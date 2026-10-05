@@ -212,15 +212,22 @@ pub struct Snapshot {
     /// False when no pane engine could be asked (every session then reads
     /// `offline`: its pane can't be seen, so it can't be called running).
     pub panes_checked: bool,
+    /// The pane engine's own state (down is reported, never hidden).
+    pub engine: super::backend::EngineStatus,
 }
 
 /// Reconcile the registry against the live panes, then merge in the peers
 /// of `root`. `cwd` keeps only sessions working under that directory (and
 /// drops peers outside it).
 pub async fn snapshot(root: &std::path::Path, registry: &Registry, cwd: Option<&str>) -> anyhow::Result<Snapshot> {
-    let live = match super::backend::backend() {
-        Ok(pane) => Some(super::backend::blocking(move || pane.list()).await?),
-        Err(_) => None,
+    let (live, engine) = match super::backend::backend() {
+        // A pane engine that can't be read leaves the registry as it is (a
+        // misread must not mark live sessions dead) and says why.
+        Ok(pane) => match super::backend::blocking(move || Ok((pane.list(), pane.status()))).await? {
+            (Ok(live), status) => (Some(live), status),
+            (Err(e), _) => (None, super::backend::EngineStatus { running: false, error: Some(format!("{e:#}")) }),
+        },
+        Err(e) => (None, super::backend::EngineStatus { running: false, error: Some(format!("{e:#}")) }),
     };
     let reconciled = match &live {
         Some(live) => registry.reconcile(live)?,
@@ -235,7 +242,7 @@ pub async fn snapshot(root: &std::path::Path, registry: &Registry, cwd: Option<&
     let panes_checked = live.is_some();
     let live = live.unwrap_or_default();
     // Without a pane engine nothing is live, so nothing reads running.
-    Ok(Snapshot { agents: agents(&file, &live, &peers), reconciled, panes_checked })
+    Ok(Snapshot { agents: agents(&file, &live, &peers), reconciled, panes_checked, engine })
 }
 
 /// Find an agent by id, address, slug or session label.

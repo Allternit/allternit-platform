@@ -98,11 +98,12 @@ async fn health() -> Response {
     Json(json!({ "ok": true, "service": "allternit-factory", "panes": backend::installed() })).into_response()
 }
 
+async fn full_snapshot(state: &ServiceState) -> Result<view::Snapshot, Response> {
+    view::snapshot(&state.root_dir, &Registry::open_default(), None).await.map_err(internal)
+}
+
 async fn snapshot(state: &ServiceState) -> Result<Vec<Agent>, Response> {
-    view::snapshot(&state.root_dir, &Registry::open_default(), None)
-        .await
-        .map(|s| s.agents)
-        .map_err(internal)
+    full_snapshot(state).await.map(|s| s.agents)
 }
 
 #[derive(Deserialize)]
@@ -111,14 +112,17 @@ struct TeamQ {
 }
 
 async fn agents_list(State(state): S, Query(q): Query<TeamQ>) -> Response {
-    let mut agents = match snapshot(&state).await {
-        Ok(a) => a,
+    let snap = match full_snapshot(&state).await {
+        Ok(s) => s,
         Err(r) => return r,
     };
+    let mut agents = snap.agents;
     if let Some(team) = q.team {
         agents.retain(|a| a.team.as_deref() == Some(team.as_str()));
     }
-    Json(json!({ "agents": agents })).into_response()
+    // `engine` (additive): whether the pane engine is up, so a screen can say
+    // why every terminal bot reads offline.
+    Json(json!({ "agents": agents, "engine": snap.engine })).into_response()
 }
 
 async fn find_agent(state: &ServiceState, id: &str) -> Result<Agent, Response> {

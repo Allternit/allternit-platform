@@ -242,6 +242,7 @@ fn factory_api_contract() {
     // the record now says dead (never running).
     let (s, body) = get(&e, "/api/factory/agents");
     assert_eq!(s, 200, "{body}");
+    assert_eq!(body["engine"]["running"], false, "{body}");
     let ghost = body["agents"].as_array().unwrap().iter().find(|a| a["slug"] == "ghost").cloned().expect("ghost");
     assert_shape(&md, "Agent", &ghost);
     assert_eq!(ghost["state"], "offline");
@@ -406,7 +407,10 @@ fn exit_code_table() {
         (out.status.code().unwrap_or(-1), body)
     };
     let (code, body) = run(&["agents", "ps", "--json"]);
-    assert_eq!((code, body), (0, json!({ "agents": [] })));
+    assert_eq!((code, &body["agents"]), (0, &json!([])), "{body}");
+    // No pane engine in this HOME: reported, not hidden.
+    assert_eq!(body["engine"]["running"], false, "{body}");
+    assert!(body["engine"]["error"].is_string(), "{body}");
     let (code, body) = run(&["orchestration", "send", "nobody", "hi", "--json"]);
     assert_eq!(code, 2, "{body}");
     assert_eq!(body["error"]["code"], "not_found");

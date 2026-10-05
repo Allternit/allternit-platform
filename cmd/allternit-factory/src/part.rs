@@ -129,7 +129,10 @@ pub fn ps(ctx: &Ctx, cwd: Option<String>) -> u8 {
         }
     };
     if ctx.json {
-        return ok_json(json!({ "agents": snap.agents }));
+        return ok_json(json!({ "agents": snap.agents, "engine": snap.engine }));
+    }
+    if let Some(err) = &snap.engine.error {
+        eprintln!("pane engine: {err}");
     }
     for change in &snap.reconciled {
         eprintln!("reconciled {}: {}", change.session, change.kind);

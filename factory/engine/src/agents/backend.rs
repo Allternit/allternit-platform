@@ -48,13 +48,21 @@ pub enum PaneSend {
     Queued { message_id: String, depth: usize, reason: String },
 }
 
+/// Whether the pane engine is up (reported by `agents ps`, never hidden).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct EngineStatus {
+    pub running: bool,
+    pub error: Option<String>,
+}
+
 /// The pane engine, as the engine sees it. Calls are blocking (the pane
 /// engine's API is a local socket); call them off the async runtime with
 /// [`blocking`].
 pub trait PaneBackend: Send + Sync {
     /// Start a pane. Fails if `session` already exists.
     fn spawn(&self, req: &PaneSpawn) -> Result<LivePane>;
-    /// Every live agent pane (sessions labeled `ao-…`).
+    /// Every live agent pane: sessions labeled `ao-…`, plus any other pane
+    /// the pane engine sees an agent in (as session `ao-pane-<paneId>`).
     fn list(&self) -> Result<Vec<LivePane>>;
     /// One session's pane, if it is live.
     fn find(&self, session: &str) -> Result<Option<LivePane>> {
@@ -68,6 +76,10 @@ pub trait PaneBackend: Send + Sync {
     fn capture(&self, session: &str, lines: u32) -> Result<String>;
     /// Close the session's pane.
     fn kill(&self, session: &str) -> Result<()>;
+    /// Whether the pane engine is running (no panes can be live when not).
+    fn status(&self) -> EngineStatus {
+        EngineStatus { running: true, error: None }
+    }
 }
 
 /// The pane engine is unreachable, or no pane engine is linked. Maps to exit

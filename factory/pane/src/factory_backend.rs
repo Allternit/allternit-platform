@@ -13,7 +13,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use allternit_factory_engine::backend::{self, LivePane, PaneBackend, PaneSend, PaneSpawn, Transport};
+use allternit_factory_engine::backend::{self, EngineStatus, LivePane, PaneBackend, PaneSend, PaneSpawn, Transport};
 use anyhow::{anyhow, Result};
 use serde_json::Value;
 
@@ -80,7 +80,47 @@ fn live_pane(session: &str, pane: &Value) -> Option<LivePane> {
     })
 }
 
+/// Session label for an agent pane outside an `ao-` workspace (a pane a
+/// person opened and started an agent in): `ao-pane-<paneId>`.
+const ADOPTED_PREFIX: &str = "ao-pane-";
+
+/// Every live agent pane: the first pane of each `ao-` workspace, plus any
+/// other pane the pane engine detected an agent in.
+fn list_all(client: &ApiClient) -> Result<Vec<LivePane>, CallError> {
+    let mut out = Vec::new();
+    for (label, id) in agent_workspaces(client)? {
+        if let Some(pane) = first_pane(client, &id)?.and_then(|p| live_pane(&label, &p)) {
+            out.push(pane);
+        }
+    }
+    let agent_ws: std::collections::HashSet<String> =
+        agent_workspaces(client)?.into_iter().map(|(_, id)| id).collect();
+    let all = ao::call(client, Method::PaneList(PaneListParams { workspace_id: None }))?;
+    for pane in all["panes"].as_array().into_iter().flatten() {
+        let in_agent_ws = pane["workspace_id"].as_str().is_some_and(|w| agent_ws.contains(w));
+        let has_agent = pane["agent"].as_str().is_some_and(|a| !a.is_empty());
+        if in_agent_ws || !has_agent {
+            continue;
+        }
+        if let Some(id) = pane["pane_id"].as_str() {
+            if let Some(p) = live_pane(&format!("{ADOPTED_PREFIX}{id}"), pane) {
+                out.push(p);
+            }
+        }
+    }
+    Ok(out)
+}
+
 fn find(client: &ApiClient, session: &str) -> Result<Option<LivePane>, CallError> {
+    if let Some(pane_id) = session.strip_prefix(ADOPTED_PREFIX) {
+        let all = ao::call(client, Method::PaneList(PaneListParams { workspace_id: None }))?;
+        return Ok(all["panes"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|p| p["pane_id"].as_str() == Some(pane_id))
+            .and_then(|p| live_pane(session, p)));
+    }
     let Some(ws) = ao::find_workspace(client, session)? else { return Ok(None) };
     let id = ws["workspace_id"].as_str().unwrap_or_default();
     Ok(first_pane(client, id)?.and_then(|p| live_pane(session, &p)))
@@ -150,20 +190,13 @@ impl PaneBackend for PaneEngine {
     }
 
     fn list(&self) -> Result<Vec<LivePane>> {
-        let client = client();
-        let workspaces = match agent_workspaces(&client) {
-            Ok(ws) => ws,
-            // No pane engine running means no live panes: a fact, not a failure.
-            Err(CallError::EngineDown) => return Ok(Vec::new()),
-            Err(e) => return Err(err(e)),
-        };
-        let mut out = Vec::new();
-        for (label, id) in workspaces {
-            if let Some(pane) = first_pane(&client, &id).map_err(err)?.and_then(|p| live_pane(&label, &p)) {
-                out.push(pane);
-            }
+        match list_all(&client()) {
+            Ok(panes) => Ok(panes),
+            // No pane engine running means no live panes: a fact, not a
+            // failure (`status()` reports the engine itself as down).
+            Err(CallError::EngineDown) => Ok(Vec::new()),
+            Err(e) => Err(err(e)),
         }
-        Ok(out)
     }
 
     fn find(&self, session: &str) -> Result<Option<LivePane>> {
@@ -171,6 +204,13 @@ impl PaneBackend for PaneEngine {
             Ok(p) => Ok(p),
             Err(CallError::EngineDown) => Ok(None),
             Err(e) => Err(err(e)),
+        }
+    }
+
+    fn status(&self) -> EngineStatus {
+        match ao::workspaces(&client()) {
+            Ok(_) => EngineStatus { running: true, error: None },
+            Err(e) => EngineStatus { running: false, error: Some(format!("{:#}", err(e))) },
         }
     }
 
@@ -207,6 +247,11 @@ impl PaneBackend for PaneEngine {
     }
 
     fn kill(&self, session: &str) -> Result<()> {
+        if session.starts_with(ADOPTED_PREFIX) {
+            // Not started by the engine: closing its workspace could close a
+            // person's other panes. They close it themselves.
+            return Err(anyhow!("{session} is a pane someone opened; close it in the agent wall"));
+        }
         let client = client();
         let Some(ws) = ao::find_workspace(&client, session).map_err(err)? else { return Ok(()) };
         let id = ws["workspace_id"].as_str().unwrap_or_default().to_string();
