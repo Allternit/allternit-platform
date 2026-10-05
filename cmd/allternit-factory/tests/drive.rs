@@ -378,7 +378,15 @@ async fn global_caps_are_shared_across_two_drive_processes() {
     assert_eq!(max_overlap(&iv), 1, "global concurrency cap crossed: {iv:?}");
     for d in [&dag1, &dag2] {
         let s = dag(&ledger, d).await;
-        assert!(s.nodes.values().filter(|n| n.parent_node_id.is_some()).all(|n| n.status == "DONE"));
+        let statuses: Vec<_> = s.nodes.values().filter(|n| n.parent_node_id.is_some()).map(|n| (n.node_id.clone(), n.status.clone())).collect();
+        assert!(
+            statuses.iter().all(|(_, st)| st == "DONE"),
+            "{statuses:?}\n--- drive 1 ---\n{}{}\n--- drive 2 ---\n{}{}",
+            String::from_utf8_lossy(&o1.stdout),
+            String::from_utf8_lossy(&o1.stderr),
+            String::from_utf8_lossy(&o2.stdout),
+            String::from_utf8_lossy(&o2.stderr)
+        );
     }
     assert!(events_of(&ledger, SPAWN_DEFERRED)
         .await
