@@ -122,7 +122,9 @@ pub fn subscribe() -> broadcast::Receiver<Value> {
 }
 
 fn emit(state: &AppState, ty: &str, a: &Approval) {
-    let evt = json!({ "type": ty, "at": now_rfc3339(), "data": a.to_json() });
+    // `owner` lets SSE subscribers (the /api/factory/events proxy) send each
+    // user only their own approvals; it is stripped before reaching clients.
+    let evt = json!({ "type": ty, "at": now_rfc3339(), "owner": a.owner, "data": a.to_json() });
     let _ = EVENTS.send(evt);
     if let Some(bot) = a.bot_id.as_deref().filter(|b| !b.is_empty()) {
         crate::gateway_runner::led(&state.db, bot, "", None, ty, ("user", &a.owner), a.to_json(), Some(format!("factory:{ty}:{}", a.id)));
@@ -1122,6 +1124,7 @@ mod tests {
         assert_eq!(body["resolvedVia"], "app");
         let evt = events.recv().await.unwrap();
         assert_eq!(evt["type"], "approval.resolved");
+        assert_eq!(evt["owner"], "user-a", "SSE subscribers filter on the owner");
 
         // The Gate recorded it: the gate is resolved ok by the owner as a user.
         let all = state.rails.ledger.query(LedgerQuery::default()).await.unwrap();
