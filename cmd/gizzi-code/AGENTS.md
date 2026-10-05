@@ -77,7 +77,7 @@ The daemon (`gizzi daemon`) runs a background cron scheduler on port **3031** wi
 ### Architecture
 
 ```
-Daemon (in-process via `gizzi runtime daemon`,
+Daemon (in-process via `gizzi agents harness daemon`,
         src/runtime/daemon/runtime-daemon.ts — the standalone
         src/daemon/main.ts entrypoint was removed in the
         2026-09 dead-code cleanup)
@@ -221,7 +221,7 @@ Config-home resolution follows the pluginDirectories/memdir pattern:
   re-point, persona injection, `isCanonicalBotSession`) +
   `src/runtime/bots/capability-epoch.ts` (FNV-1a epoch over identity + SOUL +
   memory list + roster; drift re-stamps and rebuilds the injection once).
-  `gizzi bot chat <name> [message]` — no message launches the TUI on the
+  `gizzi agents bot chat <name> [message]` — no message launches the TUI on the
   pinned session (`-s/--session` path, now honored by `ink-app/app.tsx`);
   with a message it is a headless print-mode turn (`run -s <id>` semantics)
   preserving continuity. The persona block is injected per turn in
@@ -242,7 +242,7 @@ Config-home resolution follows the pluginDirectories/memdir pattern:
   `Session.createNext`, and the canonical session is never deleted after the
   run. Unknown bot → failed run with a structured error (typed D4 reasons
   land in B4). `AgentExecutorConfig.botRoutineDeps` injects fakes in tests.
-  CLI: `gizzi bot routine add <name> [--label] --schedule <cron-or-interval>
+  CLI: `gizzi agents bot routine add <name> [--label] --schedule <cron-or-interval>
   --prompt <text>` / `list <name>` / `remove <name> <jobId>`. Routines set
   `catchUpMissed: true`, so a fire missed while the daemon was off runs on
   daemon start with the same marker. Tests: `test/runtime/bots/bot-routines.test.ts`
@@ -258,7 +258,7 @@ Config-home resolution follows the pluginDirectories/memdir pattern:
   auth/quota/config/model/blocked; the agent executor records
   `run.reason` (typed column, with a pragma-guarded `ALTER TABLE` migration
   in CronDatabase for pre-existing cron.db files) alongside `run.error`.
-  Headless `gizzi bot chat
+  Headless `gizzi agents bot chat
   <name> <message>` prints `[reason: <code>]` ahead of error text (bus
   subscription fires before run.ts renders the same session.error event).
   `src/runtime/tools/builtins/message-agent.ts` (`message_agent`) is a

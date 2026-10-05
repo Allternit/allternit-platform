@@ -202,6 +202,15 @@ export function GlobalKeybindingHandlers({
     context: 'Global',
     isActive: screen !== 'dashboard'
   });
+  // The Allternit Factory floor (ctrl+x f; also /factory, and f on the
+  // dashboard and bots screens). Inactive while it's mounted.
+  const handleOpenFactory = useCallback(() => {
+    setScreen('factory');
+  }, [setScreen]);
+  useKeybinding('app:openFactory', handleOpenFactory, {
+    context: 'Chat',
+    isActive: screen !== 'factory'
+  });
   if (feature('KAIROS') || feature('KAIROS_BRIEF')) {
     // biome-ignore lint/correctness/useHookAtTopLevel: feature() is a compile-time constant
     useKeybinding('app:toggleBrief', handleToggleBrief, {

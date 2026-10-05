@@ -1,3 +1,4 @@
+import type { CommandModule } from "yargs";
 /**
  * Cron CLI Commands
  * 
@@ -30,9 +31,65 @@ import path from "path";
 const DEFAULT_CRON_PORT = 3031;
 const CRON_DB_PATH = path.join(Global.Path.data, "cron.db");
 
+/** `… jobs start`: the daemon in the foreground (also the supervised entrypoint). */
+const CronStartCommand: CommandModule<{}, any> = {
+        command: "start",
+        describe: "Start the cron daemon",
+        builder: (yargs) =>
+          yargs
+            .option("port", {
+              type: "number",
+              default: DEFAULT_CRON_PORT,
+              describe: "Port to run the daemon on",
+            })
+            .option("background", {
+              type: "boolean",
+              default: false,
+              describe: "Run in the background",
+            }),
+        handler: async (argv) => {
+          process.stdout.write(colors.cyan("Starting GIZZI Cron Daemon...\n"));
+
+          if (argv.background) {
+            const { spawn } = await import("child_process");
+            const proc = spawn(process.execPath, process.argv.slice(1).filter(a => a !== "--background"), {
+              detached: true,
+              stdio: "ignore",
+            });
+            proc.unref();
+            process.stdout.write(`Daemon started in background (PID: ${proc.pid})\n`);
+            return;
+          }
+
+          try {
+            await startDaemon({
+              port: argv.port as number,
+              dbPath: CRON_DB_PATH,
+              pidfile: pidfilePath(),
+            });
+            // From here on a crash must be recorded and exit non-zero
+            // (never leaving a stale pidfile), so launchd/systemd can
+            // restart the daemon.
+            installCronCrashHandlers(pidfilePath());
+          } catch (e: any) {
+            if (e.message?.includes("already in use")) {
+              process.stdout.write(colors.yellow(`Daemon is already running on port ${argv.port}\n`));
+            } else {
+              process.stderr.write(colors.red(`Failed to start daemon: ${e.message}\n`));
+            }
+          }
+        }
+}
+
+/**
+ * Gizzi's local job scheduler (the cron daemon), mounted as
+ * `gizzi workflows wake jobs`. The engine's Wake (`workflows wake
+ * list|due|run`) schedules Factory checks; this runs Gizzi's own scheduled
+ * jobs and bot routines.
+ */
 export const CronCommand = cmd({
-  command: "cron",
-  describe: "manage scheduled jobs (cron)",
+  command: "jobs",
+  describe: "Gizzi's local scheduled jobs and bot routines (the cron daemon)",
   builder: (yargs) =>
     yargs
       .command(
@@ -71,54 +128,7 @@ export const CronCommand = cmd({
           }
         }
       )
-      .command(
-        "start",
-        "Start the cron daemon",
-        (yargs) =>
-          yargs
-            .option("port", {
-              type: "number",
-              default: DEFAULT_CRON_PORT,
-              describe: "Port to run the daemon on",
-            })
-            .option("background", {
-              type: "boolean",
-              default: false,
-              describe: "Run in the background",
-            }),
-        async (argv) => {
-          process.stdout.write(colors.cyan("Starting GIZZI Cron Daemon...\n"));
-
-          if (argv.background) {
-            const { spawn } = await import("child_process");
-            const proc = spawn(process.execPath, process.argv.slice(1).filter(a => a !== "--background"), {
-              detached: true,
-              stdio: "ignore",
-            });
-            proc.unref();
-            process.stdout.write(`Daemon started in background (PID: ${proc.pid})\n`);
-            return;
-          }
-
-          try {
-            await startDaemon({
-              port: argv.port as number,
-              dbPath: CRON_DB_PATH,
-              pidfile: pidfilePath(),
-            });
-            // From here on a crash must be recorded and exit non-zero
-            // (never leaving a stale pidfile), so launchd/systemd can
-            // restart the daemon.
-            installCronCrashHandlers(pidfilePath());
-          } catch (e: any) {
-            if (e.message?.includes("already in use")) {
-              process.stdout.write(colors.yellow(`Daemon is already running on port ${argv.port}\n`));
-            } else {
-              process.stderr.write(colors.red(`Failed to start daemon: ${e.message}\n`));
-            }
-          }
-        }
-      )
+      .command(CronStartCommand)
       .command(
         "enable",
         "Start the cron daemon on boot/login (launchd/systemd)",
@@ -186,7 +196,7 @@ export const CronCommand = cmd({
               process.stdout.write(`Autostart: ${colors.yellow("unsupported on " + process.platform)}\n`);
             } else {
               const unit = sup.launchdPlist ?? sup.systemdUnit;
-              process.stdout.write(`Autostart: ${unit ? colors.green(`installed (${unit})`) : colors.dim("not installed — `gizzi cron enable`")}\n`);
+              process.stdout.write(`Autostart: ${unit ? colors.green(`installed (${unit})`) : colors.dim("not installed — `gizzi workflows wake jobs enable`")}\n`);
             }
 
             const pidfile = pidfilePath();
@@ -394,3 +404,16 @@ function formatDuration(ms: number): string {
   if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
   return `${seconds}s`;
 }
+
+/**
+ * Hidden `gizzi cron start`, kept only because LaunchAgents/systemd units
+ * written by earlier releases run exactly that line. Not in --help or
+ * completions; `gizzi doctor` tells the user to re-run
+ * `gizzi workflows wake jobs enable` to rewrite the unit.
+ */
+export const CronLegacyStartCommand = cmd({
+  command: "cron",
+  describe: false,
+  builder: (yargs) => yargs.command(CronStartCommand).demandCommand(1),
+  handler: async () => {},
+})

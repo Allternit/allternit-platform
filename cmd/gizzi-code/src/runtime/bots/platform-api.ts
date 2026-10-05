@@ -1,6 +1,6 @@
 /**
  * Minimal authenticated client for the Allternit platform API (bots, threads,
- * agent sessions). Shared by the TUI pet HUD and `gizzi bot threads`.
+ * agent sessions). Shared by the TUI pet HUD and `gizzi agents bot threads`.
  *
  * Base URL: the Allternit gateway (ALLTERNIT_API_URL / GIZZI_GATEWAY_URL,
  * loopback :8013 by default — the API Desktop runs locally).

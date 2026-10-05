@@ -9,6 +9,7 @@
  *   ↑/↓ (or k/j)  move selection          Enter  open canonical chat
  *   n             create bot (name/title)  d      delete (inline y/n)
  *   r             refresh                  q/Esc  back to REPL
+ *   f             the Allternit Factory floor
  *
  * Delete confirm idiom mirrors the dashboard's armed double-press: a bot
  * with a canonical chat requires y twice; a bot without one confirms once.
@@ -19,7 +20,7 @@
  * is marked read.
  */
 import * as React from 'react'
-import { Box, Text, useInput, useTheme } from '../../ink'
+import { Box, Text, useInput } from '../../ink'
 import { useTerminalSize } from '../../hooks/useTerminalSize'
 import { useKeybinding } from '../../keybindings/useKeybinding'
 import { useAppState, useSetAppState } from '../../state/AppState'
@@ -36,7 +37,6 @@ type DeleteConfirm = { name: string; armed: boolean }
 
 export function BotsPaneScreen(): React.ReactNode {
   const { rows: termRows, columns } = useTerminalSize()
-  const theme = useTheme()
   const setAppState = useSetAppState()
   const { addNotification } = useNotifications()
 
@@ -194,6 +194,7 @@ export function BotsPaneScreen(): React.ReactNode {
         setDeleteConfirm({ name: selectedRow.name, armed: !selectedRow.hasCanonicalChat })
       },
       refresh,
+      openFactory: () => setAppState(prev => (prev.screen === 'bots' ? { ...prev, screen: 'factory' } : prev)),
       exit: exitPane,
     })
     if (!handled && key.escape) exitPane()
@@ -205,7 +206,7 @@ export function BotsPaneScreen(): React.ReactNode {
   return (
     <Box flexDirection="column" width={columns} height={termRows} paddingX={1}>
       <Box flexDirection="row" justifyContent="space-between">
-        <Text bold color={theme.gizzi}>
+        <Text bold color="gizzi">
           Gizzi Code · Bots
         </Text>
         <Text dimColor>
@@ -216,7 +217,7 @@ export function BotsPaneScreen(): React.ReactNode {
       </Box>
       {deleteConfirm ? (
         <Box flexDirection="column" marginTop={1}>
-          <Text color={theme.error}>
+          <Text color="error">
             {deleteConfirm.armed
               ? `Delete bot '${deleteConfirm.name}'? This cannot be undone. [y/n]`
               : `Bot '${deleteConfirm.name}' has a canonical chat — press y again to confirm delete. [y/n]`}
@@ -228,15 +229,15 @@ export function BotsPaneScreen(): React.ReactNode {
       <Box flexDirection="column" marginTop={1}>
         {mode === 'create' ? (
           <Box flexDirection="row" opaque>
-            <Text color={theme.gizzi}>{'❯ '}</Text>
-            <Text color={theme.text}>
+            <Text color="gizzi">{'❯ '}</Text>
+            <Text color="text">
               {draft}
               {'▌'}
             </Text>
           </Box>
         ) : null}
         {statusError ? (
-          <Text color={theme.error} wrap="truncate-end">
+          <Text color="error" wrap="truncate-end">
             {truncate(statusError, columns - 2)}
           </Text>
         ) : null}
@@ -246,7 +247,7 @@ export function BotsPaneScreen(): React.ReactNode {
               ? 'Enter create <name>[ title] · Esc cancel'
               : busy
                 ? 'working…'
-                : '↑/↓ select · Enter open chat · n new · d delete · r refresh · q/Esc back'}
+                : '↑/↓ select · Enter open chat · n new · d delete · r refresh · f factory · q/Esc back'}
           </Text>
           <Text dimColor>/bots</Text>
         </Box>

@@ -3,7 +3,7 @@
  * docs/programs/gizzi/GIZZI_BOT_MODE_SPEC.md).
  *
  * One pinned session per bot ("Bot Chat is born the moment the Bot is
- * born", lazily): the first `gizzi bot chat <name>` creates the session and
+ * born", lazily): the first `gizzi agents bot chat <name>` creates the session and
  * records it in `bot.json` as `canonicalSession`; every later open resumes
  * it. This module is the only owner of that pointer (bot-store exposes the
  * raw pin/stamp primitives).

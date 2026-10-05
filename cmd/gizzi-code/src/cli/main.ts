@@ -261,21 +261,28 @@ function isLongLivedCommand(argv: { _: (string | number)[]; print?: boolean }): 
       // `mcp serve` runs an MCP server; add/remove/list/auth/logout/debug
       // are one-shot.
       return sub === "serve"
-    case "bot":
-      // `bot chat` with no message launches the interactive TUI (delegates to
-      // the default $0 command); with a message it is a one-shot headless turn
-      // that self-exits in print mode.
-      return sub === "chat" && argv._.length <= 3
-    case "runtime":
-      // `runtime daemon` is a WebSocket daemon; list/register/status exit.
-      return sub === "daemon"
-    case "cowork":
-      // `cowork attach <run-id>` attaches to a live run; everything else
-      // (list/start/stop/logs/show/schedule/approval/checkpoint) exits.
-      return sub === "attach"
+    case "agents": {
+      // `agents bot chat <name>` with no message launches the interactive
+      // TUI; `agents harness daemon` is a WebSocket daemon. Engine
+      // pass-through verbs (wall, attach, drive, feed) await the engine's
+      // exit inside their handler, so they are one-shot here.
+      const [, , third] = argv._ as string[]
+      if (sub === "bot") return third === "chat" && argv._.length <= 4
+      return sub === "harness" && third === "daemon"
+    }
+    case "workflows": {
+      // `workflows wake jobs start` is the local job daemon (also the
+      // supervised entrypoint).
+      const [, , third, fourth] = argv._ as string[]
+      return sub === "wake" && third === "jobs" && fourth === "start"
+    }
+    case "workspace": {
+      // `workspace tasks attach <run-id>` attaches to a live run.
+      const [, , third] = argv._ as string[]
+      return sub === "tasks" && third === "attach"
+    }
     case "cron":
-      // `cron start` runs the daemon in the foreground and blocks (also the
-      // launchd/systemd supervised entrypoint); everything else exits.
+      // Hidden: `cron start` as written into older launchd/systemd units.
       return sub === "start"
     case "remote":
       // `remote connect` opens an interactive remote session and

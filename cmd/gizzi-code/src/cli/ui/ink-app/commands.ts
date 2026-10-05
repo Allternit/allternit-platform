@@ -21,6 +21,7 @@ import cost from './commands/cost/index.js'
 import dash from './commands/dash/index.js'
 import dashboard from './commands/dashboard/index.js'
 import bots from './commands/bots/index.js'
+import factory from './commands/factory/index.js'
 import diff from './commands/diff/index.js'
 import ctx_viz from './commands/ctx_viz/index.js'
 import doctor from './commands/doctor/index.js'
@@ -322,6 +323,7 @@ const COMMANDS = memoize((): Command[] => [
   dash,
   dashboard,
   bots,
+  factory,
   diff,
   doctor,
   editPrompt,
