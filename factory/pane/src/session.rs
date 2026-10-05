@@ -102,8 +102,8 @@ pub fn active_name() -> Option<String> {
 
 pub fn local_attach_command() -> String {
     match active_name() {
-        Some(name) => format!("ao session attach {name}"),
-        None => "ao".to_string(),
+        Some(name) => format!("{} session attach {name}", crate::factory_host::program_name()),
+        None => crate::factory_host::program_name(),
     }
 }
 
@@ -113,8 +113,8 @@ pub fn local_stop_command() -> String {
 
 pub fn stop_command_for(name: Option<&str>) -> String {
     match name {
-        Some(name) => format!("ao session stop {name}"),
-        None => "ao server stop".to_string(),
+        Some(name) => format!("{} session stop {name}", crate::factory_host::program_name()),
+        None => format!("{} server stop", crate::factory_host::program_name()),
     }
 }
 

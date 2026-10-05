@@ -6,8 +6,8 @@ use clap::{Args, Parser, Subcommand};
 use serde_json::json;
 
 use crate::exec::{
-    dry_run, fail, not_built, ok_json, run, run_pane_interactive, run_rails_in_process, Code, Ctx,
-    Target,
+    dry_run, fail, not_built, ok_json, run, run_pane_interactive, run_rails_in_process,
+    run_shaped, Code, Ctx, Target,
 };
 
 #[derive(Parser)]
@@ -740,7 +740,9 @@ fn workspace(ctx: &Ctx, cmd: WorkspaceCmd) -> u8 {
                 args.push("--ready".into());
             }
             opt(&mut args, "--dag", dag);
-            run(ctx, Target::Rails(args))
+            let shape: fn(&str) -> serde_json::Value =
+                if ready { node_list_ready_json } else { node_list_claimed_json };
+            run_shaped(ctx, Target::Rails(args), Some(shape))
         }
         WorkspaceCmd::Approve { node, gate, judge, actor, reason, dry_run: dry } => {
             let target = if judge {
@@ -792,5 +794,52 @@ fn workspace(ctx: &Ctx, cmd: WorkspaceCmd) -> u8 {
         ),
         WorkspaceCmd::Board(_) => not_built(ctx, "workspace", "board", "Use `workspace node list` for now."),
         WorkspaceCmd::Tasks(_) => not_built(ctx, "workspace", "tasks", "The cowork queue has not folded in yet."),
+    }
+}
+
+/// `wih list --ready` prints `<dag> <node> <title…>` per READY node.
+fn node_list_ready_json(text: &str) -> serde_json::Value {
+    let nodes: Vec<_> = text
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.trim().splitn(3, ' ');
+            let dag = parts.next().filter(|s| !s.is_empty())?;
+            let node = parts.next()?;
+            let title = parts.next().unwrap_or("");
+            Some(json!({ "dag": dag, "node": node, "title": title, "state": "ready" }))
+        })
+        .collect();
+    json!({ "nodes": nodes })
+}
+
+/// `wih list` prints `<wih> <node>` per claimed (open) node.
+fn node_list_claimed_json(text: &str) -> serde_json::Value {
+    let nodes: Vec<_> = text
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split_whitespace();
+            let wih = parts.next()?;
+            let node = parts.next()?;
+            Some(json!({ "wih": wih, "node": node, "state": "claimed" }))
+        })
+        .collect();
+    json!({ "nodes": nodes })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn node_list_lines_become_json() {
+        assert_eq!(
+            node_list_ready_json("d1 n2 Fix the build\n\n"),
+            json!({ "nodes": [{ "dag": "d1", "node": "n2", "title": "Fix the build", "state": "ready" }] })
+        );
+        assert_eq!(
+            node_list_claimed_json("wih_1 n2\n"),
+            json!({ "nodes": [{ "wih": "wih_1", "node": "n2", "state": "claimed" }] })
+        );
+        assert_eq!(node_list_claimed_json(""), json!({ "nodes": [] }));
     }
 }

@@ -59,6 +59,17 @@ pub(crate) fn shell_program(argv0: &str) -> String {
     program
 }
 
+/// The command a person types to reach this engine: `ao` upstream-style
+/// with no prefix, `allternit-factory pane` under the factory host. Used in
+/// "start/attach/stop it with …" hints so they name a command that exists.
+pub(crate) fn program_name() -> String {
+    if argv_prefix().is_empty() {
+        "ao".to_string()
+    } else {
+        shell_program("allternit-factory")
+    }
+}
+
 /// A path a child process can execute with herdr's argv to reach this engine.
 pub(crate) fn bin_path() -> io::Result<PathBuf> {
     let exe = std::env::current_exe()?;

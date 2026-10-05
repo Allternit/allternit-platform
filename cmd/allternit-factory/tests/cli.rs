@@ -138,7 +138,7 @@ fn node_list_on_an_empty_workspace_is_one_json_document() {
     let root = ws.path().to_str().unwrap();
     let out = factory(home.path(), &["workspace", "node", "list", "--json", "--root", root]);
     assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
-    one_json(&out);
+    assert_eq!(one_json(&out), serde_json::json!({ "nodes": [] }));
 }
 
 #[test]

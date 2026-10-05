@@ -219,6 +219,12 @@ impl Target {
 
 /// Run a verb's target and translate its outcome to the contract.
 pub fn run(ctx: &Ctx, target: Target) -> u8 {
+    run_shaped(ctx, target, None)
+}
+
+/// Like [`run`], but with `--json` a plain-text result is turned into a JSON
+/// document by `shape` (for implementations that only print lines).
+pub fn run_shaped(ctx: &Ctx, target: Target, shape: Option<fn(&str) -> Value>) -> u8 {
     match target {
         Target::Rails(args) if !ctx.json => run_rails_in_process(ctx.root.as_ref(), args, true),
         Target::Rails(args) => {
@@ -227,12 +233,12 @@ pub fn run(ctx: &Ctx, target: Target) -> u8 {
                 child.extend(["--root".into(), root.display().to_string()]);
             }
             child.extend(args);
-            run_child(ctx, child, Classify::Table)
+            run_child(ctx, child, Classify::Table, shape)
         }
         Target::Pane(args) => {
             let mut child = vec!["pane".to_string()];
             child.extend(args);
-            run_child(ctx, child, Classify::Pane)
+            run_child(ctx, child, Classify::Pane, shape)
         }
     }
 }
@@ -307,7 +313,12 @@ enum Classify {
     Pane,
 }
 
-fn run_child(ctx: &Ctx, args: Vec<String>, classify: Classify) -> u8 {
+fn run_child(
+    ctx: &Ctx,
+    args: Vec<String>,
+    classify: Classify,
+    shape: Option<fn(&str) -> Value>,
+) -> u8 {
     let exe = match std::env::current_exe() {
         Ok(exe) => exe,
         Err(err) => return fail(ctx, Code::Internal, &format!("cannot locate allternit-factory: {err}"), None),
@@ -362,9 +373,10 @@ fn run_child(ctx: &Ctx, args: Vec<String>, classify: Classify) -> u8 {
     if code == Code::Ok {
         if ctx.json {
             let trimmed = out.trim();
-            match serde_json::from_str::<Value>(trimmed) {
-                Ok(value) => println!("{value}"),
-                Err(_) => println!("{}", json!({ "text": out })),
+            match (serde_json::from_str::<Value>(trimmed), shape) {
+                (Ok(value), _) => println!("{value}"),
+                (Err(_), Some(shape)) => println!("{}", shape(&out)),
+                (Err(_), None) => println!("{}", json!({ "text": out })),
             }
         }
         return 0;
