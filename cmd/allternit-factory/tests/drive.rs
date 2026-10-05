@@ -347,26 +347,33 @@ async fn global_caps_are_shared_across_two_drive_processes() {
 
     // The binary drives through the real pane engine: give it its own pane
     // session and factory home, and stop that pane server at the end.
+    // Its config (and socket) dir is a short temp dir — macOS caps a socket
+    // path at 104 bytes — removed with the test, so nothing lands in ~/.config.
     let pane_session = format!("drive-test-{}", std::process::id());
     let factory_home = root.join(".factory-home");
+    let pane_config = tempfile::Builder::new().prefix("f3dt").tempdir_in("/tmp").unwrap();
+    let pane_config_dir = pane_config.path().to_path_buf();
     let engine = |args: &[&str]| {
         let mut cmd = tokio::process::Command::new(commrails_bin());
         cmd.env("HERDR_SESSION", &pane_session)
+            .env("XDG_CONFIG_HOME", &pane_config_dir)
             .env("ALLTERNIT_FACTORY_HOME", &factory_home)
             .args(args);
         cmd
     };
-    struct StopPanes(String, PathBuf);
+    struct StopPanes(String, PathBuf, PathBuf, Option<TempDir>);
     impl Drop for StopPanes {
         fn drop(&mut self) {
             let _ = std::process::Command::new(commrails_bin())
                 .env("HERDR_SESSION", &self.0)
+                .env("XDG_CONFIG_HOME", &self.2)
                 .env("ALLTERNIT_FACTORY_HOME", &self.1)
                 .args(["pane", "server", "stop"])
                 .output();
+            drop(self.3.take());
         }
     }
-    let _stop = StopPanes(pane_session.clone(), factory_home.clone());
+    let _stop = StopPanes(pane_session.clone(), factory_home.clone(), pane_config_dir.clone(), Some(pane_config));
     let run = |dag: String| engine(&["internal", "rails", "--root", root.to_str().unwrap(), "drive", &dag]).output();
     let (o1, o2) = tokio::join!(run(dag1.clone()), run(dag2.clone()));
     let (o1, o2) = (o1.unwrap(), o2.unwrap());
