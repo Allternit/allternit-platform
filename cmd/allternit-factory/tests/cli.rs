@@ -24,6 +24,28 @@ fn factory(home: &Path, args: &[&str]) -> Output {
 }
 
 /// stdout must be exactly one JSON document.
+/// A send dry run resolves the target and lists the records it would write,
+/// and writes none of them.
+#[test]
+fn send_dry_run_plans_the_delivery_and_writes_nothing() {
+    // Short: the pane engine's socket lives under HOME (macOS caps the path).
+    let home = tempfile::Builder::new().prefix("f3cli").tempdir_in("/tmp").unwrap();
+    let ws = tempfile::Builder::new().prefix("f3ws").tempdir_in("/tmp").unwrap();
+    let reg = home.path().join(".allternit/factory");
+    std::fs::create_dir_all(&reg).unwrap();
+    std::fs::write(reg.join("registry.json"), r#"{"sessions":{"ao-worker":{"cwd":"/w","lifecycle":"running"}}}"#).unwrap();
+    let root = ws.path().to_str().unwrap();
+    let out = factory(home.path(), &["orchestration", "send", "worker", "hello", "there", "--dry-run", "--json", "--root", root]);
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    let doc = one_json(&out);
+    assert_eq!(doc["dryRun"], true);
+    assert_eq!(doc["plan"]["to"], "local:worker");
+    // No pane engine is running in this HOME, so the pane is gone: queued.
+    assert_eq!(doc["plan"]["via"], "pane_queue");
+    assert_eq!(doc["plan"]["records"], serde_json::json!(["MessageSent", "BusMessageSent", "factory.delivery"]));
+    assert!(!ws.path().join(".allternit/ledger").exists(), "a dry run wrote the ledger");
+}
+
 fn one_json(out: &Output) -> Value {
     let text = String::from_utf8_lossy(&out.stdout);
     serde_json::from_str(text.trim()).unwrap_or_else(|e| panic!("stdout is not one JSON document ({e}): {text:?}"))
@@ -98,16 +120,13 @@ fn usage_errors_exit_64_with_the_usage_code() {
 #[test]
 fn dry_run_prints_the_command_and_runs_nothing() {
     let home = tempfile::tempdir().unwrap();
-    let out = factory(
-        home.path(),
-        &["orchestration", "send", "worker", "hello", "there", "--dry-run", "--json"],
-    );
+    let out = factory(home.path(), &["agents", "down", "worker", "--dry-run", "--json"]);
     assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
     let doc = one_json(&out);
     assert_eq!(doc["dryRun"], true);
     assert_eq!(doc["changed"], false);
     let argv: Vec<&str> = doc["wouldRun"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
-    assert_eq!(argv, ["allternit-factory", "pane", "send", "worker", "hello", "there"]);
+    assert_eq!(argv, ["allternit-factory", "pane", "kill", "worker"]);
 
     let ws = tempfile::tempdir().unwrap();
     let root = ws.path().to_str().unwrap();

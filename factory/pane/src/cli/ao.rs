@@ -2083,6 +2083,8 @@ fn probe_executor(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::Deserialize;
+    use std::collections::BTreeMap;
 
     fn entry_with_lead(lead: Option<&str>) -> AoSession {
         AoSession {

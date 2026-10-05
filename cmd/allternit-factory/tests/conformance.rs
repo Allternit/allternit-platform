@@ -41,6 +41,22 @@ use tempfile::TempDir;
 
 // ------------------------------------------------------------------ helpers
 
+#[path = "support/fake_panes.rs"]
+mod fake_panes;
+
+/// One fake pane engine and factory home per test process (process-wide).
+fn panes() -> Arc<fake_panes::FakePanes> {
+    static PANES: std::sync::OnceLock<(Arc<fake_panes::FakePanes>, TempDir)> = std::sync::OnceLock::new();
+    PANES
+        .get_or_init(|| {
+            let home = test_root();
+            std::env::set_var("ALLTERNIT_FACTORY_HOME", home.path());
+            (fake_panes::FakePanes::install(), home)
+        })
+        .0
+        .clone()
+}
+
 fn test_root() -> TempDir {
     let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/tmp");
     std::fs::create_dir_all(&base).unwrap();
@@ -48,7 +64,8 @@ fn test_root() -> TempDir {
 }
 
 async fn build_gate(root: &Path) -> (Arc<Ledger>, Arc<Gate>) {
-    std::env::set_var("ALLTERNIT_COMMRAILS_BIN", env!("CARGO_BIN_EXE_allternit-factory"));
+    std::env::set_var("ALLTERNIT_FACTORY_BIN", env!("CARGO_BIN_EXE_allternit-factory"));
+    panes();
     let ledger = Arc::new(Ledger::new(LedgerOptions {
         root_dir: Some(root.to_path_buf()),
         ledger_dir: Some(PathBuf::from(".allternit/ledger")),

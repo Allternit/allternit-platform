@@ -853,7 +853,7 @@ fn claude_settings_register_the_s1_outcome_hooks_when_given() {
     assert!(s["hooks"]["Stop"][0].get("matcher").is_none());
     assert_eq!(s["hooks"]["Stop"][0]["hooks"][0]["command"], "'/opt/bin/system-one' hook-outcome");
     // The gate itself is unchanged.
-    assert!(s["hooks"]["PreToolUse"][0]["hooks"][0]["command"].as_str().unwrap().contains("hook claude-pretool"));
+    assert!(s["hooks"]["PreToolUse"][0]["hooks"][0]["command"].as_str().unwrap().contains("internal hook --root"));
     let bare = claude_settings_with_outcome(t, None);
     assert_eq!(bare["hooks"].as_object().unwrap().keys().collect::<Vec<_>>(), vec!["PreToolUse"]);
     // Qwen gets the same outcome hooks next to its own PreToolUse gate.
