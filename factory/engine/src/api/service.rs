@@ -3097,6 +3097,8 @@ pub fn create_router(state: Arc<ServiceState>) -> Router {
         .route("/v1/replays", post(replays_create))
         // INIT
         .route("/v1/init", post(init_system))
+        // The Factory API (API.md §3).
+        .merge(crate::api::factory::router())
         .with_state(state)
 }
 
@@ -3130,6 +3132,19 @@ pub async fn run_service_on(
             sleep(Duration::from_secs(2)).await;
         }
     });
+
+    // One registry, reconciled at engine start (SPEC §6 rule 3).
+    if crate::agents::backend::installed() {
+        let registry = crate::agents::registry::Registry::open_default();
+        match crate::agents::view::snapshot(&state.root_dir, &registry, None).await {
+            Ok(snap) => {
+                for change in &snap.reconciled {
+                    tracing::info!(session = %change.session, kind = %change.kind, "registry reconciled");
+                }
+            }
+            Err(e) => tracing::warn!("registry reconcile at start failed: {e:#}"),
+        }
+    }
 
     let app = create_router(state);
 

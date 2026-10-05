@@ -156,9 +156,17 @@ pub struct SendPlan {
     pub to: String,
     pub via: String,
     pub thread_id: String,
-    /// Ledger event types the real send appends, in order.
+    /// Ledger event types the real send appends, in order (besides opening
+    /// the mail thread the first time it is used).
     pub records: Vec<String>,
+    /// For a paste: what it appends instead if the pane is busy when it
+    /// runs and the text goes to the mailbox (`via: pane_queue`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub if_queued: Option<Vec<String>>,
 }
+
+/// The Bus event a mailbox enqueue appends.
+const MAILBOX_EVENT: &str = "BusMessageSent";
 
 enum Target {
     Terminal(Agent),
@@ -243,12 +251,18 @@ pub async fn plan(ctx: &SendCtx, req: &SendRequest) -> std::result::Result<SendP
         Target::Remote(bot) => (bot.clone(), "session|vendor_ticket (decided by the bot's binding)".to_string()),
         Target::Channel(thread) => (format!("channel:{thread}"), "channel".to_string()),
     };
-    Ok(SendPlan {
-        thread_id: thread_for(req, &to),
-        to,
-        via,
-        records: vec!["MessageSent".to_string(), DELIVERY_EVENT.to_string()],
-    })
+    let base = |extra: Option<&str>| -> Vec<String> {
+        let mut r = vec!["MessageSent".to_string()];
+        r.extend(extra.map(str::to_string));
+        r.push(DELIVERY_EVENT.to_string());
+        r
+    };
+    let (records, if_queued) = match via.as_str() {
+        "pane_queue" => (base(Some(MAILBOX_EVENT)), None),
+        "pane" => (base(None), Some(base(Some(MAILBOX_EVENT)))),
+        _ => (base(None), None),
+    };
+    Ok(SendPlan { thread_id: thread_for(req, &to), to, via, records, if_queued })
 }
 
 fn validate(req: &SendRequest) -> std::result::Result<(), SendError> {
