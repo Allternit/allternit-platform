@@ -13,6 +13,7 @@ Every number belongs to one [account](/api/platform/accounts). Scope `numbers` (
 | `GET` | `/v1/numbers/{id}` | Retrieve |
 | `DELETE` | `/v1/numbers/{id}` | Release |
 | `POST` / `GET` | `/v1/numbers/{id}/registration` | US texting registration (live numbers) |
+| `POST` | `/v1/numbers/{id}/registration/otp` | Sole proprietors: verify the texted code, or resend it |
 | `POST` | `/v1/numbers/{id}/consent` | Record that a person agreed to be contacted |
 | `POST` | `/v1/numbers/{id}/simulate_inbound` | Sandbox only: play a text arriving |
 
@@ -56,7 +57,7 @@ curl https://api.allternit.com/v1/numbers/$NUMBER/registration \
         "privacyPolicyUrl": "https://lakesidedental.example/privacy", "termsUrl": "https://lakesidedental.example/terms" }'
 ```
 
-Local numbers register for 10DLC, toll-free numbers for toll-free verification. 10DLC is two steps at the carrier: the brand is verified first, then the campaign is reviewed; the campaign is filed automatically once the brand clears. `GET …/registration` refreshes the status, and every change is sent as `registration.updated`. Carrier review usually takes days to a few weeks; that is controlled by the carriers, not promised by us.
+Local numbers register for 10DLC, toll-free numbers for toll-free verification. For a person without an EIN, send `entityType: "SOLE_PROPRIETOR"` with `contactFirstName`, `contactLastName` and `mobilePhone`; the carrier texts a code there, and `POST /v1/numbers/{id}/registration/otp` with `{ "pin": "123456" }` verifies it (an empty body sends a new code). A refusal caused by Allternit's carrier account (not the business) keeps the registration pending with a `rejectionReason` starting `waiting:` and is retried automatically. 10DLC is two steps at the carrier: the brand is verified first, then the campaign is reviewed; the campaign is filed automatically once the brand clears. `GET …/registration` refreshes the status, and every change is sent as `registration.updated`. Carrier review usually takes days to a few weeks; that is controlled by the carriers, not promised by us.
 
 ## Consent
 

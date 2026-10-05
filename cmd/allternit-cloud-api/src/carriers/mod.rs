@@ -243,6 +243,8 @@ pub struct RegistrationForm {
     pub contact_last_name: String,
     pub contact_email: String,
     pub contact_phone: String,
+    /// Sole proprietors: the mobile number the carrier texts a verification code to.
+    pub mobile_phone: Option<String>,
     pub use_case: String,
     pub use_case_summary: String,
     pub sample_messages: Vec<String>,
@@ -313,9 +315,23 @@ pub trait Carrier: Send + Sync {
         Ok(None)
     }
 
+    /// Sole proprietor brands: (re)send the verification code to the brand's mobile number.
+    async fn send_brand_otp(&self, brand_id: &str) -> Result<(), CarrierError> {
+        let _ = brand_id;
+        Err(CarrierError::Unsupported("sole proprietor verification"))
+    }
+    /// Sole proprietor brands: check the code the person received. `Ok(false)` = wrong code.
+    async fn verify_brand_otp(&self, brand_id: &str, pin: &str) -> Result<bool, CarrierError> {
+        let _ = (brand_id, pin);
+        Err(CarrierError::Unsupported("sole proprietor verification"))
+    }
+
     async fn port_in_create(&self, e164s: &[String], reference: &str, webhook_url: &str) -> Result<PortStatus, CarrierError>;
     async fn port_in_status(&self, order_id: &str) -> Result<PortStatus, CarrierError>;
 }
+
+/// Telnyx/TCR entity type for an individual with no EIN.
+pub const SOLE_PROPRIETOR: &str = "SOLE_PROPRIETOR";
 
 /// The configured carrier, or `NotConfigured`.
 pub fn from_env(http: Arc<dyn CarrierHttp>) -> Result<Arc<dyn Carrier>, CarrierError> {
