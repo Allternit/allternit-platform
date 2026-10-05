@@ -32,7 +32,7 @@ The platform API (`allternit-api`) does not call model providers directly. It ca
 | `/pty` | Terminal sessions. |
 | `/permission`, `/question` | Approval and question prompts raised during a run. |
 | `/automations`, `/cron` | Scheduled and triggered runs. |
-| `/peers` | Peer sessions (see [CommRails](/core/commrails)). |
+| `/peers` | Peer sessions (see [Allternit Factory agents](/factory/agents)). |
 | `/pane-browser`, `/pane-artifact`, `/pane-render` | Desktop pane integrations. |
 
 The route list lives in `cmd/gizzi-code/src/runtime/server/server.ts`. The runtime publishes an OpenAPI description of these routes; treat that, not this table, as the full reference.
@@ -50,4 +50,4 @@ Gizzi is the runtime that executes sessions today. The Agency Kernel is the sepa
 - [Agents API](/api/agents)
 - [Page Agents API](/api/page-agents)
 - [Providers API](/api/providers)
-- [CommRails](/core/commrails)
+- [Allternit Factory](/factory/overview)

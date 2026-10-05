@@ -134,7 +134,7 @@ await execute({ action: 'click', selector: '@e5' });
 The `autoland` tool is the agent-facing contract for landing a completed implementation run. Its registry entry is `write` / `danger`.
 
 <Warning>
-Autoland is a **stub**. `execute` does not call Rails or merge anything: it returns `success: true` with a message and nothing else. The Rails call (`POST /api/v1/rails/gate/autoland`) appears only as a comment in the source. Do not treat a successful result as a landed change.
+Autoland is a **stub**. `execute` does not call the Factory Gate or merge anything: it returns `success: true` with a message and nothing else. The old work-engine call (`POST /api/v1/rails/gate/autoland`) appears only as a comment in the source. Do not treat a successful result as a landed change.
 </Warning>
 
 ### Input

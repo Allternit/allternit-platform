@@ -179,9 +179,22 @@ The iOS client surfaces API errors through the standard HTTP status codes:
 
 Client-side errors are reported as device alerts and logged to the in-app diagnostics view.
 
+## Allternit Factory on the phone
+
+<Note>
+Shipping with the Allternit Factory build. Applies to the ai.allternit.com phone layout and the m.allternit.com app. Not live yet.
+</Note>
+
+- The bot phone is the main surface: one bot, its threads, its Work app and Approve.
+- Code: one terminal with a bot strip above it to switch between Terminal bots' panes.
+- The Board and the Node page are one-column lists, and Approve works from them.
+- "Needs you" arrives as a push notification with Approve and Open buttons, and on your own channels with a one-time code. See [Approvals](/factory/approvals).
+
+The phone reads the same [Allternit Factory](/factory/overview) engine as Desktop and Gizzi, through the fabric relay.
+
 ## Related links
 
-- [CommRails](/core/commrails)
+- [Allternit Factory](/factory/overview)
 - [Agent Sessions API](/api/agent-sessions)
 - [Agent Chat API](/api/agent-chat)
 - [Agent Preferences API](/api/agent-preferences)

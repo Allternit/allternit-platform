@@ -1,0 +1,75 @@
+---
+title: "Determinism contract"
+description: "The ten rules every Factory command and module follows, and what each one means for you."
+---
+
+<Note>
+Shipping with the Allternit Factory build. These rules are the build contract for the Factory engine and are checked by its tests (replay, `--dry-run` parity, exit codes).
+</Note>
+
+"Built on software-engineering discipline" means these ten rules, in practice. Every command and every module follows them.
+
+## 1. One writer
+
+Only the Gate changes state. Every change is an event appended to the ledger, with provenance: who, which prompt, which pickup. No module keeps its own side database for work state.
+
+**What this means for you:** every change has an author and a reason you can look up. `gizzi orchestration feed` shows them as they happen.
+
+## 2. State is derived
+
+What `ps`, `board` and every screen show is a projection of the ledger plus live process facts. The projection can be thrown away and rebuilt, and replay proves it.
+
+**What this means for you:** if a screen looks wrong, the ledger is still right. Rebuilding the projection gives the same answer every time. See [Replay](/architecture/replay).
+
+## 3. One registry, reconciled
+
+Running sessions are checked against reality (the live panes) when the engine starts and on every `ps`. A record says "dead" when the process is gone, never "running".
+
+**What this means for you:** `gizzi agents ps` never lists a bot as running when its pane is gone.
+
+## 4. Every mutation has a dry run
+
+`--dry-run` prints exactly what would change, and the real run does exactly that.
+
+**What this means for you:** you can always preview `agents up`, `workflows drive` or any other change before it happens, and trust the preview.
+
+## 5. Stable IDs and idempotent commands
+
+Running a create twice with the same key doesn't make two things.
+
+**What this means for you:** if a command times out, run it again. You won't get a duplicate campaign, node or pane.
+
+## 6. Every command speaks JSON
+
+`--json` works on every read and write, and there's one fixed [exit-code table](/factory/commands#exit-codes): `0` ok, `1` refused by Gate, `2` not found, `3` transport broken, `4` timeout, `5` needs a person, `64` usage.
+
+**What this means for you:** scripts and agents can drive the Factory without scraping text, and can tell "refused" from "broken" from "waiting on a person".
+
+## 7. No silent fallbacks
+
+If a message can't be delivered verified, it's queued and says so. If a spawn is refused, it says why. Nothing "works" by quietly doing something else.
+
+**What this means for you:** every send shows its real [delivery state](/factory/orchestration#delivery-states). A missing engine is an error with an install hint, not a degraded mode.
+
+## 8. Nothing runs unasked
+
+`drive` and `watch` run in the foreground. The engine server is started explicitly, by Desktop or by the first `gizzi` command that needs it, and it says so. Wake only schedules checks. It never marks work done.
+
+**What this means for you:** no background loop picks up work you didn't start. Closing `drive` stops it.
+
+## 9. Proof comes from the judge and receipts
+
+Proof never comes from narrative files or todo checkboxes.
+
+**What this means for you:** `proven k/n` on the Board counts judge verdicts on evidence. A bot writing "done" in `PROGRESS.md` changes nothing.
+
+## 10. Bounded loops
+
+Every retry or remediation loop has a written limit (`max_rounds`, per-pickup iterations).
+
+**What this means for you:** a failing build-check loop stops at its limit and asks you. It never burns tokens forever.
+
+## Related
+
+- [Overview](/factory/overview)
+- [Command reference](/factory/commands)

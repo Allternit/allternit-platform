@@ -111,13 +111,13 @@ There are no hidden permissive defaults. If a safe value cannot be resolved, the
 
 ## Current implementation
 
-The work runtime underneath the run model is in [CommRails](/core/commrails) on main today: first-class node outputs, manual and timer wait gates, leases with heartbeat and reclaim, campaigns, and the attention gate. Agents request attention through that gate; they do not notify people directly. The run statuses, budgets and resolved defaults above are specified in the [kernel contracts](/architecture/kernel-contracts) and the Agency API v0.3 contract. Scheduled autonomous waking of campaigns through the Agency API stays off until an explicit go-live.
+The work runtime underneath the run model is in the [Allternit Factory](/factory/overview) engine on main today: first-class node outputs, manual and timer wait gates, leases with heartbeat and reclaim, campaigns, and the attention gate. Agents request attention through that gate; they do not notify people directly. The run statuses, budgets and resolved defaults above are specified in the [kernel contracts](/architecture/kernel-contracts) and the Agency API v0.3 contract. Scheduled autonomous waking of campaigns through the Agency API stays off until an explicit go-live.
 
 ## Availability
 
 | Part | Status | Notes |
 |------|--------|-------|
-| Work runtime: node outputs, wait gates, leases and reclaim | **ENABLED** · INTERNAL | Internal work runtime (CommRails). |
+| Work runtime: node outputs, wait gates, leases and reclaim | **ENABLED** · INTERNAL | Internal work runtime (Allternit Factory engine). |
 | Campaigns in the work runtime | **ENABLED** · INTERNAL | Internal. Waking through the Agency API is not enabled. |
 | Attention gate | **ENABLED** · INTERNAL | Internal. |
 | Run status model, budgets, resolved defaults | **PUBLIC PREVIEW** (contract; not served) | Specified in ABI 1.0.0 and API v0.3; exposed only once the Agency API ships. |

@@ -538,7 +538,7 @@ curl -X POST https://api.allternit.com/api/agents/from-template \
 POST /api/agents/:id/runs
 ```
 
-Sends `input` through the Gizzi runtime using the agent's system prompt and its configured `model` and `provider`. The call records a run, persists the outcome, and emits CommRails ledger events.
+Sends `input` through the Gizzi runtime using the agent's system prompt and its configured `model` and `provider`. The call records a run, persists the outcome, and emits ledger events in the Allternit Factory engine.
 
 #### Request body
 
@@ -618,7 +618,7 @@ Returns up to 50 run records for the agent, newest first.
 GET /api/agents/:id/events
 ```
 
-Server-sent events (SSE) stream of CommRails ledger events scoped to the agent. Replays up to 50 recent matching events on connect, then polls for new events every 2 seconds.
+Server-sent events (SSE) stream of ledger events (Allternit Factory engine) scoped to the agent. Replays up to 50 recent matching events on connect, then polls for new events every 2 seconds.
 
 #### Example curl
 
@@ -641,7 +641,7 @@ data: {"event_type":"agent.run.completed","agent_id":"agent_018f3a7c...","run_id
 POST /api/agents/:id/events/ingest
 ```
 
-Appends a runtime-bridged event to the CommRails ledger so it appears on `GET /api/agents/:id/events` (for example `waiting_approval`, `waiting_input` or `blocked` states). The payload must be a JSON object and is merged under `agent_id` (and `run_id` when given). Unsupported event types return `400`; success returns `202` with `{"ok": true}`.
+Appends a runtime-bridged event to the Allternit Factory ledger so it appears on `GET /api/agents/:id/events` (for example `waiting_approval`, `waiting_input` or `blocked` states). The payload must be a JSON object and is merged under `agent_id` (and `run_id` when given). Unsupported event types return `400`; success returns `202` with `{"ok": true}`.
 
 ## Agent identity
 
