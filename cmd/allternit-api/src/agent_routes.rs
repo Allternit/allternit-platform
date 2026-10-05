@@ -755,21 +755,21 @@ fn persist_agent_identity_channels(
             phone_number, phone_provider, phone_voice_enabled, phone_sms_enabled,
             wallet_address, wallet_provider, wallet_chain_id, wallet_allowed_methods,
             updated_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, CURRENT_TIMESTAMP)
+        ) VALUES (?1, ?2, ?3, ?4, COALESCE(?5, 'custom'), COALESCE(?6, 0), COALESCE(?7, 0), COALESCE(?8, 'approve'), ?9, COALESCE(?10, 1), ?11, COALESCE(?12, 'vapi'), COALESCE(?13, 0), COALESCE(?14, 0), ?15, COALESCE(?16, 'etrid'), ?17, ?18, CURRENT_TIMESTAMP)
         ON CONFLICT(agent_id) DO UPDATE SET
             email_address = COALESCE(excluded.email_address, email_address),
-            email_provider = COALESCE(excluded.email_provider, email_provider),
-            email_send_enabled = COALESCE(excluded.email_send_enabled, email_send_enabled),
-            email_receive_enabled = COALESCE(excluded.email_receive_enabled, email_receive_enabled),
-            email_reply_mode = COALESCE(excluded.email_reply_mode, email_reply_mode),
+            email_provider = COALESCE(?5, email_provider),
+            email_send_enabled = COALESCE(?6, email_send_enabled),
+            email_receive_enabled = COALESCE(?7, email_receive_enabled),
+            email_reply_mode = COALESCE(?8, email_reply_mode),
             email_reply_allowlist = COALESCE(excluded.email_reply_allowlist, email_reply_allowlist),
-            email_reply_enabled = COALESCE(excluded.email_reply_enabled, email_reply_enabled),
+            email_reply_enabled = COALESCE(?10, email_reply_enabled),
             phone_number = COALESCE(excluded.phone_number, phone_number),
-            phone_provider = COALESCE(excluded.phone_provider, phone_provider),
-            phone_voice_enabled = COALESCE(excluded.phone_voice_enabled, phone_voice_enabled),
-            phone_sms_enabled = COALESCE(excluded.phone_sms_enabled, phone_sms_enabled),
+            phone_provider = COALESCE(?12, phone_provider),
+            phone_voice_enabled = COALESCE(?13, phone_voice_enabled),
+            phone_sms_enabled = COALESCE(?14, phone_sms_enabled),
             wallet_address = COALESCE(excluded.wallet_address, wallet_address),
-            wallet_provider = COALESCE(excluded.wallet_provider, wallet_provider),
+            wallet_provider = COALESCE(?16, wallet_provider),
             wallet_chain_id = COALESCE(excluded.wallet_chain_id, wallet_chain_id),
             wallet_allowed_methods = COALESCE(excluded.wallet_allowed_methods, wallet_allowed_methods),
             updated_at = CURRENT_TIMESTAMP",
@@ -778,9 +778,11 @@ fn persist_agent_identity_channels(
             agent_id,
             user_id,
             email.and_then(|v| as_str(v.get("address"))),
-            email.and_then(|v| as_str(v.get("provider"))).or(Some("custom".to_string())),
-            email.and_then(|v| v.get("sendEnabled").and_then(|x| x.as_bool())).unwrap_or(false) as i32,
-            email.and_then(|v| v.get("receiveEnabled").and_then(|x| x.as_bool())).unwrap_or(false) as i32,
+            // Absent fields keep their stored value on update (defaults apply only to a new row):
+            // a reply-settings save must not switch sending/receiving off or reset the provider.
+            email.and_then(|v| as_str(v.get("provider"))),
+            email.and_then(|v| v.get("sendEnabled").and_then(|x| x.as_bool())).map(|b| b as i32),
+            email.and_then(|v| v.get("receiveEnabled").and_then(|x| x.as_bool())).map(|b| b as i32),
             // Bot email reply policy (bot email that replies). Omitted fields
             // keep their value; an empty allowlist array clears it. Mode strings
             // outside the known set are ignored rather than persisted.
@@ -794,11 +796,11 @@ fn persist_agent_identity_channels(
             }),
             email.and_then(|v| v.get("replyEnabled").and_then(|x| x.as_bool())).map(|b| b as i32),
             phone.and_then(|v| as_str(v.get("number"))),
-            phone.and_then(|v| as_str(v.get("provider"))).or(Some("vapi".to_string())),
-            phone.and_then(|v| v.get("voiceEnabled").and_then(|x| x.as_bool())).unwrap_or(false) as i32,
-            phone.and_then(|v| v.get("smsEnabled").and_then(|x| x.as_bool())).unwrap_or(false) as i32,
+            phone.and_then(|v| as_str(v.get("provider"))),
+            phone.and_then(|v| v.get("voiceEnabled").and_then(|x| x.as_bool())).map(|b| b as i32),
+            phone.and_then(|v| v.get("smsEnabled").and_then(|x| x.as_bool())).map(|b| b as i32),
             wallet.and_then(|v| as_str(v.get("address"))),
-            wallet.and_then(|v| as_str(v.get("provider"))).or(Some("etrid".to_string())),
+            wallet.and_then(|v| as_str(v.get("provider"))),
             wallet.and_then(|v| as_str(v.get("chainId"))),
             wallet.and_then(|v| {
                 v.get("allowedMethods")
@@ -4574,6 +4576,29 @@ mod tests {
     use tower::ServiceExt;
 
     use crate::beta_session_routes::tests as beta_test;
+
+    #[test]
+    fn identity_channel_saves_keep_fields_they_dont_send() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(include_str!("../migrations/V47__session_memory.sql")).unwrap();
+        conn.execute_batch("ALTER TABLE agent_identity_channels ADD COLUMN email_reply_mode TEXT NOT NULL DEFAULT 'approve';
+             ALTER TABLE agent_identity_channels ADD COLUMN email_reply_allowlist TEXT;
+             ALTER TABLE agent_identity_channels ADD COLUMN email_reply_enabled INTEGER NOT NULL DEFAULT 1;").unwrap();
+        let read = |c: &rusqlite::Connection| -> (String, i64, i64, String, i64, String, i64) {
+            c.query_row("SELECT email_provider, email_send_enabled, email_receive_enabled, email_reply_mode, email_reply_enabled, phone_provider, phone_voice_enabled FROM agent_identity_channels WHERE agent_id = 'a1'", [], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?))
+            }).unwrap()
+        };
+        // A new row with no reply fields gets the defaults (it used to fail NOT NULL).
+        persist_agent_identity_channels(&conn, "a1", "u1", Some(&serde_json::json!({ "email": { "address": "a@bots.allternit.com", "provider": "mailflare", "sendEnabled": true, "receiveEnabled": true } }))).unwrap();
+        assert_eq!(read(&conn), ("mailflare".into(), 1, 1, "approve".into(), 1, "vapi".into(), 0));
+        // Saving only the reply policy keeps sending, receiving and the provider.
+        persist_agent_identity_channels(&conn, "a1", "u1", Some(&serde_json::json!({ "email": { "replyMode": "auto_known", "replyAllowlist": ["x@y.z"] } }))).unwrap();
+        assert_eq!(read(&conn), ("mailflare".into(), 1, 1, "auto_known".into(), 1, "vapi".into(), 0));
+        // Phone saves don't touch email, and explicit values still win.
+        persist_agent_identity_channels(&conn, "a1", "u1", Some(&serde_json::json!({ "phone": { "provider": "telnyx", "voiceEnabled": true }, "email": { "sendEnabled": false } }))).unwrap();
+        assert_eq!(read(&conn), ("mailflare".into(), 0, 1, "auto_known".into(), 1, "telnyx".into(), 1));
+    }
 
     fn request(path: &str, method: &str, body: &serde_json::Value, user: &str) -> Request<Body> {
         Request::builder()

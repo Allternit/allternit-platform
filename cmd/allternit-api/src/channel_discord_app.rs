@@ -159,8 +159,10 @@ impl DiscordAppTransport {
         Self {
             http,
             db: DB.get().cloned(),
-            cloud_base: env("ALLTERNIT_CLOUD_API_URL"),
-            cloud_token: some(pick(secret, "cloudToken")).or_else(|| env("ALLTERNIT_RUNTIME_DEVICE_TOKEN")),
+            // A paired runtime knows its cloud and its own device credential; the env
+            // vars stay as overrides (tests, headless hosts).
+            cloud_base: env("ALLTERNIT_CLOUD_API_URL").or_else(|| some(crate::phone_sync::cloud_base())),
+            cloud_token: some(pick(secret, "cloudToken")).or_else(|| env("ALLTERNIT_RUNTIME_DEVICE_TOKEN")).or_else(crate::phone_sync::runtime_bearer),
             guild_id: some(pick(secret, "guildId")),
             public_key: some(pick(secret, "publicKey")).or_else(|| env("ALLTERNIT_DISCORD_APP_PUBLIC_KEY")),
             relay_secret: some(pick(secret, "relaySecret")),
@@ -374,6 +376,103 @@ impl ChannelTransport for DiscordAppTransport {
     }
 }
 
+// ---------------------------------------------------------------- connect
+
+/// `POST /api/v1/gateway/channel-accounts/discord {guildId?}`: after "Add to
+/// Discord" lands on the cloud, record the server on this runtime as an
+/// app-mode connection (idempotent). 404 until the install is there.
+pub fn discord_app_connect_router() -> axum::Router<Arc<crate::AppState>> {
+    axum::Router::new().route("/gateway/channel-accounts/discord", axum::routing::post(discord_connect_h))
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DiscordConnectBody {
+    guild_id: Option<String>,
+}
+
+/// Record (or refresh) the local app-mode connection for an installed guild.
+pub fn upsert_app_connection(db: &DbHandle, owner: &str, guild_id: &str, guild_name: &str) -> Result<Value, (axum::http::StatusCode, String)> {
+    use axum::http::StatusCode;
+    let keys = json!({ "mode": "app", "guildId": guild_id }).to_string();
+    let Some(sealed) = crate::agent_gateway_routes::seal_strict(&keys) else {
+        return Err((StatusCode::SERVICE_UNAVAILABLE, "no encryption key is configured; the connection was not stored".into()));
+    };
+    let conn = db.connect().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let existing: Option<String> = conn
+        .query_row(
+            "SELECT id FROM provider_account_bindings WHERE owner = ?1 AND vendor = 'discord' AND auth_type = 'channel_oauth' AND external_account_id = ?2",
+            params![owner, guild_id],
+            |r| r.get(0),
+        )
+        .ok();
+    let t = crate::agent_gateway_routes::now();
+    let name = if guild_name.is_empty() { "Discord server" } else { guild_name };
+    let id = match existing {
+        Some(id) => {
+            conn.execute(
+                "UPDATE provider_account_bindings SET display_name = ?1, secret_ref = ?2, state = 'CONNECTED', verified_at = ?3, updated_at = ?3 WHERE id = ?4 AND owner = ?5",
+                params![name, sealed, t, id, owner],
+            )
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            id
+        }
+        None => {
+            let id = crate::agent_gateway_routes::id("acct");
+            conn.execute(
+                "INSERT INTO provider_account_bindings (id, owner, vendor, auth_type, external_account_id, display_name, secret_ref, scopes_json, state, verified_at, created_at, updated_at)
+                 VALUES (?1, ?2, 'discord', 'channel_oauth', ?3, ?4, ?5, '[\"messages\"]', 'CONNECTED', ?6, ?6, ?6)",
+                params![id, owner, guild_id, name, sealed, t],
+            )
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            id
+        }
+    };
+    Ok(json!({ "account": { "id": id, "vendor": "discord", "displayName": name, "handle": guild_id, "state": "CONNECTED" } }))
+}
+
+async fn discord_connect_h(
+    axum::extract::State(state): axum::extract::State<Arc<crate::AppState>>,
+    axum::Extension(user): axum::Extension<crate::auth::AuthUser>,
+    headers: HeaderMap,
+    axum::Json(body): axum::Json<DiscordConnectBody>,
+) -> axum::response::Response {
+    use axum::{http::StatusCode, response::IntoResponse, Json};
+    let base = crate::phone_sync::cloud_base();
+    // Ask the cloud which servers this user added the shared app to (the bot token never reaches a runtime).
+    let mut req = reqwest::Client::new()
+        .get(format!("{}/api/v1/channels/discord/installs", base.trim_end_matches('/')))
+        .timeout(std::time::Duration::from_secs(10));
+    if let Some(auth) = headers.get("authorization").and_then(|v| v.to_str().ok()) {
+        req = req.header("authorization", auth);
+    }
+    let resp = match req.send().await {
+        Ok(r) => r,
+        Err(e) => return (StatusCode::BAD_GATEWAY, Json(json!({ "error": format!("cloud unreachable: {e}") }))).into_response(),
+    };
+    if resp.status() == StatusCode::SERVICE_UNAVAILABLE {
+        return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "error": "discord_not_configured" }))).into_response();
+    }
+    if !resp.status().is_success() {
+        return (StatusCode::BAD_GATEWAY, Json(json!({ "error": format!("cloud returned {}", resp.status()) }))).into_response();
+    }
+    let installs: Value = resp.json().await.unwrap_or(Value::Null);
+    let list = installs.get("installs").and_then(Value::as_array).cloned().unwrap_or_default();
+    let install = match body.guild_id.as_deref() {
+        Some(g) => list.iter().find(|i| i.get("guildId").and_then(Value::as_str) == Some(g)).cloned(),
+        None => list.last().cloned(), // newest install
+    };
+    let Some(install) = install else {
+        return (StatusCode::NOT_FOUND, Json(json!({ "error": "not_installed" }))).into_response();
+    };
+    let guild = install.get("guildId").and_then(Value::as_str).unwrap_or_default();
+    let name = install.get("guildName").and_then(Value::as_str).unwrap_or_default();
+    match upsert_app_connection(&state.db, &user.user_id, guild, name) {
+        Ok(v) => Json(v).into_response(),
+        Err((code, msg)) => (code, Json(json!({ "error": msg }))).into_response(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -568,4 +667,26 @@ mod tests {
         assert_eq!(status(crate::relay_auth::relayed_post(DISCORD_APP_EVENTS_PATH, foreign.as_bytes(), Some(("tok", "user-a")))).await, StatusCode::BAD_REQUEST);
         assert_eq!(status(crate::relay_auth::relayed_post(DISCORD_APP_EVENTS_PATH, good.as_bytes(), Some(("tok", "user-a")))).await, StatusCode::OK);
     }
+
+    #[tokio::test]
+    async fn connect_records_one_app_mode_connection_per_server() {
+        let dir = std::env::temp_dir().join(format!("allternit-discordapp-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let st = crate::test_helpers::app_state(&dir).await;
+        let r = upsert_app_connection(&st.db, "user-a", "G1", "Acme HQ").unwrap();
+        let id = r["account"]["id"].as_str().unwrap().to_string();
+        let r2 = upsert_app_connection(&st.db, "user-a", "G1", "").unwrap();
+        assert_eq!(r2["account"]["id"].as_str().unwrap(), id, "same server: one connection");
+        let n: i64 = st.db.connect().unwrap().query_row("SELECT COUNT(*) FROM provider_account_bindings WHERE vendor = 'discord'", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 1);
+        let secret_ref: String = st.db.connect().unwrap().query_row("SELECT secret_ref FROM provider_account_bindings WHERE id = ?1", params![id], |r| r.get(0)).unwrap();
+        let secret = crate::token_crypto::open(&secret_ref);
+        assert!(is_app_secret(&secret), "the transport sees it as a shared-app connection");
+        assert_eq!(pick(&secret, "guildId"), "G1");
+        // A transport built from it falls back to this runtime's own cloud + credential.
+        let t = DiscordAppTransport::from_secret(&secret, std::sync::Arc::new(crate::channel_transports::ReqwestSend));
+        assert_eq!(t.guild_id.as_deref(), Some("G1"));
+        assert!(t.cloud_base.is_some());
+    }
+
 }
