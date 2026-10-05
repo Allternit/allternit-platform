@@ -642,7 +642,7 @@ fn sound_from_notify_message_rejects_unknown_payloads() {
 
 #[test]
 fn reload_local_client_config_refreshes_local_client_presentation_state() {
-    let _guard = crate::config::test_config_env_lock().lock().unwrap();
+    let _guard = crate::config::test_config_env_lock().lock().unwrap_or_else(|e| e.into_inner());
     let path = std::env::temp_dir().join(format!(
         "herdr-client-config-reload-{}-{}.toml",
         std::process::id(),
@@ -680,7 +680,7 @@ fn reload_local_client_config_refreshes_local_client_presentation_state() {
 
 #[test]
 fn reload_local_client_config_keeps_ui_preferences_when_ui_is_invalid() {
-    let _guard = crate::config::test_config_env_lock().lock().unwrap();
+    let _guard = crate::config::test_config_env_lock().lock().unwrap_or_else(|e| e.into_inner());
     let path = std::env::temp_dir().join(format!(
         "herdr-client-invalid-ui-reload-{}-{}.toml",
         std::process::id(),

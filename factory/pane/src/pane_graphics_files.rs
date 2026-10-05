@@ -185,7 +185,11 @@ fn create_generation(base: &Path) -> io::Result<Generation> {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
-        let root = base.join(format!("server-{}-{nonce}", std::process::id()));
+        // The counter keeps two stores in one process apart when the clock
+        // (microsecond-granular on macOS) gives them the same nonce.
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+        let root = base.join(format!("server-{}-{nonce}-{seq}", std::process::id()));
         fs::create_dir(&root)?;
         fs::set_permissions(&root, fs::Permissions::from_mode(DIRECTORY_MODE))?;
         let source = root.join("source");

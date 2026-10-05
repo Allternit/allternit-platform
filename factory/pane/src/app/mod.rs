@@ -2987,7 +2987,7 @@ mod tests {
 
     #[test]
     fn due_session_save_starts_background_writer() {
-        let _guard = crate::config::test_config_env_lock().lock().unwrap();
+        let _guard = crate::config::test_config_env_lock().lock().unwrap_or_else(|e| e.into_inner());
         let config_home = unique_temp_path("background-session-save");
         std::env::set_var("XDG_CONFIG_HOME", &config_home);
         std::env::remove_var(crate::session::SESSION_ENV_VAR);
@@ -3052,7 +3052,7 @@ mod tests {
 
     #[tokio::test]
     async fn pane_exit_checkpoint_survives_automatic_workspace_creation_on_shutdown() {
-        let _guard = crate::config::test_config_env_lock().lock().unwrap();
+        let _guard = crate::config::test_config_env_lock().lock().unwrap_or_else(|e| e.into_inner());
         let config_home = unique_temp_path("signaled-pane-session-checkpoint");
         std::env::set_var("XDG_CONFIG_HOME", &config_home);
         std::env::remove_var(crate::session::SESSION_ENV_VAR);
@@ -3089,7 +3089,7 @@ mod tests {
 
     #[test]
     fn normal_autosave_replaces_a_signaled_exit_checkpoint() {
-        let _guard = crate::config::test_config_env_lock().lock().unwrap();
+        let _guard = crate::config::test_config_env_lock().lock().unwrap_or_else(|e| e.into_inner());
         let config_home = unique_temp_path("signaled-pane-autosave");
         std::env::set_var("XDG_CONFIG_HOME", &config_home);
         std::env::remove_var(crate::session::SESSION_ENV_VAR);
@@ -3122,7 +3122,7 @@ mod tests {
 
     #[test]
     fn durable_mutation_after_pane_exit_checkpoint_wins_on_shutdown() {
-        let _guard = crate::config::test_config_env_lock().lock().unwrap();
+        let _guard = crate::config::test_config_env_lock().lock().unwrap_or_else(|e| e.into_inner());
         let config_home = unique_temp_path("pane-exit-newer-session-state");
         std::env::set_var("XDG_CONFIG_HOME", &config_home);
         std::env::remove_var(crate::session::SESSION_ENV_VAR);

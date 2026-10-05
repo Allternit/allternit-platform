@@ -241,7 +241,7 @@ impl Drop for IntegrationEnvLock {
 #[cfg(test)]
 pub(crate) fn integration_env_lock() -> IntegrationEnvLock {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    let guard = LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
+    let guard = LOCK.get_or_init(|| Mutex::new(())).lock().unwrap_or_else(|e| e.into_inner());
     IntegrationEnvLock {
         _guard: guard,
         #[cfg(windows)]
