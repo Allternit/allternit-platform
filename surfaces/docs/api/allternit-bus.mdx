@@ -398,7 +398,7 @@ curl -X POST http://127.0.0.1:8013/api/v1/agents/agent_018f3a7c.../identity/emai
 
 ## Agent email rail
 
-Real inbound/outbound email for agents, backed by a per-installation mailflare worker (see `services/mailflare/`). Inbound mail arrives as an HMAC-signed webhook and is bridged into the agent's Rails Mail threads; outbound mail is held for human approval before it is sent.
+Real inbound/outbound email for agents, backed by a per-installation mailflare worker (see `services/mailflare/`). Inbound mail arrives as an HMAC-signed webhook and is bridged into the agent's Factory mail threads; outbound mail is held for human approval before it is sent.
 
 ### Send email (approval-gated)
 
@@ -414,7 +414,7 @@ POST /api/v1/agent-email/send
 | `text` | string | One of text/html | Plain-text body. |
 | `html` | string | One of text/html | HTML body. |
 
-The message is **not sent immediately**. It is recorded as `pending_approval` and a review is requested on a Rails Mail thread (`mail:email-out-<id>`). A human approves or rejects via `POST /api/rails/mail/decide` with `{ "thread": "<thread_id>", "approve": true|false }`; approving triggers the actual send and writes a receipt with the provider message id. The decide response includes an `email` object for email threads.
+The message is **not sent immediately**. It is recorded as `pending_approval` and a review is requested on a Factory mail thread (`mail:email-out-<id>`). A human approves or rejects via `POST /api/factory/mail/decide` (`/api/rails/mail/decide` until the [Allternit Factory](/factory/migration#http-routes) build ships) with `{ "thread": "<thread_id>", "approve": true|false }`; approving triggers the actual send and writes a receipt with the provider message id. The decide response includes an `email` object for email threads.
 
 ```json
 {
@@ -438,7 +438,7 @@ Reports whether the mailflare rail is configured, the agent email domain, and wh
 POST /api/v1/agent-email/inbound
 ```
 
-Public route called by the mailflare worker, authenticated by an `X-Email-Platform-Signature` HMAC-SHA256 header against `ALLTERNIT_MAILFLARE_WEBHOOK_SECRET`. `message.inbound` events are stored and bridged into the receiving agent's Rails Mail thread (`mail:email-in-<agent>`). Unknown recipients return `202` and are logged.
+Public route called by the mailflare worker, authenticated by an `X-Email-Platform-Signature` HMAC-SHA256 header against `ALLTERNIT_MAILFLARE_WEBHOOK_SECRET`. `message.inbound` events are stored and bridged into the receiving agent's Factory mail thread (`mail:email-in-<agent>`). Unknown recipients return `202` and are logged.
 
 ### Provision phone
 

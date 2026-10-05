@@ -200,7 +200,7 @@ The Agency Kernel is being implemented inside the existing Allternit platform. T
 | Piece | Role in the architecture | Docs |
 |-------|--------------------------|------|
 | **Gizzi Code** | The agent runtime and CLI. It executes work: sessions, tools, sandboxing, model calls. | [Gizzi runtime](/core/gizzi-runtime), [CLI](/cli/overview) |
-| **CommRails** | The work runtime (Work Orchestration plane). It carries work as a graph of nodes with outputs, wait gates, leases and campaigns. | [CommRails](/core/commrails) |
+| **Allternit Factory** | The work runtime (Work Orchestration plane) and the agent harness layer, in one engine (`allternit-factory`). It carries work as a graph of nodes with outputs, wait gates, leases and campaigns, and runs the team of agents that picks it up. | [Allternit Factory](/factory/overview) |
 | **Permission floor** | The start of the Governance plane. Hard policy runs first. Work-bound executor paths are being converged on the Allternit policy gate; direct interactive runtime behavior may differ from Agency/work-runtime execution. | [Policy and safety](/architecture/policy) |
 | **Kernel ABI 1.0.0** | The frozen contract package that every plane is built against. | [Kernel contracts](/architecture/kernel-contracts) |
 | **Surfaces** | The Experience plane today: desktop, web, mobile, extensions. | [Desktop](/surfaces/desktop), [Platform](/surfaces/platform) |

@@ -1,0 +1,112 @@
+---
+title: "Architecture (dev)"
+description: "How the Factory engine is laid out in the platform repo, its processes and ports, /api/factory, and what allternit-api proxies versus owns."
+---
+
+<Note>
+Shipping with the Allternit Factory build. This is the approved layout. Until the build lands, the code lives in `commrails/` and `infrastructure/executor/ao-engine/`.
+</Note>
+
+## Layout in the platform repo
+
+The Factory is built inside the platform repo, following its convention: binaries in `cmd/`, substrates as top-level crate directories.
+
+```text
+allternit/                         (platform repo)
+├── cmd/allternit-factory/         the engine binary (internal, never typed)
+├── factory/                       replaces commrails/ and infrastructure/executor/ao-engine/
+│   ├── engine/                    crate allternit-factory-engine
+│   │   └── src/
+│   │       ├── core/              ledger · ids · store · projections · index · replay · config
+│   │       ├── gate/              the only writer: policy, hooks, kill switch, egress, fence
+│   │       ├── agents/
+│   │       ├── orchestration/
+│   │       ├── workflows/         includes kernel, the template compiler
+│   │       ├── workspace/
+│   │       ├── api/               /api/factory (the engine's server)
+│   │       ├── remote/            machines, fabric
+│   │       └── tickets/           the portable ticket area, kept apart from the four parts
+│   └── pane/                      crate allternit-factory-pane: the Herdr fork, the live pane engine
+│                                  (keeps its Apache-2.0 LICENSE + NOTICE)
+├── cmd/allternit-api/             links factory/* in-process
+├── cmd/gizzi-code/                the product CLI/TUI: gizzi agents|orchestration|workflows|workspace
+└── surfaces/allternit-desktop     ships allternit-factory + gizzi in resources/bin
+```
+
+### The engine binary
+
+`allternit-factory` replaces the old `allternit-commrails`, `allternit-rails`, `allternit-commrails-service`, `allternit-rails-service` and `ao` binaries. Nobody types it, but its tree is:
+
+| Command | What it does |
+|---|---|
+| `allternit-factory serve [--port 3011] [--socket …]` | The engine server. `serve uhp` and `serve fabric` run the harness protocol and fabric servers |
+| `allternit-factory agents\|orchestration\|workflows\|workspace <verb>` | The four parts. Gizzi calls these with `--json` |
+| `allternit-factory pane …` | The pane engine's own commands. With no arguments it opens the live wall |
+| `allternit-factory internal …` | Hidden maintenance commands (ledger, index, lease, vault, replay) |
+
+**The core** stores events, IDs and state. **The Gate** is the only thing allowed to change state. **The four parts** hold the domain logic. **The surfaces** (pane, api, remote) are how people and machines reach it.
+
+**The pane engine is a clean block.** The forked Herdr code keeps its Apache-2.0 LICENSE and NOTICE and its internal layout, so upstream Herdr fixes can still be merged. Allternit additions sit beside it, not inside its files. `allternit-mux` folds into it.
+
+### Where the old modules go
+
+| Part | From the old work engine (`commrails/src`) | From the old orchestrator (`ao-engine/src`) | From elsewhere |
+|---|---|---|---|
+| core | `core`, `ledger`, `index`, `projections`, `replay`, `prompt`, `compact`, `query`, `dolt` | `config`, `persist`, `events`, `ipc`, `protocol` | — |
+| gate | `gate`, `hook`, `policy`, `killswitch`, `egress`, `fence`, `constraints` | the spawn gate | — |
+| agents | `peer`, `execenv` | `harness`, `native`, `peers`, `agent_resume`, `detect`, `integration`, `worktree`, `session` | Gizzi `runtime` (local agent CLI discovery) |
+| orchestration | `mail`, `bus`, `transport`, `attention`, `steer`, `observer` | `mailbox`, `transcript`, pane read/send | Gizzi `ac` and `mail`. Gizzi `/v1/orchestrator` send/tail |
+| workflows | `templates`, `drive`, `wake`, `wait_gates`, `leases`, `merge_locks`, `dependencies` | `watch` and `drain` | `kernel` (ComputeGraph IR) as the template compiler |
+| workspace | `work`, `wih`, `campaign`, `receipts`, `judge`, `verification`, `vault`, `lessons`, `context`, `memory`, `echoes` | — | Node folders and proof (new). The cowork queue and run tables (folded last) |
+| pane (`factory/pane`) | — | `ui`, `client`, `app`, `pane`, `pty`, `terminal*`, `layout`, `workspace`, `input`, `kitty_graphics`, `ghostty`, `copy_mode`, `selection` | `cmd/allternit-mux` |
+| api | `service`, `mcp`, `bridge`, `workspace` | `api`, `server`, `serve` (UHP), `visibility` | Gizzi `/v1/orchestrator` routes |
+| remote | `bridge` identities | `fabric`, `remote` | — |
+
+**Kept apart:** `tickets`, `graph` and `sync` (the portable ticket tool for foreign repos) stay one `tickets` area inside the engine, not inside any of the four parts. The old standalone `commrails` and `rails` binaries and their `install.sh` are removed.
+
+## Processes and ports
+
+| Process | What it is | Where |
+|---|---|---|
+| `allternit-factory` | The engine. Ledger, Gate, panes, agents, fabric. One process that outlives any window | HTTP on `127.0.0.1:3011`, Unix socket at `~/.allternit/factory/factory.sock`. State root `~/.allternit/factory/` |
+| `gizzi` | The product CLI/TUI. `gizzi <part> <verb>` runs `allternit-factory <part> <verb> … --json` and renders it | Next to the engine (brew, npm, Desktop `resources/bin`) |
+| `allternit-api` | The data plane Desktop, web and phone talk to. Proxies `/api/factory/*` to the engine, owns approvals | Its usual port. Links the `factory/` crates in-process for ledger and Gate access |
+
+The workspace ledger stays in the workspace's `.allternit/` folder, with its existing layout. Event names are data and aren't renamed, so old ledgers still replay.
+
+The engine starts explicitly: Desktop starts it, or the first `gizzi` command that needs it starts it and says so.
+
+## `/api/factory`
+
+The engine serves `/api/factory`. All JSON is camelCase, times are RFC 3339, and IDs are opaque strings. Errors use HTTP 400/403/404/409/502/504 with `{ "error": { "code", "fact", "action" } }`, using the same codes as the [CLI exit codes](/factory/commands#exit-codes).
+
+| Area | Routes |
+|---|---|
+| Agents | `GET /agents`, `GET /agents/:id`, `GET /agents/:id/capture`, `GET /agents/:id/transcript`, `GET /teams`, `POST /teams/:name/up`, `POST /teams/:name/down` |
+| Orchestration | `POST /send`, `GET /deliveries`, `GET /events` (Server-Sent Events with `Last-Event-ID` replay) |
+| Workflows | `GET /templates`, `GET /templates/:id`, `POST /runs`, `GET /dags/:dagId` |
+| Workspace | `GET /campaigns`, `GET /campaigns/:id/board`, `GET /nodes/:dagId/:nodeId`, `POST /nodes/:dagId/:nodeId/proof` |
+| Approvals | `GET /approvals`, `POST /approvals/:id/resolve` (owned by allternit-api) |
+
+The full contract, with every request and response shape, is the [Factory API reference](/factory/api-reference).
+
+## What allternit-api proxies and what it owns
+
+- **Proxies:** every `/api/factory/*` route except approvals goes straight to the engine, for Desktop, ai.allternit.com and m.allternit.com (through the fabric relay).
+- **Owns:** `/api/factory/approvals*`, plus the push action endpoint and the inbound channel hooks, because push and channels already live in allternit-api. It resolves approvals as Gate events through the linked `factory/` crates.
+- **Replaces:** `/rails`, `/api/rails`, `/commrails` and `/api/commrails` move to `/api/factory`. Gizzi's `/v1/orchestrator` (and the platform's `/api/v1/orchestrator` passthrough to it) is replaced by the engine. The old routes are removed in the same release that updates every caller.
+
+## How each surface reads it
+
+| Surface | Reads |
+|---|---|
+| Gizzi | The engine binary (`--json`) and its socket. The live wall is the engine's Rust pane view |
+| Desktop Code mode | `/api/factory`. A terminal tile is an engine pane, the same one the TUI shows |
+| Desktop Bot Mode, project pages | `/api/factory` through allternit-api. Team graph, Flow graph, Board and Node page are views in `src/components/factory/` |
+| ai.allternit.com phone layout, m.allternit.com | The same `/api/factory` data through the fabric relay: bot strip over one terminal, Board, Approve |
+
+## Related
+
+- [Factory API reference](/factory/api-reference)
+- [Determinism contract](/factory/determinism)
+- [Work machine](/architecture/work-machine)
