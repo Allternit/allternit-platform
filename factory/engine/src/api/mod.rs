@@ -2,6 +2,7 @@
 //! command implementations (SPEC §5 `surfaces/api`).
 
 pub mod cli;
+pub mod factory;
 pub mod mcp;
 pub mod service;
 pub mod workspace;

@@ -26,6 +26,7 @@ mod config;
 mod copy_mode;
 mod detect;
 mod events;
+pub mod factory_backend;
 pub mod factory_host;
 mod ghostty;
 mod handoff_runtime;

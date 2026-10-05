@@ -45,8 +45,8 @@ use crate::work::projection::project_dag;
 use crate::work::types::DagState;
 use crate::{
     AllternitEvent, Actor, ActorType, DagMutation, EventScope, Gate, Index, IndexOptions, LeaseRequest,
-    Leases, Ledger, LedgerQuery, Mail, MailOptions, Orchestrator, PeerEnvelope, PeerRegistry,
-    ReceiptStore, ReceiptStoreOptions, SpawnOptions, Steer, Vault, VaultOptions, WatchOutcome,
+    Leases, Ledger, LedgerQuery, Mail, MailOptions, PeerEnvelope, PeerRegistry,
+    ReceiptStore, ReceiptStoreOptions, Steer, Vault, VaultOptions,
     WorkOps, send_envelope,
 };
 #[cfg(unix)]
@@ -110,8 +110,6 @@ enum Commands {
     Graph(GraphCmd),
     #[command(subcommand)]
     Peer(PeerCmd),
-    #[command(subcommand)]
-    Orchestrator(OrchestratorCmd),
     #[command(subcommand)]
     Steer(SteerCmd),
     /// Spawn-gate hooks injected into third-party harnesses (Gate 2 + hard floor).
@@ -448,59 +446,6 @@ enum PeerCmd {
     },
 }
 
-#[derive(Subcommand)]
-enum OrchestratorCmd {
-    /// Spawn a tmux session for an agent and register it as a Rails peer.
-    Spawn {
-        slug: String,
-        repo: PathBuf,
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true)]
-        cmd: Vec<String>,
-        #[arg(long)]
-        worktree: bool,
-        #[arg(long, default_value = "agent")]
-        vendor: String,
-        #[arg(long, default_value = "interactive")]
-        mode: String,
-        #[arg(long)]
-        task_file: Option<PathBuf>,
-        #[arg(long)]
-        notes_sentinel: Option<PathBuf>,
-        /// Bind the session to a WIH: hooked harnesses (claude) enforce Gate 2
-        /// against it; unhooked harnesses are refused if its policy needs leased writes.
-        #[arg(long, env = "ALLTERNIT_COMMRAILS_WIH")]
-        wih: Option<String>,
-    },
-    /// Send data to a running executor session.
-    Send {
-        slug: String,
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true)]
-        data: Vec<String>,
-    },
-    /// Block until the sentinel file exists, the pane dies, or timeout.
-    Watch {
-        slug: String,
-        sentinel: PathBuf,
-        #[arg(long, default_value_t = 3600)]
-        timeout_seconds: u64,
-        #[arg(long, default_value_t = 20)]
-        interval_seconds: u64,
-    },
-    /// Show status for all ao-* sessions or one specific session.
-    Status {
-        slug: Option<String>,
-        #[arg(long, default_value_t = 25)]
-        lines: usize,
-    },
-    /// Kill a session and unregister its peer.
-    Kill {
-        slug: String,
-        #[arg(long)]
-        rm_worktree: bool,
-    },
-    /// Verify the delegation toolchain.
-    Doctor,
-}
 
 #[derive(Subcommand)]
 enum SteerCmd {
@@ -1848,9 +1793,6 @@ where
         Commands::Peer(cmd) => {
             run_peer_command(&root, cmd).await?;
         }
-        Commands::Orchestrator(cmd) => {
-            run_orchestrator_command(&root, cmd).await?;
-        }
         Commands::Steer(cmd) => {
             run_steer_command(&root, cmd).await?;
         }
@@ -2264,87 +2206,6 @@ async fn run_peer_command(root: &Path, cmd: PeerCmd) -> Result<()> {
                     receipt.error.unwrap_or_else(|| "unknown delivery failure".to_string())
                 );
             }
-        }
-    }
-    Ok(())
-}
-
-async fn run_orchestrator_command(root: &Path, cmd: OrchestratorCmd) -> Result<()> {
-    let orch = Orchestrator::new(root.to_path_buf())?;
-    match cmd {
-        OrchestratorCmd::Spawn {
-            slug,
-            repo,
-            cmd,
-            worktree,
-            vendor,
-            mode,
-            task_file,
-            notes_sentinel,
-            wih,
-        } => {
-            let result = orch
-                .spawn(SpawnOptions {
-                    slug: &slug,
-                    repo: &repo,
-                    cmd: &cmd,
-                    worktree,
-                    vendor: &vendor,
-                    mode: &mode,
-                    task_file: task_file.as_deref(),
-                    notes_sentinel: notes_sentinel.as_deref(),
-                    wih: wih.as_deref(),
-                    capture: None,
-                })
-                .await?;
-            println!(
-                "{} {} {} {} {}",
-                result.session,
-                result.workdir.display(),
-                result.logfile.display(),
-                result.peer_id,
-                result.inbox_socket.display()
-            );
-        }
-        OrchestratorCmd::Send { slug, data } => {
-            let text = data.join(" ");
-            orch.send(&slug, &text).await?;
-            println!("submitted to ao-{}", slug);
-        }
-        OrchestratorCmd::Watch {
-            slug,
-            sentinel,
-            timeout_seconds,
-            interval_seconds,
-        } => {
-            match orch.watch(&slug, &sentinel, timeout_seconds, interval_seconds).await? {
-                WatchOutcome::Done => {
-                    println!("DONE {}", sentinel.display());
-                }
-                WatchOutcome::Dead => {
-                    println!("PANE-DEAD ao-{} (agent exited or session gone)", slug);
-                    std::process::exit(3);
-                }
-                WatchOutcome::Timeout => {
-                    println!(
-                        "TIMEOUT after {}s; sentinel absent, pane alive",
-                        timeout_seconds
-                    );
-                    std::process::exit(4);
-                }
-            }
-        }
-        OrchestratorCmd::Status { slug, lines } => {
-            let output = orch.status(slug.as_deref(), lines).await?;
-            println!("{}", output);
-        }
-        OrchestratorCmd::Kill { slug, rm_worktree } => {
-            orch.kill(&slug, rm_worktree).await?;
-            println!("killed ao-{}", slug);
-        }
-        OrchestratorCmd::Doctor => {
-            orch.doctor().await?;
-            println!("orchestrator doctor: OK");
         }
     }
     Ok(())

@@ -4,7 +4,7 @@
 //! State lives in `.allternit/drive/caps.json` and is only read-modified-written
 //! under an exclusive `flock` on `.allternit/drive/caps.lock`, so two drive
 //! processes (different DAGs) see one set of running sessions and one spawn
-//! history. A running entry is dropped once its tmux session is gone; a
+//! history. A running entry is dropped once its agent pane is gone; a
 //! reservation younger than [`RESERVATION_GRACE_SECS`] is kept even before
 //! its session exists, so a concurrent prune cannot race a spawn in flight.
 

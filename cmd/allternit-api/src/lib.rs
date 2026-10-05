@@ -210,6 +210,8 @@ pub mod idempotency;
 pub mod factory_approvals;
 pub mod factory_approvals_channels;
 pub mod factory_approvals_push;
+/// `/api/factory/*` → the Factory engine (everything except approvals).
+pub mod factory_proxy;
 pub mod inbox_needs;
 pub mod inbox_routes;
 pub mod internal_auth;

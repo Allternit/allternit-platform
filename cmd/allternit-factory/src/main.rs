@@ -12,6 +12,7 @@
 //! Exit codes and the `--json` error shape follow API.md §2 (see `exec.rs`).
 
 mod exec;
+mod part;
 mod tree;
 
 use std::process::ExitCode;
@@ -25,6 +26,9 @@ fn main() -> ExitCode {
     // The pane engine re-executes itself (server daemon, client, handoff); in
     // this binary it lives under `pane`, so it must put that word back first.
     allternit_factory_pane::factory_host::set_argv_prefix(["pane"]);
+    // Every engine spawn, send, capture and kill goes through the pane engine
+    // (no tmux path): install it as the engine's pane backend.
+    allternit_factory_pane::factory_backend::install();
 
     let argv: Vec<std::ffi::OsString> = std::env::args_os().collect();
     let wants_json = argv.iter().any(|a| a == "--json");

@@ -37,7 +37,7 @@ use crate::gate::{Gate, GateError, WihPickupOptions};
 use crate::hook::{self, WihPolicy};
 use crate::ledger::Ledger;
 use crate::mail::{Mail, MailImportance, MailOptions, TypedMessage};
-use crate::orchestrator::{self, CaptureFiles, Orchestrator, SpawnOptions, WatchOutcome};
+use crate::spawn::{self, session_alive_blocking, CaptureFiles, SpawnOptions, Spawner, WatchOutcome};
 use crate::templates::RETRY_SAFE_LABEL;
 use crate::wait_gates::WaitGateKind;
 use crate::work::graph::ready_nodes;
@@ -210,7 +210,7 @@ pub struct Driver {
     opts: DriveOptions,
     hooks: Arc<dyn DriveHooks>,
     caps: CapsStore,
-    orch: Option<Orchestrator>,
+    orch: Option<Spawner>,
     running: BTreeMap<String, Running>,
     /// `(node_id, reason)` deferrals already written to the ledger this run.
     deferral_logged: HashSet<(String, &'static str)>,
@@ -233,7 +233,7 @@ impl Driver {
         let orch = if opts.dry_run {
             None
         } else {
-            Some(Orchestrator::new(root.clone())?)
+            Some(Spawner::new(root.clone())?)
         };
         Ok(Self {
             caps: CapsStore::new(&root),
@@ -277,8 +277,8 @@ impl Driver {
         self.gate.as_ref().ok_or_else(|| anyhow!("no gate (dry run)"))
     }
 
-    fn orch(&self) -> Result<&Orchestrator> {
-        self.orch.as_ref().ok_or_else(|| anyhow!("no orchestrator (dry run)"))
+    fn orch(&self) -> Result<&Spawner> {
+        self.orch.as_ref().ok_or_else(|| anyhow!("no spawner (dry run)"))
     }
 
     async fn load(&self) -> Result<(Vec<AllternitEvent>, DagState, Vec<Attempt>)> {
@@ -365,7 +365,7 @@ impl Driver {
                 self.dag_id()
             );
             for r in self.running.values() {
-                println!("  {} {}", r.attempt.node_id, orchestrator::session_name(&r.attempt.slug));
+                println!("  {} {}", r.attempt.node_id, spawn::session_name(&r.attempt.slug));
             }
         }
         Ok(report)
@@ -421,8 +421,8 @@ impl Driver {
             if a.exit_file().exists() {
                 println!("drive: collecting finished attempt {} ({})", a.attempt_id, a.node_id);
                 self.finish(a.clone(), WatchOutcome::Done, report).await?;
-            } else if orchestrator::session_alive(&a.slug).await {
-                println!("drive: adopting running session {} ({})", orchestrator::session_name(&a.slug), a.node_id);
+            } else if spawn::session_alive(&a.slug).await {
+                println!("drive: adopting running session {} ({})", spawn::session_name(&a.slug), a.node_id);
                 self.caps.adopt(self.running_entry(&a.node_id, &a.slug), &session_alive_blocking)?;
                 let deadline = a.started_at + chrono::Duration::seconds(a.timeout_seconds as i64);
                 self.running.insert(a.node_id.clone(), Running { attempt: a.clone(), deadline });
@@ -482,7 +482,7 @@ impl Driver {
             status.push(format!(
                 "{}: running {} ({})",
                 r.attempt.node_id,
-                orchestrator::session_name(&r.attempt.slug),
+                spawn::session_name(&r.attempt.slug),
                 r.attempt.executor
             ));
         }
@@ -670,9 +670,9 @@ impl Driver {
         let (_, dag, attempts) = self.load().await?;
         let mut live = HashSet::new();
         for a in attempts.iter().filter(|a| a.outcome.is_none()) {
-            if orchestrator::session_alive(&a.slug).await {
+            if spawn::session_alive(&a.slug).await {
                 live.insert(a.attempt_id.clone());
-                report.plan.push(format!("{}: running {} (would adopt)", a.node_id, orchestrator::session_name(&a.slug)));
+                report.plan.push(format!("{}: running {} (would adopt)", a.node_id, spawn::session_name(&a.slug)));
             }
         }
         let limits = self.limits();
@@ -905,6 +905,7 @@ impl Driver {
                     mode: "headless",
                     task_file: Some(&prompt_file),
                     notes_sentinel: None,
+                    bot: None,
                     wih: Some(&wih_id),
                     capture: Some(&capture),
                 })
@@ -933,7 +934,7 @@ impl Driver {
 
         println!(
             "drive {dag_id}: spawned {node_id} ({executor}) wih {wih_id} attempt {attempt_id} session {}",
-            orchestrator::session_name(&slug)
+            spawn::session_name(&slug)
         );
         let aref = attempt.as_ref(&dag_id);
         if let Err(e) = self.hooks.on_attempt_started(&aref).await {
@@ -1256,15 +1257,6 @@ fn read_capped(path: &Path) -> String {
         start += 1;
     }
     format!("[... truncated ...]\n{}", &text[start..])
-}
-
-/// Blocking liveness probe for the caps lock (runs under `flock`).
-fn session_alive_blocking(slug: &str) -> bool {
-    std::process::Command::new("tmux")
-        .args(["list-panes", "-t", &format!("={}:", orchestrator::session_name(slug)), "-F", "#{pane_dead}"])
-        .output()
-        .map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "0")
-        .unwrap_or(false)
 }
 
 #[cfg(test)]

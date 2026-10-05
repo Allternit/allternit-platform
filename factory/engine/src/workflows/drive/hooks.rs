@@ -27,7 +27,7 @@ pub struct AttemptRef {
     pub wih_id: String,
     pub attempt_id: String,
     pub executor: String,
-    /// Orchestrator slug; the tmux session is `ao-<slug>`.
+    /// Session slug; the agent pane is labeled `ao-<slug>`.
     pub slug: String,
 }
 
