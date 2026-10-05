@@ -219,6 +219,17 @@ pub(crate) async fn send_email_with_files(
     send_email_inner(state, user_id, req, SendEmailExtra { attachments, ..SendEmailExtra::default() }).await
 }
 
+/// An Allternit notice to the owner's own address (a Factory approval request
+/// or its outcome): delivered without mailflare's review because it goes only
+/// to the bot owner's account email. The owner's autonomy level still applies.
+pub(crate) async fn send_owner_notice(
+    state: &Arc<AppState>,
+    user_id: &str,
+    req: SendAgentEmailRequest,
+) -> Result<Value, ApiError> {
+    send_email_inner(state, user_id, req, SendEmailExtra { skip_approval: true, ..SendEmailExtra::default() }).await
+}
+
 pub(crate) async fn send_email_for_user(
     state: &Arc<AppState>,
     user_id: &str,
@@ -927,6 +938,14 @@ async fn receive_inbound_email(
             guard = reason.as_str(),
             "agent-email: inbound skipped by loop guard"
         );
+    }
+
+    // A Factory approval answer from the owner (`approve <node> <code>`) is
+    // consumed here; it never becomes a bot turn or an inbox thread.
+    if guard.is_none()
+        && crate::factory_approvals_channels::email_answer(&state, &relayed.owner, &agent_id, from, subject, text_body.or(snippet).unwrap_or(""), provider_message_id.unwrap_or("")).await
+    {
+        return (StatusCode::ACCEPTED, Json(json!({"accepted": true, "delivered": false, "factoryApproval": true}))).into_response();
     }
 
     // Persist the webhook payload (raw body and threading headers), then
