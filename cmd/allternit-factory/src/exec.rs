@@ -222,8 +222,8 @@ pub fn run(ctx: &Ctx, target: Target) -> u8 {
     run_shaped(ctx, target, None)
 }
 
-/// Like [`run`], but with `--json` a plain-text result is turned into a JSON
-/// document by `shape` (for implementations that only print lines).
+/// Like [`run`], but with `--json` the implementation's stdout is turned into
+/// the contract's JSON document by `shape`.
 pub fn run_shaped(ctx: &Ctx, target: Target, shape: Option<fn(&str) -> Value>) -> u8 {
     match target {
         Target::Rails(args) if !ctx.json => run_rails_in_process(ctx.root.as_ref(), args, true),
@@ -372,11 +372,12 @@ fn run_child(
 
     if code == Code::Ok {
         if ctx.json {
-            let trimmed = out.trim();
-            match (serde_json::from_str::<Value>(trimmed), shape) {
-                (Ok(value), _) => println!("{value}"),
-                (Err(_), Some(shape)) => println!("{}", shape(&out)),
-                (Err(_), None) => println!("{}", json!({ "text": out })),
+            match shape {
+                Some(shape) => println!("{}", shape(&out)),
+                None => match serde_json::from_str::<Value>(out.trim()) {
+                    Ok(value) => println!("{value}"),
+                    Err(_) => println!("{}", json!({ "text": out })),
+                },
             }
         }
         return 0;

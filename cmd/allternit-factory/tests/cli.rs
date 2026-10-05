@@ -176,3 +176,24 @@ fn internal_rails_keeps_its_own_help() {
         assert!(text.contains(group), "internal rails --help missing {group}: {text}");
     }
 }
+
+#[test]
+fn agents_ps_without_a_pane_server_is_one_document_with_agents() {
+    let home = tempfile::tempdir().unwrap();
+    let out = factory(home.path(), &["agents", "ps", "--json"]);
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    let doc = one_json(&out);
+    assert_eq!(doc["agents"], serde_json::json!([]));
+    // The engine being down is reported in the document, not hidden.
+    assert!(doc["engine"]["error"].is_string(), "{doc}");
+}
+
+#[test]
+fn version_is_one_line() {
+    let home = tempfile::tempdir().unwrap();
+    let out = factory(home.path(), &["--version"]);
+    assert_eq!(out.status.code(), Some(0));
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(text.lines().count(), 1, "{text:?}");
+    assert!(text.starts_with("allternit-factory "), "{text:?}");
+}

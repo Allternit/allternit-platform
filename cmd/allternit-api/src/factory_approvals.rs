@@ -34,12 +34,12 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration as StdDuration;
 
-use allternit_commrails::core::types::{Actor, ActorType, AllternitEvent, LedgerQuery};
-use allternit_commrails::gate::gate::HumanDecision;
-use allternit_commrails::judge::{pending_judge_needs, status as judge_status, events as judge_events};
-use allternit_commrails::wait_gates::GateOutcome;
-use allternit_commrails::work::needs_you::pending_manual_gates;
-use allternit_commrails::work::project_dag;
+use allternit_factory_engine::core::types::{Actor, ActorType, AllternitEvent, LedgerQuery};
+use allternit_factory_engine::gate::gate::HumanDecision;
+use allternit_factory_engine::judge::{pending_judge_needs, status as judge_status, events as judge_events};
+use allternit_factory_engine::wait_gates::GateOutcome;
+use allternit_factory_engine::work::needs_you::pending_manual_gates;
+use allternit_factory_engine::work::project_dag;
 use axum::extract::{Extension, Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -562,8 +562,8 @@ pub async fn resolve(state: &Arc<AppState>, id: &str, approve: bool, actor_user:
 async fn gate_decide(state: &Arc<AppState>, a: &Approval, approve: bool, actor_user: &str, reason: &str) -> Result<(), (String, String)> {
     let actor = Actor { r#type: ActorType::User, id: actor_user.to_string() };
     let rails = &state.rails;
-    let scope = allternit_commrails::EventScope { dag_id: Some(a.dag_id.clone()), node_id: Some(a.node_id.clone()), ..Default::default() };
-    allternit_commrails::policy::inject_policy(&rails.root_dir, &rails.ledger, Some(scope), "gateway").await.map_err(|e| ("policy".to_string(), e.to_string()))?;
+    let scope = allternit_factory_engine::EventScope { dag_id: Some(a.dag_id.clone()), node_id: Some(a.node_id.clone()), ..Default::default() };
+    allternit_factory_engine::policy::inject_policy(&rails.root_dir, &rails.ledger, Some(scope), "gateway").await.map_err(|e| ("policy".to_string(), e.to_string()))?;
     let res = if let Some(gate_id) = a.gate.strip_prefix("wait:") {
         let outcome = if approve { GateOutcome::Ok } else { GateOutcome::Failed };
         rails.gate.resolve_node_wait_gate(&a.dag_id, &a.node_id, gate_id, outcome, Some(actor), Some(reason.to_string())).await
@@ -573,7 +573,7 @@ async fn gate_decide(state: &Arc<AppState>, a: &Approval, approve: bool, actor_u
     } else {
         return Err(("unknown_gate".into(), format!("approval gate {:?} is not a wait-gate or judge verdict", a.gate)));
     };
-    res.map_err(|e| match allternit_commrails::GateError::from_anyhow(&e) {
+    res.map_err(|e| match allternit_factory_engine::GateError::from_anyhow(&e) {
         Some(g) => (g.code.clone(), g.reason.clone()),
         None => ("gate".into(), e.to_string()),
     })
@@ -650,8 +650,8 @@ pub async fn sync_from_ledger(state: &Arc<AppState>) -> anyhow::Result<SyncRepor
         }
     }
     let mut needs: Vec<Need> = Vec::new();
-    let mut projected: HashMap<String, allternit_commrails::work::types::DagState> = HashMap::new();
-    let mut project = |dag_id: &str| -> allternit_commrails::work::types::DagState {
+    let mut projected: HashMap<String, allternit_factory_engine::work::types::DagState> = HashMap::new();
+    let mut project = |dag_id: &str| -> allternit_factory_engine::work::types::DagState {
         projected
             .entry(dag_id.to_string())
             .or_insert_with(|| {
@@ -746,7 +746,7 @@ pub async fn sync_from_ledger(state: &Arc<AppState>) -> anyhow::Result<SyncRepor
 }
 
 /// How a pending approval ended when the ledger no longer waits on it.
-fn closed_outcome(a: &Approval, dag: &allternit_commrails::work::types::DagState, events: &[&AllternitEvent]) -> (&'static str, Option<String>) {
+fn closed_outcome(a: &Approval, dag: &allternit_factory_engine::work::types::DagState, events: &[&AllternitEvent]) -> (&'static str, Option<String>) {
     let node = dag.nodes.get(&a.node_id);
     if let Some(gate_id) = a.gate.strip_prefix("wait:") {
         if let Some(g) = node.and_then(|n| n.wait_gates.iter().find(|g| g.gate_id == gate_id)) {
@@ -933,8 +933,8 @@ async fn push_action_h(State(state): State<Arc<AppState>>, Extension(user): Exte
 mod tests {
     use super::*;
     use crate::channel_transports::{HttpReq, HttpResp, HttpSend};
-    use allternit_commrails::gate::gate::DagMutation;
-    use allternit_commrails::wait_gates::WaitGateKind;
+    use allternit_factory_engine::gate::gate::DagMutation;
+    use allternit_factory_engine::wait_gates::WaitGateKind;
     use axum::body::Body;
     use axum::http::Request;
     use tower::ServiceExt;
@@ -977,7 +977,7 @@ mod tests {
     /// A DAG with one node behind a manual wait-gate, owned by user-a.
     async fn waiting_node(state: &Arc<AppState>, labels: &[&str]) -> (String, String) {
         let gate = &state.rails.gate;
-        allternit_commrails::policy::inject_policy(&state.rails.root_dir, &state.rails.ledger, None, "gateway").await.unwrap();
+        allternit_factory_engine::policy::inject_policy(&state.rails.root_dir, &state.rails.ledger, None, "gateway").await.unwrap();
         let (_p, dag, node) = gate.plan_new("Ship the saved views", None).await.unwrap();
         let mut muts: Vec<DagMutation> = labels.iter().map(|l| DagMutation::AddLabel { node_id: node.clone(), label: l.to_string() }).collect();
         muts.push(DagMutation::AddLabel { node_id: node.clone(), label: "owner:user-a".into() });

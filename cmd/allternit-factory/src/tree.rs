@@ -486,7 +486,7 @@ fn agents(ctx: &Ctx, cmd: AgentsCmd) -> u8 {
                 let mut args = vec!["visibility".to_string()];
                 opt(&mut args, "--root", ctx.root.as_ref().map(|r| r.display().to_string()));
                 opt(&mut args, "--cwd", cwd);
-                run(ctx, Target::Pane(args))
+                run_shaped(ctx, Target::Pane(args), Some(agents_ps_json))
             } else {
                 run(ctx, Target::Pane(vec!["status".into()]))
             }
@@ -797,6 +797,70 @@ fn workspace(ctx: &Ctx, cmd: WorkspaceCmd) -> u8 {
     }
 }
 
+/// `agents ps --json`: the pane engine's visibility document (engine panes,
+/// native CLI sessions, peers, harnesses, waiting-on-you), plus `agents`, the
+/// contract's `Agent[]` (types.ts) for the terminal panes it can see. Fields the
+/// engine does not know yet (team, avatar, role, machine, node, proof, reach)
+/// are null/empty rather than guessed; `fields` is `unavailable` until the
+/// engine delivers persona/memory/skills/tools/model/permissions to panes.
+fn agents_ps_json(text: &str) -> serde_json::Value {
+    let mut doc: serde_json::Value = match serde_json::from_str(text.trim()) {
+        Ok(doc) => doc,
+        Err(_) => return json!({ "agents": [], "text": text }),
+    };
+    let waiting: std::collections::HashSet<String> = doc["waitingOnYou"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|w| w["paneId"].as_str().map(str::to_string))
+        .collect();
+    let agents: Vec<serde_json::Value> = doc["engine"]["agents"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|a| {
+            let pane = a["paneId"].as_str()?;
+            let label = |k: &str| a[k].as_str().filter(|s| !s.is_empty());
+            let slug = label("name").unwrap_or(pane);
+            let name = label("name").or(label("title")).or(label("agent")).unwrap_or(pane);
+            let state = if waiting.contains(pane) {
+                "needs_you"
+            } else {
+                match a["status"].as_str() {
+                    Some("working") => "working",
+                    Some("blocked") => "blocked",
+                    Some("done") => "done",
+                    _ => "idle",
+                }
+            };
+            let fields = ["persona", "memory", "skills", "tools", "model", "permissions"]
+                .iter()
+                .map(|f| (f.to_string(), json!("unavailable")))
+                .collect::<serde_json::Map<_, _>>();
+            Some(json!({
+                "id": pane,
+                "slug": slug,
+                "name": name,
+                "team": null,
+                "address": slug,
+                "avatar": null,
+                "role": null,
+                "binding": { "type": "terminal", "harness": a["agent"].clone() },
+                "state": state,
+                "machine": null,
+                "pane": { "id": pane, "attachable": true },
+                "currentNode": null,
+                "proof": null,
+                "context": { "usedPct": null, "tokens": null },
+                "reach": [],
+                "fields": fields,
+            }))
+        })
+        .collect();
+    doc["agents"] = json!(agents);
+    doc
+}
+
 /// `wih list --ready` prints `<dag> <node> <title…>` per READY node.
 fn node_list_ready_json(text: &str) -> serde_json::Value {
     let nodes: Vec<_> = text
@@ -841,5 +905,28 @@ mod tests {
             json!({ "nodes": [{ "wih": "wih_1", "node": "n2", "state": "claimed" }] })
         );
         assert_eq!(node_list_claimed_json(""), json!({ "nodes": [] }));
+    }
+
+    #[test]
+    fn agents_ps_projects_engine_panes_to_contract_agents() {
+        let doc = json!({
+            "engine": { "agents": [
+                { "paneId": "p1", "workspaceId": "w1", "name": "fixer", "agent": "claude", "status": "working" },
+                { "paneId": "p2", "workspaceId": "w1", "name": null, "agent": "codex", "status": "blocked" }
+            ]},
+            "waitingOnYou": [{ "paneId": "p2" }],
+            "native": [], "peers": []
+        });
+        let out = agents_ps_json(&doc.to_string());
+        let agents = out["agents"].as_array().unwrap();
+        assert_eq!(agents.len(), 2);
+        assert_eq!(agents[0]["address"], "fixer");
+        assert_eq!(agents[0]["state"], "working");
+        assert_eq!(agents[0]["binding"], json!({ "type": "terminal", "harness": "claude" }));
+        assert_eq!(agents[1]["name"], "codex");
+        assert_eq!(agents[1]["state"], "needs_you");
+        assert_eq!(agents[1]["fields"]["persona"], "unavailable");
+        // The visibility document stays as it was.
+        assert_eq!(out["engine"]["agents"].as_array().unwrap().len(), 2);
     }
 }
