@@ -170,6 +170,13 @@ enum Commands {
         /// Per-attempt timeout (default: config timeout_seconds, 3600).
         #[arg(long)]
         timeout_seconds: Option<u64>,
+        /// Team (`.allternit/teams/<team>/team.yaml`) whose vendor bots take
+        /// their `bot:<slug>` nodes as vendor tickets (needs ALLTERNIT_API_URL).
+        #[arg(long)]
+        team: Option<String>,
+        /// Preset of --team.
+        #[arg(long, requires = "team")]
+        preset: Option<String>,
     },
 }
 
@@ -2008,7 +2015,10 @@ where
             dry_run,
             workdir,
             timeout_seconds,
+            team,
+            preset,
         } => {
+            let (vendor_bots, vendor_api) = drive_vendor_setup(&root, team.as_deref(), preset.as_deref(), dry_run)?;
             let gate = if dry_run { None } else { Some(stores.gate().await?) };
             let mut driver = Driver::new(
                 root.clone(),
@@ -2022,9 +2032,13 @@ where
                     dry_run,
                     workdir,
                     timeout_seconds,
+                    vendor_bots,
                 },
                 Arc::new(NoHooks),
             )?;
+            if let Some(api) = vendor_api {
+                driver = driver.with_vendor_api(api);
+            }
             let report = driver
                 .run(async {
                     let _ = tokio::signal::ctrl_c().await;
@@ -2037,6 +2051,46 @@ where
     }
 
     Ok(())
+}
+
+/// `drive --team`: the team's vendor bots and the allternit-api client their
+/// tickets go through. A team with vendor bots and no API configured is
+/// refused before anything runs (no silent mail fallback), except in a dry run.
+fn drive_vendor_setup(
+    root: &Path,
+    team: Option<&str>,
+    preset: Option<&str>,
+    dry_run: bool,
+) -> Result<(
+    std::collections::BTreeMap<String, crate::drive::VendorInfo>,
+    Option<Arc<dyn crate::agents::team_apply::FactoryApi>>,
+)> {
+    use crate::agents::team_apply::{self, ApiClient};
+    let Some(team) = team else { return Ok(Default::default()) };
+    let loaded = crate::agents::team::load_team(root, team)?;
+    let vendor_bots = team_apply::vendor_bots(&loaded, preset)?;
+    let api = ApiClient::from_env().map_err(|e| anyhow::anyhow!("{}", e.fact))?;
+    if !vendor_bots.is_empty() && api.is_none() && !dry_run {
+        bail!(
+            "team {team} has vendor bots ({}) but {}; drive will not mail them instead. {}",
+            vendor_bots.keys().cloned().collect::<Vec<_>>().join(", "),
+            team_apply::API_NOT_SET_FACT,
+            team_apply::API_ENV_ACTION
+        );
+    }
+    Ok((vendor_bots, api.map(|c| Arc::new(c) as Arc<dyn team_apply::FactoryApi>)))
+}
+
+/// The workspace's Gate and ledger, built from the same stores `plan new`
+/// uses (for in-process callers such as `allternit-factory workflows run`).
+pub async fn open_workspace_gate(root: &Path) -> Result<(Arc<Ledger>, Arc<Gate>)> {
+    let ledger = Arc::new(Ledger::new(LedgerOptions {
+        root_dir: Some(root.to_path_buf()),
+        ledger_dir: Some(PathBuf::from(".allternit/ledger")),
+    }));
+    let stores = Stores::new(root.to_path_buf(), ledger.clone());
+    let gate = stores.gate().await?;
+    Ok((ledger, gate))
 }
 
 async fn run_hook_command(root: &Path, stores: &Stores, ledger: &Arc<Ledger>, cmd: HookCmd) -> Result<()> {
