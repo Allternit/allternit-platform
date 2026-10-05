@@ -23,7 +23,7 @@ macro_rules! println {
 }
 
 mod agent;
-mod ao;
+pub(crate) mod ao;
 mod ao_gate;
 mod api;
 mod completion;

@@ -15,13 +15,11 @@
 //!   layout.apply pane node.
 //! - Worktree add/remove shell out to git with the script's exact commands.
 
-use std::collections::BTreeMap;
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
 
 use super::ao_gate;
 use crate::api::client::{ApiClient, ApiClientError};
@@ -46,7 +44,6 @@ const USAGE_TRANSCRIPT: &str = "usage: ao transcript <slug> [--tail <lines>]";
 
 const AO_DIR: &str = ".agent-orchestrator";
 const LOGS_DIR: &str = "logs";
-const STATE_FILE: &str = "state.json";
 
 pub(super) fn run_ao_command(args: &[String]) -> std::io::Result<i32> {
     ensure_ao_session();
@@ -112,7 +109,7 @@ fn print_ao_help() {
 
 /// Default the engine session to `ao` unless the user explicitly selected one
 /// (`--session`, `HERDR_SOCKET_PATH`, or a pre-set `HERDR_SESSION` win).
-fn ensure_ao_session() {
+pub(crate) fn ensure_ao_session() {
     if crate::session::explicit_session_requested() {
         return;
     }
@@ -128,7 +125,7 @@ fn ensure_ao_session() {
 // RPC helpers
 // ---------------------------------------------------------------------------
 
-enum CallError {
+pub(crate) enum CallError {
     EngineDown,
     Rpc { code: String, message: String },
     Io(std::io::Error),
@@ -171,7 +168,7 @@ fn map_client_error(err: ApiClientError) -> CallError {
     }
 }
 
-fn call(client: &ApiClient, method: Method) -> Result<serde_json::Value, CallError> {
+pub(crate) fn call(client: &ApiClient, method: Method) -> Result<serde_json::Value, CallError> {
     let request = Request {
         id: "ao".into(),
         method,
@@ -194,12 +191,12 @@ fn call(client: &ApiClient, method: Method) -> Result<serde_json::Value, CallErr
     Ok(value["result"].clone())
 }
 
-fn workspaces(client: &ApiClient) -> Result<Vec<serde_json::Value>, CallError> {
+pub(crate) fn workspaces(client: &ApiClient) -> Result<Vec<serde_json::Value>, CallError> {
     let result = call(client, Method::WorkspaceList(EmptyParams {}))?;
     Ok(result["workspaces"].as_array().cloned().unwrap_or_default())
 }
 
-fn find_workspace(client: &ApiClient, label: &str) -> Result<Option<serde_json::Value>, CallError> {
+pub(crate) fn find_workspace(client: &ApiClient, label: &str) -> Result<Option<serde_json::Value>, CallError> {
     Ok(workspaces(client)?
         .into_iter()
         .find(|ws| ws["label"].as_str() == Some(label)))
@@ -225,7 +222,7 @@ fn first_pane_cwd(client: &ApiClient, workspace_id: &str) -> Result<Option<Strin
         .map(str::to_string))
 }
 
-fn pane_read_text(client: &ApiClient, pane_id: &str, lines: u32) -> Result<String, CallError> {
+pub(crate) fn pane_read_text(client: &ApiClient, pane_id: &str, lines: u32) -> Result<String, CallError> {
     let result = call(
         client,
         Method::PaneRead(PaneReadParams {
@@ -240,7 +237,7 @@ fn pane_read_text(client: &ApiClient, pane_id: &str, lines: u32) -> Result<Strin
     Ok(result["read"]["text"].as_str().unwrap_or_default().to_string())
 }
 
-fn ensure_engine_running() -> std::io::Result<()> {
+pub(crate) fn ensure_engine_running() -> std::io::Result<()> {
     let client = ApiClient::local();
     let request = Request {
         id: "ao:ping".into(),
@@ -266,44 +263,13 @@ fn ensure_engine_running() -> std::io::Result<()> {
 // old files load cleanly and old binaries keep working against new files.
 // ---------------------------------------------------------------------------
 
-#[derive(Default, Serialize, Deserialize)]
-struct AoState {
-    sessions: BTreeMap<String, AoSession>,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-struct AoSession {
-    cwd: String,
-    #[serde(default)]
-    log: Option<String>,
-    #[serde(default)]
-    dead: bool,
-    /// Exact relaunch command (`logs/ao-<slug>.cmd.sh`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    runner: Option<String>,
-    /// Isolated worktree dir when spawned with --worktree (else == cwd).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    worktree: Option<String>,
-    /// Worktree branch (`ao/<slug>`) when applicable.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    branch: Option<String>,
-    /// Sentinel NOTES file armed via `ao watch` (frontmatter status: done|blocked).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    sentinel: Option<String>,
-    /// Owning lead identity (A3). Absent on pre-registry records — dispatch
-    /// operations refuse fail-closed on those unless --as-human.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    lead: Option<String>,
-    /// running | dead | finished (free-form; absent on old records).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    lifecycle: Option<String>,
-    /// engine | tmux — which world the session was spawned in.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    world: Option<String>,
-    /// Cached mailbox depth for peer:ao-<slug>; refreshed by queue/drain.
-    #[serde(default)]
-    queued: u32,
-}
+// The registry itself is the Factory engine's (`~/.allternit/factory/
+// registry.json`, migrated once from `~/.agent-orchestrator/state.json`):
+// `ao spawn` and engine spawns (drive, agents up) record into the same file,
+// and the engine reconciles it against live panes. The entry shape is the
+// one above plus the factory's fields (pane id, harness, bot binding).
+type AoState = allternit_factory_engine::registry::RegistryFile;
+type AoSession = allternit_factory_engine::registry::Entry;
 
 fn ao_home() -> PathBuf {
     std::env::var_os("HOME")
@@ -313,25 +279,18 @@ fn ao_home() -> PathBuf {
 }
 
 fn state_path() -> PathBuf {
-    ao_home().join(STATE_FILE)
+    allternit_factory_engine::registry::Registry::open_default().path().to_path_buf()
 }
 
 fn load_state() -> AoState {
-    let Ok(file) = std::fs::File::open(state_path()) else {
-        return AoState::default();
-    };
-    serde_json::from_reader(std::io::BufReader::new(file)).unwrap_or_default()
+    allternit_factory_engine::registry::Registry::open_default()
+        .load()
+        .unwrap_or_default()
 }
 
 fn save_state(state: &AoState) {
-    let path = state_path();
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let Ok(file) = std::fs::File::create(path) else {
-        return;
-    };
-    let _ = serde_json::to_writer_pretty(std::io::BufWriter::new(file), state);
+    let state = state.clone();
+    let _ = allternit_factory_engine::registry::Registry::open_default().update(move |file| *file = state);
 }
 
 // ---------------------------------------------------------------------------
@@ -738,6 +697,8 @@ fn spawn(args: &[String]) -> std::io::Result<i32> {
                 lifecycle: Some("dead".to_string()),
                 world: Some("engine".to_string()),
                 queued: 0,
+                harness: agent_cmd.first().cloned(),
+                ..Default::default()
             },
         );
         save_state(&state);
@@ -759,6 +720,7 @@ fn spawn(args: &[String]) -> std::io::Result<i32> {
             lifecycle: Some("running".to_string()),
             world: Some("engine".to_string()),
             queued: 0,
+            ..Default::default()
         },
     );
     save_state(&state);
@@ -890,7 +852,7 @@ fn enqueue_fallback(session: &str, prompt: &str) -> std::io::Result<i32> {
 /// Marker loop token, verbatim from ao-send: last-40-alnum of the prompt.
 /// Comparing alnum-only text is immune to TUI line-wrapping, input-box
 /// border chars, and padding.
-fn prompt_marker(prompt: &str) -> Option<String> {
+pub(crate) fn prompt_marker(prompt: &str) -> Option<String> {
     let stripped = alnum(prompt);
     let marker: String = stripped
         .chars()
@@ -899,7 +861,7 @@ fn prompt_marker(prompt: &str) -> Option<String> {
     (!marker.is_empty()).then_some(marker)
 }
 
-fn first_pane_id(client: &ApiClient, workspace_id: &str) -> Result<Option<String>, CallError> {
+pub(crate) fn first_pane_id(client: &ApiClient, workspace_id: &str) -> Result<Option<String>, CallError> {
     let result = call(
         client,
         Method::PaneList(PaneListParams {
@@ -918,7 +880,7 @@ fn first_pane_id(client: &ApiClient, workspace_id: &str) -> Result<Option<String
 /// two consecutive captures (a single sighting can be a half-painted frame),
 /// Enter only after verified landing. On a bad read-back the line is cleared
 /// with C-u (NEVER C-c — that kills kimi). Ok(true) == Enter was sent.
-fn paste_and_verify(
+pub(crate) fn paste_and_verify(
     client: &ApiClient,
     pane: &str,
     prompt: &str,
@@ -1532,7 +1494,7 @@ fn drain_one(client: &ApiClient, session: &str, text: &str) -> Result<bool, Call
 
 /// Idle probe: two consecutive captures 800ms apart must be byte-identical.
 /// A busy agent mid-turn keeps repainting; an idle prompt does not.
-fn pane_idle(client: &ApiClient, pane: &str) -> Result<bool, CallError> {
+pub(crate) fn pane_idle(client: &ApiClient, pane: &str) -> Result<bool, CallError> {
     let first = pane_read_text(client, pane, 80)?;
     std::thread::sleep(Duration::from_millis(800));
     let second = pane_read_text(client, pane, 80)?;
@@ -2135,6 +2097,7 @@ mod tests {
             lifecycle: Some("running".to_string()),
             world: Some("engine".to_string()),
             queued: 0,
+            ..Default::default()
         }
     }
 

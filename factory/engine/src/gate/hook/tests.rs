@@ -274,7 +274,7 @@ fn claude_settings_carry_hook_in_bypass_mode() {
     let hook = &s["hooks"]["PreToolUse"][0];
     assert_eq!(hook["matcher"], "*");
     let cmd = hook["hooks"][0]["command"].as_str().unwrap();
-    assert!(cmd.starts_with("'/opt/bin/allternit-factory' internal rails --root '/w/it'\\''s' hook claude-pretool"));
+    assert!(cmd.starts_with("'/opt/bin/allternit-factory' internal hook --root '/w/it'\\''s' claude-pretool"));
     assert!(cmd.ends_with("--workspace '/w/wt' --wih 'wih_1'"));
 }
 

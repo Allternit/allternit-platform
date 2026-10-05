@@ -59,11 +59,14 @@ GATE_CASES=0
 GATEBIN="$TDIR/gatebin"
 mkdir -p "$GATEBIN"
 # Fake allternit-commrails: `hook claude-settings --out F` writes its argv to F.
-# The engine world calls the gate as `allternit-factory internal rails …`; the
-# fake drops that prefix so both worlds record the same argv.
+# The engine world calls the gate as `allternit-factory internal hook --root R
+# <verb> …`; the fake rewrites that to the script's `--root R hook <verb> …` so
+# both worlds record the same argv.
 cat > "$GATEBIN/allternit-commrails" <<'FAKE'
 #!/bin/sh
-[ "${1:-} ${2:-}" = "internal rails" ] && shift 2
+if [ "${1:-} ${2:-}" = "internal hook" ]; then
+  shift 2; r1=$1; r2=$2; shift 2; set -- "$r1" "$r2" hook "$@"
+fi
 out=""; prev=""
 for a in "$@"; do [ "$prev" = "--out" ] && out=$a; prev=$a; done
 case " $* " in

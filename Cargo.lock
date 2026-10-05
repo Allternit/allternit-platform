@@ -1020,6 +1020,7 @@ name = "allternit-factory-pane"
 version = "0.9.0"
 dependencies = [
  "allternit-factory-engine",
+ "anyhow",
  "axum",
  "base64 0.22.1",
  "bincode",
