@@ -16,11 +16,15 @@
 //! * an attempt interrupted after its harness started (the non-idempotent
 //!   step) is restarted only for nodes labelled `retry:safe`, otherwise only
 //!   after a human resolves the gate for that attempt;
-//! * a dead or timed-out session closes the node FAILED with a receipt.
+//! * a dead or timed-out session closes the node FAILED with a receipt;
+//! * a node with an `on_fail` route that closes failed is routed back to its
+//!   target at most `max_rounds` times, then stops as degraded with a
+//!   needs-you gate (see [`route`]).
 
 pub mod caps;
 pub mod config;
 pub mod hooks;
+pub mod route;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -38,7 +42,8 @@ use crate::hook::{self, WihPolicy};
 use crate::ledger::Ledger;
 use crate::mail::{Mail, MailImportance, MailOptions, TypedMessage};
 use crate::orchestrator::{self, CaptureFiles, Orchestrator, SpawnOptions, WatchOutcome};
-use crate::templates::RETRY_SAFE_LABEL;
+use crate::gate::gate::DagMutation;
+use crate::templates::{CLOSURE_STATE, EVIDENCE_PARAM, RETRY_SAFE_LABEL};
 use crate::wait_gates::WaitGateKind;
 use crate::work::graph::ready_nodes;
 use crate::work::projection::project_dag;
@@ -47,6 +52,7 @@ use crate::work::types::{DagNode, DagState};
 use caps::{CapCounts, CapLimits, CapsStore, Capacity, Deferral, FileLock, RunningEntry};
 use config::{drive_dir, ArgvVars, DriveConfig};
 use hooks::{AttemptRef, DriveHooks, NeedsYou, NodeFinished};
+pub use route::{FailRoute, ROUNDS_EXHAUSTED, ROUTE_BACK};
 
 pub const ATTEMPT_STARTED: &str = "DriveAttemptStarted";
 pub const ATTEMPT_FINISHED: &str = "DriveAttemptFinished";
@@ -104,6 +110,10 @@ pub struct DriveReport {
     pub waiting: Vec<String>,
     /// Dry-run plan lines.
     pub plan: Vec<String>,
+    /// `(failed node_id, on_fail target node_id, round)` routed back.
+    pub routed_back: Vec<(String, String, u32)>,
+    /// Failed nodes whose route-back rounds ran out (root closure degraded).
+    pub degraded: Vec<String>,
 }
 
 /// One ledger attempt: a `DriveAttemptStarted` and its `DriveAttemptFinished`.
@@ -436,6 +446,10 @@ impl Driver {
             }
         }
 
+        // 2b. Failed nodes with an `on_fail` route: route back (bounded) or
+        //     stop as degraded.
+        let route_lines = self.route_failures(report).await?;
+
         // 3. Decide.
         let (_, dag, attempts) = self.load().await?;
         let mut live = HashSet::new();
@@ -446,7 +460,7 @@ impl Driver {
 
         // 4. Act.
         let mut deferred_any = false;
-        let mut status = Vec::new();
+        let mut status = route_lines;
         for action in actions {
             match action {
                 Action::Wait { line } => status.push(line),
@@ -525,9 +539,16 @@ impl Driver {
                 if deps_done {
                     for g in node.blocking_wait_gates(now) {
                         let who = if g.kind == WaitGateKind::Manual { "needs you" } else { "waiting" };
+                        let evidence = g
+                            .params
+                            .get(EVIDENCE_PARAM)
+                            .and_then(Value::as_str)
+                            .filter(|e| !g.description.contains(*e))
+                            .map(|e| format!(" — look at: {e}"))
+                            .unwrap_or_default();
                         out.push(Action::Wait {
                             line: format!(
-                                "{}: {who} — {} gate {} \"{}\" (resolve: allternit-factory workspace approve {}/{} {} --actor user:<you>)",
+                                "{}: {who} — {} gate {} \"{}\"{evidence} (resolve: allternit-factory workspace approve {}/{} {} --actor user:<you>)",
                                 node.node_id, g.kind, g.gate_id, g.description, dag.dag_id, node.node_id, g.gate_id
                             ),
                         });
@@ -682,6 +703,9 @@ impl Driver {
         if let Err(reason) = &capacity {
             report.plan.push(format!("capacity: would refuse to start: {reason}"));
         }
+        for route in route::plan_fail_routes(&dag) {
+            report.plan.push(route.line(true));
+        }
         for action in self.decide(&dag, &attempts, &live) {
             let line = match action {
                 Action::Wait { line } => line,
@@ -743,6 +767,163 @@ impl Driver {
             println!("  {line}");
         }
         Ok(())
+    }
+
+    /// Act on every failed node that carries an `on_fail` route: route it
+    /// back (reopen the target and the nodes between, through the Gate) while
+    /// rounds remain, else mark the root's closure degraded and hand the node
+    /// to a person. Bounded: a node routes back at most `max_rounds` times.
+    /// Returns status lines. A route the Gate refuses (e.g. the state moved
+    /// under it) is reported and re-evaluated on the next pass.
+    pub async fn route_failures(&self, report: &mut DriveReport) -> Result<Vec<String>> {
+        let (_, dag, _) = self.load().await?;
+        let mut lines = Vec::new();
+        for r in route::plan_fail_routes(&dag) {
+            let applied = match &r {
+                FailRoute::Blocked { .. } => {
+                    lines.push(r.line(false));
+                    continue;
+                }
+                FailRoute::RouteBack { .. } => self.route_back(&dag, &r, report).await,
+                FailRoute::Exhausted { .. } => self.rounds_exhausted(&dag, &r, report).await,
+            };
+            match applied {
+                Ok(line) => lines.push(line),
+                Err(err) => {
+                    let line = format!("{}: on_fail route refused: {err:#}", r.node_id());
+                    eprintln!("drive {}: {line}", self.dag_id());
+                    lines.push(line);
+                }
+            }
+        }
+        Ok(lines)
+    }
+
+    async fn route_back(&self, dag: &DagState, r: &FailRoute, report: &mut DriveReport) -> Result<String> {
+        let FailRoute::RouteBack { node_id, target, round, max_rounds, reopen } = r else {
+            bail!("not a route-back");
+        };
+        let failed = dag.nodes.get(node_id).context("failed node vanished")?;
+        let target_node = dag.nodes.get(target).context("on_fail target vanished")?;
+        let why = format!("drive: on_fail route back from {node_id} (round {round}/{max_rounds})");
+        let mut mutations: Vec<DagMutation> = reopen
+            .iter()
+            .map(|(n, from, to)| DagMutation::ChangeStatus {
+                node_id: n.clone(),
+                from: from.clone(),
+                to: to.clone(),
+                reason: Some(why.clone()),
+            })
+            .collect();
+        let description = format!(
+            "{}{}",
+            target_node.description.as_deref().unwrap_or_default(),
+            route::feedback_text(failed, *round, *max_rounds)
+        );
+        mutations.push(DagMutation::UpdateNode {
+            node_id: target.clone(),
+            patch: json!({ "description": description }),
+        });
+        mutations.push(DagMutation::SetState {
+            node_id: node_id.clone(),
+            dimension: route::ROUNDS_STATE.to_string(),
+            value: round.to_string(),
+            reason: Some(why.clone()),
+        });
+        let delta_id = self
+            .gate()?
+            .plan_refine(
+                self.dag_id(),
+                &format!("drive: route back {node_id} → {target} (round {round}/{max_rounds})"),
+                "drive",
+                mutations,
+            )
+            .await?;
+        self.emit(
+            ROUTE_BACK,
+            json!({
+                "dag_id": self.dag_id(),
+                "node_id": node_id,
+                "target_node_id": target,
+                "round": round,
+                "max_rounds": max_rounds,
+                "failed_status": failed.status,
+                "output_receipt_id": failed.output.as_ref().map(|o| o.receipt_id.clone()),
+                "reopened": reopen.iter().map(|(n, f, t)| json!({ "node_id": n, "from": f, "to": t })).collect::<Vec<_>>(),
+                "delta_id": delta_id,
+            }),
+        )
+        .await?;
+        let line = r.line(false);
+        println!("drive {}: {line}", self.dag_id());
+        report.routed_back.push((node_id.clone(), target.clone(), *round));
+        Ok(line)
+    }
+
+    async fn rounds_exhausted(&self, dag: &DagState, r: &FailRoute, report: &mut DriveReport) -> Result<String> {
+        let FailRoute::Exhausted { node_id, target, max_rounds, reopen, root_id, closure_text } = r else {
+            bail!("not a rounds-exhausted route");
+        };
+        let failed = dag.nodes.get(node_id).context("failed node vanished")?;
+        let why = format!("drive: {node_id} used {max_rounds}/{max_rounds} on_fail rounds");
+        let mut mutations = Vec::new();
+        if let Some(root) = root_id {
+            mutations.push(DagMutation::SetState {
+                node_id: root.clone(),
+                dimension: CLOSURE_STATE.to_string(),
+                value: route::CLOSURE_DEGRADED.to_string(),
+                reason: Some(closure_text.clone()),
+            });
+        }
+        // Reopen first (a wait-gate cannot be added to a closed node); the
+        // needs-you gate below keeps it from running until a person decides.
+        if reopen.1 != reopen.2 {
+            mutations.push(DagMutation::ChangeStatus {
+                node_id: reopen.0.clone(),
+                from: reopen.1.clone(),
+                to: reopen.2.clone(),
+                reason: Some(why.clone()),
+            });
+        }
+        self.gate()?
+            .plan_refine(
+                self.dag_id(),
+                &format!("drive: rounds exhausted on {node_id} → degraded"),
+                "drive",
+                mutations,
+            )
+            .await?;
+        let output = failed
+            .output
+            .as_ref()
+            .map(|o| format!(" Its last output: {}.", o.output_path))
+            .unwrap_or_default();
+        let detail = format!(
+            "{node_id} closed {} again after {max_rounds} route-back round(s) to {target}; rounds exhausted, \
+             the flow is degraded ({closure_text}).{output} Resolve this gate to run it once more, or close the plan root yourself.",
+            failed.status
+        );
+        let executor = failed.executor.clone().unwrap_or_default();
+        let gate_id = self
+            .needs_you(node_id, route::ROUNDS_EXHAUSTED_REASON, &detail, &executor, None)
+            .await?;
+        self.emit(
+            ROUNDS_EXHAUSTED,
+            json!({
+                "dag_id": self.dag_id(),
+                "node_id": node_id,
+                "target_node_id": target,
+                "max_rounds": max_rounds,
+                "root_node_id": root_id,
+                "closure": route::CLOSURE_DEGRADED,
+                "closure_text": closure_text,
+                "gate_id": gate_id,
+            }),
+        )
+        .await?;
+        report.needs_you.push((node_id.clone(), route::ROUNDS_EXHAUSTED_REASON.to_string()));
+        report.degraded.push(node_id.clone());
+        Ok(format!("{node_id}: needs you [{gate_id}] {detail}"))
     }
 
     fn running_entry(&self, node_id: &str, slug: &str) -> RunningEntry {
