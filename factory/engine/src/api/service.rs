@@ -3010,6 +3010,8 @@ async fn receipts_summary(
 // ============================================================================
 
 pub fn create_router(state: Arc<ServiceState>) -> Router {
+    // `/api/factory` teams + workspace reads (stream F6E); keep one copy if F3 adds these paths too.
+    let factory = crate::agents::http::router(state.root_dir.clone()).merge(crate::workspace::http::router(state.root_dir.clone(), state.ledger.clone(), state.gate.clone()));
     Router::new()
         // Health
         .route("/health", get(health_check))
@@ -3098,6 +3100,7 @@ pub fn create_router(state: Arc<ServiceState>) -> Router {
         // INIT
         .route("/v1/init", post(init_system))
         .with_state(state)
+        .merge(factory)
 }
 
 /// Run the HTTP service

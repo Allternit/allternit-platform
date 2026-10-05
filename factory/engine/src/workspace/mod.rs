@@ -5,6 +5,7 @@ pub mod board;
 pub mod campaign;
 pub mod context;
 pub mod echoes;
+pub mod http;
 pub mod judge;
 pub mod lessons;
 pub mod memory;

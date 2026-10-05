@@ -17,15 +17,6 @@ use crate::work::projection::project_dag;
 use crate::workspace::node_folder::{self, PROOF_DIR, PROOF_FILE};
 use crate::workspace::proof::{self, ProofAdded, PROOF_TOOL};
 
-fn safe_file_name(name: &str) -> String {
-    let cleaned: String = name
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') { c } else { '_' })
-        .collect();
-    let cleaned = cleaned.trim_start_matches('.').to_string();
-    if cleaned.is_empty() { "file".to_string() } else { cleaned }
-}
-
 impl Gate {
     /// See [`crate::workspace::proof::add`].
     pub async fn proof_add(
@@ -82,7 +73,7 @@ impl Gate {
             .unwrap_or_else(|| "file".to_string());
         // Content-addressed name: the same bytes land on the same name, so an
         // existing copy is never overwritten with different content.
-        let stored_name = format!("{}-{}", &hex[..12], safe_file_name(&source_name));
+        let stored_name = proof::stored_proof_name(&bytes, &source_name);
         let dest = dir.join(PROOF_DIR).join(&stored_name);
         if !dest.exists() {
             let tmp = dir.join(PROOF_DIR).join(format!(".{stored_name}.tmp"));

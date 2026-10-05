@@ -99,7 +99,11 @@ pub struct Delivery {
     /// Vendor ticket id, e.g. "T-14".
     pub ticket: Option<String>,
     pub thread_id: Option<String>,
+    /// The outbound thread message this delivery carried, if any.
+    pub message_id: Option<String>,
     pub node_id: Option<String>,
+    /// The DAG of `node_id`.
+    pub dag_id: Option<String>,
     pub at: String,
     pub detail: Option<String>,
 }
@@ -119,7 +123,8 @@ pub struct NodePage {
     pub progress_md: Option<String>,
     pub proof_md: Option<String>,
     pub files: Vec<NodeFile>,
-    /// Filled by the integrator (stream F3) from delivery records.
+    /// Vendor tickets from the ledger (`DriveVendorTicketCreated`); other
+    /// delivery kinds are added by the integrator (stream F3).
     pub deliveries: Vec<Delivery>,
     pub wih: Option<NodeWih>,
     /// API.md `Approval`, owned by allternit-api; null here.
@@ -145,6 +150,47 @@ fn list_files(dir: &Path, rel: &str, out: &mut Vec<NodeFile>) {
             _ => {}
         }
     }
+}
+
+/// The node's vendor tickets as API.md `Delivery` rows, in ledger order.
+pub fn vendor_ticket_deliveries(events: &[AllternitEvent], dag_id: &str, node_id: &str) -> Vec<Delivery> {
+    use crate::drive::{ticket_delivery_state, VENDOR_TICKET_CREATED};
+    events
+        .iter()
+        .filter(|e| e.r#type == VENDOR_TICKET_CREATED)
+        .filter(|e| {
+            e.payload.get("dag_id").and_then(|v| v.as_str()) == Some(dag_id)
+                && e.payload.get("node_id").and_then(|v| v.as_str()) == Some(node_id)
+        })
+        .filter_map(|e| {
+            let s = |k: &str| e.payload.get(k).and_then(|v| v.as_str()).map(str::to_string);
+            let ticket = s("ticket")?;
+            let state = match ticket_delivery_state(s("guarantee").as_deref()) {
+                "verified" => DeliveryState::Verified,
+                "best_effort" => DeliveryState::BestEffort,
+                "read_only" => DeliveryState::ReadOnly,
+                _ => DeliveryState::Failed,
+            };
+            let detail = match (s("lane"), s("wih_id")) {
+                (Some(l), Some(w)) => Some(format!("lane {l}, WIH {w}")),
+                (None, Some(w)) => Some(format!("no lane could take it, WIH {w}")),
+                (l, None) => l.map(|l| format!("lane {l}")),
+            };
+            Some(Delivery {
+                id: format!("vendor-ticket:{ticket}"),
+                to: s("to").or_else(|| s("executor")).unwrap_or_default(),
+                via: DeliveryVia::VendorTicket,
+                state,
+                ticket: Some(ticket),
+                thread_id: None,
+                message_id: None,
+                node_id: Some(node_id.to_string()),
+                dag_id: Some(dag_id.to_string()),
+                at: e.ts.clone(),
+                detail,
+            })
+        })
+        .collect()
 }
 
 pub fn build(root: &Path, events: &[AllternitEvent], dag_id: &str, node_id: &str) -> Result<NodePage> {
@@ -224,7 +270,7 @@ pub fn build(root: &Path, events: &[AllternitEvent], dag_id: &str, node_id: &str
         progress_md,
         proof_md,
         files,
-        deliveries: Vec::new(),
+        deliveries: vendor_ticket_deliveries(&evs, dag_id, node_id),
         wih,
         approval: None,
     })

@@ -42,6 +42,24 @@ pub async fn add(gate: &Gate, dag_id: &str, node_id: &str, line: &str, file: &Pa
     gate.proof_add(dag_id, node_id, line, file).await
 }
 
+fn safe_file_name(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') { c } else { '_' })
+        .collect();
+    let cleaned = cleaned.trim_start_matches('.').to_string();
+    if cleaned.is_empty() { "file".to_string() } else { cleaned }
+}
+
+/// The content-addressed name `proof add` stores `source_name` under in the
+/// node's `proof/`: `<first 12 hex of sha256>-<sanitized name>`. Same bytes,
+/// same name, so a stored copy is never overwritten with other content.
+pub fn stored_proof_name(bytes: &[u8], source_name: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let hex = hex::encode(Sha256::digest(bytes));
+    format!("{}-{}", &hex[..12], safe_file_name(source_name))
+}
+
 /// One `proof.add` receipt from the ledger.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProofReceipt {

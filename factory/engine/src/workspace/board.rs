@@ -259,17 +259,30 @@ pub fn dag_ids(events: &[AllternitEvent]) -> Vec<String> {
 }
 
 /// A bot's own nodes across DAGs (`GET /api/factory/nodes?assignee=`).
-/// `open_only` drops done and failed nodes.
+/// A node is the bot's when its assignee is the address (`slug@team`), the
+/// bare slug or `bot:<slug>` (what a pickup for the bot records), or its
+/// executor is `bot:<slug>`. `open_only` drops done and failed nodes.
 pub fn cards_for_assignee(
     root: &Path,
     events: &[AllternitEvent],
     assignee: &str,
     open_only: bool,
 ) -> Vec<NodeCard> {
+    let slug = assignee.split('@').next().unwrap_or(assignee);
+    let bot = format!("bot:{slug}");
+    let names = [assignee, slug, bot.as_str()];
     dag_ids(events)
         .iter()
-        .flat_map(|d| cards_for_dag(root, events, d))
-        .filter(|c| c.assignee.as_deref() == Some(assignee))
+        .flat_map(|d| {
+            let dag = project_dag(&dag_events(events, d), d);
+            cards_for_dag(root, events, d)
+                .into_iter()
+                .filter(|c| {
+                    c.assignee.as_deref().is_some_and(|a| names.contains(&a))
+                        || dag.nodes.get(&c.node_id).and_then(|n| n.executor.as_deref()) == Some(bot.as_str())
+                })
+                .collect::<Vec<_>>()
+        })
         .filter(|c| !open_only || !matches!(c.status, CardStatus::Done | CardStatus::Failed))
         .collect()
 }
