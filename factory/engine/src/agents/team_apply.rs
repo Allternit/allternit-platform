@@ -656,7 +656,10 @@ pub fn apply(
         Ok(b) => b,
         Err(e) => return steps.iter().map(|s| StepResult::failed(s, "transport", format!("{e:#}"))).collect(),
     };
-    let workdir = opts.workdir.clone().unwrap_or_else(|| root.to_path_buf());
+    // Absolute paths: they go into hook commands and the pane's cwd.
+    let abs = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    let root = &abs(root);
+    let workdir = abs(&opts.workdir.clone().unwrap_or_else(|| root.to_path_buf()));
     let mut ids: BTreeMap<String, String> = BTreeMap::new();
     // Instruction files already claimed in a workdir this run (two bots must
     // not share one managed block).
@@ -814,6 +817,46 @@ fn spawn_one(
     r.pane = Some(slug);
     r.workdir = Some(workdir.to_path_buf());
     r
+}
+
+/// Refuse a plan whose Terminal bots would share one instruction file in one
+/// workdir (one managed block per file: the second delivery would replace
+/// the first bot's persona). Counts the spawn steps and the team's bots
+/// already live in `workdir`. Pure; `up --dry-run` and `up` both run it.
+pub fn check_workdirs(
+    team: &LoadedTeam,
+    preset: Option<&str>,
+    plan: &[TeamPlanStep],
+    workdir: &Path,
+    live: &LiveState,
+) -> std::result::Result<(), String> {
+    let bots = team.effective_bots(preset).map_err(|e| e.to_string())?;
+    let workdir = &workdir.canonicalize().unwrap_or_else(|_| workdir.to_path_buf());
+    let mut users: BTreeMap<&'static str, Vec<String>> = BTreeMap::new();
+    for b in bots.iter().filter(|b| b.binding == Binding::Terminal) {
+        let spawning = plan.iter().any(|s| s.action == PlanAction::Spawn && s.agent == b.address && s.machine.is_none());
+        let live_here = live.workdirs.get(&b.address).map(|w| w == workdir).unwrap_or(false);
+        if !(spawning || live_here) {
+            continue;
+        }
+        if let Some(file) = b.harness.as_deref().and_then(delivery::instruction_file) {
+            users.entry(file).or_default().push(b.address.clone());
+        }
+    }
+    let clashes: Vec<String> = users
+        .iter()
+        .filter(|(_, v)| v.len() > 1)
+        .map(|(f, v)| format!("{} would share {f}", v.join(" and ")))
+        .collect();
+    if clashes.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "{} in {} (one managed block per file, so one bot's persona would replace the other's); give them separate workdirs (--workdir) or harnesses that read different files",
+            clashes.join("; "),
+            workdir.display()
+        ))
+    }
 }
 
 /// The most severe failure code among `results` (`None` when all ok/skipped).

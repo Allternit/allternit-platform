@@ -157,6 +157,8 @@ async fn team_up(State(st): State<TeamsState>, AxPath(name): AxPath<String>, bod
         let live = team_apply::live_state(&root, &team)
             .map_err(|e| error_response("transport", format!("{e:#}"), "Start the pane engine (allternit-factory pane) and retry.", Value::Null))?;
         let plan = plan_up(&team, preset.as_deref(), body.on.as_deref(), &live).map_err(|e| team_error(&e))?;
+        team_apply::check_workdirs(&team, preset.as_deref(), &plan, &root, &live)
+            .map_err(|fact| error_response("refused", fact, "Nothing was started. Run up from the CLI with --workdir, or change a bot's harness in a preset.", json!({ "plan": plan })))?;
         if body.dry_run {
             return Ok(Json(json!({ "plan": plan, "applied": false })).into_response());
         }
@@ -246,13 +248,17 @@ mod tests {
         assert_eq!(v["teams"][0]["agents"][1], "builder@product-build");
         assert_eq!(v["invalid"][0]["name"], "broken");
 
-        let (st, v) = call(&app, "POST", "/api/factory/teams/product-build/up", Some(json!({ "dryRun": true, "preset": "cheap" }))).await;
+        let (st, v) = call(&app, "POST", "/api/factory/teams/product-build/up", Some(json!({ "dryRun": true }))).await;
         assert_eq!(st, StatusCode::OK, "{v}");
         assert_eq!(v["applied"], false);
         assert_eq!(v["plan"][1]["action"], "spawn");
-        assert_eq!(v["plan"][1]["harness"], "codex");
-        let (_, again) = call(&app, "POST", "/api/factory/teams/product-build/up", Some(json!({ "dryRun": true, "preset": "cheap" }))).await;
+        assert_eq!(v["plan"][1]["harness"], "claude");
+        let (_, again) = call(&app, "POST", "/api/factory/teams/product-build/up", Some(json!({ "dryRun": true }))).await;
         assert_eq!(v, again, "the dry run is deterministic");
+        // `cheap` runs builder and checker both on codex in one workdir: refused, nothing started.
+        let (st, v) = call(&app, "POST", "/api/factory/teams/product-build/up", Some(json!({ "dryRun": true, "preset": "cheap" }))).await;
+        assert_eq!(st, StatusCode::CONFLICT, "{v}");
+        assert!(v["error"]["fact"].as_str().unwrap().contains("AGENTS.md"), "{v}");
 
         let (st, v) = call(&app, "POST", "/api/factory/teams/nope/up", Some(json!({ "dryRun": true }))).await;
         assert_eq!(st, StatusCode::NOT_FOUND);
