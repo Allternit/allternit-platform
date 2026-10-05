@@ -48,6 +48,14 @@ pub enum PaneSend {
     Queued { message_id: String, depth: usize, reason: String },
 }
 
+/// A pane's visible screen, as ANSI text, for a mirror view (Desktop's
+/// terminal tiles). `revision` changes whenever the screen does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PaneScreen {
+    pub ansi: String,
+    pub revision: u64,
+}
+
 /// Whether the pane engine is up (reported by `agents ps`, never hidden).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct EngineStatus {
@@ -76,6 +84,16 @@ pub trait PaneBackend: Send + Sync {
     fn capture(&self, session: &str, lines: u32) -> Result<String>;
     /// Close the session's pane.
     fn kill(&self, session: &str) -> Result<()>;
+    /// The session's visible screen with its colors (ANSI), for a mirror view.
+    fn screen(&self, session: &str) -> Result<PaneScreen> {
+        Err(anyhow::anyhow!("this pane engine cannot read screens ({session})"))
+    }
+    /// Type into the session's pane as a person at the keyboard would: `text`
+    /// is written as-is, `keys` are named keys (`Enter`, `C-c`, `Up`, …).
+    /// Nothing is recorded: this is the terminal, not a send.
+    fn input(&self, session: &str, _text: &str, _keys: &[String]) -> Result<()> {
+        Err(anyhow::anyhow!("this pane engine cannot take input ({session})"))
+    }
     /// Whether the pane engine is running (no panes can be live when not).
     fn status(&self) -> EngineStatus {
         EngineStatus { running: true, error: None }

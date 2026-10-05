@@ -13,14 +13,16 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use allternit_factory_engine::backend::{self, EngineStatus, LivePane, PaneBackend, PaneSend, PaneSpawn, Transport};
+use allternit_factory_engine::backend::{
+    self, EngineStatus, LivePane, PaneBackend, PaneScreen, PaneSend, PaneSpawn, Transport,
+};
 use anyhow::{anyhow, Result};
 use serde_json::Value;
 
 use crate::api::client::ApiClient;
 use crate::api::schema::{
-    LayoutApplyParams, LayoutNode, LayoutPane, Method, PaneListParams,
-    WorkspaceCloseParams, WorkspaceCreateParams,
+    LayoutApplyParams, LayoutNode, LayoutPane, Method, PaneListParams, PaneReadParams,
+    PaneSendInputParams, ReadFormat, ReadSource, WorkspaceCloseParams, WorkspaceCreateParams,
 };
 use crate::cli::ao::{self as ao, CallError};
 
@@ -244,6 +246,43 @@ impl PaneBackend for PaneEngine {
         let client = client();
         let pane = find(&client, session).map_err(err)?.ok_or_else(|| anyhow!("no live pane for {session}"))?;
         ao::pane_read_text(&client, &pane.pane_id, lines).map_err(err)
+    }
+
+    fn screen(&self, session: &str) -> Result<PaneScreen> {
+        let client = client();
+        let pane = find(&client, session).map_err(err)?.ok_or_else(|| anyhow!("no live pane for {session}"))?;
+        let result = ao::call(
+            &client,
+            Method::PaneRead(PaneReadParams {
+                pane_id: pane.pane_id,
+                source: ReadSource::Visible,
+                lines: None,
+                format: ReadFormat::Ansi,
+                strip_ansi: false,
+                // A mirror view polls: don't count it as someone reading.
+                intent: crate::api::schema::ReadIntent::Passive,
+            }),
+        )
+        .map_err(err)?;
+        Ok(PaneScreen {
+            ansi: result["read"]["text"].as_str().unwrap_or_default().to_string(),
+            revision: result["read"]["revision"].as_u64().unwrap_or(0),
+        })
+    }
+
+    fn input(&self, session: &str, text: &str, keys: &[String]) -> Result<()> {
+        let client = client();
+        let pane = find(&client, session).map_err(err)?.ok_or_else(|| anyhow!("no live pane for {session}"))?;
+        ao::call(
+            &client,
+            Method::PaneSendInput(PaneSendInputParams {
+                pane_id: pane.pane_id,
+                text: text.to_string(),
+                keys: keys.to_vec(),
+            }),
+        )
+        .map_err(err)?;
+        Ok(())
     }
 
     fn kill(&self, session: &str) -> Result<()> {
