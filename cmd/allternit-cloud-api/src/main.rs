@@ -330,6 +330,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         allternit_cloud_api::routes::platform_v1::events::spawn_worker(state.db.clone());
     }
 
+    // 10DLC / toll-free registrations: retry pending ones (missed webhooks, campaigns waiting on our carrier account).
+    allternit_cloud_api::routes::phone::start_registration_sweep(state.db.clone());
+
     // Voice calls: deliver queued call.* events to runtimes (wake on demand).
     allternit_cloud_api::routes::voice_calls_cloud::start_voice_calls_worker(state.clone());
     allternit_cloud_api::routes::inapp_calls::start_inapp_calls_worker(state.clone());

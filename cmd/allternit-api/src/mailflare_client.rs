@@ -26,13 +26,18 @@ pub struct MailflareConfig {
     pub webhook_secret: Option<String>,
 }
 
+/// The domain every Allternit bot mailbox lives on.
+pub const DEFAULT_BOT_EMAIL_DOMAIN: &str = "bots.allternit.com";
+
 impl MailflareConfig {
     /// Load from the environment. Returns `None` (mailflare disabled) when the
-    /// base URL or admin key is missing/empty.
+    /// base URL or admin key is missing/empty. The bot mail domain defaults to
+    /// [`DEFAULT_BOT_EMAIL_DOMAIN`]: a missing `ALLTERNIT_BOT_EMAIL_DOMAIN` used
+    /// to switch bot email off silently even with the service configured.
     pub fn from_env() -> Option<Self> {
         let base_url = env_non_empty("ALLTERNIT_MAILFLARE_URL")?;
         let admin_key = env_non_empty("ALLTERNIT_MAILFLARE_ADMIN_KEY")?;
-        let domain = env_non_empty("ALLTERNIT_BOT_EMAIL_DOMAIN")?;
+        let domain = env_non_empty("ALLTERNIT_BOT_EMAIL_DOMAIN").unwrap_or_else(|| DEFAULT_BOT_EMAIL_DOMAIN.to_string());
         Some(Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             admin_key,

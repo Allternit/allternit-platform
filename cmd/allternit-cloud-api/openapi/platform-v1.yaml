@@ -290,6 +290,26 @@ paths:
             application/json:
               schema: { type: object, additionalProperties: true }
         default: { $ref: "#/components/responses/Error" }
+  /v1/numbers/{id}/registration/otp:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    post:
+      operationId: verifyRegistrationCode
+      summary: Sole proprietors — verify the texted code, or send a new one
+      description: "`{ \"pin\": \"123456\" }` checks the code the person received; an empty body sends a new code. Once verified, the campaign files itself."
+      tags: [Numbers]
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, properties: { pin: { type: string } } }
+      responses:
+        "200":
+          description: Registration state.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        default: { $ref: "#/components/responses/Error" }
   /v1/numbers/{id}/consent:
     parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
     post:

@@ -72,6 +72,7 @@ pub fn routes() -> Router<Arc<ApiState>> {
         .route("/api/v1/phone/numbers/port", post(port_create_route))
         .route("/api/v1/phone/numbers/:id", delete(release_number_route))
         .route("/api/v1/phone/numbers/:id/registration", get(registration_get_route).post(registration_post_route))
+        .route("/api/v1/phone/numbers/:id/registration/otp", post(registration_otp_route))
         .route("/api/v1/phone/numbers/:id/port", get(port_status_route))
         .route("/api/v1/phone/numbers/:id/consent", post(consent_route))
         .route("/api/v1/phone/calls/outbound", post(call_outbound_route))
@@ -634,6 +635,17 @@ pub async fn refresh_registration(db: &PgPool, carrier: &dyn Carrier, number: &N
                     handle.campaign_id = Some(campaign_id);
                     status = carrier.registration_status(kind, &number.e164, &handle, number.messaging_ref.as_deref()).await?;
                 }
+                // Our side of the carrier account (balance, account level) or the carrier being
+                // down: not the business's fault. Stay pending with the reason and retry later.
+                Err(CarrierError::Upstream(code, reason)) if carrier_will_retry(code, &reason) => {
+                    tracing::warn!(registration = %reg.id, "campaign filing waits: {reason}");
+                    sqlx::query("UPDATE sms_registrations SET rejection_reason = $2, updated_at = now() WHERE id = $1")
+                        .bind(&reg.id)
+                        .bind(format!("waiting: {reason}"))
+                        .execute(db)
+                        .await?;
+                    return Ok(());
+                }
                 Err(CarrierError::Upstream(_, reason)) | Err(CarrierError::Invalid(reason)) => {
                     status = RegistrationStatus { state: RegState::Rejected, reason: Some(format!("campaign: {reason}")) };
                 }
@@ -660,6 +672,94 @@ pub async fn refresh_registration(db: &PgPool, carrier: &dyn Carrier, number: &N
     )
     .await;
     Ok(())
+}
+
+/// A campaign refusal that is about Allternit's carrier account or a carrier
+/// outage, not the business's registration: keep it pending and try again.
+pub(crate) fn carrier_will_retry(status: u16, reason: &str) -> bool {
+    let r = reason.to_ascii_lowercase();
+    status == 402 || status == 429 || status >= 500
+        || r.contains("must have at least $")
+        || r.contains("insufficient")
+        || r.contains("balance")
+        || r.contains("account level")
+}
+
+/// Retry every pending registration that hasn't changed for a while (a carrier
+/// webhook can be missed, and a campaign waiting on our account never gets one).
+pub async fn sweep_pending_registrations(db: &PgPool, carrier: &dyn Carrier) -> PResult<usize> {
+    let regs: Vec<(String, String)> = sqlx::query_as(
+        "SELECT r.id, r.number_id FROM sms_registrations r WHERE r.state = 'pending' AND r.updated_at < now() - interval '15 minutes' ORDER BY r.updated_at LIMIT 50",
+    )
+    .fetch_all(db)
+    .await?;
+    let mut n = 0;
+    for (reg_id, number_id) in regs {
+        let number: Option<NumberRow> = sqlx::query_as(&format!("SELECT {NUMBER_COLS} FROM phone_numbers WHERE id = $1 AND released_at IS NULL")).bind(&number_id).fetch_optional(db).await?;
+        let reg: Option<RegRow> = sqlx::query_as(&format!("SELECT {REG_COLS} FROM sms_registrations WHERE id = $1")).bind(&reg_id).fetch_optional(db).await?;
+        if let (Some(number), Some(reg)) = (number, reg) {
+            match refresh_registration(db, carrier, &number, &reg).await {
+                Ok(()) => n += 1,
+                Err(_) => tracing::warn!(registration = %reg_id, "registration sweep refresh failed"),
+            }
+            // Mark it looked at, so one stuck row doesn't hog every sweep.
+            let _ = sqlx::query("UPDATE sms_registrations SET updated_at = now() WHERE id = $1 AND state = 'pending'").bind(&reg_id).execute(db).await;
+        }
+    }
+    Ok(n)
+}
+
+/// Every 30 minutes, when a carrier is configured.
+pub fn start_registration_sweep(db: PgPool) {
+    let Ok(carrier) = carrier() else { return };
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(30 * 60)).await;
+            if let Err(e) = sweep_pending_registrations(&db, carrier.as_ref()).await {
+                tracing::warn!("registration sweep: {:?}", e);
+            }
+        }
+    });
+}
+
+/// Sole proprietor registrations: with `pin`, check the code the person got by
+/// text and (when right) file the campaign; without it, send a new code.
+pub async fn registration_otp(db: &PgPool, carrier: &dyn Carrier, user: &str, number_id: &str, pin: Option<&str>) -> PResult<Value> {
+    let number = number_for_user(db, user, number_id).await?;
+    let reg = latest_registration(db, number_id).await?.ok_or(PhoneError::NotFound("no_registration"))?;
+    if reg.state != "pending" {
+        return Err(PhoneError::Conflict("registration_not_pending"));
+    }
+    let brand_id = reg.brand_id.clone().ok_or(PhoneError::Conflict("no_brand"))?;
+    match pin.map(str::trim).filter(|p| !p.is_empty()) {
+        None => carrier.send_brand_otp(&brand_id).await?,
+        Some(pin) => {
+            if !carrier.verify_brand_otp(&brand_id, pin).await? {
+                return Err(PhoneError::BadRequest("That code didn't match. Check the latest text, or ask for a new code.".into()));
+            }
+            // Verified: file the campaign now rather than waiting for the sweep.
+            let _ = refresh_registration(db, carrier, &number, &reg).await;
+        }
+    }
+    let number = number_for_user(db, user, number_id).await?;
+    let reg = latest_registration(db, number_id).await?.ok_or(PhoneError::NotFound("no_registration"))?;
+    Ok(reg_json(&reg, &number))
+}
+
+#[derive(Deserialize, Default)]
+struct OtpBody {
+    pin: Option<String>,
+}
+
+async fn registration_otp_route(State(state): State<Arc<ApiState>>, headers: HeaderMap, Path(id): Path<String>, body: Option<Json<OtpBody>>) -> Response {
+    let run = async {
+        let user = user_id(&state, &headers).await?;
+        let carrier = carrier()?;
+        let pin = body.and_then(|Json(b)| b.pin);
+        let out = registration_otp(&state.db, carrier.as_ref(), &user, &id, pin.as_deref()).await?;
+        Ok::<_, PhoneError>(Json(out).into_response())
+    };
+    run.await.unwrap_or_else(IntoResponse::into_response)
 }
 
 /// The latest registration for a number the user owns, refreshed from the
@@ -1483,6 +1583,12 @@ mod tests {
             let campaign_id = (!self.defer_campaign).then(|| "camp-1".to_string());
             Ok(RegistrationHandle { brand_id: Some("brand-1".into()), campaign_id, tfv_id: None })
         }
+        async fn send_brand_otp(&self, _b: &str) -> Result<(), CarrierError> {
+            Ok(())
+        }
+        async fn verify_brand_otp(&self, _b: &str, pin: &str) -> Result<bool, CarrierError> {
+            Ok(pin == "123456")
+        }
         async fn file_pending_campaign(&self, _b: &str, form: &RegistrationForm) -> Result<Option<String>, CarrierError> {
             assert_eq!(form.use_case, "CUSTOMER_CARE", "the stored form is passed back");
             match self.campaign_ready.lock().unwrap().clone() {
@@ -1793,7 +1899,38 @@ mod tests {
         refresh_registration(&db, &c, &number, &reg).await.unwrap();
         assert_eq!(number_for_user(&db, USER, &n.id).await.unwrap().sms_state, "active");
 
+        // A refusal about Allternit's carrier account (balance) is not the business's fault:
+        // it stays pending with the reason, the sweep retries it, and it files once fixed.
+        let n3 = buy(&db, &c, &e164(54)).await.unwrap();
+        *c.reg_state.lock().unwrap() = None;
+        submit_registration(&db, &c, USER, &n3.id, None, form.clone()).await.unwrap();
+        *c.campaign_ready.lock().unwrap() = Some(Err("Your account must have at least $30.00 to perform this operation".into()));
+        let number3 = number_for_user(&db, USER, &n3.id).await.unwrap();
+        let reg3 = latest_registration(&db, &n3.id).await.unwrap().unwrap();
+        refresh_registration(&db, &c, &number3, &reg3).await.unwrap();
+        let reg3 = latest_registration(&db, &n3.id).await.unwrap().unwrap();
+        assert_eq!(reg3.state, "pending", "balance problems keep it pending");
+        assert!(reg3.rejection_reason.as_deref().is_some_and(|r| r.starts_with("waiting: ")));
+        assert_eq!(number_for_user(&db, USER, &n3.id).await.unwrap().sms_state, "pending_registration");
+        *c.campaign_ready.lock().unwrap() = Some(Ok("camp-30".into()));
+        sqlx::query("UPDATE sms_registrations SET updated_at = now() - interval '1 hour' WHERE id = $1").bind(&reg3.id).execute(&db).await.unwrap();
+        assert!(sweep_pending_registrations(&db, &c).await.unwrap() >= 1);
+        assert_eq!(latest_registration(&db, &n3.id).await.unwrap().unwrap().campaign_id.as_deref(), Some("camp-30"), "the sweep files it once the account is fixed");
+        assert!(carrier_will_retry(503, "x") && carrier_will_retry(400, "Insufficient balance") && !carrier_will_retry(400, "sample1 is required"));
+
+        // Sole proprietor: a wrong code is a clear 400, the right one files the campaign.
+        release_number(&db, &c, USER, &n3.id).await.unwrap(); // stay inside the plan's 3 numbers
+        let n4 = buy(&db, &c, &e164(56)).await.unwrap();
+        *c.reg_state.lock().unwrap() = None;
+        submit_registration(&db, &c, USER, &n4.id, None, form.clone()).await.unwrap();
+        *c.campaign_ready.lock().unwrap() = Some(Ok("camp-sp".into()));
+        assert!(matches!(registration_otp(&db, &c, USER, &n4.id, Some("000000")).await, Err(PhoneError::BadRequest(_))));
+        let out = registration_otp(&db, &c, USER, &n4.id, Some("123456")).await.unwrap();
+        assert_eq!(out["registration"]["campaignId"], "camp-sp");
+        assert!(registration_otp(&db, &c, USER, &n4.id, None).await.is_ok(), "resend works while pending");
+
         // A campaign the carrier refuses outright shows its reason.
+        release_number(&db, &c, USER, &n4.id).await.unwrap();
         let n2 = buy(&db, &c, &e164(53)).await.unwrap();
         *c.reg_state.lock().unwrap() = None;
         submit_registration(&db, &c, USER, &n2.id, None, form).await.unwrap();

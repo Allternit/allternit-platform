@@ -570,7 +570,7 @@ async fn connect_allternit_mail(
                 "setup_hint": if configured {
                     "Pass {\"agent_id\":\"...\"} to provision (or adopt) the agent's mailbox and mark this connector connected."
                 } else {
-                    "Allternit Mail is not configured on this deployment: set ALLTERNIT_MAILFLARE_URL, ALLTERNIT_MAILFLARE_ADMIN_KEY and ALLTERNIT_BOT_EMAIL_DOMAIN, then connect with {\"agent_id\":\"...\"}."
+                    "Allternit Mail is not configured on this deployment: set ALLTERNIT_MAILFLARE_URL and ALLTERNIT_MAILFLARE_ADMIN_KEY (ALLTERNIT_BOT_EMAIL_DOMAIN defaults to bots.allternit.com), then connect with {\"agent_id\":\"...\"}."
                 },
             })),
         );

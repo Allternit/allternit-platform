@@ -370,7 +370,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 POST /api/v1/agents/:agent_id/identity/email
 ```
 
-Provisions an email address for the agent using the domain configured in `ALLTERNIT_BOT_EMAIL_DOMAIN`.
+Provisions an email address for the agent on `ALLTERNIT_BOT_EMAIL_DOMAIN`. With Allternit Mail configured (`ALLTERNIT_MAILFLARE_URL` + `ALLTERNIT_MAILFLARE_ADMIN_KEY`) the domain defaults to `bots.allternit.com`.
 
 When the mailflare agent-email rail is configured (`ALLTERNIT_MAILFLARE_URL` + `ALLTERNIT_MAILFLARE_ADMIN_KEY`), this creates a **real mailbox** on the mailflare worker, mints a mailbox-scoped send/read API key, seals it server-side, and stores the channel with provider `"mailflare"`. The agent can then genuinely receive and (subject to approval) send internet email. When mailflare is not configured, the endpoint falls back to minting an address record only (provider `"commrails"`) with no send/receive transport.
 
@@ -520,7 +520,7 @@ curl -X POST http://127.0.0.1:8013/api/v1/photon/sessions/sess_9c1d.../bridge \
 | `409 Conflict` | `email_not_provisioned` | Agent has no mailflare email channel; provision one first. |
 | `403 Forbidden` | `email_send_disabled` | Outbound email is disabled for this agent. |
 | `500 Internal Server Error` | `internal_error` | Unexpected server error. |
-| `501 Not Implemented` | `email_domain_not_configured` | `ALLTERNIT_BOT_EMAIL_DOMAIN` is not set. |
+| `501 Not Implemented` | `email_domain_not_configured` | Allternit Mail isn't configured and `ALLTERNIT_BOT_EMAIL_DOMAIN` is not set. |
 | `501 Not Implemented` | `mailflare_not_configured` | `ALLTERNIT_MAILFLARE_URL` / `ALLTERNIT_MAILFLARE_ADMIN_KEY` are not set. |
 | `501 Not Implemented` | `phone_pool_not_configured` | `ALLTERNIT_BOT_PHONE_POOL` is not set. |
 | `501 Not Implemented` | `phone_pool_empty` | `ALLTERNIT_BOT_PHONE_POOL` is empty. |

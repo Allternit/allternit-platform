@@ -15,15 +15,15 @@ Each channel has a short wizard: intro, one action (usually the platform's own a
 
 | Channel | What you do | Status |
 | --- | --- | --- |
-| **Telegram** | Name the bot, tap **Confirm** in Telegram once. If managed bots are not available yet, the wizard asks for a BotFather token instead. | Available |
-| **Email** | Your bot gets a shared address (for example `researcher@mail.allternit.com`) that is live as soon as the wizard finishes. Add your own domain later for branded addresses. | Coming soon |
-| **Phone number** | Buy a local or toll-free number, or port yours. Calls work immediately; texting follows carrier registration. See [Calls and texts in threads](/guides/calls-and-texts). | Coming soon |
+| **Telegram** | Name the bot, tap **Confirm** in Telegram once. Until Allternit's managed Telegram bot is switched on, the wizard asks for a BotFather token instead. | Available (token) |
+| **Email** | Your bot gets its own address named after it (for example `researcher@bots.allternit.com`) that is live as soon as the wizard finishes. You can change the name part in the bot's Identity settings. | Available |
+| **Phone number** | Buy a local or toll-free number (paid plans), or port yours. Calls work immediately; texting follows carrier registration. See [Calls and texts in threads](/guides/calls-and-texts). | Available |
 | **Discord** | Add the Allternit app to your server, then choose which channels the bots may use. | Coming soon |
 | **Slack** | Install the Allternit app in your workspace. | Coming soon |
 | **Microsoft Teams** | Install the app. If your organisation requires it, the wizard gives you a link for your admin. | Coming soon |
 | **WhatsApp** | Business number through Meta, or a personal number by QR code ("Linked devices"). Personal numbers carry a warning you must read first. | Coming soon |
 
-"Coming soon" means the connection service for that channel has not reached your Allternit yet. The wizard checks, and shows a disabled **Coming soon** panel instead of an error. Nothing is broken; the button turns into a working wizard after an update.
+"Coming soon" means Allternit's own app for that platform (Discord, Slack, Teams, WhatsApp) isn't switched on yet; each needs a one-time setup with that platform, and some need the platform's review. The wizard checks live (`GET /api/v1/channels/availability`) and shows a disabled **Coming soon** panel instead of an error, and turns into a working wizard as soon as the app is on.
 
 ## Switch it on per bot
 
@@ -53,7 +53,6 @@ Email wizards include a reply setting for each bot:
 | **Known senders** | Replies send automatically to senders on your allowlist; everyone else waits for approval. |
 | **Auto** | The bot replies without approval. |
 
-Email reply modes are **coming soon** together with the Email channel.
 
 ## Limits
 
