@@ -41,6 +41,9 @@ use crate::work::types::{DagEdge, DagNode, DagRelation, DagState};
 #[path = "gate_judge.rs"]
 mod gate_judge;
 pub use gate_judge::{CloseOutcome, HumanDecision, JudgeHandle, ReclaimRecord};
+// `proof add` (Gate-written receipt); see `workspace/proof.rs`.
+#[path = "../workspace/proof_gate.rs"]
+mod proof_gate;
 
 #[derive(Clone)]
 pub struct GateOptions {
@@ -2047,6 +2050,7 @@ impl Gate {
         let events = self.events_for_dag(dag_id).await?;
         let dag = project_dag(&events, dag_id);
         let _ = write_dag_view(&self.root_dir, &dag)?;
+        crate::workspace::node_folder::refresh(&self.root_dir, &dag, &self.ledger).await;
         Ok(())
     }
 
