@@ -1061,6 +1061,7 @@ mod email_local_part_tests {
             admin_key: "ep_admin".into(),
             domain: "bus.test".into(),
             webhook_secret: None,
+            brokered: false,
         })
     }
 

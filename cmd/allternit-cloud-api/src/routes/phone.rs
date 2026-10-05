@@ -631,7 +631,7 @@ pub async fn refresh_registration(db: &PgPool, carrier: &dyn Carrier, number: &N
             match carrier.file_pending_campaign(&brand_id, &form).await {
                 Ok(None) => return Ok(()),
                 Ok(Some(campaign_id)) => {
-                    sqlx::query("UPDATE sms_registrations SET campaign_id = $2, updated_at = now() WHERE id = $1").bind(&reg.id).bind(&campaign_id).execute(db).await?;
+                    sqlx::query("UPDATE sms_registrations SET campaign_id = $2, rejection_reason = NULL, updated_at = now() WHERE id = $1").bind(&reg.id).bind(&campaign_id).execute(db).await?;
                     handle.campaign_id = Some(campaign_id);
                     status = carrier.registration_status(kind, &number.e164, &handle, number.messaging_ref.as_deref()).await?;
                 }
@@ -1915,7 +1915,9 @@ mod tests {
         *c.campaign_ready.lock().unwrap() = Some(Ok("camp-30".into()));
         sqlx::query("UPDATE sms_registrations SET updated_at = now() - interval '1 hour' WHERE id = $1").bind(&reg3.id).execute(&db).await.unwrap();
         assert!(sweep_pending_registrations(&db, &c).await.unwrap() >= 1);
-        assert_eq!(latest_registration(&db, &n3.id).await.unwrap().unwrap().campaign_id.as_deref(), Some("camp-30"), "the sweep files it once the account is fixed");
+        let filed = latest_registration(&db, &n3.id).await.unwrap().unwrap();
+        assert_eq!(filed.campaign_id.as_deref(), Some("camp-30"), "the sweep files it once the account is fixed");
+        assert_eq!(filed.rejection_reason, None, "the old waiting note is cleared once filed");
         assert!(carrier_will_retry(503, "x") && carrier_will_retry(400, "Insufficient balance") && !carrier_will_retry(400, "sample1 is required"));
 
         // Sole proprietor: a wrong code is a clear 400, the right one files the campaign.
