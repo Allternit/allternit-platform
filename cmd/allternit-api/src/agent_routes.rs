@@ -26,7 +26,7 @@ use tracing::warn;
 use crate::auth::get_user;
 use crate::auth::AuthUser;
 use crate::AppState;
-use allternit_commrails::LedgerQuery;
+use allternit_factory_engine::LedgerQuery;
 
 fn unauthorized() -> axum::response::Response {
     (
@@ -317,15 +317,15 @@ async fn ingest_agent_event(
         }
     }
 
-    let event = allternit_commrails::AllternitEvent {
+    let event = allternit_factory_engine::AllternitEvent {
         event_id: String::new(),
         ts: String::new(),
-        actor: allternit_commrails::Actor {
-            r#type: allternit_commrails::ActorType::User,
+        actor: allternit_factory_engine::Actor {
+            r#type: allternit_factory_engine::ActorType::User,
             id: user_id,
         },
         scope: body.run_id.as_ref().map(|run_id| {
-            allternit_commrails::EventScope {
+            allternit_factory_engine::EventScope {
                 project_id: None,
                 dag_id: None,
                 node_id: None,
@@ -1059,14 +1059,14 @@ async fn create_agent(
     match result {
         Ok(Ok((id, principal_token))) => {
             // Append agent creation event to Rails ledger for audit/traceability
-            let ledger_event = allternit_commrails::AllternitEvent {
+            let ledger_event = allternit_factory_engine::AllternitEvent {
                 event_id: String::new(),
                 ts: String::new(),
-                actor: allternit_commrails::Actor {
-                    r#type: allternit_commrails::ActorType::User,
+                actor: allternit_factory_engine::Actor {
+                    r#type: allternit_factory_engine::ActorType::User,
                     id: user_id.clone(),
                 },
-                scope: Some(allternit_commrails::EventScope {
+                scope: Some(allternit_factory_engine::EventScope {
                     project_id: None,
                     dag_id: None,
                     node_id: None,
@@ -3738,14 +3738,14 @@ async fn append_run_ledger_event(
         }
     }
 
-    let event = allternit_commrails::AllternitEvent {
+    let event = allternit_factory_engine::AllternitEvent {
         event_id: String::new(),
         ts: String::new(),
-        actor: allternit_commrails::Actor {
-            r#type: allternit_commrails::ActorType::User,
+        actor: allternit_factory_engine::Actor {
+            r#type: allternit_factory_engine::ActorType::User,
             id: user_id.to_string(),
         },
-        scope: Some(allternit_commrails::EventScope {
+        scope: Some(allternit_factory_engine::EventScope {
             project_id: None,
             dag_id: None,
             node_id: None,

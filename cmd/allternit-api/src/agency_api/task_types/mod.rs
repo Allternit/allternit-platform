@@ -46,9 +46,9 @@ pub fn is_enabled(id: &str) -> bool {
 mod tests;
 
 use super::compiler::{RunTemplate, TemplateGraph};
-use allternit_commrails::judge::completion::CompletionPolicy;
-use allternit_commrails::kernel::graph::{self, ComputeGraph};
-use allternit_commrails::kernel::registry::PrimitiveRegistry;
+use allternit_factory_engine::judge::completion::CompletionPolicy;
+use allternit_factory_engine::kernel::graph::{self, ComputeGraph};
+use allternit_factory_engine::kernel::registry::PrimitiveRegistry;
 use anyhow::{anyhow, bail, Result};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -211,7 +211,7 @@ impl RunTemplate for KernelTaskTemplate {
             .map(|a| a.iter().filter_map(Value::as_str).map(String::from).collect())
             .unwrap_or_default();
         let task_id = params["task_id"].as_str().map(str::to_owned).unwrap_or_else(|| {
-            format!("task.{}.{}", t.id.to_ascii_lowercase(), &allternit_commrails::receipts::jcs::sha256_tagged(goal.as_bytes())[7..23])
+            format!("task.{}.{}", t.id.to_ascii_lowercase(), &allternit_factory_engine::receipts::jcs::sha256_tagged(goal.as_bytes())[7..23])
         });
         let g = instantiate(t, &task_id, &writable).map_err(|e| e.to_string())?;
         to_template_graph(&g, &writable, t.graph_id, &task_id).map_err(|e| e.to_string())

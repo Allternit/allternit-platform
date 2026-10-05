@@ -325,7 +325,7 @@ async fn create_run(
         .map_err(err)?;
     // Judge fail-closed + verifier-owned completion, origin agency (Q18).
     s.append_raw(
-        allternit_commrails::judge::events::POLICY_SET,
+        allternit_factory_engine::judge::events::POLICY_SET,
         &run_id,
         json!({ "dag_id": compiled.task_ir["dag_id"], "policy": compiler::judge_policy_json(&compiled.judge_policy) }),
     )
@@ -1053,14 +1053,14 @@ async fn create_replay(
     let src = obj.get("source_run_id").and_then(Value::as_str).unwrap_or_default().to_string();
     owned(store(&st).load_run(&src).await.map_err(|e| ApiError::internal(e, &rid))?, &user, &rid)?;
     let cs = st.rails.receipts.chain_store().map_err(|e| ApiError::internal(e, &rid))?;
-    let cassette = allternit_commrails::replay::record_cassette(&cs, &src, None, 0)
+    let cassette = allternit_factory_engine::replay::record_cassette(&cs, &src, None, 0)
         .ok()
         .filter(|c| !c.entries.is_empty())
         .ok_or_else(|| ApiError::new(422, "STATE", "ERR_REPLAY_UNRECORDED", "source run has no recorded receipts to replay", &rid))?;
     let id = new_id("rpl");
     let total = cassette.entries.len();
-    let report = allternit_commrails::replay::replay_report(&cs, cassette, None, &id).map_err(|e| ApiError::internal(e, &rid))?;
-    use allternit_commrails::replay::Verdict;
+    let report = allternit_factory_engine::replay::replay_report(&cs, cassette, None, &id).map_err(|e| ApiError::internal(e, &rid))?;
+    use allternit_factory_engine::replay::Verdict;
     let verdict = match report.verdict {
         Verdict::Identical => "equivalent",
         Verdict::ExpectedDivergence => "diverged_expected",

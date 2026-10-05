@@ -4,14 +4,14 @@
 //! fall back to the local peer registry. Never fail the GET.
 
 use super::{VisibilityDto, VisibilityNeed, VisibilityNeedNode, VisibilityPane};
-use allternit_commrails::core::types::LedgerQuery;
-use allternit_commrails::ledger::ledger::Ledger;
-use allternit_commrails::peer::PeerRegistry;
-use allternit_commrails::wih::active_wihs;
-use allternit_commrails::judge::{pending_judge_needs, PendingJudgeNeed};
-use allternit_commrails::attention::{open_needs_you, AttentionItem};
-use allternit_commrails::work::needs_you::{pending_manual_gates, PendingManualGate};
-use allternit_commrails::project_dag;
+use allternit_factory_engine::core::types::LedgerQuery;
+use allternit_factory_engine::ledger::ledger::Ledger;
+use allternit_factory_engine::peer::PeerRegistry;
+use allternit_factory_engine::wih::active_wihs;
+use allternit_factory_engine::judge::{pending_judge_needs, PendingJudgeNeed};
+use allternit_factory_engine::attention::{open_needs_you, AttentionItem};
+use allternit_factory_engine::work::needs_you::{pending_manual_gates, PendingManualGate};
+use allternit_factory_engine::project_dag;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::Path;
@@ -136,7 +136,7 @@ async fn resolve_need_nodes(raw: &Value, ledger: &Ledger) -> Result<NeedNodeJoin
     }
 
     // Titles come from the projected dag; cache one projection per dag_id.
-    let mut dag_cache: HashMap<String, allternit_commrails::work::DagState> = HashMap::new();
+    let mut dag_cache: HashMap<String, allternit_factory_engine::work::DagState> = HashMap::new();
     for node in join.values_mut() {
         let dag = dag_cache
             .entry(node.dag_id.clone())
@@ -227,7 +227,7 @@ pub fn visibility_from_ao_json(
             id: peer.peer_id.clone(),
             label: peer.name.clone(),
             state: match peer.status {
-                allternit_commrails::peer::PeerStatus::Active => "working".to_string(),
+                allternit_factory_engine::peer::PeerStatus::Active => "working".to_string(),
                 _ => "idle".to_string(),
             },
             last_message: None,
@@ -251,7 +251,7 @@ pub fn visibility_from_peers(peers: &PeerRegistry) -> VisibilityDto {
             id: peer.peer_id.clone(),
             label: peer.name.clone(),
             state: match peer.status {
-                allternit_commrails::peer::PeerStatus::Active => "working".to_string(),
+                allternit_factory_engine::peer::PeerStatus::Active => "working".to_string(),
                 _ => "idle".to_string(),
             },
             last_message: None,
@@ -266,10 +266,34 @@ pub fn visibility_from_peers(peers: &PeerRegistry) -> VisibilityDto {
     }
 }
 
+/// The engine binary, in API.md §1's order: next to this executable, then
+/// `$ALLTERNIT_FACTORY_BIN`, then `~/.allternit/bin/allternit-factory`, then
+/// `allternit-factory` on PATH.
+fn factory_bin() -> std::path::PathBuf {
+    const NAME: &str = "allternit-factory";
+    if let Some(sibling) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.join(NAME)))
+        .filter(|p| p.is_file())
+    {
+        return sibling;
+    }
+    if let Some(explicit) = std::env::var_os("ALLTERNIT_FACTORY_BIN").filter(|v| !v.is_empty()) {
+        return explicit.into();
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        let installed = std::path::PathBuf::from(home).join(".allternit/bin").join(NAME);
+        if installed.is_file() {
+            return installed;
+        }
+    }
+    NAME.into()
+}
+
 async fn run_ao_visibility(root: &Path) -> Option<Value> {
-    let bin = std::env::var("AO_BIN").unwrap_or_else(|_| "ao".to_string());
+    let bin = factory_bin();
     let mut child = Command::new(&bin)
-        .args(["visibility", "--root", &root.to_string_lossy()])
+        .args(["pane", "visibility", "--root", &root.to_string_lossy()])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .kill_on_drop(true)
@@ -413,7 +437,7 @@ mod tests {
 
     #[test]
     fn open_attention_items_join_needs_you() {
-        use allternit_commrails::attention::{AttentionChannel, ItemState};
+        use allternit_factory_engine::attention::{AttentionChannel, ItemState};
         let dir = std::env::temp_dir().join(format!("ao-vis-att-{}", std::process::id()));
         let peers = PeerRegistry::new(&dir).expect("peers");
         let mut dto = visibility_from_peers(&peers);
@@ -499,8 +523,8 @@ mod tests {
         assert!(dto.needs_you.is_empty());
     }
 
-    use allternit_commrails::core::types::{Actor, ActorType, AllternitEvent};
-    use allternit_commrails::{Ledger, LedgerOptions};
+    use allternit_factory_engine::core::types::{Actor, ActorType, AllternitEvent};
+    use allternit_factory_engine::{Ledger, LedgerOptions};
 
     async fn ledger_with(events: Vec<(&str, serde_json::Value)>) -> Ledger {
         static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);

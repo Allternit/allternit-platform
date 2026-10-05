@@ -2,36 +2,51 @@
 //!
 //! Every turn launches a third-party CLI. Before launch:
 //! * Claude Code (hooked) gets a session-scoped `--settings` file generated
-//!   by `allternit-commrails hook claude-settings`, whose PreToolUse hook runs
+//!   by `allternit-factory internal rails hook claude-settings`, whose PreToolUse hook runs
 //!   the hard floor, plus Gate 2 when the turn is bound to a WIH. No
 //!   `--dangerously-skip-permissions`; a missing commrails binary refuses the
 //!   turn instead of running unhooked.
 //! * Codex (sandboxed) runs under its `workspace-write` OS sandbox.
 //! * Everything else is `ungated`: allowed unbound, refused (via
-//!   `allternit-commrails hook spawn-check`) on a WIH whose policy requires
+//!   `allternit-factory internal rails hook spawn-check`) on a WIH whose policy requires
 //!   lease coverage for writes.
 //!
-//! The policy itself lives in `allternit-commrails` (`commrails/src/hook`);
+//! The policy itself lives in `allternit-factory-engine` (`factory/engine/src/gate/hook`);
 //! this module only shells out to it so the gateway does not link CommRails.
 
 use std::path::{Path, PathBuf};
 
 use crate::drivers::{DriverKind, GateKind};
 
-/// Env var naming the `allternit-commrails` binary.
+/// Env var naming the gate binary (`allternit-factory`).
 pub const BIN_ENV: &str = "ALLTERNIT_COMMRAILS_BIN";
+/// Name of the engine binary that carries the gate.
+pub const BIN_NAME: &str = "allternit-factory";
+/// Argv the gate binary needs before the maintenance CLI's own argv.
+pub const BIN_ARGV_PREFIX: [&str; 2] = ["internal", "rails"];
 /// Env var naming the CommRails root that holds WIHs/leases/ledger.
 pub const ROOT_ENV: &str = "ALLTERNIT_COMMRAILS_ROOT";
 
-/// Locate `allternit-commrails`: `$ALLTERNIT_COMMRAILS_BIN`, then `PATH`.
+/// Locate the gate binary: `$ALLTERNIT_COMMRAILS_BIN`, then the current
+/// executable when it is `allternit-factory` (`serve uhp` runs inside it),
+/// then a sibling of the current executable, then `PATH`. It runs with
+/// [`BIN_ARGV_PREFIX`].
 pub fn commrails_bin() -> Option<PathBuf> {
     if let Some(p) = std::env::var_os(BIN_ENV) {
         let p = PathBuf::from(p);
         return p.is_file().then_some(p);
     }
+    if let Ok(exe) = std::env::current_exe() {
+        if exe.file_stem().and_then(|n| n.to_str()) == Some(BIN_NAME) {
+            return Some(exe);
+        }
+        if let Some(sibling) = exe.parent().map(|d| d.join(BIN_NAME)).filter(|p| p.is_file()) {
+            return Some(sibling);
+        }
+    }
     let path = std::env::var_os("PATH")?;
     std::env::split_paths(&path)
-        .map(|d| d.join("allternit-commrails"))
+        .map(|d| d.join(BIN_NAME))
         .find(|c| c.is_file())
 }
 
@@ -56,7 +71,7 @@ pub async fn prepare(
     }
     let bin = commrails_bin().ok_or_else(|| {
         format!(
-            "spawn gate: allternit-commrails not found (set {BIN_ENV}); refusing to run {} without its gate",
+            "spawn gate: allternit-factory not found (set {BIN_ENV}); refusing to run {} without its gate",
             driver.binary()
         )
     })?;
@@ -72,12 +87,13 @@ pub async fn prepare(
 
     if let Some(wih) = wih_id {
         let out = tokio::process::Command::new(&bin)
+            .args(BIN_ARGV_PREFIX)
             .arg("--root")
             .arg(&root)
             .args(["hook", "spawn-check", "--harness", driver.binary(), "--wih", wih])
             .output()
             .await
-            .map_err(|err| format!("spawn gate: could not run allternit-commrails: {err}"))?;
+            .map_err(|err| format!("spawn gate: could not run allternit-factory: {err}"))?;
         if !out.status.success() {
             let reason = String::from_utf8_lossy(&out.stderr).trim().to_string();
             return Err(if reason.is_empty() {
@@ -93,7 +109,8 @@ pub async fn prepare(
     }
     let settings = session_dir.join("claude-settings.json");
     let mut cmd = tokio::process::Command::new(&bin);
-    cmd.arg("--root")
+    cmd.args(BIN_ARGV_PREFIX)
+        .arg("--root")
         .arg(&root)
         .args(["hook", "claude-settings", "--workspace"])
         .arg(workspace_dir)
@@ -106,7 +123,7 @@ pub async fn prepare(
     let out = cmd
         .output()
         .await
-        .map_err(|err| format!("spawn gate: could not run allternit-commrails: {err}"))?;
+        .map_err(|err| format!("spawn gate: could not run allternit-factory: {err}"))?;
     if !out.status.success() || !settings.is_file() {
         return Err(format!(
             "spawn gate: could not write claude hook settings: {}",

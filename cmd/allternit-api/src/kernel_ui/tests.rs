@@ -67,10 +67,10 @@ async fn credential_read_rule_reaches_judge_policy() {
     let t = setup().await;
     let u = user("u1", Some("acme"));
     call(&t, "PUT", "/v1/kernel/agent-rules?scope=org:acme", &u, Some(json!({ "guardrails": { "allow_credential_read": ["~/.config/tool"] } }))).await;
-    let mut p = allternit_commrails::judge::policy::JudgePolicy::default();
+    let mut p = allternit_factory_engine::judge::policy::JudgePolicy::default();
     agent_rules::apply_to_policy(&t.st, "acme", &mut p).await;
     assert_eq!(p.allow_credential_read, Some(vec!["~/.config/tool".to_string()]));
-    let mut other = allternit_commrails::judge::policy::JudgePolicy::default();
+    let mut other = allternit_factory_engine::judge::policy::JudgePolicy::default();
     agent_rules::apply_to_policy(&t.st, "nobody", &mut other).await;
     assert_eq!(other.allow_credential_read, None);
 }
@@ -242,7 +242,7 @@ async fn activity_merges_hooks_and_runs_with_filters_and_paging() {
     let t = setup().await;
     let u = user("u1", None);
     let s = AgencyStore::new(t.st.rails.ledger.clone());
-    let hook = allternit_commrails::hook::HOOK_EVENT;
+    let hook = allternit_factory_engine::hook::HOOK_EVENT;
     s.append_raw(hook, "wih_1", json!({ "wih_id": "wih_1", "harness": "claude", "tool": "Bash", "decision": "deny", "reason": "outside fence" })).await.unwrap();
     s.append_raw(hook, "wih_1", json!({ "wih_id": "wih_1", "harness": "claude", "tool": "Read", "decision": "allow", "reason": "" })).await.unwrap();
     // a verified run and a budget-halted run
@@ -331,7 +331,7 @@ async fn enforced_map_marks_every_field() {
 
 #[tokio::test]
 async fn level_maps_to_fence_and_off_keeps_only_the_blocklist() {
-    use allternit_commrails::judge::policy::{Fence, JudgePolicy, RuleAction, VerifyMode};
+    use allternit_factory_engine::judge::policy::{Fence, JudgePolicy, RuleAction, VerifyMode};
     let mut e = agent_rules::defaults();
     let mut p = JudgePolicy::default();
     agent_rules::rules_to_policy(&e, &mut p);
@@ -378,7 +378,7 @@ async fn budgets_take_the_stricter_scope_and_tighten_the_guard() {
     assert_eq!(open.tightened(&ov).org_daily.usd, Some(5.0));
     assert_eq!(open.tightened(&ov).org_max_concurrent, 1, "min(env default 1, rule 2)");
     // and the rules reach the run's task_ir
-    let mut p = allternit_commrails::judge::policy::JudgePolicy::default();
+    let mut p = allternit_factory_engine::judge::policy::JudgePolicy::default();
     let mut ir = json!({});
     agent_rules::apply_to_run(&t.st, "acme", vec!["project:p1".into()], &mut p, &mut ir).await;
     assert_eq!(ir["rules"]["daily_usd"].as_f64(), Some(5.0));

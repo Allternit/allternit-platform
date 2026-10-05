@@ -7,7 +7,7 @@ use super::bugfix::{self, baseline, explore, judge, repro, select::Outcome, Extr
 use super::{scripted, Exec, Step, StepErr};
 use crate::agency_api::safety::{journal_value, journaled_value};
 use crate::gizzi_completion::{complete_ephemeral_usage, Usage};
-use allternit_commrails::kernel::router::ExecutionPlan;
+use allternit_factory_engine::kernel::router::ExecutionPlan;
 use bugfix::edits::Planned;
 use serde_json::{json, Value};
 use std::path::Path;

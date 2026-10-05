@@ -102,9 +102,9 @@ pub async fn dispatch(st: &crate::AppState, owner: &str, target: &str, actions: 
     if actions.iter().any(consequential) && !approved {
         bail!("approval required: consequential computer action without an approval (refused)");
     }
-    let digest = allternit_commrails::receipts::jcs::sha256_tagged(serde_json::to_string(actions)?.as_bytes());
+    let digest = allternit_factory_engine::receipts::jcs::sha256_tagged(serde_json::to_string(actions)?.as_bytes());
     if target == "local" {
-        let run_id = format!("agency-{}", &allternit_commrails::receipts::jcs::sha256_tagged(key.as_bytes()).replace("sha256:", "")[..24]);
+        let run_id = format!("agency-{}", &allternit_factory_engine::receipts::jcs::sha256_tagged(key.as_bytes()).replace("sha256:", "")[..24]);
         let body = json!({ "mode": "direct", "actions": actions, "run_id": run_id, "session_id": run_id, "target_scope": "desktop" });
         let resp = reqwest::Client::new().post(format!("{}/v1/computer-use/execute", acu_base(st)))
             .timeout(std::time::Duration::from_secs(120)).json(&body).send().await

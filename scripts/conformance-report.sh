@@ -16,7 +16,7 @@ API=""
 [ "${1:-}" = "--api" ] && API="${2:?--api needs a base URL}"
 OUT="$(mktemp -d)"
 
-cargo test -p allternit-commrails --test conformance 2>&1 | tee "$OUT/kernel.txt" | grep -E "^test result|error(\[|:)" >&2
+cargo test -p allternit-factory --test conformance 2>&1 | tee "$OUT/kernel.txt" | grep -E "^test result|error(\[|:)" >&2
 if [ -n "$API" ]; then
   # Runs take longer than bun's 5 s default per-test timeout.
   AGENCY_BASE_URL="$API" bun test --reporter=junit --reporter-outfile="$OUT/api.xml" --timeout $(( (${AGENCY_RUN_TIMEOUT_S:-120} * 2 + 90) * 1000 )) ./tests/agency-conformance/agency-api.conformance.ts 2>&1 | tee "$OUT/api.txt" | tail -5 >&2

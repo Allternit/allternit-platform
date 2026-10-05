@@ -27,7 +27,7 @@ pub async fn advance(s: &AgencyStore, owner: &str, campaign_id: &str, run_id: &s
     }
     let mut c = s.load_object(EV_CAMPAIGN_STATE, campaign_id, owner).await?
         .ok_or_else(|| anyhow!("campaign {campaign_id} not found"))?;
-    let digest = allternit_commrails::receipts::jcs::sha256_tagged(step.as_bytes());
+    let digest = allternit_factory_engine::receipts::jcs::sha256_tagged(step.as_bytes());
     let cycles = c["cycles"].as_array().cloned().unwrap_or_default();
     if let Some(prev) = cycles.iter().find(|x| x["effect_key"] == key) {
         return Ok(format!("campaign:{campaign_id}:cycle:{}:{}", prev["cycle"], prev["step_digest"].as_str().unwrap_or_default()));

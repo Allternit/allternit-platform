@@ -560,7 +560,7 @@ impl StuckDetector {
 
 // ── 4. prod lanes ───────────────────────────────────────────────────────────
 
-use allternit_commrails::kernel::router::{PoolEntry, Residency, StaticModelPool};
+use allternit_factory_engine::kernel::router::{PoolEntry, Residency, StaticModelPool};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum LaneMode {

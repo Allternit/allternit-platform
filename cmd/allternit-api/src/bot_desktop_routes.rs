@@ -33,7 +33,7 @@ use crate::bot_desktop_windows;
 use crate::AppState;
 use crate::{BotDesktopControlState, BotDesktopSession};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use allternit_commrails::core::types::{Actor, ActorType, AllternitEvent, EventScope};
+use allternit_factory_engine::core::types::{Actor, ActorType, AllternitEvent, EventScope};
 use allternit_driver_interface::{
     DesktopEndpoint,
     DesktopProtocol,
