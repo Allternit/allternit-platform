@@ -926,6 +926,19 @@ pub async fn dispatch_events_with_files(st: &Arc<AppState>, acct: &Account, tx: 
                 continue;
             }
         }
+        // Factory approval answers on Slack / SMS: checked against the owner's
+        // verified identity and a one-time code, never routed to a bot.
+        if matches!(tx.provider(), "slack" | "sms") && e.kind == InboundKind::Message && !e.own && e.text.as_deref().is_some_and(crate::factory_approvals_channels::is_answer) {
+            let ans = crate::factory_approvals_channels::Answer { channel: tx.provider(), account: acct, sender: e.user.as_deref(), text: e.text.as_deref().unwrap_or(""), message_id: &e.message_id, forwarded: false };
+            if let Some(reply) = crate::factory_approvals_channels::handle_answer(st, ans).await.filter(|r| !r.is_empty()) {
+                let out = Outbound { workspace: e.workspace.clone(), channel: e.channel.clone(), thread: e.thread.clone(), text: reply, identity: None };
+                if let Err(err) = tx.post(&out).await {
+                    warn!(provider = tx.provider(), "factory approval reply failed: {err:?}");
+                }
+            }
+            crate::channel_attachments::discard_kept(tx.provider(), &e.remote_id);
+            continue;
+        }
         let routed = route_inbound(&st.db, &rt, acct, tx.provider(), &e).await;
         // Files kept for a message that was not recorded (a replay) are dropped, not left behind.
         crate::channel_attachments::discard_kept(tx.provider(), &e.remote_id);
@@ -1099,6 +1112,13 @@ async fn webhook_h(State(state): State<Arc<AppState>>, Path(provider): Path<Stri
     let Ok(payload) = serde_json::from_slice::<Value>(&body) else {
         return (StatusCode::BAD_REQUEST, Json(json!({ "error": "invalid_json" }))).into_response();
     };
+    // Factory approval answers (buttons, `approve <node> <code>`, `verify <code>`)
+    // are read from the raw update (forwarding lives there) and never routed to a bot.
+    if provider == "telegram" && crate::factory_approvals_channels::telegram_is_factory(&payload) {
+        let st = state.clone();
+        tokio::spawn(async move { crate::factory_approvals_channels::telegram_update(&st, &acct, &payload).await });
+        return Json(json!({ "ok": true })).into_response();
+    }
     let events = tx.normalize(&payload);
     let files = crate::channel_attachments::inbound_files(&provider, &payload);
     let st = state.clone();
