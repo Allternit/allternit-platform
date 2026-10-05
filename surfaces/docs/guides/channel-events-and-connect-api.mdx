@@ -61,16 +61,16 @@ Tool use during a call reuses the `agent.tool.*` events.
 | Phone | Cloud `/api/v1/phone/numbers/*` (search, buy with `runtimeId` + `botId`, `registration`, `registration/otp`, `port`); availability from the public `GET /api/v1/channels/availability` |
 | Telegram (managed bot) | Runtime `GET /api/v1/gateway/channel-accounts/telegram/managed/available`; cloud `POST /api/v1/channel-onboarding/telegram` and `GET …/:id`. Without the manager bot the wizard falls back to the BotFather token form. |
 | Slack | Cloud `GET /api/v1/channels/slack/install` (the Add to Slack link), then runtime `POST /api/v1/gateway/channel-accounts/slack` records the installed workspace (idempotent; 404 until the install lands) |
-| Email | Runtime `GET /api/v1/agent-email/status`, `POST /api/v1/agents/:id/identity/email` (the bot's address), `PATCH /api/v1/agents/:id` with `identityChannels.email.{replyMode, replyAllowlist}` (`approve` / `auto_known` / `auto`; other email fields are kept) |
+| Email | Runtime `GET /api/v1/agent-email/status`, `POST /api/v1/agents/:id/identity/email` (the bot's address; `DELETE` then `POST {localPart}` changes it), `PATCH /api/v1/agents/:id` with `identityChannels.email.{replyMode, replyAllowlist}` (`approve` / `auto_known` / `auto`; other email fields are kept) |
 | Discord | Cloud `POST /api/v1/channels/discord/install {runtimeId}` (the Add to Discord link), then runtime `POST /api/v1/gateway/channel-accounts/discord {guildId?}` reads `GET /api/v1/channels/discord/installs` and records the server as an app-mode connection (idempotent; 404 until the install lands). Bots answer where they are mentioned; there is no channel picker yet. |
 | Teams, WhatsApp | Not wired yet: the cloud install routes exist but nothing turns a finished install into an account on the runtime, so these show **Coming soon**. |
 
-A 404 or 503 on a read means the provider's backend isn't there: availability calls resolve to "not available" and the wizard shows its **Coming soon** panel. Company domains for bot email and test-message buttons are not built yet; the wizards say so instead of failing.
+A 404 or 503 on a read means the provider's backend isn't there: availability calls resolve to "not available" and the wizard shows its **Coming soon** panel. Company domains for bot email and test-message buttons are not built yet; the wizards say so instead of failing. The email wizard has no test button: it tells people to email the address from their own inbox.
 
 | Area | Methods |
 | --- | --- |
 | Telegram managed bots | `telegramManagedAvailability`, `createManagedTelegramBot`, `managedTelegramStatus`, `cancelManagedTelegramBot` |
-| Email | `emailStatus`, `saveEmailSettings` (`replyMode`: `approve`, `known`, `auto`; `allowlist`), `setEmailDomain`, `emailDomainStatus`, `sendEmailTest` |
+| Email | `emailStatus`, `saveEmailSettings` (`replyMode`: `approve`, `known`, `auto`; `allowlist`), `setEmailDomain`, `emailDomainStatus`, `changeEmailAddress(botId, localPart)` |
 | Phone numbers | `phoneAvailability`, `searchPhoneNumbers`, `buyPhoneNumber`, `submitPhoneRegistration`, `phoneRegistrationStatus`, `portPhoneNumber` |
 | Discord, Slack, Teams, WhatsApp | `startChannelConnect(provider, { botId })`, `channelConnectStatus`, `cancelChannelConnect`, `teamsAdminLink`, `listConnectChannels`, `saveConnectChannels`, `whatsappModes`, `startWhatsAppPersonal` |
 | Health | `sendConnectTest(accountId)` |
