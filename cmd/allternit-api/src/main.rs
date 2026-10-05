@@ -1139,6 +1139,9 @@ async fn main() {
         .nest("/api", allternit_api::vendor_tickets::router())
         // The twin: one persona and shared memory across every bot.
         .nest("/api", allternit_api::twin_persona::router())
+        // Factory approvals: owned here (not proxied to the engine) because
+        // push and channels live in this process.
+        .nest("/api", allternit_api::factory_approvals::router())
         .nest("/api", allternit_api::vendor_local_connector::router())
         .nest("/api", office_engine_router())
         .nest("/api", provider_router())
@@ -1331,6 +1334,7 @@ async fn main() {
     allternit_api::spend_limits::spawn_sync(state.clone());
     // Bots' saved memory is tidied weekly on their own model (P7.4).
     allternit_api::memory_curation::spawn_weekly(state.clone());
+    allternit_api::factory_approvals::spawn_sync(state.clone());
     // Canonical memory: merge duplicates (S1 RELATION shadow) + soft decay (WP-M1d).
     allternit_api::memory_consolidation::spawn(state.clone());
 

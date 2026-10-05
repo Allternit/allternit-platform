@@ -7,7 +7,7 @@
  * The screen (BotsPaneScreen) owns data loading, selection, and keys.
  */
 import * as React from 'react'
-import { Box, Text, useTheme } from '../../ink'
+import { Box, Text } from '../../ink'
 import type { BotRosterRow } from '@/runtime/bots/bot-roster.js'
 import { EMPTY_BOTS_MESSAGE, buildBotRowSegments } from './rows.js'
 
@@ -18,7 +18,6 @@ export function BotsRowList({
   rows: BotRosterRow[]
   selectedIndex: number
 }): React.ReactNode {
-  const theme = useTheme()
   if (rows.length === 0) {
     return (
       <Box flexDirection="column" marginTop={1}>
@@ -33,10 +32,10 @@ export function BotsRowList({
         const s = buildBotRowSegments(row)
         return (
           <Box key={row.name} flexDirection="row" paddingLeft={1}>
-            <Text color={theme[s.glyphColor] ?? s.glyphColor}>{s.glyph} </Text>
+            <Text color={s.glyphColor}>{s.glyph} </Text>
             <Text
               bold={isSelected}
-              color={isSelected ? theme.text : theme.subtle}
+              color={isSelected ? 'text' : 'subtle'}
               wrap="truncate-end"
             >
               {s.identity}
@@ -49,7 +48,7 @@ export function BotsRowList({
             ) : null}
             {s.model ? <Text dimColor>{s.model}</Text> : null}
             {s.badge ? (
-              <Text color={theme.warning} bold>
+              <Text color="warning" bold>
                 {' '}
                 {s.badge}
               </Text>

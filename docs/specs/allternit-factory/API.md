@@ -1,4 +1,4 @@
-# Allternit Factory: interface contract (v0, 2026-10-04)
+# Allternit Factory: interface contract (v0.2, 2026-10-04)
 
 Every workstream builds against this. If you need a change, write it in your notes file under "Contract change requested". Don't silently diverge.
 
@@ -60,21 +60,23 @@ TeamPlanStep { action: 'spawn'|'bind'|'skip'|'stop', agent: string, harness?: st
 ```
 
 ### Orchestration
-- `POST /api/factory/send` body `{ to: string /* address or agent id */, text: string, queue?: boolean, threadId?: string }` → `Delivery`
+- `POST /api/factory/send` body `{ to: string /* address or agent id */, text: string, queue?: boolean, threadId?: string }` → `Delivery`. When `threadId` is given, the engine records the text as a thread message, and `messageId` names it.
 - `GET /api/factory/deliveries?agent=&thread=&node=` → `{ deliveries: Delivery[] }`
 - `GET /api/factory/events` (Server-Sent Events). Event types: `agent.state`, `node.status`, `delivery`, `approval.requested`, `approval.resolved`, `proof.recorded`, `team.changed`. Each has `{ type, at, data }`. It supports `Last-Event-ID` replay.
 
 ```
 Delivery { id, to: string, via: 'session'|'pane'|'pane_queue'|'vendor_ticket'|'channel',
            state: 'verified'|'queued'|'best_effort'|'read_only'|'failed',
-           ticket: string|null /* 'T-14' */, threadId: string|null, nodeId: string|null,
+           ticket: string|null /* 'T-14' */, threadId: string|null,
+           messageId: string|null /* the outbound thread message this delivery carried */,
+           nodeId: string|null, dagId: string|null /* the DAG of nodeId */,
            at: string, detail: string|null }
 ```
 
 ### Workflows
 - `GET /api/factory/templates` → `{ templates: TemplateSummary[] }`
 - `GET /api/factory/templates/:id` → `Template`
-- `POST /api/factory/runs` body `{ template: string, params?: Record<string,string>, campaignId?: string, dryRun?: boolean }` → `{ dagId: string, nodes: NodeCard[] }`
+- `POST /api/factory/runs` body `{ template: string, intent?: string, params?: Record<string,string>, campaignId?: string, projectId?: string, dryRun?: boolean }` → `{ dagId: string, campaignId: string, nodes: NodeCard[] }`. `intent` is the person's words. It becomes the campaign's and root node's `## Intent`, and fills the template param named `intent` if there is one. Give `campaignId` or `projectId`: with `projectId`, the engine uses that project's campaign and creates one if there isn't one (Project = Campaign).
 - `GET /api/factory/dags/:dagId` → `Flow`
 
 ```
@@ -86,15 +88,17 @@ Flow { dagId, title, nodes: NodeCard[], edges: { from: string, to: string, type:
 ```
 
 ### Workspace
-- `GET /api/factory/campaigns` → `{ campaigns: { id, title, intent, status, proven: number, total: number, needsYou: number }[] }`
+- `GET /api/factory/campaigns` → `{ campaigns: { id, projectId: string|null, title, intent, status, proven: number, total: number, needsYou: number }[] }`. `projectId` links a campaign to its project page (Project = Campaign).
 - `GET /api/factory/campaigns/:id/board` → `Board`
+- `GET /api/factory/nodes?assignee=<address>&status=<open|all>` → `{ nodes: NodeCard[] }`: a bot's own nodes across campaigns (the bot phone's Work app). The default `status` is `open`.
 - `GET /api/factory/nodes/:dagId/:nodeId` → `NodePage`
 - `POST /api/factory/nodes/:dagId/:nodeId/proof` (multipart: `line`, `file`) → `{ path, receiptId }`
 
 ```
 NodeCard { dagId, nodeId, title, status: 'new'|'ready'|'working'|'checking'|'needs_you'|'done'|'failed'|'blocked',
            assignee: string|null /* address */, bindingType: 'hosted'|'terminal'|'vendor'|null,
-           proof: { proven: number, total: number }, blockedBy: string[], needsYou: boolean, depth: number }
+           proof: { proven: number, total: number }, blockedBy: string[], needsYou: boolean, depth: number,
+           gate: { kind: string } | null /* set when the node waits on a person */ }
 Board { campaign: { id, title, intent }, summary: { now: NodeCard[], next: NodeCard[], proven: {k: number, n: number}, needsYou: NodeCard[] },
         waves: { depth: number, nodes: NodeCard[] }[] }
 NodePage { card: NodeCard,
@@ -106,7 +110,7 @@ NodePage { card: NodeCard,
 
 ### Approvals (owned by allternit-api)
 - `GET /api/factory/approvals?state=pending` → `{ approvals: Approval[] }`
-- `POST /api/factory/approvals/:id/resolve` body `{ decision: 'approve'|'reject', note?: string }`. Called in-app, with the session's owner as actor.
+- `POST /api/factory/approvals/:id/resolve` body `{ decision: 'approve'|'reject', note?: string }`. Called in-app, with the session's owner as actor. `200` → `Approval` (resolved). `409` when another surface answered first → `{ error: { code: 'refused', fact: 'Already approved by <who> via <surface> at <time>', action: 'Nothing to do.' }, approval: Approval }`. `410` when expired.
 - Push action endpoint and channel inbound hooks: internal to allternit-api (see stream F5).
 
 ```
@@ -115,6 +119,12 @@ Approval { id, dagId, nodeId, title, summary, evidenceRef: string|null, risk: 'n
            state: 'pending'|'approved'|'rejected'|'expired',
            resolvedBy: string|null, resolvedVia: string|null, resolvedAt: string|null, expiresAt: string }
 ```
+
+### UI events (allternit-ai, window CustomEvents)
+These aren't HTTP. They're how the Factory surfaces in the app hand off to each other. Each one has one owner that listens.
+- `allternit:switch-mode` `{ mode: 'code' }`: the shell (desktop and PhoneShell) switches modes.
+- `allternit:factory-attach-pane` `{ paneId, botId, originView }`: the Code mode terminal wall focuses that engine pane (owner: the Desktop fold-in stream).
+- `allternit:factory-open-node` `{ dagId, nodeId }`: the current page's shared pane opens the Node pane. A bot thread hosts it in its own pane, and a project page in its pane workspace.
 
 ### Errors
 HTTP errors use status 400/403/404/409/502/504 with the body `{ error: { code, fact, action } }`, using the same codes as the CLI.

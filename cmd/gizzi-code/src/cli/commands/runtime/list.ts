@@ -5,7 +5,7 @@ export async function runtimeListCommand(): Promise<void> {
 
   if (runtimes.length === 0) {
     process.stdout.write('No runtimes registered.\n');
-    process.stdout.write('Run `gizzi runtime register` to discover local agent CLIs.\n');
+    process.stdout.write('Run `gizzi agents harness register` to discover local agent CLIs.\n');
     return;
   }
 

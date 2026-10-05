@@ -396,6 +396,7 @@ import { isFullscreenEnvEnabled, maybeGetTmuxMouseHint, isMouseTrackingEnabled }
 import { AlternateScreen } from '../ink/components/AlternateScreen';
 import { DashboardScreen } from './DashboardScreen';
 import { BotsPaneScreen } from './bots-pane/BotsPaneScreen';
+import { FactoryFloorScreen } from './factory-floor/FactoryFloorScreen';
 import { InProcessDashboardSource } from '../dashboard/InProcessSource';
 import { ScrollKeybindingHandler } from '../components/ScrollKeybindingHandler';
 import { useMessageActions, MessageActionsKeybindings, MessageActionsBar, type MessageActionsState, type MessageActionsNav, type MessageActionCaps } from '../components/messageActions';
@@ -5004,6 +5005,20 @@ export function REPL({
       </KeybindingSetup>;
     return <AlternateScreen mouseTracking={isMouseTrackingEnabled()}>
         {botsReturn}
+      </AlternateScreen>;
+  }
+
+  if (screen === 'factory') {
+    // Full-screen Allternit Factory floor. Same AlternateScreen +
+    // KeybindingSetup shape as the bots branch; the screen exits back to
+    // 'prompt' itself (q/Esc, or after opening a Hosted bot's session).
+    const factoryReturn = <KeybindingSetup>
+        <AnimatedTerminalTitle isAnimating={titleIsAnimating} title={terminalTitle} disabled={titleDisabled} noPrefix={showStatusInTerminalTab} />
+        <GlobalKeybindingHandlers {...globalKeybindingProps} />
+        <FactoryFloorScreen />
+      </KeybindingSetup>;
+    return <AlternateScreen mouseTracking={isMouseTrackingEnabled()}>
+        {factoryReturn}
       </AlternateScreen>;
   }
 

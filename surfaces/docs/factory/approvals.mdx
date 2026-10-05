@@ -1,0 +1,48 @@
+---
+title: "Approvals"
+description: "Approve a node in the app, from a push notification, or on your own channels with a one-time code."
+---
+
+<Note>
+Shipping with the Allternit Factory build. Factory approvals on every surface are the approved design and are not live yet.
+</Note>
+
+When a node reaches a manual gate, it waits for you. The same approval request appears everywhere at once, and **the first valid answer wins**. The other surfaces then show who approved and where.
+
+Every approval is a Gate event with you (the owner) as the actor and the surface as provenance, so the ledger records exactly how each decision was made.
+
+## In the app
+
+- The **Approve** button on the Node page, which shows the spec next to the proof.
+- The node's card on the Board.
+- The bot phone's Work app.
+- Gizzi: `gizzi workspace approve <node>`, or the approvals list on the home screen.
+
+## Push notifications
+
+A "needs you" push has **Approve** and **Open** buttons. Approve checks that the device session belongs to the owner before it counts. See [Call notifications](/guides/call-notifications) for how push is set up on your devices.
+
+## Channels: Telegram, Slack, SMS and email
+
+The request is posted only to channels bound to **your own account**, never to a shared or team channel. It carries a one-time code tied to that node and to you.
+
+- Telegram and Slack show buttons.
+- SMS and email: reply with `approve n_02 <code>` (or `reject n_02 <code>`).
+
+### Safety rules
+
+- **The code expires.** An expired code is refused.
+- **Only you can answer.** A reply from any sender other than your verified identity on that bound account is refused and logged.
+- **A forwarded message can't approve.** Forwarded or quoted messages never match.
+- **One use.** A code works once.
+- **High-risk nodes stay in the app.** A bot's [autonomy policy](/guides/bot-autonomy) can require in-app approval for high-risk nodes (money, deploys, client messages). Those requests aren't approvable from a channel at all.
+
+## What you see after
+
+The approval shows its state (`pending`, `approved`, `rejected` or `expired`), who resolved it, on which surface, and when. A rejected node goes back along its Template's route with your note attached.
+
+## Related
+
+- [The Needs you inbox](/guides/needs-you-inbox)
+- [Messaging channels](/guides/messaging-channels)
+- [Workflows: gates](/factory/workflows#gates)

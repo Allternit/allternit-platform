@@ -66,7 +66,7 @@ export function launchdPlistPath(home: string = os.homedir()): string {
 
 export type SystemdUnitOptions = {
   description: string
-  /** Full ExecStart line, e.g. "/usr/local/bin/gizzi cron start". */
+  /** Full ExecStart line, e.g. "/usr/local/bin/gizzi workflows wake jobs start". */
   execStart: string
 }
 
@@ -262,7 +262,7 @@ export async function enableSupervision(
     return {
       ok: false,
       platform,
-      message: `cron autostart is not supported on ${process.platform}. Start the daemon manually with \`gizzi cron start\`.`,
+      message: `cron autostart is not supported on ${process.platform}. Start the daemon manually with \`gizzi workflows wake jobs start\`.`,
     }
   }
   if (!isSupervisableExec(execPath)) {
@@ -271,7 +271,7 @@ export async function enableSupervision(
       platform,
       message:
         "autostart requires the installed gizzi binary, not a JS runtime " +
-        `(${path.basename(execPath)}). Re-run \`gizzi cron enable\` from the installed binary.`,
+        `(${path.basename(execPath)}). Re-run \`gizzi workflows wake jobs enable\` from the installed binary.`,
     }
   }
 
@@ -281,7 +281,7 @@ export async function enableSupervision(
     const plist = launchdPlist({
       label: CRON_DAEMON_LABEL,
       program: execPath,
-      args: ["cron", "start"],
+      args: ["workflows", "wake", "jobs", "start"],
       stdoutLog: path.join(logDir, "daemon.out.log"),
       stderrLog: path.join(logDir, "daemon.err.log"),
     })
@@ -306,7 +306,7 @@ export async function enableSupervision(
   const unitPath = systemdUnitPath(home)
   const unit = systemdUserUnit({
     description: "Gizzi cron daemon",
-    execStart: `${execPath} cron start`,
+    execStart: `${execPath} workflows wake jobs start`,
   })
   await fs.mkdir(path.dirname(unitPath), { recursive: true })
   await fs.writeFile(unitPath, unit)

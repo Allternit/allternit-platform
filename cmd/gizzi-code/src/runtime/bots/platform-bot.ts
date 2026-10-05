@@ -1,5 +1,5 @@
 /**
- * Register a local `gizzi bot` as a platform bot (decision 2026-09-28,
+ * Register a local `gizzi agents bot` as a platform bot (decision 2026-09-28,
  * HANDOFF-gateway-key-and-bots-storage Part 2): the terminal `/bots` chat, the
  * pet HUD and Desktop then show one conversation per bot, the platform bot's
  * standing thread.

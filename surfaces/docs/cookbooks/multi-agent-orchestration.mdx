@@ -1,6 +1,6 @@
 ---
 title: "Cookbook: Multi-Agent Orchestration"
-description: Coordinate multiple agents on a shared task using the CommRails communication protocol
+description: Coordinate multiple agents on a shared task in your own code with the Allternit SDK
 ---
 
 ## Goal
@@ -11,7 +11,7 @@ Build a system where three specialized agents collaborate on a task:
 - **Writer** — synthesizes research into a draft document
 - **Reviewer** — reviews the draft and provides feedback
 
-The agents communicate through the Allternit CommRails protocol and coordinate via a shared message channel.
+Your code runs the agents and passes each one's output to the next.
 
 ## Prerequisites
 
@@ -117,5 +117,5 @@ while (iterations < MAX_ITERATIONS) {
 ## Next steps
 
 - Replace sequential calls with **async parallel runs** for the research phase (fan out multiple researchers).
-- Use the **CommRails protocol** for persistent inter-agent messaging across sessions.
+- To run the same pattern as a standing team with verified sends, proof and approvals, use the [Allternit Factory](/factory/overview) and a [build-check-prove Template](/factory/workflows#build-check-prove).
 - Add a **budget limit** per agent run to control costs.

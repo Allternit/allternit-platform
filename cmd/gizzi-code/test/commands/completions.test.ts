@@ -10,7 +10,7 @@ import { COMMANDS } from "../../src/cli/commands/registry"
 
 const REPO_ROOT = path.resolve(import.meta.dir, "../..")
 
-const SAMPLE_COMMANDS = ["doctor", "serve", "auth"]
+const SAMPLE_COMMANDS = ["doctor", "serve", "auth", "agents", "orchestration", "workflows", "workspace"]
 
 describe("completions generator derives from the yargs command registry", () => {
   test("commandEntries includes a sample of real command names", () => {
@@ -32,6 +32,10 @@ describe("completions generator derives from the yargs command registry", () => 
       const raw = Array.isArray(mod.command) ? mod.command[0] : mod.command
       const name = raw.split(/\s+/)[0]
       if (name === "$0") continue
+      if (mod.describe === false) {
+        expect(names).not.toContain(name)
+        continue
+      }
       expect(names).toContain(name)
     }
   })

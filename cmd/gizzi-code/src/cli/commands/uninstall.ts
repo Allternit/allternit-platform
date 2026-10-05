@@ -204,7 +204,7 @@ async function executeUninstall(method: Installation.Method, targets: RemovalTar
       spinner.stop("Cron daemon stopped")
     } else {
       spinner.stop("Failed to stop cron daemon", 1)
-      errors.push("Cron daemon: shutdown request failed — it may need `gizzi cron stop` manually")
+      errors.push("Cron daemon: shutdown request failed — it may need `gizzi workflows wake jobs stop` manually")
     }
   }
 

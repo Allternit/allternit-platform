@@ -100,7 +100,7 @@ export interface BotPatch {
 const SLUG_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/
 
 /**
- * Subcommand names of `gizzi bot` (plus a few generic collisions). A bot
+ * Subcommand names of `gizzi agents bot` (plus a few generic collisions). A bot
  * named `list` or `chat` would be unreachable from the CLI, so creation is
  * refused up front.
  */
@@ -127,7 +127,7 @@ export function validateBotName(name: string): void {
     )
   }
   if (RESERVED_BOT_NAMES.has(name)) {
-    throw new BotStoreError(`'${name}' is a reserved name — it collides with a gizzi bot subcommand`)
+    throw new BotStoreError(`'${name}' is a reserved name — it collides with a gizzi agents bot subcommand`)
   }
 }
 

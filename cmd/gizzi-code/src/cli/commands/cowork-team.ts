@@ -1,11 +1,11 @@
 /**
- * gizzi cowork-team — Team board CLI
+ * gizzi workspace team — Team board CLI
  *
  * Usage:
- *   gizzi cowork-team board list <workspaceId>
- *   gizzi cowork-team board status <workspaceId>
- *   gizzi cowork-team board assign <itemId> <assigneeId>
- *   gizzi cowork-team skills list <workspaceId>
+ *   gizzi workspace team board list <workspaceId>
+ *   gizzi workspace team board status <workspaceId>
+ *   gizzi workspace team board assign <itemId> <assigneeId>
+ *   gizzi workspace team skills list <workspaceId>
  */
 
 import { cmd } from "@/cli/commands/cmd"
@@ -230,8 +230,8 @@ async function skillsListCommand(workspaceId: string): Promise<void> {
 // ─── Command Definition ───────────────────────────────────────────────────────
 
 export const CoworkTeamCommand = cmd({
-  command: "cowork-team",
-  describe: "Team board and workspace operations",
+  command: "team",
+  describe: "a shared team workspace on the platform: its board (list, status, assign) and skills",
   builder: (yargs) =>
     yargs
       .command(
