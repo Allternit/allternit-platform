@@ -72,9 +72,11 @@ All events are appended to the Ledger as JSON objects with:
 - DriveAttemptStarted (payload: dag_id, node_id, wih_id, attempt_id, attempt, executor, harness, slug, run_dir, timeout_seconds, restart_of, pid) — written before the harness spawns; an attempt without a finish whose session is gone reads as interrupted.
 - DriveAttemptFinished (payload: dag_id, node_id, wih_id, attempt_id, outcome done|failed|dead|timeout|interrupted|spawn_refused|spawn_failed|close_failed|closed, exit_code, receipt_id, reason)
 - DriveSpawnDeferred (payload: dag_id, node_id, reason max_concurrent|max_spawns_per_hour|global_max_concurrent|global_max_spawns_per_hour|capacity, limit, current, detail) — once per node and reason per drive process.
-- DriveNeedsYou (payload: dag_id, node_id, reason harness_refused|harness_unconfigured|interrupted|attempt_failed|pickup_refused, gate_id, executor, attempt_id, detail) — paired with a manual DagNodeWaitGateAdded whose params carry `source: drive`.
+- DriveNeedsYou (payload: dag_id, node_id, reason harness_refused|harness_unconfigured|interrupted|attempt_failed|pickup_refused|rounds_exhausted, gate_id, executor, attempt_id, detail) — paired with a manual DagNodeWaitGateAdded whose params carry `source: drive`.
 - DriveBotNotified (payload: dag_id, node_id, executor, thread_id, message_id) — one typed mail per bot node.
 - DriveCapacityRefused (payload: dag_id, reason) — drive refused to start (load / memory below thresholds).
+- DriveRouteBack (payload: dag_id, node_id, target_node_id, round, max_rounds, failed_status, output_receipt_id, reopened[{node_id, from, to}], delta_id) — after the Gate refine that reopened the `on_fail` path; the round is also the failed node's `on_fail_rounds` state.
+- DriveRoundsExhausted (payload: dag_id, node_id, target_node_id, max_rounds, root_node_id, closure "degraded", closure_text, gate_id) — after the root's `closure` state was set to degraded and a `rounds_exhausted` needs-you gate added (DriveNeedsYou reason `rounds_exhausted`).
 
 ### Mail logistics
 - ThreadCreated
