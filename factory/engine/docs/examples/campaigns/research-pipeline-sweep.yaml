@@ -7,8 +7,8 @@
 # only meant to take over after Eoj unloads the launchd job himself.
 #
 # To trial it (in a scratch root, or after unloading launchd):
-#   allternit-commrails campaign declare --file docs/examples/campaigns/research-pipeline-sweep.yaml
-#   allternit-commrails campaign resume research-pipeline-sweep   # arms the next weekday 09:05
+#   allternit-factory workspace campaign new --file factory/engine/docs/examples/campaigns/research-pipeline-sweep.yaml
+#   allternit-factory workspace campaign resume research-pipeline-sweep   # arms the next weekday 09:05
 # and, for a sweep to run the command itself, allowlist it in
 # .allternit/rails/automation.yaml:
 #   wake:

@@ -3999,16 +3999,16 @@ async fn gate_check(
 }
 
 async fn gate_rules() -> impl IntoResponse {
-    // The rules file ships with the rails crate's spec directory; in a dev
-    // checkout that is two levels up from this crate's manifest dir. The
-    // crate was later renamed commrails — accept both locations.
+    // The rules file ships with the factory engine's spec directory; in a
+    // dev checkout that is two levels up from this crate's manifest dir.
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..");
-    let candidates = [
-        repo_root.join("rails").join("spec").join("GATE_RULES.md"),
-        repo_root.join("commrails").join("spec").join("GATE_RULES.md"),
-    ];
+    let candidates = [repo_root
+        .join("factory")
+        .join("engine")
+        .join("spec")
+        .join("GATE_RULES.md")];
     let rules = candidates
         .iter()
         .find_map(|path| std::fs::read_to_string(path).ok());

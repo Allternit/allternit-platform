@@ -1,7 +1,7 @@
 # CommRails Bridge (scoped remote identities)
 
 Status: **built, default OFF.** Nothing listens until someone runs
-`allternit-commrails bridge serve`, and the listener refuses every
+`allternit-factory internal rails bridge serve`, and the listener refuses every
 non-loopback bind unless explicitly told otherwise. Enabling it on the mesh is
 Eoj's call (see "Enabling" below). Tracks build-plan item P1-5 ("Box ↔ Mac
 bridge for Chief").
@@ -23,7 +23,7 @@ it, can be compromised, and limits what a compromised box can do.
 |---|---|
 | Identity store (hashed tokens, 0600) | `src/bridge/identity.rs` |
 | Listener, route table, guard, audit | `src/bridge/server.rs` |
-| `identity add\|list\|revoke`, `bridge serve` | `src/bin/allternit-commrails.rs` |
+| `identity add\|list\|revoke`, `bridge serve` | `src/api/cli/rails.rs` |
 | Remote prompt attribution (Gate 0) | `Gate::plan_new_with_origin`, `templates::plan_from_template_with_origin` |
 | Box-side client (Python 3.8+ stdlib) | `tools/commrails-bridge-client/commrails-bridge` |
 | Tests (loopback only) | `tests/bridge.rs`, unit tests in `src/bridge/*` |
@@ -31,11 +31,11 @@ it, can be compromised, and limits what a compromised box can do.
 ### Identities
 
 ```bash
-allternit-commrails identity add --actor bot:chief \
+allternit-factory internal rails identity add --actor bot:chief \
   --scopes plan:create,plan:read,mail:send,mail:read,template:instantiate
 # prints the bearer token ONCE on stdout (crb_<64 hex>)
-allternit-commrails identity list
-allternit-commrails identity revoke --actor bot:chief     # or --id bid_…
+allternit-factory internal rails identity list
+allternit-factory internal rails identity revoke --actor bot:chief     # or --id bid_…
 ```
 
 - File: `$ALLTERNIT_COMMRAILS_BRIDGE_IDENTITIES`, else
@@ -60,7 +60,7 @@ allternit-commrails identity revoke --actor bot:chief     # or --id bid_…
 ### Listener
 
 ```bash
-allternit-commrails bridge serve --root <workspace-root> \
+allternit-factory internal rails bridge serve --root <workspace-root> \
   [--bind 127.0.0.1:7433] [--allow-remote] [--identities <file>] \
   [--rate-limit-per-min 60]
 ```
@@ -170,7 +170,7 @@ Residual risks, accepted and documented:
 - **Token at rest on the box** is only as safe as the box's `0600` file. Assume
   it can leak; the scope ceiling above is what bounds the damage.
 
-**Revoke = one command:** `allternit-commrails identity revoke --actor
+**Revoke = one command:** `allternit-factory internal rails identity revoke --actor
 bot:chief`. Effective on the next request, no restart. Then mint a new token
 if Chief should keep access.
 
@@ -181,7 +181,7 @@ Nothing below has been applied. Each step is a manual decision.
 1. Mint the identity on the Mac and move the token to the box:
 
    ```bash
-   allternit-commrails identity add --actor bot:chief \
+   allternit-factory internal rails identity add --actor bot:chief \
      --scopes plan:create,plan:read,mail:send,mail:read,template:instantiate \
      > /tmp/chief.token
    # copy to the box as ~/.config/commrails-bridge/token (chmod 600), then:
@@ -211,7 +211,8 @@ Nothing below has been applied. Each step is a manual decision.
      <key>Label</key><string>com.allternit.commrails-bridge</string>
      <key>ProgramArguments</key>
      <array>
-       <string>/Users/joe/.local/bin/allternit-commrails</string>
+       <string>/Users/joe/.local/bin/allternit-factory</string>
+       <string>internal</string><string>rails</string>
        <string>bridge</string><string>serve</string>
        <string>--bind</string><string>100.x.y.z:7433</string>
        <string>--allow-remote</string>

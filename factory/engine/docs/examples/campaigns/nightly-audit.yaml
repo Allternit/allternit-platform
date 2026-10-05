@@ -1,7 +1,7 @@
 # Nightly Audit campaign: PARKED.
 #
 # status: paused on purpose. Eoj must enable it explicitly
-# (`allternit-commrails campaign resume nightly-audit`); no agent resumes it
+# (`allternit-factory workspace campaign resume nightly-audit`); no agent resumes it
 # on its own. The Nightly Audit Engineer bot is roster-noted as
 # "parked, routine off".
 #

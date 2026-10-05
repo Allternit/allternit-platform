@@ -25,7 +25,7 @@ set -uo pipefail
 
 PARITY_DIR="$(cd "$(dirname "$0")" && pwd)"
 AOE_ROOT="$(cd "$PARITY_DIR/../.." && pwd)"
-REPO_ROOT="$(cd "$PARITY_DIR/../../../.." && pwd)"
+REPO_ROOT="$(cd "$PARITY_DIR/../../.." && pwd)"
 BRAIN_OPS="${BRAIN_OPS:-$HOME/Desktop/Allternit/Allternit Brain/Ops}"
 VERBOSE=0
 SKIP_LIVE=0

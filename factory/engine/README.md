@@ -65,47 +65,24 @@ See [spec/SPEC_OVERVIEW.md](./spec/SPEC_OVERVIEW.md) for details on:
 - **GenAI Telemetry** (Token tracking & OpenTelemetry compliance)
 - **OAuth Vault** (Credential management)
 
-## `commrails` CLI
+## Ticket area (library only)
 
-The `commrails` binary (the `rails` bin name remains as a one-release shim) is the ticket/DAG workflow CLI:
-
-```bash
-cargo run -p allternit-commrails --bin commrails -- init
-commrails ticket new "title" --description "..." --priority P1
-commrails dag block <ticket> <blocker>
-commrails ready --explain
-commrails doctor
-commrails memory learn "..." --tags api
-commrails echo new "..."
-commrails template new "name" --steps steps.json
-commrails batch exec batch.json
-commrails gate add <ticket> manual --description "..."
-commrails lock acquire branch:main
-commrails setup claude
-commrails query --entity tickets status:open
-commrails sync linear pull
-commrails compact all
-commrails kill status
-commrails slo --window 60
-commrails dolt status
-```
-
-`commrails` supports real pull/push/status sync with GitHub, Linear, Jira, Azure
-DevOps, GitLab, and Notion. It also includes a kill switch, SLO metrics, and an
-optional Dolt storage backend.
-
-See [cli/README.md](./cli/README.md) for a product overview and
-[cli/RAILS_CLI.md](./cli/RAILS_CLI.md) for the full command reference.
+The portable ticket/DAG CLI (`commrails` / `rails`, with `install.sh`) was
+removed when the engine became the Allternit Factory. Its library code stays in
+`src/tickets/` (tickets, typed dependencies, ready-list, sync providers for
+GitHub, Linear, Jira, Azure DevOps, GitLab and Notion, setup recipes, batch,
+doctor), and the engine's own ticket verbs remain under
+`allternit-factory internal rails ticket …`.
 
 ## Remote bridge (default off)
 
-`allternit-commrails bridge serve` is a scoped listener that lets a remote agent
+`allternit-factory internal rails bridge serve` is a scoped listener that lets a remote agent
 (e.g. Chief on the shared box, over the mesh) create/read plans and send/read
-mail with a bearer identity from `allternit-commrails identity add`. Pickup,
+mail with a bearer identity from `allternit-factory internal rails identity add`. Pickup,
 close, leases, wait-gate resolution and gate decisions are never available to
 it. Loopback only unless `--allow-remote`. Spec, threat model and enablement
 steps: [spec/BRIDGE.md](./spec/BRIDGE.md); box client:
-[`tools/commrails-bridge-client/`](../tools/commrails-bridge-client/).
+[`tools/commrails-bridge-client/`](../../tools/commrails-bridge-client/).
 
 See [docs/architecture/README.md](./docs/architecture/README.md) for a full feature/architecture breakdown before you run the test suites.
-Hidden runtime stores (`.allternit/`) are documented in [docs/architecture/README.md](./docs/architecture/README.md#layer-c---ledger-bus-transports) and tracked during `allternit commrails init` and `commrails init`.
+Hidden runtime stores (`.allternit/`) are documented in [docs/architecture/README.md](./docs/architecture/README.md#layer-c---ledger-bus-transports).

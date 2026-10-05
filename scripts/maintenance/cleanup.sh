@@ -25,7 +25,7 @@ log "Disk free before: ${BEFORE} (${BEFORE_PCT})"
 # The main workspace target is intentionally left alone because agents are actively using it.
 log "Cleaning standalone Rust targets..."
 rm -rf "${PROJECT_ROOT}/cmd/launcher/target"
-rm -rf "${PROJECT_ROOT}/commrails/target"
+rm -rf "${PROJECT_ROOT}/factory/engine/target"
 rm -rf "${WORKSPACE_ROOT}/distribution/launcher-desktop/target"
 rm -rf "${WORKSPACE_ROOT}/distribution/launcher-simplified/target"
 
