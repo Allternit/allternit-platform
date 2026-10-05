@@ -271,6 +271,8 @@ export const webhooks = sqliteTable("webhooks", {
 	url: text("url").notNull(),
 	secret: text("secret").notNull(),
 	events: text("events").notNull(),
+	/** Only this mailbox's events; null = every mailbox of the user. */
+	mailboxId: text("mailbox_id").references(() => mailboxes.id, { onDelete: "cascade" }),
 	enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
 	createdAt: integer("created_at", { mode: "timestamp" })
 		.notNull()

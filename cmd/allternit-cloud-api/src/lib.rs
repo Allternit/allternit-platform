@@ -432,6 +432,8 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // Allternit Platform API (/v1/accounts, /v1/usage, … plus console
         // /api/v1/platform/*): inert (404 platform_api_disabled) until
         // ALLTERNIT_PLATFORM_API=1; authenticates project keys itself.
+        // Bot email for every runtime: mailbox provisioning on Allternit Mail (503 until ALLTERNIT_MAILFLARE_* are set).
+        .merge(routes::bot_email::routes())
         .merge(routes::platform_v1::router(&state))
         // The Stripe webhook verifies the Stripe-Signature HMAC itself and
         // answers 503 webhook_not_configured when STRIPE_WEBHOOK_SECRET is unset.

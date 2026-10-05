@@ -119,6 +119,9 @@ export async function processInboundMessage(
 	});
 	await dispatchWebhooks(env, decision.mailbox.userId, "message.inbound", {
 		messageId,
+		mailboxId: decision.mailbox.mailboxId,
+		// The mailbox the mail was delivered to (the To header can differ for Cc/Bcc).
+		mailbox: mailboxAddress,
 		from: fromAddr,
 		to: toAddr,
 		subject: parsed.subject,
@@ -144,7 +147,7 @@ export async function processInboundMessage(
 		// SPF/DKIM/DMARC verdicts from the receiving platform; bots must not
 		// reply to a forged sender, so consumers can gate on dmarc=fail.
 		authResults: parsed.authenticationResults,
-	});
+	}, decision.mailbox.mailboxId);
 }
 
 export async function storeRawToR2(

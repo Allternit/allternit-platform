@@ -29,12 +29,15 @@ export async function dispatchWebhooks(
 	userId: string,
 	eventType: WebhookEventType,
 	payload: Record<string, unknown>,
+	mailboxId?: string | null,
 ): Promise<void> {
 	const db = getDb(env);
 	const hooks = await db.select().from(webhooks).where(eq(webhooks.userId, userId));
 
 	for (const hook of hooks) {
 		if (!hook.enabled) continue;
+		// A mailbox-scoped webhook gets only its own mailbox's events.
+		if (hook.mailboxId && hook.mailboxId !== mailboxId) continue;
 		let events: string[] = [];
 		try {
 			events = JSON.parse(hook.events) as string[];

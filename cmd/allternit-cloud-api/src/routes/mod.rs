@@ -37,6 +37,7 @@ pub mod mesh;
 pub mod channel_inbound;
 pub mod phone;
 pub mod photo_avatars;
+pub mod bot_email;
 pub mod platform_v1;
 pub mod phone_sync;
 pub mod runtime_files;
