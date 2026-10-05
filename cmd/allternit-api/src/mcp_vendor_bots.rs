@@ -541,7 +541,18 @@ pub async fn call_tool(db: &DbHandle, actions: &dyn Actions, s: &Session, name: 
         "list_threads" => list_threads(db, s, &args),
         "read_thread" => read_thread(db, s, &args),
         "get_ticket" => crate::vendor_tickets::tool_get_ticket(db, &s.owner, &s.vendor_bot_id, &args),
-        "post_result" => crate::vendor_tickets::tool_post_result(db, &s.owner, &s.vendor_bot_id, &args),
+        "post_result" => match crate::vendor_tickets::tool_post_result(db, &s.owner, &s.vendor_bot_id, &args) {
+            // A ticket that delivers a Factory node closes that node now, so the answer says how it went.
+            Ok(mut v) if v["ticket"]["nodeClose"]["state"] == "pending" => {
+                let id = v["ticket"]["id"].as_str().unwrap_or_default().to_string();
+                match crate::factory_bots::close_linked_node(db, &s.owner, &id).await {
+                    Ok(t) => v["ticket"] = t,
+                    Err(e) => tracing::warn!(ticket = %id, error = %e, "node close failed to run"),
+                }
+                Ok(v)
+            }
+            other => other,
+        },
         "list_open_tickets" => crate::vendor_tickets::tool_list_open_tickets(db, &s.owner, &s.vendor_bot_id),
         "twin_context" => crate::twin_persona::tool_twin_context(db, &s.owner),
         "twin_propose" => crate::twin_persona::tool_twin_propose(db, &s.owner, &s.vendor_bot_id, &args),

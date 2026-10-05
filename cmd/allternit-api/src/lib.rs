@@ -208,6 +208,7 @@ pub mod health;
 pub mod hud_routes;
 pub mod idempotency;
 pub mod factory_approvals;
+pub mod factory_bots;
 pub mod factory_approvals_channels;
 pub mod factory_approvals_push;
 pub mod inbox_needs;
