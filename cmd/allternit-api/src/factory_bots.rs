@@ -718,11 +718,11 @@ mod tests {
 
         // the existing gateway read shows the terminal binding with camelCase fields
         let bot = first["bot"]["id"].as_str().unwrap();
-        let (s, read) = call(&app, "GET", "user-a", &format!("/api/v1/bots/{bot}/execution-binding"), None).await;
+        let (s, read) = call(&app, "GET", "user-a", &format!("/api/v1/gateway/bots/{bot}/execution-binding"), None).await;
         assert_eq!(s, StatusCode::OK, "{read}");
         assert_eq!((read["binding"]["type"].as_str(), read["binding"]["harness"].as_str(), read["binding"]["paneId"].as_str()), (Some("terminal"), Some("claude"), Some("%3")));
         // the gateway PUT rejects a terminal binding without a harness too
-        let (s, _) = call(&app, "PUT", "user-a", &format!("/api/v1/bots/{bot}/execution-binding"), Some(json!({ "type": "terminal" }))).await;
+        let (s, _) = call(&app, "PUT", "user-a", &format!("/api/v1/gateway/bots/{bot}/execution-binding"), Some(json!({ "type": "terminal" }))).await;
         assert_eq!(s, StatusCode::BAD_REQUEST);
         // a rebind to another harness keeps the bot and binding ids
         let (_, re) = call(&app, "POST", "user-a", "/api/v1/factory/bots", Some(json!({ "slug": "builder", "name": "Builder", "binding": { "type": "terminal", "harness": "codex" } }))).await;
