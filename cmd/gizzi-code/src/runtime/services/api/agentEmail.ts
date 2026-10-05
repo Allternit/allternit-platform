@@ -1,14 +1,14 @@
 /**
  * Agent Email client — external (mailflare-backed) email for platform agents.
  *
- * Shared between the CLI (`gizzi mail send-external` / `gizzi mail email-status`,
+ * Shared between the CLI (`gizzi orchestration mail send-external` / `gizzi orchestration mail email-status`,
  * via the `@/cli/agent-email-client` re-export) and the runtime tools
  * (`send_agent_email` / `get_agent_email_status` in
  * `@/runtime/tools/builtins/agent-email`).
  *
  * Talks to the protected `/api/v1/agent-email/*` routes
  * (`cmd/allternit-api/src/agent_email_routes.rs`). Same base-URL + no-auth-header
- * pattern as `rails-mail-client.ts`: `cmd/allternit-api/src/auth.rs:823-838`
+ * pattern as the old Rails Mail client: `cmd/allternit-api/src/auth.rs:823-838`
  * trusts localhost-origin requests when `local_dev_bypass()`/`self_hosted()` is
  * enabled, which is the common case for a CLI user running against their own
  * local allternit-api instance. A remote/authenticated instance is out of scope.

@@ -1,0 +1,63 @@
+#!/usr/bin/env bun
+// Fake Allternit Factory engine for gizzi-code tests. Behaviour is chosen
+// by the verb so one script covers every exit path in API.md §2.
+const args = process.argv.slice(2)
+const json = args.includes("--json")
+const rest = args.filter((a) => a !== "--json")
+const key = rest.slice(0, 2).join(" ")
+const out = (doc: unknown) => process.stdout.write(JSON.stringify(doc) + "\n")
+const fail = (exit: number, code: string, fact: string, action = "") => {
+  if (json) out({ error: { code, fact, action } })
+  else process.stderr.write(fact + "\n")
+  process.exit(exit)
+}
+
+if (rest[0] === "--version") {
+  process.stdout.write("allternit-factory 0.0.0-test\n")
+  process.exit(0)
+}
+switch (key) {
+  case "agents ps":
+    out({
+      agents: [
+        { id: "a1", slug: "gizzi", address: "gizzi@core", binding: { type: "hosted" }, state: "working",
+          currentNode: { dagId: "d1", nodeId: "n1", title: "Write the spec" }, proof: { proven: 1, total: 3 } },
+        { id: "a2", slug: "coder", address: "coder@core", binding: { type: "terminal", harness: "claude" }, state: "needs_you",
+          pane: { id: "p2", attachable: true }, currentNode: null, proof: null },
+        { id: "a3", slug: "gpt", address: "gpt@core", binding: { type: "vendor", vendor: "chatgpt", lane: "ui_bridge" }, state: "idle",
+          currentNode: null, proof: { proven: 0, total: 1 } },
+      ],
+    })
+    process.exit(0)
+  case "agents echo":
+    out({ args: rest })
+    process.exit(0)
+  case "agents wall":
+  case "agents attach":
+    // Pass-through: no --json, stdio inherited.
+    process.stdout.write(`PASSTHROUGH ${rest.join(" ")} json=${json}\n`)
+    process.exit(Number(process.env.FAKE_PASSTHROUGH_EXIT ?? 0))
+  case "workspace board":
+    fail(2, "not_found", "workspace board is not built yet")
+  case "workspace approve":
+    if (rest[2] === "n-refused") fail(1, "refused", "Gate refused: node n-refused has no proof", "Add proof first")
+    if (rest[2] === "n-person") fail(5, "needs_person", "A person has to sign this one")
+    out({ approved: rest[2], dryRun: rest.includes("--dry-run") })
+    process.exit(0)
+  case "orchestration send":
+    out({ id: "dl1", to: rest[2], via: "pane", state: "verified", ticket: null, threadId: null, nodeId: null, at: "2026-10-04T00:00:00Z", detail: null })
+    process.exit(0)
+  case "workflows garbage":
+    process.stdout.write("this is not json\n")
+    process.exit(0)
+  case "workflows sleep":
+    setTimeout(() => process.exit(0), 10_000)
+    break
+  case "workflows usage":
+    fail(64, "usage", "workflows usage needs a template")
+  case "workflows crash":
+    process.stderr.write("panic: engine fell over\n")
+    process.exit(3)
+  default:
+    fail(2, "not_found", `${rest.slice(0, 2).join(" ")} is not built yet`)
+}

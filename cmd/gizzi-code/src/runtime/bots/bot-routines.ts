@@ -4,12 +4,12 @@
  * A routine is a cron job of type `agent` whose config carries `bot: <name>`.
  * The cron agent executor delivers the prompt into the bot's canonical chat
  * (resume + one turn) instead of minting an ephemeral session, and the job is
- * namespaced `[bot:<name>] <label>` so `gizzi cron list` shows ownership.
+ * namespaced `[bot:<name>] <label>` so `gizzi workflows wake jobs list` shows ownership.
  *
  * This module owns:
  * - the `[bot:<name>]` naming convention (pure functions),
  * - routine CRUD over the cron job store (CronService is the same service
- *   `gizzi cron add` talks to — the HTTP API in the daemon delegates to it;
+ *   `gizzi workflows wake jobs add` talks to — the HTTP API in the daemon delegates to it;
  *   heavy imports are dynamic so this file stays drivable from plain bun
  *   tests, mirroring canonical-chat.ts),
  * - the executor delivery seam (deliverBotRoutine): resolve bot, open its
@@ -82,7 +82,7 @@ let initializedDbPath: string | null = null
 
 /**
  * Real deps over the SQLite-backed CronService — the same service the cron
- * daemon's HTTP API (`gizzi cron add`) delegates to. The daemon re-reads the
+ * daemon's HTTP API (`gizzi workflows wake jobs add`) delegates to. The daemon re-reads the
  * jobs table on every check tick, so jobs created here are picked up without
  * a daemon restart.
  *

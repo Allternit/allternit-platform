@@ -73,6 +73,9 @@ export const DEFAULT_BINDINGS: KeybindingBlock[] = [
       escape: 'chat:cancel',
       // ctrl+x chord prefix avoids shadowing readline editing keys (ctrl+a/b/e/f/...).
       'ctrl+x ctrl+k': 'chat:killAgents',
+      // The Allternit Factory floor. ctrl+x prefix like the other chat
+      // chords so a plain f stays a typed character in the prompt.
+      'ctrl+x f': 'app:openFactory',
       [MODE_CYCLE_KEY]: 'chat:cycleMode',
       'meta+p': 'chat:modelPicker',
       'meta+o': 'chat:fastMode',
@@ -194,6 +197,15 @@ export const DEFAULT_BINDINGS: KeybindingBlock[] = [
       // input and delete confirm can claim Esc first, same as Dashboard.
       escape: 'bots:exit',
       q: 'bots:exit',
+    },
+  },
+  {
+    context: 'Factory',
+    bindings: {
+      // Gated by FactoryFloorScreen (isActive) so the vendor detail view
+      // and in-flight engine calls can claim Esc first.
+      escape: 'factory:exit',
+      q: 'factory:exit',
     },
   },
   {

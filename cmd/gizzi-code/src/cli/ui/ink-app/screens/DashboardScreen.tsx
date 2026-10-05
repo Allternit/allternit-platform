@@ -18,7 +18,7 @@
 import * as React from 'react';
 import { useRegisterOverlay } from '../context/overlayContext';
 import { useTerminalSize } from '../hooks/useTerminalSize';
-import { Box, Text, useInput, useTheme } from '../ink';
+import { Box, Text, useInput } from '../ink';
 import { useKeybinding } from '../keybindings/useKeybinding';
 import { useAppState, useSetAppState } from '../state/AppState';
 import { Messages } from '../components/Messages';
@@ -177,7 +177,6 @@ export function DashboardScreen({
   onPermissionDone?: (toolUseID: string) => void;
 }): React.ReactNode {
   const { rows: termRows, columns } = useTerminalSize();
-  const [theme] = useTheme();
   const setAppState = useSetAppState();
   // Subscribe to task state so progress triggers re-renders; rows are read
   // from the source during render (same pattern as TasksDialog).
@@ -460,6 +459,11 @@ export function DashboardScreen({
       setShowCheatsheet(true);
       return;
     }
+    if (input === 'f' && !key.ctrl && !key.meta) {
+      // The Allternit Factory floor.
+      setAppState(prev => (prev.screen === 'dashboard' ? { ...prev, screen: 'factory' } : prev));
+      return;
+    }
     if (input === 'v' && !key.ctrl && !key.meta && selectedRow) {
       setDetailsFor(selectedRow.id);
       return;
@@ -562,13 +566,13 @@ export function DashboardScreen({
     return (
       <Box key={row.id} flexDirection="column">
         <Box flexDirection="row" paddingLeft={1}>
-          <Text color={theme[color] ?? color}>
+          <Text color={color}>
             {shownGlyph}
             {row.pinned ? ' ⌖' : '  '}
           </Text>
           <Text
             bold={isSelected}
-            color={isSelected ? theme.text : theme.subtle}
+            color={isSelected ? 'text' : 'subtle'}
             wrap="truncate-end"
           >
             {` ${truncate(row.title, titleWidth)}`}
@@ -603,7 +607,7 @@ export function DashboardScreen({
                   workerBadge={pendingConfirm.workerBadge}
                 />
               ) : (
-                <Text color={theme.warning}>awaiting input — answer the prompt in the main session</Text>
+                <Text color="warning">awaiting input — answer the prompt in the main session</Text>
               ))}
             {peek?.lastResponseText ? (
               peek.lastResponseText
@@ -619,8 +623,8 @@ export function DashboardScreen({
               <Text dimColor>{peek?.lastResponseType && peek.lastResponseType !== 'none' ? `last: ${peek.lastResponseType}` : 'no response yet'}</Text>
             )}
             <Box flexDirection="row" opaque>
-              <Text color={theme.gizzi}>{'❯ '}</Text>
-              <Text color={focus === 'reply' ? theme.text : theme.inactive}>
+              <Text color="gizzi">{'❯ '}</Text>
+              <Text color={focus === 'reply' ? 'text' : 'inactive'}>
                 {padLine(`${replyDraft}${focus === 'reply' ? '▌' : ''}`, columns - 6)}
               </Text>
             </Box>
@@ -632,11 +636,11 @@ export function DashboardScreen({
 
   const renderCheatsheet = () => (
     <Box flexDirection="column" paddingLeft={1} marginTop={1} opaque>
-      <Text bold color={theme.gizzi}>Dashboard keys</Text>
+      <Text bold color="gizzi">Dashboard keys</Text>
       <Text dimColor>{'  ↑/↓ select · Shift+↑/↓ reorder · Enter peek/reply'}</Text>
       <Text dimColor>{'  Tab dispatch · x stop (again: remove) · p pin · r rename'}</Text>
       <Text dimColor>{'  v details · / search (a: act, s: state, # id) · Ctrl+G group'}</Text>
-      <Text dimColor>{'  Ctrl+S peek · Space collapse section · ? cheatsheet · Esc exit'}</Text>
+      <Text dimColor>{'  Ctrl+S peek · Space collapse section · f factory floor · ? cheatsheet · Esc exit'}</Text>
     </Box>
   );
 
@@ -649,7 +653,7 @@ export function DashboardScreen({
     return (
       <Box flexDirection="column" paddingLeft={1} marginTop={1} opaque>
         <Box flexDirection="row" justifyContent="space-between">
-          <Text bold color={theme.gizzi} wrap="truncate-end">
+          <Text bold color="gizzi" wrap="truncate-end">
             {truncate(row?.title ?? detailsFor ?? '', titleWidth)}
           </Text>
           <Text dimColor>{'↑/↓ scroll · Ctrl+U/D page · g/G top/bottom · Esc back'}</Text>
@@ -718,7 +722,7 @@ export function DashboardScreen({
             return (
               <Box key="more" flexDirection="row" paddingLeft={1}>
                 <Text dimColor>{'  '}</Text>
-                <Text bold={isSelected} color={isSelected ? theme.text : theme.inactive}>
+                <Text bold={isSelected} color={isSelected ? 'text' : 'inactive'}>
                   {`▸ ${item.count} more (Enter to show all)`}
                 </Text>
               </Box>
@@ -742,7 +746,7 @@ export function DashboardScreen({
       paddingX={1}
     >
       <Box flexDirection="row" justifyContent="space-between">
-        <Text bold color={theme.gizzi}>
+        <Text bold color="gizzi">
           Gizzi Code · Dashboard
         </Text>
         <Text dimColor>
@@ -754,8 +758,8 @@ export function DashboardScreen({
       </Box>
       {searchOpen && (
         <Box flexDirection="row" marginTop={1} opaque>
-          <Text color={theme.gizzi}>{'/ '}</Text>
-          <Text color={theme.text}>
+          <Text color="gizzi">{'/ '}</Text>
+          <Text color="text">
             {padLine(`${searchQuery}▌`, columns - 4)}
           </Text>
         </Box>
@@ -764,15 +768,15 @@ export function DashboardScreen({
       <Box flexDirection="column" marginTop={1}>
         {focus === 'rename' ? (
           <Box flexDirection="row" opaque>
-            <Text color={theme.gizzi}>{'✎ '}</Text>
-            <Text color={theme.text}>
+            <Text color="gizzi">{'✎ '}</Text>
+            <Text color="text">
               {padLine(`${renameDraft}▌`, columns - 4)}
             </Text>
           </Box>
         ) : (
           <Box flexDirection="row" opaque>
-            <Text color={theme.gizzi}>{'❯ '}</Text>
-            <Text color={focus === 'dispatch' ? theme.text : theme.inactive}>
+            <Text color="gizzi">{'❯ '}</Text>
+            <Text color={focus === 'dispatch' ? 'text' : 'inactive'}>
               {padLine(`${draft}${focus === 'dispatch' ? '▌' : ''}`, columns - 4)}
             </Text>
           </Box>

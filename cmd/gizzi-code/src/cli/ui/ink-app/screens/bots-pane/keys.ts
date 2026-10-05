@@ -14,6 +14,8 @@ export interface BotsPaneKeyHandlers {
   deleteSelected(): void
   /** r — refresh roster rows. */
   refresh(): void
+  /** f — the Allternit Factory floor. */
+  openFactory?(): void
   /** q / Esc — back to the REPL. */
   exit(): void
 }
@@ -63,6 +65,10 @@ export function handleBotsPaneKey(
       return true
     case 'r':
       handlers.refresh()
+      return true
+    case 'f':
+      if (!handlers.openFactory) return false
+      handlers.openFactory()
       return true
     case 'q':
       handlers.exit()

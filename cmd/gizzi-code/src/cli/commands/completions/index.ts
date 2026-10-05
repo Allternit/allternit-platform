@@ -40,6 +40,9 @@ export function commandEntries(modules: RegisteredCommand[] = COMMANDS): Complet
   for (const mod of modules) {
     const raw = Array.isArray(mod.command) ? mod.command[0] : mod.command
     if (typeof raw !== "string") continue
+    // Hidden commands (describe: false) stay out of completions, as they
+    // stay out of --help.
+    if (mod.describe === false) continue
     const name = raw.split(/\s+/)[0]
     if (!name || name === "$0" || seen.has(name)) continue
     seen.add(name)
@@ -62,7 +65,13 @@ const SUBCOMMAND_HINTS: Record<string, string[]> = {
   session: ["list", "delete", "export"],
   config: ["list", "add", "remove", "set-active", "import", "export", "profile", "telemetry"],
   db: ["path", "migrate"],
-  cron: ["list", "start", "stop", "status", "add", "remove", "run", "pause", "resume"],
+  agents: [
+    "up", "ps", "down", "whoami", "recover", "snapshot", "restore", "model", "handoff",
+    "harness", "pack", "install", "templates", "wall", "attach", "doctor", "modes", "bot",
+  ],
+  orchestration: ["send", "capture", "transcript", "threads", "mail", "feed", "attention", "steer", "coordinate", "ac"],
+  workflows: ["run", "drive", "template", "wake", "gate", "status"],
+  workspace: ["campaign", "plan", "node", "approve", "proof", "judge", "board", "tasks", "team"],
   profile: ["list", "save", "activate", "deactivate", "delete", "show"],
   "permission-profile": ["list", "show", "activate", "deactivate", "save", "delete", "presets"],
   completions: ["bash", "zsh", "fish", "install"],
