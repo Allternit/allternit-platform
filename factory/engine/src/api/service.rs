@@ -809,7 +809,7 @@ pub struct InitResponse {
 async fn health_check() -> impl IntoResponse {
     Json(HealthResponse {
         status: "healthy".to_string(),
-        service: "allternit-commrails".to_string(),
+        service: "allternit-factory".to_string(),
         version: "0.1.0".to_string(),
     })
 }
