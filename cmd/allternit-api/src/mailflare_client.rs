@@ -24,6 +24,9 @@ pub struct MailflareConfig {
     pub domain: String,
     /// HMAC-SHA256 secret shared with mailflare webhook deliveries.
     pub webhook_secret: Option<String>,
+    /// Provisioned through Allternit's cloud: this runtime has no admin key and
+    /// acts only with each bot's own mailbox-scoped key.
+    pub brokered: bool,
 }
 
 /// The domain every Allternit bot mailbox lives on.
@@ -43,8 +46,29 @@ impl MailflareConfig {
             admin_key,
             domain,
             webhook_secret: env_non_empty("ALLTERNIT_MAILFLARE_WEBHOOK_SECRET"),
+            brokered: false,
         })
     }
+
+    /// A cloud-brokered client for one mailbox's service URL (no admin key).
+    pub fn brokered(base_url: &str) -> Self {
+        Self {
+            base_url: base_url.trim_end_matches('/').to_string(),
+            admin_key: String::new(),
+            domain: env_non_empty("ALLTERNIT_BOT_EMAIL_DOMAIN").unwrap_or_else(|| DEFAULT_BOT_EMAIL_DOMAIN.to_string()),
+            webhook_secret: None,
+            brokered: true,
+        }
+    }
+}
+
+/// Bot email can be provisioned through Allternit's cloud: no local admin key,
+/// but this runtime is paired (it has a device credential). Off with
+/// `ALLTERNIT_BOT_EMAIL_BROKERED=0`.
+pub fn brokered_available() -> bool {
+    MailflareConfig::from_env().is_none()
+        && crate::phone_sync::runtime_bearer().is_some()
+        && std::env::var("ALLTERNIT_BOT_EMAIL_BROKERED").map(|v| v != "0").unwrap_or(true)
 }
 
 fn env_non_empty(key: &str) -> Option<String> {

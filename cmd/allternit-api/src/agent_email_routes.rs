@@ -117,6 +117,18 @@ pub struct AgentEmailChannel {
     pub reply_enabled: bool,
     /// The mailbox's domain passed outbound verification; required for `auto`.
     pub domain_verified: bool,
+    /// Cloud-brokered mailboxes: the sealed per-mailbox webhook secret and the
+    /// mail service URL the mailbox lives on.
+    pub webhook_secret_sealed: Option<String>,
+    pub mail_url: Option<String>,
+}
+
+impl AgentEmailChannel {
+    /// The client to act on this mailbox with: the local admin config when this
+    /// runtime has one, else the cloud-brokered client for the mailbox's URL.
+    pub fn client(&self) -> Option<MailflareClient> {
+        MailflareClient::from_env().or_else(|| self.mail_url.as_deref().map(|u| MailflareClient::new(crate::mailflare_client::MailflareConfig::brokered(u))))
+    }
 }
 
 /// Look up the agent's mailflare email channel. Returns `None` when the agent
@@ -129,7 +141,7 @@ pub fn lookup_email_channel(
         "SELECT email_address, email_send_enabled, email_receive_enabled,
                 email_mailbox_id, email_api_key_sealed,
                 email_reply_mode, email_reply_allowlist, email_reply_enabled,
-                email_domain_verified
+                email_domain_verified, email_webhook_secret_sealed, email_mail_url
          FROM agent_identity_channels
          WHERE agent_id = ?1 AND email_provider = 'mailflare'",
         params![agent_id],
@@ -144,6 +156,8 @@ pub fn lookup_email_channel(
                 reply_allowlist: row.get(6)?,
                 reply_enabled: row.get::<_, Option<i32>>(7)?.unwrap_or(1) != 0,
                 domain_verified: row.get::<_, Option<i32>>(8)?.unwrap_or(0) != 0,
+                webhook_secret_sealed: row.get(9)?,
+                mail_url: row.get(10)?,
             })
         },
     )
@@ -254,14 +268,6 @@ async fn send_email_inner(
         ));
     }
 
-    let client = MailflareClient::from_env().ok_or_else(|| {
-        err(
-            StatusCode::NOT_IMPLEMENTED,
-            "mailflare_not_configured",
-            "ALLTERNIT_MAILFLARE_URL/ALLTERNIT_MAILFLARE_ADMIN_KEY are not configured.",
-        )
-    })?;
-
     let channel = {
         let conn = state.db.connect().map_err(internal)?;
         lookup_email_channel(&conn, &req.agent_id)
@@ -288,10 +294,19 @@ async fn send_email_inner(
             "Agent email channel has no mailflare mailbox id; re-provision.",
         )
     })?;
-    // Direct (unreviewed) replies are delivered with the allternit-api admin
-    // key, the only key mailflare honors skipApproval for; the per-mailbox key
-    // can never send without review.
-    let api_key = if extra.skip_approval {
+    let client = channel.client().ok_or_else(|| {
+        err(
+            StatusCode::NOT_IMPLEMENTED,
+            "mailflare_not_configured",
+            "Allternit Mail is not configured on this runtime.",
+        )
+    })?;
+    let brokered = client.config().brokered;
+    // Direct (unreviewed) replies: with the local admin key, mailflare honors
+    // skipApproval. A cloud-brokered runtime has only the bot's own key: it
+    // sends (mailflare holds it) and then approves its own send below, since
+    // this runtime's review and autonomy already decided it may go.
+    let api_key = if extra.skip_approval && !brokered {
         client.config().admin_key.clone()
     } else {
         open_channel_key(&channel)?
@@ -359,7 +374,7 @@ async fn send_email_inner(
         )
         .await;
 
-    let send_response = match send_result {
+    let mut send_response = match send_result {
         Ok(response) => response,
         Err(e) => {
             mark_outbound_failed(state, &outbound_id, &e.to_string());
@@ -370,6 +385,15 @@ async fn send_email_inner(
             ));
         }
     };
+
+    if brokered && extra.skip_approval && send_response.status == "pending_approval" {
+        if let Some(job) = send_response.job_id.clone() {
+            match client.approve(&api_key, &job).await {
+                Ok(_) => send_response.status = "queued".into(),
+                Err(e) => warn!(error = %e, outbound_id = %outbound_id, "agent-email: self-approve failed; left for review"),
+            }
+        }
+    }
 
     let conn = state.db.connect().map_err(internal)?;
     if send_response.status == "pending_approval" {
@@ -695,12 +719,6 @@ pub async fn decide_outbound_for_thread(
         );
     };
 
-    let client = match MailflareClient::from_env() {
-        Some(client) => client,
-        None => {
-            return EmailDecisionOutcome::Failed("mailflare is not configured".to_string());
-        }
-    };
     let channel = match state
         .db
         .connect()
@@ -713,6 +731,13 @@ pub async fn decide_outbound_for_thread(
             );
         }
         Err(e) => return EmailDecisionOutcome::Failed(e.to_string()),
+    };
+    // Approve/reject use the bot's own key, so a cloud-brokered runtime can decide too.
+    let client = match channel.client() {
+        Some(client) => client,
+        None => {
+            return EmailDecisionOutcome::Failed("mailflare is not configured".to_string());
+        }
     };
     let api_key = match open_channel_key(&channel) {
         Ok(key) => key,
@@ -813,19 +838,43 @@ async fn receive_inbound_email(
     relayed: crate::relay_auth::RelayedAuth,
 ) -> Response {
     let body = relayed.body.clone();
-    let config = match crate::mailflare_client::MailflareConfig::from_env() {
-        Some(config) => config,
-        None => {
-            warn!("agent-email webhook received but mailflare is not configured; rejecting");
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(json!({"error": "mailflare_not_configured"})),
-            )
-                .into_response();
-        }
+    // Which mailbox the event names (not trusted until the signature checks out).
+    let claimed: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+    let claimed_data = claimed.get("data").cloned().unwrap_or(Value::Null);
+    let claimed_mailbox = claimed_data.get("mailboxId").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let claimed_address = claimed_data
+        .get("mailbox")
+        .and_then(|v| v.as_str())
+        .or_else(|| claimed_data.get("to").and_then(|v| v.as_str()))
+        .unwrap_or("")
+        .to_string();
+    // A cloud-brokered mailbox has its own webhook secret; otherwise the runtime-wide one.
+    let resolved = {
+        let conn = match state.db.connect() {
+            Ok(conn) => conn,
+            Err(e) => return internal(e).into_response(),
+        };
+        conn.query_row(
+            "SELECT agent_id, email_receive_enabled, email_webhook_secret_sealed FROM agent_identity_channels
+             WHERE email_provider = 'mailflare' AND ((?1 <> '' AND email_mailbox_id = ?1) OR LOWER(email_address) = LOWER(?2))
+             ORDER BY (email_mailbox_id = ?1) DESC LIMIT 1",
+            params![claimed_mailbox, claimed_address],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)? != 0, row.get::<_, Option<String>>(2)?)),
+        )
+        .optional()
     };
-    let Some(secret) = config.webhook_secret.clone() else {
-        warn!("agent-email webhook received but ALLTERNIT_MAILFLARE_WEBHOOK_SECRET is not set; rejecting");
+    let resolved = match resolved {
+        Ok(r) => r,
+        Err(e) => return internal(e).into_response(),
+    };
+    let channel_secret = resolved
+        .as_ref()
+        .and_then(|(_, _, sealed)| sealed.as_deref())
+        .map(crate::token_crypto::open)
+        .filter(|s| !s.is_empty());
+    let env_secret = crate::mailflare_client::MailflareConfig::from_env().and_then(|c| c.webhook_secret);
+    let Some(secret) = channel_secret.or(env_secret) else {
+        warn!("agent-email webhook received but no signing secret is known for it; rejecting");
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(json!({"error": "webhook_secret_not_configured"})),
@@ -867,29 +916,14 @@ async fn receive_inbound_email(
     let provider_message_id = data.get("messageId").and_then(|v| v.as_str());
     let mail_headers = crate::agent_email_reply::InboundMailHeaders::from_data(&data);
 
-    // Resolve the receiving agent by the `to` address.
-    let resolved = {
-        let conn = match state.db.connect() {
-            Ok(conn) => conn,
-            Err(e) => return internal(e).into_response(),
-        };
-        conn.query_row(
-            "SELECT agent_id, email_receive_enabled FROM agent_identity_channels
-             WHERE LOWER(email_address) = LOWER(?1)",
-            params![to],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)? != 0)),
-        )
-        .optional()
-    };
     let (agent_id, receive_enabled) = match resolved {
-        Ok(Some(row)) => row,
-        Ok(None) => {
+        Some((agent, enabled, _)) => (agent, enabled),
+        None => {
             // Unknown recipient — acknowledge (202) so mailflare does not retry.
             info!(to = %to, "agent-email: inbound for unknown recipient; acknowledged");
             return (StatusCode::ACCEPTED, Json(json!({"accepted": true, "delivered": false})))
                 .into_response();
         }
-        Err(e) => return internal(e).into_response(),
     };
     if let Err((status, body)) = require_agent_owner_id(&state, &relayed.owner, &agent_id) {
         return (status, body).into_response();
@@ -1080,6 +1114,14 @@ async fn agent_email_status(
 pub(crate) async fn agent_email_status_value() -> Value {
     let config = match crate::mailflare_client::MailflareConfig::from_env() {
         Some(config) => config,
+        None if crate::mailflare_client::brokered_available() => {
+            // Mailboxes are provisioned through Allternit's cloud for this runtime.
+            return json!({
+                "configured": true,
+                "mode": "cloud",
+                "domain": std::env::var("ALLTERNIT_BOT_EMAIL_DOMAIN").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| crate::mailflare_client::DEFAULT_BOT_EMAIL_DOMAIN.to_string()),
+            });
+        }
         None => {
             return json!({
                 "configured": false,
@@ -1228,6 +1270,16 @@ pub async fn revoke_agent_mailbox(agent_id: &str, db: &crate::db::DbHandle) {
         return;
     };
     let Some(client) = MailflareClient::from_env() else {
+        // Cloud-brokered: the cloud holds the admin key and removes the mailbox, its key,
+        // its webhook and the relay route.
+        if let Some(bearer) = crate::phone_sync::runtime_bearer() {
+            let url = format!("{}/api/v1/runtime-devices/me/bot-email/mailboxes/{}", crate::phone_sync::cloud_base().trim_end_matches('/'), mailbox_id);
+            match reqwest::Client::new().delete(url).bearer_auth(bearer).timeout(std::time::Duration::from_secs(20)).send().await {
+                Ok(r) if r.status().is_success() || r.status() == StatusCode::NOT_FOUND => info!(agent_id = %agent_id, mailbox_id = %mailbox_id, "agent-email: mailbox removed through the cloud"),
+                Ok(r) => warn!(status = %r.status(), agent_id = %agent_id, "agent-email: cloud mailbox removal refused"),
+                Err(e) => warn!(error = %e, agent_id = %agent_id, "agent-email: cloud mailbox removal failed"),
+            }
+        }
         return;
     };
     match client.delete_mailbox(&mailbox_id).await {

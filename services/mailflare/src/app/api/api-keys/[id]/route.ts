@@ -3,7 +3,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import { getEnv } from "@/lib/cloudflare";
 import { getDb } from "@/db";
 import { apiKeys } from "@/db/schema";
-import { requireUser } from "@/lib/auth/cookies";
+import { authenticateSessionOrApiKey } from "@/lib/api/auth";
 import { createAuditLog } from "@/lib/mailboxes/audit";
 
 type ApiKeyRouteParams = {
@@ -12,7 +12,9 @@ type ApiKeyRouteParams = {
 
 export async function DELETE(request: Request, { params }: ApiKeyRouteParams) {
 	const env = getEnv();
-	const user = await requireUser(env, request);
+	// A signed-in user, or an admin-scope API key (the platform tears down bot mail).
+	const user = (await authenticateSessionOrApiKey(env, request, { scope: "admin" }))?.user;
+	if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 	const { id } = await params;
 
 	const db = getDb(env);

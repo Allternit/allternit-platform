@@ -370,7 +370,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 POST /api/v1/agents/:agent_id/identity/email
 ```
 
-Provisions an email address for the agent on `ALLTERNIT_BOT_EMAIL_DOMAIN`. With Allternit Mail configured (`ALLTERNIT_MAILFLARE_URL` + `ALLTERNIT_MAILFLARE_ADMIN_KEY`) the domain defaults to `bots.allternit.com`.
+Provisions an email address for the agent on `ALLTERNIT_BOT_EMAIL_DOMAIN` (default `bots.allternit.com`): through Allternit's cloud on a signed-in computer, or directly when the runtime has Allternit Mail's admin key. See [Agent email rail](#agent-email-rail).
 
 When the mailflare agent-email rail is configured (`ALLTERNIT_MAILFLARE_URL` + `ALLTERNIT_MAILFLARE_ADMIN_KEY`), this creates a **real mailbox** on the mailflare worker, mints a mailbox-scoped send/read API key, seals it server-side, and stores the channel with provider `"mailflare"`. The agent can then genuinely receive and (subject to approval) send internet email. When mailflare is not configured, the endpoint falls back to minting an address record only (provider `"commrails"`) with no send/receive transport.
 
@@ -399,6 +399,15 @@ curl -X POST http://127.0.0.1:8013/api/v1/agents/agent_018f3a7c.../identity/emai
 ## Agent email rail
 
 Real inbound/outbound email for agents, backed by a per-installation mailflare worker (see `services/mailflare/`). Inbound mail arrives as an HMAC-signed webhook and is bridged into the agent's Rails Mail threads; outbound mail is held for human approval before it is sent.
+
+### Two ways a runtime gets bot email
+
+| Mode | Who creates the mailbox | Keys on the runtime |
+|---|---|---|
+| **Cloud-provisioned** (default for every signed-in computer) | cloud-api, `POST /api/v1/runtime-devices/me/bot-email/mailboxes {agentId, localPart, displayName?}` with the runtime's device credential. The cloud creates an `email` relay route to that runtime, the mailbox on `bots.allternit.com` (a taken name gets `-2`, `-3`…), a send+read key scoped to that mailbox, and a `message.inbound` webhook scoped to that mailbox only, and returns `{address, mailboxId, apiKey, webhookSecret, mailUrl}` once. `DELETE …/mailboxes/:mailbox_id` removes all of it. | Only the bot's own sealed key and its webhook secret. Never the admin key. |
+| **Admin** (an operator runtime) | The runtime itself, with `ALLTERNIT_MAILFLARE_URL` + `ALLTERNIT_MAILFLARE_ADMIN_KEY`. | The admin key; one runtime-wide `ALLTERNIT_MAILFLARE_WEBHOOK_SECRET`. |
+
+Inbound mail is verified with the receiving mailbox's own secret (cloud-provisioned) or the runtime-wide one (admin), before anything in the body is trusted; the bot is found by the event's `mailboxId`, then the delivered-to address, then `to`. A cloud-provisioned bot's direct replies (`auto`, `auto_known`) are sent with its own key and approved by the runtime itself once its review and autonomy rules allow them. A mailbox's mail is never delivered to another runtime: each webhook is scoped to one mailbox. `ALLTERNIT_BOT_EMAIL_BROKERED=0` turns the cloud mode off. cloud-api answers `503 bot_email_not_configured` until `ALLTERNIT_MAILFLARE_URL` and `ALLTERNIT_MAILFLARE_ADMIN_KEY` are set on it.
 
 ### Send email (approval-gated)
 
