@@ -117,10 +117,10 @@ fn main() {
 
     let lib_dir = vendored_dir.join("zig-out/lib");
     println!("cargo:rustc-link-search=native={}", lib_dir.display());
-    if target.contains("apple-darwin") {
-        let static_lib = lib_dir.join("libghostty-vt.a");
-        println!("cargo:rustc-link-arg={}", static_lib.display());
-    } else if target.contains("windows-msvc") {
+    // Allternit: this crate is a library linked into `allternit-factory`, and
+    // `rustc-link-arg` does not reach dependents, so macOS links the archive as
+    // a static lib like Linux (rustc picks `libghostty-vt.a`, not the dylib).
+    if target.contains("windows-msvc") {
         println!("cargo:rustc-link-lib=static=ghostty-vt-static");
     } else {
         println!("cargo:rustc-link-lib=static=ghostty-vt");

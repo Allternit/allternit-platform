@@ -32,6 +32,8 @@ fn main() -> ExitCode {
         Ok(cli) => cli,
         Err(err) => return ExitCode::from(exit_usage(err, wants_json)),
     };
-    let ctx = Ctx::new(cli.root.clone(), cli.json);
+    // Verbs that take trailing arguments (passthrough groups, not-built verbs)
+    // keep `--json` out of clap's sight, so honor it wherever it appears.
+    let ctx = Ctx::new(cli.root.clone(), cli.json || wants_json);
     ExitCode::from(tree::dispatch(&ctx, cli.command))
 }

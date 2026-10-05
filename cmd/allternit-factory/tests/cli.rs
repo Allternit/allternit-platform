@@ -48,7 +48,10 @@ fn help_lists_the_four_parts_and_hides_internal() {
     for part in ["serve", "pane", "agents", "orchestration", "workflows", "workspace"] {
         assert!(text.contains(part), "--help is missing {part}: {text}");
     }
-    assert!(!text.contains("internal"), "internal must stay hidden: {text}");
+    assert!(
+        !text.lines().any(|l| l.trim_start().starts_with("internal")),
+        "the internal group must stay hidden: {text}"
+    );
     for old in ["commrails", "rails", " ao "] {
         assert!(!text.to_lowercase().contains(old), "old name {old:?} in --help: {text}");
     }
