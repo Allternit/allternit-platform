@@ -137,3 +137,5 @@ The security overrides used (recommended for permanent adoption in the root
   linked workspace members only — not installed in gizzi-code's pnpm tree, not bundled. The 8 high
   are: js-yaml (2, lock-only — see "Remaining"), vite/esbuild family (5, same not-bundled caveat),
   pdfjs-dist (1, other owner's package).
+
+> 2026-10-05 (Factory F5b): `@allternit/orchestrator` was removed from gizzi-code with Gizzi's `/v1/orchestrator` route (the Factory engine replaces it), so the `express`/`body-parser`/`qs` chain and the linked-member devDependency findings above that cite it no longer apply to gizzi-code.

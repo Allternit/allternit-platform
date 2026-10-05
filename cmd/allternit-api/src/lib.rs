@@ -266,7 +266,6 @@ pub mod office_routes;
 pub mod onboarding_routes;
 pub mod open_connector_proxy;
 pub mod otel;
-pub mod orchestrator_routes;
 pub mod permission_policy;
 pub mod policy_audit;
 pub mod policy_config;

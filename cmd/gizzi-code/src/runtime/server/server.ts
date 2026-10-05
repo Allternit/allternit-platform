@@ -84,7 +84,6 @@ import { PluginRoutes } from "@/runtime/server/routes/plugin"
 import { CoworkRoutes } from "@/runtime/server/routes/cowork"
 import { AcpRoutes } from "@/runtime/server/routes/acp"
 import { PeerRoutes } from "@/runtime/server/routes/peers"
-import { OrchestratorRoutes } from "@/runtime/server/routes/orchestrator"
 import { RuntimeHeartbeat } from "@/runtime/runtime-heartbeat"
 import { RuntimeRoutes } from "@/runtime/server/routes/runtime"
 import { RemoteControlRoutes } from "@/runtime/server/routes/remote_control"
@@ -488,7 +487,6 @@ export namespace Server {
             .route("/native-session", NativeSessionRoutes())
             .route("/automations", AutomationsRoutes())
             .route("/peers", PeerRoutes())
-            .route("/orchestrator", OrchestratorRoutes())
             .route("/agent", AgentRoutes())
             .route("/command", CommandRoutes())
             .route("/provider", ProviderRoutes())

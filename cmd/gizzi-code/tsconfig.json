@@ -97,12 +97,6 @@
       "@allternit/util": [
         "../../platform/packages/util/src"
       ],
-      "@allternit/orchestrator": [
-        "../../platform/packages/orchestrator/src/index.ts"
-      ],
-      "@allternit/orchestrator/*": [
-        "../../platform/packages/orchestrator/src/*"
-      ],
       "@allternit/remote-control": [
         "./packages/remote-control/src/index"
       ],

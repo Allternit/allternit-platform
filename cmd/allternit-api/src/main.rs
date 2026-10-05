@@ -92,7 +92,6 @@ use allternit_api::office_cli_routes::office_cli_router;
 use allternit_api::office_engine_routes::{office_engine_router, office_engine_v1_router};
 use allternit_api::office_routes::office_router;
 use allternit_api::onboarding_routes::onboarding_router;
-use allternit_api::orchestrator_routes::orchestrator_router;
 use allternit_api::platform_static::platform_service;
 use allternit_api::playground_routes::playground_router;
 use allternit_api::provider_routes::provider_router;
@@ -1055,7 +1054,6 @@ async fn main() {
         .merge(office_router())
         .merge(office_cli_router())
         .merge(office_engine_v1_router())
-        .merge(orchestrator_router())
         .merge(alabs_router())
         .merge(automation_router())
         .merge(brain_router())

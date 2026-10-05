@@ -17,7 +17,6 @@
         "@ai-sdk/provider-utils": "3.0.21",
         "@allternit/gizzi-util": "workspace:*",
         "@allternit/native-sessions": "workspace:*",
-        "@allternit/orchestrator": "workspace:*",
         "@allternit/plugin": "workspace:*",
         "@allternit/request-scorer": "workspace:*",
         "@allternit/script": "workspace:*",
@@ -188,15 +187,6 @@
         "@types/node": "^20.0.0",
         "typescript": "^5.3.0",
         "vitest": "^1.0.0"
-      }
-    },
-    "../../services/orchestration/control-plane/allternit-orchestrator": {
-      "name": "@allternit/orchestrator",
-      "version": "1.0.0",
-      "dependencies": {
-        "@allternit/browser": "workspace:*",
-        "@allternit/engine": "workspace:*",
-        "@allternit/governor": "workspace:*"
       }
     },
     "packages/plugin": {
@@ -444,9 +434,6 @@
     ],
     "@allternit/governor": [
       "@allternit/governor@workspace:../../../../domains/governance/governor"
-    ],
-    "@allternit/orchestrator": [
-      "@allternit/orchestrator@workspace:../../services/orchestration/control-plane/allternit-orchestrator"
     ],
     "@allternit/plugin": [
       "@allternit/plugin@workspace:packages/plugin"
