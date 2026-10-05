@@ -190,3 +190,5 @@ The View declares `csp: { connectDomains: [], resourceDomains: [] }`, so it can 
 > Read-only access to the caller's Allternit agents and their runs. Use list_agents to find an agent, list_runs to find its runs (filter by agent_id or status), get_run for status and timestamps, and get_run_result for the output of a finished run. Use render_run_status only when the user wants to see a run's status displayed. Nothing here starts, changes, or deletes anything.
 
 Access requires an OAuth token with the scope `agents:read`. See [Authentication](/plugins/develop/authentication).
+
+The server answers both MCP eras on one endpoint: stateless 2026-07-28 requests (version in `_meta`, `server/discover`, `resultType` on every result) and `initialize` for 2025-11-25 and earlier. See [protocol versions](/api/mcp-servers#protocol-versions).

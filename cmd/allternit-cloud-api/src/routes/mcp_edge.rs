@@ -412,6 +412,23 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
         Err(_) => return (StatusCode::BAD_REQUEST, Json(json!({ "error": "invalid_json" }))).into_response(),
     };
     let id = request.get("id").cloned().unwrap_or(Value::Null);
+    let rpc_method = request["method"].as_str().unwrap_or_default();
+    let h = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
+    if let Some(err) = mcp_protocol::check_headers(&id, rpc_method, &request["params"], h("mcp-method"), h("mcp-name")) {
+        return (StatusCode::BAD_REQUEST, Json(err)).into_response();
+    }
+    // `server/discover` is static: answer it here so a modern client learns
+    // versions, capabilities and instructions without waking the computer.
+    if rpc_method == "server/discover" {
+        let spec = match target {
+            Target::Bot(_) => mcp_protocol::servers::vendor_bot(env!("CARGO_PKG_VERSION")),
+            Target::Agents => mcp_protocol::servers::agents(env!("CARGO_PKG_VERSION")),
+        };
+        let era = mcp_protocol::Era::of(rpc_method, &request["params"], h("mcp-protocol-version"));
+        if let Some(reply) = mcp_protocol::preflight(&spec, &era, &id, rpc_method) {
+            return Json(reply).into_response();
+        }
+    }
 
     let outcome = match tokio::time::timeout(BUDGET, deliver(backend, &target, &caller, &body)).await {
         Ok(o) => o,
@@ -740,6 +757,33 @@ mod tests {
         assert!(f.paths().is_empty(), "nothing reaches a runtime until the token is right");
         // aud as an array, scope as `scp`, trailing slash: accepted.
         assert_eq!(post(&f, bot("b-auth-3"), &bearer("array-aud"), LIST).await.0, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn server_discover_is_answered_at_the_edge_without_a_runtime() {
+        let f = Fake::new(&["rt1"]).token("agents", claims(BASE, AGENTS_SCOPE, "user-a")).token("bot", claims("https://mcp.allternit.com/mcp/bots/b-d", BOT_SCOPE, "user-a"));
+        let discover = r#"{"jsonrpc":"2.0","id":"d","method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}"#;
+        let (status, _, body) = post(&f, Target::Agents, &bearer("agents"), discover).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["result"]["supportedVersions"][0], "2026-07-28");
+        assert_eq!(body["result"]["instructions"], mcp_protocol::servers::AGENTS_INSTRUCTIONS);
+        let (_, _, body) = post(&f, bot("b-d"), &bearer("bot"), discover).await;
+        assert_eq!(body["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["name"], "allternit-vendor-bot");
+        assert!(f.paths().is_empty(), "discover never wakes a computer");
+        // Still behind auth.
+        assert_eq!(post(&f, Target::Agents, &HeaderMap::new(), discover).await.0, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn a_mismatched_mcp_method_header_is_a_400() {
+        let f = Fake::new(&["rt1"]).token("agents", claims(BASE, AGENTS_SCOPE, "user-a"));
+        let mut h = bearer("agents");
+        h.insert("mcp-method", "tools/call".parse().unwrap());
+        let (status, _, body) = post(&f, Target::Agents, &h, LIST).await;
+        assert_eq!((status, body["error"]["code"].as_i64()), (StatusCode::BAD_REQUEST, Some(-32020)));
+        assert!(f.paths().is_empty());
+        h.insert("mcp-method", "tools/list".parse().unwrap());
+        assert_eq!(post(&f, Target::Agents, &h, LIST).await.0, StatusCode::OK);
     }
 
     #[tokio::test]

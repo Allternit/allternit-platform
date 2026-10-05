@@ -103,7 +103,7 @@ mod tests {
         let app = app("edge-owner").await;
         let (status, body) = call(&app, "/webhooks/mcp-edge/bots/bot-vendor", &list(), Some((TOKEN, "user-a")), Some("claude-connector")).await;
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(body["result"]["tools"].as_array().map(Vec::len), Some(10), "{body}");
+        assert_eq!(body["result"]["tools"].as_array().map(Vec::len), Some(crate::mcp_vendor_bots::tool_descriptors().len()), "{body}");
     }
 
     #[tokio::test]

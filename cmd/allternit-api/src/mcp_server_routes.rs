@@ -34,21 +34,24 @@ use crate::mcp_tunnel_auth::require_tunnel_auth;
 use crate::tool_routes::{execute_tool_internal, ExecuteToolRequest};
 use crate::AppState;
 
-const PROTOCOL_VERSION: &str = "2025-06-18";
-const SUPPORTED_PROTOCOL_VERSIONS: [&str; 2] = ["2025-06-18", "2025-03-26"];
-const SERVER_NAME: &str = "allternit-api";
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Protocol versions, `initialize`, `server/discover` and modern result
+/// decoration come from the shared `mcp-protocol` crate.
+fn server_spec() -> mcp_protocol::ServerSpec {
+    mcp_protocol::servers::agents(SERVER_VERSION)
+}
 
 pub fn mcp_server_router() -> Router<Arc<AppState>> {
     Router::new().route("/server", post(handle_rpc))
 }
 
 #[derive(Debug, Deserialize)]
-pub(crate) struct JsonRpcRequest {
-    id: Option<Value>,
-    method: String,
+pub struct JsonRpcRequest {
+    pub(crate) id: Option<Value>,
+    pub(crate) method: String,
     #[serde(default)]
-    params: Value,
+    pub(crate) params: Value,
 }
 
 async fn tool_catalog(state: &AppState) -> Vec<Value> {
@@ -195,6 +198,15 @@ async fn tool_catalog(state: &AppState) -> Vec<Value> {
     tools
 }
 
+/// A modern client's `Mcp-Method` / `Mcp-Name` headers must agree with the
+/// body (MCP 2026-07-28); a mismatch is HTTP 400 with `-32020`.
+pub(crate) fn header_mismatch(headers: &axum::http::HeaderMap, req: &JsonRpcRequest) -> Option<axum::response::Response> {
+    let h = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
+    let id = req.id.clone().unwrap_or_default();
+    mcp_protocol::check_headers(&id, &req.method, &req.params, h("mcp-method"), h("mcp-name"))
+        .map(|err| (StatusCode::BAD_REQUEST, Json(err)).into_response())
+}
+
 fn success(id: Value, result: Value) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "result": result })
 }
@@ -215,6 +227,9 @@ async fn handle_rpc(
     headers: axum::http::HeaderMap,
     Json(req): Json<JsonRpcRequest>,
 ) -> impl IntoResponse {
+    if let Some(resp) = header_mismatch(&headers, &req) {
+        return resp;
+    }
     let tunnel_id = headers
         .get(TUNNEL_ID_HEADER)
         .and_then(|v| v.to_str().ok())
@@ -317,7 +332,6 @@ pub async fn mcp_tools_internal_stdio(state: &Arc<AppState>, user_id: &str, line
         }
     };
 
-    let id = req.id.clone().unwrap_or_default();
     if req.id.is_none() {
         // Notification: no response body required.
         return None;
@@ -339,9 +353,9 @@ async fn handle_rpc_inner(
     // JSON-RPC notifications (no `id`) get no response body — the caller
     // isn't waiting on one. `notifications/initialized` is the only one this
     // server expects.
-    let Some(id) = req.id.clone() else {
+    if req.id.is_none() {
         return StatusCode::ACCEPTED.into_response();
-    };
+    }
 
     Json(handle_rpc_inner_value(state, user_id, org_id, req, agents_only).await).into_response()
 }
@@ -366,29 +380,27 @@ async fn handle_rpc_inner_value(
     agents_only: bool,
 ) -> Value {
     let id = req.id.clone().unwrap_or_default();
+    let spec = server_spec();
+    let era = mcp_protocol::Era::of(&req.method, &req.params, None);
+    if let Some(done) = mcp_protocol::preflight(&spec, &era, &id, &req.method) {
+        return done;
+    }
+    let method = req.method.clone();
+    let response = dispatch_method(state, user_id, org_id, req, agents_only, id).await;
+    mcp_protocol::finish(&spec, &era, &method, response)
+}
 
+/// The server's own methods (everything `mcp_protocol::preflight` doesn't
+/// answer).
+async fn dispatch_method(
+    state: &Arc<AppState>,
+    user_id: &str,
+    org_id: Option<&str>,
+    req: JsonRpcRequest,
+    agents_only: bool,
+    id: Value,
+) -> Value {
     match req.method.as_str() {
-        "initialize" => {
-            let requested = req.params.get("protocolVersion").and_then(|v| v.as_str());
-            let version = requested
-                .filter(|v| SUPPORTED_PROTOCOL_VERSIONS.contains(v))
-                .unwrap_or(PROTOCOL_VERSION);
-            success(
-                id,
-                json!({
-                    "protocolVersion": version,
-                    "capabilities": {
-                        "tools": { "listChanged": false },
-                        "resources": { "subscribe": false, "listChanged": false }
-                    },
-                    "serverInfo": { "name": SERVER_NAME, "version": SERVER_VERSION },
-                    "instructions": crate::mcp_agents::SERVER_INSTRUCTIONS
-                }),
-            )
-        }
-
-        "ping" => success(id, json!({})),
-
         "tools/list" => {
             let mut tools = if agents_only { Vec::new() } else { tool_catalog(state).await };
             tools.extend(crate::mcp_agents::tool_descriptors());

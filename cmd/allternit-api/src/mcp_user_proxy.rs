@@ -62,7 +62,6 @@ pub const APPROVED_META_KEY: &str = "allternit/approved";
 pub const SESSION_HEADER: &str = "x-allternit-session";
 /// Upper bound on a proxy token's life (the task's ≤ 15 minutes).
 pub const TOKEN_TTL_SECS: i64 = 15 * 60;
-const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
 const PER_CONNECTOR_TIMEOUT: Duration = Duration::from_secs(25);
 
 pub fn mcp_user_proxy_router() -> Router<Arc<AppState>> {
@@ -324,10 +323,13 @@ async fn handle_rpc(state: &Arc<AppState>, claims: &ProxyClaims, body: &Value, a
     let method = body.get("method").and_then(|m| m.as_str()).unwrap_or("");
     let params = body.get("params").cloned().unwrap_or(Value::Null);
     let started = Instant::now();
+    let spec = server_spec();
+    let era = mcp_protocol::Era::of(method, &params, None);
+    if let Some(done) = mcp_protocol::preflight(&spec, &era, &id, method) {
+        return Some(done);
+    }
 
     let (payload, tool, outcome) = match method {
-        "initialize" => (rpc_result(&id, initialize_result(&params)), None, "ok"),
-        "ping" => (rpc_result(&id, json!({})), None, "ok"),
         "tools/list" => {
             let connectors = load_user_connectors(state, &claims.user_id, allow_private).await;
             let modes = load_install_modes(state, &claims.user_id).await;
@@ -374,21 +376,17 @@ async fn handle_rpc(state: &Arc<AppState>, claims: &ProxyClaims, body: &Value, a
         elapsed_ms = started.elapsed().as_millis() as u64,
         "mcp user proxy call"
     );
-    Some(payload)
+    Some(mcp_protocol::finish(&spec, &era, method, payload))
 }
 
-fn initialize_result(params: &Value) -> Value {
-    // Echo a version the client asked for when it is one this proxy is written to.
-    let version = params
-        .get("protocolVersion")
-        .and_then(|v| v.as_str())
-        .filter(|v| ["2024-11-05", "2025-03-26", "2025-06-18"].contains(v))
-        .unwrap_or(MCP_PROTOCOL_VERSION);
-    json!({
-        "protocolVersion": version,
-        "capabilities": { "tools": { "listChanged": false }, "resources": {} },
-        "serverInfo": { "name": PROXY_SERVER_NAME, "version": "1" },
-    })
+/// Versions, `initialize` and `server/discover` come from `mcp-protocol`.
+fn server_spec() -> mcp_protocol::ServerSpec {
+    mcp_protocol::ServerSpec {
+        name: PROXY_SERVER_NAME,
+        version: "1",
+        capabilities: json!({ "tools": { "listChanged": false }, "resources": {} }),
+        instructions: None,
+    }
 }
 
 // ─── permission modes ────────────────────────────────────────────────────────
@@ -689,9 +687,14 @@ mod tests {
 
     #[test]
     fn initialize_reports_tools_and_resources() {
-        let r = initialize_result(&json!({ "protocolVersion": "2025-03-26" }));
+        let init = |v: &str| {
+            let p = json!({ "protocolVersion": v });
+            let era = mcp_protocol::Era::of("initialize", &p, None);
+            mcp_protocol::preflight(&server_spec(), &era, &json!(1), "initialize").unwrap()["result"].clone()
+        };
+        let r = init("2025-03-26");
         assert_eq!(r["protocolVersion"], "2025-03-26");
-        assert_eq!(initialize_result(&json!({ "protocolVersion": "1999" }))["protocolVersion"], MCP_PROTOCOL_VERSION);
+        assert_eq!(init("1999")["protocolVersion"], mcp_protocol::LEGACY_DEFAULT);
         assert!(r["capabilities"]["tools"].is_object() && r["capabilities"]["resources"].is_object());
     }
 }
