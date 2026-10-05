@@ -560,7 +560,9 @@ async fn dead_and_timed_out_sessions_fail_with_receipts() {
         ],
     )
     .await;
-    let report = drive(&root, &ledger, &gate, &dag_id, |o| o.timeout_seconds = Some(2)).await;
+    // 5s: dead_a dies after ~1s; the margin keeps it "dead" (not "timeout")
+    // while a parallel test starts a pane-engine daemon.
+    let report = drive(&root, &ledger, &gate, &dag_id, |o| o.timeout_seconds = Some(5)).await;
     let mut finished = report.finished.clone();
     finished.sort();
     assert_eq!(finished, vec![("dead_a".into(), "dead".into()), ("slow_a".into(), "timeout".into())]);
