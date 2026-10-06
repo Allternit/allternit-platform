@@ -315,6 +315,21 @@ pub fn factory_core_router() -> Router<Arc<AppState>> {
         .route("/vault/archive", post(vault_archive))
 }
 
+/// [`factory_core_router`] plus the subpaths it renamed (`/`, `/health`,
+/// `/dags…`, `/runs/:id/cancel`) in their old form. Mounted only under the old
+/// prefixes, for callers already deployed (see main.rs); nothing new calls it.
+pub fn legacy_alias_router() -> Router<Arc<AppState>> {
+    factory_core_router()
+        .route("/", get(health_check))
+        .route("/health", get(health_check))
+        .route("/dags", get(dags_view))
+        .route("/dags/:dag_id/render", get(dag_render))
+        .route("/dags/:dag_id/execute", post(dag_execute))
+        .route("/dags/:dag_id/nodes", post(create_dag_node))
+        .route("/dags/:dag_id/nodes/:node_id", patch(update_dag_node).delete(delete_dag_node))
+        .route("/runs/:run_id/cancel", post(run_cancel))
+}
+
 // ============================================================================
 // Handlers
 // ============================================================================
@@ -6127,6 +6142,32 @@ mod tests {
         let x = node_meta(&app, &dag_id, "task X").await;
         assert_eq!(x["description"], json!(""));
 
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[tokio::test]
+    async fn old_prefix_aliases_serve_the_old_paths_beside_the_factory_routes() {
+        // The same three mounts as main.rs: a duplicate or conflicting route
+        // panics here instead of crash-looping the server at boot.
+        let temp = std::env::temp_dir().join(format!("old-prefix-aliases-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp).unwrap();
+        let app = Router::new()
+            .nest("/api/factory", factory_core_router())
+            .nest("/api/rails", legacy_alias_router())
+            .nest("/api/commrails", legacy_alias_router())
+            .with_state(test_app_state(&temp).await);
+        // What deployed callers send (allternit-ai use-rails-dags, gizzi <= 2.1.9).
+        for (path, want) in [
+            ("/api/commrails/dags?view=mine", StatusCode::OK),
+            ("/api/rails/health", StatusCode::OK),
+            ("/api/rails/mail/threads", StatusCode::OK),
+            ("/api/factory/plans/dags?view=mine", StatusCode::OK),
+            // The old subpaths exist only under the old prefixes.
+            ("/api/factory/dags", StatusCode::NOT_FOUND),
+        ] {
+            let res = app.clone().oneshot(Request::get(path).body(Body::empty()).unwrap()).await.unwrap();
+            assert_eq!(res.status(), want, "{path}");
+        }
         let _ = std::fs::remove_dir_all(&temp);
     }
 }

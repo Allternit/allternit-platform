@@ -96,7 +96,7 @@ use allternit_api::platform_static::platform_service;
 use allternit_api::playground_routes::playground_router;
 use allternit_api::provider_routes::provider_router;
 use allternit_api::rate_limit::rate_limit_middleware;
-use allternit_api::rails::{factory_core_router, RailsState};
+use allternit_api::rails::{factory_core_router, legacy_alias_router, RailsState};
 use allternit_api::fabric_routes::fabric_router;
 use allternit_api::remote_control_routes::remote_control_router;
 use allternit_api::research_task_routes::research_task_router;
@@ -1154,6 +1154,13 @@ async fn main() {
         // The Factory's in-process routes (mail, peers, steer, ledger, plans …).
         // Static under /api/factory, so they win over the engine proxy below.
         .nest("/api/factory", factory_core_router())
+        // Old prefixes, kept only for callers already in users' hands:
+        // ai.allternit.com / Desktop (allternit-ai `rails.service`,
+        // `use-rails-dags`) and gizzi-code <= v2.1.9 (mail client, DAG mirror).
+        // Remove both once allternit-ai main and the current gizzi-code
+        // release call /api/factory only.
+        .nest("/api/rails", legacy_alias_router()) // old-names: keep (alias for deployed callers; remove after allternit-ai + gizzi-code move to /api/factory)
+        .nest("/api/commrails", legacy_alias_router()) // old-names: keep (alias for deployed callers; remove after allternit-ai + gizzi-code move to /api/factory)
         .nest("/stream", stream_router())
         .nest("/ws/bots", bot_desktop_stream_router())
         .nest(
@@ -1532,7 +1539,7 @@ async fn main() {
         info!("  - Visualization:  GET /viz/*");
         info!("  - Sandbox:        POST /sandbox/*");
         info!("  - VM Sessions:    POST|GET|DELETE /vm-session/*");
-        info!("  - Factory core:   GET|POST /api/factory/{mail,peers,steer,ledger,plan,…}");
+        info!("  - Factory core:   GET|POST /api/factory/{{mail,peers,steer,ledger,plan,…}}");
         info!("  - Event Stream:   WS /stream/ws/*");
         #[cfg(unix)]
         info!("  - Terminal:       POST /terminal/*");
