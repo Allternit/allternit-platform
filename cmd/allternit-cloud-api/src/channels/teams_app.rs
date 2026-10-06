@@ -530,6 +530,7 @@ pub fn routes() -> Router<Arc<ApiState>> {
         .route("/api/v1/channels/teams/send", post(send_h))
         .route("/api/v1/channels/teams/connect", post(connect_h))
         .route("/api/v1/channels/teams/register", post(register_h))
+        .route("/api/v1/channels/teams/installs", get(installs_h))
         .route("/api/v1/channels/teams/catalog-upload", post(catalog_upload_h))
         .route("/api/v1/channels/teams/install-app", post(install_app_h))
 }
@@ -545,7 +546,7 @@ fn bearer(headers: &HeaderMap) -> Option<String> {
 /// The runtime calls these routes in the background with its paired runtime
 /// device token; the connect wizard calls them in a browser with a Clerk
 /// session. Accept whichever credential authenticated.
-async fn resolve_caller(state: &ApiState, headers: &HeaderMap) -> Result<String, ApiError> {
+pub(crate) async fn resolve_caller(state: &ApiState, headers: &HeaderMap) -> Result<String, ApiError> {
     match resolve_user_scoped(&state.db, headers, "compute").await {
         Ok(user) => Ok(user.id),
         Err(session_err) => {
@@ -687,13 +688,7 @@ async fn send_h(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json(bod
 async fn connect_h(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> Result<Response, ApiError> {
     let Some(cfg) = config() else { return Ok(not_configured()) };
     let user = resolve_user_scoped(&state.db, &headers, "compute").await?;
-    let state_id = uuid::Uuid::new_v4().to_string();
-    sqlx::query("INSERT INTO teams_app_states (state, user_id, expires_at) VALUES ($1, $2, now() + make_interval(mins => $3))")
-        .bind(&state_id)
-        .bind(&user.id)
-        .bind(STATE_TTL_MINUTES as f64)
-        .execute(&state.db)
-        .await?;
+    let state_id = new_connect_state(&state.db, &user.id).await?;
     let redirect_uri = format!("{}/channels/teams/callback", public_base());
     Ok(Json(json!({
         "url": connect_url(&cfg.app_id, &redirect_uri, &state_id),
@@ -701,6 +696,19 @@ async fn connect_h(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> Re
         "expiresInSeconds": STATE_TTL_MINUTES * 60,
     }))
     .into_response())
+}
+
+/// A one-time sign-in state naming the user (10 minutes).
+pub(crate) async fn new_connect_state(db: &sqlx::PgPool, user: &str) -> Result<String, sqlx::Error> {
+    let state_id = uuid::Uuid::new_v4().to_string();
+    // make_interval's `mins` is an integer: binding a float fails on every call.
+    sqlx::query("INSERT INTO teams_app_states (state, user_id, expires_at) VALUES ($1, $2, now() + make_interval(mins => $3))")
+        .bind(&state_id)
+        .bind(user)
+        .bind(STATE_TTL_MINUTES as i32)
+        .execute(db)
+        .await?;
+    Ok(state_id)
 }
 
 #[derive(Debug, Deserialize)]
@@ -823,6 +831,27 @@ async fn register_h(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json
         .execute(&state.db)
         .await?;
     Ok(Json(json!({ "ok": true, "installs": result.rows_affected() })).into_response())
+}
+
+/// `GET /api/v1/channels/teams/installs`: the Microsoft tenants this user connected, so their
+/// runtime can record the connection before the first message arrives.
+async fn installs_h(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> Result<Response, ApiError> {
+    let Some(_cfg) = config() else { return Ok(not_configured()) };
+    let user = resolve_caller(&state, &headers).await?;
+    Ok(Json(json!({ "installs": list_installs(&state.db, &user).await? })).into_response())
+}
+
+pub(crate) async fn list_installs(db: &sqlx::PgPool, user: &str) -> Result<Vec<Value>, sqlx::Error> {
+    let rows: Vec<(String, Option<String>, Option<String>, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
+        "SELECT tenant_id, runtime_id, team_name, created_at FROM teams_installs WHERE user_id = $1 ORDER BY created_at",
+    )
+    .bind(user)
+    .fetch_all(db)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(tenant, runtime, name, at)| json!({ "tenantId": tenant, "runtimeId": runtime, "teamName": name, "installedAt": at }))
+        .collect())
 }
 
 #[derive(Debug, Deserialize)]
@@ -1018,6 +1047,19 @@ async fn retry_or_dead(
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn the_sign_in_state_is_stored_and_installs_are_listed_per_user() {
+        let pool = crate::routes::test_support::test_pool().await;
+        sqlx::raw_sql(&include_str!("../../migrations_pg/027_teams_app.sql").replace("public.", "")).execute(&pool).await.unwrap();
+        let st = super::new_connect_state(&pool, "user1").await.expect("state insert");
+        let (u,): (String,) = sqlx::query_as("SELECT user_id FROM teams_app_states WHERE state = $1 AND expires_at > now()").bind(&st).fetch_one(&pool).await.unwrap();
+        assert_eq!(u, "user1");
+        sqlx::query("INSERT INTO teams_installs (id, tenant_id, user_id, team_name) VALUES ('i1', 't-1', 'user1', 'Acme')").execute(&pool).await.unwrap();
+        let list = super::list_installs(&pool, "user1").await.unwrap();
+        assert_eq!((list.len(), list[0]["tenantId"].as_str(), list[0]["teamName"].as_str()), (1, Some("t-1"), Some("Acme")));
+        assert!(super::list_installs(&pool, "user2").await.unwrap().is_empty());
+    }
+
     use super::*;
     use std::sync::Mutex as StdMutex;
 

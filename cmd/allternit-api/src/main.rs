@@ -1024,6 +1024,8 @@ async fn main() {
         .merge(allternit_api::people::people_router())
         .merge(allternit_api::channel_slack_app::slack_app_connect_router())
         .merge(allternit_api::channel_discord_app::discord_app_connect_router())
+        .merge(allternit_api::channel_teams_app::teams_app_connect_router())
+        .merge(allternit_api::channel_whatsapp_app::whatsapp_business_connect_router())
         .merge(allternit_api::spend_limits::spend_limit_router())
         .merge(allternit_api::channel_tools::channel_tools_router())
         .merge(allternit_api::autonomy::autonomy_router())

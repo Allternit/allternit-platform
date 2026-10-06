@@ -44,10 +44,127 @@ impl WhatsAppBusinessTransport {
         Self {
             http,
             cloud_url: env("ALLTERNIT_CLOUD_API_URL").unwrap_or_else(|| "https://api.allternit.com".into()).trim_end_matches('/').to_string(),
-            cloud_token: non_empty(pick(secret, "cloudToken")).or_else(|| env("ALLTERNIT_CLOUD_API_TOKEN")),
+            // A signed-in computer sends with its own device credential; no token to paste.
+            cloud_token: non_empty(pick(secret, "cloudToken")).or_else(|| env("ALLTERNIT_CLOUD_API_TOKEN")).or_else(crate::phone_sync::runtime_bearer),
             phone_number_id: non_empty(pick(secret, "phoneNumberId")),
         }
     }
+}
+
+/// `POST /gateway/channel-accounts/whatsapp {runtimeId?} | {relaySecret, phoneNumberId, displayName?}`:
+/// record the business numbers Embedded Signup connected, so bots can be switched on for them.
+/// Without a relay secret in the body it asks the cloud (`GET /api/v1/channels/whatsapp/accounts`)
+/// for the owner's numbers routed to `runtimeId`. 404 `not_installed` until a signup lands. The relay
+/// secret is sealed; the Meta token never leaves the cloud.
+pub fn whatsapp_business_connect_router() -> axum::Router<Arc<crate::AppState>> {
+    axum::Router::new().route("/gateway/channel-accounts/whatsapp", axum::routing::post(connect_h))
+}
+
+#[derive(Debug, serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct ConnectBody {
+    relay_secret: Option<String>,
+    phone_number_id: Option<String>,
+    display_name: Option<String>,
+    runtime_id: Option<String>,
+}
+
+async fn connect_h(
+    axum::extract::State(state): axum::extract::State<Arc<crate::AppState>>,
+    axum::Extension(user): axum::Extension<crate::auth::AuthUser>,
+    headers: HeaderMap,
+    body: Option<axum::Json<ConnectBody>>,
+) -> axum::response::Response {
+    use axum::{http::StatusCode, response::IntoResponse, Json};
+    let body = body.map(|axum::Json(b)| b).unwrap_or_default();
+    if let (Some(secret), Some(pnid)) = (body.relay_secret.as_deref(), body.phone_number_id.as_deref()) {
+        return match upsert_business_account(&state.db, &user.user_id, secret, pnid, body.display_name.as_deref()) {
+            Ok(v) => Json(v).into_response(),
+            Err((code, msg)) => (code, Json(json!({ "error": msg }))).into_response(),
+        };
+    }
+    let auth = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string)
+        .or_else(|| crate::phone_sync::runtime_bearer().map(|t| format!("Bearer {t}")));
+    let Some(auth) = auth else {
+        return (StatusCode::UNAUTHORIZED, Json(json!({ "error": "not_signed_in" }))).into_response();
+    };
+    let url = format!("{}/api/v1/channels/whatsapp/accounts", crate::phone_sync::cloud_base().trim_end_matches('/'));
+    let resp = match reqwest::Client::new().get(url).header("authorization", auth).timeout(std::time::Duration::from_secs(10)).send().await {
+        Ok(r) => r,
+        Err(e) => return (StatusCode::BAD_GATEWAY, Json(json!({ "error": format!("cloud unreachable: {e}") }))).into_response(),
+    };
+    if resp.status() == StatusCode::SERVICE_UNAVAILABLE {
+        return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "error": "whatsapp_not_configured" }))).into_response();
+    }
+    if !resp.status().is_success() {
+        return (StatusCode::BAD_GATEWAY, Json(json!({ "error": format!("cloud returned {}", resp.status()) }))).into_response();
+    }
+    let listed: Value = resp.json().await.unwrap_or(Value::Null);
+    match record_from_cloud(&state.db, &user.user_id, &listed, body.runtime_id.as_deref()) {
+        Ok(Some(v)) => Json(v).into_response(),
+        Ok(None) => (StatusCode::NOT_FOUND, Json(json!({ "error": "not_installed" }))).into_response(),
+        Err((code, msg)) => (code, Json(json!({ "error": msg }))).into_response(),
+    }
+}
+
+/// Record every number the cloud lists for this computer (all of them when no runtime is named);
+/// answers with the newest one recorded, or `None` when there are none yet.
+pub fn record_from_cloud(db: &crate::db::DbHandle, owner: &str, listed: &Value, runtime_id: Option<&str>) -> Result<Option<Value>, (axum::http::StatusCode, String)> {
+    let mut last = None;
+    for a in listed.get("accounts").and_then(Value::as_array).into_iter().flatten() {
+        let s = |k: &str| a.get(k).and_then(Value::as_str).unwrap_or_default();
+        if runtime_id.is_some_and(|rt| s("runtimeId") != rt) {
+            continue;
+        }
+        last = Some(upsert_business_account(db, owner, s("relaySecret"), s("phoneNumberId"), None)?);
+    }
+    Ok(last)
+}
+
+pub fn upsert_business_account(db: &crate::db::DbHandle, owner: &str, relay_secret: &str, phone_number_id: &str, display_name: Option<&str>) -> Result<Value, (axum::http::StatusCode, String)> {
+    use axum::http::StatusCode;
+    let (relay_secret, pnid) = (relay_secret.trim(), phone_number_id.trim());
+    if relay_secret.is_empty() || pnid.is_empty() || !pnid.bytes().all(|b| b.is_ascii_digit()) {
+        return Err((StatusCode::BAD_REQUEST, "relaySecret and a numeric phoneNumberId are required".into()));
+    }
+    let keys = json!({ "mode": "business", "appSecret": relay_secret, "phoneNumberId": pnid }).to_string();
+    let Some(sealed) = crate::agent_gateway_routes::seal_strict(&keys) else {
+        return Err((StatusCode::SERVICE_UNAVAILABLE, "no encryption key is configured; the connection was not stored".into()));
+    };
+    let conn = db.connect().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let name = display_name.map(str::trim).filter(|n| !n.is_empty()).unwrap_or("WhatsApp business");
+    let t = crate::agent_gateway_routes::now();
+    let existing: Option<String> = conn
+        .query_row(
+            "SELECT id FROM provider_account_bindings WHERE owner = ?1 AND vendor = 'whatsapp' AND external_account_id = ?2",
+            rusqlite::params![owner, pnid],
+            |r| r.get(0),
+        )
+        .ok();
+    let id = match existing {
+        Some(id) => {
+            conn.execute(
+                "UPDATE provider_account_bindings SET display_name = ?1, secret_ref = ?2, state = 'CONNECTED', verified_at = ?3, updated_at = ?3 WHERE id = ?4 AND owner = ?5",
+                rusqlite::params![name, sealed, t, id, owner],
+            )
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            id
+        }
+        None => {
+            let id = crate::agent_gateway_routes::id("acct");
+            conn.execute(
+                "INSERT INTO provider_account_bindings (id, owner, vendor, auth_type, external_account_id, display_name, secret_ref, scopes_json, state, verified_at, created_at, updated_at)
+                 VALUES (?1, ?2, 'whatsapp', 'channel_oauth', ?3, ?4, ?5, '[\"messages\"]', 'CONNECTED', ?6, ?6, ?6)",
+                rusqlite::params![id, owner, pnid, name, sealed, t],
+            )
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            id
+        }
+    };
+    Ok(json!({ "account": { "id": id, "vendor": "whatsapp", "displayName": name, "handle": pnid, "state": "CONNECTED" } }))
 }
 
 /// The bot's name in bold ahead of its text.
@@ -163,5 +280,31 @@ mod tests {
         t.cloud_token = None;
         assert!(matches!(t.post(&out(None)).await, Err(PostError::Rejected(_))));
         assert!(http.sent.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn embedded_signup_records_the_business_number_once() {
+        let dir = std::env::temp_dir().join(format!("allternit-wa-biz-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let st = crate::test_helpers::app_state(&dir).await;
+        assert!(upsert_business_account(&st.db, "u1", "", "123", None).is_err());
+        assert!(upsert_business_account(&st.db, "u1", "rs", "12a", None).is_err());
+        let a = upsert_business_account(&st.db, "u1", "relay-1", "1555", Some("Acme Support")).unwrap();
+        let b = upsert_business_account(&st.db, "u1", "relay-2", "1555", None).unwrap();
+        assert_eq!(a["account"]["id"], b["account"]["id"], "re-onboarding the same number updates it");
+        let accts = crate::channel_transports::accounts(&st.db, "whatsapp", None);
+        assert_eq!(accts.len(), 1);
+        assert!(is_business(&accts[0].secret));
+        assert_eq!(crate::channel_transports::pick(&accts[0].secret, "appSecret"), "relay-2");
+
+        // Pulled from the cloud: only the numbers routed to this computer are recorded.
+        let listed = json!({ "accounts": [
+            { "accountId": "a1", "runtimeId": "rt-other", "phoneNumberId": "1777", "relaySecret": "r-other" },
+            { "accountId": "a2", "runtimeId": "rt-1", "phoneNumberId": "1888", "relaySecret": "r-1" },
+        ] });
+        assert!(record_from_cloud(&st.db, "u1", &json!({ "accounts": [] }), Some("rt-1")).unwrap().is_none());
+        let got = record_from_cloud(&st.db, "u1", &listed, Some("rt-1")).unwrap().unwrap();
+        assert_eq!(got["account"]["handle"], "1888");
+        assert_eq!(crate::channel_transports::accounts(&st.db, "whatsapp", None).len(), 2, "1555 from before + 1888; 1777 lives on another computer");
     }
 }

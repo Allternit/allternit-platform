@@ -147,6 +147,76 @@ pub(crate) fn ensure_account(db: &DbHandle, owner: &str) -> Option<Account> {
     Some(Account { id: account_id, owner: owner.to_string(), restricted_bot: None, secret: "{}".to_string() })
 }
 
+/// `POST /gateway/channel-accounts/teams {runtimeId?}`: after the Microsoft sign-in, point the
+/// owner's Teams installs at this computer (when `runtimeId` is given) and record the connection,
+/// so bots can be switched on before the first message. 404 `not_installed` until the sign-in lands.
+pub fn teams_app_connect_router() -> Router<Arc<AppState>> {
+    Router::new().route("/gateway/channel-accounts/teams", post(teams_connect_h))
+}
+
+#[derive(Debug, serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct TeamsConnectBody {
+    runtime_id: Option<String>,
+}
+
+async fn teams_connect_h(
+    State(state): State<Arc<AppState>>,
+    axum::Extension(user): axum::Extension<crate::auth::AuthUser>,
+    headers: axum::http::HeaderMap,
+    body: Option<Json<TeamsConnectBody>>,
+) -> axum::response::Response {
+    use axum::{http::StatusCode, response::IntoResponse};
+    let base = crate::phone_sync::cloud_base();
+    let base = base.trim_end_matches('/');
+    // The caller's own sign-in when it has one, else this computer's device credential.
+    let auth = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string)
+        .or_else(|| crate::phone_sync::runtime_bearer().map(|t| format!("Bearer {t}")));
+    let Some(auth) = auth else {
+        return (StatusCode::UNAUTHORIZED, Json(json!({ "error": "not_signed_in", "message": "Sign in to Allternit on this computer first." }))).into_response();
+    };
+    let client = reqwest::Client::new();
+    if let Some(rt) = body.and_then(|Json(b)| b.runtime_id).filter(|r| !r.trim().is_empty()) {
+        let _ = client
+            .post(format!("{base}/api/v1/channels/teams/register"))
+            .header("authorization", &auth)
+            .json(&json!({ "runtimeId": rt }))
+            .timeout(std::time::Duration::from_secs(10))
+            .send()
+            .await;
+    }
+    let resp = match client.get(format!("{base}/api/v1/channels/teams/installs")).header("authorization", &auth).timeout(std::time::Duration::from_secs(10)).send().await {
+        Ok(r) => r,
+        Err(e) => return (StatusCode::BAD_GATEWAY, Json(json!({ "error": format!("cloud unreachable: {e}") }))).into_response(),
+    };
+    if resp.status() == StatusCode::SERVICE_UNAVAILABLE {
+        return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "error": "teams_not_configured" }))).into_response();
+    }
+    if !resp.status().is_success() {
+        return (StatusCode::BAD_GATEWAY, Json(json!({ "error": format!("cloud returned {}", resp.status()) }))).into_response();
+    }
+    let installs: Value = resp.json().await.unwrap_or(Value::Null);
+    connect_from_installs(&state.db, &user.user_id, &installs)
+}
+
+/// Record the connection when the owner has at least one install (the newest names it).
+pub(crate) fn connect_from_installs(db: &DbHandle, owner: &str, installs: &Value) -> axum::response::Response {
+    use axum::{http::StatusCode, response::IntoResponse};
+    let list = installs.get("installs").and_then(Value::as_array).cloned().unwrap_or_default();
+    let Some(newest) = list.last() else {
+        return (StatusCode::NOT_FOUND, Json(json!({ "error": "not_installed" }))).into_response();
+    };
+    let Some(acct) = ensure_account(db, owner) else {
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "account_not_recorded" }))).into_response();
+    };
+    let tenant = newest.get("tenantId").and_then(Value::as_str).unwrap_or_default();
+    let name = newest.get("teamName").and_then(Value::as_str).filter(|n| !n.is_empty()).unwrap_or("Microsoft Teams");
+    Json(json!({ "account": { "id": acct.id, "vendor": "teams", "displayName": name, "handle": tenant, "state": "CONNECTED" }, "tenants": list.len() })).into_response()
+}
+
 fn cloud_base(state: &AppState) -> Option<String> {
     state.config.cloud_api_url().map(|u| u.trim_end_matches('/').to_string())
 }
@@ -261,6 +331,25 @@ mod tests {
         assert_eq!(events[0].text.as_deref(), Some("@Scout hello there"));
         assert_eq!(events[0].conversation, "teams:19:abc@thread.tacv2");
         assert_eq!(events[0].workspace.as_deref(), Some("https://smba.test/amer/"));
+    }
+
+    #[tokio::test]
+    async fn signing_in_to_teams_records_the_connection_before_any_message() {
+        let dir = std::env::temp_dir().join(format!("allternit-ta-connect-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let st = crate::test_helpers::app_state(&dir).await;
+        let body = |r: Response| async move { serde_json::from_slice::<Value>(&axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap()).unwrap() };
+        // No sign-in yet: not installed, and nothing is recorded.
+        assert_eq!(connect_from_installs(&st.db, "user-a", &json!({ "installs": [] })).status(), StatusCode::NOT_FOUND);
+        let n: i64 = st.db.connect().unwrap().query_row("SELECT COUNT(*) FROM provider_account_bindings WHERE owner = 'user-a'", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 0);
+        let installs = json!({ "installs": [{ "tenantId": "t-1", "runtimeId": "rt-1", "teamName": "Acme", "installedAt": "2026-10-06T00:00:00Z" }] });
+        let got = body(connect_from_installs(&st.db, "user-a", &installs)).await;
+        assert_eq!((got["account"]["id"].as_str(), got["account"]["displayName"].as_str(), got["account"]["handle"].as_str()), (Some("teams-app:user-a"), Some("Acme"), Some("t-1")));
+        // Idempotent: the same account again, still one row.
+        assert_eq!(body(connect_from_installs(&st.db, "user-a", &installs)).await["account"]["id"], "teams-app:user-a");
+        let n: i64 = st.db.connect().unwrap().query_row("SELECT COUNT(*) FROM provider_account_bindings WHERE owner = 'user-a' AND vendor = 'teams'", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 1);
     }
 
     #[tokio::test]
