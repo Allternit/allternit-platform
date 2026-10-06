@@ -8,7 +8,9 @@
 //! `MCP_PUBLIC_URL` is set):
 //! - `POST   /api/v1/mcp/approvals` {client, target, label?} → 201 `{id, client, target}` (idempotent)
 //! - `GET    /api/v1/mcp/approvals?target=` → `{approvals: [{id, client, target, label, createdAt, lastUsedAt}]}`
-//! - `DELETE /api/v1/mcp/approvals/:id` → `{ok: true}`; 404 for one that isn't the caller's
+//! - `DELETE /api/v1/mcp/approvals/:id` → `{ok: true, subscriptionsEnded}`; 404 for one that isn't the caller's.
+//!   Also ends that app's MCP Events subscriptions for the target and sends each a
+//!   signed `terminated` envelope (`routes::mcp_events::terminate_principal`).
 
 use axum::{
     extract::{Path, Query, State},
@@ -132,9 +134,22 @@ async fn revoke_route(State(state): State<Arc<ApiState>>, headers: HeaderMap, Pa
         Ok(u) => u.id,
         Err(e) => return e.into_response(),
     };
-    match sqlx::query("UPDATE mcp_oauth_approvals SET revoked_at = now() WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL").bind(&id).bind(&user).execute(&state.db).await {
-        Ok(r) if r.rows_affected() > 0 => Json(json!({ "ok": true })).into_response(),
-        Ok(_) => (StatusCode::NOT_FOUND, Json(json!({ "error": "not_found" }))).into_response(),
+    let revoked: Result<Option<(String, String)>, _> =
+        sqlx::query_as("UPDATE mcp_oauth_approvals SET revoked_at = now() WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL RETURNING client_id, target")
+            .bind(&id)
+            .bind(&user)
+            .fetch_optional(&state.db)
+            .await;
+    match revoked {
+        Ok(Some((client, target))) => {
+            // The app loses its event subscriptions too, and is told so (`terminated`).
+            let ended = crate::routes::mcp_events::terminate_principal(&state.db, &user, &client, &target, "approval_revoked").await.unwrap_or_else(|e| {
+                tracing::error!("mcp oauth approvals: ending subscriptions failed: {e}");
+                0
+            });
+            Json(json!({ "ok": true, "subscriptionsEnded": ended })).into_response()
+        }
+        Ok(None) => (StatusCode::NOT_FOUND, Json(json!({ "error": "not_found" }))).into_response(),
         Err(e) => internal(e),
     }
 }
