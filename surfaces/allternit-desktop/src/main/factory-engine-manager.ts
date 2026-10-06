@@ -34,6 +34,7 @@ import { dirname } from 'node:path';
 import { app } from 'electron';
 import log from 'electron-log';
 import { PORTS, factoryEngineUrl } from './config.js';
+import { runtimeResource } from './runtime-home.js';
 import { spawnSidecar } from './process-lifeline.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -48,6 +49,12 @@ export interface FactoryBinaryContext {
   packaged: boolean;
   /** process.resourcesPath in packaged builds. */
   resourcesPath?: string;
+  /**
+   * The active runtime package's copy (runtimeResource('bin', name)), which
+   * a runtime update moves together with gizzi-code. Checked before
+   * resources/bin when packaged.
+   */
+  runtimeBinary?: string;
   /** Repo root (…/allternit) used in development. */
   repoRoot: string;
   platform?: NodeJS.Platform;
@@ -60,8 +67,9 @@ function binaryName(platform: NodeJS.Platform): string {
 }
 
 /**
- * Where the engine binary is, or null. Packaged: resources/bin only (the
- * copy that shipped with this Desktop). Dev: $ALLTERNIT_FACTORY_BIN, then the
+ * Where the engine binary is, or null. Packaged: the active runtime
+ * package's copy, then resources/bin (the copy that shipped with this
+ * Desktop). Dev: $ALLTERNIT_FACTORY_BIN, then the
  * repo's cargo targets. Never PATH: an unrelated engine version must not be
  * picked up silently.
  */
@@ -71,7 +79,7 @@ export function resolveFactoryBinary(context: FactoryBinaryContext): string | nu
   const exists = context.exists ?? ((p: string) => fs.existsSync(p));
   const name = binaryName(platform);
   const candidates = context.packaged
-    ? [path.join(context.resourcesPath ?? '', 'bin', name)]
+    ? [context.runtimeBinary ?? '', path.join(context.resourcesPath ?? '', 'bin', name)]
     : [
         env.ALLTERNIT_FACTORY_BIN ?? '',
         env.CARGO_TARGET_DIR ? path.join(env.CARGO_TARGET_DIR, 'release', name) : '',
@@ -415,6 +423,7 @@ export class FactoryEngineManager {
     return {
       packaged: app.isPackaged,
       resourcesPath: process.resourcesPath,
+      runtimeBinary: app.isPackaged ? runtimeResource('bin', binaryName(process.platform)) : undefined,
       repoRoot: path.resolve(__dirname, '..', '..', '..', '..'),
       ...(this.binaryContextOverride ?? {}),
     };

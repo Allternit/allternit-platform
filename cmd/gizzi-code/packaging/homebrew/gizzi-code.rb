@@ -36,8 +36,13 @@ class GizziCode < Formula
   end
 
   def install
-    bin.install "gizzi-code"
-    bin.install_symlink "gizzi-code" => "gizzi"
+    # gizzi-code and the Allternit Factory engine live side by side in
+    # libexec: gizzi finds allternit-factory next to its own (resolved)
+    # binary, and only `gizzi` / `gizzi-code` go on PATH.
+    libexec.install "gizzi-code"
+    libexec.install "allternit-factory" if File.exist?("allternit-factory")
+    bin.install_symlink libexec/"gizzi-code"
+    bin.install_symlink libexec/"gizzi-code" => "gizzi"
 
     # Install shell completions
     bash_completion.install "completions/gizzi-code.bash" if File.exist?("completions/gizzi-code.bash")

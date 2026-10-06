@@ -7,6 +7,10 @@ vi.mock('electron', () => ({
   app: { isPackaged: false },
 }));
 
+vi.mock('./runtime-home.js', () => ({
+  runtimeResource: (...segments: string[]) => join('/nonexistent-runtime', ...segments),
+}));
+
 vi.mock('electron-log', () => ({
   default: { info: () => {}, warn: () => {}, error: () => {} },
 }));
@@ -39,6 +43,15 @@ describe('resolveFactoryBinary', () => {
     expect(resolveFactoryBinary({ packaged: true, resourcesPath: resources, repoRoot: '/nope', platform: 'darwin' })).toBeNull();
     const bin = file(join(resources, 'bin', 'allternit-factory'));
     expect(resolveFactoryBinary({ packaged: true, resourcesPath: resources, repoRoot: '/nope', platform: 'darwin' })).toBe(bin);
+  });
+
+  it('prefers the active runtime package copy when packaged', () => {
+    const resources = tmp('allternit-res-');
+    file(join(resources, 'bin', 'allternit-factory'));
+    const runtimeBin = file(join(tmp('allternit-runtime-'), 'bin', 'allternit-factory'));
+    expect(
+      resolveFactoryBinary({ packaged: true, resourcesPath: resources, runtimeBinary: runtimeBin, repoRoot: '/nope', platform: 'darwin' }),
+    ).toBe(runtimeBin);
   });
 
   it('never falls back to a binary on PATH', () => {
