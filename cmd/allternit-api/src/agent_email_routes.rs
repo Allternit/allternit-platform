@@ -273,6 +273,14 @@ async fn send_email_inner(
         lookup_email_channel(&conn, &req.agent_id)
             .map_err(internal)?
             .ok_or_else(|| {
+                // No address, and this computer can't make one either: say email is off here.
+                if crate::mailflare_client::MailflareConfig::from_env().is_none() && !crate::mailflare_client::brokered_available() {
+                    return err(
+                        StatusCode::NOT_IMPLEMENTED,
+                        "mailflare_not_configured",
+                        "Allternit Mail is not configured on this runtime.",
+                    );
+                }
                 err(
                     StatusCode::CONFLICT,
                     "email_not_provisioned",
