@@ -133,6 +133,151 @@ paths:
                   object: { type: string, const: account }
                   deleted: { type: boolean, const: true }
         default: { $ref: "#/components/responses/Error" }
+  /v1/agents:
+    get:
+      operationId: listAgents
+      summary: List agents
+      description: Agents in the project, oldest first. A key bound to an account sees only that account's agents. Requires the `agents` scope.
+      tags: [Agents]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/After"
+        - name: account_id
+          in: query
+          description: Only this account's agents.
+          schema: { type: string }
+      responses:
+        "200":
+          description: A page of agents.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ListEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/Agent" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createAgent
+      summary: Create an agent
+      description: |
+        A hosted agent for one of your accounts. The greeting must say the caller is talking to an AI
+        (`greeting_missing_ai_disclosure` otherwise); voices are stock voices only; tools come from the
+        launch list. Sandbox projects can have 3 agents (`agent_limit_reached`).
+      tags: [Agents]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              additionalProperties: false
+              properties:
+                account_id:
+                  type: string
+                  description: Required unless the key is bound to an account (then that account).
+                name: { type: string, minLength: 1, maxLength: 100 }
+                instructions: { type: string, maxLength: 32000 }
+                greeting:
+                  type: string
+                  maxLength: 500
+                  description: First thing the agent says. Must say it is an AI. Default "Hi, this is {name}, an AI assistant. How can I help?"
+                model:
+                  type: string
+                  description: '"allternit" (default, routed by Allternit) or "provider/model".'
+                voice: { $ref: "#/components/schemas/StockVoice" }
+                tools:
+                  type: array
+                  items: { $ref: "#/components/schemas/AgentTool" }
+                autonomy: { $ref: "#/components/schemas/Autonomy" }
+                transfer_targets:
+                  type: array
+                  maxItems: 20
+                  items: { type: string, description: E.164 number }
+                business_hours: { type: object, additionalProperties: true }
+                metadata: { type: object, additionalProperties: true }
+      responses:
+        "201":
+          description: The new agent.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Agent" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/agents/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, examples: ["agent_0123456789abcdef01234567"] }
+    get:
+      operationId: getAgent
+      summary: Retrieve an agent
+      tags: [Agents]
+      responses:
+        "200":
+          description: The agent.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Agent" }
+        default: { $ref: "#/components/responses/Error" }
+    patch:
+      operationId: updateAgent
+      summary: Update an agent
+      description: "Absent fields are unchanged; `business_hours: null` clears it; arrays and `metadata` replace the old value. The agent's account can't change."
+      tags: [Agents]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                name: { type: string, minLength: 1, maxLength: 100 }
+                instructions: { type: string, maxLength: 32000 }
+                greeting: { type: string, maxLength: 500 }
+                model: { type: string }
+                voice: { $ref: "#/components/schemas/StockVoice" }
+                tools:
+                  type: array
+                  items: { $ref: "#/components/schemas/AgentTool" }
+                autonomy: { $ref: "#/components/schemas/Autonomy" }
+                transfer_targets:
+                  type: array
+                  maxItems: 20
+                  items: { type: string }
+                business_hours: { type: [object, "null"], additionalProperties: true }
+                metadata: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: The updated agent.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Agent" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deleteAgent
+      summary: Delete an agent
+      tags: [Agents]
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, object, deleted]
+                properties:
+                  id: { type: string }
+                  object: { type: string, const: agent }
+                  deleted: { type: boolean, const: true }
+        default: { $ref: "#/components/responses/Error" }
   /v1/usage:
     get:
       operationId: getUsage
@@ -580,6 +725,44 @@ components:
         external_ref: { type: [string, "null"] }
         metadata: { type: object, additionalProperties: true }
         created_at: { type: string, format: date-time }
+    Agent:
+      type: object
+      required: [id, object, account_id, name, instructions, greeting, model, voice, tools, autonomy, transfer_targets, business_hours, metadata, status, created_at, updated_at]
+      properties:
+        id: { type: string }
+        object: { type: string, const: agent }
+        account_id: { type: string }
+        name: { type: string }
+        instructions: { type: string }
+        greeting: { type: string }
+        model: { type: string }
+        voice: { $ref: "#/components/schemas/StockVoice" }
+        tools:
+          type: array
+          items: { $ref: "#/components/schemas/AgentTool" }
+        autonomy: { $ref: "#/components/schemas/Autonomy" }
+        transfer_targets:
+          type: array
+          items: { type: string }
+        business_hours: { type: [object, "null"], additionalProperties: true }
+        metadata: { type: object, additionalProperties: true }
+        status:
+          type: string
+          enum: [pending, ready]
+          description: "`ready` once the project's hosted runtime holds the agent."
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    AgentTool:
+      type: string
+      enum: [send_text, call, email, channel_post, calendar, web_fetch, web_search, knowledge_search, ask_human, transfer]
+    Autonomy:
+      type: string
+      enum: [draft, ask, tell, limits]
+      description: "What the agent may do on its own: draft (writes, never sends), ask (asks a human first), tell (acts, then tells), limits (acts within set limits). Payments always wait for a human."
+    StockVoice:
+      type: string
+      enum: [af_alloy, af_aoede, af_bella, af_heart, af_jessica, af_kore, af_nicole, af_nova, af_river, af_sarah, af_sky, am_adam, am_echo, am_eric, am_fenrir, am_liam, am_michael, am_onyx, am_puck, am_santa, bf_alice, bf_emma, bf_isabella, bf_lily, bm_daniel, bm_fable, bm_george, bm_lewis]
+      default: af_heart
     UsageRow:
       type: object
       required: [group, meter, unit, quantity, events]
