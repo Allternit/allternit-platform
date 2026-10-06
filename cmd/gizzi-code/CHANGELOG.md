@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- MCP: Gizzi speaks MCP 2026-07-28 and every older revision. It now uses the
+  official TypeScript SDK v2 (`@modelcontextprotocol/client`, `server` and
+  `core` 2.3.1) in place of `@modelcontextprotocol/sdk` 1.x. Servers that
+  answer `server/discover` get stateless requests. Older servers get the
+  usual `initialize` session. The verdict is cached per server, and
+  `gizzi mcp list` shows the protocol version. A new per-server `protocol`
+  option (`auto` | `legacy` | `modern`) overrides detection.
+- MCP OAuth: when the authorization server supports Client ID Metadata
+  Documents, Gizzi identifies itself with
+  `https://platform.allternit.com/oauth/gizzi-client.json` instead of
+  registering a client. Dynamic client registration is the fallback. The
+  callback's `iss` is checked against the expected issuer (RFC 9207).
+- MCP tools merged from several servers come out in a stable order (servers
+  by name, then tools by name), so name-collision suffixes don't change
+  between runs.
+- Gizzi's own MCP servers (the vault Lens server and others) answer both
+  protocol eras.
+
 ## 2.1.9 (2026-09-30)
 
 Gizzi now gates every CLI it drives, blocks risky network and credential
