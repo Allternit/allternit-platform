@@ -161,12 +161,19 @@ fn priority_string(v: &Option<serde_json::Value>) -> Option<String> {
 
 /// The node for `id`, folding a pre-fold `tasks` row the user owns first.
 /// `Err` is the response to send (404, or 403 for someone else's task).
-async fn node_task(state: &AppState, conn: &rusqlite::Connection, user_id: &str, id: &str) -> Result<(), Response> {
+// No rusqlite::Connection is ever held across an .await here: it isn't Sync, so
+// the handler future wouldn't be Send and axum would reject it. Connections are
+// opened in short synchronous scopes instead (cheap for SQLite).
+async fn node_task(state: &AppState, user_id: &str, id: &str) -> Result<(), Response> {
     let events = cowork_nodes::ledger_events(&state.rails).await.map_err(cowork_error)?;
     if cowork_nodes::find(&events, user_id, id).is_some() {
         return Ok(());
     }
-    match cowork_nodes::legacy_row(conn, id) {
+    let legacy = {
+        let conn = state.db.connect().map_err(db_error)?;
+        cowork_nodes::legacy_row(&conn, id)
+    };
+    match legacy {
         Ok(Some(t)) if t.user_id != user_id => Err((StatusCode::FORBIDDEN, Json(json!({"error": "Access denied"}))).into_response()),
         Ok(Some(t)) => cowork_nodes::fold_row(&state.rails, &t).await.map_err(cowork_error),
         Ok(None) => Err(cowork_error(CoworkError::not_found(format!("task {id} not found")))),
@@ -235,22 +242,29 @@ async fn create_task(
         }),
     };
     let ws = body.workspace_id.clone().unwrap_or_default();
-    let conn = match state.db.connect() {
-        Ok(c) => c,
-        Err(e) => return db_error(e),
-    };
     // An id that names a pre-fold row is the same task (idempotent create).
-    if let Ok(Some(t)) = cowork_nodes::legacy_row(&conn, &id) {
+    let legacy = {
+        let conn = match state.db.connect() {
+            Ok(c) => c,
+            Err(e) => return db_error(e),
+        };
+        cowork_nodes::legacy_row(&conn, &id)
+    };
+    if let Ok(Some(t)) = legacy {
         if t.user_id != user.user_id {
             return cowork_error(CoworkError::usage(format!("task id {id:?} is taken"), "Create it without an id, or with a different one."));
         }
-        if let Err(r) = node_task(&state, &conn, &user.user_id, &id).await {
+        if let Err(r) = node_task(&state, &user.user_id, &id).await {
             return r;
         }
     }
     match cowork_nodes::create(&state.rails, &user.user_id, &ws, &id, &fields, dry.dry_run.unwrap_or(false)).await {
         Ok(Created::Planned(plan)) => (StatusCode::OK, Json(json!({ "dryRun": true, "plan": plan }))).into_response(),
         Ok(Created::Task(task, created)) => {
+            let conn = match state.db.connect() {
+                Ok(c) => c,
+                Err(e) => return db_error(e),
+            };
             if let Err(e) = cowork_nodes::write_row(&conn, &task) {
                 error!("tasks read model: {}", e);
             }
@@ -291,16 +305,16 @@ async fn get_task(
 
 /// Apply `fields` to the task's node, then refresh its read-model row.
 async fn write_task(state: &AppState, user_id: &str, id: &str, fields: TaskFields, dry_run: bool, action: &str, audit: String) -> Response {
-    let conn = match state.db.connect() {
-        Ok(c) => c,
-        Err(e) => return db_error(e),
-    };
-    if let Err(r) = node_task(state, &conn, user_id, id).await {
+    if let Err(r) = node_task(state, user_id, id).await {
         return r;
     }
     match cowork_nodes::update(&state.rails, user_id, id, &fields, dry_run).await {
         Ok(Ok(plan)) => (StatusCode::OK, Json(json!({ "dryRun": true, "plan": plan }))).into_response(),
         Ok(Err(task)) => {
+            let conn = match state.db.connect() {
+                Ok(c) => c,
+                Err(e) => return db_error(e),
+            };
             if let Err(e) = cowork_nodes::write_row(&conn, &task) {
                 error!("tasks read model: {}", e);
             }
@@ -341,16 +355,16 @@ async fn delete_task(
     headers: HeaderMap,
 ) -> Response {
     let Some(user) = get_user(&headers) else { return unauthorized() };
-    let conn = match state.db.connect() {
-        Ok(c) => c,
-        Err(e) => return db_error(e),
-    };
-    if let Err(r) = node_task(&state, &conn, &user.user_id, &id).await {
+    if let Err(r) = node_task(&state, &user.user_id, &id).await {
         return r;
     }
     if let Err(e) = cowork_nodes::delete(&state.rails, &user.user_id, &id).await {
         return cowork_error(e);
     }
+    let conn = match state.db.connect() {
+        Ok(c) => c,
+        Err(e) => return db_error(e),
+    };
     match conn.execute("DELETE FROM tasks WHERE id = ?1 AND user_id = ?2", rusqlite::params![&id, &user.user_id]) {
         Ok(_) => {
             let _ = write_audit_log(&conn, &id, "delete", "human", &user.user_id, None);

@@ -704,12 +704,14 @@ fn now() -> String {
 }
 
 /// Enqueue a task: one open queue item per node. Folds a legacy task first.
-pub async fn enqueue(rails: &RailsState, conn: &rusqlite::Connection, user_id: &str, task_id: &str, queue_id: &str, agent_id: Option<&str>, agent_role: Option<&str>) -> CoworkResult<QueueItem> {
+/// `legacy` is the task's pre-fold `tasks` row, looked up by the caller in a
+/// synchronous scope (a rusqlite Connection must not be held across an await).
+pub async fn enqueue(rails: &RailsState, legacy: Option<Task>, user_id: &str, task_id: &str, queue_id: &str, agent_id: Option<&str>, agent_role: Option<&str>) -> CoworkResult<QueueItem> {
     let _guard = WRITE_LOCK.lock().await;
     let mut events = ledger_events(rails).await?;
     if find(&events, user_id, task_id).is_none() {
-        match legacy_row(conn, task_id) {
-            Ok(Some(t)) if t.user_id == user_id => {
+        match legacy {
+            Some(t) if t.user_id == user_id => {
                 fold_row_locked(rails, &t).await?;
                 events = ledger_events(rails).await?;
             }
@@ -965,11 +967,17 @@ fn read_legacy_queue(conn: &rusqlite::Connection) -> Result<Vec<LegacyQueue>> {
 /// Fold every open cowork task and queue row into nodes, through the Gate.
 /// Idempotent: a task that already is a node is counted, not rewritten.
 /// With `dry_run`, nothing is written and the report says what would be.
-pub async fn fold_legacy(conn: &rusqlite::Connection, rails: &RailsState, dry_run: bool) -> Result<FoldReport> {
+/// Takes the database handle, not a connection: a rusqlite Connection isn't
+/// Sync, so holding one across the awaits below would make this future !Send
+/// (the startup fold runs in `tokio::spawn`). Connections are opened only in
+/// the synchronous read and write-back scopes.
+pub async fn fold_legacy(db: &crate::db::DbHandle, rails: &RailsState, dry_run: bool) -> Result<FoldReport> {
     let _guard = WRITE_LOCK.lock().await;
     let mut report = FoldReport { dry_run, ..Default::default() };
-    let tasks = read_legacy_tasks(conn)?;
-    let queue = read_legacy_queue(conn)?;
+    let (tasks, queue) = {
+        let conn = db.connect()?;
+        (read_legacy_tasks(&conn)?, read_legacy_queue(&conn)?)
+    };
     let events = ledger_events(rails).await.map_err(|e| anyhow!(e.fact))?;
     let by_id: HashMap<String, &Task> = tasks.iter().map(|t| (t.id.clone(), t)).collect();
     // Tasks with an open queue row are folded even when the task row itself
@@ -1074,9 +1082,10 @@ pub async fn fold_legacy(conn: &rusqlite::Connection, rails: &RailsState, dry_ru
     if !dry_run {
         // Refresh the read model for everything that's now a node.
         let events = ledger_events(rails).await.map_err(|e| anyhow!(e.fact))?;
+        let conn = db.connect()?;
         for t in &tasks {
             if let Some((d, n)) = find(&events, &t.user_id, &t.id) {
-                let _ = write_row(conn, &task_of(&d, &n));
+                let _ = write_row(&conn, &task_of(&d, &n));
             }
         }
     }
@@ -1087,14 +1096,16 @@ pub async fn fold_legacy(conn: &rusqlite::Connection, rails: &RailsState, dry_ru
 /// `factory_cowork_fold_runs`. Rows a run couldn't fold stay readable and
 /// fold the first time they're edited.
 pub async fn fold_once(state: &Arc<crate::AppState>) -> Result<Option<FoldReport>> {
-    let conn = state.db.connect()?;
-    let done: i64 = conn
-        .query_row("SELECT COUNT(*) FROM factory_cowork_fold_runs WHERE dry_run = 0", [], |r| r.get(0))
-        .unwrap_or(0);
+    let done: i64 = {
+        let conn = state.db.connect()?;
+        conn.query_row("SELECT COUNT(*) FROM factory_cowork_fold_runs WHERE dry_run = 0", [], |r| r.get(0))
+            .unwrap_or(0)
+    };
     if done > 0 {
         return Ok(None);
     }
-    let report = fold_legacy(&conn, &state.rails, false).await?;
+    let report = fold_legacy(&state.db, &state.rails, false).await?;
+    let conn = state.db.connect()?;
     conn.execute(
         "INSERT INTO factory_cowork_fold_runs (id, dry_run, skipped, report) VALUES (?1, 0, ?2, ?3)",
         rusqlite::params![uuid::Uuid::new_v4().to_string(), report.skipped.len() as i64, serde_json::to_string(&report)?],
@@ -1229,7 +1240,7 @@ mod tests {
         seed(&state);
         let conn = state.db.connect().unwrap();
 
-        let dry = fold_legacy(&conn, &state.rails, true).await.unwrap();
+        let dry = fold_legacy(&state.db, &state.rails, true).await.unwrap();
         assert!(dry.dry_run);
         assert_eq!(dry.tasks_seen, 6);
         // t-open, t-doing, t-done-queued (open claim), t-other; t-done is history; "t-bad id" is skipped.
@@ -1240,7 +1251,7 @@ mod tests {
         assert_eq!(dry.skipped.len(), 1);
         assert!(user_task_nodes(&ledger_events(&state.rails).await.unwrap(), "user-a", None).is_empty(), "dry run wrote nothing");
 
-        let real = fold_legacy(&conn, &state.rails, false).await.unwrap();
+        let real = fold_legacy(&state.db, &state.rails, false).await.unwrap();
         assert_eq!((real.tasks_folded, real.queue_folded, real.skipped.len()), (4, 2, 1), "{real:?}");
         let events = ledger_events(&state.rails).await.unwrap();
         let (_, doing) = find(&events, "user-a", "t-doing").unwrap();
@@ -1252,7 +1263,7 @@ mod tests {
         assert!(find(&events, "user-a", "t-other").is_none(), "nodes are scoped to their owner");
         assert!(find(&events, "user-b", "t-other").is_some());
 
-        let again = fold_legacy(&conn, &state.rails, false).await.unwrap();
+        let again = fold_legacy(&state.db, &state.rails, false).await.unwrap();
         assert_eq!((again.tasks_folded, again.queue_folded), (0, 0), "{again:?}");
         assert_eq!((again.tasks_already_nodes, again.queue_already_nodes), (4, 2));
     }

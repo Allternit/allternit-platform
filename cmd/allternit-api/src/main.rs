@@ -593,9 +593,9 @@ async fn main() {
     if std::env::args().nth(1).as_deref() == Some("cowork-fold") {
         let dry_run = std::env::args().any(|a| a == "--dry-run");
         let code = match state.db.connect() {
-            Ok(conn) => match allternit_api::cowork_nodes::fold_legacy(&conn, &state.rails, dry_run).await {
+            Ok(_) => match allternit_api::cowork_nodes::fold_legacy(&state.db, &state.rails, dry_run).await {
                 Ok(report) => {
-                    if !dry_run {
+                    if let (false, Ok(conn)) = (dry_run, state.db.connect()) {
                         let _ = conn.execute(
                             "INSERT INTO factory_cowork_fold_runs (id, dry_run, skipped, report) VALUES (?1, 0, ?2, ?3)",
                             rusqlite::params![uuid::Uuid::new_v4().to_string(), report.skipped.len() as i64, serde_json::to_string(&report).unwrap_or_default()],

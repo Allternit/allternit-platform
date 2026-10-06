@@ -171,11 +171,14 @@ async fn create_queue(
 ) -> Response {
     let Some(user) = get_user(&headers) else { return unauthorized() };
     let queue_id = payload.id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    let conn = match state.db.connect() {
-        Ok(c) => c,
-        Err(e) => return db_error(e),
+    let legacy = {
+        let conn = match state.db.connect() {
+            Ok(c) => c,
+            Err(e) => return db_error(e),
+        };
+        cowork_nodes::legacy_row(&conn, &payload.task_id).ok().flatten()
     };
-    match cowork_nodes::enqueue(&state.rails, &conn, &user.user_id, &payload.task_id, &queue_id, payload.agent_id.as_deref(), payload.agent_role.as_deref()).await {
+    match cowork_nodes::enqueue(&state.rails, legacy, &user.user_id, &payload.task_id, &queue_id, payload.agent_id.as_deref(), payload.agent_role.as_deref()).await {
         Ok(item) => {
             refresh_row(&state, &user.user_id, &queue_id).await;
             (StatusCode::CREATED, Json(json!(item))).into_response()
