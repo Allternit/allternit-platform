@@ -321,7 +321,7 @@ async fn subscribe_verify_deliver_wakes_the_bot_with_a_ticket() {
     assert_eq!(entries[0]["data"]["subject"], "Hello");
     assert_eq!(entries[0]["connectorName"], "Fake Mail");
     assert_eq!(entries[0]["ticketId"], ticket_id.as_str());
-    let store = allternit_commrails::tickets::TicketStore::new(&fx.state.rails.root_dir).unwrap();
+    let store = allternit_factory_engine::tickets::TicketStore::new(&fx.state.rails.root_dir).unwrap();
     let ticket = store.list().unwrap().into_iter().find(|t| t.id.to_string() == ticket_id).expect("ticket created");
     assert_eq!(ticket.assignee.as_deref(), Some("bot-a"));
     assert!(ticket.labels.contains(&"approval-required".to_string()));
