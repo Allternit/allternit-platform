@@ -27,6 +27,16 @@ By default the bot replies on the channel the person just used. Under **Reply on
 
 The bot's notes about a person belong to the person, not to a chat. What it learns on Telegram is known when they text, and the bot sees it at the top of each of their turns.
 
+The bot writes these notes itself while it works, and can add people you mention:
+
+| Tool | What it does |
+|---|---|
+| `people_lookup {query}` | Finds people by name, organisation, email or phone number (up to 5), each with what is known about them and the channels they can be reached on. |
+| `people_remember {person, fact}` | Saves one short fact. `person` is the person's id or a name that matches exactly one person; with two people of that name the bot gets both ids and must pick. Facts that look like passwords, card or bank numbers or a social security number are refused. |
+| `people_add_contact {name, email?, phone?, org?}` | Adds someone with an email address and/or phone number. If one already belongs to a person you know, that person is updated, not duplicated. |
+
+The tools are served on your computer's connector endpoint (`/internal/connectors/mcp`) beside the mail and phone tools, act only on your own people, and are what every Allternit bot sees. Vendor bots don't get them; they can only suggest a note for you to approve (`twin_propose`, see [Your twin](/guides/your-twin)). To see them, open the bot's phone, then **Contacts**, and expand a person: **What the bots know** lists every note with **Remove**, and you can type a note of your own. Developers: the notes are `facts` (`{id, fact, botId, createdAt}`) on `GET /api/v1/people/:id`, and `DELETE /api/v1/people/:id/facts/:factId` removes one.
+
 ## Merge and split
 
 - **Merge with** folds another person into this one: identities, notes and threads move, and the other person's old thread becomes a sub-thread.
