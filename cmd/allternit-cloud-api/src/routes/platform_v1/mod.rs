@@ -1,6 +1,6 @@
 //! Allternit Platform API (`/v1`): the developer-facing surface.
 //!
-//! One module per area (`accounts`, `usage`, later `numbers`, `messages`, …).
+//! One module per area (`accounts`, `agents`, `numbers`, `messages`, `webhooks`, `usage`).
 //! Each area exposes `register(RouteTable) -> RouteTable`; `build_table` below
 //! is the single list. The route table records every `(method, path)` it
 //! registers, and the test `openapi_matches_router` compares that list with
@@ -15,6 +15,7 @@
 //! → handler.
 
 pub mod accounts;
+pub mod agents;
 pub mod caller;
 pub mod console;
 pub mod error;
@@ -113,6 +114,7 @@ fn build_table() -> RouteTable {
     // One line per area. Later phases add theirs here.
     let table = RouteTable::new();
     let table = accounts::register(table);
+    let table = agents::register(table);
     let table = numbers::register(table);
     let table = messages::register(table);
     let table = webhooks::register(table);
@@ -251,3 +253,5 @@ pub fn new_id(prefix: &str) -> String {
 mod tests;
 #[cfg(test)]
 mod tests_p1;
+#[cfg(test)]
+mod tests_p2;

@@ -577,6 +577,7 @@
               "api/platform/errors",
               "api/platform/idempotency-and-limits",
               "api/platform/accounts",
+              "api/platform/agents",
               "api/platform/numbers",
               "api/platform/messaging",
               "api/platform/webhooks",
