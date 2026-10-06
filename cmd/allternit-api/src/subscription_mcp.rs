@@ -29,7 +29,7 @@ use tracing::warn;
 
 use crate::auth::AuthUser;
 use crate::subscription_routes::{
-    acknowledged_version, forward, mint_human_action, provider_disclosure, DISCLOSURE_VERSION, HUMAN_ACTION_HEADER,
+    acknowledged_version, forward, provider_disclosure, DISCLOSURE_VERSION, HUMAN_ACTION_HEADER,
 };
 use crate::AppState;
 
@@ -436,7 +436,9 @@ pub(crate) async fn execute_prepared(state: &Arc<AppState>, user: &AuthUser, app
     ) else {
         return record_failure(state, user, approval_id, row.content, "The prepared task is malformed.").await;
     };
-    let action = match mint_human_action(&state.db, &user.user_id, "approval.confirm") {
+    // D16 task binding: the action can start only this prepared task.
+    let digest = crate::subscription_routes::task_digest(capability, provider, prompt, Some(&json!({})));
+    let action = match crate::subscription_routes::mint_bound_human_action(&state.db, &user.user_id, "approval.confirm", &digest) {
         Ok((action, _)) => action,
         Err(e) => {
             warn!(error = %e, "subscription mcp: could not mint the human action");

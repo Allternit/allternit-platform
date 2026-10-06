@@ -265,7 +265,26 @@ fn subscription_approval_content(
     message_id: &str,
     metadata: &serde_json::Value,
 ) -> serde_json::Value {
-    let sub = metadata.get("subscription").cloned().unwrap_or_else(|| json!({}));
+    let mut sub = metadata.get("subscription").cloned().unwrap_or_else(|| json!({}));
+    // D16 task binding: approving binds the human action to `subscription.task`,
+    // so what the card shows is derived from it — the provider and the prompt
+    // preview are the task's, never a separate runtime-supplied copy.
+    if let Some(task) = sub.get("task").cloned() {
+        if let Some(provider) = task.get("provider").and_then(|v| v.as_str()) {
+            if sub.get("provider").and_then(|v| v.as_str()) != Some(provider) {
+                // A display name for another provider would misname it.
+                if let Some(obj) = sub.as_object_mut() {
+                    obj.remove("providerName");
+                }
+                sub["provider"] = json!(provider);
+            }
+        }
+        if let Some(prompt) = task.get("prompt").and_then(|v| v.as_str()) {
+            const PREVIEW_CHARS: usize = 4000;
+            sub["prompt"] = json!(prompt.chars().take(PREVIEW_CHARS).collect::<String>());
+            sub["truncated"] = json!(prompt.chars().count() > PREVIEW_CHARS);
+        }
+    }
     let text = |key: &str| sub.get(key).and_then(|v| v.as_str()).unwrap_or("").to_string();
     let provider = text("provider");
     let name = {

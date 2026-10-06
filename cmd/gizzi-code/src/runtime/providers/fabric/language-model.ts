@@ -150,7 +150,15 @@ export class SubscriptionFabricLanguageModel implements LanguageModelV2 {
           // No send behind this turn: a person confirms it on a card first.
           const action =
             humanAction ??
-            (await confirmSend({ sessionID, provider: fabricProvider, modelClass, prompt, signal: abortSignal }))
+            (await confirmSend({
+              sessionID,
+              provider: fabricProvider,
+              modelClass,
+              prompt,
+              capability: continuing ? "chat.continue" : "chat.create",
+              options: taskOptions(modelClass),
+              signal: abortSignal,
+            }))
           thoughts.sending()
           const handlers: FollowHandlers = {
             onText: (delta) => text(delta),
@@ -185,6 +193,7 @@ export class SubscriptionFabricLanguageModel implements LanguageModelV2 {
                 taskID: outcome.task_id,
                 question,
                 reason: outcome.error?.class,
+                options: taskOptions(modelClass),
                 signal: abortSignal,
               })
             } catch (error) {
@@ -270,6 +279,11 @@ export class SubscriptionFabricLanguageModel implements LanguageModelV2 {
   }
 }
 
+/** A chat task's options; the approval card binds to exactly these. */
+function taskOptions(modelClass: string): Record<string, unknown> {
+  return { model_class: modelClass }
+}
+
 async function submit(input: {
   sessionID: string
   prompt: string
@@ -286,7 +300,7 @@ async function submit(input: {
     capability,
     prompt: input.prompt,
     thread_id: input.sessionID,
-    options: { model_class: input.modelClass },
+    options: taskOptions(input.modelClass),
     routing: { provider: input.fabricProvider },
     priority: "interactive",
     idempotency_key: `gizzi-${input.sessionID}-${input.requestID}`,
