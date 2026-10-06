@@ -43,3 +43,7 @@ THIRD-PARTY-NOTICES.md @herdr-env             # license notice names upstream
 # Data and fingerprints that name old paths
 .gitleaksignore @commrails                    # gitleaks fingerprints of past commits name the files' old paths
 surfaces/docs/docs.json @commrails            # redirects from the old CommRails doc URLs to the Factory pages
+cmd/allternit-api/src/bot_desktop_mux.rs @herdr-env              # sets the pane engine's session env (HERDR_SESSION is its upstream contract)
+cmd/allternit-computer-cloud/guest/build-image.sh @herdr-env      # cloud guest unit sets the pane engine's session env
+cmd/allternit-computer-cloud/guest/cloud-init.yaml @herdr-env     # same, for cloud-init guests
+services/workspace-service/tests/** @herdr-env                    # tests isolate a pane server via HERDR_SESSION / HERDR_SOCKET_PATH

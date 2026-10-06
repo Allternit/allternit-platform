@@ -6153,14 +6153,14 @@ mod tests {
         std::fs::create_dir_all(&temp).unwrap();
         let app = Router::new()
             .nest("/api/factory", factory_core_router())
-            .nest("/api/rails", legacy_alias_router())
-            .nest("/api/commrails", legacy_alias_router())
+            .nest("/api/rails", legacy_alias_router()) // old-names: keep (tests the deployed-caller aliases)
+            .nest("/api/commrails", legacy_alias_router()) // old-names: keep (tests the deployed-caller aliases)
             .with_state(test_app_state(&temp).await);
         // What deployed callers send (allternit-ai use-rails-dags, gizzi <= 2.1.9).
         for (path, want) in [
-            ("/api/commrails/dags?view=mine", StatusCode::OK),
-            ("/api/rails/health", StatusCode::OK),
-            ("/api/rails/mail/threads", StatusCode::OK),
+            ("/api/commrails/dags?view=mine", StatusCode::OK), // old-names: keep (tests the deployed-caller aliases)
+            ("/api/rails/health", StatusCode::OK), // old-names: keep (tests the deployed-caller aliases)
+            ("/api/rails/mail/threads", StatusCode::OK), // old-names: keep (tests the deployed-caller aliases)
             ("/api/factory/plans/dags?view=mine", StatusCode::OK),
             // The old subpaths exist only under the old prefixes.
             ("/api/factory/dags", StatusCode::NOT_FOUND),
