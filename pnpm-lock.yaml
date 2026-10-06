@@ -454,6 +454,9 @@ importers:
       env-paths:
         specifier: 3.0.0
         version: 3.0.0
+      execa:
+        specifier: 8.0.1
+        version: 8.0.1
       express:
         specifier: 5.2.1
         version: 5.2.1
