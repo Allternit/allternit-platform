@@ -28,11 +28,24 @@ pub fn configure_root(db: &DbHandle, root: &Path) -> Result<()> {
     if !root.is_absolute() {
         return Err(ServiceError::Provenance("memory drive root must be absolute".into()));
     }
+    // Repos refuse symlinked ancestors, so store the real path (macOS /var,
+    // symlinked home or data folders).
+    std::fs::create_dir_all(root).map_err(crate::memory_drive::DriveError::from)?;
+    let root = &root.canonicalize().map_err(crate::memory_drive::DriveError::from)?;
     db.connect()?.execute(
         "INSERT INTO memory_drive_config(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
         params![ROOT_KEY, root.to_string_lossy()],
     )?;
     Ok(())
+}
+
+/// The configured root, or the given fallback (made real) when none is set.
+pub fn root_or(db: &DbHandle, fallback: &Path) -> Result<PathBuf> {
+    if let Some(root) = configured_root(&db.connect()?)? {
+        return Ok(root);
+    }
+    std::fs::create_dir_all(fallback).map_err(crate::memory_drive::DriveError::from)?;
+    Ok(fallback.canonicalize().map_err(crate::memory_drive::DriveError::from)?)
 }
 
 pub fn configured_root(conn: &Connection) -> Result<Option<PathBuf>> {

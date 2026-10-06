@@ -102,7 +102,8 @@ async fn run(state: Arc<AppState>, user: AuthUser, f: impl FnOnce(&Ctx) -> servi
 
 fn open(ctx: &Ctx, drive: Option<&str>, write: bool) -> service::Result<(DriveRef, DriveRecord)> {
     let r = DriveRef::parse(drive, &ctx.1.user_id)?;
-    let d = scopes::open(&ctx.0.db, &ctx.0.config.brains_dir(), &ctx.1.user_id, &r, write)?;
+    let root = crate::memory_drive_writer::root_or(&ctx.0.db, &ctx.0.config.brains_dir())?;
+    let d = scopes::open(&ctx.0.db, &root, &ctx.1.user_id, &r, write)?;
     Ok((r, d))
 }
 
@@ -420,10 +421,13 @@ async fn run_dream(State(state): State<Arc<AppState>>, Extension(user): Extensio
     }
     let owner = user.user_id.clone();
     let db = state.db.clone();
-    let root = state.config.brains_dir();
+    let fallback = state.config.brains_dir();
     let provisioned = tokio::task::spawn_blocking({
         let (db, owner) = (db.clone(), owner.clone());
-        move || scopes::open(&db, &root, &owner, &DriveRef::personal(&owner), true)
+        move || {
+            let root = crate::memory_drive_writer::root_or(&db, &fallback)?;
+            scopes::open(&db, &root, &owner, &DriveRef::personal(&owner), true)
+        }
     })
     .await;
     match provisioned {
