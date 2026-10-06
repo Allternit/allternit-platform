@@ -56,6 +56,7 @@ Env names are namespaced (`ALLTERNIT_<CHANNEL>_*`). The old bare names (`APP_ID`
 
 - Portal: Azure portal, create an **Azure Bot** (or Entra app registration plus Bot Channels Registration). Choose multi-tenant (leave `ALLTERNIT_TEAMS_TENANT_ID` unset) or single-tenant (set it). Create a client secret.
 - Messaging endpoint: `https://api.allternit.com/channels/teams/messages`. Enable the Microsoft Teams channel on the bot.
+- Entra app registration, Authentication: add a Web redirect URI `https://api.allternit.com/channels/teams/callback` (the in-app Microsoft sign-in returns there).
 - Package: `scripts/channel-apps/teams-package.sh <Microsoft App ID>` produces `allternit-teams-app.zip` from `docs/channel-apps/teams/`. A tenant admin (or you, for testing) uploads it in Teams (Apps, Manage your apps, Upload) or the Teams admin center.
 - Keychain fields: `app_id`, `app_password`, optional `tenant_id`.
 - Env: `ALLTERNIT_TEAMS_APP_ID`, `ALLTERNIT_TEAMS_APP_PASSWORD`, optional `ALLTERNIT_TEAMS_TENANT_ID`.
@@ -65,6 +66,7 @@ Env names are namespaced (`ALLTERNIT_<CHANNEL>_*`). The old bare names (`APP_ID`
 ## WhatsApp via Meta (the slow one: weeks)
 
 - Portal: https://developers.facebook.com, create a Business-type app, add the WhatsApp product, configure Embedded Signup and note its configuration id. A System User token (WhatsApp management permissions) goes in `system_token`.
+- Facebook Login for Business settings: turn on **Login with the JavaScript SDK**, add `api.allternit.com` to **Allowed Domains for the JavaScript SDK**, and add `https://api.allternit.com/channels/whatsapp/signup` as a valid OAuth redirect URI. The signup page Allternit hosts there runs Embedded Signup.
 - Keychain fields: `com.allternit.meta.app_id`, `app_secret`, `es_config_id`, optional `system_token`.
 - Env: `ALLTERNIT_META_APP_ID`, `ALLTERNIT_META_APP_SECRET`, `ALLTERNIT_META_ES_CONFIG_ID`, optional `ALLTERNIT_META_SYSTEM_TOKEN`.
 - Review wait: Meta business verification (typically days to a couple of weeks) and App Review for the WhatsApp permissions (typically days to weeks, with rejections and resubmits common) are required before businesses other than yours can complete Embedded Signup. Plan for 2-4 weeks.

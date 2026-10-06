@@ -52,6 +52,10 @@ pub const WINDOW_HOURS: i64 = 24;
 pub fn routes() -> Router<Arc<ApiState>> {
     Router::new()
         .route("/api/v1/channels/whatsapp/embedded-signup/complete", post(complete))
+        .route("/api/v1/channels/whatsapp/connect", post(connect))
+        .route("/api/v1/channels/whatsapp/accounts", axum::routing::get(accounts))
+        .route("/channels/whatsapp/signup", axum::routing::get(signup_page))
+        .route("/channels/whatsapp/signup/complete", post(signup_complete))
         .route("/api/v1/channels/whatsapp/send", post(send))
 }
 
@@ -350,6 +354,11 @@ async fn complete(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json(b
 
 async fn complete_inner(state: &ApiState, headers: &HeaderMap, body: CompleteBody, graph: &dyn Graph) -> Result<Response, ApiError> {
     let user = crate::auth::resolve_user_scoped(&state.db, headers, "compute").await?.id;
+    complete_for(state, &user, body, graph).await
+}
+
+async fn complete_for(state: &ApiState, user: &str, body: CompleteBody, graph: &dyn Graph) -> Result<Response, ApiError> {
+    let user = user.to_string();
     let (Some(cfg), Some(cipher)) = (MetaConfig::from_env(), state.credential_cipher.clone()) else {
         return Ok(not_configured());
     };
@@ -466,6 +475,179 @@ async fn complete_inner(state: &ApiState, headers: &HeaderMap, body: CompleteBod
         .into_response())
 }
 
+// ------------------------------------------------------------------ signup from the app
+
+const SIGNUP_STATE_MINUTES: i64 = 30;
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ConnectBody {
+    runtime_id: String,
+}
+
+/// `POST /api/v1/channels/whatsapp/connect {runtimeId}` → `{url}`: the hosted signup page for this
+/// user and computer. 503 `whatsapp_not_configured` until Allternit's Meta app is set up.
+async fn connect(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json(body): Json<ConnectBody>) -> Response {
+    if MetaConfig::from_env().is_none() {
+        return not_configured();
+    }
+    let user = match crate::auth::resolve_user_scoped(&state.db, &headers, "compute").await {
+        Ok(u) => u.id,
+        Err(e) => return e.into_response(),
+    };
+    match signup_link(&state.db, &user, &body.runtime_id).await {
+        Ok(url) => Json(json!({ "url": url, "expiresInSeconds": SIGNUP_STATE_MINUTES * 60 })).into_response(),
+        Err(e) => e.into_response(),
+    }
+}
+
+pub(crate) async fn signup_link(db: &sqlx::PgPool, user: &str, runtime_id: &str) -> Result<String, ApiError> {
+    let owns: Option<(String,)> = sqlx::query_as("SELECT id FROM runtime_devices WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL")
+        .bind(runtime_id)
+        .bind(user)
+        .fetch_optional(db)
+        .await?;
+    if owns.is_none() {
+        return Err(ApiError::NotFound("Runtime not found".into()));
+    }
+    let _ = sqlx::query("DELETE FROM whatsapp_signup_states WHERE expires_at < now()").execute(db).await;
+    let state = random_token();
+    sqlx::query("INSERT INTO whatsapp_signup_states (state, user_id, runtime_id, expires_at) VALUES ($1, $2, $3, now() + make_interval(mins => $4))")
+        .bind(&state)
+        .bind(user)
+        .bind(runtime_id)
+        .bind(SIGNUP_STATE_MINUTES as i32)
+        .execute(db)
+        .await?;
+    Ok(format!("{}/channels/whatsapp/signup?state={}", public_base(), state))
+}
+
+#[derive(Deserialize)]
+struct SignupQuery {
+    state: String,
+}
+
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\'', "&#39;")
+}
+
+/// The hosted signup page: Meta's Embedded Signup through Facebook's SDK, then completion here.
+async fn signup_page(State(state): State<Arc<ApiState>>, axum::extract::Query(q): axum::extract::Query<SignupQuery>) -> Response {
+    let Some(cfg) = MetaConfig::from_env() else { return not_configured() };
+    let live: Option<(String,)> = sqlx::query_as("SELECT user_id FROM whatsapp_signup_states WHERE state = $1 AND expires_at > now()")
+        .bind(&q.state)
+        .fetch_optional(&state.db)
+        .await
+        .unwrap_or(None);
+    if live.is_none() {
+        return (StatusCode::GONE, axum::response::Html(signup_html(None, "This link expired. Start again from Allternit."))).into_response();
+    }
+    let page = signup_html(Some((&cfg.app_id, &cfg.config_id, &q.state)), "");
+    (StatusCode::OK, [("cache-control", "no-store")], axum::response::Html(page)).into_response()
+}
+
+fn signup_html(run: Option<(&str, &str, &str)>, message: &str) -> String {
+    let script = match run {
+        Some((app_id, config_id, state)) => format!(
+            r#"<script>
+const S = {{ appId: "{a}", configId: "{c}", state: "{st}" }};
+let session = null;
+const say = (t) => {{ document.getElementById('msg').textContent = t; }};
+window.addEventListener('message', (e) => {{
+  if (!/facebook\.com$/.test(new URL(e.origin).hostname)) return;
+  try {{ const d = JSON.parse(e.data); if (d.type === 'WA_EMBEDDED_SIGNUP' && d.event === 'FINISH') session = d.data; }} catch (_) {{}}
+}});
+window.fbAsyncInit = () => {{ FB.init({{ appId: S.appId, autoLogAppEvents: true, xfbml: false, version: 'v25.0' }}); document.getElementById('go').disabled = false; }};
+async function finish(code) {{
+  if (!session || !session.waba_id || !session.phone_number_id) {{ say('Meta did not return the number. Start the signup again.'); return; }}
+  say('Connecting your number…');
+  const r = await fetch('/channels/whatsapp/signup/complete', {{ method: 'POST', headers: {{ 'content-type': 'application/json' }},
+    body: JSON.stringify({{ state: S.state, code, wabaId: session.waba_id, phoneNumberId: session.phone_number_id }}) }});
+  const b = await r.json().catch(() => ({{}}));
+  say(r.ok ? 'Connected. Go back to Allternit; it finishes on its own.' : (b.message || b.error || 'The number could not be connected.'));
+}}
+function start() {{
+  FB.login((resp) => {{ if (resp.authResponse && resp.authResponse.code) finish(resp.authResponse.code); else say('The signup was closed before it finished.'); }},
+    {{ config_id: S.configId, response_type: 'code', override_default_response_type: true, extras: {{ setup: {{}}, sessionInfoVersion: '3' }} }});
+}}
+</script>
+<script async defer crossorigin="anonymous" src="https://connect.facebook.net/en_US/sdk.js"></script>"#,
+            a = html_escape(app_id), c = html_escape(config_id), st = html_escape(state)
+        ),
+        None => String::new(),
+    };
+    let button = if run.is_some() { r#"<button id="go" disabled onclick="start()">Connect with Meta</button>"# } else { "" };
+    format!(
+        r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Connect WhatsApp · Allternit</title>
+<style>body{{font:15px/1.5 system-ui,sans-serif;max-width:460px;margin:12vh auto;padding:0 20px;color:#1a1a1a;background:#fff}}
+button{{font:inherit;padding:10px 16px;border-radius:8px;border:1px solid #ccc;background:#f4f4f4;cursor:pointer}}button:disabled{{opacity:.5}}
+@media (prefers-color-scheme:dark){{body{{background:#111;color:#eee}}button{{background:#222;color:#eee;border-color:#444}}}}</style></head>
+<body><h1 style="font-size:20px">Connect your WhatsApp Business number</h1>
+<p>Meta's signup opens: sign in, pick or create your business, and verify the number by SMS.</p>{button}
+<p id="msg" role="status">{msg}</p>{script}</body></html>"#,
+        msg = html_escape(message)
+    )
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SignupCompleteBody {
+    state: String,
+    code: String,
+    waba_id: String,
+    phone_number_id: String,
+}
+
+/// The hosted page's completion: the one-time state stands in for the user's session.
+async fn signup_complete(State(state): State<Arc<ApiState>>, Json(body): Json<SignupCompleteBody>) -> Response {
+    let row: Option<(String, String)> = match sqlx::query_as(
+        "DELETE FROM whatsapp_signup_states WHERE state = $1 AND expires_at > now() RETURNING user_id, runtime_id",
+    )
+    .bind(&body.state)
+    .fetch_optional(&state.db)
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => return ApiError::from(e).into_response(),
+    };
+    let Some((user, runtime_id)) = row else {
+        return (StatusCode::GONE, Json(json!({ "error": "expired_state", "message": "This link expired. Start again from Allternit." }))).into_response();
+    };
+    let complete = CompleteBody { code: body.code, waba_id: body.waba_id, phone_number_id: body.phone_number_id, runtime_id: Some(runtime_id) };
+    match complete_for(&state, &user, complete, &ReqwestGraph).await {
+        Ok(r) => r,
+        Err(e) => e.into_response(),
+    }
+}
+
+/// `GET /api/v1/channels/whatsapp/accounts`: the caller's connected business numbers with each
+/// number's relay secret, so their computer can record them (session, API token or device credential).
+async fn accounts(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> Response {
+    let Some(cfg) = MetaConfig::from_env() else { return not_configured() };
+    let user = match crate::channels::teams_app::resolve_caller(&state, &headers).await {
+        Ok(u) => u,
+        Err(e) => return e.into_response(),
+    };
+    match list_accounts(&state.db, &cfg, &user).await {
+        Ok(list) => Json(json!({ "accounts": list })).into_response(),
+        Err(e) => ApiError::from(e).into_response(),
+    }
+}
+
+pub(crate) async fn list_accounts(db: &sqlx::PgPool, cfg: &MetaConfig, user: &str) -> Result<Vec<Value>, sqlx::Error> {
+    let rows: Vec<(String, String, String, String, String)> = sqlx::query_as(
+        "SELECT id, runtime_id, route_id, waba_id, phone_number_id FROM whatsapp_es_accounts WHERE user_id = $1 AND revoked_at IS NULL ORDER BY created_at",
+    )
+    .bind(user)
+    .fetch_all(db)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, runtime, route, waba, pnid)| json!({ "accountId": id, "runtimeId": runtime, "wabaId": waba, "phoneNumberId": pnid, "relaySecret": relay_secret(&cfg.app_secret, &route) }))
+        .collect())
+}
+
 // ------------------------------------------------------------------ send
 
 #[derive(Deserialize)]
@@ -528,7 +710,7 @@ async fn send(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json(body)
 }
 
 async fn send_inner(state: &ApiState, headers: &HeaderMap, body: SendBody, graph: &dyn Graph) -> Result<Response, ApiError> {
-    let user = crate::auth::resolve_user_scoped(&state.db, headers, "compute").await?.id;
+    let user = crate::channels::teams_app::resolve_caller(state, headers).await?; // a session, an API token, or the runtime's device credential
     let (Some(cfg), Some(cipher)) = (MetaConfig::from_env(), state.credential_cipher.clone()) else {
         return Ok(not_configured());
     };
@@ -630,6 +812,43 @@ mod tests {
         assert_eq!(calls[1].4, Some(json!({ "override_callback_uri": "https://api.allternit.com/channels/in/k", "verify_token": "vt" })));
         assert_eq!(calls[2].1, "https://graph.facebook.com/v25.0/222/register");
         assert_eq!(calls[2].4, Some(json!({ "messaging_product": "whatsapp", "pin": "123456" })));
+    }
+
+    #[tokio::test]
+    async fn the_app_gets_a_one_time_signup_link_and_its_computer_reads_its_numbers() {
+        use crate::routes::test_support::{seed_runtime_device, test_pool};
+        let pool = test_pool().await;
+        for sql in [
+            include_str!("../../migrations_pg/020_channel_inbound_queue.sql"),
+            include_str!("../../migrations_pg/028_whatsapp_embedded_signup.sql"),
+            include_str!("../../migrations_pg/061_whatsapp_signup_states.sql"),
+        ] {
+            sqlx::raw_sql(&sql.replace("public.", "")).execute(&pool).await.unwrap();
+        }
+        seed_runtime_device(&pool, "rt-1", "user1").await;
+        // Someone else's computer: refused.
+        assert!(signup_link(&pool, "user2", "rt-1").await.is_err());
+        let url = signup_link(&pool, "user1", "rt-1").await.unwrap();
+        let state = url.split("state=").nth(1).unwrap();
+        assert!(url.contains("/channels/whatsapp/signup?state="));
+        let (user, rt): (String, String) = sqlx::query_as("SELECT user_id, runtime_id FROM whatsapp_signup_states WHERE state = $1").bind(state).fetch_one(&pool).await.unwrap();
+        assert_eq!((user.as_str(), rt.as_str()), ("user1", "rt-1"));
+
+        // A connected number comes back with the relay secret its computer verifies with.
+        sqlx::query("INSERT INTO channel_inbound_routes (id, key_hash, user_id, runtime_id, provider, label) VALUES ('route-1', 'h', 'user1', 'rt-1', 'whatsapp', 'WhatsApp business')").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO whatsapp_es_accounts (id, user_id, runtime_id, route_id, waba_id, phone_number_id, token_sealed, pin_sealed, verify_token_hash) VALUES ('wa-1','user1','rt-1','route-1','111','222','t','p','v')").execute(&pool).await.unwrap();
+        let list = list_accounts(&pool, &cfg(), "user1").await.unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!((list[0]["phoneNumberId"].as_str(), list[0]["runtimeId"].as_str()), (Some("222"), Some("rt-1")));
+        assert_eq!(list[0]["relaySecret"].as_str(), Some(relay_secret("SECRET", "route-1").as_str()));
+        assert!(list_accounts(&pool, &cfg(), "user2").await.unwrap().is_empty());
+    }
+
+    #[test]
+    fn the_signup_page_escapes_what_it_embeds() {
+        let page = signup_html(Some(("A\"<b>", "C", "s'1")), "");
+        assert!(page.contains("A&quot;&lt;b&gt;") && page.contains("s&#39;1") && !page.contains("<b>"));
+        assert!(signup_html(None, "This link expired.").contains("This link expired.") && !signup_html(None, "x").contains("sdk.js"));
     }
 
     #[tokio::test]
