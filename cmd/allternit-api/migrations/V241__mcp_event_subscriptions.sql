@@ -1,4 +1,4 @@
--- V237: MCP Events client subscriptions (`src/mcp_events_client.rs`).
+-- V241: MCP Events client subscriptions (`src/mcp_events_client.rs`).
 --
 -- Allternit subscribes, as an MCP Events client, to events from the external
 -- MCP servers a user connected (`mcp_connectors`). An event wakes the bot the

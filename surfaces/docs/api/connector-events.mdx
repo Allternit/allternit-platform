@@ -147,6 +147,6 @@ The runtime answers `200 {"status":"triggered","ticketId","eventId"}`, `200 {"st
 
 ## Storage
 
-- Runtime: `mcp_event_subscriptions` (migration V238). Secrets sealed with the runtime's token key.
+- Runtime: `mcp_event_subscriptions` (migration V241). Secrets sealed with the runtime's token key.
 - Cloud: `mcp_event_client_subscriptions` + `mcp_event_client_seen` (migration 059). Secrets sealed with `ALLTERNIT_CREDENTIALS_KEY` when set. Dedupe marks are kept 7 days.
 - Connector event data is not forwarded to the cloud event backbone.
