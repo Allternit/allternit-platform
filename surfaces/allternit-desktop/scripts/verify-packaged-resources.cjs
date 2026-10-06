@@ -103,6 +103,13 @@ const required = [
     label: 'phone-remote viewer (client/index.html)',
     buildStep: 'surfaces/phone-remote/client must ship in extraResources',
   },
+  {
+    // The screencapture fallback (used when Screen Recording is denied to sc_capture) resizes every frame with this
+    // first-party helper; it was missing from the extraResources filter, so the packaged fallback could never work.
+    path: path.join(repoRoot, 'surfaces', 'phone-remote', 'server', 'capture', 'resize_jpeg.swift'),
+    label: 'phone-remote resize helper source (capture/resize_jpeg.swift)',
+    buildStep: 'surfaces/allternit-desktop/package.json extraResources phone-remote/server filter must list capture/resize_jpeg*',
+  },
   // NOTE: the compiled sc_capture helper is deliberately NOT hard-required
   // here — it is a gitignored runtime artifact (capture.mjs swiftc-builds it
   // on first launch) and no CI step produces it. Requiring it would red the
@@ -143,6 +150,18 @@ for (const item of required) {
     `    Expected at: ${item.path}\n` +
     `    Build it with: ${item.buildStep}\n`
   );
+}
+
+// phone-remote's screencapture fallback needs its resize helper inside the app (the filter once left it out).
+{
+  const pkg = JSON.parse(fs.readFileSync(path.join(desktopDir, 'package.json'), 'utf8'));
+  const pr = ((pkg.build && pkg.build.extraResources) || []).find((e) => e && e.to === 'phone-remote/server');
+  for (const need of ['capture/resize_jpeg.swift', 'capture/resize_jpeg']) {
+    if (pr && Array.isArray(pr.filter) && !pr.filter.includes(need)) {
+      failed = true;
+      process.stderr.write(`[verify-packaged-resources] ✗ phone-remote/server extraResources filter is missing ${need}\n`);
+    } else log(`✓ phone-remote/server ships ${need}`);
+  }
 }
 
 // A staged file only ships if an extraResources filter lets it through:
