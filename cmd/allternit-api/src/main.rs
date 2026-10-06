@@ -86,6 +86,7 @@ use allternit_api::mcp_routes::mcp_router;
 use allternit_api::me_routes::me_router;
 use allternit_api::memory_reconstruction_routes::memory_reconstruction_router;
 use allternit_api::memory_routes::memory_router;
+use allternit_api::memory_drive_routes::memory_drive_router;
 use allternit_api::metrics::metrics_router;
 use allternit_api::oauth_routes::oauth_router;
 use allternit_api::office_cli_routes::office_cli_router;
@@ -1117,6 +1118,7 @@ async fn main() {
         .merge(alabs_router())
         .merge(automation_router())
         .merge(brain_router())
+        .merge(memory_drive_router())
         .merge(hud_router());
 
     // Gateway control plane (virtual-key management + admin observability,
