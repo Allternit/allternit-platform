@@ -233,6 +233,19 @@ pub fn create_ticket(db: &DbHandle, t: NewTicket) -> Result<Value, String> {
     )
     .map_err(|e| e.to_string())?;
     record_participation(db, t.owner, t.vendor_bot_id, t.thread_id, "ticket");
+    // Ledger → Desktop/cloud event backbone (`vendor.ticket.created`), on the owner's thread bot.
+    if let Some(owner_bot) = thread_bot(db, t.owner, t.thread_id) {
+        crate::gateway_runner::led(
+            db,
+            &owner_bot,
+            t.thread_id,
+            None,
+            "vendor.ticket.created",
+            ("user", t.owner),
+            json!({ "ticketId": &id, "vendorBotId": t.vendor_bot_id, "deadlineAt": &deadline, "title": instructions.chars().take(120).collect::<String>() }),
+            Some(format!("vendor-ticket-created:{}:{id}", t.owner)),
+        );
+    }
     get_ticket(db, t.owner, &id)?.ok_or_else(|| "ticket missing".into())
 }
 

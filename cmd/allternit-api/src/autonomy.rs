@@ -298,10 +298,27 @@ fn preview(text: &str) -> String {
 #[allow(clippy::too_many_arguments)]
 pub fn inbox(db: &DbHandle, owner: &str, bot_id: &str, kind: &str, key: &str, title: &str, body: &str, severity: &str, action_url: Option<&str>, meta: Value) {
     let Ok(conn) = db.connect() else { return };
-    let _ = conn.execute(
+    let id = format!("aut:{kind}:{key}");
+    let fresh = conn.execute(
         "INSERT OR IGNORE INTO inbox_items (id, user_id, agent_id, type, title, body, severity, status, action_url, metadata) VALUES (?1,?2,?3,?4,?5,?6,?7,'unread',?8,?9)",
-        params![format!("aut:{kind}:{key}"), owner, bot_id, kind, title, body, severity, action_url, meta.to_string()],
-    );
+        params![id, owner, bot_id, kind, title, body, severity, action_url, meta.to_string()],
+    )
+    .unwrap_or(0)
+        == 1;
+    if fresh {
+        // Ledger → Desktop/cloud event backbone (`inbox.item.created`).
+        let thread = meta["threadId"].as_str().unwrap_or("");
+        crate::gateway_runner::led(
+            db,
+            bot_id,
+            thread,
+            None,
+            "inbox.item.created",
+            ("bot", bot_id),
+            json!({ "itemId": &id, "kind": kind, "title": title, "severity": severity, "actionUrl": action_url }),
+            Some(format!("inbox-item:{id}")),
+        );
+    }
 }
 
 fn who(a: &Action<'_>) -> String {

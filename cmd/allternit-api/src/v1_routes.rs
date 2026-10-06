@@ -1884,11 +1884,22 @@ async fn agent_chat_bridge(
                             let _ = tokio::task::spawn_blocking(
                                 move || -> Result<(), rusqlite::Error> {
                                     let conn = db.connect()?;
-                                    conn.execute(
+                                    let fresh = conn.execute(
                                         "INSERT OR IGNORE INTO cowork_approvals (id, user_id, content, source) \
                                          VALUES (?1, ?2, ?3, 'gizzi-permission')",
                                         params![rid, uid, content],
-                                    )?;
+                                    )? == 1;
+                                    if fresh {
+                                        // Owner ledger → the cloud event backbone (approval.requested).
+                                        let _ = crate::runtime_events::record_user_event(
+                                            &conn,
+                                            &uid,
+                                            "approval.requested",
+                                            None,
+                                            &serde_json::json!({ "approvalId": rid, "source": "gizzi-permission" }),
+                                            Some(&format!("approval:{rid}:requested")),
+                                        );
+                                    }
                                     Ok(())
                                 },
                             )
