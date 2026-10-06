@@ -28,7 +28,7 @@ Every major harness now ships orchestration for its own agents only (Claude Code
 | `packages/@allternit/executor-core` | Kept as-is: it models *parallel variant racing* (one goal, N model variants, verification profiles) — a sibling concern, not a substitute. `orchestrator` models *sequenced delegation with review*. A later ADR may unify their status/event vocabularies. |
 | `packages/@allternit/parallel-run`, `cowork-engine` | Untouched consumers-to-be; cowork mode is a natural orchestrator caller. |
 | `packages/@allternit/workflow-engine` | Integration target: orchestration phases as DAG nodes (phase 2). |
-| `~/.claude/skills/agent-orchestrator` + `ao-*` scripts + `~/.agent-orchestrator/ORCHESTRATOR.md` (dev machine) | Reference implementation and proving ground. The `local-terminal` backend encodes the same semantics (verified send, sentinel watch, `script(1)` transcripts, worktree isolation). The scripts remain the human/CLI shim. |
+| `~/.claude/skills/agent-orchestrator` and its original shell scripts (dev machine) | Reference implementation and proving ground. The `local-terminal` backend encodes the same semantics (verified send, sentinel watch, `script(1)` transcripts, worktree isolation). Superseded by the Allternit Factory (`gizzi agents|orchestration`); the scripts are retired (see `surfaces/docs/factory/migration.mdx`). |
 
 ## Vendor launch matrix (v1 knowledge baked into the package)
 

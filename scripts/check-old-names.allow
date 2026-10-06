@@ -39,3 +39,7 @@ alabs-generated-courses/**                    # generated course content (regene
 factory/pane/** @herdr-env                    # upstream Herdr env contract
 cmd/allternit-factory/tests/** @herdr-env     # tests set the pane's HERDR_SESSION / HERDR_SOCKET_PATH for an isolated pane server
 THIRD-PARTY-NOTICES.md @herdr-env             # license notice names upstream
+
+# Data and fingerprints that name old paths
+.gitleaksignore @commrails                    # gitleaks fingerprints of past commits name the files' old paths
+surfaces/docs/docs.json @commrails            # redirects from the old CommRails doc URLs to the Factory pages

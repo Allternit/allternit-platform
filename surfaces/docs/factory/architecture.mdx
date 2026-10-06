@@ -55,10 +55,10 @@ allternit/                         (platform repo)
 | Part | From the old work engine | From the old orchestrator engine | From elsewhere |
 |---|---|---|---|
 | core | `core`, `ledger`, `index`, `projections`, `replay`, `prompt`, `compact`, `query`, `dolt` | `config`, `persist`, `events`, `ipc`, `protocol` | — |
-| gate | `gate`, `hook`, `policy`, `killswitch`, `egress`, `fence`, `constraints` | the spawn gate | — |
+| gate | `gate`, `hook`, `policy`, `killswitch`, `egress`, `fence`, `constraints` | Its spawn gate is retired: `hook` is the one spawn gate | — |
 | agents | `peer`, `execenv` | `harness`, `native`, `peers`, `agent_resume`, `detect`, `integration`, `worktree`, `session` | Gizzi `runtime` (local agent CLI discovery) |
-| orchestration | `mail`, `bus`, `transport`, `attention`, `steer`, `observer` | `mailbox`, `transcript`, pane read/send | Gizzi `ac` and `mail`. Gizzi `/v1/orchestrator` send/tail |
-| workflows | `templates`, `drive`, `wake`, `wait_gates`, `leases`, `merge_locks`, `dependencies` | `watch` and `drain` | `kernel` (ComputeGraph IR) as the template compiler |
+| orchestration | `mail`, `bus`, `transport`, `attention`, `steer`, `observer` | `mailbox` (the Bus queue `orchestration drain` empties), `transcript` (the PTY tee), the verified paste | Gizzi `ac` and `mail`. Gizzi `/v1/orchestrator` send/tail |
+| workflows | `templates`, `drive`, `wake`, `wait_gates`, `leases`, `merge_locks`, `dependencies` | Its `watch` and `drain` verbs are retired: `drive` watches its runs, `orchestration drain` empties a mailbox | `kernel` (ComputeGraph IR) as the template compiler |
 | workspace | `work`, `wih`, `campaign`, `receipts`, `judge`, `verification`, `vault`, `lessons`, `context`, `memory`, `echoes` | — | Node folders and proof (new). The cowork queue and run tables (folded last) |
 | pane (`factory/pane`) | — | `ui`, `client`, `app`, `pane`, `pty`, `terminal*`, `layout`, `workspace`, `input`, `kitty_graphics`, `ghostty`, `copy_mode`, `selection` | `cmd/allternit-mux` (folded in and deleted: raw terminals are `factory.terminal.*`) |
 | api | `service`, `mcp`, `bridge`, `workspace` | `api`, `server`, `serve` (UHP), `visibility` | Gizzi `/v1/orchestrator` routes |

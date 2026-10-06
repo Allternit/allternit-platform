@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # steer-checkpoint <repo-path> <from-name> [-f <markdown-file>]
 # Write <repo>/.steering/checkpoint.md deterministically from stdin or a file,
-# then post a Rails steer/checkpoint event if the API is up.
+# then post a Factory steer/checkpoint event if the API is up.
 # Exits 0 on success; prints the checkpoint path.
 set -euo pipefail
 [ $# -ge 2 ] || { echo "usage: steer-checkpoint <repo-path> <from-name> [-f <file>]  (markdown body via stdin or -f)" >&2; exit 2; }
@@ -27,11 +27,11 @@ TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 echo "wrote $OUT"
 
-# Rails checkpoint event (best-effort, non-fatal)
-if curl -s --max-time 3 http://127.0.0.1:8013/api/rails/peers >/dev/null 2>&1; then
+# Factory checkpoint event (best-effort, non-fatal)
+if curl -s --max-time 3 http://127.0.0.1:8013/api/factory/peers >/dev/null 2>&1; then
   NOTES=$(head -c 200 "$OUT" | tr '\n' ' ' | sed 's/"/\\"/g')
-  RESP=$(curl -s --max-time 5 -X POST http://127.0.0.1:8013/api/rails/steer/checkpoint \
+  RESP=$(curl -s --max-time 5 -X POST http://127.0.0.1:8013/api/factory/steer/checkpoint \
     -H "Content-Type: application/json" \
     -d "{\"cwd\":\"$REPO\",\"notes\":\"$NOTES\"}" 2>/dev/null || true)
-  [ -n "$RESP" ] && echo "rails: $RESP"
+  [ -n "$RESP" ] && echo "factory: $RESP"
 fi

@@ -62,14 +62,21 @@ steer_build_context() {
 }
 
 # steer_consult <cwd> <prompt-file> -> answer on stdout (may be empty on failure)
-# Delegates to the Factory steering coordinator via `gizzi orchestration steer
-# consult`. Falls back to a fresh `kimi -p` consult only when gizzi is missing.
+# Delegates to the Factory steering coordinator (`orchestration steer consult`):
+# the engine binary when it is on PATH (or $ALLTERNIT_FACTORY_BIN), else a
+# gizzi that has the Factory verbs. An older gizzi answers an unknown verb with
+# its banner and exit 0, which would read as a STEER verdict, so it is probed
+# first. Falls back to a fresh `kimi -p` consult when neither can.
 steer_consult() {
-  local cwd=$1 prompt_file=$2
+  local cwd=$1 prompt_file=$2 factory="${ALLTERNIT_FACTORY_BIN:-}"
+  [ -n "$factory" ] && [ -x "$factory" ] || factory=$(command -v allternit-factory 2>/dev/null || true)
   if [ -n "${STEER_CONSULT_CMD:-}" ]; then
     # Test/override path, e.g. STEER_CONSULT_CMD="cat canned-answer.txt"
     $STEER_CONSULT_CMD < "$prompt_file"
-  elif command -v gizzi >/dev/null 2>&1; then
+  elif [ -n "$factory" ]; then
+    "$factory" --root "$cwd" orchestration steer consult --cwd "$cwd" --prompt-file "$prompt_file"
+  elif command -v gizzi >/dev/null 2>&1 \
+    && (cd "$cwd" && gizzi orchestration steer --help 2>&1) | grep -qi 'consult'; then
     (cd "$cwd" && gizzi orchestration steer consult --cwd "$cwd" --prompt-file "$prompt_file")
   else
     (cd "$cwd" && kimi -p "$(cat "$prompt_file")" 2>/dev/null)

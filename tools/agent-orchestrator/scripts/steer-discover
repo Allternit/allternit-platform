@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # steer-discover [--project <substr>] [--self <session-id>]
 # Deterministically find parallel agent sessions on this machine, newest first.
-# Queries the Rails peer registry first (vendor-neutral, cross-CLI), then falls
+# Queries the Factory engine's peer registry first (vendor-neutral, cross-CLI), then falls
 # back to a filesystem scan of the kimi-code sessions directory.
 # Prints a table: session_id, age, cwd, subagents, current activity hint.
 set -euo pipefail
 
 PROJECT=""
 SELF=""
-RAILS_URL="${ALLTERNIT_RAILS_URL:-http://127.0.0.1:8013}"
+FACTORY_URL="${ALLTERNIT_GATEWAY_URL:-http://127.0.0.1:8013}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --project) PROJECT="$2"; shift 2 ;;
@@ -19,22 +19,22 @@ done
 
 KIMI_DIR="${KIMI_SESSIONS_DIR:-$HOME/.kimi-code/sessions}"
 
-python3 - "$KIMI_DIR" "$PROJECT" "$SELF" "$RAILS_URL" <<'PY'
+python3 - "$KIMI_DIR" "$PROJECT" "$SELF" "$FACTORY_URL" <<'PY'
 import json, os, sys, time, glob, urllib.request
 
-sessions_dir, project, self_id, rails_url = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+sessions_dir, project, self_id, factory_url = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 now = time.time()
 
-# --- Rails peer registry (vendor-neutral; works across kimi/claude/codex/gizzi) ---
+# --- Factory peer registry (vendor-neutral; works across kimi/claude/codex/gizzi) ---
 peers = []
 try:
-    with urllib.request.urlopen(f"{rails_url}/api/rails/peers", timeout=3) as r:
+    with urllib.request.urlopen(f"{factory_url}/api/factory/peers", timeout=3) as r:
         peers = json.load(r).get("peers", [])
 except Exception:
     pass
 
 if peers:
-    print("=== Rails peers (registered) ===")
+    print("=== Factory peers (registered) ===")
     print(f"{'NAME':<40} {'VENDOR':<10} {'STATUS':<8} CWD")
     for p in sorted(peers, key=lambda x: x.get("last_heartbeat_at", ""), reverse=True):
         name = p.get("name", "?")

@@ -1,137 +1,160 @@
 ---
 name: agent-orchestrator
-description: Orchestrate external CLI agents (kimi, codex, agy, claude, gizzi-code) through the Allternit Rails communication and coordination system. Use when the user asks to delegate, offload, or farm out implementation work to another CLI agent / terminal session, or to run work outside this session to save tokens.
+description: Orchestrate external CLI agents (kimi, codex, agy, claude, grok, gizzi) through the Allternit Factory (gizzi agents / orchestration / workspace / workflows). Use when the user asks to delegate, offload, or farm out implementation work to another CLI agent / terminal session, or to run work outside this session to save tokens. Part of Allternit Agents / Bot Agents — not a separate product.
 ---
 
-# CLI Agent Orchestrator (v3 — Rails-native)
+# CLI Agent Orchestrator (v4 — Allternit Factory)
 
-You are the **orchestrator**: you own scoping, task specs, monitoring, review, and bug-fixing. The **executor** is an external CLI agent in its own tmux session. You never do the bulk implementation yourself — but you always verify it.
+You are the **orchestrator**: you own scoping, task specs, monitoring, review, and bug-fixing. The **executor** is an external CLI agent running as a **Terminal bot** in an Allternit Factory pane. You never do the bulk implementation yourself — but you always verify it.
 
-The underlying engine is `allternit-commrails` from the `allternit-commrails` crate. The bundled `ao-*` scripts in this directory are thin shims over `allternit-commrails orchestrator` (and `allternit-commrails steer` for consults). The binary must be on PATH:
+The Factory is what Gizzi and Allternit Desktop both run. People and agents type `gizzi <part> <verb>`. The engine underneath (`allternit-factory`) is never typed. Brain page: `Allternit Brain/Products/Factory.md`. Dev docs: `allternit/surfaces/docs/factory/` (commands, determinism, migration). The older orchestration tools are merged into it, and their names are removed, not aliased.
 
-```bash
-cargo build -p allternit-commrails
-# symlink or copy target/debug/allternit-commrails onto PATH, e.g. ~/.local/bin
-```
+**Contract you can rely on** (every `gizzi` Factory verb):
+- `--json` prints one JSON document and nothing else. Mutations take `--dry-run` and print exactly what would change.
+- Exit codes: `0` ok · `1` refused by the Gate · `2` not found (also "`<part> <verb>` is not built yet") · `3` transport broken or engine missing · `4` timeout · `5` needs a person · `64` usage · `70` internal.
+- On error with `--json`: `{"error":{"code","fact","action"}}`. Read `fact` and `action` and act on them. Never guess past a refusal.
 
-Every spawned session is registered as a Rails peer under `.allternit/peers/`, with a per-session UDS inbox. That lets other local agents discover it (`allternit-commrails peer list`, `/list-agents` in gizzi-code) and send plain-text messages to it (`allternit-commrails peer send`, `/send-message`).
+## Old names
+
+The pre-Factory orchestration scripts and CLIs are retired and their names are removed, not aliased. The old → new command table is on the docs migration page (`surfaces/docs/factory/migration.mdx`). If a `gizzi` verb answers exit `2` "not built yet", say so in your report; don't reach for a removed tool.
 
 ## Gate 0 — Enter the DAG first
 
-Per the ratified DAG-as-default rule (`commrails/spec/DAG_AS_DEFAULT_TASK_SYSTEM.md`), orchestrated work is multi-step and cross-session by definition. Before spawning anything: `allternit-commrails plan new "<scope>"` at the workspace root, then `wih pickup` on the node. The spawned executor works against that `dag:<dag_id>` / `wih:<wih_id>`; handoffs and steering reference those ids. Skip only for provably ≤2-step work.
+Orchestrated work is multi-step and cross-session by definition (DAG-as-default rule). Before spawning anything, at the workspace root:
+
+```bash
+gizzi workspace plan new "<scope>" --dry-run   # check, then run without --dry-run
+gizzi workspace node add …                      # one node per phase, if the plan didn't make them
+gizzi workspace node claim <node>               # the WIH pickup for the phase you're delegating
+```
+
+The executor works against that `dag` / node id. Handoffs, steering and sends reference it (`gizzi orchestration send … ` with the node in the task file). Skip only for provably ≤2-step work.
 
 ## Phase 0 — Detect agents
 
 ```bash
-ao-doctor   # probes tmux/script/git + every executor CLI
+gizzi doctor                  # Gizzi, the engine, harnesses, transport, install
+gizzi agents doctor           # panes, harnesses and the registry against reality
+gizzi agents harness list     # which harnesses the engine can drive here
 ```
 
-Exit codes: 0 = usable; 1 = no usable executors; 2 = transport broken. Trust its per-vendor verdicts over any static table.
+Exit `0` = usable. Exit `3` = the engine is missing or its transport is broken (follow the printed action). Trust these per-harness verdicts over any static table.
 
 ## Phase 1 — Scope and plan (you, in this session)
 
-Same as v2: do the analysis yourself, then write inside the executor's workdir:
+Do the analysis yourself, then write inside the executor's workdir:
 
 - `docs/<TOPIC>_MAP.md` — the full gap analysis.
 - `docs/<TOPIC>_PHASE_<N>_TASK.md` — one phase only, with constraints, file paths, and a deliverable sentinel/notes file.
 
+Executors can't read outside their workspace, so inline what they need (`Allternit Brain/delegation-runbook.md`).
+
 ## Phase 2 — Spawn
 
-```bash
-~/.claude/skills/agent-orchestrator/scripts/ao-spawn [--worktree] <slug> <repo-dir> "<agent-launch-cmd>"
-# prints: ao-<slug> <workdir> <logfile> <peer_id> <inbox_socket>
-```
-
-Use `--worktree` whenever the repo allows it. The binary refuses when the git root is `$HOME`.
-
-Headless one-shot pattern — chain the sentinel:
+A spawned executor is a Terminal bot on a team. For a one-off delegation, a team of one is fine.
 
 ```bash
-ao-spawn <slug> <repo> "claude -p '$(cat docs/X_TASK.md)' --permission-mode acceptEdits; touch docs/X_NOTES.sentinel"
+# 1. Worktree (refuse if the git root is $HOME)
+git -C <repo> worktree add ../<repo-name>-<slug> -b factory/<slug>
+
+# 2. Team file at the workspace root: .allternit/teams/<team>/team.yaml
+cat > .allternit/teams/<team>/team.yaml <<'YAML'
+name: <team>
+bots:
+  - { bot: <slug>, role: build, binding: terminal, harness: claude }   # or codex / kimi / grok / agy / gizzi
+YAML
+
+# 3. Plan, then apply
+gizzi agents up <team> --workdir ../<repo-name>-<slug> --dry-run --json   # TeamPlanStep[]: spawn / bind / skip / stop
+gizzi agents up <team> --workdir ../<repo-name>-<slug>
+gizzi agents ps --json                                                     # the bot, its pane, state
 ```
 
-**Spawn gate (audit S1).** Every launch line goes through `ao-spawn-gate` (bash) / `ao_gate.rs` (engine `ao spawn` and `ao recover --apply`), byte-for-byte identical:
+The address is `<slug>@<team>`. The pane exports `ALLTERNIT_FACTORY_BOT`, `ALLTERNIT_FACTORY_TEAM`, `ALLTERNIT_FACTORY_PANE_ID` (and `ALLTERNIT_FACTORY_BOT_ID` once bound), so the executor knows who it is (`gizzi agents whoami`). The engine delivers the bot's persona as guidance, its context pack and skills, the Allternit connector and the Gate hook at spawn. Add `model:` or `--preset` per `team.yaml` when the task needs a specific model.
 
-- **claude / claude-code → hook.** Launched with `--permission-mode acceptEdits --settings ~/.agent-orchestrator/logs/ao-<slug>.claude-settings.json`; the settings file comes from `allternit-commrails hook claude-settings` and runs the PreToolUse hook (hard floor + Gate 2) on every tool call. `--dangerously-skip-permissions` (and `--permission-mode bypassPermissions`) is rewritten, with a one-line `spawn gate: rewrote ...` notice. No `allternit-commrails` binary (`$ALLTERNIT_COMMRAILS_BIN`, else PATH) → the spawn is refused, never run unhooked.
-- **codex → sandbox.** `--dangerously-bypass-approvals-and-sandbox` becomes `-c 'sandbox_mode="workspace-write"' -c 'approval_policy="never"' -c sandbox_workspace_write.network_access=true`; `danger-full-access` becomes `workspace-write`.
-- **everything else (kimi, agy, gemini, sh, ...) → ungated.** Unchanged, and labeled `gate=ungated` in `~/.agent-orchestrator/logs/spawn-gate.log` (every spawn is logged there with its class). With `ALLTERNIT_COMMRAILS_WIH` set, an ungated harness must pass `allternit-commrails hook spawn-check` or the spawn is refused.
-
-The gate classifies by the first command word (after `VAR=value`/`env`/`exec`), so launch the harness directly — `bash -c 'claude ...'` is logged as ungated `bash`.
-
-Each spawned session exports:
-
-- `ALLTERNIT_RAILS_PEER_NAME=ao-<slug>`
-- `ALLTERNIT_RAILS_INBOX=<socket-path>`
-- `ALLTERNIT_RAILS_ROOT=<workdir>`
-
-so the executor can participate in Rails cross-session messaging.
+A spawn the Gate refuses exits `1` and says why. Fix the cause. Don't retry blindly.
 
 ## Phase 3 — Send prompts
 
 ```bash
-ao-send <slug> "Read docs/<TASK_FILE> and execute it exactly."
+gizzi orchestration send <slug>@<team> "Read docs/<TASK_FILE> and execute it exactly." --json
 ```
 
-`ao-send` now delegates to `allternit-commrails orchestrator send`. It prefers UDS delivery if the peer inbox is listening, otherwise falls back to tmux key injection.
+Read the delivery in the reply:
+- `via: pane`, `state: verified` — it landed.
+- `via: pane_queue`, `state: queued` — the pane was busy or the paste couldn't be verified, so it's in the bot's mailbox. `detail` says why. Deliver it once the pane is idle with `gizzi orchestration drain <slug>@<team>`.
+- `failed` — nothing landed. Read `detail` and fix it.
+
+Use `--queue` to queue on purpose. Use `--dry-run` to see the records a send would write. A repeated idempotency key returns the first delivery instead of sending twice. Every send is recorded in mail and as a `factory.delivery` ledger event (`gizzi orchestration mail list`, `GET /api/factory/deliveries?agent=`).
 
 ## Phase 4 — Monitor and steer
 
+Completion is the **sentinel file's existence only**, never TUI activity (kimi shows no spinner). Watch in the foreground, bounded:
+
 ```bash
-ao-watch <slug> <NOTES_FILE> [timeout=3600] [interval=20]
+deadline=$(( $(date +%s) + 3600 ))
+while [ ! -f <workdir>/docs/<NOTES>.sentinel ]; do
+  state=$(gizzi agents ps --json | jq -r '.agents[] | select(.address=="<slug>@<team>") | .state')
+  case "$state" in offline|failed) echo "PANE-DEAD"; break;; esac        # was exit 3
+  [ "$(date +%s)" -ge "$deadline" ] && { echo "TIMEOUT"; break; }       # was exit 4
+  sleep 20
+done
 ```
 
-Exits 0 on DONE, 3 on PANE-DEAD, 4 on TIMEOUT. To steer or answer questions, `ao-send` into the same session.
-
-To see progress: `ao-status <slug> 40`. To list all sessions: `ao-status`.
+- Progress: `gizzi orchestration capture <slug>@<team> 40`. Full log: `gizzi orchestration transcript <slug>@<team>`.
+- `needs_you` state, or `gizzi orchestration attention list`, means the executor is waiting on a person or an approval.
+- To steer or answer questions, `gizzi orchestration send` into the same bot.
+- A person can watch live with `gizzi agents wall [team]` or `gizzi agents attach <slug>@<team>` (interactive, so don't run it yourself).
+- For work that's already a DAG from a template, `gizzi workflows drive <dag> --once --dry-run`, then `--once`, drives READY nodes through the Gate instead of hand-sending.
 
 ## Phase 5 — Review the work
 
-Same as v2: verify the true footprint, scope, claims, and cheap syntax gate. Fix small bugs yourself; send bad implementations back via `ao-send`.
+Verify the true footprint (`git -C <worktree> diff --stat`), scope, claims, and a cheap syntax gate. Never accept the notes file at face value. Fix small bugs yourself. Send bad implementations back with `gizzi orchestration send`. Proof for DAG work lives in the node: `gizzi workspace proof show`, `gizzi workspace judge show`.
 
 ## Phase 6 — Iterate and clean up
 
-When all phases pass: merge/apply the worktree branch, then `ao-kill <slug> [--rm-worktree]`.
+When all phases pass: merge/apply the worktree branch, close the node (`gizzi workspace node close <node>`), then
+
+```bash
+gizzi agents down <team> --dry-run
+gizzi agents down <team> --rm-worktree     # keeps the branch
+```
+
+If a session died mid-run: `gizzi agents recover` (dry run by default) shows a respawn plan with the harness's resume argv. `--apply` respawns.
 
 ## Cross-session messaging
 
-Local peers are discoverable with:
-
 ```bash
-allternit-commrails peer list
-allternit-commrails peer send <name> "<message>"
+gizzi agents ps                                  # every bot of every binding: state, node, proof
+gizzi orchestration send <bot@team> "<message>"  # Terminal, Hosted or Vendor bot; the engine picks the delivery
+gizzi orchestration mail list | read <thread>    # the recorded threads
+gizzi orchestration feed --json                  # ledger events
 ```
 
-From gizzi-code, the runtime exposes `allternit_list_agents` and `allternit_send_message` tools. Messages travel over the peer's UDS inbox and never leave the machine.
+From gizzi-code, the runtime's `allternit_list_agents` and `allternit_send_message` tools reach the same bots. Local pane sends never leave the machine.
 
 ## Platform integration
 
-Executor lifecycle events are still mirrored into CommRails mail thread `wih:executor-<slug>` via `runtime/server/rails-bridge.ts`, and artifacts can be shared with `POST /api/commrails/mail/share` (the old `/api/rails/mail/share` prefix remains as a one-release alias).
+Desktop, ai.allternit.com and the phone read the same engine through allternit-api's `/api/factory` proxy: agents, capture, transcript, send, deliveries, the `/api/factory/events` SSE stream, templates, runs, campaigns, nodes, and approvals (owned by allternit-api). A delegated executor shows up in Code mode's terminal wall and on the team strip as a Terminal bot.
 
-## Dispatch semantics (registry, mailbox, ownership, recovery)
+## Dispatch semantics
 
-The ao engine adds durable dispatch semantics on top of the tmux/rails flow. Additive: the `ao-*` bash scripts and `ao spawn/send/watch/status/kill/doctor` keep their exact behavior.
-
-**Dispatch registry.** `~/.agent-orchestrator/state.json` — `{"sessions": {"ao-<slug>": {...}}}`. Legacy keys `cwd`/`log`/`dead` are unchanged (old readers ignore the rest). Added keys: `runner` (`logs/ao-<slug>.cmd.sh`), `worktree`, `branch`, `sentinel` (armed by `ao watch`), `lead`, `lifecycle` (running|dead|finished), `world` (engine|tmux), `queued`. Written by the engine spawn/kill paths and by the bash `ao-spawn`/`ao-kill` shims via `ao-registry-sync`.
-
-**Bus mailbox — queue-not-drop.** Busy/unverifiable sends go to the durable Rails Bus (`.allternit/bus/queue.db`, server-free) addressed to `peer:ao-<slug>` with transport `mailbox`:
-
-- `ao queue <slug> "msg"` — enqueue; `ao queue <slug>` — list pending.
-- `ao send --queue <slug> "msg"` — try the verified immediate send; on busy/unverifiable, enqueue instead of dropping. Plain `ao send` is unchanged.
-- `ao drain <slug> [--all]` — inject the oldest pending row through the verified ao-send paste path; settle (`mark_delivered`) only after verified delivery. Failed paste leaves the row `pending`.
-- `ao watch` auto-drains the oldest pending row per tick once the pane reads idle.
-
-Never use `GET /api/rails/peers/:name/inbox` for drain (it marks delivered on read). Exactly one drainer per recipient, owned by ao-engine. Mailbox root: `--root` > `AO_PEERS_ROOT` > cwd.
-
-**Fail-closed ownership.** Spawn records the lead (`--lead` / `AO_LEAD` / user / `human`). `queue`/`drain`/`send --queue`/`recover` require that lead or `--as-human`. Unknown owner → refuse.
-
-**Recovery pass.** `ao recover [slug]` reconciles registry vs live tmux + engine. Dead-but-unfinished sessions get a respawn plan from `.cmd.sh`, upgraded to harness resume argv when the runner line is resumable. Dry-run default; `--apply` respawns and re-arms the sentinel watcher.
-
-**Validation boundary.** Unit tests + `infrastructure/executor/ao-engine/tests/dispatch_demo/run.sh`. Not claimed: multi-day autonomous runs, cross-machine leads, atomic claim under concurrent drainers.
+- **One registry:** `~/.allternit/factory/registry.json` (`$ALLTERNIT_FACTORY_HOME` moves it), migrated once from the old orchestrator registry. It's reconciled against live panes at engine start and on every `gizzi agents ps`: a gone pane reads `offline`, never running. Panes a person opened with an agent in them are adopted into the registry too.
+- **Queue, never drop:** a send to a busy or unverifiable pane goes to the bot's mailbox (`pane_queue` / `queued`). `gizzi orchestration drain <bot@team> [--all]` delivers it, oldest first, through the same verified paste; a message is settled only once its delivery is verified.
+- **No silent fallback:** without the pane engine every spawn and send fails with exit `3`. There's no tmux path.
+- **Spawn logs** for engine spawns are in `~/.allternit/factory/logs/`.
 
 ## Pitfalls learned the hard way
 
-- kimi `-p` refuses `--yolo`/`--auto` — TUI + `ao-send` is the only autonomous kimi path.
-- C-c kills a kimi TUI outright; `ao-send` clears with C-u on mismatch.
+- kimi `-p` refuses `--yolo`/`--auto` — run kimi as an interactive Terminal bot and send to it.
+- C-c kills a kimi TUI outright. The verified send clears with C-u on a mismatch, so don't paste by hand.
 - Busy-indicator polling gives false idles on kimi — sentinel files only.
-- Use worktrees to attribute changes when multiple agents share a repo.
-- Scope each phase so its review fits in a few file reads.
+- Use worktrees to attribute changes when multiple agents share a repo. Never attribute working-tree changes to your executor without a worktree or mtime evidence.
+- Scope each phase so its review fits in a few file reads. A 2,000-line unreviewed diff is not "done".
+- macOS screen-recording filenames contain U+202F — use globs for user-provided recordings.
+- Don't drive Terminal.app with AppleScript (focus races injected prompts into the wrong window). If the user wants a visible window, have them run `gizzi agents attach <bot@team>` or `gizzi agents wall`.
+- A `best_effort` delivery (vendor or channel) is not proof the bot read it.
+
+## Provenance
+
+Patterns adopted from: awslabs/cli-agent-orchestrator (named sessions, status semantics, attach-to-observe), kingbootoshi/codex-orchestrator (persistent transcript logs, completion notification chaining), primeline-ai/claude-tmux-orchestration (verify-idle-before-send handshake), claude-squad/Crystal (worktree-per-agent isolation). The pane engine is a fork of herdr (Apache-2.0).

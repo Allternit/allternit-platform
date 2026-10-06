@@ -761,10 +761,10 @@ fn persist_agent_identity_channels(
             -- DELETE + POST /identity/email, never by a PATCH (that would leave the
             -- bot's address and its real mailbox apart).
             email_address = CASE WHEN email_provider = 'mailflare' AND email_mailbox_id IS NOT NULL
-                                      AND COALESCE(?5, 'mailflare') IN ('mailflare', 'commrails')
+                                      AND COALESCE(?5, 'mailflare') IN ('mailflare', 'commrails') -- old-names: keep (stored provider value)
                                  THEN email_address ELSE COALESCE(excluded.email_address, email_address) END,
             email_provider = CASE WHEN email_provider = 'mailflare' AND email_mailbox_id IS NOT NULL
-                                       AND COALESCE(?5, 'mailflare') IN ('mailflare', 'commrails')
+                                       AND COALESCE(?5, 'mailflare') IN ('mailflare', 'commrails') -- old-names: keep (stored provider value)
                                   THEN email_provider ELSE COALESCE(?5, email_provider) END,
             email_send_enabled = COALESCE(?6, email_send_enabled),
             email_receive_enabled = COALESCE(?7, email_receive_enabled),
@@ -4613,7 +4613,7 @@ mod tests {
         let addr = |c: &rusqlite::Connection| -> (String, String) {
             c.query_row("SELECT email_address, email_provider FROM agent_identity_channels WHERE agent_id = 'a1'", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap()
         };
-        persist_agent_identity_channels(&conn, "a1", "u1", Some(&serde_json::json!({ "email": { "address": "typed@bots.allternit.com", "provider": "commrails" } }))).unwrap();
+        persist_agent_identity_channels(&conn, "a1", "u1", Some(&serde_json::json!({ "email": { "address": "typed@bots.allternit.com", "provider": "commrails" } }))).unwrap(); // old-names: keep (stored provider value)
         assert_eq!(addr(&conn), ("a@bots.allternit.com".into(), "mailflare".into()));
         persist_agent_identity_channels(&conn, "a1", "u1", Some(&serde_json::json!({ "email": { "address": "me@acme.com", "provider": "google_workspace" } }))).unwrap();
         assert_eq!(addr(&conn), ("me@acme.com".into(), "google_workspace".into()));

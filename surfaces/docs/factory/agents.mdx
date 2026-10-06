@@ -88,7 +88,8 @@ gizzi agents up product-build --on build-box
 - `gizzi agents ps` lists every bot with its binding, state, current node and proof count. Running sessions are checked against the live panes on every `ps`, so a dead process shows as dead, never as running.
 - `gizzi agents wall [<team>]` opens the live wall of terminals in the engine's pane view. `ctrl+b q` returns you to Gizzi.
 - `gizzi agents attach <bot@team>` depends on the binding. A Terminal bot opens its pane. A Hosted bot opens its session right in Gizzi's TUI. A Vendor bot shows its thread and ticket status, because it has no terminal.
-- `gizzi agents recover` shows what it would restart after a crash. `--apply` does it.
+- `gizzi agents recover` shows what it would restart after a crash. `--apply` does it. A session qualifies when its pane is gone, it isn't finished, and its notes sentinel (if it has one) doesn't say `status: done`. Only the lead that started it can restart it (`--lead <id>`, else `$ALLTERNIT_FACTORY_LEAD` or your user name), unless you pass `--as-human`. The restart goes through the same spawn gate as any spawn, with the bot's identity and WIH kept, and uses the harness's own resume when the original launch named a session (`claude --resume`, `codex resume`, `kimi --session`, `agy --conversation`, `grok --resume`).
+- `gizzi agents down <bot@team>` stops one bot's pane; `gizzi agents down <team>` stops the team's.
 
 On Desktop, Code mode's terminal wall shows the same panes as xterm tiles, so a keystroke in either shows up in both.
 
