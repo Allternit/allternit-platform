@@ -17,13 +17,13 @@ pub mod tickets;
 pub mod workflows;
 pub mod workspace;
 
-pub use crate::agents::{execenv, orchestrator, peer};
+pub use crate::agents::{backend, execenv, peer, registry, spawn, view};
 pub use crate::api::{cli, mcp, service};
 #[cfg(feature = "dolt")]
 pub use crate::core::dolt;
 pub use crate::core::{compact, index, ledger, projections, prompt, query, replay};
 pub use crate::gate::{constraints, egress, fence, hook, killswitch, policy};
-pub use crate::orchestration::{attention, bus, mail, observer, steer};
+pub use crate::orchestration::{attention, bus, mail, observer, send, steer};
 pub use crate::remote::bridge;
 pub use crate::tickets::{batch, doctor, graph, rails_id, setup, sync};
 pub use crate::workflows::{
@@ -52,7 +52,7 @@ pub use crate::mail::{
     MailIndexOptions, MailMessage, MailOptions, MailSearchHit, OverdueMessage, TypedMessage,
     DEFAULT_MAIL_THREAD,
 };
-pub use crate::orchestrator::{CaptureFiles, ExecutorProbe, Orchestrator, SpawnOptions, WatchOutcome};
+pub use crate::spawn::{CaptureFiles, SpawnOptions, Spawner, WatchOutcome};
 pub use crate::peer::{
     DeliveryReceipt, Peer, PeerEnvelope, PeerRegistry, PeerStatus, send_envelope,
 };

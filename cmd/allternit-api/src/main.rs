@@ -1178,6 +1178,9 @@ async fn main() {
         // Factory bots (create + bind in one call) and vendor tickets as node
         // deliveries: /api/v1/factory/bots, /api/v1/factory/node-tickets.
         .nest("/api", allternit_api::factory_bots::router())
+        // Everything else under /api/factory goes to the Factory engine. A
+        // wildcard route, not a nest: the static approvals routes above win.
+        .nest("/api", allternit_api::factory_proxy::router())
         .nest("/api", allternit_api::vendor_local_connector::router())
         .nest("/api", office_engine_router())
         .nest("/api", provider_router())
@@ -1472,6 +1475,7 @@ async fn main() {
     // Start server — port from env; production owners pin 8013 explicitly,
     // unset defaults to the dev port (18013) so ad-hoc builds never squat :8013.
     let port = app_config.api_port();
+    allternit_api::factory_proxy::set_self_base(format!("http://127.0.0.1:{port}"));
     let port_source = match std::env::var("ALLTERNIT_API_PORT") {
         Ok(value) if value.parse::<u16>().is_ok() => format!("env ALLTERNIT_API_PORT={value}"),
         _ => "default (dev 18013 — production owners must pin ALLTERNIT_API_PORT=8013)".to_string(),

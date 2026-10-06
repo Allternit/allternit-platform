@@ -2156,6 +2156,33 @@ impl Gate {
             .map_err(|err| anyhow!("policy injection required for scope {:?}: {}", scope, err))
     }
 
+    /// Record a Factory fact (`factory.*`: a run's campaign link, …) as a
+    /// Gate event. Only `factory.`-prefixed types are accepted, so this can't
+    /// be used to forge work-state events.
+    pub async fn record_factory_event(
+        &self,
+        event_type: &str,
+        actor: Actor,
+        scope: Option<EventScope>,
+        payload: serde_json::Value,
+    ) -> Result<String> {
+        if !event_type.starts_with("factory.") {
+            return Err(anyhow!("record_factory_event only records factory.* events, not {event_type}"));
+        }
+        let evt = AllternitEvent {
+            event_id: create_event_id(),
+            ts: Utc::now().to_rfc3339(),
+            actor,
+            scope,
+            r#type: event_type.to_string(),
+            payload,
+            provenance: None,
+        };
+        let id = evt.event_id.clone();
+        self.emit(evt).await?;
+        Ok(id)
+    }
+
     pub async fn record_agent_decision(
         &self,
         note: &str,

@@ -22,8 +22,8 @@ The engine serves these routes at `/api/factory`. allternit-api proxies them for
 The four parts and their verbs are exactly SPEC §7. Rules:
 - Every command accepts `--json`. With `--json`, stdout is one JSON document and nothing else.
 - Every mutation accepts `--dry-run` and prints exactly what would change.
-- Exit codes: `0` ok · `1` refused by Gate · `2` not found · `3` transport broken / engine missing · `4` timeout · `5` needs a person · `64` usage error.
-- On error with `--json`, stdout is `{"error":{"code":"refused|not_found|transport|timeout|needs_person|usage","fact":"…","action":"…"}}`.
+- Exit codes: `0` ok · `1` refused by Gate · `2` not found · `3` transport broken / engine missing · `4` timeout · `5` needs a person · `64` usage error · `70` internal engine failure (HTTP 500, code `internal`).
+- On error with `--json`, stdout is `{"error":{"code":"refused|not_found|transport|timeout|needs_person|usage|internal","fact":"…","action":"…"}}`.
 - A verb that's specified but not implemented yet returns exit `2` with code `not_found` and the fact `"<part> <verb> is not built yet"`. Never pretend.
 
 ## 3. HTTP resources (`/api/factory`)
@@ -31,7 +31,8 @@ The four parts and their verbs are exactly SPEC §7. Rules:
 All JSON uses camelCase. Times are RFC 3339. IDs are opaque strings.
 
 ### Agents
-- `GET /api/factory/agents?team=<name>` → `{ agents: Agent[] }`
+- `GET /api/factory/health` → `{ ok: boolean, service: 'allternit-factory', panes: boolean }`
+- `GET /api/factory/agents?team=<name>` → `{ agents: Agent[], engine: { running: boolean, error: string|null } }`. `engine` reports whether the pane engine could be read. When it couldn't, the registry is shown unchanged and is never marked dead.
 - `GET /api/factory/agents/:id` → `Agent`
 - `GET /api/factory/agents/:id/capture?lines=80` → `{ text: string, at: string }`
 - `GET /api/factory/agents/:id/transcript?cursor=` → `{ chunks: {at:string,text:string}[], next: string|null }`
@@ -67,9 +68,12 @@ TeamPlanStep { action: 'spawn'|'bind'|'skip'|'stop', agent: string, harness?: st
 ```
 
 ### Orchestration
-- `POST /api/factory/send` body `{ to: string /* address or agent id */, text: string, queue?: boolean, threadId?: string }` → `Delivery`. When `threadId` is given, the engine records the text as a thread message, and `messageId` names it.
+- `POST /api/factory/send` body `{ to: string /* address, agent id, or 'channel:<threadId>' */, text: string, queue?: boolean, threadId?: string, nodeId?: string, dagId?: string, idempotencyKey?: string /* or the Idempotency-Key header */, dryRun?: boolean }` → `Delivery`. A repeated `idempotencyKey` returns the first Delivery. `dryRun` → `{ dryRun: true, plan: { to, via, threadId, records: string[], ifQueued?: string[] } }` and writes nothing. A send that can't be resolved returns `not_found` and writes nothing. Vendor sends need `threadId`. When `threadId` is given, the engine records the text as a thread message, and `messageId` names it.
 - `GET /api/factory/deliveries?agent=&thread=&node=` → `{ deliveries: Delivery[] }`
-- `GET /api/factory/events` (Server-Sent Events). Event types: `agent.state`, `node.status`, `delivery`, `approval.requested`, `approval.resolved`, `proof.recorded`, `team.changed`. Each has `{ type, at, data }`. It supports `Last-Event-ID` replay.
+- `GET /api/factory/events` (Server-Sent Events). Event types: `agent.state` (`{agentId, state, pane}`, live only, no SSE id), `node.status` (`{dagId, nodeId, cause, status}`), `delivery` (a Delivery), `approval.requested` and `approval.resolved` (an Approval), `proof.recorded` (`{dagId, nodeId, outcome}`), `team.changed`. Each has `{ type, at, data }`.
+  - Ledger-backed events carry their ledger event id, and `Last-Event-ID` (or `?after=`) replays from there. Without it, the stream starts at now.
+  - Approval events through the allternit-api proxy have ids `<engineId>~apr-<approvalId>`. They aren't replayed, so re-read `GET /api/factory/approvals?state=pending` on reconnect.
+  - A user only receives their own approvals.
 
 ```
 Delivery { id, to: string, via: 'session'|'pane'|'pane_queue'|'vendor_ticket'|'channel',
@@ -81,9 +85,9 @@ Delivery { id, to: string, via: 'session'|'pane'|'pane_queue'|'vendor_ticket'|'c
 ```
 
 ### Workflows
-- `GET /api/factory/templates` → `{ templates: TemplateSummary[] }`
+- `GET /api/factory/templates` → `{ templates: TemplateSummary[] }`, where `TemplateSummary { id, name, description, steps: number, params: number }`
 - `GET /api/factory/templates/:id` → `Template`
-- `POST /api/factory/runs` body `{ template: string, intent?: string, params?: Record<string,string>, campaignId?: string, projectId?: string, dryRun?: boolean }` → `{ dagId: string, campaignId: string, nodes: NodeCard[] }`. `intent` is the person's words. It becomes the campaign's and root node's `## Intent`, and fills the template param named `intent` if there is one. Give `campaignId` or `projectId`: with `projectId`, the engine uses that project's campaign and creates one if there isn't one (Project = Campaign).
+- `POST /api/factory/runs` body `{ template: string, intent?: string, params?: Record<string,string>, campaignId?: string, projectId?: string, dryRun?: boolean }` → `{ dagId: string, campaignId: string, nodes: NodeCard[] }`. `dryRun` → `{ dryRun: true, plan: { template, campaignId, nodes: {nodeId, stepId, title, executor}[], records: string[] } }`. `intent` is the person's words. It becomes the campaign's and root node's `## Intent`, and fills the template param named `intent` if there is one. Give `campaignId` or `projectId`: with `projectId`, the engine uses that project's campaign and creates one if there isn't one (Project = Campaign).
 - `GET /api/factory/dags/:dagId` → `Flow`
 
 ```
@@ -121,7 +125,7 @@ NodePage { card: NodeCard,
 - Push action endpoint and channel inbound hooks: internal to allternit-api.
 
 ```
-Approval { id, dagId, nodeId, title, summary, evidenceRef: string|null, risk: 'normal'|'high',
+Approval { id, dagId, nodeId, title, summary, evidenceRef: string|null, risk: 'normal'|'high', riskReason: string|null,
            requestedAt, surfaces: ('app'|'push'|'telegram'|'slack'|'sms'|'email')[],
            state: 'pending'|'approved'|'rejected'|'expired',
            resolvedBy: string|null, resolvedVia: string|null, resolvedAt: string|null, expiresAt: string }
