@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * End-to-end smoke test for Rails peer registry + cross-session messaging.
+ * End-to-end smoke test for the Allternit Factory peer registry + cross-session messaging.
  *
  * Registers two peers on a local allternit-api, starts UDS inbox listeners,
  * lists peers, sends a message from peer-a to peer-b by name, and asserts
@@ -52,7 +52,7 @@ async function apiFetch(path: string, init: RequestInit = {}): Promise<Response>
 }
 
 async function registerPeer(name: string): Promise<PeerRegisterResponse> {
-  const res = await apiFetch('/api/rails/peers', {
+  const res = await apiFetch('/api/factory/peers', {
     method: 'POST',
     body: JSON.stringify({ name, vendor: 'e2e', cwd: process.cwd() }),
   })
@@ -63,7 +63,7 @@ async function registerPeer(name: string): Promise<PeerRegisterResponse> {
 }
 
 async function listPeers(): Promise<PeerListResponse> {
-  const res = await apiFetch('/api/rails/peers')
+  const res = await apiFetch('/api/factory/peers')
   if (!res.ok) {
     throw new Error(`listPeers failed: ${res.status} ${await res.text()}`)
   }
@@ -71,7 +71,7 @@ async function listPeers(): Promise<PeerListResponse> {
 }
 
 async function sendToPeer(name: string, body: string, from?: string): Promise<SendResponse> {
-  const res = await apiFetch(`/api/rails/peers/${encodeURIComponent(name)}/send`, {
+  const res = await apiFetch(`/api/factory/peers/${encodeURIComponent(name)}/send`, {
     method: 'POST',
     body: JSON.stringify({ body, ...(from ? { from } : {}) }),
   })
@@ -131,10 +131,10 @@ async function main() {
   const inboxB = await startInboxServer(peerB.inbox_socket)
 
   // Heartbeat to mark active.
-  await apiFetch(`/api/rails/peers/${encodeURIComponent(peerA.name)}/heartbeat`, {
+  await apiFetch(`/api/factory/peers/${encodeURIComponent(peerA.name)}/heartbeat`, {
     method: 'POST',
   })
-  await apiFetch(`/api/rails/peers/${encodeURIComponent(peerB.name)}/heartbeat`, {
+  await apiFetch(`/api/factory/peers/${encodeURIComponent(peerB.name)}/heartbeat`, {
     method: 'POST',
   })
 
@@ -171,7 +171,7 @@ async function main() {
     throw new Error(`Expected body "hello from peer-a", got ${envelope.body}`)
   }
 
-  console.log('\n✅ Rails peer e2e test passed')
+  console.log('\n✅ Factory peer e2e test passed')
 }
 
 main().catch((err) => {

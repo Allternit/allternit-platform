@@ -53,7 +53,7 @@ SHELL_UI_PORT=5177
 VITE_PREVIEW_PORT=4173
 GATEWAY_PORT=8013
 API_PORT=3000
-RAILS_PORT=3011
+FACTORY_PORT=3011
 OPENCLAW_PORT=18789
 LOCAL_HOST="127.0.0.1"
 
@@ -96,7 +96,7 @@ cleanup() {
     lsof -ti :${VITE_PREVIEW_PORT} | xargs kill -9 2>/dev/null || true  # Vite preview
     lsof -ti :${GATEWAY_PORT} | xargs kill -9 2>/dev/null || true  # Gateway service
     lsof -ti :${API_PORT} | xargs kill -9 2>/dev/null || true  # API service
-    lsof -ti :${RAILS_PORT} | xargs kill -9 2>/dev/null || true  # Rails service
+    lsof -ti :${FACTORY_PORT} | xargs kill -9 2>/dev/null || true  # Factory engine
     lsof -ti :${OPENCLAW_PORT} | xargs kill -9 2>/dev/null || true  # OpenClaw service
 
     sleep 1
@@ -253,28 +253,26 @@ start_api_service() {
     print_warning "API Service still starting in background..."
 }
 
-# Start Rails Service (Allternit Agent System)
-start_rails_service() {
-    print_status "Starting Rails Service (Allternit Agent System)..."
+# Start the Allternit Factory engine (agents, orchestration, workflows, workspace)
+start_factory_engine() {
+    print_status "Starting the Factory engine..."
 
-    RAILS_DIR="$PROJECT_ROOT/allternit-agent-system-rails"
-
-    # Start the Rails service
+    # Start the engine
     (
-        cd "$RAILS_DIR"
-        cargo run --bin allternit-rails-service --release > "$LOG_DIR/rails-service.log" 2>&1
+        cd "$PROJECT_ROOT"
+        cargo run -p allternit-factory --release -- --root "$PROJECT_ROOT" serve --port "$FACTORY_PORT" > "$LOG_DIR/factory.log" 2>&1
     ) &
 
-    RAILS_PID=$!
-    echo $RAILS_PID > "$LOG_DIR/rails-service.pid"
+    FACTORY_PID=$!
+    echo $FACTORY_PID > "$LOG_DIR/factory.pid"
 
     # Wait for service to be ready
     sleep 2
     local_proto="http"
-    if curl -s "${local_proto}://${LOCAL_HOST}:${RAILS_PORT}/health" > /dev/null 2>&1; then
-        print_success "Rails Service started on ${local_proto}://${LOCAL_HOST}:${RAILS_PORT}"
+    if curl -s "${local_proto}://${LOCAL_HOST}:${FACTORY_PORT}/api/factory/health" > /dev/null 2>&1; then
+        print_success "Factory engine started on ${local_proto}://${LOCAL_HOST}:${FACTORY_PORT}"
     else
-        print_warning "Rails Service starting..."
+        print_warning "Factory engine starting..."
     fi
 }
 
@@ -382,7 +380,7 @@ stop_services() {
     lsof -ti :${VOICE_SERVICE_PORT} | xargs kill -9 2>/dev/null || true
     lsof -ti :${SHELL_UI_PORT} | xargs kill -9 2>/dev/null || true
     lsof -ti :${API_PORT} | xargs kill -9 2>/dev/null || true
-    lsof -ti :${RAILS_PORT} | xargs kill -9 2>/dev/null || true
+    lsof -ti :${FACTORY_PORT} | xargs kill -9 2>/dev/null || true
     lsof -ti :${OPENCLAW_PORT} | xargs kill -9 2>/dev/null || true
 
     # Clean up env files
@@ -415,7 +413,7 @@ main() {
             
             start_voice_service
             start_api_service
-            start_rails_service
+            start_factory_engine
             start_openclaw_service
             start_shell_ui
             show_urls
@@ -461,10 +459,10 @@ main() {
             else
                 echo -e "  ${RED}✗${NC} API Service (port ${API_PORT})"
             fi
-            if lsof -ti ${RAILS_PORT} > /dev/null 2>&1; then
-                echo -e "  ${GREEN}✓${NC} Rails Service (port ${RAILS_PORT})"
+            if lsof -ti ${FACTORY_PORT} > /dev/null 2>&1; then
+                echo -e "  ${GREEN}✓${NC} Factory engine (port ${FACTORY_PORT})"
             else
-                echo -e "  ${RED}✗${NC} Rails Service (port ${RAILS_PORT})"
+                echo -e "  ${RED}✗${NC} Factory engine (port ${FACTORY_PORT})"
             fi
             if lsof -ti ${OPENCLAW_PORT} > /dev/null 2>&1; then
                 echo -e "  ${GREEN}✓${NC} OpenClaw (port ${OPENCLAW_PORT})"
@@ -488,8 +486,8 @@ main() {
                 api|a)
                     tail -f "$LOG_DIR/api-service.log"
                     ;;
-                rails|r)
-                    tail -f "$LOG_DIR/rails-service.log"
+                factory|f)
+                    tail -f "$LOG_DIR/factory.log"
                     ;;
                 openclaw|oc)
                     tail -f "$LOG_DIR/openclaw-service.log"
@@ -500,7 +498,7 @@ main() {
             esac
             ;;
         *)
-            echo "Usage: $0 {start|stop|restart|status|logs [terminal|voice|shell|api|rails|openclaw|all]}"
+            echo "Usage: $0 {start|stop|restart|status|logs [terminal|voice|shell|api|factory|openclaw|all]}"
             exit 1
             ;;
     esac

@@ -33,7 +33,7 @@ allternit/
 ├── infrastructure/           # Cloud providers, executors, bridges (alias: infra/ symlink)
 ├── mcp/                      # Model Context Protocol servers and crates (computers-server, core, mcp-client, servers)
 ├── drivers/                  # VM and hardware drivers (firecracker, apple-vf)
-├── commrails/                # CommRails agent communication/coordination substrate (Rust; crate allternit-commrails)
+├── factory/                  # Allternit Factory engine (Rust; crate allternit-factory-engine; factory/pane = pane engine). Binary: cmd/allternit-factory
 ├── platform/                 # Contracts, protocols, Rust SDK, plugin runtime, shared packages
 ├── platform/packages/        # Internal @allternit/* TS libraries (39; consolidated from packages/@allternit/ on 2026-09-18, S3)
 ├── sdk/                      # Public SDK packages
@@ -71,7 +71,8 @@ allternit/
 
 > The agent workspace surface (`ai.allternit.com`) is **not** in this repo — it moved to the private
 > satellite `Allternit/allternit-ai` in the 2026-09-15 OSS split. The root `ui` symlink and the old
-> `rails/` directory were deleted the same week; the real communication substrate is `commrails/`.
+> `rails/` directory were deleted the same week; the communication and coordination substrate is now the
+> Allternit Factory (`factory/`, see `surfaces/docs/factory/architecture.mdx`).
 
 Inside `docs/`:
 
@@ -133,8 +134,8 @@ Adopted with the Agency Kernel (WP2). Authority: `spec/Contracts/kernel/v1`. New
 | # | Plane | Owns | Where today |
 |---|-------|------|-------------|
 | 1 | Experience / API | one external agent identity, SDK/API, streams, threads, artifacts | `cmd/`, `services/`, `sdk/` |
-| 2 | Agent | TaskIR, AgentState, Agent ISA, capability semantics | `commrails/src/kernel/{registry,isa}.rs`, `spec/Contracts/kernel/v1` |
-| 3 | Work Orchestration | ComputeGraph, node lifecycle, leases, campaigns, wait/wake, WIH projection | `commrails/src/kernel/{lifecycle,graph,projection}.rs`, `domains/kernel/drivers/dag-wih-integration` |
+| 2 | Agent | TaskIR, AgentState, Agent ISA, capability semantics | `factory/engine/src/workflows/kernel/{registry,isa}.rs`, `spec/Contracts/kernel/v1` |
+| 3 | Work Orchestration | ComputeGraph, node lifecycle, leases, campaigns, wait/wake, WIH projection | `factory/engine/src/workflows/kernel/{lifecycle,graph,projection}.rs`, `domains/kernel/drivers/dag-wih-integration` |
 | 4 | Cognition | S0-S3, Decision and Judge runtimes, verification cognition | `domains/kernel/drivers/` |
 | 5 | Context + State | ContextCompiler, ChunkStore, memory, cognitive state | `domains/kernel/drivers/context-pack-builder`, `services/memory` |
 | 6 | Execution / Model | execution router, model pool, tool runtimes, fabric placement | `domains/kernel/drivers/allternit-providers`, `services/tools` |

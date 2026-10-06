@@ -140,7 +140,7 @@ describe("shadow ledger + harvester", () => {
     const ts = (n: number) => new Date(Date.UTC(2026, 9, 1, 0, 0, n)).toISOString();
     const guardOld = ledger.logDecision({ ...base, primitive_id: "permission.cli_guard", question_id: "may_proceed", ts: ts(1) });
     const guard = ledger.logDecision({ ...base, primitive_id: "permission.cli_guard", question_id: "may_proceed", ts: ts(2) });
-    const judge = ledger.logDecision({ ...base, primitive_id: "permission.commrails_judge", question_id: "may_proceed", ts: ts(2) });
+    const judge = ledger.logDecision({ ...base, primitive_id: "permission.commrails_judge", question_id: "may_proceed", ts: ts(2) }); // old-names: keep (stored data: S1 ledger primitive id the engine Gate judge records)
     const first = ledger.logDecision({ ...base, primitive_id: "judge.first_pass.tool", question_id: "tool_safe", ts: ts(2) });
     await flush();
     ledger.recordOutcome({ subject_ref: "cc-tool:t1", truth: "false", source: "cli_hook.permission_denied", ts: ts(3) });

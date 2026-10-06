@@ -1,13 +1,12 @@
 import Foundation
 
 // -----------------------------------------------------------------------------
-// Agent Activity (Rails Mail) REST models — `cmd/allternit-api/src/rails/
-// mod.rs`, mounted at `/api/rails` (AppConfig.railsBaseURL). Verified against
+// Agent Activity (Factory mail) REST models — allternit-api's
+// `factory_core_router()`, mounted at `/api/factory` (AppConfig.factoryBaseURL). Verified against
 // the real handlers directly, not against the web phase's own client types.
 // -----------------------------------------------------------------------------
 
-/// One row of `GET /mail/threads`'s `threads[]` (`list_mail_threads`,
-/// rails/mod.rs:843) — `{ thread_id, messages: <count>, last_ts }`.
+/// One row of `GET /mail/threads`'s `threads[]` (`list_mail_threads`) — `{ thread_id, messages: <count>, last_ts }`.
 /// `messages` is a message *count*, not the message list — there is no
 /// separate human-readable title yet, `threadId` literally IS the topic
 /// string (the web phase's own finding, still true; displayed as-is).
@@ -30,8 +29,7 @@ struct AgentActivityThreadListResponse: Decodable, Sendable {
     let threads: [AgentActivityThreadSummary]
 }
 
-/// One row of `GET /mail/thread/:id`'s `messages[]` (`read_mail_thread`,
-/// rails/mod.rs:877-908) — `{ message_id, thread_id, from_agent, body,
+/// One row of `GET /mail/thread/:id`'s `messages[]` (`read_mail_thread`) — `{ message_id, thread_id, from_agent, body,
 /// event_type, timestamp }`. `body` is pulled server-side from a ledger
 /// event's `payload.body_ref` key, so it can be any JSON value (a plain
 /// string, `null`, or something structured) depending on what produced the
@@ -72,8 +70,7 @@ struct AgentActivityMessageListResponse: Decodable, Sendable {
     let messages: [AgentActivityMessage]
 }
 
-/// One event from `POST /ledger/tail` (`tail_ledger` / `UiLedgerEvent`,
-/// rails/mod.rs:399-459) — the response is a bare `UiLedgerEvent[]`, no
+/// One event from `POST /ledger/tail` (`tail_ledger` / `UiLedgerEvent`) — the response is a bare `UiLedgerEvent[]`, no
 /// envelope. Wire keys, verified against the real `UiLedgerEvent` struct, are
 /// `event_id` / `event_type` / `timestamp` / `payload` (the internal Rust
 /// field is named `ts`, but it's serialized out as `timestamp` — the map

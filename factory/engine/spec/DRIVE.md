@@ -1,13 +1,13 @@
 # Drive: the opt-in DAG runner
 
-Status: **implemented 2026-09-29** (`commrails/src/drive/`). Source requirements:
+Status: **implemented 2026-09-29** (`factory/engine/src/workflows/drive/`). Source requirements:
 Raven reverse audit S10 (spawn caps, capacity admission, harmful-action
 idempotency) and S9 (lease heartbeats / verifier close, integrated via hooks).
 
 ## What it is
 
 ```
-allternit-commrails drive <dag_id> [--max-concurrent N] [--max-spawns-per-hour N]
+allternit-factory internal core drive <dag_id> [--max-concurrent N] [--max-spawns-per-hour N]
                                    [--once] [--dry-run] [--workdir <dir>] [--timeout-seconds N]
 ```
 

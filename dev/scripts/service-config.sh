@@ -12,7 +12,7 @@ export Allternit_API_PORT=3000
 export Allternit_POLICY_PORT=3003
 export Allternit_KERNEL_PORT=3004
 export Allternit_OPERATOR_PORT=3010
-export Allternit_RAILS_PORT=3011
+export ALLTERNIT_FACTORY_PORT=3011   # Allternit Factory engine
 export Allternit_LINK_CARD_PORT=3090
 
 # -----------------------------------------------------------------------------
@@ -56,11 +56,11 @@ export Allternit_REGISTRY_URL="http://127.0.0.1:${Allternit_REGISTRY_PORT}"
 export Allternit_VOICE_URL="http://127.0.0.1:${Allternit_VOICE_PORT}"
 export Allternit_WEBVM_URL="http://127.0.0.1:${Allternit_WEBVM_PORT}"
 export Allternit_OPERATOR_URL="http://127.0.0.1:${Allternit_OPERATOR_PORT}"
-export Allternit_RAILS_URL="http://127.0.0.1:${Allternit_RAILS_PORT}"
+export ALLTERNIT_FACTORY_URL="http://127.0.0.1:${ALLTERNIT_FACTORY_PORT}"
 export Allternit_GATEWAY_URL="http://127.0.0.1:${Allternit_GATEWAY_PORT}"
 export Allternit_TERMINAL_URL="http://127.0.0.1:${Allternit_TERMINAL_PORT}"
 
 # -----------------------------------------------------------------------------
 # All Ports Array (for cleanup)
 # -----------------------------------------------------------------------------
-export Allternit_ALL_PORTS="${Allternit_API_PORT} ${Allternit_POLICY_PORT} ${Allternit_KERNEL_PORT} ${Allternit_OPERATOR_PORT} ${Allternit_RAILS_PORT} ${Allternit_VOICE_PORT} ${Allternit_WEBVM_PORT} ${Allternit_GATEWAY_PORT} ${Allternit_MEMORY_PORT} ${Allternit_REGISTRY_PORT} ${Allternit_TERMINAL_PORT} ${Allternit_SHELL_UI_PORT} ${OPENCLAW_PORT}"
+export Allternit_ALL_PORTS="${Allternit_API_PORT} ${Allternit_POLICY_PORT} ${Allternit_KERNEL_PORT} ${Allternit_OPERATOR_PORT} ${ALLTERNIT_FACTORY_PORT} ${Allternit_VOICE_PORT} ${Allternit_WEBVM_PORT} ${Allternit_GATEWAY_PORT} ${Allternit_MEMORY_PORT} ${Allternit_REGISTRY_PORT} ${Allternit_TERMINAL_PORT} ${Allternit_SHELL_UI_PORT} ${OPENCLAW_PORT}"

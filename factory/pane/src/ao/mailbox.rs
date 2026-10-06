@@ -1,20 +1,20 @@
 //! Dispatch mailbox — Bus-backed queue-not-drop messaging for `ao` sessions.
 //!
 //! When a dispatch targets a busy or unverifiable session, the message is
-//! enqueued on the Rails Bus (`allternit-commrails`, durable SQLite
+//! enqueued on the Factory bus (the engine's durable SQLite
 //! at `<root>/.allternit/bus/queue.db`) with recipient `peer:ao-<slug>` and
-//! transport `mailbox`. The drainer (owned by ao-engine — exactly one per
+//! transport `mailbox`. The drainer (owned by the pane engine — exactly one per
 //! recipient; the Bus delivery status is global per recipient, so two
 //! drainers would race) later takes the oldest pending row, injects it
-//! through the same verified-paste path `ao send` uses, and only on verified
+//! through the same verified-paste path `allternit-factory pane send` uses, and only on verified
 //! delivery calls `mark_delivered`. A failed injection leaves the row
 //! `pending` — rollback for free.
 //!
-//! The HTTP inbox endpoint (`GET /api/rails/peers/:name/inbox`) marks
+//! The HTTP inbox endpoint (`GET /api/factory/peers/:name/inbox`) marks
 //! delivered on read; it is deliberately NOT used here. Settlement happens
 //! only after verified pane delivery, server-free (no 8013 dependency).
 //!
-//! Root resolution matches the peers feed (`--root` flag > `AO_PEERS_ROOT`
+//! Root resolution matches the peers feed (`--root` flag > `ALLTERNIT_FACTORY_PEERS_ROOT`
 //! env > process cwd): the Bus is local to a root, so a mailbox enqueued
 //! under one root is invisible to a drainer running under another.
 

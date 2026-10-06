@@ -2,7 +2,7 @@
 //!
 //! Each task type is three versioned data files plus this registry:
 //! * a compute graph (`graphs/<graph_id>.json`, ComputeGraphIRV1) that the
-//!   commrails validator accepts (the seven invariants, registry membership);
+//!   Factory validator accepts (the seven invariants, registry membership);
 //! * a completion contract (`contracts.v1.json`, CompletionPolicyV1 shape):
 //!   what "done" means. The graph's `gate` node (`ver.check_acceptance_evidence`,
 //!   verifier-owned, S0) requires exactly the contract's criteria, and every

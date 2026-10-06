@@ -1,6 +1,6 @@
 //! WP12 kernel-level conformance suite (Agency API alpha gate, CL-282; CL-001).
 //!
-//! Runs against the commrails kernel pieces on main. Test names start with a
+//! Runs against the Factory engine kernel pieces. Test names start with a
 //! group tag (`restart_`, `resume_`, `receipt_completion_`, `replay_`,
 //! `fault_`, `rollback_`, `duplicate_`, `concurrency_`, `security_`,
 //! `model_swap_`); `scripts/conformance-report.sh` maps groups to ledger rows.
@@ -247,7 +247,7 @@ fn chain_store() -> (TempDir, ChainStore) {
 fn cx(run: &str, node: &str) -> EffectContext {
     EffectContext {
         run_id: run.into(), session_id: "s1".into(), task_id: "t1".into(), node_id: Some(node.into()),
-        trace_id: "tr1".into(), state_version: 1, producer_id: "commrails".into(), policy_decision_id: "dec1".into(),
+        trace_id: "tr1".into(), state_version: 1, producer_id: "allternit-factory".into(), policy_decision_id: "dec1".into(),
     }
 }
 fn args(n: u32) -> Value {

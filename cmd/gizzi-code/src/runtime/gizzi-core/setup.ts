@@ -88,10 +88,10 @@ export async function setup(
     switchSession(asSessionId(customSessionId))
   }
 
-  // --bare / SIMPLE: skip Rails peer registration and teammate snapshot.
+  // --bare / SIMPLE: skip Factory peer registration and teammate snapshot.
   // Scripted calls don't receive injected messages and don't use swarm teammates.
   if (!isBareMode()) {
-    // Register this gizzi-code session as a Rails peer so other local agents
+    // Register this gizzi-code session as a Factory peer so other local agents
     // can discover and message it. The inbox listener routes incoming
     // envelopes into the command queue as task notifications.
     // Gate lives inside registerRailsPeer so the bundler keeps the module.

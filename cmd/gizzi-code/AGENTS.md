@@ -449,17 +449,17 @@ tests silently run against a stale SDK. Set `GIZZI_SKIP_SDK_DIST=1` to skip.
 
 ---
 
-## Rails cross-session messaging
+## Allternit Factory cross-session messaging
 
-gizzi-code integrates with the Allternit Agent System Rails so any local agent session can discover and message any other local agent session on the same machine.
+gizzi-code integrates with the Allternit Factory so any local agent session can discover and message any other local agent session on the same machine.
 
 ### Runtime tools
 
-- `ListPeers` (alias `ListAgents`) — lists local Rails peers: name, vendor, cwd, status.
+- `ListPeers` (alias `ListAgents`) — lists local Factory peers: name, vendor, cwd, status.
 - `SendMessage` (alias `SendMessageToPeer`) — sends a message to a peer by name.
 
 `SendMessage.to` accepts:
-- A Rails peer name from `ListPeers` (tries Rails first, falls back to teammate mailbox).
+- A Factory peer name from `ListPeers` (tries the Factory first, falls back to teammate mailbox).
 
 > HTTP polling of the durable Bus inbox is the only gizzi-code transport; the
 > never-implemented UDS socket variant was removed 2026-09-18.
@@ -471,45 +471,36 @@ gizzi-code integrates with the Allternit Agent System Rails so any local agent s
 (removed in the 2026-09 dead-code cleanup)
 (removed in the 2026-09 dead-code cleanup)
 | `src/runtime/gizzi-core/services/railsPeer.ts` | Peer registration + HTTP inbox poller |
-| `src/cli/ui/ink-app/components/RailsInboxBridge.tsx` | Bridges polled Rails envelopes into the TUI mailbox |
+| `src/cli/ui/ink-app/components/RailsInboxBridge.tsx` | Bridges polled Factory envelopes into the TUI mailbox |
 (removed in the 2026-09 dead-code cleanup)
 | `src/runtime/services/api/allternitApi.ts` | `listApiPeers`, `registerApiPeer`, `sendApiPeerMessage`, `pollApiPeerInbox` |
 
 ### Enabling
 
-CommRails peer registration is default-on (set `GIZZI_ENABLE_RAILS_PEER=0` to opt out). To register as a Rails peer and poll the HTTP inbox explicitly:
+Factory peer registration is default-on (set `ALLTERNIT_FACTORY_PEER=0` to opt out). To register as a Factory peer and poll the HTTP inbox explicitly:
 
 ```bash
-GIZZI_ENABLE_RAILS_PEER=1 gizzi
+ALLTERNIT_FACTORY_PEER=1 gizzi
 ```
 
-On startup the session registers as `gizzi-<sessionId>`, polls the HTTP inbox for peer messages, and exports `ALLTERNIT_RAILS_PEER_NAME` / `ALLTERNIT_RAILS_INBOX`.
+On startup the session registers as `gizzi-<sessionId>`, polls the HTTP inbox for peer messages, and exports `ALLTERNIT_FACTORY_PEER_NAME` / `ALLTERNIT_FACTORY_INBOX`. The Factory todo panel (`RailsTaskList`) mirrors `GET /api/factory/plans/dags?view=mine`; pickup/close go to `/api/factory/wihs/*`, node edits to `/api/factory/plan/:dag/nodes/:node`, and approved plans publish via `POST /api/factory/plan/from-text`.
 
 ### Steering checkpoint
 
-The Rails steering coordinator is also exposed over `/api/rails/steer/*` and via `allternit-rails steer`:
+The Factory steering coordinator is exposed over `/api/factory/steer/*` and via `gizzi orchestration steer …` (engine-internal form: `allternit-factory internal core steer …`):
 
-- `POST /api/rails/steer/checkpoint` — hash `.steering/checkpoint.md` and emit a ledger event on change.
-- `POST /api/rails/steer/consult` — build prompt context and consult the configured steering backend.
-- `POST /api/rails/steer/commit-gate` — commit/push approval consult.
+- `POST /api/factory/steer/checkpoint` — hash `.steering/checkpoint.md` and emit a ledger event on change.
+- `POST /api/factory/steer/consult` — build prompt context and consult the configured steering backend.
+- `POST /api/factory/steer/commit-gate` — commit/push approval consult.
 
 ### Testing
 
-- `bun run typecheck` ✅
-- `cargo test -p allternit-agent-system-rails` ✅
-- `cargo build -p allternit-api` ✅
-- `test/rails-peer-e2e.ts` — registers two peers via `/api/rails/peers`, lists them, and confirms Bus/UDS message delivery.
-- `../tmp/rails-two-session-test/run.sh` — automated two-session gizzi-code TUI exchange (evidence saved to `../tmp/rails-two-session-test/evidence/`).
-- `allternit-rails --root <repo> steer checkpoint --cwd <repo>` — verified from the shell.
-- Two live `GIZZI_ENABLE_RAILS_PEER=1 gizzi` sessions exchanged a `ListPeers` / `SendMessage` round-trip.
-
-### Product-update system prompts
-
-Load these into agent sessions to teach the Rails workflow:
-
-- `docs/RAILS_PRODUCT_UPDATE_SYSTEM_PROMPT.md` — full product update / system prompt.
-- `.allternit/context-packs/rails-product-update/inputs/INSTRUCTIONS.md` — concise agent-instruction context pack.
-- `.allternit/context-packs/rails-product-update/inputs/templates/QUICKSTART.md` — copy-paste quickstart.
+- `bun run typecheck`
+- `cargo test -p allternit-factory-engine`
+- `cargo build -p allternit-api`
+- `test/rails-peer-e2e.ts` — registers two peers via `/api/factory/peers`, lists them, and confirms Bus/UDS message delivery.
+- `allternit-factory internal core --root <repo> steer checkpoint --cwd <repo>` — from the shell.
+- Two live `ALLTERNIT_FACTORY_PEER=1 gizzi` sessions exchanged a `ListPeers` / `SendMessage` round-trip.
 
 ## Agent email tools + dispatch-time hard bans
 

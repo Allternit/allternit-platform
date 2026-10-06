@@ -34,7 +34,7 @@ patterns=(
   'commrails|CommRails (any case)|[Cc][Oo][Mm][Mm][Rr][Aa][Ii][Ll][Ss]'
   'rails-bin|allternit-rails binary|allternit[-_]rails([^A-Za-z0-9_]|$)'
   'rails-env|old env ALLTERNIT_RAILS_*|ALLTERNIT_RAILS_[A-Z]'
-  'gizzi-rails-env|old env GIZZI_RAILS_*|GIZZI_(COMM)?RAILS_[A-Z]'
+  'gizzi-rails-env|old env GIZZI_RAILS_*, GIZZI_ENABLE_RAILS_PEER|GIZZI_([A-Z]+_)?(COMM)?RAILS_[A-Z]'
   'ao-env|old env AO_*|(^|[^A-Za-z0-9_])AO_[A-Z]'
   'herdr-env|old env HERDR_* (outside the pane engine)|(^|[^A-Za-z0-9_])HERDR_[A-Z]'
   'rails-route|old route /rails, /api/rails|(^|[^A-Za-z0-9._~-])/(api/)?rails([/"'"'"'`?#) ]|$)'

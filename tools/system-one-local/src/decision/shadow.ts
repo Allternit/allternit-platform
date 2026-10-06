@@ -144,7 +144,7 @@ export function harvest(dir: string, opts: { primitive?: string; model?: string;
     if (o.decision_id) target = byId.has(o.decision_id) ? o.decision_id : undefined;
     else if (o.subject_ref) {
       // Latest matching decision made at or before the outcome, per primitive: one tool call can
-      // carry several gates (CLI guard, CommRails judge, judge first pass) that share the label.
+      // carry several gates (CLI guard, Factory Gate judge, judge first pass) that share the label.
       const cands = decisions.filter((d) => d.rec.subject_ref === o.subject_ref && (!o.question_id || d.rec.question_id === o.question_id) && d.rec.ts <= o.ts);
       cands.sort((a, b) => a.rec.ts.localeCompare(b.rec.ts));
       const latest = new Map<string, string>();

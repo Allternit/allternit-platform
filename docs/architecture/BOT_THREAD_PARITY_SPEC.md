@@ -350,7 +350,7 @@ Findings (2026-09-26):
 - `AL_IMPLEMENTATION_SPEC` marks the Al **plan/decompose loop as Planned**.
 - The contract already requires convergence: "all trigger sources should
   converge into the same canonical Intent/Run pipeline" (schedules,
-  webhooks, CommRails messages, connector events). Today goal loop, CommRails
+  webhooks, Factory peer messages, connector events). Today goal loop, Factory
   WIH/rails DAGs (`BotRailsDeck`), the cowork session DAG, and Automation
   routines each run their own path.
 
@@ -359,7 +359,7 @@ missing **A:// SDK** (TypeScript + Rust types over the existing HTTP
 surface) and give the coordinator its toolset through it:
 `plan_graph`, `create_thread`, `assign`, `await_threads`, `route_message`,
 `request_decision`, `synthesize`, `schedule` (Automation routine),
-`message_peer` (CommRails), `read_dag`. Goal loop, WIH, and rails DAGs become
+`message_peer` (Factory peers), `read_dag`. Goal loop, WIH, and rails DAGs become
 consumers of (or projections over) the canonical graph, retired only once
 their callers are covered.
 
@@ -380,7 +380,7 @@ Source: two screen recordings and three screenshots of Allternit Desktop
 | B3 | **"Bot not found."** after editing and saving the bot | `BotHomeView.tsx:301` shows it when the bot is missing from the store *or* `isBot(bot)` is false. *Suspected*: the save path writes the agent back without `isBot` / `botProfile`, or the view loses its `botId` context | Trace the Edit bot save payload; the bot view must resolve by id from the server, not only the local store |
 | B4 | **"Computer's computer"** and a black window on Expand computer | `BotComputerWindow.tsx:18-27` renders a placeholder bot named "Computer" until the agent store loads in the new window | Load the bot by id before rendering; show a loading state, never a fake name |
 | B5 | **Webhook error**: `Unexpected token '<', "<!doctype"… is not valid JSON` | The webhook receiver-port call hits a route the API doesn't serve, so it gets the app's HTML page back | Point it at the served route, or hide the card when the API has no webhook receiver |
-| B6 | **Inbox: "Agent messaging is not connected"** (`NEXT_PUBLIC_ALLTERNIT_RAILS_API=1`) | Rails messaging is off in the desktop build | Folds into §3.5 (inbox → routed thread messages over the API) |
+| B6 | **Inbox: "Agent messaging is not connected"** (`NEXT_PUBLIC_ALLTERNIT_FACTORY_API=1`) | Factory messaging is off in the desktop build | Folds into §3.5 (inbox → routed thread messages over the API) |
 | B7 | **Model shown three different ways**: config says `openai/gpt-5-mini`, chat header says "OpenRouter · Model" (setup required) and later "Pi · Model" | The bot's model, its brain bind, and the session picker are separate sources | One source: the thread's model, defaulting to the bot's. Unavailable models are dimmed with the reason, not silently shown |
 | B8 | **Gizzi has no computer** ("Provision computer"), despite the atomic-create rule | The default Gizzi bot predates atomic create; nothing backfills it | Provision on first use or during migration; never show an empty computer panel as the default state |
 | B9 | **Two routine systems on one tab**: "Simple routines" (browser-only store) above the Automation Tasks list | See §4.6 | Converge on Automation Tasks |

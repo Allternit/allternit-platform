@@ -26,7 +26,7 @@ impl std::fmt::Display for ClientError {
                 let path = client_socket_path();
                 write!(
                     f,
-                    "\nIs ao server running? Start it with `ao server`."
+                    "\nIs allternit-factory pane server running? Start it with `allternit-factory pane server`."
                 )?;
                 write!(f, "\nSocket path: {}", path.display())
             }

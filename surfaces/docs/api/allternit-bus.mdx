@@ -373,7 +373,7 @@ POST /api/v1/agents/:agent_id/identity/email
 
 Provisions an email address for the agent on `ALLTERNIT_BOT_EMAIL_DOMAIN` (default `bots.allternit.com`): through Allternit's cloud on a signed-in computer, or directly when the runtime has Allternit Mail's admin key. See [Agent email rail](#agent-email-rail).
 
-When the mailflare agent-email rail is configured (`ALLTERNIT_MAILFLARE_URL` + `ALLTERNIT_MAILFLARE_ADMIN_KEY`), this creates a **real mailbox** on the mailflare worker, mints a mailbox-scoped send/read API key, seals it server-side, and stores the channel with provider `"mailflare"`. The agent can then genuinely receive and (subject to approval) send internet email. When mailflare is not configured, the endpoint falls back to minting an address record only (provider `"commrails"`) with no send/receive transport.
+When the mailflare agent-email rail is configured (`ALLTERNIT_MAILFLARE_URL` + `ALLTERNIT_MAILFLARE_ADMIN_KEY`), this creates a **real mailbox** on the mailflare worker, mints a mailbox-scoped send/read API key, seals it server-side, and stores the channel with provider `"mailflare"`. The agent can then genuinely receive and (subject to approval) send internet email. When mailflare is not configured, the endpoint falls back to minting an address record only (provider `"commrails"`, a stored value) with no send/receive transport. {/* old-names: keep (stored provider value) */}
 
 Provisioning is idempotent: re-provisioning an agent returns its existing channel. A platform address (provider `mailflare`) is owned by the server: a `PATCH /api/v1/agents/:id` that sends a different `identityChannels.email.address` keeps the stored one. To change it, release it and provision again (below). Switching the bot to its own mail account (`provider` other than `mailflare` / `commrails`) still saves the new address.
 
@@ -468,7 +468,7 @@ POST /api/v1/agent-email/send
 | `text` | string | One of text/html | Plain-text body. |
 | `html` | string | One of text/html | HTML body. |
 
-The message is **not sent immediately**. It is recorded as `pending_approval` and a review is requested on a Factory mail thread (`mail:email-out-<id>`). A human approves or rejects via `POST /api/factory/mail/decide` (`/api/rails/mail/decide` until the [Allternit Factory](/factory/migration#http-routes) build ships) with `{ "thread": "<thread_id>", "approve": true|false }`; approving triggers the actual send and writes a receipt with the provider message id. The decide response includes an `email` object for email threads.
+The message is **not sent immediately**. It is recorded as `pending_approval` and a review is requested on a Factory mail thread (`mail:email-out-<id>`). A human approves or rejects via `POST /api/factory/mail/decide` with `{ "thread": "<thread_id>", "approve": true|false }`; approving triggers the actual send and writes a receipt with the provider message id. The decide response includes an `email` object for email threads.
 
 ```json
 {

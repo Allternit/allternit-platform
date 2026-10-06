@@ -3,7 +3,7 @@ import type { Command } from '../../commands.js'
 import { ALLTERNIT_GATEWAY_BASE } from '@/shared/constants/allternitGateway'
 
 const API_BASE = process.env.Allternit_API_URL || ALLTERNIT_GATEWAY_BASE
-const RAILS_BASE = `${API_BASE}/api/rails`
+const FACTORY_BASE = `${API_BASE}/api/factory`
 
 interface PlanNewResponse {
   prompt_id?: string
@@ -18,7 +18,7 @@ interface PlanRenderResponse {
 }
 
 async function compileDirective(text: string): Promise<string> {
-  const planRes = await fetch(`${RAILS_BASE}/plan`, {
+  const planRes = await fetch(`${FACTORY_BASE}/plan`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ text }),
@@ -32,7 +32,7 @@ async function compileDirective(text: string): Promise<string> {
   const plan = (await planRes.json()) as PlanNewResponse
   const dagId = plan.dag_id
 
-  const renderRes = await fetch(`${RAILS_BASE}/dags/${encodeURIComponent(dagId)}/render?format=markdown`)
+  const renderRes = await fetch(`${FACTORY_BASE}/plan/${encodeURIComponent(dagId)}/render?format=markdown`)
   if (!renderRes.ok) {
     return `Created DAG plan **${dagId}**. (Render unavailable: ${renderRes.status} ${renderRes.statusText})`
   }
@@ -52,7 +52,7 @@ const directive: Command = {
   async getPromptForCommand(args): Promise<ContentBlockParam[]> {
     const text = args.trim()
     if (!text) {
-      return [{ type: 'text', text: 'Usage: /directive <natural language directive> — compiles it into a DAG plan via the Rails runtime.' }]
+      return [{ type: 'text', text: 'Usage: /directive <natural language directive> — compiles it into a DAG plan via the Allternit Factory.' }]
     }
 
     try {

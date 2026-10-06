@@ -81,11 +81,11 @@ fn pane_list(args: &[String]) -> std::io::Result<i32> {
 
 fn pane_get(args: &[String]) -> std::io::Result<i32> {
     let Some(raw_pane_id) = args.first() else {
-        eprintln!("usage: ao pane get <pane_id>");
+        eprintln!("usage: allternit-factory pane pane get <pane_id>");
         return Ok(2);
     };
     if args.len() != 1 {
-        eprintln!("usage: ao pane get <pane_id>");
+        eprintln!("usage: allternit-factory pane pane get <pane_id>");
         return Ok(2);
     }
 
@@ -287,7 +287,7 @@ fn parse_pane_neighbor_args(args: &[String]) -> Result<PaneNeighborParams, Strin
 
     let Some(direction) = direction else {
         return Err(
-            "usage: ao pane neighbor --direction left|right|up|down [--pane ID|--current]"
+            "usage: allternit-factory pane pane neighbor --direction left|right|up|down [--pane ID|--current]"
                 .into(),
         );
     };
@@ -297,7 +297,7 @@ fn parse_pane_neighbor_args(args: &[String]) -> Result<PaneNeighborParams, Strin
 
 fn parse_pane_focus_args(args: &[String]) -> Result<PaneFocusDirectionParams, String> {
     let params = parse_pane_neighbor_args(args).map_err(|_| {
-        "usage: ao pane focus --direction left|right|up|down [--pane ID|--current]".to_string()
+        "usage: allternit-factory pane pane focus --direction left|right|up|down [--pane ID|--current]".to_string()
     })?;
     Ok(PaneFocusDirectionParams {
         pane_id: params.pane_id,
@@ -350,7 +350,7 @@ fn parse_pane_resize_args(args: &[String]) -> Result<PaneResizeParams, String> {
 
     let Some(direction) = direction else {
         return Err(
-            "usage: ao pane resize --direction left|right|up|down [--amount FLOAT] [--pane ID|--current]"
+            "usage: allternit-factory pane pane resize --direction left|right|up|down [--amount FLOAT] [--pane ID|--current]"
                 .into(),
         );
     };
@@ -433,11 +433,11 @@ fn parse_pane_zoom_args(args: &[String]) -> Result<PaneZoomParams, String> {
 
 fn pane_rename(args: &[String]) -> std::io::Result<i32> {
     let Some(raw_pane_id) = args.first() else {
-        eprintln!("usage: ao pane rename <pane_id> <label>|--clear");
+        eprintln!("usage: allternit-factory pane pane rename <pane_id> <label>|--clear");
         return Ok(2);
     };
     if args.len() < 2 {
-        eprintln!("usage: ao pane rename <pane_id> <label>|--clear");
+        eprintln!("usage: allternit-factory pane pane rename <pane_id> <label>|--clear");
         return Ok(2);
     }
     let label = if args.len() == 2 && args[1] == "--clear" {
@@ -470,7 +470,7 @@ fn pane_read(args: &[String]) -> std::io::Result<i32> {
 }
 
 fn parse_pane_read_args(args: &[String]) -> Result<PaneReadParams, String> {
-    const USAGE: &str = "usage: ao pane read <pane_id> [--source visible|recent|recent-unwrapped|detection] [--lines N] [--format text|ansi] [--ansi] [--raw]";
+    const USAGE: &str = "usage: allternit-factory pane pane read <pane_id> [--source visible|recent|recent-unwrapped|detection] [--lines N] [--format text|ansi] [--ansi] [--raw]";
 
     let args = super::expand_equals_args(args, &["--source", "--lines", "--format"]);
     let mut pane_id = None;
@@ -559,7 +559,7 @@ fn parse_pane_input_args(
     env_pane_id: Option<&str>,
 ) -> Result<PaneInputSetParams, String> {
     const USAGE: &str =
-        "usage: ao pane input [<pane_id>|--pane ID|--current] --right-click herdr|pane";
+        "usage: allternit-factory pane pane input [<pane_id>|--pane ID|--current] --right-click herdr|pane";
 
     let args = super::expand_equals_args(args, &["--pane", "--right-click"]);
     let mut pane_id = None;
@@ -730,7 +730,7 @@ fn parse_pane_split_args(
 
     let Some(direction) = direction else {
         return Err(
-            "usage: ao pane split [<pane_id>|--pane ID|--current] --direction right|down [--ratio FLOAT] [--cwd PATH] [--env KEY=VALUE] [--right-click herdr|pane] [--focus] [--no-focus]"
+            "usage: allternit-factory pane pane split [<pane_id>|--pane ID|--current] --direction right|down [--ratio FLOAT] [--cwd PATH] [--env KEY=VALUE] [--right-click herdr|pane] [--focus] [--no-focus]"
                 .into(),
         );
     };
@@ -916,7 +916,7 @@ fn parse_pane_move_args(args: &[String]) -> Result<PaneMoveParams, String> {
 }
 
 fn pane_move_usage() -> String {
-    "usage: ao pane move <pane_id> --tab <tab_id> --split right|down [--target-pane ID] [--ratio FLOAT] [--focus|--no-focus]\n       ao pane move <pane_id> --new-tab [--workspace ID] [--label TEXT] [--focus|--no-focus]\n       ao pane move <pane_id> --new-workspace [--label TEXT] [--tab-label TEXT] [--focus|--no-focus]"
+    "usage: allternit-factory pane pane move <pane_id> --tab <tab_id> --split right|down [--target-pane ID] [--ratio FLOAT] [--focus|--no-focus]\n       allternit-factory pane pane move <pane_id> --new-tab [--workspace ID] [--label TEXT] [--focus|--no-focus]\n       allternit-factory pane pane move <pane_id> --new-workspace [--label TEXT] [--tab-label TEXT] [--focus|--no-focus]"
         .into()
 }
 
@@ -981,7 +981,7 @@ fn parse_pane_swap_args(args: &[String]) -> Result<PaneSwapParams, String> {
             })
         }
         _ => Err(
-            "usage: ao pane swap --direction left|right|up|down [--pane ID|--current]\n       ao pane swap --source-pane ID --target-pane ID"
+            "usage: allternit-factory pane pane swap --direction left|right|up|down [--pane ID|--current]\n       allternit-factory pane pane swap --source-pane ID --target-pane ID"
                 .into(),
         ),
     }
@@ -1011,11 +1011,11 @@ fn parse_pane_direction(value: &str) -> Result<PaneDirection, String> {
 
 fn pane_close(args: &[String]) -> std::io::Result<i32> {
     let Some(raw_pane_id) = args.first() else {
-        eprintln!("usage: ao pane close <pane_id>");
+        eprintln!("usage: allternit-factory pane pane close <pane_id>");
         return Ok(2);
     };
     if args.len() != 1 {
-        eprintln!("usage: ao pane close <pane_id>");
+        eprintln!("usage: allternit-factory pane pane close <pane_id>");
         return Ok(2);
     }
 
@@ -1024,7 +1024,7 @@ fn pane_close(args: &[String]) -> std::io::Result<i32> {
 
 fn pane_send_text(args: &[String]) -> std::io::Result<i32> {
     if args.len() < 2 {
-        eprintln!("usage: ao pane send-text <pane_id> <text>");
+        eprintln!("usage: allternit-factory pane pane send-text <pane_id> <text>");
         return Ok(2);
     }
 
@@ -1035,7 +1035,7 @@ fn pane_send_text(args: &[String]) -> std::io::Result<i32> {
 
 fn pane_send_keys(args: &[String]) -> std::io::Result<i32> {
     if args.len() < 2 {
-        eprintln!("usage: ao pane send-keys <pane_id> <key> [key ...]");
+        eprintln!("usage: allternit-factory pane pane send-keys <pane_id> <key> [key ...]");
         return Ok(2);
     }
 
@@ -1046,7 +1046,7 @@ fn pane_send_keys(args: &[String]) -> std::io::Result<i32> {
 
 fn pane_run(args: &[String]) -> std::io::Result<i32> {
     if args.len() < 2 {
-        eprintln!("usage: ao pane run <pane_id> <command>");
+        eprintln!("usage: allternit-factory pane pane run <pane_id> <command>");
         return Ok(2);
     }
 
@@ -1075,7 +1075,7 @@ fn pane_wait_output(args: &[String]) -> std::io::Result<i32> {
 }
 
 fn parse_pane_wait_output_args(args: &[String]) -> Result<PaneWaitForOutputParams, String> {
-    const USAGE: &str = "usage: ao pane wait-output <pane_id> (--match TEXT | --regex PATTERN) [--source visible|recent|recent-unwrapped] [--lines N] [--timeout MS] [--raw]";
+    const USAGE: &str = "usage: allternit-factory pane pane wait-output <pane_id> (--match TEXT | --regex PATTERN) [--source visible|recent|recent-unwrapped] [--lines N] [--timeout MS] [--raw]";
 
     let args = super::expand_equals_args(
         args,
@@ -1164,7 +1164,7 @@ fn parse_pane_wait_output_args(args: &[String]) -> Result<PaneWaitForOutputParam
 }
 
 fn pane_report_agent(args: &[String]) -> std::io::Result<i32> {
-    const USAGE: &str = "usage: ao pane report-agent <pane_id> --source ID --agent LABEL --state idle|working|blocked|unknown [--message TEXT] [--seq N] [--agent-session-id ID] [--agent-session-path PATH]";
+    const USAGE: &str = "usage: allternit-factory pane pane report-agent <pane_id> --source ID --agent LABEL --state idle|working|blocked|unknown [--message TEXT] [--seq N] [--agent-session-id ID] [--agent-session-path PATH]";
 
     let args = super::expand_equals_args(
         args,
@@ -1294,7 +1294,7 @@ fn pane_report_agent(args: &[String]) -> std::io::Result<i32> {
 }
 
 fn pane_report_agent_session(args: &[String]) -> std::io::Result<i32> {
-    const USAGE: &str = "usage: ao pane report-agent-session <pane_id> --source ID --agent LABEL [--seq N] [--agent-session-id ID] [--agent-session-path PATH] [--session-start-source SOURCE]";
+    const USAGE: &str = "usage: allternit-factory pane pane report-agent-session <pane_id> --source ID --agent LABEL [--seq N] [--agent-session-id ID] [--agent-session-path PATH] [--session-start-source SOURCE]";
 
     let args = super::expand_equals_args(
         args,
@@ -1412,7 +1412,7 @@ fn pane_report_agent_session(args: &[String]) -> std::io::Result<i32> {
 
 fn pane_release_agent(args: &[String]) -> std::io::Result<i32> {
     let Some(raw_pane_id) = args.first() else {
-        eprintln!("usage: ao pane release-agent <pane_id> --source ID --agent LABEL [--seq N]");
+        eprintln!("usage: allternit-factory pane pane release-agent <pane_id> --source ID --agent LABEL [--seq N]");
         return Ok(2);
     };
 
@@ -1477,7 +1477,7 @@ fn pane_release_agent(args: &[String]) -> std::io::Result<i32> {
 
 fn pane_report_metadata(args: &[String]) -> std::io::Result<i32> {
     let Some(raw_pane_id) = args.first() else {
-        eprintln!("usage: ao pane report-metadata <pane_id> --source ID [--agent LABEL] [--applies-to-source ID] [--title TEXT|--clear-title] [--display-agent TEXT|--clear-display-agent] [--state-label STATUS=TEXT] [--clear-state-labels] [--token NAME=VALUE] [--clear-token NAME] [--seq N] [--ttl-ms N]");
+        eprintln!("usage: allternit-factory pane pane report-metadata <pane_id> --source ID [--agent LABEL] [--applies-to-source ID] [--title TEXT|--clear-title] [--display-agent TEXT|--clear-display-agent] [--state-label STATUS=TEXT] [--clear-state-labels] [--token NAME=VALUE] [--clear-token NAME] [--seq N] [--ttl-ms N]");
         return Ok(2);
     };
 
@@ -1667,39 +1667,39 @@ fn pane_report_metadata(args: &[String]) -> std::io::Result<i32> {
 }
 
 fn print_pane_help() {
-    eprintln!("ao pane commands:");
-    eprintln!("  ao pane list [--workspace <workspace_id>]");
-    eprintln!("  ao pane current [--pane ID|--current]");
-    eprintln!("  ao pane get <pane_id>");
-    eprintln!("  ao pane layout [--pane ID|--current]");
-    eprintln!("  ao pane process-info [--pane ID|--current]");
-    eprintln!("  ao pane neighbor --direction left|right|up|down [--pane ID|--current]");
-    eprintln!("  ao pane edges [--pane ID|--current]");
-    eprintln!("  ao pane focus --direction left|right|up|down [--pane ID|--current]");
+    eprintln!("allternit-factory pane pane commands:");
+    eprintln!("  allternit-factory pane pane list [--workspace <workspace_id>]");
+    eprintln!("  allternit-factory pane pane current [--pane ID|--current]");
+    eprintln!("  allternit-factory pane pane get <pane_id>");
+    eprintln!("  allternit-factory pane pane layout [--pane ID|--current]");
+    eprintln!("  allternit-factory pane pane process-info [--pane ID|--current]");
+    eprintln!("  allternit-factory pane pane neighbor --direction left|right|up|down [--pane ID|--current]");
+    eprintln!("  allternit-factory pane pane edges [--pane ID|--current]");
+    eprintln!("  allternit-factory pane pane focus --direction left|right|up|down [--pane ID|--current]");
     eprintln!(
-        "  ao pane resize --direction left|right|up|down [--amount FLOAT] [--pane ID|--current]"
+        "  allternit-factory pane pane resize --direction left|right|up|down [--amount FLOAT] [--pane ID|--current]"
     );
-    eprintln!("  ao pane zoom [<pane_id>|--pane ID|--current] [--toggle|--on|--off]");
-    eprintln!("  ao pane rename <pane_id> <label>|--clear");
-    eprintln!("  ao pane read <pane_id> [--source visible|recent|recent-unwrapped] [--lines N] [--format text|ansi] [--ansi]");
-    eprintln!("  ao pane input [<pane_id>|--pane ID|--current] --right-click herdr|pane");
+    eprintln!("  allternit-factory pane pane zoom [<pane_id>|--pane ID|--current] [--toggle|--on|--off]");
+    eprintln!("  allternit-factory pane pane rename <pane_id> <label>|--clear");
+    eprintln!("  allternit-factory pane pane read <pane_id> [--source visible|recent|recent-unwrapped] [--lines N] [--format text|ansi] [--ansi]");
+    eprintln!("  allternit-factory pane pane input [<pane_id>|--pane ID|--current] --right-click herdr|pane");
     eprintln!(
-        "  ao pane split [<pane_id>|--pane ID|--current] --direction right|down [--ratio FLOAT] [--cwd PATH] [--env KEY=VALUE] [--right-click herdr|pane] [--focus] [--no-focus]"
+        "  allternit-factory pane pane split [<pane_id>|--pane ID|--current] --direction right|down [--ratio FLOAT] [--cwd PATH] [--env KEY=VALUE] [--right-click herdr|pane] [--focus] [--no-focus]"
     );
-    eprintln!("  ao pane swap --direction left|right|up|down [--pane ID|--current]");
-    eprintln!("  ao pane swap --source-pane ID --target-pane ID");
-    eprintln!("  ao pane move <pane_id> --tab <tab_id> --split right|down [--target-pane ID] [--ratio FLOAT] [--focus|--no-focus]");
-    eprintln!("  ao pane move <pane_id> --new-tab [--workspace ID] [--label TEXT] [--focus|--no-focus]");
-    eprintln!("  ao pane move <pane_id> --new-workspace [--label TEXT] [--tab-label TEXT] [--focus|--no-focus]");
-    eprintln!("  ao pane close <pane_id>");
-    eprintln!("  ao pane send-text <pane_id> <text>");
-    eprintln!("  ao pane send-keys <pane_id> <key> [key ...]");
-    eprintln!("  ao pane wait-output <pane_id> (--match TEXT | --regex PATTERN) [--source visible|recent|recent-unwrapped] [--lines N] [--timeout MS] [--raw]");
-    eprintln!("  ao pane report-agent <pane_id> --source ID --agent LABEL --state idle|working|blocked|unknown [--message TEXT] [--seq N] [--agent-session-id ID] [--agent-session-path PATH]");
-    eprintln!("  ao pane report-agent-session <pane_id> --source ID --agent LABEL [--seq N] [--agent-session-id ID] [--agent-session-path PATH]");
-    eprintln!("  ao pane release-agent <pane_id> --source ID --agent LABEL [--seq N]");
-    eprintln!("  ao pane report-metadata <pane_id> --source ID [--agent LABEL] [--applies-to-source ID] [--title TEXT|--clear-title] [--display-agent TEXT|--clear-display-agent] [--state-label STATUS=TEXT] [--clear-state-labels] [--token NAME=VALUE] [--clear-token NAME] [--seq N] [--ttl-ms N]");
-    eprintln!("  ao pane run <pane_id> <command>");
+    eprintln!("  allternit-factory pane pane swap --direction left|right|up|down [--pane ID|--current]");
+    eprintln!("  allternit-factory pane pane swap --source-pane ID --target-pane ID");
+    eprintln!("  allternit-factory pane pane move <pane_id> --tab <tab_id> --split right|down [--target-pane ID] [--ratio FLOAT] [--focus|--no-focus]");
+    eprintln!("  allternit-factory pane pane move <pane_id> --new-tab [--workspace ID] [--label TEXT] [--focus|--no-focus]");
+    eprintln!("  allternit-factory pane pane move <pane_id> --new-workspace [--label TEXT] [--tab-label TEXT] [--focus|--no-focus]");
+    eprintln!("  allternit-factory pane pane close <pane_id>");
+    eprintln!("  allternit-factory pane pane send-text <pane_id> <text>");
+    eprintln!("  allternit-factory pane pane send-keys <pane_id> <key> [key ...]");
+    eprintln!("  allternit-factory pane pane wait-output <pane_id> (--match TEXT | --regex PATTERN) [--source visible|recent|recent-unwrapped] [--lines N] [--timeout MS] [--raw]");
+    eprintln!("  allternit-factory pane pane report-agent <pane_id> --source ID --agent LABEL --state idle|working|blocked|unknown [--message TEXT] [--seq N] [--agent-session-id ID] [--agent-session-path PATH]");
+    eprintln!("  allternit-factory pane pane report-agent-session <pane_id> --source ID --agent LABEL [--seq N] [--agent-session-id ID] [--agent-session-path PATH]");
+    eprintln!("  allternit-factory pane pane release-agent <pane_id> --source ID --agent LABEL [--seq N]");
+    eprintln!("  allternit-factory pane pane report-metadata <pane_id> --source ID [--agent LABEL] [--applies-to-source ID] [--title TEXT|--clear-title] [--display-agent TEXT|--clear-display-agent] [--state-label STATUS=TEXT] [--clear-state-labels] [--token NAME=VALUE] [--clear-token NAME] [--seq N] [--ttl-ms N]");
+    eprintln!("  allternit-factory pane pane run <pane_id> <command>");
 }
 
 #[cfg(test)]
@@ -1875,7 +1875,7 @@ mod tests {
         ]))
         .unwrap_err();
 
-        assert!(err.contains("usage: ao pane swap"));
+        assert!(err.contains("usage: allternit-factory pane pane swap"));
     }
 
     #[test]
@@ -1912,7 +1912,7 @@ mod tests {
         let err =
             parse_pane_move_args(&args(&["issue-1", "--target-pane", "issue-2"])).unwrap_err();
 
-        assert!(err.contains("usage: ao pane move"));
+        assert!(err.contains("usage: allternit-factory pane pane move"));
     }
 
     #[test]

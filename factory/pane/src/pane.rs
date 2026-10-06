@@ -138,7 +138,7 @@ impl PaneLaunchEnv {
 fn apply_pane_launch_env(cmd: &mut CommandBuilder, launch_env: &PaneLaunchEnv) {
     cmd.env_remove("CODEX_THREAD_ID");
     for (key, value) in &launch_env.extra {
-        // Spawn-time ao transcript configuration; the agent must not inherit it.
+        // Spawn-time allternit-factory pane transcript configuration; the agent must not inherit it.
         if key == crate::ao::transcript::TRANSCRIPT_ENV_VAR {
             continue;
         }
@@ -2273,7 +2273,7 @@ impl PaneRuntime {
     ) -> std::io::Result<Self> {
         crate::logging::pane_spawn_started(pane_id.raw(), rows, cols, scrollback_limit_bytes);
 
-        // ao transcript tee (additive `src/ao/` patch): raw output bytes are
+        // allternit-factory pane transcript tee (additive `src/ao/` patch): raw output bytes are
         // written from the on_read closure below, before parsing/filtering.
         let mut transcript_tee = crate::ao::transcript::tee_from_launch_env(&launch_env.extra);
         // Factory terminal tap (src/factory_terminal.rs, an Allternit addition):

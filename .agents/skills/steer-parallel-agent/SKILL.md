@@ -1,6 +1,6 @@
 ---
 name: steer-parallel-agent
-description: Steer an already-running parallel agent session (another Kimi Code, Claude Code, Codex, Agy, etc.) that is working on the same project. Use whenever the user mentions another agent, a parallel session, a different CLI agent, a second agent, a background agent, "the other agent", "agent working on", "steer that session", "don't mess up its work", "coordinate with", "parallel agent", "another session", "same project", "already running", "existing agent", "target session", "redirect the agent", "augment its work", "merge plans", or "cross-agent steering". Covers discovery, non-invasive steering, activation, and verification — even when the target agent is not in tmux, not registered in Rails, and cannot be injected into directly.
+description: Steer an already-running parallel agent session (another Kimi Code, Claude Code, Codex, Agy, etc.) that is working on the same project. Use whenever the user mentions another agent, a parallel session, a different CLI agent, a second agent, a background agent, "the other agent", "agent working on", "steer that session", "don't mess up its work", "coordinate with", "parallel agent", "another session", "same project", "already running", "existing agent", "target session", "redirect the agent", "augment its work", "merge plans", or "cross-agent steering". Covers discovery, non-invasive steering, activation, and verification — even when the target agent is not in tmux, not registered as a Factory peer, and cannot be injected into directly.
 ---
 
 # Steer a Parallel Agent Session
@@ -23,7 +23,7 @@ Bundled scripts live in `tools/agent-orchestrator/scripts/` in the Allternit pla
 |---|---|
 | `steer-discover [--project <substr>] [--self <session-id>]` | Scan all local agent sessions, newest first. Shows session ID, age, subagent assignments, last user message. `--self` excludes your own session. |
 | `steer-context <session-id>` | Dump the target's `state.json` summary, active plan files, and last 25 meaningful wire events. Read-only. |
-| `steer-checkpoint <repo> <from-name> [-f file]` | Write `<repo>/.steering/checkpoint.md` from stdin or a file, and post a Rails checkpoint event if the API is up. |
+| `steer-checkpoint <repo> <from-name> [-f file]` | Write `<repo>/.steering/checkpoint.md` from stdin or a file, and post a Factory steering checkpoint event if the API is up. |
 | `steer-prompt <file1> [file2...]` | Generate the pointer prompt and copy it to the macOS clipboard. |
 | `steer-verify <session-id> <path>` | Exit 0 if the target's `wire.jsonl` shows it Read the given file; exit 1 otherwise. |
 | `steer send <session-id> <file1> [file2...]` | Full flow: generate prompt, copy to clipboard, then poll `steer-verify` up to 10 min until the target reads the first file. |
@@ -148,15 +148,16 @@ Structure:
 - Phase sequencing
 - Append-your-status section
 
-### 2.3 Rails checkpoint event (optional, if Rails is running)
+### 2.3 Factory checkpoint event (optional, if allternit-api is running)
 
 ```bash
-curl -s -X POST http://127.0.0.1:8013/api/rails/steer/checkpoint \
+curl -s -X POST http://127.0.0.1:8013/api/factory/steer/checkpoint \
   -H "Content-Type: application/json" \
   -d '{"cwd":"<repo-path>","notes":"<brief summary>"}'
 ```
 
-This only helps if the target agent has Rails hooks configured.
+This only helps if the target agent has the Factory steering hooks configured
+(or use `gizzi orchestration steer checkpoint`).
 
 ---
 
@@ -190,9 +191,10 @@ Perfect timing — the user can paste the prompt immediately.
 
 Try these fallbacks in order:
 
-1. **Rails peer message** — if the target is registered as a Rails peer:
+1. **Factory peer message** — if the target is registered as a Factory peer
+   (`gizzi orchestration send <bot@team> "…"` for a bot on a team):
    ```bash
-   curl -X POST http://127.0.0.1:8013/api/rails/peers/<name>/send \
+   curl -X POST http://127.0.0.1:8013/api/factory/peers/<name>/send \
      -H "Content-Type: application/json" \
      -d '{"message":"Read .steering/checkpoint.md"}'
    ```
@@ -253,10 +255,10 @@ Once the target is steering, continue to monitor it periodically. If you need to
 | Obstacle | Solution |
 |---|---|
 | Target session not in tmux | Read state from disk; use file-based steering. |
-| Target not registered in Rails | Use file-based steering; skip Rails checkpoint. |
+| Target not registered as a Factory peer | Use file-based steering; skip the Factory checkpoint. |
 | Target agent is a different CLI (Claude, Codex) | Same pattern: find its session directory, read its state/log, write steering docs, activate via user paste. |
 | Target agent has no `.steering/` convention | Create `.steering/` and write `checkpoint.md`; also write to `docs/coordination/`. |
-| User refuses to paste prompt | Explain that direct injection is risky and ask them to paste. If absolutely necessary, use Rails/tmux fallback. |
+| User refuses to paste prompt | Explain that direct injection is risky and ask them to paste. If absolutely necessary, use the Factory peer / tmux fallback. |
 | Target session is archived or dead | Inform the user; the session cannot be steered. |
 | Multiple agents on same project | Create a single `.steering/checkpoint.md` that addresses all agents; use `docs/coordination/` for per-agent notes. |
 
@@ -282,11 +284,11 @@ Once the target is steering, continue to monitor it periodically. If you need to
 2. Read its `state.json` and saw subagents assigned to `www`, `compute`, `robotics`, `spaces`, `manufacturing`.
 3. Tailed its `wire.jsonl` and saw it had built fonts and entered plan mode.
 4. Wrote `.steering/checkpoint.md` and `docs/coordination/website-unification-handoff.md` in the shared repo.
-5. Posted a Rails checkpoint event.
+5. Posted a Factory checkpoint event.
 6. Gave the user a pointer prompt to paste.
 7. Verified by tailing the wire log: the target read the steering files, updated its todo list to the merged plan, and began Phase 0.
 
 **What did not work:**
-- Rails peer messaging (target was not registered).
+- Factory peer messaging (target was not registered).
 - tmux send-keys (target was not in tmux).
 - Direct wire injection (too risky).

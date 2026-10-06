@@ -596,8 +596,8 @@ fn run_pane(bin: &Path, root: &Path, argv: &[String]) -> std::result::Result<(),
     let mut cmd = Command::new(bin);
     cmd.args(argv)
         .stdin(Stdio::null())
-        .env("ALLTERNIT_COMMRAILS_ROOT", root)
-        .env("ALLTERNIT_COMMRAILS_BIN", bin);
+        .env("ALLTERNIT_FACTORY_ROOT", root)
+        .env("ALLTERNIT_FACTORY_BIN", bin);
     for k in SECRET_ENV {
         cmd.env_remove(k);
     }

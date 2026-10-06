@@ -1,7 +1,7 @@
 //! Scripted runner for task-type graphs (eval harness; no model, no effects).
 //!
 //! Walks an instantiated graph the way the executor walks BUG_FIX: every
-//! visited node is routed by the commrails [`Router`] over the scripted pool
+//! visited node is routed by the Factory engine [`Router`] over the scripted pool
 //! (`executor::scripted_pool`, so routing and capabilities are exercised for
 //! real) and walks the kernel node lifecycle to `Committed` or `Failed`.
 //! Completion is verifier-owned: the run completes only when the graph's

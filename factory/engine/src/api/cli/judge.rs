@@ -167,7 +167,7 @@ pub fn parse_actor(raw: &str) -> Result<Actor> {
 /// Human authority is not a string. The service has no authenticated-user
 /// channel, so a `user:` actor is honoured only from a local interactive CLI
 /// (stdin is a terminal) that carries no WIH env. Anything launched for a
-/// worker (`ALLTERNIT_COMMRAILS_WIH` set) can never act as a person.
+/// worker (`ALLTERNIT_FACTORY_WIH` set) can never act as a person.
 /// `agent:` actors are unaffected here (Gate-level checks still apply).
 pub fn check_human_channel(
     actor: &Actor,
@@ -179,7 +179,7 @@ pub fn check_human_channel(
         return Ok(());
     }
     if wih_env.is_some_and(|w| !w.trim().is_empty()) {
-        bail!("human actor refused: this process runs under a WIH (ALLTERNIT_COMMRAILS_WIH); a worker cannot act as user:{}", actor.id);
+        bail!("human actor refused: this process runs under a WIH (ALLTERNIT_FACTORY_WIH); a worker cannot act as user:{}", actor.id);
     }
     if require_tty && !interactive {
         bail!("human actor refused: resolving as a person needs a local interactive terminal");
@@ -191,7 +191,7 @@ fn guard_human(actor: &Actor, require_tty: bool) -> Result<()> {
     use std::io::IsTerminal;
     check_human_channel(
         actor,
-        std::env::var("ALLTERNIT_COMMRAILS_WIH").ok().as_deref(),
+        std::env::var("ALLTERNIT_FACTORY_WIH").ok().as_deref(),
         std::io::stdin().is_terminal(),
         require_tty,
     )

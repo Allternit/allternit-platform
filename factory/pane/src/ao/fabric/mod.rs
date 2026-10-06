@@ -1,7 +1,7 @@
 //! ao Fabric Transport node (P3, spec: Allternit Brain/Research/specs/
 //! ao-fabric-node.md; spike: Research/drafts/spike-p3-clerk-device-auth.md).
 //!
-//! Makes the `ao` binary a pairable Fabric node: `ao fabric pair|serve|status`.
+//! Makes the `ao` binary a pairable Fabric node: `allternit-factory pane fabric pair|serve|status`.
 //! Pairing is Allternit's own 3-leg Ed25519 protocol (the node never holds a
 //! Clerk token); `serve` runs the loopback HTTP+WS shim (this binary, port
 //! 8014 default) plus a line-faithful Rust port of cmd/agent-daemon's relay

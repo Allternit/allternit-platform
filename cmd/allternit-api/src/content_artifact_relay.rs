@@ -9,13 +9,13 @@
 //! displayed (§6 decision 6): no stricter received sandbox, no policy
 //! promotion flow.
 //!
-//! Transport: the bundle rides as a CommRails-shaped envelope
+//! Transport: the bundle rides as a Factory-shaped envelope
 //! (`allternit.content-artifact.relay/v1`) over an HTTP inbox POST between
-//! gateway base URLs. The CommRails UDS envelope path was rejected because
-//! the receiving gateway runs no UDS listener; the CommRails Bus inbox is
+//! gateway base URLs. The Factory UDS envelope path was rejected because
+//! the receiving gateway runs no UDS listener; the Factory bus inbox is
 //! keyed per data_dir (`.allternit/bus/queue.db`), so it cannot span two
 //! gateway instances with separate data dirs — the org-mesh topology this
-//! tier exists for. CommRails still provides the substrate pieces that
+//! tier exists for. The Factory still provides the substrate pieces that
 //! matter: the envelope/identity conventions and the durable local ledger —
 //! every relayed bundle is recorded as a `ContentArtifactRelayed` ledger
 //! event on the sending and receiving gateways.
@@ -64,7 +64,7 @@ use crate::content_artifact_routes::{
 use crate::internal_auth::require_internal_token;
 use crate::AppState;
 
-/// Bundle envelope kind — the CommRails-style type tag carried in every relay.
+/// Bundle envelope kind — the Factory-style type tag carried in every relay.
 pub(crate) const RELAY_ENVELOPE: &str = "allternit.content-artifact.relay/v1";
 
 /// Inbox path on the receiving gateway (same path this gateway serves).
@@ -533,7 +533,7 @@ async fn relay_content_artifact(
     })
     .await;
 
-    // CommRails substrate record: the relay is a durable local ledger event.
+    // Factory substrate record: the relay is a durable local ledger event.
     let _ = state
         .rails
         .ledger

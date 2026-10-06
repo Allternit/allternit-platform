@@ -73,7 +73,7 @@ in the lifecycle. Per §16 they must not be cited as A:// conformance:
 | Webhook subscription/trigger routes | Emit/ingest events into their own pipeline; they do not create canonical Intent/Run work | `BOT_AUTHORING_SPEC.md` §9 |
 | Artifact `a://` address display in Cowork/chat | An address string rendered in UI; no lifecycle participation | artphase2 ledger entry |
 | `cowork_memory_entries`, schedules DB | Scoped data/trigger substrate; durable but not execution-ownership state | — |
-| CommRails ledger mirroring of runtime events | Transport substrate carrying already-attributed events; carries semantics, does not define them | `A_PROTOCOL.md` §15 |
+| Factory ledger mirroring of runtime events | Transport substrate carrying already-attributed events; carries semantics, does not define them | `A_PROTOCOL.md` §15 |
 
 ## 5b. Task-DAG items A-T1–A-T5 (closed)
 

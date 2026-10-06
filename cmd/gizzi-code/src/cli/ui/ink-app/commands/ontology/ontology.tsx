@@ -51,15 +51,15 @@ interface OntologyData {
 }
 
 const API_BASE = process.env.Allternit_API_URL || ALLTERNIT_GATEWAY_BASE
-const RAILS_BASE = `${API_BASE}/api/rails`
+const FACTORY_BASE = `${API_BASE}/api/factory`
 
 async function loadOntology(): Promise<OntologyData> {
   try {
     const [plansRes, wihsRes, packsRes, receiptsRes] = await Promise.all([
-      fetch(`${RAILS_BASE}/plans`),
-      fetch(`${RAILS_BASE}/wihs`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) }),
-      fetch(`${RAILS_BASE}/context-packs`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limit: 100 }) }),
-      fetch(`${RAILS_BASE}/receipts`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limit: 200 }) }),
+      fetch(`${FACTORY_BASE}/plans`),
+      fetch(`${FACTORY_BASE}/wihs`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) }),
+      fetch(`${FACTORY_BASE}/context-packs`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limit: 100 }) }),
+      fetch(`${FACTORY_BASE}/receipts`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limit: 200 }) }),
     ])
 
     const plansJson = await plansRes.json().catch(() => ({}))

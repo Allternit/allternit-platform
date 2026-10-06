@@ -45,9 +45,9 @@ mod workspace;
 mod worktree;
 
 const TERMINAL_SESSION_OBSERVE_USAGE: &str =
-    "usage: ao terminal session observe <target> [--cols N] [--rows N]";
+    "usage: allternit-factory pane terminal session observe <target> [--cols N] [--rows N]";
 const TERMINAL_SESSION_CONTROL_USAGE: &str =
-    "usage: ao terminal session control <target> [--takeover] [--cols N] [--rows N]";
+    "usage: allternit-factory pane terminal session control <target> [--takeover] [--cols N] [--rows N]";
 pub(crate) const AGENT_HELP_FOOTER: &str = concat!(
     "Are you an AI? Use these resources ONLY IF your task specifically asks you to:\n",
     "  Help a human understand or set up ao for the first time:\n",
@@ -55,7 +55,7 @@ pub(crate) const AGENT_HELP_FOOTER: &str = concat!(
     "  Debug or investigate a problem with ao:\n",
     "    https://github.com/herdrdev/herdr/blob/main/README.md\n",
     "  Control ao panes, agents, or workspaces:\n",
-    "    SKIP if an ao skill is already in your context. Otherwise run: ao --skill",
+    "    SKIP if an ao skill is already in your context. Otherwise run: allternit-factory pane --skill",
 );
 
 pub(crate) fn parse_token_assignment(raw: &str) -> Result<(String, Option<String>), String> {
@@ -170,11 +170,11 @@ fn config_check(args: &[String]) -> std::io::Result<i32> {
     match args {
         [] => {}
         [flag] if matches!(flag.as_str(), "help" | "--help" | "-h") => {
-            eprintln!("usage: ao config check");
+            eprintln!("usage: allternit-factory pane config check");
             return Ok(0);
         }
         _ => {
-            eprintln!("usage: ao config check");
+            eprintln!("usage: allternit-factory pane config check");
             return Ok(2);
         }
     }
@@ -194,7 +194,7 @@ fn config_check(args: &[String]) -> std::io::Result<i32> {
 
 fn config_reset_keys(args: &[String]) -> std::io::Result<i32> {
     if !args.is_empty() {
-        eprintln!("usage: ao config reset-keys");
+        eprintln!("usage: allternit-factory pane config reset-keys");
         return Ok(2);
     }
 
@@ -260,7 +260,7 @@ fn config_reset_keys(args: &[String]) -> std::io::Result<i32> {
         path.display()
     );
     println!("Built-in v2 keybindings will apply after ao restarts or reloads config.");
-    println!("If an ao server is running, run `ao server reload-config` to apply this now.");
+    println!("If an allternit-factory pane server is running, run `allternit-factory pane server reload-config` to apply this now.");
     println!(
         "To restore: cp {} {}",
         backup_path.display(),
@@ -329,15 +329,15 @@ fn session_attach_help(args: &[String]) -> std::io::Result<i32> {
         args.first().map(String::as_str),
         Some("help" | "--help" | "-h")
     ) {
-        eprintln!("usage: ao session attach <name>");
+        eprintln!("usage: allternit-factory pane session attach <name>");
         return Ok(0);
     }
-    eprintln!("usage: ao session attach <name>");
+    eprintln!("usage: allternit-factory pane session attach <name>");
     Ok(2)
 }
 
 fn session_list(args: &[String]) -> std::io::Result<i32> {
-    let json = match parse_session_json_only(args, "usage: ao session list [--json]") {
+    let json = match parse_session_json_only(args, "usage: allternit-factory pane session list [--json]") {
         Ok(json) => json,
         Err(code) => return Ok(code),
     };
@@ -355,7 +355,7 @@ fn session_list(args: &[String]) -> std::io::Result<i32> {
 
 fn session_stop(args: &[String]) -> std::io::Result<i32> {
     let (name, json) =
-        match parse_session_name_and_json(args, "usage: ao session stop <name> [--json]") {
+        match parse_session_name_and_json(args, "usage: allternit-factory pane session stop <name> [--json]") {
             Ok(parsed) => parsed,
             Err(code) => return Ok(code),
         };
@@ -388,7 +388,7 @@ fn session_stop(args: &[String]) -> std::io::Result<i32> {
 
 fn session_delete(args: &[String]) -> std::io::Result<i32> {
     let (name, json) =
-        match parse_session_name_and_json(args, "usage: ao session delete <name> [--json]") {
+        match parse_session_name_and_json(args, "usage: allternit-factory pane session delete <name> [--json]") {
             Ok(parsed) => parsed,
             Err(code) => return Ok(code),
         };
@@ -415,7 +415,7 @@ fn session_delete(args: &[String]) -> std::io::Result<i32> {
 fn terminal_attach(args: &[String]) -> std::io::Result<i32> {
     let (terminal_id, takeover) = match parse_attach_target(
         args,
-        "usage: ao terminal attach <terminal_id> [--takeover]",
+        "usage: allternit-factory pane terminal attach <terminal_id> [--takeover]",
     ) {
         Ok(parsed) => parsed,
         Err(code) => return Ok(code),
@@ -567,7 +567,7 @@ fn terminal_title(args: &[String]) -> std::io::Result<i32> {
     match args.first().map(|arg| arg.as_str()) {
         Some("set") => {
             if args.len() != 2 {
-                eprintln!("usage: ao terminal title set <title>");
+                eprintln!("usage: allternit-factory pane terminal title set <title>");
                 return Ok(2);
             }
             print_response(&send_request(&Request {
@@ -579,7 +579,7 @@ fn terminal_title(args: &[String]) -> std::io::Result<i32> {
         }
         Some("clear") => {
             if args.len() != 1 {
-                eprintln!("usage: ao terminal title clear");
+                eprintln!("usage: allternit-factory pane terminal title clear");
                 return Ok(2);
             }
             print_response(&send_request(&Request {
@@ -588,13 +588,13 @@ fn terminal_title(args: &[String]) -> std::io::Result<i32> {
             })?)
         }
         Some("help" | "--help" | "-h") => {
-            eprintln!("usage: ao terminal title set <title>");
-            eprintln!("       ao terminal title clear");
+            eprintln!("usage: allternit-factory pane terminal title set <title>");
+            eprintln!("       allternit-factory pane terminal title clear");
             Ok(0)
         }
         _ => {
-            eprintln!("usage: ao terminal title set <title>");
-            eprintln!("       ao terminal title clear");
+            eprintln!("usage: allternit-factory pane terminal title set <title>");
+            eprintln!("       allternit-factory pane terminal title clear");
             Ok(2)
         }
     }
@@ -900,27 +900,27 @@ fn print_session_error(code: &str, message: &str) {
 }
 
 fn print_config_help() {
-    eprintln!("ao config commands:");
-    eprintln!("  ao config check  validate config.toml and print diagnostics");
-    eprintln!("  ao config reset-keys  back up config.toml and remove custom keybindings");
+    eprintln!("allternit-factory pane config commands:");
+    eprintln!("  allternit-factory pane config check  validate config.toml and print diagnostics");
+    eprintln!("  allternit-factory pane config reset-keys  back up config.toml and remove custom keybindings");
 }
 
 fn print_terminal_help() {
-    eprintln!("ao terminal commands:");
-    eprintln!("  ao terminal attach <terminal_id> [--takeover]");
-    eprintln!("  ao terminal session control <target> [--takeover] [--cols N] [--rows N]");
-    eprintln!("  ao terminal session observe <target> [--cols N] [--rows N]");
-    eprintln!("  ao terminal title set <title>");
-    eprintln!("  ao terminal title clear");
+    eprintln!("allternit-factory pane terminal commands:");
+    eprintln!("  allternit-factory pane terminal attach <terminal_id> [--takeover]");
+    eprintln!("  allternit-factory pane terminal session control <target> [--takeover] [--cols N] [--rows N]");
+    eprintln!("  allternit-factory pane terminal session observe <target> [--cols N] [--rows N]");
+    eprintln!("  allternit-factory pane terminal title set <title>");
+    eprintln!("  allternit-factory pane terminal title clear");
     eprintln!("  detach from direct attach with ctrl+b q; send literal ctrl+b with ctrl+b ctrl+b");
 }
 
 fn print_session_help() {
-    eprintln!("ao session commands:");
-    eprintln!("  ao session list [--json]");
-    eprintln!("  ao session attach <name>");
-    eprintln!("  ao session stop <name> [--json]");
-    eprintln!("  ao session delete <name> [--json]");
+    eprintln!("allternit-factory pane session commands:");
+    eprintln!("  allternit-factory pane session list [--json]");
+    eprintln!("  allternit-factory pane session attach <name>");
+    eprintln!("  allternit-factory pane session stop <name> [--json]");
+    eprintln!("  allternit-factory pane session delete <name> [--json]");
     eprintln!("  use 'default' as <name> to target the default session for stop");
 }
 

@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
-"""commrails-bridge: box-side client for the CommRails bridge (spec/BRIDGE.md).
+"""factory-bridge: box-side client for the Allternit Factory bridge
+(factory/engine/spec/BRIDGE.md).
 
-Python 3.8+ stdlib only. Talks to `allternit-commrails bridge serve` on Eoj's
+Python 3.8+ stdlib only. Talks to `allternit-factory internal core bridge serve` on Eoj's
 Mac with a scoped bearer identity (e.g. bot:chief). It can create and read
 plans and send/read coordination mail. It cannot pick up, close, lease, or
 resolve anything: the bridge answers those with 403 whatever this token claims.
 
 Config (flags override env):
-  --url    / COMMRAILS_BRIDGE_URL         default http://127.0.0.1:7433
-  --token-file / COMMRAILS_BRIDGE_TOKEN_FILE  default ~/.config/commrails-bridge/token
-             COMMRAILS_BRIDGE_TOKEN        (token in env; file is preferred)
+  --url        / ALLTERNIT_FACTORY_BRIDGE_URL         default http://127.0.0.1:7433
+  --token-file / ALLTERNIT_FACTORY_BRIDGE_TOKEN_FILE  default ~/.config/allternit-factory-bridge/token
+                 ALLTERNIT_FACTORY_BRIDGE_TOKEN       (token in env; file is preferred)
+  The pre-Factory names (env prefix and token path) are still read, with a
+  one-time deprecation on stderr.
 
 Plain http is only allowed to loopback and Tailscale mesh addresses
 (100.64.0.0/10, fd7a:115c:a1e0::/48, *.ts.net), where WireGuard carries the
@@ -41,7 +44,8 @@ import urllib.parse
 import urllib.request
 
 DEFAULT_URL = "http://127.0.0.1:7433"
-DEFAULT_TOKEN_FILE = os.path.expanduser("~/.config/commrails-bridge/token")
+DEFAULT_TOKEN_FILE = os.path.expanduser("~/.config/allternit-factory-bridge/token")
+OLD_TOKEN_FILE = os.path.expanduser("~/.config/commrails-bridge/token")  # old-names: keep (box-side config set before the Factory)
 DEFAULT_RUNS_DIR = "/workspace/runs"
 ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
 
@@ -55,7 +59,7 @@ class BridgeError(Exception):
 
 
 def die(msg, code=1):
-    sys.stderr.write("commrails-bridge: %s\n" % msg)
+    sys.stderr.write("factory-bridge: %s\n" % msg)
     sys.exit(code)
 
 
@@ -84,8 +88,34 @@ def check_transport(url):
     die("plain http to %s refused (not loopback or Tailscale mesh); use https" % ip)
 
 
+_warned = set()
+
+
+def deprecated(old, new):
+    """Say once on stderr that an old box-side setting was used."""
+    if old not in _warned:
+        _warned.add(old)
+        sys.stderr.write("factory-bridge: %s is deprecated; use %s\n" % (old, new))
+
+
+def env(new, old):
+    """Read env `new`, else the pre-Factory name `old` with a one-time deprecation."""
+    value = os.environ.get(new)
+    if value:
+        return value
+    value = os.environ.get(old)
+    if value:
+        deprecated(old, new)
+    return value
+
+
 def load_token(args):
-    path = args.token_file or os.environ.get("COMMRAILS_BRIDGE_TOKEN_FILE") or DEFAULT_TOKEN_FILE
+    path = args.token_file or env("ALLTERNIT_FACTORY_BRIDGE_TOKEN_FILE", "COMMRAILS_BRIDGE_TOKEN_FILE")  # old-names: keep (box-side config set before the Factory)
+    if not path:
+        path = DEFAULT_TOKEN_FILE
+        if not os.path.exists(path) and os.path.exists(OLD_TOKEN_FILE):
+            deprecated(OLD_TOKEN_FILE, DEFAULT_TOKEN_FILE)
+            path = OLD_TOKEN_FILE
     if os.path.exists(path):
         st = os.stat(path)
         if st.st_mode & 0o077:
@@ -94,10 +124,10 @@ def load_token(args):
             token = fh.read().strip()
         if token:
             return token
-    token = os.environ.get("COMMRAILS_BRIDGE_TOKEN", "").strip()
+    token = (env("ALLTERNIT_FACTORY_BRIDGE_TOKEN", "COMMRAILS_BRIDGE_TOKEN") or "").strip()  # old-names: keep (box-side config set before the Factory)
     if token:
         return token
-    die("no token: write it to %s (mode 0600) or set COMMRAILS_BRIDGE_TOKEN" % path)
+    die("no token: write it to %s (mode 0600) or set ALLTERNIT_FACTORY_BRIDGE_TOKEN" % path)
 
 
 class Client(object):
@@ -225,15 +255,15 @@ def cmd_mail_read(c, args):
 
 MIRROR_README = """# MIRROR — NOT TRUTH
 
-This directory is a read-only snapshot of CommRails DAG `{dag_id}`.
+This directory is a read-only snapshot of Factory DAG `{dag_id}`.
 
-- Authoritative state is the CommRails ledger on Eoj's Mac (workspace root
-  served by `allternit-commrails bridge serve`). This copy can be stale the
+- Authoritative state is the Factory ledger on Eoj's Mac (workspace root
+  served by `allternit-factory internal core bridge serve`). This copy can be stale the
   moment it is written.
 - Snapshot taken {taken_at} from {url} as `{actor}`.
 - Edits here are never synced back. Change the plan through the bridge
-  (`commrails-bridge plan-new`, `plan-from-template`, `mail-send`), then
-  re-run `commrails-bridge mirror {dag_id}` to refresh.
+  (`factory-bridge plan-new`, `plan-from-template`, `mail-send`), then
+  re-run `factory-bridge mirror {dag_id}` to refresh.
 - Files: `plan.json` (projected DAG), `nodes/<node_id>.out.md` (recorded node
   outputs, sha256-checked against the ledger's receipt).
 """
@@ -310,7 +340,7 @@ def cmd_mirror(c, args):
 
 
 def build_parser():
-    p = argparse.ArgumentParser(prog="commrails-bridge", description=__doc__.split("\n")[0])
+    p = argparse.ArgumentParser(prog="factory-bridge", description=__doc__.split("\n")[0])
     p.add_argument("--url", default=None)
     p.add_argument("--token-file", default=None)
     sub = p.add_subparsers(dest="cmd")
@@ -361,13 +391,13 @@ def build_parser():
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
-    url = args.url or os.environ.get("COMMRAILS_BRIDGE_URL") or DEFAULT_URL
+    url = args.url or env("ALLTERNIT_FACTORY_BRIDGE_URL", "COMMRAILS_BRIDGE_URL") or DEFAULT_URL  # old-names: keep (box-side config set before the Factory)
     check_transport(url)
     client = Client(url, load_token(args))
     try:
         args.fn(client, args)
     except BridgeError as err:
-        sys.stderr.write("commrails-bridge: %s\n" % err)
+        sys.stderr.write("factory-bridge: %s\n" % err)
         if isinstance(err.body, dict):
             sys.stderr.write(json.dumps(err.body, sort_keys=True) + "\n")
         sys.exit(3 if err.status in (401, 403) else 2)

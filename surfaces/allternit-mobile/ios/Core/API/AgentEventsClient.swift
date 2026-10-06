@@ -4,7 +4,7 @@ import Foundation
 // AgentRunEvent — one frame of `GET /api/v1/agents/:id/events`
 // (cmd/allternit-api/src/agent_routes.rs:84-138).
 //
-// The handler replays up to 50 recent Rails-ledger events for the agent on
+// The handler replays up to 50 recent Factory ledger events for the agent on
 // connect, then polls the ledger every 2s for new ones. Each SSE `data:`
 // frame is a JSON envelope:
 //
@@ -12,7 +12,7 @@ import Foundation
 //    "timestamp": "<rfc3339>", "data": { ...original event payload... }}
 //
 // (`timestamp` is the ledger's `Utc::now().to_rfc3339()` stamp —
-// rails/src/ledger/ledger.rs:47-48 — so it may carry fractional seconds.)
+// factory/engine/src/core/ledger — so it may carry fractional seconds.)
 //
 // Event types the backend actually emits with an `agent_id` payload today
 // (agent_routes.rs):

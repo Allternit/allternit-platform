@@ -9,7 +9,7 @@
 
 ## Executive summary
 
-The Mintlify docs describe a mature product surface. In `cmd/gizzi-code` the **high-level shape is implemented** (interactive TUI, `gizzi exec`, auth, permission profiles, built-in tools, MCP client, Rails peer messaging), but there are **many mismatches between the docs and the actual CLI**: wrong env-var names, missing CLI flags, aspirational config sections, and several pages that actually describe separate packages (`allternit-api`, `allternit-sdk`, `allternit-rails`, `agent-daemon`, `allternit-mux`, `@allternit/cli-typescript`).
+The Mintlify docs describe a mature product surface. In `cmd/gizzi-code` the **high-level shape is implemented** (interactive TUI, `gizzi exec`, auth, permission profiles, built-in tools, MCP client, Factory peer messaging), but there are **many mismatches between the docs and the actual CLI**: wrong env-var names, missing CLI flags, aspirational config sections, and several pages that actually describe separate packages (`allternit-api`, `allternit-sdk`, `allternit-factory`, `agent-daemon`, `allternit-mux`, `@allternit/cli-typescript`).
 
 ### Top findings
 
@@ -20,7 +20,7 @@ The Mintlify docs describe a mature product surface. In `cmd/gizzi-code` the **h
 5. **Keyring is stubbed** — `credential_store = "keyring"` exists but the default backend throws `notImplementedKeyringBackend()`.
 6. **Stream-JSON event names differ from docs** — Docs show `message`/`result` types; actual types are `text`, `tool_use`, `tool_running`, `step_start`, `step_finish`, `error`, `reasoning`, `background_task_started`, `background_task_finished`.
 7. **`allternit` wrapper status/doctor output mismatch** — `allternit-wrapper.mdx` examples show `api`/`gateway` service checks; gizzi-code checks `API`/`Kernel` and omits gateway.
-8. **Several docs describe separate packages** — `tool-belt.mdx`, `mcp.mdx`, `strict-tool-use.mdx` describe `allternit-sdk` + `allternit-api`; `commrails-cli.mdx`, `agent-daemon.mdx`, `allternit-mux.mdx`, `cli-typescript.mdx` describe standalone binaries/packages. These are implemented, but not inside `cmd/gizzi-code`.
+8. **Several docs describe separate packages** — `tool-belt.mdx`, `mcp.mdx`, `strict-tool-use.mdx` describe `allternit-sdk` + `allternit-api`; `factory/commands.mdx`, `agent-daemon.mdx`, `allternit-mux.mdx`, `cli-typescript.mdx` describe standalone binaries/packages. These are implemented, but not inside `cmd/gizzi-code`.
 
 ---
 
@@ -89,7 +89,7 @@ The Mintlify docs describe a mature product surface. In `cmd/gizzi-code` the **h
 | `cli/configuration.mdx` | `ALLTERNIT_ENDPOINT` env | Missing | `src/runtime/services/api/allternitApi.ts:30` | Use `ALLTERNIT_API_URL` |
 | `cli/configuration.mdx` | `GIZZI_CONFIG_PATH` env | Missing | `src/runtime/context/flag/flag.ts:13,17` | Use `GIZZI_CONFIG` / `GIZZI_CONFIG_DIR` |
 | `cli/configuration.mdx` | `GIZZI_CREDENTIAL_STORE` env | Missing | `src/runtime/context/config/auth-profiles.ts:162` | Not implemented |
-| `cli/configuration.mdx` | `GIZZI_ENABLE_RAILS_PEER` env | Implemented | `src/runtime/gizzi-core/services/railsPeer.ts:49` | — |
+| `cli/configuration.mdx` | `ALLTERNIT_FACTORY_PEER` env | Implemented | `src/runtime/gizzi-core/services/railsPeer.ts:49` | — |
 | `cli/configuration.mdx` | `config.toml` created with `0o600` | Partial | `src/runtime/context/config/auth-profiles.ts:77-78` | Only auth writes set mode |
 | `cli/headless-execution.mdx` | `gizzi exec` command | Implemented | `src/cli/commands/run.ts:988-998` | — |
 | `cli/headless-execution.mdx` | Pipe-safe / non-interactive | Implemented | `src/cli/commands/run.ts:588,769-772,457-480` | — |
@@ -119,8 +119,8 @@ The Mintlify docs describe a mature product surface. In `cmd/gizzi-code` the **h
 | `cli/allternit-wrapper.mdx` | `allternit doctor` | Partial | `src/cli/allternit.ts:82-93`, `src/cli/platform/daemon.ts:119-157` | Checks Cargo/Bun/Platform, not api/gateway/local-models |
 | `cli/allternit-wrapper.mdx` | `allternit logs` | Implemented | `src/cli/allternit.ts:95-98` | — |
 | `cli/allternit-wrapper.mdx` | Config keys (`api.bind_address`, `kernel.url`, etc.) | Missing | `src/cli/ui/ink-app/utils/settings/types.ts` | Not consumed by gizzi-code; ports hardcoded |
-| `cli/commrails-cli.mdx` | `allternit-rails` / `rails` binaries | Separate package | `rails/src/bin/allternit-rails.rs`, `rails/cli/src/main.rs` | Not in gizzi-code |
-| `cli/commrails-cli.mdx` | gizzi-code `ListPeers`/`SendMessage` runtime tools | Implemented | `src/runtime/tools/ListPeersTool/ListPeersTool.ts:53`, `src/runtime/tools/SendMessageTool/SendMessageTool.ts:103`, `src/runtime/gizzi-core/services/railsPeer.ts:45` | — |
+| `factory/commands.mdx` | `allternit-factory` engine binary (maintenance CLI: `allternit-factory internal core …`) | Separate package | `factory/engine/` | Not in gizzi-code; gizzi locates it via `src/cli/factory/engine.ts` |
+| `factory/commands.mdx` | gizzi-code `ListPeers`/`SendMessage` runtime tools | Implemented | `src/runtime/tools/ListPeersTool/ListPeersTool.ts:53`, `src/runtime/tools/SendMessageTool/SendMessageTool.ts:103`, `src/runtime/gizzi-core/services/railsPeer.ts:45` | — |
 | `cli/agent-daemon.mdx` | Agent daemon process | Separate package | `cmd/agent-daemon/src/index.ts` | Not in gizzi-code |
 | `cli/agent-daemon.mdx` | gizzi-code runtime pairing client | Implemented | `src/runtime/services/pairing/pairing.ts` | Separate from daemon |
 | `cli/allternit-mux.mdx` | `allternit-factory pane tty` (mux folded into the Factory pane engine) | Separate package | `factory/pane/src/factory_terminal.rs` | Not in gizzi-code |
@@ -184,7 +184,7 @@ These are documented on the CLI/docs site but owned by other packages. They shou
 |---------|-------|----------|
 | `NativeToolBelt`, REST tool execution, approval endpoints | `allternit-sdk` + `allternit-api` | `sdk/allternit-sdk/src/ai-runtime/tools/`, `cmd/allternit-api/src/tool_routes.rs` |
 | `/mcp/*` REST connector/server directory and `/mcp/server` JSON-RPC | `allternit-api` | `cmd/allternit-api/src/mcp_routes.rs`, `cmd/allternit-api/src/mcp_server_routes.rs` |
-| `allternit-rails` / `rails` CLI | `allternit-agent-system-rails` | `rails/src/bin/allternit-rails.rs`, `rails/cli/src/main.rs` |
+| `allternit-factory` engine | `allternit-factory-engine` | `factory/engine/` |
 | `allternit-agent-daemon` | `cmd/agent-daemon/` | `cmd/agent-daemon/src/index.ts` |
 | `allternit-factory` pane engine (was `allternit-mux`) | `factory/pane/` | `factory/pane/src/factory_terminal.rs` |
 | `@allternit/cli-typescript` | `cmd/cli-typescript/cli/` | `cmd/cli-typescript/cli/package.json` |

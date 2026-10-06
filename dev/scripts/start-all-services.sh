@@ -8,7 +8,7 @@
 #   ./start-all-services.sh [mode] [options]
 #
 # Modes:
-#   core      - Start only core services (API, Rails, Workspace)
+#   core      - Start only core services (API, Factory engine, Workspace)
 #   standard  - Start core + AI services (Voice, WebVM) [default]
 #   full      - Start all services including infrastructure
 #   dev       - Start with hot-reload development mode
@@ -162,7 +162,7 @@ build_all_rust_services() {
     # Core services
     build_rust_service "allternit-api" "7-apps/api" "allternit-api"
     build_rust_service "workspace-service" "4-services/orchestration/workspace-service" "workspace-service"
-    build_rust_service "allternit-agent-system-rails" "0-substrate/allternit-agent-system-rails" "allternit-rails-service"
+    build_rust_service "allternit-factory" "cmd/allternit-factory" "allternit-factory"
     build_rust_service "kernel" "4-services/orchestration/kernel-service" "kernel"
     
     # AI/ML services
@@ -241,36 +241,34 @@ start_workspace() {
     wait_for_service "Workspace" "3021"
 }
 
-# Start Rails Service (port 3011)
-start_rails() {
-    local binary="${PROJECT_ROOT}/target/release/allternit-rails-service"
-    
-    if port_in_use "$Allternit_RAILS_PORT"; then
-        log_warn "Rails service already running on port $Allternit_RAILS_PORT"
+# Start the Allternit Factory engine (port 3011)
+start_factory() {
+    local binary="${PROJECT_ROOT}/target/release/allternit-factory"
+    local port="${ALLTERNIT_FACTORY_PORT:-3011}"
+
+    if port_in_use "$port"; then
+        log_warn "Factory engine already running on port $port"
         return 0
     fi
-    
-    log_service "Starting Rails Service on port $Allternit_RAILS_PORT"
-    
-    export Allternit_RAILS_PORT="$Allternit_RAILS_PORT"
-    export Allternit_RAILS_BIND="0.0.0.0"
+
+    log_service "Starting the Factory engine on port $port"
+
     export RUST_LOG="info"
-    
+
     if [[ "$DETACH" == true ]]; then
-        nohup "$binary" > "${PROJECT_ROOT}/.logs/rails.log" 2>&1 &
-        echo $! > "${PROJECT_ROOT}/.pids/rails.pid"
+        nohup "$binary" --root "$PROJECT_ROOT" serve --port "$port" > "${PROJECT_ROOT}/.logs/factory.log" 2>&1 &
+        echo $! > "${PROJECT_ROOT}/.pids/factory.pid"
     else
-        "$binary" &
-        echo $! > "${PROJECT_ROOT}/.pids/rails.pid"
+        "$binary" --root "$PROJECT_ROOT" serve --port "$port" &
+        echo $! > "${PROJECT_ROOT}/.pids/factory.pid"
     fi
-    
-    # Rails might not have a /health endpoint, check port instead
+
     sleep 2
-    if port_in_use "$Allternit_RAILS_PORT"; then
-        log_success "Rails is ready!"
+    if curl -fsS "http://127.0.0.1:${port}/api/factory/health" > /dev/null 2>&1; then
+        log_success "Factory engine is ready!"
         return 0
     else
-        log_error "Rails failed to start"
+        log_error "Factory engine failed to start (see .logs/factory.log)"
         return 1
     fi
 }
@@ -424,14 +422,14 @@ main() {
             log_info "Starting CORE services..."
             start_api
             start_workspace
-            start_rails
+            start_factory
             ;;
             
         standard)
             log_info "Starting STANDARD services (core + AI)..."
             start_api
             start_workspace
-            start_rails
+            start_factory
             start_kernel
             start_voice
             start_webvm
@@ -442,7 +440,7 @@ main() {
             log_info "Starting FULL services (all)..."
             start_api
             start_workspace
-            start_rails
+            start_factory
             start_kernel
             start_policy
             start_voice
@@ -454,7 +452,7 @@ main() {
             log_info "Starting DEVELOPMENT mode..."
             start_api
             start_workspace
-            start_rails
+            start_factory
             start_ui
             log_info "Development services started with hot-reload"
             ;;
@@ -473,7 +471,7 @@ main() {
     
     check_service "API" "$Allternit_API_PORT" && log_success "API: http://127.0.0.1:${Allternit_API_PORT}" || log_error "API: Not running"
     port_in_use "3021" && log_success "Workspace: http://127.0.0.1:3021" || log_error "Workspace: Not running"
-    port_in_use "$Allternit_RAILS_PORT" && log_success "Rails: http://127.0.0.1:${Allternit_RAILS_PORT}" || log_error "Rails: Not running"
+    port_in_use "${ALLTERNIT_FACTORY_PORT:-3011}" && log_success "Factory engine: http://127.0.0.1:${ALLTERNIT_FACTORY_PORT:-3011}" || log_error "Factory engine: Not running"
     check_service "Kernel" "$Allternit_KERNEL_PORT" && log_success "Kernel: http://127.0.0.1:${Allternit_KERNEL_PORT}" || log_warn "Kernel: Not running"
     check_service "Voice" "$Allternit_VOICE_PORT" && log_success "Voice: http://127.0.0.1:${Allternit_VOICE_PORT}" || log_warn "Voice: Not running"
     check_service "WebVM" "$Allternit_WEBVM_PORT" && log_success "WebVM: http://127.0.0.1:${Allternit_WEBVM_PORT}" || log_warn "WebVM: Not running"

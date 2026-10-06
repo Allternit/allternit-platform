@@ -1,6 +1,6 @@
-//! CommRails visibility DTO (BA-1 leftover: ao-engine HTTP).
+//! Factory visibility DTO (BA-1 leftover: the pane engine's visibility JSON).
 //!
-//! Best-effort: try `ao visibility --root` (P5 JSON). On timeout/missing binary,
+//! Best-effort: try `allternit-factory pane visibility --root` (P5 JSON). On timeout/missing binary,
 //! fall back to the local peer registry. Never fail the GET.
 
 use super::{VisibilityDto, VisibilityNeed, VisibilityNeedNode, VisibilityPane};
@@ -19,7 +19,7 @@ use std::process::Stdio;
 use std::time::Duration;
 use tokio::process::Command;
 
-const AO_VISIBILITY_TIMEOUT: Duration = Duration::from_millis(800);
+const PANE_VISIBILITY_TIMEOUT: Duration = Duration::from_millis(800);
 
 fn map_ao_status(raw: &str) -> &'static str {
     match raw.to_ascii_lowercase().as_str() {
@@ -299,7 +299,7 @@ async fn run_ao_visibility(root: &Path) -> Option<Value> {
         .kill_on_drop(true)
         .spawn()
         .ok()?;
-    match tokio::time::timeout(AO_VISIBILITY_TIMEOUT, child.wait_with_output()).await {
+    match tokio::time::timeout(PANE_VISIBILITY_TIMEOUT, child.wait_with_output()).await {
         Ok(Ok(output)) if output.status.success() => serde_json::from_slice(&output.stdout).ok(),
         _ => None,
     }

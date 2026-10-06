@@ -1,7 +1,7 @@
 //! P5 visibility feed watcher: background thread that samples the three
 //! panel feeds and posts them to the client loop.
 //!
-//! Cadence (fixed numbers, documented in `docs/programs/ao/AO_VISIBILITY_PEERS_NOTES.md`):
+//! Cadence (fixed numbers, see the P5 visibility/peers notes in `docs/programs/`):
 //! - engine agents (`agent.list` over the same socket contract the CLI uses):
 //!   every 2s — this is also what derives waiting-on-you transitions;
 //! - native catalog scan + Rails peers: re-walked every 15s and cached
@@ -9,7 +9,7 @@
 //!   to re-walk 27 harness dirs every 2s).
 //!
 //! Registry root for feed 3 is the ao process's current working directory
-//! (overridable with `AO_PEERS_ROOT`) — the registry is local-only, so a
+//! (overridable with `ALLTERNIT_FACTORY_PEERS_ROOT`) — the registry is local-only, so a
 //! wrong root means an empty peers section.
 
 use std::sync::atomic::{AtomicBool, Ordering};

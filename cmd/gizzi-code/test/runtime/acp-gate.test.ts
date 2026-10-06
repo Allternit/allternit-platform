@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { acpGateDecision, acpToolToHookPayload, parseHookOutput } from "@/runtime/drivers/acp-gate"
+import { ENGINE_CORE_ARGV, acpGateDecision, acpToolToHookPayload, parseHookOutput } from "@/runtime/drivers/acp-gate"
 
-const BIN = process.env.ALLTERNIT_COMMRAILS_BIN
+const BIN = process.env.ALLTERNIT_FACTORY_BIN
 const fixtures: string[] = []
 function fixtureRoot() {
   const root = mkdtempSync(join(import.meta.dir, ".acp-gate-test-"))
@@ -146,8 +146,8 @@ describe("acp gate mapping", () => {
   })
 })
 
-// Real gate binary (set ALLTERNIT_COMMRAILS_BIN to run).
-describe.skipIf(!BIN)("acp gate against the real commrails binary", () => {
+// Real engine binary (set ALLTERNIT_FACTORY_BIN to an allternit-factory build to run).
+describe.skipIf(!BIN)("acp gate against the real allternit-factory engine", () => {
   test("catastrophic command denied, normal allowed", async () => {
     const root = fixtureRoot()
     const deny = await acpGateDecision({ toolCall: { kind: "execute", rawInput: { command: "rm -rf ~/" } }, cwd: root, root, harness: "kimi", bin: BIN })
@@ -158,7 +158,7 @@ describe.skipIf(!BIN)("acp gate against the real commrails binary", () => {
   test("finding 7: real WIH lease admits source but denies an outside destination", async () => {
     const root = fixtureRoot()
     const cli = (...args: string[]) => {
-      const result = Bun.spawnSync([BIN!, "--root", root, ...args], { cwd: root, stdout: "pipe", stderr: "pipe" })
+      const result = Bun.spawnSync([BIN!, ...ENGINE_CORE_ARGV, "--root", root, ...args], { cwd: root, stdout: "pipe", stderr: "pipe" })
       if (!result.success) throw new Error(result.stderr.toString())
       return result.stdout.toString()
     }

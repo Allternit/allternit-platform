@@ -14,7 +14,7 @@ fn test_root() -> TempDir {
     let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/tmp");
     std::fs::create_dir_all(&base).unwrap();
     tempfile::Builder::new()
-        .prefix("allternit-rails-")
+        .prefix("allternit-factory-")
         .tempdir_in(base)
         .unwrap()
 }

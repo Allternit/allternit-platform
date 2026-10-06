@@ -5,7 +5,7 @@
 //! - Workspaces, Memory, Files, Inbox
 //! - Visualization rendering (charts to SVG/PNG/PDF)
 //! - Sandbox code execution (VM-based)
-//! - Rails System integration (Ledger, Gate, Leases, Work)
+//! - Allternit Factory core in-process (Ledger, Gate, Leases, Work, mail, peers)
 //! - Cowork Runtime (persistent remote execution)
 //! - Event streaming (WebSocket)
 //! - SSH, Swarm, Workflows, Boards
@@ -96,7 +96,7 @@ use allternit_api::platform_static::platform_service;
 use allternit_api::playground_routes::playground_router;
 use allternit_api::provider_routes::provider_router;
 use allternit_api::rate_limit::rate_limit_middleware;
-use allternit_api::rails::{rails_router, RailsState};
+use allternit_api::rails::{factory_core_router, RailsState};
 use allternit_api::fabric_routes::fabric_router;
 use allternit_api::remote_control_routes::remote_control_router;
 use allternit_api::research_task_routes::research_task_router;
@@ -413,10 +413,10 @@ async fn main() {
                 )
             });
 
-    // Initialize Rails service state
+    // Initialize the Factory core state (in-process ledger, Gate, mail, peers)
     let rails = RailsState::new(data_dir.clone())
         .await
-        .expect("Failed to initialize Rails service state");
+        .expect("Failed to initialize the Factory core state");
 
     // Initialize cowork scheduler (optional — no-op if DB path is unset)
     let cowork_scheduler = initialize_cowork_scheduler(&data_dir, app_config.api_port()).await;
@@ -427,7 +427,7 @@ async fn main() {
     // Initialize cowork background service
     let (cowork_background, bg_state) = initialize_cowork_background(&data_dir).await;
 
-    // Initialize cowork runtime run manager (Rails-backed DAG/WIH lifecycle)
+    // Initialize cowork runtime run manager (Factory-backed DAG/WIH lifecycle)
     let cowork_run_manager =
         initialize_cowork_run_manager(
             &data_dir,
@@ -1151,10 +1151,9 @@ async fn main() {
         .nest("/viz", viz_router())
         .nest("/sandbox", sandbox_router())
         .nest("/vm-session", vm_session_router())
-        .nest("/rails", rails_router())
-        .nest("/api/rails", rails_router())
-        .nest("/commrails", rails_router())
-        .nest("/api/commrails", rails_router())
+        // The Factory's in-process routes (mail, peers, steer, ledger, plans …).
+        // Static under /api/factory, so they win over the engine proxy below.
+        .nest("/api/factory", factory_core_router())
         .nest("/stream", stream_router())
         .nest("/ws/bots", bot_desktop_stream_router())
         .nest(
@@ -1533,7 +1532,7 @@ async fn main() {
         info!("  - Visualization:  GET /viz/*");
         info!("  - Sandbox:        POST /sandbox/*");
         info!("  - VM Sessions:    POST|GET|DELETE /vm-session/*");
-        info!("  - Rails System:   GET|POST /rails/*");
+        info!("  - Factory core:   GET|POST /api/factory/{mail,peers,steer,ledger,plan,…}");
         info!("  - Event Stream:   WS /stream/ws/*");
         #[cfg(unix)]
         info!("  - Terminal:       POST /terminal/*");
@@ -1689,7 +1688,7 @@ async fn initialize_cowork_background(
     }
 }
 
-/// Initialize the cowork runtime run manager backed by Rails DAGs/WIHs.
+/// Initialize the cowork runtime run manager backed by Factory DAGs/WIHs.
 ///
 /// `store_path` points at the canonical SQLite store; when present the
 /// RunManager runs the A:// lease-expiry sweeper against it (lock 1/3).

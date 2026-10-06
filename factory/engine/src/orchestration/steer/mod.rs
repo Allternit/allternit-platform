@@ -192,20 +192,19 @@ impl Steer {
     pub async fn consult(&self, cwd: impl AsRef<Path>, context: &str) -> Result<String> {
         let cwd = cwd.as_ref();
 
-        if let Ok(cmd) = std::env::var("STEER_CONSULT_CMD") {
-            return run_shell_command(&cmd, cwd, context).await;
-        }
-
-        // Recursion guard: `ao-consult` is a shim that execs `allternit-rails
-        // steer consult`, which would call back into the shim without bound
-        // (2026-10-02 fork bomb). When AO_CONSULT_ACTIVE is set (we are already
-        // inside a consult, or the shim set it), skip the shim and fall
-        // through to the kimi fallback.
-        let consult_active = std::env::var("AO_CONSULT_ACTIVE")
+        // Recursion guard: a consult command may itself end in a steering
+        // consult (a hook inside the child, or a command that calls
+        // `gizzi orchestration steer consult`), which would loop without
+        // bound (the 2026-10-02 fork bomb). Inside a consult
+        // (ALLTERNIT_FACTORY_CONSULT_ACTIVE set) the command is skipped and
+        // kimi answers directly.
+        let consult_active = std::env::var("ALLTERNIT_FACTORY_CONSULT_ACTIVE")
             .map(|v| !v.is_empty())
             .unwrap_or(false);
-        if !consult_active && command_exists("ao-consult") {
-            return run_shell_command("ao-consult", cwd, context).await;
+        if !consult_active {
+            if let Ok(cmd) = std::env::var("STEER_CONSULT_CMD") {
+                return run_shell_command(&cmd, cwd, context).await;
+            }
         }
 
         // Fallback: kimi -p <prompt>
@@ -214,7 +213,7 @@ impl Steer {
                 .arg("-p")
                 .arg(context)
                 .current_dir(cwd)
-                .env("AO_CONSULT_ACTIVE", "1")
+                .env("ALLTERNIT_FACTORY_CONSULT_ACTIVE", "1")
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn()
@@ -223,7 +222,7 @@ impl Steer {
             return Ok(String::from_utf8_lossy(&output.stdout).to_string());
         }
 
-        anyhow::bail!("no steering consult backend found (set STEER_CONSULT_CMD, or install ao-consult/kimi)")
+        anyhow::bail!("no steering consult backend found (set STEER_CONSULT_CMD, or install kimi)")
     }
 
     /// Run a commit-gate consult.  Returns the first-line verdict and full body.
@@ -269,8 +268,8 @@ async fn run_shell_command(cmd: &str, cwd: &Path, stdin: &str) -> Result<String>
         .arg(cmd)
         .current_dir(cwd)
         // Recursion guard: nested steering consults triggered by hooks inside
-        // this child must not re-enter the ao-consult shim.
-        .env("AO_CONSULT_ACTIVE", "1")
+        // this child must not re-run the consult command.
+        .env("ALLTERNIT_FACTORY_CONSULT_ACTIVE", "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -310,7 +309,7 @@ mod tests {
     use std::ffi::OsString;
     use std::io::Write;
 
-    /// Serializes env mutation (PATH / STEER_CONSULT_CMD / AO_CONSULT_ACTIVE)
+    /// Serializes env mutation (PATH / STEER_CONSULT_CMD / ALLTERNIT_FACTORY_CONSULT_ACTIVE)
     /// across the consult tests in this module.
     fn env_lock() -> &'static tokio::sync::Mutex<()> {
         static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
@@ -330,7 +329,7 @@ mod tests {
             let guard = Self {
                 path: std::env::var_os("PATH"),
                 cmd: std::env::var_os("STEER_CONSULT_CMD"),
-                active: std::env::var_os("AO_CONSULT_ACTIVE"),
+                active: std::env::var_os("ALLTERNIT_FACTORY_CONSULT_ACTIVE"),
             };
             std::env::remove_var("STEER_CONSULT_CMD");
             guard
@@ -348,8 +347,8 @@ mod tests {
                 None => std::env::remove_var("STEER_CONSULT_CMD"),
             }
             match &self.active {
-                Some(v) => std::env::set_var("AO_CONSULT_ACTIVE", v),
-                None => std::env::remove_var("AO_CONSULT_ACTIVE"),
+                Some(v) => std::env::set_var("ALLTERNIT_FACTORY_CONSULT_ACTIVE", v),
+                None => std::env::remove_var("ALLTERNIT_FACTORY_CONSULT_ACTIVE"),
             }
         }
     }
@@ -382,76 +381,52 @@ mod tests {
         Steer::new(ledger)
     }
 
-    /// With AO_CONSULT_ACTIVE set, consult() must not invoke an ao-consult on
-    /// PATH (even though one is present) and must fall through to the kimi
-    /// fallback. Regression test for the 2026-10-02 steer-consult fork bomb:
-    /// ao-consult execs `allternit-rails steer consult`, which called
-    /// ao-consult again without bound.
+    /// With ALLTERNIT_FACTORY_CONSULT_ACTIVE set, consult() must not run
+    /// STEER_CONSULT_CMD and must fall through to kimi. Regression test for
+    /// the 2026-10-02 steer-consult fork bomb (a consult command that ends in
+    /// another consult looped without bound).
     #[tokio::test]
-    async fn consult_skips_ao_consult_when_active() {
+    async fn consult_skips_the_command_when_active() {
         let _guard = env_lock().lock().await;
 
         let root = tempfile::tempdir().unwrap();
         let bin_dir = root.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
 
-        // Fake ao-consult that would fail loudly if invoked.
-        let shim = bin_dir.join("ao-consult");
-        write_script(
-            &shim,
-            "#!/usr/bin/env bash\necho AO-CONSULT-INVOKED >&2\nexit 42\n",
-        );
         // Fake kimi that answers successfully; the expected fallback backend.
         let kimi = bin_dir.join("kimi");
         write_script(&kimi, "#!/usr/bin/env bash\necho KIMI-ANSWER\n");
 
         let _env = EnvGuard::takeover();
         prepend_path(&bin_dir);
-        std::env::set_var("AO_CONSULT_ACTIVE", "1");
+        std::env::set_var("STEER_CONSULT_CMD", "echo COMMAND-INVOKED; exit 42");
+        std::env::set_var("ALLTERNIT_FACTORY_CONSULT_ACTIVE", "1");
 
         let answer = test_steer(root.path())
             .consult(root.path(), "test context")
             .await
             .expect("consult failed");
 
-        assert!(
-            answer.contains("KIMI-ANSWER"),
-            "expected kimi fallback answer, got: {answer:?}"
-        );
-        assert!(
-            !answer.contains("AO-CONSULT-INVOKED"),
-            "ao-consult shim was invoked despite AO_CONSULT_ACTIVE"
-        );
+        assert!(answer.contains("KIMI-ANSWER"), "expected kimi fallback answer, got: {answer:?}");
+        assert!(!answer.contains("COMMAND-INVOKED"), "STEER_CONSULT_CMD ran despite ALLTERNIT_FACTORY_CONSULT_ACTIVE");
     }
 
-    /// Without AO_CONSULT_ACTIVE, an ao-consult on PATH is used (guards
-    /// against accidentally disabling the primary backend).
+    /// Without ALLTERNIT_FACTORY_CONSULT_ACTIVE, STEER_CONSULT_CMD answers
+    /// (guards against accidentally disabling the primary backend).
     #[tokio::test]
-    async fn consult_uses_ao_consult_when_not_active() {
+    async fn consult_uses_the_command_when_not_active() {
         let _guard = env_lock().lock().await;
 
         let root = tempfile::tempdir().unwrap();
-        let bin_dir = root.path().join("bin");
-        fs::create_dir_all(&bin_dir).unwrap();
-
-        let shim = bin_dir.join("ao-consult");
-        write_script(
-            &shim,
-            "#!/usr/bin/env bash\nstdin=$(cat)\necho AO-CONSULT-USED\n",
-        );
-
         let _env = EnvGuard::takeover();
-        prepend_path(&bin_dir);
-        std::env::remove_var("AO_CONSULT_ACTIVE");
+        std::env::set_var("STEER_CONSULT_CMD", "cat >/dev/null; echo COMMAND-USED");
+        std::env::remove_var("ALLTERNIT_FACTORY_CONSULT_ACTIVE");
 
         let answer = test_steer(root.path())
             .consult(root.path(), "test context")
             .await
             .expect("consult failed");
 
-        assert!(
-            answer.contains("AO-CONSULT-USED"),
-            "expected ao-consult answer, got: {answer:?}"
-        );
+        assert!(answer.contains("COMMAND-USED"), "expected the consult command's answer, got: {answer:?}");
     }
 }

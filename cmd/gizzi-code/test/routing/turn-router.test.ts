@@ -54,7 +54,7 @@ describe("capability classes (O1/O5) mirror the kernel table", () => {
     expect(by("cheap").extensions["x-gen_class"]).toBe(GEN_SMALL)
     expect(by("mid").extensions["x-gen_class"]).toBe(GEN_STANDARD)
     expect(by("deep").extensions["x-gen_class"]).toBe(GEN_DEEP)
-    expect(SMALL_COST_MAX).toBe(0.0015) // commrails/src/kernel/classes.rs
+    expect(SMALL_COST_MAX).toBe(0.0015) // factory/engine/src/workflows/kernel/classes.rs
     expect(genClassOf({ ...by("mid"), extensions: { "x-gen_class": "gen.deep" } })).toBe(GEN_DEEP)
   })
   test("call types and caps", () => {

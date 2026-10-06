@@ -55,7 +55,7 @@ fn api_schema(args: &[String]) -> std::io::Result<i32> {
 
 fn api_snapshot(args: &[String]) -> std::io::Result<i32> {
     if !args.is_empty() {
-        eprintln!("usage: ao api snapshot");
+        eprintln!("usage: allternit-factory pane api snapshot");
         return Ok(2);
     }
 
@@ -89,7 +89,7 @@ fn schema_summary_text() -> std::io::Result<String> {
     schemas.sort();
 
     Ok(format!(
-        "ao API schema\nprotocol: {}\nschema_version: {}\nschemas: {}\n\nUse `ao api schema --json` to print the full schema.\nUse `ao api schema --output PATH` to write it to a file.\n",
+        "ao API schema\nprotocol: {}\nschema_version: {}\nschemas: {}\n\nUse `allternit-factory pane api schema --json` to print the full schema.\nUse `allternit-factory pane api schema --output PATH` to write it to a file.\n",
         protocol,
         schema_version,
         schemas.join(", ")
@@ -97,13 +97,13 @@ fn schema_summary_text() -> std::io::Result<String> {
 }
 
 fn print_api_help() {
-    eprintln!("ao api commands:");
-    eprintln!("  ao api snapshot");
-    eprintln!("  ao api schema [--json | --output PATH]");
+    eprintln!("allternit-factory pane api commands:");
+    eprintln!("  allternit-factory pane api snapshot");
+    eprintln!("  allternit-factory pane api schema [--json | --output PATH]");
 }
 
 fn print_api_schema_help() {
-    eprintln!("usage: ao api schema [--json | --output PATH]");
+    eprintln!("usage: allternit-factory pane api schema [--json | --output PATH]");
 }
 
 #[cfg(test)]
@@ -112,7 +112,7 @@ mod tests {
     fn schema_summary_text_stays_human_sized() {
         let text = super::schema_summary_text().unwrap();
         assert!(text.contains("ao API schema"));
-        assert!(text.contains("Use `ao api schema --json`"));
+        assert!(text.contains("Use `allternit-factory pane api schema --json`"));
         assert!(text.len() < 400);
     }
 }

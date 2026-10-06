@@ -1,28 +1,27 @@
 import Foundation
 
-/// Client for the Rails Mail / ledger endpoints that back Agent Activity
-/// (`cmd/allternit-api/src/rails/mod.rs`, routes registered at
-/// rails/mod.rs:179-188).
+/// Client for the Factory mail / ledger endpoints that back Agent Activity
+/// (served in process by allternit-api's `factory_core_router()`).
 ///
-/// The rails router is mounted directly under `/api`
-/// (cmd/allternit-api/src/main.rs:334-335, `.nest("/api/rails",
-/// rails_router())`) — NOT under `/api/v1` — so, exactly like
+/// The Factory core router is mounted directly under `/api`
+/// (cmd/allternit-api/src/main.rs, `.nest("/api/factory",
+/// factory_core_router())`) — NOT under `/api/v1` — so, exactly like
 /// `ACIAgentClient` for `/api/aci/*`, requests go through
-/// `APIClient.authorizedRequest(url:)` against `AppConfig.railsBaseURL`
+/// `APIClient.authorizedRequest(url:)` against `AppConfig.factoryBaseURL`
 /// rather than `APIClient.get/post(path:)`.
 final class AgentActivityClient: @unchecked Sendable {
     private let client: APIClient
     private let baseURL: URL
 
-    init(client: APIClient = .shared, baseURL: URL = AppConfig.railsBaseURL) {
+    init(client: APIClient = .shared, baseURL: URL = AppConfig.factoryBaseURL) {
         self.client = client
         self.baseURL = baseURL
     }
 
     // MARK: - Threads
 
-    /// `GET /api/rails/mail/threads` (`list_mail_threads`,
-    /// rails/mod.rs:843-864) → `{ threads: [{ thread_id, messages: <count>,
+    /// `GET /api/factory/mail/threads` (`list_mail_threads`) →
+    /// `{ threads: [{ thread_id, messages: <count>,
     /// last_ts }] }`.
     func listThreads() async throws -> [AgentActivityThreadSummary] {
         let request = try await client.authorizedRequest(url: baseURL.appendingPathComponent("mail/threads"))
@@ -35,8 +34,8 @@ final class AgentActivityClient: @unchecked Sendable {
         }
     }
 
-    /// `GET /api/rails/mail/thread/:thread_id` (`read_mail_thread`,
-    /// rails/mod.rs:877-908) → `{ messages: [{ message_id, thread_id,
+    /// `GET /api/factory/mail/thread/:thread_id` (`read_mail_thread`) →
+    /// `{ messages: [{ message_id, thread_id,
     /// from_agent, body, event_type, timestamp }] }`.
     func getThreadMessages(threadId: String) async throws -> [AgentActivityMessage] {
         let request = try await client.authorizedRequest(
@@ -58,7 +57,7 @@ final class AgentActivityClient: @unchecked Sendable {
         let body: String
     }
 
-    /// `POST /api/rails/mail/send` (`mail_send`, rails/mod.rs:620-667) — the
+    /// `POST /api/factory/mail/send` (`mail_send`) — the
     /// legacy `{ thread, body }` shape is sufficient for a human reply (the
     /// richer `from_agent`/`to_agents`/`subject`/`importance` fields are the
     /// agent-to-agent typed-envelope path, not needed here) →
@@ -78,7 +77,7 @@ final class AgentActivityClient: @unchecked Sendable {
         let approve: Bool
     }
 
-    /// `POST /api/rails/mail/decide` (`mail_decide`, rails/mod.rs:989-1024) —
+    /// `POST /api/factory/mail/decide` (`mail_decide`) —
     /// `approve` is strictly boolean server-side (`MailDecideRequest`
     /// resolves it to `"accepted"`/`"rejected"`; there's no N-way decision)
     /// → `{ decided, thread_id }`, discarded.
@@ -103,7 +102,7 @@ final class AgentActivityClient: @unchecked Sendable {
         }
     }
 
-    /// `POST /api/rails/mail/share` (`mail_share`, rails/mod.rs:916-963) →
+    /// `POST /api/factory/mail/share` (`mail_share`) →
     /// `{ shared, share_id, thread_id }`, discarded.
     func share(threadId: String, assetRef: String, note: String? = nil) async throws {
         var request = try await client.authorizedRequest(
@@ -120,7 +119,7 @@ final class AgentActivityClient: @unchecked Sendable {
         let count: Int
     }
 
-    /// `POST /api/rails/ledger/tail` (`tail_ledger`, rails/mod.rs:426-459) —
+    /// `POST /api/factory/ledger/tail` (`tail_ledger`) —
     /// body `{ count }` → bare `UiLedgerEvent[]`, no envelope. This is the
     /// real (and only) mechanism for reservation/guard/review visibility:
     /// `AgentActivityStore` fetches a batch and filters client-side by

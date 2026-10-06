@@ -1,6 +1,6 @@
 //! The one spawn path: a gated agent session in a pane-engine pane.
 //!
-//! This replaced the CommRails orchestrator's tmux spawner. What a spawn does
+//! This replaced the old orchestrator's tmux spawner. What a spawn does
 //! is unchanged (spawn gate, WIH policy, execution environment, fence, hook
 //! settings, peer registration, headless capture); where it runs is now always
 //! the pane engine (`factory/pane`) through the installed [`PaneBackend`], and
@@ -8,7 +8,7 @@
 //!
 //! The hook a gated harness runs is this engine's own executable
 //! (`allternit-factory internal hook …`), resolved by
-//! [`crate::hook::find_commrails_bin`]; a spawn whose hook binary can't be
+//! [`crate::hook::find_factory_bin`]; a spawn whose hook binary can't be
 //! resolved is refused, never run unhooked.
 //!
 //! [`PaneBackend`]: super::backend::PaneBackend
@@ -138,7 +138,7 @@ impl Spawner {
         // A hooked harness without the engine binary would run unhooked;
         // refuse instead of falling back to bypass.
         let gate_bin = if gate == HarnessGate::Hook {
-            Some(hook::find_commrails_bin().ok_or_else(|| {
+            Some(hook::find_factory_bin().ok_or_else(|| {
                 anyhow::anyhow!(
                     "cannot install the spawn-gate hook for {harness}: this process is not allternit-factory and ALLTERNIT_FACTORY_BIN is not set"
                 )
@@ -159,7 +159,7 @@ impl Spawner {
         };
 
         let hook_target = gate_bin.as_deref().map(|bin| HookTarget {
-            commrails_bin: bin,
+            factory_bin: bin,
             root: &self.root_dir,
             workspace: Some(&workdir),
             wih_id: opts.wih,
@@ -202,34 +202,29 @@ impl Spawner {
         // Register the peer first so the pane's env names a known inbox.
         let peer = self.peers.register(&session, workdir.clone(), opts.vendor)?;
 
-        // The pane's own environment (the old tmux `export …` prefix). Both the
-        // ALLTERNIT_COMMRAILS_* and legacy ALLTERNIT_RAILS_* names stay until
-        // the rename sweep moves the harness side over.
+        // The pane's own environment (the old tmux `export …` prefix).
         let fence_strict = hook::fence_env_strict() || wih_policy.as_ref().is_some_and(|p| p.fence_strict);
         let mut env: BTreeMap<String, String> = BTreeMap::new();
         let inbox = peer.inbox_socket.to_string_lossy().to_string();
         let root_s = workdir.to_string_lossy().to_string();
-        env.insert("ALLTERNIT_AO_PANE_ID".into(), session.clone());
+        // The pane slug, the same value a team bot's pane carries (whoami.rs).
+        env.insert("ALLTERNIT_FACTORY_PANE_ID".into(), super::registry::slug_of(&session).to_string());
         for (k, v) in [
-            ("ALLTERNIT_COMMRAILS_PEER_NAME", &peer.name),
-            ("ALLTERNIT_RAILS_PEER_NAME", &peer.name),
-            ("ALLTERNIT_COMMRAILS_INBOX", &inbox),
-            ("ALLTERNIT_RAILS_INBOX", &inbox),
-            ("ALLTERNIT_COMMRAILS_ROOT", &root_s),
-            ("ALLTERNIT_RAILS_ROOT", &root_s),
+            ("ALLTERNIT_FACTORY_PEER_NAME", &peer.name),
+            ("ALLTERNIT_FACTORY_INBOX", &inbox),
+            ("ALLTERNIT_FACTORY_ROOT", &root_s),
         ] {
             env.insert(k.into(), v.clone());
         }
         if let Some(wih_id) = opts.wih {
-            env.insert("ALLTERNIT_COMMRAILS_WIH".into(), wih_id.to_string());
+            env.insert("ALLTERNIT_FACTORY_WIH".into(), wih_id.to_string());
         }
         if fence_strict {
             env.insert(hook::FENCE_ENV.into(), "strict".into());
         }
         if let Some(task) = opts.task_file {
             let task = task.to_string_lossy().to_string();
-            env.insert("ALLTERNIT_COMMRAILS_TASK_FILE".into(), task.clone());
-            env.insert("ALLTERNIT_RAILS_TASK_FILE".into(), task);
+            env.insert("ALLTERNIT_FACTORY_TASK_FILE".into(), task);
         }
         // Claude refuses bypassPermissions as root unless told it is in a
         // sandbox; Allternit's execution environment is that sandbox.
@@ -312,7 +307,7 @@ impl Spawner {
             worktree: opts.worktree.then(|| workdir.to_string_lossy().to_string()),
             branch: opts.worktree.then(|| format!("ao/{slug}")),
             sentinel: opts.notes_sentinel.map(|p| p.to_string_lossy().to_string()),
-            lead: Some(std::env::var("AO_LEAD").unwrap_or_else(|_| "engine".to_string())),
+            lead: Some(std::env::var("ALLTERNIT_FACTORY_LEAD").unwrap_or_else(|_| "engine".to_string())),
             lifecycle: Some("running".to_string()),
             world: Some("engine".to_string()),
             pane_id: Some(live.pane_id.clone()),

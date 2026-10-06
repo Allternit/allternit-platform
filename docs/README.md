@@ -5,7 +5,7 @@ How this directory is organized (ratified S0, enforced S6/S7 — 2026-09-18).
 ## The taxonomy
 
 1. **Stable dir families do not move.** Capitalized families (`Core_System/`, `Operations/`, `Future_Blueprints/`, `Business_Strategy/`, `Product_and_Content/`, `Archive/`) and stable lower-case dirs (`architecture/`, `audit/`, `design/`, `marketing/`, `pipeline/`, `projects/`, `public/`, `research/`, `specs/`, `reports/`, `upstream/`, `learning/`, `archive/`, `parity-reports*/`, `openai-audit/`, `kimi-audit/`, `a-protocol/`, `agent-activity-design/`, `agent-tasks/`, `Audits_and_Research/`, `desktop-cloud-mvp/`, `gap-analysis/`, plus small dirs `assets/ bots/ demos/ development/ infra/ jobs/ plans/`) are the filing cabinet. Reorganizing one is an explicit decision, not a cleanup.
-2. **`programs/<program>/`** holds phase-organized program docs (Swarm builds, CommRails, gizzi-code, iOS, cloud-agents, AO/UHP, ACU shadow head, media-plugins). Filename prefixes map to programs (`SWARM_*`, `RAILS_*`, `GIZZI_*`, `IOS_*`, `CLOUD_AGENTS_*`, `ACU_*`, `AO_*`, `MEDIAPLUG*`).
+2. **`programs/<program>/`** holds phase-organized program docs (Swarm builds, the pre-Factory work engine, gizzi-code, iOS, cloud-agents, AO/UHP, ACU shadow head, media-plugins). Filename prefixes map to programs (`SWARM_*`, `RAILS_*`, `GIZZI_*`, `IOS_*`, `CLOUD_AGENTS_*`, `ACU_*`, `AO_*`, `MEDIAPLUG*`).
 3. **`learnings/`** holds one-off docs with no clear program prefix — triage notes, audit tasks, setup guides, runbooks.
 4. **Depth 1 stays almost empty.** Only `MASTER_INDEX.md` (this index's sibling), plus docs that the root `AGENTS.md` references by frozen path (`NATIVE_SESSIONS.md`, `AGENT_EMAIL_RAIL.md`).
 

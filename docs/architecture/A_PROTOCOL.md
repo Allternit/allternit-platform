@@ -81,7 +81,7 @@ Roles
     orchestrator, worker, reviewer, observer, human, system
 
 Transport
-    CommRails and other transports carry semantic messages
+    Factory peer messaging and other transports carry semantic messages
 
 Execution
     Run/DAG runtime + Fabric Transport lease ownership
@@ -190,7 +190,7 @@ The transport implements the worker lifecycle around:
 - Lease expiry is evaluated using the server clock.
 - A stale worker cannot complete work using an expired generation.
 - Recovery resumes from the last committed checkpoint; in-memory process state is not assumed portable.
-- v0.1 worker discovery uses long-poll claim. CommRails push may optimize wake-up but is not required for correctness.
+- v0.1 worker discovery uses long-poll claim. Factory push may optimize wake-up but is not required for correctness.
 
 ## 9. Principal authentication
 
@@ -277,7 +277,7 @@ Al may be conversationally present in Cowork, but Cowork must not collapse into 
 
 ## 15. Transport independence
 
-A:// defines coordination semantics. CommRails, HTTP, WebSocket, local IPC, Slack adapters, email adapters, or future transports can carry those semantics.
+A:// defines coordination semantics. Factory peer messaging, HTTP, WebSocket, local IPC, Slack adapters, email adapters, or future transports can carry those semantics.
 
 Transport does not redefine principal identity, run state, attribution, or approval meaning.
 
@@ -484,7 +484,7 @@ Use these names consistently:
 - **Al** — the persistent user-facing principal/persona.
 - **`a://`** — protocol namespace in code/spec prose.
 - **Fabric Transport** — worker-facing execution transport and lease mechanism.
-- **CommRails** — peer/message transport layer.
+- **Factory peer messaging** — peer/message transport layer.
 - **Run/DAG runtime** — durable execution state machine.
 - **Cowork** — human control room.
 - **Gizzi** — technical/terminal/code worker.

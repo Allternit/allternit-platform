@@ -4,7 +4,7 @@
 //! - **Feed 1 (engine agents):** `AgentInfo` rows from `agent.list` (the
 //!   panel polls; `events.subscribe pane.agent_status_changed` exists
 //!   server-side but has no client machinery — poll-diff transitions are used
-//!   instead, documented in `docs/programs/ao/AO_VISIBILITY_PEERS_NOTES.md`).
+//!   instead, see the P5 visibility/peers notes in `docs/programs/`).
 //! - **Feed 2 (native sessions):** [`crate::ao::native`] catalog rows.
 //! - **Feed 3 (Rails peers):** [`crate::ao::peers`] registry rows.
 //!
@@ -39,7 +39,7 @@ pub fn status_priority(status: AgentStatus) -> u8 {
 }
 
 /// One raw sample of the three feeds, taken by the poller (or the
-/// `ao visibility` CLI).
+/// `allternit-factory pane visibility` CLI).
 #[derive(Clone)]
 pub struct FeedSample {
     /// `Err` when no engine server answered (panel still renders the other
@@ -181,7 +181,7 @@ impl WaitingList {
         }
     }
 
-    /// Rebuild the list from scratch (headless `ao visibility`: no history).
+    /// Rebuild the list from scratch (headless `allternit-factory pane visibility`: no history).
     pub fn rebuild(&mut self, agents: &[AgentInfo], now_ms: u64) {
         self.entries.clear();
         self.observe(agents, now_ms);
@@ -270,7 +270,7 @@ fn joined_native_via_peer<'a>(
         .max_by_key(|s| s.updated_at)
 }
 
-/// The full merged panel — what the overlay renders and `ao visibility`
+/// The full merged panel — what the overlay renders and `allternit-factory pane visibility`
 /// prints.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

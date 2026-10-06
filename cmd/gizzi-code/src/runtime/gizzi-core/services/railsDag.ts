@@ -1,13 +1,14 @@
 /**
- * Rails DAG poller for gizzi-code.
+ * Allternit Factory DAG poller for gizzi-code.
  *
- * Mirrors the user's CommRails WIH DAGs (GET /api/commrails/dags?view=mine)
- * into the TUI so the Rails todo panel can render live node statuses. Same
+ * Mirrors the user's Factory WIH DAGs (GET /api/factory/plans/dags?view=mine)
+ * into the TUI so the Factory todo panel can render live node statuses. Same
  * shape as the inbox poller in railsPeer.ts: HTTP polling, dedupe by content
- * fingerprint, errors swallowed, gated on Rails peer mode.
+ * fingerprint, errors swallowed, gated on Factory peer mode.
  */
 
 import { spawn } from 'node:child_process'
+import { locateEngine } from 'src/cli/factory/engine.js'
 import { logForDiagnosticsNoPII } from 'src/shared/utils/diagLogs.js'
 import { errorMessage } from 'src/shared/utils/errors.js'
 import {
@@ -52,29 +53,22 @@ export type DagViewDto = {
 const RAILS_DAG_POLL_INTERVAL_MS = 3_000
 
 /**
- * True when this session registered as a Rails peer (peer name exported by
- * railsPeer.ts registerRailsPeer). All Rails DAG behavior is gated on this
- * so non-Rails sessions are completely unaffected.
+ * True when this session registered as a Factory peer (peer name exported by
+ * railsPeer.ts registerRailsPeer). All Factory DAG behavior is gated on this
+ * so non-peer sessions are completely unaffected.
  */
 export function isRailsPeerMode(): boolean {
-  return Boolean(
-    process.env.ALLTERNIT_COMMRAILS_PEER_NAME ||
-      process.env.ALLTERNIT_RAILS_PEER_NAME,
-  )
+  return Boolean(process.env.ALLTERNIT_FACTORY_PEER_NAME)
 }
 
-/** The rails peer name = our agent id for WIH pickup/close ownership. */
+/** The Factory peer name = our agent id for WIH pickup/close ownership. */
 export function railsPeerAgentId(): string | null {
-  return (
-    process.env.ALLTERNIT_COMMRAILS_PEER_NAME ||
-    process.env.ALLTERNIT_RAILS_PEER_NAME ||
-    null
-  )
+  return process.env.ALLTERNIT_FACTORY_PEER_NAME || null
 }
 
 // ─── WIH write-back ─────────────────────────────────────────────────────────
 //
-// pickup/close POSTs against /api/commrails/wihs/*. Never throw: failures
+// pickup/close POSTs against /api/factory/wihs/*. Never throw: failures
 // (network, 400/403/409 with the server's error message) come back as
 // {ok:false, error} for inline display in the todo panel.
 
@@ -132,14 +126,15 @@ async function postWihMutation(
 
 /**
  * Best-effort, fire-and-forget metadata stamp: report the picked-up WIH id
- * (plus dag/node ids) onto the AO pane via `ao pane report-metadata` so the
- * pane's provenance ledger can tie a tmux pane to a WIH. Only runs when the
- * orchestrator exported ALLTERNIT_AO_PANE_ID. A stamp failure (missing `ao`
- * binary, spawn error, non-zero exit) must NEVER break or delay pickup —
+ * (plus dag/node ids) onto the Factory pane via
+ * `allternit-factory pane pane report-metadata` so the pane's provenance
+ * ledger can tie a pane to a WIH. Only runs when the engine exported
+ * ALLTERNIT_FACTORY_PANE_ID. A stamp failure (missing engine binary, spawn
+ * error, non-zero exit) must NEVER break or delay pickup —
  * everything here is untracked and swallowed to a debug log.
  */
 function paneIdOrNull(): string | null {
-  return process.env.ALLTERNIT_AO_PANE_ID || null
+  return process.env.ALLTERNIT_FACTORY_PANE_ID || null
 }
 
 function spawnPaneMetadata(
@@ -149,14 +144,22 @@ function spawnPaneMetadata(
   const paneId = paneIdOrNull()
   if (!paneId) return
   try {
-    const child = spawn('ao', ['pane', 'report-metadata', paneId, ...args], {
+    const engine = locateEngine()
+    if (!engine) {
+      logForDiagnosticsNoPII('debug', 'rails_pane_metadata_failed', {
+        error: 'Factory engine binary not found',
+        ...context,
+      })
+      return
+    }
+    const child = spawn(engine.path, ['pane', 'pane', 'report-metadata', paneId, ...args], {
       detached: true,
       stdio: 'ignore',
       shell: false,
     })
     child.on('error', error => {
-      // Most commonly ENOENT when the `ao` binary isn't on PATH — log and
-      // skip; the mutation itself already succeeded.
+      // Spawn failure (e.g. the engine binary vanished) — log and skip;
+      // the mutation itself already succeeded.
       logForDiagnosticsNoPII('debug', 'rails_pane_metadata_failed', {
         error: errorMessage(error),
         ...context,
@@ -202,7 +205,7 @@ function clearPaneTokensForClose(dagId: string, nodeId: string): void {
  * Pick up a READY node: creates a WIH owned by this peer. 409 when the node
  * is not pickup-able (already taken, not ready); error message is surfaced
  * verbatim for inline panel display. On success the returned wih_id (when the
- * pane env carries ALLTERNIT_AO_PANE_ID) is stamped onto the AO pane.
+ * pane env carries ALLTERNIT_FACTORY_PANE_ID) is stamped onto the Factory pane.
  */
 export function pickupWih(
   dagId: string,
@@ -210,9 +213,9 @@ export function pickupWih(
 ): Promise<WihMutationResult> {
   const agentId = railsPeerAgentId()
   if (!agentId) {
-    return Promise.resolve({ ok: false, error: 'rails peer mode is off' })
+    return Promise.resolve({ ok: false, error: 'Factory peer mode is off' })
   }
-  return postWihMutation('/api/commrails/wihs/pickup', {
+  return postWihMutation('/api/factory/wihs/pickup', {
     dag_id: dagId,
     node_id: nodeId,
     agent_id: agentId,
@@ -241,10 +244,10 @@ export function closeWih(
 ): Promise<WihMutationResult> {
   const agentId = railsPeerAgentId()
   if (!agentId) {
-    return Promise.resolve({ ok: false, error: 'rails peer mode is off' })
+    return Promise.resolve({ ok: false, error: 'Factory peer mode is off' })
   }
   return postWihMutation(
-    `/api/commrails/wihs/${encodeURIComponent(wihId)}/close`,
+    `/api/factory/wihs/${encodeURIComponent(wihId)}/close`,
     { status, evidence, agent_id: agentId },
   ).then(result => {
     if (result.ok && dagId && nodeId) {
@@ -256,7 +259,7 @@ export function closeWih(
 
 // ─── DAG node mutations ─────────────────────────────────────────────────────
 //
-// rename/reparent/delete against /api/commrails/dags/:dag_id/nodes/:node_id.
+// rename/reparent/delete against /api/factory/plan/:dag_id/nodes/:node_id.
 // Same contract as the WIH mutations: never throw, 400/409 bodies carry an
 // `error` string that is surfaced verbatim in the todo panel.
 
@@ -268,7 +271,7 @@ async function dagNodeMutation(
   nodeId: string,
   body?: Record<string, unknown>,
 ): Promise<DagNodeMutationResult> {
-  const path = `/api/commrails/dags/${encodeURIComponent(dagId)}/nodes/${encodeURIComponent(nodeId)}`
+  const path = `/api/factory/plan/${encodeURIComponent(dagId)}/nodes/${encodeURIComponent(nodeId)}`
   try {
     const config = getAllternitApiConfig()
     const res = await apiFetch(config, path, {
@@ -379,7 +382,7 @@ export function startRailsDagListener(
     try {
       const dto = await apiFetchJson<DagViewDto>(
         config,
-        '/api/commrails/dags?view=mine',
+        '/api/factory/plans/dags?view=mine',
       )
       const fingerprint = JSON.stringify([dto.dags, dto.active_wihs])
       if (fingerprint === lastFingerprint) return

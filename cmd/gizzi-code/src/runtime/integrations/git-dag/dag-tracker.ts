@@ -2,13 +2,13 @@
  * Git DAG Tracker
  * 
  * Tracks commit DAG for agent collaboration.
- * Integrates agenthub-style DAG with allternit rails DAG.
+ * Integrates agenthub-style DAG with the Allternit Factory DAG.
  * 
  * Features:
  * - Track commit parent/child relationships
  * - Find frontier commits (leaves)
  * - Trace lineage (ancestry)
- * - Map to allternit rails DAG nodes
+ * - Map to Allternit Factory DAG nodes
  */
 
 import { exec } from 'child_process'
@@ -295,13 +295,13 @@ export namespace GitDAGTracker {
   }
 
   /**
-   * Map commit to allternit rails DAG node
+   * Map commit to Allternit Factory DAG node
    */
   export function mapToRailsNode(commitHash: string, railsNodeId: string): void {
     const commit = commitCache.get(commitHash)
     if (commit) {
       commit.railsNodeId = railsNodeId
-      log.info('Mapped commit to rails node', { commitHash, railsNodeId })
+      log.info('Mapped commit to Factory node', { commitHash, railsNodeId })
     }
   }
 

@@ -493,7 +493,7 @@ pub(crate) async fn load_user_connectors(state: &Arc<AppState>, user_id: &str, a
 
 // ─── SSRF guard ──────────────────────────────────────────────────────────────
 
-/// Shared egress policy (commrails): only publicly routable unicast addresses.
+/// Shared egress policy (Factory engine): only publicly routable unicast addresses.
 fn is_forbidden_ip(ip: IpAddr) -> bool {
     !allternit_factory_engine::egress::is_public_ip(ip)
 }

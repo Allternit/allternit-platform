@@ -1,6 +1,6 @@
-//! `ao visibility` — headless JSON dump of the P5 "who needs you" panel.
+//! `allternit-factory pane visibility` — headless JSON dump of the P5 "who needs you" panel.
 //!
-//! This is the panel's CLI twin (spec binding decision 2: "ao agent list JSON
+//! This is the panel's CLI twin (spec binding decision 2: "allternit-factory pane agent list JSON
 //! is the headless contract" — this command reuses that contract for feed 1
 //! and adds feeds 2 and 3). It exists so the merged panel is scriptable and
 //! demo-verifiable without driving the TUI.
@@ -25,7 +25,7 @@ pub fn run_visibility_command(args: &[String]) -> io::Result<i32> {
             "--home" => home_flag = iter.next().cloned(),
             "help" | "--help" | "-h" => {
                 eprintln!(
-                    "usage: ao visibility [--root <dir>] [--cwd <dir>] [--home <dir>]\n\n\
+                    "usage: allternit-factory pane visibility [--root <dir>] [--cwd <dir>] [--home <dir>]\n\n\
                      Merged P5 panel snapshot as JSON: engine agents (agent.list),\n\
                      waiting-on-you list, native CLI sessions (catalog), Rails peers."
                 );

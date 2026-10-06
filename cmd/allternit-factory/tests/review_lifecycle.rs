@@ -208,7 +208,7 @@ async fn status_cli_reads_current_source_and_rejects_weird() {
     let (_, dag, node) = gate.plan_new("review", None).await.unwrap();
     let run = |args: &[&str]| {
         std::process::Command::new(env!("CARGO_BIN_EXE_allternit-factory"))
-            .args(["internal", "rails"])
+            .args(["internal", "core"])
             .arg("--root")
             .arg(root.path())
             .arg("work")

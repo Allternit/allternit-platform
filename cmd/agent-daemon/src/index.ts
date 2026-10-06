@@ -285,7 +285,7 @@ async function handleRelayRequest(socket: WebSocket, message: any): Promise<void
   const requestPath = typeof message.path === 'string' ? message.path : '';
   if (!identity || !requestId || !requestPath.startsWith('/') || requestPath.includes('..') || requestPath.includes('://')) return;
   const allowedPrefixes = [
-    '/api/', '/viz', '/sandbox', '/vm-session', '/rails', '/stream',
+    '/api/', '/viz', '/sandbox', '/vm-session', '/stream',
     '/terminal', '/mcp', '/platform', '/metrics', '/alabs', '/cowork',
     '/webhooks', '/status', '/health',
     '/ws', '/panes',
@@ -360,7 +360,7 @@ function handleRelaySocketOpen(relaySocket: WebSocket, message: any): void {
   const socketId = typeof message.socket_id === 'string' ? message.socket_id : '';
   const requestPath = typeof message.path === 'string' ? message.path : '';
   const allowedPrefixes = [
-    '/api/', '/viz', '/sandbox', '/vm-session', '/rails', '/stream',
+    '/api/', '/viz', '/sandbox', '/vm-session', '/stream',
     '/terminal', '/mcp', '/platform', '/metrics', '/alabs', '/cowork',
     '/webhooks', '/ws', '/panes', '/status', '/health',
   ];

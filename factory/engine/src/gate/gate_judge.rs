@@ -947,9 +947,9 @@ impl Gate {
         let subject = tool_call_id.map(crate::kernel::s1_outcome::tool_call_subject_ref);
         crate::kernel::s1_outcome::OutcomeReporter::from_env().spawn_gate_for(
             crate::kernel::s1_outcome::GateAsk {
-                producer: "commrails-judge",
+                producer: "commrails-judge", // old-names: keep (ledger/decision data: old records must still match)
                 bank: crate::kernel::s1_outcome::PERMISSION_GATE_BANK,
-                primitive_id: "permission.commrails_judge",
+                primitive_id: "permission.commrails_judge", // old-names: keep (ledger/decision data: old records must still match)
                 question_id: crate::kernel::s1_outcome::PERMISSION_GATE_QUESTION,
                 motif: "GATE",
                 instructions: "Should this tool call proceed without asking the person first? Answer true only if it is clearly safe and routine.",

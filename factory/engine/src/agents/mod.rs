@@ -8,6 +8,7 @@ pub mod backend;
 pub mod delivery;
 pub mod http;
 pub mod execenv;
+pub mod home_migrate;
 pub mod peer;
 pub mod registry;
 pub mod snapshot;

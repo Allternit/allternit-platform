@@ -17,8 +17,8 @@
  *   ALLTERNIT_TENANT_ID              - tenant marker (default: allternit-default)
  *   ALLTERNIT_GATEWAY_URL            - API gateway URL (default: http://localhost:8013)
  *   ALLTERNIT_TERMINAL_SERVER_URL    - Gizzi runtime URL (default: http://127.0.0.1:4096)
- *   ALLTERNIT_RAILS_URL              - Rails service URL (default: http://127.0.0.1:8080)
- *   ALLTERNIT_RAILS_WORKSPACE_ID     - Rails workspace ID (default: default)
+ *   ALLTERNIT_FACTORY_API_URL        - Base URL of the in-process Factory API (default: http://127.0.0.1:8080)
+ *   ALLTERNIT_FACTORY_WORKSPACE_ID   - Factory workspace ID (default: default)
  *   ALLTERNIT_CRON_DAEMON_URL        - Cron daemon URL (default: http://127.0.0.1:4096/cron)
  *   ALLTERNIT_VM_DIR                 - VM storage directory (optional)
  *   ALLTERNIT_SELF_HOSTED            - Self-hosted mode, skips Clerk (default: false)
@@ -68,8 +68,10 @@ function main() {
     tenantId: getEnv('ALLTERNIT_TENANT_ID', existing.tenantId ?? 'allternit-default'),
     gatewayUrl: getEnv('ALLTERNIT_GATEWAY_URL', existing.gatewayUrl ?? 'http://localhost:8013'),
     terminalServerUrl: getEnv('ALLTERNIT_TERMINAL_SERVER_URL', existing.terminalServerUrl ?? 'http://127.0.0.1:4096'),
-    railsUrl: getEnv('ALLTERNIT_RAILS_URL', existing.railsUrl ?? 'http://127.0.0.1:8080'),
-    railsWorkspaceId: getEnv('ALLTERNIT_RAILS_WORKSPACE_ID', existing.railsWorkspaceId ?? 'default'),
+    // An existing company.json written before the Factory rename carries
+    // railsUrl / railsWorkspaceId; carry their values over to the new keys.
+    factoryApiUrl: getEnv('ALLTERNIT_FACTORY_API_URL', existing.factoryApiUrl ?? existing.railsUrl ?? 'http://127.0.0.1:8080'),
+    factoryWorkspaceId: getEnv('ALLTERNIT_FACTORY_WORKSPACE_ID', existing.factoryWorkspaceId ?? existing.railsWorkspaceId ?? 'default'),
     cronDaemonUrl: getEnv('ALLTERNIT_CRON_DAEMON_URL', existing.cronDaemonUrl ?? 'http://127.0.0.1:4096/cron'),
     vmDir: getEnv('ALLTERNIT_VM_DIR', existing.vmDir ?? ''),
     clerkPublishableKey: getEnv('NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY', existing.clerkPublishableKey ?? ''),

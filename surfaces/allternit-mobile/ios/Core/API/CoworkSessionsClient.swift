@@ -2,7 +2,7 @@ import Foundation
 
 /// Gateway-API client for Cowork sessions — `/api/v1/cowork/sessions`.
 ///
-/// Routes through `APIClient.shared` / `AppConfig.apiBaseURL` (the Rails/
+/// Routes through `APIClient.shared` / `AppConfig.apiBaseURL` (the allternit-api
 /// Axum gateway), NOT the cloud API used by `CoworkTasksClient`.
 final class CoworkSessionsClient: @unchecked Sendable {
     /// `GET /api/v1/cowork/sessions?limit=<n>`.

@@ -35,10 +35,10 @@ fn parse_status_args(args: &[String]) -> Option<(StatusScope, bool)> {
         None => Some((StatusScope::Full, false)),
         Some("--json") if args.len() == 1 => Some((StatusScope::Full, true)),
         Some("server") => {
-            parse_status_scope_args(args, StatusScope::Server, "ao status server [--json]")
+            parse_status_scope_args(args, StatusScope::Server, "allternit-factory pane status server [--json]")
         }
         Some("client") => {
-            parse_status_scope_args(args, StatusScope::Client, "ao status client [--json]")
+            parse_status_scope_args(args, StatusScope::Client, "allternit-factory pane status client [--json]")
         }
         Some("help" | "--help" | "-h") => {
             if args.len() > 1 {
@@ -393,10 +393,10 @@ fn current_exe_label() -> String {
 }
 
 fn print_status_help() {
-    eprintln!("ao status commands:");
-    eprintln!("  ao status [--json]         show local client and running server status");
-    eprintln!("  ao status server [--json]  show running server status");
-    eprintln!("  ao status client [--json]  show local client binary status");
+    eprintln!("allternit-factory pane status commands:");
+    eprintln!("  allternit-factory pane status [--json]         show local client and running server status");
+    eprintln!("  allternit-factory pane status server [--json]  show running server status");
+    eprintln!("  allternit-factory pane status client [--json]  show local client binary status");
 }
 
 #[cfg(test)]

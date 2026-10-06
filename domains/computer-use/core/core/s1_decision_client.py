@@ -4,7 +4,7 @@ Allternit Computer Use — S1 decision runtime client
 The one Python client for the S1 decision runtime (``POST /v1/decision``,
 ``POST /v1/decision/outcome``), mirroring the TS client
 (``tools/system-one-local/src/decision/client.ts``) and the Rust
-``OutcomeReporter`` (``commrails/src/kernel/s1_outcome.rs``).
+``OutcomeReporter`` (``factory/engine/src/workflows/kernel/s1_outcome.rs``).
 
 - URL: ``ALLTERNIT_S1_URL`` / ``SYSTEM_ONE_URL`` (default ``http://127.0.0.1:7717``).
 - Backend: ``ALLTERNIT_S1_BACKEND`` (default ``auto``).

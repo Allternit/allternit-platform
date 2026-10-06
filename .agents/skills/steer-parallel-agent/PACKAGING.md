@@ -1,82 +1,69 @@
-# Packaging Agent Orchestration + Steering into Allternit Platform / gizzi-code
+# Packaging agent orchestration + steering into the Allternit Platform / gizzi-code
 
-> How the desktop-local orchestration tooling (`ao-*`, `steer-*`, agent-orchestrator skill, steer-parallel-agent skill) becomes part of the shipped product.
+> How the orchestration and steering tooling (the Allternit Factory, the `steer-*`
+> scripts, the agent-orchestrator skill, the steer-parallel-agent skill) ships in
+> the product.
 
-## What exists today and where it lives
+The pre-Factory orchestrator scripts and work-engine binaries are gone (removed,
+not aliased). Their replacements are in the Factory
+[migration page](../../../surfaces/docs/factory/migration.mdx).
 
-| Asset | Current location | Scope |
+## What exists and where it lives
+
+| Asset | Location | Scope |
 |---|---|---|
-| `agent-orchestrator` skill (spawn/monitor/review external CLI agents) | `~/.claude/skills/agent-orchestrator/`, mirrored at `~/.agent-orchestrator/ORCHESTRATOR.md` | Desktop only |
-| `ao-*` scripts (`ao-doctor`, `ao-spawn`, `ao-send`, `ao-watch`, `ao-status`, `ao-kill`) | `~/.claude/skills/agent-orchestrator/scripts/`, symlinked to `~/.local/bin/` | Desktop only |
-| `steer-parallel-agent` skill (redirect an already-running session) | `~/.kimi-code/skills/steer-parallel-agent/` | Desktop only |
-| `steer-*` scripts (`steer`, `steer-discover`, `steer-context`, `steer-checkpoint`, `steer-prompt`, `steer-verify`) | `~/.kimi-code/skills/steer-parallel-agent/scripts/`, symlinked to `~/.local/bin/` | Desktop only |
-| Rails steering/peer endpoints | `cmd/allternit-api/src/rails/mod.rs` | **Already in platform** |
-| Rails peer registration in gizzi-code | `cmd/gizzi-code/src/runtime/gizzi-core/services/railsPeer.ts` (behind `GIZZI_ENABLE_RAILS_PEER=1`) | **Already in platform, opt-in** |
+| Orchestration (spawn, send, watch, capture, stop agents) | The Allternit Factory: `gizzi agents up\|ps\|down\|recover\|doctor`, `gizzi orchestration send\|capture\|transcript`. Engine binary `allternit-factory`, shipped next to `gizzi` and bundled by Desktop | Product |
+| `agent-orchestrator` skill (delegate to external CLI agents) | `.agents/skills/agent-orchestrator/` (project scope) and the gizzi-code bundled catalog | Product |
+| `steer-parallel-agent` skill (redirect an already-running session) | `.agents/skills/steer-parallel-agent/` (project scope) and the gizzi-code bundled catalog | Product |
+| `steer-*` scripts (`steer`, `steer-discover`, `steer-context`, `steer-checkpoint`, `steer-prompt`, `steer-verify`) | `tools/agent-orchestrator/scripts/`, symlinked to `~/.local/bin/` by `tools/agent-orchestrator/install.sh` | Desktop |
+| Steering and peer endpoints | `/api/factory/steer/{checkpoint,consult,commit-gate}` and `/api/factory/peers…`, served in process by `cmd/allternit-api` | Product |
+| Peer registration in gizzi-code | `cmd/gizzi-code/src/runtime/gizzi-core/services/railsPeer.ts`, default on | Product |
 
-## Target packaging
+## Skills: three channels
 
-### 1. Scripts → `allternit-platform/bin/` (or `packages/agent-steering/`)
-
-The platform repo already ships CLI tools from `bin/` (`allternit-stage`, `verify-*.sh`, `run-graph`, etc.). Move both toolkits there:
-
-```
-allternit-platform/bin/
-  ao-doctor  ao-spawn  ao-send  ao-watch  ao-status  ao-kill
-  steer  steer-discover  steer-context  steer-checkpoint  steer-prompt  steer-verify
-```
-
-Distribution channels that already exist:
-- **Homebrew tap** (`Allternit-websites/projects/homebrew-tap/`) — formula/cask symlinks `bin/*` into a PATH dir.
-- **Install pages** (`install.allternit.com`, `install.gizziio.com`) — shell installers do the same for Linux.
-
-Portability requirements already satisfied: scripts are bash + python3 only, no absolute paths baked in (`KIMI_SESSIONS_DIR` env override exists in steer-*, `~/.local/bin` symlink pattern exists in ao-*).
-
-### 2. Skills → three channels, in priority order
-
-gizzi-code skill loading supports all three today:
+gizzi-code skill loading supports all three:
 
 | Channel | Path | When to use |
 |---|---|---|
-| Bundled | `cmd/gizzi-code/src/skills/bundled/` | Compiled into the CLI; ships to every install. `bundledSkills.ts` registry is currently empty — register the two skills here. |
-| Project | `<repo>/.agents/skills/` | Loads for any agent that opens the repo. Put `agent-orchestrator` and `steer-parallel-agent` in `allternit-platform/.agents/skills/` (same pattern as `alabs-course-pipeline`). |
-| Workspace | `<workspace>/.allternit/skills/**` | Loaded by `src/workspace/loader.ts:90`. For user-level workspaces. |
+| Bundled | `cmd/gizzi-code/src/runtime/skills/bundled/` via `bundledSkills.ts` | Compiled into the CLI; ships to every install |
+| Project | `<repo>/.agents/skills/` | Loads for any agent that opens the repo |
+| Workspace | `<workspace>/.allternit/skills/**` | Loaded by `src/workspace/loader.ts`. For user-level workspaces |
 
-For kimi-code specifically, `config.toml` supports `extra_skill_dirs = []` — the installer can append the platform repo's `.agents/skills/` path so kimi sessions pick up the same skills.
+For kimi-code, `config.toml` supports `extra_skill_dirs = []`; the installer can
+append the platform repo's `.agents/skills/` path so kimi sessions pick up the
+same skills.
 
-### 3. Rails endpoints → no new work
+## Steering endpoints
 
-`/api/rails/steer/checkpoint`, `/api/rails/steer/consult`, `/api/rails/peers` are already in `cmd/allternit-api`. `steer-checkpoint` curls them; `ao-*` platform integration announces via `/api/rails/mail/share`. This layer is done.
+`steer-checkpoint` posts to `/api/factory/steer/checkpoint`; the repo's
+`.steering/` Stop hook and commit gate consult through
+`gizzi orchestration steer consult` (see `.steering/README.md`). Nothing else to
+package.
 
-### 4. Session discovery → one code change
+## Session discovery
 
-`steer-discover` scans `~/.kimi-code/sessions/*/state.json` — kimi-specific. To work across vendors and across machines in the desktop-app model:
+`steer-discover` asks the Factory peer registry first
+(`GET <allternit-api>/api/factory/peers`; peers carry `name`, `cwd`, `vendor`,
+`last_heartbeat_at`, `status`), then falls back to scanning local session files
+(`~/.kimi-code/sessions/*/state.json`) for agents that don't register. Terminal
+bots started with `gizzi agents up` are registered automatically.
 
-1. **Primary:** query the Rails peer registry (`GET http://127.0.0.1:8013/api/rails/peers`). Peers already carry `name`, `cwd`, `vendor`, `last_heartbeat_at`, `status`.
-2. **Fallback:** filesystem scan (current behavior) for agents that don't register.
+## Steering hooks: per-repo convention
 
-Prerequisite: make peer registration default-on in gizzi-code (currently `GIZZI_ENABLE_RAILS_PEER=1` opt-in) and add equivalent registration hooks to kimi/codex/agy session-start via their respective config/hook surfaces. Until that lands, the filesystem fallback keeps the tool functional.
+The `.steering/checkpoint.md` convention plus the Stop-hook steering consult is
+documented in the platform `AGENTS.md`. Repos opt in by adding the hook config and
+a `.steering/README.md`.
 
-### 5. Steering hooks → per-repo convention, already working
+## Open items
 
-The `.steering/checkpoint.md` convention + Stop-hook steering consult is documented in the platform `AGENTS.md` and works today. Repos opt in by adding the hook config and a `.steering/README.md`. `Allternit-websites` now has `.steering/checkpoint.md` written by the audit agent; adding the Stop hook there is a repo-config decision, not product code.
-
-## Migration checklist
-
-- [x] `ao-*` scripts: repo already canonical at `tools/agent-orchestrator/scripts/` (shims over `allternit-rails`); desktop `~/.local/bin` re-synced to repo via `tools/agent-orchestrator/install.sh`.
-- [x] `steer-*` scripts added to `tools/agent-orchestrator/scripts/`; desktop symlinks repointed to repo.
-- [x] Skills copied to `allternit-platform/.agents/skills/{agent-orchestrator,steer-parallel-agent}/` (project scope, auto-discovered by gizzi-code's skill scanner).
-- [x] Both skills registered in the gizzi-code builtin catalog: `cmd/gizzi-code/src/runtime/skills/bundledSkills.ts` imports `src/runtime/skills/bundled/{agentOrchestrator,steerParallelAgent}.md` via Bun's text loader (`.md` module types already declared in `src/types/global.d.ts`).
-- [x] `steer-discover` is Rails-first (`GET $ALLTERNIT_RAILS_URL/api/rails/peers`, default `http://127.0.0.1:8013`) with kimi filesystem-scan fallback.
-- [x] `GIZZI_ENABLE_RAILS_PEER` is now default-on in gizzi-code (opt out with `=0`): `railsPeer.ts`, `tools-registry-gizzi.ts`, `cli/ui/ink-app/tools.ts` flipped from `isEnvTruthy` to `!isEnvDefinedFalsy`.
-- [x] `tools/agent-orchestrator/install.sh` symlinks all 13 tools + `allternit-rails` binary into `~/.local/bin` (builds the binary via `cargo build --release -p allternit-agent-system-rails` when missing).
-- [ ] Homebrew **formula** for the CLI tools — deferred: needs release tarballs with sha256; the desktop cask (`homebrew-tap/Casks/allternit.rb`) should bundle the tools into the app's resources and run `install.sh` on first run instead.
-- [ ] `install.allternit.com` — the DMG installer should invoke the toolkit install step post-install (owned by the websites repo; coordinate before editing).
-- [x] `ORCHESTRATOR.md` + SKILL.md files now state the repo is canonical.
-
-**Note:** `~/.local/bin` symlinks currently point into the session worktree. After this branch merges to main, re-run `tools/agent-orchestrator/install.sh` from the main checkout to repoint them durably.
+- Homebrew **formula** for the CLI tools: needs release tarballs with sha256; the
+  desktop cask (`homebrew-tap/Casks/allternit.rb`) bundles the tools into the
+  app's resources instead.
+- `install.allternit.com`: the DMG installer should run the toolkit install step
+  post-install (owned by the websites repo; coordinate before editing).
 
 ## What NOT to package
 
-- Session-specific state (`~/.kimi-code/sessions/`, wire logs) — machine-local by design.
-- The Rails API server itself — already part of `cmd/allternit-api`, runs as a platform service.
-- Evidence/log dirs (`~/.agent-orchestrator/logs/`, `evidence/`) — runtime output, not product code.
+- Session-specific state (`~/.kimi-code/sessions/`, wire logs): machine-local by design.
+- The Factory API itself: already part of `cmd/allternit-api`, runs as a platform service.
+- Evidence and log dirs under `~/.allternit/factory/`: runtime output, not product code.

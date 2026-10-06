@@ -2,36 +2,36 @@
 //!
 //! Every turn launches a third-party CLI. Before launch:
 //! * Claude Code (hooked) gets a session-scoped `--settings` file generated
-//!   by `allternit-factory internal rails hook claude-settings`, whose PreToolUse hook runs
+//!   by `allternit-factory internal core hook claude-settings`, whose PreToolUse hook runs
 //!   the hard floor, plus Gate 2 when the turn is bound to a WIH. No
-//!   `--dangerously-skip-permissions`; a missing commrails binary refuses the
+//!   `--dangerously-skip-permissions`; a missing engine binary refuses the
 //!   turn instead of running unhooked.
 //! * Codex (sandboxed) runs under its `workspace-write` OS sandbox.
 //! * Everything else is `ungated`: allowed unbound, refused (via
-//!   `allternit-factory internal rails hook spawn-check`) on a WIH whose policy requires
+//!   `allternit-factory internal core hook spawn-check`) on a WIH whose policy requires
 //!   lease coverage for writes.
 //!
 //! The policy itself lives in `allternit-factory-engine` (`factory/engine/src/gate/hook`);
-//! this module only shells out to it so the gateway does not link CommRails.
+//! this module only shells out to it so the gateway does not link the engine.
 
 use std::path::{Path, PathBuf};
 
 use crate::drivers::{DriverKind, GateKind};
 
 /// Env var naming the gate binary (`allternit-factory`).
-pub const BIN_ENV: &str = "ALLTERNIT_COMMRAILS_BIN";
+pub const BIN_ENV: &str = "ALLTERNIT_FACTORY_BIN";
 /// Name of the engine binary that carries the gate.
 pub const BIN_NAME: &str = "allternit-factory";
 /// Argv the gate binary needs before the maintenance CLI's own argv.
-pub const BIN_ARGV_PREFIX: [&str; 2] = ["internal", "rails"];
-/// Env var naming the CommRails root that holds WIHs/leases/ledger.
-pub const ROOT_ENV: &str = "ALLTERNIT_COMMRAILS_ROOT";
+pub const BIN_ARGV_PREFIX: [&str; 2] = ["internal", "core"];
+/// Env var naming the Factory root that holds WIHs/leases/ledger.
+pub const ROOT_ENV: &str = "ALLTERNIT_FACTORY_ROOT";
 
-/// Locate the gate binary: `$ALLTERNIT_COMMRAILS_BIN`, then the current
+/// Locate the gate binary: `$ALLTERNIT_FACTORY_BIN`, then the current
 /// executable when it is `allternit-factory` (`serve uhp` runs inside it),
 /// then a sibling of the current executable, then `PATH`. It runs with
 /// [`BIN_ARGV_PREFIX`].
-pub fn commrails_bin() -> Option<PathBuf> {
+pub fn factory_bin() -> Option<PathBuf> {
     if let Some(p) = std::env::var_os(BIN_ENV) {
         let p = PathBuf::from(p);
         return p.is_file().then_some(p);
@@ -65,22 +65,22 @@ pub async fn prepare(
     wih_id: Option<&str>,
 ) -> Result<Prepared, String> {
     let gate = driver.gate();
-    // Unbound, non-hooked turns need nothing from CommRails.
+    // Unbound, non-hooked turns need nothing from the Factory.
     if wih_id.is_none() && gate != GateKind::Hook {
         return Ok(Prepared::default());
     }
-    let bin = commrails_bin().ok_or_else(|| {
+    let bin = factory_bin().ok_or_else(|| {
         format!(
             "spawn gate: allternit-factory not found (set {BIN_ENV}); refusing to run {} without its gate",
             driver.binary()
         )
     })?;
-    // A WIH lives in a CommRails root; unbound turns log floor denials into
+    // A WIH lives in a Factory root; unbound turns log floor denials into
     // the session dir.
     let root = match (wih_id, std::env::var_os(ROOT_ENV)) {
         (_, Some(root)) => PathBuf::from(root),
         (Some(_), None) => {
-            return Err(format!("spawn gate: a WIH-bound turn needs {ROOT_ENV} set to the CommRails root"))
+            return Err(format!("spawn gate: a WIH-bound turn needs {ROOT_ENV} set to the Factory root"))
         }
         (None, None) => session_dir.to_path_buf(),
     };
@@ -116,7 +116,7 @@ pub async fn prepare(
         .arg(workspace_dir)
         .arg("--out")
         .arg(&settings)
-        .env_remove("ALLTERNIT_COMMRAILS_WIH");
+        .env_remove("ALLTERNIT_FACTORY_WIH");
     if let Some(wih) = wih_id {
         cmd.args(["--wih", wih]);
     }
@@ -148,7 +148,7 @@ mod tests {
         let ws = session.join("workspace");
         std::fs::create_dir_all(&ws).unwrap();
 
-        // No commrails binary: claude is refused, never run unhooked.
+        // No engine binary: claude is refused, never run unhooked.
         std::env::set_var(BIN_ENV, tmp.path().join("missing"));
         std::env::remove_var(ROOT_ENV);
         let err = prepare(DriverKind::Claude, &session, &ws, None).await.unwrap_err();
@@ -156,8 +156,8 @@ mod tests {
         // Unbound ungated drivers need nothing.
         assert!(prepare(DriverKind::Kimi, &session, &ws, None).await.unwrap().claude_settings.is_none());
 
-        // Fake commrails: spawn-check refuses, claude-settings writes --out.
-        let bin = tmp.path().join("allternit-commrails");
+        // Fake engine: spawn-check refuses, claude-settings writes --out.
+        let bin = tmp.path().join("allternit-factory");
         std::fs::write(
             &bin,
             "#!/bin/sh\ncase \"$*\" in\n  *spawn-check*) echo 'refusing to spawn kimi: ungated' >&2; exit 3;;\n  *claude-settings*) while [ $# -gt 0 ]; do [ \"$1\" = --out ] && echo '{}' > \"$2\"; shift; done;;\nesac\n",
@@ -166,7 +166,7 @@ mod tests {
         std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
         std::env::set_var(BIN_ENV, &bin);
 
-        // WIH-bound turns need the CommRails root.
+        // WIH-bound turns need the Factory root.
         let err = prepare(DriverKind::Kimi, &session, &ws, Some("wih_1")).await.unwrap_err();
         assert!(err.contains(ROOT_ENV), "{err}");
         std::env::set_var(ROOT_ENV, tmp.path());

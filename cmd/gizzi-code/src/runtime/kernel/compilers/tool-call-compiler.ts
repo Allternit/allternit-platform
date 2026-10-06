@@ -4,7 +4,7 @@
  *   op + args from state → ToolInvocationV1 with a provenance class on every
  *   argument, tiered disclosure of the operation to the model, and a
  *   ToolReceiptV1 per compiled call that the WP3 receipt chain can append
- *   (commrails ChainStore::append needs envelope.{schema_id,schema_version,run_id}).
+ *   (the Factory engine ChainStore::append needs envelope.{schema_id,schema_version,run_id}).
  *
  * Provenance rules (02 §14, L2097–L2111):
  *  - POLICY values can't be overridden by the model: a policy-fixed argument

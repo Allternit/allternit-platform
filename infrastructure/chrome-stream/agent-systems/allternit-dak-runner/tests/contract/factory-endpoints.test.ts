@@ -1,17 +1,18 @@
 /**
- * Rails HTTP Endpoint Contract Tests
+ * Factory HTTP Endpoint Contract Tests
  * 
- * Tests to verify Rails service endpoints match DAK adapter expectations.
+ * Tests to verify the Factory API endpoints (allternit-api, in process under
+ * /api/factory) match DAK adapter expectations.
  * Ensures endpoint paths, request/response schemas are correct.
  */
 
 import axios from 'axios';
 
-const RAILS_BASE_URL = process.env.RAILS_BASE_URL || 'http://127.0.0.1:3011';
+const FACTORY_BASE_URL = process.env.FACTORY_BASE_URL || 'http://127.0.0.1:3000/api/factory';
 
-describe('Rails HTTP Endpoints', () => {
+describe('Factory HTTP Endpoints', () => {
   const axiosInstance = axios.create({
-    baseURL: RAILS_BASE_URL,
+    baseURL: FACTORY_BASE_URL,
     timeout: 5000,
     headers: {
       'Content-Type': 'application/json',
@@ -23,8 +24,8 @@ describe('Rails HTTP Endpoints', () => {
   // ============================================================================
 
   describe('Health', () => {
-    it('GET /health should return 200', async () => {
-      const response = await axiosInstance.get('/health');
+    it('GET /ledger/health should return 200', async () => {
+      const response = await axiosInstance.get('/ledger/health');
       expect(response.status).toBe(200);
       expect(response.data).toHaveProperty('status');
       expect(response.data.status).toBe('ok');
@@ -319,24 +320,24 @@ describe('Rails HTTP Endpoints', () => {
 // Run tests if executed directly
 if (require.main === module) {
   (async () => {
-    console.log('Running Rails Endpoint Contract Tests...');
-    console.log(`Rails Base URL: ${RAILS_BASE_URL}`);
+    console.log('Running Factory Endpoint Contract Tests...');
+    console.log(`Factory Base URL: ${FACTORY_BASE_URL}`);
     
     try {
       // Quick health check
-      await axiosInstance.get('/health');
-      console.log('✓ Rails service is running');
+      await axiosInstance.get('/ledger/health');
+      console.log('✓ Factory API is running');
       
       // Run all tests
-      const testSuite = new describe('Rails HTTP Endpoints', () => {});
+      const testSuite = new describe('Factory HTTP Endpoints', () => {});
       console.log('✓ All tests defined');
       console.log('\nRun with Jest for full test execution:');
-      console.log('  npm test -- rails-endpoints.test.ts');
+      console.log('  npm test -- factory-endpoints.test.ts');
     } catch (error: any) {
-      console.error('✗ Rails service is not running');
+      console.error('✗ Factory API is not running');
       console.error(`  Error: ${error.message}`);
-      console.error('\nStart Rails service first:');
-      console.error('  cargo run -p allternit-agent-system-rails --bin allternit-rails-service');
+      console.error('\nStart allternit-api first (it serves /api/factory in process):');
+      console.error('  cargo run -p allternit-api');
       process.exit(1);
     }
   })();

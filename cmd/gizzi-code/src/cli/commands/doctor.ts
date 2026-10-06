@@ -15,6 +15,7 @@ import {
   checkVoiceEngine,
   type DoctorCheck,
   checkFactoryEngine,
+  checkFactoryHomeMove,
 } from "@/cli/commands/doctorChecks"
 import { isDaemonRunning } from "@/runtime/automation/cron/daemon"
 import { supervisionState } from "@/runtime/automation/cron/supervision"
@@ -192,6 +193,7 @@ export const DoctorCommand = cmd({
 
       // ── Allternit Factory engine ──
       checks.push(...(await checkFactoryEngine()))
+      checks.push(checkFactoryHomeMove())
 
       // ── Project ──
       {

@@ -1,7 +1,7 @@
 //! Node identity: one Ed25519 keypair per `--session ao` state dir, owned by
 //! ao alone (spike D1 — never reads gizzi-code/agent-daemon/Desktop identity
 //! files). Keypair is reused across re-pairs; only the device token rotates.
-//! Storage: `~/.agent-orchestrator/fabric/identity.json`, mode 0600, atomic
+//! Storage: `~/.allternit/factory/fabric/identity.json`, mode 0600, atomic
 //! temp-write + rename (pattern from gizzi `pairing.ts:119-129`).
 
 use std::path::PathBuf;
@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 
 use super::wire::RuntimeSessionResponse;
 
-const IDENTITY_DIR: &str = ".agent-orchestrator/fabric";
+const IDENTITY_DIR: &str = "fabric";
 const IDENTITY_FILE: &str = "identity.json";
 
 /// Proactive rotation window: rotate when the token expires within 7 days
@@ -43,8 +43,10 @@ pub(crate) struct NodeIdentity {
 
 impl NodeIdentity {
     pub(crate) fn identity_path() -> PathBuf {
-        let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"));
-        home.join(IDENTITY_DIR).join(IDENTITY_FILE)
+        crate::factory_host::factory_path(
+            &format!("{IDENTITY_DIR}/{IDENTITY_FILE}"),
+            Some(crate::factory_host::home_path(".agent-orchestrator/fabric").join(IDENTITY_FILE)), // old-names: keep (identity paired before the Factory)
+        )
     }
 
     /// Generate a fresh keypair (no pairing yet). Used on first `pair`.
@@ -109,7 +111,7 @@ impl NodeIdentity {
         if self.is_paired() {
             Ok(())
         } else {
-            Err("node is not paired — run `ao fabric pair` first".to_string())
+            Err("node is not paired — run `allternit-factory pane fabric pair` first".to_string())
         }
     }
 
@@ -151,7 +153,7 @@ impl NodeIdentity {
     }
 
     /// Human-readable key fingerprint: sha256 of the raw public key,
-    /// lowercase hex. Used by `ao fabric status`.
+    /// lowercase hex. Used by `allternit-factory pane fabric status`.
     pub(crate) fn fingerprint(&self) -> String {
         let Ok(bytes) = URL_SAFE_NO_PAD.decode(&self.public_key) else {
             return "<invalid public key>".to_string();

@@ -18,7 +18,7 @@ fn factory(home: &Path, args: &[&str]) -> Output {
         .env_remove("HERDR_SOCKET_PATH")
         .env_remove("HERDR_SESSION")
         .env_remove("HERDR_ENV")
-        .env_remove("ALLTERNIT_COMMRAILS_ROOT")
+        .env_remove("ALLTERNIT_FACTORY_ROOT")
         .output()
         .expect("run allternit-factory")
 }
@@ -201,11 +201,11 @@ fn transcript_of_an_unknown_agent_is_not_found() {
 #[test]
 fn internal_rails_keeps_its_own_help() {
     let home = tempfile::tempdir().unwrap();
-    let out = factory(home.path(), &["internal", "rails", "--help"]);
+    let out = factory(home.path(), &["internal", "core", "--help"]);
     assert_eq!(out.status.code(), Some(0));
     let text = String::from_utf8_lossy(&out.stdout);
     for group in ["ledger", "index", "lease", "vault", "replay", "hook"] {
-        assert!(text.contains(group), "internal rails --help missing {group}: {text}");
+        assert!(text.contains(group), "internal core --help missing {group}: {text}");
     }
 }
 

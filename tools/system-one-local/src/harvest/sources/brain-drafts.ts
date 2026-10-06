@@ -1,6 +1,6 @@
 // Allternit Brain draft accept/reject (Allternit Brain/.incoming/{applied,rejected}/) ->
-// bank.lesson_worthiness items. ONLY CommRails lessons-triage drafts carry the
-// x_commrails candidate block (candidate_id, dag_id, node_id, verdict); every
+// bank.lesson_worthiness items. ONLY the Factory engine's lessons-triage drafts carry
+// the candidate block (field name in candidateFromDraft; candidate_id, dag_id, node_id, verdict); every
 // other producer (watch-brain.js, session dumps) writes a different document
 // shape that is not a lesson_worthiness state, so those files are skipped.
 // Labels mirror triage.rs report_applied_outcomes / report_rejected_outcomes:
@@ -13,14 +13,14 @@ import { join } from "node:path";
 import { BANKS, lessonCandidateState } from "../banks.ts";
 import type { HarvestItem, HarvestSource } from "../types.ts";
 
-/** triage.rs question ids (kept in sync: commrails/src/lessons/triage.rs). */
+/** triage.rs question ids (kept in sync: factory/engine/src/workspace/lessons/triage.rs). */
 export const Q_TASK_SUCCESS = "task_success";
 export const Q_REUSABLE = "reusable_pattern";
 export const Q_SUPPORTED = "supported_by_events";
 
 /** Rebuild the triage candidate JSON from a draft (draft_markdown's evidence block). */
 export function candidateFromDraft(d: Record<string, any>): Record<string, unknown> {
-  const x = d.x_commrails ?? {};
+  const x = d.x_commrails ?? {}; // old-names: keep (stored data: Brain draft field the engine lessons triage writes)
   const md: string = d.updates?.[0]?.content ?? "";
   const num = (re: RegExp) => { const m = re.exec(md); return m ? Number(m[1]) : 0; };
   const list = (re: RegExp) => { const m = re.exec(md); return m ? m[1].split(",").map((s) => s.trim()).filter(Boolean) : []; };
@@ -54,7 +54,7 @@ export function brainDraftsSource(brainRoot: string): HarvestSource {
     *items() {
       const seen = new Set<string>();
       for (const { path, file, d } of [...drafts(brainRoot, "applied"), ...drafts(brainRoot, "rejected")]) {
-        const x = d.x_commrails;
+        const x = d.x_commrails; // old-names: keep (stored data: Brain draft field the engine lessons triage writes)
         if (!x?.candidate_id) continue; // not a lessons-triage draft: no lesson_worthiness state
         const cid = String(x.candidate_id);
         if (seen.has(cid)) continue; // reviewed once per candidate

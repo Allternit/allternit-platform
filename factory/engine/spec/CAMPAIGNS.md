@@ -90,7 +90,7 @@ terminal campaigns complete with `skipped_<status>`.
 
 | Executor | Behaviour |
 |---|---|
-| `command` | Runs `/bin/sh -c <command>` in the rails root **only if** `automation.yaml` has `wake.enabled_executors: [command]` **and** the exact string is in `wake.command_allowlist`. Timeout `wake.command_timeout_secs` (default 900). Env: `ALLTERNIT_CAMPAIGN_ID`, `ALLTERNIT_WAKE_ID`, `ALLTERNIT_WAKE_MESSAGE`, `ALLTERNIT_RAILS_ROOT`, `ALLTERNIT_DAG_ID`. Non-zero exit or timeout raises needs-you `campaign:<id>:failed`. |
+| `command` | Runs `/bin/sh -c <command>` in the Factory root **only if** `automation.yaml` has `wake.enabled_executors: [command]` **and** the exact string is in `wake.command_allowlist`. Timeout `wake.command_timeout_secs` (default 900). Env: `ALLTERNIT_CAMPAIGN_ID`, `ALLTERNIT_WAKE_ID`, `ALLTERNIT_WAKE_MESSAGE`, `ALLTERNIT_FACTORY_ROOT`, `ALLTERNIT_DAG_ID`. Non-zero exit or timeout raises needs-you `campaign:<id>:failed`. |
 | `command` (not enabled/allowlisted) | No run. Needs-you `campaign:<id>:check`. |
 | `bot:<slug>`, `ao:<harness>` | **Never spawned by a sweep**, even if listed in `enabled_executors`. Needs-you `campaign:<id>:check`. Spawn gating (concurrency and hourly caps, S10) lands with the drive runner. |
 

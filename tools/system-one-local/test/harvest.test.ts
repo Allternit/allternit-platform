@@ -280,9 +280,9 @@ describe("agent-ledger source (judge node, git-verified)", () => {
 
 describe("brain-drafts source (lesson_worthiness)", () => {
   const lessonsDraft = {
-    source: "allternit-commrails lessons triage (dag:d wih:w)", date: "2026-09-20", auto_apply: false,
-    updates: [{ doc: "Sessions/lessons/commrails-d-c.md", action: "create-or-replace", content: "# Lesson\n\n- final status: success · closed: 2026-09-20\n- attempts: 2 (failed: 1)\n- evidence: ev1, ev2\n\n### Node output excerpt\n\n```text\nfixed the retry bug\n```\n" }],
-    x_commrails: { candidate_id: "mc_w", dag_id: "d", node_id: "n", wih_id: "w", verdict: "promoted", scored: true, s1_decision_ids: {} },
+    source: "allternit-factory lessons triage (dag:d wih:w)", date: "2026-09-20", auto_apply: false,
+    updates: [{ doc: "Sessions/lessons/factory-d-c.md", action: "create-or-replace", content: "# Lesson\n\n- final status: success · closed: 2026-09-20\n- attempts: 2 (failed: 1)\n- evidence: ev1, ev2\n\n### Node output excerpt\n\n```text\nfixed the retry bug\n```\n" }],
+    x_commrails: { candidate_id: "mc_w", dag_id: "d", node_id: "n", wih_id: "w", verdict: "promoted", scored: true, s1_decision_ids: {} }, // old-names: keep (stored data: Brain draft field the engine lessons triage writes)
   };
   test("candidateFromDraft rebuilds the triage state", () => {
     const c = candidateFromDraft(lessonsDraft);
@@ -299,7 +299,7 @@ describe("brain-drafts source (lesson_worthiness)", () => {
     fs.mkdirSync(join(root, ".incoming", "rejected"), { recursive: true });
     fs.writeFileSync(join(root, ".incoming", "applied", "draft-1.json"), JSON.stringify(lessonsDraft));
     fs.writeFileSync(join(root, ".incoming", "applied", "draft-2.json"), JSON.stringify({ source: "watch-brain.js repo scanner", updates: [] })); // not lessons
-    const rejected = { ...lessonsDraft, x_commrails: { ...lessonsDraft.x_commrails, candidate_id: "mc_x" }, x_rejection: { why: "not-reusable" } };
+    const rejected = { ...lessonsDraft, x_commrails: { ...lessonsDraft.x_commrails, candidate_id: "mc_x" }, x_rejection: { why: "not-reusable" } }; // old-names: keep (stored data: Brain draft field the engine lessons triage writes)
     fs.writeFileSync(join(root, ".incoming", "rejected", "draft-3.json"), JSON.stringify(rejected));
     const got = [...(brainDraftsSource(root).items() as Iterable<HarvestItem>)];
     expect(got.length).toBe(3); // 2 applied truths + 1 rejected reusable=false

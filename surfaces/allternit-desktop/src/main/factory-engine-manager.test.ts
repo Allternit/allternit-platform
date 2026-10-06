@@ -153,10 +153,10 @@ describe('removeStaleTools', () => {
     const bin = join(home, '.local', 'bin');
     mkdirSync(bin, { recursive: true });
     // Old tools.
-    file(join(bin, 'allternit-rails'), Buffer.concat([Buffer.from([0xcf, 0xfa, 0xed, 0xfe]), Buffer.from('…allternit_commrails::cli…')]));
-    symlinkSync('/Users/u/.claude/skills/agent-orchestrator/scripts/ao-send', join(bin, 'ao-send'));
-    symlinkSync('/Users/u/allternit/tools/agent-orchestrator/scripts/ao-consult', join(bin, 'ao-consult.repo-link'));
-    file(join(bin, 'ao-consult'), '#!/usr/bin/env bash\nexport AO_CONSULT_ACTIVE=1\nexec "$HOME/.local/bin/ao-consult.repo-link" "$@"\n');
+    file(join(bin, 'allternit-rails'), Buffer.concat([Buffer.from([0xcf, 0xfa, 0xed, 0xfe]), Buffer.from('…allternit_commrails::cli…')])); // old-names: keep (installer removes the old binaries)
+    symlinkSync('/Users/u/.claude/skills/agent-orchestrator/scripts/ao-send', join(bin, 'ao-send')); // old-names: keep (installer removes the old binaries)
+    symlinkSync('/Users/u/allternit/tools/agent-orchestrator/scripts/ao-consult', join(bin, 'ao-consult.repo-link')); // old-names: keep (installer removes the old binaries)
+    file(join(bin, 'ao-consult'), '#!/usr/bin/env bash\nexport AO_CONSULT_ACTIVE=1\nexec "$HOME/.local/bin/ao-consult.repo-link" "$@"\n'); // old-names: keep (installer removes the old binaries)
     // Not old tools: same-looking names the user owns.
     symlinkSync('/opt/homebrew/bin/ao-thing', join(bin, 'ao-thing'));
     file(join(bin, 'ao-notes'), '#!/bin/sh\necho mine\n');
@@ -164,19 +164,19 @@ describe('removeStaleTools', () => {
 
     const r = removeStaleTools(home);
     expect(r.removed.map((p) => p.slice(bin.length + 1)).sort()).toEqual(
-      ['allternit-rails', 'ao-consult', 'ao-consult.repo-link', 'ao-send'],
+      ['allternit-rails', 'ao-consult', 'ao-consult.repo-link', 'ao-send'], // old-names: keep (installer removes the old binaries)
     );
     expect(r.kept.map((k) => k.path.slice(bin.length + 1)).sort()).toEqual(['ao-notes', 'ao-thing']);
     expect(existsSync(join(bin, 'gizzi-coder'))).toBe(true);
     expect(lstatSync(join(bin, 'ao-thing')).isSymbolicLink()).toBe(true);
   });
 
-  it('keeps an allternit-rails that is not the CommRails binary', () => {
+  it('keeps an old-engine-named file that is not the old engine binary', () => {
     const home = tmp('allternit-home-');
-    file(join(home, '.local', 'bin', 'allternit-rails'), '#!/bin/sh\nexec gizzi agents "$@"\n');
+    file(join(home, '.local', 'bin', 'allternit-rails'), '#!/bin/sh\nexec gizzi agents "$@"\n'); // old-names: keep (installer removes the old binaries)
     const r = removeStaleTools(home);
     expect(r.removed).toEqual([]);
-    expect(r.kept[0].reason).toMatch(/not the CommRails binary/);
+    expect(r.kept[0].reason).toMatch(/not the old engine binary/);
   });
 
   it('does nothing when ~/.local/bin does not exist', () => {

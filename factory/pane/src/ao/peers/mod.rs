@@ -1,4 +1,4 @@
-//! `ao peer list|send` — Rails peer feed for the P5 visibility panel
+//! `allternit-factory pane peer list|send` — Rails peer feed for the P5 visibility panel
 //! (spec binding decision 4; memo Finding 3).
 //!
 //! The registry is the Rails `PeerRegistry` file at
@@ -6,8 +6,8 @@
 //! **read-only** through the rails crate's own `Peer`/`PeerStatus` types so
 //! the ao side can never drift from the registry schema.
 //!
-//! Root resolution (documented in `docs/programs/ao/AO_VISIBILITY_PEERS_NOTES.md`):
-//! **`--root <dir>` > `AO_PEERS_ROOT` env > the ao process's current working
+//! Root resolution (see the P5 visibility/peers notes in `docs/programs/`):
+//! **`--root <dir>` > `ALLTERNIT_FACTORY_PEERS_ROOT` env > the ao process's current working
 //! directory.** The registry is local-only — sessions under different roots
 //! are invisible to each other (`peer/mod.rs` doc comment) — so a wrong root
 //! means an empty panel.
@@ -29,7 +29,7 @@ pub use allternit_factory_engine::peer::{Peer, PeerStatus};
 use allternit_factory_engine::peer::PeerEnvelope;
 
 /// Env override for the registry root (flag > env > cwd).
-pub const ROOT_ENV_VAR: &str = "AO_PEERS_ROOT";
+pub const ROOT_ENV_VAR: &str = "ALLTERNIT_FACTORY_PEERS_ROOT";
 
 /// Resolve the registry root: flag > env > process cwd.
 pub fn registry_root(flag: Option<&str>) -> std::io::Result<PathBuf> {
@@ -116,7 +116,7 @@ pub fn send_message(
         .map_err(|e| format!("send_envelope: {e}"))
 }
 
-/// CLI entry: `ao peer list [--root <dir>]` / `ao peer send <name> <message> [--root <dir>]`.
+/// CLI entry: `allternit-factory pane peer list [--root <dir>]` / `allternit-factory pane peer send <name> <message> [--root <dir>]`.
 pub fn run(args: &[String]) -> std::io::Result<i32> {
     let sub = args.first().map(String::as_str).unwrap_or("");
     let rest = &args[1.min(args.len())..];
@@ -137,13 +137,13 @@ pub fn run(args: &[String]) -> std::io::Result<i32> {
             let name = rest.first().cloned().unwrap_or_default();
             let body = rest.get(1).cloned().unwrap_or_default();
             if name.is_empty() || body.is_empty() {
-                eprintln!("usage: ao peer send <name> <message> [--root <dir>]");
+                eprintln!("usage: allternit-factory pane peer send <name> <message> [--root <dir>]");
                 return Ok(2);
             }
             let root = registry_root(root_flag.as_deref())?;
             let peers = read_registry(&root)?;
             let Some(peer) = resolve(&peers, &name) else {
-                eprintln!("ao peer send: no peer named {name:?} under {}", root.display());
+                eprintln!("allternit-factory pane peer send: no peer named {name:?} under {}", root.display());
                 return Ok(1);
             };
             let receipt = send_message("ao", peer, &body, std::time::Duration::from_secs(2))
@@ -160,7 +160,7 @@ pub fn run(args: &[String]) -> std::io::Result<i32> {
             Ok(if receipt.delivered { 0 } else { 1 })
         }
         _ => {
-            eprintln!("usage: ao peer <list|send> [--root <dir>]");
+            eprintln!("usage: allternit-factory pane peer <list|send> [--root <dir>]");
             Ok(2)
         }
     }

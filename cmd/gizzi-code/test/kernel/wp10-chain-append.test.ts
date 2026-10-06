@@ -3,7 +3,7 @@ import { KernelTurn } from "../../src/runtime/kernel/compilers/turn-hook"
 import type { ToolReceiptV1 } from "../../../../spec/Contracts/kernel/v1/generated/ts/kernel-abi"
 
 const oldFlag = process.env.GIZZI_KERNEL_COMPILERS
-const oldURL = process.env.GIZZI_COMMRAILS_URL
+const oldURL = process.env.ALLTERNIT_FACTORY_URL
 let server: ReturnType<typeof Bun.serve> | undefined
 
 afterEach(() => {
@@ -12,13 +12,13 @@ afterEach(() => {
   KernelTurn.reset()
   if (oldFlag === undefined) delete process.env.GIZZI_KERNEL_COMPILERS
   else process.env.GIZZI_KERNEL_COMPILERS = oldFlag
-  if (oldURL === undefined) delete process.env.GIZZI_COMMRAILS_URL
-  else process.env.GIZZI_COMMRAILS_URL = oldURL
+  if (oldURL === undefined) delete process.env.ALLTERNIT_FACTORY_URL
+  else process.env.ALLTERNIT_FACTORY_URL = oldURL
 })
 
 function listen(handler: (req: Request) => Promise<Response>) {
   server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: handler })
-  process.env.GIZZI_COMMRAILS_URL = server.url.toString().replace(/\/$/, "")
+  process.env.ALLTERNIT_FACTORY_URL = server.url.toString().replace(/\/$/, "")
 }
 
 describe("WP10 external chain append", () => {
@@ -74,5 +74,11 @@ describe("WP10 external chain append", () => {
     expect(await KernelTurn.withToolReceipt({ sessionID: "s", tool: "read", args: {} }, async () => "ok")).toBe("ok")
     expect(KernelTurn.record("s")!.errors[0]).toStartWith("chain_append:")
     expect(KernelTurn.record("s")!.receipts[0].extensions?.["x-chain_append"]).toBe("failed")
+  })
+
+  test("engine URL: ALLTERNIT_FACTORY_URL wins, old shell var still honoured, default is local engine", () => {
+    expect(KernelTurn.engineUrl({ ALLTERNIT_FACTORY_URL: "http://f:1/" })).toBe("http://f:1")
+    expect(KernelTurn.engineUrl({ GIZZI_RAILS_URL: "http://old:2" })).toBe("http://old:2") // old-names: keep (tests the deprecated fallback)
+    expect(KernelTurn.engineUrl({})).toBe("http://127.0.0.1:3011")
   })
 })

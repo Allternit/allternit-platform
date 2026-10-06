@@ -1,4 +1,4 @@
-//! `ao harness status|sync|uninstall` — Rust port of the Allternit ops harness
+//! `allternit-factory pane harness status|sync|uninstall` — Rust port of the Allternit ops harness
 //! sync (`Allternit Brain/Ops/harness-sync.js` + `harness-sync/lib.js`) with
 //! byte-parity across all 16 tools in `Ops/harness.json`.
 //!
@@ -15,7 +15,7 @@
 //!
 //! The manifest ships embedded below (`harness.json`, a verbatim copy of
 //! `Ops/harness.json` — run.sh asserts the copy stays byte-identical).
-//! `AO_HARNESS_MANIFEST` overrides the path for tests and future phases.
+//! `ALLTERNIT_FACTORY_HARNESS_MANIFEST` overrides the path for tests and future phases.
 
 mod collate;
 mod json_val;
@@ -81,7 +81,7 @@ pub(crate) struct ToolCfg {
     pub(crate) sync_when_absent: bool,
     #[serde(default)]
     pub(crate) mcp: Option<McpCfg>,
-    // P7 (ao harness install): per-tool license class + install recipe. Both
+    // P7 (allternit-factory pane harness install): per-tool license class + install recipe. Both
     // verified ABSENT before P7 (spec binding 2); `_licenseNote` in the
     // manifest carries the evidence URL for each class assignment.
     #[serde(default)]
@@ -160,7 +160,7 @@ pub(crate) struct McpCfg {
 }
 
 fn load_manifest() -> std::io::Result<Manifest> {
-    let text = if let Ok(override_path) = std::env::var("AO_HARNESS_MANIFEST") {
+    let text = if let Ok(override_path) = std::env::var("ALLTERNIT_FACTORY_HARNESS_MANIFEST") {
         std::fs::read_to_string(&override_path).map_err(|err| {
             std::io::Error::new(
                 err.kind(),
@@ -246,8 +246,8 @@ pub(crate) struct FsCtx {
 
 impl FsCtx {
     fn from_env() -> Self {
-        // P7: a managed-dir install (AO_HARNESS_HOME or ~/.ao/harness) must be
-        // visible to the installed() probes so `ao harness sync` reaches tools
+        // P7: a managed-dir install (ALLTERNIT_FACTORY_HARNESS_HOME or ~/.allternit/factory/harness) must be
+        // visible to the installed() probes so `allternit-factory pane harness sync` reaches tools
         // ao itself installed — the managed bin dir joins PATH exactly the way
         // HR CE puts $TOOLS/bin on PATH for its entrypoint (spec binding 5:
         // executor registration is P4 machinery; P7 just feeds it a reachable
@@ -533,7 +533,7 @@ fn mcp_remove(m: &McpCfg, server: &McpServer, dry_run: bool) -> std::io::Result<
 }
 
 // ---------------------------------------------------------------------------
-// CLI surface (`ao harness [status|sync|uninstall] [--dry-run] [--tools=a,b]`)
+// CLI surface (`allternit-factory pane harness [status|sync|uninstall] [--dry-run] [--tools=a,b]`)
 // ---------------------------------------------------------------------------
 
 pub(crate) fn run(args: &[String]) -> std::io::Result<i32> {
@@ -561,7 +561,7 @@ pub(crate) fn run(args: &[String]) -> std::io::Result<i32> {
         }
     }
     let command = positionals.first().map(String::as_str).unwrap_or("status");
-    // `positionals.get(1..)` — a bare `ao harness` (no positional at all)
+    // `positionals.get(1..)` — a bare `allternit-factory pane harness` (no positional at all)
     // must not slice-panic on an empty vec.
     let install_tools: Vec<&str> = positionals
         .get(1..)

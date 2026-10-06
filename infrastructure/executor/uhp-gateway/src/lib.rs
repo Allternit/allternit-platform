@@ -43,7 +43,7 @@ pub struct ServeConfig {
 pub async fn serve(cfg: ServeConfig) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if !cfg.engine_socket.exists() {
         return Err(format!(
-            "engine socket {} not found (set HERDR_SOCKET_PATH or --engine-socket; start the engine first)",
+            "engine socket {} not found (set ALLTERNIT_FACTORY_PANE_SOCKET or --engine-socket; start the engine first)",
             cfg.engine_socket.display()
         )
         .into());

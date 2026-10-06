@@ -432,7 +432,7 @@ export type AppState = DeepImmutable<{
     verificationStarted: boolean
     verificationCompleted: boolean
   }
-  // CommRails DAG view mirrored from GET /api/commrails/dags (peer mode
+  // Factory DAG view mirrored from GET /api/factory/plans/dags (peer mode
   // only). Written by RailsDagBridge (poll) and ExitPlanModeV2Tool (plan
   // publish); read by the RailsTaskList panel.
   railsDag: {

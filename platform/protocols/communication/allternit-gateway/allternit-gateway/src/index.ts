@@ -164,16 +164,13 @@ app.use('/api/v1/a2ui', async (req, res) => {
 
 // ═════════════════════════════════════════════════════════════════════════════
 // ═════════════════════════════════════════════════════════════════════════════
-// Generic API Proxy (Catch-all for v1, Rails, and Sessions)
+// Generic API Proxy (Catch-all for v1, the Factory, and Sessions)
 // ═════════════════════════════════════════════════════════════════════════════
 
-app.use(['/api/v1', '/api/rails', '/api/chat', '/session', '/v1'], async (req, res) => {
+app.use(['/api/v1', '/api/factory', '/api/chat', '/session', '/v1'], async (req, res) => {
+  // allternit-api serves all of these, /api/factory included (in process).
   const apiUrl = process.env.API_URL || 'http://127.0.0.1:3000';
-  const kernelUrl = process.env.KERNEL_URL || 'http://127.0.0.1:3004';
-  
-  // Decide target based on path
-  const targetBase = req.baseUrl.startsWith('/api/rails') ? kernelUrl : apiUrl;
-  const targetUrl = `${targetBase}${req.baseUrl}${req.path}${req.url.includes('?') ? '?' + req.url.split('?')[1] : ''}`;
+  const targetUrl = `${apiUrl}${req.baseUrl}${req.path}${req.url.includes('?') ? '?' + req.url.split('?')[1] : ''}`;
 
   console.log(`[Gateway] Proxying to: ${targetUrl}`);
 

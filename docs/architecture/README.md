@@ -179,7 +179,7 @@ Use:
 - **Al** — persistent user-facing principal/persona.
 - **`a://`** — internal protocol namespace.
 - **Fabric Transport** — worker/lease transport.
-- **CommRails** — peer/message transport.
+- **Factory peer messaging** — peer/message transport.
 - **Cowork** — control room.
 - **Gizzi** — code/terminal technical worker.
 - **Bot** — independently permissioned persistent worker principal.

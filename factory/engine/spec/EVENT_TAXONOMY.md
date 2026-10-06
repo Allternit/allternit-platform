@@ -65,7 +65,7 @@ All events are appended to the Ledger as JSON objects with:
 - WIHReclaimed (payload: wih_id, dag_id, node_id, reason) — followed by WIHClosedSigned with final_status RECLAIMED
 
 ### Spawn gate (third-party harnesses)
-- HarnessToolGated (payload: wih_id|null, harness, harness_session_id, tool, decision allow|deny|unresolved, reason, paths, command) — written by `allternit-commrails hook claude-pretool` for every tool call, WIH-bound or not (Q25: record everything; `unresolved` = allowed, effect not scannable).
+- HarnessToolGated (payload: wih_id|null, harness, harness_session_id, tool, decision allow|deny|unresolved, reason, paths, command) — written by `allternit-factory internal core hook claude-pretool` for every tool call, WIH-bound or not (Q25: record everything; `unresolved` = allowed, effect not scannable).
 - HarnessSpawnRefused (payload: wih_id, harness, reason) — an unhooked harness refused on a WIH whose policy requires leased writes.
 
 ### Drive runner (spec/DRIVE.md)

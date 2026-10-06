@@ -16,7 +16,12 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut addr: SocketAddr = "127.0.0.1:8410".parse()?;
     let mut token: Option<String> = std::env::var("UHP_TOKEN").ok().filter(|value| !value.is_empty());
     let mut data_dir: Option<PathBuf> = None;
-    let mut engine_socket: Option<PathBuf> = std::env::var_os("HERDR_SOCKET_PATH").map(PathBuf::from);
+    // $ALLTERNIT_FACTORY_PANE_SOCKET, else the socket the pane engine exports
+    // into every pane (its own env contract, kept from upstream).
+    let mut engine_socket: Option<PathBuf> = std::env::var_os("ALLTERNIT_FACTORY_PANE_SOCKET")
+        .filter(|v| !v.is_empty())
+        .or_else(|| std::env::var_os("HERDR_SOCKET_PATH")) // old-names: keep (the pane engine's upstream env contract)
+        .map(PathBuf::from);
 
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -51,7 +56,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                      --addr           bind address (default 127.0.0.1:8410)\n\
                      --token          bearer token (env UHP_TOKEN; random if unset)\n\
                      --data-dir       state directory (default $HOME/.ao/uhp)\n\
-                     --engine-socket  herdr engine socket (env HERDR_SOCKET_PATH; required)"
+                     --engine-socket  pane engine socket (env ALLTERNIT_FACTORY_PANE_SOCKET; required)"
                 );
                 return Ok(());
             }
@@ -71,7 +76,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             .join(".ao/uhp")
     });
     let engine_socket = engine_socket.ok_or(
-        "no engine socket: pass --engine-socket or set HERDR_SOCKET_PATH",
+        "no engine socket: pass --engine-socket or set ALLTERNIT_FACTORY_PANE_SOCKET",
     )?;
 
     let runtime = tokio::runtime::Builder::new_multi_thread()

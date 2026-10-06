@@ -52,7 +52,7 @@ Cold (Vault):
 
 ## Lesson triage (Beacon pattern → Brain close-out)
 
-`allternit-commrails lessons triage --dag <id>`:
+`allternit-factory internal core lessons triage --dag <id>`:
 
 1. For each candidate of the DAG without a `LessonTriaged` event (or all with
    `--force`), ask the local System One server
@@ -65,7 +65,7 @@ Cold (Vault):
    (`--task-min`/`--mean-min`).
 3. Promoted → a draft in the allternit-ops `brain_update_draft` file format with
    `confirm: false`: `<brain_root>/.incoming/draft-<ms>.json`
-   `{source, date, auto_apply: false, updates: [{doc: "Sessions/lessons/commrails-<dag>-<candidate>.md", action: "create-or-replace", content}], x_commrails: {…scores}}`.
+   `{source, date, auto_apply: false, updates: [{doc: "Sessions/lessons/commrails-<dag>-<candidate>.md", action: "create-or-replace", content}], x_commrails: {…scores}}`. <!-- old-names: keep (Brain draft data key and lesson file names) -->
    The content has frontmatter (`status: draft`), an empty "Lesson" section for the
    human, the scores, and the ledger evidence. Never applied here.
 4. Server unreachable → scoring is skipped and the draft is written marked

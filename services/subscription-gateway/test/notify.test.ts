@@ -41,7 +41,7 @@ describe("terminal-state notify (D12)", () => {
     cleanupDir(dir);
   });
 
-  it("bot requester → CommRails peer message on completed", async () => {
+  it("bot requester → Factory peer message on completed", async () => {
     insertTask(deps.db, sampleTask({ task_id: "t-notify" }));
     deps.log.append({
       task_id: "t-notify",
@@ -53,7 +53,7 @@ describe("terminal-state notify (D12)", () => {
 
     expect(recorder.calls).toHaveLength(1);
     expect(recorder.calls[0].url).toBe(
-      "http://127.0.0.1:18013/api/rails/peers/bot-1/send"
+      "http://127.0.0.1:18013/api/factory/peers/bot-1/send"
     );
     expect(recorder.calls[0].body.from).toBe("subscription-gateway");
     expect(recorder.calls[0].body.body).toContain("t-notify");
@@ -72,7 +72,7 @@ describe("terminal-state notify (D12)", () => {
     expect(recorder.calls).toHaveLength(0);
   });
 
-  it("user requester → desktop drop file, no CommRails call", async () => {
+  it("user requester → desktop drop file, no Factory peer call", async () => {
     insertTask(
       deps.db,
       sampleTask({ task_id: "t-user", requester: { kind: "user", id: "user-1" } })

@@ -1,7 +1,7 @@
-# CommRails Bridge (scoped remote identities)
+# Factory Bridge (scoped remote identities)
 
 Status: **built, default OFF.** Nothing listens until someone runs
-`allternit-factory internal rails bridge serve`, and the listener refuses every
+`allternit-factory internal core bridge serve`, and the listener refuses every
 non-loopback bind unless explicitly told otherwise. Enabling it on the mesh is
 Eoj's call (see "Enabling" below). Tracks build-plan item P1-5 ("Box ↔ Mac
 bridge for Chief").
@@ -9,7 +9,7 @@ bridge for Chief").
 ## Why
 
 Chief is a Grok bot on the shared "box" host. It writes `/workspace/…` there,
-but CommRails DAGs live in ledgers under workspace roots on Eoj's Mac, so Chief
+but Factory DAGs live in ledgers under workspace roots on Eoj's Mac, so Chief
 can neither create nor read them. The bridge gives Chief a narrow door:
 **create and read plans, send and read coordination mail — nothing else.**
 
@@ -25,21 +25,21 @@ it, can be compromised, and limits what a compromised box can do.
 | Listener, route table, guard, audit | `src/bridge/server.rs` |
 | `identity add\|list\|revoke`, `bridge serve` | `src/api/cli/rails.rs` |
 | Remote prompt attribution (Gate 0) | `Gate::plan_new_with_origin`, `templates::plan_from_template_with_origin` |
-| Box-side client (Python 3.8+ stdlib) | `tools/commrails-bridge-client/commrails-bridge` |
+| Box-side client (Python 3.8+ stdlib) | `tools/factory-bridge-client/factory-bridge` |
 | Tests (loopback only) | `tests/bridge.rs`, unit tests in `src/bridge/*` |
 
 ### Identities
 
 ```bash
-allternit-factory internal rails identity add --actor bot:chief \
+allternit-factory internal core identity add --actor bot:chief \
   --scopes plan:create,plan:read,mail:send,mail:read,template:instantiate
 # prints the bearer token ONCE on stdout (crb_<64 hex>)
-allternit-factory internal rails identity list
-allternit-factory internal rails identity revoke --actor bot:chief     # or --id bid_…
+allternit-factory internal core identity list
+allternit-factory internal core identity revoke --actor bot:chief     # or --id bid_…
 ```
 
-- File: `$ALLTERNIT_COMMRAILS_BRIDGE_IDENTITIES`, else
-  `~/.allternit/commrails-bridge/identities.json` (outside every workspace
+- File: `$ALLTERNIT_FACTORY_BRIDGE_IDENTITIES`, else
+  `~/.allternit/factory/bridge/identities.json` (outside every workspace
   root, so it never lands in a repo). Written atomically at mode 0600; the
   listener refuses to authenticate against a file readable by group/other.
 - Stored per identity: id, actor, scopes, **SHA-256 of the token** (never the
@@ -60,7 +60,7 @@ allternit-factory internal rails identity revoke --actor bot:chief     # or --id
 ### Listener
 
 ```bash
-allternit-factory internal rails bridge serve --root <workspace-root> \
+allternit-factory internal core bridge serve --root <workspace-root> \
   [--bind 127.0.0.1:7433] [--allow-remote] [--identities <file>] \
   [--rate-limit-per-min 60]
 ```
@@ -124,7 +124,7 @@ template-param refusal, 404 unknown route/dag/node/template.
 
 ### Mirror
 
-`commrails-bridge mirror <dag_id> [runs_dir]` writes
+`factory-bridge mirror <dag_id> [runs_dir]` writes
 `<runs_dir>/<dag_id>/` (default `/workspace/runs/<dag_id>/`):
 
 ```
@@ -152,7 +152,7 @@ review decisions, gate decisions), leases (write locks).
 | Send mail on `dag:`/`wih:`/`mail:` threads as `bot:chief` | Request, renew, or release leases |
 | Read mail in the served root | Resolve wait-gates or make gate/review decisions |
 | Spend its rate budget (60 req/min default) | Speak as a user, or as a different bot |
-| | Reach any other CommRails route (ledger, vault, peers, steer, init …) |
+| | Reach any other Factory route (ledger, vault, peers, steer, init …) |
 | | Read files other than the ledger, mail bodies, node output blobs, and the template store |
 
 Residual risks, accepted and documented:
@@ -170,7 +170,7 @@ Residual risks, accepted and documented:
 - **Token at rest on the box** is only as safe as the box's `0600` file. Assume
   it can leak; the scope ceiling above is what bounds the damage.
 
-**Revoke = one command:** `allternit-factory internal rails identity revoke --actor
+**Revoke = one command:** `allternit-factory internal core identity revoke --actor
 bot:chief`. Effective on the next request, no restart. Then mint a new token
 if Chief should keep access.
 
@@ -181,10 +181,10 @@ Nothing below has been applied. Each step is a manual decision.
 1. Mint the identity on the Mac and move the token to the box:
 
    ```bash
-   allternit-factory internal rails identity add --actor bot:chief \
+   allternit-factory internal core identity add --actor bot:chief \
      --scopes plan:create,plan:read,mail:send,mail:read,template:instantiate \
      > /tmp/chief.token
-   # copy to the box as ~/.config/commrails-bridge/token (chmod 600), then:
+   # copy to the box as ~/.config/allternit-factory-bridge/token (chmod 600), then:
    rm /tmp/chief.token
    ```
 
@@ -200,7 +200,7 @@ Nothing below has been applied. Each step is a manual decision.
    ```
 
 3. Run the listener on the Mac's mesh address only. Example launchd plist
-   (`~/Library/LaunchAgents/com.allternit.commrails-bridge.plist`; replace
+   (`~/Library/LaunchAgents/com.allternit.factory-bridge.plist`; replace
    `100.x.y.z`, paths and root):
 
    ```xml
@@ -208,7 +208,7 @@ Nothing below has been applied. Each step is a manual decision.
    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
    <plist version="1.0">
    <dict>
-     <key>Label</key><string>com.allternit.commrails-bridge</string>
+     <key>Label</key><string>com.allternit.factory-bridge</string>
      <key>ProgramArguments</key>
      <array>
        <string>/Users/joe/.local/bin/allternit-factory</string>
@@ -220,7 +220,7 @@ Nothing below has been applied. Each step is a manual decision.
      </array>
      <key>RunAtLoad</key><true/>
      <key>KeepAlive</key><true/>
-     <key>StandardErrorPath</key><string>/tmp/commrails-bridge.log</string>
+     <key>StandardErrorPath</key><string>/tmp/factory-bridge.log</string>
    </dict>
    </plist>
    ```
@@ -229,7 +229,7 @@ Nothing below has been applied. Each step is a manual decision.
    public interfaces even if the Tailscale ACL is wrong. If the mesh address
    is not up yet at boot, the bind fails and launchd retries.
 
-4. On the box: `COMMRAILS_BRIDGE_URL=http://100.x.y.z:7433 commrails-bridge whoami`.
+4. On the box: `ALLTERNIT_FACTORY_BRIDGE_URL=http://100.x.y.z:7433 factory-bridge whoami`.
 
 Acceptance (P1-5): Chief runs `plan-from-template` from the box, the DAG
 appears in the Mac rail under the served root, and a pickup attempt from the

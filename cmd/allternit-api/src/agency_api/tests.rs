@@ -239,7 +239,7 @@ async fn agency_forces_verifier_owned_completion_and_leased_writes() {
     let s = AgencyStore::new(t.st.rails.ledger.clone());
     let rec = s.load_run(id).await.unwrap().unwrap();
     let dag = rec.task_ir["dag_id"].as_str().unwrap();
-    // The real commrails judge sees an agency-origin plan: judge + verifier close.
+    // The real Factory judge sees an agency-origin plan: judge + verifier close.
     let node = rec.task_ir["nodes"][0]["id"].as_str().unwrap().to_string();
     let eff = effective_policy(&s.raw_events().await.unwrap(), dag, Some(&node));
     assert_eq!(eff.origin, Some(PolicyOrigin::Agency));

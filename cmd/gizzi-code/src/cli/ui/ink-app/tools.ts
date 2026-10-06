@@ -112,14 +112,15 @@ const SnipTool = feature('HISTORY_SNIP')
   ? safeRequire('./tools/SnipTool/SnipTool.js')?.SnipTool
   : null
 const ListPeersTool =
-  !isEnvDefinedFalsy(process.env.GIZZI_ENABLE_RAILS_PEER)
+  !isFactoryPeerDisabled()
     ? safeRequire('./tools/ListPeersTool/ListPeersTool.js')?.ListPeersTool
     : null
 /* eslint-enable custom-rules/no-process-env-top-level, @typescript-eslint/no-require-imports */
 import type { ToolPermissionContext } from './Tool.js'
 import { getDenyRuleForTool } from './utils/permissions/permissions.js'
 import { hasEmbeddedSearchTools } from './utils/embeddedTools.js'
-import { isEnvDefinedFalsy, isEnvTruthy } from './utils/envUtils.js'
+import { isEnvTruthy } from './utils/envUtils.js'
+import { isFactoryPeerDisabled } from 'src/shared/utils/envUtils.js'
 import { isPowerShellToolEnabled } from './utils/shell/shellToolUtils.js'
 import { isAgentSwarmsEnabled } from './utils/agentSwarmsEnabled.js'
 import { isWorktreeModeEnabled } from './utils/worktreeModeEnabled.js'

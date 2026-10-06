@@ -95,7 +95,7 @@ python_exec(code: string,            # executed via argv, never shell
 | Models route around `python_exec` via bash anyway | Accept (CodeAct); bash is sandboxed too post-P0, so the bypass is contained |
 | Sandbox breaks legitimate workflows (git hooks, etc.) | GitSpawn cuts both ways — document that P0.1 audits what runs *before* sandbox arms; provide fs-profile escape hatch with receipts |
 | Astra Python-bias premise unverified | First-party eval: run 20-repo task corpus through both models, log tool-call mix; spec does not depend on the premise (Fable evidence alone justifies it) |
-| Vendor patch status drift (GitSpawn follow-ons) | Subscribe to Manifold Security advisories; `ao-doctor`-style version gate for executor CLIs |
+| Vendor patch status drift (GitSpawn follow-ons) | Subscribe to Manifold Security advisories; `gizzi agents doctor`-style version gate for executor CLIs |
 
 ## 5. Verification plan
 

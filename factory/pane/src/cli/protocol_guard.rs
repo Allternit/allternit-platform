@@ -25,7 +25,7 @@ pub(super) fn mismatch_response(
 
     let message = if client_protocol > server_protocol {
         format!(
-            "client protocol {client_protocol} is newer than server protocol {server_protocol}; restart the ao server before using this command. {restart_guidance}"
+            "client protocol {client_protocol} is newer than server protocol {server_protocol}; restart the allternit-factory pane server before using this command. {restart_guidance}"
         )
     } else {
         format!(

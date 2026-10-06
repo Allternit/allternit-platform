@@ -464,7 +464,7 @@ fn url_carries_credentials(url: &str) -> bool {
 
 fn deliver_claude_hook(req: &DeliveryRequest<'_>, gate: &GateTarget, w: &mut Writer<'_>) -> Result<Label> {
     let target = HookTarget {
-        commrails_bin: &gate.bin,
+        factory_bin: &gate.bin,
         root: &gate.root,
         workspace: Some(req.workdir),
         wih_id: gate.wih_id.as_deref(),
@@ -529,7 +529,7 @@ pub fn deliver(req: &DeliveryRequest<'_>) -> Result<DeliveryReport> {
             }
         },
         (Kind::Codex, Some(g)) => {
-            let target = HookTarget { commrails_bin: &g.bin, root: &g.root, workspace: Some(req.workdir), wih_id: g.wih_id.as_deref() };
+            let target = HookTarget { factory_bin: &g.bin, root: &g.root, workspace: Some(req.workdir), wih_id: g.wih_id.as_deref() };
             argv.push("-c".to_string());
             argv.push(codex_hook_override(target));
             Label::Delivered

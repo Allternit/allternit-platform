@@ -7,7 +7,7 @@
 //! What one run does (the WP10 BUG_FIX graph, driven like WP10's e2e rig):
 //! * the graph is re-instantiated from the TaskIR (`bug_fix::instantiate`) and
 //!   each visited node walks the kernel lifecycle (declared → … → closed);
-//! * every node is routed by the commrails [`Router`] into an `ExecutionPlanV1`
+//! * every node is routed by the Factory engine [`Router`] into an `ExecutionPlanV1`
 //!   over the ModelPool gizzi-code serves at `GET /model-pool`; S0 nodes
 //!   (tests, parsers, diff review, policy) run deterministically here;
 //! * cognition (the patch-proposing S2 nodes) goes to gizzi-code over HTTP

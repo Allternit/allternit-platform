@@ -26,7 +26,7 @@ fn integration_status(args: &[String]) -> std::io::Result<i32> {
         [] => false,
         [flag] if flag == "--outdated-only" => true,
         _ => {
-            eprintln!("usage: ao integration status [--outdated-only]");
+            eprintln!("usage: allternit-factory pane integration status [--outdated-only]");
             return Ok(2);
         }
     };
@@ -110,13 +110,13 @@ fn parse_integration_target(
 ) -> std::io::Result<Option<IntegrationTarget>> {
     let Some(target) = args.first().map(|arg| arg.as_str()) else {
         eprintln!(
-            "usage: ao integration {action} <pi|omp|claude|codex|copilot|devin|droid|kimi|opencode|kilo|hermes|qodercli|qwen|cursor|mastracode|grok>"
+            "usage: allternit-factory pane integration {action} <pi|omp|claude|codex|copilot|devin|droid|kimi|opencode|kilo|hermes|qodercli|qwen|cursor|mastracode|grok>"
         );
         return Ok(None);
     };
     if args.len() != 1 {
         eprintln!(
-            "usage: ao integration {action} <pi|omp|claude|codex|copilot|devin|droid|kimi|opencode|kilo|hermes|qodercli|qwen|cursor|mastracode|grok>"
+            "usage: allternit-factory pane integration {action} <pi|omp|claude|codex|copilot|devin|droid|kimi|opencode|kilo|hermes|qodercli|qwen|cursor|mastracode|grok>"
         );
         return Ok(None);
     }
@@ -152,40 +152,40 @@ fn parse_integration_target(
 }
 
 fn print_integration_help() {
-    eprintln!("ao integration commands:");
-    eprintln!("  ao integration install pi");
-    eprintln!("  ao integration install omp");
-    eprintln!("  ao integration install claude");
-    eprintln!("  ao integration install codex");
-    eprintln!("  ao integration install copilot");
-    eprintln!("  ao integration install devin");
-    eprintln!("  ao integration install droid");
-    eprintln!("  ao integration install kimi");
-    eprintln!("  ao integration install opencode");
-    eprintln!("  ao integration install kilo");
-    eprintln!("  ao integration install hermes");
-    eprintln!("  ao integration install qodercli");
-    eprintln!("  ao integration install qwen");
-    eprintln!("  ao integration install cursor");
-    eprintln!("  ao integration install mastracode");
-    eprintln!("  ao integration install antigravity-cli");
-    eprintln!("  ao integration install grok");
-    eprintln!("  ao integration uninstall pi");
-    eprintln!("  ao integration uninstall omp");
-    eprintln!("  ao integration uninstall claude");
-    eprintln!("  ao integration uninstall codex");
-    eprintln!("  ao integration uninstall copilot");
-    eprintln!("  ao integration uninstall devin");
-    eprintln!("  ao integration uninstall droid");
-    eprintln!("  ao integration uninstall kimi");
-    eprintln!("  ao integration uninstall opencode");
-    eprintln!("  ao integration uninstall kilo");
-    eprintln!("  ao integration uninstall hermes");
-    eprintln!("  ao integration uninstall qodercli");
-    eprintln!("  ao integration uninstall qwen");
-    eprintln!("  ao integration uninstall cursor");
-    eprintln!("  ao integration uninstall mastracode");
-    eprintln!("  ao integration uninstall antigravity-cli");
-    eprintln!("  ao integration uninstall grok");
-    eprintln!("  ao integration status [--outdated-only]");
+    eprintln!("allternit-factory pane integration commands:");
+    eprintln!("  allternit-factory pane integration install pi");
+    eprintln!("  allternit-factory pane integration install omp");
+    eprintln!("  allternit-factory pane integration install claude");
+    eprintln!("  allternit-factory pane integration install codex");
+    eprintln!("  allternit-factory pane integration install copilot");
+    eprintln!("  allternit-factory pane integration install devin");
+    eprintln!("  allternit-factory pane integration install droid");
+    eprintln!("  allternit-factory pane integration install kimi");
+    eprintln!("  allternit-factory pane integration install opencode");
+    eprintln!("  allternit-factory pane integration install kilo");
+    eprintln!("  allternit-factory pane integration install hermes");
+    eprintln!("  allternit-factory pane integration install qodercli");
+    eprintln!("  allternit-factory pane integration install qwen");
+    eprintln!("  allternit-factory pane integration install cursor");
+    eprintln!("  allternit-factory pane integration install mastracode");
+    eprintln!("  allternit-factory pane integration install antigravity-cli");
+    eprintln!("  allternit-factory pane integration install grok");
+    eprintln!("  allternit-factory pane integration uninstall pi");
+    eprintln!("  allternit-factory pane integration uninstall omp");
+    eprintln!("  allternit-factory pane integration uninstall claude");
+    eprintln!("  allternit-factory pane integration uninstall codex");
+    eprintln!("  allternit-factory pane integration uninstall copilot");
+    eprintln!("  allternit-factory pane integration uninstall devin");
+    eprintln!("  allternit-factory pane integration uninstall droid");
+    eprintln!("  allternit-factory pane integration uninstall kimi");
+    eprintln!("  allternit-factory pane integration uninstall opencode");
+    eprintln!("  allternit-factory pane integration uninstall kilo");
+    eprintln!("  allternit-factory pane integration uninstall hermes");
+    eprintln!("  allternit-factory pane integration uninstall qodercli");
+    eprintln!("  allternit-factory pane integration uninstall qwen");
+    eprintln!("  allternit-factory pane integration uninstall cursor");
+    eprintln!("  allternit-factory pane integration uninstall mastracode");
+    eprintln!("  allternit-factory pane integration uninstall antigravity-cli");
+    eprintln!("  allternit-factory pane integration uninstall grok");
+    eprintln!("  allternit-factory pane integration status [--outdated-only]");
 }

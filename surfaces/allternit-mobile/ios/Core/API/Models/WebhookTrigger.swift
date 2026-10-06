@@ -21,7 +21,7 @@ import Foundation
 /// One inbound webhook trigger (`TriggerRow`,
 /// webhook_trigger_routes.rs:67-77) — an org-scoped route from a public
 /// inbound URL to a bot: a signed POST to `/webhooks/inbound/:id` creates a
-/// Rails ticket assigned to `targetBotId`.
+/// Factory ticket assigned to `targetBotId`.
 struct WebhookTrigger: Decodable, Sendable, Identifiable, Hashable {
     let id: String
     let orgId: String

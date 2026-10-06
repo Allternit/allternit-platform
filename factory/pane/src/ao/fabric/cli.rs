@@ -1,4 +1,4 @@
-//! `ao fabric pair|serve|status` — the Fabric Transport node commands.
+//! `allternit-factory pane fabric pair|serve|status` — the Fabric Transport node commands.
 
 use std::io::Write as _;
 use std::sync::Arc;
@@ -8,9 +8,9 @@ use super::identity::NodeIdentity;
 use super::{DEFAULT_AO_PORT};
 use super::wire::ExchangeOutcome;
 
-const USAGE: &str = "usage: ao fabric pair [--no-browser] [--runtime-type <t>] [--name <n>] [--re-pair]
-       ao fabric serve [--port <p>]
-       ao fabric status";
+const USAGE: &str = "usage: allternit-factory pane fabric pair [--no-browser] [--runtime-type <t>] [--name <n>] [--re-pair]
+       allternit-factory pane fabric serve [--port <p>]
+       allternit-factory pane fabric status";
 
 /// Default the engine session to `ao` exactly like the other ao contract
 /// commands (mirrors `cli::ao::ensure_ao_session`).
@@ -49,11 +49,11 @@ pub(crate) fn run(args: &[String]) -> std::io::Result<i32> {
 }
 
 // ---------------------------------------------------------------------------
-// ao fabric pair
+// allternit-factory pane fabric pair
 // ---------------------------------------------------------------------------
 
 fn pair(args: &[String]) -> std::io::Result<i32> {
-    let mut no_browser = std::env::var_os("AO_FABRIC_NO_BROWSER").is_some();
+    let mut no_browser = std::env::var_os("ALLTERNIT_FACTORY_FABRIC_NO_BROWSER").is_some();
     let mut runtime_type: Option<String> = None;
     let mut name: Option<String> = None;
     let mut re_pair = false;
@@ -192,7 +192,7 @@ async fn async_pair(
     loop {
         if let Some(deadline) = deadline {
             if time::OffsetDateTime::now_utc() >= deadline {
-                eprintln!("error: pairing expired — run `ao fabric pair` again");
+                eprintln!("error: pairing expired — run `allternit-factory pane fabric pair` again");
                 return 1;
             }
         }
@@ -224,7 +224,7 @@ async fn async_pair(
                 tokio::time::sleep(std::time::Duration::from_secs(seconds.max(1))).await;
             }
             Ok(ExchangeOutcome::Expired) => {
-                eprintln!("error: pairing expired — run `ao fabric pair` again");
+                eprintln!("error: pairing expired — run `allternit-factory pane fabric pair` again");
                 return 1;
             }
             Ok(ExchangeOutcome::Denied) => {
@@ -267,7 +267,7 @@ fn open_browser_best_effort(url: &str) {
 }
 
 // ---------------------------------------------------------------------------
-// ao fabric serve
+// allternit-factory pane fabric serve
 // ---------------------------------------------------------------------------
 
 fn serve(args: &[String]) -> std::io::Result<i32> {
@@ -306,7 +306,7 @@ fn serve(args: &[String]) -> std::io::Result<i32> {
     let identity = match NodeIdentity::load() {
         Some(identity) => identity,
         None => {
-            eprintln!("error: no identity — run `ao fabric pair` first");
+            eprintln!("error: no identity — run `allternit-factory pane fabric pair` first");
             return Ok(1);
         }
     };
@@ -370,7 +370,7 @@ async fn async_serve(identity: NodeIdentity, port: u16) -> i32 {
     match cloud.heartbeat(&identity).await {
         Ok(()) => {}
         Err(HeartbeatError::Revoked) => {
-            eprintln!("error: this ao node was revoked — run `ao fabric pair --re-pair`");
+            eprintln!("error: this ao node was revoked — run `allternit-factory pane fabric pair --re-pair`");
             return 1;
         }
         Err(HeartbeatError::Transport(err)) => {
@@ -500,14 +500,14 @@ async fn async_serve(identity: NodeIdentity, port: u16) -> i32 {
 }
 
 // ---------------------------------------------------------------------------
-// ao fabric status
+// allternit-factory pane fabric status
 // ---------------------------------------------------------------------------
 
 fn status(_args: &[String]) -> std::io::Result<i32> {
     let identity = match NodeIdentity::load() {
         Some(identity) => identity,
         None => {
-            println!("identity: none (run `ao fabric pair`)");
+            println!("identity: none (run `allternit-factory pane fabric pair`)");
             return Ok(0);
         }
     };
@@ -517,7 +517,7 @@ fn status(_args: &[String]) -> std::io::Result<i32> {
     println!("fingerprint (sha256): {}", identity.fingerprint());
 
     if !identity.is_paired() {
-        println!("pairing: not paired (run `ao fabric pair`)");
+        println!("pairing: not paired (run `allternit-factory pane fabric pair`)");
     } else {
         println!("pairing: paired");
         println!("  runtime id: {}", identity.runtime_id.as_deref().unwrap_or("?"));
@@ -535,7 +535,7 @@ fn status(_args: &[String]) -> std::io::Result<i32> {
                 );
             }
             _ => println!(
-                "  token expires: {} (EXPIRED — run `ao fabric pair --re-pair`)",
+                "  token expires: {} (EXPIRED — run `allternit-factory pane fabric pair --re-pair`)",
                 identity.expires_at.as_deref().unwrap_or("?")
             ),
         }
@@ -574,7 +574,7 @@ fn status(_args: &[String]) -> std::io::Result<i32> {
                 println!("live ao sessions: {}", sessions.join(", "));
             }
         }
-        _ => println!("relay: not serving (run `ao fabric serve`)"),
+        _ => println!("relay: not serving (run `allternit-factory pane fabric serve`)"),
     }
 
     Ok(0)

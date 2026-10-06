@@ -11,7 +11,7 @@ This document defines the official port assignments for all Allternit services.
 | 3003 | Policy Service | `2-governance/` | HTTP | ✅ Yes |
 | 3004 | Kernel Service | `4-services/orchestration/kernel-service/` | HTTP | ✅ Yes |
 | 3010 | Operator Service | `4-services/allternit-operator/` | HTTP | ✅ Yes |
-| 3011 | Rails Service | `allternit-commrails/` | HTTP | ✅ Yes |
+| 3011 | Allternit Factory engine | `cmd/allternit-factory/` (`factory/`) | HTTP | ✅ Yes |
 | 3090 | Link Card Service | `4-services/infrastructure/link-card-service/` | HTTP | ⚠️ Optional |
 
 ### AI/ML Services (8000-8009)
@@ -100,7 +100,7 @@ Allternit_REGISTRY_URL=http://127.0.0.1:8080
 Allternit_VOICE_URL=http://127.0.0.1:8001
 Allternit_WEBVM_URL=http://127.0.0.1:8002
 Allternit_OPERATOR_URL=http://127.0.0.1:3010
-Allternit_RAILS_URL=http://127.0.0.1:3011
+ALLTERNIT_FACTORY_URL=http://127.0.0.1:3011
 
 # Gateways
 Allternit_GATEWAY_URL=http://127.0.0.1:8013
@@ -161,7 +161,7 @@ Allternit_SHELL_UI_URL=http://127.0.0.1:5177
 - Voice (8001) - TTS features
 - WebVM (8002) - Browser automation
 - Operator (3010) - UI automation
-- Rails (3011) - Agent planning
+- Factory engine (3011) - Agent planning
 - ~~AGUI (8010)~~ - Retired (package deleted)
 - ~~A2A (8012)~~ - Retired (package deleted)
 - OpenClaw (18789) - LLM integration

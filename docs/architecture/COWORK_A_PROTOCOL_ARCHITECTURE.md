@@ -309,7 +309,7 @@ Long-term bot triggers include:
 - connector event;
 - file/system event;
 - API call;
-- CommRails message;
+- Factory peer message;
 - condition/watch trigger.
 
 All trigger sources should converge into the same canonical Intent/Run pipeline rather than inventing separate execution systems.
@@ -386,7 +386,7 @@ The present repo already contains important pieces of this model:
 - Fabric Transport worker authentication/leases;
 - approval bindings;
 - event attribution fields;
-- CommRails peer messaging substrate;
+- Factory peer messaging substrate;
 - Gizzi Code/local execution path;
 - bot-mode substrates;
 - scheduler/runtime pieces.

@@ -1,6 +1,6 @@
 //! ao — Allternit agent-orchestrator contract over the ao engine socket.
 //!
-//! Implements `ao spawn|send|watch|status|kill|doctor` with byte-level parity
+//! Implements `allternit-factory pane spawn|send|watch|status|kill|doctor` with byte-level parity
 //! to the bash scripts in `~/.claude/skills/agent-orchestrator/scripts/`
 //! (same arguments, exit codes, stdout formats, semantics). The engine runs
 //! as named session `ao`; the tmux script path remains the fallback.
@@ -8,8 +8,8 @@
 //! Design notes (P1 spike, docs/learnings/ALLTERNIT_RUNTIME_P1_NOTES.md):
 //! - Dead panes/workspaces are removed engine-side, so liveness is a presence
 //!   probe (workspace listed + pane present). A small registry at
-//!   `~/.agent-orchestrator/state.json` is the tmux remain-on-exit analog that
-//!   keeps DEAD sessions observable to `ao status`.
+//!   the Factory registry (`~/.allternit/factory/registry.json`) is the tmux remain-on-exit analog that
+//!   keeps DEAD sessions observable to `allternit-factory pane status`.
 //! - Transcripts come from the additive PTY tee (`src/ao/transcript.rs`),
 //!   requested via the `HERDR_AO_TRANSCRIPT` launch-env marker on the
 //!   layout.apply pane node.
@@ -29,20 +29,19 @@ use crate::api::schema::{
     WorkspaceCloseParams, WorkspaceCreateParams,
 };
 
-const USAGE_SPAWN: &str = "usage: ao spawn [--worktree] <slug> <repo-dir> <agent-cmd...>";
-const USAGE_SEND: &str = "usage: ao send <slug> <prompt...> | ao send <slug> -f <file>";
-const USAGE_WATCH: &str = "usage: ao watch <slug> <sentinel-file> [timeout] [interval]";
-const USAGE_STATUS: &str = "usage: ao status [slug] [lines=25]";
-const USAGE_KILL: &str = "usage: ao kill <slug> [--rm-worktree]";
+const USAGE_SPAWN: &str = "usage: allternit-factory pane spawn [--worktree] <slug> <repo-dir> <agent-cmd...>";
+const USAGE_SEND: &str = "usage: allternit-factory pane send <slug> <prompt...> | allternit-factory pane send <slug> -f <file>";
+const USAGE_WATCH: &str = "usage: allternit-factory pane watch <slug> <sentinel-file> [timeout] [interval]";
+const USAGE_STATUS: &str = "usage: allternit-factory pane status [slug] [lines=25]";
+const USAGE_KILL: &str = "usage: allternit-factory pane kill <slug> [--rm-worktree]";
 // Dispatch-semantics subcommands (additive; not part of the bash parity
 // contract — the ao_parity golden test compares only the six above).
 const USAGE_QUEUE: &str =
-    "usage: ao queue <slug> [prompt...] [--root <dir>] [--lead <id>] [--as-human]";
-const USAGE_DRAIN: &str = "usage: ao drain <slug> [--all] [--root <dir>] [--lead <id>] [--as-human]";
-const USAGE_RECOVER: &str = "usage: ao recover [slug] [--apply] [--lead <id>] [--as-human]";
-const USAGE_TRANSCRIPT: &str = "usage: ao transcript <slug> [--tail <lines>]";
+    "usage: allternit-factory pane queue <slug> [prompt...] [--root <dir>] [--lead <id>] [--as-human]";
+const USAGE_DRAIN: &str = "usage: allternit-factory pane drain <slug> [--all] [--root <dir>] [--lead <id>] [--as-human]";
+const USAGE_RECOVER: &str = "usage: allternit-factory pane recover [slug] [--apply] [--lead <id>] [--as-human]";
+const USAGE_TRANSCRIPT: &str = "usage: allternit-factory pane transcript <slug> [--tail <lines>]";
 
-const AO_DIR: &str = ".agent-orchestrator";
 const LOGS_DIR: &str = "logs";
 
 pub(super) fn run_ao_command(args: &[String]) -> std::io::Result<i32> {
@@ -68,7 +67,7 @@ pub(super) fn run_ao_command(args: &[String]) -> std::io::Result<i32> {
             Ok(0)
         }
         _ => {
-            eprintln!("{USAGE_SPAWN}\n{USAGE_SEND}\n{USAGE_WATCH}\n{USAGE_STATUS}\n{USAGE_KILL}\nusage: ao doctor");
+            eprintln!("{USAGE_SPAWN}\n{USAGE_SEND}\n{USAGE_WATCH}\n{USAGE_STATUS}\n{USAGE_KILL}\nusage: allternit-factory pane doctor");
             Ok(2)
         }
     }
@@ -83,20 +82,20 @@ fn print_ao_help() {
          {USAGE_WATCH}\n\
          {USAGE_STATUS}\n\
          {USAGE_KILL}\n\
-         usage: ao doctor\n\
+         usage: allternit-factory pane doctor\n\
          {USAGE_QUEUE}\n\
          {USAGE_DRAIN}\n\
          {USAGE_RECOVER}\n\
          {USAGE_TRANSCRIPT}\n\
          \n\
          Dispatch semantics (additive to the parity contract):\n\
-         - spawn records a dispatch-registry entry in ~/.agent-orchestrator/state.json\n\
+         - spawn records a dispatch-registry entry in ~/.allternit/factory/registry.json\n\
            (runner command, worktree, branch, sentinel, owning lead, lifecycle,\n\
-           mailbox depth). --lead <id> or AO_LEAD sets the owner.\n\
+           mailbox depth). --lead <id> or ALLTERNIT_FACTORY_LEAD sets the owner.\n\
          - queue enqueues to the Rails Bus mailbox peer:ao-<slug> (queue-not-drop);\n\
-           drain injects the oldest pending row through the verified ao-send paste\n\
+           drain injects the oldest pending row through the verified send paste\n\
            path and settles only after verified delivery. Single drainer per\n\
-           recipient, owned by ao-engine. watch auto-drains when the pane is idle.\n\
+           recipient, owned by the pane engine. watch auto-drains when the pane is idle.\n\
          - queue/drain/send --queue/recover are fail-closed on ownership: the\n\
            caller must be the recorded lead, or pass --as-human.\n\
          - recover reconciles the registry against live tmux/engine sessions and\n\
@@ -264,18 +263,15 @@ pub(crate) fn ensure_engine_running() -> std::io::Result<()> {
 // ---------------------------------------------------------------------------
 
 // The registry itself is the Factory engine's (`~/.allternit/factory/
-// registry.json`, migrated once from `~/.agent-orchestrator/state.json`):
-// `ao spawn` and engine spawns (drive, agents up) record into the same file,
+// registry.json`, migrated once from the old orchestrator registry):
+// `allternit-factory pane spawn` and engine spawns (drive, agents up) record into the same file,
 // and the engine reconciles it against live panes. The entry shape is the
 // one above plus the factory's fields (pane id, harness, bot binding).
 type AoState = allternit_factory_engine::registry::RegistryFile;
 type AoSession = allternit_factory_engine::registry::Entry;
 
 fn ao_home() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/"))
-        .join(AO_DIR)
+    allternit_factory_engine::registry::factory_home()
 }
 
 fn state_path() -> PathBuf {
@@ -297,7 +293,7 @@ fn save_state(state: &AoState) {
 // Ownership (A3 — fail-closed lead → runner)
 // ---------------------------------------------------------------------------
 
-/// Caller identity: explicit `--lead` flag > `AO_LEAD` env > USER/LOGNAME >
+/// Caller identity: explicit `--lead` flag > `ALLTERNIT_FACTORY_LEAD` env > USER/LOGNAME >
 /// "human". Spawn records this as the owning lead; dispatch operations
 /// resolve it the same way and compare.
 fn caller_identity(lead_flag: Option<&str>) -> String {
@@ -306,7 +302,7 @@ fn caller_identity(lead_flag: Option<&str>) -> String {
             return lead.to_string();
         }
     }
-    for var in ["AO_LEAD", "USER", "LOGNAME"] {
+    for var in ["ALLTERNIT_FACTORY_LEAD", "USER", "LOGNAME"] {
         if let Ok(value) = std::env::var(var) {
             if !value.is_empty() {
                 return value.to_string();
@@ -459,15 +455,15 @@ fn eprintln_engine(err: &CallError) -> i32 {
 }
 
 // ---------------------------------------------------------------------------
-// ao spawn
+// allternit-factory pane spawn
 // ---------------------------------------------------------------------------
 
 fn spawn(args: &[String]) -> std::io::Result<i32> {
-    // Hidden parity probe: `ao spawn --gate-rewrite <line> <settings-file>`
-    // mirrors `ao-spawn-gate --rewrite` (tests/ao_parity/gate_parity.sh).
+    // Hidden parity probe: `allternit-factory pane spawn --gate-rewrite <line> <settings-file>`
+    // the spawn gate's `--rewrite` (ao_gate.rs).
     if args.first().map(String::as_str) == Some("--gate-rewrite") {
         if args.len() != 3 {
-            eprintln!("usage: ao spawn --gate-rewrite <line> <settings-file>");
+            eprintln!("usage: allternit-factory pane spawn --gate-rewrite <line> <settings-file>");
             return Ok(2);
         }
         let class = ao_gate::classify(&ao_gate::harness_of(&args[1]));
@@ -531,7 +527,7 @@ fn spawn(args: &[String]) -> std::io::Result<i32> {
             .arg(format!("={session}:"));
         if run_quiet(&mut check) {
             eprintln!(
-                "error: session {session} already exists (ao status {slug} to inspect)"
+                "error: session {session} already exists (allternit-factory pane status {slug} to inspect)"
             );
             return Ok(1);
         }
@@ -546,7 +542,7 @@ fn spawn(args: &[String]) -> std::io::Result<i32> {
     let client = ApiClient::local();
     match find_workspace(&client, &session) {
         Ok(Some(_)) => {
-            eprintln!("error: session {session} already exists (ao status {slug} to inspect)");
+            eprintln!("error: session {session} already exists (allternit-factory pane status {slug} to inspect)");
             return Ok(1);
         }
         Ok(None) => {}
@@ -730,7 +726,7 @@ fn spawn(args: &[String]) -> std::io::Result<i32> {
 }
 
 // ---------------------------------------------------------------------------
-// ao send
+// allternit-factory pane send
 // ---------------------------------------------------------------------------
 
 fn send(args: &[String]) -> std::io::Result<i32> {
@@ -849,7 +845,7 @@ fn enqueue_fallback(session: &str, prompt: &str) -> std::io::Result<i32> {
     }
 }
 
-/// Marker loop token, verbatim from ao-send: last-40-alnum of the prompt.
+/// Marker loop token, verbatim from the old send script: last-40-alnum of the prompt.
 /// Comparing alnum-only text is immune to TUI line-wrapping, input-box
 /// border chars, and padding.
 pub(crate) fn prompt_marker(prompt: &str) -> Option<String> {
@@ -875,7 +871,7 @@ pub(crate) fn first_pane_id(client: &ApiClient, workspace_id: &str) -> Result<Op
         .map(str::to_string))
 }
 
-/// Verified bracketed-paste injection shared by `ao send` and the mailbox
+/// Verified bracketed-paste injection shared by `allternit-factory pane send` and the mailbox
 /// drainer (A2 settle path): paste, poll the pane until the marker shows in
 /// two consecutive captures (a single sighting can be a half-painted frame),
 /// Enter only after verified landing. On a bad read-back the line is cleared
@@ -945,7 +941,7 @@ fn send_failure_exit(session: &str, err: &CallError) -> i32 {
 }
 
 // ---------------------------------------------------------------------------
-// ao watch
+// allternit-factory pane watch
 // ---------------------------------------------------------------------------
 
 fn watch(args: &[String]) -> std::io::Result<i32> {
@@ -966,7 +962,7 @@ fn watch(args: &[String]) -> std::io::Result<i32> {
     };
     let client = ApiClient::local();
     // Record the armed sentinel on the dispatch registry entry (A1) so
-    // `ao recover` can tell dead-but-unfinished sessions from finished ones.
+    // `allternit-factory pane recover` can tell dead-but-unfinished sessions from finished ones.
     let mut state = load_state();
     if let Some(entry) = state.sessions.get_mut(&session) {
         entry.sentinel = Some(sentinel.clone());
@@ -982,7 +978,7 @@ fn watch(args: &[String]) -> std::io::Result<i32> {
             Ok(true) => {}
             // Engine unreachable is indistinguishable from "session gone".
             Ok(false) | Err(_) => {
-                println!("PANE-DEAD {session} (agent exited or session gone; check log in ~/.agent-orchestrator/logs)");
+                println!("PANE-DEAD {session} (agent exited or session gone; check log in ~/.allternit/factory/logs)");
                 mark_dead(&session);
                 return Ok(3);
             }
@@ -1003,7 +999,7 @@ fn watch(args: &[String]) -> std::io::Result<i32> {
 /// One automatic drain attempt on the oldest pending mailbox row. Every
 /// failure mode (no bus, ownership mismatch, busy pane, unverifiable paste)
 /// is a silent skip: watch is a monitor, not a dispatcher, and the row stays
-/// pending for an explicit `ao drain`.
+/// pending for an explicit `allternit-factory pane drain`.
 fn auto_drain_tick(client: &ApiClient, session: &str) {
     let Ok(root) = mailbox_root(None) else {
         return;
@@ -1053,7 +1049,7 @@ fn mark_dead(session: &str) {
 }
 
 // ---------------------------------------------------------------------------
-// ao transcript (Allternit Factory: `orchestration transcript`)
+// allternit-factory pane transcript (Allternit Factory: `orchestration transcript`)
 // ---------------------------------------------------------------------------
 
 /// Print the raw PTY transcript recorded for a spawned session (the log path
@@ -1119,17 +1115,17 @@ fn transcript(args: &[String]) -> std::io::Result<i32> {
 }
 
 // ---------------------------------------------------------------------------
-// ao status
+// allternit-factory pane status
 // ---------------------------------------------------------------------------
 
 fn status(args: &[String]) -> std::io::Result<i32> {
     // The ao contract shadows the engine's `status` word at the dispatcher
     // (see cli.rs). Engine status forms are rehomed here so both vocabularies
-    // work: `ao status --json`, `ao status server [--json]`,
-    // `ao status client [--json]`, and `ao status help`. Everything else
-    // stays on the ao contract (`ao status [slug] [lines]`). The remote
+    // work: `allternit-factory pane status --json`, `allternit-factory pane status server [--json]`,
+    // `allternit-factory pane status client [--json]`, and `allternit-factory pane status help`. Everything else
+    // stays on the ao contract (`allternit-factory pane status [slug] [lines]`). The remote
     // machine machinery probes `status server --json`, so without this
-    // rehome `ao machine add` cannot inspect a remote server.
+    // rehome `allternit-factory pane machine add` cannot inspect a remote server.
     match args.first().map(String::as_str) {
         Some("--json") | Some("server") | Some("client") | Some("help") | Some("--help")
         | Some("-h") => return super::status::run_status_command(args),
@@ -1220,7 +1216,7 @@ fn status(args: &[String]) -> std::io::Result<i32> {
 }
 
 // ---------------------------------------------------------------------------
-// ao kill
+// allternit-factory pane kill
 // ---------------------------------------------------------------------------
 
 fn kill(args: &[String]) -> std::io::Result<i32> {
@@ -1300,14 +1296,14 @@ fn kill(args: &[String]) -> std::io::Result<i32> {
             }
             println!("removed worktree {wt_dir}");
         } else {
-            eprintln!("warn: pane dir '{wt_dir}' does not look like an ao worktree — not removing");
+            eprintln!("warn: pane dir '{wt_dir}' does not look like an allternit-factory pane worktree — not removing");
         }
     }
     Ok(0)
 }
 
 // ---------------------------------------------------------------------------
-// ao queue — Bus mailbox enqueue / inspect (A2)
+// allternit-factory pane queue — Bus mailbox enqueue / inspect (A2)
 // ---------------------------------------------------------------------------
 
 fn queue(args: &[String]) -> std::io::Result<i32> {
@@ -1385,11 +1381,11 @@ fn queue(args: &[String]) -> std::io::Result<i32> {
 }
 
 // ---------------------------------------------------------------------------
-// ao drain — settle verified, roll back free (A2)
+// allternit-factory pane drain — settle verified, roll back free (A2)
 //
 // Exactly one drainer may exist per recipient: the Bus delivery status is
 // global per recipient, so two concurrent drainers would race poll/settle.
-// The drainer is owned by ao-engine (this subcommand plus the watch loop's
+// The drainer is owned by the pane engine (this subcommand plus the watch loop's
 // auto-drain tick). Do not bolt a second drainer onto the HTTP inbox
 // endpoint — it marks delivered on read, which is exactly the semantics this
 // path exists to avoid.
@@ -1473,7 +1469,7 @@ fn drain(args: &[String]) -> std::io::Result<i32> {
 }
 
 /// One drain attempt: pane must be present and read idle, then the message
-/// goes through the same verified paste path as `ao send`. Ok(false) means
+/// goes through the same verified paste path as `allternit-factory pane send`. Ok(false) means
 /// "do not settle" — the row stays pending.
 fn drain_one(client: &ApiClient, session: &str, text: &str) -> Result<bool, CallError> {
     let Some(workspace) = find_workspace(client, session)? else {
@@ -1502,7 +1498,7 @@ pub(crate) fn pane_idle(client: &ApiClient, pane: &str) -> Result<bool, CallErro
 }
 
 // ---------------------------------------------------------------------------
-// ao recover — reconcile the registry against reality (A4)
+// allternit-factory pane recover — reconcile the registry against reality (A4)
 //
 // Dry-run by default: prints the plan; --apply respawns. A session is a
 // recovery candidate when it is dead in BOTH worlds (tmux + engine) and has
@@ -1603,7 +1599,7 @@ fn recover(args: &[String]) -> std::io::Result<i32> {
                                 .stdout(Stdio::null())
                                 .stderr(Stdio::null())
                                 .spawn();
-                            println!("re-armed sentinel watch: ao watch {slug} {sentinel}");
+                            println!("re-armed sentinel watch: allternit-factory pane watch {slug} {sentinel}");
                         }
                     }
                 }
@@ -1697,7 +1693,7 @@ fn respawn(
     std::fs::create_dir_all(&logs_dir).map_err(|err| format!("mkdir: {err}"))?;
     let log = logs_dir.join(format!("{session}-{}.log", timestamp_now()));
     let runner = logs_dir.join(format!("{session}.cmd.sh"));
-    // Respawns go through the same spawn gate as `ao spawn` (a resume argv
+    // Respawns go through the same spawn gate as `allternit-factory pane spawn` (a resume argv
     // is rebuilt without the gate flags; a verbatim runner is re-gated
     // idempotently).
     let gated = ao_gate::gate(session, cwd, &argv.join(" "), &logs_dir, &ao_home())
@@ -1854,14 +1850,14 @@ fn tmux_list_ao_sessions() -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------
-// ao doctor
+// allternit-factory pane doctor
 // ---------------------------------------------------------------------------
 
 fn doctor(_args: &[String]) -> std::io::Result<i32> {
     let mut transport_ok = true;
     let mut usable = false;
 
-    println!("ao-doctor: transport");
+    println!("doctor: transport");
     match engine_status_line() {
         Ok(line) => println!("{line}"),
         Err(line) => {
@@ -1879,7 +1875,7 @@ fn doctor(_args: &[String]) -> std::io::Result<i32> {
         }
     }
 
-    println!("ao-doctor: executors");
+    println!("doctor: executors");
     probe_executor("kimi", "kimi", &["--yolo"], None, "no headless: -p refuses --yolo/--auto", &mut usable);
     probe_executor(
         "codex",
@@ -1902,32 +1898,32 @@ fn doctor(_args: &[String]) -> std::io::Result<i32> {
     // P7 harness section (spec binding 7): managed-dir health, per-tool
     // binary+pin match, license acceptance state, sync reachability. The
     // ao_parity harness strips everything from this header to the next
-    // `ao-doctor: ` section (or EOF) — it is additive surface, not part of
+    // `doctor: ` section (or EOF) — it is additive surface, not part of
     // the P1 parity contract. Exit codes are unchanged when the section is
     // green, including the "nothing installed yet" case.
     let harness = harness_doctor_section();
 
     if !transport_ok {
-        println!("ao-doctor: TRANSPORT BROKEN");
+        println!("doctor: TRANSPORT BROKEN");
         return Ok(2);
     }
     if usable {
         if !harness {
-            println!("ao-doctor: HARNESS PROBLEMS");
+            println!("doctor: HARNESS PROBLEMS");
             return Ok(3);
         }
-        println!("ao-doctor: OK — at least one executor is usable");
+        println!("doctor: OK — at least one executor is usable");
         return Ok(0);
     }
-    println!("ao-doctor: NO USABLE EXECUTORS");
+    println!("doctor: NO USABLE EXECUTORS");
     Ok(1)
 }
 
-/// Print the `ao-doctor: harness` section; true when green. Loading the
-/// manifest can fail (corrupt AO_HARNESS_MANIFEST override) — reported as a
+/// Print the `doctor: harness` section; true when green. Loading the
+/// manifest can fail (corrupt ALLTERNIT_FACTORY_HARNESS_MANIFEST override) — reported as a
 /// problem rather than panicking inside doctor.
 fn harness_doctor_section() -> bool {
-    println!("ao-doctor: harness");
+    println!("doctor: harness");
     let manifest = match crate::ao::harness::load_manifest_for_doctor() {
         Ok(manifest) => manifest,
         Err(err) => {
@@ -1959,7 +1955,7 @@ fn engine_status_line() -> Result<String, String> {
             let result = &value["result"];
             let protocol = result["protocol"].as_u64().unwrap_or(0);
             let version = result["version"].as_str().unwrap_or("unknown");
-            Ok(format!("  ao-engine: OK (socket {socket}, protocol {protocol}, {version})"))
+            Ok(format!("  pane engine: OK (socket {socket}, protocol {protocol}, {version})"))
         }
         Err(ApiClientError::Io(err))
             if matches!(
@@ -1968,11 +1964,11 @@ fn engine_status_line() -> Result<String, String> {
             ) =>
         {
             Err(format!(
-                "  ao-engine: MISSING — start it with: ao spawn <slug> <dir> <cmd...> (or: ao --session ao server) [{socket}]"
+                "  pane engine: MISSING — start it with: allternit-factory pane spawn <slug> <dir> <cmd...> (or: allternit-factory pane --session ao server) [{socket}]"
             ))
         }
         Err(err) => Err(format!(
-            "  ao-engine: STALE (socket present but ping failed: {err}) [{socket}]"
+            "  pane engine: STALE (socket present but ping failed: {err}) [{socket}]"
         )),
     }
 }

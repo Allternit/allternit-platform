@@ -12,7 +12,7 @@
 //!
 //! Two on-disk formats live in [`TEMPLATE_DIR`]:
 //!
-//! - `<id>.json` — a serialized [`Template`] (what `commrails template new`
+//! - `<id>.json` — a serialized [`Template`] (what `allternit-factory internal core template new`
 //!   writes).
 //! - `<id>.md` — markdown with YAML frontmatter (`name`, `description`) and
 //!   exactly one fenced ```` ```yaml template-spec ```` block holding

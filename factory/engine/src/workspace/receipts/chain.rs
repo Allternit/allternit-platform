@@ -594,7 +594,7 @@ mod tests {
 
     fn cx() -> EffectContext {
         EffectContext { run_id: "runE".into(), session_id: "s1".into(), task_id: "t1".into(), node_id: None,
-            trace_id: "tr1".into(), state_version: 1, producer_id: "commrails".into(), policy_decision_id: "dec1".into() }
+            trace_id: "tr1".into(), state_version: 1, producer_id: "allternit-factory".into(), policy_decision_id: "dec1".into() }
     }
     fn req(key: &str) -> EffectRequest {
         EffectRequest { action_id: "act1".into(), tool_id: "fs.write".into(),

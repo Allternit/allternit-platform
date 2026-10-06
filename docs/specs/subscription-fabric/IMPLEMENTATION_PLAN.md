@@ -90,7 +90,7 @@ services/subscription-gateway/                       # the daemon
       log.ts             # append-only event ledger (mirrors bot_events pattern)
       sse.ts             # fan-out to SSE subscribers
       outbox.ts          # durable per-caller outbox, acked delivery, reconnect replay (D12)
-      notify.ts          # terminal-state push: CommRails peer msg, desktop notif, MCP update (D12)
+      notify.ts          # terminal-state push: Factory peer msg, desktop notif, MCP update (D12)
     catalog/
       subs_models.ts     # subs/<provider>:<model_class> picker registry for gizzi-code/UIs (D13)
     artifacts/
@@ -137,7 +137,7 @@ Gate: schemas round-trip; `ArtifactEvent`/`Task` unions compile; no provider-nam
 
 ### P1 — Gateway skeleton + store + security
 Files: `services/subscription-gateway/` `main.ts`, `config.ts`, `http/*`, `store/*`, `security/*`, `events/log.ts`, `events/outbox.ts`, `events/notify.ts`. Static router returning "no route" (real router lands P4).
-Includes the **completion-push spine** (D12): durable per-caller outbox with acked delivery + reconnect replay, and terminal-state notify (CommRails peer message, desktop notification). SSE push lands here too; progress scraping itself lands in P2/P3.
+Includes the **completion-push spine** (D12): durable per-caller outbox with acked delivery + reconnect replay, and terminal-state notify (Factory peer message, desktop notification). SSE push lands here too; progress scraping itself lands in P2/P3.
 Also: add 7788 to `docs/Operations/QUICK_REFERENCE.md` port table.
 Verify: `pnpm -F subscription-gateway build && pnpm -F subscription-gateway test`; smoke: start daemon, `curl --unix-socket ~/.allternit/subscriptions/gateway.sock -H "Authorization: Bearer $T" http://localhost/v1/capabilities` returns `[]`; TCP without token → 401; bad `Host` → 403; request with `Origin` → 403. Outbox test: client disconnects mid-stream, reconnects, receives missed events exactly once (idempotent on `event_id`).
 Gate: keychain-refusal boot path tested (HARDENING D3); migrations idempotent; no caller-polling required to learn a terminal state (proven by test that a disconnected caller gets `completed` via outbox replay).
@@ -204,7 +204,7 @@ Metered-fallback execution via `llm_gateway`; multi-account per provider; concur
 | Provider silently downgrades model | `observed_model` per attempt → pool degraded | quota pools (A4/P4) |
 | Selector drift breaks adapter silently | probe canary + fallback-strategy telemetry + circuit breaker | SDK selectors + worker (P2/P4) |
 | Local daemon abused via browser/DNS-rebinding | UDS default, token always, Host/Origin validation | http server (P1) |
-| Silent completion gap — caller must ask to discover done/failed | push-based completion: worker detects, outbox + CommRails/MCP/desktop notify deliver; polling is debug-only | events/outbox + notify (D12, P1) |
+| Silent completion gap — caller must ask to discover done/failed | push-based completion: worker detects, outbox + Factory/MCP/desktop notify deliver; polling is debug-only | events/outbox + notify (D12, P1) |
 | Dead-feeling UX on long provider-side tasks | native progress scraping + 15 s heartbeats + partial artifacts; stall watchdog reads `last_change_at` | worker/progress + SDK extractors (D11, P2/P5) |
 | Web surface geo-blocked / restricted, entitlement stranded | desktop-app lane (no URL to block) as automatic fallback for the same entitlement | desktop_bridge + dual-lane router policy (D14, P7) |
 | Desktop automation brittleness (framework drift, app updates killing CDP) | CDP-first stack (DOM, not pixels) per research; pinned app versions + fuse watchdog + probe canary; desktop lanes only on the pinned-image Sessions machine | D14/D15 + P7 conformance + update watchdog |

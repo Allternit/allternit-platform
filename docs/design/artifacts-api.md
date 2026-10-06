@@ -405,7 +405,7 @@ client of the API; the per-surface build plans belong to their own sessions.
 | **Local (default)** | `a://artifact/<id>` on the local gateway; only this machine, only authenticated local users | DECIDED |
 | **Static export** | Existing client-side pipelines: HTML / PDF / ZIP / PPTX / MP4 (`artifact-export.ts`) | DECIDED — exists, unchanged; export stays client-side in Phase 1 |
 | **Hosted publish (Cloudflare Pages)** | Infra exists (the Ops gateway already deploys Pages projects). Publish = explicit user action that exports a version and deploys it to a Pages project under the user's account. | IMPLEMENTED 2026-09-12 (`artphase3-0912`) — `POST/GET/DELETE /api/v1/content-artifacts/:id/publish`; shared project + per-user routes, version-snapshot publish, immutable deployments, sandbox-policy gate |
-| **Org relay (A:// mesh)** | Artifact travels between gateways over the mesh (CommRails substrate, `commrails/`). | IMPLEMENTED 2026-09-12 (session `relay-0912`) — `POST /api/v1/content-artifacts/:id/relay` + public inbox `POST /api/v1/content-artifacts/relay/inbox`; `a://artifact/<id>@<gateway>` read resolution; see "Relay tier — implementation" below |
+| **Org relay (A:// mesh)** | Artifact travels between gateways over the mesh (Factory substrate, `factory/`). | IMPLEMENTED 2026-09-12 (session `relay-0912`) — `POST /api/v1/content-artifacts/:id/relay` + public inbox `POST /api/v1/content-artifacts/relay/inbox`; `a://artifact/<id>@<gateway>` read resolution; see "Relay tier — implementation" below |
 
 **Publish tier — decisions (2026-09-12, decided by Eoj; the former OPEN
 questions, answered):**
@@ -462,12 +462,12 @@ decisions above are implemented as decided, in
   `resolvedFrom`. This is read-through only — nothing is persisted locally;
   import happens only via the explicit relay send/inbox flow. Unknown peer →
   404 naming the peer.
-- **Wire transport:** HTTP inbox between gateway base URLs. The CommRails UDS
-  envelope path needs a listener the gateway does not run, and the CommRails
+- **Wire transport:** HTTP inbox between gateway base URLs. The Factory UDS
+  envelope path needs a listener the gateway does not run, and the Factory
   Bus inbox is keyed per data_dir (`.allternit/bus/queue.db`), so neither can
   span two gateway instances with separate data dirs — the org-mesh topology.
-  The bundle is a CommRails-shaped envelope and every relayed bundle is
-  recorded as a `ContentArtifactRelayed` event in the local CommRails ledger
+  The bundle is a Factory-shaped envelope and every relayed bundle is
+  recorded as a `ContentArtifactRelayed` event in the local Factory ledger
   on both the sending and receiving gateways.
 - **Configuration:** `ALLTERNIT_GATEWAY_NAME` (this gateway's name in
   provenance, default `local`) and `ALLTERNIT_RELAY_PEERS` (comma-separated

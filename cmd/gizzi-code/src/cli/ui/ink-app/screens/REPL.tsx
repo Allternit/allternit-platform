@@ -5143,7 +5143,7 @@ export function REPL({
                 {!showSpinner && !toolJSX?.isLocalJSXCommand && showExpandedTodos && tasksV2 && tasksV2.length > 0 && <Box width="100%" flexDirection="column">
                       <TaskListV2 tasks={tasksV2} isStandalone={true} />
                     </Box>}
-                {/* Rails DAG todo panel: self-hides when Rails peer mode is
+                {/* Factory DAG todo panel: self-hides when Factory peer mode is
                   off or the DAG view is empty. Sibling of TaskListV2 so it
                   renders even when there are no local tasksV2. */}
                 {!showSpinner && !toolJSX?.isLocalJSXCommand && showExpandedTodos && <RailsTaskList />}

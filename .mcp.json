@@ -1,13 +1,5 @@
 {
   "mcpServers": {
-    "rails": {
-      "command": "~/Desktop/allternit-workspace/allternit/target/debug/rails",
-      "args": [
-        "--root",
-        "~/Library/Application Support/allternit",
-        "mcp"
-      ]
-    },
     "sequential-thinking": {
       "command": "npx",
       "args": [

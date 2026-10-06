@@ -996,11 +996,11 @@ fn confirm_remote_install_with_running_server(
         Err(err) => {
             if !io::stdin().is_terminal() {
                 return Err(io::Error::other(format!(
-                    "could not inspect the running remote ao server on {target} before installing: {err}; run from an interactive terminal to approve updating the remote binary"
+                    "could not inspect the running remote allternit-factory pane server on {target} before installing: {err}; run from an interactive terminal to approve updating the remote binary"
                 )));
             }
             eprintln!(
-                "could not inspect the running remote ao server on {target} before installing: {err}"
+                "could not inspect the running remote allternit-factory pane server on {target} before installing: {err}"
             );
             eprint!("continue installing the remote ao binary? [y/N] ");
             io::stderr().flush()?;
@@ -1040,7 +1040,7 @@ fn confirm_remote_install_with_running_server(
 
     if plan == RemoteInstallRunningServerPlan::KeepRunning {
         if io::stdin().is_terminal() {
-            eprintln!("remote ao server on {target} is already compatible:");
+            eprintln!("remote allternit-factory pane server on {target} is already compatible:");
             eprintln!("  server: v{}", version_label(version.as_deref()));
             eprintln!(
                 "ao will install {} without stopping the running remote server.",
@@ -1055,7 +1055,7 @@ fn confirm_remote_install_with_running_server(
             RemoteInstallRunningServerPlan::LiveHandoff => return Ok(false),
             RemoteInstallRunningServerPlan::StopRequired(_) => {
                 return Err(io::Error::other(format!(
-                    "remote ao server on {target} is running v{}; run from an interactive terminal to approve stopping it for the update",
+                    "remote allternit-factory pane server on {target} is running v{}; run from an interactive terminal to approve stopping it for the update",
                     version_label(version.as_deref())
                 )));
             }
@@ -1064,7 +1064,7 @@ fn confirm_remote_install_with_running_server(
     }
 
     if plan == RemoteInstallRunningServerPlan::LiveHandoff {
-        eprintln!("remote ao server on {target} is currently running:");
+        eprintln!("remote allternit-factory pane server on {target} is currently running:");
         eprintln!("  server: v{}", version_label(version.as_deref()));
         eprintln!(
             "ao will install {} and hand off live pane processes to the prepared server.",
@@ -1073,7 +1073,7 @@ fn confirm_remote_install_with_running_server(
         return Ok(false);
     }
 
-    eprintln!("remote ao server on {target} is currently running:");
+    eprintln!("remote allternit-factory pane server on {target} is currently running:");
     eprintln!("  server: v{}", version_label(version.as_deref()));
     eprintln!(
         "To complete the remote update, ao must stop the running remote server after installing."
@@ -1263,19 +1263,19 @@ fn confirm_remote_server_stop(
     if !io::stdin().is_terminal() {
         if required_upgrade {
             return Err(io::Error::other(format!(
-                "remote ao server on {target} needs one final update before this client can attach; run from an interactive terminal to approve updating it"
+                "remote allternit-factory pane server on {target} needs one final update before this client can attach; run from an interactive terminal to approve updating it"
             )));
         }
 
         eprintln!(
-            "remote ao server on {target} is still running v{}; it will use {} after it restarts.",
+            "remote allternit-factory pane server on {target} is still running v{}; it will use {} after it restarts.",
             version_label(version),
             current_version()
         );
         return Ok(false);
     }
 
-    eprintln!("remote ao server on {target} is currently running:");
+    eprintln!("remote allternit-factory pane server on {target} is currently running:");
     eprintln!("  server: v{}", version_label(version));
     eprintln!("  prepared binary: {}", current_version());
     eprintln!();
@@ -1316,7 +1316,7 @@ fn confirm_remote_server_stop(
     if required_upgrade {
         return Err(io::Error::new(
             io::ErrorKind::Interrupted,
-            "remote ao server stop cancelled",
+            "remote allternit-factory pane server stop cancelled",
         ));
     }
 
@@ -1357,7 +1357,7 @@ fn live_handoff_remote_server(ssh: &RemoteSsh, remote_herdr: &RemoteHerdr) -> io
     }
 
     eprintln!(
-        "handed off the remote ao server on {}; reconnecting to the prepared server.",
+        "handed off the remote allternit-factory pane server on {}; reconnecting to the prepared server.",
         ssh.target()
     );
     Ok(())
@@ -1372,7 +1372,7 @@ fn stop_remote_server(ssh: &RemoteSsh, remote_herdr: &RemoteHerdr) -> io::Result
 
     wait_for_remote_server_shutdown(ssh, remote_herdr)?;
     eprintln!(
-        "stopped the remote ao server on {}; it will restart when the remote client bridge attaches.",
+        "stopped the remote allternit-factory pane server on {}; it will restart when the remote client bridge attaches.",
         ssh.target()
     );
     Ok(())
@@ -1388,7 +1388,7 @@ fn wait_for_remote_server_shutdown(ssh: &RemoteSsh, remote_herdr: &RemoteHerdr) 
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
                 format!(
-                    "shutdown was requested, but the old remote ao server on {target} is still responding after {} seconds",
+                    "shutdown was requested, but the old remote allternit-factory pane server on {target} is still responding after {} seconds",
                     REMOTE_SERVER_SHUTDOWN_CONFIRM_TIMEOUT.as_secs(),
                     target = ssh.target()
                 ),

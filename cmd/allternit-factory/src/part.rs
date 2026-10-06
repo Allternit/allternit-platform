@@ -18,7 +18,7 @@ fn runtime(ctx: &Ctx) -> Result<tokio::runtime::Runtime, u8> {
 
 /// Who is sending from the command line.
 fn cli_sender() -> String {
-    for var in ["AO_LEAD", "USER", "LOGNAME"] {
+    for var in ["ALLTERNIT_FACTORY_LEAD", "USER", "LOGNAME"] {
         if let Ok(v) = std::env::var(var) {
             if !v.is_empty() {
                 return format!("user:{v}");

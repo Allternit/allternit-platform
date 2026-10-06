@@ -213,7 +213,7 @@ pub fn config_diagnostic_summary(diagnostics: &[String]) -> Option<String> {
         ""
     };
 
-    Some(format!("{target}{impact}; ao config check"))
+    Some(format!("{target}{impact}; allternit-factory pane config check"))
 }
 
 pub fn load_live_config() -> Result<LoadedConfig, Vec<String>> {
@@ -762,7 +762,7 @@ mod tests {
 
         assert_eq!(
             config_diagnostic_summary(&diagnostics).as_deref(),
-            Some("config.toml; ao config check")
+            Some("config.toml; allternit-factory pane config check")
         );
     }
 
@@ -775,7 +775,7 @@ mod tests {
 
         assert_eq!(
             config_diagnostic_summary(&diagnostics).as_deref(),
-            Some("config.toml has unknown keys; ao config check")
+            Some("config.toml has unknown keys; allternit-factory pane config check")
         );
     }
 
@@ -788,7 +788,7 @@ mod tests {
 
         assert_eq!(
             config_diagnostic_summary(&diagnostics).as_deref(),
-            Some("config.toml; ao config check")
+            Some("config.toml; allternit-factory pane config check")
         );
     }
 
@@ -801,7 +801,7 @@ mod tests {
 
         assert_eq!(
             config_diagnostic_summary(&diagnostics).as_deref(),
-            Some("config.toml invalid; using defaults; ao config check")
+            Some("config.toml invalid; using defaults; allternit-factory pane config check")
         );
     }
 
@@ -810,14 +810,14 @@ mod tests {
         let startup = vec!["config read error: permission denied; using defaults".to_string()];
         assert_eq!(
             config_diagnostic_summary(&startup).as_deref(),
-            Some("config.toml unreadable; using defaults; ao config check")
+            Some("config.toml unreadable; using defaults; allternit-factory pane config check")
         );
 
         let reload =
             vec!["config read error: permission denied; keeping current config".to_string()];
         assert_eq!(
             config_diagnostic_summary(&reload).as_deref(),
-            Some("config.toml unreadable; keeping current config; ao config check")
+            Some("config.toml unreadable; keeping current config; allternit-factory pane config check")
         );
     }
 
@@ -830,7 +830,7 @@ mod tests {
 
         assert_eq!(
             config_diagnostic_summary(&diagnostics).as_deref(),
-            Some("config.toml invalid; keeping current config; ao config check")
+            Some("config.toml invalid; keeping current config; allternit-factory pane config check")
         );
     }
 

@@ -81,12 +81,12 @@ export async function tui(options?: any): Promise<void> {
     bypassAvailable: permissionInit.toolPermissionContext.isBypassPermissionsModeAvailable,
   })
 
-  // Register as a Rails peer so other local agents can discover and message
+  // Register as a Factory peer so other local agents can discover and message
   // this session. Fire-and-forget: failures are logged but never block TUI.
   // The actual inbox listener is mounted inside the React tree by
   // <RailsInboxBridge /> so it can post messages to the mailbox context.
   registerRailsPeer(getSessionId()).catch((err) => {
-    Log.Default.info('tui: rails peer registration failed', {
+    Log.Default.info('tui: Factory peer registration failed', {
       error: err?.message || String(err),
     })
   })

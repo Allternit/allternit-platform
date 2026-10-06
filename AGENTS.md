@@ -81,7 +81,7 @@ Every agent session in this repo works in its OWN linked worktree — never in t
 Agents that stop at "code works in my worktree" leave debt for the next session. A session is not done until all of this is done. Canonical example: session `0f55144a` (2026-09-07, PR #105).
 
 1. **Worktree.** Create `<repo>-session-<id>` on branch `session/<id>` from latest `main`; `cd` into it. Never edit the shared checkout (it may hold other sessions' uncommitted in-flight work — leave that untouched).
-2. **Plan.** After scoping with the owner, enter the work into the CommRails WIH DAG (`allternit-commrails plan new`, then per-node `wih pickup`) — see "Planning and task tracking" below for the >2-step rule. A plan file may be drafted as scratch while scoping, but the DAG is the source of truth once it exists. Update `.steering/checkpoint.md` (`Goal` / `Just did` / `Next` / `Open questions`) at every milestone.
+2. **Plan.** After scoping with the owner, enter the work into the Factory WIH DAG (`gizzi workspace plan new`, then per-node `gizzi workspace node claim`) — see "Planning and task tracking" below for the >2-step rule. A plan file may be drafted as scratch while scoping, but the DAG is the source of truth once it exists. Update `.steering/checkpoint.md` (`Goal` / `Just did` / `Next` / `Open questions`) at every milestone.
 3. **Implement and verify.** Every claim checked before you make it: typecheck, unit tests, `cargo check`/`cargo test` for Rust, and a live smoke test (run the server, `curl` the endpoints) for anything behavioral. Note pre-existing breakage as pre-existing; don't silently fix unrelated files.
 4. **Commit and push.** Logical commits (conventional-ish prefixes: `feat(...)`, `fix(...)`, `docs(ledger): ...`), push the session branch to origin. Never commit directly on main except step 7.
 5. **PR and merge.** `gh pr create` with a real summary + verification evidence, `gh pr merge <n> --merge` (merge commit, not squash — keeps session chunk history). Record the PR number and merge SHA.
@@ -117,17 +117,17 @@ Final cleanup happens only after the change is safely in the canonical codebase.
 
 ## Steering checkpoints
 
-This repo is wired for hook-based steering: when an agent session working here ends a turn, a `Stop` hook consults a **separate steering agent** (a different model family, run via the agent-orchestrator tmux tooling) — but only if `.steering/checkpoint.md` changed since the last review. So at every meaningful checkpoint (subtask finished, design decision made, before a risky change), update `.steering/checkpoint.md`: `Goal`, `Just did`, `Next`, `Open questions`. The steering agent's answers/guidance come back injected as a `[steering]` message — treat them as authoritative and act on them before continuing. Additionally, `git commit`/`git push` pass through a hard gate: they only execute after the steering agent approves. See `.steering/README.md`. Kill switch: `touch .steering/off`.
+This repo is wired for hook-based steering: when an agent session working here ends a turn, a `Stop` hook consults a **separate steering agent** (a different model family, reached through `gizzi orchestration steer consult`) — but only if `.steering/checkpoint.md` changed since the last review. So at every meaningful checkpoint (subtask finished, design decision made, before a risky change), update `.steering/checkpoint.md`: `Goal`, `Just did`, `Next`, `Open questions`. The steering agent's answers/guidance come back injected as a `[steering]` message — treat them as authoritative and act on them before continuing. Additionally, `git commit`/`git push` pass through a hard gate: they only execute after the steering agent approves. See `.steering/README.md`. Kill switch: `touch .steering/off`.
 
 ## Planning and task tracking
 
-Multi-step work is tracked in the CommRails WIH DAG, deterministically — not by
-agent discretion. Ratified per `commrails/spec/DAG_AS_DEFAULT_TASK_SYSTEM.md`.
+Multi-step work is tracked in the Allternit Factory WIH DAG, deterministically —
+not by agent discretion. Ratified per `factory/engine/spec/DAG_AS_DEFAULT_TASK_SYSTEM.md`.
 
 - **The rule.** If a session expects to take more than two steps, or its work
   will be picked up, reviewed, or continued by another session, it must be
-  represented as DAG nodes under a `plan` before execution: `allternit-commrails
-  plan new "<goal>"`, broken into nodes. Work of two steps or less may stay
+  represented as DAG nodes under a `plan` before execution: `gizzi workspace
+  plan new "<goal>"`, broken into nodes (`gizzi workspace node add|claim|close`). Work of two steps or less may stay
   ephemeral (no DAG required).
 - **The DAG is the source of truth.** A markdown plan file is scratch for
   drafting only; the moment the DAG exists, node statuses replace the
@@ -519,85 +519,67 @@ When adding new courses/modules, update:
 
 ---
 
-## CommRails — agent communication and coordination
+## Allternit Factory — agent communication and coordination
 
-This repo uses **CommRails** (crate `allternit-commrails`, formerly `allternit-agent-system-rails`) as its unified communication and coordination substrate:
+This repo uses the **Allternit Factory** as its unified communication and coordination substrate (it replaced the older work engine and agent orchestrator; old commands, routes and env names are removed, not aliased — see `surfaces/docs/factory/migration.mdx`):
 
-- `commrails/` — Rust library crate (`allternit-commrails`).
-- `cmd/allternit-api/src/rails/mod.rs` — HTTP surface mounted at `/api/commrails` and `/commrails` (canonical; `/api/rails` and `/rails` remain as aliases).
+- `factory/engine/` — Rust library crate (`allternit-factory-engine`); `cmd/allternit-factory/` is the engine binary (internal, never typed by users).
+- `cmd/allternit-api/src/rails/mod.rs` — the in-process Factory core router (`factory_core_router()`), mounted at `/api/factory` (peers, steer, mail, ledger, receipts, wihs, plans, leases, gate, vault, …).
 - `cmd/gizzi-code/src/runtime/gizzi-core/services/railsPeer.ts` — gizzi-code peer registration + HTTP inbox poller.
 - `cmd/gizzi-code/src/cli/ui/ink-app/components/RailsInboxBridge.tsx` — bridges polled envelopes into the TUI mailbox.
 
-Every local agent session can register itself as a **peer** under `.allternit/peers/`. Peers can discover each other and send plain-text messages — the Allternit equivalent of Claude Code's `ListAgents` / `SendMessage`. Messages never leave the machine. UDS sockets are supported for direct push; gizzi-code uses HTTP polling of the durable Bus inbox. Any CLI can participate by registering and polling the HTTP inbox; `.allternit/mux` is not required for CommRails messaging.
+Every local agent session can register itself as a **peer** under `.allternit/peers/`. Peers can discover each other and send plain-text messages — the Allternit equivalent of Claude Code's `ListAgents` / `SendMessage`. Messages never leave the machine. UDS sockets are supported for direct push; gizzi-code uses HTTP polling of the durable Bus inbox. Any CLI can participate by registering and polling the HTTP inbox; `.allternit/mux` is not required for Factory messaging. Terminal bots started with `gizzi agents up` are registered automatically.
 
-**One-release shims:** the old binaries (`allternit-rails`, `allternit-rails-service`, `rails`) and the old HTTP prefixes (`/api/rails`, `/rails`) and env names (`ALLTERNIT_RAILS_*`, `GIZZI_RAILS_URL`) still work. New callers should use `allternit-commrails`, `/api/commrails`, and `ALLTERNIT_COMMRAILS_*` / `GIZZI_COMMRAILS_URL`.
+### HTTP surface (`/api/factory`, served by allternit-api)
 
-### Current status (Phase 1–7 complete)
+- `POST /api/factory/peers` — register a peer (`{ name, cwd, vendor }`).
+- `GET /api/factory/peers` — list peers.
+- `POST /api/factory/peers/:name/send` — send a message to a peer by name.
+- `POST /api/factory/peers/:name/heartbeat` — keep a peer marked active.
+- `POST /api/factory/steer/checkpoint` — hash `.steering/checkpoint.md` and emit a `SteeringCheckpoint` ledger event when it changes.
+- `POST /api/factory/steer/consult` — build steering context and consult the configured backend.
+- `POST /api/factory/steer/commit-gate` — commit/push approval consult.
 
-The peer registry, UDS inbox transport, steering checkpoint, `/api/rails/peers` HTTP routes, `/api/rails/steer/*` routes, `allternit-commrails` CLI commands, gizzi-code runtime tools, `ao-*` shims, and `.steering/bin` hook delegation are implemented and verified:
+The full route table is in `surfaces/docs/factory/architecture.mdx` ("Routes allternit-api serves in process").
 
-- `POST /api/rails/peers` — register a peer (`{ name, cwd, vendor }`).
-- `GET /api/rails/peers` — list peers.
-- `POST /api/rails/peers/:name/send` — send a message to a peer by name.
-- `POST /api/rails/peers/:name/heartbeat` — keep a peer marked active.
-- `POST /api/rails/steer/checkpoint` — hash `.steering/checkpoint.md` and emit a `SteeringCheckpoint` ledger event when it changes.
-- `POST /api/rails/steer/consult` — build steering context and consult the configured backend.
-- `POST /api/rails/steer/commit-gate` — commit/push approval consult.
-
-From the shell:
+From the shell, people use `gizzi`:
 
 ```bash
-allternit-commrails peer register <name> --vendor <agent-family>
-allternit-commrails peer list
-allternit-commrails peer send <name> "<message>"
-allternit-commrails peer heartbeat <name>
-allternit-commrails peer inbox <name>
-allternit-commrails orchestrator doctor
-allternit-commrails steer checkpoint --cwd <dir>
-allternit-commrails steer consult --cwd <dir>
-allternit-commrails steer commit-gate --cwd <dir>
+gizzi agents ps                                  # peers and bots, reconciled with live panes
+gizzi orchestration send <bot@team> "<message>"  # message a bot
+gizzi orchestration steer checkpoint|consult|commit-gate --cwd <dir>
+gizzi agents doctor                              # harnesses, panes, transport
 ```
+
+The engine's hidden maintenance CLI covers the raw peer commands (`register`, `list`, `send`, `heartbeat`, `inbox`): `allternit-factory internal core peer <verb> …`.
 
 From gizzi-code, the runtime exposes:
 
 - `ListPeers` (alias `ListAgents`) — discover local agent peers.
-- `SendMessage` (alias `SendMessageToPeer`) — send to a CommRails peer by name, with teammate-mailbox fallback.
+- `SendMessage` (alias `SendMessageToPeer`) — send to a Factory peer by name, with teammate-mailbox fallback.
 
-### Enabling CommRails peer mode in gizzi-code
+### Peer mode in gizzi-code
 
-CommRails peer registration is default-on (set `GIZZI_ENABLE_RAILS_PEER=0` to opt out). To register and poll the HTTP inbox explicitly:
+Factory peer registration is default-on (set `ALLTERNIT_FACTORY_PEER=0` to opt out). It registers the session as `gizzi-<sessionId>` with the Factory API and polls the HTTP inbox for peer messages. The process also exports:
 
-```bash
-GIZZI_ENABLE_RAILS_PEER=1 gizzi
-```
-
-This registers the session as `gizzi-<sessionId>` with the CommRails API and polls the HTTP inbox for peer messages. The process also exports (new name first, legacy alias still set):
-
-- `ALLTERNIT_COMMRAILS_PEER_NAME` (alias `ALLTERNIT_RAILS_PEER_NAME`)
-- `ALLTERNIT_COMMRAILS_INBOX` (alias `ALLTERNIT_RAILS_INBOX`)
+- `ALLTERNIT_FACTORY_PEER_NAME`
+- `ALLTERNIT_FACTORY_INBOX`
 
 ### Verification
 
-- `cargo test -p allternit-commrails` ✅
-- `cargo build -p allternit-api` ✅
-- `bun run typecheck` in `cmd/gizzi-code` ✅
+- `cargo test -p allternit-factory-engine` and `cargo test -p allternit-factory`
+- `cargo build -p allternit-api`
+- `bun run typecheck` in `cmd/gizzi-code`
 - `cmd/gizzi-code/test/rails-peer-e2e.ts` registers two peers, lists them, and confirms Bus/UDS message delivery.
-- `tmp/rails-two-session-test/run.sh` automates a two-session `GIZZI_ENABLE_RAILS_PEER=1 gizzi-code` TUI exchange and saves evidence to `tmp/rails-two-session-test/evidence/`.
-- Two live `GIZZI_ENABLE_RAILS_PEER=1 gizzi` sessions exchanged a `ListPeers` / `SendMessage` round-trip (see `docs/programs/rails/RAILS_PRODUCT_UPDATE_SYSTEM_PROMPT.md`).
 
-### Product-update system prompts
+### Docs
 
-Load these into agent sessions to teach the Rails workflow:
-
-- `docs/programs/rails/RAILS_PRODUCT_UPDATE_SYSTEM_PROMPT.md` — full product update / system prompt.
-- `.allternit/context-packs/rails-product-update/inputs/INSTRUCTIONS.md` — concise agent-instruction context pack.
-- `.allternit/context-packs/rails-product-update/inputs/templates/QUICKSTART.md` — copy-paste quickstart.
-
-See `docs/RAILS_UNIFIED_COMMUNICATION_PLAN.md` for the full roadmap.
+- `surfaces/docs/factory/overview.mdx` — what the Factory is; `commands.mdx` — every `gizzi` command; `migration.mdx` — old → new names.
+- `docs/programs/rails/RAILS_PRODUCT_UPDATE_SYSTEM_PROMPT.md` — the pre-Factory product-update prompt (history; superseded by the Factory docs).
 
 ## Agent email rail (services/mailflare)
 
-`services/mailflare/` is a **vendored fork** of [hieunc229/mailflare](https://github.com/hieunc229/mailflare) that gives agents real internet email (inbound webhook → Rails Mail threads; outbound via the Rails Mail review gate). Conventions:
+`services/mailflare/` is a **vendored fork** of [hieunc229/mailflare](https://github.com/hieunc229/mailflare) that gives agents real internet email (inbound webhook → Factory mail threads; outbound via the Factory mail review gate). Conventions:
 
 - It is a plain **npm** project with its own `package-lock.json` and OpenNext/Cloudflare build — like `services/open-connector`, it is **excluded from the pnpm workspace** (`!services/mailflare` in `pnpm-workspace.yaml`). Never add it to the workspace; root `pnpm install` ingesting it breaks its Next.js build.
 - Verify changes with `npm run build` (lint has pre-existing upstream errors; don't add new ones). Type checking is `ignoreBuildErrors`-gated upstream, so run `npx tsc --noEmit` when touching TS.

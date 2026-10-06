@@ -80,7 +80,7 @@
 | Program | Dir | Files | Key docs |
 |---|---|---|---|
 | Swarm builds | [swarm/](./programs/swarm/) | 68 | `SWARM_{A..E}_MAP.md`, `SWARM_*_PHASE*_NOTES.md` |
-| CommRails | [rails/](./programs/rails/) | 24 | [RAILS_PRODUCT_UPDATE_SYSTEM_PROMPT.md](./programs/rails/RAILS_PRODUCT_UPDATE_SYSTEM_PROMPT.md), `RAILS_{GRAPH,MAIL,PARITY}_*` |
+| Work engine (pre-Factory) | [rails/](./programs/rails/) | 24 | [RAILS_PRODUCT_UPDATE_SYSTEM_PROMPT.md](./programs/rails/RAILS_PRODUCT_UPDATE_SYSTEM_PROMPT.md), `RAILS_{GRAPH,MAIL,PARITY}_*` |
 | Gizzi-code | [gizzi/](./programs/gizzi/) | 24 | [GIZZI_BOT_MODE_SPEC.md](./programs/gizzi/GIZZI_BOT_MODE_SPEC.md), `GIZZI_W2*`, `FABRIC_PWA_BOT_MODE_*`, `GC_*` |
 | iOS | [ios/](./programs/ios/) | 15 | `IOS_BOT_PARITY_*`, `IOS_LOCAL_MODELS_MARKETPLACE_*` |
 | Cloud agents | [cloud-agents/](./programs/cloud-agents/) | 8 | `CLOUD_AGENTS_PHASE_*` |

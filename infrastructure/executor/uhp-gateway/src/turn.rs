@@ -2,7 +2,7 @@
 //! to completion. One-shot headless command per turn; the prompt is an argv
 //! flag. The per-session workspace directory on disk is the checkpoint.
 //!
-//! Output is parsed from the transcript tee file (`HERDR_AO_TRANSCRIPT`, the
+//! Output is parsed from the transcript tee file (`HERDR_AO_TRANSCRIPT`, the // old-names: keep (pane launch-env marker)
 //! P1 additive raw-byte pane log), NOT from the rendered pane screen: headless
 //! panes render at a few columns wide, so screen reads wrap every NDJSON line
 //! into unparseable fragments (verified live 2026-09-10 — a claude turn
@@ -186,7 +186,7 @@ async fn run_turn_inner(
     );
     let transcript_path = session_dir.join(format!("turn-{}.log", response.id));
     let mut env = vec![(
-        "HERDR_AO_TRANSCRIPT".to_string(),
+        "HERDR_AO_TRANSCRIPT".to_string(), // old-names: keep (the pane engine reads this launch-env marker)
         transcript_path.display().to_string(),
     )];
     // A model override needs an isolated Codex home with an explicit provider

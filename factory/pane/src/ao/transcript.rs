@@ -1,6 +1,6 @@
 //! PTY transcript tee — the one intentional engine diff beyond the P0 gut list.
 //!
-//! `ao spawn` requests a per-pane transcript by putting the log path in the
+//! `allternit-factory pane spawn` requests a per-pane transcript by putting the log path in the
 //! pane launch env under [`TRANSCRIPT_ENV_VAR`]. The launch path opens the file
 //! here and the pane's `on_read` closure writes every raw PTY output byte
 //! (before parsing/filtering, so the log matches `script -q` semantics:
@@ -52,14 +52,14 @@ impl TranscriptTee {
             tracing::warn!(
                 path = %self.path.display(),
                 err = %err,
-                "ao transcript tee disabled after write error"
+                "allternit-factory pane transcript tee disabled after write error"
             );
         }
     }
 }
 
 /// Opens a tee when the launch env carries a transcript path. Open failures
-/// are logged and treated as "no tee" so spawn still succeeds; `ao spawn`
+/// are logged and treated as "no tee" so spawn still succeeds; `allternit-factory pane spawn`
 /// verifies the log separately for its instant-exit tail.
 pub(crate) fn tee_from_launch_env(extra: &[(String, String)]) -> Option<TranscriptTee> {
     let path = extra
@@ -72,7 +72,7 @@ pub(crate) fn tee_from_launch_env(extra: &[(String, String)]) -> Option<Transcri
             tracing::warn!(
                 path = %path.display(),
                 err = %err,
-                "ao transcript tee failed to open"
+                "allternit-factory pane transcript tee failed to open"
             );
             None
         }

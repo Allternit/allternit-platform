@@ -1685,9 +1685,9 @@ async fn wih_prompt_text(ledger: &Ledger, wih_id: &str) -> Result<Option<String>
 
 fn build_prompt(dag_id: &str, node: &DagNode, wih_id: &str, body: Option<&str>) -> String {
     format!(
-        "# {title}\n\n{body}\n\n---\nCommRails: dag {dag_id}, node {node_id}, WIH {wih_id}. \
+        "# {title}\n\n{body}\n\n---\nAllternit Factory: dag {dag_id}, node {node_id}, WIH {wih_id}. \
          Your final answer on stdout becomes this node's output (`wih close --output`). \
-         Writes need a lease: `allternit-factory internal rails lease request {wih_id} <agent> <paths...>`.\n",
+         Writes need a lease: `allternit-factory internal core lease request {wih_id} <agent> <paths...>`.\n",
         title = node.title,
         body = body.unwrap_or("(no description)"),
         node_id = node.node_id,

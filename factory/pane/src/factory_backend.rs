@@ -4,7 +4,7 @@
 //! `allternit-factory` calls [`install`] at startup; from then on every engine
 //! spawn (`workflows drive` executors, `agents up` later), send, capture and
 //! kill goes through this pane engine's socket API — the same calls
-//! `allternit-factory pane ao spawn|send|status|kill` make. There is no tmux
+//! `allternit-factory pane allternit-factory pane spawn|send|status|kill` make. There is no tmux
 //! path.
 //!
 //! [`PaneBackend`]: allternit_factory_engine::backend::PaneBackend

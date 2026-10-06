@@ -1,17 +1,17 @@
-//! Spawn gate (audit S1) for `ao spawn` / `ao recover --apply`.
+//! Spawn gate (audit S1) for `allternit-factory pane spawn` / `allternit-factory pane recover --apply`.
 //!
-//! Byte-for-byte mirror of `tools/agent-orchestrator/scripts/ao-spawn-gate`,
-//! the bash gate every `ao-spawn` launch line goes through. Same gated runner
+//! The spawn gate every pane-engine launch line goes through (it began as a
+//! byte-for-byte port of the old bash gate script). Same gated runner
 //! line, same stderr, same refusal exit, same `spawn-gate.log` line. Parity is
 //! checked black-box by `tests/ao_parity/gate_parity.sh` (rewrite table) and
 //! `tests/ao_parity/run.sh` (full spawn).
 //!
-//! Policy is allternit-commrails `hook` (PR #965):
+//! Policy is the engine's `hook` (PR #965):
 //! - claude / claude-code (`hook`): `--dangerously-skip-permissions` becomes
 //!   `--permission-mode acceptEdits --settings <file>`; the settings file comes
-//!   from `allternit-commrails hook claude-settings` and carries the PreToolUse
+//!   from `allternit-factory internal core hook claude-settings` and carries the PreToolUse
 //!   hook (hard floor + Gate 2). No bypass flag: the same flags are inserted
-//!   after the harness word. No commrails binary: the spawn is refused.
+//!   after the harness word. No engine binary: the spawn is refused.
 //! - codex (`sandbox`): `--dangerously-bypass-approvals-and-sandbox` becomes the
 //!   workspace-write sandbox flags; `danger-full-access` becomes
 //!   `workspace-write`.
@@ -177,11 +177,11 @@ const GATE_ARGV_PREFIX: [&str; 2] = ["internal", "hook"];
 
 /// The engine binary that carries the gate: this process when it is
 /// `allternit-factory` (the normal case), else `$ALLTERNIT_FACTORY_BIN` (or the
-/// deprecated `$ALLTERNIT_COMMRAILS_BIN`), else an `allternit-factory` next to
+/// deprecated `$ALLTERNIT_FACTORY_BIN`), else an `allternit-factory` next to
 /// this executable. Never one found on `PATH` — the same rule as the engine's
-/// `hook::find_commrails_bin`, which this delegates to.
-fn commrails_bin() -> Option<PathBuf> {
-    allternit_factory_engine::hook::find_commrails_bin()
+/// `hook::find_factory_bin`, which this delegates to.
+fn factory_bin() -> Option<PathBuf> {
+    allternit_factory_engine::hook::find_factory_bin()
 }
 
 fn env_nonempty(key: &str) -> Option<String> {
@@ -193,18 +193,18 @@ fn env_nonempty(key: &str) -> Option<String> {
 pub(super) fn gate(session: &str, workdir: &str, line: &str, logs_dir: &Path, ao_home: &Path) -> Result<Gated, ()> {
     let harness = harness_of(line);
     let class = classify(&harness);
-    let root = env_nonempty("ALLTERNIT_COMMRAILS_ROOT").unwrap_or_else(|| ao_home.display().to_string());
+    let root = env_nonempty("ALLTERNIT_FACTORY_ROOT").unwrap_or_else(|| ao_home.display().to_string());
     let settings = logs_dir.join(format!("{session}.claude-settings.json"));
-    let wih = env_nonempty("ALLTERNIT_COMMRAILS_WIH");
+    let wih = env_nonempty("ALLTERNIT_FACTORY_WIH");
     let shown = if harness.is_empty() { "the agent" } else { harness.as_str() };
 
     let mut bin = None;
     if class == GateClass::Hook || wih.is_some() {
-        match commrails_bin() {
+        match factory_bin() {
             Some(found) => bin = Some(found),
             None => {
                 eprintln!(
-                    "error: spawn gate: allternit-factory not found (set ALLTERNIT_COMMRAILS_BIN); refusing to run {shown} without its gate"
+                    "error: spawn gate: allternit-factory not found (set ALLTERNIT_FACTORY_BIN); refusing to run {shown} without its gate"
                 );
                 return Err(());
             }

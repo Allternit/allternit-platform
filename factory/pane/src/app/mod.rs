@@ -1867,7 +1867,7 @@ mod tests {
         );
         assert_eq!(
             app.state.config_diagnostic.as_deref(),
-            Some("config.toml; ao config check")
+            Some("config.toml; allternit-factory pane config check")
         );
 
         std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
@@ -1932,7 +1932,7 @@ mod tests {
         assert_eq!(app.state.pane_borders, target_pane_borders);
         assert_eq!(
             app.state.config_diagnostic.as_deref(),
-            Some("config.toml has unknown keys; ao config check")
+            Some("config.toml has unknown keys; allternit-factory pane config check")
         );
 
         std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
@@ -2062,7 +2062,7 @@ mod tests {
             .config_diagnostic
             .as_deref()
             .is_some_and(|message| {
-                message == "config.toml invalid; keeping current config; ao config check"
+                message == "config.toml invalid; keeping current config; allternit-factory pane config check"
             }));
         assert!(app.state.toast.is_none());
 

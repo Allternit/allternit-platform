@@ -28,7 +28,7 @@ export interface Config {
   // §A8 — per-capability stall watchdog timeouts (seconds); defaults 90, with
   // research.deep at 1200. Policy keys: stall_timeout_s, stall_timeout_s.<cap>.
   stallTimeouts: { defaultS: number; byCapability: Record<string, number> };
-  // Base URL of the local allternit-api (CommRails peer messages, D12).
+  // Base URL of the local allternit-api (Factory peer messages, D12).
   apiBase: string;
   // Login mode browser (plain, non-automated Google Chrome; Firefox still
   // works when set explicitly). null → auto-detect at boot; unset and

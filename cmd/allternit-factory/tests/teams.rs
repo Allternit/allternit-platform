@@ -38,7 +38,7 @@ fn factory_env(home: &Path, args: &[&str], env: &[(&str, &str)]) -> Output {
         "HERDR_SOCKET_PATH",
         "HERDR_SESSION",
         "HERDR_ENV",
-        "ALLTERNIT_COMMRAILS_ROOT",
+        "ALLTERNIT_FACTORY_ROOT",
         "ALLTERNIT_FACTORY_BIN",
         "ALLTERNIT_FACTORY_BOT",
         "ALLTERNIT_FACTORY_TEAM",

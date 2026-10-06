@@ -1,6 +1,6 @@
 //! Campaigns: a declared objective with an owner, a budget, an executor and
 //! exactly one pending check (the Raven Oncall `ops_check_later` shape, on
-//! CommRails' ledger instead of an in-memory scheduler).
+//! the Factory ledger instead of an in-memory scheduler).
 //!
 //! Truth is the ledger (`Campaign*` events plus the campaign's `Wake*`
 //! events keyed `campaign:<id>`). [`project_campaigns`] rebuilds every
@@ -78,7 +78,7 @@ impl std::fmt::Display for CampaignStatus {
 pub enum CampaignExecutor {
     /// `bot:<slug>` — a Grok/Allternit bot.
     Bot(String),
-    /// `ao:<harness>` — an ao-engine harness session.
+    /// `ao:<harness>` — a pane-engine harness session.
     Ao(String),
     /// A shell command (runs only when the operator enabled + allowlisted it).
     Command(String),

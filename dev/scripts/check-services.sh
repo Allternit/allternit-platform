@@ -70,7 +70,7 @@ print_status_table() {
     declare -a services=(
         "API:$Allternit_API_PORT:/health"
         "Workspace:3021:/health"
-        "Rails:$Allternit_RAILS_PORT:/"
+        "Factory:${ALLTERNIT_FACTORY_PORT:-3011}:/api/factory/health"
         "Kernel:$Allternit_KERNEL_PORT:/health"
         "Policy:$Allternit_POLICY_PORT:/health"
         "Voice:$Allternit_VOICE_PORT:/health"
@@ -122,7 +122,7 @@ print_status_json() {
     declare -a services=(
         "API:$Allternit_API_PORT:/health"
         "Workspace:3021:/health"
-        "Rails:$Allternit_RAILS_PORT:/"
+        "Factory:${ALLTERNIT_FACTORY_PORT:-3011}:/api/factory/health"
         "Kernel:$Allternit_KERNEL_PORT:/health"
         "Policy:$Allternit_POLICY_PORT:/health"
         "Voice:$Allternit_VOICE_PORT:/health"

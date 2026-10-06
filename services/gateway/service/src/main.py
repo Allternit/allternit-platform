@@ -1169,15 +1169,7 @@ def rewrite_upstream_path(path: str) -> str:
     if path in {'/health', '/api/health'}:
         return '/health'
 
-    if path == '/api/rails':
-        return '/rails'
-    if path.startswith('/api/rails/'):
-        return '/rails/' + path[len('/api/rails/'):]
-
-    if path == '/api/v1/rails':
-        return '/rails'
-    if path.startswith('/api/v1/rails/'):
-        return '/rails/' + path[len('/api/v1/rails/'):]
+    # /api/factory/* passes through unchanged (allternit-api serves it).
 
     if path == '/api/v1':
         return '/'

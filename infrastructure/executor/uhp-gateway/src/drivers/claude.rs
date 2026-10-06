@@ -3,7 +3,7 @@
 //!  --permission-mode acceptEdits --settings <spawn-gate settings>`.
 //!
 //! No `--dangerously-skip-permissions`: the settings file (written by
-//! `allternit-factory internal rails hook claude-settings`) carries allow rules so the
+//! `allternit-factory internal core hook claude-settings`) carries allow rules so the
 //! headless run never blocks on a prompt, and a PreToolUse hook that runs the
 //! Allternit hard floor + Gate 2 on every tool call.
 

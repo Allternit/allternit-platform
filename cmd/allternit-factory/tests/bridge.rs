@@ -1,4 +1,4 @@
-//! CommRails bridge: scoped identities, forbidden capabilities, bind policy,
+//! Factory bridge: scoped identities, forbidden capabilities, bind policy,
 //! ledger provenance, rate limiting, and the box-side client's mirror output.
 //! Every listener here binds 127.0.0.1:0 — nothing is exposed.
 
@@ -23,7 +23,7 @@ fn test_root() -> TempDir {
     let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/tmp");
     std::fs::create_dir_all(&base).unwrap();
     tempfile::Builder::new()
-        .prefix("commrails-bridge-")
+        .prefix("factory-bridge-")
         .tempdir_in(base)
         .unwrap()
 }
@@ -306,7 +306,7 @@ async fn non_loopback_bind_is_refused_by_the_cli() {
     let bin = env!("CARGO_BIN_EXE_allternit-factory");
     let serve = |bind: &str, allow_remote: bool| {
         let mut cmd = Command::new(bin);
-        cmd.args(["internal", "rails", "bridge", "serve", "--bind", bind, "--root"])
+        cmd.args(["internal", "core", "bridge", "serve", "--bind", bind, "--root"])
             .arg(tmp.path())
             .arg("--identities")
             .arg(&ids);
@@ -331,7 +331,7 @@ async fn non_loopback_bind_is_refused_by_the_cli() {
     let out = Command::new(bin)
         .args([
             "internal",
-            "rails",
+            "core",
             "identity",
             "add",
             "--actor",
@@ -349,7 +349,7 @@ async fn non_loopback_bind_is_refused_by_the_cli() {
     let out = Command::new(bin)
         .args([
             "internal",
-            "rails",
+            "core",
             "identity",
             "add",
             "--actor",
@@ -610,7 +610,7 @@ fn python3() -> Option<PathBuf> {
 
 fn client_script() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tools/commrails-bridge-client/commrails-bridge")
+        .join("../../tools/factory-bridge-client/factory-bridge")
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

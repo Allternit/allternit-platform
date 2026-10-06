@@ -4,7 +4,7 @@ description: "How the Factory engine is laid out in the platform repo, its proce
 ---
 
 <Note>
-Shipping with the Allternit Factory build. This is the approved layout. Until the build lands, the code lives in `commrails/` and `infrastructure/executor/ao-engine/`.
+This is the engine's layout in the platform repo as of the Allternit Factory build. The older work-engine and orchestrator crates it replaced are gone; the [migration page](/factory/migration) lists their names.
 </Note>
 
 ## Layout in the platform repo
@@ -14,7 +14,7 @@ The Factory is built inside the platform repo, following its convention: binarie
 ```text
 allternit/                         (platform repo)
 ├── cmd/allternit-factory/         the engine binary (internal, never typed)
-├── factory/                       replaces commrails/ and infrastructure/executor/ao-engine/
+├── factory/                       replaces the old work-engine and orchestrator crates
 │   ├── engine/                    crate allternit-factory-engine
 │   │   └── src/
 │   │       ├── core/              ledger · ids · store · projections · index · replay · config
@@ -35,14 +35,14 @@ allternit/                         (platform repo)
 
 ### The engine binary
 
-`allternit-factory` replaces the old `allternit-commrails`, `allternit-rails`, `allternit-commrails-service`, `allternit-rails-service` and `ao` binaries. Nobody types it, but its tree is:
+`allternit-factory` replaces the old work-engine, work-engine service and orchestrator binaries (named on the [migration page](/factory/migration#commands)). Nobody types it, but its tree is:
 
 | Command | What it does |
 |---|---|
 | `allternit-factory serve [--port 3011] [--socket …]` | The engine server. `serve uhp` and `serve fabric` run the harness protocol and fabric servers |
 | `allternit-factory agents\|orchestration\|workflows\|workspace <verb>` | The four parts. Gizzi calls these with `--json` |
 | `allternit-factory pane …` | The pane engine's own commands. With no arguments it opens the live wall |
-| `allternit-factory internal …` | Hidden maintenance commands (ledger, index, lease, vault, replay) |
+| `allternit-factory internal core …` | Hidden maintenance commands (ledger, index, lease, vault, replay, hook, mail, steer, peer, plan, wih, identity, bridge) |
 
 **The core** stores events, IDs and state. **The Gate** is the only thing allowed to change state. **The four parts** hold the domain logic. **The surfaces** (pane, api, remote) are how people and machines reach it.
 
@@ -52,7 +52,7 @@ allternit/                         (platform repo)
 
 ### Where the old modules go
 
-| Part | From the old work engine (`commrails/src`) | From the old orchestrator (`ao-engine/src`) | From elsewhere |
+| Part | From the old work engine | From the old orchestrator engine | From elsewhere |
 |---|---|---|---|
 | core | `core`, `ledger`, `index`, `projections`, `replay`, `prompt`, `compact`, `query`, `dolt` | `config`, `persist`, `events`, `ipc`, `protocol` | — |
 | gate | `gate`, `hook`, `policy`, `killswitch`, `egress`, `fence`, `constraints` | the spawn gate | — |
@@ -64,7 +64,7 @@ allternit/                         (platform repo)
 | api | `service`, `mcp`, `bridge`, `workspace` | `api`, `server`, `serve` (UHP), `visibility` | Gizzi `/v1/orchestrator` routes |
 | remote | `bridge` identities | `fabric`, `remote` | — |
 
-**Kept apart:** `tickets`, `graph` and `sync` (the portable ticket tool for foreign repos) stay one `tickets` area inside the engine, not inside any of the four parts. The old standalone `commrails` and `rails` binaries and their `install.sh` are removed.
+**Kept apart:** `tickets`, `graph` and `sync` (the portable ticket tool for foreign repos) stay one `tickets` area inside the engine, not inside any of the four parts. The old standalone work-engine binaries and their `install.sh` are removed.
 
 ## Processes and ports
 
@@ -73,7 +73,7 @@ allternit/                         (platform repo)
 | `allternit-factory` | The engine. Ledger, Gate, panes, agents, fabric. One process that outlives any window | HTTP on `127.0.0.1:3011`, Unix socket at `~/.allternit/factory/factory.sock`. State root `~/.allternit/factory/` |
 | `allternit-factory pane server` | The pane engine daemon: every agent pane and every terminal. Started on demand (`allternit-factory pane tty ensure`, an agent spawn, Gizzi's first PTY) and outlives them | Its own socket for the agent session `ao`, which `pane tty ensure` reports. Under `XDG_CONFIG_HOME` when set |
 | `gizzi` | The product CLI/TUI. `gizzi <part> <verb>` runs `allternit-factory <part> <verb> … --json` and renders it | Next to the engine (brew, npm, Desktop `resources/bin`) |
-| `allternit-api` | The data plane Desktop, web and phone talk to. Proxies `/api/factory/*` to the engine, owns approvals | Its usual port. Links the `factory/` crates in-process for ledger and Gate access |
+| `allternit-api` | The data plane Desktop, web and phone talk to. Proxies the engine's `/api/factory/*` routes, serves the work-engine routes in process, owns approvals | Its usual port. Links the `factory/` crates in-process for ledger and Gate access |
 
 The workspace ledger stays in the workspace's `.allternit/` folder, with its existing layout. Event names are data and aren't renamed, so old ledgers still replay.
 
@@ -95,9 +95,44 @@ The full contract, with every request and response shape, is the [Factory API re
 
 ## What allternit-api proxies and what it owns
 
-- **Proxies:** every `/api/factory/*` route except approvals goes straight to the engine, for Desktop, ai.allternit.com and m.allternit.com (through the fabric relay).
+- **Proxies:** the engine's `/api/factory/*` routes (agents, teams, send, deliveries, events, templates, runs, `dags/:id`, campaigns, nodes, health, tasks) go straight to the engine, for Desktop, ai.allternit.com and m.allternit.com (through the fabric relay).
+- **Serves in process:** the work-engine routes (mail, peers, steer, ledger, plans, leases and the rest, listed below). allternit-api runs them itself against the linked `factory/` crates, behind the same auth as the rest of the API.
 - **Owns:** `/api/factory/approvals*`, plus the push action endpoint and the inbound channel hooks, because push and channels already live in allternit-api. It resolves approvals as Gate events through the linked `factory/` crates.
-- **Replaces:** `/rails`, `/api/rails`, `/commrails` and `/api/commrails` move to `/api/factory`. Gizzi's `/v1/orchestrator` (and the platform's `/api/v1/orchestrator` passthrough to it) is replaced by the engine. The old routes are removed in the same release that updates every caller.
+- **Replaces:** the old work-engine route prefixes all move to `/api/factory` (old → new in the [migration page](/factory/migration#http-routes)). Gizzi's `/v1/orchestrator` (and the platform's `/api/v1/orchestrator` passthrough to it) is replaced by the engine. The old routes were removed in the same release that updated every caller; there are no aliases.
+
+## Routes allternit-api serves in process
+
+These are mounted by allternit-api at `/api/factory` (`factory_core_router()`), not proxied. Paths are relative to `/api/factory`.
+
+| Area | Routes |
+|---|---|
+| Status | `GET /ledger/health` |
+| Peers | `GET\|POST /peers`, `DELETE /peers/:idOrName`, `POST /peers/:idOrName/heartbeat`, `POST /peers/:idOrName/send`, `GET /peers/:idOrName/inbox` |
+| Visibility | `GET /visibility` |
+| Steering | `POST /steer/checkpoint`, `POST /steer/consult`, `POST /steer/commit-gate` |
+| Ledger | `GET /ledger/events`, `POST /ledger/tail` |
+| Receipts | `POST /receipts` (query), `POST /receipts/write` |
+| Mail | `POST /mail/send`, `GET\|POST /mail/threads`, `GET /mail/thread/:threadId`, `POST /mail/ack`, `POST /mail/share`, `POST /mail/decide`, `POST /mail/review`, `POST /mail/archive`, `GET /mail/agents`, `POST /mail/agents/register`, `GET /mail/inbox/:agentId`, `GET /mail/outbox/:agentId`, `GET /mail/search`, `GET /mail/overdue` |
+| WIH (pickups) | `GET\|POST /wihs`, `POST /wihs/pickup`, `GET /wihs/:wihId/context`, `POST /wihs/:wihId/sign`, `POST /wihs/:wihId/close` |
+| Tickets | `GET\|POST /tickets`, `GET /tickets/ready`, `GET /tickets/blocked`, `GET\|PATCH /tickets/:id`, `POST /tickets/:id/close`, `POST /tickets/:id/reopen`, `POST\|DELETE /tickets/:id/dependencies` |
+| Graph | `GET /graph/insights`, `GET /graph/triage`, `GET /graph/impact/:ticketId` |
+| Workspace DAGs | `GET\|POST /workspace/:ws/dags`, `GET /workspace/:ws/dags/:dagId`, `POST /workspace/:ws/dags/:dagId/start`, `POST /workspace/:ws/packs`, `GET /workspace/:ws/packs/:packId` |
+| Plans | `GET /plans`, `GET /plans/dags?view=…`, `POST /plan`, `POST /plan/from-text`, `POST /plan/refine`, `GET /plan/:dagId`, `GET /plan/:dagId/render`, `POST /plan/:dagId/execute`, `POST /plan/:dagId/nodes`, `PATCH\|DELETE /plan/:dagId/nodes/:nodeId`, `POST /plan/runs/:runId/cancel` |
+| Leases | `GET\|POST /leases`, `GET\|DELETE /leases/:leaseId`, `POST /leases/:leaseId/renew` |
+| Context packs | `POST /context-packs` (list), `POST /context-packs/seal` |
+| Index | `POST /index/rebuild` |
+| Gate | `POST /gate/evaluate`, `GET /gate/status`, `POST /gate/check`, `GET /gate/rules`, `POST /gate/verify`, `POST /gate/decision`, `POST /gate/mutate` |
+| Vault | `GET /vault/status`, `POST /vault/archive` |
+
+Every subpath kept its old name except five, which moved because the engine already uses those paths:
+
+| Old work-engine path | Now |
+|---|---|
+| `GET /` (status) and `GET /health` | `GET /api/factory/ledger/health` |
+| `GET /dags?view=…` | `GET /api/factory/plans/dags?view=…` |
+| `GET /dags/:dag/render`, `POST /dags/:dag/execute` | `GET /api/factory/plan/:dag/render`, `POST /api/factory/plan/:dag/execute` |
+| `POST /dags/:dag/nodes`, `PATCH\|DELETE /dags/:dag/nodes/:node` | `POST /api/factory/plan/:dag/nodes`, `PATCH\|DELETE /api/factory/plan/:dag/nodes/:node` |
+| `POST /runs/:run/cancel` | `POST /api/factory/plan/runs/:run/cancel` |
 
 ## How each surface reads it
 

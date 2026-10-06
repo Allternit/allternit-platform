@@ -16,9 +16,9 @@
  *   - installCli(): first run, link `gizzi` (and only `gizzi`) into
  *     ~/.local/bin. The engine is found next to the real gizzi binary, so it
  *     is never put on PATH itself.
- *   - removeStaleTools(): remove the retired `allternit-rails`, `ao-*` and
- *     `ao-consult` entries in ~/.local/bin, only after checking each one is
- *     the old tool.
+ *   - removeStaleTools(): remove the retired pre-Factory work-engine and
+ *     orchestrator entries in ~/.local/bin (names in removeStaleTools), only
+ *     after checking each one is the old tool.
  *
  * Best-effort like every sidecar: a failure here never blocks the app. The
  * proxy answers 502 `transport` while the engine is down, and the Factory
@@ -200,10 +200,10 @@ export function installGizziLink(gizziBinary: string | null, home: string, lfs: 
   return { action: 'relinked', link, target: gizziBinary };
 }
 
-/** Old-tool markers: CommRails / the agent orchestrator (`ao`). */
-const OLD_TARGET = /allternit-rails|commrails|agent-orchestrator|ao-engine/;
-const OLD_BINARY_MARKER = /allternit-rails|commrails|allternit_commrails/;
-const AO_CONSULT_GUARD = /AO_CONSULT_ACTIVE|ao-consult\.repo-link|allternit-rails steer consult/;
+/** Markers of the pre-Factory work engine and orchestrator tools. */
+const OLD_TARGET = /allternit-rails|commrails|agent-orchestrator|ao-engine/; // old-names: keep (installer removes the old binaries)
+const OLD_BINARY_MARKER = /allternit-rails|commrails|allternit_commrails/; // old-names: keep (installer removes the old binaries)
+const OLD_CONSULT_GUARD = /AO_CONSULT_ACTIVE|ao-consult\.repo-link|allternit-rails steer consult/; // old-names: keep (installer removes the old binaries)
 
 export interface StaleRemoval {
   removed: string[];
@@ -212,19 +212,19 @@ export interface StaleRemoval {
 
 /**
  * Remove the retired tools from ~/.local/bin, each only after checking it is
- * the old tool:
- *   - `allternit-rails`: a symlink into CommRails, or a binary that carries
- *     the CommRails name;
- *   - `ao-*` (including `ao-consult.repo-link`): a symlink into the agent
- *     orchestrator / ao engine;
- *   - `ao-consult`: that symlink, or the recursion-guard script that wrapped
- *     `allternit-rails steer consult`.
+ * the old tool (the names are in the code below, marked as kept):
+ *   - the old work-engine binary: a symlink into the old engine, or a binary
+ *     that carries the old engine's crate name;
+ *   - the old orchestrator scripts (prefix match, including the consult
+ *     repo link): a symlink into the old orchestrator or its engine;
+ *   - the old consult script: that symlink, or the recursion-guard script
+ *     that wrapped the old engine's steer consult.
  * Anything else with those names is kept and listed.
  */
 export function removeStaleTools(home: string, lfs: LinkFs = nodeLinkFs): StaleRemoval {
   const dir = path.join(home, '.local', 'bin');
   const out: StaleRemoval = { removed: [], kept: [] };
-  const names = lfs.readdir(dir).filter((n) => n === 'allternit-rails' || n.startsWith('ao-'));
+  const names = lfs.readdir(dir).filter((n) => n === 'allternit-rails' || n.startsWith('ao-')); // old-names: keep (installer removes the old binaries)
   for (const name of names) {
     const p = path.join(dir, name);
     const st = lfs.lstat(p);
@@ -236,12 +236,12 @@ export function removeStaleTools(home: string, lfs: LinkFs = nodeLinkFs): StaleR
       old = OLD_TARGET.test(target);
       reason = `points at ${target}`;
     } else if (st.isFile()) {
-      if (name === 'allternit-rails') {
+      if (name === 'allternit-rails') { // old-names: keep (installer removes the old binaries)
         old = OLD_BINARY_MARKER.test(lfs.head(p, 8 * 1024 * 1024) ?? '');
-        reason = 'not the CommRails binary';
-      } else if (name === 'ao-consult') {
-        old = AO_CONSULT_GUARD.test(lfs.head(p, 64 * 1024) ?? '');
-        reason = 'not the ao-consult guard';
+        reason = 'not the old engine binary';
+      } else if (name === 'ao-consult') { // old-names: keep (installer removes the old binaries)
+        old = OLD_CONSULT_GUARD.test(lfs.head(p, 64 * 1024) ?? '');
+        reason = 'not the old consult guard';
       } else {
         reason = 'a regular file, not an old-tool link';
       }

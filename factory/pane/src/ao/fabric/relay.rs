@@ -40,7 +40,7 @@ fn allowed_path(path: &str) -> bool {
     // index.ts:287-296 (request list; socket_open uses the same list in this
     // port — see module doc).
     const ALLOWED_PREFIXES: &[&str] = &[
-        "/api/", "/viz", "/sandbox", "/vm-session", "/rails", "/stream",
+        "/api/", "/viz", "/sandbox", "/vm-session", "/stream",
         "/terminal", "/mcp", "/platform", "/metrics", "/alabs", "/cowork",
         "/webhooks", "/status", "/health",
         "/ws", "/panes",

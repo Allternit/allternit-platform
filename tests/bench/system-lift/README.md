@@ -106,7 +106,8 @@ This is an integration sketch, not a runnable real adapter. No unimplemented
 production endpoint is assumed. The WP10 branch was initially unavailable, then
 published during this work. Alignment was checked at
 `1a264c7aa105788e2934ab7d9625ecc7611d5b6e`: its
-`commrails/src/kernel/bug_fix.rs` exports `TEMPLATE_ID = "BUG_FIX"`,
+the work engine's `kernel/bug_fix.rs` (now
+`factory/engine/src/workflows/kernel/bug_fix.rs`) exports `TEMPLATE_ID = "BUG_FIX"`,
 `GRAPH_ID = "coding.bug_fix.v1"`, and
 `instantiate(task_id, writable_resources)`. Map the fixture task ID and
 `editablePaths` to filesystem resources (`fs:src/lib.ts`), not inferred model

@@ -1,4 +1,4 @@
-//! `ao harness install <tool>` — P7 port of HarnessRouter CE's version-pinned
+//! `allternit-factory pane harness install <tool>` — P7 port of HarnessRouter CE's version-pinned
 //! per-backend entrypoint install scripts (spec binding 1: install = data +
 //! logic, never a shipped Python/ shell layer; HR CE `docker/entrypoint.sh`
 //! is the reference, vendored for P6, read-only here).
@@ -9,8 +9,9 @@
 //!   (HR's own comment, verbatim rationale).
 //! - **Pins are explicit data, never "latest"** — bumping a pin is a manifest
 //!   edit + re-run install; doctor surfaces the drift.
-//! - **One managed dir** — `AO_HARNESS_HOME` or `~/.ao/harness`. PATH gains
-//!   the managed `bin/` only inside ao-spawned subprocesses (the harness
+//! - **One managed dir** — `ALLTERNIT_FACTORY_HARNESS_HOME` or
+//!   `~/.allternit/factory/harness`. PATH gains the managed `bin/` only inside
+//!   engine-spawned subprocesses (the harness
 //!   `FsCtx` probes and the verify runs), never the user's shell rc.
 //! - **License gate (plan §8, hard)** — only apache/mit/bsd-class tools
 //!   install without `--accept-terms <tool>`. proprietary-terms (claude et
@@ -23,7 +24,7 @@
 //!
 //! Executor registration after install is deliberately NOT new code (spec
 //! binding 5): the P4 driver probe (`installed()`) sees the managed binary
-//! through `FsCtx`, so `ao harness sync` picks the tool up unchanged.
+//! through `FsCtx`, so `allternit-factory pane harness sync` picks the tool up unchanged.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -66,11 +67,12 @@ pub(crate) enum AcceptState {
 
 /// One managed dir for everything P7 installs (spec binding 3).
 pub(crate) fn managed_root() -> PathBuf {
-    if let Ok(root) = std::env::var("AO_HARNESS_HOME") {
+    if let Some(root) = std::env::var_os("ALLTERNIT_FACTORY_HARNESS_HOME").filter(|v| !v.is_empty()) {
         return PathBuf::from(root);
     }
-    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"));
-    home.join(".ao").join("harness")
+    // An install made before the Factory stays where it is (its venvs bake in
+    // absolute paths); new installs go under the Factory home.
+    crate::factory_host::factory_path("harness", Some(crate::factory_host::home_path(".ao/harness"))) // old-names: keep (installs made before the Factory)
 }
 
 pub(crate) fn managed_bin_dir() -> PathBuf {
@@ -503,7 +505,7 @@ pub(crate) fn install_tool(
         return Err(format!(
             "{} has no version-pinned install channel ao can drive (method 'unsupported' — \
              see its _licenseNote in Ops/harness.json). Install it by its vendor's own \
-             means; `ao harness` will pick it up via the normal installed() probes.",
+             means; `allternit-factory pane harness` will pick it up via the normal installed() probes.",
             driver.label,
         ));
     }
@@ -624,7 +626,7 @@ pub(crate) fn install_tool(
 }
 
 // ---------------------------------------------------------------------------
-// `ao harness install` CLI
+// `allternit-factory pane harness install` CLI
 // ---------------------------------------------------------------------------
 
 pub(crate) fn cmd_install(
@@ -634,7 +636,7 @@ pub(crate) fn cmd_install(
     dry_run: bool,
 ) -> io::Result<i32> {
     if tools.is_empty() {
-        eprintln!("usage: ao harness install <tool…> [--accept-terms <tool>] [--dry-run]");
+        eprintln!("usage: allternit-factory pane harness install <tool…> [--accept-terms <tool>] [--dry-run]");
         return Ok(2);
     }
     let root = managed_root();
@@ -680,7 +682,7 @@ pub(crate) fn cmd_install(
         return Ok(1);
     }
     println!(
-        "\nDone.{} The managed bin dir is on PATH for ao-spawned subprocesses only — run `ao doctor` to verify.",
+        "\nDone.{} The managed bin dir is on PATH for ao-spawned subprocesses only — run `allternit-factory pane doctor` to verify.",
         if already > 0 { format!(" {already} already at pin.") } else { String::new() }
     );
     Ok(0)
@@ -696,7 +698,7 @@ const DRIVER_KEYS: &[&str] = &[
 ];
 
 // ---------------------------------------------------------------------------
-// `ao doctor` harness section (spec binding 7)
+// `allternit-factory pane doctor` harness section (spec binding 7)
 // ---------------------------------------------------------------------------
 
 #[derive(Debug)]
@@ -728,7 +730,7 @@ pub(crate) fn doctor(manifest: &Manifest, root: &Path, ctx: &super::FsCtx) -> Ha
         rows.push(DoctorRow {
             tool: "managed dir".to_string(),
             status: "absent",
-            detail: format!("{} — ao has installed nothing (run `ao harness install <tool>`)", root.display()),
+            detail: format!("{} — ao has installed nothing (run `allternit-factory pane harness install <tool>`)", root.display()),
         });
         return HarnessDoctor { root: root.to_path_buf(), rows, ok: true };
     }
@@ -787,7 +789,7 @@ pub(crate) fn doctor(manifest: &Manifest, root: &Path, ctx: &super::FsCtx) -> Ha
             AcceptState::Missing => {
                 ok = false;
                 problems.push(format!(
-                    "terms NOT ACCEPTED ({} @ {}) — run: ao harness install {} --accept-terms {}",
+                    "terms NOT ACCEPTED ({} @ {}) — run: allternit-factory pane harness install {} --accept-terms {}",
                     class.as_str(),
                     block.pinned_version.as_deref().unwrap_or("none"),
                     driver.key,
@@ -798,7 +800,7 @@ pub(crate) fn doctor(manifest: &Manifest, root: &Path, ctx: &super::FsCtx) -> Ha
 
         if !driver.installed(ctx) {
             ok = false;
-            problems.push("unreachable by `ao harness sync` (managed bin not on probe PATH)".to_string());
+            problems.push("unreachable by `allternit-factory pane harness sync` (managed bin not on probe PATH)".to_string());
         }
 
         let status = if problems.is_empty() { "ok" } else {
