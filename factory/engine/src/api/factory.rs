@@ -32,7 +32,7 @@ use crate::api::service::ServiceState;
 use crate::core::types::{Actor, ActorType, AllternitEvent, EventScope, LedgerQuery};
 use crate::judge::state::project_node_judge;
 use crate::send::{self, ApiLink, DeliveryFilter, SendCtx, SendRequest};
-use crate::templates::{plan_from_template, Template, TemplateStore, TEMPLATE_DIR};
+use crate::templates::{plan_from_template, Template, TemplateStore};
 use crate::work::graph::ready_nodes;
 use crate::work::{project_dag, DagNode, DagState};
 
@@ -583,20 +583,19 @@ fn template_json(t: &Template) -> Value {
     })
 }
 
-fn template_store(root: &std::path::Path) -> Result<Option<TemplateStore>, Response> {
-    if !root.join(TEMPLATE_DIR).is_dir() {
-        return Ok(None);
-    }
-    TemplateStore::new(root).map(Some).map_err(internal)
+// The store falls back to the built-in templates when the workspace has no
+// template folder, which is every fresh install. Don't short-circuit on a
+// missing folder here: that hid the built-ins and left Workflows empty.
+fn template_store(root: &std::path::Path) -> Result<TemplateStore, Response> {
+    TemplateStore::new(root).map_err(internal)
 }
 
 async fn templates_list(State(state): S) -> Response {
     let list = match template_store(&state.root_dir) {
-        Ok(Some(store)) => match store.list() {
+        Ok(store) => match store.list() {
             Ok(l) => l,
             Err(e) => return internal(e),
         },
-        Ok(None) => Vec::new(),
         Err(r) => return r,
     };
     let summaries: Vec<Value> = list
@@ -607,17 +606,14 @@ async fn templates_list(State(state): S) -> Response {
 }
 
 fn resolve_template(root: &std::path::Path, id: &str) -> Result<Template, Response> {
-    match template_store(root)? {
-        Some(store) => store.resolve(id).map_err(|e| {
-            let text = format!("{e:#}");
-            if text.contains("not found") {
-                error("not_found", format!("template {id} not found"), "List templates with GET /api/factory/templates.")
-            } else {
-                error("usage", text, "Fix the template file.")
-            }
-        }),
-        None => Err(error("not_found", format!("template {id} not found (no {TEMPLATE_DIR})"), "Add templates under .allternit/rails/templates/.")),
-    }
+    template_store(root)?.resolve(id).map_err(|e| {
+        let text = format!("{e:#}");
+        if text.contains("not found") {
+            error("not_found", format!("template {id} not found"), "List templates with GET /api/factory/templates.")
+        } else {
+            error("usage", text, "Fix the template file.")
+        }
+    })
 }
 
 async fn template_get(State(state): S, Path(id): Path<String>) -> Response {
