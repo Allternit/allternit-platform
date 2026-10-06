@@ -95,6 +95,30 @@ manual) that hold readiness; manual gates surface in the API `needsYou` list.
 opt-in `drive` command acts on it (2026-09-29, spec/DRIVE.md), which is why the
 non-goal below now reads "no background executor".
 
+Optional template fields (2026-10-05; a template without them works as before):
+
+- step `executor: role:<role>`: resolved at instantiation from a role map the
+  caller builds from team.yaml (`plan_from_template_with_roles`). An unmapped
+  role is refused before anything is created, naming the role. Nodes only ever
+  store `bot:` / `ao:`.
+- step `on_fail: <step>`: must be a transitive `blocked_by` predecessor. Minted
+  as the labels `on_fail:<node id>` and `max_rounds:<n>`; drive routes a failed
+  node back at most `max_rounds` times (spec/DRIVE.md "Failure routes").
+- template `max_rounds` (positive; default 3 when any step has `on_fail`).
+- step `wait_gate.evidence`: what the person looks at; carried in the gate's
+  `params.evidence` and its description.
+- template `closure: { success, degraded, failed }`: recorded on the plan root
+  as state `closure_success` / `closure_degraded` / `closure_failed`; drive sets
+  `closure = degraded` when rounds run out.
+
+`Template::to_contract_json()` gives the API.md camelCase shape (`blockedBy`,
+`onFail`, `waitGate`, `maxRounds`, `closure`); files stay snake_case.
+
+Built-in templates `build-check-prove` and `fact-check` (source:
+`factory/engine/templates/*.md`, compiled in) are used when the workspace has
+no file of that id; a workspace file of the same id wins, and `list` marks
+built-ins `builtin: true`. Reading templates never creates the directory.
+
 ## Failure modes to guard against
 
 - **Ceremony inflation**: agents creating DAGs for trivial 2-step work. The

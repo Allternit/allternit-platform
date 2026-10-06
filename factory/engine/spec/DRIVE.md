@@ -82,6 +82,35 @@ keeps the node out of `ready_nodes`, so there is no retry loop.
 | `interrupted` | an attempt's harness started and neither finished nor left an exit code | restart it once on the same WIH |
 | `attempt_failed` | spawn failed, or `wih close` was refused | spawn failed: retry the spawn on the same WIH; close refused: retry only the close from the captured output (the harness is not re-run) |
 | `pickup_refused` | Gate 1 refused (e.g. a missing predecessor output) | try pickup again |
+| `rounds_exhausted` | an `on_fail` node failed again after `max_rounds` route-backs | run the node once more (the flow stays recorded as degraded), or close the plan root yourself |
+
+Gate lines show what the person must look at: a template gate with
+`wait_gate.evidence` carries it in `params.evidence` and in its description
+(`<description> (look at: <evidence>)`).
+
+### Failure routes (`on_fail`, bounded)
+
+A template step with `on_fail: <step>` mints a node labelled
+`on_fail:<target node id>` and `max_rounds:<n>` (template `max_rounds`,
+default 3). When that node closes failed (`FAILED` / `FAIL` from a harness
+failure or a FAILED close, or `EXCEPTION` from the judge), each drive pass:
+
+- **routes back** while the node's `on_fail_rounds` state is below
+  `max_rounds`: one Gate refine reopens the target and every node on the
+  `blocked_by` path between it and the failed node (`DagNodeStatusChanged` to
+  `NEW`, or `READY` from `EXCEPTION` / `NEEDS_HUMAN`), appends "Round k of N:
+  ... its output: <output path> (receipt ...)" to the target's description,
+  and sets `on_fail_rounds = k` on the failed node. Then `DriveRouteBack`.
+- **stops** when the rounds are used: the plan root's state `closure` is set
+  to `degraded` (reason = the template's `closure_degraded` text), the failed
+  node is reopened and gets a `rounds_exhausted` needs-you gate, then
+  `DriveRoundsExhausted`. Drive never routes that node back again.
+
+A route is skipped (and shown as waiting) while a node on the path is held
+by a WIH or mid-run. Rounds come from the projected DAG, not a side file, so
+`replay` reproduces them. `--dry-run` prints `would route back X → Y (round
+k/N)` or `rounds exhausted → degraded`. `DriveReport` has `routed_back` and
+`degraded`.
 
 ### Harmful-action idempotency
 

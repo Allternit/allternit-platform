@@ -5,8 +5,16 @@
 //! `view` the merged agent view (registry + live panes + peers).
 
 pub mod backend;
+pub mod delivery;
+pub mod http;
 pub mod execenv;
 pub mod peer;
 pub mod registry;
+pub mod snapshot;
 pub mod spawn;
+pub mod team;
+pub mod team_apply;
+pub mod team_pack;
+pub mod team_plan;
 pub mod view;
+pub mod whoami;

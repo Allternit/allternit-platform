@@ -128,8 +128,10 @@ pub fn ps(ctx: &Ctx, cwd: Option<String>) -> u8 {
             return fail(ctx, code, &format!("{e:#}"), None);
         }
     };
+    // Team bots' panes get their team/address/role/reach and delivered fields.
+    let agents = crate::bots::enrich_ps(json!(snap.agents), &ctx.root_dir());
     if ctx.json {
-        return ok_json(json!({ "agents": snap.agents, "engine": snap.engine }));
+        return ok_json(json!({ "agents": agents, "engine": snap.engine }));
     }
     if let Some(err) = &snap.engine.error {
         eprintln!("pane engine: {err}");
@@ -137,16 +139,17 @@ pub fn ps(ctx: &Ctx, cwd: Option<String>) -> u8 {
     for change in &snap.reconciled {
         eprintln!("reconciled {}: {}", change.session, change.kind);
     }
-    if snap.agents.is_empty() {
+    let rows = agents.as_array().cloned().unwrap_or_default();
+    if rows.is_empty() {
         println!("no agents");
     }
-    for a in &snap.agents {
+    for a in &rows {
         println!(
             "{:<24} {:<9} {:<10} {}",
-            a.address,
-            a.state,
-            a.binding.harness.as_deref().unwrap_or("-"),
-            a.pane.as_ref().map(|p| p.id.as_str()).unwrap_or("-")
+            a["address"].as_str().unwrap_or("-"),
+            a["state"].as_str().unwrap_or("-"),
+            a["binding"]["harness"].as_str().unwrap_or("-"),
+            a["pane"]["id"].as_str().unwrap_or("-")
         );
     }
     0

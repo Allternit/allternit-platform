@@ -6,7 +6,7 @@ use clap::{Args, Parser, Subcommand};
 use serde_json::json;
 
 use crate::exec::{
-    dry_run, fail, not_built, ok_json, run, run_pane_interactive, run_rails_in_process,
+    dry_run, fail, not_built, run, run_pane_interactive, run_rails_in_process,
     run_shaped, Code, Ctx, Target,
 };
 
@@ -103,24 +103,26 @@ pub enum ServeSurface {
 
 #[derive(Subcommand)]
 pub enum AgentsCmd {
-    /// Start a team from team.yaml.
-    Up(Planned),
+    /// Start a team from team.yaml (`--dry-run` prints the plan).
+    Up(crate::bots::UpArgs),
     /// Every agent: the session registry reconciled against live panes, plus peers.
     Ps {
         /// Only sessions working under this directory.
         #[arg(long)]
         cwd: Option<String>,
     },
-    /// Stop an agent session (and optionally remove its worktree).
+    /// Stop a team (when `<target>` names one) or one agent session (and
+    /// optionally remove its worktree).
     Down {
+        #[arg(value_name = "TEAM_OR_SLUG")]
         slug: String,
         #[arg(long)]
         rm_worktree: bool,
         #[arg(long)]
         dry_run: bool,
     },
-    /// Who am I, as an agent.
-    Whoami(Planned),
+    /// Who am I, as an agent (inside a factory pane).
+    Whoami,
     /// Reconcile the registry with live sessions; respawn dead-but-unfinished
     /// runners with --apply (the default is a dry run).
     Recover {
@@ -135,9 +137,9 @@ pub enum AgentsCmd {
         as_human: bool,
     },
     /// Snapshot the whole team.
-    Snapshot(Planned),
-    /// Restore a team snapshot.
-    Restore(Planned),
+    Snapshot(crate::bots::SnapshotArgs),
+    /// Restore a team snapshot (the latest by default).
+    Restore(crate::bots::RestoreArgs),
     /// Set a bot's model.
     Model(Planned),
     /// Hand a bot's seat to a fresh session.
@@ -146,9 +148,12 @@ pub enum AgentsCmd {
     #[command(disable_help_flag = true)]
     Harness(Rest),
     /// Pack a team for sharing.
-    Pack(Planned),
-    /// Install a packed team.
-    Install(Planned),
+    Pack(crate::bots::PackArgs),
+    /// Install a packed team (a pack, a folder, or a pinned GitHub tree URL).
+    Install(crate::bots::InstallArgs),
+    /// Bots in allternit-api: add.
+    #[command(subcommand)]
+    Bot(crate::bots::BotCmd),
     /// Agent templates.
     Templates(Planned),
     /// Open the live terminal wall of running agents.
@@ -229,6 +234,15 @@ pub enum WorkflowsCmd {
         /// Plan text / title.
         #[arg(long)]
         text: Option<String>,
+        /// The person's words: the plan text, and the `intent` param when the template has one.
+        #[arg(long)]
+        intent: Option<String>,
+        /// Team whose bots take the template's `role:` steps (team.yaml roles).
+        #[arg(long)]
+        team: Option<String>,
+        /// Preset of --team.
+        #[arg(long, requires = "team")]
+        preset: Option<String>,
         #[arg(long)]
         dry_run: bool,
     },
@@ -292,12 +306,13 @@ pub enum WorkspaceCmd {
         dry_run: bool,
     },
     /// Proof: add, show.
-    Proof(Planned),
+    #[command(subcommand)]
+    Proof(crate::work::ProofCmd),
     /// The judge: show, resolve, policy, pending, … .
     #[command(disable_help_flag = true)]
     Judge(Rest),
-    /// The project board.
-    Board(Planned),
+    /// The project board of a campaign (or a DAG id).
+    Board { campaign: String },
     /// The cowork task queue.
     Tasks(Planned),
 }
@@ -307,6 +322,8 @@ pub enum NodeCmd {
     /// Add a node to a DAG (`--dag --parent --title …`).
     #[command(disable_help_flag = true)]
     Add(Rest),
+    /// One node's page: card, spec, progress, proof, deliveries, WIH.
+    Show { dag: String, node: String },
     /// Work items: every open node, or the READY ones.
     List {
         #[arg(long)]
@@ -492,19 +509,23 @@ fn serve(ctx: &Ctx, args: ServeArgs) -> u8 {
 }
 
 fn agents(ctx: &Ctx, cmd: AgentsCmd) -> u8 {
-    const TEAM: &str = "Teams (team.yaml) are not in the engine yet; spawn single agents with `allternit-factory pane spawn`.";
+    const TEAM: &str = "Not in the engine yet; edit team.yaml and run `agents up <team>` again.";
     match cmd {
-        AgentsCmd::Up(_) => not_built(ctx, "agents", "up", TEAM),
-        AgentsCmd::Whoami(_) => not_built(ctx, "agents", "whoami", TEAM),
-        AgentsCmd::Snapshot(_) => not_built(ctx, "agents", "snapshot", TEAM),
-        AgentsCmd::Restore(_) => not_built(ctx, "agents", "restore", TEAM),
+        AgentsCmd::Up(args) => crate::bots::up(ctx, args),
+        AgentsCmd::Whoami => crate::bots::whoami_cmd(ctx),
+        AgentsCmd::Snapshot(args) => crate::bots::snapshot_cmd(ctx, args),
+        AgentsCmd::Restore(args) => crate::bots::restore(ctx, args),
+        AgentsCmd::Pack(args) => crate::bots::pack(ctx, args),
+        AgentsCmd::Install(args) => crate::bots::install(ctx, args),
+        AgentsCmd::Bot(cmd) => crate::bots::bot(ctx, cmd),
         AgentsCmd::Model(_) => not_built(ctx, "agents", "model", TEAM),
         AgentsCmd::Handoff(_) => not_built(ctx, "agents", "handoff", TEAM),
-        AgentsCmd::Pack(_) => not_built(ctx, "agents", "pack", TEAM),
-        AgentsCmd::Install(_) => not_built(ctx, "agents", "install", TEAM),
         AgentsCmd::Templates(_) => not_built(ctx, "agents", "templates", TEAM),
         AgentsCmd::Ps { cwd } => crate::part::ps(ctx, cwd),
         AgentsCmd::Down { slug, rm_worktree, dry_run: dry } => {
+            if let Some(code) = crate::bots::down_team(ctx, &slug, rm_worktree, dry) {
+                return code;
+            }
             let mut args = vec!["kill".to_string(), slug];
             if rm_worktree {
                 args.push("--rm-worktree".into());
@@ -613,7 +634,12 @@ fn orchestration(ctx: &Ctx, cmd: OrchestrationCmd) -> u8 {
 
 fn workflows(ctx: &Ctx, cmd: WorkflowsCmd) -> u8 {
     match cmd {
-        WorkflowsCmd::Run { template, params, text, dry_run: dry } => {
+        WorkflowsCmd::Run { template, params, text, intent, team, preset, dry_run: dry } => {
+            let mut run_args = crate::work::RunArgs { template, params, text, intent, team, preset, dry_run: dry };
+            if let Some(code) = crate::work::run(ctx, &mut run_args) {
+                return code;
+            }
+            let crate::work::RunArgs { template, params, text, .. } = run_args;
             let mut args = vec!["plan".to_string(), "new".to_string()];
             args.extend(text);
             args.push("--template".into());
@@ -628,7 +654,12 @@ fn workflows(ctx: &Ctx, cmd: WorkflowsCmd) -> u8 {
             }
             run(ctx, target)
         }
-        WorkflowsCmd::Drive(rest) => rails_passthrough(ctx, &["drive"], rest, true),
+        WorkflowsCmd::Drive(rest) => {
+            if let Some(code) = crate::work::drive_precheck(ctx, &rest.args) {
+                return code;
+            }
+            rails_passthrough(ctx, &["drive"], rest, true)
+        }
         WorkflowsCmd::Wake(rest) => rails_passthrough(ctx, &["wake"], rest, false),
         WorkflowsCmd::Gate(rest) => rails_passthrough(ctx, &["wait-gate"], rest, false),
         WorkflowsCmd::Status { run: dag, format } => run(
@@ -640,15 +671,6 @@ fn workflows(ctx: &Ctx, cmd: WorkflowsCmd) -> u8 {
 }
 
 fn template(ctx: &Ctx, cmd: TemplateCmd) -> u8 {
-    use allternit_factory_engine::templates::{TemplateStore, TEMPLATE_DIR};
-    let root = ctx.root_dir();
-    let store = || -> Result<Option<TemplateStore>, String> {
-        // Reading never creates the template directory.
-        if !root.join(TEMPLATE_DIR).is_dir() {
-            return Ok(None);
-        }
-        TemplateStore::new(&root).map(Some).map_err(|e| format!("{e:#}"))
-    };
     match cmd {
         TemplateCmd::Save(_) => not_built(
             ctx,
@@ -656,60 +678,9 @@ fn template(ctx: &Ctx, cmd: TemplateCmd) -> u8 {
             "template save",
             "Write the template file under .allternit/rails/templates/ by hand for now.",
         ),
-        TemplateCmd::List => {
-            let templates = match store() {
-                Ok(Some(store)) => match store.list() {
-                    Ok(list) => list,
-                    Err(e) => return fail(ctx, Code::Internal, &format!("{e:#}"), None),
-                },
-                Ok(None) => Vec::new(),
-                Err(e) => return fail(ctx, Code::Internal, &e, None),
-            };
-            if ctx.json {
-                return ok_json(json!({ "templates": templates }));
-            }
-            if templates.is_empty() {
-                println!("no templates in {}", root.join(TEMPLATE_DIR).display());
-            }
-            for t in &templates {
-                println!("{}\t{}\t{} steps", t.id, t.name, t.steps.len());
-            }
-            0
-        }
-        TemplateCmd::Show { template } | TemplateCmd::Check { template } => {
-            let resolved = match store() {
-                Ok(Some(store)) => store.resolve(&template),
-                Ok(None) if std::path::Path::new(&template).is_file() => {
-                    TemplateStore::load_file(std::path::Path::new(&template))
-                }
-                Ok(None) => {
-                    return fail(
-                        ctx,
-                        Code::NotFound,
-                        &format!("template {template} not found (no {} here)", TEMPLATE_DIR),
-                        None,
-                    )
-                }
-                Err(e) => return fail(ctx, Code::Internal, &e, None),
-            };
-            match resolved {
-                Ok(t) => {
-                    if ctx.json {
-                        return ok_json(serde_json::to_value(&t).unwrap_or_default());
-                    }
-                    println!("{} — {} ({} steps)", t.id, t.name, t.steps.len());
-                    for p in &t.params {
-                        println!("  param {}", serde_json::to_string(p).unwrap_or_default());
-                    }
-                    0
-                }
-                Err(e) => {
-                    let text = format!("{e:#}");
-                    let code = if text.contains("not found") { Code::NotFound } else { Code::Usage };
-                    fail(ctx, code, &text, None)
-                }
-            }
-        }
+        TemplateCmd::List => crate::work::template(ctx, "list", None),
+        TemplateCmd::Show { template } => crate::work::template(ctx, "show", Some(&template)),
+        TemplateCmd::Check { template } => crate::work::template(ctx, "check", Some(&template)),
     }
 }
 
@@ -725,6 +696,7 @@ fn workspace(ctx: &Ctx, cmd: WorkspaceCmd) -> u8 {
         WorkspaceCmd::Plan(rest) => rails_passthrough(ctx, &["plan"], rest, false),
         WorkspaceCmd::Judge(rest) => rails_passthrough(ctx, &["judge"], rest, false),
         WorkspaceCmd::Node(NodeCmd::Add(rest)) => rails_passthrough(ctx, &["node", "add"], rest, false),
+        WorkspaceCmd::Node(NodeCmd::Show { dag, node }) => crate::work::node_show(ctx, &dag, &node),
         WorkspaceCmd::Node(NodeCmd::Claim(rest)) => rails_passthrough(ctx, &["wih", "pickup"], rest, false),
         WorkspaceCmd::Node(NodeCmd::Close(rest)) => rails_passthrough(ctx, &["wih", "close"], rest, false),
         WorkspaceCmd::Node(NodeCmd::Handoff(_)) => not_built(
@@ -735,7 +707,7 @@ fn workspace(ctx: &Ctx, cmd: WorkspaceCmd) -> u8 {
         ),
         WorkspaceCmd::Node(NodeCmd::List { dag, ready, mine }) => {
             if mine {
-                return not_built(ctx, "workspace", "node list --mine", "Needs `agents whoami`; list without --mine.");
+                return crate::work::node_list_mine(ctx);
             }
             let mut args = vec!["wih".to_string(), "list".to_string()];
             if ready {
@@ -788,13 +760,8 @@ fn workspace(ctx: &Ctx, cmd: WorkspaceCmd) -> u8 {
             }
             run(ctx, target)
         }
-        WorkspaceCmd::Proof(_) => not_built(
-            ctx,
-            "workspace",
-            "proof",
-            "Proof is recorded through receipts and the judge today (workspace judge show).",
-        ),
-        WorkspaceCmd::Board(_) => not_built(ctx, "workspace", "board", "Use `workspace node list` for now."),
+        WorkspaceCmd::Proof(cmd) => crate::work::proof_cmd(ctx, cmd),
+        WorkspaceCmd::Board { campaign } => crate::work::board_cmd(ctx, &campaign),
         WorkspaceCmd::Tasks(_) => not_built(ctx, "workspace", "tasks", "The cowork queue has not folded in yet."),
     }
 }

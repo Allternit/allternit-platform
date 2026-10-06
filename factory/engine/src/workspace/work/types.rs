@@ -114,15 +114,30 @@ impl NodeWaitGate {
 }
 
 /// Validate a node `executor`: `bot:<slug>` or `ao:<harness>`, where the
-/// name is non-empty `[A-Za-z0-9_.-]`.
+/// name is non-empty `[A-Za-z0-9_.-]`. Nodes never store `role:<role>`
+/// (drive only understands `bot:` / `ao:`); a template's `role:` executor is
+/// resolved to one of these before a node is minted.
 pub fn validate_executor(executor: &str) -> Result<(), String> {
+    check_executor(executor, false)
+}
+
+/// Validate a template step `executor`: `bot:<slug>`, `ao:<harness>`, or
+/// `role:<role>` (resolved from the team's role map at instantiation).
+pub fn validate_template_executor(executor: &str) -> Result<(), String> {
+    check_executor(executor, true)
+}
+
+fn check_executor(executor: &str, allow_role: bool) -> Result<(), String> {
+    let (shapes, starts) = if allow_role {
+        ("bot:<slug>, ao:<harness> or role:<role>", "bot:, ao: or role:")
+    } else {
+        ("bot:<slug> or ao:<harness>", "bot: or ao:")
+    };
     let (prefix, name) = executor
         .split_once(':')
-        .ok_or_else(|| format!("executor {executor:?} must be bot:<slug> or ao:<harness>"))?;
-    if prefix != "bot" && prefix != "ao" {
-        return Err(format!(
-            "executor {executor:?} must start with bot: or ao:"
-        ));
+        .ok_or_else(|| format!("executor {executor:?} must be {shapes}"))?;
+    if prefix != "bot" && prefix != "ao" && !(allow_role && prefix == "role") {
+        return Err(format!("executor {executor:?} must start with {starts}"));
     }
     if name.is_empty()
         || !name

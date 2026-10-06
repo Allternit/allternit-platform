@@ -39,7 +39,7 @@ use crate::rails_id::{HierarchicalId, TicketId};
 use crate::tickets::{Ticket, TicketKind, TicketPriority, TicketStatus, TicketStore};
 use crate::wait_gates::WaitGateKind;
 use crate::work::placeholders;
-use crate::work::types::{validate_executor, DagEdge};
+use crate::work::types::{validate_executor, validate_template_executor, DagEdge};
 
 /// Kernel templates keep ComputeGraphIR authoritative (the WIH DAG is a projection).
 pub use crate::kernel::bug_fix as bug_fix;
@@ -62,7 +62,9 @@ pub struct TemplateStep {
     pub priority: TicketPriority,
     #[serde(default)]
     pub blocked_by: Vec<String>,
-    /// `bot:<slug>` | `ao:<harness>` (WIH DAG only; `drive` spawns `ao:` and mails `bot:`).
+    /// `bot:<slug>` | `ao:<harness>` | `role:<role>` (WIH DAG only; `drive`
+    /// spawns `ao:` and mails `bot:`). `role:` is resolved from the team's
+    /// role map at instantiation, so nodes only ever carry `bot:` / `ao:`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executor: Option<String>,
     /// Wait-gate attached to the node (WIH DAG only).
@@ -73,11 +75,51 @@ pub struct TemplateStep {
     /// else is rejected; omit it for steps with non-idempotent effects.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retry: Option<String>,
+    /// Step to route back to when this step closes failed. Must be a
+    /// transitive `blocked_by` predecessor. Becomes the node labels
+    /// `on_fail:<target node id>` and `max_rounds:<n>`; `drive` reopens the
+    /// target and every node between it and this one, at most `max_rounds`
+    /// times, then stops with a degraded closure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_fail: Option<String>,
 }
 
 /// Node label that marks a node safe for `drive` to restart after an
 /// interrupted attempt.
 pub const RETRY_SAFE_LABEL: &str = "retry:safe";
+
+/// Node label prefix naming the node a failed node routes back to:
+/// `on_fail:<target node id>`.
+pub const ON_FAIL_LABEL_PREFIX: &str = "on_fail:";
+
+/// Node label prefix carrying the route-back limit: `max_rounds:<n>`.
+pub const MAX_ROUNDS_LABEL_PREFIX: &str = "max_rounds:";
+
+/// `max_rounds` when a template has an `on_fail` step but declares no
+/// `max_rounds` (determinism contract rule 10: every loop has a limit).
+pub const DEFAULT_MAX_ROUNDS: u32 = 3;
+
+/// Root state dimension holding the closure the flow ended with
+/// (`degraded` is written by `drive` when route-back rounds run out).
+pub const CLOSURE_STATE: &str = "closure";
+/// Root state dimensions holding the template's closure texts.
+pub const CLOSURE_SUCCESS_STATE: &str = "closure_success";
+pub const CLOSURE_DEGRADED_STATE: &str = "closure_degraded";
+pub const CLOSURE_FAILED_STATE: &str = "closure_failed";
+
+/// Wait-gate param carrying what the person must look at before approving.
+pub const EVIDENCE_PARAM: &str = "evidence";
+
+/// What the campaign/root records on each closure, one line each.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TemplateClosure {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub success: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub degraded: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failed: Option<String>,
+}
 
 /// A wait-gate declared on a template step.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -85,6 +127,10 @@ pub struct TemplateWaitGate {
     pub kind: WaitGateKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// What the person must look at (e.g. `PROOF.md and proof/ files`).
+    /// Carried into the gate's `params.evidence` and its description.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<String>,
     /// `until` (timer, RFC 3339), `repo`, `run_id`, `pr`.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub params: HashMap<String, serde_json::Value>,
@@ -110,9 +156,24 @@ pub struct Template {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub params: Vec<TemplateParam>,
     pub steps: Vec<TemplateStep>,
+    /// Route-back limit for `on_fail` steps (positive). Defaults to
+    /// [`DEFAULT_MAX_ROUNDS`] when any step has `on_fail`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_rounds: Option<u32>,
+    /// Closure texts, recorded on the plan root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub closure: Option<TemplateClosure>,
     #[serde(default = "Utc::now")]
     pub created_at: chrono::DateTime<Utc>,
+    /// Compiled into the engine (no workspace file of this id). Never read
+    /// from disk.
+    #[serde(default, skip_deserializing, skip_serializing_if = "std::ops::Not::not")]
+    pub builtin: bool,
 }
+
+/// Role -> executor (`bot:<slug>` / `ao:<harness>`), built by the caller
+/// from the team's `team.yaml`.
+pub type RoleMap = BTreeMap<String, String>;
 
 /// Result of instantiating a template into tickets.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -203,6 +264,9 @@ impl Template {
                 if let Some(d) = &gate.description {
                     out.extend(placeholders::param_refs(d));
                 }
+                if let Some(e) = &gate.evidence {
+                    out.extend(placeholders::param_refs(e));
+                }
                 for v in gate.params.values() {
                     if let Some(s) = v.as_str() {
                         out.extend(placeholders::param_refs(s));
@@ -210,20 +274,82 @@ impl Template {
                 }
             }
         }
+        if let Some(c) = &self.closure {
+            for text in [&c.success, &c.degraded, &c.failed].into_iter().flatten() {
+                out.extend(placeholders::param_refs(text));
+            }
+        }
         out
     }
 
-    /// Validate the template and expand it into DAG mutations whose nodes are
-    /// children of `root_node_id`. Node ids are `<step_id>-<suffix>` with one
-    /// random suffix per instantiation (node ids must be unique across dags).
-    pub fn expand_dag(
-        &self,
-        root_node_id: &str,
-        provided: &HashMap<String, String>,
-    ) -> Result<DagTemplateExpansion> {
-        let params = self.resolve_params(provided)?;
-        let params_map: HashMap<String, String> =
-            params.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    /// Route-back limit: the declared `max_rounds`, else
+    /// [`DEFAULT_MAX_ROUNDS`] when any step has `on_fail`, else none.
+    pub fn effective_max_rounds(&self) -> Option<u32> {
+        self.max_rounds.or_else(|| {
+            self.steps
+                .iter()
+                .any(|s| s.on_fail.is_some())
+                .then_some(DEFAULT_MAX_ROUNDS)
+        })
+    }
+
+    /// The template in API.md's `Template` shape (camelCase:
+    /// `blockedBy`, `onFail`, `waitGate {kind, evidence?}`, `maxRounds`,
+    /// `closure`). The on-disk format stays snake_case.
+    pub fn to_contract_json(&self) -> serde_json::Value {
+        use serde_json::json;
+        let params: Vec<serde_json::Value> = self
+            .params
+            .iter()
+            .map(|p| {
+                let mut o = json!({ "name": p.name });
+                if let Some(d) = &p.description {
+                    o["description"] = json!(d);
+                }
+                if let Some(d) = &p.default {
+                    o["default"] = json!(d);
+                }
+                o
+            })
+            .collect();
+        let steps: Vec<serde_json::Value> = self
+            .steps
+            .iter()
+            .map(|s| {
+                let wait_gate = s.wait_gate.as_ref().map(|g| {
+                    let mut o = json!({ "kind": g.kind });
+                    if let Some(e) = &g.evidence {
+                        o["evidence"] = json!(e);
+                    }
+                    o
+                });
+                json!({
+                    "id": s.id,
+                    "title": s.title,
+                    "executor": s.executor,
+                    "blockedBy": s.blocked_by,
+                    "onFail": s.on_fail,
+                    "waitGate": wait_gate,
+                    "retry": s.retry,
+                })
+            })
+            .collect();
+        json!({
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "params": params,
+            "steps": steps,
+            "maxRounds": self.effective_max_rounds(),
+            "closure": self.closure,
+        })
+    }
+
+    /// Structural validation that needs no params or team: step ids, edges
+    /// (unknown / cycles), executors (`role:` allowed), `retry`, `on_fail`
+    /// (existing transitive predecessor), `max_rounds` (positive), and
+    /// output placeholders (predecessors only).
+    pub fn validate(&self) -> Result<()> {
         if self.steps.is_empty() {
             bail!("template {} has no steps", self.id);
         }
@@ -258,9 +384,12 @@ impl Template {
                 });
             }
         }
+        if self.max_rounds == Some(0) {
+            bail!("template {}: max_rounds must be a positive integer", self.id);
+        }
         for step in &self.steps {
             if let Some(executor) = &step.executor {
-                validate_executor(executor)
+                validate_template_executor(executor)
                     .map_err(|e| anyhow::anyhow!("step {}: {}", step.id, e))?;
             }
             if let Some(retry) = &step.retry {
@@ -269,6 +398,19 @@ impl Template {
                 }
             }
             let preds = transitive_blockers(&self.steps, &step.id);
+            if let Some(target) = &step.on_fail {
+                if !seen.contains(target.as_str()) {
+                    bail!("step {}: on_fail names unknown step {}", step.id, target);
+                }
+                if !preds.contains(target) {
+                    bail!(
+                        "step {}: on_fail {} must be a blocked_by predecessor of {} (the step to route back to)",
+                        step.id,
+                        target,
+                        step.id
+                    );
+                }
+            }
             for r in placeholders::node_refs(&step.description) {
                 if !seen.contains(r.node_id.as_str()) {
                     bail!("step {}: {} references unknown step {}", step.id, r.raw, r.node_id);
@@ -283,6 +425,64 @@ impl Template {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// Validate the template and expand it into DAG mutations whose nodes are
+    /// children of `root_node_id`. Node ids are `<step_id>-<suffix>` with one
+    /// random suffix per instantiation (node ids must be unique across dags).
+    /// Templates with `role:` executors need [`Template::expand_dag_with_roles`].
+    pub fn expand_dag(
+        &self,
+        root_node_id: &str,
+        provided: &HashMap<String, String>,
+    ) -> Result<DagTemplateExpansion> {
+        self.expand_dag_with_roles(root_node_id, provided, None)
+    }
+
+    /// The executor a step's node gets: `role:<r>` replaced through `roles`
+    /// (an unmapped role is an error naming it); `bot:` / `ao:` unchanged.
+    pub fn resolve_step_executor(
+        &self,
+        step: &TemplateStep,
+        roles: Option<&RoleMap>,
+    ) -> Result<Option<String>> {
+        let Some(executor) = &step.executor else {
+            return Ok(None);
+        };
+        let Some(role) = executor.strip_prefix("role:") else {
+            return Ok(Some(executor.clone()));
+        };
+        let mapped = roles.and_then(|r| r.get(role)).with_context(|| {
+            format!(
+                "step {}: executor role:{role} has no team member: no bot holds role {role:?} \
+                 (pass --team <team.yaml>, or add the role {role} to team.yaml)",
+                step.id
+            )
+        })?;
+        validate_executor(mapped).map_err(|e| {
+            anyhow::anyhow!("step {}: role {role} maps to an invalid executor: {e}", step.id)
+        })?;
+        Ok(Some(mapped.clone()))
+    }
+
+    /// [`Template::expand_dag`] with a role map (role -> `bot:<slug>` /
+    /// `ao:<harness>`, from team.yaml) used to resolve `role:<role>` executors.
+    pub fn expand_dag_with_roles(
+        &self,
+        root_node_id: &str,
+        provided: &HashMap<String, String>,
+        roles: Option<&RoleMap>,
+    ) -> Result<DagTemplateExpansion> {
+        self.validate()?;
+        let params = self.resolve_params(provided)?;
+        let params_map: HashMap<String, String> =
+            params.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        let mut executors: HashMap<&str, Option<String>> = HashMap::new();
+        for step in &self.steps {
+            executors.insert(step.id.as_str(), self.resolve_step_executor(step, roles)?);
+        }
+        let max_rounds = self.effective_max_rounds().unwrap_or(DEFAULT_MAX_ROUNDS);
 
         let suffix = {
             let mut b = [0u8; 2];
@@ -310,12 +510,22 @@ impl Template {
                 parent_node_id: Some(root_node_id.to_string()),
                 execution_mode: "shared".to_string(),
                 description: (!description.trim().is_empty()).then_some(description),
-                executor: step.executor.clone(),
+                executor: executors[step.id.as_str()].clone(),
             });
             if step.retry.is_some() {
                 mutations.push(DagMutation::AddLabel {
                     node_id: nodes[&step.id].clone(),
                     label: RETRY_SAFE_LABEL.to_string(),
+                });
+            }
+            if let Some(target) = &step.on_fail {
+                mutations.push(DagMutation::AddLabel {
+                    node_id: nodes[&step.id].clone(),
+                    label: format!("{ON_FAIL_LABEL_PREFIX}{}", nodes[target]),
+                });
+                mutations.push(DagMutation::AddLabel {
+                    node_id: nodes[&step.id].clone(),
+                    label: format!("{MAX_ROUNDS_LABEL_PREFIX}{max_rounds}"),
                 });
             }
         }
@@ -343,7 +553,7 @@ impl Template {
         }
         for step in &self.steps {
             if let Some(gate) = &step.wait_gate {
-                let params = gate
+                let mut params: HashMap<String, serde_json::Value> = gate
                     .params
                     .iter()
                     .map(|(k, v)| {
@@ -357,16 +567,46 @@ impl Template {
                         (k.clone(), v)
                     })
                     .collect();
+                let evidence = gate
+                    .evidence
+                    .as_deref()
+                    .map(|e| placeholders::render_params(e, &params_map))
+                    .filter(|e| !e.trim().is_empty());
+                let mut description = gate
+                    .description
+                    .as_deref()
+                    .map(|d| placeholders::render_params(d, &params_map));
+                if let Some(e) = &evidence {
+                    params.insert(EVIDENCE_PARAM.to_string(), serde_json::Value::String(e.clone()));
+                    let base = description
+                        .unwrap_or_else(|| placeholders::render_params(&step.title, &params_map));
+                    description = Some(format!("{base} (look at: {e})"));
+                }
                 mutations.push(DagMutation::AddWaitGate {
                     node_id: nodes[&step.id].clone(),
                     gate_id: None,
                     kind: gate.kind.clone(),
-                    description: gate
-                        .description
-                        .as_deref()
-                        .map(|d| placeholders::render_params(d, &params_map)),
+                    description,
                     params,
                 });
+            }
+        }
+        // Closure texts live on the plan root as state dimensions, so drive
+        // reads them from the projected DAG (no side database).
+        if let Some(closure) = &self.closure {
+            for (dimension, text) in [
+                (CLOSURE_SUCCESS_STATE, &closure.success),
+                (CLOSURE_DEGRADED_STATE, &closure.degraded),
+                (CLOSURE_FAILED_STATE, &closure.failed),
+            ] {
+                if let Some(text) = text {
+                    mutations.push(DagMutation::SetState {
+                        node_id: root_node_id.to_string(),
+                        dimension: dimension.to_string(),
+                        value: placeholders::render_params(text, &params_map),
+                        reason: Some(format!("template {} closure", self.id)),
+                    });
+                }
             }
         }
         Ok(DagTemplateExpansion {
@@ -419,8 +659,24 @@ pub async fn plan_from_template_with_origin(
     project_id: Option<String>,
     origin: Option<&PromptOrigin>,
 ) -> Result<TemplatePlanResult> {
-    // Validate (params, steps, edges, placeholders) before creating anything.
-    template.expand_dag("__root__", params)?;
+    plan_from_template_with_roles(gate, template, params, raw_text, project_id, origin, None).await
+}
+
+/// [`plan_from_template_with_origin`] with a role map (role -> `bot:<slug>` /
+/// `ao:<harness>`, built by the caller from team.yaml) that resolves the
+/// template's `role:<role>` executors. An unmapped role is refused before
+/// anything is created.
+pub async fn plan_from_template_with_roles(
+    gate: &Gate,
+    template: &Template,
+    params: &HashMap<String, String>,
+    raw_text: Option<&str>,
+    project_id: Option<String>,
+    origin: Option<&PromptOrigin>,
+    roles: Option<&RoleMap>,
+) -> Result<TemplatePlanResult> {
+    // Validate (params, steps, edges, placeholders, roles) before creating anything.
+    template.expand_dag_with_roles("__root__", params, roles)?;
     let effective = template.resolve_params(params)?;
     let param_text = effective
         .iter()
@@ -439,7 +695,7 @@ pub async fn plan_from_template_with_origin(
     };
     let (prompt_id, dag_id, root_node_id) =
         gate.plan_new_with_origin(&text, project_id, origin).await?;
-    let expansion = template.expand_dag(&root_node_id, params)?;
+    let expansion = template.expand_dag_with_roles(&root_node_id, params, roles)?;
     let delta = format!(
         "instantiate template {} ({}){}",
         template.id,
@@ -481,6 +737,10 @@ struct MarkdownSpec {
     #[serde(default)]
     params: Vec<TemplateParam>,
     steps: Vec<TemplateStep>,
+    #[serde(default)]
+    max_rounds: Option<u32>,
+    #[serde(default)]
+    closure: Option<TemplateClosure>,
 }
 
 /// Parse a markdown template: YAML frontmatter (`name`, `description`) and
@@ -547,11 +807,41 @@ pub fn parse_markdown_template(id: &str, raw: &str) -> Result<Template> {
         description: fm.description,
         params: spec.params,
         steps: spec.steps,
+        max_rounds: spec.max_rounds,
+        closure: spec.closure,
         created_at: Utc::now(),
+        builtin: false,
     })
 }
 
-/// Store for workflow templates.
+/// Templates compiled into the engine, as `(id, markdown source)`. A
+/// workspace file with the same id wins.
+const BUILTIN_TEMPLATES: &[(&str, &str)] = &[
+    ("build-check-prove", include_str!("../../templates/build-check-prove.md")),
+    ("fact-check", include_str!("../../templates/fact-check.md")),
+];
+
+/// The built-in template `id`, if there is one.
+pub fn builtin_template(id: &str) -> Option<Template> {
+    let (id, raw) = BUILTIN_TEMPLATES.iter().find(|(i, _)| *i == id)?;
+    let mut t = parse_markdown_template(id, raw)
+        .unwrap_or_else(|e| panic!("built-in template {id} does not parse: {e:#}"));
+    t.builtin = true;
+    // Fixed timestamp: built-ins sort after workspace templates, stably.
+    t.created_at = chrono::DateTime::<Utc>::UNIX_EPOCH;
+    Some(t)
+}
+
+/// Every built-in template.
+pub fn builtin_templates() -> Vec<Template> {
+    BUILTIN_TEMPLATES
+        .iter()
+        .filter_map(|(id, _)| builtin_template(id))
+        .collect()
+}
+
+/// Store for workflow templates: `<root>/.allternit/rails/templates`, with
+/// the built-ins as a fallback. Reads never create the directory.
 pub struct TemplateStore {
     templates_dir: PathBuf,
 }
@@ -560,7 +850,6 @@ impl TemplateStore {
     pub fn new(root: impl AsRef<Path>) -> Result<Self> {
         let root = root.as_ref();
         let templates_dir = root.join(TEMPLATE_DIR);
-        ensure_dir(&templates_dir)?;
         Ok(Self { templates_dir })
     }
 
@@ -578,13 +867,17 @@ impl TemplateStore {
             description: description.into(),
             params: Vec::new(),
             steps,
+            max_rounds: None,
+            closure: None,
             created_at: Utc::now(),
+            builtin: false,
         };
         self.write(&template)?;
         Ok(template)
     }
 
-    /// Load a template by ID: `<id>.json`, else `<id>.md`.
+    /// Load a template by ID: `<id>.json`, else `<id>.md`, else the built-in
+    /// of that id.
     pub fn get(&self, id: &str) -> Result<Option<Template>> {
         if id.is_empty() || id.contains('/') || id.contains('\\') || id.contains("..") {
             bail!("invalid template id {id:?}");
@@ -597,7 +890,7 @@ impl TemplateStore {
         if md.exists() {
             return Self::load_file(&md).map(Some);
         }
-        Ok(None)
+        Ok(builtin_template(id))
     }
 
     /// Load a template file (`.json` or `.md`); the id is the file stem.
@@ -632,9 +925,20 @@ impl TemplateStore {
             .with_context(|| format!("template {id_or_path} not found in {}", self.templates_dir.display()))
     }
 
-    /// List all templates (JSON and markdown).
+    /// List all templates (JSON and markdown), then the built-ins that no
+    /// workspace file overrides (`builtin: true`).
     pub fn list(&self) -> Result<Vec<Template>> {
+        let mut templates = self.list_files()?;
+        let ids: HashSet<String> = templates.iter().map(|t| t.id.clone()).collect();
+        templates.extend(builtin_templates().into_iter().filter(|t| !ids.contains(&t.id)));
+        Ok(templates)
+    }
+
+    fn list_files(&self) -> Result<Vec<Template>> {
         let mut templates = Vec::new();
+        if !self.templates_dir.is_dir() {
+            return Ok(templates);
+        }
         for entry in std::fs::read_dir(&self.templates_dir)? {
             let entry = entry?;
             if !entry.file_type()?.is_file() {
@@ -751,6 +1055,7 @@ impl TemplateStore {
     }
 
     fn write(&self, template: &Template) -> Result<()> {
+        ensure_dir(&self.templates_dir)?;
         let path = self.path(&template.id);
         write_json_atomic(&path, template)
             .with_context(|| format!("failed to write template {path:?}"))
@@ -838,6 +1143,7 @@ steps:
                         executor: None,
                         wait_gate: None,
                         retry: None,
+                        on_fail: None,
                     },
                     TemplateStep {
                         id: "ui".to_string(),
@@ -849,6 +1155,7 @@ steps:
                         executor: None,
                         wait_gate: None,
                         retry: None,
+                        on_fail: None,
                     },
                 ],
             )
@@ -870,23 +1177,31 @@ steps:
         let store = TemplateStore::new(tmp.path()).unwrap();
         let raw = r#"{"id":"old","name":"Old","description":"d","created_at":"2026-01-01T00:00:00Z",
             "steps":[{"id":"a","title":"A","description":"x","kind":"task","priority":"p2","blocked_by":[]}]}"#;
+        std::fs::create_dir_all(tmp.path().join(TEMPLATE_DIR)).unwrap();
         std::fs::write(tmp.path().join(TEMPLATE_DIR).join("old.json"), raw).unwrap();
         let t = store.get("old").unwrap().unwrap();
         assert_eq!(t.steps.len(), 1);
         assert!(t.params.is_empty());
+        assert!(t.max_rounds.is_none() && t.closure.is_none() && !t.builtin);
+        assert!(t.steps[0].on_fail.is_none());
     }
 
     #[test]
     fn markdown_template_parses_and_lists() {
         let tmp = TempDir::new().unwrap();
         let store = TemplateStore::new(tmp.path()).unwrap();
+        std::fs::create_dir_all(tmp.path().join(TEMPLATE_DIR)).unwrap();
         std::fs::write(tmp.path().join(TEMPLATE_DIR).join("promo.md"), MD).unwrap();
         let t = store.get("promo").unwrap().unwrap();
         assert_eq!(t.id, "promo");
         assert_eq!(t.name, "Motion promo");
         assert_eq!(t.steps.len(), 4);
         assert_eq!(t.steps[2].wait_gate.as_ref().unwrap().kind, WaitGateKind::Manual);
-        assert_eq!(store.list().unwrap().len(), 1);
+        // The workspace file plus the two built-ins.
+        let list = store.list().unwrap();
+        assert_eq!(list.len(), 1 + BUILTIN_TEMPLATES.len());
+        assert_eq!(list[0].id, "promo");
+        assert!(!list[0].builtin && list[1..].iter().all(|t| t.builtin));
         assert!(store.resolve("promo").is_ok());
     }
 
@@ -993,6 +1308,290 @@ steps:
         t.steps[0].executor = None;
         t.steps[0].blocked_by = vec!["rerecord".to_string()];
         assert!(t.expand_dag("root", &p).unwrap_err().to_string().contains("cycle"));
+    }
+
+    const LOOP_MD: &str = r#"---
+name: Loop
+description: build and check with a route back
+---
+
+```yaml template-spec
+params:
+  - name: intent
+max_rounds: 4
+steps:
+  - id: build
+    title: "Build {{ params.intent }}"
+    executor: role:build
+  - id: lint
+    title: Lint
+    executor: "ao:kimi"
+    blocked_by: [build]
+  - id: check
+    title: Check
+    executor: role:check
+    blocked_by: [lint]
+    on_fail: build
+  - id: signoff
+    title: Sign off
+    blocked_by: [check]
+    wait_gate:
+      kind: manual
+      evidence: "PROOF.md for {{ params.intent }}"
+closure:
+  success: "Proven: {{ params.intent }}"
+  degraded: Stopped at max_rounds.
+  failed: Could not be fixed.
+```
+"#;
+
+    fn roles() -> RoleMap {
+        let mut r = RoleMap::new();
+        r.insert("build".into(), "bot:builder".into());
+        r.insert("check".into(), "ao:codex".into());
+        r
+    }
+
+    fn intent(v: &str) -> HashMap<String, String> {
+        HashMap::from([("intent".to_string(), v.to_string())])
+    }
+
+    #[test]
+    fn markdown_parses_on_fail_evidence_role_max_rounds_closure() {
+        let t = parse_markdown_template("loop", LOOP_MD).unwrap();
+        assert_eq!(t.max_rounds, Some(4));
+        assert_eq!(t.effective_max_rounds(), Some(4));
+        assert_eq!(t.steps[2].on_fail.as_deref(), Some("build"));
+        assert_eq!(t.steps[0].executor.as_deref(), Some("role:build"));
+        let g = t.steps[3].wait_gate.as_ref().unwrap();
+        assert_eq!(g.evidence.as_deref(), Some("PROOF.md for {{ params.intent }}"));
+        let c = t.closure.as_ref().unwrap();
+        assert_eq!(c.degraded.as_deref(), Some("Stopped at max_rounds."));
+        assert_eq!(c.failed.as_deref(), Some("Could not be fixed."));
+        t.validate().unwrap();
+    }
+
+    #[test]
+    fn json_parses_new_fields_and_round_trips_snake_case() {
+        let raw = r#"{"id":"j","name":"J","created_at":"2026-01-01T00:00:00Z","max_rounds":2,
+            "closure":{"degraded":"d"},
+            "steps":[{"id":"a","title":"A","executor":"role:build"},
+                     {"id":"b","title":"B","blocked_by":["a"],"on_fail":"a",
+                      "wait_gate":{"kind":"manual","evidence":"proof/"}}]}"#;
+        let t: Template = serde_json::from_str(raw).unwrap();
+        assert_eq!(t.max_rounds, Some(2));
+        assert_eq!(t.steps[1].on_fail.as_deref(), Some("a"));
+        assert_eq!(t.steps[1].wait_gate.as_ref().unwrap().evidence.as_deref(), Some("proof/"));
+        let back = serde_json::to_value(&t).unwrap();
+        assert_eq!(back["max_rounds"], 2);
+        assert_eq!(back["steps"][1]["on_fail"], "a");
+        assert!(back.get("builtin").is_none());
+        // `builtin` is never read from disk.
+        let forged: Template =
+            serde_json::from_str(&raw.replacen("\"id\":\"j\"", "\"id\":\"j\",\"builtin\":true", 1)).unwrap();
+        assert!(!forged.builtin);
+    }
+
+    #[test]
+    fn contract_json_matches_api_shape() {
+        let t = parse_markdown_template("loop", LOOP_MD).unwrap();
+        let c = t.to_contract_json();
+        let keys = |v: &serde_json::Value| {
+            let mut k: Vec<String> = v.as_object().unwrap().keys().cloned().collect();
+            k.sort();
+            k
+        };
+        assert_eq!(
+            keys(&c),
+            ["closure", "description", "id", "maxRounds", "name", "params", "steps"]
+        );
+        assert_eq!(
+            keys(&c["steps"][0]),
+            ["blockedBy", "executor", "id", "onFail", "retry", "title", "waitGate"]
+        );
+        assert_eq!(c["maxRounds"], 4);
+        assert_eq!(c["steps"][2]["onFail"], "build");
+        assert_eq!(c["steps"][2]["blockedBy"], serde_json::json!(["lint"]));
+        assert_eq!(c["steps"][0]["waitGate"], serde_json::Value::Null);
+        assert_eq!(c["steps"][3]["waitGate"]["kind"], "manual");
+        assert_eq!(c["steps"][3]["waitGate"]["evidence"], "PROOF.md for {{ params.intent }}");
+        assert_eq!(c["closure"]["degraded"], "Stopped at max_rounds.");
+        assert_eq!(c["params"][0], serde_json::json!({ "name": "intent" }));
+        // No on_fail, no max_rounds -> null.
+        let plain = parse_markdown_template("promo", MD).unwrap().to_contract_json();
+        assert_eq!(plain["maxRounds"], serde_json::Value::Null);
+        assert_eq!(plain["closure"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn max_rounds_defaults_to_three_with_on_fail_and_rejects_zero() {
+        let mut t = parse_markdown_template("loop", LOOP_MD).unwrap();
+        t.max_rounds = None;
+        assert_eq!(t.effective_max_rounds(), Some(DEFAULT_MAX_ROUNDS));
+        let x = t.expand_dag_with_roles("root", &intent("x"), Some(&roles())).unwrap();
+        let check = &x.nodes["check"];
+        assert!(x.mutations.iter().any(|m| matches!(m,
+            DagMutation::AddLabel { node_id, label } if node_id == check && label == "max_rounds:3")));
+        t.max_rounds = Some(0);
+        let err = t.validate().unwrap_err().to_string();
+        assert!(err.contains("max_rounds must be a positive integer"), "{err}");
+    }
+
+    #[test]
+    fn role_executors_resolve_through_the_role_map() {
+        let t = parse_markdown_template("loop", LOOP_MD).unwrap();
+        let x = t.expand_dag_with_roles("root", &intent("x"), Some(&roles())).unwrap();
+        let mut seen = 0;
+        for m in &x.mutations {
+            if let DagMutation::CreateNode { node_id, executor, .. } = m {
+                let want = if node_id == &x.nodes["build"] {
+                    Some("bot:builder")
+                } else if node_id == &x.nodes["check"] {
+                    Some("ao:codex")
+                } else if node_id == &x.nodes["lint"] {
+                    Some("ao:kimi")
+                } else {
+                    None
+                };
+                assert_eq!(executor.as_deref(), want, "{node_id}");
+                // Nodes never carry role: executors.
+                assert!(executor.as_deref().map_or(true, |e| validate_executor(e).is_ok()));
+                seen += 1;
+            }
+        }
+        assert_eq!(seen, 4);
+    }
+
+    #[test]
+    fn unmapped_role_is_an_error_naming_the_role() {
+        let t = parse_markdown_template("loop", LOOP_MD).unwrap();
+        let err = t.expand_dag("root", &intent("x")).unwrap_err().to_string();
+        assert!(err.contains("role:build") && err.contains("--team"), "{err}");
+        let mut partial = RoleMap::new();
+        partial.insert("build".into(), "bot:builder".into());
+        let err = t
+            .expand_dag_with_roles("root", &intent("x"), Some(&partial))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("role check") || err.contains("role:check"), "{err}");
+        assert!(err.contains("team.yaml"), "{err}");
+        // A role may not map to another role.
+        let mut bad = roles();
+        bad.insert("check".into(), "role:build".into());
+        let err = t.expand_dag_with_roles("root", &intent("x"), Some(&bad)).unwrap_err().to_string();
+        assert!(err.contains("invalid executor"), "{err}");
+    }
+
+    #[test]
+    fn on_fail_must_name_an_existing_predecessor() {
+        let mut t = parse_markdown_template("loop", LOOP_MD).unwrap();
+        t.steps[2].on_fail = Some("nope".into());
+        let err = t.validate().unwrap_err().to_string();
+        assert!(err.contains("unknown step nope"), "{err}");
+        // signoff comes after check: not a predecessor.
+        t.steps[2].on_fail = Some("signoff".into());
+        let err = t.validate().unwrap_err().to_string();
+        assert!(err.contains("must be a blocked_by predecessor"), "{err}");
+        // Itself is not a predecessor either.
+        t.steps[2].on_fail = Some("check".into());
+        assert!(t.validate().is_err());
+        // A transitive predecessor (build via lint) is fine.
+        t.steps[2].on_fail = Some("build".into());
+        t.validate().unwrap();
+    }
+
+    #[test]
+    fn expansion_labels_on_fail_closure_and_evidence() {
+        let t = parse_markdown_template("loop", LOOP_MD).unwrap();
+        let x = t.expand_dag_with_roles("root", &intent("login"), Some(&roles())).unwrap();
+        let (build, check, signoff) = (&x.nodes["build"], &x.nodes["check"], &x.nodes["signoff"]);
+        let labels: Vec<(&String, &String)> = x
+            .mutations
+            .iter()
+            .filter_map(|m| match m {
+                DagMutation::AddLabel { node_id, label } => Some((node_id, label)),
+                _ => None,
+            })
+            .collect();
+        assert!(labels.contains(&(check, &format!("on_fail:{build}"))));
+        assert!(labels.contains(&(check, &"max_rounds:4".to_string())));
+        assert_eq!(labels.len(), 2, "only the on_fail step is labelled");
+        let states: BTreeMap<&str, &str> = x
+            .mutations
+            .iter()
+            .filter_map(|m| match m {
+                DagMutation::SetState { node_id, dimension, value, .. } if node_id == "root" => {
+                    Some((dimension.as_str(), value.as_str()))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(states.get(CLOSURE_SUCCESS_STATE), Some(&"Proven: login"));
+        assert_eq!(states.get(CLOSURE_DEGRADED_STATE), Some(&"Stopped at max_rounds."));
+        assert_eq!(states.get(CLOSURE_FAILED_STATE), Some(&"Could not be fixed."));
+        let gate = x
+            .mutations
+            .iter()
+            .find_map(|m| match m {
+                DagMutation::AddWaitGate { node_id, description, params, .. } if node_id == signoff => {
+                    Some((description.clone(), params.clone()))
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(gate.1[EVIDENCE_PARAM], "PROOF.md for login");
+        assert_eq!(gate.0.as_deref(), Some("Sign off (look at: PROOF.md for login)"));
+    }
+
+    #[test]
+    fn builtins_load_expand_and_yield_to_workspace_files() {
+        let tmp = TempDir::new().unwrap();
+        let store = TemplateStore::new(tmp.path()).unwrap();
+        // Reads never create the template directory.
+        assert!(!tmp.path().join(TEMPLATE_DIR).exists());
+        let list = store.list().unwrap();
+        assert_eq!(
+            list.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(),
+            ["build-check-prove", "fact-check"]
+        );
+        assert!(list.iter().all(|t| t.builtin));
+        assert!(!tmp.path().join(TEMPLATE_DIR).exists());
+
+        let bcp = store.resolve("build-check-prove").unwrap();
+        assert!(bcp.builtin);
+        assert_eq!(bcp.effective_max_rounds(), Some(3));
+        assert_eq!(bcp.steps.iter().find(|s| s.id == "check").unwrap().on_fail.as_deref(), Some("build"));
+        let prove = bcp.steps.iter().find(|s| s.id == "prove").unwrap();
+        assert_eq!(prove.wait_gate.as_ref().unwrap().evidence.as_deref(), Some("PROOF.md and proof/ files"));
+        assert!(bcp.closure.as_ref().unwrap().degraded.is_some());
+        let x = bcp.expand_dag_with_roles("root", &intent("a login page"), Some(&roles())).unwrap();
+        assert_eq!(x.nodes.len(), 3);
+        // Without a team the role executors are refused, naming the role.
+        let err = bcp.expand_dag("root", &intent("x")).unwrap_err().to_string();
+        assert!(err.contains("role:build"), "{err}");
+
+        let fc = store.get("fact-check").unwrap().unwrap();
+        assert_eq!(fc.effective_max_rounds(), Some(2));
+        assert_eq!(fc.steps.iter().find(|s| s.id == "verify").unwrap().on_fail.as_deref(), Some("research"));
+        let mut fr = RoleMap::new();
+        fr.insert("research".into(), "bot:research".into());
+        fr.insert("check".into(), "bot:checker".into());
+        let claim = HashMap::from([("claim".to_string(), "Water boils at 100 C at sea level".to_string())]);
+        let x = fc.expand_dag_with_roles("root", &claim, Some(&fr)).unwrap();
+        assert_eq!(x.params.get("source").map(String::as_str), Some("any"));
+        assert!(fc.expand_dag_with_roles("root", &HashMap::new(), Some(&fr)).is_err());
+
+        // A workspace file with the same id wins.
+        std::fs::create_dir_all(tmp.path().join(TEMPLATE_DIR)).unwrap();
+        std::fs::write(tmp.path().join(TEMPLATE_DIR).join("fact-check.md"), MD).unwrap();
+        let own = store.get("fact-check").unwrap().unwrap();
+        assert!(!own.builtin);
+        assert_eq!(own.name, "Motion promo");
+        let list = store.list().unwrap();
+        assert_eq!(list.len(), 2);
+        assert_eq!(list.iter().filter(|t| t.builtin).count(), 1);
+        // Built-ins are not deletable files.
+        assert!(!store.delete("build-check-prove").unwrap());
     }
 
     #[test]

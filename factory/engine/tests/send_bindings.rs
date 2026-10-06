@@ -84,7 +84,7 @@ fn ctx(root: &Path, base: Option<String>) -> SendCtx {
     SendCtx {
         root: root.to_path_buf(),
         registry: Registry::at(root.join("registry.json")),
-        api: ApiLink { base, authorization: Some("Bearer t0k".into()) },
+        api: ApiLink { base, authorization: Some("Bearer t0k".into()), desktop: None },
         sender: "user:eoj".into(),
     }
 }

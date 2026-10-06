@@ -115,6 +115,9 @@ pub struct ApiLink {
     pub base: Option<String>,
     /// The `Authorization` header value to call it with.
     pub authorization: Option<String>,
+    /// A Desktop caller's `(x-allternit-desktop-access-token,
+    /// x-allternit-user-id)`, passed through by allternit-api's proxy.
+    pub desktop: Option<(String, String)>,
 }
 
 impl ApiLink {
@@ -136,7 +139,7 @@ impl ApiLink {
             .ok()
             .filter(|v| !v.is_empty())
             .map(|t| format!("Bearer {t}"));
-        Self { base, authorization }
+        Self { base, authorization, desktop: None }
     }
 }
 
@@ -379,6 +382,9 @@ async fn api_call(api: &ApiLink, method: reqwest::Method, path: &str, body: Opti
     let mut rb = client().request(method, &url);
     if let Some(auth) = &api.authorization {
         rb = rb.header("authorization", auth);
+    }
+    if let Some((token, user)) = &api.desktop {
+        rb = rb.header("x-allternit-desktop-access-token", token).header("x-allternit-user-id", user);
     }
     if let Some(body) = body {
         rb = rb.json(&body);
