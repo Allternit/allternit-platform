@@ -84,7 +84,7 @@
   "license": "UNLICENSED",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Gizziio/desktop"
+    "url": "https://github.com/Allternit/desktop"
   },
   "build": {
     "appId": "com.allternit.desktop",
@@ -505,7 +505,7 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "Gizziio",
+        "owner": "Allternit",
         "repo": "desktop",
         "releaseType": "release"
       }

@@ -71,7 +71,7 @@ function getDb() {
     process.env.ALLTERNIT_AI_PATH ||
     (existsSync('../allternit-ai/package.json') ? '../allternit-ai' : '');
   if (!ui) {
-    throw new Error('Workspace UI not found. Set ALLTERNIT_AI_PATH or clone Gizziio/allternit-ai as a sibling.');
+    throw new Error('Workspace UI not found. Set ALLTERNIT_AI_PATH or clone Allternit/allternit-ai as a sibling.');
   }
   return new Database(`${ui}/data/sqlite.db`);
 }

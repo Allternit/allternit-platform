@@ -5,11 +5,11 @@ PackageVersion: 2.1.8
 PackageLocale: en-US
 Publisher: Allternit Technologies
 PublisherUrl: https://allternit.com
-PublisherSupportUrl: https://github.com/Gizziio/allternit-platform/issues
+PublisherSupportUrl: https://github.com/Allternit/allternit-platform/issues
 PackageName: Gizzi Code
 PackageUrl: https://docs.gizziio.com
 License: MIT
-LicenseUrl: https://github.com/Gizziio/allternit-platform/blob/main/cmd/gizzi-code/LICENSE
+LicenseUrl: https://github.com/Allternit/allternit-platform/blob/main/cmd/gizzi-code/LICENSE
 Copyright: Copyright (c) 2026 Allternit Technologies
 ShortDescription: AI-powered terminal interface and runtime for the Allternit ecosystem
 Description: |
@@ -31,7 +31,7 @@ Commands:
 Installers:
   - Architecture: x64
     InstallerType: zip
-    InstallerUrl: https://github.com/Gizziio/allternit-platform/releases/download/gizzi-code/v2.1.8/gizzi-code-v2.1.8-windows-x64.zip
+    InstallerUrl: https://github.com/Allternit/allternit-platform/releases/download/gizzi-code/v2.1.8/gizzi-code-v2.1.8-windows-x64.zip
     InstallerSha256: 32960CB8458308E8D7B99BFF9930023E9794B6ED74BE6137AF7FA4B6C0D25A7E
     NestedInstallerType: portable
     Dependencies:
@@ -42,6 +42,6 @@ Installers:
         PortableCommandAlias: gizzi-code
 ReleaseNotes: |
   Gizzi Code CLI 2.1.8
-ReleaseNotesUrl: https://github.com/Gizziio/allternit-platform/releases/tag/gizzi-code/v2.1.8
+ReleaseNotesUrl: https://github.com/Allternit/allternit-platform/releases/tag/gizzi-code/v2.1.8
 ManifestType: singleton
 ManifestVersion: 1.5.0

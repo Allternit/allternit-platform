@@ -114,7 +114,7 @@ Pass when: no section is an empty click that does nothing; every "Connect" eithe
 | E4 | Office engine | `shell:get-office-host-status` matches installed Office; open a doc | **Down** |
 | E5 | Connector host | Connector list 200 or explicit "not installed" | **Down** |
 | E6 | Mesh-node | Status stopped/running; no renderer crash | |
-| E7 | Updater | `app:check-for-updates` against `Gizziio/desktop`; invalid GH response is a visible error, not a hang | **Invalid GH response** |
+| E7 | Updater | `app:check-for-updates` against `Allternit/desktop`; invalid GH response is a visible error, not a hang | **Invalid GH response** |
 | E8 | Computer-use / accessibility | Permissions banner: Fix Permissions opens System Settings; Dismiss hides | Accessibility denied is OK if banner is honest |
 | E9 | Usage metering | Home does not 503-loop. Empty usage is OK until Clerk JWT is stored for cloud metering | **503 / cloud 401** |
 
@@ -176,7 +176,7 @@ Capture CDP `console` + `pageerror` + HTTP ≥400.
 |----|------|-----------|
 | I1 | macOS DMG notarized + stapled | Gatekeeper open with no right-click bypass |
 | I2 | Windows + Linux | Built in CI with native `allternit-api`; not announced until that is true |
-| I3 | Distro feed `Gizziio/desktop` Latest = 1.1.0 for this train | Updater finds this build |
+| I3 | Distro feed `Allternit/desktop` Latest = 1.1.0 for this train | Updater finds this build |
 | I4 | No secrets in the repo or baked bundle | No `sk_live_`, no test passwords, no `dev-api-token` backdoor on production cloud |
 
 ---

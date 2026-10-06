@@ -19,7 +19,7 @@ echo "║           Allternit VM Image Build & Release Script                ║
 echo "╚═══════════════════════════════════════════════════════════════╝"
 echo ""
 echo "Version: $VERSION"
-echo "Repository: Gizziio/allternit"
+echo "Repository: Allternit/allternit-platform"
 echo ""
 
 # Check if we're in the right directory
@@ -56,7 +56,7 @@ echo ""
 echo "✅ Workflow triggered successfully!"
 echo ""
 echo "📊 Monitor progress at:"
-echo "   https://github.com/Gizziio/allternit/actions"
+echo "   https://github.com/Allternit/allternit-platform/actions"
 echo ""
 echo "📝 The workflow will:"
 echo "   1. Build VM images for x86_64 and ARM64"

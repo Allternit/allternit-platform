@@ -59,7 +59,7 @@ If auto-detect fails (CORS issues), use:
 | `9b89f761` | ✅ Pushed |
 | Build | ⏳ In Progress |
 
-Check: GitHub Actions Cloudflare Pages deploy on `Gizziio/allternit-platform`
+Check: GitHub Actions Cloudflare Pages deploy on `Allternit/allternit-platform`
 
 ## Testing Checklist
 

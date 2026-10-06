@@ -224,7 +224,7 @@ export async function toolToAPISchema(
   // standard prompt caching (Bedrock/Vertex supported); the beta sub-fields
   // (scope, ttl) are already gated upstream by shouldIncludeFirstPartyOnlyBetas
   // which independently respects this kill switch.
-  // github.com/Gizziio/allternit-platform/issues/20031
+  // github.com/Allternit/allternit-platform/issues/20031
   if (isEnvTruthy(process.env.GIZZI_DISABLE_EXPERIMENTAL_BETAS)) {
     const allowed = new Set([
       'name',

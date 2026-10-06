@@ -44,7 +44,7 @@ const VENDOR_BINARY = path.join(
 );
 const SIDECAR_DIR = path.join(REPO_ROOT, 'infrastructure', 'mesh', 'tsnet-ios');
 
-const GITHUB_REPO = 'Gizziio/allternit-platform';
+const GITHUB_REPO = 'Allternit/allternit-platform';
 // Asset naming from release-gizzi-code.yml (mesh-node shipped since v0.2.2).
 const RELEASE_ASSET = {
   'darwin-arm64': { pattern: /-darwin-arm64\.tar\.gz$/, member: 'mesh-node' },

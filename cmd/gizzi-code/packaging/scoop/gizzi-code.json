@@ -6,18 +6,18 @@
   "depends": "ripgrep",
   "architecture": {
     "64bit": {
-      "url": "https://github.com/Gizziio/allternit-platform/releases/download/gizzi-code/v2.1.8/gizzi-code-v2.1.8-windows-x64.zip",
+      "url": "https://github.com/Allternit/allternit-platform/releases/download/gizzi-code/v2.1.8/gizzi-code-v2.1.8-windows-x64.zip",
       "hash": "32960cb8458308e8d7b99bff9930023e9794b6ed74be6137af7fa4b6c0d25a7e"
     }
   },
   "bin": "gizzi-code.exe",
   "checkver": {
-    "github": "https://github.com/Gizziio/allternit-platform"
+    "github": "https://github.com/Allternit/allternit-platform"
   },
   "autoupdate": {
     "architecture": {
       "64bit": {
-        "url": "https://github.com/Gizziio/allternit-platform/releases/download/gizzi-code/v$version/gizzi-code-v$version-windows-x64.zip"
+        "url": "https://github.com/Allternit/allternit-platform/releases/download/gizzi-code/v$version/gizzi-code-v$version-windows-x64.zip"
       }
     }
   }

@@ -531,7 +531,7 @@ owner reviews and merges — no self-merge.
   then paired; never the laptop). That node's allternit-api auto-starts
   `gizzi-cloud` when it is not a desktop sidecar. `GET/POST
   /api/v1/continuation/ensure` refuses if only a laptop node is online.
-- **P5 PARTIAL** — updater feed locked to `Gizziio/desktop` (publish +
+- **P5 PARTIAL** — updater feed locked to `Allternit/desktop` (publish +
   `updateElectronApp` + manifest + preflight mismatch gate). Signing /
   notarization / cutting `desktop-v1.2.0` is an owner action (Apple
   secrets). Windows/Linux already build on `desktop-v*` tags.

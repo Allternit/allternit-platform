@@ -5,7 +5,7 @@ import { createAllternit } from "@allternit/sdk";
 import { parseArgs } from "util";
 import { Script } from "@allternit/script";
 export async function getLatestRelease(skip) {
-    const data = await fetch("https://api.github.com/repos/Gizziio/allternit-platform/releases?per_page=100").then((res) => {
+    const data = await fetch("https://api.github.com/repos/Allternit/allternit-platform/releases?per_page=100").then((res) => {
         if (!res.ok)
             throw new Error(res.statusText);
         return res.json();
@@ -26,7 +26,7 @@ export async function getCommits(from, to) {
     const fromRef = from.startsWith("v") ? from : `v${from}`;
     const toRef = to === "HEAD" ? to : to.startsWith("v") ? to : `v${to}`;
     // Get commit data with GitHub usernames from the API
-    const compare = await $ `gh api "/repos/Gizziio/allternit-platform/compare/${fromRef}...${toRef}" --jq '.commits[] | {sha: .sha, login: .author.login, message: .commit.message}'`.text();
+    const compare = await $ `gh api "/repos/Allternit/allternit-platform/compare/${fromRef}...${toRef}" --jq '.commits[] | {sha: .sha, login: .author.login, message: .commit.message}'`.text();
     const commitData = new Map();
     for (const line of compare.split("\n").filter(Boolean)) {
         const data = JSON.parse(line);
@@ -179,7 +179,7 @@ export async function generateChangelog(commits, allternit) {
 export async function getContributors(from, to) {
     const fromRef = from.startsWith("v") ? from : `v${from}`;
     const toRef = to === "HEAD" ? to : to.startsWith("v") ? to : `v${to}`;
-    const compare = await $ `gh api "/repos/Gizziio/allternit-platform/compare/${fromRef}...${toRef}" --jq '.commits[] | {login: .author.login, message: .commit.message}'`.text();
+    const compare = await $ `gh api "/repos/Allternit/allternit-platform/compare/${fromRef}...${toRef}" --jq '.commits[] | {login: .author.login, message: .commit.message}'`.text();
     const contributors = new Map();
     for (const line of compare.split("\n").filter(Boolean)) {
         const { login, message } = JSON.parse(line);

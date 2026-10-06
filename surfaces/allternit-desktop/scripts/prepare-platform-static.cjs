@@ -36,7 +36,7 @@ function resolveHostedUiDir() {
     // fall through to the error below
   }
   log('ERROR: ai.allternit.com UI not found or its build worktree could not be prepared.');
-  log('Clone Gizziio/allternit-ai next to this repo, or set ALLTERNIT_AI_PATH.');
+  log('Clone Allternit/allternit-ai next to this repo, or set ALLTERNIT_AI_PATH.');
   log('Do not package surfaces/platform.allternit.com — that is the cloud console.');
   process.exit(1);
 }

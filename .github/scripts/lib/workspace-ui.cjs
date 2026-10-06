@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** Resolve private Gizziio/allternit-ai (workspace UI). Never the console. */
+/** Resolve private Allternit/allternit-ai (workspace UI). Never the console. */
 const fs = require('fs');
 const path = require('path');
 
@@ -17,7 +17,7 @@ function resolveWorkspaceUi() {
     if (fs.existsSync(path.join(c, 'package.json'))) return c;
   }
   throw new Error(
-    'Workspace UI not found. Clone Gizziio/allternit-ai next to this repo or set ALLTERNIT_AI_PATH. Do not write discovery artifacts into this public repo.',
+    'Workspace UI not found. Clone Allternit/allternit-ai next to this repo or set ALLTERNIT_AI_PATH. Do not write discovery artifacts into this public repo.',
   );
 }
 

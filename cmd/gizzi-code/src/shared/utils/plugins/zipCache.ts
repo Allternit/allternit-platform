@@ -255,7 +255,7 @@ async function collectFilesForZip(
   // same JS number, causing subdirs to be silently skipped as "cycles". This
   // broke the round-trip test on Windows CI when sharding shuffled which tests
   // ran first and pushed MFT sequence numbers over the precision cliff.
-  // See also: markdownConfigLoader.ts getFileIdentity, Gizziio/allternit-platform#13893
+  // See also: markdownConfigLoader.ts getFileIdentity, Allternit/allternit-platform#13893
   try {
     const dirStat = await stat(currentDir, { bigint: true })
     // ReFS (Dev Drive), NFS, some FUSE mounts report dev=0 and ino=0 for

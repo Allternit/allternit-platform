@@ -1,7 +1,7 @@
 # Latent runtime bug decisions — owner review
 
 **What this is.** On 2026-09-18 a full day of typing / lint / burn-down work across
-`Gizziio/allternit-platform` (PRs #577–#630) and `Gizziio/allternit-ai` (PRs #23–#41)
+`Allternit/allternit-platform` (PRs #577–#630) and `Allternit/allternit-ai` (PRs #23–#41)
 surfaced ~20 latent runtime bugs. The agents **deliberately did not fix them**: the burn-down
 and lint lanes were under type-only / behavior-preserved rules, so every finding was kept
 byte-semantically identical behind a cast, a guard, or a documented `@ts-nocheck` header
@@ -19,29 +19,29 @@ risk.
 **Verification base.** Platform first read against `origin/main` @ `5ca613f8c`
 (2026-09-18 attestation for burn b0015), then re-verified after burn b0016 landed
 (`origin/main` @ `ba75db051`) — no platform row was touched by b0016. allternit-ai read
-against `origin/main` @ `53cbeca6` (merge of Gizziio/allternit-ai#41). Line numbers refer to
+against `origin/main` @ `53cbeca6` (merge of Allternit/allternit-ai#41). Line numbers refer to
 the later of the two platform trees.
 
 **Provenance.** Findings flagged in: platform PRs
-[#598](https://github.com/Gizziio/allternit-platform/pull/598),
-[#599](https://github.com/Gizziio/allternit-platform/pull/599),
-[#602](https://github.com/Gizziio/allternit-platform/pull/602),
-[#612](https://github.com/Gizziio/allternit-platform/pull/612),
-[#613](https://github.com/Gizziio/allternit-platform/pull/613),
-[#616](https://github.com/Gizziio/allternit-platform/pull/616),
-[#620](https://github.com/Gizziio/allternit-platform/pull/620);
+[#598](https://github.com/Allternit/allternit-platform/pull/598),
+[#599](https://github.com/Allternit/allternit-platform/pull/599),
+[#602](https://github.com/Allternit/allternit-platform/pull/602),
+[#612](https://github.com/Allternit/allternit-platform/pull/612),
+[#613](https://github.com/Allternit/allternit-platform/pull/613),
+[#616](https://github.com/Allternit/allternit-platform/pull/616),
+[#620](https://github.com/Allternit/allternit-platform/pull/620);
 allternit-ai PRs
-[#30](https://github.com/Gizziio/allternit-ai/pull/30),
-[#31](https://github.com/Gizziio/allternit-ai/pull/31),
-[#32](https://github.com/Gizziio/allternit-ai/pull/32),
-[#33](https://github.com/Gizziio/allternit-ai/pull/33),
-[#34](https://github.com/Gizziio/allternit-ai/pull/34),
-[#35](https://github.com/Gizziio/allternit-ai/pull/35),
-[#36](https://github.com/Gizziio/allternit-ai/pull/36),
-[#37](https://github.com/Gizziio/allternit-ai/pull/37),
-[#38](https://github.com/Gizziio/allternit-ai/pull/38),
-[#40](https://github.com/Gizziio/allternit-ai/pull/40),
-[#41](https://github.com/Gizziio/allternit-ai/pull/41);
+[#30](https://github.com/Allternit/allternit-ai/pull/30),
+[#31](https://github.com/Allternit/allternit-ai/pull/31),
+[#32](https://github.com/Allternit/allternit-ai/pull/32),
+[#33](https://github.com/Allternit/allternit-ai/pull/33),
+[#34](https://github.com/Allternit/allternit-ai/pull/34),
+[#35](https://github.com/Allternit/allternit-ai/pull/35),
+[#36](https://github.com/Allternit/allternit-ai/pull/36),
+[#37](https://github.com/Allternit/allternit-ai/pull/37),
+[#38](https://github.com/Allternit/allternit-ai/pull/38),
+[#40](https://github.com/Allternit/allternit-ai/pull/40),
+[#41](https://github.com/Allternit/allternit-ai/pull/41);
 ledger summaries `agent-ledger/summaries/2026-09-18-{0930,1136,1241-agent-43,1300,1349,1420,1838,1908,2015}-*`
 (burn batches b0001–b0015) and the dormant-stub decision doc (`DORMANT_STUB_DECISIONS.md`, PR #610).
 
@@ -77,7 +77,7 @@ Any fresh gizzi data dir that reaches the cowork surfaces before a manual fix hi
 "no such table" errors. Follow-up: regenerate the migration with statement breakpoints (or
 apply the statements individually).
 
-### Agent workspace (`Gizziio/allternit-ai`)
+### Agent workspace (`Allternit/allternit-ai`)
 
 | # | Bug | What's broken (verified on main) | User-visible symptom | Fix approach | Effort | Risk | Source | Owner decision |
 |---|-----|----------------------------------|----------------------|--------------|--------|------|--------|----------------|
@@ -104,17 +104,17 @@ re-open them.
 
 | Finding | Status | Fixing PR |
 |---------|--------|-----------|
-| Theme `log('success', …)` silently swallowed (8 call sites; `LOG_LEVELS['success']` undefined) | **FIXED** — `'success'` level added at weight 1 + regression test | platform [#602](https://github.com/Gizziio/allternit-platform/pull/602) |
-| `question.ts` called static `Bus.publish` on the Bus *class* (TypeError on every question event) | **FIXED** — imports the `Bus` namespace from `@/shared/bus` | platform [#602](https://github.com/Gizziio/allternit-platform/pull/602) |
-| `TestingPermissionTool.isEnabled()` compared `"production" === 'test'` (always false) | **FIXED** — restored to `process.env.NODE_ENV === 'test'` | platform [#616](https://github.com/Gizziio/allternit-platform/pull/616) |
-| VerifyPlan gate mismatch: `classifierDecision.ts` (both copies) gated on `USER_TYPE === 'ant'` while `tools.ts` used `GIZZI_CODE_VERIFY_PLAN` | **FIXED** — both copies aligned to the env flag | platform [#613](https://github.com/Gizziio/allternit-platform/pull/613) |
-| `highlightJs.getLanguage` always `undefined` (ESM default-export interop) | **FIXED** — read off the default export | platform [#620](https://github.com/Gizziio/allternit-platform/pull/620) |
-| `question-tool.tsx` referenced 5 never-defined values → `ReferenceError` on render | **FIXED** — definitions added per sibling conventions | allternit-ai [#30](https://github.com/Gizziio/allternit-ai/pull/30) |
-| `WorkflowBuilderProgram` messages tab crash (`msg.role.toUpperCase()`); `dak.store` `leaseInfo` snake/camel mismatch | **FIXED** — render `kind`/`payload`; explicit lease mapping | allternit-ai [#31](https://github.com/Gizziio/allternit-ai/pull/31) |
-| Video providers never showed configured (`isAvailable === true` on a function); SessionsPage trace inspector `authHeaders` ReferenceError; `NativeAgentView` message-list crash (wrong `parts` contract); design in-place edit feedback shape; `logger.error` arg order; "Current" session chip always false | **FIXED** — all six in the owner-approved fix lane | allternit-ai [#32](https://github.com/Gizziio/allternit-ai/pull/32) |
-| `OAuthSelectAccountPage` undefined `router.push`; missing class exports; `ChatComposer` handoff passed agent object instead of id; `allowpopups="true"` string prop | **FIXED** — all four | allternit-ai [#33](https://github.com/Gizziio/allternit-ai/pull/33) |
-| `DesignPropertiesPanel.update()` passed `type: undefined` for missing shapes | **GUARDED** — early-return on missing shape landed (the lie can no longer reach `updateShapes`); root behavior unchanged | allternit-ai [#40](https://github.com/Gizziio/allternit-ai/pull/40) |
-| `ControlTab` dual queue-item wire shape (`item.task` no longer exists); `ReviewTab`/`ControlTab` dead views | **FIXED** — both views deleted (zero consumers) | allternit-ai [#41](https://github.com/Gizziio/allternit-ai/pull/41) |
+| Theme `log('success', …)` silently swallowed (8 call sites; `LOG_LEVELS['success']` undefined) | **FIXED** — `'success'` level added at weight 1 + regression test | platform [#602](https://github.com/Allternit/allternit-platform/pull/602) |
+| `question.ts` called static `Bus.publish` on the Bus *class* (TypeError on every question event) | **FIXED** — imports the `Bus` namespace from `@/shared/bus` | platform [#602](https://github.com/Allternit/allternit-platform/pull/602) |
+| `TestingPermissionTool.isEnabled()` compared `"production" === 'test'` (always false) | **FIXED** — restored to `process.env.NODE_ENV === 'test'` | platform [#616](https://github.com/Allternit/allternit-platform/pull/616) |
+| VerifyPlan gate mismatch: `classifierDecision.ts` (both copies) gated on `USER_TYPE === 'ant'` while `tools.ts` used `GIZZI_CODE_VERIFY_PLAN` | **FIXED** — both copies aligned to the env flag | platform [#613](https://github.com/Allternit/allternit-platform/pull/613) |
+| `highlightJs.getLanguage` always `undefined` (ESM default-export interop) | **FIXED** — read off the default export | platform [#620](https://github.com/Allternit/allternit-platform/pull/620) |
+| `question-tool.tsx` referenced 5 never-defined values → `ReferenceError` on render | **FIXED** — definitions added per sibling conventions | allternit-ai [#30](https://github.com/Allternit/allternit-ai/pull/30) |
+| `WorkflowBuilderProgram` messages tab crash (`msg.role.toUpperCase()`); `dak.store` `leaseInfo` snake/camel mismatch | **FIXED** — render `kind`/`payload`; explicit lease mapping | allternit-ai [#31](https://github.com/Allternit/allternit-ai/pull/31) |
+| Video providers never showed configured (`isAvailable === true` on a function); SessionsPage trace inspector `authHeaders` ReferenceError; `NativeAgentView` message-list crash (wrong `parts` contract); design in-place edit feedback shape; `logger.error` arg order; "Current" session chip always false | **FIXED** — all six in the owner-approved fix lane | allternit-ai [#32](https://github.com/Allternit/allternit-ai/pull/32) |
+| `OAuthSelectAccountPage` undefined `router.push`; missing class exports; `ChatComposer` handoff passed agent object instead of id; `allowpopups="true"` string prop | **FIXED** — all four | allternit-ai [#33](https://github.com/Allternit/allternit-ai/pull/33) |
+| `DesignPropertiesPanel.update()` passed `type: undefined` for missing shapes | **GUARDED** — early-return on missing shape landed (the lie can no longer reach `updateShapes`); root behavior unchanged | allternit-ai [#40](https://github.com/Allternit/allternit-ai/pull/40) |
+| `ControlTab` dual queue-item wire shape (`item.task` no longer exists); `ReviewTab`/`ControlTab` dead views | **FIXED** — both views deleted (zero consumers) | allternit-ai [#41](https://github.com/Allternit/allternit-ai/pull/41) |
 
 ## Appendix — how to execute a FIX
 

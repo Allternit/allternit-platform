@@ -1,7 +1,7 @@
 # Contributing
 
 Gizzi Code lives at `cmd/gizzi-code` in the
-[Gizziio/allternit-platform](https://github.com/Gizziio/allternit-platform)
+[Allternit/allternit-platform](https://github.com/Allternit/allternit-platform)
 monorepo (pnpm workspace).
 
 ## Setup
@@ -38,6 +38,6 @@ workflows re-run both gates on the tagged commit.
 
 ## Reporting issues / security
 
-- Bugs: https://github.com/Gizziio/allternit-platform/issues
+- Bugs: https://github.com/Allternit/allternit-platform/issues
 - Security: see [SECURITY.md](./SECURITY.md) (GitHub Security Advisories;
   security@allternit.com for escalation).
