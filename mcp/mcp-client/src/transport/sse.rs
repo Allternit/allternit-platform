@@ -431,6 +431,18 @@ impl McpTransport for SseTransport {
         Ok(())
     }
 
+    async fn send(&self, message: crate::protocol::JsonRpcMessage) -> Result<()> {
+        // POST the message; the reply (if any) is not surfaced here.
+        use crate::protocol::JsonRpcMessage;
+        let body = match message {
+            JsonRpcMessage::Request(r) => r,
+            JsonRpcMessage::Notification(n) => JsonRpcRequest::notification(n.method, n.params),
+            _ => return Err(McpError::Protocol("clients may only send requests and notifications".into())),
+        };
+        let _ = self.send_post_request(&body).await?;
+        Ok(())
+    }
+
     async fn is_healthy(&self) -> bool {
         !self.closed.load(Ordering::SeqCst) && self.health_check().await
     }
