@@ -131,6 +131,7 @@ cmd/gizzi-code/packages/sdk/dist/
 # large vendored binaries — fetch/build via scripts, not git (see infrastructure/mesh/tsnet-ios/build-sidecar.sh)
 cmd/gizzi-code/vendor/cloudflared/
 cmd/gizzi-code/vendor/mesh-node/
+cmd/gizzi-code/vendor/allternit-factory/
 surfaces/allternit-mobile/ios/Frameworks/Mesh.xcframework/
 infrastructure/mesh/tsnet-ios/Mesh.xcframework/
 # D3 spike: prebuilt libgit2.xcframework — fetch via Frameworks/fetch-libgit2.sh

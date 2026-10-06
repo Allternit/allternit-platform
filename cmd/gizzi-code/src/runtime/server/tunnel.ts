@@ -5,10 +5,10 @@
 //   named — `cloudflared tunnel run --token <token>` against the user's own
 //           Cloudflare account. The hostname lives on the Cloudflare side, so
 //           the URL is only known when the user also supplies it.
-// Binary discovery follows the same pattern as the allternit-mux auto-spawn
+// Binary discovery follows the same pattern as the allternit-factory lookup
 // (pty/index.ts): env override → vendored siblings → PATH. The child is owned
-// by this process and killed on server shutdown (unlike the mux daemon, it
-// must not outlive us).
+// by this process and killed on server shutdown (unlike the Factory pane
+// engine, it must not outlive us).
 import { type ChildProcess } from "node:child_process"
 import { spawnOwnedChild } from "@/runtime/util/parent-lifeline"
 import { existsSync } from "node:fs"

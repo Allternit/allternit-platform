@@ -4,8 +4,11 @@ import { Instance } from "../../src/runtime/context/project/instance"
 import { Pty } from "../../src/runtime/integrations/pty"
 import { tmpdir } from "../fixture/fixture"
 
+// Needs the Factory pane engine (see pane-engine.test.ts).
+const bin = Pty.factoryBinary()
+
 describe("pty", () => {
-  test("does not leak output when websocket objects are reused", async () => {
+  test.skipIf(!bin)("does not leak output when websocket objects are reused", async () => {
     await using dir = await tmpdir({ git: true })
 
     await Instance.provide({
@@ -55,7 +58,7 @@ describe("pty", () => {
     })
   })
 
-  test("does not leak output when Bun recycles websocket objects before re-connect", async () => {
+  test.skipIf(!bin)("does not leak output when Bun recycles websocket objects before re-connect", async () => {
     await using dir = await tmpdir({ git: true })
 
     await Instance.provide({
@@ -99,7 +102,7 @@ describe("pty", () => {
     })
   })
 
-  test("does not leak output when socket data mutates in-place", async () => {
+  test.skipIf(!bin)("does not leak output when socket data mutates in-place", async () => {
     await using dir = await tmpdir({ git: true })
 
     await Instance.provide({

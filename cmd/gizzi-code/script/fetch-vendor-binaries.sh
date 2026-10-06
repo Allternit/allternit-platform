@@ -39,7 +39,7 @@ FORCE=0
 [ "${1:-}" = "--force" ] && FORCE=1
 
 # platform-arch as gizzi-code computes it at runtime:
-# `${process.platform}-${process.arch}` (same mapping as script/vendor-mux.sh).
+# `${process.platform}-${process.arch}` (same mapping as script/vendor-factory.sh).
 host_platform() {
   local os arch
   os=$(uname | tr '[:upper:]' '[:lower:]')

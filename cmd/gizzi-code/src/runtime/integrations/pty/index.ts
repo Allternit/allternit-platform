@@ -1,8 +1,13 @@
-// Mux-backed PTY integration (phase 3 of the terminal consolidation plan).
-// Same namespace surface as the old bun-pty implementation, but sessions are
-// real PTYs owned by the allternit-mux daemon: they survive `gizzi serve`
-// restarts, keep persistent scrollback, and `connect` streams live output via
-// mux event subscriptions instead of an in-process fan-out.
+// PTY integration on the Allternit Factory pane engine. Same namespace
+// surface as the old bun-pty and allternit-mux implementations, but every
+// session is a pane in the pane engine (`allternit-factory pane`, the
+// Factory's agent session): a Gizzi PTY, a Desktop terminal tile and a Factory
+// agent pane are the same thing. Sessions survive `gizzi serve` restarts and
+// UI reconnects, replay their kept scrollback (up to 2 MiB) on connect, and
+// stream live output from the pane's raw output tap.
+//
+// Wire: the pane engine socket, one JSON request per connection, hidden
+// `factory.terminal.*` methods (factory/pane/src/factory_terminal.rs).
 import { BusEvent } from "@/shared/bus/bus-event"
 import { Bus } from "@/shared/bus"
 import z from "zod/v4"
@@ -11,8 +16,8 @@ import { Log } from "@/shared/util/log"
 import { Instance } from "@/runtime/context/project/instance"
 import { Shell } from "@/runtime/integrations/shell/shell"
 import { Plugin } from "@/runtime/integrations/plugin"
-import { connect as netConnect } from "node:net"
-import { homedir } from "node:os"
+import { connect as netConnect, type Socket as NetSocket } from "node:net"
+import { existsSync } from "node:fs"
 import { dirname, join } from "node:path"
 
 export namespace Pty {
@@ -27,183 +32,112 @@ export namespace Pty {
     close: (code?: number, reason?: string) => void
   }
 
-  // ── mux NDJSON client ──────────────────────────────────────────────────────
+  // ── pane engine client ─────────────────────────────────────────────────────
 
-  function muxSocketPath(): string {
-    if (process.env.ALLTERNIT_MUX_SOCKET) return process.env.ALLTERNIT_MUX_SOCKET
-    const stateDir = process.env.ALLTERNIT_MUX_STATE_DIR ?? join(homedir(), ".allternit", "mux")
-    return join(stateDir, "mux.sock")
+  /** The `allternit-factory` binary: ALLTERNIT_FACTORY_BIN → next to gizzi
+   *  (Desktop resources/bin, dist) → npm-style vendor tree → PATH → dev
+   *  monorepo builds. */
+  export function factoryBinary(): string | undefined {
+    const execDir = dirname(process.execPath)
+    const platformArch = `${process.platform}-${process.arch}`
+    const candidates = [
+      process.env.ALLTERNIT_FACTORY_BIN,
+      join(execDir, "allternit-factory"),
+      join(execDir, "vendor", "allternit-factory", platformArch, "allternit-factory"),
+      Bun.which("allternit-factory") ?? undefined,
+      join(process.cwd(), "..", "..", "target", "release", "allternit-factory"),
+      join(process.cwd(), "..", "..", "target", "debug", "allternit-factory"),
+    ].filter(Boolean) as string[]
+    return candidates.find((bin) => existsSync(bin))
   }
 
-  function muxStateDir(): string {
-    return process.env.ALLTERNIT_MUX_STATE_DIR ?? join(homedir(), ".allternit", "mux")
+  let socketPath: string | undefined = process.env.ALLTERNIT_FACTORY_PANE_SOCKET || undefined
+  let ensuring: Promise<string> | undefined
+
+  /** `allternit-factory pane tty ensure`: starts the pane engine when it is
+   *  down (it daemonizes and outlives gizzi; it is the Factory's) and reports
+   *  its socket. */
+  async function ensureEngine(): Promise<string> {
+    ensuring ??= (async () => {
+      const bin = factoryBinary()
+      if (!bin) throw new Error("allternit-factory binary not found (set ALLTERNIT_FACTORY_BIN)")
+      const proc = Bun.spawn([bin, "pane", "tty", "ensure"], { stdin: "ignore", stdout: "pipe", stderr: "pipe" })
+      const [out, err, code] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ])
+      if (code !== 0) throw new Error(`the Factory pane engine could not be started: ${err.trim() || `exit ${code}`}`)
+      const socket = JSON.parse(out).socket
+      if (typeof socket !== "string") throw new Error("pane tty ensure reported no socket")
+      socketPath = socket
+      return socket
+    })().finally(() => {
+      ensuring = undefined
+    })
+    return ensuring
   }
 
-  // gizzi is a self-contained binary (gizzi-code parity): if no mux daemon is
-  // running, spawn one instead of failing. Resolution order for the binary:
-  // ALLTERNIT_MUX_BIN → PATH → repo target/debug (dev).
-  let spawnAttempt: Promise<void> | undefined
-
-  /** Public hook to pre-warm the mux daemon so /terminal routes served by the
-   *  platform API can connect to the socket without waiting for a gizzi PTY
-   *  request to lazily start it. */
+  /** Public hook to pre-start the pane engine so allternit-api's /terminal
+   *  routes and the first PTY request don't wait for it. */
   export async function warmup(): Promise<void> {
     try {
-      await ensureMuxDaemon()
+      await ensureEngine()
     } catch (err) {
-      log.warn("mux warmup failed; will retry on first PTY request", { error: err })
+      log.warn("pane engine warmup failed; will retry on first PTY request", { error: err })
     }
   }
 
-  async function ensureMuxDaemon(): Promise<void> {
-    const socket = muxSocketPath()
-    const { existsSync, unlinkSync } = await import("node:fs")
-    // NB: unix sockets are not regular files — Bun.file().exists() misses them.
-    if (existsSync(socket)) {
-      // Check if the existing socket is responsive. A stale socket file from a
-      // dead daemon will fail to connect; remove it and respawn.
-      try {
-        const sock = netConnect(socket)
-        await new Promise((resolve, reject) => {
-          sock.once("connect", resolve)
-          sock.once("error", reject)
-          setTimeout(() => reject(new Error("timeout")), 1000)
-        })
-        sock.end()
-        return
-      } catch {
-        try {
-          unlinkSync(socket)
-        } catch {
-          // ignore
-        }
-      }
-    }
-    spawnAttempt ??= (async () => {
-      const { spawnOwnedChild } = await import("../../util/parent-lifeline")
-      const { mkdirSync } = await import("node:fs")
-      const execDir = dirname(process.execPath)
-      const platformArch = `${process.platform}-${process.arch}`
-      const candidates = [
-        // 1. Explicit override.
-        process.env.ALLTERNIT_MUX_BIN,
-        // 2. Vendored sibling (desktop resources/bin, dist output).
-        join(execDir, "allternit-mux"),
-        // 3. npm-style vendor tree (gizzi-code ripgrep layout).
-        join(execDir, "vendor", "allternit-mux", platformArch, "allternit-mux"),
-        // 4. PATH.
-        Bun.which("allternit-mux") ?? undefined,
-        // 5. Dev monorepo builds.
-        join(process.cwd(), "..", "..", "target", "release", "allternit-mux"),
-        join(process.cwd(), "..", "..", "target", "debug", "allternit-mux"),
-      ].filter(Boolean) as string[]
-      mkdirSync(muxStateDir(), { recursive: true })
-      let spawned = false
-      for (const bin of candidates) {
-        if (!(await Bun.file(bin).exists())) continue
-        try {
-          const child = spawnOwnedChild(bin, ["serve"], {
-            env: {
-              ...process.env,
-              ALLTERNIT_MUX_STATE_DIR: muxStateDir(),
-              ALLTERNIT_MUX_SOCKET: muxSocketPath(),
-            },
-            stdio: "ignore",
-          })
-          // Bun reports a failed exec on the child's error event, not sync.
-          const failed = await new Promise<boolean>((resolve) => {
-            child.once("error", () => resolve(true))
-            setTimeout(() => resolve(false), 300)
-          })
-          if (failed) continue
-          const { ProcessRegistry } = await import("@/runtime/process-registry")
-          ProcessRegistry.track(child, { label: "allternit-mux", group: process.platform !== "win32" })
-          spawned = true
-          log.info("auto-spawned allternit-mux", { bin })
-          break
-        } catch {
-          continue
-        }
-      }
-      if (!spawned) throw new Error("allternit-mux binary not found (set ALLTERNIT_MUX_BIN)")
-      // Wait for the socket to appear.
-      const deadline = Date.now() + 10_000
-      while (!existsSync(socket)) {
-        if (Date.now() > deadline) throw new Error("allternit-mux did not start in time")
-        await new Promise((r) => setTimeout(r, 100))
-      }
-    })().catch((e) => {
-      spawnAttempt = undefined
-      throw e
+  function dial(path: string): Promise<NetSocket> {
+    return new Promise((resolve, reject) => {
+      const sock = netConnect(path)
+      sock.once("connect", () => {
+        sock.off("error", reject)
+        resolve(sock)
+      })
+      sock.once("error", reject)
     })
-    await spawnAttempt
   }
 
-  class MuxConn {
-    constructor(private sock: any, private pending: string[]) {}
+  /** Line reader over one connection. */
+  class Conn {
+    private pending: string[] = []
+    private buffer = ""
+    private waiter: ((line: string | undefined) => void) | undefined
+    private ended = false
 
-    static connect(path: string): Promise<MuxConn> {
-      return new Promise((resolve, reject) => {
-        const pending: string[] = []
-        const conn = new MuxConn(null as any, pending)
-        const sock = netConnect(path)
-        let buffer = ""
-        sock.on("connect", () => resolve(conn))
-        sock.on("error", reject)
-        sock.on("data", (chunk: Buffer) => {
-          buffer += chunk.toString("utf8")
-          let idx
-          while ((idx = buffer.indexOf("\n")) >= 0) {
-            const line = buffer.slice(0, idx)
-            buffer = buffer.slice(idx + 1)
-            if (line.trim()) pending.push(line)
-          }
-        })
-        conn.sock = sock
+    constructor(readonly sock: NetSocket) {
+      sock.on("data", (chunk: Buffer) => {
+        this.buffer += chunk.toString("utf8")
+        let idx
+        while ((idx = this.buffer.indexOf("\n")) >= 0) {
+          const line = this.buffer.slice(0, idx)
+          this.buffer = this.buffer.slice(idx + 1)
+          if (line.trim()) this.push(line)
+        }
       })
-    }
-
-    nextLine(): Promise<string> {
-      if (this.pending.length) return Promise.resolve(this.pending.shift()!)
-      return new Promise((resolve, reject) => {
-        // Detach all three on settle: watchExit calls this in a loop on one
-        // long-lived socket, and leftover error/close listeners grew without
-        // bound (MaxListenersExceededWarning, steady memory growth in serve).
-        const cleanup = () => {
-          this.sock.off("data", onData)
-          this.sock.off("error", onError)
-          this.sock.off("close", onClose)
-        }
-        const onData = () => {
-          if (this.pending.length) {
-            cleanup()
-            resolve(this.pending.shift()!)
-          }
-        }
-        const onError = (err: Error) => {
-          cleanup()
-          reject(err)
-        }
-        const onClose = () => {
-          cleanup()
-          reject(new Error("mux socket closed"))
-        }
-        this.sock.on("data", onData)
-        this.sock.on("error", onError)
-        this.sock.on("close", onClose)
-      })
-    }
-
-    async request(method: string, params: Record<string, unknown> = {}): Promise<any> {
-      const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`
-      this.sock.write(JSON.stringify({ id, method, params }) + "\n")
-      for (;;) {
-        const line = await this.nextLine()
-        const frame = JSON.parse(line)
-        if (frame.id !== id) continue
-        if (frame.error) throw new Error(`${frame.error.code}: ${frame.error.message}`)
-        return frame.result
+      const end = () => {
+        this.ended = true
+        this.waiter?.(undefined)
+        this.waiter = undefined
       }
+      sock.on("close", end)
+      sock.on("error", end)
+    }
+
+    private push(line: string) {
+      if (this.waiter) {
+        const w = this.waiter
+        this.waiter = undefined
+        w(line)
+      } else this.pending.push(line)
+    }
+
+    /** Next line, or undefined once the connection ended. */
+    next(): Promise<string | undefined> {
+      if (this.pending.length) return Promise.resolve(this.pending.shift())
+      if (this.ended) return Promise.resolve(undefined)
+      return new Promise((resolve) => (this.waiter = resolve))
     }
 
     close(): void {
@@ -215,11 +149,40 @@ export namespace Pty {
     }
   }
 
-  async function mux<T = any>(method: string, params: Record<string, unknown> = {}): Promise<T> {
-    await ensureMuxDaemon()
-    const conn = await MuxConn.connect(muxSocketPath())
+  /** Opens a connection and sends one request; returns the connection
+   *  positioned at the response line. Re-resolves the socket once when the
+   *  engine isn't reachable (restarted, or never started). */
+  async function open(method: string, params: Record<string, unknown>): Promise<Conn> {
+    let sock: NetSocket | undefined
+    if (socketPath) sock = await dial(socketPath).catch(() => undefined)
+    if (!sock) sock = await dial(await ensureEngine())
+    const conn = new Conn(sock)
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    sock.write(JSON.stringify({ id, method, params }) + "\n")
+    return conn
+  }
+
+  class EngineError extends Error {
+    constructor(
+      readonly code: string,
+      message: string,
+    ) {
+      super(`${code}: ${message}`)
+    }
+  }
+
+  async function readResult(conn: Conn): Promise<any> {
+    const line = await conn.next()
+    if (line === undefined) throw new Error("the pane engine closed the connection")
+    const frame = JSON.parse(line)
+    if (frame.error) throw new EngineError(frame.error.code, frame.error.message)
+    return frame.result
+  }
+
+  async function engine<T = any>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+    const conn = await open(method, params)
     try {
-      return await conn.request(method, params)
+      return await readResult(conn)
     } finally {
       conn.close()
     }
@@ -268,72 +231,60 @@ export namespace Pty {
     Deleted: BusEvent.define("pty.deleted", z.object({ id: Identifier.schema("pty") })),
   }
 
-  // ── state: gizzi pty id -> mux session/pane mapping ───────────────────────
-
-  interface Mapping {
-    info: Info
-    muxSessionId: string
-    muxPaneId: string
-  }
-
-  const LABEL_PREFIX = "gizzi-pty-"
+  // ── state: gizzi pty ids created by this instance ────────────────────────
+  // The pty id is the pane engine's terminal id, so nothing else is mapped.
 
   const state = Instance.state(
-    () => new Map<string, Mapping>(),
+    () => new Map<string, Info>(),
     async (sessions) => {
-      for (const mapping of sessions.values()) {
+      for (const id of sessions.keys()) {
         try {
-          await mux("session.close", { session_id: mapping.muxSessionId })
+          await engine("factory.terminal.close", { terminal_id: id })
         } catch {
-          // mux may be down; sessions are daemon-owned and outlive us anyway
+          // already gone, or the engine is down
         }
       }
       sessions.clear()
     },
   )
 
-  function toInfo(muxSession: any, id: string, title: string, command: string, args: string[], cwd: string): Info {
-    const pane = (muxSession.panes ?? [])[0] ?? {}
-    return {
-      id,
-      title,
-      command,
-      args,
-      cwd,
-      status: pane.process_running ? "running" : "exited",
-      pid: pane.pid ?? 0,
-    } as Info
+  /** Live facts for one terminal; undefined when the engine no longer has it. */
+  async function lookup(id: string): Promise<any | undefined> {
+    try {
+      const { terminal } = await engine("factory.terminal.get", { terminal_id: id })
+      return terminal
+    } catch (err) {
+      if (err instanceof EngineError && err.code === "terminal_not_found") return undefined
+      throw err
+    }
   }
 
-  async function findByLabel(id: string): Promise<any | undefined> {
-    const list = await mux("session.list")
-    return (list.sessions ?? []).find((s: any) => s.label === `${LABEL_PREFIX}${id}`)
+  function refresh(info: Info, terminal: any | undefined): Info {
+    return {
+      ...info,
+      status: terminal?.running ? "running" : "exited",
+      pid: terminal?.pid ?? info.pid,
+    }
   }
 
   // ── public API (parity with the bun-pty implementation) ────────────────────
 
   export async function list(): Promise<Info[]> {
     const out: Info[] = []
-    for (const mapping of state().values()) {
-      const session = await findByLabel(mapping.info.id).catch(() => undefined)
-      if (!session) {
-        out.push({ ...mapping.info, status: "exited" })
-        continue
-      }
-      const info = toInfo(session, mapping.info.id, mapping.info.title, mapping.info.command, mapping.info.args, mapping.info.cwd)
-      mapping.info = info
-      out.push(info)
+    for (const [id, info] of state()) {
+      const next = refresh(info, await lookup(id).catch(() => undefined))
+      state().set(id, next)
+      out.push(next)
     }
     return out
   }
 
   export async function get(id: string): Promise<Info | undefined> {
-    const mapping = state().get(id)
-    if (!mapping) return undefined
-    const session = await findByLabel(id).catch(() => undefined)
-    if (!session) return { ...mapping.info, status: "exited" }
-    mapping.info = toInfo(session, mapping.info.id, mapping.info.title, mapping.info.command, mapping.info.args, mapping.info.cwd)
-    return mapping.info
+    const info = state().get(id)
+    if (!info) return undefined
+    const next = refresh(info, await lookup(id).catch(() => undefined))
+    state().set(id, next)
+    return next
   }
 
   export async function create(input: CreateInput) {
@@ -357,14 +308,12 @@ export namespace Pty {
       GIZZI_TERMINAL: "1",
     } as Record<string, string>
 
-    log.info("creating mux-backed session", { id, cmd: command, args, cwd })
+    log.info("creating pane-engine terminal", { id, cmd: command, args, cwd })
 
-    const { session } = await mux("session.create", {
-      label: `${LABEL_PREFIX}${id}`,
+    const { terminal } = await engine("factory.terminal.create", {
+      terminal_id: id,
+      label: `gizzi-${id.slice(-8)}`,
       cwd,
-    })
-    const { pane } = await mux("pane.create", {
-      session_id: session.session_id,
       cols: 80,
       rows: 24,
       command: [command, ...args],
@@ -378,64 +327,64 @@ export namespace Pty {
       args,
       cwd,
       status: "running",
-      pid: pane.pid ?? 0,
+      pid: terminal?.pid ?? 0,
     }
-    state().set(id, {
-      info,
-      muxSessionId: session.session_id,
-      muxPaneId: pane.pane_id,
-    })
+    state().set(id, info)
 
     // Watch for exit so Event.Exited fires like the bun-pty version.
-    void watchExit(id, pane.pane_id)
+    void watchExit(id)
 
     Bus.publish(Event.Created, { info })
     return info
   }
 
-  async function watchExit(id: string, paneId: string): Promise<void> {
+  async function watchExit(id: string): Promise<void> {
+    let conn: Conn | undefined
     try {
-      const conn = await MuxConn.connect(muxSocketPath())
-      await conn.request("events.subscribe", { types: ["pane.exited"] })
+      conn = await open("factory.terminal.output", { terminal_id: id, replay: false, follow: true })
+      await readResult(conn)
       for (;;) {
-        const frame = JSON.parse(await conn.nextLine())
-        if (frame.type === "pane.exited" && frame.pane_id === paneId) {
-          const exitCode = frame.data?.exit_code ?? -1
-          const mapping = state().get(id)
-          if (mapping) mapping.info = { ...mapping.info, status: "exited" }
-          Bus.publish(Event.Exited, { id, exitCode })
-          conn.close()
+        const line = await conn.next()
+        if (line === undefined) return // engine went away: list/get report it
+        const frame = JSON.parse(line)
+        if (frame.type === "exit") {
+          const info = state().get(id)
+          if (info) state().set(id, { ...info, status: "exited" })
+          Bus.publish(Event.Exited, { id, exitCode: frame.exit_code ?? -1 })
           return
         }
       }
     } catch {
-      // mux unreachable — exit state will be reflected on next list/get
+      // engine unreachable — exit state will be reflected on next list/get
+    } finally {
+      conn?.close()
     }
   }
 
   export async function update(id: string, input: UpdateInput) {
-    const mapping = state().get(id)
-    if (!mapping) return
+    const info = state().get(id)
+    if (!info) return
+    let next = info
     if (input.title) {
-      mapping.info = { ...mapping.info, title: input.title }
+      next = { ...info, title: input.title }
+      state().set(id, next)
     }
     if (input.size) {
-      await mux("pane.resize", {
-        pane_id: mapping.muxPaneId,
+      await engine("factory.terminal.resize", {
+        terminal_id: id,
         cols: input.size.cols,
         rows: input.size.rows,
       }).catch(() => undefined)
     }
-    Bus.publish(Event.Updated, { info: mapping.info })
-    return mapping.info
+    Bus.publish(Event.Updated, { info: next })
+    return next
   }
 
   export async function remove(id: string) {
-    const mapping = state().get(id)
-    if (!mapping) return
-    log.info("removing mux-backed session", { id })
+    if (!state().has(id)) return
+    log.info("removing pane-engine terminal", { id })
     try {
-      await mux("session.close", { session_id: mapping.muxSessionId })
+      await engine("factory.terminal.close", { terminal_id: id })
     } catch {
       // already gone
     }
@@ -444,15 +393,15 @@ export namespace Pty {
   }
 
   export async function resize(id: string, cols: number, rows: number) {
-    const mapping = state().get(id)
-    if (!mapping || mapping.info.status !== "running") return
-    await mux("pane.resize", { pane_id: mapping.muxPaneId, cols, rows }).catch(() => undefined)
+    const info = state().get(id)
+    if (!info || info.status !== "running") return
+    await engine("factory.terminal.resize", { terminal_id: id, cols, rows }).catch(() => undefined)
   }
 
   export async function write(id: string, data: string) {
-    const mapping = state().get(id)
-    if (!mapping || mapping.info.status !== "running") return
-    await mux("pane.send_input", { pane_id: mapping.muxPaneId, data }).catch(() => undefined)
+    const info = state().get(id)
+    if (!info || info.status !== "running") return
+    await engine("factory.terminal.write", { terminal_id: id, data }).catch(() => undefined)
   }
 
   // WebSocket control frame: 0x00 + UTF-8 JSON (kept for protocol parity).
@@ -470,64 +419,56 @@ export namespace Pty {
     // reuses the same ws object for another connection, the pump must still
     // know which connection it belongs to.
     const connectionId = (ws as any).data?.events?.connection ?? (ws as any).data?.connId ?? id
-    const mapping = state().get(id)
-    if (!mapping) {
+    if (!state().has(id)) {
       ws.close()
       return
     }
-    await ensureMuxDaemon()
-    log.info("client connected to mux-backed session", { id })
+    log.info("client connected to pane-engine terminal", { id })
 
-    // Replay the persistent scrollback (survives server restarts, unlike the
-    // old in-memory buffer).
-    const replay = await mux("pane.read", { pane_id: mapping.muxPaneId, source: "scrollback" }).catch(() => undefined)
-    const data: string = replay?.output ?? ""
-    if (data) {
-      try {
-        for (let i = 0; i < data.length; i += 64 * 1024) {
-          ws.send(data.slice(i, i + 64 * 1024))
-        }
-      } catch {
-        ws.close()
-        return
-      }
-    }
-    try {
-      ws.send(meta(data.length))
-    } catch {
-      ws.close()
-      return
-    }
-
-    // Live output via mux event subscription on a dedicated connection.
-    const conn = await MuxConn.connect(muxSocketPath()).catch(() => undefined)
+    // One stream: the kept scrollback, a `live` marker, then live output.
+    const conn = await open("factory.terminal.output", { terminal_id: id, replay: true, follow: true }).catch(
+      () => undefined,
+    )
     if (!conn) {
       ws.close()
       return
     }
-    await conn.request("events.subscribe", { types: ["pane.output", "pane.exited"] })
+    try {
+      await readResult(conn)
+    } catch {
+      conn.close()
+      ws.close()
+      return
+    }
+
+    const stillOurs = () =>
+      ((ws as any).data?.events?.connection ?? (ws as any).data?.connId ?? id) === connectionId
     const pump = (async () => {
+      let replayed = 0
       try {
         for (;;) {
-          const frame = JSON.parse(await conn.nextLine())
-          const framePaneId = frame.pane_id ?? frame.data?.pane_id
-          if (framePaneId !== mapping.muxPaneId) continue
-          if (frame.type === "pane.output") {
-            const chunk = frame.data?.data ?? ""
-            if (chunk) {
-              try {
-                // Prevent cross-connection output leaks: only send if this ws
-                // is still associated with the connection that created the pump.
-                const currentConnection = (ws as any).data?.events?.connection ?? (ws as any).data?.connId ?? id
-                if (currentConnection !== connectionId) {
-                  break
-                }
-                ws.send(chunk)
-              } catch {
-                break
-              }
+          const line = await conn.next()
+          if (line === undefined) break // engine went away
+          const frame = JSON.parse(line)
+          // Prevent cross-connection output leaks: only send if this ws is
+          // still associated with the connection that created the pump.
+          if (!stillOurs()) break
+          if (frame.type === "output") {
+            const chunk: string = frame.data ?? ""
+            if (!chunk) continue
+            replayed += chunk.length
+            try {
+              ws.send(chunk)
+            } catch {
+              break
             }
-          } else if (frame.type === "pane.exited") {
+          } else if (frame.type === "live") {
+            try {
+              ws.send(meta(replayed))
+            } catch {
+              break
+            }
+          } else if (frame.type === "exit") {
             try {
               ws.close()
             } catch {
@@ -537,17 +478,20 @@ export namespace Pty {
           }
         }
       } catch {
-        // mux went away
+        // engine went away
+      } finally {
+        conn.close()
       }
     })()
     void pump
 
     return {
       onMessage: (message: string | ArrayBuffer) => {
-        void mux("pane.send_input", { pane_id: mapping.muxPaneId, data: String(message) }).catch(() => undefined)
+        const data = typeof message === "string" ? message : new TextDecoder().decode(message)
+        void engine("factory.terminal.write", { terminal_id: id, data }).catch(() => undefined)
       },
       onClose: () => {
-        log.info("client disconnected from mux-backed session", { id })
+        log.info("client disconnected from pane-engine terminal", { id })
         conn.close()
       },
     }
