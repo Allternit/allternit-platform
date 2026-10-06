@@ -14,7 +14,7 @@ const path = require('path');
 const fs = require('fs');
 
 const desktopDir = process.env.ALLTERNIT_DESKTOP_DIR
-  || path.join(__dirname, 'surfaces', 'allternit-desktop');
+  || path.join(__dirname, '..', '..', '..', 'surfaces', 'allternit-desktop');
 const userDataDir = process.env.ALLTERNIT_E2E_PROFILE
   || '/tmp/allternit-desktop-e2e-bots';
 const PLATFORM_URL = process.env.ALLTERNIT_PLATFORM_URL

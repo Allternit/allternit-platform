@@ -5,7 +5,7 @@ const fs = require('fs');
 // Default to THIS repo's desktop shell (surfaces/allternit-desktop, launched
 // with `npm run dev` / electron .). Override with ALLTERNIT_DESKTOP_DIR.
 const desktopDir = process.env.ALLTERNIT_DESKTOP_DIR
-  || path.join(__dirname, 'surfaces', 'allternit-desktop');
+  || path.join(__dirname, '..', '..', '..', 'surfaces', 'allternit-desktop');
 const userDataDir = process.env.ALLTERNIT_E2E_PROFILE
   || '/tmp/allternit-desktop-e2e-v2';
 // The desktop shell defaults to its DEV_UI (localhost:3014, see

@@ -94,7 +94,7 @@ two cannot drift. Plus: SSE discipline, on-demand ACI screenshots, touch/safe-ar
   (growth/chips/HUD/action sheet/dictation), haptics.
 - **1C — PWA integration + ACI pull + web adoption + chrome**: App view switch, Bots section +
   chat page (roster → chat), ACI watch-toggle pull mode, touch/safe-area pass,
-  `BotChatSessionView.tsx` adoption, 390×844 standalone smoke (extend `bot-e2e-pwa.cjs`),
+  `BotChatSessionView.tsx` adoption, 390×844 standalone smoke (extend `scripts/e2e/bot/bot-e2e-pwa.cjs`),
   docs, release-preflight.
 
 ## Risks / watch-items
