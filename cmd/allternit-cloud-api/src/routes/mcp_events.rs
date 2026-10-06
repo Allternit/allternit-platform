@@ -30,6 +30,11 @@
 //!   principal's subscriptions end and each callback gets a signed
 //!   `{"type":"terminated", …, "error":{"code":-32012,"message":"Forbidden",
 //!   "data":{"reason":"approval_revoked"}}}`.
+//! * **Owner view**: Settings › Connected apps lists each approval's
+//!   subscriptions ([`owner_subscriptions`], via `GET /api/v1/mcp/approvals`)
+//!   and ends one ([`end_owner_subscription`], `DELETE
+//!   /api/v1/mcp/events/subscriptions/:id`, reason `ended_by_owner`, same
+//!   signed `terminated` envelope).
 
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use rand::RngCore;
@@ -435,6 +440,28 @@ pub async fn terminate_principal(db: &PgPool, user_id: &str, client: &str, targe
     .bind(target)
     .fetch_all(db)
     .await?;
+    end_and_notify(db, subs, reason).await
+}
+
+/// Why an owner-ended subscription stopped (`deactivated_reason`, and
+/// `data.reason` of its `terminated` envelope).
+pub const REASON_ENDED_BY_OWNER: &str = "ended_by_owner";
+
+/// The owner ends one of their own subscriptions (Settings › Connected apps).
+/// `false` = no live subscription with that id belongs to `user_id` (the
+/// route answers 404, so another owner's ids are not confirmed to exist).
+pub async fn end_owner_subscription(db: &PgPool, user_id: &str, id: &str) -> Result<bool, sqlx::Error> {
+    let subs: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT id, url, secret FROM platform_webhooks WHERE kind = 'mcp_subscription' AND deleted_at IS NULL AND user_id = $1 AND id = $2",
+    )
+    .bind(user_id)
+    .bind(id)
+    .fetch_all(db)
+    .await?;
+    Ok(end_and_notify(db, subs, REASON_ENDED_BY_OWNER).await? > 0)
+}
+
+async fn end_and_notify(db: &PgPool, subs: Vec<(String, String, String)>, reason: &'static str) -> Result<usize, sqlx::Error> {
     for (id, _, _) in &subs {
         super::platform_v1::events::deactivate_endpoint(db, id, reason).await?;
     }
@@ -447,6 +474,74 @@ pub async fn terminate_principal(db: &PgPool, user_id: &str, client: &str, targe
         });
     }
     Ok(n)
+}
+
+/// One subscription as its owner sees it (never the callback URL or secret).
+#[derive(Debug, Clone, PartialEq)]
+pub struct OwnerSubscription {
+    pub id: String,
+    pub client: String,
+    pub target: String,
+    pub name: String,
+    pub arguments: Value,
+    pub created_at: DateTime<Utc>,
+    pub refresh_before: Option<DateTime<Utc>>,
+    pub last_delivery_at: Option<DateTime<Utc>>,
+    /// The newest failed delivery's error, when nothing was delivered after it.
+    pub last_error: Option<String>,
+}
+
+impl OwnerSubscription {
+    /// Live = not past its TTL. An expired one gets no events until the app renews it.
+    pub fn active(&self, now: DateTime<Utc>) -> bool {
+        self.refresh_before.is_none_or(|r| r > now)
+    }
+
+    pub fn to_json(&self, now: DateTime<Utc>) -> Value {
+        json!({
+            "id": self.id,
+            "name": self.name,
+            "arguments": self.arguments,
+            "createdAt": self.created_at.to_rfc3339(),
+            "refreshBefore": self.refresh_before.map(|t| t.to_rfc3339()),
+            "active": self.active(now),
+            "lastDeliveryAt": self.last_delivery_at.map(|t| t.to_rfc3339()),
+            "lastError": self.last_error,
+        })
+    }
+}
+
+/// Every not-ended MCP Events subscription `user_id` owns, oldest first.
+pub async fn owner_subscriptions(db: &PgPool, user_id: &str) -> Result<Vec<OwnerSubscription>, sqlx::Error> {
+    type R = (String, String, String, Vec<String>, Value, DateTime<Utc>, Option<DateTime<Utc>>, Option<DateTime<Utc>>, Option<String>);
+    let rows: Vec<R> = sqlx::query_as(
+        "SELECT w.id, w.client_id, w.target, w.events, w.arguments, w.created_at, w.refresh_before, last.delivered, \
+                (SELECT d.last_error FROM platform_webhook_deliveries d \
+                  WHERE d.webhook_id = w.id AND d.last_error IS NOT NULL AND d.state <> 'delivered' \
+                    AND (last.delivered IS NULL OR d.created_at > last.delivered) \
+                  ORDER BY d.created_at DESC LIMIT 1) \
+         FROM platform_webhooks w \
+         CROSS JOIN LATERAL (SELECT max(delivered_at) AS delivered FROM platform_webhook_deliveries d WHERE d.webhook_id = w.id) last \
+         WHERE w.kind = 'mcp_subscription' AND w.deleted_at IS NULL AND w.user_id = $1 \
+         ORDER BY w.created_at, w.id",
+    )
+    .bind(user_id)
+    .fetch_all(db)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| OwnerSubscription {
+            id: r.0,
+            client: r.1,
+            target: r.2,
+            name: r.3.into_iter().next().unwrap_or_default(),
+            arguments: r.4,
+            created_at: r.5,
+            refresh_before: r.6,
+            last_delivery_at: r.7,
+            last_error: r.8,
+        })
+        .collect())
 }
 
 /// The signed `terminated` envelope for one subscription.
@@ -883,6 +978,74 @@ mod tests {
             // Its queued delivery is dropped, the other client's still goes.
             let pending: Vec<String> = sqlx::query_scalar("SELECT webhook_id FROM platform_webhook_deliveries WHERE state = 'pending'").fetch_all(&db).await.unwrap();
             assert!(!pending.contains(&mine) && pending.len() == 1);
+        }
+
+        #[tokio::test]
+        async fn the_owner_sees_and_ends_only_their_own_subscriptions() {
+            let db = db().await;
+            let now = Utc::now();
+            let ok = subscribe_pg(&db, &agents(), "approval.requested", json!({ "bot_id": "b1" }), "https://93.184.216.34/ok", &secret(1), now).await;
+            let flaky = subscribe_pg(&db, &agents(), "thread.needs_user", json!({}), "https://93.184.216.34/flaky", &secret(1), now).await;
+            let someone_else = Principal { user_id: "u2".into(), ..agents() };
+            let theirs = subscribe_pg(&db, &someone_else, "approval.requested", json!({}), "https://93.184.216.34/u2", &secret(1), now).await;
+
+            allternit_events::emit_user_event(&db, "u1", "approval.requested", &json!({ "bot_id": "b1" }), None, "cloud", None).await.unwrap();
+            allternit_events::emit_user_event(&db, "u1", "thread.needs_user", &json!({}), None, "cloud", None).await.unwrap();
+            let rec = Rec::default();
+            rec.status.lock().unwrap().insert("https://93.184.216.34/flaky".into(), 503);
+            assert_eq!(deliver_due_with(&db, &rec).await.unwrap(), 2);
+
+            let mine = owner_subscriptions(&db, "u1").await.unwrap();
+            assert_eq!(mine.iter().map(|s| s.id.as_str()).collect::<Vec<_>>().len(), 2);
+            assert!(!mine.iter().any(|s| s.id == theirs));
+            let a = mine.iter().find(|s| s.id == ok).unwrap();
+            assert_eq!((a.client.as_str(), a.target.as_str(), a.name.as_str(), &a.arguments), ("chatgpt", "agents", "approval.requested", &json!({ "bot_id": "b1" })));
+            assert!(a.last_delivery_at.is_some() && a.last_error.is_none() && a.active(Utc::now()));
+            let f = mine.iter().find(|s| s.id == flaky).unwrap();
+            assert!(f.last_delivery_at.is_none() && f.last_error.is_some(), "{f:?}");
+            // The owner view never carries the callback or secret.
+            let j = a.to_json(Utc::now());
+            assert_eq!(j["active"], json!(true));
+            assert!(j.get("url").is_none() && j.get("secret").is_none());
+            for key in ["id", "name", "arguments", "createdAt", "refreshBefore", "lastDeliveryAt", "lastError"] {
+                assert!(j.get(key).is_some(), "{key}");
+            }
+
+            // A later success clears the shown error.
+            rec.status.lock().unwrap().insert("https://93.184.216.34/flaky".into(), 200);
+            sqlx::query("UPDATE platform_webhook_deliveries SET next_attempt_at = now()").execute(&db).await.unwrap();
+            deliver_due_with(&db, &rec).await.unwrap();
+            let f = owner_subscriptions(&db, "u1").await.unwrap().into_iter().find(|s| s.id == flaky).unwrap();
+            assert!(f.last_delivery_at.is_some() && f.last_error.is_none(), "{f:?}");
+
+            // Past its TTL: still listed, not active.
+            sqlx::query("UPDATE platform_webhooks SET refresh_before = now() - interval '1 second' WHERE id = $1").bind(&flaky).execute(&db).await.unwrap();
+            let f = owner_subscriptions(&db, "u1").await.unwrap().into_iter().find(|s| s.id == flaky).unwrap();
+            assert!(!f.active(Utc::now()));
+
+            // Someone else can't end it, and isn't told it exists.
+            assert!(!end_owner_subscription(&db, "u2", &ok).await.unwrap());
+            assert!(end_owner_subscription(&db, "u1", &ok).await.unwrap());
+            assert!(!end_owner_subscription(&db, "u1", &ok).await.unwrap(), "already ended");
+            let (reason,): (Option<String>,) = sqlx::query_as("SELECT deactivated_reason FROM platform_webhooks WHERE id = $1").bind(&ok).fetch_one(&db).await.unwrap();
+            assert_eq!(reason.as_deref(), Some(REASON_ENDED_BY_OWNER));
+            let left: Vec<String> = owner_subscriptions(&db, "u1").await.unwrap().into_iter().map(|s| s.id).collect();
+            assert_eq!(left, vec![flaky]);
+            assert_eq!(owner_subscriptions(&db, "u2").await.unwrap().len(), 1);
+            // Ending one doesn't stop the others' events.
+            allternit_events::emit_user_event(&db, "u1", "approval.requested", &json!({ "bot_id": "b1" }), None, "cloud", None).await.unwrap();
+            let to_ended: i64 = sqlx::query_scalar("SELECT count(*) FROM platform_webhook_deliveries WHERE webhook_id = $1").bind(&ok).fetch_one(&db).await.unwrap();
+            assert_eq!(to_ended, 1);
+        }
+
+        #[test]
+        fn an_owner_ended_subscription_gets_a_signed_terminated_envelope() {
+            let (headers, body) = terminated_request("sub_x", &secret(4), REASON_ENDED_BY_OWNER, 1_700_000_000).unwrap();
+            let h: HashMap<String, String> = headers.into_iter().collect();
+            let v: Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(v["error"]["data"]["reason"], json!("ended_by_owner"));
+            let key = mcp_protocol::webhooks::parse_secret(&secret(4)).unwrap();
+            assert!(mcp_protocol::webhooks::verify(&key, &h["webhook-id"], &h["webhook-timestamp"], &h["webhook-signature"], &body, 1_700_000_000).is_ok());
         }
 
         #[tokio::test]

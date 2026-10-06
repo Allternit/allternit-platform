@@ -43,6 +43,8 @@ pub enum Audience {
 #[derive(Debug)]
 pub struct EventType {
     pub name: &'static str,
+    /// Short plain-words label for people (Settings › Connected apps), e.g. "Approval requests".
+    pub title: &'static str,
     pub description: &'static str,
     pub platform: bool,
     pub agents: bool,
@@ -101,6 +103,7 @@ const P_THREAD: (&str, &str) = ("thread_id", "The thread, when there is one.");
 pub static REGISTRY: &[EventType] = &[
     EventType {
         name: "approval.requested",
+        title: "Approval requests",
         description: "An agent is waiting for the owner to approve an action (a tool call, an outbound message, a payment).",
         platform: false,
         agents: true,
@@ -111,6 +114,7 @@ pub static REGISTRY: &[EventType] = &[
     },
     EventType {
         name: "approval.resolved",
+        title: "Approval decisions",
         description: "An approval was granted or denied.",
         platform: false,
         agents: true,
@@ -121,6 +125,7 @@ pub static REGISTRY: &[EventType] = &[
     },
     EventType {
         name: "agent.run.completed",
+        title: "Finished agent runs",
         description: "An agent run finished.",
         platform: false,
         agents: true,
@@ -131,6 +136,7 @@ pub static REGISTRY: &[EventType] = &[
     },
     EventType {
         name: "thread.needs_user",
+        title: "Threads that need you",
         description: "A bot's thread needs the owner (a question, a held outbound email, a blocked task).",
         platform: false,
         agents: true,
@@ -141,6 +147,7 @@ pub static REGISTRY: &[EventType] = &[
     },
     EventType {
         name: "message.received",
+        title: "New messages",
         description: "A message arrived. Platform API: an inbound text on a project number. Agents and bots: a new inbound message on one of the bot's channels.",
         platform: true,
         agents: true,
@@ -151,6 +158,7 @@ pub static REGISTRY: &[EventType] = &[
     },
     EventType {
         name: "message.status",
+        title: "Text delivery updates",
         description: "Platform API: an outbound text changed delivery status.",
         platform: true,
         agents: false,
@@ -161,6 +169,7 @@ pub static REGISTRY: &[EventType] = &[
     },
     EventType {
         name: "registration.updated",
+        title: "Number registration changes",
         description: "Platform API: a number's 10DLC / toll-free registration changed state.",
         platform: true,
         agents: false,
@@ -171,6 +180,7 @@ pub static REGISTRY: &[EventType] = &[
     },
     EventType {
         name: "call.ended",
+        title: "Ended calls",
         description: "A phone or in-app call with a bot ended.",
         platform: false,
         agents: true,
@@ -181,6 +191,7 @@ pub static REGISTRY: &[EventType] = &[
     },
     EventType {
         name: "inbox.item.created",
+        title: "New inbox items",
         description: "A new item landed in the owner's Allternit inbox.",
         platform: false,
         agents: true,
@@ -191,6 +202,7 @@ pub static REGISTRY: &[EventType] = &[
     },
     EventType {
         name: "vendor.ticket.created",
+        title: "New vendor tickets",
         description: "A ticket was opened for a vendor bot to work on (call get_ticket, do the work, then post_result).",
         platform: false,
         agents: false,
@@ -201,6 +213,7 @@ pub static REGISTRY: &[EventType] = &[
     },
     EventType {
         name: "subscription.login_needed",
+        title: "AI subscription needs sign-in",
         description: "A connected AI subscription (e.g. ChatGPT, Claude) needs the owner to sign in again.",
         platform: false,
         agents: true,
@@ -211,6 +224,7 @@ pub static REGISTRY: &[EventType] = &[
     },
     EventType {
         name: "subscription.signed_in",
+        title: "AI subscription signed in again",
         description: "A connected AI subscription is signed in again.",
         platform: false,
         agents: true,
@@ -221,6 +235,7 @@ pub static REGISTRY: &[EventType] = &[
     },
     EventType {
         name: "usage.threshold",
+        title: "Usage alerts",
         description: "The owner's usage crossed a plan threshold (e.g. 80% or 100% of included minutes or credits).",
         platform: false,
         agents: true,
@@ -321,6 +336,39 @@ pub async fn emit_user_event(
     Ok(Some(id))
 }
 
+/// The servers that offer an event, as `GET /api/v1/events/catalog` names them:
+/// `agents` (the MCP agents server, `/mcp`), `bot` (a vendor-bot connector,
+/// `/mcp/bots/:id`), `platform` (Platform API project webhooks).
+pub fn servers(e: &EventType) -> Vec<&'static str> {
+    [(e.agents, "agents"), (e.bot, "bot"), (e.platform, "platform")].into_iter().filter(|(on, _)| *on).map(|(_, s)| s).collect()
+}
+
+/// The registry as people see it (Settings › Connected apps).
+pub fn catalog() -> Value {
+    json!({
+        "events": REGISTRY.iter().map(|e| json!({
+            "name": e.name,
+            "title": e.title,
+            "description": e.description,
+            "servers": servers(e),
+        })).collect::<Vec<_>>()
+    })
+}
+
+/// `GET /api/v1/events/catalog` (signed-in users): every registered event with
+/// a plain-words title, its description and which servers offer it.
+pub fn routes() -> axum::Router<std::sync::Arc<crate::ApiState>> {
+    axum::Router::new().route("/api/v1/events/catalog", axum::routing::get(catalog_route))
+}
+
+async fn catalog_route(axum::extract::State(state): axum::extract::State<std::sync::Arc<crate::ApiState>>, headers: axum::http::HeaderMap) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if let Err(e) = crate::auth::resolve_user(&state.db, &headers).await {
+        return e.into_response();
+    }
+    axum::Json(catalog()).into_response()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -363,5 +411,21 @@ mod tests {
         // Platform-only events can't be injected by a runtime.
         assert_eq!(from_runtime("message.status", &json!({})), None);
         assert_eq!(from_runtime("registration.updated", &json!({})), None);
+    }
+
+    #[test]
+    fn catalog_has_a_title_and_servers_for_every_event() {
+        let c = catalog();
+        let events = c["events"].as_array().unwrap();
+        assert_eq!(events.len(), REGISTRY.len());
+        for e in events {
+            let title = e["title"].as_str().unwrap();
+            assert!(!title.is_empty() && !title.contains('.'), "{e}");
+            assert!(!e["servers"].as_array().unwrap().is_empty(), "{e}");
+        }
+        let approval = events.iter().find(|e| e["name"] == "approval.requested").unwrap();
+        assert_eq!(approval["servers"], json!(["agents"]));
+        let msg = events.iter().find(|e| e["name"] == "message.received").unwrap();
+        assert_eq!(msg["servers"], json!(["agents", "bot", "platform"]));
     }
 }

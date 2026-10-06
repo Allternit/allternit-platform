@@ -263,6 +263,8 @@ The edge answers these itself; your computer doesn't need to be awake. Subscript
 | `-32014` | Unsupported | A delivery mode other than `webhook`. |
 | `-32015` | CallbackEndpointError | Your callback didn't pass verification; `data.reason` is `connection_refused`, `timeout`, `tls_error`, `http_4xx`, `http_5xx` or `challenge_failed`. |
 
+Owners see and end subscriptions through the cloud API: `GET /api/v1/mcp/approvals` lists each approved app's `subscriptions`, `DELETE /api/v1/mcp/events/subscriptions/:id` ends one (the callback gets a signed `terminated` message, `reason: "ended_by_owner"`), and `GET /api/v1/events/catalog` returns every event with a plain-words title and the servers that offer it. Fields and errors are in [Seeing and ending subscriptions](/guides/mcp-events#seeing-and-ending-subscriptions).
+
 Opening `https://mcp.allternit.com/` (or the server URL in a browser) shows a short page with the server URLs, protocol versions and event catalog.
 
 ## Error codes
