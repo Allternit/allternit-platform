@@ -16,6 +16,7 @@ import {
   TYPES_SECTION_INDIVIDUAL,
   WHAT_NOT_TO_SAVE_SECTION,
 } from '../../memdir/memoryTypes.js'
+import { isMemoryDriveActive } from '../../memdir/paths.js'
 import { BASH_TOOL_NAME } from '../../tools/BashTool/toolName.js'
 import { FILE_EDIT_TOOL_NAME } from '../../tools/FileEditTool/constants.js'
 import { FILE_READ_TOOL_NAME } from '../../tools/FileReadTool/prompt.js'
@@ -47,12 +48,33 @@ function opener(newMessageCount: number, existingMemories: string): string {
  * Build the extraction prompt for auto-only memory (no team memory).
  * Four-type taxonomy, no scope guidance (single directory).
  */
+/** Memory Drive format: one-line facts in topic files; gizzi stamps provenance and rebuilds the index. */
+const DRIVE_HOW_TO_SAVE: readonly string[] = [
+  '## How to save memories',
+  '',
+  'The memory directory is a Memory Drive (git repo). Each memory is ONE line in a topic file:',
+  '',
+  '```markdown',
+  '# Preferences',
+  '',
+  '- Prefers short, direct answers without hype adjectives',
+  '```',
+  '',
+  '- Pick the topic file by type: `user.md`, `preferences.md` (feedback), `projects/<name>.md` (project), `references.md`; create it with a `# <Topic>` heading if missing',
+  '- Write just `- <fact>`; gizzi adds `[source: …; added: …; id: …]` when it commits. When editing an existing line, keep its `[...]` metadata and change only the text',
+  '- Never edit `MEMORY.md`\'s `## Index` (it is regenerated) and never use frontmatter',
+  '- One durable fact per line; update or delete lines that are wrong; do not add duplicates',
+  '- `twin/` and `cowork/` are managed by Allternit: never write there',
+]
+
 export function buildExtractAutoOnlyPrompt(
   newMessageCount: number,
   existingMemories: string,
   skipIndex = false,
 ): string {
-  const howToSave = skipIndex
+  const howToSave = isMemoryDriveActive()
+    ? DRIVE_HOW_TO_SAVE
+    : skipIndex
     ? [
         '## How to save memories',
         '',

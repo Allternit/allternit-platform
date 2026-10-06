@@ -257,6 +257,17 @@ pub mod memory_notes_routes;
 pub mod memory_reconstruction_routes;
 pub mod memory_routes;
 pub mod memory_kernel_service;
+pub mod memory_drive;
+pub mod memory_drive_service;
+pub mod memory_drive_routes;
+pub mod memory_drive_writer;
+pub mod memory_drive_transport;
+pub mod memory_drive_scopes;
+pub mod memory_dream;
+pub mod memory_drive_twin;
+pub mod memory_drive_cowork;
+#[cfg(test)]
+mod memory_drive_tests;
 pub mod memory_index;
 pub mod memory_extraction;
 pub mod memory_relations;

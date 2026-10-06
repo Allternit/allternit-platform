@@ -312,6 +312,7 @@ pub fn tool_twin_propose(db: &DbHandle, owner: &str, vendor_bot_id: &str, args: 
     };
     let conn = db.connect().map_err(|e| e.to_string())?;
     let m = propose(&conn, owner, &body)?;
+    crate::memory_drive_twin::sync_logged(db, owner);
     Ok(json!({ "ok": true, "status": m["status"], "note": "The owner reviews it before any bot uses it." }))
 }
 
@@ -368,42 +369,67 @@ async fn list_h(State(state): State<Arc<AppState>>, Extension(user): Extension<A
 }
 
 async fn add_h(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Json(b): Json<MemoryBody>) -> Response {
-    with_conn(&state, |c| match add_memory(c, &user.user_id, &b) {
+    let mirror = (state.db.clone(), user.user_id.clone());
+    let resp = with_conn(&state, |c| match add_memory(c, &user.user_id, &b) {
         Ok(m) => (StatusCode::CREATED, Json(json!({ "memory": m }))).into_response(),
         Err(e) => err(StatusCode::BAD_REQUEST, e),
-    })
+    });
+    if resp.status().is_success() {
+        tokio::task::spawn_blocking(move || crate::memory_drive_twin::sync_logged(&mirror.0, &mirror.1));
+    }
+    resp
 }
 
 async fn propose_h(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Json(b): Json<MemoryBody>) -> Response {
-    with_conn(&state, |c| match propose(c, &user.user_id, &b) {
+    let mirror = (state.db.clone(), user.user_id.clone());
+    let resp = with_conn(&state, |c| match propose(c, &user.user_id, &b) {
         Ok(m) => (StatusCode::CREATED, Json(json!({ "memory": m }))).into_response(),
         Err(e) if e.starts_with("Too many") => err(StatusCode::TOO_MANY_REQUESTS, e),
         Err(e) => err(StatusCode::BAD_REQUEST, e),
-    })
+    });
+    if resp.status().is_success() {
+        tokio::task::spawn_blocking(move || crate::memory_drive_twin::sync_logged(&mirror.0, &mirror.1));
+    }
+    resp
 }
 
 async fn update_h(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(id): Path<String>, Json(b): Json<MemoryBody>) -> Response {
-    with_conn(&state, |c| match update_memory(c, &user.user_id, &id, &b) {
+    let mirror = (state.db.clone(), user.user_id.clone());
+    let resp = with_conn(&state, |c| match update_memory(c, &user.user_id, &id, &b) {
         Ok(Some(m)) => Json(json!({ "memory": m })).into_response(),
         Ok(None) => err(StatusCode::NOT_FOUND, "not_found"),
         Err(e) => err(StatusCode::BAD_REQUEST, e),
-    })
+    });
+    if resp.status().is_success() {
+        tokio::task::spawn_blocking(move || crate::memory_drive_twin::sync_logged(&mirror.0, &mirror.1));
+    }
+    resp
 }
 
 async fn accept_h(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(id): Path<String>) -> Response {
-    with_conn(&state, |c| match accept_memory(c, &user.user_id, &id) {
+    let mirror = (state.db.clone(), user.user_id.clone());
+    let resp = with_conn(&state, |c| match accept_memory(c, &user.user_id, &id) {
         Ok(Some(m)) => Json(json!({ "memory": m })).into_response(),
         Ok(None) => err(StatusCode::NOT_FOUND, "not_found"),
         Err(e) => err(StatusCode::BAD_REQUEST, e),
-    })
+    });
+    if resp.status().is_success() {
+        tokio::task::spawn_blocking(move || crate::memory_drive_twin::sync_logged(&mirror.0, &mirror.1));
+    }
+    resp
 }
 
 async fn delete_h(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(id): Path<String>) -> Response {
-    with_conn(&state, |c| match delete_memory(c, &user.user_id, &id) {
+    let mirror = (state.db.clone(), user.user_id.clone());
+    let resp = with_conn(&state, |c| match delete_memory(c, &user.user_id, &id) {
         Ok(true) => Json(json!({ "ok": true })).into_response(),
         Ok(false) => err(StatusCode::NOT_FOUND, "not_found"),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, e),
-    })
+    });
+    if resp.status().is_success() {
+        tokio::task::spawn_blocking(move || crate::memory_drive_twin::sync_logged(&mirror.0, &mirror.1));
+    }
+    resp
 }
 
 #[derive(Deserialize)]

@@ -156,6 +156,48 @@ fn create_git_token(
     Ok((id, plaintext))
 }
 
+/// Mint a token scoped to one brain with `read` (fetch only) or `write`
+/// access. Used for Memory Drive clone/sync credentials.
+pub fn create_scoped_git_token(
+    conn: &rusqlite::Connection,
+    user_id: &str,
+    name: Option<&str>,
+    brain_id: &str,
+    access: &str,
+) -> Result<(String, String), rusqlite::Error> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let plaintext = format!("{}{:x}", GIT_TOKEN_PREFIX, uuid::Uuid::new_v4().simple());
+    conn.execute(
+        "INSERT INTO git_tokens (id, user_id, token_hash, name, brain_id, access) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![id, user_id, hash_git_token(&plaintext), name, brain_id, access],
+    )?;
+    Ok((id, plaintext))
+}
+
+/// A verified token: owner, optional brain scope and access level.
+#[derive(Debug, Clone)]
+pub struct GitTokenGrant {
+    pub id: String,
+    pub user_id: String,
+    pub brain_id: Option<String>,
+    pub access: String,
+}
+
+fn verify_git_token_grant(
+    conn: &rusqlite::Connection,
+    presented: &str,
+) -> Result<Option<GitTokenGrant>, rusqlite::Error> {
+    let Some((id, user_id)) = verify_git_token(conn, presented)? else {
+        return Ok(None);
+    };
+    let (brain_id, access) = conn.query_row(
+        "SELECT brain_id, access FROM git_tokens WHERE id = ?1",
+        params![id],
+        |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, String>(1)?)),
+    )?;
+    Ok(Some(GitTokenGrant { id, user_id, brain_id, access }))
+}
+
 /// Verify a presented git token against its stored digest (constant-time) and
 /// stamp `last_used_at`. Returns (token_id, user_id) on success.
 fn verify_git_token(
@@ -371,7 +413,7 @@ fn provision_brain_repo(
 
 /// Absolute clone URL derived from the request's host headers, so it works
 /// behind whatever reverse proxy terminates TLS for the deployment.
-fn clone_url_for(headers: &HeaderMap, brain_id: &str) -> String {
+pub(crate) fn clone_url_for(headers: &HeaderMap, brain_id: &str) -> String {
     let proto = headers
         .get("x-forwarded-proto")
         .and_then(|v| v.to_str().ok())
@@ -389,6 +431,10 @@ fn clone_url_for(headers: &HeaderMap, brain_id: &str) -> String {
         .filter(|v| !v.is_empty())
         .unwrap_or("localhost")
         .to_string();
+    // Only host[:port] characters; anything else falls back to loopback so a
+    // forged header can't produce a link to somewhere else.
+    let host = if host.bytes().all(|b| b.is_ascii_alphanumeric() || b"-.:[]".contains(&b)) { host } else { "localhost".to_string() };
+    let proto = if proto == "https" { "https" } else { "http" };
     format!("{}://{}/api/v1/brains/{}/git", proto, host, brain_id)
 }
 
@@ -744,12 +790,14 @@ fn git_auth_failure() -> Response {
 }
 
 /// The git-token gate shared by both smart-HTTP methods. On success returns
-/// the owning user id and the brain's registry row.
+/// the token's user id, the brain's registry row and, for a Memory Drive, the
+/// drive's marker owner (its pushes are validated by the pre-receive hook).
 async fn authorize_git_request(
     state: &Arc<AppState>,
     headers: &HeaderMap,
     brain_id: &str,
-) -> Result<(String, BrainRow), Response> {
+    push: bool,
+) -> Result<(String, BrainRow, Option<String>), Response> {
     let Some(token) = extract_git_token(headers) else {
         return Err(git_auth_failure());
     };
@@ -759,27 +807,47 @@ async fn authorize_git_request(
     let db = state.db.clone();
     let brain_id = brain_id.to_string();
     let result = tokio::task::spawn_blocking(
-        move || -> Result<Option<(String, BrainRow)>, String> {
+        move || -> Result<Result<(String, BrainRow, Option<String>), StatusCode>, String> {
             let conn = db.connect().map_err(|e| e.to_string())?;
-            let Some((_token_id, user_id)) =
-                verify_git_token(&conn, &token).map_err(|e| e.to_string())?
-            else {
-                return Ok(None);
+            let Some(grant) = verify_git_token_grant(&conn, &token).map_err(|e| e.to_string())? else {
+                return Ok(Err(StatusCode::UNAUTHORIZED));
             };
             let Some(brain) = brain_by_id(&conn, &brain_id) else {
-                return Ok(None);
+                return Ok(Err(StatusCode::UNAUTHORIZED));
             };
-            // Token owner must own the brain — a valid token never crosses users.
-            if brain.user_id != user_id {
-                return Ok(None);
+            // A scoped token opens exactly one brain.
+            if grant.brain_id.as_deref().is_some_and(|b| b != brain.id) {
+                return Ok(Err(StatusCode::UNAUTHORIZED));
             }
-            Ok(Some((user_id, brain)))
+            let drive_owner = crate::memory_drive_service::drive_owner_for_brain(&conn, &brain.id).map_err(|e| e.to_string())?;
+            let allowed = if brain.user_id == grant.user_id {
+                true
+            } else if grant.brain_id.is_some() {
+                // Shared (team/project/bot/swarm) drives: membership is
+                // re-checked on every request, so removal revokes access.
+                crate::memory_drive_service::member_access(&conn, &grant.user_id, &brain.id)
+                    .map_err(|e| e.to_string())?
+                    .is_some_and(|a| !push || a == "write")
+            } else {
+                false
+            };
+            if !allowed {
+                return Ok(Err(StatusCode::UNAUTHORIZED));
+            }
+            if push && grant.access != "write" {
+                return Ok(Err(StatusCode::FORBIDDEN));
+            }
+            Ok(Ok((grant.user_id, brain, drive_owner)))
         },
     )
     .await;
     match result {
-        Ok(Ok(Some(ok))) => Ok(ok),
-        Ok(Ok(None)) => Err(git_auth_failure()),
+        Ok(Ok(Ok(ok))) => Ok(ok),
+        Ok(Ok(Err(StatusCode::FORBIDDEN))) => Err(json_error(
+            StatusCode::FORBIDDEN,
+            "This token is read-only. Create a write token to push.",
+        )),
+        Ok(Ok(Err(_))) => Err(git_auth_failure()),
         Ok(Err(e)) => {
             warn!("git auth db error: {}", e);
             Err(json_error(
@@ -805,10 +873,21 @@ async fn git_smart_http(
     uri: Uri,
     body: Body,
 ) -> Response {
-    let (user_id, brain) = match authorize_git_request(&state, &headers, &brain_id).await {
+    let push = crate::memory_drive_transport::is_push(&git_path, uri.query().unwrap_or_default());
+    let (user_id, brain, drive_owner) = match authorize_git_request(&state, &headers, &brain_id, push).await {
         Ok(ok) => ok,
         Err(resp) => return resp,
     };
+    // Memory Drives validate every push in a pre-receive hook before the ref
+    // moves. No hook, no push.
+    if drive_owner.is_some() {
+        if let Err(e) = crate::memory_drive_transport::ensure_hook(FsPath::new(&brain.path)) {
+            warn!("memory drive hook install failed: {}", e);
+            if push {
+                return json_error(StatusCode::SERVICE_UNAVAILABLE, "Memory Drive cannot accept pushes right now. Retry later.");
+            }
+        }
+    }
 
     // The CGI path must stay inside the repo: reject traversal outright.
     if git_path.split('/').any(|seg| seg == "..") {
@@ -816,9 +895,11 @@ async fn git_smart_http(
     }
 
     let project_root = state.config.brains_dir();
+    // The repo lives under its OWNER's directory (a member of a shared
+    // drive reaches the owner's repo, never a path derived from their id).
     let repo_relative = format!(
         "{}/{}.git",
-        sanitize_path_component(&user_id),
+        sanitize_path_component(&brain.user_id),
         brain.id
     );
     let path_info = if git_path.is_empty() {
@@ -842,7 +923,7 @@ async fn git_smart_http(
         Err(_) => return json_error(StatusCode::BAD_REQUEST, "unreadable request body"),
     };
 
-    let env = build_cgi_env(
+    let mut env = build_cgi_env(
         &project_root,
         &path_info,
         &method,
@@ -851,6 +932,10 @@ async fn git_smart_http(
         content_encoding.as_deref(),
         &user_id,
     );
+    if let Some(owner) = &drive_owner {
+        env.push((crate::memory_drive_transport::OWNER_ENV.to_string(), owner.clone()));
+    }
+    let reindex_after = (push && method == Method::POST && drive_owner.is_some()).then(|| brain.id.clone());
 
     let result = tokio::task::spawn_blocking(move || {
         // env_clear: the CGI is untrusted-input-adjacent — it must NOT inherit
@@ -889,6 +974,17 @@ async fn git_smart_http(
     })
     .await;
 
+    // A refused push still answers 200 with a pack-protocol error, so the
+    // index is repaired from the actual head rather than the status code.
+    if let Some(brain_id) = reindex_after {
+        let db = state.db.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            if let Err(e) = crate::memory_drive_service::repair_index_for_brain(&db, &brain_id) {
+                warn!("memory drive reindex after push failed (will retry on next read): {}", e);
+            }
+        })
+        .await;
+    }
     match result {
         Ok(Ok(stdout)) => parse_cgi_response(&stdout),
         Ok(Err(e)) => {

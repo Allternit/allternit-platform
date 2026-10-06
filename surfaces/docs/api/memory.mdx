@@ -7,6 +7,10 @@ description: 'Store, query, and manage memory documents, events, entities, edges
 
 The `/api/memory` surface gives agents durable memory primitives: documents, events, entities, edges, semantic query, and session-scoped key/value storage. It proxies to the memory service when available and falls back to local SQLite-backed storage when it is not. Session memory powers the model-facing `memory` tool, letting an agent read and write values keyed by session.
 
+<Note>
+Long-term agent memory (the facts your agents recall across sessions) is stored in each user's [Memory Drive](/api/memory-drive), a private git repo. `/memory/v2/retain`, `/memory/v2/recall` and `/memory/v2/facts` keep their shapes; writes now commit to the drive and the facts are an index rebuilt from it. See [Memory Drive internals](/core/memory-drive).
+</Note>
+
 ## Base URL
 
 ```

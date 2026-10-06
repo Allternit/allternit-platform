@@ -1724,6 +1724,12 @@ async fn delete_memory(
     let db = state.db.clone();
     let user_id = user.user_id;
     let result = tokio::task::spawn_blocking(move || {
+        // Bot/project memory lives in its Memory Drive: forget it there.
+        match crate::memory_drive_cowork::forget(&db, &user_id, &id) {
+            Ok(Some(found)) => return Ok(found),
+            Ok(None) => {}
+            Err(e) => return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(e))),
+        }
         let conn = db.connect()?;
         allternit_cowork_runtime::sqlite_store::delete_memory_entry(&conn, &user_id, &id)
             .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))
@@ -1779,6 +1785,23 @@ async fn store_memory(
             ),
             None => body.principal.clone(),
         };
+        // A bot's or project's memory is saved to its Memory Drive.
+        let drive_entry = crate::memory_drive_cowork::CoworkEntry {
+            project_id: body.project_id.clone(),
+            session_id: body.session_id.clone(),
+            content: body.content.clone(),
+            type_: type_.clone(),
+            tags: body.tags.clone(),
+            source: body.source.clone(),
+            owner_principal: principal.clone(),
+            grants: body.grants.clone().unwrap_or_default(),
+            ..Default::default()
+        };
+        match crate::memory_drive_cowork::store(&db, &user_id, drive_entry) {
+            Ok(Some(id)) => return Ok(id),
+            Ok(None) => {}
+            Err(e) => return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(e))),
+        }
         allternit_cowork_runtime::sqlite_store::store_memory_entry(
             &mut conn,
             &user_id,

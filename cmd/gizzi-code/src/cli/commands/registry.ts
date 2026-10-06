@@ -31,6 +31,7 @@ import { FabricWorkerCommand } from "@/cli/commands/fabric-worker"
 import { ProviderCommand } from "@/cli/commands/provider"
 import { AllternitCommand } from "@/cli/commands/allternit"
 import { BrainCommand } from "@/cli/commands/brain"
+import { MemoryCommand } from "@/cli/commands/memory"
 import { ProductsCommand } from "@/cli/commands/products"
 import { HtmlArtifactCommand } from "@/cli/commands/html-artifact"
 import { ArtifactCommand } from "@/cli/commands/artifact"
@@ -115,6 +116,7 @@ export const COMMANDS: RegisteredCommand[] = [
   ProviderCommand,
   AllternitCommand,
   BrainCommand,
+  MemoryCommand,
   HtmlArtifactCommand,
   ArtifactCommand,
   ProgramsCommand,

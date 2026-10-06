@@ -229,10 +229,12 @@ The Memory Kernel is experimental: it builds as a workspace member but has no li
 - **[Memory Fabric](/core/memory-fabric)** provides the low-level provider trait, ledger, and routing for all memory operations.
 - **Memory Agent** (`services/memory/agent`) is the TypeScript long-term memory service with vector search and LLM-driven consolidation.
 - **Memory Kernel** (`services/memory/data/memory-kernel`) is the structured, three-layer semantic model that future surfaces can use when they need typed entities and versioned facts.
+- **[Memory Drive](/core/memory-drive)** is where each user's agent memory is stored today: a private git repo in the open Agent Memory Repo format, with allternit-api's `memory_facts` rebuilt from it as a search index.
 
 ## Related docs
 
 - [Memory Fabric](/core/memory-fabric)
+- [Memory Drive internals](/core/memory-drive)
 - [Gizzi Runtime](/core/gizzi-runtime)
 - [Session Manager](/core/session-manager)
 - [Allternit Factory](/factory/overview)

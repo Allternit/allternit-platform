@@ -447,6 +447,40 @@ pub fn edit_fact(
     let Some((old_text, agent_id, obs_id, old_type)) = row else { return Ok(None) };
     let t = new_type.or_else(|| old_type.as_deref().and_then(MemoryType::parse)).unwrap_or(MemoryType::Fact);
     let text = new_text.map(str::trim).filter(|t| !t.is_empty() && *t != old_text);
+    if crate::memory_drive_writer::is_drive_fact(&conn, fact_id)? {
+        // The drive is canonical: change the entry there, then the index
+        // follows. A type change keeps the entry id; a text change is a new
+        // entry that `updates` the old one, in a single commit.
+        let internal = |e: crate::memory_drive_service::ServiceError| MemoryKernelError::Internal(e.to_string());
+        let Some(text) = text else {
+            let ty = t.as_str().to_string();
+            crate::memory_drive_writer::modify_fact_entry(db, user_id, fact_id, |e| {
+                e.metadata.insert("memory_type".into(), ty.clone());
+            })
+            .map_err(internal)?;
+            return Ok(Some((fact_id.to_string(), t)));
+        };
+        let obs = obs_id.unwrap_or_default();
+        let new = crate::memory_kernel_service::persist_facts_typed(
+            db, user_id, agent_id.as_deref(), &obs, &[(text.to_string(), Some(t.as_str()))], &[fact_id.to_string()],
+        )?;
+        let new_id = match new.into_iter().next() {
+            Some(f) => f.id,
+            None => conn
+                .query_row(
+                    "SELECT id FROM memory_facts WHERE user_id = ?1 AND lower(fact) = lower(?2) AND valid_until IS NULL LIMIT 1",
+                    params![user_id, text],
+                    |r| r.get::<_, String>(0),
+                )
+                .optional()?
+                .unwrap_or_default(),
+        };
+        if new_id.is_empty() {
+            return Ok(None);
+        }
+        write_relation(&conn, user_id, (NodeKind::Fact, &new_id), RelationType::Updates, (NodeKind::Fact, fact_id), 1.0, ORIGIN_USER, None)?;
+        return Ok(Some((new_id, t)));
+    }
     let Some(text) = text else {
         set_fact_type(&conn, user_id, fact_id, t)?;
         return Ok(Some((fact_id.to_string(), t)));

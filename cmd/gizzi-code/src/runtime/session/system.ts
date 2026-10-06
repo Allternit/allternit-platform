@@ -1,8 +1,7 @@
 import { Ripgrep } from "@/shared/file/ripgrep"
 
 import { Instance } from "@/runtime/context/project/instance"
-import { Filesystem } from "@/shared/util/filesystem"
-import { getAutoMemPathFor } from "@/memdir/paths"
+import { MemoryDrive } from "@/runtime/memory/drive/drive"
 
 import PROMPT_DEFAULT from "@/runtime/session/prompt/default.txt"
 import PROMPT_DEFAULT_WITHOUT_TODO from "@/runtime/session/prompt/qwen.txt"
@@ -46,52 +45,23 @@ export namespace SystemPrompt {
   }
 
   async function memoryPrompt(): Promise<string> {
-    // The memdir auto-memory directory — the same store the TUI memory UX
-    // (`#` quick-add, /remember, extract-memories) reads and writes, resolved
-    // through the shared memdir layer (src/memdir/paths).
-    const memoryDir = getAutoMemPathFor(Instance.directory)
-    const exists = await Filesystem.exists(memoryDir)
-    return [
-      `# auto memory`,
-      ``,
-      `You have a persistent, file-based memory system. Memory files persist across conversations and are automatically`,
-      `loaded into future sessions. Your memory directory is \`${memoryDir}\` — the same auto-memory store the`,
-      `interactive TUI uses, so memories are shared between headless and interactive sessions.`,
-      ``,
-      exists ? `The memory directory exists.` : `The memory directory does not exist yet — it will be created automatically when you save a memory.`,
-      ``,
-      `## How to save memories`,
-      ``,
-      `Use the \`memory_write\` tool (preferred) to save structured memories. Each memory has:`,
-      `- **name**: short snake_case identifier (e.g. \`user_role\`, \`testing_feedback\`) — used as filename`,
-      `- **description**: one-line summary — used to determine which memories are loaded in future sessions, so be specific`,
-      `- **type**: \`user\` | \`feedback\` | \`project\` | \`reference\``,
-      `- **body**: the memory content`,
-      ``,
-      `Types:`,
-      `- \`user\` — user's role, preferences, expertise, communication style`,
-      `- \`feedback\` — corrections or guidance from the user that should alter future behavior`,
-      `- \`project\` — ongoing work context, goals, decisions, deadlines`,
-      `- \`reference\` — pointers to external resources (URLs, Linear projects, dashboards)`,
-      ``,
-      `For \`feedback\` and \`project\` types, structure the body as: rule/fact first, then **Why:** and **How to apply:** lines.`,
-      ``,
-      `## How to recall memories`,
-      ``,
-      `Use the \`memory_recall\` tool to search across all saved memories before making assumptions.`,
-      ``,
-      `## Rules`,
-      `- Do NOT save session-specific details, in-progress work state, or code derivable from the repo`,
-      `- Do NOT save speculative or unverified conclusions from a single file`,
-      `- Do NOT create duplicate memories — use \`memory_recall\` to check first, then update if one exists`,
-      `- Update or remove memories that turn out to be wrong or outdated`,
-      `- MEMORY.md is always loaded (lines after 200 are truncated) — topic files are loaded when relevant to the session`,
-      ``,
-      `## Explicit user requests`,
-      `- "remember X" → use \`memory_write\` immediately`,
-      `- "forget X" / "stop remembering X" → use \`memory_recall\` to find it, then use the write tool to remove or update it`,
-      `- "correct" / "that's wrong" → update or remove the incorrect memory entry`,
-    ].join("\n")
+    // The user's Memory Drive (personal + mounted drives): each MEMORY.md
+    // (bounded), its checkout path for reading topic files with normal
+    // tools, and how to save with memory_write. Waits briefly for the
+    // session-start sync, never blocks on the network.
+    const context = await MemoryDrive.sessionContext({ writeTool: "memory_write" }).catch(() => "")
+    if (context) {
+      return [
+        context,
+        "",
+        "## Rules",
+        "- Use `memory_recall` before assuming a preference or convention, and to find a memory's id before updating it",
+        "- \"remember X\" → `memory_write` immediately; \"forget X\" → find it with `memory_recall`, then `memory_write` with action delete",
+        "- Do NOT save session-specific details, in-progress work state, code derivable from the repo, or unverified conclusions",
+        "- Fix or delete memories that turn out to be wrong",
+      ].join("\n")
+    }
+    return "# Memory\n\nPersistent memory is turned off for this session (GIZZI_MEMORY_DRIVE=0)."
   }
 
   export async function environment(model: Provider.Model) {

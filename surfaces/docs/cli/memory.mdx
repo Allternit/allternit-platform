@@ -1,0 +1,50 @@
+---
+title: gizzi memory
+description: "Your Memory Drive from the terminal: status, sync, history, files, search, import, nightly Dreams."
+---
+
+Gizzi keeps a copy of your [Memory Drive](/guides/memory-drive) on your computer and reads
+its `MEMORY.md` at the start of every session. Memories saved during a session are
+committed and synced at the end of the turn.
+
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| `gizzi memory` / `gizzi memory status` | Drive location, sync state, pending changes, last error. |
+| `gizzi memory sync` | Sync now. `--dismiss` clears the notice about edits that were refused. |
+| `gizzi memory log [-n N]` | Recent changes. |
+| `gizzi memory view <path>` | Print a file, e.g. `facts.md`. |
+| `gizzi memory search <words>` | Search every drive you have mounted. |
+| `gizzi memory import` | Preview moving memories from the old per-project memory folder into the drive. Nothing changes. |
+| `gizzi memory import --apply` | Do the import as one change. Running it again does nothing. |
+| `gizzi memory dreams` | Recent nightly Dreams and their reports. |
+| `gizzi memory undo-dream <id>` | Undo one Dream. |
+
+Add `--drive <ref>` (for example `team:ws_42`) to work with a shared drive, and `--json`
+where you need machine-readable output.
+
+In the terminal UI: `/memory` (overview), `/memory view <path>`, `/memory log`, `/memory sync`,
+`/memory-search <words>`.
+
+## Where it lives
+
+- Signed in: `<gizzi data>/memory-drive/<account>/personal`, plus one folder per mounted drive.
+- Signed out: a local drive for that computer. The first time you sign in, its history is
+  merged into your account's drive. Nothing is reset or overwritten.
+- Each account has its own folder; switching accounts never mixes memories.
+
+Agents with **user** memory (`memory: user` in the agent definition) keep it in your drive
+at `agents/<agent>/memory.md`. **Project** memory stays in the project's
+`.claude/agent-memory/` (shared through that project's own git) and **local** memory stays on
+your computer.
+
+## Saving and syncing
+
+- One line per memory: Gizzi adds the source (`gizzi:session/<id>`), the date and an id.
+- If someone else saved first, Gizzi re-reads the drive, re-applies your change once and pushes
+  again. It never force-pushes.
+- Offline, changes are kept and pushed the next time you're online, each as its own change.
+- If the drive refuses a change (for example, a line that looks like a password), the reason is
+  shown, the edit is moved to `<drive>.rejected/` and nothing else is lost.
+- Gizzi's own local dream stays off while the nightly Dream is on for your drive.
