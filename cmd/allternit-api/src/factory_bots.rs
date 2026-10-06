@@ -1,4 +1,4 @@
-//! Factory bots (SPEC §9 "Bots in the Factory"; migration V236).
+//! Factory bots (SPEC §9 "Bots in the Factory"; migration V239).
 //!
 //! Every agent in the Factory is a Bot: an `agents` row with one execution
 //! binding (`bot_execution_bindings`). This module adds the two calls the

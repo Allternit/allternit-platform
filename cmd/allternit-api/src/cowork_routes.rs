@@ -2160,7 +2160,43 @@ fn claim_open_approval(
     write_approval_decision(conn, approval_id, outcome, user_id, true)
 }
 
+/// Owner ledger → the cloud event backbone (`approval.resolved`). A gateway
+/// approval also resolves on its bot ledger; both carry the approval id, so
+/// the forwarder sends them as one event.
+fn record_approval_resolved(conn: &rusqlite::Connection, approval_id: &str, outcome: &ApprovalOutcome, user_id: &str) {
+    let decision = match outcome {
+        ApprovalOutcome::Approved => "approved",
+        ApprovalOutcome::Rejected => "rejected",
+        ApprovalOutcome::Dismissed => "dismissed",
+    };
+    let source: Option<String> = conn
+        .query_row("SELECT source FROM cowork_approvals WHERE id = ?1", rusqlite::params![approval_id], |r| r.get(0))
+        .ok();
+    let _ = crate::runtime_events::record_user_event(
+        conn,
+        user_id,
+        "approval.resolved",
+        None,
+        &serde_json::json!({ "approvalId": approval_id, "decision": decision, "source": source }),
+        Some(&format!("approval:{approval_id}:resolved")),
+    );
+}
+
 fn write_approval_decision(
+    conn: &rusqlite::Connection,
+    approval_id: &str,
+    outcome: &ApprovalOutcome,
+    user_id: &str,
+    only_open: bool,
+) -> rusqlite::Result<usize> {
+    let n = write_approval_decision_row(conn, approval_id, outcome, user_id, only_open)?;
+    if n > 0 {
+        record_approval_resolved(conn, approval_id, outcome, user_id);
+    }
+    Ok(n)
+}
+
+fn write_approval_decision_row(
     conn: &rusqlite::Connection,
     approval_id: &str,
     outcome: &ApprovalOutcome,
@@ -2202,6 +2238,11 @@ fn write_approval_decision(
 /// Undo a claim whose follow-up (minting the human action) failed, so the
 /// card is still there for the person.
 fn reopen_approval(conn: &rusqlite::Connection, approval_id: &str, user_id: &str) {
+    // The claim recorded `approval.resolved`; it didn't happen after all.
+    let _ = conn.execute(
+        "DELETE FROM runtime_user_events WHERE user_id = ?1 AND idempotency_key = ?2",
+        params![user_id, format!("approval:{approval_id}:resolved")],
+    );
     let _ = conn.execute(
         "UPDATE cowork_approvals SET dismissed = 0, decision = NULL, decided_at = NULL
          WHERE id = ?1 AND (user_id = ?2 OR user_id IS NULL)",
@@ -2252,6 +2293,9 @@ fn subscription_approval(content: &str) -> SubscriptionApproval {
 enum DecideOutcome {
     NotFound,
     AnswerRequired,
+    /// A subscription card without the complete task it would run (an
+    /// Allternit runtime older than D16 task binding): it cannot be approved.
+    TaskRequired,
     /// Something other than a person's session tried to decide a
     /// subscription card. Only a person decides those (D16).
     PersonRequired(&'static str),
@@ -2403,6 +2447,10 @@ async fn decide_approval(
                         reopen_approval(&conn, &approval_id, &user_id);
                         return Ok(DecideOutcome::AnswerRequired);
                     }
+                    Err(Ok(crate::subscription_routes::CardReplyRefusal::TaskRequired)) => {
+                        reopen_approval(&conn, &approval_id, &user_id);
+                        return Ok(DecideOutcome::TaskRequired);
+                    }
                     Err(Err(e)) => {
                         reopen_approval(&conn, &approval_id, &user_id);
                         return Err(e);
@@ -2432,6 +2480,11 @@ async fn decide_approval(
             )
                 .into_response()
         }
+        Ok(Ok(DecideOutcome::TaskRequired)) => (
+            StatusCode::CONFLICT,
+            Json(json!({"error": "task_required", "detail": "This request came from an older version of Allternit and can't be sent. Reject it, update Allternit, then ask again."})),
+        )
+            .into_response(),
         Ok(Ok(DecideOutcome::AnswerRequired)) => (
             StatusCode::BAD_REQUEST,
             Json(json!({"error": "answer_required", "detail": "Type an answer to send to the provider, or reject the card."})),

@@ -8,7 +8,7 @@ url="https://docs.gizziio.com"
 license=('Apache-2.0')
 depends=('ripgrep')  # Glob/Grep use rg on PATH (not statically linked)
 # Release assets are version-named tarballs (tag gizzi-code/v${pkgver})
-source=("https://github.com/Gizziio/allternit-platform/releases/download/gizzi-code/v${pkgver}/gizzi-code-v${pkgver}-linux-${CARCH}.tar.gz")
+source=("https://github.com/Allternit/allternit-platform/releases/download/gizzi-code/v${pkgver}/gizzi-code-v${pkgver}-linux-${CARCH}.tar.gz")
 sha256sums_x86_64=('2d3c7eea7b77b95de4abfb445d12a890783364df03a93e2809c9e71d7afbca2a')
 sha256sums_aarch64=('dc0386c5321da1a20b03b5486be10e36c771cceb63eacefdfd2f11a29b4bebf8')
 

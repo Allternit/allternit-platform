@@ -1,9 +1,9 @@
 name: Build hosted workspace UI
-description: Checkout Gizziio/allternit-ai and copy dist into desktop resources/platform. Never use the cloud console.
+description: Checkout Allternit/allternit-ai and copy dist into desktop resources/platform. Never use the cloud console.
 
 inputs:
   token:
-    description: PAT that can read private Gizziio/allternit-ai (ALLTERNIT_AI_CHECKOUT_TOKEN)
+    description: PAT that can read private Allternit/allternit-ai (ALLTERNIT_AI_CHECKOUT_TOKEN)
     required: true
 
 runs:
@@ -12,7 +12,7 @@ runs:
     - name: Checkout ai.allternit.com UI
       uses: actions/checkout@v4
       with:
-        repository: Gizziio/allternit-ai
+        repository: Allternit/allternit-ai
         path: .hosted-ui
         token: ${{ inputs.token }}
 

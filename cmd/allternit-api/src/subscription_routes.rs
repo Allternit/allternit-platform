@@ -164,12 +164,34 @@ pub(crate) fn mint_human_action(
     user_id: &str,
     surface: &str,
 ) -> rusqlite::Result<(String, String)> {
+    mint_action(db, user_id, surface, None)
+}
+
+/// Mint a human action that can start only the task the person approved:
+/// `task_digest` is [`task_digest`] of that task. The forwarder refuses it
+/// for any other capability, provider, prompt or options. Every approval card
+/// mints through this (D16 task binding).
+pub(crate) fn mint_bound_human_action(
+    db: &crate::db::DbHandle,
+    user_id: &str,
+    surface: &str,
+    task_digest: &str,
+) -> rusqlite::Result<(String, String)> {
+    mint_action(db, user_id, surface, Some(task_digest))
+}
+
+fn mint_action(
+    db: &crate::db::DbHandle,
+    user_id: &str,
+    surface: &str,
+    task_digest: Option<&str>,
+) -> rusqlite::Result<(String, String)> {
     let action_id = format!("ha_{}", uuid::Uuid::new_v4().simple());
     let conn = db.connect()?;
     conn.execute(
-        "INSERT INTO subs_human_actions (action_id, user_id, surface, expires_at) \
-         VALUES (?1, ?2, ?3, datetime('now', ?4))",
-        params![action_id, user_id, surface, format!("+{HUMAN_ACTION_TTL_SECS} seconds")],
+        "INSERT INTO subs_human_actions (action_id, user_id, surface, expires_at, task_digest) \
+         VALUES (?1, ?2, ?3, datetime('now', ?4), ?5)",
+        params![action_id, user_id, surface, format!("+{HUMAN_ACTION_TTL_SECS} seconds"), task_digest],
     )?;
     let expires_at: String = conn.query_row(
         "SELECT expires_at FROM subs_human_actions WHERE action_id = ?1",
@@ -180,22 +202,101 @@ pub(crate) fn mint_human_action(
 }
 
 /// Consume `action_id` for one task submission. True when it belongs to the
-/// user, has not expired, and is unused — or was used by a retry of the same
-/// submission (same idempotency key).
+/// user, has not expired, is unused — or was used by a retry of the same
+/// submission (same idempotency key) — and, when it is bound to a task, the
+/// submitted task is that task (`submitted_digest`).
 fn consume_human_action(
     db: &crate::db::DbHandle,
     user_id: &str,
     action_id: &str,
     idempotency_key: Option<&str>,
+    submitted_digest: &str,
 ) -> rusqlite::Result<bool> {
     let changed = db.connect()?.execute(
         "UPDATE subs_human_actions \
          SET consumed_at = COALESCE(consumed_at, datetime('now')), idempotency_key = COALESCE(idempotency_key, ?3) \
          WHERE action_id = ?1 AND user_id = ?2 AND expires_at > datetime('now') \
-           AND (consumed_at IS NULL OR (idempotency_key IS NOT NULL AND idempotency_key = ?3))",
-        params![action_id, user_id, idempotency_key],
+           AND (consumed_at IS NULL OR (idempotency_key IS NOT NULL AND idempotency_key = ?3)) \
+           AND (task_digest IS NULL OR task_digest = ?4)",
+        params![action_id, user_id, idempotency_key, submitted_digest],
     )?;
     Ok(changed == 1)
+}
+
+/// True when `action_id` is the user's live action bound to some other task
+/// than `submitted_digest` (to tell that refusal apart from an unknown or
+/// used action).
+fn bound_to_other_task(
+    db: &crate::db::DbHandle,
+    user_id: &str,
+    action_id: &str,
+    submitted_digest: &str,
+) -> rusqlite::Result<bool> {
+    let bound: Option<Option<String>> = db
+        .connect()?
+        .query_row(
+            "SELECT task_digest FROM subs_human_actions WHERE action_id = ?1 AND user_id = ?2",
+            params![action_id, user_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Ok(matches!(bound, Some(Some(d)) if d != submitted_digest))
+}
+
+/// `chat.create` and `chat.continue` are one task for binding: gizzi starts
+/// the provider thread with the same action when a continue finds no thread.
+fn capability_family(capability: &str) -> &str {
+    match capability {
+        "chat.create" | "chat.continue" => "chat",
+        other => other,
+    }
+}
+
+/// Objects with their keys sorted, recursively, so a digest does not depend
+/// on key order.
+fn canonical_json(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            let mut out = Map::new();
+            for k in keys {
+                out.insert(k.clone(), canonical_json(&map[k]));
+            }
+            Value::Object(out)
+        }
+        Value::Array(items) => Value::Array(items.iter().map(canonical_json).collect()),
+        other => other.clone(),
+    }
+}
+
+/// SHA-256 (hex) of the task a person approved: capability family, provider,
+/// prompt and options (missing options count as `{}`). Computed the same way
+/// for the card (at approval) and for the submitted task (at the forwarder).
+pub(crate) fn task_digest(capability: &str, provider: &str, prompt: &str, options: Option<&Value>) -> String {
+    use sha2::{Digest, Sha256};
+    let empty = json!({});
+    let options = match options {
+        Some(Value::Null) | None => &empty,
+        Some(v) => v,
+    };
+    let canonical = json!({
+        "capability": capability_family(capability),
+        "provider": provider,
+        "prompt": prompt,
+        "options": canonical_json(options),
+    });
+    hex::encode(Sha256::digest(canonical_json(&canonical).to_string().as_bytes()))
+}
+
+/// The digest of a `POST v1/tasks` body, as [`task_digest`] sees it.
+fn submitted_task_digest(task: &Map<String, Value>, provider: &str) -> String {
+    task_digest(
+        task.get("capability").and_then(Value::as_str).unwrap_or(""),
+        provider,
+        task.get("prompt").and_then(Value::as_str).unwrap_or(""),
+        task.get("options"),
+    )
 }
 
 fn db_error(e: impl std::fmt::Display) -> Response {
@@ -462,6 +563,50 @@ pub(crate) fn is_subscription_card(content: &Value) -> bool {
 pub(crate) enum CardReplyRefusal {
     /// A provider question was approved without an answer to send.
     AnswerRequired,
+    /// The card does not carry the complete task it would run (an Allternit
+    /// runtime older than D16 task binding). It cannot be approved; the
+    /// person rejects it and asks again after the runtime updates.
+    TaskRequired,
+}
+
+/// The task a subscription card confirms, as the runtime put it on the card
+/// (`subscription.task`). For a provider question the prompt is the person's
+/// answer, so it is filled in at approval.
+pub(crate) struct CardTask {
+    pub capability: String,
+    pub provider: String,
+    pub prompt: String,
+    pub options: Value,
+}
+
+impl CardTask {
+    /// Read `subscription.task` off a card. `None` when anything the digest
+    /// needs is missing (a send without its prompt, a question without its
+    /// capability).
+    pub(crate) fn from_card(content: &Value, answer: Option<&str>) -> Option<CardTask> {
+        let sub = content.get("subscription")?;
+        let task = sub.get("task")?;
+        let text = |v: Option<&Value>| v.and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+        let capability = text(task.get("capability"))?;
+        let provider = text(task.get("provider"))?;
+        let question = sub.get("kind").and_then(Value::as_str) == Some("question");
+        let prompt = if question {
+            answer.map(str::trim).filter(|a| !a.is_empty())?.chars().take(MAX_ANSWER_CHARS).collect()
+        } else {
+            // Not trimmed: the digest is of exactly what will be sent.
+            task.get("prompt").and_then(Value::as_str).filter(|p| !p.trim().is_empty())?.to_string()
+        };
+        let options = match task.get("options") {
+            None | Some(Value::Null) => json!({}),
+            Some(v @ Value::Object(_)) => v.clone(),
+            Some(_) => return None,
+        };
+        Some(CardTask { capability, provider, prompt, options })
+    }
+
+    pub(crate) fn digest(&self) -> String {
+        task_digest(&self.capability, &self.provider, &self.prompt, Some(&self.options))
+    }
 }
 
 /// A provider question approved without an answer: the card must stay open.
@@ -491,8 +636,10 @@ pub(crate) fn permission_reply_body(
     if card_needs_answer(content, reply, answer) {
         return Err(Ok(CardReplyRefusal::AnswerRequired));
     }
+    // D16 task binding: the action can start only the task on the card.
+    let task = CardTask::from_card(content, answer).ok_or(Ok(CardReplyRefusal::TaskRequired))?;
     let answer = answer.map(str::trim).filter(|a| !a.is_empty());
-    let (action_id, _) = mint_human_action(db, user_id, "approval.confirm").map_err(Err)?;
+    let (action_id, _) = mint_bound_human_action(db, user_id, "approval.confirm", &task.digest()).map_err(Err)?;
     let mut body = json!({ "reply": "once", "humanAction": action_id });
     if let Some(answer) = answer {
         body["answer"] = json!(answer.chars().take(MAX_ANSWER_CHARS).collect::<String>());
@@ -656,6 +803,8 @@ pub(crate) enum TaskRefusal {
     DisclosureRequired(String),
     HumanActionRequired,
     HumanActionInvalid,
+    /// The action was approved for a different task than the one submitted.
+    HumanActionTaskMismatch,
 }
 
 impl TaskRefusal {
@@ -676,6 +825,10 @@ impl TaskRefusal {
             TaskRefusal::HumanActionRequired => coded(
                 StatusCode::FORBIDDEN,
                 json!({"error": "human_action_required", "detail": format!("send {HUMAN_ACTION_HEADER} from the surface where a person sent or confirmed this task")}),
+            ),
+            TaskRefusal::HumanActionTaskMismatch => coded(
+                StatusCode::FORBIDDEN,
+                json!({"error": "human_action_task_mismatch", "detail": "the human action was approved for a different task; only the task on the approved card can run"}),
             ),
             TaskRefusal::HumanActionInvalid => coded(
                 StatusCode::FORBIDDEN,
@@ -712,7 +865,11 @@ pub(crate) fn prepare_task_submission(
         .filter(|a| !a.is_empty())
         .ok_or(Ok(TaskRefusal::HumanActionRequired))?;
     let idempotency_key = task.get("idempotency_key").and_then(Value::as_str);
-    if !consume_human_action(db, user_id, action_id, idempotency_key).map_err(Err)? {
+    let digest = submitted_task_digest(&task, &provider);
+    if !consume_human_action(db, user_id, action_id, idempotency_key, &digest).map_err(Err)? {
+        if bound_to_other_task(db, user_id, action_id, &digest).map_err(Err)? {
+            return Err(Ok(TaskRefusal::HumanActionTaskMismatch));
+        }
         return Err(Ok(TaskRefusal::HumanActionInvalid));
     }
     task.insert(
@@ -1259,7 +1416,8 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK);
 
-        let send_card = json!({"details": {"actionType": "subscription"}, "subscription": {"kind": "send", "provider": "chatgpt"}});
+        let send_card = json!({"details": {"actionType": "subscription"}, "subscription": {"kind": "send", "provider": "chatgpt",
+            "task": {"capability": "chat.create", "provider": "chatgpt", "prompt": "hi"}}});
         // Ordinary tool cards relay the plain reply.
         let plain = permission_reply_body(&state.db, USER, &json!({"details": {"actionType": "bash"}}), "once", None).unwrap();
         assert_eq!(plain, json!({"reply": "once"}));
@@ -1282,7 +1440,8 @@ mod tests {
         assert_eq!(seen.lock().unwrap().last().unwrap().4["initiated_by"]["action_id"], json!(action));
 
         // A provider question needs the person's answer; it is relayed trimmed.
-        let question = json!({"details": {"actionType": "subscription"}, "subscription": {"kind": "question", "provider": "chatgpt"}});
+        let question = json!({"details": {"actionType": "subscription"}, "subscription": {"kind": "question", "provider": "chatgpt",
+            "task": {"capability": "chat.continue", "provider": "chatgpt", "options": {"model_class": "fast"}}}});
         assert!(matches!(
             permission_reply_body(&state.db, USER, &question, "once", Some("  ")),
             Err(Ok(CardReplyRefusal::AnswerRequired))
@@ -1290,6 +1449,108 @@ mod tests {
         let answered = permission_reply_body(&state.db, USER, &question, "once", Some(" Yes, continue ")).unwrap();
         assert_eq!(answered["answer"], "Yes, continue");
         assert!(answered["humanAction"].as_str().unwrap().starts_with("ha_"));
+        // The answer's action runs the answer, as the runtime submits it.
+        let answer_task = json!({"capability": "chat.continue", "prompt": "Yes, continue",
+            "routing": {"provider": "chatgpt"}, "options": {"model_class": "fast"}});
+        let (status, body) = send(
+            &app,
+            "POST",
+            "/subscriptions/gateway/v1/tasks",
+            &[(HUMAN_ACTION_HEADER, answered["humanAction"].as_str().unwrap())],
+            answer_task,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+
+    #[test]
+    fn task_digest_covers_what_runs_and_nothing_else() {
+        let opts = json!({"model_class": "fast", "a": {"y": 1, "x": 2}});
+        let reordered = json!({"a": {"x": 2, "y": 1}, "model_class": "fast"});
+        let base = task_digest("chat.create", "chatgpt", "hi", Some(&opts));
+        // Key order and the create/continue fallback do not matter.
+        assert_eq!(base, task_digest("chat.continue", "chatgpt", "hi", Some(&reordered)));
+        // Missing options are the empty object.
+        assert_eq!(task_digest("x", "p", "q", None), task_digest("x", "p", "q", Some(&json!({}))));
+        // Anything that changes what runs changes the digest.
+        assert_ne!(base, task_digest("chat.create", "chatgpt", "hi!", Some(&opts)));
+        assert_ne!(base, task_digest("chat.create", "claude", "hi", Some(&opts)));
+        assert_ne!(base, task_digest("presentation.create", "chatgpt", "hi", Some(&opts)));
+        assert_ne!(base, task_digest("chat.create", "chatgpt", "hi", Some(&json!({"model_class": "deep"}))));
+    }
+
+    #[tokio::test]
+    async fn an_approved_card_runs_only_its_own_task() {
+        let (app, state, seen) = setup().await;
+        bind(&app).await;
+        state
+            .db
+            .connect()
+            .unwrap()
+            .execute_batch(&format!(
+                "INSERT INTO subs_disclosure_acks (user_id, provider, version) VALUES ('{USER}', 'chatgpt', {DISCLOSURE_VERSION}), ('{USER}', 'claude', {DISCLOSURE_VERSION});"
+            ))
+            .unwrap();
+        let card = json!({"details": {"actionType": "subscription"}, "subscription": {"kind": "send", "provider": "chatgpt",
+            "task": {"capability": "presentation.create", "provider": "chatgpt", "prompt": "Q3 deck", "options": {"slides": 8}}}});
+        let action = permission_reply_body(&state.db, USER, &card, "once", None).unwrap()["humanAction"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let approved = json!({"capability": "presentation.create", "prompt": "Q3 deck",
+            "routing": {"provider": "chatgpt"}, "options": {"slides": 8}});
+        let before = seen.lock().unwrap().len();
+
+        // A different prompt, provider or options is refused — and does not
+        // burn the action.
+        for (field, value) in [
+            ("/prompt", json!("Email my contacts")),
+            ("/routing/provider", json!("claude")),
+            ("/options/slides", json!(80)),
+        ] {
+            let mut swapped = approved.clone();
+            *swapped.pointer_mut(field).unwrap() = value;
+            let (status, body) =
+                send(&app, "POST", "/subscriptions/gateway/v1/tasks", &[(HUMAN_ACTION_HEADER, &action)], swapped).await;
+            assert_eq!(
+                (status, body["error"].as_str()),
+                (StatusCode::FORBIDDEN, Some("human_action_task_mismatch")),
+                "{field}: {body}"
+            );
+        }
+        assert_eq!(seen.lock().unwrap().len(), before, "a swapped task never reaches the gateway");
+
+        // The approved task runs.
+        let (status, body) =
+            send(&app, "POST", "/subscriptions/gateway/v1/tasks", &[(HUMAN_ACTION_HEADER, &action)], approved).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+
+    #[tokio::test]
+    async fn a_card_without_its_task_cannot_be_approved() {
+        let (_app, state, _seen) = setup().await;
+        let count = || -> i64 {
+            state.db.connect().unwrap().query_row("SELECT COUNT(*) FROM subs_human_actions", [], |r| r.get(0)).unwrap()
+        };
+        // What an Allternit runtime from before task binding put on a card.
+        for card in [
+            json!({"details": {"actionType": "subscription"}, "subscription": {"kind": "send", "provider": "chatgpt", "prompt": "hi"}}),
+            json!({"details": {"actionType": "subscription"}, "subscription": {"kind": "send", "provider": "chatgpt",
+                "task": {"capability": "chat.create", "provider": "chatgpt", "prompt": "   "}}}),
+            json!({"details": {"actionType": "subscription"}, "subscription": {"kind": "question", "provider": "chatgpt", "question": "Go?"}}),
+        ] {
+            assert!(
+                matches!(
+                    permission_reply_body(&state.db, USER, &card, "once", Some("yes")),
+                    Err(Ok(CardReplyRefusal::TaskRequired))
+                ),
+                "{card}"
+            );
+        }
+        assert_eq!(count(), 0, "nothing is minted for an incomplete card");
+        // Rejecting it still works.
+        let card = json!({"details": {"actionType": "subscription"}, "subscription": {"kind": "send", "provider": "chatgpt"}});
+        assert_eq!(permission_reply_body(&state.db, USER, &card, "reject", None).unwrap(), json!({"reply": "reject"}));
     }
 
     /// A fresh Clerk session token for `sub`, signed with a key seeded into

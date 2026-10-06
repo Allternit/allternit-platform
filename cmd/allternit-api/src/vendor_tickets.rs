@@ -21,7 +21,7 @@
 //! instead (`resultVia: "reply"`); with no reply either the ticket expires.
 //!
 //! **Node deliveries** (Factory, SPEC §9 "Vendor tickets"). A ticket can be linked to a Factory
-//! node (`dag_id`, `node_id`, `wih_id`, `workspace_root`; migration V236): it is then how that
+//! node (`dag_id`, `node_id`, `wih_id`, `workspace_root`; migration V239): it is then how that
 //! node reaches the vendor bot. When it completes, its result is recorded as the node's output
 //! and the WIH is closed through the Gate ([`crate::factory_bots::close_linked_node`]). A refused
 //! close keeps the result and shows up as `nodeClose.state = "failed"` with the reason.
@@ -230,7 +230,7 @@ pub struct NewTicket<'a> {
     pub instructions: &'a str,
     pub allowed_tools: Vec<String>,
     pub deadline_secs: Option<i64>,
-    /// The Factory node this ticket delivers (V236). Unique per (owner, dag, node, WIH).
+    /// The Factory node this ticket delivers (V239). Unique per (owner, dag, node, WIH).
     pub node: Option<NodeLink<'a>>,
 }
 
@@ -316,6 +316,19 @@ pub fn create_ticket(db: &DbHandle, t: NewTicket) -> Result<Value, String> {
         return Err(e.to_string());
     }
     record_participation(db, t.owner, t.vendor_bot_id, t.thread_id, "ticket");
+    // Ledger → Desktop/cloud event backbone (`vendor.ticket.created`), on the owner's thread bot.
+    if let Some(owner_bot) = thread_bot(db, t.owner, t.thread_id) {
+        crate::gateway_runner::led(
+            db,
+            &owner_bot,
+            t.thread_id,
+            None,
+            "vendor.ticket.created",
+            ("user", t.owner),
+            json!({ "ticketId": &id, "vendorBotId": t.vendor_bot_id, "deadlineAt": &deadline, "title": instructions.chars().take(120).collect::<String>() }),
+            Some(format!("vendor-ticket-created:{}:{id}", t.owner)),
+        );
+    }
     get_ticket(db, t.owner, &id)?.ok_or_else(|| "ticket missing".into())
 }
 

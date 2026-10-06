@@ -47,6 +47,7 @@ All authenticated routes require a valid bearer token in the `Authorization` hea
 | `POST` | `/api/v1/agents/:agent_id/connectors/resolve` | Resolve connector credentials for an agent. |
 | `GET` | `/api/v1/agents/:agent_id/identity` | Get an agent's identity channels. |
 | `POST` | `/api/v1/agents/:agent_id/identity/email` | Provision an email address for an agent. |
+| `DELETE` | `/api/v1/agents/:agent_id/identity/email` | Give up the agent's address so a new one can be provisioned. |
 | `POST` | `/api/v1/agents/:agent_id/identity/phone` | Provision a phone number for an agent. |
 | `POST` | `/api/v1/photon/sessions/:session_id/bridge` | Bridge a session to another surface. |
 | `POST` | `/webhooks/photon` | Public webhook for inbound Photon messages. |
@@ -370,11 +371,11 @@ curl -H "Authorization: Bearer $TOKEN" \
 POST /api/v1/agents/:agent_id/identity/email
 ```
 
-Provisions an email address for the agent using the domain configured in `ALLTERNIT_BOT_EMAIL_DOMAIN`.
+Provisions an email address for the agent on `ALLTERNIT_BOT_EMAIL_DOMAIN` (default `bots.allternit.com`): through Allternit's cloud on a signed-in computer, or directly when the runtime has Allternit Mail's admin key. See [Agent email rail](#agent-email-rail).
 
 When the mailflare agent-email rail is configured (`ALLTERNIT_MAILFLARE_URL` + `ALLTERNIT_MAILFLARE_ADMIN_KEY`), this creates a **real mailbox** on the mailflare worker, mints a mailbox-scoped send/read API key, seals it server-side, and stores the channel with provider `"mailflare"`. The agent can then genuinely receive and (subject to approval) send internet email. When mailflare is not configured, the endpoint falls back to minting an address record only (provider `"commrails"`) with no send/receive transport.
 
-Provisioning is idempotent: re-provisioning an agent returns its existing channel, and the address never changes once created.
+Provisioning is idempotent: re-provisioning an agent returns its existing channel. A platform address (provider `mailflare`) is owned by the server: a `PATCH /api/v1/agents/:id` that sends a different `identityChannels.email.address` keeps the stored one. To change it, release it and provision again (below). Switching the bot to its own mail account (`provider` other than `mailflare` / `commrails`) still saves the new address.
 
 The part before the `@` comes from the optional body `{ "localPart": "ledger-bot" }`: 3-40 lowercase letters, numbers and single hyphens (invalid values return `400 invalid_local_part`; role names such as `postmaster` return `400 reserved_local_part`). A requested name that is already taken returns `409 email_local_part_taken`. Without `localPart`, the address is a slug of the bot's name (`ledger-bot`), with `-2`, `-3` and so on added only when that address is taken. The mailbox's display name, which becomes the From name on outbound mail, is the bot's name.
 
@@ -396,9 +397,32 @@ curl -X POST http://127.0.0.1:8013/api/v1/agents/agent_018f3a7c.../identity/emai
 }
 ```
 
+### Change an agent's address
+
+```http
+DELETE /api/v1/agents/:agent_id/identity/email
+```
+
+Removes the agent's mailbox (on a cloud-provisioned runtime, cloud-api also removes its key, its webhook and the relay route), then clears the address and the mailbox credentials from the agent. Reply settings (`replyMode`, `replyAllowlist`) stay. Mail sent to the old address stops arriving. Follow it with `POST …/identity/email {"localPart": "<new name>"}`.
+
+If the mailbox can't be removed, the call returns `502 mailbox_not_removed` and the agent keeps its address. The app's email wizard and the bot's Identity settings do both steps; when the new name is taken they provision the default address again and say which address the bot is on.
+
+```json
+{ "released": true }
+```
+
 ## Agent email rail
 
 Real inbound/outbound email for agents, backed by a per-installation mailflare worker (see `services/mailflare/`). Inbound mail arrives as an HMAC-signed webhook and is bridged into the agent's Factory mail threads; outbound mail is held for human approval before it is sent.
+
+### Two ways a runtime gets bot email
+
+| Mode | Who creates the mailbox | Keys on the runtime |
+|---|---|---|
+| **Cloud-provisioned** (default for every signed-in computer) | cloud-api, `POST /api/v1/runtime-devices/me/bot-email/mailboxes {agentId, localPart, displayName?}` with the runtime's device credential. The cloud creates an `email` relay route to that runtime, the mailbox on `bots.allternit.com` (a taken name gets `-2`, `-3`…), a send+read key scoped to that mailbox, and a `message.inbound` webhook scoped to that mailbox only, and returns `{address, mailboxId, apiKey, webhookSecret, mailUrl}` once. `DELETE …/mailboxes/:mailbox_id` removes all of it. | Only the bot's own sealed key and its webhook secret. Never the admin key. |
+| **Admin** (an operator runtime) | The runtime itself, with `ALLTERNIT_MAILFLARE_URL` + `ALLTERNIT_MAILFLARE_ADMIN_KEY`. | The admin key; one runtime-wide `ALLTERNIT_MAILFLARE_WEBHOOK_SECRET`. |
+
+Inbound mail is verified with the receiving mailbox's own secret (cloud-provisioned) or the runtime-wide one (admin), before anything in the body is trusted; the bot is found by the event's `mailboxId`, then the delivered-to address, then `to`. A cloud-provisioned bot's direct replies (`auto`, `auto_known`) are sent with its own key and approved by the runtime itself once its review and autonomy rules allow them. A mailbox's mail is never delivered to another runtime: each webhook is scoped to one mailbox. `ALLTERNIT_BOT_EMAIL_BROKERED=0` turns the cloud mode off. cloud-api answers `503 bot_email_not_configured` until `ALLTERNIT_MAILFLARE_URL` and `ALLTERNIT_MAILFLARE_ADMIN_KEY` are set on it.
 
 ### Send email (approval-gated)
 
@@ -520,7 +544,7 @@ curl -X POST http://127.0.0.1:8013/api/v1/photon/sessions/sess_9c1d.../bridge \
 | `409 Conflict` | `email_not_provisioned` | Agent has no mailflare email channel; provision one first. |
 | `403 Forbidden` | `email_send_disabled` | Outbound email is disabled for this agent. |
 | `500 Internal Server Error` | `internal_error` | Unexpected server error. |
-| `501 Not Implemented` | `email_domain_not_configured` | `ALLTERNIT_BOT_EMAIL_DOMAIN` is not set. |
+| `501 Not Implemented` | `email_domain_not_configured` | Allternit Mail isn't configured and `ALLTERNIT_BOT_EMAIL_DOMAIN` is not set. |
 | `501 Not Implemented` | `mailflare_not_configured` | `ALLTERNIT_MAILFLARE_URL` / `ALLTERNIT_MAILFLARE_ADMIN_KEY` are not set. |
 | `501 Not Implemented` | `phone_pool_not_configured` | `ALLTERNIT_BOT_PHONE_POOL` is not set. |
 | `501 Not Implemented` | `phone_pool_empty` | `ALLTERNIT_BOT_PHONE_POOL` is empty. |

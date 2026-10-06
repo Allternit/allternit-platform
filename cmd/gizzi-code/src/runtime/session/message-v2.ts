@@ -222,6 +222,9 @@ export namespace MessageV2 {
       cache: z.object({
         read: z.number(),
         write: z.number(),
+        /** Request TTL/refresh estimate; absent for providers with unknown expiry. */
+        ttlSeconds: z.number().optional(),
+        refreshedAt: z.number().optional(),
       }),
     }),
   })
@@ -390,6 +393,9 @@ export namespace MessageV2 {
       cache: z.object({
         read: z.number(),
         write: z.number(),
+        /** Request TTL/refresh estimate; absent for providers with unknown expiry. */
+        ttlSeconds: z.number().optional(),
+        refreshedAt: z.number().optional(),
       }),
     }),
     /** Token counts were estimated because the provider reported none. */
@@ -431,6 +437,12 @@ export namespace MessageV2 {
         partID: z.string(),
         field: z.string(),
         delta: z.string(),
+        /**
+         * The delta's durable trace sequence (SessionTrace). Chat bridges use
+         * it as the resume cursor: after a dropped stream they replay the
+         * session trace after it and skip live deltas already replayed.
+         */
+        traceSeq: z.number().int().optional(),
       }),
     ),
     PartRemoved: BusEvent.define(

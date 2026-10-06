@@ -10,7 +10,12 @@ import type { RunLogListInput } from "./storage/runtime-store.ts";
 import type { RuntimeTokenService } from "./storage/runtime-token-service.ts";
 import type { Context } from "hono";
 
-import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import {
+  createMcpHandler,
+  isLegacyRequest,
+  WebStandardStreamableHTTPServerTransport,
+  type McpHttpHandler,
+} from "@modelcontextprotocol/server";
 import { Scalar } from "@scalar/hono-api-reference";
 import { Hono } from "hono";
 import { ConnectionError } from "../connection-service.ts";
@@ -484,12 +489,10 @@ export class ConnectServer {
     return writeRuntimeSuccess(context, await this.options.connections.listAuthenticatedServices(services));
   }
 
-  private async handleMcp(context: Context): Promise<Response> {
-    const transport = new WebStandardStreamableHTTPServerTransport({
-      sessionIdGenerator: undefined,
-      enableJsonResponse: true,
-    });
-    const server = createMcpServer({
+  private modernMcp?: McpHttpHandler;
+
+  private createMcpServerForRequest() {
+    return createMcpServer({
       catalog: this.options.catalog,
       providerLoader: this.options.providerLoader,
       connections: this.options.connections,
@@ -497,10 +500,35 @@ export class ConnectServer {
       actionPolicy: this.options.actionPolicy,
       actionSearch: this.actionSearch,
     });
+  }
+
+  /**
+   * Dual-era, stateless MCP. 2026-07-28 requests (per-request `_meta`,
+   * `server/discover`) go to the SDK's modern handler. 2025-era requests
+   * (`initialize` and friends) keep the exact previous wiring: a fresh
+   * server + stateless transport with plain JSON responses, which is what the
+   * allternit-api `/connectors/mcp` proxy parses.
+   */
+  private async handleMcp(context: Context): Promise<Response> {
+    const request = context.req.raw;
+    if (!(await isLegacyRequest(request))) {
+      this.modernMcp ??= createMcpHandler(() => this.createMcpServerForRequest(), {
+        legacy: "reject",
+        responseMode: "json",
+        onerror: (error) => this.options.logger?.warn({ err: error }, "mcp request failed"),
+      });
+      return this.modernMcp.fetch(request);
+    }
+
+    const transport = new WebStandardStreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+      enableJsonResponse: true,
+    });
+    const server = this.createMcpServerForRequest();
 
     await server.connect(transport);
     try {
-      return await transport.handleRequest(context.req.raw);
+      return await transport.handleRequest(request);
     } finally {
       await server.close();
     }

@@ -1,7 +1,10 @@
-import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport, StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { McpError } from "@modelcontextprotocol/sdk/types.js";
+import {
+  Client,
+  ProtocolError,
+  SdkHttpError,
+  StreamableHTTPClientTransport,
+  UnauthorizedError,
+} from "@modelcontextprotocol/client";
 import { createHash } from "node:crypto";
 import { compactObject } from "../../core/cast.ts";
 import { providerUserAgent, ProviderRequestError } from "../provider-runtime.ts";
@@ -651,6 +654,10 @@ async function callStreamableHttpMcpTool(input: {
   const client = new Client({
     name: input.clientName,
     version: "1.0.0",
+  }, {
+    // Remote 2025-era server: keep the plain initialize handshake (one round trip per call).
+    // Switch to { mode: "auto" } once the provider answers server/discover.
+    versionNegotiation: { mode: "legacy" },
   });
 
   try {
@@ -662,7 +669,6 @@ async function callStreamableHttpMcpTool(input: {
         name: input.toolName,
         arguments: input.arguments,
       },
-      undefined,
       {
         timeout: input.requestTimeoutMs,
       },
@@ -681,15 +687,15 @@ function mapHubspotMcpError(service: string, error: unknown): ProviderRequestErr
   if (error instanceof UnauthorizedError) {
     return new HubspotRequestError("credential_expired", `${service} MCP token is invalid or expired`, 401, error);
   }
-  if (error instanceof StreamableHTTPError) {
-    const status = error.code;
+  if (error instanceof SdkHttpError) {
+    const status = error.status;
     return new ProviderRequestError(
       status === 401 || status === 403 ? 401 : status && status >= 400 && status < 500 ? 400 : 502,
       `${service} MCP request failed: ${error.message}`,
       error,
     );
   }
-  if (error instanceof McpError) {
+  if (error instanceof ProtocolError) {
     return new ProviderRequestError(502, `${service} MCP request failed: ${error.message}`, error);
   }
   return new ProviderRequestError(

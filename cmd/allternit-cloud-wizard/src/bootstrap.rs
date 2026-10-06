@@ -35,7 +35,7 @@
 use allternit_cloud_ssh::SshConnection;
 use serde::{Deserialize, Serialize};
 
-/// Pinned gizzi-code release tag (in `Gizziio/allternit-platform`, built by
+/// Pinned gizzi-code release tag (in `Allternit/allternit-platform`, built by
 /// `release-gizzi-code.yml` from this monorepo).
 pub const GIZZI_RELEASE: &str = "gizzi-code/0.2.3";
 
@@ -57,7 +57,7 @@ pub const GIZZI_LINUX_ARM64_SHA256_ENV: &str = "GIZZI_LINUX_ARM64_SHA256";
 
 /// GitHub releases download base for the pinned release.
 pub const GIZZI_DOWNLOAD_BASE: &str =
-    "https://github.com/Gizziio/allternit-platform/releases/download";
+    "https://github.com/Allternit/allternit-platform/releases/download";
 
 /// Port gizzi-code serves on (mesh-only; no firewall ports are opened).
 pub const GIZZI_PORT: u16 = 4096;

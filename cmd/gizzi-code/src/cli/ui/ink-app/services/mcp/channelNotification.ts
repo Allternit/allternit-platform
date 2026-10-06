@@ -17,7 +17,7 @@
  * must explicitly opt in via channelsEnabled: true in managed settings.
  */
 
-import type { ServerCapabilities } from '@modelcontextprotocol/sdk/types.js'
+import type { ServerCapabilities } from '@modelcontextprotocol/client'
 import { z } from 'zod/v4'
 import { type ChannelEntry, getAllowedChannels } from '../../bootstrap/state.js'
 import { CHANNEL_TAG } from '../../constants/xml.js'

@@ -49,6 +49,7 @@
   },
   "dependencies": {
     "@clerk/clerk-react": "^5.30.0",
+    "@modelcontextprotocol/client": "catalog:",
     "electron-log": "^5.2.0",
     "electron-store": "^8.2.0",
     "fix-path": "^4.0.0",
@@ -85,7 +86,7 @@
   "license": "UNLICENSED",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Gizziio/desktop"
+    "url": "https://github.com/Allternit/desktop"
   },
   "build": {
     "appId": "com.allternit.desktop",
@@ -506,7 +507,7 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "Gizziio",
+        "owner": "Allternit",
         "repo": "desktop",
         "releaseType": "release"
       }

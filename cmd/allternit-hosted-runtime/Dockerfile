@@ -17,7 +17,7 @@ RUN apt-get update \
 # checksum makes the hosted image reproducible without compiling desktop-only
 # Gizzi sources inside the container build.
 RUN curl -fsSL \
-      "https://github.com/Gizziio/gizzi-code/releases/download/${GIZZI_RELEASE}/gizzi-code-linux-x64-native" \
+      "https://github.com/Allternit/gizzi-code/releases/download/${GIZZI_RELEASE}/gizzi-code-linux-x64-native" \
       -o /app/gizzi-code \
     && echo "${GIZZI_LINUX_X64_SHA256}  /app/gizzi-code" | sha256sum -c - \
     && chmod +x /app/gizzi-code

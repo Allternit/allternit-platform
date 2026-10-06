@@ -24,22 +24,60 @@ pub struct MailflareConfig {
     pub domain: String,
     /// HMAC-SHA256 secret shared with mailflare webhook deliveries.
     pub webhook_secret: Option<String>,
+    /// Provisioned through Allternit's cloud: this runtime has no admin key and
+    /// acts only with each bot's own mailbox-scoped key.
+    pub brokered: bool,
 }
+
+/// The domain every Allternit bot mailbox lives on.
+pub const DEFAULT_BOT_EMAIL_DOMAIN: &str = "bots.allternit.com";
 
 impl MailflareConfig {
     /// Load from the environment. Returns `None` (mailflare disabled) when the
-    /// base URL or admin key is missing/empty.
+    /// base URL or admin key is missing/empty. The bot mail domain defaults to
+    /// [`DEFAULT_BOT_EMAIL_DOMAIN`]: a missing `ALLTERNIT_BOT_EMAIL_DOMAIN` used
+    /// to switch bot email off silently even with the service configured.
     pub fn from_env() -> Option<Self> {
         let base_url = env_non_empty("ALLTERNIT_MAILFLARE_URL")?;
         let admin_key = env_non_empty("ALLTERNIT_MAILFLARE_ADMIN_KEY")?;
-        let domain = env_non_empty("ALLTERNIT_BOT_EMAIL_DOMAIN")?;
+        let domain = env_non_empty("ALLTERNIT_BOT_EMAIL_DOMAIN").unwrap_or_else(|| DEFAULT_BOT_EMAIL_DOMAIN.to_string());
         Some(Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             admin_key,
             domain,
             webhook_secret: env_non_empty("ALLTERNIT_MAILFLARE_WEBHOOK_SECRET"),
+            brokered: false,
         })
     }
+
+    /// A cloud-brokered client for one mailbox's service URL (no admin key).
+    pub fn brokered(base_url: &str) -> Self {
+        Self {
+            base_url: base_url.trim_end_matches('/').to_string(),
+            admin_key: String::new(),
+            domain: env_non_empty("ALLTERNIT_BOT_EMAIL_DOMAIN").unwrap_or_else(|| DEFAULT_BOT_EMAIL_DOMAIN.to_string()),
+            webhook_secret: None,
+            brokered: true,
+        }
+    }
+}
+
+/// Bot email can be provisioned through Allternit's cloud: no local admin key,
+/// but this runtime is paired (it has a device credential). Off with
+/// `ALLTERNIT_BOT_EMAIL_BROKERED=0`.
+/// Tests run on machines that may be signed in to Allternit for real; brokered mode stays off in
+/// them unless a test switches it on, so results don't depend on the machine.
+#[cfg(test)]
+pub static TEST_BROKERED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn brokered_available() -> bool {
+    #[cfg(test)]
+    if !TEST_BROKERED.load(std::sync::atomic::Ordering::Relaxed) {
+        return false;
+    }
+    MailflareConfig::from_env().is_none()
+        && crate::phone_sync::runtime_bearer().is_some()
+        && std::env::var("ALLTERNIT_BOT_EMAIL_BROKERED").map(|v| v != "0").unwrap_or(true)
 }
 
 fn env_non_empty(key: &str) -> Option<String> {

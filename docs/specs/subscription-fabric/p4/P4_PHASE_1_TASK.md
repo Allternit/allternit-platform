@@ -1,6 +1,6 @@
 # P4 Phase 1 — Real Router + Quota Pools (subscription-gateway)
 
-You are working in a git worktree of `Gizziio/allternit-platform` (branch `session/subsfab-p4`,
+You are working in a git worktree of `Allternit/allternit-platform` (branch `session/subsfab-p4`,
 cut from main @ 16b0d96e2). Zero prior context — this file is your whole brief. Read the files
 it points at before writing code.
 

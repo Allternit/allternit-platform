@@ -54,14 +54,25 @@ Tool use during a call reuses the `agent.tool.*` events.
 
 ## Connect API
 
-`src/lib/gateway/connect-api.ts` is the typed client for the wizards, under `/api/v1/gateway/channel-connect`. `createConnectApi(http)` takes any `HttpLike`; `connectApi` is the default instance. A 404 or 503 on a read means the provider's backend has not shipped: availability calls resolve to "not available" and the wizard shows its **Coming soon** panel.
+`src/lib/gateway/connect-api.ts` is the typed client for the wizards. `createConnectApi(http, cloud, runtimeId)` takes the runtime `HttpLike`, a cloud fetch (`cloudApiFetch`, the signed-in token) and the current runtime id; `connectApi` is the default instance. Each wizard calls the route that implements it:
+
+| Wizard | Routes |
+| --- | --- |
+| Phone | Cloud `/api/v1/phone/numbers/*` (search, buy with `runtimeId` + `botId`, `registration`, `registration/otp`, `port`); availability from the public `GET /api/v1/channels/availability` |
+| Telegram (managed bot) | Runtime `GET /api/v1/gateway/channel-accounts/telegram/managed/available`; cloud `POST /api/v1/channel-onboarding/telegram` and `GET …/:id`. Without the manager bot the wizard falls back to the BotFather token form. |
+| Slack | Cloud `GET /api/v1/channels/slack/install` (the Add to Slack link), then runtime `POST /api/v1/gateway/channel-accounts/slack` records the installed workspace (idempotent; 404 until the install lands) |
+| Email | Runtime `GET /api/v1/agent-email/status`, `POST /api/v1/agents/:id/identity/email` (the bot's address; `DELETE` then `POST {localPart}` changes it), `PATCH /api/v1/agents/:id` with `identityChannels.email.{replyMode, replyAllowlist}` (`approve` / `auto_known` / `auto`; other email fields are kept) |
+| Discord | Cloud `POST /api/v1/channels/discord/install {runtimeId}` (the Add to Discord link), then runtime `POST /api/v1/gateway/channel-accounts/discord {guildId?}` reads `GET /api/v1/channels/discord/installs` and records the server as an app-mode connection (idempotent; 404 until the install lands). Bots answer where they are mentioned. Channel picker: cloud `GET /api/v1/channels/discord/installs/:guildId/channels` (text and announcement channels in position order, each `{id, name, selected}`, plus `allChannels`) and `PUT …/channels {channelIds}` (empty = every channel, also ones made later). Messages from other channels are dropped at the cloud and never reach the runtime; a thread counts as its parent channel; DMs and slash commands are not filtered. 404 `discord_not_installed` for a server that isn't the caller's. |
+| Teams, WhatsApp | Not wired yet: the cloud install routes exist but nothing turns a finished install into an account on the runtime, so these show **Coming soon**. |
+
+A 404 or 503 on a read means the provider's backend isn't there: availability calls resolve to "not available" and the wizard shows its **Coming soon** panel. Company domains for bot email and test-message buttons are not built yet; the wizards say so instead of failing. The email wizard has no test button: it tells people to email the address from their own inbox.
 
 | Area | Methods |
 | --- | --- |
 | Telegram managed bots | `telegramManagedAvailability`, `createManagedTelegramBot`, `managedTelegramStatus`, `cancelManagedTelegramBot` |
-| Email | `emailStatus`, `saveEmailSettings` (`replyMode`: `approve`, `known`, `auto`; `allowlist`), `setEmailDomain`, `emailDomainStatus`, `sendEmailTest` |
+| Email | `emailStatus`, `saveEmailSettings` (`replyMode`: `approve`, `known`, `auto`; `allowlist`), `setEmailDomain`, `emailDomainStatus`, `changeEmailAddress(botId, localPart)` |
 | Phone numbers | `phoneAvailability`, `searchPhoneNumbers`, `buyPhoneNumber`, `submitPhoneRegistration`, `phoneRegistrationStatus`, `portPhoneNumber` |
-| Discord, Slack, Teams, WhatsApp | `startChannelConnect(provider, { botId })`, `channelConnectStatus`, `cancelChannelConnect`, `teamsAdminLink`, `listConnectChannels`, `saveConnectChannels`, `whatsappModes`, `startWhatsAppPersonal` |
+| Discord, Slack, Teams, WhatsApp | `startChannelConnect(provider, { botId })`, `channelConnectStatus`, `cancelChannelConnect`, `teamsAdminLink`, `listConnectChannels(provider, guildId)`, `saveConnectChannels(provider, guildId, channelIds)`, `whatsappModes`, `startWhatsAppPersonal` |
 | Health | `sendConnectTest(accountId)` |
 
 Wizards live in `src/components/gateway/connect/`. `ConnectWizard` is the shared step engine (intro, action, form, waiting, code, done); each provider supplies its steps. `ConnectWizardDialog` maps a provider to its wizard and is mounted by `MessagingConnectorsSection` and `BotMessagingToggles`.

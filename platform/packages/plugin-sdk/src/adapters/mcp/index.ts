@@ -34,16 +34,10 @@ import {
   StorageBackend,
 } from '../../types';
 
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-  ListResourcesRequestSchema,
-  ReadResourceRequestSchema,
-  ErrorCode,
-  McpError,
-} from '@modelcontextprotocol/sdk/types.js';
+// Official MCP SDK v2: serves MCP 2026-07-28 (server/discover, per-request
+// _meta) and the legacy initialize handshake from one factory.
+import { Server, ProtocolError, ProtocolErrorCode, type Tool, type Transport } from '@modelcontextprotocol/server';
+import { serveStdio } from '@modelcontextprotocol/server/stdio';
 
 export interface McpAdapterConfig {
   /** Transport type */
@@ -83,40 +77,43 @@ export class McpAdapter implements Adapter {
 }
 
 class McpAdapterInstance implements AdapterInstance {
-  private server: Server;
-  private transport: StdioServerTransport;
+  private handle?: { close(): Promise<void> };
   private host: McpPluginHost;
   private plugin: Plugin;
   
   constructor(plugin: Plugin, private config: McpAdapterConfig) {
     this.plugin = plugin;
     this.host = new McpPluginHost(plugin);
-    
-    // Create MCP server
-    this.server = new (Server as any)(
+  }
+
+  /** A fresh MCP server for one connection (serveStdio calls this per era). */
+  createServer(): Server {
+    const config = this.config;
+    const plugin = this.plugin;
+    const server = new Server(
       {
         name: config.serverName || plugin.manifest.id,
         version: config.serverVersion || plugin.manifest.version,
       },
       {
         capabilities: {
-          tools: config.exposeTools !== false ? {} : undefined,
-          resources: config.exposeResources !== false ? {} : undefined,
-          prompts: config.exposePrompts !== false ? {} : undefined,
+          ...(config.exposeTools !== false ? { tools: {} } : {}),
+          ...(config.exposeResources !== false ? { resources: {} } : {}),
         },
       }
     );
     
-    this.setupHandlers();
+    this.setupHandlers(server);
+    return server;
   }
   
-  private setupHandlers(): void {
+  private setupHandlers(server: Server): void {
     // List available tools (one per plugin function)
-    this.server.setRequestHandler(ListToolsRequestSchema, async () => {
-      const tools = this.plugin.manifest.provides.functions.map(fn => ({
+    if (this.config.exposeTools !== false) server.setRequestHandler('tools/list', async () => {
+      const tools: Tool[] = this.plugin.manifest.provides.functions.map(fn => ({
         name: fn.name,
         description: fn.description,
-        inputSchema: fn.parameters,
+        inputSchema: fn.parameters as unknown as Tool['inputSchema'],
       }));
       
       // Add meta-tool for plugin info
@@ -133,7 +130,7 @@ class McpAdapterInstance implements AdapterInstance {
     });
     
     // Execute tool
-    this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    if (this.config.exposeTools !== false) server.setRequestHandler('tools/call', async (request) => {
       const { name, arguments: args } = request.params;
       
       try {
@@ -151,8 +148,8 @@ class McpAdapterInstance implements AdapterInstance {
         // Find the function
         const fn = this.plugin.manifest.provides.functions.find(f => f.name === name);
         if (!fn) {
-          throw new McpError(
-            ErrorCode.MethodNotFound,
+          throw new ProtocolError(
+            ProtocolErrorCode.MethodNotFound,
             `Unknown tool: ${name}`
           );
         }
@@ -208,7 +205,7 @@ class McpAdapterInstance implements AdapterInstance {
     });
     
     // List resources (plugin documentation)
-    this.server.setRequestHandler(ListResourcesRequestSchema, async () => {
+    if (this.config.exposeResources !== false) server.setRequestHandler('resources/list', async () => {
       return {
         resources: [
           {
@@ -226,7 +223,7 @@ class McpAdapterInstance implements AdapterInstance {
     });
     
     // Read resource
-    this.server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    if (this.config.exposeResources !== false) server.setRequestHandler('resources/read', async (request) => {
       const uri = request.params.uri;
       
       if (uri === `plugin://${this.plugin.manifest.id}/manifest`) {
@@ -253,8 +250,8 @@ class McpAdapterInstance implements AdapterInstance {
         };
       }
       
-      throw new McpError(
-        ErrorCode.InvalidRequest,
+      throw new ProtocolError(
+        ProtocolErrorCode.InvalidRequest,
         `Unknown resource: ${uri}`
       );
     });
@@ -317,9 +314,9 @@ ${Object.entries(fn.parameters.properties).map(([key, val]: [string, any]) => `-
 `.trim();
   }
   
-  async start(): Promise<void> {
-    this.transport = new StdioServerTransport();
-    await this.server.connect(this.transport);
+  /** Serve over this process's stdio (or `transport`, for tests). */
+  async start(transport?: Transport): Promise<void> {
+    this.handle = serveStdio(() => this.createServer(), transport ? { transport } : {});
     
     // Initialize plugin with our host
     await this.plugin.initialize(this.host);
@@ -329,7 +326,8 @@ ${Object.entries(fn.parameters.properties).map(([key, val]: [string, any]) => `-
   
   async stop(): Promise<void> {
     await this.plugin.destroy?.();
-    await this.server.close();
+    await this.handle?.close();
+    this.handle = undefined;
   }
   
   getEndpoint(): AdapterEndpoint {

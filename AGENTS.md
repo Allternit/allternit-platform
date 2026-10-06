@@ -21,7 +21,7 @@ Do not call the workspace "Allternit Cloud" or put it in a repo named `allternit
 
 | Product | Domain | Source | Pages project |
 |---|---|---|---|
-| Agent workspace | `ai.allternit.com` | private `Gizziio/allternit-ai` | `ai-allternit` |
+| Agent workspace | `ai.allternit.com` | private `Allternit/allternit-ai` | `ai-allternit` |
 | Cloud console | `platform.allternit.com` | this repo `surfaces/platform.allternit.com` | `allternit-platform` |
 
 - This public repo **must never** `wrangler pages deploy --project-name=ai-allternit`.
@@ -59,7 +59,7 @@ Eoj's rule, effective 2026-09-26. Several terminals build and ship gizzi-code an
 2. **Build only from latest `origin/main`.** Fetch first and build from main (or a commit main contains). A binary from an unmerged session branch is never installed into an app, released, or copied over someone else's build. If your change isn't merged, it isn't shippable.
 3. **One build per product at a time.** If the report shows an ACTIVE build of the same product, wait for it or coordinate with its session (`ListAgents`/`SendMessage`). Don't start a parallel one.
 4. **Ship through the official channels — all of them, every time.**
-   - **gizzi-code:** bump `cmd/gizzi-code/package.json` on main → push tag `gizzi-code/vX.Y.Z` (CI `publish-gizzi-code-npm.yml` publishes npm + the GitHub Release) → update `Gizziio/homebrew-tap` `Formula/gizzi-code.rb` (version + every platform sha256 from the release assets) → `bash cmd/gizzi-code/script/update-packaging-hashes.sh X.Y.Z` to move the in-repo manifests (homebrew/scoop/arch/rpm/deb/winget) to the new version and hashes, committed via PR → `brew upgrade gizzi-code` on the owner machine → `gizzi --version` matches. The Desktop sidecar is the second channel: rebuild Desktop with `resources/bin/gizzi-code` built from the same commit (lifecycle step 8).
+   - **gizzi-code:** bump `cmd/gizzi-code/package.json` on main → push tag `gizzi-code/vX.Y.Z` (CI `publish-gizzi-code-npm.yml` publishes npm + the GitHub Release) → update `Allternit/homebrew-tap` `Formula/gizzi-code.rb` (version + every platform sha256 from the release assets) → `bash cmd/gizzi-code/script/update-packaging-hashes.sh X.Y.Z` to move the in-repo manifests (homebrew/scoop/arch/rpm/deb/winget) to the new version and hashes, committed via PR → `brew upgrade gizzi-code` on the owner machine → `gizzi --version` matches. The Desktop sidecar is the second channel: rebuild Desktop with `resources/bin/gizzi-code` built from the same commit (lifecycle step 8).
    - **Allternit Desktop:** DMG from main per lifecycle step 8, installed by replacing `/Applications/Allternit Desktop.app` — not alongside it; official releases via a new `desktop-v*` tag under the release-lock commandment.
    - Never patch an installed app in place (copying a binary or `platform/` into any `Allternit Desktop*.app`), and never keep a second installed copy such as a "Preview" app — both drift from main and hide which build is running.
 5. **New replaces old, in the same session.** Once the new build is verified, run `bash scripts/build-state.sh --prune`: it deletes stale gizzi binaries and Desktop DMGs/bundles in the shared checkout, your worktree, and workspace-level backup dirs, and runs `brew cleanup gizzi-code`. It refuses while any build is active, never touches the installed app, the current Homebrew version, or user-data backups. Stale copies in another session's worktree: message that session instead of deleting them (worktree ownership is absolute).
@@ -222,7 +222,7 @@ allternit/
 │   ├── analyze-packages.ts               ← Codebase → topics/challenges
 │   ├── platform-as-course.ts             ← Platform → course outline
 │   └── fix-unpublished-modules.ts        ← Publishes + sets prerequisites
-├── (workspace UI) Gizziio/allternit-ai   ← LabsView / demos live there, not here
+├── (workspace UI) Allternit/allternit-ai   ← LabsView / demos live there, not here
 └── .agents/skills/
     └── alabs-course-pipeline/
         └── SKILL.md                      ← Agent skill for pipeline usage
@@ -480,7 +480,7 @@ Phase 4 added public docs for the agent runtime surfaces. When working on tools,
 - **Canvas Instance:** Free For Teacher, `canvas.instructure.com`
 - **Node Version:** v25.6.1 with `tsx`
 - **Database:** SQLite (`better-sqlite3`) + PostgreSQL (Prisma)
-- **Workspace UI:** private `Gizziio/allternit-ai` (Vite + React). Console is `surfaces/platform.allternit.com/`.
+- **Workspace UI:** private `Allternit/allternit-ai` (Vite + React). Console is `surfaces/platform.allternit.com/`.
 - **Course IDs:** See catalog table above
 - **Generated modules:** Stored in `alabs-generated-courses/`
 - **Demo site:** `alabs-generated-courses/demos/index.html` — works offline
@@ -507,14 +507,14 @@ The `LabsView.tsx` "Try Demo" buttons link to `/demos/ALABS-ADV-{COURSE}-module1
 
 After generating new modules:
 1. Copy to `alabs-generated-courses/demos/`
-2. Copy to `Gizziio/allternit-ai` `public/demos/`
+2. Copy to `Allternit/allternit-ai` `public/demos/`
 3. Regenerate index: `npx tsx scripts/generate-demo-index.ts`
 4. Copy updated index to both locations
 
 ### Platform UI Updates
 
 When adding new courses/modules, update:
-- `Gizziio/allternit-ai` `src/views/LabsView.tsx` — `ALABS_COURSES` array
+- `Allternit/allternit-ai` `src/views/LabsView.tsx` — `ALABS_COURSES` array
 - Module counts, descriptions, demo URLs
 
 ---

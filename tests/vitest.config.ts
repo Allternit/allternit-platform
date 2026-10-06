@@ -20,7 +20,7 @@ export default defineConfig({
     exclude: [
       'node_modules',
       'dist',
-      // Workspace UI tests live in Gizziio/allternit-ai now.
+      // Workspace UI tests live in Allternit/allternit-ai now.
       'integration/cowork-team.test.ts',
       'integration/intelli-schedule.test.ts',
     ],

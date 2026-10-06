@@ -29,11 +29,10 @@ use tracing::warn;
 
 use crate::auth::AuthUser;
 use crate::subscription_routes::{
-    acknowledged_version, forward, mint_human_action, provider_disclosure, DISCLOSURE_VERSION, HUMAN_ACTION_HEADER,
+    acknowledged_version, forward, provider_disclosure, DISCLOSURE_VERSION, HUMAN_ACTION_HEADER,
 };
 use crate::AppState;
 
-const PROTOCOL_VERSION: &str = "2025-03-26";
 const SERVER_NAME: &str = "allternit-subscriptions";
 /// `cowork_approvals.content.kind` of a prepared subscription task.
 pub const PREPARED_KIND: &str = "subscription_task";
@@ -115,18 +114,20 @@ pub async fn handle_rpc(
     let Some(id) = req.id.clone() else {
         return StatusCode::ACCEPTED.into_response();
     };
-    let reply = match req.method.as_str() {
-        "initialize" => success(
-            id,
-            json!({
-                "protocolVersion": PROTOCOL_VERSION,
-                "capabilities": {"tools": {"listChanged": false}},
-                "serverInfo": {"name": SERVER_NAME, "version": env!("CARGO_PKG_VERSION")},
-                "instructions": "Tools here prepare tasks for the user's own subscriptions (ChatGPT, Claude, Kimi). \
+    let spec = mcp_protocol::ServerSpec {
+        name: SERVER_NAME,
+        version: env!("CARGO_PKG_VERSION"),
+        capabilities: json!({"tools": {"listChanged": false}}),
+        instructions: Some(
+            "Tools here prepare tasks for the user's own subscriptions (ChatGPT, Claude, Kimi). \
 Nothing runs until the user approves it in the Allternit app.",
-            }),
         ),
-        "ping" => success(id, json!({})),
+    };
+    let era = mcp_protocol::Era::of(&req.method, &req.params, None);
+    if let Some(done) = mcp_protocol::preflight(&spec, &era, &id, &req.method) {
+        return crate::mcp_server_routes::rpc_response(&req.method, &req.params, done);
+    }
+    let reply = match req.method.as_str() {
         "tools/list" => success(id, json!({"tools": tool_list(&state, &user).await})),
         "tools/call" => {
             let name = req.params.get("name").and_then(Value::as_str).unwrap_or_default();
@@ -139,7 +140,7 @@ Nothing runs until the user approves it in the Allternit app.",
         }
         other => rpc_error(id, -32601, format!("Method not found: {other}")),
     };
-    Json(reply).into_response()
+    crate::mcp_server_routes::rpc_response(&req.method, &req.params, mcp_protocol::finish(&spec, &era, &req.method, reply))
 }
 
 // ── Gateway access (in-process, through the forwarder) ───────────────────────
@@ -435,7 +436,9 @@ pub(crate) async fn execute_prepared(state: &Arc<AppState>, user: &AuthUser, app
     ) else {
         return record_failure(state, user, approval_id, row.content, "The prepared task is malformed.").await;
     };
-    let action = match mint_human_action(&state.db, &user.user_id, "approval.confirm") {
+    // D16 task binding: the action can start only this prepared task.
+    let digest = crate::subscription_routes::task_digest(capability, provider, prompt, Some(&json!({})));
+    let action = match crate::subscription_routes::mint_bound_human_action(&state.db, &user.user_id, "approval.confirm", &digest) {
         Ok((action, _)) => action,
         Err(e) => {
             warn!(error = %e, "subscription mcp: could not mint the human action");

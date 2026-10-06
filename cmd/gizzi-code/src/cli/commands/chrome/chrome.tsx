@@ -131,7 +131,7 @@ function AllternitInChromeMenu({
   let t8_2 = null;
   const t9_2 = !isDisabled && <>{!isHomespace && <Box flexDirection="column"><Text>Status:{" "}{isConnected ? <Text color="success">Enabled</Text> : <Text color="inactive">Disabled</Text>}</Text><Text>Extension:{" "}{isExtensionInstalled ? <Text color="success">Installed</Text> : <Text color="warning">Not detected</Text>}</Text></Box>}<Select key={selectKey} options={options} onChange={handleAction} hideIndexes={true} />{showInstallHint && <Text color="warning">Once installed, select {"\"Reconnect extension\""} to connect.</Text>}<Text><Text dimColor={true}>Usage: </Text><Text>gizzi --chrome</Text><Text dimColor={true}> or </Text><Text>gizzi --no-chrome</Text></Text><Text dimColor={true}>Site-level permissions are inherited from the Chrome extension. Manage permissions in the Chrome extension settings to control which sites Gizzi can browse, click, and type on.</Text></>;
 
-  const t10_2 = <Text dimColor={true}>Learn more: https://github.com/Gizziio/desktop</Text>;
+  const t10_2 = <Text dimColor={true}>Learn more: https://github.com/Allternit/desktop</Text>;
 
   const t11 = <Box flexDirection="column" gap={1}>{t6_2}{t7_2}{t8_2}{t9_2}{t10_2}</Box>;
 

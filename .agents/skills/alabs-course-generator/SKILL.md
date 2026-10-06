@@ -63,7 +63,7 @@ Hard requirements:
      - audience & prerequisites
      - `sections`: each with `title`, `lessons`, `description`, and `lessonTitles`
 
-Use the Anthropic analysis as the parser target: `anthropic-academy-analysis.json`.
+Use the Anthropic analysis as the parser target: `docs/research/data/anthropic-academy-analysis.json`.
 
 ### Phase 2: Deep mapping
 

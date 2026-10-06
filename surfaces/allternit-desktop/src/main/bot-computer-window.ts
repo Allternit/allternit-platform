@@ -28,3 +28,17 @@ export function isBotComputerWindowUrl(url: URL): boolean {
     Boolean(url.searchParams.get('botId'))
   );
 }
+
+/** The bot phone in its own window (`/bot-phone?botId=`), opened by "Pop out". */
+export function buildBotPhoneWindowUrl(platformUrl: string, botId: string): string {
+  if (!botId) throw new Error('A bot ID is required');
+  const url = new URL('/bot-phone', platformUrl);
+  url.searchParams.set('botId', botId);
+  return url.toString();
+}
+
+export function isBotPhoneWindowUrl(url: URL): boolean {
+  return url.pathname === '/bot-phone' && Boolean(url.searchParams.get('botId'));
+}
+
+export const BOT_PHONE_WINDOW_SIZE = { width: 420, height: 880, minWidth: 360, minHeight: 560 };

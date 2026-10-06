@@ -103,7 +103,24 @@ mod tests {
         let app = app("edge-owner").await;
         let (status, body) = call(&app, "/webhooks/mcp-edge/bots/bot-vendor", &list(), Some((TOKEN, "user-a")), Some("claude-connector")).await;
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(body["result"]["tools"].as_array().map(Vec::len), Some(10), "{body}");
+        assert_eq!(body["result"]["tools"].as_array().map(Vec::len), Some(crate::mcp_vendor_bots::tool_descriptors().len()), "{body}");
+    }
+
+    #[tokio::test]
+    async fn protocol_errors_get_the_spec_http_status_through_the_relay() {
+        let app = app("edge-status").await;
+        let path = "/webhooks/mcp-edge/bots/bot-vendor";
+        let owner = Some((TOKEN, "user-a"));
+        let modern = |method: &str, version: &str| json!({ "jsonrpc": "2.0", "id": 9, "method": method, "params": { "_meta": { "io.modelcontextprotocol/protocolVersion": version } } });
+        let (status, body) = call(&app, path, &modern("nope/nope", "2026-07-28"), owner, None).await;
+        assert_eq!((status, body["error"]["code"].as_i64()), (StatusCode::NOT_FOUND, Some(-32601)), "modern unknown method is 404");
+        let (status, body) = call(&app, path, &modern("tools/list", "2099-01-01"), owner, None).await;
+        assert_eq!((status, body["error"]["code"].as_i64()), (StatusCode::BAD_REQUEST, Some(-32022)));
+        // Legacy clients keep getting 200 for every JSON-RPC error.
+        let (status, body) = call(&app, path, &json!({ "jsonrpc": "2.0", "id": 9, "method": "nope/nope" }), owner, None).await;
+        assert_eq!((status, body["error"]["code"].as_i64()), (StatusCode::OK, Some(-32601)));
+        let (status, _) = call(&app, "/webhooks/mcp-edge/server", &modern("nope/nope", "2026-07-28"), owner, None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "agents server too");
     }
 
     #[tokio::test]

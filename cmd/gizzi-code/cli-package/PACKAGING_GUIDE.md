@@ -15,7 +15,7 @@ curl -fsSL https://install.gizziio.com/install | bash
 ### 2. Homebrew (macOS)
 
 ```bash
-brew install gizziio/gizzi/gizzi-code
+brew install allternit/tap/gizzi-code
 brew install gizzi-code
 ```
 
@@ -32,23 +32,23 @@ npm install -g @allternit/gizzi-code
 winget install Allternit.GizziCode
 
 # Scoop
-scoop install https://raw.githubusercontent.com/Gizziio/allternit-platform/main/cmd/gizzi-code/packaging/scoop/gizzi-code.json
+scoop install https://raw.githubusercontent.com/Allternit/allternit-platform/main/cmd/gizzi-code/packaging/scoop/gizzi-code.json
 ```
 
 ### 5. GitHub Releases
 
 Download pre-built binaries (assets are version-named tarballs/zips, e.g.
 `gizzi-code-v1.0.2-darwin-arm64.tar.gz`; see the release page for the full
-list — https://github.com/Gizziio/allternit-platform/releases):
+list — https://github.com/Allternit/allternit-platform/releases):
 
 ```bash
 # macOS (Apple Silicon)
-curl -LO https://github.com/Gizziio/allternit-platform/releases/download/gizzi-code/v2.0.1/gizzi-code-v2.0.1-darwin-arm64.tar.gz
+curl -LO https://github.com/Allternit/allternit-platform/releases/download/gizzi-code/v2.1.9/gizzi-code-v2.1.9-darwin-arm64.tar.gz
 tar -xzf gizzi-code-v1.0.2-darwin-arm64.tar.gz
 mv gizzi-code /usr/local/bin/gizzi-code
 
 # Linux (x64)
-curl -LO https://github.com/Gizziio/allternit-platform/releases/download/gizzi-code/v2.0.1/gizzi-code-v2.0.1-linux-x64.tar.gz
+curl -LO https://github.com/Allternit/allternit-platform/releases/download/gizzi-code/v2.1.9/gizzi-code-v2.1.9-linux-x64.tar.gz
 tar -xzf gizzi-code-v1.0.2-linux-x64.tar.gz
 mv gizzi-code /usr/local/bin/gizzi-code
 ```
@@ -255,5 +255,5 @@ npm install -g @allternit/gizzi-code
 ## Support
 
 - Documentation: https://docs.gizziio.com
-- Issues: https://github.com/Gizziio/allternit-platform/issues
-- Discussions: https://github.com/Gizziio/allternit-platform/discussions
+- Issues: https://github.com/Allternit/allternit-platform/issues
+- Discussions: https://github.com/Allternit/allternit-platform/discussions

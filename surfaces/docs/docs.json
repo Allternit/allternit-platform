@@ -88,11 +88,14 @@
               "guides/needs-you-inbox",
               "guides/invite-someone",
               "guides/call-notifications",
+              "guides/notifications",
               "guides/messaging-channels",
               "guides/bot-autonomy",
               "guides/calls-and-texts",
               "guides/voice",
-              "guides/mcp-apps-status"
+              "guides/mcp-apps-status",
+              "guides/mcp-events",
+              "guides/connected-apps"
             ],
             "icon": "/icons/window.svg"
           },
@@ -513,6 +516,7 @@
               "plugins/sdk/overview",
               "plugins/sdk/quickstart",
               "plugins/sdk/server",
+              "plugins/sdk/events",
               "plugins/sdk/bridge",
               "plugins/sdk/ui",
               "plugins/sdk/look-packs",
@@ -586,11 +590,13 @@
               "api/autonomy",
               "api/inapp-calls",
               "api/web-push",
+              "api/notifications",
               "api/allternit-api",
               "api/authentication",
               "api/endpoints",
               "api/rate-limits",
               "api/event-stream",
+              "api/runtime-events",
               "api/inbox",
               "api/status",
               "api/me",
@@ -713,6 +719,7 @@
             "group": "Collaboration & Workflows",
             "pages": [
               "api/agent-chat",
+              "api/subscription-gateway",
               "api/conversations",
               "api/artifacts",
               "api/boards",
@@ -819,7 +826,7 @@
         {
           "anchor": "GitHub",
           "icon": "github",
-          "href": "https://github.com/Gizziio"
+          "href": "https://github.com/Allternit"
         },
         {
           "anchor": "Courses",
@@ -850,7 +857,7 @@
   "footer": {
     "socials": {
       "x": "https://x.com/allternit",
-      "github": "https://github.com/Gizziio",
+      "github": "https://github.com/Allternit",
       "youtube": "https://www.youtube.com/@gizziioagi",
       "linkedin": "https://www.linkedin.com/in/allternit-llc"
     }

@@ -9,3 +9,9 @@
 
 /assets/*
   Cache-Control: public, max-age=31536000, must-revalidate
+
+/oauth/*
+  # Gizzi's MCP OAuth Client ID Metadata Document (CIMD): authorization servers fetch it
+  # server-side; it must be served as JSON and readable cross-origin (caching follows /*).
+  Content-Type: application/json
+  Access-Control-Allow-Origin: *

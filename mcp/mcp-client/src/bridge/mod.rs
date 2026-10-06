@@ -1,7 +1,5 @@
 //! Tool bridge for integrating MCP with Allternit tool registry
 
-use crate::protocol::Tool;
-
 /// Format an MCP tool name with server prefix
 ///
 /// Format: "mcp__{server_name}__{tool_name}"

@@ -1,6 +1,6 @@
 name: Discovery Blog
 
-# Disabled 2026-09-15: discovery artifacts live in Gizziio/allternit-ai
+# Disabled 2026-09-15: discovery artifacts live in Allternit/allternit-ai
 # (ai.allternit.com), not this public repo. Re-enable there, not here.
 
 on:
@@ -56,7 +56,7 @@ jobs:
       - name: Commit and push if changed
         id: commit
         run: |
-          echo "Discovery artifacts belong in Gizziio/allternit-ai, not this public repo."
+          echo "Discovery artifacts belong in Allternit/allternit-ai, not this public repo."
           echo "changed=false" >> "$GITHUB_OUTPUT"
 
       - name: Trigger Cloudflare Pages deploy

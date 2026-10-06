@@ -96,7 +96,7 @@ No public SSH exposure: the runner only reaches mail over the tailnet.
    (adjust the mail host tag to whatever `mail` actually carries; `tailscale status`
    shows tags with `tailscale status --json`). If you skip the `ssh` block,
    also generate an SSH keypair for root@mail and set `CONTABO_SSH_KEY` below.
-3. **GitHub secrets** (repo `Gizziio/allternit-platform`):
+3. **GitHub secrets** (repo `Allternit/allternit-platform`):
    ```bash
    gh secret set TS_OAUTH_CLIENT_ID      # from step 1
    gh secret set TS_OAUTH_CLIENT_SECRET  # from step 1, shown once

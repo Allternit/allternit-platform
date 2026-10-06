@@ -1,18 +1,24 @@
-//! Streamable HTTP transport (MCP spec 2025-06-18) for the MCP client
+//! Streamable HTTP transport for the MCP client — both eras.
 //!
-//! A single MCP endpoint accepts every client message as an HTTP POST:
-//! - `Accept: application/json, text/event-stream` on every POST
-//! - the response is either one `application/json` JSON-RPC message or a
-//!   `text/event-stream` carrying the response (plus any server messages)
-//! - the server may assign a session in the `Mcp-Session-Id` response header
-//!   of the `initialize` result; the client echoes it on every later request
-//! - after `initialize` the client sends `MCP-Protocol-Version` with the
-//!   negotiated version on every request
-//! - notifications are POSTed and acknowledged with `202 Accepted`
-//! - `DELETE` on the endpoint with the session id ends the session
+//! A single MCP endpoint accepts every client message as an HTTP POST with
+//! `Accept: application/json, text/event-stream`; the response is one
+//! `application/json` JSON-RPC message or a `text/event-stream` carrying it
+//! (plus request-scoped notifications, which are skipped).
 //!
-//! Not implemented: the optional standalone `GET` SSE stream for
-//! server-initiated messages, and resumability (`Last-Event-ID`).
+//! **Modern (2026-07-28, stateless).** A request whose `params._meta`
+//! declares `io.modelcontextprotocol/protocolVersion` is sent with the
+//! mirrored `MCP-Protocol-Version`, `Mcp-Method` and (for `tools/call`,
+//! `resources/read`, `prompts/get`) `Mcp-Name` headers and no session.
+//! `McpClient` adds the `_meta`; this transport derives the headers from it.
+//!
+//! **Legacy (2025-03-26 .. 2025-11-25).** The server may assign a session in
+//! the `Mcp-Session-Id` header of the `initialize` result; the client echoes
+//! it, plus `MCP-Protocol-Version` with the negotiated version, on every
+//! later request; notifications get `202 Accepted`; `DELETE` ends the
+//! session; a `404` on a session request means the session expired.
+//!
+//! Not implemented: `subscriptions/listen` streams, the legacy standalone
+//! `GET` stream, and resumability (`Last-Event-ID`).
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -28,13 +34,14 @@ use tokio::sync::RwLock;
 use tracing::{debug, trace, warn};
 
 use crate::error::{McpError, Result, TransportError};
-use crate::protocol::{JsonRpcRequest, JsonRpcResponse, MCP_PROTOCOL_VERSION};
+use crate::protocol::{JsonRpcMessage, JsonRpcRequest, JsonRpcResponse};
+use mcp_protocol::client as dual;
 use crate::transport::{McpTransport, TransportType};
 
-/// Header carrying the server-assigned session id
-pub const SESSION_ID_HEADER: &str = "mcp-session-id";
-/// Header carrying the negotiated protocol version
-pub const PROTOCOL_VERSION_HEADER: &str = "mcp-protocol-version";
+/// Header carrying the server-assigned session id (legacy era)
+pub const SESSION_ID_HEADER: &str = dual::HEADER_SESSION_ID;
+/// Header carrying the protocol version
+pub const PROTOCOL_VERSION_HEADER: &str = dual::HEADER_PROTOCOL_VERSION;
 
 /// Longest error body echoed back into an error message
 const MAX_ERROR_BODY: usize = 512;
@@ -140,11 +147,14 @@ impl StreamableHttpTransport {
     }
 
     /// The protocol version negotiated by `initialize`, if it has run
+    /// (legacy era; modern requests carry their own version).
     pub async fn protocol_version(&self) -> Option<String> {
         self.protocol_version.read().await.clone()
     }
 
-    async fn build_headers(&self) -> Result<HeaderMap> {
+    /// `modern`: the 2026-07-28 request headers for this request, or `None`
+    /// for a legacy request (session + negotiated version headers instead).
+    async fn build_headers(&self, modern: Option<&[(&'static str, String)]>) -> Result<HeaderMap> {
         let mut headers = HeaderMap::new();
         headers.insert(
             ACCEPT,
@@ -169,6 +179,16 @@ impl StreamableHttpTransport {
             headers.insert(AUTHORIZATION, value);
         }
 
+        if let Some(modern) = modern {
+            for (name, value) in modern {
+                let value = HeaderValue::from_str(value).map_err(|_| {
+                    TransportError::ConnectionFailed(format!("invalid value for header {name}"))
+                })?;
+                headers.insert(HeaderName::from_static(name), value);
+            }
+            return Ok(headers);
+        }
+
         if let Some(session) = self.session_id.read().await.as_deref() {
             let value = HeaderValue::from_str(session)
                 .map_err(|_| TransportError::ConnectionFailed("invalid session id".to_string()))?;
@@ -189,7 +209,13 @@ impl StreamableHttpTransport {
             return Err(McpError::ConnectionClosed);
         }
 
-        let headers = self.build_headers().await?;
+        let modern = match (body.method.as_str(), body.params.as_ref()) {
+            ("initialize", _) | (_, None) => None,
+            (method, Some(params)) => {
+                dual::declared_version(params).map(|v| dual::modern_headers(v, method, params))
+            }
+        };
+        let headers = self.build_headers(modern.as_deref()).await?;
         let response = self
             .client
             .post(&self.url)
@@ -212,7 +238,7 @@ impl StreamableHttpTransport {
 
         // Spec: a 404 for a request carrying a session id means the session
         // ended; the client must start a new one by re-initializing.
-        if status == StatusCode::NOT_FOUND && self.session_id.read().await.is_some() {
+        if status == StatusCode::NOT_FOUND && modern.is_none() && self.session_id.read().await.is_some() {
             *self.session_id.write().await = None;
             *self.protocol_version.write().await = None;
             return Err(TransportError::Http {
@@ -277,10 +303,12 @@ impl McpTransport for StreamableHttpTransport {
         let result = into_result(message)?;
 
         if is_initialize {
+            // The server's answer, else what we offered.
             let negotiated = result
                 .get("protocolVersion")
                 .and_then(|v| v.as_str())
-                .unwrap_or(MCP_PROTOCOL_VERSION);
+                .or_else(|| body.params.as_ref()?.get("protocolVersion")?.as_str())
+                .unwrap_or(dual::LEGACY_OFFER);
             *self.protocol_version.write().await = Some(negotiated.to_string());
         }
 
@@ -292,6 +320,19 @@ impl McpTransport for StreamableHttpTransport {
         trace!(method, "streamable-http notification");
         let response = self.post(&body).await?;
         // 202 Accepted with no body is the specified answer; drain anything else.
+        let _ = response.bytes().await;
+        Ok(())
+    }
+
+    async fn send(&self, message: JsonRpcMessage) -> Result<()> {
+        // Every client message is a POST; the reply (if any) is not surfaced
+        // here (use `request`). Only requests and notifications may be sent.
+        let body = match message {
+            JsonRpcMessage::Request(r) => r,
+            JsonRpcMessage::Notification(n) => JsonRpcRequest::notification(n.method, n.params),
+            _ => return Err(McpError::Protocol("clients may only send requests and notifications".into())),
+        };
+        let response = self.post(&body).await?;
         let _ = response.bytes().await;
         Ok(())
     }
@@ -332,6 +373,11 @@ impl McpTransport for StreamableHttpTransport {
 
     fn transport_type(&self) -> TransportType {
         TransportType::StreamableHttp
+    }
+
+    fn era_cache_key(&self) -> Option<String> {
+        let url = reqwest::Url::parse(&self.url).ok()?;
+        Some(url.origin().ascii_serialization())
     }
 }
 
@@ -745,5 +791,198 @@ mod tests {
         let transport = StreamableHttpTransport::new(config).unwrap();
         transport.request("initialize", Some(json!({ "protocolVersion": "2025-06-18" }))).await.unwrap();
         assert_eq!(seen.lock().unwrap().requests.len(), 1);
+    }
+
+    // ── dual-era client against modern / legacy / mixed servers ──────────────
+
+    #[derive(Clone, Copy, PartialEq)]
+    enum Mode {
+        /// 2026-07-28 only: rejects `initialize`, requires `_meta` + headers.
+        Modern,
+        /// Legacy SDK server: 400 (plain text) for anything before initialize.
+        Legacy,
+        /// Answers the probe with -32022 listing only legacy versions.
+        LegacyListing,
+        /// 401 for everything.
+        Unauthorized,
+        /// Modern, but answers tools/list with an MRTR result.
+        InputRequired,
+    }
+
+    #[derive(Clone)]
+    struct DualServer {
+        mode: Mode,
+        /// (method, mcp-protocol-version, mcp-method, mcp-name, session, _meta version, initialize offer)
+        log: Arc<Mutex<Vec<[Option<String>; 7]>>>,
+    }
+
+    async fn dual_handle(State(server): State<DualServer>, headers: AxumHeaders, body: axum::Json<Value>) -> Response {
+        let method = body["method"].as_str().unwrap_or("").to_string();
+        let meta_version = body["params"]["_meta"][mcp_protocol::META_PROTOCOL_VERSION].as_str().map(String::from);
+        server.log.lock().unwrap().push([
+            Some(method.clone()),
+            header(&headers, "mcp-protocol-version"),
+            header(&headers, "mcp-method"),
+            header(&headers, "mcp-name"),
+            header(&headers, "mcp-session-id"),
+            meta_version.clone(),
+            body["params"]["protocolVersion"].as_str().map(String::from),
+        ]);
+        let id = body["id"].clone();
+        let json_reply = |status: AxumStatus, v: Value| (status, axum::Json(v)).into_response();
+        let ok = |result: Value| json_reply(AxumStatus::OK, json!({ "jsonrpc": "2.0", "id": id, "result": result }));
+        match server.mode {
+            Mode::Unauthorized => (AxumStatus::UNAUTHORIZED, "login").into_response(),
+            Mode::Modern | Mode::InputRequired => {
+                let Some(v) = meta_version else {
+                    return json_reply(AxumStatus::BAD_REQUEST, json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32020, "message": "missing _meta" } }));
+                };
+                assert_eq!(header(&headers, "mcp-protocol-version").as_deref(), Some(v.as_str()));
+                assert_eq!(header(&headers, "mcp-method").as_deref(), Some(method.as_str()));
+                assert!(body["params"]["_meta"][mcp_protocol::META_CLIENT_INFO]["name"].is_string());
+                assert!(header(&headers, "mcp-session-id").is_none());
+                match method.as_str() {
+                    "server/discover" => ok(json!({
+                        "resultType": "complete",
+                        "supportedVersions": [mcp_protocol::LATEST],
+                        "capabilities": { "tools": {} },
+                        "_meta": { mcp_protocol::META_SERVER_INFO: { "name": "modern", "version": "9" } }
+                    })),
+                    "tools/list" if server.mode == Mode::InputRequired => ok(json!({ "resultType": "input_required", "inputRequests": {} })),
+                    // no resultType: complete
+                    "tools/list" => ok(json!({ "tools": [{ "name": "echo", "inputSchema": { "type": "object" } }] })),
+                    "tools/call" => ok(json!({ "content": [{ "type": "text", "text": body["params"]["name"] }] })),
+                    _ => json_reply(AxumStatus::NOT_FOUND, json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32601, "message": "Method not found" } })),
+                }
+            }
+            Mode::Legacy | Mode::LegacyListing => {
+                if method == "initialize" {
+                    let mut resp = ok(json!({
+                        "protocolVersion": body["params"]["protocolVersion"],
+                        "capabilities": { "tools": {} },
+                        "serverInfo": { "name": "legacy", "version": "1" }
+                    }));
+                    resp.headers_mut().insert("mcp-session-id", "s-1".parse().unwrap());
+                    return resp;
+                }
+                if header(&headers, "mcp-session-id").as_deref() != Some("s-1") {
+                    if server.mode == Mode::LegacyListing {
+                        return json_reply(AxumStatus::BAD_REQUEST, json!({ "jsonrpc": "2.0", "id": id, "error": {
+                            "code": -32022, "message": "Unsupported protocol version",
+                            "data": { "supported": ["2025-06-18", "2025-03-26"], "requested": mcp_protocol::LATEST } } }));
+                    }
+                    return (AxumStatus::BAD_REQUEST, "Bad Request: No valid session ID provided").into_response();
+                }
+                if body.get("id").is_none() {
+                    return AxumStatus::ACCEPTED.into_response();
+                }
+                ok(json!({ "tools": [{ "name": "echo", "inputSchema": { "type": "object" } }] }))
+            }
+        }
+    }
+
+    async fn spawn_dual(mode: Mode) -> (String, Arc<Mutex<Vec<[Option<String>; 7]>>>) {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let app = Router::new()
+            .route("/mcp", post(dual_handle).delete(|| async { AxumStatus::OK }))
+            .with_state(DualServer { mode, log: log.clone() });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (format!("http://{addr}/mcp"), log)
+    }
+
+    async fn connect(url: &str) -> crate::Result<crate::McpClient> {
+        let mut client = crate::McpClient::new(StreamableHttpTransport::new(StreamableHttpConfig::new(url))?);
+        client.initialize().await?;
+        Ok(client)
+    }
+
+    fn methods(log: &Arc<Mutex<Vec<[Option<String>; 7]>>>) -> Vec<String> {
+        log.lock().unwrap().iter().map(|r| r[0].clone().unwrap()).collect()
+    }
+
+    #[tokio::test]
+    async fn modern_server_is_spoken_to_statelessly_with_meta_and_headers() {
+        let (url, log) = spawn_dual(Mode::Modern).await;
+        let client = connect(&url).await.unwrap();
+        assert_eq!(client.era(), &crate::ProtocolEra::Modern { version: mcp_protocol::LATEST.into() });
+        assert!(client.capabilities().unwrap().tools.is_some());
+        assert_eq!(client.list_tools().await.unwrap()[0].name, "echo");
+        let called = client.request("tools/call", Some(json!({ "name": "Hello, 世界", "arguments": {} }))).await.unwrap();
+        assert_eq!(called["content"][0]["text"], "Hello, 世界");
+        // a modern 404 + JSON-RPC error is a JSON-RPC error, not a transport failure
+        let err = client.request("nope/nope", None).await.unwrap_err();
+        assert!(matches!(err, McpError::JsonRpc { code: -32601, .. }), "{err:?}");
+
+        let log = log.lock().unwrap().clone();
+        assert_eq!(log[0][0].as_deref(), Some("server/discover"));
+        assert!(log.iter().all(|r| r[0].as_deref() != Some("initialize")));
+        let call = log.iter().find(|r| r[0].as_deref() == Some("tools/call")).unwrap();
+        assert_eq!(call[3].as_deref(), Some("=?base64?SGVsbG8sIOS4lueVjA==?="));
+        let list = log.iter().find(|r| r[0].as_deref() == Some("tools/list")).unwrap();
+        assert_eq!(list[3], None, "Mcp-Name only on named methods");
+    }
+
+    #[tokio::test]
+    async fn legacy_server_falls_back_to_initialize_and_the_era_is_cached_per_origin() {
+        let (url, log) = spawn_dual(Mode::Legacy).await;
+        let client = connect(&url).await.unwrap();
+        assert_eq!(client.era(), &crate::ProtocolEra::Legacy { version: mcp_protocol::client::LEGACY_OFFER.into() });
+        assert_eq!(client.list_tools().await.unwrap()[0].name, "echo");
+        assert_eq!(methods(&log), ["server/discover", "initialize", "notifications/initialized", "tools/list"]);
+        {
+            let log = log.lock().unwrap();
+            // the legacy call carries session + negotiated version, no modern headers
+            assert_eq!(log[3][4].as_deref(), Some("s-1"));
+            assert_eq!(log[3][1].as_deref(), Some(mcp_protocol::client::LEGACY_OFFER));
+            assert_eq!(log[3][2], None);
+            assert_eq!(log[3][5], None);
+        }
+        // Second connection to the same origin: no probe.
+        log.lock().unwrap().clear();
+        let again = connect(&url).await.unwrap();
+        assert!(!again.era().is_modern());
+        assert_eq!(methods(&log), ["initialize", "notifications/initialized"]);
+    }
+
+    #[tokio::test]
+    async fn unsupported_version_listing_only_legacy_versions_initializes_with_the_shared_one() {
+        let (url, log) = spawn_dual(Mode::LegacyListing).await;
+        let client = connect(&url).await.unwrap();
+        assert_eq!(client.era(), &crate::ProtocolEra::Legacy { version: "2025-06-18".into() });
+        let log = log.lock().unwrap();
+        assert_eq!(log[1][0].as_deref(), Some("initialize"));
+        assert_eq!(log[1][6].as_deref(), Some("2025-06-18"));
+    }
+
+    #[tokio::test]
+    async fn auth_failure_on_the_probe_is_not_an_era_signal() {
+        let (url, log) = spawn_dual(Mode::Unauthorized).await;
+        let err = connect(&url).await.unwrap_err();
+        assert!(matches!(err, McpError::Transport(TransportError::Http { status: 401, .. })), "{err:?}");
+        assert_eq!(methods(&log), ["server/discover"]);
+    }
+
+    #[tokio::test]
+    async fn non_complete_result_types_are_reported() {
+        let (url, _log) = spawn_dual(Mode::InputRequired).await;
+        let client = connect(&url).await.unwrap();
+        let err = client.list_tools().await.unwrap_err();
+        assert!(matches!(&err, McpError::Protocol(m) if m.contains("input_required")), "{err:?}");
+    }
+
+    #[tokio::test]
+    async fn a_stale_legacy_cache_entry_is_corrected_by_reprobing() {
+        let (url, log) = spawn_dual(Mode::Modern).await;
+        let key = reqwest::Url::parse(&url).unwrap().origin().ascii_serialization();
+        crate::seed_era_cache_for_tests(&key, crate::ProtocolEra::Legacy { version: "2025-06-18".into() });
+        let client = connect(&url).await.unwrap();
+        assert!(client.era().is_modern());
+        assert_eq!(methods(&log), ["initialize", "server/discover"]);
+        log.lock().unwrap().clear();
+        let again = connect(&url).await.unwrap();
+        assert!(again.era().is_modern());
+        assert_eq!(methods(&log), ["server/discover"]);
     }
 }

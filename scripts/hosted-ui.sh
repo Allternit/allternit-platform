@@ -1,4 +1,4 @@
-# Resolve the ai.allternit.com workspace UI (private Gizziio/allternit-ai).
+# Resolve the ai.allternit.com workspace UI (private Allternit/allternit-ai).
 # Not the cloud console (platform.allternit.com).
 #
 # Usage:  HOSTED_UI="$(. scripts/hosted-ui.sh; resolve_hosted_ui "$REPO_ROOT")"
@@ -25,7 +25,7 @@ resolve_hosted_ui() {
     return $?
   fi
   echo "ai.allternit.com UI not found." >&2
-  echo "Clone Gizziio/allternit-ai next to this repo, or set ALLTERNIT_AI_PATH." >&2
+  echo "Clone Allternit/allternit-ai next to this repo, or set ALLTERNIT_AI_PATH." >&2
   echo "Do not use surfaces/platform.allternit.com — that is the cloud console." >&2
   return 1
 }

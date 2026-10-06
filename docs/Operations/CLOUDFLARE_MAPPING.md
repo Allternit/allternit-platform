@@ -8,14 +8,14 @@ Quick reference for Cloudflare Pages projects and their domains.
 > live projects (via `wrangler pages list`) and this repo's deploy workflows.
 >
 > Last verified: 2026-09-15. OSS split moved the workspace UI out of this
-> repo. Cloudflare Pages Git on `ai-allternit` is **Gizziio/allternit-ai**
+> repo. Cloudflare Pages Git on `ai-allternit` is **Allternit/allternit-ai**
 > (`repo_id` 1370871216); merge to that repo's `main` auto-deploys production.
 
 ## Naming (do not mix these up)
 
 | Product | Domain | GitHub source | Pages project |
 |---------|--------|---------------|---------------|
-| Agent workspace | **ai.allternit.com** | private **Gizziio/allternit-ai** (renamed from `allternit-cloud`) | `ai-allternit` |
+| Agent workspace | **ai.allternit.com** | private **Allternit/allternit-ai** (renamed from `allternit-cloud`) | `ai-allternit` |
 | Cloud console | **platform.allternit.com** | this repo `surfaces/platform.allternit.com` | `allternit-platform` |
 
 `allternit-cloud` is not a product name. The workspace site is `ai.allternit.com`.
@@ -24,7 +24,7 @@ repo is the control-plane binary for `api.allternit.com`, not the workspace UI.
 
 **This public repo must never `wrangler pages deploy --project-name=ai-allternit`.**
 
-Desktop release checks out `Gizziio/allternit-ai` with repo secret
+Desktop release checks out `Allternit/allternit-ai` with repo secret
 `ALLTERNIT_AI_CHECKOUT_TOKEN` (PAT, contents:read on that private repo).
 Without it, `release-desktop.yml` cannot bundle the workspace UI.
 
@@ -38,13 +38,13 @@ Without it, `release-desktop.yml` cannot bundle the workspace UI.
 | **allternit-docs** | docs.allternit.com | `surfaces/docs/dist` (unzipped `export.zip`) | `.github/workflows/deploy-docs-cloudflare.yml` |
 | **allternit-office** | office.allternit.com | `surfaces/office.allternit.com/dist` | `.github/workflows/deploy-office-cloudflare.yml` |
 | **allternit-office-addins** | allternit-office-addins.pages.dev | office add-in `pages-deploy/` | `.github/workflows/deploy-cloudflare-pages.yml` |
-| **allternit-remote-control** | m.allternit.com | Allternit Mobile, the phone PWA (formerly fabrictransport.allternit.com; source in Gizziio/allternit-ai) | wrangler CLI / allternit-ai |
+| **allternit-remote-control** | m.allternit.com | Allternit Mobile, the phone PWA (formerly fabrictransport.allternit.com; source in Allternit/allternit-ai) | wrangler CLI / allternit-ai |
 
-### Deployed from Gizziio/allternit-ai (private) — not this repo
+### Deployed from Allternit/allternit-ai (private) — not this repo
 
 | Pages Project | Domain(s) | Notes |
 |---------------|-----------|-------|
-| **ai-allternit** | ai.allternit.com | Workspace UI. Pages Git is `Gizziio/allternit-ai`. Merge to `main` auto-deploys. Public-repo GHA must never wrangler this project. Optional wrangler fallback: allternit-ai `workflow_dispatch` `deploy=true`. |
+| **ai-allternit** | ai.allternit.com | Workspace UI. Pages Git is `Allternit/allternit-ai`. Merge to `main` auto-deploys. Public-repo GHA must never wrangler this project. Optional wrangler fallback: allternit-ai `workflow_dispatch` `deploy=true`. |
 
 ### Live projects deployed outside this repo (Allternit Websites repo / manual)
 

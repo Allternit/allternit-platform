@@ -2,7 +2,7 @@
 # Usage: brew tap <you>/gizzi && brew install gizzi
 #
 # NOTE: canonical formula lives in packaging/homebrew/gizzi-code.rb in the
-# Gizziio/allternit-platform repo; this copy is for tap distribution.
+# Allternit/allternit-platform repo; this copy is for tap distribution.
 
 class GizziCode < Formula
   desc "AI-powered terminal interface and runtime for the Allternit ecosystem"
@@ -15,7 +15,7 @@ class GizziCode < Formula
 
   # Release tags look like "gizzi-code/v1.0.2"; assets are version-named:
   # gizzi-code-v1.0.2-<target>.tar.gz
-  base_url = "https://github.com/Gizziio/allternit-platform/releases/download/gizzi-code/v#{version}"
+  base_url = "https://github.com/Allternit/allternit-platform/releases/download/gizzi-code/v#{version}"
 
   if OS.mac? && Hardware::CPU.arm?
     url "#{base_url}/gizzi-code-v#{version}-darwin-arm64.tar.gz"

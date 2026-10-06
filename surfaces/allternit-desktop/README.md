@@ -45,16 +45,16 @@ also point it at your own Allternit instance running on a VPS.
 
 ### Download
 
-Releases live on the public repo `github.com/Gizziio/desktop` — the same
+Releases live on the public repo `github.com/Allternit/desktop` — the same
 feed the in-app auto-updater polls (hourly). The current release is **v1.1.1**
 (`desktop-v1.1.1` in this repo's history; the publish checklist for mirroring
-it to `Gizziio/desktop` is in `docs/DISTRIBUTION-CHECKLIST.md`). Install:
+it to `Allternit/desktop` is in `docs/DISTRIBUTION-CHECKLIST.md`). Install:
 
 ```bash
 curl -fsSL https://install.allternit.com/install | bash
 ```
 
-or download the DMG from `https://github.com/Gizziio/desktop/releases/latest`.
+or download the DMG from `https://github.com/Allternit/desktop/releases/latest`.
 
 Release builds are produced by `.github/workflows/release-desktop.yml`
 (tag `desktop-v*`) — see **Development** below. CI artifacts are currently
@@ -111,8 +111,8 @@ Then in Allternit Desktop, select **VPS** mode and enter your URL.
 
 ### Desktop App (UI)
 Auto-updates use `update-electron-app` (Squirrel) against the GitHub Releases
-feed of `Gizziio/desktop` — explicit in `src/main/unified-main.ts`
-(`updateElectronApp({ repo: 'Gizziio/desktop', updateInterval: '1 hour' })`)
+feed of `Allternit/desktop` — explicit in `src/main/unified-main.ts`
+(`updateElectronApp({ repo: 'Allternit/desktop', updateInterval: '1 hour' })`)
 and in `build.publish` in `package.json`. The app checks the latest release
 on that repo about once an hour and prompts via the renderer when a new
 version is available.

@@ -11,7 +11,7 @@ Buildable as a standalone crate. It is intentionally **not** part of the root wo
 The launcher embeds two artifacts at compile time:
 
 1. `embed/allternit-api` — the compiled `allternit-api` release binary.
-2. `embed/ui` — the built static UI assets from private `Gizziio/allternit-ai`.
+2. `embed/ui` — the built static UI assets from private `Allternit/allternit-ai`.
 
 ### Building the artifacts
 
@@ -24,7 +24,7 @@ From the repository root:
 This script:
 
 - Builds `allternit-api` in release mode (`cargo build --release -p allternit-api`).
-- Builds the UI (`pnpm install && pnpm build` in `Gizziio/allternit-ai`, via `scripts/hosted-ui.sh`).
+- Builds the UI (`pnpm install && pnpm build` in `Allternit/allternit-ai`, via `scripts/hosted-ui.sh`).
 - Copies both artifacts into `cmd/launcher/embed/`.
 
 ### Building the launcher

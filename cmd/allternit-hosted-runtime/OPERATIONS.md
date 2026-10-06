@@ -8,7 +8,7 @@ the enterprise service.
 ## One-time setup
 
 1. Let `Publish Hosted Runtime Image` publish
-   `ghcr.io/gizziio/allternit-hosted-runtime:latest`. The GHCR package must be
+   `ghcr.io/allternit/allternit-hosted-runtime:latest`. The GHCR package must be
    public so Fly Machines can pull it without storing registry credentials.
 2. Configure the Cloud API with a Fly organization/app and two secrets:
 

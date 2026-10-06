@@ -42,7 +42,7 @@ function Print-Mascot {
 # CONFIGURATION
 # =============================================================================
 
-$Repo = "Gizziio/allternit-platform"
+$Repo = "Allternit/allternit-platform"
 $AssetPrefix = "gizzi-code"
 $InstallDir = if ($env:INSTALL_DIR) { $env:INSTALL_DIR } else { "$env:LOCALAPPDATA\gizzi" }
 $Version = if ($env:VERSION) { $env:VERSION } else { "latest" }
@@ -282,7 +282,7 @@ function Print-PostInstall {
     
     Write-Host "$Bold$Reset Documentation:$Reset"
     Write-Host "  $Cyan$Reset https://docs.gizziio.com$Reset"
-    Write-Host "  $Cyan$Reset https://github.com/Gizziio/allternit-platform$Reset"
+    Write-Host "  $Cyan$Reset https://github.com/Allternit/allternit-platform$Reset"
     Write-Host ""
     
     Write-Host "$Dim$Reset Need help? Run: gizzi-code --help$Reset"

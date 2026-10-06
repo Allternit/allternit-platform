@@ -3,7 +3,7 @@ import {
   createClaudeForChromeMcpServer,
   type PermissionMode,
 } from './extension.js'
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import { StdioServerTransport } from '@modelcontextprotocol/server/stdio'
 import { format } from 'util'
 import { shutdownDatadog } from '@/services/analytics/datadog.js'
 import { shutdown1PEventLogging } from '@/services/analytics/firstPartyEventLogger.js'
@@ -22,7 +22,7 @@ import { getAllSocketPaths, getSecureSocketPath } from './common.js'
 
 const EXTENSION_DOWNLOAD_URL = 'https://chromewebstore.google.com/detail/chheieepkpbhkiimdmbdjmnhcooclpok'
 const BUG_REPORT_URL =
-  'https://github.com/Gizziio/desktop/issues'
+  'https://github.com/Allternit/desktop/issues'
 
 // String metadata keys safe to forward to analytics. Keys like error_message
 // are excluded because they could contain page content or user data.

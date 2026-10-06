@@ -96,7 +96,7 @@ async function deliverOutboundMessage(env: CloudflareEnv, params: DeliveryParams
 			messageId: params.messageId,
 			providerMessageId: response.providerMessageId,
 			to: params.to,
-		});
+		}, params.mailboxId);
 		await createAuditLog(env, {
 			actorUserId: params.userId,
 			mailboxId: params.mailboxId,
@@ -114,7 +114,7 @@ async function deliverOutboundMessage(env: CloudflareEnv, params: DeliveryParams
 		await dispatchWebhooks(env, params.userId, "message.failed", {
 			messageId: params.messageId,
 			error,
-		});
+		}, params.mailboxId);
 		throw err;
 	}
 }

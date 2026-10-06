@@ -9,10 +9,11 @@ import urllib.parse
 import urllib.request
 from typing import Any, Dict, Optional
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 
-mcp = FastMCP("allternit-computer-canonical")
+# Official mcp >= 2.3: serves MCP 2026-07-28 and the legacy initialize handshake.
+mcp = MCPServer("allternit-computer-canonical")
 BASE_URL = os.environ.get("ALLTERNIT_COMPUTER_URL", "http://127.0.0.1:8760").rstrip("/")
 
 

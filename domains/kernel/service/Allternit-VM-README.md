@@ -132,7 +132,7 @@ cargo run --release -p allternit-vm-image-builder -- download --version 1.1.0
 
 # Or manually from GitHub Releases
 curl -L -o ubuntu-22.04-allternit-v1.1.0.ext4.zst \
-  https://github.com/Gizziio/allternit/releases/download/v1.1.0/ubuntu-22.04-allternit-v1.1.0.ext4.zst
+  https://github.com/Allternit/allternit-platform/releases/download/v1.1.0/ubuntu-22.04-allternit-v1.1.0.ext4.zst
 zstd -d ubuntu-22.04-allternit-v1.1.0.ext4.zst
 ```
 
@@ -357,7 +357,7 @@ npm test
 
 1. Check GitHub release exists:
    ```bash
-   curl -I https://github.com/Gizziio/allternit/releases/download/v1.1.0/ubuntu-22.04-allternit-v1.1.0.ext4.zst
+   curl -I https://github.com/Allternit/allternit-platform/releases/download/v1.1.0/ubuntu-22.04-allternit-v1.1.0.ext4.zst
    ```
 
 2. Verify disk space:

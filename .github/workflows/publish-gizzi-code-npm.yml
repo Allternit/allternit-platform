@@ -263,7 +263,7 @@ jobs:
               files: [process.env.BIN_BASENAME, "vendor", ...(process.env.ENGINE_FILES ? [process.env.ENGINE_FILES] : [])],
               repository: {
                 type: "git",
-                url: "https://github.com/Gizziio/allternit-platform.git",
+                url: "https://github.com/Allternit/allternit-platform.git",
                 directory: "cmd/gizzi-code",
               },
             };

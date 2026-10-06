@@ -136,7 +136,7 @@ cd surfaces/ai.allternit.com && pnpm dev
 PLATFORM_URL=http://localhost:3013 node bot-e2e-pwa-fabric.cjs
 ```
 
-Requires `/tmp/botmode-e2e-state.json` from a prior `bot-e2e-live.cjs` run.
+Requires `/tmp/botmode-e2e-state.json` from a prior `scripts/e2e/bot/bot-e2e-live.cjs` run.
 
 Evidence: `~/.agent-orchestrator/evidence/fabric-pwa-bot-mode-ui/`
 (`vitest-bot-chat-1c.txt`, `tsc-noemit-1c.txt`, `pwa-fabric-390x844.png`).

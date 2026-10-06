@@ -1,6 +1,6 @@
 name: Release Allternit Desktop
 
-# Workspace UI is built from private Gizziio/allternit-ai via
+# Workspace UI is built from private Allternit/allternit-ai via
 # .github/actions/build-hosted-ui. Repo secret ALLTERNIT_AI_CHECKOUT_TOKEN
 # must be a PAT (or GitHub App token) with read access to that repo.
 # Do not package surfaces/platform.allternit.com — that is the cloud console.
@@ -114,7 +114,7 @@ jobs:
         with:
           key: allternit-api-macos
 
-      # ── Step 1: Build workspace UI from private Gizziio/allternit-ai ────────
+      # ── Step 1: Build workspace UI from private Allternit/allternit-ai ────────
       - name: Build workspace UI (ai.allternit.com)
         uses: ./.github/actions/build-hosted-ui
         with:

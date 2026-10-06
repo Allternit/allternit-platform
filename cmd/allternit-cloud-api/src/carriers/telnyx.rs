@@ -119,7 +119,10 @@ fn campaign_body(brand_id: &str, f: &RegistrationForm) -> Value {
 /// Telnyx refuses a campaign while its brand is still being verified
 /// (campaignBuilder 400, code 527 "Brand registration status pending").
 fn brand_not_ready(e: &CarrierError) -> bool {
-    matches!(e, CarrierError::Upstream(400, msg) if msg.to_ascii_lowercase().contains("registration status pending"))
+    matches!(e, CarrierError::Upstream(400, msg) if {
+        let m = msg.to_ascii_lowercase();
+        m.contains("registration status pending") || m.contains("otp") || m.contains("not verified")
+    })
 }
 
 fn require(form: &RegistrationForm, pairs: &[(&str, &str)]) -> Result<(), CarrierError> {
@@ -315,19 +318,35 @@ impl Carrier for Telnyx {
                 if f.sample_messages.is_empty() {
                     return Err(CarrierError::Invalid("missing fields: sampleMessages".into()));
                 }
-                let brand = self
-                    .call(
-                        "POST",
-                        "/10dlc/brand",
-                        Some(json!({
-                            "entityType": f.entity_type, "displayName": f.display_name, "companyName": f.legal_name,
-                            "ein": f.ein, "phone": f.contact_phone, "street": f.street, "city": f.city, "state": f.state,
-                            "postalCode": f.postal_code, "country": f.country, "email": f.contact_email,
-                            "website": f.website, "vertical": f.vertical, "webhookURL": super::status_webhook_url("telnyx"),
-                        })),
-                    )
-                    .await?;
+                let sole = f.entity_type == super::SOLE_PROPRIETOR;
+                let mobile = f.mobile_phone.clone().filter(|m| !m.trim().is_empty()).unwrap_or_else(|| f.contact_phone.clone());
+                if sole {
+                    require(f, &[("contactFirstName", &f.contact_first_name), ("contactLastName", &f.contact_last_name)])?;
+                    if !super::is_e164(&mobile) {
+                        return Err(CarrierError::Invalid("missing fields: mobilePhone (a mobile number in +1… form; the carrier texts it a code)".into()));
+                    }
+                }
+                let mut brand_body = json!({
+                    "entityType": f.entity_type, "displayName": f.display_name, "companyName": f.legal_name,
+                    "phone": f.contact_phone, "street": f.street, "city": f.city, "state": f.state,
+                    "postalCode": f.postal_code, "country": f.country, "email": f.contact_email,
+                    "website": f.website, "vertical": f.vertical, "webhookURL": super::status_webhook_url("telnyx"),
+                });
+                if sole {
+                    // An individual: no EIN; the carrier verifies the person by a code to their mobile.
+                    brand_body["firstName"] = json!(f.contact_first_name);
+                    brand_body["lastName"] = json!(f.contact_last_name);
+                    brand_body["mobilePhone"] = json!(mobile);
+                } else {
+                    brand_body["ein"] = json!(f.ein);
+                }
+                let brand = self.call("POST", "/10dlc/brand", Some(brand_body)).await?;
                 let brand_id = str_at(&brand, &["brandId"]).ok_or_else(|| CarrierError::Upstream(502, "brand has no id".into()))?.to_string();
+                if sole {
+                    // The campaign waits for the code; the status refresh files it once verified.
+                    self.send_brand_otp(&brand_id).await?;
+                    return Ok(RegistrationHandle { brand_id: Some(brand_id), campaign_id: None, tfv_id: None });
+                }
                 let _ = e164;
                 // A new brand is still being verified, and the carrier refuses
                 // campaigns until it is. Keep the brand and file the campaign
@@ -433,6 +452,27 @@ impl Carrier for Telnyx {
         match self.call("POST", "/10dlc/campaignBuilder", Some(campaign_body(brand_id, form))).await {
             Ok(campaign) => Ok(str_at(&campaign, &["campaignId"]).map(str::to_string)),
             Err(e) if brand_not_ready(&e) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    async fn send_brand_otp(&self, brand_id: &str) -> Result<(), CarrierError> {
+        self.call(
+            "POST",
+            &format!("/10dlc/brand/{brand_id}/smsOtp"),
+            Some(json!({
+                "pinSms": "Allternit: your texting verification code is @OTP_PIN@. Reply STOP to opt out.",
+                "successSms": "Allternit: you're verified. Your number's texting registration continues now.",
+            })),
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn verify_brand_otp(&self, brand_id: &str, pin: &str) -> Result<bool, CarrierError> {
+        match self.call("PUT", &format!("/10dlc/brand/{brand_id}/smsOtp"), Some(json!({ "otpPin": pin.trim() }))).await {
+            Ok(_) => Ok(true),
+            Err(CarrierError::Upstream(400..=422, _)) => Ok(false),
             Err(e) => Err(e),
         }
     }
@@ -650,6 +690,35 @@ mod tests {
         assert_eq!(t.file_pending_campaign("b-1", &form).await.unwrap(), None);
         assert_eq!(t.file_pending_campaign("b-1", &form).await.unwrap().as_deref(), Some("c-1"));
         assert!(matches!(t.file_pending_campaign("b-1", &form).await, Err(CarrierError::Upstream(422, m)) if m == "bad sample"));
+    }
+
+
+    #[tokio::test]
+    async fn a_sole_proprietor_brand_has_no_ein_and_gets_a_code_first() {
+        let http = FakeHttp::with(vec![(200, json!({ "brandId": "b-sp" })), (200, json!({}))]);
+        let t = Telnyx::new(http.clone(), "k".into(), None).unwrap();
+        let form = RegistrationForm {
+            entity_type: "SOLE_PROPRIETOR".into(), display_name: "Dana Lee Tutoring".into(), contact_email: "dana@example.test".into(), vertical: "EDUCATION".into(),
+            country: "US".into(), use_case: "SOLE_PROPRIETOR".into(), use_case_summary: "lesson reminders".into(), opt_in_workflow: "students text first".into(),
+            sample_messages: vec!["Reminder: lesson at 4".into()], contact_first_name: "Dana".into(), contact_last_name: "Lee".into(),
+            mobile_phone: Some("+16125550188".into()), ein: Some("should-not-be-sent".into()), ..Default::default()
+        };
+        let h = t.submit_registration(RegistrationKind::TenDlc, "+16125550100", None, None, &form).await.unwrap();
+        assert_eq!((h.brand_id.as_deref(), h.campaign_id.as_deref()), (Some("b-sp"), None), "the campaign waits for the code");
+        let reqs = http.requests();
+        let brand = reqs[0].json.clone().unwrap();
+        assert_eq!((brand["firstName"].as_str(), brand["mobilePhone"].as_str(), brand.get("ein")), (Some("Dana"), Some("+16125550188"), None));
+        assert!(reqs[1].url.ends_with("/10dlc/brand/b-sp/smsOtp") && reqs[1].method == "POST");
+        assert!(reqs[1].json.as_ref().unwrap()["pinSms"].as_str().unwrap().contains("@OTP_PIN@"));
+        // A sole proprietor without a mobile number is refused before anything is filed.
+        let bad = RegistrationForm { mobile_phone: None, contact_phone: String::new(), ..form.clone() };
+        assert!(matches!(t.submit_registration(RegistrationKind::TenDlc, "+16125550100", None, None, &bad).await, Err(CarrierError::Invalid(m)) if m.contains("mobilePhone")));
+
+        let http = FakeHttp::with(vec![(200, json!({})), (400, json!({ "errors": [{ "detail": "invalid otp" }] }))]);
+        let t = Telnyx::new(http.clone(), "k".into(), None).unwrap();
+        assert!(t.verify_brand_otp("b-sp", " 123456 ").await.unwrap());
+        assert!(!t.verify_brand_otp("b-sp", "000000").await.unwrap());
+        assert_eq!(http.requests()[0].json.clone().unwrap()["otpPin"], "123456");
     }
 
 }

@@ -37,6 +37,7 @@ pub fn register(table: RouteTable) -> RouteTable {
         .add("/v1/numbers", &["GET", "POST"], get(list_numbers).post(buy))
         .add("/v1/numbers/:id", &["GET", "DELETE"], get(get_number).delete(release))
         .add("/v1/numbers/:id/registration", &["GET", "POST"], get(registration_get).post(registration_post))
+        .add("/v1/numbers/:id/registration/otp", &["POST"], post(registration_otp))
         .add("/v1/numbers/:id/consent", &["POST"], post(consent))
         .add("/v1/numbers/:id/simulate_inbound", &["POST"], post(simulate_inbound))
 }
@@ -275,6 +276,30 @@ async fn registration_get(State(state): State<Arc<ApiState>>, caller: PlatformCa
     let number = api_number(&state.db, &caller, &id).await?;
     let carrier = if number.simulated { None } else { phone::carrier().ok() };
     let out = phone::registration_status(&state.db, carrier.as_deref(), &caller.owner_user_id, &number.id).await.map_err(phone_error)?;
+    Ok(Json(out))
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct OtpBody {
+    pin: Option<String>,
+}
+
+/// Sole proprietor registrations: `{ "pin": "123456" }` checks the code the
+/// person received; an empty body sends a new code.
+async fn registration_otp(
+    State(state): State<Arc<ApiState>>,
+    caller: PlatformCaller,
+    Path(id): Path<String>,
+    body: Option<ApiJson<OtpBody>>,
+) -> Result<Json<Value>, PlatformError> {
+    caller.require("numbers")?;
+    let number = api_number(&state.db, &caller, &id).await?;
+    if number.simulated {
+        return Err(PlatformError::invalid_request("simulated_number", "Simulated numbers text without registration."));
+    }
+    let carrier = phone::carrier().map_err(phone_error)?;
+    let pin = body.and_then(|ApiJson(b)| b.pin);
+    let out = phone::registration_otp(&state.db, carrier.as_ref(), &caller.owner_user_id, &number.id, pin.as_deref()).await.map_err(phone_error)?;
     Ok(Json(out))
 }
 

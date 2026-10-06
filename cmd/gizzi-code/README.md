@@ -22,13 +22,13 @@ emulation.
 
 **Homebrew (macOS / Linux):**
 ```bash
-brew tap Gizziio/tap
+brew tap Allternit/tap
 brew install gizzi-code
 ```
 
 **Scoop / winget (Windows):**
 ```powershell
-scoop bucket add gizziio https://github.com/Gizziio/scoop-bucket
+scoop bucket add allternit https://github.com/Allternit/scoop-bucket
 scoop install gizzi-code
 winget install Allternit.GizziCode
 ```
@@ -39,13 +39,13 @@ npm install -g @allternit/gizzi-code
 ```
 
 Or grab a prebuilt binary from the
-[releases page](https://github.com/Gizziio/allternit-platform/releases)
+[releases page](https://github.com/Allternit/allternit-platform/releases)
 (assets `gizzi-code-v<version>-<target>.tar.gz` / `.zip`; tags
 `gizzi-code/v<version>`). The repo installer also works without waiting
 for install.gizziio.com:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Gizziio/allternit-platform/main/cmd/gizzi-code/install | bash
+curl -fsSL https://raw.githubusercontent.com/Allternit/allternit-platform/main/cmd/gizzi-code/install | bash
 ```
 
 ## Platform support
@@ -92,7 +92,7 @@ bun run build                # production binary -> dist/gizzi-code
 ## Repository layout
 
 This package lives at `cmd/gizzi-code` inside the
-[Gizziio/allternit-platform](https://github.com/Gizziio/allternit-platform)
+[Allternit/allternit-platform](https://github.com/Allternit/allternit-platform)
 monorepo. Platform services it talks to: `cmd/allternit-cloud-api` (public
 cloud API, api.allternit.com) and `cmd/allternit-api` (local gateway backend,
 loopback-only today — see `reports/2026-09-04-backend-b-deploy-decision.md`).

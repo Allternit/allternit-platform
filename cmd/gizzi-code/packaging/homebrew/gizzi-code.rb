@@ -9,7 +9,7 @@ class GizziCode < Formula
 
   # Release tags look like "gizzi-code/v2.0.5"; assets are version-named:
   # gizzi-code-v2.0.5-<target>.tar.gz
-  base_url = "https://github.com/Gizziio/allternit-platform/releases/download/gizzi-code/v#{version}"
+  base_url = "https://github.com/Allternit/allternit-platform/releases/download/gizzi-code/v#{version}"
 
   # macOS ARM64 (Apple Silicon)
   if OS.mac? && Hardware::CPU.arm?

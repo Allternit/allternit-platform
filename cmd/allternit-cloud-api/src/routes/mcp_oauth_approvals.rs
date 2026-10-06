@@ -7,8 +7,17 @@
 //! Routes (Clerk session or `compute`-scoped API key; 503 `mcp_edge_not_configured` until
 //! `MCP_PUBLIC_URL` is set):
 //! - `POST   /api/v1/mcp/approvals` {client, target, label?} → 201 `{id, client, target}` (idempotent)
-//! - `GET    /api/v1/mcp/approvals?target=` → `{approvals: [{id, client, target, label, createdAt, lastUsedAt}]}`
-//! - `DELETE /api/v1/mcp/approvals/:id` → `{ok: true}`; 404 for one that isn't the caller's
+//! - `GET    /api/v1/mcp/approvals?target=` → `{approvals: [{id, client, target, label, createdAt, lastUsedAt,
+//!   subscriptions: [{id, name, arguments, createdAt, refreshBefore, active, lastDeliveryAt, lastError}]}]}`.
+//!   `subscriptions` are that app's MCP Events subscriptions for the target that haven't ended
+//!   (`active: false` = past its TTL and not renewed). Never the callback URL or secret.
+//!   `subscriptions: null` when they couldn't be read (the approvals still list).
+//! - `DELETE /api/v1/mcp/approvals/:id` → `{ok: true, subscriptionsEnded}`; 404 for one that isn't the caller's.
+//!   Also ends that app's MCP Events subscriptions for the target and sends each a
+//!   signed `terminated` envelope (`routes::mcp_events::terminate_principal`).
+//! - `DELETE /api/v1/mcp/events/subscriptions/:id` → `{ok: true}`: the owner ends one subscription;
+//!   its callback gets a signed `terminated` envelope (`data.reason: "ended_by_owner"`).
+//!   404 `not_found` for one that isn't the caller's or has already ended.
 
 use axum::{
     extract::{Path, Query, State},
@@ -25,7 +34,10 @@ use std::sync::Arc;
 use crate::ApiState;
 
 pub fn routes() -> Router<Arc<ApiState>> {
-    Router::new().route("/api/v1/mcp/approvals", get(list_route).post(approve_route)).route("/api/v1/mcp/approvals/:id", delete(revoke_route))
+    Router::new()
+        .route("/api/v1/mcp/approvals", get(list_route).post(approve_route))
+        .route("/api/v1/mcp/approvals/:id", delete(revoke_route))
+        .route("/api/v1/mcp/events/subscriptions/:id", delete(end_subscription_route))
 }
 
 fn internal(error: sqlx::Error) -> Response {
@@ -113,13 +125,40 @@ async fn list_route(State(state): State<Arc<ApiState>>, headers: HeaderMap, Quer
     .bind(q.target)
     .fetch_all(&state.db)
     .await;
-    match rows {
-        Ok(rows) => Json(json!({
-            "approvals": rows.into_iter().map(|(id, client, target, label, created, used)| json!({
-                "id": id, "client": client, "target": target, "label": label, "createdAt": created.to_rfc3339(), "lastUsedAt": used.map(|u| u.to_rfc3339())
-            })).collect::<Vec<_>>()
-        }))
-        .into_response(),
+    let rows = match rows {
+        Ok(rows) => rows,
+        Err(e) => return internal(e),
+    };
+    // The approvals still list if the subscriptions can't be read (`null`); the app
+    // then says it couldn't load that app's events instead of losing Connected apps.
+    let subs = crate::routes::mcp_events::owner_subscriptions(&state.db, &user).await.map_err(|e| tracing::error!("mcp oauth approvals: listing subscriptions failed: {e}")).ok();
+    let now = chrono::Utc::now();
+    Json(json!({
+        "approvals": rows.into_iter().map(|(id, client, target, label, created, used)| {
+            let mut row = json!({
+                "id": id, "client": client, "target": target, "label": label, "createdAt": created.to_rfc3339(), "lastUsedAt": used.map(|u| u.to_rfc3339()),
+            });
+            row["subscriptions"] = match &subs {
+                Some(subs) => subs.iter().filter(|s| s.client == client && s.target == target).map(|s| s.to_json(now)).collect(),
+                None => serde_json::Value::Null,
+            };
+            row
+        }).collect::<Vec<_>>()
+    }))
+    .into_response()
+}
+
+async fn end_subscription_route(State(state): State<Arc<ApiState>>, headers: HeaderMap, Path(id): Path<String>) -> Response {
+    if crate::routes::mcp_edge::public_mcp_url_for_keys().is_none() {
+        return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "error": "mcp_edge_not_configured" }))).into_response();
+    }
+    let user = match crate::auth::resolve_user_scoped(&state.db, &headers, "compute").await {
+        Ok(u) => u.id,
+        Err(e) => return e.into_response(),
+    };
+    match crate::routes::mcp_events::end_owner_subscription(&state.db, &user, &id).await {
+        Ok(true) => Json(json!({ "ok": true })).into_response(),
+        Ok(false) => (StatusCode::NOT_FOUND, Json(json!({ "error": "not_found" }))).into_response(),
         Err(e) => internal(e),
     }
 }
@@ -132,9 +171,22 @@ async fn revoke_route(State(state): State<Arc<ApiState>>, headers: HeaderMap, Pa
         Ok(u) => u.id,
         Err(e) => return e.into_response(),
     };
-    match sqlx::query("UPDATE mcp_oauth_approvals SET revoked_at = now() WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL").bind(&id).bind(&user).execute(&state.db).await {
-        Ok(r) if r.rows_affected() > 0 => Json(json!({ "ok": true })).into_response(),
-        Ok(_) => (StatusCode::NOT_FOUND, Json(json!({ "error": "not_found" }))).into_response(),
+    let revoked: Result<Option<(String, String)>, _> =
+        sqlx::query_as("UPDATE mcp_oauth_approvals SET revoked_at = now() WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL RETURNING client_id, target")
+            .bind(&id)
+            .bind(&user)
+            .fetch_optional(&state.db)
+            .await;
+    match revoked {
+        Ok(Some((client, target))) => {
+            // The app loses its event subscriptions too, and is told so (`terminated`).
+            let ended = crate::routes::mcp_events::terminate_principal(&state.db, &user, &client, &target, "approval_revoked").await.unwrap_or_else(|e| {
+                tracing::error!("mcp oauth approvals: ending subscriptions failed: {e}");
+                0
+            });
+            Json(json!({ "ok": true, "subscriptionsEnded": ended })).into_response()
+        }
+        Ok(None) => (StatusCode::NOT_FOUND, Json(json!({ "error": "not_found" }))).into_response(),
         Err(e) => internal(e),
     }
 }

@@ -38,6 +38,8 @@ async fn ctx() -> Ctx {
         include_str!("../../../migrations_pg/024_phone_numbers.sql"),
         include_str!("../../../migrations_pg/050_platform_api_foundation.sql"),
         include_str!("../../../migrations_pg/051_platform_numbers_messaging.sql"),
+        // The event backbone generalises the webhook tables (kind, signer, subject).
+        include_str!("../../../migrations_pg/057_allternit_events_backbone.sql"),
     ] {
         sqlx::raw_sql(&sql.replace("public.", "")).execute(&state.db).await.expect("migration applies");
     }

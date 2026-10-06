@@ -1,7 +1,12 @@
 //! `/v1/webhooks`: where a project's events go (scope `webhooks`).
 //!
 //! An endpoint has a public https `url`, the `events` it wants (or `["*"]`) and
-//! a signing `secret` (`whsec_…`, shown once at creation). Deliveries are signed
+//! a signing `secret` (`whsec_…`, shown once at creation). `signer` picks the
+//! signature format: `allternit` (default, the `allternit-signature` header)
+//! or `standard_webhooks` (`webhook-id` / `webhook-timestamp` /
+//! `webhook-signature`, verifiable with any Standard Webhooks library; the
+//! secret is then `whsec_` + base64 of 32 random bytes). The body is the same
+//! event object either way. Deliveries are signed
 //! and retried as described in [`super::events`]. A key bound to one account
 //! can't manage endpoints (they are project-wide).
 
@@ -19,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::FromRow;
 
-use super::events::{check_url, EVENT_TYPES};
+use super::events::{check_url, EVENT_TYPES, SIGNER_ALLTERNIT, SIGNER_STANDARD};
 use super::{build_page, new_id, ApiJson, ApiQuery, Page, PageParams, PlatformCaller, PlatformError, RouteTable};
 use crate::ApiState;
 
@@ -41,10 +46,11 @@ pub struct Webhook {
     pub url: String,
     pub events: Vec<String>,
     pub description: Option<String>,
+    pub signer: String,
     pub created_at: DateTime<Utc>,
 }
 
-const COLUMNS: &str = "id, 'webhook_endpoint'::text AS object, url, events, description, created_at";
+const COLUMNS: &str = "id, 'webhook_endpoint'::text AS object, url, events, description, signer, created_at";
 
 fn manage(caller: &PlatformCaller) -> Result<(), PlatformError> {
     caller.require("webhooks")?;
@@ -72,6 +78,8 @@ struct CreateBody {
     url: String,
     events: Vec<String>,
     description: Option<String>,
+    /// `allternit` (default) | `standard_webhooks`.
+    signer: Option<String>,
 }
 
 async fn create_webhook(
@@ -89,12 +97,25 @@ async fn create_webhook(
     if count >= MAX_ENDPOINTS {
         return Err(PlatformError::invalid_request("too_many_endpoints", format!("A project can have up to {MAX_ENDPOINTS} webhook endpoints.")));
     }
-    let mut raw = [0u8; 24];
-    rand::thread_rng().fill_bytes(&mut raw);
-    let secret = format!("whsec_{}", hex::encode(raw));
+    let signer = match body.signer.as_deref() {
+        None | Some(SIGNER_ALLTERNIT) => SIGNER_ALLTERNIT,
+        Some(SIGNER_STANDARD) => SIGNER_STANDARD,
+        Some(other) => {
+            return Err(PlatformError::invalid_request("invalid_signer", format!("Unknown signer '{other}'. Use \"{SIGNER_ALLTERNIT}\" or \"{SIGNER_STANDARD}\".")).with_param("signer"))
+        }
+    };
+    let secret = if signer == SIGNER_STANDARD {
+        let mut raw = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut raw);
+        format!("whsec_{}", base64::Engine::encode(&base64::engine::general_purpose::STANDARD, raw))
+    } else {
+        let mut raw = [0u8; 24];
+        rand::thread_rng().fill_bytes(&mut raw);
+        format!("whsec_{}", hex::encode(raw))
+    };
     let description = body.description.map(|d| d.chars().take(200).collect::<String>());
     let hook = sqlx::query_as::<_, Webhook>(&format!(
-        "INSERT INTO platform_webhooks (id, project_id, url, events, secret, description) VALUES ($1, $2, $3, $4, $5, $6) RETURNING {COLUMNS}"
+        "INSERT INTO platform_webhooks (id, project_id, url, events, secret, description, signer) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING {COLUMNS}"
     ))
     .bind(new_id("wh_"))
     .bind(&caller.project_id)
@@ -102,6 +123,7 @@ async fn create_webhook(
     .bind(&events)
     .bind(&secret)
     .bind(&description)
+    .bind(signer)
     .fetch_one(&state.db)
     .await?;
     let mut v = serde_json::to_value(&hook).unwrap_or(Value::Null);

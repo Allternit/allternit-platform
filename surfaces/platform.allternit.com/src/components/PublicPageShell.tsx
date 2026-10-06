@@ -15,7 +15,7 @@ const FOOTER_LINKS = [
     title: "Resources",
     links: [
       { label: "Docs", to: "/docs" },
-      { label: "Model router", href: "https://github.com/Gizziio/allternit-platform/blob/session/d89ae6f0-3d9f-418e-8d5a-e2f91a39256b/cmd/allternit-cloud-api/docs/model-router.md" },
+      { label: "Model router", href: "https://github.com/Allternit/allternit-platform/blob/session/d89ae6f0-3d9f-418e-8d5a-e2f91a39256b/cmd/allternit-cloud-api/docs/model-router.md" },
       { label: "API status", href: "https://status.allternit.com" },
       { label: "Changelog", href: "https://allternit.com/changelog" },
     ],

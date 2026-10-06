@@ -19,7 +19,7 @@ The phone is a 390 px window that floats over the current view. It is not a tab.
 - **Drag** the title strip to move it. Where you leave it is remembered for next time. With the title strip focused, the arrow keys move it too.
 - **Switch bots** from the name in the title strip.
 - **Minimize** turns it into a pill in the bottom-right corner. The pill shows a live call, or the latest message, and new messages pop up briefly as notifications. Click the pill to bring the phone back.
-- **Pop out** opens the phone as a larger window in the middle of the screen. Click it again to dock it.
+- **Pop out** opens the phone in its own window that you can move to another screen; links in it (a thread, MCP Apps) open in the main window. In a browser it opens as a popup; if popups are blocked, or on a Desktop app that is older than the release with the phone window, it opens as a larger panel in the middle of the screen instead, and clicking it again docks it.
 - **Close**, or press **Esc**. Focus stays inside the phone while it is open and returns to where you were when it closes.
 
 ## The home screen
@@ -64,7 +64,11 @@ Nothing is sent without you tapping **Send**. Developers: see [Starting conversa
 
 ## Unread
 
-A conversation counts as unread when it has new activity since you last opened it on this device. The Phones button, the pills on the home screen and the badges on app tiles all use the same count.
+A conversation counts as unread when it has new activity since you last opened it on any of your devices: open it on your phone and the badge clears on Desktop and the web app too (on their next refresh, within about a minute). The Phones button, the pills on the home screen and the badges on app tiles all use the same count.
+
+The home screen shows the bot's own email address when the bot has the Email channel on.
+
+Developers: your computer keeps the read marks. `GET /api/v1/bot-phone/seen` returns `{"seen": {"<conversationId>": <epoch ms>}}` for the signed-in owner, and `PUT /api/v1/bot-phone/seen {"seen": {…}}` records marks (a mark only moves forward; up to 500 per call, the newest 5,000 are kept). Each device also keeps a local copy, so a computer that is briefly unreachable doesn't bring badges back.
 
 ## What the bot can do on its own
 

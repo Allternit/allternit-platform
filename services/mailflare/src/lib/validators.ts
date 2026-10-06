@@ -164,4 +164,6 @@ export const webhookSchema = z.object({
 		.array(z.enum(["message.inbound", "message.outbound", "message.failed"]))
 		.min(1)
 		.max(3),
+	/** Scope the webhook to one of the caller's mailboxes. */
+	mailboxId: z.string().min(1).max(128).optional(),
 });

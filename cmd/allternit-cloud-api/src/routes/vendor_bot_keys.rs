@@ -9,7 +9,12 @@
 //! Routes (Clerk session or `compute`-scoped API key; 503 `mcp_edge_not_configured` until
 //! `MCP_PUBLIC_URL` is set, since a key is useless without the edge):
 //! - `POST   /api/v1/vendor-bots/:id/cli-keys` {label?} → 201 `{id, key, prefix, label, createdAt, mcpUrl, instructionsUrl}`
-//! - `GET    /api/v1/vendor-bots/:id/cli-keys` → `{keys: [{id, label, prefix, createdAt, lastUsedAt}]}` (revoked ones are not listed)
+//! - `GET    /api/v1/vendor-bots/:id/cli-keys` → `{keys: [{id, label, prefix, createdAt, lastUsedAt, subscriptions}]}`
+//!   (revoked ones are not listed). `subscriptions` are the MCP Events subscriptions the agent made with that
+//!   key on this bot's connector (principal `cli-key:<id>`, target `bot:<id>`), the same shape as
+//!   `GET /api/v1/mcp/approvals`: `[{id, name, arguments, createdAt, refreshBefore, active, lastDeliveryAt,
+//!   lastError}]`, or `null` when they couldn't be read (the keys still list). The owner stops one with
+//!   `DELETE /api/v1/mcp/events/subscriptions/:id`; revoking the key ends all of them.
 //! - `DELETE /api/v1/vendor-bots/:id/cli-keys/:keyId` → `{ok: true}`; 404 for a key that isn't the caller's
 //! - `GET    /bots/:id/instructions` and `GET /mcp/bots/:id/instructions` (key as Bearer) → `text/plain`,
 //!   what an agent reads to learn the tools; 401 for a missing, wrong, revoked or other-bot key.
@@ -138,22 +143,38 @@ async fn list_route(State(state): State<Arc<ApiState>>, headers: HeaderMap, Path
         Ok(u) => u.id,
         Err(e) => return e.into_response(),
     };
-    let rows: Result<Vec<(String, String, String, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>)>, _> = sqlx::query_as(
-        "SELECT id, label, key_prefix, created_at, last_used_at FROM vendor_bot_keys WHERE user_id = $1 AND vendor_bot_id = $2 AND revoked_at IS NULL ORDER BY created_at DESC",
-    )
-    .bind(&user)
-    .bind(&vendor_bot_id)
-    .fetch_all(&state.db)
-    .await;
-    match rows {
-        Ok(rows) => Json(json!({
-            "keys": rows.into_iter().map(|(id, label, prefix, created, used)| json!({
-                "id": id, "label": label, "prefix": prefix, "createdAt": created.to_rfc3339(), "lastUsedAt": used.map(|u| u.to_rfc3339())
-            })).collect::<Vec<_>>()
-        }))
-        .into_response(),
+    match list_keys(&state.db, &user, &vendor_bot_id).await {
+        Ok(v) => Json(v).into_response(),
         Err(e) => internal(e),
     }
+}
+
+/// `{keys: [...]}` for the owner's live keys on one vendor bot, each with its event subscriptions.
+pub async fn list_keys(db: &PgPool, user: &str, vendor_bot_id: &str) -> Result<serde_json::Value, sqlx::Error> {
+    let rows: Vec<(String, String, String, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>)> = sqlx::query_as(
+        "SELECT id, label, key_prefix, created_at, last_used_at FROM vendor_bot_keys WHERE user_id = $1 AND vendor_bot_id = $2 AND revoked_at IS NULL ORDER BY created_at DESC",
+    )
+    .bind(user)
+    .bind(vendor_bot_id)
+    .fetch_all(db)
+    .await?;
+    // The keys still list if the subscriptions can't be read (`null`).
+    let subs = crate::routes::mcp_events::owner_subscriptions(db, user).await.map_err(|e| tracing::error!("vendor bot keys: listing subscriptions failed: {e}")).ok();
+    let target = format!("bot:{vendor_bot_id}");
+    let now = chrono::Utc::now();
+    Ok(json!({
+        "keys": rows.into_iter().map(|(id, label, prefix, created, used)| {
+            let client = format!("cli-key:{id}");
+            let subscriptions = match &subs {
+                Some(subs) => subs.iter().filter(|s| s.client == client && s.target == target).map(|s| s.to_json(now)).collect(),
+                None => serde_json::Value::Null,
+            };
+            json!({
+                "id": id, "label": label, "prefix": prefix, "createdAt": created.to_rfc3339(), "lastUsedAt": used.map(|u| u.to_rfc3339()),
+                "subscriptions": subscriptions,
+            })
+        }).collect::<Vec<_>>()
+    }))
 }
 
 async fn revoke_route(State(state): State<Arc<ApiState>>, headers: HeaderMap, Path((vendor_bot_id, key_id)): Path<(String, String)>) -> Response {
@@ -171,7 +192,13 @@ async fn revoke_route(State(state): State<Arc<ApiState>>, headers: HeaderMap, Pa
         .execute(&state.db)
         .await
     {
-        Ok(r) if r.rows_affected() > 0 => Json(json!({ "ok": true })).into_response(),
+        Ok(r) if r.rows_affected() > 0 => {
+            // A key is its own MCP principal (`cli-key:<id>`): its event subscriptions end with it.
+            if let Err(e) = crate::routes::mcp_events::terminate_principal(&state.db, &user, &format!("cli-key:{key_id}"), &format!("bot:{vendor_bot_id}"), "key_revoked").await {
+                tracing::error!("vendor bot keys: ending subscriptions failed: {e}");
+            }
+            Json(json!({ "ok": true })).into_response()
+        }
         Ok(_) => (StatusCode::NOT_FOUND, Json(json!({ "error": "not_found" }))).into_response(),
         Err(e) => internal(e),
     }
@@ -235,6 +262,57 @@ mod tests {
         }
         assert!(issue(&db, "user_a", "bot_1", "").await.unwrap().is_none(), "the 11th key");
         assert!(issue(&db, "user_a", "bot_2", "").await.unwrap().is_some(), "the cap is per bot");
+    }
+
+    #[tokio::test]
+    async fn key_subscriptions_are_listed_and_stoppable_only_by_their_owner() {
+        let db = test_pool().await;
+        crate::routes::test_support::events_backbone_schema(&db).await;
+        sqlx::raw_sql(&include_str!("../../migrations_pg/040_vendor_bot_keys.sql").replace("public.", "")).execute(&db).await.unwrap();
+        let (key_id, _, _) = issue(&db, "user_a", "bot_1", "sandbox").await.unwrap().unwrap();
+        let (other_key, _, _) = issue(&db, "user_a", "bot_1", "").await.unwrap().unwrap();
+        // Subscriptions the edge stored for the key's principal, another key's, an OAuth app's on the same bot,
+        // and someone else's.
+        for (id, user, client, target, name) in [
+            ("sub_k1", "user_a", format!("cli-key:{key_id}"), "bot:bot_1", "vendor.ticket.created"),
+            ("sub_k2", "user_a", format!("cli-key:{other_key}"), "bot:bot_1", "message.received"),
+            ("sub_app", "user_a", "chatgpt".to_string(), "bot:bot_1", "vendor.ticket.created"),
+            ("sub_b", "user_b", format!("cli-key:{key_id}"), "bot:bot_1", "vendor.ticket.created"),
+        ] {
+            sqlx::query(
+                "INSERT INTO platform_webhooks (id, kind, signer, user_id, client_id, target, url, events, secret, arguments, refresh_before, verified_at) \
+                 VALUES ($1, 'mcp_subscription', 'standard_webhooks', $2, $3, $4, 'https://93.184.216.34/cb', ARRAY[$5], 'whsec_x', '{\"thread_id\":\"t1\"}', now() + interval '1 day', now())",
+            )
+            .bind(id).bind(user).bind(&client).bind(target).bind(name)
+            .execute(&db).await.unwrap();
+        }
+        let v = list_keys(&db, "user_a", "bot_1").await.unwrap();
+        let keys = v["keys"].as_array().unwrap();
+        assert_eq!(keys.len(), 2);
+        let k1 = keys.iter().find(|k| k["id"] == key_id.as_str()).unwrap();
+        let subs = k1["subscriptions"].as_array().unwrap();
+        assert_eq!(subs.len(), 1, "{k1}");
+        let s = &subs[0];
+        assert_eq!((s["id"].as_str(), s["name"].as_str(), s["active"].as_bool()), (Some("sub_k1"), Some("vendor.ticket.created"), Some(true)));
+        assert_eq!(s["arguments"], json!({ "thread_id": "t1" }));
+        for key in ["createdAt", "refreshBefore", "lastDeliveryAt", "lastError"] {
+            assert!(s.get(key).is_some(), "{key}");
+        }
+        assert!(s.get("url").is_none() && s.get("secret").is_none());
+        let k2 = keys.iter().find(|k| k["id"] == other_key.as_str()).unwrap();
+        assert_eq!(k2["subscriptions"].as_array().unwrap().iter().map(|s| s["id"].as_str().unwrap()).collect::<Vec<_>>(), ["sub_k2"]);
+        // Another bot's keys list shows none of these.
+        assert!(list_keys(&db, "user_a", "bot_2").await.unwrap()["keys"].as_array().unwrap().is_empty());
+
+        // Only the owner can stop a key's subscription (the same DELETE /api/v1/mcp/events/subscriptions/:id).
+        assert!(!crate::routes::mcp_events::end_owner_subscription(&db, "user_b", "sub_k1").await.unwrap());
+        assert!(crate::routes::mcp_events::end_owner_subscription(&db, "user_a", "sub_k1").await.unwrap());
+        let v = list_keys(&db, "user_a", "bot_1").await.unwrap();
+        let k1 = v["keys"].as_array().unwrap().iter().find(|k| k["id"] == key_id.as_str()).unwrap().clone();
+        assert!(k1["subscriptions"].as_array().unwrap().is_empty());
+        // user_b's row with the same principal is untouched.
+        let left: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar("SELECT deleted_at FROM platform_webhooks WHERE id = 'sub_b'").fetch_one(&db).await.unwrap();
+        assert!(left.is_none());
     }
 
     #[test]

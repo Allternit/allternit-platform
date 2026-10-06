@@ -94,3 +94,25 @@ The views draw the same picture for the same input (no random layout), show "—
 ## How this relates to the Agency Kernel
 
 Desktop hosts the Allternit API and Gizzi runtime locally. It is not part of the [Agency Kernel](/architecture); the kernel's Agency API is a Cloud API surface. See [Architecture](/architecture).
+
+## Prompt-cache countdown
+
+After a cache-bearing response, Gizzi Code shows a separate cache row under
+its model/context footer. Desktop and the web/phone/PWA workspace show the
+same indicator inside the latest reply's post-run orb telemetry, alongside
+time, tokens, and cost. Clicking the telemetry also includes a Cache row in
+the details. Existing custom
+status-line commands are preserved.
+
+The row updates every 30 seconds without sending a model request. Green means
+warm, amber means less than 20% of the TTL remains, and red means the estimated
+TTL has elapsed. The block bar shows time remaining. `last hit` is the share
+of the latest request's input read from cache, not a session-wide hit rate.
+When cold, `may re-cache` shows the latest reported input footprint.
+
+Expiry is an estimate from the request TTL, not a guarantee that the provider
+still holds the cache. Changes to model, tools, or context may invalidate it
+earlier. Unknown provider TTLs have no countdown. Native requests with a known TTL
+currently use five-minute ephemeral markers; Gizzi's interactive cache path
+uses its configured five-minute or one-hour TTL. No keepalive requests
+are sent. Miss counts and causes are omitted when not reported.

@@ -310,3 +310,17 @@ pub fn authed_request(method: &str, path: &str, body: &str) -> Request<Body> {
         .body(Body::from(body.to_string()))
         .unwrap()
 }
+
+/// The event backbone's tables (Platform API 050/051 + 057) in a test schema.
+pub async fn events_backbone_schema(db: &sqlx::PgPool) {
+    for sql in [
+        include_str!("../../migrations_pg/003_api_keys.sql"),
+        include_str!("../../migrations_pg/020_channel_inbound_queue.sql"),
+        include_str!("../../migrations_pg/024_phone_numbers.sql"),
+        include_str!("../../migrations_pg/050_platform_api_foundation.sql"),
+        include_str!("../../migrations_pg/051_platform_numbers_messaging.sql"),
+        include_str!("../../migrations_pg/057_allternit_events_backbone.sql"),
+    ] {
+        sqlx::raw_sql(&sql.replace("public.", "")).execute(db).await.expect("migration applies");
+    }
+}

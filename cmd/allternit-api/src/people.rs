@@ -730,6 +730,25 @@ pub fn facts(db: &DbHandle, owner: &str, person: &str, limit: usize) -> Vec<Stri
         .unwrap_or_default()
 }
 
+/// Facts with their ids, for the owner to read and remove.
+pub fn fact_items(db: &DbHandle, owner: &str, person: &str, limit: usize) -> Vec<Value> {
+    let Ok(conn) = db.connect() else { return vec![] };
+    let person = canonical(&conn, owner, person);
+    conn.prepare("SELECT id, fact, bot_id, created_at FROM person_facts WHERE owner = ?1 AND person_id = ?2 ORDER BY created_at DESC, rowid DESC LIMIT ?3")
+        .and_then(|mut q| {
+            q.query_map(params![owner, person, limit as i64], |r| {
+                Ok(json!({ "id": r.get::<_, String>(0)?, "fact": r.get::<_, String>(1)?, "botId": r.get::<_, Option<String>>(2)?, "createdAt": r.get::<_, Option<String>>(3)? }))
+            })?
+            .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Remove one fact; false when it isn't the owner's.
+pub fn forget(db: &DbHandle, owner: &str, fact_id: &str) -> bool {
+    db.connect().ok().and_then(|c| c.execute("DELETE FROM person_facts WHERE id = ?1 AND owner = ?2", params![fact_id, owner]).ok()).unwrap_or(0) > 0
+}
+
 /// The line a bot turn starts with: who wrote, on which channel, and what is already
 /// known about them from every other channel.
 pub fn turn_prefix(db: &DbHandle, owner: &str, provider: &str, s: Option<&Sender>, raw_user: Option<&str>, text: &str) -> String {
@@ -742,6 +761,119 @@ pub fn turn_prefix(db: &DbHandle, owner: &str, provider: &str, s: Option<&Sender
     out
 }
 
+// ---------------------------------------------------------------- bot tools
+
+/// Tools a bot calls while it works (served on the runtime's internal MCP endpoint beside
+/// `allternit_mail.*` and the phone tools). The bot acts for its owner, so it reads and writes
+/// the owner's people directly; vendor bots go through `twin_propose` instead.
+pub fn mcp_tools() -> Vec<Value> {
+    let person = json!({ "type": "string", "minLength": 1, "description": "The person's id (pe_…) or their name as shown in the conversation." });
+    vec![
+        json!({
+            "name": "people_lookup",
+            "title": "Look someone up",
+            "description": "Find people the owner knows by name, email or phone number. Returns each match with what is already known about them (from every channel) and how to reach them.",
+            "inputSchema": { "type": "object", "properties": { "query": { "type": "string", "minLength": 1 } }, "required": ["query"], "additionalProperties": false },
+            "annotations": { "readOnlyHint": true, "openWorldHint": false }
+        }),
+        json!({
+            "name": "people_remember",
+            "title": "Remember something about a person",
+            "description": "Save one short fact about a person the owner deals with (a preference, a role, a date that matters), so every channel and every bot knows it next time. Only facts the person shared or that are plainly useful; never passwords, payment details or health information.",
+            "inputSchema": { "type": "object", "properties": { "person": person, "fact": { "type": "string", "minLength": 1, "maxLength": 500 }, "agent_id": { "type": "string" }, "thread_id": { "type": "string" } }, "required": ["person", "fact"], "additionalProperties": false },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "openWorldHint": false }
+        }),
+        json!({
+            "name": "people_add_contact",
+            "title": "Add a contact",
+            "description": "Add a person with an email address and/or phone number. If one of them already belongs to someone the owner knows, that person is updated instead of creating a duplicate.",
+            "inputSchema": { "type": "object", "properties": { "name": { "type": "string", "minLength": 1 }, "org": { "type": "string" }, "email": { "type": "string" }, "phone": { "type": "string" } }, "required": ["name"], "additionalProperties": false },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "openWorldHint": false }
+        }),
+    ]
+}
+
+pub fn is_tool(name: &str) -> bool {
+    matches!(name, "people_lookup" | "people_remember" | "people_add_contact")
+}
+
+const SENSITIVE: [&str; 9] = ["password", "passcode", "pin code", "credit card", "card number", "cvv", "social security", "ssn", "bank account"];
+
+/// A person by id, or by a name that matches exactly one person (case-insensitive).
+fn resolve_person(db: &DbHandle, owner: &str, person: &str) -> Result<Person, String> {
+    let person = person.trim();
+    if let Some(p) = get_person(db, owner, person) {
+        return Ok(p);
+    }
+    let matches: Vec<Person> = list_people(db, owner).into_iter().filter(|p| p.display_name.trim().eq_ignore_ascii_case(person)).collect();
+    match matches.len() {
+        1 => Ok(matches.into_iter().next().unwrap()),
+        0 => Err(format!("No one called \"{person}\" yet. Use people_lookup, or people_add_contact to add them.")),
+        _ => Err(format!(
+            "More than one person is called \"{person}\": {}. Pass the id.",
+            matches.iter().map(|p| format!("{} ({}{})", p.id, p.display_name, p.org.as_deref().map(|o| format!(", {o}")).unwrap_or_default())).collect::<Vec<_>>().join("; ")
+        )),
+    }
+}
+
+fn person_summary(db: &DbHandle, owner: &str, p: &Person) -> Value {
+    let reach: Vec<Value> = identities_of(db, owner, &p.id).into_iter().map(|i| json!({ "channel": i.provider, "handle": i.label.unwrap_or(i.external_id) })).collect();
+    json!({ "id": p.id, "name": p.display_name, "org": p.org, "known": facts(db, owner, &p.id, 12), "reach": reach })
+}
+
+pub fn call_mcp_tool(db: &DbHandle, owner: &str, name: &str, args: &Value) -> Result<Value, String> {
+    let s = |k: &str| args.get(k).and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty());
+    match name {
+        "people_lookup" => {
+            let q = s("query").ok_or("query is required")?.to_lowercase();
+            let digits: String = q.chars().filter(|c| c.is_ascii_digit()).collect();
+            let found: Vec<Value> = list_people(db, owner)
+                .into_iter()
+                .filter(|p| {
+                    p.display_name.to_lowercase().contains(&q)
+                        || p.org.as_deref().is_some_and(|o| o.to_lowercase().contains(&q))
+                        || identities_of(db, owner, &p.id).iter().any(|i| {
+                            i.external_id.to_lowercase().contains(&q) || (digits.len() >= 7 && i.external_id.chars().filter(|c| c.is_ascii_digit()).collect::<String>().contains(&digits))
+                        })
+                })
+                .take(5)
+                .map(|p| person_summary(db, owner, &p))
+                .collect();
+            Ok(json!({ "people": found }))
+        }
+        "people_remember" => {
+            let fact = s("fact").ok_or("fact is required")?;
+            if fact.chars().count() > 500 {
+                return Err("Keep a fact under 500 characters.".into());
+            }
+            let lower = fact.to_lowercase();
+            if SENSITIVE.iter().any(|w| lower.contains(w)) {
+                return Err("That looks like a secret or payment detail; it isn't saved.".into());
+            }
+            let p = resolve_person(db, owner, s("person").ok_or("person is required")?)?;
+            remember(db, owner, &p.id, s("agent_id"), fact, s("thread_id"))?;
+            Ok(json!({ "saved": true, "person": { "id": p.id, "name": p.display_name } }))
+        }
+        "people_add_contact" => {
+            let name = s("name").ok_or("name is required")?;
+            let mut handles = Vec::new();
+            if let Some(e) = s("email") {
+                handles.push(("email".to_string(), e.to_string()));
+            }
+            if let Some(ph) = s("phone") {
+                handles.push(("sms".to_string(), ph.to_string()));
+            }
+            if handles.is_empty() {
+                return Err("Give an email address or a phone number.".into());
+            }
+            let id = import_contact(db, owner, name, s("org"), &handles, "bot")?;
+            let p = get_person(db, owner, &id).ok_or("person not found")?;
+            Ok(person_summary(db, owner, &p))
+        }
+        other => Err(format!("unknown people tool: {other}")),
+    }
+}
+
 // ---------------------------------------------------------------- routes
 
 pub fn people_router() -> Router<Arc<AppState>> {
@@ -752,6 +884,7 @@ pub fn people_router() -> Router<Arc<AppState>> {
         .route("/people/:id/merge", post(merge_h))
         .route("/people/:id/split", post(split_h))
         .route("/people/:id/facts", post(fact_h))
+        .route("/people/:id/facts/:fact_id", axum::routing::delete(forget_h))
         .route("/people/:id/message", post(message_h))
         .route("/people-links", get(links_h))
         .route("/people-links/:id/confirm", post(confirm_h))
@@ -787,6 +920,7 @@ pub fn person_json(db: &DbHandle, owner: &str, p: &Person) -> Value {
         "channels": channels,
         "lastChannel": last.map(|i| i.provider.clone()), "lastSeenAt": last.and_then(|i| i.last_seen_at.clone()),
         "threads": threads,
+        "facts": fact_items(db, owner, &p.id, 50),
     })
 }
 
@@ -923,9 +1057,17 @@ struct FactBody {
 
 async fn fact_h(State(st): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(pid): Path<String>, Json(b): Json<FactBody>) -> Response {
     match remember(&st.db, &user.user_id, &pid, b.bot_id.as_deref(), &b.fact, b.thread_id.as_deref()) {
-        Ok(p) => Json(json!({ "personId": p, "facts": facts(&st.db, &user.user_id, &p, 50) })).into_response(),
+        Ok(p) => Json(json!({ "personId": p, "facts": fact_items(&st.db, &user.user_id, &p, 50) })).into_response(),
         Err(e) if e == "person not found" => err(StatusCode::NOT_FOUND, "not_found", &e),
         Err(e) => err(StatusCode::BAD_REQUEST, "bad_request", &e),
+    }
+}
+
+async fn forget_h(State(st): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path((_pid, fact_id)): Path<(String, String)>) -> Response {
+    if forget(&st.db, &user.user_id, &fact_id) {
+        Json(json!({ "removed": true })).into_response()
+    } else {
+        err(StatusCode::NOT_FOUND, "not_found", "no such note")
     }
 }
 
@@ -1285,5 +1427,46 @@ mod tests {
         let text = r.turn.unwrap().2;
         assert!(text.contains("allergic to nuts") && text.matches("allergic").count() == 1, "{text}");
         assert!(remember(&st.db, "other-owner", &person, None, "x", None).is_err());
+    }
+
+    #[test]
+    fn bots_add_people_remember_facts_and_look_them_up() {
+        let dir = std::env::temp_dir().join(format!("allternit-people-tools-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let st = rt.block_on(crate::test_helpers::app_state(&dir));
+        let call = |name: &str, args: Value| call_mcp_tool(&st.db, "o", name, &args);
+
+        assert!(call("people_add_contact", json!({ "name": "Dana" })).unwrap_err().contains("email address or a phone"));
+        let dana = call("people_add_contact", json!({ "name": "Dana Lee", "org": "Acme", "email": "dana@acme.io", "phone": "+1 (555) 123-4567" })).unwrap();
+        let id = dana["id"].as_str().unwrap().to_string();
+        // The same email again updates Dana instead of adding a second person.
+        assert_eq!(call("people_add_contact", json!({ "name": "D. Lee", "email": "DANA@acme.io" })).unwrap()["id"], id.as_str());
+
+        assert_eq!(call("people_remember", json!({ "person": "dana lee", "fact": "Prefers email over calls", "agent_id": "bot-1" })).unwrap()["person"]["id"], id.as_str());
+        assert!(call("people_remember", json!({ "person": id, "fact": "Her card number is 4111" })).unwrap_err().contains("isn't saved"));
+        assert!(call("people_remember", json!({ "person": "Nobody", "fact": "x" })).unwrap_err().contains("No one called"));
+
+        // Lookup by name, org, email or phone digits; facts come back from every channel.
+        for q in ["dana", "acme", "dana@acme", "555-123-4567"] {
+            let found = call("people_lookup", json!({ "query": q })).unwrap();
+            assert_eq!(found["people"][0]["id"], id.as_str(), "{q}");
+            assert_eq!(found["people"][0]["known"], json!(["Prefers email over calls"]), "{q}");
+        }
+        // Another owner sees none of it.
+        assert_eq!(call_mcp_tool(&st.db, "someone-else", "people_lookup", &json!({ "query": "dana" })).unwrap()["people"], json!([]));
+
+        // Two people with one name: the bot is asked for the id.
+        call("people_add_contact", json!({ "name": "Dana Lee", "email": "other@x.io" })).unwrap();
+        assert!(call("people_remember", json!({ "person": "Dana Lee", "fact": "y" })).unwrap_err().contains("More than one"));
+        assert!(mcp_tools().iter().all(|t| is_tool(t["name"].as_str().unwrap())));
+
+        // The owner sees each note with who wrote it, and can remove it; nobody else can.
+        let items = fact_items(&st.db, "o", &id, 50);
+        assert_eq!((items.len(), items[0]["botId"].as_str()), (1, Some("bot-1")));
+        let fid = items[0]["id"].as_str().unwrap();
+        assert!(!forget(&st.db, "someone-else", fid));
+        assert!(forget(&st.db, "o", fid));
+        assert!(fact_items(&st.db, "o", &id, 50).is_empty());
     }
 }

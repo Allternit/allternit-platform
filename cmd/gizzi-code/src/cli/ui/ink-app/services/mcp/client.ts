@@ -5,38 +5,14 @@ import type {
   ContentBlockParam,
   MessageParam,
 } from '@allternit/gizzi-sdk/providers/allternit/resources/index.mjs'
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import {
-  SSEClientTransport,
-  type SSEClientTransportOptions,
-} from '@modelcontextprotocol/sdk/client/sse.js'
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
-import {
-  StreamableHTTPClientTransport,
-  type StreamableHTTPClientTransportOptions,
-} from '@modelcontextprotocol/sdk/client/streamableHttp.js'
-import {
-  createFetchWithInit,
-  type FetchLike,
-  type Transport,
-} from '@modelcontextprotocol/sdk/shared/transport.js'
-import {
-  CallToolResultSchema,
-  ElicitRequestSchema,
-  type ElicitRequestURLParams,
-  type ElicitResult,
-  ErrorCode,
-  type JSONRPCMessage,
-  type ListPromptsResult,
-  ListPromptsResultSchema,
-  ListResourcesResultSchema,
-  ListRootsRequestSchema,
-  type ListToolsResult,
-  ListToolsResultSchema,
-  McpError,
-  type PromptMessage,
-  type ResourceLink,
-} from '@modelcontextprotocol/sdk/types.js'
+import { Client } from '@modelcontextprotocol/client'
+import { SSEClientTransport, type SSEClientTransportOptions } from '@modelcontextprotocol/client'
+import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
+import { StreamableHTTPClientTransport, type StreamableHTTPClientTransportOptions } from '@modelcontextprotocol/client'
+import { createFetchWithInit, type FetchLike, type Transport } from '@modelcontextprotocol/client'
+import type { ElicitRequestURLParams, ElicitResult, JSONRPCMessage, ListPromptsResult, ListToolsResult, PromptMessage, ResourceLink } from '@modelcontextprotocol/client'
+import { ProtocolError, ProtocolErrorCode, SdkError, SdkErrorCode, SdkHttpError } from '@modelcontextprotocol/client'
+import { McpEra } from '@/runtime/tools/mcp/era.js'
 import mapValues from 'lodash-es/mapValues.js'
 import memoize from 'lodash-es/memoize.js'
 import zipObject from 'lodash-es/zipObject.js'
@@ -121,7 +97,7 @@ const fetchMcpSkillsForClient = feature('MCP_SKILLS')
     ).fetchMcpSkillsForClient
   : null
 
-import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js'
+import { UnauthorizedError } from '@modelcontextprotocol/client'
 import type { AssistantMessage } from './../../types/message.ts'
 /* eslint-enable @typescript-eslint/no-require-imports */
 import { classifyMcpToolForCollapse } from '../../tools/MCPTool/classifyForCollapse.js'
@@ -191,9 +167,32 @@ export class McpToolCallError_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS extends T
  * Per the MCP spec, servers return 404 when a session ID is no longer valid.
  * We check both signals to avoid false positives from generic 404s (wrong URL, server gone, etc.).
  */
+/**
+ * HTTP status of an MCP transport error. SDK v2 throws SdkHttpError with
+ * `.status`; a numeric `.code` is the v1 StreamableHTTPError shape (kept for
+ * errors produced by our own fetch wrappers).
+ */
+export function mcpHttpStatus(error: unknown): number | undefined {
+  if (error instanceof SdkHttpError) return error.status
+  if (error instanceof Error && 'code' in error) {
+    const code = (error as Error & { code?: unknown }).code
+    if (typeof code === 'number' && code >= 100 && code < 600) return code
+  }
+  return undefined
+}
+
+/** The SDK closed the connection under a pending request (v2 SdkError, or a v1-shaped -32000). */
+export function isMcpConnectionClosedError(error: unknown): boolean {
+  if (error instanceof SdkError) return error.code === SdkErrorCode.ConnectionClosed
+  return (
+    error instanceof Error &&
+    (error as Error & { code?: unknown }).code === -32000 &&
+    error.message.includes('Connection closed')
+  )
+}
+
 export function isMcpSessionExpiredError(error: Error): boolean {
-  const httpStatus =
-    'code' in error ? (error as Error & { code?: number }).code : undefined
+  const httpStatus = mcpHttpStatus(error)
   if (httpStatus !== 404) {
     return false
   }
@@ -983,6 +982,38 @@ export const connectToServer = memoize(
         }
       }
 
+      // Dual-era MCP (2026-07-28 + legacy). stdio and streamable-HTTP servers are
+      // probed with `server/discover` and fall back to the legacy `initialize`
+      // handshake; SSE, WebSocket, IDE and in-process transports are legacy-only.
+      // A cached legacy verdict (McpEra, per server) skips the probe; a cached
+      // modern verdict still probes so a connect keeps proving the server is up.
+      const eraCapable =
+        !inProcessServer &&
+        (serverRef.type === 'stdio' ||
+          !serverRef.type ||
+          serverRef.type === 'http' ||
+          serverRef.type === 'claudeai-proxy')
+      const eraMode: McpEra.Mode = eraCapable
+        ? ((serverRef as { protocol?: McpEra.Mode }).protocol ?? 'auto')
+        : 'legacy'
+      const eraTarget =
+        'url' in serverRef && typeof serverRef.url === 'string'
+          ? serverRef.url
+          : [
+              (serverRef as { command?: string }).command ?? '',
+              ...((serverRef as { args?: string[] }).args ?? []),
+            ].join(' ')
+      const eraProbeTimeoutMs =
+        serverRef.type === 'stdio' || !serverRef.type
+          ? McpEra.STDIO_PROBE_TIMEOUT_MS
+          : getConnectionTimeoutMs()
+      const eraPrior =
+        eraMode === 'auto' &&
+        (await McpEra.prior(name, eraTarget).catch(() => undefined))?.kind ===
+          'legacy'
+          ? ({ kind: 'legacy' } as const)
+          : undefined
+
       const client = new Client(
         {
           name: 'gizzi',
@@ -992,6 +1023,7 @@ export const connectToServer = memoize(
           websiteUrl: PRODUCT_URL,
         },
         {
+          versionNegotiation: McpEra.negotiation(eraMode, eraProbeTimeoutMs),
           capabilities: {
             roots: {},
             // Empty object declares the capability. Sending {form:{},url:{}}
@@ -1009,7 +1041,7 @@ export const connectToServer = memoize(
         logMCPDebug(name, `Client created, setting up request handler`)
       }
 
-      client.setRequestHandler(ListRootsRequestSchema, async () => {
+      client.setRequestHandler('roots/list', async () => {
         logMCPDebug(name, `Received ListRoots request from server`)
         return {
           roots: [
@@ -1048,7 +1080,10 @@ export const connectToServer = memoize(
         }
       }
 
-      const connectPromise = client.connect(transport)
+      const connectPromise = client.connect(transport, {
+        timeout: getConnectionTimeoutMs(),
+        ...(eraPrior ? { prior: eraPrior } : {}),
+      })
       const timeoutPromise = new Promise<never>((_, reject) => {
         const timeoutId = setTimeout(() => {
           const elapsed = Date.now() - connectStartTime
@@ -1086,9 +1121,12 @@ export const connectToServer = memoize(
           stderrOutput = '' // Release accumulated string to prevent memory growth
         }
         const elapsed = Date.now() - connectStartTime
+        if (eraMode === 'auto') {
+          void McpEra.remember(name, eraTarget, client).catch(() => {})
+        }
         logMCPDebug(
           name,
-          `Successfully connected (transport: ${serverRef.type || 'stdio'}) in ${elapsed}ms`,
+          `Successfully connected (transport: ${serverRef.type || 'stdio'}, era: ${client.getProtocolEra() ?? 'unknown'}, protocol: ${client.getNegotiatedProtocolVersion() ?? 'unknown'}) in ${elapsed}ms`,
         )
       } catch (error) {
         const elapsed = Date.now() - connectStartTime
@@ -1134,9 +1172,7 @@ export const connectToServer = memoize(
           )
           logMCPError(name, error)
 
-          // StreamableHTTPError has a `code` property with the HTTP status
-          const errorCode = (error as Error & { code?: number }).code
-          if (errorCode === 401) {
+          if (mcpHttpStatus(error) === 401) {
             return handleRemoteAuthFailure(name, serverRef, 'claudeai-proxy')
           }
         } else if (
@@ -1191,7 +1227,7 @@ export const connectToServer = memoize(
       // Register default elicitation handler that returns cancel during the
       // window before registerElicitationHandler overwrites it in
       // onConnectionAttempt (useManageMCPConnections).
-      client.setRequestHandler(ElicitRequestSchema, async request => {
+      client.setRequestHandler('elicitation/create', async request => {
         logMCPDebug(
           name,
           `Elicitation request received during initialization: ${jsonStringify(request)}`,
@@ -1236,7 +1272,7 @@ export const connectToServer = memoize(
 
       // client.close() → transport.close() → transport.onclose → SDK's _onclose():
       // rejects all pending request handlers (so hung callTool() promises fail with
-      // McpError -32000 "Connection closed") and then invokes our client.onclose
+      // SdkError CONNECTION_CLOSED) and then invokes our client.onclose
       // handler below (which clears the memo cache so the next call reconnects).
       // Calling client.onclose?.() directly would only clear the cache — pending
       // tool calls would stay hung.
@@ -1754,7 +1790,6 @@ export const fetchToolsForClient = memoizeWithLRU(
 
       const result = (await client.client.request(
         { method: 'tools/list' },
-        ListToolsResultSchema,
       )) as ListToolsResult
 
       // Sanitize tool data from MCP server
@@ -1960,16 +1995,13 @@ export const fetchToolsForClient = memoizeWithLRU(
                         error.message.slice(0, 200),
                       )
                     }
-                    // McpError has a numeric `code` with the JSON-RPC error
-                    // code (e.g. -32000 ConnectionClosed, -32001 RequestTimeout)
-                    if (
-                      name === 'McpError' &&
-                      'code' in error &&
-                      typeof error.code === 'number'
-                    ) {
+                    // ProtocolError carries the numeric JSON-RPC error code;
+                    // SdkError carries an SDK-local code (e.g. CONNECTION_CLOSED,
+                    // REQUEST_TIMEOUT). Both are safe to report.
+                    if (error instanceof ProtocolError || error instanceof SdkError) {
                       throw new TelemetrySafeError_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS(
                         error.message,
-                        `McpError ${error.code}`,
+                        `${error instanceof SdkError ? 'SdkError' : 'ProtocolError'} ${error.code}`,
                       )
                     }
                   }
@@ -2017,7 +2049,6 @@ export const fetchResourcesForClient = memoizeWithLRU(
 
       const result = await client.client.request(
         { method: 'resources/list' },
-        ListResourcesResultSchema,
       )
 
       if (!result.resources) return []
@@ -2051,7 +2082,6 @@ export const fetchCommandsForClient = memoizeWithLRU(
       // Request prompts list from client
       const result = (await client.client.request(
         { method: 'prompts/list' },
-        ListPromptsResultSchema,
       )) as ListPromptsResult
 
       if (!result.prompts) return []
@@ -2868,11 +2898,11 @@ export async function callMCPToolWithUrlElicitationRetry({
         onProgress,
       })
     } catch (error) {
-      // The MCP SDK's Protocol creates plain McpError (not UrlElicitationRequiredError)
+      // The MCP SDK's Protocol may create a plain ProtocolError (not UrlElicitationRequiredError)
       // for error responses, so we check the error code instead of instanceof.
       if (
-        !(error instanceof McpError) ||
-        error.code !== ErrorCode.UrlElicitationRequired
+        !(error instanceof ProtocolError) ||
+        error.code !== ProtocolErrorCode.UrlElicitationRequired
       ) {
         throw error
       }
@@ -3104,7 +3134,6 @@ async function callMCPTool({
           arguments: args,
           _meta: meta,
         },
-        CallToolResultSchema,
         {
           signal,
           timeout: timeoutMs,
@@ -3201,10 +3230,9 @@ async function callMCPTool({
     }
 
     // Check for 401 errors indicating expired/invalid OAuth tokens
-    // The MCP SDK's StreamableHTTPError has a `code` property with the HTTP status
+    // SDK v2 HTTP failures are SdkHttpError with the HTTP status on `.status`
     if (e instanceof Error) {
-      const errorCode = 'code' in e ? (e.code as number | undefined) : undefined
-      if (errorCode === 401 || e instanceof UnauthorizedError) {
+      if (mcpHttpStatus(e) === 401 || e instanceof UnauthorizedError) {
         logMCPDebug(
           name,
           `Tool call returned 401 Unauthorized - token may have expired`,
@@ -3218,16 +3246,14 @@ async function callMCPTool({
 
       // Check for session expiry — two error shapes can surface here:
       // 1. Direct 404 + JSON-RPC -32001 from the server (StreamableHTTPError)
-      // 2. -32000 "Connection closed" (McpError) — the SDK closes the transport
+      // 2. "Connection closed" (SdkError CONNECTION_CLOSED) — the SDK closes the transport
       //    after the onerror handler fires, so the pending callTool() rejects
       //    with this derived error instead of the original 404.
       // In both cases, clear the connection cache so the next tool call
       // creates a fresh session.
       const isSessionExpired = isMcpSessionExpiredError(e)
       const isConnectionClosedOnHttp =
-        'code' in e &&
-        (e as Error & { code?: number }).code === -32000 &&
-        e.message.includes('Connection closed') &&
+        isMcpConnectionClosedError(e) &&
         (config.type === 'http' || config.type === 'claudeai-proxy')
       if (isSessionExpired || isConnectionClosedOnHttp) {
         logMCPDebug(

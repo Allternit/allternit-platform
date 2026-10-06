@@ -37,7 +37,7 @@ remaining:
     STILL OPEN as of 2026-09-14: a human with Vercel dashboard access (team
     `gizzi-io-6138s-projects`) needs to disconnect the GitHub repo from all
     three Vercel projects (a2rchitech, allternit, platform): open each
-    project → Settings → Git → "Disconnect" the `Gizziio/allternit-platform`
+    project → Settings → Git → "Disconnect" the `Allternit/allternit-platform`
     connection (or delete the projects outright if nothing else depends on
     them). This cannot be done from this checkout — there is no
     vercel.json/.vercel/project.json wiring the link from the repo side; the
@@ -57,7 +57,7 @@ setup this repo migrated away from four months ago. Recommending removal
 
 Evidence gathered, in order:
 
-1. **`gh api repos/Gizziio/allternit-platform/commits/main/status`** confirms
+1. **`gh api repos/Allternit/allternit-platform/commits/main/status`** confirms
    the failure is real and current: `a2rchitech` and `platform` sit in
    `pending` state indefinitely (never resolve, success or failure), and
    `allternit` reports `failure` with `npx vercel inspect
@@ -73,7 +73,7 @@ Evidence gathered, in order:
    the web surface.** The only `vercel.json` in the whole repo is
    `cmd/gizzi-code/src/cli/ui/ink-app/context/theme/vercel.json`, an editor
    *color theme* file unrelated to deployment.
-4. **`gh api repos/Gizziio/allternit-platform/hooks` returns `[]`** — no
+4. **`gh api repos/Allternit/allternit-platform/hooks` returns `[]`** — no
    classic repo webhooks. This confirms the Vercel checks are posted by a
    Vercel-owned **GitHub App installation**, not anything configured from
    this repo's side — there is nothing in the checkout to "fix," only a
@@ -122,7 +122,7 @@ not a code change — there's nothing in this checkout to edit or delete.
 
 ### The duplicate workflow/script
 
-Confirmed via `gh api repos/Gizziio/allternit-platform/actions/workflows`
+Confirmed via `gh api repos/Allternit/allternit-platform/actions/workflows`
 (the live list of workflows GitHub Actions has actually registered for this
 repo) that only `.github/workflows/typography-validation.yml` (root) is
 active. `surfaces/ai.allternit.com/.github/workflows/typography-validation.yml`

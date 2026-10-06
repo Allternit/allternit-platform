@@ -41,10 +41,12 @@ See [Authentication](/api/authentication).
 
 | Method | Description |
 |--------|-------------|
-| `initialize` | Return protocol version, capabilities, and server info. |
+| `server/discover` | Supported protocol versions, capabilities, server info, and instructions (MCP 2026-07-28). |
+| `initialize` | Legacy handshake (2025-11-25 and earlier): negotiated version, capabilities, server info. |
 | `ping` | Health check. |
 | `tools/list` | List available tools. |
 | `tools/call` | Execute a tool by name. |
+| `resources/list`, `resources/read`, `resources/templates/list` | The `ui://` Views behind the agent tools. |
 
 ## Tool catalog
 
@@ -66,7 +68,48 @@ The same `/mcp` mount also serves the routes that manage which external MCP serv
 | `POST` | `/mcp/test` | Test a connection to an MCP server. |
 | `GET` | `/mcp/oauth/callback` | OAuth callback for MCP servers that require it. |
 
-## Initialize
+## Protocol versions
+
+The server speaks both MCP eras on the same endpoint:
+
+- **2026-07-28 (stateless).** No handshake. Put the version in every request's `params._meta["io.modelcontextprotocol/protocolVersion"]` (and the `MCP-Protocol-Version` header). Results carry `resultType: "complete"` and `_meta["io.modelcontextprotocol/serverInfo"]`; list and read results also carry `ttlMs` and `cacheScope: "private"`. An unknown version is refused with `-32022` and the list of supported versions.
+- **2025-11-25, 2025-06-18, 2025-03-26, 2024-11-05.** Send `initialize` first, as before. An unknown version in `initialize` gets `2025-06-18`.
+
+If you send `Mcp-Method` or `Mcp-Name` headers, they must match the body; a mismatch is HTTP `400` with `-32020`. An `Mcp-Name` in the `=?base64?…?=` form is decoded before the comparison.
+
+List results (`tools/list`, `prompts/list`, `resources/list`, `resources/templates/list`) come back in one canonical order in both eras: ascending by `name`, `uri` or `uriTemplate` (byte order). The same rule applies on every Allternit MCP endpoint, including attached servers' tools and the connector endpoints.
+
+```bash
+curl -X POST https://api.allternit.com/mcp/server \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "MCP-Protocol-Version: 2026-07-28" \
+  -H "Mcp-Method: server/discover" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": "d1",
+    "method": "server/discover",
+    "params": { "_meta": { "io.modelcontextprotocol/protocolVersion": "2026-07-28" } }
+  }'
+```
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "d1",
+  "result": {
+    "resultType": "complete",
+    "supportedVersions": ["2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"],
+    "capabilities": { "tools": { "listChanged": false }, "resources": { "listChanged": false } },
+    "_meta": { "io.modelcontextprotocol/serverInfo": { "name": "allternit-api", "version": "0.1.0" } },
+    "instructions": "Read-only access to the caller's Allternit agents and their runs. …",
+    "ttlMs": 60000,
+    "cacheScope": "private"
+  }
+}
+```
+
+## Initialize (legacy clients)
 
 ### Example request
 
@@ -94,8 +137,9 @@ curl -X POST https://api.allternit.com/mcp/server \
   "id": 1,
   "result": {
     "protocolVersion": "2025-03-26",
-    "capabilities": { "tools": {} },
-    "serverInfo": { "name": "allternit-api", "version": "0.1.0" }
+    "capabilities": { "tools": { "listChanged": false }, "resources": { "subscribe": false, "listChanged": false } },
+    "serverInfo": { "name": "allternit-api", "version": "0.1.0" },
+    "instructions": "Read-only access to the caller's Allternit agents and their runs. …"
   }
 }
 ```
@@ -194,6 +238,35 @@ The internal endpoint uses the same JSON-RPC contract but is intended for peer s
 | `x-allternit-user-id` | User id the request is running as. |
 | `x-allternit-organization-id` | Optional organization id. |
 
+## MCP Events (mcp.allternit.com)
+
+The public edge at `https://mcp.allternit.com/mcp` (agents server, scope `agents:read`) and `https://mcp.allternit.com/mcp/bots/<bot id>` (vendor bot connector, scope `bots:act`) supports the MCP Events extension with webhook delivery. Both advertise it in `server/discover` (and in a legacy `initialize` answer):
+
+```json
+"capabilities": { "tools": { "listChanged": false }, "events": { "listChanged": false } }
+```
+
+| Method | What it does |
+|--------|--------------|
+| `events/list` | The events this server offers, with `inputSchema` (filter arguments) and `payloadSchema`. |
+| `events/subscribe` | Create or refresh a webhook subscription. Idempotent: the same caller, URL, name and arguments always map to the same `id`. |
+| `events/unsubscribe` | End a subscription. Always answers `{}`. |
+
+The edge answers these itself; your computer doesn't need to be awake. Subscriptions last 24 hours by default, up to 7 days (`ttlMs: null` is clamped to 7 days); subscribe again before `refreshBefore` to keep them. Deliveries are signed with [Standard Webhooks](https://www.standardwebhooks.com) using the `whsec_` secret you supply, and carry `X-MCP-Subscription-Id`. See the [MCP Events guide](/guides/mcp-events) for the event catalog, the verification challenge, and delivery rules.
+
+| Code | Name | When |
+|------|------|------|
+| `-32602` | InvalidParams | Bad arguments, a non-https or private callback URL, or a `whsec_` secret outside 24–64 bytes. |
+| `-32011` | NotFound | The event isn't offered by this server (`data.kind: "event"`). |
+| `-32012` | Forbidden | A vendor bot connector asked for another bot's events. |
+| `-32013` | ResourceExhausted | 50 live subscriptions per app and server (`data.limit: "subscriptions"`). |
+| `-32014` | Unsupported | A delivery mode other than `webhook`. |
+| `-32015` | CallbackEndpointError | Your callback didn't pass verification; `data.reason` is `connection_refused`, `timeout`, `tls_error`, `http_4xx`, `http_5xx` or `challenge_failed`. |
+
+Owners see and end subscriptions through the cloud API: `GET /api/v1/mcp/approvals` lists each approved app's `subscriptions`, `DELETE /api/v1/mcp/events/subscriptions/:id` ends one (the callback gets a signed `terminated` message, `reason: "ended_by_owner"`), and `GET /api/v1/events/catalog` returns every event with a plain-words title and the servers that offer it. Fields and errors are in [Seeing and ending subscriptions](/guides/mcp-events#seeing-and-ending-subscriptions).
+
+Opening `https://mcp.allternit.com/` (or the server URL in a browser) shows a short page with the server URLs, protocol versions and event catalog.
+
 ## Error codes
 
 JSON-RPC errors are returned with standard JSON-RPC error codes:
@@ -216,6 +289,7 @@ HTTP status codes:
 ## Related pages
 
 - [Authentication](/api/authentication)
+- [MCP Events guide](/guides/mcp-events)
 - [Connectors API](/api/connectors)
 - [Server Tools API](/api/server-tools)
 - [Tools guide](/tools/tool-belt)

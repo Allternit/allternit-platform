@@ -1,0 +1,68 @@
+---
+title: Subscription Gateway API
+description: Start tasks on a connected ChatGPT, Claude or Kimi subscription through the forwarder, with the human action each task needs.
+---
+
+## Overview
+
+A connected subscription runs in its own browser on the person's Sessions computer. The Allternit API forwards requests to that computer's gateway and adds the gateway token server-side. Every task that would send something through a subscription needs a **human action**: proof that a person sent or confirmed that task. Agents, tools, bots and schedules never get one on their own. They prepare the task on an approval card, and the action is created when a person approves it.
+
+<Note>
+This namespace is served by the Allternit API data-plane node (`http://127.0.0.1:8013` on the same machine, or your paired or provisioned node), under `/api/v1`.
+</Note>
+
+## Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v1/subscriptions/human-actions` | Create a human action for a UI surface where a person starts a task directly. Needs a person's session; `chat.send` and `approval.confirm` are reserved for the platform. |
+| `ANY` | `/api/v1/subscriptions/gateway/v1/...` | Forward to the gateway. `POST v1/tasks` is checked and stamped as described below. |
+| `POST` | `/api/v1/subscriptions/disclosure/ack` | Record the person's acknowledgement of a provider's disclosure. |
+
+## Submitting a task
+
+`POST /api/v1/subscriptions/gateway/v1/tasks` with the action in the `x-allternit-human-action` header:
+
+```json
+{
+  "capability": "presentation.create",
+  "prompt": "A 10-slide Q3 review",
+  "routing": { "provider": "chatgpt" },
+  "options": { "slides": 10 },
+  "idempotency_key": "my-tool-call-1"
+}
+```
+
+The forwarder checks, in order: the body, the provider, the disclosure version, then the human action. The action is used up only when everything passes. It belongs to one user, expires after 10 minutes, and works once; a retry with the same `idempotency_key` may reuse it. Accepted tasks are stamped with `initiated_by: {kind: "human", user_id, action_id}`.
+
+## Approval cards are bound to their task
+
+When a person approves a subscription card, the action created for it can start **only the task on that card**. The card carries the task as `subscription.task`:
+
+| Field | Description |
+|-------|-------------|
+| `capability` | The capability submitted. `chat.create` and `chat.continue` count as the same task. |
+| `provider` | The subscription provider. |
+| `prompt` | The full prompt submitted. For a provider question (`kind: "question"`) it is left out: the person's answer is the prompt. |
+| `options` | The options submitted, exactly (missing = `{}`; key order does not matter). |
+
+Submit exactly that task with the action. A task with a different capability, provider, prompt or options is refused with `human_action_task_mismatch`, and the action is not used up. The card's preview and provider are taken from `subscription.task`, so what the person reads is the start of what runs.
+
+A card without a complete `subscription.task` (sent by an Allternit runtime from before task binding) cannot be approved: the decision returns `409 task_required`, the card stays open with that message, and the person can reject it and ask again once Allternit has updated.
+
+## Errors
+
+| Status | `error` | Meaning |
+|--------|---------|---------|
+| 400 | `invalid_task`, `provider_required`, `unknown_provider` | The task body is not usable. |
+| 403 | `disclosure_required` | The person has not acknowledged this provider's current disclosure. |
+| 403 | `human_action_required` | No `x-allternit-human-action` header. |
+| 403 | `human_action_invalid` | The action is unknown, expired, another user's, or already used. |
+| 403 | `human_action_task_mismatch` | The action was approved for a different task. |
+| 403 | `person_required` | A human action or card decision came from an agent or API token instead of a person. |
+| 409 | `task_required` | Approving a card that does not carry its complete task. |
+
+## Related pages
+
+- [Connected subscriptions](/guides/subscriptions)
+- [Agent Chat API](/api/agent-chat)

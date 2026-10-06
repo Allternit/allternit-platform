@@ -5,10 +5,9 @@ import type { ActionSearchIndexProvider } from "./core/action-search.ts";
 import type { JsonSchema, ProviderDefinition } from "./core/types.ts";
 import type { IProviderLoader } from "./providers/provider-loader.ts";
 import type { ActionRunner } from "./server/actions/action-runner.ts";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import * as z from "zod/v4";
+import { McpServer, type CallToolResult } from "@modelcontextprotocol/server";
+import * as z from "zod";
 import { createActionSearchIndexProvider, searchActions as searchActionIndex } from "./core/action-search.ts";
 import { renderActionMarkdown } from "./server/api/action-markdown.ts";
 
@@ -78,6 +77,8 @@ export function listMcpToolSummaries(): IMcpToolSummary[] {
 
 /**
  * Create a stateless MCP server instance for one Streamable HTTP request.
+ * Served dual-era by `createMcpHandler` (MCP 2026-07-28 `server/discover` +
+ * legacy `initialize`); tools list in registration order.
  */
 export function createMcpServer(options: IMcpServerOptions): McpServer {
   const server = new McpServer(
@@ -95,9 +96,9 @@ export function createMcpServer(options: IMcpServerOptions): McpServer {
     {
       title: "List Apps",
       description: "List available provider apps with connection and action counts.",
-      inputSchema: {
+      inputSchema: z.object({
         query: z.string().optional().describe("Optional case-insensitive app name, service, category, or auth filter."),
-      },
+      }),
     },
     async ({ query }) => toolResult(successPayload(await listApps(options, query))),
   );
@@ -108,7 +109,7 @@ export function createMcpServer(options: IMcpServerOptions): McpServer {
       title: "Search Actions",
       description:
         "Search catalog actions by query and optional provider service id. Use this before requesting an action guide.",
-      inputSchema: {
+      inputSchema: z.object({
         query: z
           .string()
           .optional()
@@ -118,7 +119,7 @@ export function createMcpServer(options: IMcpServerOptions): McpServer {
           .optional()
           .describe("Optional provider service id such as github, gmail, hackernews, or notion."),
         limit: z.number().int().min(1).max(50).default(20).describe("Maximum number of actions to return."),
-      },
+      }),
     },
     async ({ query, service, limit }) =>
       toolResult(successPayload(await searchActions(options, { query, service, limit }))),
@@ -129,9 +130,9 @@ export function createMcpServer(options: IMcpServerOptions): McpServer {
     {
       title: "Get Action Guide",
       description: "Return one action's compact markdown guide, including local execute examples and input parameters.",
-      inputSchema: {
+      inputSchema: z.object({
         actionId: z.string().describe("Full action id, for example github.get_current_user."),
-      },
+      }),
     },
     async ({ actionId }) => toolResult(await getActionGuide(options, actionId)),
   );
@@ -142,13 +143,13 @@ export function createMcpServer(options: IMcpServerOptions): McpServer {
       title: "Execute Action",
       description:
         "Execute one local provider action by id with a JSON input object. Call get_action_guide first if the input shape is unclear.",
-      inputSchema: {
+      inputSchema: z.object({
         actionId: z.string().describe("Full action id, for example hackernews.get_item."),
         input: z
           .record(z.string(), z.unknown())
           .default({})
           .describe("Action input object matching the selected action guide."),
-      },
+      }),
     },
     async ({ actionId, input }) => toolResult(await executeAction(options, actionId, input)),
   );

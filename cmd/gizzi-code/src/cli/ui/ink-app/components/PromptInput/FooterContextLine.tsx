@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { CacheCountdown } from './CacheCountdown'
 import { useSyncExternalStore } from 'react'
 import { getActiveBotChat, onActiveBotChatChange } from '../../bootstrap/state'
 import { Box, Text } from '../../ink'
@@ -42,7 +43,8 @@ export function FooterContextLine({ messages }: { messages: Message[] }): React.
   }
 
   return (
-    <Box flexGrow={1} justifyContent="space-between" gap={1}>
+    <Box flexGrow={1} flexDirection="column">
+    <Box justifyContent="space-between" gap={1}>
       <Text dimColor={true} wrap="truncate-end">
         {renderModelSetting(model)}
         {effort ? `  effort: ${effort}` : ''}
@@ -52,6 +54,8 @@ export function FooterContextLine({ messages }: { messages: Message[] }): React.
           context: {percent}% ({formatTokens(used)}/{formatTokens(total)})
         </Text>
       </Box>
+    </Box>
+    <CacheCountdown messages={messages} model={model} />
     </Box>
   )
 }

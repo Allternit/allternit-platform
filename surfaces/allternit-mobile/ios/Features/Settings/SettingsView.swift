@@ -685,7 +685,7 @@ struct SettingsView: View {
         } header: {
             Text("Products")
         } footer: {
-            Text("Gizziio Code, Cowork, and Extensions settings.")
+            Text("Gizzi Code, Cowork, and Extensions settings.")
         }
     }
 

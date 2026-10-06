@@ -326,13 +326,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     allternit_cloud_api::routes::channel_onboarding::start_telegram_manager_onboarding();
 
     // Platform API: signed webhook delivery + monthly number usage (only when switched on).
+    // The same queue delivers MCP Events from the mcp.allternit.com edge, so with the
+    // Platform API off but the edge on, the delivery worker still runs (no number fees).
     if allternit_cloud_api::routes::platform_v1::platform_api_enabled() {
         allternit_cloud_api::routes::platform_v1::events::spawn_worker(state.db.clone());
+    } else if allternit_cloud_api::routes::mcp_edge::public_mcp_url_for_keys().is_some() {
+        allternit_cloud_api::routes::platform_v1::events::spawn_delivery_worker(state.db.clone());
     }
+
+    // 10DLC / toll-free registrations: retry pending ones (missed webhooks, campaigns waiting on our carrier account).
+    allternit_cloud_api::routes::phone::start_registration_sweep(state.db.clone());
 
     // Voice calls: deliver queued call.* events to runtimes (wake on demand).
     allternit_cloud_api::routes::voice_calls_cloud::start_voice_calls_worker(state.clone());
     allternit_cloud_api::routes::inapp_calls::start_inapp_calls_worker(state.clone());
+    // Web Push from the event backbone, per the owner's notification preferences (no-op without VAPID env).
+    allternit_cloud_api::routes::notifications::spawn_push_sink(state.db.clone());
     // Teams shared app: deliver queued Bot Framework activities to runtimes.
     allternit_cloud_api::channels::teams_app::start_teams_app_worker(state.clone());
     // Slack shared app: deliver queued Slack events to the installing users' runtimes.

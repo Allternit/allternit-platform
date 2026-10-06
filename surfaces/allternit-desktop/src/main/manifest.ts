@@ -43,7 +43,7 @@ export const PLATFORM_MANIFEST = {
 
   /** Update endpoints */
   update: {
-    desktopFeedUrl: 'https://github.com/Gizziio/desktop/releases/latest',
+    desktopFeedUrl: 'https://github.com/Allternit/desktop/releases/latest',
     backendVersionUrl: 'https://api.allternit.com/versions/latest',
   },
 } as const;

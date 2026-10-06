@@ -262,7 +262,7 @@ export namespace Installation {
         .then((data: any) => data.version)
     }
 
-    return fetch("https://api.github.com/repos/Gizziio/allternit-platform/releases/latest")
+    return fetch("https://api.github.com/repos/Allternit/allternit-platform/releases/latest")
       .then((res) => {
         if (!res.ok) throw new Error(res.statusText)
         return res.json()

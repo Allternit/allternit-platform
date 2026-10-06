@@ -22,6 +22,7 @@ import { ContextProjector } from "@/runtime/session/context-projector"
 import { consumeRetryHint } from "@/runtime/providers/retry-hint"
 import { SessionContext } from "./context-event"
 import { Guardrails } from "./guardrails"
+import { generatedFileMeta, generatedFilePart, type GeneratedFileMeta } from "./generated-file"
 
 export namespace SessionProcessor {
   const DOOM_LOOP_THRESHOLD = 3
@@ -163,6 +164,9 @@ export namespace SessionProcessor {
             let currentText: MessageV2.TextPart | undefined
             let currentReasoning: MessageV2.ReasoningPart | undefined
             let reasoningMap: Record<string, MessageV2.ReasoningPart> = {}
+            // Metadata a provider sent (raw `generated_file`) for the next `file` part.
+            let pendingFileMeta: GeneratedFileMeta | undefined
+            const cacheRequestAt = Date.now()
             const stream = await LLM.stream(streamInput)
 
             // State machine for splitting <think> tags
@@ -455,6 +459,16 @@ export namespace SessionProcessor {
                   input.assistantMessage.finish = value.finishReason
                   input.assistantMessage.cost += usage.cost
                   input.assistantMessage.tokens = usage.tokens
+                  // Native Anthropic requests use ephemeral markers without a TTL override
+                  // (ProviderTransform.applyCaching). Do not infer expiry for other providers.
+                  if (input.model.providerID === "anthropic" && !input.assistantMessage.tokensEstimated &&
+                      usage.tokens.cache.read + usage.tokens.cache.write > 0) {
+                    input.assistantMessage.tokens.cache = {
+                      ...usage.tokens.cache,
+                      ttlSeconds: 300,
+                      refreshedAt: cacheRequestAt,
+                    }
+                  }
                   await Session.updatePart({
                     id: Identifier.ascending("part"),
                     reason: value.finishReason ?? "unknown",
@@ -692,6 +706,26 @@ export namespace SessionProcessor {
                   currentReasoning = undefined
                   break
 
+                case "file": {
+                  // A generated file (image, deck, document) → FilePart on the
+                  // assistant message; bridges turn it into an artifact card.
+                  const file = (value as { file?: { mediaType?: string; base64?: string } }).file
+                  const meta = pendingFileMeta
+                  pendingFileMeta = undefined
+                  const part = generatedFilePart({
+                    id: Identifier.ascending("part"),
+                    messageID: input.assistantMessage.id,
+                    sessionID: input.assistantMessage.sessionID,
+                    mediaType: file?.mediaType,
+                    base64: file?.base64,
+                    meta,
+                  })
+                  if (!part) break
+                  await Session.updatePart(part)
+                  Bus.publish(MessageV2.Event.PartUpdated, { part })
+                  break
+                }
+
                 case "finish":
                   break
 
@@ -704,6 +738,25 @@ export namespace SessionProcessor {
                   const raw = (value as { raw?: unknown }).raw
                   if (!raw || typeof raw !== "object") break
                   const observed = raw as Record<string, unknown>
+                  if (observed.__gizzi === "generated_file") {
+                    const meta = generatedFileMeta(observed)
+                    if (!meta?.url) {
+                      pendingFileMeta = meta
+                      break
+                    }
+                    // Too large to inline: the file part points at its URL.
+                    const part = generatedFilePart({
+                      id: Identifier.ascending("part"),
+                      messageID: input.assistantMessage.id,
+                      sessionID: input.assistantMessage.sessionID,
+                      meta,
+                    })
+                    if (part) {
+                      await Session.updatePart(part)
+                      Bus.publish(MessageV2.Event.PartUpdated, { part })
+                    }
+                    break
+                  }
                   if (observed.__gizzi === "observed_context") {
                     Bus.publish(SessionContext.Event.Updated, {
                       sessionID: input.sessionID,

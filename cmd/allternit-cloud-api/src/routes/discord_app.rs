@@ -34,7 +34,7 @@
 use async_trait::async_trait;
 use axum::{
     body::Bytes,
-    extract::{Query, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::{Html, IntoResponse, Response},
     routing::{get, post, put},
@@ -93,6 +93,8 @@ pub const INTENTS: u64 = (1 << 0) | (1 << 9) | (1 << 12);
 pub fn routes() -> Router<Arc<ApiState>> {
     Router::new()
         .route("/api/v1/channels/discord/install", post(install))
+        .route("/api/v1/channels/discord/installs", get(list_installs))
+        .route("/api/v1/channels/discord/installs/:guild_id/channels", get(list_channels).put(save_channels))
         .route("/api/v1/channels/discord/send", post(send))
         .route("/api/v1/channels/discord/dm", post(dm))
         .route("/api/v1/channels/discord/commands", put(commands))
@@ -277,6 +279,119 @@ pub fn install_url(cfg: &DiscordConfig, state: &str) -> String {
 
 async fn user_id(state: &ApiState, headers: &HeaderMap) -> Result<String, ApiError> {
     crate::auth::resolve_user_scoped(&state.db, headers, "compute").await.map(|u| u.id)
+}
+
+/// `GET /api/v1/channels/discord/installs`: the servers this user added the
+/// shared app to, so their runtime can record each as a connection.
+async fn list_installs(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> Result<Response, ApiError> {
+    if DiscordConfig::from_env().is_none() {
+        return Ok(not_configured());
+    }
+    let user = user_id(&state, &headers).await?;
+    let rows: Vec<(String, Option<String>, String, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
+        "SELECT guild_id, guild_name, runtime_id, installed_at FROM discord_installs WHERE user_id = $1 AND revoked_at IS NULL ORDER BY installed_at",
+    )
+    .bind(&user)
+    .fetch_all(&state.db)
+    .await?;
+    let installs: Vec<Value> = rows
+        .into_iter()
+        .map(|(guild_id, guild_name, runtime_id, installed_at)| json!({ "guildId": guild_id, "guildName": guild_name, "runtimeId": runtime_id, "installedAt": installed_at }))
+        .collect();
+    Ok(Json(json!({ "installs": installs })).into_response())
+}
+
+/// Text channels a bot can post in: text (0) and announcement (5).
+const POSTABLE_CHANNEL_TYPES: [u64; 2] = [0, 5];
+
+/// `GET /api/v1/channels/discord/installs/:guild_id/channels`: the server's text channels, each
+/// with `selected` (no saved choice = every channel is selected).
+async fn list_channels(State(state): State<Arc<ApiState>>, headers: HeaderMap, Path(guild_id): Path<String>) -> Response {
+    let Some(cfg) = DiscordConfig::from_env() else { return not_configured() };
+    let user = match user_id(&state, &headers).await {
+        Ok(u) => u,
+        Err(e) => return e.into_response(),
+    };
+    guild_channels(&state.db, default_api(&cfg).as_ref(), &user, &guild_id).await
+}
+
+pub async fn guild_channels(db: &sqlx::PgPool, api: &dyn DiscordApi, user: &str, guild_id: &str) -> Response {
+    let allowed: Option<(Option<Vec<String>>,)> = match sqlx::query_as(
+        "SELECT allowed_channel_ids FROM discord_installs WHERE guild_id = $1 AND user_id = $2 AND revoked_at IS NULL",
+    )
+    .bind(guild_id)
+    .bind(user)
+    .fetch_optional(db)
+    .await
+    {
+        Ok(row) => row,
+        Err(error) => return ApiError::from(error).into_response(),
+    };
+    let Some((allowed,)) = allowed else { return json_error(StatusCode::NOT_FOUND, "discord_not_installed") };
+    let result = api
+        .call(ApiRequest { method: "GET", path: format!("/guilds/{guild_id}/channels"), auth: Auth::Bot, body: Body::None })
+        .await;
+    let listed = match result {
+        Ok(r) if r.ok() => r.body,
+        Ok(r) => return (StatusCode::BAD_GATEWAY, Json(json!({ "error": "discord_error", "status": r.status }))).into_response(),
+        Err(error) => {
+            tracing::warn!("discord channel list failed: {error}");
+            return json_error(StatusCode::BAD_GATEWAY, "discord_unreachable");
+        }
+    };
+    let mut channels: Vec<(i64, Value)> = listed
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|c| c.get("type").and_then(Value::as_u64).is_some_and(|t| POSTABLE_CHANNEL_TYPES.contains(&t)))
+        .filter_map(|c| {
+            let id = str_at(c, "/id")?.to_string();
+            let selected = allowed.as_ref().map_or(true, |a| a.contains(&id));
+            Some((
+                c.get("position").and_then(Value::as_i64).unwrap_or(0),
+                json!({ "id": id, "name": str_at(c, "/name").unwrap_or_default(), "selected": selected }),
+            ))
+        })
+        .collect();
+    channels.sort_by_key(|(position, _)| *position);
+    Json(json!({ "channels": channels.into_iter().map(|(_, c)| c).collect::<Vec<_>>(), "allChannels": allowed.is_none() })).into_response()
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ChannelsBody {
+    /// The channels the bots may answer in. Empty or absent = every channel.
+    #[serde(default)]
+    channel_ids: Vec<String>,
+}
+
+/// `PUT /api/v1/channels/discord/installs/:guild_id/channels {channelIds}`.
+async fn save_channels(State(state): State<Arc<ApiState>>, headers: HeaderMap, Path(guild_id): Path<String>, Json(body): Json<ChannelsBody>) -> Response {
+    let user = match user_id(&state, &headers).await {
+        Ok(u) => u,
+        Err(e) => return e.into_response(),
+    };
+    store_allowed_channels(&state.db, &user, &guild_id, &body.channel_ids).await
+}
+
+pub async fn store_allowed_channels(db: &sqlx::PgPool, user: &str, guild_id: &str, channel_ids: &[String]) -> Response {
+    if let Err(response) = check_install(db, user, guild_id).await {
+        return response;
+    }
+    let mut ids: Vec<String> = channel_ids.iter().map(|c| c.trim().to_string()).filter(|c| !c.is_empty() && c.len() <= 32 && c.chars().all(|ch| ch.is_ascii_digit())).collect();
+    ids.sort();
+    ids.dedup();
+    let allowed = if ids.is_empty() { None } else { Some(ids) };
+    match sqlx::query("UPDATE discord_installs SET allowed_channel_ids = $3, updated_at = now() WHERE guild_id = $1 AND user_id = $2 AND revoked_at IS NULL")
+        .bind(guild_id)
+        .bind(user)
+        .bind(&allowed)
+        .execute(db)
+        .await
+    {
+        Ok(_) => Json(json!({ "saved": true, "allChannels": allowed.is_none(), "channelIds": allowed.unwrap_or_default() })).into_response(),
+        Err(error) => ApiError::from(error).into_response(),
+    }
 }
 
 async fn owns_runtime(db: &sqlx::PgPool, user: &str, runtime_id: &str) -> Result<bool, ApiError> {
@@ -683,20 +798,22 @@ pub fn command_inbound(interaction: &Value) -> Option<Inbound> {
 
 pub struct Owner {
     pub route_id: String,
+    /// Channels the bots may answer in; `None` = all of them.
+    pub allowed_channels: Option<Vec<String>>,
 }
 
 /// The install an event belongs to: by guild, or for a DM by the Discord user who installed.
 async fn owner_for(db: &sqlx::PgPool, guild_id: Option<&str>, author_id: &str) -> Result<Option<Owner>, sqlx::Error> {
-    let row: Option<(Option<String>,)> = match guild_id {
+    let row: Option<(Option<String>, Option<Vec<String>>)> = match guild_id {
         Some(guild) => {
-            sqlx::query_as("SELECT route_id FROM discord_installs WHERE guild_id = $1 AND revoked_at IS NULL")
+            sqlx::query_as("SELECT route_id, allowed_channel_ids FROM discord_installs WHERE guild_id = $1 AND revoked_at IS NULL")
                 .bind(guild)
                 .fetch_optional(db)
                 .await?
         }
         None => {
             sqlx::query_as(
-                "SELECT route_id FROM discord_installs WHERE installed_by_discord_id = $1 AND revoked_at IS NULL
+                "SELECT route_id, NULL::text[] FROM discord_installs WHERE installed_by_discord_id = $1 AND revoked_at IS NULL
                   ORDER BY updated_at DESC LIMIT 1",
             )
             .bind(author_id)
@@ -704,7 +821,7 @@ async fn owner_for(db: &sqlx::PgPool, guild_id: Option<&str>, author_id: &str) -
             .await?
         }
     };
-    Ok(row.and_then(|(id,)| id).map(|route_id| Owner { route_id }))
+    Ok(row.and_then(|(id, allowed)| id.map(|route_id| Owner { route_id, allowed_channels: allowed })))
 }
 
 /// Thread messages arrive with the thread's id as the channel; webhooks live on the parent.
@@ -770,6 +887,12 @@ pub async fn route_message_create(
         let (channel, thread) = resolve_thread(api, &inbound.channel_id).await;
         inbound.channel_id = channel;
         inbound.thread_id = thread;
+        // A thread counts as its parent channel.
+        if let Some(allowed) = &owner.allowed_channels {
+            if !allowed.iter().any(|c| c == &inbound.channel_id) {
+                return Ok(None);
+            }
+        }
     }
     enqueue(db, &owner.route_id, &inbound).await?;
     Ok(Some(owner.route_id))
@@ -1648,6 +1771,7 @@ mod tests {
         for sql in [
             include_str!("../../migrations_pg/020_channel_inbound_queue.sql"),
             include_str!("../../migrations_pg/025_discord_installs.sql"),
+            include_str!("../../migrations_pg/058_discord_allowed_channels.sql"),
         ] {
             sqlx::raw_sql(&sql.replace("public.", "")).execute(&pool).await.unwrap();
         }
@@ -1881,6 +2005,55 @@ mod tests {
         let mut elsewhere = message("<@app1> hi", true);
         elsewhere["guild_id"] = json!("g-unknown");
         assert_eq!(route_message_create(&pool, api.as_ref(), &cfg, &elsewhere).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn the_owner_picks_channels_and_other_channels_never_reach_the_runtime() {
+        let pool = db().await;
+        let route = install_for_test(&pool, "g1", "d1").await;
+        let api = FakeApi::new(|_, path| match path {
+            "/guilds/g1/channels" => reply(200, json!([
+                { "id": "45", "name": "random", "type": 0, "position": 2 },
+                { "id": "44", "name": "general", "type": 0, "position": 1 },
+                { "id": "50", "name": "Voice", "type": 2, "position": 0 },
+                { "id": "51", "name": "news", "type": 5, "position": 3 },
+            ])),
+            "/channels/44" => reply(200, json!({ "id": "44", "type": 0 })),
+            "/channels/45" => reply(200, json!({ "id": "45", "type": 0 })),
+            "/channels/t9" => reply(200, json!({ "id": "t9", "type": 11, "parent_id": "44" })),
+            _ => reply(404, Value::Null),
+        });
+        let body = |r: Response| async move { serde_json::from_slice::<Value>(&axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap()).unwrap() };
+
+        // Before a choice every text channel is selected; voice channels are left out; ordered by position.
+        let listed = body(guild_channels(&pool, api.as_ref(), "user1", "g1").await).await;
+        assert_eq!(listed["allChannels"], true);
+        let names: Vec<_> = listed["channels"].as_array().unwrap().iter().map(|c| (c["name"].as_str().unwrap().to_string(), c["selected"].as_bool().unwrap())).collect();
+        assert_eq!(names, [("general".into(), true), ("random".into(), true), ("news".into(), true)]);
+        // Someone else's server is a 404.
+        assert_eq!(guild_channels(&pool, api.as_ref(), "user2", "g1").await.status(), StatusCode::NOT_FOUND);
+        assert_eq!(store_allowed_channels(&pool, "user2", "g1", &["44".into()]).await.status(), StatusCode::NOT_FOUND);
+
+        let saved = body(store_allowed_channels(&pool, "user1", "g1", &["44".into(), "44".into(), "bad id".into()]).await).await;
+        assert_eq!((saved["allChannels"].clone(), saved["channelIds"].clone()), (json!(false), json!(["44"])));
+        let listed = body(guild_channels(&pool, api.as_ref(), "user1", "g1").await).await;
+        assert_eq!(listed["channels"][1]["selected"], false, "random is no longer selected");
+
+        let cfg = cfg();
+        let mut in_random = message("<@app1> hi", true);
+        in_random["channel_id"] = json!("45");
+        assert_eq!(route_message_create(&pool, api.as_ref(), &cfg, &in_random).await.unwrap(), None);
+        assert_eq!(route_message_create(&pool, api.as_ref(), &cfg, &message("<@app1> hi", true)).await.unwrap(), Some(route.clone()));
+        // A thread under an allowed channel counts as that channel.
+        let mut in_thread = message("<@app1> hi", true);
+        in_thread["channel_id"] = json!("t9");
+        assert_eq!(route_message_create(&pool, api.as_ref(), &cfg, &in_thread).await.unwrap(), Some(route.clone()));
+        assert_eq!(queued(&pool, &route).await.len(), 2);
+
+        // Saving none goes back to every channel.
+        let all = body(store_allowed_channels(&pool, "user1", "g1", &[]).await).await;
+        assert_eq!(all["allChannels"], true);
+        assert_eq!(route_message_create(&pool, api.as_ref(), &cfg, &in_random).await.unwrap(), Some(route));
     }
 
     #[tokio::test]

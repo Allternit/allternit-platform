@@ -3,10 +3,10 @@
 > **Enterprise Agentic Operating System**
 > Agent runtime, desktop shell, cloud gateway, and services — one pnpm + Cargo workspace.
 
-This repo (`Gizziio/allternit-platform`) is the core platform monorepo: the Allternit agent
+This repo (`Allternit/allternit-platform`) is the core platform monorepo: the Allternit agent
 runtime (gizzi-code), the desktop app, the Rust API gateway, and the supporting services.
 The agent workspace UI (`ai.allternit.com`) lives in the private satellite repo
-`Gizziio/allternit-ai`, not here.
+`Allternit/allternit-ai`, not here.
 
 ## Quick start
 

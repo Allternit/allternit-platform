@@ -1,9 +1,6 @@
 // @ts-nocheck
 import { feature } from 'bun:bundle'
-import type {
-  ElicitResult,
-  JSONRPCMessage,
-} from '@modelcontextprotocol/sdk/types'
+import type { ElicitResult, JSONRPCMessage } from '@modelcontextprotocol/client'
 import { randomUUID } from 'crypto'
 import type { AssistantMessage } from 'src//types/message'
 import type {

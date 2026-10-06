@@ -98,7 +98,7 @@ Electron update feed backed by GitHub Releases. The feed repository is
 configured in `src/main/unified-main.ts` as:
 
 ```ts
-repo: 'Gizziio/desktop'
+repo: 'Allternit/desktop'
 ```
 
 and in `package.json` `build.publish` as:
@@ -106,7 +106,7 @@ and in `package.json` `build.publish` as:
 ```json
 {
   "provider": "github",
-  "owner": "Gizziio",
+  "owner": "Allternit",
   "repo": "desktop"
 }
 ```

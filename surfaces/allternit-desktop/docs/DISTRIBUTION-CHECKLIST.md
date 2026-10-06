@@ -36,7 +36,7 @@ app-specific passwords into this file.
 | Linux metadata | maintainer `Allternit <support@allternit.com>`, vendor `Allternit`, AppImage + deb targets |
 | Auto-update feed (runtime) | `updateElectronApp({ repo: 'allternit/desktop' })` in `src/main/unified-main.ts` |
 
-**Known mismatch to fix before first signed release:** `package.json` `build.publish` still says `Gizziio/desktop`. Runtime + `src/main/manifest.ts` use `allternit/desktop`. Pick one GitHub repo and make publish + updater + README agree.
+**Known mismatch to fix before first signed release:** `package.json` `build.publish` still says `Allternit/desktop`. Runtime + `src/main/manifest.ts` use `allternit/desktop`. Pick one GitHub repo and make publish + updater + README agree.
 
 ---
 
@@ -49,7 +49,7 @@ Do these while Apple is in review.
 - [x] Enrollment type: **Organization** (Allternit LLC)
 - [x] Account Holder Apple ID (in review): `cartlidge.joseph@proton.me`
 - [x] Apple 2FA on that Apple ID (confirmed on). Required for enrollment, App Store Connect, and `notarytool`. This is Apple 2FA (trusted phone + trusted device), not Proton-mail 2FA.
-- [ ] Decide GitHub Releases repo: `allternit/desktop` vs `Gizziio/desktop` — then fix `build.publish`
+- [ ] Decide GitHub Releases repo: `allternit/desktop` vs `Allternit/desktop` — then fix `build.publish`
 - [ ] Create GitHub Actions secrets **names** on that repo (values empty until certs exist):
   - [ ] `APPLE_ID`
   - [ ] `APPLE_ID_PASSWORD` (or switch hook to App Store Connect API key)

@@ -11,6 +11,12 @@
  * in the Allternit app, allternit-api mints the human action server-side and
  * relays it with the reply. A reply without one (a terminal UI, a remote
  * peer) cannot start a task: gizzi never mints actions itself.
+ *
+ * Task binding: every card carries `subscription.task` — the exact task that
+ * runs on approval (capability, provider, full prompt, options; for a
+ * question the person's answer is the prompt). allternit-api binds the human
+ * action to it, and the forwarder refuses that action for any other task, so
+ * callers must submit exactly what they put on the card.
  */
 
 import { Identifier } from "@/shared/id/id"
@@ -26,6 +32,10 @@ export interface SendConfirmation {
   provider: string
   modelClass: string
   prompt: string
+  /** The capability the task is submitted with (chat.create / chat.continue). */
+  capability: string
+  /** The options the task is submitted with, exactly. */
+  options: Record<string, unknown>
   signal?: AbortSignal
 }
 
@@ -35,6 +45,8 @@ export interface QuestionInput {
   taskID: string
   question: string
   reason?: string
+  /** The options the answer is submitted with, exactly. */
+  options: Record<string, unknown>
   signal?: AbortSignal
 }
 
@@ -48,6 +60,7 @@ export async function confirmSend(input: SendConfirmation): Promise<string> {
     model: input.modelClass,
     prompt: input.prompt.slice(0, PROMPT_PREVIEW_CHARS),
     truncated: input.prompt.length > PROMPT_PREVIEW_CHARS,
+    task: { capability: input.capability, provider: input.provider, prompt: input.prompt, options: input.options },
   }, `Send to your ${name} subscription`, () => `You chose not to send this to your ${name} subscription.`)
   return requireAction(data, name)
 }
@@ -65,6 +78,8 @@ export async function askProviderQuestion(input: QuestionInput): Promise<{ human
     taskId: input.taskID,
     question: input.question,
     ...(input.reason ? { reason: input.reason } : {}),
+    // The prompt is the person's answer; allternit-api fills it in.
+    task: { capability: "chat.continue", provider: input.provider, options: input.options },
   }, `${name} asks: ${input.question}`, () => `${name} needs you: ${input.question}`)
   const humanAction = requireAction(data, name)
   const answer = data?.answer?.trim()

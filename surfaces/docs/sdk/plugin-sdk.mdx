@@ -268,7 +268,7 @@ class ResearchPlugin extends BasePlugin {
 npx @allternit/plugin-sdk run --adapter mcp
 ```
 
-Configure an MCP client to point at the generated server command.
+Configure an MCP client to point at the generated server command. The MCP adapter runs on the official MCP SDK v2 over stdio and is dual-era: clients that speak MCP `2026-07-28` open with `server/discover`, older clients with `initialize`. It lists one tool per plugin function in manifest order, plus `_plugin_info`, and the plugin's manifest and README as resources. It needs Node.js 20 or later.
 
 ### As an HTTP API
 

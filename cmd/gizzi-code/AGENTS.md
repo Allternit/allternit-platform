@@ -414,7 +414,7 @@ paths) still work.
 Before building, releasing, or installing gizzi-code, run `bash scripts/build-state.sh`
 from the repo root (enforced by `.steering/bin/guard-build.sh`), build only from
 latest `origin/main`, ship through every official channel (npm + GitHub Release
-via the `gizzi-code/v*` tag, the `Gizziio/homebrew-tap` formula, and the Desktop
+via the `gizzi-code/v*` tag, the `Allternit/homebrew-tap` formula, and the Desktop
 sidecar), then `--prune` the builds it replaced. Full rule: root `AGENTS.md`,
 "one current build per product". Binaries embed `GIZZI_BUILD_SHA` so any copy
 can be traced to its commit.

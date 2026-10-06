@@ -147,3 +147,8 @@ infrastructure/mesh/tsnet-ios/Harness/harness
 docs/desktop-cloud-mvp/*.mp4
 docs/desktop-cloud-mvp/*.webm
 docs/desktop-cloud-mvp/*.mov
+
+# runtime state — never commit
+.logs/
+.pids/
+/tmp/

@@ -38,7 +38,7 @@ pub fn allternit_bus_router() -> Router<Arc<AppState>> {
             post(resolve_agent_connectors),
         )
         // Identity channels (mailflare-aware provision_email lives here)
-        .route("/agents/:agent_id/identity/email", post(provision_email))
+        .route("/agents/:agent_id/identity/email", post(provision_email).delete(release_email))
 }
 
 /// Public webhook surface for inbound Photon.codes messages.
@@ -550,6 +550,11 @@ async fn provision_email(
                 .await?;
         return Ok(Json(ProvisionEmailResponse { address, provider: "mailflare" }).into_response());
     }
+    // No local admin key: Allternit's cloud provisions the mailbox for this runtime.
+    if crate::mailflare_client::brokered_available() {
+        let address = provision_email_brokered(&state, &user.user_id, &agent_id, requested.as_deref()).await?;
+        return Ok(Json(ProvisionEmailResponse { address, provider: "mailflare" }).into_response());
+    }
 
     let domain = std::env::var("ALLTERNIT_BOT_EMAIL_DOMAIN")
         .ok()
@@ -622,6 +627,39 @@ async fn provision_email(
     Ok(Json(ProvisionEmailResponse { address, provider: "commrails" }).into_response())
 }
 
+/// `DELETE /agents/:id/identity/email`: give up the bot's address so a new one can be chosen.
+/// The mailbox (and, on the cloud, its key, webhook and relay route) is removed first; if that
+/// fails the address is kept, so the bot never ends up with a mailbox it can no longer read.
+/// Reply settings stay on the bot.
+async fn release_email(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(agent_id): Path<String>,
+) -> Result<Response, ApiError> {
+    require_agent_owner(&state, &user, &agent_id)?;
+    if !crate::agent_email_routes::revoke_agent_mailbox(&agent_id, &state.db).await {
+        return Err(err(
+            StatusCode::BAD_GATEWAY,
+            "mailbox_not_removed",
+            "The old address couldn't be removed right now, so the bot keeps it. Try again in a minute.",
+        ));
+    }
+    clear_email_channel(&state.db.connect().map_err(internal)?, &agent_id).map_err(internal)?;
+    Ok(Json(json!({ "released": true })).into_response())
+}
+
+/// Forget the bot's address and mailbox credentials; its reply settings stay.
+fn clear_email_channel(conn: &rusqlite::Connection, agent_id: &str) -> rusqlite::Result<usize> {
+    conn.execute(
+        "UPDATE agent_identity_channels SET
+             email_address = NULL, email_provider = NULL, email_send_enabled = 0, email_receive_enabled = 0,
+             email_mailbox_id = NULL, email_api_key_sealed = NULL, email_webhook_secret_sealed = NULL,
+             email_mail_url = NULL, email_domain_verified = 0, updated_at = CURRENT_TIMESTAMP
+         WHERE agent_id = ?1",
+        params![agent_id],
+    )
+}
+
 /// Provision a real mailflare mailbox for the agent: resolve the domain id,
 /// create the mailbox (+ Cloudflare routing rule), mint a mailbox-scoped
 /// send+read API key, seal it, and persist the channel row. On any failure no
@@ -629,6 +667,77 @@ async fn provision_email(
 /// again best-effort. Returns the provisioned address. Shared by the
 /// `POST /agents/:id/identity/email` route and the `allternit-mail` connector
 /// connect path.
+/// Provision the bot's mailbox through cloud-api (`POST /api/v1/runtime-devices/me/bot-email/mailboxes`,
+/// this runtime's device credential). The cloud creates the mailbox, a key scoped to it and a webhook
+/// that delivers only its mail to this runtime; the key and the webhook secret are sealed here.
+pub(crate) async fn provision_email_brokered(
+    state: &Arc<AppState>,
+    user_id: &str,
+    agent_id: &str,
+    requested_local_part: Option<&str>,
+) -> Result<String, ApiError> {
+    let existing = {
+        let conn = state.db.connect().map_err(internal)?;
+        crate::agent_email_routes::lookup_email_channel(&conn, agent_id).map_err(internal)?
+    };
+    if let Some(channel) = existing {
+        if channel.mailbox_id.is_some() && channel.api_key_sealed.is_some() {
+            return Ok(channel.address);
+        }
+    }
+    let bot_name = {
+        let conn = state.db.connect().map_err(internal)?;
+        agent_display_name(&conn, agent_id)
+    };
+    let local = local_part_candidates(requested_local_part, &bot_name, agent_id)?.into_iter().next().unwrap_or_else(|| sanitize_local_part(agent_id));
+    let bearer = crate::phone_sync::runtime_bearer()
+        .ok_or_else(|| err(StatusCode::CONFLICT, "runtime_not_paired", "Sign this computer in to your Allternit account to give bots email."))?;
+    let resp = reqwest::Client::new()
+        .post(format!("{}/api/v1/runtime-devices/me/bot-email/mailboxes", crate::phone_sync::cloud_base().trim_end_matches('/')))
+        .bearer_auth(bearer)
+        .timeout(std::time::Duration::from_secs(30))
+        .json(&serde_json::json!({ "agentId": agent_id, "localPart": local, "displayName": bot_name }))
+        .send()
+        .await
+        .map_err(|e| err(StatusCode::BAD_GATEWAY, "cloud_unreachable", e.to_string()))?;
+    let status = resp.status();
+    let body: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
+    if status == StatusCode::SERVICE_UNAVAILABLE {
+        return Err(err(StatusCode::NOT_IMPLEMENTED, "email_domain_not_configured", "Bot email isn't available on Allternit's cloud yet."));
+    }
+    if !status.is_success() {
+        let msg = body.get("message").or_else(|| body.get("error")).and_then(|v| v.as_str()).unwrap_or("the cloud refused to create the mailbox").to_string();
+        return Err(err(StatusCode::BAD_GATEWAY, "mailbox_not_created", msg));
+    }
+    let s = |k: &str| body.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let (address, mailbox_id, api_key, webhook_secret, mail_url) = (s("address"), s("mailboxId"), s("apiKey"), s("webhookSecret"), s("mailUrl"));
+    if address.is_empty() || mailbox_id.is_empty() || api_key.is_empty() || mail_url.is_empty() {
+        return Err(err(StatusCode::BAD_GATEWAY, "mailbox_not_created", "the cloud's answer was incomplete"));
+    }
+    let sealed_key = crate::token_crypto::seal(&api_key);
+    let sealed_secret = (!webhook_secret.is_empty()).then(|| crate::token_crypto::seal(&webhook_secret));
+    let conn = state.db.connect().map_err(internal)?;
+    let id = uuid::Uuid::new_v4().to_string();
+    conn.execute(
+        "INSERT INTO agent_identity_channels (id, agent_id, user_id, email_address, email_provider, email_send_enabled, email_receive_enabled, email_mailbox_id, email_api_key_sealed, email_webhook_secret_sealed, email_mail_url, updated_at)
+         VALUES (?1, ?2, ?3, ?4, 'mailflare', 1, 1, ?5, ?6, ?7, ?8, CURRENT_TIMESTAMP)
+         ON CONFLICT(agent_id) DO UPDATE SET
+             email_address = excluded.email_address,
+             email_provider = excluded.email_provider,
+             email_send_enabled = excluded.email_send_enabled,
+             email_receive_enabled = excluded.email_receive_enabled,
+             email_mailbox_id = excluded.email_mailbox_id,
+             email_api_key_sealed = excluded.email_api_key_sealed,
+             email_webhook_secret_sealed = excluded.email_webhook_secret_sealed,
+             email_mail_url = excluded.email_mail_url,
+             updated_at = CURRENT_TIMESTAMP",
+        params![id, agent_id, user_id, address, mailbox_id, sealed_key, sealed_secret, mail_url],
+    )
+    .map_err(internal)?;
+    info!(agent_id = %agent_id, address = %address, "agent-email: mailbox provisioned through the cloud");
+    Ok(address)
+}
+
 pub(crate) async fn provision_email_mailflare(
     state: &Arc<AppState>,
     user_id: &str,
@@ -985,6 +1094,7 @@ mod email_local_part_tests {
             admin_key: "ep_admin".into(),
             domain: "bus.test".into(),
             webhook_secret: None,
+            brokered: false,
         })
     }
 
@@ -1044,5 +1154,29 @@ mod email_local_part_tests {
         assert_eq!((taken.0, taken.1 .0["error"].as_str()), (StatusCode::CONFLICT, Some("email_local_part_taken")));
         assert!(state.db.connect().unwrap()
             .query_row("SELECT COUNT(*) FROM agent_identity_channels WHERE agent_id = 'agent-b'", [], |r| r.get::<_, i64>(0)).unwrap() == 0);
+    }
+
+    #[tokio::test]
+    async fn a_released_address_can_be_replaced_and_keeps_reply_settings() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = crate::test_helpers::app_state(temp.path()).await;
+        let fake = Arc::new(Fake::default());
+        let url = fake_mailflare(fake.clone()).await;
+        add_agent(&state, "agent-a", "Ledger Bot");
+
+        let first = provision_email_mailflare(&state, "u1", "agent-a", client(url.clone()), None).await.unwrap();
+        assert_eq!(first, "ledger-bot@bus.test");
+        let conn = state.db.connect().unwrap();
+        conn.execute("UPDATE agent_identity_channels SET email_reply_mode = 'auto_known' WHERE agent_id = 'agent-a'", []).unwrap();
+
+        assert_eq!(clear_email_channel(&conn, "agent-a").unwrap(), 1);
+        assert!(crate::agent_email_routes::lookup_email_channel(&conn, "agent-a").unwrap().is_none());
+
+        let second = provision_email_mailflare(&state, "u1", "agent-a", client(url.clone()), Some("billing-desk")).await.unwrap();
+        assert_eq!(second, "billing-desk@bus.test");
+        let (mode, mailbox): (String, Option<String>) = conn
+            .query_row("SELECT email_reply_mode, email_mailbox_id FROM agent_identity_channels WHERE agent_id = 'agent-a'", [], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap();
+        assert_eq!((mode.as_str(), mailbox.as_deref()), ("auto_known", Some("mb-billing-desk")));
     }
 }

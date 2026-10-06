@@ -350,6 +350,10 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // Keys for the allternit-bot CLI (issue/list/revoke by the owner; instructions by key). Part of the MCP edge: 503 until MCP_PUBLIC_URL is set.
         .merge(routes::vendor_bot_keys::routes())
         .merge(routes::mcp_oauth_approvals::routes())
+        // The event registry in plain words (signed-in users; Settings › Connected apps).
+        .merge(routes::allternit_events::routes())
+        // Runtimes forward their bot_events ledger into the event backbone (relay-signature auth in the handler).
+        .merge(routes::runtime_events::routes())
         // Phone numbers + SMS: Clerk-checked per request; 503 phone_not_configured when the carrier env is unset.
         .merge(routes::phone::routes())
         // The runtime pulls its own numbers with its device credential.
@@ -361,6 +365,8 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         .merge(routes::inapp_calls::routes())
         // Web Push for rings and messages when the app is closed; 503 push_not_configured until the VAPID env is set.
         .merge(routes::web_push::routes())
+        // Notification preferences per event type (Clerk session or compute key); the push sink reads them.
+        .merge(routes::notifications::routes())
         // WhatsApp Embedded Signup + 24h-window send; each handler resolves the user itself.
         .merge(routes::whatsapp_es::routes())
         // Voice tickets + minutes metering: user routes check the Clerk session; the
@@ -432,6 +438,8 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // Allternit Platform API (/v1/accounts, /v1/usage, … plus console
         // /api/v1/platform/*): inert (404 platform_api_disabled) until
         // ALLTERNIT_PLATFORM_API=1; authenticates project keys itself.
+        // Bot email for every runtime: mailbox provisioning on Allternit Mail (503 until ALLTERNIT_MAILFLARE_* are set).
+        .merge(routes::bot_email::routes())
         .merge(routes::platform_v1::router(&state))
         // The Stripe webhook verifies the Stripe-Signature HMAC itself and
         // answers 503 webhook_not_configured when STRIPE_WEBHOOK_SECRET is unset.

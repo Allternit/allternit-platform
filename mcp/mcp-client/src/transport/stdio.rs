@@ -13,11 +13,11 @@ use async_trait::async_trait;
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
-use tokio::sync::{mpsc, oneshot, RwLock};
+use tokio::sync::{broadcast, mpsc, oneshot, RwLock};
 use tracing::{debug, error, info, trace, warn};
 
 use crate::error::{McpError, Result, TransportError};
-use crate::protocol::{JsonRpcRequest, JsonRpcResponse};
+use crate::protocol::{JsonRpcMessage, JsonRpcRequest, JsonRpcResponse};
 use crate::transport::{McpTransport, TransportType};
 
 /// Stdio transport for MCP communication
@@ -34,6 +34,8 @@ pub struct StdioTransport {
     request_counter: AtomicU64,
     /// Channel for sending responses back to requesters
     response_tx: mpsc::UnboundedSender<(u64, Result<Value>)>,
+    /// Every message the server sends, for raw `receive()` subscribers
+    raw_message_tx: broadcast::Sender<std::result::Result<JsonRpcMessage, String>>,
     /// Pending requests awaiting responses
     pending_requests: Arc<StdMutex<HashMap<u64, oneshot::Sender<Result<Value>>>>>,
     /// Whether the transport is closed
@@ -55,6 +57,14 @@ pub struct StdioConfig {
     pub cwd: Option<PathBuf>,
     /// Request timeout in seconds
     pub timeout_secs: u64,
+}
+
+impl StdioConfig {
+    /// Config for `command args` with environment variables and the default
+    /// 30 second timeout. Pass it to `StdioTransport::spawn`.
+    pub fn with_env(command: impl Into<String>, args: Vec<String>, env: HashMap<String, String>) -> StdioConfig {
+        StdioConfig { command: command.into(), args, env, cwd: None, timeout_secs: 30 }
+    }
 }
 
 impl Default for StdioConfig {
@@ -119,7 +129,10 @@ impl StdioTransport {
         let pending_requests: Arc<StdMutex<HashMap<u64, oneshot::Sender<_>>>> =
             Arc::new(StdMutex::new(HashMap::new()));
 
+        let (raw_message_tx, _) = broadcast::channel::<std::result::Result<JsonRpcMessage, String>>(100);
+
         let transport = Arc::new(Self {
+            raw_message_tx,
             process: Arc::new(RwLock::new(child)),
             stdin_writer: Arc::new(tokio::sync::Mutex::new(BufWriter::new(stdin))),
             request_counter: AtomicU64::new(1),
@@ -166,8 +179,13 @@ impl StdioTransport {
         while let Ok(Some(line)) = lines.next_line().await {
             trace!("Received: {line}");
 
-            match serde_json::from_str::<JsonRpcResponse>(&line) {
-                Ok(response) => {
+            let Ok(value) = serde_json::from_str::<Value>(&line) else {
+                warn!("Failed to parse JSON-RPC message from server stdout");
+                continue;
+            };
+            // Answers to `request()` go to their waiter.
+            if value.get("method").is_none() {
+                if let Ok(response) = serde_json::from_value::<JsonRpcResponse>(value.clone()) {
                     let result = if let Some(error) = response.error {
                         Err(McpError::JsonRpc {
                             code: error.code,
@@ -177,11 +195,17 @@ impl StdioTransport {
                     } else {
                         Ok(response.result.unwrap_or(Value::Null))
                     };
-
                     let _ = self.response_tx.send((response.id, result));
                 }
+            }
+            // Every message also goes to raw `receive()` subscribers (none
+            // is the normal case; a send error just means no listener).
+            match serde_json::from_value::<JsonRpcMessage>(value) {
+                Ok(message) => {
+                    let _ = self.raw_message_tx.send(Ok(message));
+                }
                 Err(e) => {
-                    warn!("Failed to parse JSON-RPC response: {e}");
+                    let _ = self.raw_message_tx.send(Err(format!("unrecognized JSON-RPC message: {e}")));
                 }
             }
         }
@@ -278,8 +302,47 @@ impl StdioTransport {
     }
 }
 
+impl StdioTransport {
+    /// Send a raw JSON-RPC message
+    pub async fn send_message(&self, message: JsonRpcMessage) -> Result<()> {
+        if self.closed.load(Ordering::SeqCst) {
+            return Err(McpError::ConnectionClosed);
+        }
+        let json = serde_json::to_string(&message)?;
+        trace!("Sending raw message: {json}");
+        let mut writer = self.stdin_writer.lock().await;
+        writer.write_all(json.as_bytes()).await?;
+        writer.write_all(b"\n").await?;
+        writer.flush().await?;
+        Ok(())
+    }
+
+    /// Receive the next raw JSON-RPC message (only messages that arrive
+    /// after this call subscribes; `Ok(None)` if this listener lagged).
+    pub async fn receive_message(&self) -> Result<Option<JsonRpcMessage>> {
+        if self.closed.load(Ordering::SeqCst) {
+            return Err(McpError::ConnectionClosed);
+        }
+        let mut rx = self.raw_message_tx.subscribe();
+        match rx.recv().await {
+            Ok(Ok(msg)) => Ok(Some(msg)),
+            Ok(Err(e)) => Err(McpError::Protocol(e)),
+            Err(broadcast::error::RecvError::Closed) => Err(McpError::ConnectionClosed),
+            Err(broadcast::error::RecvError::Lagged(_)) => Ok(None),
+        }
+    }
+}
+
 #[async_trait]
 impl McpTransport for StdioTransport {
+    async fn send(&self, message: JsonRpcMessage) -> Result<()> {
+        self.send_message(message).await
+    }
+
+    async fn receive(&self) -> Result<Option<JsonRpcMessage>> {
+        self.receive_message().await
+    }
+
     async fn request(&self, method: &str, params: Option<Value>) -> crate::error::Result<Value> {
         let id = self.request_counter.fetch_add(1, Ordering::SeqCst);
         let request = JsonRpcRequest::new(id, method, params);
