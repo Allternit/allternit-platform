@@ -315,6 +315,15 @@ fn forget_holder(user_id: &str, bot_id: &str) {
 
 // ─── core ─────────────────────────────────────────────────────────────────────
 
+/// A reply the edge answers itself, with the Streamable HTTP status its era
+/// calls for (`mcp_protocol::http_status`: 400 version/header errors, 404 an
+/// unknown method on a modern request, else 200) — the same rule the
+/// runtime servers apply.
+fn rpc_reply(era: &mcp_protocol::Era, reply: Value) -> Response {
+    let status = StatusCode::from_u16(mcp_protocol::http_status(era.is_modern(), &reply)).unwrap_or(StatusCode::OK);
+    (status, Json(reply)).into_response()
+}
+
 fn rpc_error(id: Value, message: &str) -> Response {
     Json(json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32000, "message": message } })).into_response()
 }
@@ -439,20 +448,20 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
     // versions, capabilities and instructions without waking the computer.
     if rpc_method == "server/discover" {
         if let Some(reply) = mcp_protocol::preflight(&spec, &era, &id, rpc_method) {
-            return Json(reply).into_response();
+            return rpc_reply(&era, reply);
         }
     }
     // MCP Events: the edge owns subscriptions; nothing goes to the runtime.
     if rpc_method.starts_with("events/") {
         if let Some(reply) = mcp_protocol::preflight(&spec, &era, &id, rpc_method) {
-            return Json(reply).into_response();
+            return rpc_reply(&era, reply);
         }
         let Some(store) = backend.events_store() else {
-            return Json(mcp_protocol::rpc_err(&id, mcp_protocol::codes::METHOD_NOT_FOUND, "Events are not available")).into_response();
+            return rpc_reply(&era, mcp_protocol::rpc_err(&id, mcp_protocol::codes::METHOD_NOT_FOUND, "Events are not available"));
         };
         let principal = crate::routes::mcp_events::Principal { user_id: caller.user_id.clone(), client: caller.client.clone(), target: target.approval_target() };
         let reply = crate::routes::mcp_events::handle(store, &principal, &id, rpc_method, &request["params"], chrono::Utc::now()).await;
-        return Json(mcp_protocol::finish(&spec, &era, rpc_method, reply)).into_response();
+        return rpc_reply(&era, mcp_protocol::finish(&spec, &era, rpc_method, reply));
     }
 
     let outcome = match tokio::time::timeout(BUDGET, deliver(backend, &target, &caller, &body)).await {
@@ -920,6 +929,17 @@ mod tests {
         assert!(f.paths().is_empty(), "nothing reaches a runtime until the token is right");
         // aud as an array, scope as `scp`, trailing slash: accepted.
         assert_eq!(post(&f, bot("b-auth-3"), &bearer("array-aud"), LIST).await.0, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn edge_answered_errors_get_the_spec_http_status() {
+        let f = Fake::new(&["rt1"]).token("agents", claims(BASE, AGENTS_SCOPE, "user-a"));
+        let bad_version = r#"{"jsonrpc":"2.0","id":"d","method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2099-01-01"}}}"#;
+        let (status, body) = { let (s, _, b) = post(&f, Target::Agents, &bearer("agents"), bad_version).await; (s, b) };
+        assert_eq!((status, body["error"]["code"].as_i64()), (StatusCode::BAD_REQUEST, Some(-32022)));
+        let ok = r#"{"jsonrpc":"2.0","id":"d","method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}"#;
+        assert_eq!(post(&f, Target::Agents, &bearer("agents"), ok).await.0, StatusCode::OK);
+        assert!(f.paths().is_empty());
     }
 
     #[tokio::test]
