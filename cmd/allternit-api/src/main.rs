@@ -586,6 +586,36 @@ async fn main() {
             allternit_api::deployment_scheduler::DeploymentSchedulerState::new(),
         ),
     });
+
+    // `allternit-api cowork-fold [--dry-run]`: the one-time fold of cowork
+    // tasks and queue rows into Factory nodes. Prints the report as JSON and
+    // exits (0 ok, 70 failed). `--dry-run` writes nothing.
+    if std::env::args().nth(1).as_deref() == Some("cowork-fold") {
+        let dry_run = std::env::args().any(|a| a == "--dry-run");
+        let code = match state.db.connect() {
+            Ok(conn) => match allternit_api::cowork_nodes::fold_legacy(&conn, &state.rails, dry_run).await {
+                Ok(report) => {
+                    if !dry_run {
+                        let _ = conn.execute(
+                            "INSERT INTO factory_cowork_fold_runs (id, dry_run, skipped, report) VALUES (?1, 0, ?2, ?3)",
+                            rusqlite::params![uuid::Uuid::new_v4().to_string(), report.skipped.len() as i64, serde_json::to_string(&report).unwrap_or_default()],
+                        );
+                    }
+                    println!("{}", serde_json::to_string_pretty(&report).unwrap_or_default());
+                    0
+                }
+                Err(e) => {
+                    println!("{}", serde_json::json!({ "error": { "code": "internal", "fact": format!("cowork fold failed: {e:#}"), "action": "Nothing was half-written: re-run it, it is idempotent." } }));
+                    70
+                }
+            },
+            Err(e) => {
+                println!("{}", serde_json::json!({ "error": { "code": "internal", "fact": format!("database: {e}"), "action": "Check ALLTERNIT_DB_PATH." } }));
+                70
+            }
+        };
+        std::process::exit(code);
+    }
     allternit_api::gateway_runner::install(
         state.db.clone(),
         Arc::new(allternit_api::gateway_vendor_host::HostRoutedTransport::new(
@@ -1142,6 +1172,9 @@ async fn main() {
         // Factory approvals: owned here (not proxied to the engine) because
         // push and channels live in this process.
         .nest("/api", allternit_api::factory_approvals::router())
+        // The cowork Tasks board (cowork tasks are nodes kept with the
+        // account): /api/factory/tasks/board, /api/factory/tasks/nodes/:node.
+        .nest("/api", allternit_api::factory_tasks::router())
         // Factory bots (create + bind in one call) and vendor tickets as node
         // deliveries: /api/v1/factory/bots, /api/v1/factory/node-tickets.
         .nest("/api", allternit_api::factory_bots::router())
@@ -1338,6 +1371,28 @@ async fn main() {
     // Bots' saved memory is tidied weekly on their own model (P7.4).
     allternit_api::memory_curation::spawn_weekly(state.clone());
     allternit_api::factory_approvals::spawn_sync(state.clone());
+    // The cowork queue folds into Factory nodes once per database (F9).
+    // ALLTERNIT_FACTORY_COWORK_FOLD=off defers it (then edits fold rows one
+    // at a time); `allternit-api cowork-fold --dry-run` previews it.
+    if std::env::var("ALLTERNIT_FACTORY_COWORK_FOLD").as_deref() == Ok("off") {
+        info!("cowork fold: deferred (ALLTERNIT_FACTORY_COWORK_FOLD=off)");
+    } else {
+        let fold_state = state.clone();
+        tokio::spawn(async move {
+            match allternit_api::cowork_nodes::fold_once(&fold_state).await {
+                Ok(Some(r)) if r.skipped.is_empty() => info!(
+                    "cowork fold: {} tasks and {} queue items became nodes ({} already nodes, {} tasks and {} queue rows kept as history)",
+                    r.tasks_folded, r.queue_folded, r.tasks_already_nodes, r.tasks_kept_as_history, r.queue_kept_as_history
+                ),
+                Ok(Some(r)) => tracing::warn!(
+                    "cowork fold: {} tasks and {} queue items became nodes; {} rows couldn't be folded: {:?}",
+                    r.tasks_folded, r.queue_folded, r.skipped.len(), r.skipped
+                ),
+                Ok(None) => {}
+                Err(e) => tracing::error!("cowork fold failed (rows stay readable and fold when edited): {e:#}"),
+            }
+        });
+    }
     // Canonical memory: merge duplicates (S1 RELATION shadow) + soft decay (WP-M1d).
     allternit_api::memory_consolidation::spawn(state.clone());
 

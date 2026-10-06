@@ -2,11 +2,10 @@
 //!
 //! CRUD operations for tasks — supports personal and workspace-scoped tasks.
 
-use axum::extract::Extension;
 use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
-    response::IntoResponse,
+    response::{IntoResponse, Response},
     routing::{delete, get, post, put},
     Json, Router,
 };
@@ -16,7 +15,7 @@ use std::sync::Arc;
 use tracing::error;
 
 use crate::auth::get_user;
-use crate::auth::AuthUser;
+use crate::cowork_nodes::{self, CoworkError, Created, TaskFields};
 use crate::AppState;
 
 // ─── Request/Response Types ─────────────────────────────────────────────────
@@ -38,6 +37,11 @@ pub struct Task {
     pub updated_at: String,
     pub assignee_type: Option<String>,
     pub assignee_name: Option<String>,
+    /// The task's Factory node (`None` for history from before the fold).
+    #[serde(default, rename = "dagId", skip_serializing_if = "Option::is_none")]
+    pub dag_id: Option<String>,
+    #[serde(default, rename = "nodeId", skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -126,471 +130,249 @@ pub fn task_router() -> Router<Arc<AppState>> {
 
 // ─── Handlers ───────────────────────────────────────────────────────────────
 
+/// `?dryRun=true` (or `dry_run`) on a write prints the plan and writes nothing.
+#[derive(Debug, Deserialize, Default)]
+pub struct DryRunQuery {
+    #[serde(default, rename = "dryRun", alias = "dry_run")]
+    pub dry_run: Option<bool>,
+}
+
+fn unauthorized() -> Response {
+    (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized"}))).into_response()
+}
+
+fn db_error(e: impl std::fmt::Display) -> Response {
+    error!("DB error: {}", e);
+    (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Database error"}))).into_response()
+}
+
+fn cowork_error(e: CoworkError) -> Response {
+    (e.http_status(), Json(e.body())).into_response()
+}
+
+fn priority_string(v: &Option<serde_json::Value>) -> Option<String> {
+    match v {
+        Some(serde_json::Value::String(s)) => Some(s.clone()),
+        Some(serde_json::Value::Number(n)) => Some(n.to_string()),
+        Some(serde_json::Value::Bool(b)) => Some(b.to_string()),
+        _ => None,
+    }
+}
+
+/// The node for `id`, folding a pre-fold `tasks` row the user owns first.
+/// `Err` is the response to send (404, or 403 for someone else's task).
+async fn node_task(state: &AppState, conn: &rusqlite::Connection, user_id: &str, id: &str) -> Result<(), Response> {
+    let events = cowork_nodes::ledger_events(&state.rails).await.map_err(cowork_error)?;
+    if cowork_nodes::find(&events, user_id, id).is_some() {
+        return Ok(());
+    }
+    match cowork_nodes::legacy_row(conn, id) {
+        Ok(Some(t)) if t.user_id != user_id => Err((StatusCode::FORBIDDEN, Json(json!({"error": "Access denied"}))).into_response()),
+        Ok(Some(t)) => cowork_nodes::fold_row(&state.rails, &t).await.map_err(cowork_error),
+        Ok(None) => Err(cowork_error(CoworkError::not_found(format!("task {id} not found")))),
+        Err(e) => Err(db_error(e)),
+    }
+}
+
+/// Lists the user's tasks: their nodes, plus done/closed history from before
+/// the fold. Newest first.
 async fn list_tasks(
     State(state): State<Arc<AppState>>,
     Query(query): Query<ListTasksQuery>,
-    Extension(_user): Extension<AuthUser>,
     headers: HeaderMap,
-) -> impl IntoResponse {
-    let user = match get_user(&headers) {
-        Some(u) => u,
-        None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(json!({"error": "Unauthorized"})),
-            );
-        }
-    };
-
+) -> Response {
+    let Some(user) = get_user(&headers) else { return unauthorized() };
     let conn = match state.db.connect() {
         Ok(c) => c,
-        Err(e) => {
-            error!("DB error: {}", e);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Database error"})),
-            );
-        }
+        Err(e) => return db_error(e),
     };
-
-    let mut sql = "SELECT id, user_id, workspace_id, title, description, status, priority, assignee_id, due_date, tags, metadata, created_at, updated_at, assignee_type, assignee_name FROM tasks WHERE user_id = ?1".to_string();
-    let mut param_count = 1;
-    let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(user.user_id.clone())];
-
-    if let Some(ref ws) = query.workspace_id {
-        param_count += 1;
-        sql.push_str(&format!(" AND workspace_id = ?{}", param_count));
-        params.push(Box::new(ws.clone()));
+    let events = match cowork_nodes::ledger_events(&state.rails).await {
+        Ok(e) => e,
+        Err(e) => return cowork_error(e),
+    };
+    let ws = query.workspace_id.as_deref();
+    let mut tasks: Vec<Task> = cowork_nodes::user_task_nodes(&events, &user.user_id, ws)
+        .iter()
+        .map(|(d, n)| cowork_nodes::task_of(d, n))
+        .collect();
+    match cowork_nodes::legacy_rows(&conn, &events, &user.user_id, ws) {
+        Ok(rows) => tasks.extend(rows),
+        Err(e) => return db_error(e),
     }
-    if let Some(ref st) = query.status {
-        param_count += 1;
-        sql.push_str(&format!(" AND status = ?{}", param_count));
-        params.push(Box::new(st.clone()));
+    if let Some(st) = query.status.as_deref() {
+        let want = cowork_nodes::TaskStatus::parse(st).map(|s| s.as_str().to_string()).unwrap_or_else(|| st.to_string());
+        tasks.retain(|t| t.status == want || t.status == st);
     }
-
-    let limit = query.limit.unwrap_or(100) as i64;
-    let offset = query.offset.unwrap_or(0) as i64;
-
-    param_count += 1;
-    sql.push_str(&format!(" ORDER BY created_at DESC LIMIT ?{}", param_count));
-    params.push(Box::new(limit));
-
-    param_count += 1;
-    sql.push_str(&format!(" OFFSET ?{}", param_count));
-    params.push(Box::new(offset));
-
-    let mut stmt = match conn.prepare(&sql) {
-        Ok(s) => s,
-        Err(e) => {
-            error!("SQL prepare error: {}", e);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Query error"})),
-            );
-        }
-    };
-
-    let tasks: Vec<Task> = match stmt.query_map(
-        rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())),
-        row_to_task,
-    ) {
-        Ok(iter) => iter.filter_map(|r| r.ok()).collect(),
-        Err(e) => {
-            error!("Query error: {}", e);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Query error"})),
-            );
-        }
-    };
-
-    (
-        StatusCode::OK,
-        Json(json!({ "tasks": tasks, "count": tasks.len() })),
-    )
+    tasks.sort_by(|a, b| b.created_at.cmp(&a.created_at).then_with(|| b.id.cmp(&a.id)));
+    let total = tasks.len();
+    let offset = query.offset.unwrap_or(0);
+    let limit = query.limit.unwrap_or(100);
+    let tasks: Vec<Task> = tasks.into_iter().skip(offset).take(limit).collect();
+    (StatusCode::OK, Json(json!({ "tasks": tasks, "total": total }))).into_response()
 }
 
 async fn create_task(
     State(state): State<Arc<AppState>>,
-    Extension(_user): Extension<AuthUser>,
+    Query(dry): Query<DryRunQuery>,
     headers: HeaderMap,
     Json(body): Json<CreateTaskRequest>,
-) -> impl IntoResponse {
-    let user = match get_user(&headers) {
-        Some(u) => u,
-        None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(json!({"error": "Unauthorized"})),
-            );
-        }
+) -> Response {
+    let Some(user) = get_user(&headers) else { return unauthorized() };
+    let id = body.id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let fields = TaskFields {
+        title: Some(body.title.clone()),
+        description: body.description.clone(),
+        status: body.status.clone(),
+        priority: priority_string(&body.priority),
+        assignee_id: body.assignee_id.clone(),
+        assignee_type: body.assignee_type.clone(),
+        assignee_name: body.assignee_name.clone(),
+        due_date: body.due_date.clone(),
+        tags: body.tags.clone(),
+        metadata: body.metadata.as_ref().map(|v| match v {
+            serde_json::Value::String(s) => s.clone(),
+            other => serde_json::to_string(other).unwrap_or_default(),
+        }),
     };
-
-    let id = body
-        .id
-        .clone()
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let ws = body.workspace_id.clone().unwrap_or_default();
     let conn = match state.db.connect() {
         Ok(c) => c,
-        Err(e) => {
-            error!("DB error: {}", e);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Database error"})),
-            );
-        }
+        Err(e) => return db_error(e),
     };
-
-    let priority_str = match &body.priority {
-        Some(serde_json::Value::String(s)) => s.clone(),
-        Some(serde_json::Value::Number(n)) => n.to_string(),
-        Some(serde_json::Value::Bool(b)) => b.to_string(),
-        _ => "50".to_string(),
-    };
-
-    let metadata_str = body.metadata.as_ref().map(|v| match v {
-        serde_json::Value::String(s) => s.clone(),
-        other => serde_json::to_string(other).unwrap_or_default(),
-    });
-
-    let result = conn.execute(
-        "INSERT INTO tasks
-          (id, user_id, workspace_id, title, description, status, priority, assignee_id, due_date, tags, metadata, assignee_type, assignee_name)
-          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
-          ON CONFLICT(id) DO NOTHING",
-        rusqlite::params![
-            &id,
-            &user.user_id,
-            body.workspace_id.as_deref().unwrap_or(""),
-            &body.title,
-            body.description.as_deref().unwrap_or(""),
-            body.status.as_deref().unwrap_or("todo"),
-            &priority_str,
-            body.assignee_id.as_deref().unwrap_or(""),
-            body.due_date.as_deref().unwrap_or(""),
-            body.tags.as_deref().unwrap_or(""),
-            metadata_str.as_deref().unwrap_or(""),
-            body.assignee_type.as_deref().unwrap_or(""),
-            body.assignee_name.as_deref().unwrap_or(""),
-        ],
-    );
-
-    match result {
-        Ok(inserted) => {
-            if inserted > 0 {
-                let _ = write_audit_log(
-                    &conn,
-                    &id,
-                    "create",
-                    "human",
-                    &user.user_id,
-                    Some(&serde_json::to_string(&body).unwrap_or_default()),
-                );
-            }
-            match get_task_by_id(&conn, &id) {
-                Ok(Some(task)) => {
-                    let status = if inserted > 0 {
-                        StatusCode::CREATED
-                    } else {
-                        StatusCode::OK
-                    };
-                    (status, Json(json!({ "task": task })))
-                }
-                _ if inserted > 0 => (StatusCode::CREATED, Json(json!({ "id": id }))),
-                _ => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({"error": "Failed to load task"})),
-                ),
-            }
+    // An id that names a pre-fold row is the same task (idempotent create).
+    if let Ok(Some(t)) = cowork_nodes::legacy_row(&conn, &id) {
+        if t.user_id != user.user_id {
+            return cowork_error(CoworkError::usage(format!("task id {id:?} is taken"), "Create it without an id, or with a different one."));
         }
-        Err(e) => {
-            error!("Insert error: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Failed to create task"})),
-            )
+        if let Err(r) = node_task(&state, &conn, &user.user_id, &id).await {
+            return r;
         }
+    }
+    match cowork_nodes::create(&state.rails, &user.user_id, &ws, &id, &fields, dry.dry_run.unwrap_or(false)).await {
+        Ok(Created::Planned(plan)) => (StatusCode::OK, Json(json!({ "dryRun": true, "plan": plan }))).into_response(),
+        Ok(Created::Task(task, created)) => {
+            if let Err(e) = cowork_nodes::write_row(&conn, &task) {
+                error!("tasks read model: {}", e);
+            }
+            if created {
+                let _ = write_audit_log(&conn, &id, "create", "human", &user.user_id, Some(&serde_json::to_string(&body).unwrap_or_default()));
+            }
+            let status = if created { StatusCode::CREATED } else { StatusCode::OK };
+            (status, Json(json!({ "task": task }))).into_response()
+        }
+        Err(e) => cowork_error(e),
     }
 }
 
 async fn get_task(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-    Extension(_user): Extension<AuthUser>,
     headers: HeaderMap,
-) -> impl IntoResponse {
-    let user = match get_user(&headers) {
-        Some(u) => u,
-        None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(json!({"error": "Unauthorized"})),
-            );
-        }
+) -> Response {
+    let Some(user) = get_user(&headers) else { return unauthorized() };
+    let events = match cowork_nodes::ledger_events(&state.rails).await {
+        Ok(e) => e,
+        Err(e) => return cowork_error(e),
     };
-
+    if let Some((d, n)) = cowork_nodes::find(&events, &user.user_id, &id) {
+        return (StatusCode::OK, Json(cowork_nodes::task_of(&d, &n))).into_response();
+    }
     let conn = match state.db.connect() {
         Ok(c) => c,
-        Err(e) => {
-            error!("DB error: {}", e);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Database error"})),
-            );
-        }
+        Err(e) => return db_error(e),
     };
+    match cowork_nodes::legacy_row(&conn, &id) {
+        Ok(Some(t)) if t.user_id == user.user_id => (StatusCode::OK, Json(t)).into_response(),
+        Ok(Some(_)) => (StatusCode::FORBIDDEN, Json(json!({"error": "Access denied"}))).into_response(),
+        Ok(None) => (StatusCode::NOT_FOUND, Json(json!({"error": "Task not found"}))).into_response(),
+        Err(e) => db_error(e),
+    }
+}
 
-    match get_task_by_id(&conn, &id) {
-        Ok(Some(task)) => {
-            if task.user_id != user.user_id {
-                return (
-                    StatusCode::FORBIDDEN,
-                    Json(json!({"error": "Access denied"})),
-                );
+/// Apply `fields` to the task's node, then refresh its read-model row.
+async fn write_task(state: &AppState, user_id: &str, id: &str, fields: TaskFields, dry_run: bool, action: &str, audit: String) -> Response {
+    let conn = match state.db.connect() {
+        Ok(c) => c,
+        Err(e) => return db_error(e),
+    };
+    if let Err(r) = node_task(state, &conn, user_id, id).await {
+        return r;
+    }
+    match cowork_nodes::update(&state.rails, user_id, id, &fields, dry_run).await {
+        Ok(Ok(plan)) => (StatusCode::OK, Json(json!({ "dryRun": true, "plan": plan }))).into_response(),
+        Ok(Err(task)) => {
+            if let Err(e) = cowork_nodes::write_row(&conn, &task) {
+                error!("tasks read model: {}", e);
             }
-            (StatusCode::OK, Json(json!({ "task": task })))
+            let _ = write_audit_log(&conn, id, action, "human", user_id, Some(&audit));
+            (StatusCode::OK, Json(task)).into_response()
         }
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "Task not found"})),
-        ),
-        Err(e) => {
-            error!("Query error: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Query error"})),
-            )
-        }
+        Err(e) => cowork_error(e),
     }
 }
 
 async fn update_task(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-    Extension(_user): Extension<AuthUser>,
+    Query(dry): Query<DryRunQuery>,
     headers: HeaderMap,
     Json(body): Json<UpdateTaskRequest>,
-) -> impl IntoResponse {
-    let user = match get_user(&headers) {
-        Some(u) => u,
-        None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(json!({"error": "Unauthorized"})),
-            );
-        }
+) -> Response {
+    let Some(user) = get_user(&headers) else { return unauthorized() };
+    let fields = TaskFields {
+        title: body.title.clone(),
+        description: body.description.clone(),
+        status: body.status.clone(),
+        priority: priority_string(&body.priority),
+        assignee_id: body.assignee_id.clone(),
+        assignee_type: body.assignee_type.clone(),
+        assignee_name: body.assignee_name.clone(),
+        due_date: body.due_date.clone(),
+        tags: body.tags.clone(),
+        metadata: body.metadata.clone(),
     };
-
-    let conn = match state.db.connect() {
-        Ok(c) => c,
-        Err(e) => {
-            error!("DB error: {}", e);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Database error"})),
-            );
-        }
-    };
-
-    // Verify ownership
-    match get_task_by_id(&conn, &id) {
-        Ok(Some(ref task)) if task.user_id != user.user_id => {
-            return (
-                StatusCode::FORBIDDEN,
-                Json(json!({"error": "Access denied"})),
-            );
-        }
-        Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "Task not found"})),
-            );
-        }
-        _ => {}
-    }
-
-    let mut updates: Vec<String> = Vec::new();
-    let mut param_count = 0;
-    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
-
-    if let Some(ref title) = body.title {
-        param_count += 1;
-        updates.push(format!("title = ?{}", param_count));
-        params.push(Box::new(title.clone()));
-    }
-    if let Some(ref description) = body.description {
-        param_count += 1;
-        updates.push(format!("description = ?{}", param_count));
-        params.push(Box::new(description.clone()));
-    }
-    if let Some(ref status) = body.status {
-        param_count += 1;
-        updates.push(format!("status = ?{}", param_count));
-        params.push(Box::new(status.clone()));
-    }
-    if let Some(ref priority) = body.priority {
-        param_count += 1;
-        updates.push(format!("priority = ?{}", param_count));
-        let priority_str = match priority {
-            serde_json::Value::String(s) => s.clone(),
-            serde_json::Value::Number(n) => n.to_string(),
-            serde_json::Value::Bool(b) => b.to_string(),
-            _ => "50".to_string(),
-        };
-        params.push(Box::new(priority_str));
-    }
-    if let Some(ref assignee_id) = body.assignee_id {
-        param_count += 1;
-        updates.push(format!("assignee_id = ?{}", param_count));
-        params.push(Box::new(assignee_id.clone()));
-    }
-    if let Some(ref due_date) = body.due_date {
-        param_count += 1;
-        updates.push(format!("due_date = ?{}", param_count));
-        params.push(Box::new(due_date.clone()));
-    }
-    if let Some(ref tags) = body.tags {
-        param_count += 1;
-        updates.push(format!("tags = ?{}", param_count));
-        params.push(Box::new(tags.clone()));
-    }
-    if let Some(ref metadata) = body.metadata {
-        param_count += 1;
-        updates.push(format!("metadata = ?{}", param_count));
-        params.push(Box::new(metadata.clone()));
-    }
-    if let Some(ref assignee_type) = body.assignee_type {
-        param_count += 1;
-        updates.push(format!("assignee_type = ?{}", param_count));
-        params.push(Box::new(assignee_type.clone()));
-    }
-    if let Some(ref assignee_name) = body.assignee_name {
-        param_count += 1;
-        updates.push(format!("assignee_name = ?{}", param_count));
-        params.push(Box::new(assignee_name.clone()));
-    }
-
-    if updates.is_empty() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "No fields to update"})),
-        );
-    }
-
-    let sql = format!(
-        "UPDATE tasks SET {}, updated_at = CURRENT_TIMESTAMP WHERE id = ?{}",
-        updates.join(", "),
-        param_count + 1
-    );
-    params.push(Box::new(id.clone()));
-
-    match conn.execute(&sql, rusqlite::params_from_iter(params)) {
-        Ok(0) => (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "Task not found"})),
-        ),
-        Ok(_) => {
-            let _ = write_audit_log(
-                &conn,
-                &id,
-                "update",
-                "human",
-                &user.user_id,
-                Some(&serde_json::to_string(&body).unwrap_or_default()),
-            );
-            match get_task_by_id(&conn, &id) {
-                Ok(Some(task)) => (StatusCode::OK, Json(json!({ "task": task }))),
-                _ => (StatusCode::OK, Json(json!({ "updated": true }))),
-            }
-        }
-        Err(e) => {
-            error!("Update error: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Failed to update task"})),
-            )
-        }
-    }
+    let audit = serde_json::to_string(&body).unwrap_or_default();
+    write_task(&state, &user.user_id, &id, fields, dry.dry_run.unwrap_or(false), "update", audit).await
 }
 
 async fn delete_task(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-    Extension(_user): Extension<AuthUser>,
     headers: HeaderMap,
-) -> impl IntoResponse {
-    let user = match get_user(&headers) {
-        Some(u) => u,
-        None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(json!({"error": "Unauthorized"})),
-            );
-        }
-    };
-
+) -> Response {
+    let Some(user) = get_user(&headers) else { return unauthorized() };
     let conn = match state.db.connect() {
         Ok(c) => c,
-        Err(e) => {
-            error!("DB error: {}", e);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Database error"})),
-            );
-        }
+        Err(e) => return db_error(e),
     };
-
-    // Verify ownership
-    match get_task_by_id(&conn, &id) {
-        Ok(Some(ref task)) if task.user_id != user.user_id => {
-            return (
-                StatusCode::FORBIDDEN,
-                Json(json!({"error": "Access denied"})),
-            );
-        }
-        Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "Task not found"})),
-            );
-        }
-        _ => {}
+    if let Err(r) = node_task(&state, &conn, &user.user_id, &id).await {
+        return r;
     }
-
-    match conn.execute("DELETE FROM tasks WHERE id = ?1", [&id]) {
-        Ok(0) => (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "Task not found"})),
-        ),
+    if let Err(e) = cowork_nodes::delete(&state.rails, &user.user_id, &id).await {
+        return cowork_error(e);
+    }
+    match conn.execute("DELETE FROM tasks WHERE id = ?1 AND user_id = ?2", rusqlite::params![&id, &user.user_id]) {
         Ok(_) => {
             let _ = write_audit_log(&conn, &id, "delete", "human", &user.user_id, None);
-            (StatusCode::NO_CONTENT, Json(serde_json::Value::Null))
+            StatusCode::NO_CONTENT.into_response()
         }
-        Err(e) => {
-            error!("Delete error: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Failed to delete task"})),
-            )
-        }
+        Err(e) => db_error(e),
+    }
+}
+
+/// `Err` when the user can't see task `id` (comments and audit logs).
+fn check_owner(conn: &rusqlite::Connection, user_id: &str, id: &str) -> Result<(), Response> {
+    match cowork_nodes::legacy_row(conn, id) {
+        Ok(Some(t)) if t.user_id == user_id => Ok(()),
+        Ok(Some(_)) => Err((StatusCode::FORBIDDEN, Json(json!({"error": "Access denied"}))).into_response()),
+        Ok(None) => Err((StatusCode::NOT_FOUND, Json(json!({"error": "Task not found"}))).into_response()),
+        Err(e) => Err(db_error(e)),
     }
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-fn get_task_by_id(conn: &rusqlite::Connection, id: &str) -> rusqlite::Result<Option<Task>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, user_id, workspace_id, title, description, status, priority,
-                assignee_id, due_date, tags, metadata, created_at, updated_at,
-                assignee_type, assignee_name
-         FROM tasks WHERE id = ?1",
-    )?;
-
-    let mut rows = stmt.query_map([id], row_to_task)?;
-    rows.next().transpose()
-}
-
-fn row_to_task(row: &rusqlite::Row) -> rusqlite::Result<Task> {
+pub fn row_to_task(row: &rusqlite::Row) -> rusqlite::Result<Task> {
     Ok(Task {
         id: row.get(0)?,
         user_id: row.get(1)?,
@@ -607,6 +389,8 @@ fn row_to_task(row: &rusqlite::Row) -> rusqlite::Result<Task> {
         updated_at: row.get(12)?,
         assignee_type: row.get(13)?,
         assignee_name: row.get(14)?,
+        dag_id: None,
+        node_id: None,
     })
 }
 
@@ -620,8 +404,26 @@ pub struct AssignTaskRequest {
 async fn assign_task(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
+    Query(dry): Query<DryRunQuery>,
     headers: HeaderMap,
     Json(body): Json<AssignTaskRequest>,
+) -> Response {
+    let Some(user) = get_user(&headers) else { return unauthorized() };
+    // Null fields unassign (the same as the old empty-string write).
+    let fields = TaskFields {
+        assignee_type: Some(body.assignee_type.clone().unwrap_or_default()),
+        assignee_id: Some(body.assignee_id.clone().unwrap_or_default()),
+        assignee_name: Some(body.assignee_name.clone().unwrap_or_default()),
+        ..Default::default()
+    };
+    let audit = serde_json::to_string(&body).unwrap_or_default();
+    write_task(&state, &user.user_id, &id, fields, dry.dry_run.unwrap_or(false), "assign", audit).await
+}
+
+async fn list_task_comments(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
 ) -> impl IntoResponse {
     let user = match get_user(&headers) {
         Some(u) => u,
@@ -644,72 +446,9 @@ async fn assign_task(
                 .into_response()
         }
     };
-
-    let result = conn.execute(
-        "UPDATE tasks 
-         SET assignee_type = ?1, assignee_id = ?2, assignee_name = ?3, updated_at = CURRENT_TIMESTAMP 
-         WHERE id = ?4 AND user_id = ?5",
-        rusqlite::params![
-            body.assignee_type.as_deref().unwrap_or(""),
-            body.assignee_id.as_deref().unwrap_or(""),
-            body.assignee_name.as_deref().unwrap_or(""),
-            &id,
-            &user.user_id,
-        ],
-    );
-
-    match result {
-        Ok(_) => {
-            let _ = write_audit_log(
-                &conn,
-                &id,
-                "assign",
-                "human",
-                &user.user_id,
-                Some(&serde_json::to_string(&body).unwrap_or_default()),
-            );
-            match get_task_by_id(&conn, &id) {
-                Ok(Some(task)) => (StatusCode::OK, Json(task)).into_response(),
-                _ => (StatusCode::OK, Json(json!({"id": id}))).into_response(),
-            }
-        }
-        Err(e) => {
-            error!("Assign error: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Failed to assign task"})),
-            )
-                .into_response()
-        }
+    if let Err(r) = check_owner(&conn, &user.user_id, &id) {
+        return r.into_response();
     }
-}
-
-async fn list_task_comments(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-    headers: HeaderMap,
-) -> impl IntoResponse {
-    let _user = match get_user(&headers) {
-        Some(u) => u,
-        None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(json!({"error": "Unauthorized"})),
-            )
-                .into_response()
-        }
-    };
-
-    let conn = match state.db.connect() {
-        Ok(c) => c,
-        Err(_e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Database error"})),
-            )
-                .into_response()
-        }
-    };
 
     let mut stmt = match conn.prepare(
         "SELECT id, task_id, body, author_id, author_name, created_at 
@@ -780,6 +519,9 @@ async fn add_task_comment(
                 .into_response()
         }
     };
+    if let Err(r) = check_owner(&conn, &user.user_id, &id) {
+        return r.into_response();
+    }
 
     let comment_id = uuid::Uuid::new_v4().to_string();
     let author_name = user.email.clone();
@@ -819,7 +561,7 @@ async fn get_task_audit_logs(
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
-    let _user = match get_user(&headers) {
+    let user = match get_user(&headers) {
         Some(u) => u,
         None => {
             return (
@@ -840,6 +582,9 @@ async fn get_task_audit_logs(
                 .into_response()
         }
     };
+    if let Err(r) = check_owner(&conn, &user.user_id, &id) {
+        return r.into_response();
+    }
 
     let mut stmt = match conn.prepare(
         "SELECT id, task_id, action, actor_type, actor_id, payload, created_at 
