@@ -195,7 +195,9 @@
           "index.mjs",
           "lib/**",
           "capture/sc_capture.swift",
-          "capture/sc_capture"
+          "capture/sc_capture",
+          "capture/resize_jpeg.swift",
+          "capture/resize_jpeg"
         ]
       },
       {

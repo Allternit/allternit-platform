@@ -71,6 +71,7 @@ export class Capture extends EventEmitter {
   async start() {
     if (this.running) return;
     this.running = true;
+    this.sckitRestarts = 0;   // capture is started on demand and stopped when idle; each run gets its own restart budget
     if (this.mode === 'x11' || (this.mode !== 'sckit' && this.mode !== 'screencapture' && process.platform !== 'darwin')) {
       this.#startX11Loop();
       return;
@@ -296,7 +297,7 @@ export class Capture extends EventEmitter {
       this.timer = setTimeout(tick, wait);
     };
     tick();
-    this.on('stop', () => { rmSync(dir, { recursive: true, force: true }); });
+    this.once('stop', () => { rmSync(dir, { recursive: true, force: true }); });
   }
 
   stop() {

@@ -15,6 +15,17 @@ import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 
 import { upgrade, encodeFrame, OPCODES } from '../server/lib/ws.mjs';
+// Wait until a spawned server answers /healthz (a fixed sleep flaked on a loaded machine: startup can take >2 s).
+async function waitHealthy(port, ms = 15000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    const ok = await new Promise((r) => { const q = get({ host: '127.0.0.1', port, path: '/healthz' }, (res) => { res.resume(); r(res.statusCode === 200); }); q.on('error', () => r(false)); });
+    if (ok) return;
+    await new Promise((r) => setTimeout(r, 150));
+  }
+  throw new Error(`server on :${port} never became healthy`);
+}
+
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 let passed = 0;
@@ -185,7 +196,7 @@ async function partB() {
     '--capture', 'none', '--no-input'], { stdio: ['ignore', 'pipe', 'pipe'] });
   let stderr = '';
   child.stderr.on('data', (d) => (stderr += d));
-  await new Promise((r) => setTimeout(r, 1200));
+  await waitHealthy(port);
 
   try {
     const noToken = await httpGet(port, '/');

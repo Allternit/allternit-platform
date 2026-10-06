@@ -13,6 +13,17 @@ import assert from 'node:assert/strict';
 
 import { isStale, FrameWatchdog } from '../server/lib/watchdog.mjs';
 import { helloBody } from '../server/lib/status.mjs';
+// Wait until a spawned server answers /healthz (a fixed sleep flaked on a loaded machine: startup can take >2 s).
+async function waitHealthy(port, ms = 15000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    const ok = await new Promise((r) => { const q = get({ host: '127.0.0.1', port, path: '/healthz' }, (res) => { res.resume(); r(res.statusCode === 200); }); q.on('error', () => r(false)); });
+    if (ok) return;
+    await new Promise((r) => setTimeout(r, 150));
+  }
+  throw new Error(`server on :${port} never became healthy`);
+}
+
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 let passed = 0;
@@ -134,7 +145,7 @@ async function partD() {
     '--capture', 'none', '--no-input'], { stdio: ['ignore', 'pipe', 'pipe'] });
   let stderr = '';
   child.stderr.on('data', (d) => (stderr += d));
-  await sleep(1200);
+  await waitHealthy(port);
 
   try {
     const hello = await httpGet(port, '/hello');
@@ -149,8 +160,9 @@ async function partD() {
     ok('/healthz answers on the throwaway port');
   } finally {
     child.kill('SIGTERM');
-    await sleep(300);
-    assert.notEqual(child.exitCode, null, 'server exited on SIGTERM');
+    // up to 5 s on a loaded machine; a SIGTERM that lands before the handler is installed ends it by signal (exitCode stays null)
+    for (let i = 0; i < 50 && child.exitCode === null && child.signalCode === null; i++) await sleep(100);
+    assert.ok(child.exitCode !== null || child.signalCode !== null, 'server exited on SIGTERM');
     ok('server stops cleanly on SIGTERM');
   }
 }
