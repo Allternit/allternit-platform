@@ -36,6 +36,7 @@ use sha2::{Digest, Sha256};
 pub const SIG_HEADER: &str = "x-allternit-runtime-sig";
 pub const TS_HEADER: &str = "x-allternit-runtime-ts";
 pub const OWNER_HEADER: &str = "x-allternit-owner";
+pub const RUNTIME_ID_HEADER: &str = "x-allternit-runtime-id";
 /// Allowed clock skew between cloud-api and this runtime, either direction.
 pub const MAX_SKEW_SECS: i64 = 300;
 const MAX_BODY: usize = 1024 * 1024;
@@ -43,6 +44,7 @@ const MAX_BODY: usize = 1024 * 1024;
 const ENV_TOKEN: &str = "ALLTERNIT_RUNTIME_DEVICE_TOKEN";
 const ENV_OWNER: &str = "ALLTERNIT_RUNTIME_OWNER_ID";
 const ENV_IDENTITY_PATH: &str = "ALLTERNIT_RUNTIME_IDENTITY_PATH";
+const ENV_RUNTIME_ID: &str = "ALLTERNIT_RUNTIME_ID";
 
 // ---------------------------------------------------------------- relay secret
 
@@ -61,6 +63,12 @@ pub trait RelaySecret: Send + Sync {
     /// be seen half-updated.
     fn credentials(&self) -> Option<(String, String)> {
         Some((relay_key_from_device_token(&self.device_token()?), self.paired_owner()?))
+    }
+    /// The cloud's id for this runtime (`runtimeId` in the identity file), when known.
+    /// Sent as [`RUNTIME_ID_HEADER`] on runtime → cloud calls so the cloud can find the
+    /// device whose credential signed them.
+    fn runtime_id(&self) -> Option<String> {
+        None
     }
 }
 
@@ -99,6 +107,8 @@ struct Identity {
     user_id: String,
     #[serde(rename = "expiresAt", default)]
     expires_at: Option<String>,
+    #[serde(rename = "runtimeId", default)]
+    runtime_id: String,
 }
 
 impl Identity {
@@ -182,6 +192,10 @@ impl RelaySecret for EnvOrFileRelaySecret {
     }
     fn credentials(&self) -> Option<(String, String)> {
         self.raw_credentials().map(|(token, owner)| (relay_key_from_device_token(&token), owner))
+    }
+    fn runtime_id(&self) -> Option<String> {
+        self.env_nonempty(ENV_RUNTIME_ID)
+            .or_else(|| self.file_identity().map(|i| i.runtime_id.trim().to_string()).filter(|s| !s.is_empty()))
     }
 }
 
