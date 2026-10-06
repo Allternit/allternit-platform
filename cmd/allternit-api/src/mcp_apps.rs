@@ -1973,11 +1973,78 @@ pub(crate) mod tests {
         let init = log.iter().find(|s| s.method == "initialize").unwrap();
         assert_eq!(init.params["capabilities"]["extensions"][EXTENSION_ID]["mimeTypes"][0], APP_MIME);
         assert_eq!(init.session, None);
-        for s in log.iter().filter(|s| s.method != "initialize") {
+        // The dual-era probe (`server/discover`) went first and got this legacy
+        // server's 400; everything after `initialize` is legacy-shaped.
+        assert_eq!(log[0].method, "server/discover");
+        for s in log.iter().filter(|s| s.method != "initialize" && s.method != "server/discover") {
             assert_eq!(s.session.as_deref(), Some("sess-dash"), "{s:?}");
             assert_eq!(s.version.as_deref(), Some("2025-06-18"), "{s:?}");
         }
         assert!(*server.deleted.lock().unwrap(), "sessions are closed after each bridge call");
+    }
+
+    /// A 2026-07-28 (stateless) MCP Apps server: rejects `initialize`, wants
+    /// per-request `_meta` + the mirrored headers.
+    async fn modern_mcp(headers: axum::http::HeaderMap, Json(req): Json<Value>) -> Response {
+        let method = req["method"].as_str().unwrap_or("").to_string();
+        let id = req["id"].clone();
+        let meta = &req["params"]["_meta"];
+        let version = meta[mcp_protocol::META_PROTOCOL_VERSION].as_str();
+        if hdr(&headers, "authorization").as_deref() != Some(&format!("Bearer {TOKEN}")) {
+            return (StatusCode::UNAUTHORIZED, "no").into_response();
+        }
+        let header_ok = version.is_some()
+            && hdr(&headers, "mcp-protocol-version").as_deref() == version
+            && hdr(&headers, "mcp-method").as_deref() == Some(method.as_str())
+            && hdr(&headers, "mcp-session-id").is_none();
+        // the host must advertise MCP Apps in its per-request capabilities
+        let apps = meta[mcp_protocol::META_CLIENT_CAPABILITIES]["extensions"][EXTENSION_ID]["mimeTypes"][0] == APP_MIME;
+        if !header_ok || !apps {
+            let err = json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32020, "message": "bad modern request" } });
+            return (StatusCode::BAD_REQUEST, Json(err)).into_response();
+        }
+        let ok = |result: Value| (StatusCode::OK, Json(json!({ "jsonrpc": "2.0", "id": id, "result": result }))).into_response();
+        match method.as_str() {
+            "server/discover" => ok(json!({
+                "supportedVersions": [mcp_protocol::LATEST],
+                "capabilities": { "tools": {}, "resources": {} },
+                "_meta": { mcp_protocol::META_SERVER_INFO: { "name": "modern-dash", "version": "2" } }
+            })),
+            "tools/list" => ok(json!({ "resultType": "complete", "tools": [
+                { "name": "show_dashboard", "inputSchema": { "type": "object" }, "_meta": { "ui": { "resourceUri": "ui://dash/app" } } }
+            ]})),
+            "tools/call" => {
+                assert_eq!(hdr(&headers, "mcp-name").as_deref(), req["params"]["name"].as_str());
+                ok(json!({ "content": [{ "type": "text", "text": "ran" }], "structuredContent": { "rows": [1] } }))
+            }
+            _ => (StatusCode::NOT_FOUND, Json(json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32601, "message": "nf" } }))).into_response(),
+        }
+    }
+
+    #[tokio::test]
+    async fn modern_connectors_are_used_statelessly_with_the_apps_capability() {
+        let app = Router::new().route("/mcp", post(modern_mcp));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let connector = Connector {
+            id: "modern".into(),
+            name: "Modern".into(),
+            name_id: "modern".into(),
+            url: format!("http://{addr}/mcp"),
+            token: Some(TOKEN.into()),
+            oauth: OAuthMaterial::default(),
+            auth_failed: false,
+        };
+        let client = open_session(&connector, true).await.unwrap();
+        assert!(client.era().is_modern(), "{:?}", client.era());
+        let tools = list_all_tools(&client).await.unwrap();
+        assert_eq!(tools[0]["_meta"]["ui"]["resourceUri"], "ui://dash/app");
+        let called = forward_request(&client, Forward::ToolCall { name: "show_dashboard".into(), arguments: json!({}) })
+            .await
+            .unwrap();
+        assert_eq!(called["structuredContent"]["rows"], json!([1]));
+        close_session(client).await;
     }
 
     #[tokio::test]
