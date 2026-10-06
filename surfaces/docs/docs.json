@@ -698,6 +698,7 @@
             "group": "Collaboration & Workflows",
             "pages": [
               "api/agent-chat",
+              "api/subscription-gateway",
               "api/conversations",
               "api/artifacts",
               "api/boards",

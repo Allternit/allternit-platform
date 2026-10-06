@@ -2252,6 +2252,9 @@ fn subscription_approval(content: &str) -> SubscriptionApproval {
 enum DecideOutcome {
     NotFound,
     AnswerRequired,
+    /// A subscription card without the complete task it would run (an
+    /// Allternit runtime older than D16 task binding): it cannot be approved.
+    TaskRequired,
     /// Something other than a person's session tried to decide a
     /// subscription card. Only a person decides those (D16).
     PersonRequired(&'static str),
@@ -2403,6 +2406,10 @@ async fn decide_approval(
                         reopen_approval(&conn, &approval_id, &user_id);
                         return Ok(DecideOutcome::AnswerRequired);
                     }
+                    Err(Ok(crate::subscription_routes::CardReplyRefusal::TaskRequired)) => {
+                        reopen_approval(&conn, &approval_id, &user_id);
+                        return Ok(DecideOutcome::TaskRequired);
+                    }
                     Err(Err(e)) => {
                         reopen_approval(&conn, &approval_id, &user_id);
                         return Err(e);
@@ -2432,6 +2439,11 @@ async fn decide_approval(
             )
                 .into_response()
         }
+        Ok(Ok(DecideOutcome::TaskRequired)) => (
+            StatusCode::CONFLICT,
+            Json(json!({"error": "task_required", "detail": "This request came from an older version of Allternit and can't be sent. Reject it, update Allternit, then ask again."})),
+        )
+            .into_response(),
         Ok(Ok(DecideOutcome::AnswerRequired)) => (
             StatusCode::BAD_REQUEST,
             Json(json!({"error": "answer_required", "detail": "Type an answer to send to the provider, or reject the card."})),
