@@ -8,42 +8,19 @@
         "mcp"
       ]
     },
-    "dak-runner": {
-      "command": "node",
-      "args": [
-        "1-kernel/agent-systems/allternit-dak-runner/dist/mcp-server.js"
-      ],
-      "env": {
-        "Allternit_RAILS_CLI": "allternit",
-        "Allternit_PROJECT_PATH": "."
-      }
-    },
     "sequential-thinking": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-sequential-thinking"
+      ]
     },
     "context7": {
       "command": "npx",
-      "args": ["-y", "@upstash/context7-mcp@latest"]
-    },
-    "superpowers": {
-      "command": "node",
-      "args": ["tools/mcp-servers/superpowers/superpowers-mcp.js"]
-    },
-    "verceldeploy": {
-      "command": "node",
-      "args": ["plugins/verceldeploy-plugin/adapters/mcp.js"],
-      "env": {
-        "VERCEL_TOKEN": ""
-      }
-    },
-    "remotioncard": {
-      "command": "node",
-      "args": ["plugins/remotioncard-plugin/adapters/mcp.js"]
-    },
-    "iosappbuild": {
-      "command": "node",
-      "args": ["plugins/iosappbuild-plugin/adapters/mcp.js"]
+      "args": [
+        "-y",
+        "@upstash/context7-mcp@latest"
+      ]
     }
   }
 }

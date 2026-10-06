@@ -6,7 +6,7 @@ You are reviewing an architecture spec for a new Allternit subsystem. You are th
 
 1. `docs/specs/subscription-fabric/SPEC.md` — the full spec (this is the subject of your review).
 2. `REPO_STRUCTURE.md` (repo root) and the repo `AGENTS.md` — to ground recommendations in this monorepo's conventions.
-3. Explore the repo as needed. It is Rust + TypeScript (pnpm workspace + cargo workspace). Long-running daemons live in `services/`, internal TS libs in `platform/packages/`, surfaces in `surfaces/`. Playwright is already used (see root `bot-e2e-playwright.cjs` and `bot-e2e-web.cjs`). The local API gateway is `cmd/allternit-api` (Rust; installed instance owns port 8013, dev default 18013).
+3. Explore the repo as needed. It is Rust + TypeScript (pnpm workspace + cargo workspace). Long-running daemons live in `services/`, internal TS libs in `platform/packages/`, surfaces in `surfaces/`. Playwright is already used (see `scripts/e2e/bot/bot-e2e-playwright.cjs` and `scripts/e2e/bot/bot-e2e-web.cjs`). The local API gateway is `cmd/allternit-api` (Rust; installed instance owns port 8013, dev default 18013).
 
 ## Context (do not relitigate)
 

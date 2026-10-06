@@ -13,8 +13,8 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 
-const WORKTREE_NM = path.join(__dirname, 'node_modules');
-const SURFACE_NM = path.join(__dirname, 'surfaces/ai.allternit.com/node_modules');
+const WORKTREE_NM = path.join(__dirname, '..', '..', '..', 'node_modules');
+const SURFACE_NM = path.join(__dirname, '..', '..', '..', 'surfaces/ai.allternit.com/node_modules');
 const MODULE_FALLBACK = '~/altw/allternit/node_modules';
 
 function requireDep(name) {

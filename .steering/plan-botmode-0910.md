@@ -11,7 +11,7 @@
 - **Desktop** (`surfaces/allternit-desktop`) is a pure shell; bot mode = bundled platform web app + sidecars. Agent-sessions flag is always-on in desktop shell → desktop bot chat already routes via live cloud-api relay. Desktop Clerk sign-in is interactive (auth window) — a human sign-in is required once per profile.
 - **gizzi-code** CLI bot mode (B1–B5, PR #121) is a local-machine feature; its test suites currently fail in this checkout only because `packages/sdk/dist` is unbuilt.
 - Auth plumbing: `localStorage['allternit_token']` (Clerk JWT) → `Authorization: Bearer` on both cloud-api and local :8013. Vite dev supports **seed auto-login** (`VITE_CLERK_SEED_EMAIL/PASSWORD`, dev-only, `platform-auth-client.tsx:564-602`).
-- Root `bot-e2e-*.cjs` harnesses: `bot-e2e-verification.cjs` (headless, richest — fetches echo-bot ids live from `/api/v1/agents`), `bot-e2e-web.cjs` (headed), `bot-e2e-desktop.cjs` (Electron; `ALLTERNIT_PLATFORM_URL` overridable, default 3014 but dev UI is **3013**). No auth step in any of them — Clerk-disable/bypass was assumed. `bot-e2e-playwright.cjs` is stale (dead worktree path) — ignore.
+- Root `bot-e2e-*.cjs` harnesses: `scripts/e2e/bot/bot-e2e-verification.cjs` (headless, richest — fetches echo-bot ids live from `/api/v1/agents`), `scripts/e2e/bot/bot-e2e-web.cjs` (headed), `scripts/e2e/bot/bot-e2e-desktop.cjs` (Electron; `ALLTERNIT_PLATFORM_URL` overridable, default 3014 but dev UI is **3013**). No auth step in any of them — Clerk-disable/bypass was assumed. `scripts/e2e/bot/bot-e2e-playwright.cjs` is stale (dead worktree path) — ignore.
 
 ## Inputs needed from Eoj (execution-time)
 
@@ -44,7 +44,7 @@
    - KEEP `VITE_ALLTERNIT_GATEWAY_URL=http://127.0.0.1:8013` (computer path uses it)
    - Add `VITE_CLERK_SEED_EMAIL` + `VITE_CLERK_SEED_PASSWORD` (needs Eoj's password)
 2. Restart vite dev (`pnpm dev`, port 3013). Verify: seeded sign-in succeeds, `/api/v1/agent-sessions` responds 200 (not 401) via live relay.
-3. Point `bot-e2e-verification.cjs` at `http://localhost:3013` (BASE_URL) and run: Bot Hub → 1:1 chat (identity reply) → group chat (2 bots reply in-character) → recents-purity + rail layout checks. Collect RESULT JSON + screenshots.
+3. Point `scripts/e2e/bot/bot-e2e-verification.cjs` at `http://localhost:3013` (BASE_URL) and run: Bot Hub → 1:1 chat (identity reply) → group chat (2 bots reply in-character) → recents-purity + rail layout checks. Collect RESULT JSON + screenshots.
 4. Fix anything that fails in the session worktree; re-run until green.
 
 ## Phase 3 — PWA standalone

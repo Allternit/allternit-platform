@@ -41,7 +41,7 @@ commit `875d8ed1f` (reviewed: 44 vitest, tsc clean). **Preserve 1A/1B.** Do not 
   `routinePrompt()`.
 - ACI: `FabricSessionPanel.tsx` ~L199-222 **always** loops `fabricClient.streamAci(runId)`
   whenever `driveKind === 'aci'`. `FabricAciDrive` is presentational (screenshot prop).
-- PWA smoke: repo-root `bot-e2e-pwa.cjs` (Playwright, 1280×900 today). MODULE_FALLBACK
+- PWA smoke: `scripts/e2e/bot/bot-e2e-pwa.cjs` (Playwright, 1280×900 today). MODULE_FALLBACK
   currently points at `~/altw/allternit/node_modules` — if you touch the file,
   also accept the worktree's `node_modules` / `surfaces/ai.allternit.com/node_modules`.
 - Desktop lock: changes under `src/components/` and `src/fabric-session/` reach the
@@ -128,7 +128,7 @@ frames while the PWA is backgrounded.
 
 ### 6. PWA smoke
 
-Extend `bot-e2e-pwa.cjs` (or add a sibling `bot-e2e-pwa-fabric.cjs` if the existing
+Extend `scripts/e2e/bot/bot-e2e-pwa.cjs` (or add a sibling `scripts/e2e/bot/bot-e2e-pwa-fabric.cjs` if the existing
 file is the web-app PWA, not fabrictransport):
 
 - Viewport **390×844**.

@@ -7,7 +7,7 @@ This document describes the production-grade repository setup for the Allternit 
 We use a **monorepo + satellite repo** architecture:
 
 - **`allternit-platform`** (this repo) — Core platform monorepo. Source of truth for the full stack.
-- **Satellite repos** — Extracted public packages with independent release cycles.
+- **Satellite repos** — only where a tool needs its own repo (release downloads, brew/scoop, GPL isolation). See below.
 
 ## Core Monorepo (`allternit-platform`)
 
@@ -158,26 +158,29 @@ The repo carries three distinct SDKs — keep them straight:
 
 ## Satellite Repos
 
-These repos are published independently to NPM and have their own GitHub releases.
+All source lives in this monorepo. The other repos exist only where a tool needs its own repo:
 
-| Repo | NPM Package | Purpose |
-|------|-------------|---------|
-| [`allternit-sdk`](https://github.com/Gizziio/allternit-sdk) | `@allternit/sdk` | AI runtime, providers, ACP, and OpenAPI client |
-| [`allternit-plugin-sdk`](https://github.com/Gizziio/allternit-plugin-sdk) | `@allternit/plugin-sdk` | Universal plugin SDK with 6 adapters |
-| [`allternit-api-client`](https://github.com/Gizziio/allternit-api-client) | `@allternit/api-client` | TypeScript API client |
-| [`gizzi-code`](https://github.com/Gizziio/gizzi-code) | `@allternit/gizzi-code` | Workspace-aware AI CLI |
-| [`allternit-plugins`](https://github.com/Gizziio/allternit-plugins) | `@allternit/*-plugin` | 12 ready-to-use card plugins |
-| [`allternit-docs`](https://github.com/Gizziio/allternit-docs) | — | Documentation websites |
-| [`allternit-assets`](https://github.com/Gizziio/allternit-assets) | — | Brand assets and logos |
+| Repo | Purpose |
+|------|---------|
+| [`allternit-ai`](https://github.com/Gizziio/allternit-ai) (private) | Workspace UI for ai.allternit.com, m.allternit.com and the Desktop app |
+| [`allternit-websites`](https://github.com/Gizziio/allternit-websites) (private) | Marketing, services, labs and docs-adjacent sites |
+| [`desktop`](https://github.com/Gizziio/desktop) | Allternit Desktop release downloads (Mac + Windows). Built by `release-desktop.yml` here |
+| [`gizzi-code`](https://github.com/Gizziio/gizzi-code) | Hosts the `hosted-runtime-*` Linux binary the cloud runtime downloads (`cmd/allternit-hosted-runtime`) |
+| [`homebrew-tap`](https://github.com/Gizziio/homebrew-tap) | `brew install --cask allternit` and the gizzi formula |
+| [`scoop-bucket`](https://github.com/Gizziio/scoop-bucket) | Windows `scoop install gizzi-code` |
+| [`allternit-tts`](https://github.com/Gizziio/allternit-tts) | GPL-licensed Kokoro TTS child process, kept separate for licensing |
+
+The older extracted copies (`allternit-sdk`, `allternit-api-client`, `allternit-docs`,
+`gizzi-code-docs`, `allternit-assets`) stopped tracking this repo in September 2026 and are
+not maintained. Do not push to them; the code here is current.
 
 ## Development Workflow
 
-1. **Day-to-day development** happens in `allternit-platform`.
-2. When a satellite package is ready for release:
-   - Code is extracted from the monorepo
-   - Pushed to the satellite repo
-   - Tagged and released on GitHub
-   - Published to NPM
+1. All development happens in `allternit-platform` through a PR to `main`.
+2. Releases are tags on this repo: `gizzi-code/v*` (CLI, also published to npm),
+   `sdk/v*`, `gizzi-sdk/v*`. Desktop releases are published to the `desktop` repo.
+3. `allternit-bot-latest` is a rolling release for vendor-agent sandboxes. It is never
+   marked Latest, because the gizzi installer reads this repo's Latest release.
 
 ## NPM Organization
 
