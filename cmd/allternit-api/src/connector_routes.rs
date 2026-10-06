@@ -581,7 +581,15 @@ async fn connect_allternit_mail(
     {
         return (status, Json(e));
     }
-    let Some(client) = crate::mailflare_client::MailflareClient::from_env() else {
+    // Same order as POST /agents/:id/identity/email: a local admin key
+    // provisions directly; without one, a signed-in runtime gets the mailbox
+    // from Allternit's cloud (brokered) — the status above reports that as
+    // available, so connecting must work too.
+    let provisioned = if let Some(client) = crate::mailflare_client::MailflareClient::from_env() {
+        crate::allternit_bus_routes::provision_email_mailflare(state, user_id, &agent_id, client, None).await
+    } else if crate::mailflare_client::brokered_available() {
+        crate::allternit_bus_routes::provision_email_brokered(state, user_id, &agent_id, None).await
+    } else {
         return (
             StatusCode::NOT_IMPLEMENTED,
             Json(json!({
@@ -591,11 +599,7 @@ async fn connect_allternit_mail(
             })),
         );
     };
-    let address = match crate::allternit_bus_routes::provision_email_mailflare(
-        state, user_id, &agent_id, client, None,
-    )
-    .await
-    {
+    let address = match provisioned {
         Ok(address) => address,
         Err((status, Json(e))) => return (status, Json(e)),
     };
@@ -3060,19 +3064,25 @@ mod tests {
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let body = body_json(resp.into_body()).await;
-        // No mailflare env in tests → the rail reports unconfigured with a
-        // setup hint instead of attempting a connect.
-        assert_eq!(body["status"], "unconfigured");
         assert_eq!(body["backend"], "allternit_native");
-        assert_eq!(body["rail"]["configured"], false);
-        assert!(
-            body["setup_hint"]
-                .as_str()
-                .unwrap()
-                .contains("ALLTERNIT_MAILFLARE_URL"),
-            "hint: {}",
-            body["setup_hint"]
-        );
+        // No mailflare env in tests. A signed-in runtime still has mail
+        // through Allternit's cloud (brokered); otherwise the rail reports
+        // unconfigured with a setup hint instead of attempting a connect.
+        if crate::mailflare_client::brokered_available() {
+            assert_eq!(body["status"], "available");
+            assert_eq!(body["rail"]["configured"], true);
+        } else {
+            assert_eq!(body["status"], "unconfigured");
+            assert_eq!(body["rail"]["configured"], false);
+            assert!(
+                body["setup_hint"]
+                    .as_str()
+                    .unwrap()
+                    .contains("ALLTERNIT_MAILFLARE_URL"),
+                "hint: {}",
+                body["setup_hint"]
+            );
+        }
     }
 
     #[tokio::test]
@@ -3151,7 +3161,8 @@ mod tests {
         assert_eq!(body["result"]["isError"], false);
         let payload: Value =
             serde_json::from_str(body["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
-        assert_eq!(payload["configured"], false);
+        // Configured here only when this runtime is signed in (cloud-brokered mail).
+        assert_eq!(payload["configured"], crate::mailflare_client::brokered_available());
 
         // Unknown allternit_mail tool → MCP tool error, not a proxy fallback.
         let resp = handle_allternit_mail_mcp(
@@ -3317,8 +3328,9 @@ mod tests {
         assert!(checks.get("sidecar").is_some());
         assert!(checks.get("gmail").is_some());
         assert!(checks.get("google_drive").is_some());
-        // Allternit Mail is definitely unconfigured in this test (no env vars).
-        assert_eq!(checks["allternit_mail"]["configured"], false);
+        // No mail env vars here: Allternit Mail is configured only when this
+        // runtime is signed in (cloud-brokered mail).
+        assert_eq!(checks["allternit_mail"]["configured"], crate::mailflare_client::brokered_available());
         // Sidecar / OAuth state depends on the host environment; only assert shape.
         assert!(checks["sidecar"]["healthy"].is_boolean());
         assert!(checks["gmail"]["configured"].is_boolean());
