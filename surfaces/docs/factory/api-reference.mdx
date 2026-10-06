@@ -36,6 +36,9 @@ All JSON uses camelCase. Times are RFC 3339. IDs are opaque strings.
 - `GET /api/factory/agents/:id` → `Agent`
 - `GET /api/factory/agents/:id/capture?lines=80` → `{ text: string, at: string }`
 - `GET /api/factory/agents/:id/transcript?cursor=` → `{ chunks: {at:string,text:string}[], next: string|null }`
+- `GET /api/factory/agents/:id/screen` → `{ ansi: string, revision: number, at: string }`: the terminal agent's visible pane screen, with colors. `not_found` when the agent has no live pane.
+- `GET /api/factory/agents/:id/stream` (SSE) → `screen` events `{ ansi, revision, at }` each time the screen changes (the first at once), then one `gone` event `{ reason }` when the pane closes or can't be read, and the stream ends. Live only, no event ids. allternit-api passes it through unbuffered with no request timeout. Desktop's Code mode terminal tiles and the phone bot strip mirror panes with it.
+- `POST /api/factory/agents/:id/input` body `{ text?: string, keys?: string[] }` → `{ ok: true }`: keystrokes into the pane, as if typed at the wall. Not a send: no delivery and no ledger record. Use `POST /send` to message the agent.
 - `GET /api/factory/teams` → `{ teams: Team[] }`
 - `POST /api/factory/teams/:name/up` body `{ preset?: string, on?: string, dryRun?: boolean }` → `{ plan: TeamPlanStep[], applied: boolean }`
 - `POST /api/factory/teams/:name/down` → `{ stopped: string[] }`
