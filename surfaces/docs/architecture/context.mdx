@@ -64,3 +64,22 @@ Do not rely on a component "remembering" earlier turns. Put what matters in stat
 - [Intent Graph Kernel](/core/intent-graph-kernel)
 - [Memory Kernel](/core/memory-kernel)
 - [Routing](/architecture/routing)
+
+## Prompt-cache telemetry
+
+The native Gizzi session stores optional `tokens.cache.ttlSeconds` and
+`tokens.cache.refreshedAt` (epoch milliseconds) after a cache-bearing direct
+Anthropic response. The timestamp is captured before that request; retries
+and later model steps refresh it. The native adapter's ephemeral markers use
+the default 300-second TTL. Other provider paths omit these fields.
+
+Both the TypeScript compatibility bridge and Rust live/history bridges map
+these to finish usage fields `cacheTtlSeconds`, `cacheExpiresAt` (epoch
+milliseconds), and `cacheRecacheTokens`. The workspace preserves them through
+SSE parsing and persisted run telemetry. The countdown formatter is mirrored
+in Gizzi's `shared/util/cache-countdown.ts` and the workspace's
+`lib/agents/cache-countdown.ts`; update both together.
+
+The UI refreshes locally every 30 seconds, clears its timer on unmount, and
+labels expiry/recaching as estimates. It does not infer TTL from a model name
+in the workspace, fabricate misses, or issue background model requests.

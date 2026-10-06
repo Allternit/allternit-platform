@@ -222,6 +222,9 @@ export namespace MessageV2 {
       cache: z.object({
         read: z.number(),
         write: z.number(),
+        /** Request TTL/refresh estimate; absent for providers with unknown expiry. */
+        ttlSeconds: z.number().optional(),
+        refreshedAt: z.number().optional(),
       }),
     }),
   })
@@ -390,6 +393,9 @@ export namespace MessageV2 {
       cache: z.object({
         read: z.number(),
         write: z.number(),
+        /** Request TTL/refresh estimate; absent for providers with unknown expiry. */
+        ttlSeconds: z.number().optional(),
+        refreshedAt: z.number().optional(),
       }),
     }),
     /** Token counts were estimated because the provider reported none. */

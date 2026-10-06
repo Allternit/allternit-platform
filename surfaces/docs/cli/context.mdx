@@ -160,3 +160,23 @@ This is useful for:
 - [Headless Execution](/cli/headless-execution) — run slash commands and prompts without the TUI
 - [Configuration](/cli/configuration) — set default models, context limits, and autocompact behavior
 - [Permission Profiles](/cli/permission-profiles) — control tool approval rules that affect context composition
+
+## Prompt-cache countdown
+
+After a cache-bearing response, Gizzi Code shows a separate cache row under
+its model/context footer. Desktop and the web/phone/PWA workspace show the
+same indicator beside the latest reply's run telemetry. Existing custom
+status-line commands are preserved.
+
+The row updates every 30 seconds without sending a model request. Green means
+warm, amber means less than 20% of the TTL remains, and red means the estimated
+TTL has elapsed. The block bar shows time remaining. `last hit` is the share
+of the latest request's input read from cache, not a session-wide hit rate.
+When cold, `may re-cache` shows the latest reported input footprint.
+
+Expiry is an estimate from the request TTL, not a guarantee that the provider
+still holds the cache. Changes to model, tools, or context may invalidate it
+earlier. Unknown provider TTLs have no countdown. Native Anthropic requests
+currently use five-minute ephemeral markers; Gizzi's interactive Anthropic
+path uses its configured five-minute or one-hour TTL. No keepalive requests
+are sent. Miss counts and causes are omitted when not reported.
