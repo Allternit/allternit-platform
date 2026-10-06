@@ -17,3 +17,7 @@ Build/package/install later under the existing build-state guard and release rec
 ## Shared checkout preservation
 
 Removed only this session's original duplicate patch from the stale shared trees, then fast-forwarded them. Other sessions' cloud-console/settings work remains uncommitted. Existing ShellRail WIP was preserved in the named git stash `sync-main-preserve-existing-shellrail-WIP-20261006` during sync; equivalent rail-delete-kind files already exist on remote main. Any conflict reconciliation retains main's improved persisted-message preview/time helpers. No unrelated WIP was committed.
+
+## CI closeout
+
+The remote docs build validator passed, but the competitor-name lint flagged the added cache prose and a pre-existing subscription gateway API reference. Cache prose now describes the native TTL path without vendor branding; the gateway API reference joins the existing provider-reference exceptions. The lint checks excluding the build step pass locally. Gitleaks action failures are configuration-only: the organization transfer requires a GITLEAKS_LICENSE secret; the cache patch did not introduce a secret finding.

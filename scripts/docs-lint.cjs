@@ -139,6 +139,8 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
       // Subscription setup and its workflow index must name the supported providers.
       if (mdxPath.endsWith('surfaces/subscriptions.mdx')) continue;
       if (mdxPath.endsWith('guides/subscriptions.mdx')) continue;
+      // The subscription gateway API reference names supported providers and routing IDs.
+      if (mdxPath.endsWith('api/subscription-gateway.mdx')) continue;
       // Vendor-bot pages must name the vendors whose bots and connectors they cover.
       if (['guides/bot-phone.mdx', 'guides/keep-vendor-bots-online.mdx', 'guides/vendor-bots-on-the-phone.mdx', 'guides/vendor-bots-use-your-phone.mdx', 'guides/how-vendor-bots-connect.mdx', 'guides/allternit-bot-cli.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       if (mdxPath.endsWith('guides/platform-workflows.mdx')) continue;

@@ -68,8 +68,8 @@ Do not rely on a component "remembering" earlier turns. Put what matters in stat
 ## Prompt-cache telemetry
 
 The native Gizzi session stores optional `tokens.cache.ttlSeconds` and
-`tokens.cache.refreshedAt` (epoch milliseconds) after a cache-bearing direct
-Anthropic response. The timestamp is captured before that request; retries
+`tokens.cache.refreshedAt` (epoch milliseconds) after a cache-bearing response
+from the native cache-capable adapter. The timestamp is captured before that request; retries
 and later model steps refresh it. The native adapter's ephemeral markers use
 the default 300-second TTL. Other provider paths omit these fields.
 
