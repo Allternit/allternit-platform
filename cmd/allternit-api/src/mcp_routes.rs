@@ -827,7 +827,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(page.0.contains("Connector connected"));
+        assert!(page.0.contains("is connected") && page.0.contains(r#"aria-label="Allternit""#), "branded success page");
 
         let forms = forms.lock().unwrap().clone();
         assert_eq!(forms.len(), 1);
