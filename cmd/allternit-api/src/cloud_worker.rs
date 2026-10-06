@@ -119,12 +119,38 @@ async fn start_once(
             "ALLTERNIT_CLOUD_WORKSPACE",
             workspace.to_string_lossy().to_string(),
         )
+        // Lifeline: gizzi exits when its stdin reaches EOF, and the kernel
+        // closes our end however this process dies (kill -9, crash, a boot
+        // smoke test killing it). kill_on_drop alone only covers a clean
+        // shutdown, so every other exit left the worker running under launchd.
+        .env("GIZZI_PARENT_LIFELINE", "stdin")
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
         .map_err(|e| e.to_string())?;
-    child.wait().await.map_err(|e| e.to_string())
+    // Held, never written: dropping it would end the worker.
+    let lifeline = child.stdin.take();
+    // Drain the worker's output into our log; an unread pipe fills up and
+    // blocks the worker on its next write.
+    if let Some(out) = child.stdout.take() {
+        tokio::spawn(forward_worker_output(out, "stdout"));
+    }
+    if let Some(err) = child.stderr.take() {
+        tokio::spawn(forward_worker_output(err, "stderr"));
+    }
+    let status = child.wait().await.map_err(|e| e.to_string());
+    drop(lifeline);
+    status
+}
+
+async fn forward_worker_output<R: tokio::io::AsyncRead + Unpin>(stream: R, which: &'static str) {
+    use tokio::io::AsyncBufReadExt;
+    let mut lines = tokio::io::BufReader::new(stream).lines();
+    while let Ok(Some(line)) = lines.next_line().await {
+        info!(target: "gizzi_cloud_worker", stream = which, "{line}");
+    }
 }
 
 #[cfg(test)]
