@@ -52,6 +52,13 @@ pub struct SpawnOptions<'a> {
     pub capture: Option<&'a CaptureFiles>,
     /// The bot this session belongs to; `None` gets a local placeholder.
     pub bot: Option<BotRef>,
+    /// Extra pane environment (a team bot's identity). The engine's own
+    /// `ALLTERNIT_FACTORY_*` names win over these. Recorded in the registry,
+    /// so never put a secret here.
+    pub env: BTreeMap<String, String>,
+    /// The owning lead recorded on the session; `None` is
+    /// `$ALLTERNIT_FACTORY_LEAD`, else `engine`.
+    pub lead: Option<String>,
 }
 
 /// Files a captured (headless) spawn writes. See [`SpawnOptions::capture`].
@@ -204,7 +211,7 @@ impl Spawner {
 
         // The pane's own environment (the old tmux `export …` prefix).
         let fence_strict = hook::fence_env_strict() || wih_policy.as_ref().is_some_and(|p| p.fence_strict);
-        let mut env: BTreeMap<String, String> = BTreeMap::new();
+        let mut env: BTreeMap<String, String> = opts.env.clone();
         let inbox = peer.inbox_socket.to_string_lossy().to_string();
         let root_s = workdir.to_string_lossy().to_string();
         // The pane slug, the same value a team bot's pane carries (whoami.rs).
@@ -307,12 +314,17 @@ impl Spawner {
             worktree: opts.worktree.then(|| workdir.to_string_lossy().to_string()),
             branch: opts.worktree.then(|| format!("ao/{slug}")),
             sentinel: opts.notes_sentinel.map(|p| p.to_string_lossy().to_string()),
-            lead: Some(std::env::var("ALLTERNIT_FACTORY_LEAD").unwrap_or_else(|_| "engine".to_string())),
+            lead: Some(opts.lead.clone().unwrap_or_else(|| {
+                std::env::var("ALLTERNIT_FACTORY_LEAD").unwrap_or_else(|_| "engine".to_string())
+            })),
             lifecycle: Some("running".to_string()),
             world: Some("engine".to_string()),
             pane_id: Some(live.pane_id.clone()),
             harness: Some(opts.vendor.to_string()).filter(|h| !h.is_empty()),
             bot: Some(opts.bot.clone().unwrap_or_else(|| BotRef::placeholder(&slug))),
+            argv: Some(opts.cmd.to_vec()),
+            env: opts.env.clone(),
+            wih: opts.wih.map(str::to_string),
             created_at: Some(now.clone()),
             updated_at: Some(now),
             ..Default::default()
@@ -410,6 +422,246 @@ impl Spawner {
             }
         }
         Ok(())
+    }
+}
+
+// ─── agents recover ────────────────────────────────────────────────────────────
+
+/// Who is asking, for the ownership checks: `--lead` > `$ALLTERNIT_FACTORY_LEAD`
+/// > `$USER` / `$LOGNAME` > `human`. Spawns from the command line record this
+/// as the session's lead; `agents recover` compares against it.
+pub fn caller_identity(lead_flag: Option<&str>) -> String {
+    if let Some(lead) = lead_flag.filter(|l| !l.is_empty()) {
+        return lead.to_string();
+    }
+    for var in ["ALLTERNIT_FACTORY_LEAD", "USER", "LOGNAME"] {
+        if let Ok(value) = std::env::var(var) {
+            if !value.is_empty() {
+                return value;
+            }
+        }
+    }
+    "human".to_string()
+}
+
+/// Fail-closed ownership: the caller must be the recorded lead, or pass
+/// `--as-human`. A record with no lead refuses (never a guess).
+pub fn require_lead(session: &str, entry: &Entry, caller: &str, as_human: bool, op: &str) -> std::result::Result<(), String> {
+    if as_human {
+        return Ok(());
+    }
+    match entry.lead.as_deref() {
+        Some(lead) if lead == caller => Ok(()),
+        Some(lead) => Err(format!(
+            "{op} on {session} refused: it is owned by lead '{lead}' (caller is '{caller}'); use --as-human to override"
+        )),
+        None => Err(format!("{op} on {session} refused: no owning lead recorded; use --as-human to override")),
+    }
+}
+
+/// The `status:` line of a notes sentinel (`done`, `blocked`), if the file
+/// exists and has one. Absent means unfinished.
+pub fn sentinel_status(sentinel: Option<&str>) -> Option<String> {
+    let content = std::fs::read_to_string(sentinel?).ok()?;
+    content
+        .lines()
+        .take(20)
+        .find_map(|line| line.trim().strip_prefix("status:").map(|v| v.trim().trim_matches('"').to_string()))
+}
+
+/// The harness's own resume launch for a recorded argv that names a session
+/// (`claude --resume <id>`, `codex resume <id>`, `kimi --session|-S <id>`,
+/// `agy --conversation <id>`, `grok --resume <id>`), or `None` when the argv
+/// has no resumable session reference (the relaunch is then verbatim). The
+/// spawn gate re-adds the permission flags, so they are not carried over.
+pub fn resume_argv(argv: &[String]) -> Option<Vec<String>> {
+    let first = argv.first()?;
+    let binary = Path::new(first).file_name()?.to_str()?;
+    let id = match binary {
+        "codex" => argv.get(1).filter(|a| *a == "resume").and_then(|_| argv.get(2)),
+        "claude" | "grok" => flag_value(argv, &["--resume"]),
+        "kimi" => flag_value(argv, &["--session", "-S"]),
+        "agy" => flag_value(argv, &["--conversation"]),
+        _ => None,
+    }?;
+    if id.is_empty() || id.starts_with('-') {
+        return None;
+    }
+    let flag = match binary {
+        "codex" => "resume",
+        "kimi" => "--session",
+        "agy" => "--conversation",
+        _ => "--resume",
+    };
+    Some(vec![first.clone(), flag.to_string(), id.clone()])
+}
+
+fn flag_value<'a>(argv: &'a [String], flags: &[&str]) -> Option<&'a String> {
+    let at = argv.iter().position(|a| flags.contains(&a.as_str()))?;
+    argv.get(at + 1)
+}
+
+/// What `agents recover` decided for one session.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoverStep {
+    pub session: String,
+    /// `skip` | `refuse` | `plan` | `recovered` | `failed`.
+    pub action: String,
+    pub detail: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub argv: Option<Vec<String>>,
+    /// True when the relaunch uses the harness's own resume.
+    pub resumed: bool,
+}
+
+impl RecoverStep {
+    fn new(session: &str, action: &str, detail: impl Into<String>) -> Self {
+        Self { session: session.to_string(), action: action.into(), detail: detail.into(), argv: None, resumed: false }
+    }
+}
+
+/// Options for [`Spawner::recover`].
+pub struct RecoverOptions<'a> {
+    /// One session (by slug); `None` is every recorded session.
+    pub only: Option<&'a str>,
+    /// Respawn; without it the result is the plan.
+    pub apply: bool,
+    pub caller: &'a str,
+    pub as_human: bool,
+}
+
+/// The relaunch for a recorded session: its harness argv (upgraded to the
+/// harness's resume when it names a session), or, for a record from before
+/// the registry kept the argv, its runner file run as is.
+fn relaunch_of(session: &str, entry: &Entry) -> Option<(Vec<String>, bool)> {
+    if let Some(argv) = entry.argv.as_ref().filter(|a| !a.is_empty()) {
+        return Some(match resume_argv(argv) {
+            Some(resumed) => (resumed, true),
+            None => (argv.clone(), false),
+        });
+    }
+    let runner = entry
+        .runner
+        .clone()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| registry::logs_dir().join(format!("{session}.cmd.sh")));
+    runner.is_file().then(|| (vec!["/bin/sh".to_string(), runner.to_string_lossy().to_string()], false))
+}
+
+impl Spawner {
+    /// Reconcile the registry against the live panes and respawn sessions that
+    /// died unfinished (dry run unless `apply`). A session is a candidate when
+    /// its pane is gone, it is not `finished`, and its notes sentinel (if any)
+    /// does not say `status: done`. Only the owning lead (or `--as-human`) may
+    /// respawn it; every respawn goes through [`Spawner::spawn`], so through
+    /// the spawn gate.
+    pub async fn recover(&self, o: RecoverOptions<'_>) -> Result<Vec<RecoverStep>> {
+        let pane = backend::backend()?;
+        let live = backend::blocking(move || pane.list()).await?;
+        let live: std::collections::BTreeSet<String> = live.into_iter().map(|p| p.session).collect();
+        let only = o.only.map(session_name);
+        let file = self.registry.load()?;
+        let mut out = Vec::new();
+        for (session, entry) in &file.sessions {
+            if only.as_deref().is_some_and(|s| s != session) {
+                continue;
+            }
+            if live.contains(session) {
+                if only.is_some() {
+                    out.push(RecoverStep::new(session, "skip", "alive"));
+                }
+                continue;
+            }
+            if entry.lifecycle.as_deref() == Some("finished") {
+                if only.is_some() {
+                    out.push(RecoverStep::new(session, "skip", "finished"));
+                }
+                continue;
+            }
+            if sentinel_status(entry.sentinel.as_deref()).as_deref() == Some("done") {
+                if o.apply {
+                    self.registry.update(|f| {
+                        if let Some(e) = f.sessions.get_mut(session) {
+                            e.dead = true;
+                            e.lifecycle = Some("finished".to_string());
+                        }
+                    })?;
+                }
+                out.push(RecoverStep::new(session, "skip", "sentinel status: done (finished)"));
+                continue;
+            }
+            if let Err(why) = require_lead(session, entry, o.caller, o.as_human, "recover") {
+                out.push(RecoverStep::new(session, "refuse", why));
+                continue;
+            }
+            let Some((argv, resumed)) = relaunch_of(session, entry) else {
+                out.push(RecoverStep::new(session, "skip", "no launch command recorded"));
+                continue;
+            };
+            let how = if resumed { "agent-level resume" } else { "verbatim relaunch" };
+            let mut step = RecoverStep::new(session, "plan", format!("respawn ({how}) in {}", entry.cwd));
+            step.argv = Some(argv.clone());
+            step.resumed = resumed;
+            if o.apply {
+                match self.respawn(session, entry, &argv).await {
+                    Ok(log) => {
+                        step.action = "recovered".into();
+                        step.detail = format!("respawned ({how}); transcript {}", log.display());
+                    }
+                    Err(e) => {
+                        step.action = "failed".into();
+                        step.detail = format!("{e:#}");
+                    }
+                }
+            }
+            out.push(step);
+        }
+        Ok(out)
+    }
+
+    async fn respawn(&self, session: &str, entry: &Entry, argv: &[String]) -> Result<PathBuf> {
+        let slug = registry::slug_of(session).to_string();
+        // A runner from before the registry kept argv is replaced by the new
+        // spawn's runner at the same path: run a copy.
+        let argv: Vec<String> = if argv.first().map(String::as_str) == Some("/bin/sh") && argv.len() == 2 {
+            let copy = registry::logs_dir().join(format!("{session}.recover.cmd.sh"));
+            tokio::fs::copy(&argv[1], &copy).await?;
+            vec![argv[0].clone(), copy.to_string_lossy().to_string()]
+        } else {
+            argv.to_vec()
+        };
+        let cwd = PathBuf::from(&entry.cwd);
+        let sentinel = entry.sentinel.as_ref().map(PathBuf::from);
+        let vendor = entry.harness.clone().unwrap_or_else(|| argv[0].clone());
+        let result = self
+            .spawn(SpawnOptions {
+                slug: &slug,
+                repo: &cwd,
+                cmd: &argv,
+                worktree: false,
+                vendor: &vendor,
+                mode: "recover",
+                task_file: None,
+                notes_sentinel: sentinel.as_deref(),
+                wih: entry.wih.as_deref(),
+                capture: None,
+                bot: entry.bot.clone(),
+                env: entry.env.clone(),
+                lead: entry.lead.clone(),
+            })
+            .await?;
+        // Keep the worktree and branch the session was started with.
+        if entry.worktree.is_some() || entry.branch.is_some() {
+            let (wt, br) = (entry.worktree.clone(), entry.branch.clone());
+            self.registry.update(|f| {
+                if let Some(e) = f.sessions.get_mut(session) {
+                    e.worktree = wt;
+                    e.branch = br;
+                }
+            })?;
+        }
+        Ok(result.logfile)
     }
 }
 

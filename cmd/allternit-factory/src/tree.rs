@@ -206,6 +206,17 @@ pub enum OrchestrationCmd {
         #[arg(long)]
         tail: Option<usize>,
     },
+    /// Deliver an agent's queued messages (oldest first, each only once its
+    /// paste is verified).
+    Drain {
+        to: String,
+        /// Every queued message, not just the oldest.
+        #[arg(long)]
+        all: bool,
+        /// List what is queued; deliver nothing.
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Threads (standing / task).
     Threads(Planned),
     /// Mail: list, read, send, decide, … (`--help` for the full set).
@@ -605,30 +616,13 @@ fn agents(ctx: &Ctx, cmd: AgentsCmd) -> u8 {
             if let Some(code) = crate::bots::down_team(ctx, &slug, rm_worktree, dry) {
                 return code;
             }
-            let mut args = vec!["kill".to_string(), slug];
-            if rm_worktree {
-                args.push("--rm-worktree".into());
-            }
-            let target = Target::Pane(args);
-            if dry {
-                return dry_run(ctx, &target);
-            }
-            run(ctx, target)
+            crate::part::down(ctx, slug, rm_worktree, dry)
         }
         AgentsCmd::Recover { slug, apply, dry_run: dry, lead, as_human } => {
             if apply && dry {
                 return fail(ctx, Code::Usage, "--apply and --dry-run contradict each other", None);
             }
-            let mut args = vec!["recover".to_string()];
-            args.extend(slug);
-            if apply {
-                args.push("--apply".into());
-            }
-            opt(&mut args, "--lead", lead);
-            if as_human {
-                args.push("--as-human".into());
-            }
-            run(ctx, Target::Pane(args))
+            crate::part::recover(ctx, slug, apply, lead, as_human)
         }
         AgentsCmd::Harness(rest) => {
             let split = split(rest.args, true);
@@ -678,16 +672,9 @@ fn orchestration(ctx: &Ctx, cmd: OrchestrationCmd) -> u8 {
             };
             crate::part::send(ctx, to, text, queue, thread, node, dag, key, dry)
         }
-        OrchestrationCmd::Capture { to, lines } => {
-            let mut args = vec!["status".to_string(), to];
-            args.extend(lines.map(|n| n.to_string()));
-            run(ctx, Target::Pane(args))
-        }
-        OrchestrationCmd::Transcript { to, tail } => {
-            let mut args = vec!["transcript".to_string(), to];
-            opt(&mut args, "--tail", tail.map(|n| n.to_string()));
-            run(ctx, Target::Pane(args))
-        }
+        OrchestrationCmd::Capture { to, lines } => crate::part::capture(ctx, to, lines),
+        OrchestrationCmd::Transcript { to, tail } => crate::part::transcript(ctx, to, tail),
+        OrchestrationCmd::Drain { to, all, dry_run: dry } => crate::part::drain(ctx, to, all, dry),
         OrchestrationCmd::Threads(_) => not_built(
             ctx,
             "orchestration",

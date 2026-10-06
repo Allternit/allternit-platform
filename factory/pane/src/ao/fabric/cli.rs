@@ -271,8 +271,7 @@ fn open_browser_best_effort(url: &str) {
 // ---------------------------------------------------------------------------
 
 fn serve(args: &[String]) -> std::io::Result<i32> {
-    let mut port = std::env::var("ALLTERNIT_AO_PORT")
-        .ok()
+    let mut port = super::fabric_env("PORT")
         .and_then(|value| value.parse::<u16>().ok())
         .unwrap_or(DEFAULT_AO_PORT);
     let mut index = 0;
@@ -362,9 +361,9 @@ async fn async_serve(identity: NodeIdentity, port: u16) -> i32 {
             Ok(session) => {
                 identity.apply_session(&session);
                 let _ = identity.save();
-                println!("[ao-fabric] credential rotated (new expiry {})", session.expires_at);
+                println!("[factory-fabric] credential rotated (new expiry {})", session.expires_at);
             }
-            Err(err) => eprintln!("[ao-fabric] warn: rotation failed: {err}"),
+            Err(err) => eprintln!("[factory-fabric] warn: rotation failed: {err}"),
         }
     }
     match cloud.heartbeat(&identity).await {
@@ -374,7 +373,7 @@ async fn async_serve(identity: NodeIdentity, port: u16) -> i32 {
             return 1;
         }
         Err(HeartbeatError::Transport(err)) => {
-            eprintln!("[ao-fabric] warn: initial heartbeat failed: {err}");
+            eprintln!("[factory-fabric] warn: initial heartbeat failed: {err}");
         }
     }
 
@@ -391,9 +390,9 @@ async fn async_serve(identity: NodeIdentity, port: u16) -> i32 {
     // connector sidecar owns 8014 and 401s foreign `/v1/*` traffic).
     let local_gateway = super::resolve_local_gateway(
         port,
-        std::env::var("ALLTERNIT_AO_GATEWAY_URL").ok(),
+        super::fabric_env("GATEWAY_URL"),
     );
-    println!("[ao-fabric] relay forwarding to {local_gateway}");
+    println!("[factory-fabric] relay forwarding to {local_gateway}");
 
     let relay_task = tokio::spawn(super::relay::run(
         Arc::clone(&identity),
@@ -410,7 +409,7 @@ async fn async_serve(identity: NodeIdentity, port: u16) -> i32 {
         let cloud = match CloudClient::new() {
             Ok(cloud) => cloud,
             Err(err) => {
-                eprintln!("[ao-fabric] lifecycle: {err}");
+                eprintln!("[factory-fabric] lifecycle: {err}");
                 return;
             }
         };
@@ -429,13 +428,13 @@ async fn async_serve(identity: NodeIdentity, port: u16) -> i32 {
                             identity.apply_session(&session);
                             let _ = identity.save();
                             eprintln!(
-                                "[ao-fabric] credential rotated (new expiry {}); relay reconnecting",
+                                "[factory-fabric] credential rotated (new expiry {}); relay reconnecting",
                                 session.expires_at
                             );
                             true
                         }
                         Err(err) => {
-                            eprintln!("[ao-fabric] warn: rotation failed: {err}");
+                            eprintln!("[factory-fabric] warn: rotation failed: {err}");
                             false
                         }
                     }
@@ -451,12 +450,12 @@ async fn async_serve(identity: NodeIdentity, port: u16) -> i32 {
                 match cloud.heartbeat(&identity).await {
                     Ok(()) => false,
                     Err(HeartbeatError::Revoked) => {
-                        eprintln!("[ao-fabric] node was revoked — unpairing and stopping");
+                        eprintln!("[factory-fabric] node was revoked — unpairing and stopping");
                         cloud.revoke_self(&identity).await;
                         true
                     }
                     Err(HeartbeatError::Transport(err)) => {
-                        eprintln!("[ao-fabric] warn: heartbeat failed: {err}");
+                        eprintln!("[factory-fabric] warn: heartbeat failed: {err}");
                         false
                     }
                 }
@@ -483,12 +482,12 @@ async fn async_serve(identity: NodeIdentity, port: u16) -> i32 {
         result = shim_handle => {
             match result {
                 Ok(Ok(())) => {}
-                Ok(Err(err)) => eprintln!("[ao-fabric] shim exited: {err}"),
-                Err(err) => eprintln!("[ao-fabric] shim task failed: {err}"),
+                Ok(Err(err)) => eprintln!("[factory-fabric] shim exited: {err}"),
+                Err(err) => eprintln!("[factory-fabric] shim task failed: {err}"),
             }
         }
         _ = ctrl_wait => {
-            println!("\n[ao-fabric] shutting down");
+            println!("\n[factory-fabric] shutting down");
         }
     }
 

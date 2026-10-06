@@ -15,7 +15,7 @@
 //!     file fails to parse and is treated as missing, exactly like the JS).
 //!   - Numbers keep their raw lexeme. JS *normalizes* number lexemes
 //!     (`1e3` → `1000`, `1.50` → `1.5`); accepted deviation (documented in
-//!     docs/programs/ao/AO_HARNESS_PORT_NOTES.md): lexemes are reprinted verbatim. No
+//!     the harness port notes under docs/programs/): lexemes are reprinted verbatim. No
 //!     manifest target contains numeric values, and a lexeme that round-trips
 //!     is unaffected.
 //!   - String escaping matches `JSON.stringify`: `"` `\` `\b` `\f` `\n` `\r`

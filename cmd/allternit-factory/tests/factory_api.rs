@@ -356,13 +356,13 @@ fn factory_api_contract() {
     assert_shape(&md, "NodePage", &page);
     assert_shape(&md, "NodeCard", &page["card"]);
 
-    // Teams read from the registry; boot verbs are honest about not existing.
+    // Teams read from .allternit/teams; booting a team that isn't there is not_found.
     let (s, teams) = get(&e, "/api/factory/teams");
-    assert_eq!((s, teams.clone()), (200, json!({ "teams": [] })));
+    assert_eq!((s, teams.clone()), (200, json!({ "teams": [], "invalid": [] })));
     let (s, b) = post(&e, "/api/factory/teams/build/up", json!({}));
     assert_error(s, &b, 404, "not_found");
-    assert!(b["error"]["fact"].as_str().unwrap().contains("not built yet"));
-    let (s, b) = get(&e, "/api/factory/campaigns/c1/board");
+    assert!(b["error"]["fact"].as_str().unwrap().contains("build"), "{b}");
+    let (s, b) = get(&e, "/api/factory/campaigns/nope/board");
     assert_error(s, &b, 404, "not_found");
 
     // Events: replay from the start of the ledger includes the deliveries.
@@ -414,8 +414,10 @@ fn exit_code_table() {
     let (code, body) = run(&["orchestration", "send", "nobody", "hi", "--json"]);
     assert_eq!(code, 2, "{body}");
     assert_eq!(body["error"]["code"], "not_found");
+    let (code, body) = run(&["workspace", "board", "nope", "--json"]);
+    assert_eq!((code, body["error"]["code"].as_str()), (2, Some("not_found")), "{body}");
     let (code, body) = run(&["workspace", "board", "--json"]);
-    assert_eq!((code, body["error"]["code"].as_str()), (2, Some("not_found")));
+    assert_eq!((code, body["error"]["code"].as_str()), (64, Some("usage")), "a board needs its campaign");
     let (code, body) = run(&["orchestration", "send", "nobody", "--json"]);
     assert_eq!((code, body["error"]["code"].as_str()), (64, Some("usage")));
     let (code, _) = run(&["no-such-part", "--json"]);

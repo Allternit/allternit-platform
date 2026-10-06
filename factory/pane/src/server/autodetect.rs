@@ -195,7 +195,7 @@ pub fn spawn_server_daemon() -> io::Result<u32> {
     let exe = std::env::current_exe().map_err(|err| {
         io::Error::new(
             err.kind(),
-            format!("failed to determine ao executable path: {err}"),
+            format!("failed to determine the allternit-factory executable path: {err}"),
         )
     })?;
 
@@ -221,6 +221,12 @@ fn build_server_daemon_command(exe: PathBuf) -> Command {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
     crate::platform::detach_server_daemon_command(&mut command);
+    // The server's environment is every pane's: never hand it the Allternit
+    // API credentials of the process that happened to start it (an engine
+    // `agents up` or `serve` holds them to register bots).
+    for secret in ["ALLTERNIT_API_TOKEN", "ALLTERNIT_DESKTOP_ACCESS_TOKEN"] {
+        command.env_remove(secret);
+    }
 
     match std::env::current_dir() {
         Ok(cwd) => {

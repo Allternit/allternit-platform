@@ -24,7 +24,6 @@ macro_rules! println {
 
 mod agent;
 pub(crate) mod ao;
-mod ao_gate;
 mod api;
 mod completion;
 mod integration;
@@ -37,7 +36,6 @@ mod runtime;
 mod server;
 mod server_not_running;
 mod spec;
-#[allow(dead_code)] // engine status is shadowed by the ao contract (P1); kept for a P2+ rehome
 mod status;
 mod tab;
 mod visibility;
@@ -50,12 +48,12 @@ const TERMINAL_SESSION_CONTROL_USAGE: &str =
     "usage: allternit-factory pane terminal session control <target> [--takeover] [--cols N] [--rows N]";
 pub(crate) const AGENT_HELP_FOOTER: &str = concat!(
     "Are you an AI? Use these resources ONLY IF your task specifically asks you to:\n",
-    "  Help a human understand or set up ao for the first time:\n",
+    "  Help a human understand or set up the pane engine for the first time:\n",
     "    https://github.com/herdrdev/herdr\n",
-    "  Debug or investigate a problem with ao:\n",
+    "  Debug or investigate a problem with the pane engine:\n",
     "    https://github.com/herdrdev/herdr/blob/main/README.md\n",
-    "  Control ao panes, agents, or workspaces:\n",
-    "    SKIP if an ao skill is already in your context. Otherwise run: allternit-factory pane --skill",
+    "  Control agents, panes, or workspaces:\n",
+    "    use `gizzi agents|orchestration` (or `allternit-factory agents|orchestration`); for raw panes run: allternit-factory pane --skill",
 );
 
 pub(crate) fn parse_token_assignment(raw: &str) -> Result<(String, Option<String>), String> {
@@ -107,10 +105,8 @@ pub fn maybe_run(args: &[String]) -> std::io::Result<CommandOutcome> {
     }
 
     let exit_code = match command {
-        // ao contract commands take priority over the engine's own words
-        // (notably `status`); see src/cli/ao.rs.
-        "spawn" | "send" | "watch" | "status" | "kill" | "doctor" | "queue" | "drain"
-        | "recover" | "transcript" => ao::run_ao_command(&args[1..])?,
+        "doctor" => ao::run_doctor_command(&args[2..])?,
+        "status" => status::run_status_command(&args[2..])?,
         "fabric" => crate::ao::fabric::cli::run(&args[2..])?,
         // Factory raw terminals (src/factory_terminal.rs).
         "tty" => crate::factory_terminal::run_cli(&args[2..])?,
@@ -125,8 +121,6 @@ pub fn maybe_run(args: &[String]) -> std::io::Result<CommandOutcome> {
             exit_code
         }
         "api" => api::run_api_command(&args[2..])?,
-        // Engine `status` is shadowed by the ao contract (see the ao arm above)
-        // and rehomed inside ao::status for the engine's own subcommand forms.
         "completion" | "completions" => completion::run_completion_command(&args[2..])?,
         "config" => run_config_command(&args[2..])?,
         "machine" => machine::run_machine_command(&args[2..])?,

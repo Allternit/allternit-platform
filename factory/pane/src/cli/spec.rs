@@ -6,8 +6,8 @@ mod completion;
 mod machine;
 
 pub(super) fn command() -> Command {
-    let command = Command::new("ao")
-        .about("terminal workspace manager for AI coding agents")
+    let command = Command::new("allternit-factory-pane")
+        .about("the Allternit Factory pane engine: terminal workspaces for AI coding agents")
         .disable_help_flag(true)
         .disable_version_flag(true)
         .arg(help_flag())
@@ -29,7 +29,7 @@ pub(super) fn command() -> Command {
                 .help("Print version and exit"),
         )
         .subcommand(completion::command())
-        .subcommand(ao_command())
+        .subcommand(doctor_command())
         .subcommand(update_command())
         .subcommand(status_command())
         .subcommand(config_command())
@@ -92,7 +92,7 @@ fn write_requested_help(
     let mut root = command();
     root.build();
     let mut selected = &mut root;
-    let mut path = vec!["ao".to_string()];
+    let mut path = vec!["allternit-factory pane".to_string()];
     for segment in &args[1..help_index] {
         if selected.find_subcommand(segment).is_none() {
             break;
@@ -119,56 +119,8 @@ fn update_command() -> Command {
         .arg(flag("handoff").help("Try live handoff after installing"))
 }
 
-fn ao_command() -> Command {
-    Command::new("ao")
-        .about("Allternit agent orchestrator contract (spawn/send/watch/status/kill/doctor)")
-        .subcommand(
-            Command::new("spawn")
-                .about("Spawn an agent session (engine workspace ao-<slug>)")
-                .arg(flag("worktree").help("Run in a new git worktree <repo>-ao-<slug> on branch ao/<slug>"))
-                .arg(Arg::new("slug").required(true).help("Session slug"))
-                .arg(Arg::new("repo-dir").required(true).help("Working directory"))
-                .arg(
-                    Arg::new("agent-cmd")
-                        .required(true)
-                        .num_args(1..)
-                        .trailing_var_arg(true)
-                        .help("Agent command and arguments"),
-                ),
-        )
-        .subcommand(
-            Command::new("send")
-                .about("Verified bracketed-paste prompt injection")
-                .arg(Arg::new("slug").required(true))
-                .arg(
-                    Arg::new("prompt")
-                        .required(true)
-                        .num_args(1..)
-                        .trailing_var_arg(true)
-                        .help("Prompt text, or -f <file>"),
-                ),
-        )
-        .subcommand(
-            Command::new("watch")
-                .about("Block until a sentinel file exists, the pane dies, or a timeout")
-                .arg(Arg::new("slug").required(true))
-                .arg(Arg::new("sentinel-file").required(true))
-                .arg(Arg::new("timeout").help("Seconds (default 3600)"))
-                .arg(Arg::new("interval").help("Poll seconds (default 20)")),
-        )
-        .subcommand(
-            Command::new("status")
-                .about("List ao-* sessions or show a session's last N pane lines")
-                .arg(Arg::new("slug"))
-                .arg(Arg::new("lines").help("Lines (default 25)")),
-        )
-        .subcommand(
-            Command::new("kill")
-                .about("Kill a session; --rm-worktree also removes its worktree (branch kept)")
-                .arg(Arg::new("slug").required(true))
-                .arg(flag("rm-worktree")),
-        )
-        .subcommand(Command::new("doctor").about("Verify the delegation toolchain"))
+fn doctor_command() -> Command {
+    Command::new("doctor").about("Check the pane engine socket, git, and the agent harnesses")
 }
 
 fn status_command() -> Command {
@@ -350,7 +302,7 @@ fn tab_command() -> Command {
 
 fn notification_command() -> Command {
     Command::new("notification")
-        .about("Show ao notifications")
+        .about("Show pane engine notifications")
         .subcommand(
             Command::new("show")
                 .about("Show a notification")
@@ -1136,13 +1088,13 @@ mod tests {
                 let mut output = Vec::new();
                 assert!(
                     super::write_requested_help(&args, &mut output, || {}).unwrap(),
-                    "help was not handled for ao {} {flag}",
+                    "help was not handled for {} {flag}",
                     path.join(" ")
                 );
                 let output = String::from_utf8(output).unwrap();
                 assert!(
-                    output.contains(&format!("Usage: ao {}", path.join(" "))),
-                    "unexpected help for ao {}: {output}",
+                    output.contains(&format!("Usage: allternit-factory pane {}", path.join(" "))),
+                    "unexpected help for {}: {output}",
                     path.join(" ")
                 );
             }
@@ -1413,7 +1365,7 @@ mod tests {
         ] {
             let mut cmd = super::command();
             let mut output = Vec::new();
-            clap_complete::generate(shell, &mut cmd, "ao", &mut output);
+            clap_complete::generate(shell, &mut cmd, "allternit-factory-pane", &mut output);
             assert!(!output.is_empty(), "empty {shell:?} completion output");
         }
     }

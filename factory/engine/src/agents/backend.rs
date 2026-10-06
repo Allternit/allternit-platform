@@ -94,10 +94,64 @@ pub trait PaneBackend: Send + Sync {
     fn input(&self, session: &str, _text: &str, _keys: &[String]) -> Result<()> {
         Err(anyhow::anyhow!("this pane engine cannot take input ({session})"))
     }
+    /// The session's queued messages, oldest first (see [`PaneBackend::send`]).
+    fn mailbox(&self, _root: &std::path::Path, session: &str) -> Result<Vec<Queued>> {
+        Err(anyhow::anyhow!("this pane engine has no mailbox ({session})"))
+    }
+    /// Type `text` into the session's pane if it is idle, verify it landed,
+    /// then submit it. `Ok(false)`: the pane is gone, busy, or the paste could
+    /// not be read back (nothing was submitted).
+    fn deliver(&self, session: &str, _text: &str) -> Result<bool> {
+        Err(anyhow::anyhow!("this pane engine cannot deliver queued messages ({session})"))
+    }
+    /// Mark a queued message delivered. Only after a verified [`deliver`].
+    ///
+    /// [`deliver`]: PaneBackend::deliver
+    fn settle(&self, _root: &std::path::Path, id: &str) -> Result<()> {
+        Err(anyhow::anyhow!("this pane engine has no mailbox (message {id})"))
+    }
     /// Whether the pane engine is running (no panes can be live when not).
     fn status(&self) -> EngineStatus {
         EngineStatus { running: true, error: None }
     }
+}
+
+/// One message waiting in a session's mailbox.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct Queued {
+    pub id: String,
+    pub text: String,
+}
+
+/// What [`drain`] did with one queued message.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Drained {
+    pub message_id: String,
+    /// True: typed into the pane, verified, and settled. False: left queued.
+    pub delivered: bool,
+}
+
+/// Deliver a session's queued messages, oldest first, through the same
+/// verified paste as a send. A message is settled only after its delivery is
+/// verified; the first one that can't be delivered stays queued and stops
+/// the drain (order is kept). Without `all`, at most one message is tried.
+/// Blocking: call it with [`blocking`] from async code.
+pub fn drain(root: &std::path::Path, session: &str, all: bool) -> Result<Vec<Drained>> {
+    let pane = backend()?;
+    let mut out = Vec::new();
+    for msg in pane.mailbox(root, session)? {
+        if !pane.deliver(session, &msg.text)? {
+            out.push(Drained { message_id: msg.id, delivered: false });
+            break;
+        }
+        pane.settle(root, &msg.id)?;
+        out.push(Drained { message_id: msg.id, delivered: true });
+        if !all {
+            break;
+        }
+    }
+    Ok(out)
 }
 
 /// The pane engine is unreachable, or no pane engine is linked. Maps to exit

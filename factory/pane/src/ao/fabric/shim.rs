@@ -1031,7 +1031,7 @@ pub(crate) async fn serve(port: u16, state: Arc<ShimState>) -> Result<(), String
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
         .await
         .map_err(|err| format!("cannot bind 127.0.0.1:{port}: {err}"))?;
-    println!("[ao-fabric] loopback shim listening on http://127.0.0.1:{port}");
+    println!("[factory-fabric] loopback shim listening on http://127.0.0.1:{port}");
     axum::serve(listener, app)
         .await
         .map_err(|err| format!("shim server failed: {err}"))

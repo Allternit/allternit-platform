@@ -1,6 +1,6 @@
 //! The one session registry: `~/.allternit/factory/registry.json`.
 //!
-//! Every agent pane the engine (or `allternit-factory pane spawn …`) starts is
+//! Every agent pane the engine starts (`agents up`, `workflows drive`) is
 //! recorded here, keyed by its session label (`ao-<slug>`). The record is a
 //! claim, never the truth: [`Registry::reconcile`] checks it against the live
 //! panes at engine start and on every `agents ps`, so a session whose pane is
@@ -124,6 +124,17 @@ pub struct Entry {
     pub harness: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bot: Option<BotRef>,
+    /// The harness argv as asked for, before the spawn gate rewrote it
+    /// (`agents recover` rebuilds the launch from it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub argv: Option<Vec<String>>,
+    /// Extra pane environment the spawn asked for (a team bot's identity:
+    /// `ALLTERNIT_FACTORY_BOT`, `…_TEAM`, …). Never secrets.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: BTreeMap<String, String>,
+    /// The WIH the session was bound to (its Gate 2 policy).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wih: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

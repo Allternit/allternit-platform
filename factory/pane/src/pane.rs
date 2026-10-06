@@ -138,8 +138,8 @@ impl PaneLaunchEnv {
 fn apply_pane_launch_env(cmd: &mut CommandBuilder, launch_env: &PaneLaunchEnv) {
     cmd.env_remove("CODEX_THREAD_ID");
     for (key, value) in &launch_env.extra {
-        // Spawn-time allternit-factory pane transcript configuration; the agent must not inherit it.
-        if key == crate::ao::transcript::TRANSCRIPT_ENV_VAR {
+        // Spawn-time transcript configuration; the agent must not inherit it.
+        if crate::ao::transcript::is_transcript_key(key) {
             continue;
         }
         // Same for the Factory terminal id (src/factory_terminal.rs).

@@ -1,7 +1,7 @@
-//! PTY transcript tee — the one intentional engine diff beyond the P0 gut list.
+//! PTY transcript tee (an Allternit addition to the pane engine).
 //!
-//! `allternit-factory pane spawn` requests a per-pane transcript by putting the log path in the
-//! pane launch env under [`TRANSCRIPT_ENV_VAR`]. The launch path opens the file
+//! An engine spawn asks for a per-pane transcript by putting the log path in
+//! the pane launch env under [`TRANSCRIPT_ENV_VAR`]. The launch path opens the file
 //! here and the pane's `on_read` closure writes every raw PTY output byte
 //! (before parsing/filtering, so the log matches `script -q` semantics:
 //! byte-0 complete, ANSI included, scrollback-clear sequences included).
@@ -19,7 +19,16 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 
 /// Launch-env key carrying the transcript log path for a pane.
-pub(crate) const TRANSCRIPT_ENV_VAR: &str = "HERDR_AO_TRANSCRIPT";
+pub(crate) const TRANSCRIPT_ENV_VAR: &str = "ALLTERNIT_FACTORY_TRANSCRIPT";
+
+/// The key's name before the Factory rename. Still accepted (and stripped)
+/// so a client built before the rename keeps its transcripts.
+pub(crate) const LEGACY_TRANSCRIPT_ENV_VAR: &str = "HERDR_AO_TRANSCRIPT";
+
+/// True for either transcript launch-env key.
+pub(crate) fn is_transcript_key(key: &str) -> bool {
+    key == TRANSCRIPT_ENV_VAR || key == LEGACY_TRANSCRIPT_ENV_VAR
+}
 
 /// Append-only transcript writer for one pane's raw PTY output.
 pub(crate) struct TranscriptTee {
@@ -59,12 +68,12 @@ impl TranscriptTee {
 }
 
 /// Opens a tee when the launch env carries a transcript path. Open failures
-/// are logged and treated as "no tee" so spawn still succeeds; `allternit-factory pane spawn`
-/// verifies the log separately for its instant-exit tail.
+/// are logged and treated as "no tee" so spawn still succeeds; the engine's
+/// spawn reads the log separately for its instant-exit tail.
 pub(crate) fn tee_from_launch_env(extra: &[(String, String)]) -> Option<TranscriptTee> {
     let path = extra
         .iter()
-        .find(|(key, _)| key == TRANSCRIPT_ENV_VAR)
+        .find(|(key, _)| is_transcript_key(key))
         .map(|(_, value)| PathBuf::from(value))?;
     match TranscriptTee::open(path.clone()) {
         Ok(tee) => Some(tee),

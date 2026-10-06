@@ -74,7 +74,7 @@ fn help_lists_the_four_parts_and_hides_internal() {
         !text.lines().any(|l| l.trim_start().starts_with("internal")),
         "the internal group must stay hidden: {text}"
     );
-    for old in ["commrails", "rails", " ao "] {
+    for old in ["commrails", "rails", " ao "] { // old-names: keep (asserts the old names are gone)
         assert!(!text.to_lowercase().contains(old), "old name {old:?} in --help: {text}");
     }
 }
@@ -120,13 +120,23 @@ fn usage_errors_exit_64_with_the_usage_code() {
 #[test]
 fn dry_run_prints_the_command_and_runs_nothing() {
     let home = tempfile::tempdir().unwrap();
+    // An agent nobody started is not found, dry run or not.
+    let out = factory(home.path(), &["agents", "down", "worker", "--dry-run", "--json"]);
+    assert_eq!(error_of(&out).0, "not_found", "{}", String::from_utf8_lossy(&out.stdout));
+
+    // A recorded session: the dry run names it and changes nothing.
+    let reg = home.path().join(".allternit/factory/registry.json");
+    std::fs::create_dir_all(reg.parent().unwrap()).unwrap();
+    let text = r#"{"sessions":{"ao-worker":{"cwd":"/tmp","dead":true,"lifecycle":"dead","lead":"me"}}}"#;
+    std::fs::write(&reg, text).unwrap();
     let out = factory(home.path(), &["agents", "down", "worker", "--dry-run", "--json"]);
     assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
     let doc = one_json(&out);
     assert_eq!(doc["dryRun"], true);
     assert_eq!(doc["changed"], false);
-    let argv: Vec<&str> = doc["wouldRun"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
-    assert_eq!(argv, ["allternit-factory", "pane", "kill", "worker"]);
+    assert_eq!(doc["wouldStop"], "ao-worker");
+    let after: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&reg).unwrap()).unwrap();
+    assert_eq!(after["sessions"]["ao-worker"]["lifecycle"], "dead");
 
     let ws = tempfile::tempdir().unwrap();
     let root = ws.path().to_str().unwrap();
@@ -139,7 +149,7 @@ fn dry_run_prints_the_command_and_runs_nothing() {
     let argv: Vec<&str> = doc["wouldRun"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
     assert_eq!(
         argv,
-        ["allternit-factory", "internal", "rails", "--root", root, "wait-gate", "resolve", "--node", "d/n", "g1", "--outcome", "ok", "--actor", "user:eoj"]
+        ["allternit-factory", "internal", "core", "--root", root, "wait-gate", "resolve", "--node", "d/n", "g1", "--outcome", "ok", "--actor", "user:eoj"]
     );
     // Nothing was written into the workspace.
     assert!(!ws.path().join(".allternit").exists());
@@ -199,7 +209,7 @@ fn transcript_of_an_unknown_agent_is_not_found() {
 }
 
 #[test]
-fn internal_rails_keeps_its_own_help() {
+fn internal_core_keeps_its_own_help() {
     let home = tempfile::tempdir().unwrap();
     let out = factory(home.path(), &["internal", "core", "--help"]);
     assert_eq!(out.status.code(), Some(0));

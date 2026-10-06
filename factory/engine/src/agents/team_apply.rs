@@ -6,17 +6,20 @@
 //! place that acts on one. Every step reports what actually happened
 //! ([`StepResult`]): nothing is retried, nothing falls back silently.
 //!
-//! * **Live state** comes from `allternit-factory pane status`, the pane
-//!   engine's own list of `ao-<slug>` sessions with their workdir. A team bot's
-//!   pane slug is `<bot>-<team>` ([`pane_slug`]); the pane id this module
-//!   reports is that slug (it is what `pane kill|send|status` take, and what
-//!   the pane's `ALLTERNIT_FACTORY_PANE_ID` holds). `pane visibility` lists
-//!   engine agents without their workspace label, so it cannot be mapped back
-//!   to a bot and is not used here.
-//! * **Spawn** runs [`super::delivery::deliver`] into the workdir, then
-//!   `pane spawn <bot>-<team> <workdir> env ALLTERNIT_FACTORY_BOT=… <harness> <argv…>`.
-//!   No credential is ever put in that argv or env; the API tokens this
-//!   process holds are removed from the pane engine's environment.
+//! * **Live state** comes from the pane engine's live `ao-<slug>` sessions
+//!   (through the installed [`PaneBackend`]) plus the dead ones the session
+//!   registry still holds, each with its workdir. A team bot's pane slug is
+//!   `<bot>-<team>` ([`pane_slug`]); the pane id this module reports is that
+//!   slug (what `agents down` and `orchestration send|capture` take, and what
+//!   the pane's `ALLTERNIT_FACTORY_PANE_ID` holds).
+//! * **Spawn** runs [`super::delivery::deliver`] into the workdir, then starts
+//!   `<harness> <argv…>` through the engine's one spawn path
+//!   ([`Spawner::spawn`]: spawn gate, registry, peer), with the bot's identity
+//!   (`ALLTERNIT_FACTORY_BOT=…`) in the pane environment. No credential is
+//!   ever put in that argv or env, and the pane engine is never started with
+//!   the API tokens this process holds.
+//!
+//! [`PaneBackend`]: super::backend::PaneBackend
 //! * **Bind** (hosted / vendor) and the registration of Terminal bots go
 //!   through allternit-api `POST /api/v1/factory/bots` ([`FactoryApi`]).
 //! * **`--on <computer>`**: the pane engine has no remote spawn yet (saved
@@ -25,14 +28,16 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use super::backend::{self, LivePane};
 use super::delivery::{self, BotProfile, DeliveryRequest, Field, GateTarget, Label};
+use super::registry::{BotRef, Registry, RegistryFile};
+use super::spawn::{caller_identity, SpawnOptions, Spawner};
 use super::team::{self, Binding, EffectiveBot, LoadedTeam};
 use super::team_plan::{LiveState, PlanAction, TeamPlanStep};
 use super::whoami::{ENV_BOT, ENV_BOT_ID, ENV_PANE_ID, ENV_TEAM};
@@ -81,7 +86,8 @@ pub fn pane_slug_for_address(address: &str) -> String {
 
 // ─── Live state ────────────────────────────────────────────────────────────────
 
-/// One `ao-<slug>` session as `pane status` lists it.
+/// One `ao-<slug>` agent session: live in the pane engine, or dead and
+/// still in the registry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PaneSession {
     pub slug: String,
@@ -89,37 +95,38 @@ pub struct PaneSession {
     pub cwd: PathBuf,
 }
 
-/// Parse `pane status` (no args): `ao-<slug>  alive|DEAD  <cwd>` per line.
-pub fn parse_pane_status(text: &str) -> Vec<PaneSession> {
-    text.lines()
-        .filter_map(|line| {
-            let (name, rest) = line.split_once("  ")?;
-            let slug = name.trim().strip_prefix("ao-")?;
-            let (state, cwd) = rest.trim_start().split_once("  ").unwrap_or((rest.trim(), "-"));
+/// The sessions to plan against: every live engine session (`ao-<slug>`,
+/// not a pane someone opened by hand), then every registry session that is
+/// not live. Pure.
+pub fn sessions_from(live: &[LivePane], registry: &RegistryFile) -> Vec<PaneSession> {
+    let mut out: Vec<PaneSession> = live
+        .iter()
+        .filter(|p| !p.session.starts_with("ao-pane-"))
+        .filter_map(|p| {
             Some(PaneSession {
-                slug: slug.to_string(),
-                alive: state.trim() == "alive",
-                cwd: PathBuf::from(cwd.trim()),
+                slug: p.session.strip_prefix("ao-")?.to_string(),
+                alive: true,
+                cwd: PathBuf::from(p.cwd.clone().unwrap_or_else(|| "-".into())),
             })
         })
-        .collect()
+        .collect();
+    for (session, entry) in &registry.sessions {
+        let Some(slug) = session.strip_prefix("ao-") else { continue };
+        if out.iter().any(|s| s.slug == slug) {
+            continue;
+        }
+        out.push(PaneSession { slug: slug.to_string(), alive: false, cwd: PathBuf::from(&entry.cwd) });
+    }
+    out
 }
 
-/// Run `allternit-factory pane status` and parse it. A pane engine that is
-/// not running lists no live session (that is a fact, not an error).
+/// The live and recorded sessions. A pane engine that is not running lists
+/// no live session (that is a fact, not an error).
 pub fn pane_sessions() -> Result<Vec<PaneSession>> {
-    let bin = engine_bin()?;
-    let out = Command::new(&bin)
-        .args(["pane", "status"])
-        .stdin(Stdio::null())
-        .output()
-        .with_context(|| format!("run {} pane status", bin.display()))?;
-    if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr);
-        let last = err.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("").trim().to_string();
-        return Err(anyhow!("pane status failed ({}): {last}", out.status));
-    }
-    Ok(parse_pane_status(&String::from_utf8_lossy(&out.stdout)))
+    let pane = backend::backend()?;
+    let live = std::thread::spawn(move || pane.list()).join().map_err(|_| anyhow!("pane engine call panicked"))??;
+    let registry = Registry::open_default().load().unwrap_or_default();
+    Ok(sessions_from(&live, &registry))
 }
 
 /// Map live sessions to a team's [`LiveState`]: a session `<bot>-<team>` is
@@ -541,81 +548,46 @@ pub fn bot_profile(team: &LoadedTeam, bot: &EffectiveBot, bot_id: Option<&str>) 
     }
 }
 
-/// Harnesses whose pane line the pane engine's spawn gate runs through
-/// `/bin/sh` (claude: hook settings; codex: sandbox), so their args must be
-/// shell-quoted. Other harnesses get their argv exec'd as is.
-fn gate_runs_through_shell(harness: &str) -> bool {
-    matches!(harness, "claude" | "claude-code" | "codex")
-}
-
-fn sh_quote(a: &str) -> String {
-    if !a.is_empty() && a.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_./=:@,+%".contains(&b)) {
-        a.to_string()
-    } else {
-        format!("'{}'", a.replace('\'', "'\\''"))
-    }
-}
-
-/// The `pane spawn` argv (after the engine binary) for a Terminal bot.
-pub fn spawn_argv(bot: &EffectiveBot, team: &str, workdir: &Path, bot_id: Option<&str>, harness_argv: &[String]) -> Vec<String> {
+/// The pane environment that names a Terminal bot (see `whoami`).
+pub fn spawn_env(bot: &EffectiveBot, team: &str, bot_id: Option<&str>) -> BTreeMap<String, String> {
     let slug = pane_slug(&bot.slug, team);
-    let harness = bot.harness.clone().unwrap_or_default();
-    let mut argv = vec![
-        "pane".to_string(),
-        "spawn".into(),
-        slug.clone(),
-        workdir.display().to_string(),
-        "env".into(),
-        format!("{ENV_BOT}={}", bot.slug),
-        format!("{ENV_TEAM}={team}"),
-        format!("{ENV_PANE_ID}={slug}"),
-    ];
+    let mut env = BTreeMap::from([
+        (ENV_BOT.to_string(), bot.slug.clone()),
+        (ENV_TEAM.to_string(), team.to_string()),
+        (ENV_PANE_ID.to_string(), slug),
+    ]);
     if let Some(id) = bot_id {
-        argv.push(format!("{ENV_BOT_ID}={id}"));
+        env.insert(ENV_BOT_ID.to_string(), id.to_string());
     }
-    argv.push(harness.clone());
-    let quote = gate_runs_through_shell(&harness);
-    argv.extend(harness_argv.iter().map(|a| if quote { sh_quote(a) } else { a.clone() }));
-    argv
+    env
 }
 
-fn classify_pane_failure(stderr: &str) -> &'static str {
-    let lower = stderr.to_ascii_lowercase();
-    if lower.contains("not running") || lower.contains("could not start") || lower.contains("connection refused") {
+fn classify_spawn_failure(fact: &str) -> &'static str {
+    let lower = fact.to_ascii_lowercase();
+    if lower.contains("pane engine") || lower.contains("could not start") || lower.contains("connection refused") {
         "transport"
     } else if lower.contains("spawn gate") || lower.contains("refus") || lower.contains("already exists") {
         "refused"
-    } else if lower.contains("no session") || lower.contains("not found") {
+    } else if lower.contains("not found") || lower.contains("no such") {
         "not_found"
     } else {
         "internal"
     }
 }
 
-fn run_pane(bin: &Path, root: &Path, argv: &[String]) -> std::result::Result<(), (String, String)> {
-    let mut cmd = Command::new(bin);
-    cmd.args(argv)
-        .stdin(Stdio::null())
-        .env("ALLTERNIT_FACTORY_ROOT", root)
-        .env("ALLTERNIT_FACTORY_BIN", bin);
-    for k in SECRET_ENV {
-        cmd.env_remove(k);
-    }
-    let out = cmd.output().map_err(|e| ("internal".to_string(), format!("run {}: {e}", bin.display())))?;
-    if out.status.success() {
-        return Ok(());
-    }
-    let err = String::from_utf8_lossy(&out.stderr).to_string();
-    let last = err
-        .lines()
-        .rev()
-        .map(str::trim)
-        .find(|l| !l.is_empty())
-        .unwrap_or("")
-        .trim_start_matches("error: ")
-        .to_string();
-    let code = classify_pane_failure(&err);
-    Err((code.to_string(), if last.is_empty() { format!("pane {} exited {}", argv.first().map(String::as_str).unwrap_or(""), out.status) } else { last }))
+/// Run an engine future to completion from this synchronous code, on its own
+/// thread (callers may already be inside a tokio runtime, e.g. the HTTP
+/// handler's `spawn_blocking`).
+fn run_async<T: Send, F: std::future::Future<Output = Result<T>>>(make: impl FnOnce() -> F + Send) -> Result<T> {
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+                rt.block_on(make())
+            })
+            .join()
+            .map_err(|_| anyhow!("engine call panicked"))?
+    })
 }
 
 /// Resolve `slug`'s bot id through the API (a director bound earlier in this
@@ -671,6 +643,10 @@ pub fn apply(
         Ok(b) => b,
         Err(e) => return steps.iter().map(|s| StepResult::failed(s, "transport", format!("{e:#}"))).collect(),
     };
+    let spawner = match Spawner::new(root.to_path_buf()) {
+        Ok(s) => s,
+        Err(e) => return steps.iter().map(|s| StepResult::failed(s, "internal", format!("{e:#}"))).collect(),
+    };
     // Absolute paths: they go into hook commands and the pane's cwd.
     let abs = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
     let root = &abs(root);
@@ -690,17 +666,17 @@ pub fn apply(
             PlanAction::Skip => StepResult::new(step, StepOutcome::Skipped, step.reason.clone()),
             PlanAction::Stop => {
                 let slug = pane_slug_for_address(&step.agent);
-                let mut argv = vec!["pane".to_string(), "kill".into(), slug.clone()];
-                if opts.rm_worktree {
-                    argv.push("--rm-worktree".into());
-                }
-                match run_pane(&bin, root, &argv) {
+                match run_async(|| spawner.kill(&slug, opts.rm_worktree)) {
                     Ok(()) => {
                         let mut r = StepResult::new(step, StepOutcome::Ok, format!("stopped pane {slug}"));
                         r.pane = Some(slug);
                         r
                     }
-                    Err((code, fact)) => StepResult::failed(step, &code, fact),
+                    Err(e) => {
+                        let fact = format!("{e:#}");
+                        let code = if backend::is_transport(&e) { "transport" } else { classify_spawn_failure(&fact) };
+                        StepResult::failed(step, code, fact)
+                    }
                 }
             }
             PlanAction::Bind => {
@@ -739,7 +715,7 @@ pub fn apply(
                     out.push(StepResult::failed(step, "not_found", format!("{} is not in team.yaml", step.agent)));
                     continue;
                 };
-                spawn_one(root, team, bot, step, &bin, &workdir, opts, &mut ids, &mut claimed)
+                spawn_one(root, team, bot, step, &bin, &spawner, &workdir, opts, &mut ids, &mut claimed)
             }
         };
         out.push(result);
@@ -754,6 +730,7 @@ fn spawn_one(
     bot: &EffectiveBot,
     step: &TeamPlanStep,
     bin: &Path,
+    spawner: &Spawner,
     workdir: &Path,
     opts: &ApplyOptions,
     ids: &mut BTreeMap<String, String>,
@@ -821,10 +798,40 @@ fn spawn_one(
         }
     };
 
-    let argv = spawn_argv(bot, &team.name, workdir, bot_id.as_deref(), &report.argv);
-    let mut r = match run_pane(bin, root, &argv) {
-        Ok(()) => StepResult::new(step, StepOutcome::Ok, format!("started pane {slug} ({harness}) in {}; {reg_fact}", workdir.display())),
-        Err((code, fact)) => StepResult::failed(step, &code, format!("pane spawn failed: {fact}")),
+    let mut cmd = vec![harness.clone()];
+    cmd.extend(report.argv.iter().cloned());
+    let env = spawn_env(bot, &team.name, bot_id.as_deref());
+    let bot_ref = BotRef {
+        id: bot_id.clone().unwrap_or_else(|| format!("local:{slug}")),
+        placeholder: bot_id.is_none(),
+        name: Some(bot.slug.clone()),
+        team: Some(team.name.clone()),
+        role: Some(bot.role.clone()).filter(|r| !r.is_empty()),
+    };
+    let spawned = run_async(|| {
+        spawner.spawn(SpawnOptions {
+            slug: &slug,
+            repo: workdir,
+            cmd: &cmd,
+            worktree: false,
+            vendor: &harness,
+            mode: "team",
+            task_file: None,
+            notes_sentinel: None,
+            wih: None,
+            capture: None,
+            bot: Some(bot_ref),
+            env,
+            lead: Some(caller_identity(None)),
+        })
+    });
+    let mut r = match spawned {
+        Ok(_) => StepResult::new(step, StepOutcome::Ok, format!("started pane {slug} ({harness}) in {}; {reg_fact}", workdir.display())),
+        Err(e) => {
+            let fact = format!("{e:#}");
+            let code = if backend::is_transport(&e) { "transport" } else { classify_spawn_failure(&fact) };
+            StepResult::failed(step, code, format!("pane spawn failed: {fact}"))
+        }
     };
     r.delivered = Some(report.fields);
     r.registered = Some(registered);
@@ -895,11 +902,25 @@ mod tests {
     use crate::agents::team_plan::plan_up;
     use std::sync::Mutex;
 
+    fn live(session: &str, cwd: &str) -> LivePane {
+        LivePane { session: session.into(), pane_id: format!("p-{session}"), cwd: Some(cwd.into()), agent_status: None }
+    }
+
+    fn recorded(sessions: &[(&str, &str)]) -> RegistryFile {
+        let mut f = RegistryFile::default();
+        for (s, cwd) in sessions {
+            f.sessions.insert(s.to_string(), crate::agents::registry::Entry { cwd: cwd.to_string(), dead: true, ..Default::default() });
+        }
+        f
+    }
+
     #[test]
-    fn pane_status_lines_parse() {
-        let text = "ao-builder-product-build  alive  /w/repo\nao-old-x  DEAD  /tmp/a b\nno ao-* sessions\n";
-        let s = parse_pane_status(text);
-        assert_eq!(s.len(), 2);
+    fn sessions_are_live_panes_then_dead_records() {
+        let s = sessions_from(
+            &[live("ao-builder-product-build", "/w/repo"), live("ao-pane-p9", "/home"), live("scratch", "/x")],
+            &recorded(&[("ao-builder-product-build", "/old"), ("ao-old-x", "/tmp/a b")]),
+        );
+        assert_eq!(s.len(), 2, "{s:?}");
         assert_eq!(s[0], PaneSession { slug: "builder-product-build".into(), alive: true, cwd: "/w/repo".into() });
         assert_eq!(s[1].cwd, PathBuf::from("/tmp/a b"));
         assert!(!s[1].alive);
@@ -908,8 +929,9 @@ mod tests {
     #[test]
     fn live_state_maps_slugs_to_addresses_and_spares_other_teams() {
         let t = parse_team("product-build", GOOD).unwrap();
-        let sessions = parse_pane_status(
-            "ao-builder-product-build  alive  /w\nao-ghost-product-build  alive  /w\nao-x-product-build  alive  /w\nao-checker-product-build  DEAD  /w\n",
+        let sessions = sessions_from(
+            &[live("ao-builder-product-build", "/w"), live("ao-ghost-product-build", "/w"), live("ao-x-product-build", "/w")],
+            &recorded(&[("ao-checker-product-build", "/w")]),
         );
         let others = vec![("build".to_string(), vec!["x-product".to_string()]), ("product".to_string(), vec!["x".to_string()])];
         // `x-product-build` is bot `x-product` of team `build`; this team
@@ -923,15 +945,16 @@ mod tests {
     }
 
     #[test]
-    fn spawn_argv_carries_identity_and_no_secret() {
+    fn spawn_env_carries_identity_and_no_secret() {
         let t = parse_team("product-build", GOOD).unwrap();
         let bots = t.effective_bots(Some("cheap")).unwrap();
-        let argv = spawn_argv(&bots[1], "product-build", Path::new("/w"), Some("bot_1"), &["-c".into(), "hooks.x=[a b]".into()]);
-        assert_eq!(&argv[..4], ["pane", "spawn", "builder-product-build", "/w"]);
-        assert!(argv.contains(&"ALLTERNIT_FACTORY_BOT=builder".to_string()));
-        assert!(argv.contains(&"ALLTERNIT_FACTORY_PANE_ID=builder-product-build".to_string()));
-        assert!(argv.contains(&"ALLTERNIT_FACTORY_BOT_ID=bot_1".to_string()));
-        assert_eq!(argv.last().unwrap(), "'hooks.x=[a b]'", "codex runs through sh: quoted");
+        let env = spawn_env(&bots[1], "product-build", Some("bot_1"));
+        assert_eq!(env[ENV_BOT], "builder");
+        assert_eq!(env[ENV_TEAM], "product-build");
+        assert_eq!(env[ENV_PANE_ID], "builder-product-build");
+        assert_eq!(env[ENV_BOT_ID], "bot_1");
+        assert!(SECRET_ENV.iter().all(|k| !env.contains_key(*k)));
+        assert!(!spawn_env(&bots[1], "product-build", None).contains_key(ENV_BOT_ID));
     }
 
     #[test]

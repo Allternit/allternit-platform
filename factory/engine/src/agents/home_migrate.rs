@@ -1,4 +1,4 @@
-//! One-time move of the agent orchestrator's home, `~/.agent-orchestrator/`,
+//! One-time move of the agent orchestrator's home, `~/.agent-orchestrator/`, // old-names: keep (the migration names the old home)
 //! into the Factory home, `~/.allternit/factory/` (SPEC §12, on-disk state).
 //!
 //! The engine runs this at `serve` start; `allternit-factory internal
@@ -69,7 +69,7 @@ pub struct MigrationReport {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Outcome {
     Migrated(MigrationReport),
-    /// No `~/.agent-orchestrator/`.
+    /// No `~/.agent-orchestrator/`. // old-names: keep (the old home)
     NothingToMigrate,
     /// The marker exists: it ran before.
     AlreadyMigrated,

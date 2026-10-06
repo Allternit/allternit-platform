@@ -1235,6 +1235,8 @@ impl Driver {
                     bot: None,
                     wih: Some(&wih_id),
                     capture: Some(&capture),
+                    env: Default::default(),
+                    lead: None,
                 })
                 .await
                 .map(|_| ())
