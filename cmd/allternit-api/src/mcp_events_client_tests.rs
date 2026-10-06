@@ -415,7 +415,11 @@ async fn refresh_rotates_the_secret_and_events_keep_flowing() {
     // Not due: nothing happens.
     assert_eq!(tick(&fx.state, &fx.ctx).await, 0);
     // Due (refreshBefore inside the margin): rotated at the cloud first, then at the server.
-    fx.state.db.connect().unwrap().execute("UPDATE mcp_event_subscriptions SET refresh_before = ?1", params![(chrono::Utc::now() + chrono::Duration::minutes(5)).to_rfc3339()]).unwrap();
+    // Granted 15 min ago, 5 min left: past the half-window midpoint.
+    fx.state.db.connect().unwrap().execute(
+        "UPDATE mcp_event_subscriptions SET refresh_before = ?1, updated_at = ?2",
+        params![(chrono::Utc::now() + chrono::Duration::minutes(5)).to_rfc3339(), (chrono::Utc::now() - chrono::Duration::minutes(10)).to_rfc3339()],
+    ).unwrap();
     assert_eq!(tick(&fx.state, &fx.ctx).await, 1);
     let b = get_row(&fx.state, &a.id).await.unwrap().unwrap();
     assert_eq!(b.status, "active");
