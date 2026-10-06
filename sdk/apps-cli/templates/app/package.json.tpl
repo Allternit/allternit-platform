@@ -9,10 +9,10 @@
     "package": "allternit package"
   },
   "dependencies": {
-    "@allternit/apps-server": "^0.1.0"
+    "@allternit/apps-server": "^0.2.0"
   },
   "devDependencies": {
-    "@allternit/apps-cli": "^0.1.0",
+    "@allternit/apps-cli": "^0.2.0",
     "typescript": "^5.3.0"
   }
 }

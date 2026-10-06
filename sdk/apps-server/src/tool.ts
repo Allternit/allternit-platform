@@ -1,4 +1,7 @@
-import type { ZodRawShape } from "zod";
+import type { z } from "zod";
+
+/** A raw Zod (v4) shape: `{ city: z.string() }`. */
+export type ZodRawShape = Record<string, z.ZodType>;
 import type { ViewDef } from "./view.js";
 
 export interface ToolAnnotationsInput {
@@ -24,7 +27,7 @@ export interface AppToolInput<Shape extends ZodRawShape = ZodRawShape> {
   annotations: ToolAnnotationsInput;
   /** The View this tool renders into: a `view()` or its `ui://` URI. */
   view?: ViewDef | string;
-  handler: (args: { [K in keyof Shape]: Shape[K]["_output"] }) => ToolResultShape | Promise<ToolResultShape>;
+  handler: (args: { [K in keyof Shape]: z.output<Shape[K]> }) => ToolResultShape | Promise<ToolResultShape>;
 }
 
 export interface AppToolDef extends Omit<AppToolInput, "view"> {

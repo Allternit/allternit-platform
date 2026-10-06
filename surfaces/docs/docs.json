@@ -500,6 +500,7 @@
               "plugins/sdk/overview",
               "plugins/sdk/quickstart",
               "plugins/sdk/server",
+              "plugins/sdk/events",
               "plugins/sdk/bridge",
               "plugins/sdk/ui",
               "plugins/sdk/look-packs",

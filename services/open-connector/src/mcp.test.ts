@@ -3,8 +3,8 @@ import type { ActionDefinition, ActionExecutor, ProviderDefinition, ResolvedCred
 import type { IProviderLoader } from "./providers/provider-loader.ts";
 import type { IRunLogStore, RunLogPage } from "./server/storage/runtime-store.ts";
 
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { Client } from "@modelcontextprotocol/client";
+import { InMemoryTransport } from "@modelcontextprotocol/server";
 import { describe, expect, it } from "vitest";
 import { createCatalogStore } from "./catalog-store.ts";
 import { ConnectionService } from "./connection-service.ts";

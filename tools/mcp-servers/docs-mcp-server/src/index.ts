@@ -1,29 +1,18 @@
 #!/usr/bin/env node
 
+import { realpathSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
 import { join, relative, extname } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { ProtocolError, ProtocolErrorCode, Server, type Tool } from '@modelcontextprotocol/server';
+import { serveStdio } from '@modelcontextprotocol/server/stdio';
 
 const SERVER_NAME = 'allternit-docs-mcp';
 const SERVER_VERSION = '1.0.0';
-const PROTOCOL_VERSION = '2025-03-26';
 
 // Resolve the docs directory relative to this server's location
 const DOCS_ROOT = process.env.ALLTERNIT_DOCS_ROOT
   || join(new URL('.', import.meta.url).pathname, '..', '..', '..', '..', 'docs', 'public');
-
-interface JsonRpcRequest {
-  jsonrpc: '2.0';
-  id: string | number;
-  method: string;
-  params?: Record<string, unknown>;
-}
-
-interface JsonRpcResponse {
-  jsonrpc: '2.0';
-  id: string | number;
-  result?: unknown;
-  error?: { code: number; message: string; data?: unknown };
-}
 
 interface ToolDefinition {
   name: string;
@@ -35,7 +24,8 @@ interface ToolDefinition {
   };
 }
 
-const TOOLS: ToolDefinition[] = [
+/** Fixed order: tools/list always returns these in this order. */
+export const TOOLS: ToolDefinition[] = [
   {
     name: 'search_docs',
     description: 'Search Allternit platform documentation by keyword. Returns matching document titles, paths, and summaries.',
@@ -136,7 +126,7 @@ async function readDocContent(root: string, docPath: string): Promise<string | n
 
 // --- Tool execution ---
 
-async function executeTool(name: string, args: Record<string, unknown>): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
+export async function executeTool(name: string, args: Record<string, unknown>): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
   switch (name) {
     case 'search_docs': {
       const query = String(args.query || '').toLowerCase();
@@ -197,81 +187,36 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
   }
 }
 
-// --- JSON-RPC transport (stdio) ---
+// --- MCP server (official SDK v2) ---
+// serveStdio speaks MCP 2026-07-28 (server/discover, per-request _meta) and the
+// legacy initialize handshake from the same factory.
 
-function sendResponse(response: JsonRpcResponse): void {
-  const payload = JSON.stringify(response);
-  process.stdout.write(payload + '\n');
-}
-
-async function handleRequest(req: JsonRpcRequest): Promise<void> {
-  switch (req.method) {
-    case 'initialize':
-      sendResponse({
-        jsonrpc: '2.0',
-        id: req.id,
-        result: {
-          protocolVersion: PROTOCOL_VERSION,
-          capabilities: { tools: {} },
-          serverInfo: { name: SERVER_NAME, version: SERVER_VERSION },
-        },
-      });
-      break;
-    case 'tools/list':
-      sendResponse({
-        jsonrpc: '2.0',
-        id: req.id,
-        result: { tools: TOOLS },
-      });
-      break;
-    case 'tools/call': {
-      const toolName = String(req.params?.name || '');
-      const toolArgs = (req.params?.arguments || {}) as Record<string, unknown>;
-      try {
-        const result = await executeTool(toolName, toolArgs);
-        sendResponse({ jsonrpc: '2.0', id: req.id, result });
-      } catch (err) {
-        sendResponse({
-          jsonrpc: '2.0',
-          id: req.id,
-          error: { code: -32603, message: `Tool execution failed: ${err instanceof Error ? err.message : String(err)}` },
-        });
-      }
-      break;
-    }
-    case 'notifications/initialized':
-      // No response needed for notifications
-      break;
-    default:
-      sendResponse({
-        jsonrpc: '2.0',
-        id: req.id,
-        error: { code: -32601, message: `Method not found: ${req.method}` },
-      });
-  }
-}
-
-// Read from stdin line by line
-let buffer = '';
-process.stdin.setEncoding('utf-8');
-process.stdin.on('data', async (chunk: string) => {
-  buffer += chunk;
-  const lines = buffer.split('\n');
-  buffer = lines.pop() || '';
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
+export function createDocsServer(): Server {
+  const server = new Server({ name: SERVER_NAME, version: SERVER_VERSION }, { capabilities: { tools: {} } });
+  server.setRequestHandler('tools/list', async () => ({ tools: TOOLS as Tool[] }));
+  server.setRequestHandler('tools/call', async (request) => {
+    const toolName = String(request.params.name || '');
+    const toolArgs = (request.params.arguments || {}) as Record<string, unknown>;
     try {
-      const req = JSON.parse(trimmed) as JsonRpcRequest;
-      if (req.jsonrpc === '2.0' && req.method) {
-        await handleRequest(req);
-      }
-    } catch {
-      // Skip malformed lines
+      return await executeTool(toolName, toolArgs);
+    } catch (err) {
+      throw new ProtocolError(
+        ProtocolErrorCode.InternalError,
+        `Tool execution failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
-  }
-});
+  });
+  return server;
+}
 
-process.stdin.on('end', () => {
-  process.exit(0);
-});
+function isEntry(): boolean {
+  try {
+    return import.meta.url === pathToFileURL(realpathSync(process.argv[1] ?? '')).href;
+  } catch {
+    return false;
+  }
+}
+
+if (isEntry()) {
+  serveStdio(() => createDocsServer());
+}

@@ -20,6 +20,8 @@ The Allternit client is dual-era:
 - The era it found is remembered per origin (scheme, host and port), so later connections skip the probe. If that guess stops working, the client probes again.
 - A result without `resultType` counts as complete. A result with another `resultType` (such as `input_required`) is reported as an error; multi-round-trip input is not supported yet.
 
+Build the server dual-era: answer MCP `2026-07-28` (stateless, [`server/discover`](https://modelcontextprotocol.io/specification/2026-07-28/server/discover), a `_meta` envelope on every request) and the older `initialize` handshake, so it works with every host. The official SDK v2 does this from one server definition (`createMcpHandler` in `@modelcontextprotocol/server`; see the [Quickstart](/plugins/quickstart)), and so does the [Apps SDK](/plugins/sdk/server).
+
 Stateless servers (no session id) work in both eras. If both streamable HTTP attempts get `404` or `405`, the chat runtime falls back to the older SSE transport, but new servers should use streamable HTTP.
 
 Requests that reach your server are made by Allternit's servers, not by the user's browser. Your server does not need to allow cross-origin requests from Allternit's web origin.

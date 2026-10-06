@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { ARTEMIS_PINNED_COMMIT, McpStdioClient, runArtemisTask } from './phone-artemis.js';
 
 /** A fake ARTEMIS MCP server on in-memory pipes. */
-function fakeServer(handlers: Record<string, (args: Record<string, unknown>) => unknown>) {
+function fakeServer(handlers: Record<string, (args: Record<string, unknown>) => unknown>, era: 'legacy' | 'modern' = 'legacy') {
   const stdin = new PassThrough();
   const stdout = new PassThrough();
   const calls: Array<{ method: string; params: any }> = [];
@@ -16,12 +16,23 @@ function fakeServer(handlers: Record<string, (args: Record<string, unknown>) => 
       const msg = JSON.parse(line);
       calls.push({ method: msg.method, params: msg.params });
       if (msg.id === undefined) continue;
-      if (msg.method === 'initialize') {
-        stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: '2024-11-05', capabilities: {} } }) + '\n');
+      if (msg.method === 'server/discover') {
+        // A 2025-era server (ARTEMIS today) does not know the method; a 2026-07-28 one answers it.
+        stdout.write(
+          JSON.stringify(
+            era === 'modern'
+              ? { jsonrpc: '2.0', id: msg.id, result: { supportedVersions: ['2026-07-28'], capabilities: { tools: {} }, resultType: 'complete', _meta: { 'io.modelcontextprotocol/serverInfo': { name: 'artemis', version: '0' } } } }
+              : { jsonrpc: '2.0', id: msg.id, error: { code: -32601, message: 'Method not found' } },
+          ) + '\n',
+        );
+      } else if (msg.method === 'initialize') {
+        stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'artemis', version: '0' } } }) + '\n');
       } else if (msg.method === 'tools/call') {
         const handler = handlers[msg.params.name];
         const payload = handler ? handler(msg.params.arguments) : { error: 'no such tool' };
-        stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { content: [{ type: 'text', text: JSON.stringify(payload) }] } }) + '\n');
+        const result: Record<string, unknown> = { content: [{ type: 'text', text: JSON.stringify(payload) }] };
+        if (era === 'modern') Object.assign(result, { resultType: 'complete' });
+        stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }) + '\n');
       }
     }
   });
@@ -37,6 +48,14 @@ describe('ARTEMIS MCP client', () => {
     await client.callTool('mobile_get_device_state', {});
     expect(calls.filter((c) => c.method === 'initialize')).toHaveLength(1);
     expect(calls.some((c) => c.method === 'notifications/initialized')).toBe(true);
+  });
+
+  it('speaks 2026-07-28 to a server that answers server/discover (no initialize, _meta on every request)', async () => {
+    const { client, calls } = fakeServer({ mobile_get_device_state: () => ({ ok: 2 }) }, 'modern');
+    expect(await client.callTool('mobile_get_device_state', {})).toEqual({ ok: 2 });
+    expect(calls.some((c) => c.method === 'initialize')).toBe(false);
+    const call = calls.find((c) => c.method === 'tools/call');
+    expect(call?.params._meta['io.modelcontextprotocol/protocolVersion']).toBe('2026-07-28');
   });
 
   it('rejects calls after the server exits', async () => {
