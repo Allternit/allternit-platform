@@ -120,7 +120,7 @@ ls -la release/
 ## Automated Build Script
 
 Use the codified pipeline at the repo root — it runs every step above plus the
-gizzi-code binary, allternit-mux, vendored ripgrep, the voice-service sidecar,
+gizzi-code binary, allternit-factory, vendored ripgrep, the voice-service sidecar,
 and Lume, then patches SHA256 checksums into `src/main/manifest.ts`:
 
 ```bash

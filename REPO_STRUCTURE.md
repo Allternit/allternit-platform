@@ -20,7 +20,6 @@ allternit/
 │   ├── allternit-api/        # Main API server (Rust)
 │   ├── allternit-cloud-api/  # Cloud deployment API (Rust)
 │   ├── allternit-cloud-wizard/
-│   ├── allternit-mux/
 │   ├── allternit-node/       # VPS edge agent
 │   ├── allternit-computer-cloud/
 │   ├── allternit-hosted-runtime/

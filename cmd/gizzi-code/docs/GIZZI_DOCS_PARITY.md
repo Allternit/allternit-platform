@@ -123,8 +123,8 @@ The Mintlify docs describe a mature product surface. In `cmd/gizzi-code` the **h
 | `cli/commrails-cli.mdx` | gizzi-code `ListPeers`/`SendMessage` runtime tools | Implemented | `src/runtime/tools/ListPeersTool/ListPeersTool.ts:53`, `src/runtime/tools/SendMessageTool/SendMessageTool.ts:103`, `src/runtime/gizzi-core/services/railsPeer.ts:45` | — |
 | `cli/agent-daemon.mdx` | Agent daemon process | Separate package | `cmd/agent-daemon/src/index.ts` | Not in gizzi-code |
 | `cli/agent-daemon.mdx` | gizzi-code runtime pairing client | Implemented | `src/runtime/services/pairing/pairing.ts` | Separate from daemon |
-| `cli/allternit-mux.mdx` | `allternit-mux` binary | Separate package | `cmd/allternit-mux/src/main.rs` | Not in gizzi-code |
-| `cli/allternit-mux.mdx` | gizzi-code PTY/mux integration | Implemented | `src/runtime/integrations/pty/index.ts` | Auto-spawns and speaks mux API |
+| `cli/allternit-mux.mdx` | `allternit-factory pane tty` (mux folded into the Factory pane engine) | Separate package | `factory/pane/src/factory_terminal.rs` | Not in gizzi-code |
+| `cli/allternit-mux.mdx` | gizzi-code PTY integration | Implemented | `src/runtime/integrations/pty/index.ts` | Starts the pane engine (`pane tty ensure`) and speaks `factory.terminal.*` |
 | `cli/cli-typescript.mdx` | `@allternit/cli-typescript` | Separate package | `cmd/cli-typescript/cli/` | Not in gizzi-code |
 
 ### Core concepts (`surfaces/docs/core/*.mdx`)
@@ -186,7 +186,7 @@ These are documented on the CLI/docs site but owned by other packages. They shou
 | `/mcp/*` REST connector/server directory and `/mcp/server` JSON-RPC | `allternit-api` | `cmd/allternit-api/src/mcp_routes.rs`, `cmd/allternit-api/src/mcp_server_routes.rs` |
 | `allternit-rails` / `rails` CLI | `allternit-agent-system-rails` | `rails/src/bin/allternit-rails.rs`, `rails/cli/src/main.rs` |
 | `allternit-agent-daemon` | `cmd/agent-daemon/` | `cmd/agent-daemon/src/index.ts` |
-| `allternit-mux` binary | `cmd/allternit-mux/` | `cmd/allternit-mux/src/main.rs` |
+| `allternit-factory` pane engine (was `allternit-mux`) | `factory/pane/` | `factory/pane/src/factory_terminal.rs` |
 | `@allternit/cli-typescript` | `cmd/cli-typescript/cli/` | `cmd/cli-typescript/cli/package.json` |
 
 ---

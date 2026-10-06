@@ -5,7 +5,7 @@ description: 'Managed Allternit runtime as a Fly Machine for paid plans.'
 
 ## Overview
 
-The Allternit Hosted Runtime is a containerized runtime delivered as a Fly Machine. It bundles a pinned Gizzi Code headless binary, the agent-daemon relay, and `allternit-mux`. Paid users can provision hosted runtimes directly from the platform without managing their own VPS.
+The Allternit Hosted Runtime is a containerized runtime delivered as a Fly Machine. It bundles a pinned Gizzi Code headless binary, the agent-daemon relay, and `allternit-factory` (the Allternit Factory engine, whose pane engine runs Gizzi's terminals). Paid users can provision hosted runtimes directly from the platform without managing their own VPS.
 
 The image is published to `ghcr.io/allternit/allternit-hosted-runtime:latest` and built from `cmd/allternit-hosted-runtime`.
 
@@ -21,7 +21,7 @@ The image is published to `ghcr.io/allternit/allternit-hosted-runtime:latest` an
 │  │ agent-daemon relay              │   │
 │  └─────────────────────────────────┘   │
 │  ┌─────────────────────────────────┐   │
-│  │ allternit-mux                   │   │
+│  │ allternit-factory (pane engine) │   │
 │  └─────────────────────────────────┘   │
 └─────────────────────────────────────────┘
 ```
@@ -217,5 +217,5 @@ A stopped machine automatically wakes when a browser targets it through the runt
 
 - [Cloud API](/api/cloud-api)
 - [Agent Daemon](/cli/agent-daemon)
-- [allternit-mux](/cli/allternit-mux)
+- [allternit-mux (folded into the Factory)](/cli/allternit-mux)
 - [BYOC Deploy Wizard](/byoc/deploy-wizard)

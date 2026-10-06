@@ -55,7 +55,7 @@ the full replay.
    The meta frame marks the end of the replay. Unknown meta JSON keys must be
    ignored; frames whose first byte is `0x00` must never be rendered.
 3. **Live output** — **text frames**, raw UTF-8 terminal output, forwarded as
-   the mux daemon emits it. Render directly.
+   the Factory pane engine emits it. Render directly.
 
 ## Client → server frames
 
@@ -71,8 +71,10 @@ Terminal resize does **not** go over the socket — use `PUT /pty/:ptyID`.
 ## Close semantics
 
 - When the PTY's process exits, the server closes the WebSocket. Reconnecting
-  to the same `ptyID` is possible while the session mapping still exists
-  (`status` will be `"exited"` and replay still works).
+  to the same `ptyID` replays the output and closes again while the pane
+  engine still keeps the exited terminal (10 minutes, or until `DELETE`);
+  `status` is `"exited"`.
 - When the client disconnects, only the output subscription is torn down — the
-  PTY itself keeps running (sessions are owned by the `allternit-mux` daemon
-  and survive server restarts). Use `DELETE /pty/:ptyID` to kill it.
+  PTY itself keeps running (it is a terminal on the Allternit Factory pane
+  engine, `allternit-factory pane`, and survives `gizzi serve` restarts). Use
+  `DELETE /pty/:ptyID` to kill it.
