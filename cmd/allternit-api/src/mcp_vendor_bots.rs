@@ -363,6 +363,7 @@ fn directing_line(db: &DbHandle, s: &Session) -> Result<PhoneLine, String> {
 fn refusal_for(e: phone_outbound::OutError, to: &str) -> String {
     match e {
         phone_outbound::OutError::NoConsent(_) => format!("{to} hasn't texted or called this number and isn't one of the owner's contacts, so I can't reach out. The owner can add them as a contact."),
+        phone_outbound::OutError::NoTextConsent(_) => format!("{to} hasn't texted this number, so I can't text them. Carrier rules only allow texting people who texted the number first."),
         other => other.sentence(),
     }
 }

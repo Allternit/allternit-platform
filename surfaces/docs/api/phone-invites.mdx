@@ -3,7 +3,7 @@ title: Phone invites
 description: Invite one person to your bot's phone with a single-use link; they confirm their number and consent is recorded.
 ---
 
-An owner can invite someone to reach their bot. The invitee opens a link, confirms their phone number with a texted code, and may also create an Allternit account to reach the bot in the app. Confirming the code is the consent record: the bot may then text that number first.
+An owner can invite someone to reach their bot. The invitee opens a link, confirms their phone number with a texted code, and may also create an Allternit account to reach the bot in the app. Confirming the code is the consent record: the bot may then call that number. It may not text them first: texts need the person to text the bot's number first, because that is the only opt-in path the number's carrier registration declares.
 
 The owner routes are on `api.allternit.com` and take a Clerk session or a `compute`-scoped API key. The `/i/:code/*` routes are public: the unguessable code is the credential, and they are rate limited per IP, per invite and per phone number. The invite page itself is served from `allternit.com/i/<code>` (it redirects to `m.allternit.com/i/<code>`).
 

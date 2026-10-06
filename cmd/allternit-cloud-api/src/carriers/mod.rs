@@ -248,8 +248,13 @@ pub struct RegistrationForm {
     pub use_case: String,
     pub use_case_summary: String,
     pub sample_messages: Vec<String>,
+    /// Free-text notes from the business. Not sent as the carrier message flow:
+    /// carriers reject flows that list several opt-in paths (see `message_flow`).
     pub opt_in_workflow: String,
     pub opt_in_image_urls: Vec<String>,
+    /// Public page that shows the number and the texting disclosure (the call to
+    /// action). Filled with Allternit's hosted page for the number when empty.
+    pub opt_in_page_url: Option<String>,
     pub message_volume: String,
     pub privacy_policy_url: Option<String>,
     pub terms_url: Option<String>,
@@ -343,6 +348,61 @@ pub fn from_env(http: Arc<dyn CarrierHttp>) -> Result<Arc<dyn Carrier>, CarrierE
 }
 
 /// Public address carrier status webhooks (registration, port) are posted to.
+/// The texts a number sends for opt-in, STOP, START and HELP. The campaign filed
+/// with the carrier declares these same strings, so what people receive always
+/// matches what was registered.
+pub fn sender_name(f: &RegistrationForm) -> String {
+    let n = if f.display_name.trim().is_empty() { f.legal_name.trim() } else { f.display_name.trim() };
+    if n.is_empty() { "Allternit".to_string() } else { n.to_string() }
+}
+
+pub fn opt_in_text(name: &str) -> String {
+    format!("{name}: Thanks for your message! You're now subscribed to replies from {name}'s AI assistant. Msg frequency varies. Msg & data rates may apply. Reply STOP to opt out, HELP for help. We will not share or sell your mobile information for marketing/promotional purposes.")
+}
+
+pub fn opt_out_text(name: &str) -> String {
+    format!("{name}: You're unsubscribed and will get no more messages. Reply START to resubscribe.")
+}
+
+pub fn resubscribe_text(name: &str) -> String {
+    format!("{name}: You're subscribed again. Msg frequency varies. Msg & data rates may apply. Reply STOP to opt out, HELP for help.")
+}
+
+pub fn help_text(name: &str, contact_email: &str) -> String {
+    let contact = contact_email.trim();
+    let reach = if contact.is_empty() { "visit allternit.com".to_string() } else { format!("email {contact}") };
+    format!("{name}: This number is answered by an AI assistant. For help {reach}. Msg & data rates may apply. Reply STOP to opt out.")
+}
+
+/// Allternit's public opt-in page for a number: `GET /sms/{number_id}`.
+pub fn hosted_opt_in_page_url(number_id: &str) -> String {
+    let base = std::env::var("ALLTERNIT_CLOUD_API_URL").unwrap_or_else(|_| "https://api.allternit.com".to_string());
+    format!("{}/sms/{number_id}", base.trim_end_matches('/'))
+}
+
+/// The carrier "message flow" (opt-in workflow): exactly one opt-in path, the
+/// person texting the number first after seeing it on a public page. Telnyx
+/// rejected a flow that also listed signed forms and verbal consent without a
+/// form or script to verify (2026-10-05), so only this path is ever filed.
+pub fn message_flow(f: &RegistrationForm) -> String {
+    let name = sender_name(f);
+    let page = f.opt_in_page_url.as_deref().map(str::trim).filter(|u| !u.is_empty()).unwrap_or("(opt-in page)");
+    let mut flow = format!(
+        "Opt-in is mobile-originated only. {name} publishes this number on a public page, {page}, which states that texting the number \
+         starts a conversation with {name}'s AI assistant, that message frequency varies, that message and data rates may apply, \
+         and that replying STOP opts out and HELP gets help. A person opts in by texting the number first; no one is texted before \
+         they do. The first reply confirms the subscription with the opt-in message. STOP, STOPALL, UNSUBSCRIBE, CANCEL, END and QUIT \
+         opt out immediately with one confirmation; START opts back in; HELP returns contact details."
+    );
+    if let Some(url) = f.terms_url.as_deref().filter(|u| !u.trim().is_empty()) {
+        flow.push_str(&format!(" Terms: {}.", url.trim()));
+    }
+    if let Some(url) = f.privacy_policy_url.as_deref().filter(|u| !u.trim().is_empty()) {
+        flow.push_str(&format!(" Privacy: {}.", url.trim()));
+    }
+    flow
+}
+
 pub fn status_webhook_url(carrier: &str) -> String {
     let base = std::env::var("ALLTERNIT_CLOUD_API_URL").unwrap_or_else(|_| "https://api.allternit.com".to_string());
     format!("{}/api/v1/phone/webhooks/{carrier}", base.trim_end_matches('/'))

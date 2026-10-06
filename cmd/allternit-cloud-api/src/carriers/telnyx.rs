@@ -89,14 +89,14 @@ fn registration_state_from_campaign(campaign: &Value) -> RegistrationStatus {
 
 /// The campaignBuilder body for a 10DLC registration.
 fn campaign_body(brand_id: &str, f: &RegistrationForm) -> Value {
-    let name = if f.display_name.trim().is_empty() { f.legal_name.as_str() } else { f.display_name.as_str() };
+    let name = super::sender_name(f);
     let mut campaign = json!({
         "brandId": brand_id, "usecase": f.use_case, "description": f.use_case_summary,
-        "messageFlow": f.opt_in_workflow,
+        "messageFlow": super::message_flow(f),
         "optinKeywords": "START", "optoutKeywords": "STOP,STOPALL,UNSUBSCRIBE,CANCEL,END,QUIT", "helpKeywords": "HELP",
-        "optinMessage": format!("{name}: You're subscribed to messages from this AI assistant. Msg frequency varies. Msg & data rates may apply. Reply HELP for help, STOP to opt out."),
-        "optoutMessage": format!("{name}: You're unsubscribed and will get no more messages. Reply START to resubscribe."),
-        "helpMessage": format!("{name}: This number is answered by an AI assistant. For help email {}. Msg & data rates may apply. Reply STOP to opt out.", f.contact_email),
+        "optinMessage": super::opt_in_text(&name),
+        "optoutMessage": super::opt_out_text(&name),
+        "helpMessage": super::help_text(&name, &f.contact_email),
         "subscriberOptin": true, "subscriberOptout": true, "subscriberHelp": true,
         // Assistant replies can carry links (shared files) and phone numbers.
         "embeddedLink": true, "embeddedPhone": true,
@@ -312,7 +312,6 @@ impl Carrier for Telnyx {
                         ("country", &f.country),
                         ("useCase", &f.use_case),
                         ("useCaseSummary", &f.use_case_summary),
-                        ("optInWorkflow", &f.opt_in_workflow),
                     ],
                 )?;
                 if f.sample_messages.is_empty() {
@@ -375,7 +374,6 @@ impl Carrier for Telnyx {
                         ("messageVolume", &f.message_volume),
                         ("useCase", &f.use_case),
                         ("useCaseSummary", &f.use_case_summary),
-                        ("optInWorkflow", &f.opt_in_workflow),
                     ],
                 )?;
                 if f.sample_messages.is_empty() || f.opt_in_image_urls.is_empty() {
@@ -389,7 +387,7 @@ impl Carrier for Telnyx {
                     "messageVolume": f.message_volume, "phoneNumbers": [{ "phoneNumber": e164 }],
                     "useCase": f.use_case, "useCaseSummary": f.use_case_summary,
                     "productionMessageContent": f.sample_messages.join("\n"),
-                    "optInWorkflow": f.opt_in_workflow,
+                    "optInWorkflow": super::message_flow(f),
                     "optInWorkflowImageURLs": f.opt_in_image_urls.iter().map(|u| json!({ "url": u })).collect::<Vec<_>>(),
                     "additionalInformation": f.use_case_summary, "webhookUrl": super::status_webhook_url("telnyx"),
                 });
@@ -721,4 +719,20 @@ mod tests {
         assert_eq!(http.requests()[0].json.clone().unwrap()["otpPin"], "123456");
     }
 
+
+    #[test]
+    fn campaign_message_flow_is_one_opt_in_path_with_its_page() {
+        let f = RegistrationForm {
+            display_name: "Allternit".into(),
+            opt_in_workflow: "texts first, signed forms, verbal consent".into(),
+            opt_in_page_url: Some("https://api.allternit.com/sms/n1".into()),
+            terms_url: Some("https://www.allternit.com/terms".into()),
+            ..Default::default()
+        };
+        let flow = campaign_body("b1", &f)["messageFlow"].as_str().unwrap().to_string();
+        assert!(flow.contains("https://api.allternit.com/sms/n1") && flow.contains("mobile-originated only"));
+        assert!(flow.contains("Terms: https://www.allternit.com/terms."));
+        let lower = flow.to_lowercase();
+        assert!(!lower.contains("signed") && !lower.contains("verbal"), "the business's notes never add a second opt-in path");
+    }
 }
