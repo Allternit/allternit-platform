@@ -418,7 +418,8 @@ pub struct SubscribeRequest {
     #[serde(default = "empty_object")]
     pub arguments: Value,
     pub bot_id: String,
-    /// `REQUIRE_APPROVAL` (default) or `AUTO`, like a webhook trigger.
+    /// A webhook-trigger execution mode: `REQUIRE_APPROVAL` (default), `PLAN_ONLY`,
+    /// `ACCEPT_EDITS` or `BYPASS_PERMISSIONS`.
     #[serde(default)]
     pub execution_mode: Option<String>,
 }
@@ -446,8 +447,9 @@ pub async fn subscribe(state: &Arc<AppState>, ctx: &Ctx, user: &str, connector_i
         return Err(Refused::BadRequest("arguments must be an object".into()));
     }
     let mode = req.execution_mode.unwrap_or_else(|| "REQUIRE_APPROVAL".into());
-    if !matches!(mode.as_str(), "REQUIRE_APPROVAL" | "AUTO") {
-        return Err(Refused::BadRequest("executionMode must be REQUIRE_APPROVAL or AUTO".into()));
+    // The webhook-trigger execution modes (webhook_trigger_routes::validate_trigger_body).
+    if !matches!(mode.as_str(), "PLAN_ONLY" | "REQUIRE_APPROVAL" | "ACCEPT_EDITS" | "BYPASS_PERMISSIONS") {
+        return Err(Refused::BadRequest("executionMode must be PLAN_ONLY, REQUIRE_APPROVAL, ACCEPT_EDITS or BYPASS_PERMISSIONS".into()));
     }
     if !crate::bot_event_routes::verify_bot_ownership(state, user, &req.bot_id).await {
         return Err(Refused::NotFound("bot_not_found"));

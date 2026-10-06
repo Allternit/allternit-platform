@@ -1,0 +1,37 @@
+---
+title: 'Webhook triggers API'
+description: 'Wake a bot from any signed HTTP webhook: a trigger maps a source and event type to a bot, and each verified delivery becomes a Rails ticket for it.'
+---
+
+## Overview
+
+A webhook trigger gives an external system a URL that wakes one of your bots. Each verified delivery is recorded and becomes a Rails ticket assigned to the bot. [Connector events](/api/connector-events) create the same ticket for MCP Events from a connected app.
+
+## Manage triggers (Clerk session)
+
+| Method | Path | |
+|---|---|---|
+| `GET` | `/api/v1/webhook-triggers` | `{"triggers": [...], "total"}` |
+| `POST` | `/api/v1/webhook-triggers` | Create. `201 {"trigger"}` |
+| `GET` / `PATCH` / `DELETE` | `/api/v1/webhook-triggers/:id` | Read, update, delete. |
+| `GET` | `/api/v1/webhook-triggers/:id/deliveries` | `{"deliveries": [...], "total"}` with `status` `accepted`, `rejected` or `failed` and the `ticket_id`. |
+
+Create body (snake_case):
+
+```json
+{ "name": "Deploy finished", "source": "ci", "event_type": "deploy.finished", "target_agent_id": "bot_1",
+  "prompt_template": "Check the deploy and post a summary.", "execution_mode": "REQUIRE_APPROVAL", "secret": "a long random string" }
+```
+
+`execution_mode` is one of `PLAN_ONLY`, `REQUIRE_APPROVAL` (default; the ticket is labelled `approval-required`), `ACCEPT_EDITS`, `BYPASS_PERMISSIONS`. Only a hash of `secret` is stored.
+
+## Deliver: `POST /webhooks/inbound/:id`
+
+```http
+X-Allternit-Trigger-Secret: <the trigger's secret>
+X-Allternit-Signature: <hex HMAC-SHA256(secret, raw body)>
+```
+
+The event name is the body's `event` (or `type`) field. Both headers are required: the secret must be the trigger's own and the signature must match the body. Anything else is recorded as `rejected` (`signature required` or `signature invalid`) and creates no ticket. The answer is `200` with `{"status": "accepted", "delivery_id", "ticket_id"}`, `{"status": "rejected" | "ignored" | "failed", "reason"}`.
+
+Unsigned deliveries used to be accepted for local testing; since October 2026 they are rejected.

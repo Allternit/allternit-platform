@@ -205,6 +205,10 @@ fn verify_signature(secret: &str, body: &[u8], signature: &str) -> bool {
     diff == 0
 }
 
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
 fn extract_inbound_signature(headers: &HeaderMap) -> Option<String> {
     headers
         .get("x-allternit-signature")
@@ -493,13 +497,13 @@ async fn receive_inbound_webhook(
     // Load trigger and verify it exists/active.
     let db = state.db.clone();
     let trigger_id = id.clone();
-    let trigger = match tokio::task::spawn_blocking(move || {
+    let (trigger, secret_hash) = match tokio::task::spawn_blocking(move || {
         let conn = db.connect()?;
         conn.query_row(
-            "SELECT id, user_id, org_id, name, source, event_type, target_agent_id, prompt_template, execution_mode, active, created_at, updated_at
+            "SELECT id, user_id, org_id, name, source, event_type, target_agent_id, prompt_template, execution_mode, active, created_at, updated_at, secret_hash
              FROM webhook_triggers WHERE id = ?1",
             params![trigger_id],
-            read_trigger,
+            |row| Ok((read_trigger(row)?, row.get::<_, Option<String>>(12)?)),
         )
     })
     .await
@@ -522,19 +526,19 @@ async fn receive_inbound_webhook(
     // single request. This keeps the DB hash for audit while still allowing
     // signature verification without a plaintext vault dependency.
     //
-    // Alternatively, if the caller did not send a signature, we still accept
-    // the webhook and mark it as unsigned; this makes local testing easier.
     let provided_secret = headers
         .get("x-allternit-trigger-secret")
         .or_else(|| headers.get("X-Allternit-Trigger-Secret"))
         .and_then(|v| v.to_str().ok());
 
-    let signature_valid = if signature.is_empty() {
-        false
-    } else if let Some(secret) = provided_secret {
-        verify_signature(secret, &body, &signature)
-    } else {
-        false
+    // The presented secret must be the trigger's own (its hash is what we keep),
+    // and the body must be signed with it. Anything else never creates a ticket.
+    let signature_valid = match (signature.is_empty(), provided_secret) {
+        (false, Some(secret)) => {
+            secret_hash.as_deref().is_some_and(|stored| constant_time_eq(stored.as_bytes(), hash_secret(secret).as_bytes()))
+                && verify_signature(secret, &body, &signature)
+        }
+        _ => false,
     };
 
     // Record delivery before doing work so we always have an audit row.
@@ -561,9 +565,12 @@ async fn receive_inbound_webhook(
         .map_err(|e: rusqlite::Error| ApiError::DbError(e.to_string()))?;
     }
 
-    if !signature_valid && !signature.is_empty() {
-        update_delivery_status(&state.db, &delivery_id, "rejected", None, Some("signature invalid".into())).await?;
-        return Ok(Json(json!({ "status": "rejected", "reason": "signature invalid" })));
+    if !signature_valid {
+        // Unsigned requests used to be accepted "for local testing": anyone who
+        // learned a trigger id could create tickets for its bot. Refused now.
+        let reason = if signature.is_empty() { "signature required" } else { "signature invalid" };
+        update_delivery_status(&state.db, &delivery_id, "rejected", None, Some(reason.into())).await?;
+        return Ok(Json(json!({ "status": "rejected", "reason": reason })));
     }
 
     // Create a Rails ticket assigned to the target agent/bot.

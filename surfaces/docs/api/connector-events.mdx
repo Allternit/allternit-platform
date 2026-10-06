@@ -1,0 +1,152 @@
+---
+title: 'Connector events API'
+description: 'Subscribe a bot to MCP Events from a connected MCP server, and how the runtime, the cloud receiver and the external server fit together.'
+---
+
+## Overview
+
+When a connector's MCP server advertises MCP Events (`capabilities.events` in `server/discover` or `initialize`, or the `io.modelcontextprotocol/events` extension), the runtime can subscribe to its events on the user's behalf. Each event creates a Rails ticket for the chosen bot, the same ticket an [inbound webhook trigger](/api/webhook-triggers) creates, and a `connector.event.received` entry in that bot's `bot_events` ledger.
+
+User guide: [Wake a bot from a connected app's events](/guides/wake-a-bot-from-app-events). Allternit as the events *server*: [MCP Events](/guides/mcp-events).
+
+```text
+UI ──POST /api/v1/mcp/connectors/:id/events──▶ runtime
+      1. mint a whsec_ secret (32 random bytes)
+      2. PUT cloud /api/v1/runtime/mcp-event-subscriptions/<sub_…>  (relay-signed) → callbackUrl
+      3. events/subscribe on the connector, delivery.url = callbackUrl
+         └─ the server POSTs {"type":"verification"} to the callback; the cloud echoes it
+server ──signed event──▶ cloud POST /mcp/events/callback/<sub_…>  (verify, dedupe, queue)
+      ──relay (24 h retry, wakes a sleeping computer)──▶ runtime POST /api/v1/mcp/event-deliveries
+      → bot_events connector.event.received + a Rails ticket for the bot
+```
+
+## Runtime REST (Clerk session)
+
+Served next to the connector routes, at `/api/v1/mcp/connectors/:id/…` (also `/mcp/connectors/:id/…`). `:id` is an `mcp_connectors` id the caller owns.
+
+### `GET /api/v1/mcp/connectors/:id/events`
+
+The server's `events/list` (live, cached 60 s per user and connector) plus this user's subscriptions on the connector.
+
+```json
+{
+  "connectorId": "conn_1",
+  "supported": true,
+  "events": [
+    { "name": "email.received", "description": "A new email", "delivery": ["webhook"],
+      "inputSchema": { "type": "object", "properties": { "label": { "type": "string" } } },
+      "payloadSchema": { "type": "object" } }
+  ],
+  "subscriptions": [ { "…": "Subscription, below" } ],
+  "error": null
+}
+```
+
+- `supported: false` with `events: []`: the server does not offer events.
+- `error` (otherwise `null`) when the server could not be listed: `{"reason", "message", "needsReauth"}`. `needsReauth: true` means reconnect the connector. Subscriptions are still returned.
+- `404 {"code":"connector_not_found"}` when the connector doesn't exist for this user and has no subscriptions left.
+
+### `POST /api/v1/mcp/connectors/:id/events`
+
+```json
+{ "name": "email.received", "arguments": { "label": "inbox" }, "botId": "bot_1", "executionMode": "REQUIRE_APPROVAL" }
+```
+
+| Field | | |
+|---|---|---|
+| `name` | required | An event from `events/list`. |
+| `arguments` | optional, object | Filters, per the event's `inputSchema`. Default `{}`. |
+| `botId` | required | A bot the caller owns. |
+| `executionMode` | optional | `REQUIRE_APPROVAL` (default), `PLAN_ONLY`, `ACCEPT_EDITS` or `BYPASS_PERMISSIONS`, as on a webhook trigger. |
+
+Answers `200 {"subscription": Subscription}` when the server accepted it (`status: "active"`), `502 {"subscription": Subscription}` when it was stored but the server or cloud refused it (`status` `error` or `needs_reauth`, see `error`). `400 {"code":"bad_request"}` for a bad body, `404 {"code":"bot_not_found" | "connector_not_found"}`.
+
+**Idempotent.** The subscription id is `mcp_protocol::events::subscription_id(user id, connector URL, name, arguments)` (`sub_` + 24 hex; argument key order doesn't matter). Posting the same identity again returns the same subscription, refreshes it at the server, and updates `botId`/`executionMode`. A live subscription keeps its secret.
+
+### `DELETE /api/v1/mcp/connectors/:id/events/subscriptions/:sid`
+
+`events/unsubscribe` at the server (best effort), removal at the cloud receiver, row deleted. `204`; `404 {"code":"subscription_not_found"}`.
+
+### Subscription
+
+```json
+{
+  "id": "sub_0123456789abcdef01234567",
+  "connectorId": "conn_1",
+  "name": "email.received",
+  "arguments": { "label": "inbox" },
+  "botId": "bot_1",
+  "executionMode": "REQUIRE_APPROVAL",
+  "status": "active",
+  "error": null,
+  "refreshBefore": "2026-10-07T10:00:00Z",
+  "lastEventAt": "2026-10-06T10:01:02Z",
+  "lastEventId": "evt_42",
+  "eventCount": 3,
+  "createdAt": "2026-10-06T09:00:00Z",
+  "updatedAt": "2026-10-06T09:00:00Z"
+}
+```
+
+`status`: `pending` | `active` | `error` | `needs_reauth`. `error` is `{"code", "reason", "message"}` for `error` and `needs_reauth`, else `null`.
+
+| `error.reason` | `code` | Meaning | Retried by the runtime |
+|---|---|---|---|
+| `event_not_found` | -32011 | The server doesn't have that event. | no |
+| `needs_reauth` (status `needs_reauth`) | -32012, or none | Forbidden, a 401/403, a failed token refresh, or the OAuth grant was revoked. | yes, once the connector has a working credential |
+| `too_many_subscriptions` | -32013 | The server's limit. | no |
+| `unsupported` | -32014 / -32601, or none | Delivery mode refused, or no `events` capability. | no |
+| a `-32015` `data.reason` (`challenge_failed`, `timeout`, `tls_error`, `http_4xx`, `http_5xx`, `connection_refused`) | -32015 | The server couldn't verify the callback. | `timeout`, `http_5xx`, `connection_refused` |
+| `invalid_arguments` | -32602 | Filters don't match `inputSchema`. | no |
+| `connector_unreachable`, `connector_timeout` | none | The connector didn't answer. | yes |
+| `cloud_unreachable`, `not_paired` | none | The runtime couldn't register with the cloud (or isn't paired). | yes |
+| a `terminated` envelope's `data.reason` (for example `approval_revoked`) | its `error.code` | The server ended the subscription. `-32012` → `needs_reauth`. | as above |
+
+## Lifecycle (runtime background loop, every 60 s)
+
+- **Refresh** an active subscription when `refreshBefore` is within 15 minutes (or half its window, if shorter): a new secret is registered at the cloud first (the old one keeps verifying for 1 hour), then `events/subscribe` with it.
+- **Connector deleted or disabled**: removed at the cloud, row deleted.
+- **OAuth grant revoked** (the connector had a credential and lost it) or its token can't be renewed: `events/unsubscribe` is attempted, the cloud stops accepting events, status `needs_reauth`. Reconnecting resumes it with a new secret.
+- **Transient errors** (table above) are retried; others wait for the user.
+- A cloud removal that failed is retried until it succeeds.
+
+## Cloud receiver
+
+### Runtime registration (relay-signed)
+
+Signed like `POST /api/v1/runtime/events` (see [MCP Events › forwarding](/guides/mcp-events#for-runtime-developers-forwarding-events-to-the-cloud)): `x-allternit-runtime-id`, `x-allternit-runtime-ts`, `x-allternit-runtime-sig: v1=<hex HMAC-SHA256(sha256_hex(device_token), "<ts>.<METHOD>.<path>.<hex sha256(body)>")>`.
+
+| Request | Answer |
+|---|---|
+| `PUT /api/v1/runtime/mcp-event-subscriptions/:key` `{"secret":"whsec_…","connectorId","eventName"}` | `200 {"key","callbackUrl","status":"active"}`. A new secret rotates (old valid 1 h). Re-activates an ended row. `400` bad key/secret, `401` signature, `409` key owned by another user. |
+| `DELETE /api/v1/runtime/mcp-event-subscriptions/:key` | `204`. The receiver answers `410` from then on. |
+
+### `POST /mcp/events/callback/:key` (public)
+
+[Standard Webhooks](https://www.standardwebhooks.com) signed with the subscription's secret (`webhook-id`, `webhook-timestamp`, `webhook-signature`).
+
+| Case | Answer |
+|---|---|
+| body over 256 KiB | `413` |
+| unknown key, removed, or terminated | `410` (the server should stop) |
+| signature missing or wrong, timestamp more than 5 minutes off | `401` |
+| not a JSON object | `400` |
+| `{"type":"verification","challenge":"…"}` | `200 {"challenge":"…"}` |
+| `eventId` (else `webhook-id`) already accepted | `200 {"status":"duplicate"}` |
+| 1000 events already waiting for the runtime | `429` |
+| an event, or a `terminated` envelope | `200 {"status":"accepted"}`, queued; a `terminated` envelope also ends the subscription |
+
+Events are held in the channels relay queue (`channel_inbound_queue` on an internal `mcp_events` route), delivered in order, retried with backoff for 24 hours, and relayed to the runtime as a device-signed `POST /api/v1/mcp/event-deliveries`:
+
+```json
+{ "subscriptionKey": "sub_…", "webhookId": "msg_…", "receivedAt": "2026-10-06T10:00:00Z",
+  "event": { "eventId": "evt_42", "name": "email.received", "timestamp": "…", "data": { }, "cursor": null } }
+```
+
+The runtime answers `200 {"status":"triggered","ticketId","eventId"}`, `200 {"status":"duplicate"}` (ledger idempotency key `mcp-event:<sub>:<eventId>`), `200 {"status":"terminated"}`, or `410` for a subscription it no longer has (the cloud marks the event dead instead of retrying).
+
+## Storage
+
+- Runtime: `mcp_event_subscriptions` (migration V237). Secrets sealed with the runtime's token key.
+- Cloud: `mcp_event_client_subscriptions` + `mcp_event_client_seen` (migration 059). Secrets sealed with `ALLTERNIT_CREDENTIALS_KEY` when set. Dedupe marks are kept 7 days.
+- Connector event data is not forwarded to the cloud event backbone.
