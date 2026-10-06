@@ -2,7 +2,7 @@
 # Build the Allternit cloud computer Incus image: a paying user's computer.
 #
 # Starts from the "allternit-desktop" image (XFCE, VNC, Chrome, Tailscale,
-# allternit-mux; built by build-image.sh and shared with bot desktops) and
+# allternit-factory; built by build-image.sh and shared with bot desktops) and
 # adds the full Allternit Desktop app for Linux, autostarted in the desktop
 # session in provisioned mode. On first boot the app signs itself in with the
 # one-time /etc/allternit/bootstrap.json that cloud-api writes via cloud-init

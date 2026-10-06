@@ -549,23 +549,24 @@ if (successful.length === 1) {
     console.log(`  ${simpleName} --help`);
 }
 
-// Vendor allternit-mux and ripgrep next to the built binaries (gizzi-code
-// layout): dist/vendor/{allternit-mux,ripgrep}/... so the runtime resolves
-// them from the executable's directory.
+// Vendor allternit-factory (the Factory engine, whose pane engine owns
+// gizzi's PTYs) and ripgrep next to the built binaries (gizzi-code layout):
+// dist/vendor/{allternit-factory,ripgrep}/... so the runtime resolves them
+// from the executable's directory.
 for (const r of successful) {
     try {
         const pa = `${r.target.platform}-${r.target.arch}`;
         const ap = `${r.target.arch}-${r.target.platform}`;
         const suffix = r.target.suffix || "";
-        const vendoredMux = `vendor/allternit-mux/${pa}/allternit-mux${suffix}`;
-        if (await Bun.file(vendoredMux).exists()) {
-            const dest = `${OUTDIR}/vendor/allternit-mux/${pa}`;
+        const vendoredFactory = `vendor/allternit-factory/${pa}/allternit-factory${suffix}`;
+        if (await Bun.file(vendoredFactory).exists()) {
+            const dest = `${OUTDIR}/vendor/allternit-factory/${pa}`;
             await mkdir(dest, { recursive: true });
-            await copyFile(vendoredMux, `${dest}/allternit-mux${suffix}`);
-            console.log(`✓ vendored allternit-mux -> ${dest}/allternit-mux${suffix}`);
+            await copyFile(vendoredFactory, `${dest}/allternit-factory${suffix}`);
+            console.log(`✓ vendored allternit-factory -> ${dest}/allternit-factory${suffix}`);
         }
         else {
-            console.log(`ℹ no vendored allternit-mux for ${pa} (run script/vendor-mux.sh)`);
+            console.log(`ℹ no vendored allternit-factory for ${pa} (run script/vendor-factory.sh)`);
         }
         const vendoredRg = `vendor/ripgrep/${ap}/rg${suffix}`;
         if (await Bun.file(vendoredRg).exists()) {

@@ -318,8 +318,9 @@ function checkPackagingDryRun(jobs) {
     return;
   }
   bins.push({ name: 'mesh-node', optional: false, flag: null });
-  bins.push({ name: 'allternit-mux', optional: false, flag: null });
-  // The Factory engine Desktop runs and gizzi finds next to itself (Unix-only).
+  // The Factory engine Desktop runs and gizzi finds next to itself; its pane
+  // engine runs every terminal (allternit-api /terminal, gizzi /pty). Unix-only.
+  // It replaced allternit-mux.
   bins.push({ name: 'allternit-factory', optional: false, flag: null, darwinOnly: true });
   bins.push({ name: 'lume', optional: false, flag: null, darwinOnly: true });
 
@@ -381,7 +382,7 @@ function checkDesktopPrepareScripts() {
     return;
   }
   const scripts = pkg.scripts || {};
-  for (const name of ['prepare:lume', 'prepare:mux']) {
+  for (const name of ['prepare:lume', 'prepare:factory']) {
     if (!scripts[name]) {
       fail(`packaging: package.json is missing script ${name}`);
     } else {
@@ -390,10 +391,10 @@ function checkDesktopPrepareScripts() {
   }
   for (const chain of ['build:electron', 'build:electron:dmg', 'dist', 'pack']) {
     const cmd = scripts[chain] || '';
-    if (!cmd.includes('prepare:lume') || !cmd.includes('prepare:mux')) {
-      fail(`packaging: ${chain} must run prepare:lume and prepare:mux before verify`);
+    if (!cmd.includes('prepare:lume') || !cmd.includes('prepare:factory')) {
+      fail(`packaging: ${chain} must run prepare:lume and prepare:factory before verify`);
     } else {
-      pass(`packaging: ${chain} runs prepare:lume and prepare:mux`);
+      pass(`packaging: ${chain} runs prepare:lume and prepare:factory`);
     }
   }
   const extra = JSON.stringify(pkg.build || {});

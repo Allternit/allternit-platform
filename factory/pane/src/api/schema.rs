@@ -264,6 +264,29 @@ pub enum Method {
     PluginPaneFocus(PluginPaneFocusParams),
     #[serde(rename = "plugin.pane.close")]
     PluginPaneClose(PluginPaneCloseParams),
+    // Allternit Factory raw terminals (src/factory_terminal.rs): hidden from
+    // the published herdr schema.
+    #[serde(rename = "factory.terminal.create")]
+    #[schemars(skip)]
+    FactoryTerminalCreate(crate::factory_terminal::FactoryTerminalCreateParams),
+    #[serde(rename = "factory.terminal.write")]
+    #[schemars(skip)]
+    FactoryTerminalWrite(crate::factory_terminal::FactoryTerminalWriteParams),
+    #[serde(rename = "factory.terminal.resize")]
+    #[schemars(skip)]
+    FactoryTerminalResize(crate::factory_terminal::FactoryTerminalResizeParams),
+    #[serde(rename = "factory.terminal.close")]
+    #[schemars(skip)]
+    FactoryTerminalClose(crate::factory_terminal::FactoryTerminalTarget),
+    #[serde(rename = "factory.terminal.get")]
+    #[schemars(skip)]
+    FactoryTerminalGet(crate::factory_terminal::FactoryTerminalTarget),
+    #[serde(rename = "factory.terminal.list")]
+    #[schemars(skip)]
+    FactoryTerminalList(EmptyParams),
+    #[serde(rename = "factory.terminal.output")]
+    #[schemars(skip)]
+    FactoryTerminalOutput(crate::factory_terminal::FactoryTerminalOutputParams),
 }
 
 #[cfg(test)]

@@ -1,58 +1,70 @@
-// Mux-backed pane I/O: panes perform REAL PTY I/O through allternit-mux
-// (phase 4 of the terminal consolidation plan). Spawns a mux daemon on a temp
-// state dir, then drives the service over HTTP via tower::oneshot.
+// Pane I/O on the Allternit Factory pane engine: panes perform REAL PTY I/O
+// as terminals in the pane engine. Starts a pane engine with a scratch HOME
+// (`allternit-factory pane tty ensure`), then drives the service over HTTP via
+// tower::oneshot. Needs a built allternit-factory: $ALLTERNIT_FACTORY_BIN, or
+// the workspace target (`cargo build -p allternit-factory`).
 
 use allternit_workspace_service::{build_router, AppState};
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use serde_json::json;
-use std::process::{Child, Command, Stdio};
+use std::path::PathBuf;
+use std::process::Command;
 use std::time::{Duration, Instant};
 use tower::ServiceExt;
 
-/// Serializes tests that mutate ALLTERNIT_MUX_SOCKET (process-global env).
+/// Serializes tests that mutate ALLTERNIT_FACTORY_PANE_SOCKET / SHELL
+/// (process-global env).
 static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-struct MuxDaemon {
-    child: Child,
+struct PaneEngine {
+    bin: PathBuf,
+    home: tempfile::TempDir,
     socket: String,
-    _tmp: tempfile::TempDir,
 }
 
-fn mux_binary() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../target/debug/allternit-mux")
-}
-
-async fn start_mux() -> MuxDaemon {
-    let tmp = tempfile::tempdir().unwrap();
-    let state_dir = tmp.path().join("mux-state");
-    let socket = state_dir.join("mux.sock");
-    std::fs::create_dir_all(&state_dir).unwrap();
-    let child = Command::new(mux_binary())
-        .arg("serve")
-        .env("ALLTERNIT_MUX_STATE_DIR", &state_dir)
-        .env("ALLTERNIT_MUX_SOCKET", &socket)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("failed to spawn allternit-mux (run `cargo build -p allternit-mux` first)");
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while !socket.exists() {
-        assert!(Instant::now() < deadline, "mux socket never appeared");
-        tokio::time::sleep(Duration::from_millis(50)).await;
+fn factory_binary() -> PathBuf {
+    if let Some(bin) = std::env::var_os("ALLTERNIT_FACTORY_BIN") {
+        return PathBuf::from(bin);
     }
-    MuxDaemon {
-        child,
-        socket: socket.display().to_string(),
-        _tmp: tmp,
-    }
+    let target = std::env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target"));
+    target.join("debug/allternit-factory")
 }
 
-impl Drop for MuxDaemon {
+fn engine_command(bin: &PathBuf, home: &std::path::Path) -> Command {
+    let mut cmd = Command::new(bin);
+    cmd.env("HOME", home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_STATE_HOME", home.join(".state"))
+        .env_remove("HERDR_SOCKET_PATH")
+        .env_remove("HERDR_SESSION");
+    cmd
+}
+
+fn start_engine() -> PaneEngine {
+    let bin = factory_binary();
+    assert!(
+        bin.is_file(),
+        "allternit-factory not found at {} (run `cargo build -p allternit-factory` or set ALLTERNIT_FACTORY_BIN)",
+        bin.display()
+    );
+    // A short HOME keeps the socket path under the Unix socket length limit.
+    let home = tempfile::Builder::new().prefix("wsf").tempdir_in("/tmp").unwrap();
+    let out = engine_command(&bin, home.path()).args(["pane", "tty", "ensure"]).output().unwrap();
+    assert!(out.status.success(), "pane tty ensure failed: {}", String::from_utf8_lossy(&out.stderr));
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let socket = v["socket"].as_str().unwrap().to_string();
+    PaneEngine { bin, home, socket }
+}
+
+impl Drop for PaneEngine {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        let _ = engine_command(&self.bin, self.home.path())
+            .env("HERDR_SESSION", "ao")
+            .args(["pane", "server", "stop"])
+            .output();
     }
 }
 
@@ -90,14 +102,16 @@ async fn get(app: &axum::Router, uri: &str) -> (StatusCode, serde_json::Value) {
 }
 
 #[tokio::test]
-async fn panes_perform_real_pty_io_through_mux() {
+async fn panes_perform_real_pty_io_on_the_pane_engine() {
     let _guard = ENV_LOCK.lock().unwrap();
-    let daemon = start_mux().await;
-    std::env::set_var("ALLTERNIT_MUX_SOCKET", &daemon.socket);
+    let engine = start_engine();
+    std::env::set_var("ALLTERNIT_FACTORY_PANE_SOCKET", &engine.socket);
+    // A plain shell: a fresh HOME would put zsh into its first-run wizard.
+    std::env::set_var("SHELL", "/bin/sh");
     let app = build_router(AppState::new());
 
     // Session + pane (default shell).
-    let (status, created) = post(&app, "/sessions", json!({ "name": "mux-io" })).await;
+    let (status, created) = post(&app, "/sessions", json!({ "name": "pane-io" })).await;
     assert_eq!(status, StatusCode::CREATED);
     let session_id = created["session"]["id"].as_str().unwrap().to_string();
 
@@ -111,7 +125,7 @@ async fn panes_perform_real_pty_io_through_mux() {
     let pane_id = pane["id"].as_str().unwrap().to_string();
 
     // Send a command through the pane; real PTY executes it.
-    let marker = format!("ws-mux-io-{}", uuid::Uuid::new_v4());
+    let marker = format!("ws-pane-io-{}", uuid::Uuid::new_v4());
     let (status, _) = post(
         &app,
         &format!("/panes/{}/send", pane_id),
@@ -147,7 +161,7 @@ async fn panes_perform_real_pty_io_through_mux() {
     assert_eq!(status, StatusCode::OK);
     assert!(logs["logs"].as_str().unwrap_or("").contains(&marker));
 
-    // Delete session tears down the mux session too.
+    // Delete session closes the pane engine terminal too.
     let response = app
         .clone()
         .oneshot(
@@ -160,4 +174,11 @@ async fn panes_perform_real_pty_io_through_mux() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let out = engine_command(&engine.bin, engine.home.path())
+        .env("HERDR_SESSION", "ao")
+        .args(["pane", "tty", "list"])
+        .output()
+        .unwrap();
+    let list: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(list["terminals"], json!([]), "terminal left open: {list}");
 }

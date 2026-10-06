@@ -1,6 +1,6 @@
 # Integrated terminal parity
 
-ChatGPT/Codex's integrated terminal runs project commands without leaving the work surface. Allternit provides both the `gizzi` TUI's shell tools and server-backed real PTYs through `allternit-mux`. Terminal sessions preserve scrollback and can survive API restarts.
+ChatGPT/Codex's integrated terminal runs project commands without leaving the work surface. Allternit provides both the `gizzi` TUI's shell tools and server-backed real PTYs on the Allternit Factory pane engine. Terminal sessions preserve scrollback and can survive API restarts.
 
 ## Run and validate your project
 

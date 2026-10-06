@@ -58,18 +58,14 @@ const required = [
     label: 'TTS program (allternit-tts, GPL-3.0, started by the voice service)',
     buildStep: 'scripts/build-desktop.sh',
   },
-  // allternit-mux is Unix-only (its API is a Unix socket), so Windows ships without it.
+  // allternit-factory is Unix-only for now (its pane engine, which runs every
+  // terminal, serves a Unix socket), so Windows ships without it.
   ...(process.platform === 'win32'
     ? []
     : [
         {
-          path: path.join(resourcesDir, 'bin', 'allternit-mux'),
-          label: 'allternit-mux (PTY daemon gizzi auto-spawns for /pty)',
-          buildStep: 'npm run prepare:mux (or scripts/build-desktop.sh)',
-        },
-        {
           path: path.join(resourcesDir, 'bin', 'allternit-factory'),
-          label: 'allternit-factory (the Allternit Factory engine; Desktop runs it, gizzi finds it next to itself)',
+          label: 'allternit-factory (the Allternit Factory engine and its pane engine: terminals, agent panes; Desktop runs it, gizzi finds it next to itself)',
           buildStep: 'npm run prepare:factory',
         },
       ]),

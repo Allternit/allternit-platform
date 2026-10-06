@@ -69,8 +69,8 @@ exec "$@" 3<&- </dev/null
 `
 
 /**
- * spawn() for helpers gizzi owns (mesh-node, tailscaled, cloudflared,
- * allternit-mux) so they cannot outlive gizzi, even when gizzi itself is
+ * spawn() for helpers gizzi owns (mesh-node, tailscaled, cloudflared) so
+ * they cannot outlive gizzi, even when gizzi itself is
  * SIGKILLed or crashes and never runs its ProcessRegistry cleanup. Same pid,
  * signals, and exit semantics as a plain spawn(); always its own process group.
  */

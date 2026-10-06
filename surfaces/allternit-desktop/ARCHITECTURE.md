@@ -53,7 +53,8 @@ services. The shipped app sits between the two models:
 
 - The Electron shell **bundles sidecar binaries** under `resources/bin/`:
   `allternit-api` (Rust API, port 8013 — proxies to Gizzi on 4096),
-  `gizzi-code`, `allternit-mux`, vendored `ripgrep`, the voice-service
+  `gizzi-code`, `allternit-factory` (the Factory engine; its pane engine runs
+  every terminal), vendored `ripgrep`, the voice-service
   PyInstaller binary, `mesh-node` (tsnet sidecar), and `lume` (macOS/Linux).
   See `../BUILD.md` and `scripts/build-desktop.sh`.
 - The full self-hosted backend (VPS/local) is still installed and updated

@@ -260,25 +260,24 @@ jobs:
           chmod +x surfaces/allternit-desktop/resources/bin/allternit-local-engine
           lipo -info surfaces/allternit-desktop/resources/bin/allternit-local-engine
 
-      # ── Step 3e: Build allternit-mux (PTY daemon) ───────────────────────────
-      - name: Build allternit-mux sidecar
-        # gizzi auto-spawns this for /pty. GizziManager resolves
-        # resources/bin/allternit-mux first. Universal lipo matches api/gizzi.
+      # ── Step 3e: Zig for the Factory pane engine ───────────────────────────
+      - name: Install Zig 0.15.2
+        # The pane engine links libghostty-vt, built by Zig 0.15.2
+        # (factory/pane/build.rs); Zig cross-builds both macOS targets.
+        # Pinned by checksum; macos-latest is arm64.
         run: |
-          cargo build --release -p allternit-mux --target x86_64-apple-darwin
-          cargo build --release -p allternit-mux --target aarch64-apple-darwin
-          mkdir -p surfaces/allternit-desktop/resources/bin
-          lipo -create \
-            target/x86_64-apple-darwin/release/allternit-mux \
-            target/aarch64-apple-darwin/release/allternit-mux \
-            -output surfaces/allternit-desktop/resources/bin/allternit-mux
-          chmod +x surfaces/allternit-desktop/resources/bin/allternit-mux
-          lipo -info surfaces/allternit-desktop/resources/bin/allternit-mux
+          curl -fsSL https://ziglang.org/download/0.15.2/zig-aarch64-macos-0.15.2.tar.xz -o /tmp/zig.tar.xz
+          echo "3cc2bab367e185cdfb27501c4b30b1b0653c28d9f73df8dc91488e66ece5fa6b  /tmp/zig.tar.xz" | shasum -a 256 -c -
+          mkdir -p "$RUNNER_TEMP/zig"
+          tar -xJf /tmp/zig.tar.xz -C "$RUNNER_TEMP/zig" --strip-components=1
+          echo "ZIG=$RUNNER_TEMP/zig/zig" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/zig/zig" version
 
       # ── Step 3e2: Build the Allternit Factory engine ────────────────────────
       - name: Build allternit-factory engine
-        # Desktop runs it (factory-engine-manager.ts) and gizzi finds it next
-        # to itself in resources/bin. Universal lipo matches api/gizzi/mux.
+        # Desktop runs it (factory-engine-manager.ts); its pane engine owns
+        # every terminal (allternit-api /terminal, gizzi /pty), and gizzi finds
+        # it next to itself in resources/bin. Universal lipo matches api/gizzi.
         run: |
           cargo build --release -p allternit-factory --target x86_64-apple-darwin
           cargo build --release -p allternit-factory --target aarch64-apple-darwin
@@ -497,10 +496,10 @@ jobs:
           # No espeak-ng (GPL-3.0) in the voice service: it lives in allternit-tts.
           bash scripts/check-voice-no-gpl.sh surfaces/allternit-desktop/resources/bin/allternit-voice-service.exe
 
-      # No allternit-mux on Windows: its API is a Unix socket (tokio UnixListener)
-      # and gizzi's /pty integration dials that socket, so a Windows build would
-      # not compile and could not be used. prepare-mux / verify-packaged-resources
-      # skip it on win32 to match.
+      # Terminals on Windows: allternit-api's /terminal routes (cfg(unix)) and
+      # gizzi's /pty dial the Factory pane engine's Unix socket, and this job
+      # doesn't build allternit-factory, so Windows Desktop has no terminals,
+      # as before (allternit-mux was macOS/Linux only too).
 
       - name: Build open-connector sidecar bundle
         # services/open-connector is a plain npm project excluded from the

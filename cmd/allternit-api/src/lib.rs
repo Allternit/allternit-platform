@@ -308,7 +308,7 @@ pub mod swarm_routes;
 pub mod tag_routes;
 pub mod task_routes;
 pub mod team_skill_routes;
-// Unix-only: talks to allternit-mux over a UDS (tokio::net::UnixStream).
+// Unix-only: talks to the Factory pane engine over a UDS (tokio::net::UnixStream).
 #[cfg(unix)]
 pub mod terminal_routes;
 pub mod token_crypto;
@@ -610,7 +610,7 @@ pub struct AppState {
     pub office_cli_mcp_sessions: OfficeCliMcpState,
     /// Daemon-side Open Design skill cache with hot-reload semantics.
     pub design_skill_cache: DesignSkillCache,
-    /// Local tmux-backed terminal sessions for Code Mode. Unix-only (mux UDS).
+    /// Code Mode terminals on the Factory pane engine. Unix-only (pane engine UDS).
     #[cfg(unix)]
     pub terminal_sessions: TerminalSessionStore,
     /// Attached MCP servers reachable through the server-side MCP dispatcher.

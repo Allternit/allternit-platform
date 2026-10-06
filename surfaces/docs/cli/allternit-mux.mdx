@@ -1,180 +1,95 @@
 ---
-title: 'allternit-mux'
-description: 'Unified agent terminal multiplexer daemon and CLI.'
+title: 'allternit-mux (folded into the Factory)'
+description: 'allternit-mux is gone: every terminal now runs on the Allternit Factory pane engine. What replaced each part, and the allternit-factory pane tty commands.'
 ---
 
 ## Overview
 
+`allternit-mux` was the terminal multiplexer daemon behind Code Mode terminals, Gizzi's PTYs, workspace panes and bot desktops. It has been folded into the [Allternit Factory](/factory/architecture) pane engine (`factory/pane`, run as `allternit-factory pane`). The `cmd/allternit-mux` crate and binary no longer exist.
+
+A Desktop terminal tile, a Gizzi PTY and a Factory agent pane are now the same thing: a pane in the pane engine. A terminal shows in the agent wall as a workspace labeled `term-<id>`, and an agent you start in one is detected like any other agent pane.
+
 <Note>
-Shipping with the Allternit Factory build: `allternit-mux` folds into the Factory's pane engine (`factory/pane`), and Gizzi and Desktop read terminals through the engine instead. See [Allternit Factory architecture](/factory/architecture). Until then, this page describes the shipped daemon.
+Allternit Desktop builds released before this change keep using the `allternit-mux` they bundle, so nothing needs migrating on those machines. The hosted runtime image and cloud computer images pick up `allternit-factory` on their next build.
 </Note>
 
-`allternit-mux` is a local terminal multiplexer daemon designed for agent workflows. It manages sessions, panes, and PTY processes over a Unix domain socket and exposes an NDJSON request/response API. The CLI can start the daemon, create sessions, split panes, run commands, send input, and inspect agent state.
+## What replaced what
 
-`allternit-mux` is used by Gizzi Code for terminal and PTY features and is bundled into the Allternit Hosted Runtime image.
+| allternit-mux | Now |
+|---|---|
+| `allternit-mux serve` (daemon) | `allternit-factory pane server`. Clients start it on demand with `allternit-factory pane tty ensure` |
+| Socket `~/.allternit/mux/mux.sock` | The pane engine's socket for the Factory's agent session (`ao`), reported by `allternit-factory pane tty ensure` |
+| `ALLTERNIT_MUX_SOCKET` | `ALLTERNIT_FACTORY_PANE_SOCKET` (skips `ensure`) |
+| `ALLTERNIT_MUX_BIN` | `ALLTERNIT_FACTORY_BIN` |
+| `session.create` + `pane.create` | `factory.terminal.create` |
+| `pane.send_input` | `factory.terminal.write` (raw bytes, not a paste) |
+| `pane.resize` | `factory.terminal.resize` |
+| `pane.read` (scrollback) | `factory.terminal.output` with `follow: false` |
+| `events.subscribe` `pane.output` / `pane.exited` | `factory.terminal.output` with `follow: true` |
+| `session.close` | `factory.terminal.close` |
+| `/opt/allternit-mux/allternit-mux` and `allternit-mux.service` in guest images | `/opt/allternit-factory/allternit-factory` and `allternit-factory-pane.service` |
 
-## Socket path
+## `allternit-factory pane tty`
 
-By default the daemon listens on:
-
-```
-~/.allternit/mux/mux.sock
-```
-
-Override with:
-
-```bash
-allternit-mux --socket /tmp/custom-mux.sock ...
-allternit-mux --state-dir /tmp/mux ...
-```
-
-The environment variable `ALLTERNIT_MUX_SOCKET` also overrides the socket path.
-
-## Start the daemon
+The terminal commands, for shells, scripts and guest images. Every command prints JSON and exits 1 on an error. Every command except `help` starts the pane engine first when it isn't running.
 
 ```bash
-allternit-mux serve
+allternit-factory pane tty ensure
+# {"socket":"/Users/you/.config/…/sessions/ao/herdr.sock"}
+
+allternit-factory pane tty create build-1 --cwd ~/repo --cols 120 --rows 40 -- /bin/zsh -l
+allternit-factory pane tty write build-1 "make test" --enter
+allternit-factory pane tty read build-1        # the kept output, raw
+allternit-factory pane tty resize build-1 100 30
+allternit-factory pane tty attach build-1      # take it over here; ctrl+b q detaches
+allternit-factory pane tty get build-1
+allternit-factory pane tty list
+allternit-factory pane tty close build-1
 ```
 
-The daemon runs until it receives `SIGINT`, `SIGTERM`, or a `server.stop` request.
+| Command | What it does |
+|---|---|
+| `ensure` | Starts the pane engine if needed and prints `{"socket": …}` |
+| `create <id> [--cwd DIR] [--cols N] [--rows N] [--label L] [--env K=V]… [-- argv…]` | Opens a terminal. With no argv it runs the pane engine's default shell. Ids are 1 to 64 of `A-Z a-z 0-9 _ -` |
+| `write <id> <data> [--enter]` | Types raw bytes (`--enter` adds a carriage return) |
+| `read <id>` | Prints the kept output and exits |
+| `resize <id> <cols> <rows>` | Sets the terminal's size |
+| `attach <id>` | Takes the terminal over in your own terminal. `ctrl+b q` detaches and the shell keeps running |
+| `close <id>` | Closes the terminal |
+| `get <id>`, `list` | Terminal facts: `terminal_id`, `pane_id`, `workspace_id`, `engine_terminal`, `running`, `exit_code`, `pid`, `output_bytes` |
 
-## CLI commands
+## Socket methods
 
-| Command | Description |
-|---------|-------------|
-| `serve` | Run the multiplexer daemon. |
-| `session create` | Create a session. |
-| `session list` | List sessions. |
-| `session close <id>` | Close a session. |
-| `pane create <session_id>` | Create a root pane. |
-| `pane split <session_id>` | Split a pane. |
-| `pane list <session_id>` | List panes. |
-| `pane run <pane_id> -- <command...>` | Run a command in a pane. |
-| `pane read <pane_id>` | Read pane scrollback or screen. |
-| `pane send <pane_id> <text>` | Send text to a pane. |
-| `pane resize <pane_id>` | Resize a pane. |
-| `pane close <pane_id>` | Close a pane. |
-| `agent list` | List detected agents. |
-| `agent state <pane_id>` | Get agent state for a pane. |
-| `attach <pane_id>` | Attach this terminal to a pane. |
-| `wait <pane_id> --status <status>` | Block until an agent reaches a state. |
-| `wait-file <path>` | Block until a file exists. |
-| `stop` | Stop the daemon. |
+Clients that draw the terminal themselves (allternit-api's [Terminal API](/api/terminal), Gizzi's PTY websocket, workspace-service) speak to the pane engine's socket directly. The socket takes one JSON request per connection: `{"id", "method", "params"}` on one line, then one response line `{"id", "result"}` or `{"id", "error": {"code", "message"}}`. These methods are Allternit additions and are not in the published Herdr schema.
 
-## Examples
+| Method | Params | Result |
+|---|---|---|
+| `factory.terminal.create` | `terminal_id`, `cwd?`, `command?` (argv), `env?`, `cols?` (80), `rows?` (24), `label?` | `{ terminal }` |
+| `factory.terminal.write` | `terminal_id`, `data` | `{}` |
+| `factory.terminal.resize` | `terminal_id`, `cols`, `rows` | `{}` |
+| `factory.terminal.close` | `terminal_id` | `{}` |
+| `factory.terminal.get` | `terminal_id` | `{ terminal }` |
+| `factory.terminal.list` | — | `{ terminals }` |
+| `factory.terminal.output` | `terminal_id`, `replay?` (true), `follow?` (true) | A stream, below |
 
-### Create a session and pane
+`factory.terminal.output` answers `{"id", "result": {"terminal_id", "replay_bytes"}}`, then sends lines on the same connection:
 
-```bash
-allternit-mux session create --label "prod-debug"
-# { "type": "session", "session": { "id": "sess_abc", "label": "prod-debug", ... } }
+- `{"type":"output","data":"…"}`: terminal output as UTF-8 text. A character split across reads is never split across frames.
+- `{"type":"live"}`: once, with `follow`, when the replay is done and live output starts.
+- `{"type":"exit","exit_code":0}`: once, when the shell exits and its output is drained. `exit_code` is `null` if it couldn't be read.
 
-allternit-mux pane create sess_abc
-# { "type": "pane", "pane": { "id": "pane_xyz", ... } }
-```
+Error codes: `terminal_not_found`, `terminal_exists`, `invalid_terminal_id`, `invalid_size`, `terminal_exited`, `terminal_write_failed`, `terminal_create_failed`.
 
-### Run a command
+## Behavior
 
-```bash
-allternit-mux pane run pane_xyz -- ls -la
-```
+- **Scrollback.** The pane engine keeps the last 2 MiB of each terminal's raw output for replay. An exited terminal's output and exit code are kept for 10 minutes, or until it's closed.
+- **Size.** The client owns a terminal's size: a resize holds even when the agent wall lays the pane out differently.
+- **Terminal replies.** While a client is streaming a terminal, that client answers the program's terminal queries (cursor position, device attributes) and the pane engine's own emulator stays quiet, so programs never read two replies. With nobody attached, the pane engine answers.
+- **Lifetime.** Terminals live in the pane engine daemon. They survive UI reconnects and restarts of allternit-api or `gizzi serve`, and end when the shell exits, the terminal is closed, or the pane engine stops.
+- **Windows.** The pane engine's terminals need its Unix socket, and Windows Desktop doesn't ship `allternit-factory` yet, so Windows Desktop has no terminals. That's unchanged: `allternit-mux` was macOS and Linux only too.
 
-### Send input
+## Related
 
-```bash
-allternit-mux pane send pane_xyz "echo hello"
-```
-
-Use `--verified` to confirm the text renders before pressing Enter:
-
-```bash
-allternit-mux pane send pane_xyz "confirm deploy" --verified
-```
-
-### Read output
-
-```bash
-# Recent scrollback
-allternit-mux pane read pane_xyz --lines 50
-
-# Currently visible screen
-allternit-mux pane read pane_xyz --source screen
-```
-
-### Attach interactively
-
-```bash
-allternit-mux attach pane_xyz
-```
-
-Detach with `Ctrl-b q`.
-
-### Wait for an agent state
-
-```bash
-allternit-mux wait pane_xyz --status idle --timeout-secs 300
-```
-
-## Daemon API protocol
-
-Clients connect over the Unix socket and send one JSON object per line. The daemon responds with one JSON object per line. Event subscriptions use the `events.subscribe` method.
-
-### Request format
-
-```json
-{ "id": "1", "method": "session.create", "params": { "label": "example" } }
-```
-
-### Response format
-
-```json
-{ "id": "1", "result": { "type": "session", "session": { "id": "sess_abc" } } }
-```
-
-### Error format
-
-```json
-{ "id": "1", "error": { "code": "not_found", "message": "pane not found" } }
-```
-
-## Daemon methods
-
-| Method | Params | Description |
-|--------|--------|-------------|
-| `ping` | — | Returns `{ "type": "pong", "protocol": 1 }`. |
-| `server.status` | — | Daemon status and session count. |
-| `server.stop` | — | Shuts down the daemon. |
-| `events.subscribe` | `{ "types": [...] }` | Subscribe to pane events. |
-| `session.create` | `{ "label", "cwd" }` | Create a session. |
-| `session.list` | — | List sessions. |
-| `session.get` | `{ "session_id" }` | Get a session. |
-| `session.close` | `{ "session_id" }` | Close a session. |
-| `pane.split` | `{ "session_id", "direction", "ratio", "cols", "rows", "command", "env" }` | Split a pane. |
-| `pane.create` | `{ "session_id", "cols", "rows", "command", "env" }` | Create a root pane. |
-| `pane.list` | `{ "session_id" }` | List panes. |
-| `pane.get` | `{ "pane_id" }` | Get pane info and agent state. |
-| `pane.run` | `{ "pane_id", "command": [...], "env": {} }` | Run a command. |
-| `pane.send_input` | `{ "pane_id", "data" }` | Send raw input. |
-| `pane.send_verified` | `{ "pane_id", "data", "timeout_ms" }` | Send input after verifying it appears. |
-| `pane.read` | `{ "pane_id", "lines", "source" }` | Read output. |
-| `pane.resize` | `{ "pane_id", "cols", "rows" }` | Resize pane. |
-| `pane.close` | `{ "pane_id" }` | Close pane. |
-| `agent.list` | — | List detected agents. |
-| `agent.state` | `{ "pane_id" }` | Get agent state. |
-| `wait.file` | `{ "path", "timeout_ms" }` | Wait for a file. |
-
-## Error codes
-
-| Code | Meaning |
-|------|---------|
-| `parse_error` | Invalid JSON on the socket. |
-| `not_found` | Session or pane does not exist. |
-| `invalid_params` | Missing or invalid parameters. |
-| `internal` | Unexpected daemon error. |
-| `unknown_method` | Method not implemented. |
-
-## Related pages
-
-- [Gizzi Code CLI](/cli/overview)
-- [Hosted Runtime](/byoc/hosted-runtime)
-- [Agent Daemon](/cli/agent-daemon)
+- [Terminal API](/api/terminal)
+- [Allternit Factory architecture](/factory/architecture)
+- [Hosted runtime](/byoc/hosted-runtime)

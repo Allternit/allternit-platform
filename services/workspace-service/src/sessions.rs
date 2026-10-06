@@ -20,9 +20,6 @@ pub struct SessionRecord {
     pub metadata: SessionMetadata,
     pub pane_ids: Vec<String>,
     pub created_at: DateTime<Utc>,
-    /// Backing mux session id (real PTYs), created lazily with the first pane.
-    #[serde(default)]
-    pub mux_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -54,9 +51,10 @@ pub struct PaneRecord {
     pub metadata: PaneMetadata,
     pub output_buffer: Vec<String>,
     pub created_at: DateTime<Utc>,
-    /// Backing mux pane id (a real PTY); None until mux provisioning succeeds.
+    /// Backing Factory pane engine terminal id (a real PTY); None until the
+    /// terminal is provisioned.
     #[serde(default)]
-    pub mux_pane_id: Option<String>,
+    pub terminal_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -92,7 +90,6 @@ impl SessionStore {
             metadata,
             pane_ids: vec![],
             created_at: Utc::now(),
-            mux_session_id: None,
         };
         self.sessions.write().unwrap().insert(record.id.clone(), record.clone());
         record
@@ -129,17 +126,10 @@ impl SessionStore {
         }
     }
 
-    /// Record the backing mux session id (created lazily with the first pane).
-    pub fn set_mux_session_id(&self, id: &str, mux_session_id: String) {
-        if let Some(session) = self.sessions.write().unwrap().get_mut(id) {
-            session.mux_session_id = Some(mux_session_id);
-        }
-    }
-
-    /// Record the backing mux pane id on a pane record.
-    pub fn set_mux_pane_id(&self, id: &str, mux_pane_id: String) {
+    /// Record the backing pane engine terminal id on a pane record.
+    pub fn set_terminal_id(&self, id: &str, terminal_id: String) {
         if let Some(pane) = self.panes.write().unwrap().get_mut(id) {
-            pane.mux_pane_id = Some(mux_pane_id);
+            pane.terminal_id = Some(terminal_id);
         }
     }
 
@@ -151,7 +141,7 @@ impl SessionStore {
             metadata,
             output_buffer: vec![],
             created_at: Utc::now(),
-            mux_pane_id: None,
+            terminal_id: None,
         };
 
         let mut sessions = self.sessions.write().unwrap();

@@ -5,7 +5,8 @@ on:
     branches: [main]
     paths:
       - 'cmd/allternit-computer-cloud/guest/**'
-      - 'cmd/allternit-mux/**'
+      - 'cmd/allternit-factory/**'
+      - 'factory/**'
       - '.github/workflows/desktop-image.yml'
   workflow_dispatch:
     inputs:
@@ -38,14 +39,25 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Build allternit-mux
+      - name: Install Zig 0.15.2
+        # The Factory pane engine links libghostty-vt, built by Zig 0.15.2
+        # (factory/pane/build.rs). Pinned by checksum.
         run: |
-          cd cmd/allternit-mux
-          cargo build --release
+          curl -fsSL https://ziglang.org/download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz -o /tmp/zig.tar.xz
+          echo "02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239  /tmp/zig.tar.xz" | sha256sum -c -
+          sudo mkdir -p /opt/zig
+          sudo tar -xJf /tmp/zig.tar.xz -C /opt/zig --strip-components=1
+          echo "ZIG=/opt/zig/zig" >> "$GITHUB_ENV"
+          /opt/zig/zig version
+
+      - name: Build allternit-factory
+        # The guest's terminals run on the Factory pane engine
+        # (allternit-factory pane server; allternit-factory pane tty).
+        run: cargo build --release -p allternit-factory
 
       - name: Build desktop image
         env:
-          MUX_SRC_DIR: ${{ github.workspace }}/cmd/allternit-mux
+          FACTORY_BIN: ${{ github.workspace }}/target/release/allternit-factory
           IMAGE_NAME: ${{ github.event.inputs.image_name || 'allternit-desktop' }}
         run: |
           sudo -E cmd/allternit-computer-cloud/guest/build-image.sh

@@ -71,19 +71,20 @@ write_files:
       [Install]
       WantedBy=multi-user.target
 
-  - path: /etc/systemd/system/allternit-mux.service
+  - path: /etc/systemd/system/allternit-factory-pane.service
     owner: root:root
     permissions: "0644"
     content: |
       [Unit]
-      Description=Allternit mux guest runtime
+      Description=Allternit Factory pane engine (guest terminals)
       After=network.target systemd-user-sessions.service
-      ConditionPathExists=/opt/allternit-mux/allternit-mux
+      ConditionPathExists=/opt/allternit-factory/allternit-factory
 
       [Service]
       Type=simple
       Environment="HOME=/root"
-      ExecStart=/opt/allternit-mux/allternit-mux serve
+      Environment="HERDR_SESSION=ao"
+      ExecStart=/opt/allternit-factory/allternit-factory pane server
       ExecStop=/bin/kill -TERM $MAINPID
       KillMode=mixed
       Restart=on-failure
@@ -101,8 +102,8 @@ runcmd:
   - systemctl daemon-reload
   - systemctl enable allternit-desktop.service
   - systemctl start allternit-desktop.service
-  - systemctl enable allternit-mux.service
-  # Do not start allternit-mux here; the binary is placed by the CI image
-  # pipeline (Phase 15). When present, systemd will start it on next boot.
+  - systemctl enable allternit-factory-pane.service
+  # Do not start allternit-factory-pane here; the binary is placed by the CI
+  # image pipeline (Phase 15). When present, systemd will start it on next boot.
 
 final_message: "Allternit desktop guest is ready."

@@ -46,7 +46,9 @@ allternit/                         (platform repo)
 
 **The core** stores events, IDs and state. **The Gate** is the only thing allowed to change state. **The four parts** hold the domain logic. **The surfaces** (pane, api, remote) are how people and machines reach it.
 
-**The pane engine is a clean block.** The forked Herdr code keeps its Apache-2.0 LICENSE and NOTICE and its internal layout, so upstream Herdr fixes can still be merged. Allternit additions sit beside it, not inside its files. `allternit-mux` folds into it.
+**The pane engine is a clean block.** The forked Herdr code keeps its Apache-2.0 LICENSE and NOTICE and its internal layout, so upstream Herdr fixes can still be merged. Allternit additions sit beside it, not inside its files.
+
+**Every terminal is a pane.** `allternit-mux` folded into the pane engine and is gone. A Desktop or web terminal tile (allternit-api's [Terminal API](/api/terminal)), a Gizzi PTY, a workspace-service pane and a Factory agent pane are all panes in the same pane engine, in the Factory's agent session. Clients that draw the terminal themselves use the pane engine's `factory.terminal.*` socket methods: create, raw write, resize, close, and an output stream that replays the kept scrollback (2 MiB), then streams live output and the exit code. Each pane they open carries a small output tap (`factory/pane/src/factory_terminal.rs`). People and scripts use `allternit-factory pane tty …`. So a terminal shows in the agent wall as `term-<id>`, an agent started in one is detected like any other, and terminals outlive the UI that drew them. Details: [allternit-mux (folded into the Factory)](/cli/allternit-mux).
 
 ### Where the old modules go
 
@@ -58,7 +60,7 @@ allternit/                         (platform repo)
 | orchestration | `mail`, `bus`, `transport`, `attention`, `steer`, `observer` | `mailbox`, `transcript`, pane read/send | Gizzi `ac` and `mail`. Gizzi `/v1/orchestrator` send/tail |
 | workflows | `templates`, `drive`, `wake`, `wait_gates`, `leases`, `merge_locks`, `dependencies` | `watch` and `drain` | `kernel` (ComputeGraph IR) as the template compiler |
 | workspace | `work`, `wih`, `campaign`, `receipts`, `judge`, `verification`, `vault`, `lessons`, `context`, `memory`, `echoes` | — | Node folders and proof (new). The cowork queue and run tables (folded last) |
-| pane (`factory/pane`) | — | `ui`, `client`, `app`, `pane`, `pty`, `terminal*`, `layout`, `workspace`, `input`, `kitty_graphics`, `ghostty`, `copy_mode`, `selection` | `cmd/allternit-mux` |
+| pane (`factory/pane`) | — | `ui`, `client`, `app`, `pane`, `pty`, `terminal*`, `layout`, `workspace`, `input`, `kitty_graphics`, `ghostty`, `copy_mode`, `selection` | `cmd/allternit-mux` (folded in and deleted: raw terminals are `factory.terminal.*`) |
 | api | `service`, `mcp`, `bridge`, `workspace` | `api`, `server`, `serve` (UHP), `visibility` | Gizzi `/v1/orchestrator` routes |
 | remote | `bridge` identities | `fabric`, `remote` | — |
 
@@ -69,6 +71,7 @@ allternit/                         (platform repo)
 | Process | What it is | Where |
 |---|---|---|
 | `allternit-factory` | The engine. Ledger, Gate, panes, agents, fabric. One process that outlives any window | HTTP on `127.0.0.1:3011`, Unix socket at `~/.allternit/factory/factory.sock`. State root `~/.allternit/factory/` |
+| `allternit-factory pane server` | The pane engine daemon: every agent pane and every terminal. Started on demand (`allternit-factory pane tty ensure`, an agent spawn, Gizzi's first PTY) and outlives them | Its own socket for the agent session `ao`, which `pane tty ensure` reports. Under `XDG_CONFIG_HOME` when set |
 | `gizzi` | The product CLI/TUI. `gizzi <part> <verb>` runs `allternit-factory <part> <verb> … --json` and renders it | Next to the engine (brew, npm, Desktop `resources/bin`) |
 | `allternit-api` | The data plane Desktop, web and phone talk to. Proxies `/api/factory/*` to the engine, owns approvals | Its usual port. Links the `factory/` crates in-process for ledger and Gate access |
 
@@ -101,7 +104,7 @@ The full contract, with every request and response shape, is the [Factory API re
 | Surface | Reads |
 |---|---|
 | Gizzi | The engine binary (`--json`) and its socket. The live wall is the engine's Rust pane view |
-| Desktop Code mode | `/api/factory`. A terminal tile is an engine pane, the same one the TUI shows |
+| Desktop Code mode | `/api/factory`, and allternit-api's `/terminal` routes for plain shells. A terminal tile is an engine pane, the same one the TUI shows |
 | Desktop Bot Mode, project pages | `/api/factory` through allternit-api. Team graph, Flow graph, Board and Node page are views in `src/components/factory/` |
 | ai.allternit.com phone layout, m.allternit.com | The same `/api/factory` data through the fabric relay: bot strip over one terminal, Board, Approve |
 

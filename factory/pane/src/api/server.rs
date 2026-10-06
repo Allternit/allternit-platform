@@ -213,6 +213,29 @@ fn handle_connection_with_stop(
             }
             result
         }
+        Method::FactoryTerminalOutput(params) => {
+            // Raw terminal output: served from the tap on this thread, no
+            // app round trip (src/factory_terminal.rs).
+            let result = crate::factory_terminal::serve_output(
+                &mut stream,
+                &request_id,
+                params,
+                running,
+                local_stream_peer_closed,
+            );
+            match &result {
+                Ok(()) => crate::logging::api_request_completed(
+                    &request_id,
+                    method,
+                    "stream_closed",
+                    changes_ui,
+                ),
+                Err(err) => {
+                    crate::logging::api_request_failed(&request_id, method, &err.to_string())
+                }
+            }
+            result
+        }
         Method::EventsSubscribe(params) => {
             let result = stream_subscriptions(
                 stream,
@@ -491,6 +514,13 @@ pub(crate) fn api_method_name(method: &Method) -> &'static str {
         Method::PluginPaneOpen(_) => "plugin.pane.open",
         Method::PluginPaneFocus(_) => "plugin.pane.focus",
         Method::PluginPaneClose(_) => "plugin.pane.close",
+        Method::FactoryTerminalCreate(_) => "factory.terminal.create",
+        Method::FactoryTerminalWrite(_) => "factory.terminal.write",
+        Method::FactoryTerminalResize(_) => "factory.terminal.resize",
+        Method::FactoryTerminalClose(_) => "factory.terminal.close",
+        Method::FactoryTerminalGet(_) => "factory.terminal.get",
+        Method::FactoryTerminalList(_) => "factory.terminal.list",
+        Method::FactoryTerminalOutput(_) => "factory.terminal.output",
     }
 }
 
