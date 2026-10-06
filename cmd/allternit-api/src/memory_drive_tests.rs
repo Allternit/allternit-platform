@@ -168,7 +168,8 @@ fn import_dry_run_writes_nothing_and_apply_is_idempotent() {
     .unwrap();
     let plan = service::import_plan(&f.db, "u1").unwrap();
     assert_eq!((plan.total, plan.converted, plan.skipped), (2, 1, 1));
-    assert!(!f.root.exists(), "dry run must not create a drive");
+    assert!(std::fs::read_dir(&f.root).map(|mut d| d.next().is_none()).unwrap_or(true), "dry run must not create a drive");
+    assert!(service::resolve(&f.db, "u1").is_err(), "dry run must not register a drive");
     let drive = scopes::open(&f.db, &f.root, "u1", &DriveRef::personal("u1"), true).unwrap();
     let head = drive.storage().unwrap().head().unwrap().unwrap();
     let r = service::import_apply(&f.db, "u1", &head).unwrap();
