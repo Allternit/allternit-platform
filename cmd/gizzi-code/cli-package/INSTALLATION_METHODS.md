@@ -53,17 +53,17 @@ scoop install gizzi-code
 ### Download Binary
 
 1. Download the latest release from GitHub (assets are version-named, e.g.
-   `gizzi-code-v2.1.9-<target>.tar.gz`; see
+   `gizzi-code-v2.2.0-<target>.tar.gz`; see
    https://github.com/Allternit/allternit-platform/releases):
    ```bash
    # macOS (Apple Silicon)
-   curl -LO https://github.com/Allternit/allternit-platform/releases/download/gizzi-code/v2.1.9/gizzi-code-v2.1.9-darwin-arm64.tar.gz
+   curl -LO https://github.com/Allternit/allternit-platform/releases/download/gizzi-code/v2.2.0/gizzi-code-v2.2.0-darwin-arm64.tar.gz
 
    # Linux (x64)
-   curl -LO https://github.com/Allternit/allternit-platform/releases/download/gizzi-code/v2.1.9/gizzi-code-v2.1.9-linux-x64.tar.gz
+   curl -LO https://github.com/Allternit/allternit-platform/releases/download/gizzi-code/v2.2.0/gizzi-code-v2.2.0-linux-x64.tar.gz
 
    # Windows (x64)
-   curl -LO https://github.com/Allternit/allternit-platform/releases/download/gizzi-code/v2.1.9/gizzi-code-v2.1.9-windows-x64.zip
+   curl -LO https://github.com/Allternit/allternit-platform/releases/download/gizzi-code/v2.2.0/gizzi-code-v2.2.0-windows-x64.zip
    ```
 
 2. Make executable (macOS/Linux):

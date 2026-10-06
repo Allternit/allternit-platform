@@ -79,7 +79,10 @@ jobs:
   build-macos:
     name: Build macOS
     needs: [unit-tests, release-preflight]
-    runs-on: macos-latest
+    # macos-15, not macos-latest: macos-latest is macOS 26, and Zig 0.15.2
+    # (pinned by libghostty-vt for allternit-factory) can't link against the
+    # macOS 26 SDK (undefined _abort, _bzero, ...).
+    runs-on: macos-15
     permissions:
       contents: read
     env:
@@ -264,7 +267,7 @@ jobs:
       - name: Install Zig 0.15.2
         # The pane engine links libghostty-vt, built by Zig 0.15.2
         # (factory/pane/build.rs); Zig cross-builds both macOS targets.
-        # Pinned by checksum; macos-latest is arm64.
+        # Pinned by checksum; the macos-15 runner is arm64.
         run: |
           curl -fsSL https://ziglang.org/download/0.15.2/zig-aarch64-macos-0.15.2.tar.xz -o /tmp/zig.tar.xz
           echo "3cc2bab367e185cdfb27501c4b30b1b0653c28d9f73df8dc91488e66ece5fa6b  /tmp/zig.tar.xz" | shasum -a 256 -c -

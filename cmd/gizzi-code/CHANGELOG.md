@@ -1,8 +1,35 @@
 # Changelog
 
-## Unreleased
+## 2.2.0 (2026-10-06)
+
+Gizzi now runs the Allternit Factory: teams of agents, workflows and a shared
+workspace, from four commands. Terminals run on the Factory's pane engine.
+
+### Added
+- `gizzi agents`, `gizzi orchestration`, `gizzi workflows` and
+  `gizzi workspace`: the Allternit Factory commands. They run the
+  `allternit-factory` engine, which now installs next to `gizzi` (npm, brew
+  and the release archives on macOS and Linux). Each command takes `--json`,
+  and mutations take `--dry-run`. If the engine is missing, Gizzi says so
+  with exit code 3 and tells you how to install it.
+- `gizzi orchestration drain <to> [--all] [--dry-run]` delivers queued
+  messages oldest first. A message settles only after a verified paste.
+- `gizzi agents recover [bot] [--lead|--as-human]` relaunches an agent with
+  its harness's resume flag. `gizzi agents down <target> [--rm-worktree]`
+  stops one.
+- Built-in workflow templates (`build-check-prove`, `fact-check`) are
+  available in a fresh workspace.
+- Prompt-cache countdown in the TUI and workspace.
+- The terminal pet follows Desktop's pet on macOS.
 
 ### Changed
+- Terminals and PTYs run on the Factory pane engine. The separate
+  `allternit-mux` binary is gone.
+- The old `ao-*` commands and the `allternit-rails` names are retired; see
+  the migration page in the docs. `GIZZI_ENABLE_RAILS_PEER` still works for
+  now, with a one-time notice. Use `ALLTERNIT_FACTORY_PEER` instead.
+- Every model call is reported to the Allternit usage ledger. Turn
+  guardrails and per-call output caps apply to every turn.
 - MCP: Gizzi speaks MCP 2026-07-28 and every older revision. It now uses the
   official TypeScript SDK v2 (`@modelcontextprotocol/client`, `server` and
   `core` 2.3.1) in place of `@modelcontextprotocol/sdk` 1.x. Servers that
