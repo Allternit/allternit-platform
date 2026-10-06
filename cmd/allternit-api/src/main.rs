@@ -907,6 +907,7 @@ async fn main() {
         .merge(allternit_api::rails::fabric_transport_routes::fabric_transport_routes())
         .merge(agent_router())
         .merge(allternit_api::agent_email_routes::agent_email_router())
+        .merge(allternit_api::phone_seen_routes::phone_seen_router())
         .merge(agent_preferences_router())
         .merge(agent_workspace_router())
         // A thread placed on another Allternit (P4.2): its session's calls
