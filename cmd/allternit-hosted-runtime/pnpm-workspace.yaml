@@ -4,6 +4,16 @@ packages:
 onlyBuiltDependencies:
   - ws
 
+# Same catalog as the root pnpm-workspace.yaml (the MCP SDK pin). The shared
+# lockfile records it, so a stub without it fails the frozen install with
+# ERR_PNPM_LOCKFILE_CONFIG_MISMATCH ("catalogs" doesn't match).
+catalog:
+  '@modelcontextprotocol/server': 2.3.1
+  '@modelcontextprotocol/client': 2.3.1
+  '@modelcontextprotocol/core': 2.3.1
+  '@modelcontextprotocol/ext-apps': 2.0.3
+  zod: ^4.2.0
+
 # Keep in sync with the root pnpm-workspace.yaml: `pnpm install --frozen-lockfile`
 # fails (ERR_PNPM_LOCKFILE_CONFIG_MISMATCH) unless overrides and
 # patchedDependencies match what the shared lockfile was resolved with.

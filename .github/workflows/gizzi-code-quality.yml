@@ -161,19 +161,6 @@ jobs:
         shell: bash
         run: bash script/check-ts-nocheck.sh
 
-  gitleaks:
-    name: Secret scan
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      # gitleaks-action has no path input: on pull_request events it scans the
-      # PR diff, on push events the pushed commits. The `paths:` filters above
-      # guarantee those diffs only touch cmd/gizzi-code, which scopes the scan
-      # to the package in practice. Fails the job on any finding.
-      - uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_ENABLE_COMMENTS: "false"
+  # Secret scanning lives in .github/workflows/secrets.yml, which already scans
+  # every pull request and push (this package included). A second copy here
+  # spent CI minutes on the same diff.
