@@ -888,6 +888,32 @@ pub(crate) fn public_base() -> String {
         .to_string()
 }
 
+/// Whether an authorization server can fetch our Client ID Metadata Document
+/// at `url` (a base or the document URL): public https only. A Desktop
+/// runtime's `http://127.0.0.1:8013` is unreachable from the server, so CIMD
+/// there fails with `invalid_client`; those starts register (DCR) instead.
+pub fn cimd_reachable(url: &str) -> bool {
+    let Ok(u) = Url::parse(url) else { return false };
+    if u.scheme() != "https" {
+        return false;
+    }
+    match u.host() {
+        Some(url::Host::Domain(d)) => {
+            let d = d.to_ascii_lowercase();
+            d != "localhost" && !d.ends_with(".localhost") && !d.ends_with(".local") && !d.ends_with(".internal")
+        }
+        Some(url::Host::Ipv4(ip)) => !(ip.is_loopback() || ip.is_private() || ip.is_link_local() || ip.is_unspecified()),
+        Some(url::Host::Ipv6(ip)) => !(ip.is_loopback() || ip.is_unspecified() || (ip.segments()[0] & 0xfe00) == 0xfc00),
+        None => false,
+    }
+}
+
+/// A client id an earlier start saved that can never authenticate: our own
+/// CIMD URL on an unreachable base (pre-fix Desktop connectors).
+pub fn is_unreachable_cimd_client(client_id: &str) -> bool {
+    client_id.ends_with("/oauth/client.json") && client_id.starts_with("http") && !cimd_reachable(client_id)
+}
+
 pub fn client_metadata_url(base: &str) -> String {
     format!("{}/oauth/client.json", base.trim_end_matches('/'))
 }
@@ -1263,8 +1289,24 @@ pub async fn start_connector_oauth(
 ) -> Res<Value> {
     let (uid, cid) = (user.user_id.clone(), id.clone());
     let connector = blocking(state.db.clone(), move |c| load_connector(c, &uid, &cid)).await?;
-    let discovery = discover_authorization(&ReqwestTransport, &connector.url).await.map_err(DirError::Upstream)?;
+    let mut discovery = discover_authorization(&ReqwestTransport, &connector.url).await.map_err(DirError::Upstream)?;
     let base = public_base();
+    // Our CIMD only works where the authorization server can fetch it.
+    discovery.cimd_supported &= cimd_reachable(&base);
+    // Drop a loopback CIMD client id an earlier start saved: it can never authenticate.
+    let mut connector = connector;
+    if let Some(stale) = connector.oauth_client_id.clone().filter(|id| is_unreachable_cimd_client(id)) {
+        let (uid, cid) = (user.user_id.clone(), id.clone());
+        blocking(state.db.clone(), move |c| {
+            c.execute(
+                "UPDATE mcp_connectors SET oauth_client_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?1 AND user_id = ?2 AND oauth_client_id = ?3",
+                params![cid, uid, stale],
+            )
+            .map_err(DirError::from)
+        })
+        .await?;
+        connector.oauth_client_id = None;
+    }
     let registered = if needs_registration(connector.oauth_client_id.as_deref(), &discovery) {
         let endpoint = discovery.registration_endpoint.clone().unwrap_or_default();
         Some(register_client(&ReqwestTransport, &endpoint, &base).await.map_err(DirError::Upstream)?)
@@ -1739,6 +1781,18 @@ mod tests {
             json!({"authorization_endpoint": "https://169.254.169.254/authorize"}),
         )]));
         assert!(discover_authorization(&t, "https://mcp.example.com/mcp").await.is_err());
+    }
+
+    #[test]
+    fn cimd_is_only_used_where_the_server_can_fetch_it() {
+        assert!(cimd_reachable("https://api.allternit.com"));
+        assert!(cimd_reachable("https://api.allternit.com/oauth/client.json"));
+        for unreachable in ["http://127.0.0.1:8013", "https://127.0.0.1:8013", "https://localhost:8013", "https://10.0.0.5", "https://192.168.1.2", "https://box.local", "http://api.allternit.com", "https://[::1]:8013", "not a url"] {
+            assert!(!cimd_reachable(unreachable), "{unreachable}");
+        }
+        assert!(is_unreachable_cimd_client("http://127.0.0.1:8013/oauth/client.json"));
+        assert!(!is_unreachable_cimd_client("https://api.allternit.com/oauth/client.json"));
+        assert!(!is_unreachable_cimd_client("my-configured-client"));
     }
 
     #[test]

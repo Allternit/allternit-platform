@@ -53,7 +53,7 @@ When a user connects your server, Allternit runs the authorization-code flow wit
 
 3. **Callback.** Your authorization server redirects back with `code` and `state`. Allternit exchanges the code at the `token_endpoint` from your authorization-server metadata (`grant_type=authorization_code`, `code`, `code_verifier`, `redirect_uri`, `resource`, `state`, and `client_id`), then stores the tokens encrypted. When an access token expires, Allternit uses your refresh token at the same endpoint, again with `resource`. Tokens are used only in an `Authorization: Bearer` header on requests to your server, and are never logged or returned to the browser.
 
-Allternit picks its client in this order: a client ID configured on the connector, then the client ID metadata document (when your metadata sets `client_id_metadata_document_supported`), then [dynamic client registration](#dynamic-client-registration) (when your metadata has a `registration_endpoint`). If none applies, the connect step fails with a message saying so.
+Allternit picks its client in this order: a client ID configured on the connector, then the client ID metadata document (when your metadata sets `client_id_metadata_document_supported` and the connecting Allternit instance has a public HTTPS address your server can fetch the document from), then [dynamic client registration](#dynamic-client-registration) (when your metadata has a `registration_endpoint`). If none applies, the connect step fails with a message saying so.
 
 Every fetch Allternit makes during discovery refuses private, loopback, and link-local addresses.
 
@@ -65,7 +65,9 @@ Allternit does not send a `scope` parameter in the authorization request. Config
 
 Allternit identifies itself with a [client ID metadata document](https://datatracker.ietf.org/doc/draft-ietf-oauth-client-id-metadata-document/) (CIMD). The `client_id` is the URL of a JSON document Allternit hosts, so your authorization server does not need to register Allternit ahead of time.
 
-The document is served by the Allternit API at `/oauth/client.json`:
+The document is served by the Allternit API at `/oauth/client.json`. A connection made from Allternit Desktop runs on the user's own computer (`http://127.0.0.1:8013`), where your authorization server can't fetch the document, so Desktop uses [dynamic client registration](#dynamic-client-registration) instead, with a loopback `redirect_uri`. If your server offers client ID metadata documents but no `registration_endpoint`, Desktop users can't connect it unless the connector has a client ID configured.
+
+The hosted document:
 
 ```json
 {

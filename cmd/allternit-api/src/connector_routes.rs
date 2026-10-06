@@ -562,21 +562,51 @@ pub fn connector_public_router() -> Router<Arc<AppState>> {
 async fn sidecar_oauth_callback(
     axum::extract::RawQuery(query): axum::extract::RawQuery,
 ) -> impl IntoResponse {
+    use crate::oauth_result_page::{render, Outcome};
+    // The sidecar's own page is unbranded: keep its status, show ours (its text, as plain text, on failure).
     match crate::open_connector_proxy::proxy_oauth_callback(&query.unwrap_or_default()).await {
-        Ok((status, html)) => (
-            StatusCode::from_u16(status).unwrap_or(StatusCode::OK),
-            Html(html),
-        )
-            .into_response(),
+        Ok((status, html)) => {
+            let code = StatusCode::from_u16(status).unwrap_or(StatusCode::OK);
+            let page = if code.is_success() {
+                render(Outcome::Connected, "Connected", "Your account is connected. Allternit can now use it in your chats and bots.")
+            } else {
+                let reason = plain_text(&html);
+                let reason = if reason.is_empty() { "The app didn’t complete the sign-in.".to_string() } else { reason };
+                render(Outcome::Failed, "Couldn’t finish connecting", &reason)
+            };
+            (code, page).into_response()
+        }
         Err(e) => (
             StatusCode::BAD_GATEWAY,
-            Html(format!(
-                "<html><body><h2>Connector sidecar unavailable</h2><p>{}</p></body></html>",
-                e.message
-            )),
+            render(Outcome::Failed, "Couldn’t finish connecting", &format!("Allternit’s connector service isn’t running: {}", e.message)),
         )
             .into_response(),
     }
+}
+
+/// The visible text of an HTML fragment (tags, scripts and styles dropped, whitespace collapsed), at most 300 chars.
+fn plain_text(html: &str) -> String {
+    let lower = html.to_ascii_lowercase();
+    let mut out = String::new();
+    let (mut i, bytes) = (0usize, html.as_bytes());
+    while i < bytes.len() {
+        if bytes[i] == b'<' {
+            for skip in ["<script", "<style"] {
+                if lower[i..].starts_with(skip) {
+                    let close = format!("</{}", &skip[1..]);
+                    i = lower[i..].find(&close).map_or(bytes.len(), |e| i + e);
+                    break;
+                }
+            }
+            i = lower[i..].find('>').map_or(bytes.len(), |e| i + e + 1);
+            out.push(' ');
+        } else {
+            let ch = html[i..].chars().next().unwrap_or(' ');
+            out.push(ch);
+            i += ch.len_utf8();
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(300).collect()
 }
 
 fn caller(headers: &axum::http::HeaderMap) -> String {
@@ -2541,18 +2571,15 @@ async fn oauth_callback(
 ) -> Html<String> {
     if let Some(err) = q.error.clone() {
         let desc = q.error_description.clone().unwrap_or(err);
-        return Html(format!(
-            "<html><body><h2>Connector authorization failed</h2><p>{}</p></body></html>",
-            desc
-        ));
+        return crate::oauth_result_page::render(crate::oauth_result_page::Outcome::Failed, "Sign-in was cancelled", &desc);
     }
     let code = match q.code.clone() {
         Some(c) => c,
-        None => return Html("<html><body>Missing code.</body></html>".to_string()),
+        None => return crate::oauth_result_page::render(crate::oauth_result_page::Outcome::Failed, "Couldn’t finish signing in", "The app didn’t send back a sign-in code."),
     };
     let st = match q.state.clone() {
         Some(s) => s,
-        None => return Html("<html><body>Missing state.</body></html>".to_string()),
+        None => return crate::oauth_result_page::render(crate::oauth_result_page::Outcome::Failed, "Couldn’t finish signing in", "This sign-in link is incomplete."),
     };
 
     let db = state.db.clone();
@@ -2574,9 +2601,7 @@ async fn oauth_callback(
     let (connector_id, _user_id, metadata_s) = match found {
         Ok(Ok(Some(r))) => r,
         _ => {
-            return Html(
-                "<html><body>Pending authorization not found or expired.</body></html>".to_string(),
-            )
+            return crate::oauth_result_page::render(crate::oauth_result_page::Outcome::Failed, "This sign-in has expired", "Start connecting again from Allternit.")
         }
     };
     let md: Value = serde_json::from_str(&metadata_s).unwrap_or_else(|_| json!({}));
@@ -2633,10 +2658,7 @@ async fn oauth_callback(
                 .and_then(|v| v.as_i64())
                 .map(|s| (chrono::Utc::now() + chrono::Duration::seconds(s)).to_rfc3339());
             if access.is_empty() {
-                return Html(format!(
-                    "<html><body>Token response missing access_token: {}</body></html>",
-                    tok
-                ));
+                return crate::oauth_result_page::render(crate::oauth_result_page::Outcome::Failed, "Couldn’t finish connecting", "The app accepted the sign-in but didn’t return an access token.");
             }
             let db2 = state.db.clone();
             let cid = connector_id.clone();
@@ -2652,19 +2674,13 @@ async fn oauth_callback(
                 Ok::<_, rusqlite::Error>(())
             })
             .await;
-            Html("<html><body><h2>Connector connected</h2><p>You can close this window and return to Allternit.</p><script>window.close();</script></body></html>".to_string())
+            crate::oauth_result_page::render(crate::oauth_result_page::Outcome::Connected, "Connected", "Your account is connected. Allternit can now use it in your chats and bots.")
         }
         Ok(r) => {
             let body = r.text().await.unwrap_or_default();
-            Html(format!(
-                "<html><body>Token exchange failed: {}</body></html>",
-                body
-            ))
+            crate::oauth_result_page::render(crate::oauth_result_page::Outcome::Failed, "Couldn’t finish connecting", &format!("The app refused to complete the sign-in: {}", body.chars().take(300).collect::<String>()))
         }
-        Err(e) => Html(format!(
-            "<html><body>Token request error: {}</body></html>",
-            e
-        )),
+        Err(e) => crate::oauth_result_page::render(crate::oauth_result_page::Outcome::Failed, "Couldn’t finish connecting", &format!("Allternit couldn’t reach the app to complete the sign-in: {e}")),
     }
 }
 
@@ -2923,6 +2939,14 @@ fn urlencoding(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn sidecar_error_html_becomes_plain_text() {
+        let html = "<html><head><style>p{color:red}</style><script>x()</script></head><body><h2>Error</h2><p>Bad  state — retry</p></body></html>";
+        assert_eq!(super::plain_text(html), "Error Bad state — retry");
+        assert_eq!(super::plain_text("no tags"), "no tags");
+        assert_eq!(super::plain_text(""), "");
+    }
+
     use super::*;
 
     #[test]
