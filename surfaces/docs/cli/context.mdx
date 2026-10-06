@@ -176,7 +176,7 @@ When cold, `may re-cache` shows the latest reported input footprint.
 
 Expiry is an estimate from the request TTL, not a guarantee that the provider
 still holds the cache. Changes to model, tools, or context may invalidate it
-earlier. Unknown provider TTLs have no countdown. Native Anthropic requests
-currently use five-minute ephemeral markers; Gizzi's interactive Anthropic
-path uses its configured five-minute or one-hour TTL. No keepalive requests
+earlier. Unknown provider TTLs have no countdown. Native requests with a known TTL
+currently use five-minute ephemeral markers; Gizzi's interactive cache path
+uses its configured five-minute or one-hour TTL. No keepalive requests
 are sent. Miss counts and causes are omitted when not reported.
