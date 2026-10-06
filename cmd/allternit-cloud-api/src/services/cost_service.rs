@@ -92,8 +92,12 @@ pub struct CostAlert {
 }
 
 /// Type of cost alert
+///
+/// Stored in `cost_alerts.alert_type`, a `text` column (there is no Postgres
+/// enum type); without `type_name = "text"` sqlx binds it as a type named
+/// `alerttype` and every alert insert failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, sqlx::Type)]
-#[sqlx(rename_all = "snake_case")]
+#[sqlx(type_name = "text", rename_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 pub enum AlertType {
     Threshold,
@@ -882,6 +886,9 @@ impl CostService for CostServiceImpl {
 
         // Check if we should send a threshold alert
         if utilization_percent >= threshold {
+            // The event backbone gets one `usage.threshold` per crossing (push, MCP
+            // subscribers), independent of the 24 h cost_alerts cadence below.
+            emit_usage_threshold(&self.db, user_id, budget.monthly_budget, summary.current_month_cost, threshold, utilization_percent, Utc::now()).await;
             // Check if we've already sent an alert recently (within last 24 hours)
             let should_alert = if let Some(last_alert) = budget.last_alert_at {
                 (Utc::now() - last_alert) > Duration::hours(24)
@@ -1398,6 +1405,32 @@ impl CostService for CostServiceImpl {
     }
 }
 
+/// Emit `usage.threshold` into the event backbone for a crossed budget level,
+/// at most once per (user, month, level, budget): the source id makes the emit
+/// idempotent, so the minute-by-minute check never repeats it. `level` is the
+/// alert threshold, or 100 once the budget itself is used up. Failures are
+/// logged, never fatal to the alert check.
+pub async fn emit_usage_threshold(db: &PgPool, user_id: &str, budget: f64, used: f64, threshold: f64, utilization_percent: f64, now: DateTime<Utc>) -> Option<String> {
+    let level = if utilization_percent >= 100.0 { 100.0 } else { threshold };
+    let period = now.format("%Y-%m").to_string();
+    let source_id = format!("{user_id}:{period}:{}:{}", level.round() as i64, (budget * 100.0).round() as i64);
+    let data = serde_json::json!({
+        "meter": "cloud_spend",
+        "percent": level,
+        "used": (used * 100.0).round() / 100.0,
+        "limit": budget,
+        "period": period,
+        "currency": "USD",
+    });
+    match crate::routes::allternit_events::emit_user_event(db, user_id, "usage.threshold", &data, Some(now), "cloud:costs", Some(&source_id)).await {
+        Ok(id) => id,
+        Err(e) => {
+            warn!("usage.threshold emit failed for user {}: {}", user_id, e);
+            None
+        }
+    }
+}
+
 /// Start the background cost tracking task
 ///
 /// This task periodically:
@@ -1502,6 +1535,75 @@ pub async fn finalize_run_cost_tracking(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The tables the budget check touches, with production's column types (002 widened `real` to float8).
+    async fn budget_db() -> PgPool {
+        let db = crate::routes::test_support::test_pool().await;
+        crate::routes::test_support::events_backbone_schema(&db).await;
+        sqlx::raw_sql(
+            "CREATE TABLE runs (id text PRIMARY KEY, owner_id text, tenant_id text);
+             CREATE TABLE run_costs (id text PRIMARY KEY, run_id text, total_cost double precision DEFAULT 0, started_at timestamptz, duration_seconds bigint);
+             CREATE TABLE user_cost_budgets (user_id text PRIMARY KEY, monthly_budget double precision DEFAULT 0, current_month_cost double precision DEFAULT 0,
+                 alert_threshold double precision DEFAULT 80, last_alert_at timestamptz, alert_enabled boolean DEFAULT true, currency text DEFAULT 'USD',
+                 created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now());
+             CREATE TABLE cost_alerts (id text NOT NULL, user_id text, alert_type text, threshold_percent double precision, current_cost double precision,
+                 budget_amount double precision, message text, sent_at timestamptz DEFAULT now());",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        db
+    }
+
+    async fn spend(db: &PgPool, user: &str, id: &str, usd: f64) {
+        sqlx::query("INSERT INTO runs (id, owner_id, tenant_id) VALUES ($1, $2, $2)").bind(id).bind(user).execute(db).await.unwrap();
+        sqlx::query("INSERT INTO run_costs (id, run_id, total_cost, started_at, duration_seconds) VALUES ($1, $1, $2, now(), 60)").bind(id).bind(usd).execute(db).await.unwrap();
+    }
+
+    async fn threshold_events(db: &PgPool, user: &str) -> Vec<Value> {
+        sqlx::query_scalar("SELECT data FROM platform_events WHERE subject = 'user' AND user_id = $1 AND type = 'usage.threshold' ORDER BY created_at").bind(user).fetch_all(db).await.unwrap()
+    }
+
+    use serde_json::Value;
+
+    #[tokio::test]
+    async fn usage_threshold_is_emitted_once_per_crossing() {
+        let db = budget_db().await;
+        let service = CostServiceImpl::new(db.clone());
+        // Default budget: $100, alert at 80%.
+        service.get_or_init_user_budget("u1").await.unwrap();
+        spend(&db, "u1", "r1", 50.0).await;
+        service.check_budget_alerts("u1").await.unwrap();
+        assert!(threshold_events(&db, "u1").await.is_empty(), "under the threshold");
+
+        spend(&db, "u1", "r2", 35.0).await;
+        let alerts = service.check_budget_alerts("u1").await.unwrap();
+        assert_eq!(alerts.len(), 1, "the cost_alerts row still lands");
+        // The minute-by-minute check runs again: still one event.
+        service.check_budget_alerts("u1").await.unwrap();
+        sqlx::query("UPDATE user_cost_budgets SET last_alert_at = now() - interval '2 days'").execute(&db).await.unwrap();
+        service.check_budget_alerts("u1").await.unwrap();
+        let events = threshold_events(&db, "u1").await;
+        assert_eq!(events.len(), 1, "{events:?}");
+        let e = &events[0];
+        assert_eq!((e["meter"].as_str(), e["percent"].as_f64(), e["used"].as_f64(), e["limit"].as_f64()), (Some("cloud_spend"), Some(80.0), Some(85.0), Some(100.0)));
+        assert_eq!(e["period"].as_str().unwrap(), Utc::now().format("%Y-%m").to_string());
+
+        // Crossing the budget itself is a second crossing, emitted once, even inside the 24 h alert gap.
+        spend(&db, "u1", "r3", 20.0).await;
+        service.check_budget_alerts("u1").await.unwrap();
+        service.check_budget_alerts("u1").await.unwrap();
+        let events = threshold_events(&db, "u1").await;
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[1]["percent"].as_f64(), Some(100.0));
+
+        // Alerts off: nothing.
+        service.get_or_init_user_budget("u2").await.unwrap();
+        sqlx::query("UPDATE user_cost_budgets SET alert_enabled = false WHERE user_id = 'u2'").execute(&db).await.unwrap();
+        spend(&db, "u2", "r4", 500.0).await;
+        service.check_budget_alerts("u2").await.unwrap();
+        assert!(threshold_events(&db, "u2").await.is_empty());
+    }
 
     #[tokio::test]
     async fn test_calculate_instance_cost() {

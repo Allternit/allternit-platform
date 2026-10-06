@@ -1,0 +1,100 @@
+---
+title: Notification preferences
+description: Per-event-type push preferences, and the one push sink that turns event backbone events into Web Push notifications.
+---
+
+Every user event on the event backbone (the events runtimes forward through [Runtime events](/api/runtime-events), and the ones cloud-api raises itself, such as `usage.threshold`) can become a [Web Push](/api/web-push) notification. One sink in cloud-api reads the backbone and decides per person and event type. Preferences are stored per person, not per device.
+
+## Routes
+
+Clerk session or a `compute`-scoped API key.
+
+### `GET /api/v1/notifications/preferences`
+
+```json
+{
+  "pushConfigured": true,
+  "preferences": [
+    {
+      "event": "approval.requested",
+      "title": "Approval requests",
+      "description": "An agent is waiting for the owner to approve an action (a tool call, an outbound message, a payment).",
+      "enabled": true,
+      "default": true
+    }
+  ]
+}
+```
+
+One row per event type a person can be notified about, in [event registry](/guides/mcp-events#events) order: `approval.requested`, `approval.resolved`, `agent.run.completed`, `thread.needs_user`, `message.received`, `call.ended`, `inbox.item.created`, `vendor.ticket.created`, `subscription.login_needed`, `subscription.signed_in`, `usage.threshold`. `title` and `description` come from the registry (the same titles as `GET /api/v1/events/catalog`), so a client renders switches without its own copy. `default` is what `enabled` is when the person hasn't changed it. `pushConfigured: false` means the server has no VAPID keys, so nothing is sent whatever the switches say.
+
+### `PUT /api/v1/notifications/preferences`
+
+```json
+{ "preferences": { "agent.run.completed": true, "message.received": false, "approval.requested": null } }
+```
+
+`true` / `false` sets a type; `null` puts it back to its default. The change is all or nothing. Answers the same body as `GET`. Errors: `400 {"error":"unknown_event"}` for a name that isn't a notifiable event type (platform-only types such as `message.status` included), `400 {"error":"bad_value"}` for an empty map or a value that isn't `true`, `false` or `null`.
+
+## Defaults
+
+| On | Off |
+|---|---|
+| `approval.requested`, `thread.needs_user`, `message.received`, `call.ended`, `subscription.login_needed`, `usage.threshold` | `agent.run.completed`, `approval.resolved`, `inbox.item.created`, `vendor.ticket.created`, `subscription.signed_in` |
+
+`message.received` and `call.ended` default on because the app already pushed messages and missed calls before the sink existed.
+
+## The push sink
+
+`cmd/allternit-cloud-api/src/routes/notifications.rs`, started from `main.rs` only when the VAPID env is set. Every 3 seconds it reads user events (`platform_events`, `subject = 'user'`) stored in the last 10 minutes that it hasn't seen, and for each one:
+
+1. claims it in `notification_push_log` (`INSERT … ON CONFLICT DO NOTHING`), so a restart, a second replica or a rescan never pushes it twice;
+2. skips it when it happened at the producer more than 12 hours ago;
+3. checks the owner's preference;
+4. builds the notification ([copy and links](#copy-and-links));
+5. for `message.received`, applies the message limits (one per conversation per 20 seconds, 40 an hour) and skips it when a direct channel push went to the same person in the last 2 minutes (see below);
+6. sends it to every device the owner registered, and records `sent`, `off`, `unreachable` (no device took it) or `skipped`.
+
+Migration `060_notification_preferences.sql` adds `notification_preferences`, `notification_push_log` and an index on `platform_events (created_at) WHERE subject = 'user'`. It is applied by hand to production, after 057.
+
+### Copy and links
+
+The payload is the [Web Push](/api/web-push#what-gets-pushed) JSON with `type: "event"` (`"message"` for `message.received`) and `data: {event, botId, threadId}`. Links use the push-links scheme: `/?allternit_thread=<threadId>&bot=<botId>` when the event has both, `/?allternit_channel=<provider>` for a message without a thread, `/` otherwise.
+
+| Event | Title | Body | `tag` |
+|---|---|---|---|
+| `approval.requested` | Approval needed | `<bot> wants to: <summary>` | `approval-<id>` (`Urgency: high`) |
+| `approval.resolved` | Approval `<decision>` | the summary, or `<bot> can carry on.` | `approval-<id>` (replaces the request) |
+| `agent.run.completed` | `<bot> finished a run` | `Done: <title>`, `It failed. Open it to see why.`, `It was cancelled.` | `run-<id>` |
+| `thread.needs_user` | `<bot> needs you` | the reason, the thread title or `Open the thread to reply.` | `needs-<thread>` (`Urgency: high`) |
+| `message.received` | the sender, or New message | the text (cut at 240 characters), or `You have a new <channel> message for your bot` | `msg-<thread>` or `channel-<provider>` |
+| `call.ended` | `Missed call from <from>` or Call ended | follow-up hint, or `<bot> finished a call with <from> (2 min).` | `call-<id>` |
+| `inbox.item.created` | the item title | its summary | `inbox-<id>` |
+| `vendor.ticket.created` | `New ticket for <bot>` | A vendor bot has work waiting. | `ticket-<id>` |
+| `subscription.login_needed` | `Sign in to <Provider> again` | `Your <Provider> subscription (<label>) signed out. …` | `login-<loginId>` |
+| `subscription.signed_in` | `<Provider> is signed in again` | `… is working again.` | `login-<loginId>` (replaces the above) |
+| `usage.threshold` | `You've used 80% of your monthly cloud budget` / `You've used all of …` | `$81.50 of $100.00 so far this month.` | `usage-<meter>-<period>` |
+
+`<bot>` is the forwarded `botName`, or "Your bot". `approval.requested` with `source: "gizzi-permission"` (a coding-session permission ask) is never pushed here: the gizzi remote-control lane (`services/remote-control-push`) already notifies for it.
+
+### Direct pushes
+
+These don't go through the sink, because the backbone carries no event for them:
+
+| Push | Why it stays direct | Preference it follows |
+|---|---|---|
+| In-app call ring (`inapp_calls`) | A ring lives 45 seconds and must leave at once with `Urgency: high`; in-app calls are cloud-only, with no runtime ledger row | none: rings always ring a device with notifications on |
+| In-app missed call | Replaces the ring's notification (same tag), cloud-only | `call.ended` |
+| In-app thread message | Messages between invite-linked people are cloud-only | `message.received` |
+
+A message relayed to a runtime through a channel address (`channel_inbound`) used to be pushed directly. The runtime records the same message and forwards it as `message.received`, so now the direct push only goes out for a runtime that has never forwarded an event (an older build), and follows the `message.received` preference. Once a runtime forwards, the sink sends it, with the sender and text. While the sink isn't working (VAPID unset, or migration 060 not applied yet) every relayed message keeps its direct push. For the one message where both could fire (the first event a runtime ever forwards), the sink sees the direct push in `push_log` and skips its own.
+
+## Usage alerts
+
+The cost tracker (`services/cost_service.rs`, every minute) emits the `usage.threshold` event into the backbone when a person's monthly cloud spend crosses their budget alert threshold, and again when it reaches 100% of the budget. Each crossing is emitted once: the event's source id is `<user>:<YYYY-MM>:<level>:<budget in cents>`, so the minute-by-minute check never repeats it, a new month starts over, and changing the budget counts as a new crossing. `data`:
+
+```json
+{ "meter": "cloud_spend", "percent": 80.0, "used": 81.5, "limit": 100.0, "period": "2026-10", "currency": "USD" }
+```
+
+From the backbone it reaches push (above) and [MCP Events](/guides/mcp-events) subscribers through the same path as every other event. Platform API project webhooks carry project events only, so they don't get it. The `cost_alerts` rows the tracker already wrote every 24 hours are unchanged.

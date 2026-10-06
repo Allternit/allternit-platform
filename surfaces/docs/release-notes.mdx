@@ -5,6 +5,13 @@ description: 'Changelog for the Allternit platform, SDKs, and Gizzi Code CLI'
 
 # Release Notes
 
+## 2026-10-06 — Notifications from the event backbone
+
+- One push sink turns event backbone events into notifications: approvals, threads that need you, messages, ended calls, sign-in needed and usage alerts are on by default; finished runs and other informational events are off. Each type has its own switch. See [Notifications](/guides/notifications) and [Notification preferences](/api/notifications).
+- Relayed channel messages from a runtime that forwards its events now notify once, with the sender and text, through the sink instead of the direct push.
+- Cloud budget alerts now emit `usage.threshold` once per crossing, so push and MCP Events subscribers get them.
+- The `allternit-bot` CLI keys list now shows each key's MCP Events subscriptions, and the owner can stop one. See [allternit-bot CLI](/guides/allternit-bot-cli).
+
 ## 2026-10-02 — Thread and project pane parity
 
 - Bot threads now use one-row tops with avatar navigation and vendor provenance popovers. Ripped-page context dividers, plan cards, and wavy gap/day rules explain thread history. The pane switches Thread, Browser, and Computer; notifications and bot settings fold into ⋯ when docked. See [Threads](/guides/bot-threads).

@@ -248,9 +248,10 @@ async fn notify_message(db: &PgPool, me: &str, thread_id: &str, text: &str) {
         Ok(link) => display_name(db, &other, &link, me).await,
         Err(_) => "Someone".to_string(),
     };
-    web_push::spawn_notify(
+    web_push::spawn_notify_pref(
         db.clone(),
         other,
+        "message.received",
         PushMessage {
             kind: "message",
             title: label,
@@ -288,9 +289,10 @@ async fn notify_ring(db: &PgPool, call: &CallRow) {
 /// "Missed call from X" for the callee; replaces the ringing notification (same tag).
 async fn notify_missed(db: &PgPool, call: &CallRow) {
     let label = caller_label(db, call).await;
-    web_push::spawn_notify(
+    web_push::spawn_notify_pref(
         db.clone(),
         call.callee_user_id.clone(),
+        "call.ended",
         PushMessage {
             kind: "missed_call",
             title: format!("Missed call from {label}"),

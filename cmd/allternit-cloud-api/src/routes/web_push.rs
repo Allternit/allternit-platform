@@ -11,13 +11,17 @@
 //! - `POST   /api/v1/push/subscriptions` {deviceId, subscription:{endpoint, keys:{p256dh, auth}}} → `{ok, id}`
 //! - `DELETE /api/v1/push/subscriptions` {deviceId}                   → `{ok, removed}`
 //!
-//! Senders used by the rest of cloud-api: [`spawn_notify`] (fire and forget), which `inapp_calls` calls for
-//! a ring, a missed call and a thread message, and `channel_inbound` calls for a message that reached the
-//! bot phone. Payloads are encrypted for the browser (RFC 8291, `aes128gcm`) and signed with VAPID
+//! Senders used by the rest of cloud-api: the backbone push sink (`routes::notifications`, every user event
+//! on the event backbone, per the owner's notification preferences), and the direct senders that stay direct
+//! because the backbone carries no event for them: [`spawn_notify`] for an in-app call ring, and
+//! [`spawn_notify_pref`] for an in-app missed call (`call.ended` preference) and in-app message
+//! (`message.received` preference). [`notify_channel_message`] (`channel_inbound`) pushes a relayed channel
+//! message only for a runtime that doesn't forward its events yet; otherwise the sink sends it from the
+//! forwarded `message.received`, so it is never pushed twice. Payloads are encrypted for the browser (RFC 8291, `aes128gcm`) and signed with VAPID
 //! (RFC 8292). A push service answering 404/410 means the subscription is gone and its row is deleted.
 //!
-//! Payload the service worker receives (JSON): `{type: "call"|"missed_call"|"message"|"channel_message",
-//! title, body, url, tag, data}`. `url` is a path on the app's own origin that opens the call or thread.
+//! Payload the service worker receives (JSON): `{type: "call"|"missed_call"|"message"|"channel_message"|"event",
+//! title, body, url, tag, data}` (`event` = a backbone event; `data.event` names it). `url` is a path on the app's own origin that opens the call or thread.
 
 use aws_lc_rs::{
     aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_128_GCM},
@@ -254,7 +258,7 @@ fn default_transport() -> Arc<dyn PushTransport> {
 
 #[derive(Debug, Clone)]
 pub struct PushMessage {
-    /// `call`, `missed_call`, `message` or `channel_message`.
+    /// `call`, `missed_call`, `message`, `channel_message` or `event` (a backbone event from the sink).
     pub kind: &'static str,
     pub title: String,
     pub body: String,
@@ -380,8 +384,24 @@ pub fn spawn_notify(db: PgPool, user: String, msg: PushMessage, rate_limited: bo
     });
 }
 
+/// Like [`spawn_notify`], but only when `user` wants pushes for the registry event type `event`
+/// (`routes::notifications` preferences).
+pub fn spawn_notify_pref(db: PgPool, user: String, event: &'static str, msg: PushMessage, rate_limited: bool) {
+    let Some(vapid) = Vapid::from_env() else { return };
+    tokio::spawn(async move {
+        if !super::notifications::enabled(&db, &user, event).await {
+            return;
+        }
+        if rate_limited && !allow_message_push(&db, &user, &msg.tag).await {
+            return;
+        }
+        let transport = default_transport();
+        send_to_user(&db, transport.as_ref(), &vapid, &user, &msg).await;
+    });
+}
+
 /// Name the app shows for a channel provider.
-fn provider_label(provider: &str) -> &'static str {
+pub fn provider_label(provider: &str) -> &'static str {
     match provider {
         "slack" => "Slack",
         "telegram" => "Telegram",
@@ -394,26 +414,43 @@ fn provider_label(provider: &str) -> &'static str {
     }
 }
 
-/// A message reached the user's runtime through a channel's relay address: tell their devices, one push per
-/// address per 20 s. The message text isn't read here (the cloud only relays it), so the push just says
-/// where it came from.
-pub fn notify_channel_message(db: &PgPool, user: &str, route_id: &str, provider: &str) {
+/// Whether the direct push for a relayed channel message may go out, recording it when it may: only for a
+/// runtime that doesn't forward its events to the backbone (otherwise the push sink sends it from the
+/// forwarded `message.received`), only when `user` wants message pushes, and one per address per 20 s.
+pub async fn channel_push_allowed(db: &PgPool, user: &str, route_id: &str, runtime_id: &str) -> bool {
+    if super::notifications::runtime_forwards_events(db, runtime_id).await {
+        return false;
+    }
+    if !super::notifications::enabled(db, user, "message.received").await {
+        return false;
+    }
+    allow_message_push(db, user, &format!("channel-{route_id}")).await
+}
+
+/// A message reached the user's runtime through a channel's relay address: tell their devices, unless the
+/// runtime forwards its events (then the backbone push sink does, once, with the sender and text). The
+/// message text isn't read here (the cloud only relays it), so this push just says where it came from.
+pub fn notify_channel_message(db: &PgPool, user: &str, route_id: &str, provider: &str, runtime_id: &str) {
+    let Some(vapid) = Vapid::from_env() else { return };
     let label = provider_label(provider);
-    spawn_notify(
-        db.clone(),
-        user.to_string(),
-        PushMessage {
-            kind: "channel_message",
-            title: "New message".to_string(),
-            body: format!("You have a new {label} message for your bot"),
-            url: format!("/?allternit_channel={provider}"),
-            tag: format!("channel-{route_id}"),
-            data: json!({ "provider": provider }),
-            ttl_secs: 24 * 3600,
-            high_urgency: false,
-        },
-        true,
-    );
+    let msg = PushMessage {
+        kind: "channel_message",
+        title: "New message".to_string(),
+        body: format!("You have a new {label} message for your bot"),
+        url: format!("/?allternit_channel={provider}"),
+        tag: format!("channel-{route_id}"),
+        data: json!({ "provider": provider }),
+        ttl_secs: 24 * 3600,
+        high_urgency: false,
+    };
+    let (db, user, route_id, runtime_id) = (db.clone(), user.to_string(), route_id.to_string(), runtime_id.to_string());
+    tokio::spawn(async move {
+        if !channel_push_allowed(&db, &user, &route_id, &runtime_id).await {
+            return;
+        }
+        let transport = default_transport();
+        send_to_user(&db, transport.as_ref(), &vapid, &user, &msg).await;
+    });
 }
 
 // ---------------------------------------------------------------------------
