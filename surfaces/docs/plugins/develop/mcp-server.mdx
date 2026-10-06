@@ -7,23 +7,26 @@ Your MCP server is the only required part of a plugin. This page covers what All
 
 ## Transport
 
-Serve MCP over [streamable HTTP](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#streamable-http) on a single `https` endpoint, for example `https://example.com/mcp`.
+Serve MCP over [streamable HTTP](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http) on a single `https` endpoint, for example `https://example.com/mcp`. Both MCP eras work: the stateless 2026-07-28 protocol and the older `initialize` handshake (2025-11-25 and earlier).
 
-The Allternit client:
+The Allternit client is dual-era:
 
-- POSTs JSON-RPC requests and accepts either a JSON body or an SSE stream in reply.
-- Sends `MCP-Protocol-Version: 2025-06-18` and echoes any `Mcp-Session-Id` your server issues.
-- Treats a `202` reply to a notification as success.
-- Sends a `DELETE` with the session id when it closes a session.
-- Treats a `404` on a request that carries a session id as an expired session and initializes again.
+- It POSTs JSON-RPC requests and accepts either a JSON body or an SSE stream in reply (notifications on the stream are skipped).
+- It first tries MCP **2026-07-28**: a `server/discover` request with no `initialize`. Every modern request carries `params._meta` with `io.modelcontextprotocol/protocolVersion: "2026-07-28"`, `io.modelcontextprotocol/clientCapabilities` and `io.modelcontextprotocol/clientInfo`, plus the `MCP-Protocol-Version: 2026-07-28` and `Mcp-Method` headers, and `Mcp-Name` on `tools/call`, `resources/read` and `prompts/get` (in the `=?base64?…?=` form when the name is not plain ASCII). No session id is used.
+- If your server answers that request with `-32022` and a `supported` list, it retries with a version from the list. Other modern errors (`-32020`, `-32021`) are reported, not retried.
+- If your server answers with any other `4xx` (for example `400` "no session", `404`, `405`), or with a JSON-RPC error that is not a modern one, or with a discover result that has no `supportedVersions`, the client falls back to `initialize`. It offers `2025-11-25`, or the newest older version your `-32022` listed.
+- After `initialize` it sends `MCP-Protocol-Version` with the negotiated version and echoes any `Mcp-Session-Id` your server issues, treats a `202` reply to a notification as success, sends a `DELETE` with the session id when it closes a session, and treats a `404` on a request that carries a session id as an expired session.
+- `401`, `403`, `429` and `5xx` replies are errors, never an era signal: the client does not fall back on them.
+- The era it found is remembered per origin (scheme, host and port), so later connections skip the probe. If that guess stops working, the client probes again.
+- A result without `resultType` counts as complete. A result with another `resultType` (such as `input_required`) is reported as an error; multi-round-trip input is not supported yet.
 
-Stateless servers (no session id) work. The chat runtime tries streamable HTTP first and falls back to the older SSE transport, but new servers should use streamable HTTP.
+Stateless servers (no session id) work in both eras. If both streamable HTTP attempts get `404` or `405`, the chat runtime falls back to the older SSE transport, but new servers should use streamable HTTP.
 
 Requests that reach your server are made by Allternit's servers, not by the user's browser. Your server does not need to allow cross-origin requests from Allternit's web origin.
 
 ## What Allternit sends at initialize
 
-The client advertises MCP Apps support in its capabilities:
+The client advertises MCP Apps support in its capabilities: in `initialize` (legacy) or in every request's `_meta["io.modelcontextprotocol/clientCapabilities"]` (2026-07-28):
 
 ```json
 {

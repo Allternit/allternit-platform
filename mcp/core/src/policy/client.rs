@@ -89,7 +89,7 @@ pub type PolicyResult<T> = Result<T, PolicyError>;
 /// - Approval workflows for high-risk operations
 /// - Audit logging of all tool executions
 pub struct PolicyEnforcingMcpClient {
-    transport: Box<dyn McpTransport>,
+    client: crate::McpClient,
     policy_engine: Arc<PolicyEngine>,
     server_id: String,
     server_name: String,
@@ -160,7 +160,7 @@ impl PolicyEnforcingMcpClient {
         identity_id: String,
     ) -> Self {
         Self {
-            transport,
+            client: crate::McpClient::new(std::sync::Arc::from(transport)),
             policy_engine,
             server_id,
             server_name,
@@ -178,12 +178,14 @@ impl PolicyEnforcingMcpClient {
             return Ok(());
         }
 
-        // Transport is already connected when spawned
+        // Dual-era connect (MCP 2026-07-28 first, legacy initialize fallback).
+        self.client.initialize().await?;
         self.initialized = true;
 
         info!(
             server_id = %self.server_id,
             server_name = %self.server_name,
+            era = ?self.client.era(),
             "Policy-enforcing MCP client initialized"
         );
 
@@ -193,17 +195,17 @@ impl PolicyEnforcingMcpClient {
     /// List available tools from the MCP server
     ///
     /// This operation does not require policy evaluation as it
-    /// only reads metadata about available tools.
+    /// only reads metadata about available tools. Tools set with
+    /// [`Self::set_tools`] take precedence over asking the server.
     pub async fn list_tools(&self) -> McpResult<Vec<Tool>> {
         self.ensure_initialized()?;
-
-        // For list_tools, we don't apply policy - it's just metadata
-        // The actual tool calls will be policy-checked
+        if let Some(tools) = &self.capabilities {
+            return Ok(tools.clone());
+        }
         debug!("Listing tools (bypassing policy check for metadata)");
-
-        // Return empty list as we don't have direct access to tool listing
-        // In a real implementation, this would call the transport
-        Ok(self.capabilities.clone().unwrap_or_default())
+        let result = self.client.request("tools/list", None).await?;
+        let list: crate::types::ListToolsResult = serde_json::from_value(result)?;
+        Ok(list.tools)
     }
 
     /// Set the available tools (typically called after discovery)
@@ -340,20 +342,17 @@ impl PolicyEnforcingMcpClient {
         // Execute the tool via the transport
         info!(tool_name = %request.name, "Executing tool call");
 
-        // Build the JSON-RPC request
-        let _params = serde_json::json!({
+        let params = serde_json::json!({
             "name": request.name,
-            "arguments": request.arguments,
+            "arguments": request.arguments.clone().unwrap_or_else(|| serde_json::json!({})),
         });
-
-        // For now, return a mock result
-        // In a real implementation, this would call the transport
-        let result = ToolResult {
-            content: vec![crate::types::ToolContent::Text {
-                text: format!("Tool '{}' executed successfully", request.name),
-            }],
-            is_error: Some(false),
-        };
+        let raw = self
+            .client
+            .request("tools/call", Some(params))
+            .await
+            .map_err(|e| PolicyError::Mcp(e))?;
+        let result: ToolResult = serde_json::from_value(raw)
+            .map_err(|e| PolicyError::Mcp(McpError::Serialization(e)))?;
 
         info!(tool_name = %request.name, "Tool call completed successfully");
 
@@ -429,7 +428,7 @@ impl PolicyEnforcingMcpClient {
     /// Shutdown the client
     pub async fn shutdown(&mut self) -> McpResult<()> {
         self.initialized = false;
-        self.transport.close().await
+        self.client.shutdown().await
     }
 
     /// Check if the client is initialized

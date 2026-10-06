@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/allternitchitect/allternit"
-description = "MCP (Model Context Protocol) client with stdio/SSE transport, OAuth, health monitoring, and Allternit integration"
+description = "Allternit integration layer (policy, tool bridge, tools-gateway provider) over the mcp-client crate"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
@@ -21,6 +21,9 @@ rand = "0.8"
 futures = "0.3"
 futures-util = "0.3"
 uuid = { version = "1.6", features = ["v4"] }
+
+# The one MCP client implementation (protocol, transports, OAuth, registry)
+mcp-client = { workspace = true }
 
 # Specific dependencies
 sqlx = { workspace = true }
