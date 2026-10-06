@@ -61,13 +61,13 @@ Your bot can start a text or a call from its own number, and so can you.
 
 ### Who the bot may contact
 
-The bot only texts or calls people who **texted or called this number first**, or that you **added as a contact**. Anyone else is refused, and the bot tells you so ("+1 415 555 0123 hasn't texted or called this number and isn't on your allowed contacts"). To allow someone, add them under the number's contacts; that records your consent for that person on that number.
+The bot only **texts** people who **texted this number first** (or texted START after a STOP). That is the one sign-up path the number's carrier registration declares, so adding someone as a contact, or them having called, does not allow a text. The bot only **calls** people who texted or called the number first, or that you **added as a contact**; adding a contact records your consent for calls on that number. Anyone else is refused, and the bot says why ("+1 415 555 0123 hasn't texted this number, so I can't text them").
 
 **STOP always wins.** If a person texts STOP, the bot can't text or call them again, even if they are a contact, until they text START.
 
 ### Texting pending carrier approval
 
-US texting needs carrier registration (10DLC). The phone wizard asks **who is texting**: a business (legal name, EIN, address, contact) or **just you** (a person or sole proprietor without an EIN: your name, address and mobile number; the carrier texts a code to that mobile and you enter it in the wizard). Review usually takes a few days to two weeks and is up to the carriers. If the registration is held on Allternit's side, the wizard says it is waiting and it continues by itself; if the carrier rejects it, the wizard shows why so you can fix the details and resubmit. Until your number is approved, texts out are held back and the composer says so. Calls don't need it. Outbound calling is switched on per deployment; where it isn't on yet, the bot says outbound calling isn't available.
+US texting needs carrier registration (10DLC). The phone wizard asks **who is texting**: a business (legal name, EIN, address, contact) or **just you** (a person or sole proprietor without an EIN: your name, address and mobile number; the carrier texts a code to that mobile and you enter it in the wizard). The registration tells the carriers one way people sign up: they text your number first, after seeing it on a public **opt-in page**. Give the wizard your own page (it must show the number and say that texting it means agreeing to replies, with STOP and HELP), or leave it blank and Allternit hosts one for the number at `https://api.allternit.com/sms/<number id>`. Review usually takes a few days to two weeks and is up to the carriers. If the registration is held on Allternit's side, the wizard says it is waiting and it continues by itself; if the carrier rejects it, the wizard shows why so you can fix the details and resubmit. Until your number is approved, texts out are held back and the composer says so. Calls don't need it. Outbound calling is switched on per deployment; where it isn't on yet, the bot says outbound calling isn't available.
 
 ## On a phone
 

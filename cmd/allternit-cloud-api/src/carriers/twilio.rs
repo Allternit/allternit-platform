@@ -245,17 +245,18 @@ impl Carrier for Twilio {
                 let (Some(profile), Some(a2p)) = (f.twilio_customer_profile_sid.as_deref(), f.twilio_a2p_profile_sid.as_deref()) else {
                     return Err(CarrierError::Invalid("missing fields: twilioCustomerProfileSid, twilioA2pProfileSid".into()));
                 };
-                if f.sample_messages.len() < 2 || f.use_case.is_empty() || f.use_case_summary.is_empty() || f.opt_in_workflow.is_empty() {
-                    return Err(CarrierError::Invalid("missing fields: useCase, useCaseSummary, optInWorkflow, sampleMessages (two or more)".into()));
+                if f.sample_messages.len() < 2 || f.use_case.is_empty() || f.use_case_summary.is_empty() {
+                    return Err(CarrierError::Invalid("missing fields: useCase, useCaseSummary, sampleMessages (two or more)".into()));
                 }
                 let brand = self
                     .call("POST", "https://messaging.twilio.com/v1/a2p/BrandRegistrations".into(), Some(pairs(&[("CustomerProfileBundleSid", profile), ("A2PProfileBundleSid", a2p)])))
                     .await?;
                 let brand_sid = str_at(&brand, &["sid"]).ok_or_else(|| CarrierError::Upstream(502, "brand has no sid".into()))?.to_string();
+                let flow = super::message_flow(f);
                 let mut form = pairs(&[
                     ("BrandRegistrationSid", &brand_sid),
                     ("Description", &f.use_case_summary),
-                    ("MessageFlow", &f.opt_in_workflow),
+                    ("MessageFlow", &flow),
                     ("UsAppToPersonUsecase", &f.use_case),
                     ("HasEmbeddedLinks", "false"),
                     ("HasEmbeddedPhone", "false"),
@@ -269,7 +270,7 @@ impl Carrier for Twilio {
             RegistrationKind::TollFree => {
                 let number_sid = carrier_number_id.ok_or_else(|| CarrierError::Invalid("number has no carrier id".into()))?;
                 let _ = e164;
-                for (name, value) in [("legalName", &f.legal_name), ("website", &f.website), ("contactEmail", &f.contact_email), ("useCaseSummary", &f.use_case_summary), ("optInWorkflow", &f.opt_in_workflow), ("messageVolume", &f.message_volume), ("useCase", &f.use_case)] {
+                for (name, value) in [("legalName", &f.legal_name), ("website", &f.website), ("contactEmail", &f.contact_email), ("useCaseSummary", &f.use_case_summary), ("messageVolume", &f.message_volume), ("useCase", &f.use_case)] {
                     if value.trim().is_empty() {
                         return Err(CarrierError::Invalid(format!("missing fields: {name}")));
                     }
@@ -283,7 +284,7 @@ impl Carrier for Twilio {
                     ("NotificationEmail", &f.contact_email),
                     ("UseCaseSummary", &f.use_case_summary),
                     ("ProductionMessageSample", &f.sample_messages[0]),
-                    ("OptInType", "WEB_FORM"),
+                    ("OptInType", "VIA_TEXT"),
                     ("MessageVolume", &f.message_volume),
                     ("TollfreePhoneNumberSid", number_sid),
                     ("BusinessStreetAddress", &f.street),

@@ -569,7 +569,7 @@ fn out_error(e: crate::phone_outbound::OutError) -> StartError {
     use crate::phone_outbound::OutError;
     let message = e.sentence();
     match e {
-        OutError::NoConsent(_) => StartError::new(StatusCode::FORBIDDEN, "no_consent", message),
+        OutError::NoConsent(_) | OutError::NoTextConsent(_) => StartError::new(StatusCode::FORBIDDEN, "no_consent", message),
         OutError::CallsUnavailable => StartError::new(StatusCode::SERVICE_UNAVAILABLE, "calls_unavailable", message),
         OutError::OptedOut(_) => StartError::new(StatusCode::FORBIDDEN, "recipient_opted_out", message),
         OutError::NotActive => StartError::new(StatusCode::FORBIDDEN, "sms_not_active", message),

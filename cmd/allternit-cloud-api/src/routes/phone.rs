@@ -78,6 +78,7 @@ pub fn routes() -> Router<Arc<ApiState>> {
         .route("/api/v1/phone/calls/outbound", post(call_outbound_route))
         .route("/api/v1/channels/sms/send", post(sms_send_route))
         .route("/api/v1/phone/webhooks/:carrier", post(carrier_webhook_route))
+        .route("/sms/:number_id", get(opt_in_page_route))
 }
 
 // ---------------------------------------------------------------------------
@@ -582,8 +583,81 @@ fn mask_ein(form: &RegistrationForm) -> Value {
     v
 }
 
-pub async fn submit_registration(db: &PgPool, carrier: &dyn Carrier, user: &str, number_id: &str, kind: Option<&str>, form: RegistrationForm) -> PResult<Value> {
+/// `+16512686010` → `+1 (651) 268-6010`; other numbers stay as they are.
+fn display_number(e164: &str) -> String {
+    match e164.strip_prefix("+1") {
+        Some(d) if d.len() == 10 && d.bytes().all(|b| b.is_ascii_digit()) => format!("+1 ({}) {}-{}", &d[..3], &d[3..6], &d[6..]),
+        _ => e164.to_string(),
+    }
+}
+
+fn html_escape(text: &str) -> String {
+    text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\'', "&#39;")
+}
+
+/// The public call-to-action page carriers check: the number, who answers it,
+/// and the texting disclosure. Only numbers with a texting registration have one.
+pub fn opt_in_page_html(e164: &str, form: &RegistrationForm) -> String {
+    let name = html_escape(if form.display_name.trim().is_empty() { form.legal_name.trim() } else { form.display_name.trim() });
+    let legal = html_escape(form.legal_name.trim());
+    let shown = html_escape(&display_number(e164));
+    let sms = html_escape(e164);
+    let about = html_escape(form.use_case_summary.trim());
+    let email = html_escape(form.contact_email.trim());
+    let mut links = Vec::new();
+    if let Some(u) = form.terms_url.as_deref().map(str::trim).filter(|u| u.starts_with("https://")) {
+        links.push(format!(r#"<a href="{0}">Terms</a>"#, html_escape(u)));
+    }
+    if let Some(u) = form.privacy_policy_url.as_deref().map(str::trim).filter(|u| u.starts_with("https://")) {
+        links.push(format!(r#"<a href="{0}">Privacy policy</a>"#, html_escape(u)));
+    }
+    let links = if links.is_empty() { String::new() } else { format!("<p class=\"links\">{}</p>", links.join(" · ")) };
+    let help = if email.is_empty() { String::new() } else { format!(" or email <a href=\"mailto:{email}\">{email}</a>") };
+    format!(
+        r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Text {name}</title>
+<style>body{{margin:0;background:#fff;color:#1a1a1a;font:16px/1.5 -apple-system,system-ui,sans-serif}}main{{max-width:560px;margin:0 auto;padding:48px 16px}}
+h1{{font-size:26px;margin:0 0 8px}}.num{{font-size:30px;font-weight:600;margin:24px 0 8px}}.btn{{display:inline-block;background:#1a1a1a;color:#fff;padding:12px 20px;border-radius:10px;text-decoration:none}}
+.box{{border:1px solid #e3e3e3;border-radius:12px;padding:16px;margin:24px 0;font-size:14px;color:#444}}.links a{{color:#1a1a1a}}footer{{font-size:13px;color:#777;margin-top:32px}}</style></head>
+<body><main><h1>Text {name}</h1><p>{about}</p>
+<p class="num">{shown}</p><p><a class="btn" href="sms:{sms}">Send a text</a></p>
+<div class="box"><strong>Texting terms.</strong> By texting {shown} you agree to get replies from {name}'s AI assistant about your messages. We only text you after you text us first. Message frequency varies. Message and data rates may apply. Reply STOP at any time to opt out, and HELP for help{help}. Consent is not a condition of any purchase. Mobile information is not shared with third parties for marketing.</div>
+{links}<footer>{legal}. Texting runs on Allternit.</footer></main></body></html>"#
+    )
+}
+
+async fn opt_in_page_route(State(state): State<Arc<ApiState>>, Path(number_id): Path<String>) -> Response {
+    let row: Result<Option<(String, Value)>, sqlx::Error> = sqlx::query_as(
+        "SELECT p.e164, r.fields FROM phone_numbers p JOIN sms_registrations r ON r.number_id = p.id \
+         WHERE p.id = $1 AND p.released_at IS NULL ORDER BY r.created_at DESC LIMIT 1",
+    )
+    .bind(&number_id)
+    .fetch_optional(&state.db)
+    .await;
+    match row {
+        Ok(Some((e164, fields))) => {
+            let form: RegistrationForm = serde_json::from_value(fields).unwrap_or_default();
+            ([(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8"), (axum::http::header::CACHE_CONTROL, "public, max-age=300")], opt_in_page_html(&e164, &form)).into_response()
+        }
+        Ok(None) => (StatusCode::NOT_FOUND, "Not found").into_response(),
+        Err(e) => {
+            tracing::error!("opt-in page: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+/// Every registration names a public opt-in page: the business's own, or
+/// Allternit's hosted page for the number (`GET /sms/{number_id}`).
+fn with_opt_in_page(form: &mut RegistrationForm, number_id: &str) {
+    if form.opt_in_page_url.as_deref().map_or(true, |u| u.trim().is_empty()) {
+        form.opt_in_page_url = Some(carriers::hosted_opt_in_page_url(number_id));
+    }
+}
+
+pub async fn submit_registration(db: &PgPool, carrier: &dyn Carrier, user: &str, number_id: &str, kind: Option<&str>, mut form: RegistrationForm) -> PResult<Value> {
     let number = number_for_user(db, user, number_id).await?;
+    with_opt_in_page(&mut form, number_id);
     let kind = match kind {
         Some("10dlc") => RegistrationKind::TenDlc,
         Some("tollfree") | Some("toll_free") => RegistrationKind::TollFree,
@@ -627,7 +701,8 @@ pub async fn refresh_registration(db: &PgPool, carrier: &dyn Carrier, number: &N
     if status.state == RegState::Pending && kind == RegistrationKind::TenDlc && handle.campaign_id.is_none() {
         if let Some(brand_id) = handle.brand_id.clone() {
             let fields: Option<Value> = sqlx::query_scalar("SELECT fields FROM sms_registrations WHERE id = $1").bind(&reg.id).fetch_one(db).await?;
-            let form: RegistrationForm = fields.and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default();
+            let mut form: RegistrationForm = fields.and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default();
+            with_opt_in_page(&mut form, &number.id);
             match carrier.file_pending_campaign(&brand_id, &form).await {
                 Ok(None) => return Ok(()),
                 Ok(Some(campaign_id)) => {
@@ -960,6 +1035,17 @@ pub(crate) async fn consent_basis(db: &PgPool, number_id: &str, e164: &str) -> R
     .await
 }
 
+/// Texting needs the person to have texted the number first (or START after a
+/// STOP): the number's carrier campaign registers mobile-originated opt-in only,
+/// so a call, a recorded consent or an added contact allows calls but not texts.
+pub(crate) async fn has_text_consent(db: &PgPool, number_id: &str, e164: &str) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM sms_consent_log WHERE number_id = $1 AND e164 = $2 AND kind IN ('inbound_text', 'opt_in'))")
+        .bind(number_id)
+        .bind(e164)
+        .fetch_one(db)
+        .await
+}
+
 /// Voice calls this when someone rings a number first: it counts as consent to call back.
 pub async fn record_inbound_call(db: &PgPool, number_id: &str, caller_e164: &str) -> Result<(), sqlx::Error> {
     if consent_basis(db, number_id, caller_e164).await?.as_deref() != Some("inbound_call") {
@@ -1258,7 +1344,7 @@ pub async fn send_sms(db: &PgPool, carrier: &dyn Carrier, user: &str, number_id:
     if is_opted_out(db, &number.id, to).await? {
         return Err(PhoneError::Forbidden("recipient_opted_out"));
     }
-    if consent_basis(db, &number.id, to).await?.is_none() {
+    if !has_text_consent(db, &number.id, to).await? {
         return Err(PhoneError::Forbidden("no_consent"));
     }
     let sent_today: i64 = sqlx::query_scalar("SELECT count(*) FROM sms_outbound_log WHERE number_id = $1 AND created_at > now() - interval '24 hours'").bind(&number.id).fetch_one(db).await?;
@@ -1302,9 +1388,18 @@ fn ack(status: StatusCode, text: &'static str) -> Edge {
     Edge::Respond((status, text).into_response())
 }
 
-const HELP_TEXT: &str = "Allternit: this number is an AI assistant. Reply STOP to unsubscribe. Msg & data rates may apply. More at allternit.com";
-const STOP_TEXT: &str = "Allternit: you're unsubscribed and will get no more messages from this number. Reply START to resubscribe.";
-const START_TEXT: &str = "Allternit: you're subscribed again. Reply HELP for help, STOP to unsubscribe.";
+/// The number's registered sender name and help contact, so keyword replies
+/// match the texts declared in its carrier campaign.
+async fn sender_profile(db: &PgPool, number_id: &str) -> (String, String) {
+    let fields: Option<Value> = sqlx::query_scalar("SELECT fields FROM sms_registrations WHERE number_id = $1 ORDER BY created_at DESC LIMIT 1")
+        .bind(number_id)
+        .fetch_optional(db)
+        .await
+        .ok()
+        .flatten();
+    let form: RegistrationForm = fields.and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default();
+    (carriers::sender_name(&form), form.contact_email)
+}
 
 async fn reply(db: &PgPool, carrier: &dyn Carrier, number: &NumberRow, to: &str, text: &str) {
     match carrier.send_sms(&number.e164, to, text, number.messaging_ref.as_deref()).await {
@@ -1403,17 +1498,20 @@ pub async fn edge_core(db: &PgPool, carrier: &dyn Carrier, number: &NumberRow, h
         Some(Keyword::Stop) => {
             sqlx::query("INSERT INTO sms_opt_outs (number_id, e164) VALUES ($1, $2) ON CONFLICT DO NOTHING").bind(&number.id).bind(&from).execute(db).await?;
             log_consent(db, &number.id, &from, "opt_out", Some("sms"), Some(&text)).await?;
-            reply(db, carrier, number, &from, STOP_TEXT).await;
+            let (name, _) = sender_profile(db, &number.id).await;
+            reply(db, carrier, number, &from, &carriers::opt_out_text(&name)).await;
             return Ok(ack(StatusCode::OK, "ok"));
         }
         Some(Keyword::Help) => {
-            reply(db, carrier, number, &from, HELP_TEXT).await;
+            let (name, email) = sender_profile(db, &number.id).await;
+            reply(db, carrier, number, &from, &carriers::help_text(&name, &email)).await;
             return Ok(ack(StatusCode::OK, "ok"));
         }
         Some(Keyword::Start) => {
             sqlx::query("DELETE FROM sms_opt_outs WHERE number_id = $1 AND e164 = $2").bind(&number.id).bind(&from).execute(db).await?;
             log_consent(db, &number.id, &from, "opt_in", Some("sms"), Some(&text)).await?;
-            reply(db, carrier, number, &from, START_TEXT).await;
+            let (name, _) = sender_profile(db, &number.id).await;
+            reply(db, carrier, number, &from, &carriers::resubscribe_text(&name)).await;
             return Ok(ack(StatusCode::OK, "ok"));
         }
         None => {}
@@ -1421,9 +1519,14 @@ pub async fn edge_core(db: &PgPool, carrier: &dyn Carrier, number: &NumberRow, h
     if number.sms_state == "blocked" || is_opted_out(db, &number.id, &from).await? {
         return Ok(ack(StatusCode::OK, "ok"));
     }
-    // Texting first is consent for the bot to answer.
-    if consent_basis(db, &number.id, &from).await?.is_none() {
+    // Texting first is consent for the bot to answer; the registered opt-in
+    // message confirms it once, before the bot's own reply.
+    if !has_text_consent(db, &number.id, &from).await? {
         log_consent(db, &number.id, &from, "inbound_text", Some("sms"), None).await?;
+        if number.sms_state == "active" {
+            let (name, _) = sender_profile(db, &number.id).await;
+            reply(db, carrier, number, &from, &carriers::opt_in_text(&name)).await;
+        }
     }
     let mut normalised = json!({
         "provider": "sms", "messageId": id, "numberId": number.id, "botId": number.bot_id,
@@ -1834,16 +1937,59 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn explicit_consent_allows_a_first_text_but_not_past_stop() {
+    async fn texts_need_the_person_to_text_first_and_stop_wins() {
         let db = pool().await;
         let c = FakeCarrier::default();
         let n = buy(&db, &c, &e164(40)).await.unwrap();
         activate(&db, &n.id).await;
+        let n = number_for_user(&db, USER, &n.id).await.unwrap();
         let to = "+15550004444";
+        // Recorded consent or a call allows calls, never a first text: the campaign registers texting-first only.
         log_consent(&db, &n.id, to, "explicit", Some("web_form"), Some("signed up")).await.unwrap();
-        assert!(send_sms(&db, &c, USER, &n.id, to, "welcome").await.is_ok());
+        log_consent(&db, &n.id, to, "inbound_call", Some("call"), None).await.unwrap();
+        assert!(matches!(send_sms(&db, &c, USER, &n.id, to, "welcome").await, Err(PhoneError::Forbidden("no_consent"))));
+        assert!(matches!(deliver(&db, &c, &n, "s0", to, "hi").await, Edge::Deliver { .. }));
+        assert!(send_sms(&db, &c, USER, &n.id, to, "hello").await.is_ok());
         deliver(&db, &c, &n, "s1", to, "stop").await;
         assert!(matches!(send_sms(&db, &c, USER, &n.id, to, "again").await, Err(PhoneError::Forbidden("recipient_opted_out"))));
+    }
+
+    #[tokio::test]
+    async fn first_text_gets_the_registered_opt_in_message_once() {
+        let db = pool().await;
+        let c = FakeCarrier::default();
+        let n = buy(&db, &c, &e164(31)).await.unwrap();
+        let form = RegistrationForm { display_name: "Lakeside Dental".into(), contact_email: "office@lakeside.example".into(), ..Default::default() };
+        submit_registration(&db, &c, USER, &n.id, None, form).await.unwrap();
+        activate(&db, &n.id).await;
+        let n = number_for_user(&db, USER, &n.id).await.unwrap();
+        let from = "+15550004444";
+        let before = c.sent.lock().unwrap().len();
+        assert!(matches!(deliver(&db, &c, &n, "w1", from, "hi").await, Edge::Deliver { .. }));
+        let sent = c.sent.lock().unwrap().clone();
+        assert_eq!(sent.len(), before + 1);
+        assert_eq!(sent.last().unwrap().2, crate::carriers::opt_in_text("Lakeside Dental"));
+        assert!(matches!(deliver(&db, &c, &n, "w2", from, "again").await, Edge::Deliver { .. }));
+        assert_eq!(c.sent.lock().unwrap().len(), before + 1, "only the first text is confirmed");
+        deliver(&db, &c, &n, "w3", from, "HELP").await;
+        assert_eq!(c.sent.lock().unwrap().last().unwrap().2, crate::carriers::help_text("Lakeside Dental", "office@lakeside.example"));
+    }
+
+    #[test]
+    fn opt_in_page_shows_number_and_disclosure_and_escapes() {
+        let form = RegistrationForm {
+            display_name: "Lakeside <Dental>".into(),
+            use_case_summary: "Appointment questions.".into(),
+            contact_email: "office@lakeside.example".into(),
+            terms_url: Some("https://lakeside.example/terms".into()),
+            privacy_policy_url: Some("javascript:alert(1)".into()),
+            ..Default::default()
+        };
+        let html = opt_in_page_html("+16515550100", &form);
+        assert!(html.contains("+1 (651) 555-0100") && html.contains("sms:+16515550100"));
+        assert!(html.contains("Lakeside &lt;Dental&gt;") && !html.contains("<Dental>"));
+        assert!(html.contains("Reply STOP") && html.contains("Message and data rates may apply") && html.contains("text us first"));
+        assert!(html.contains("https://lakeside.example/terms") && !html.contains("javascript:"), "only https policy links are shown");
     }
 
     #[tokio::test]
@@ -1856,6 +2002,7 @@ mod tests {
         assert_eq!((out["registration"]["state"].as_str(), out["registration"]["kind"].as_str(), out["smsState"].as_str()), (Some("pending"), Some("10dlc"), Some("pending_registration")));
         let stored: Value = sqlx::query_scalar("SELECT fields FROM sms_registrations WHERE number_id = $1").bind(&n.id).fetch_one(&db).await.unwrap();
         assert_eq!(stored["ein"], "•••6789", "the EIN is stored masked");
+        assert_eq!(stored["optInPageUrl"].as_str(), Some(carriers::hosted_opt_in_page_url(&n.id).as_str()), "every registration names a public opt-in page");
         assert!(matches!(submit_registration(&db, &c, USER, &n.id, None, form.clone()).await, Err(PhoneError::Conflict("already_registered"))));
 
         let number = number_for_user(&db, USER, &n.id).await.unwrap();

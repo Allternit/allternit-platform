@@ -53,15 +53,15 @@ curl https://api.allternit.com/v1/numbers/$NUMBER/registration \
         "postalCode": "55101", "country": "US", "contactEmail": "office@lakesidedental.example", "contactPhone": "+16515550100",
         "useCase": "CUSTOMER_CARE", "useCaseSummary": "Appointment questions and reminders for patients who text us.",
         "sampleMessages": ["Lakeside Dental: your cleaning is tomorrow at 2 pm. Reply STOP to opt out."],
-        "optInWorkflow": "Patients text our number first, or agree on the intake form.",
+        "optInPageUrl": "https://lakesidedental.example/text-us",
         "privacyPolicyUrl": "https://lakesidedental.example/privacy", "termsUrl": "https://lakesidedental.example/terms" }'
 ```
 
-Local numbers register for 10DLC, toll-free numbers for toll-free verification. For a person without an EIN, send `entityType: "SOLE_PROPRIETOR"` with `contactFirstName`, `contactLastName` and `mobilePhone`; the carrier texts a code there, and `POST /v1/numbers/{id}/registration/otp` with `{ "pin": "123456" }` verifies it (an empty body sends a new code). A refusal caused by Allternit's carrier account (not the business) keeps the registration pending with a `rejectionReason` starting `waiting:` and is retried automatically. 10DLC is two steps at the carrier: the brand is verified first, then the campaign is reviewed; the campaign is filed automatically once the brand clears. `GET …/registration` refreshes the status, and every change is sent as `registration.updated`. Carrier review usually takes days to a few weeks; that is controlled by the carriers, not promised by us.
+Local numbers register for 10DLC, toll-free numbers for toll-free verification. The carrier message flow is generated for you with one opt-in path: people text the number first after seeing it on a public opt-in page. `optInPageUrl` is your page (it must show the number, say that texting it means agreeing to replies, and give STOP and HELP); leave it out and Allternit hosts one at `https://api.allternit.com/sms/{id}`. For a person without an EIN, send `entityType: "SOLE_PROPRIETOR"` with `contactFirstName`, `contactLastName` and `mobilePhone`; the carrier texts a code there, and `POST /v1/numbers/{id}/registration/otp` with `{ "pin": "123456" }` verifies it (an empty body sends a new code). A refusal caused by Allternit's carrier account (not the business) keeps the registration pending with a `rejectionReason` starting `waiting:` and is retried automatically. 10DLC is two steps at the carrier: the brand is verified first, then the campaign is reviewed; the campaign is filed automatically once the brand clears. `GET …/registration` refreshes the status, and every change is sent as `registration.updated`. Carrier review usually takes days to a few weeks; that is controlled by the carriers, not promised by us.
 
 ## Consent
 
-You may text or call someone only if they texted or called the number first, or you recorded their consent:
+You may **text** someone only if they texted the number first (or texted START after a STOP); that is the one opt-in path the carrier registration declares. You may **call** someone who texted or called the number first, or whose consent you recorded:
 
 ```json
 POST /v1/numbers/{id}/consent

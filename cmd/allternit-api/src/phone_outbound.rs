@@ -10,7 +10,8 @@
 //! * contact → `POST <cloud>/api/v1/phone/numbers/:id/consent` {e164, source:"owner_contacts"}.
 //!
 //! The cloud answers 403 `no_consent` when the person never texted or called the number first and
-//! isn't a contact, or has said STOP. That surfaces as [`OutError::NoConsent`].
+//! isn't a contact, or has said STOP. That surfaces as [`OutError::NoConsent`] for calls and
+//! [`OutError::NoTextConsent`] for texts (texts need the person to have texted first).
 //!
 //! UI routes (under `/api/v1`, signed-in user):
 //! * `POST /phone/text`     {botId?, numberId?, to, text}      → {threadId, messageId}
@@ -44,6 +45,10 @@ use crate::{auth::AuthUser, AppState};
 pub enum OutError {
     /// Cloud 403 `no_consent`: the person hasn't contacted this number and isn't a contact.
     NoConsent(String),
+    /// Cloud 403 `no_consent` on a text: the person never texted this number. The
+    /// number's carrier campaign registers texting-first opt-in only, so being a
+    /// contact or having called allows calls but not texts.
+    NoTextConsent(String),
     /// The cloud can't dial yet (outbound trunk not set up).
     CallsUnavailable,
     /// Cloud `recipient_opted_out`: the person replied STOP.
@@ -62,6 +67,7 @@ impl OutError {
     pub fn sentence(&self) -> String {
         match self {
             OutError::NoConsent(to) => format!("{to} hasn't texted or called this number and isn't on your allowed contacts, so I can't reach out. Add them as a contact first."),
+            OutError::NoTextConsent(to) => format!("{to} hasn't texted this number, so I can't text them. Carrier rules only allow texting people who texted the number first. Ask them to text it, or call them if they're a contact."),
             OutError::CallsUnavailable => "Outbound calling isn't switched on yet.".into(),
             OutError::OptedOut(to) => format!("{to} replied STOP, so no more messages can be sent to them."),
             OutError::NotActive => "Texts out aren't active on this number yet: it is still waiting on carrier registration.".into(),
@@ -71,7 +77,7 @@ impl OutError {
     }
     fn status(&self) -> StatusCode {
         match self {
-            OutError::NoConsent(_) => StatusCode::FORBIDDEN,
+            OutError::NoConsent(_) | OutError::NoTextConsent(_) => StatusCode::FORBIDDEN,
             OutError::CallsUnavailable => StatusCode::SERVICE_UNAVAILABLE,
             OutError::OptedOut(_) | OutError::NotActive => StatusCode::FORBIDDEN,
             OutError::DailyLimit => StatusCode::TOO_MANY_REQUESTS,
@@ -82,7 +88,7 @@ impl OutError {
     }
     fn code(&self) -> &'static str {
         match self {
-            OutError::NoConsent(_) => "no_consent",
+            OutError::NoConsent(_) | OutError::NoTextConsent(_) => "no_consent",
             OutError::CallsUnavailable => "calls_unavailable",
             OutError::OptedOut(_) => "recipient_opted_out",
             OutError::NotActive => "sms_not_active",
@@ -198,7 +204,7 @@ pub async fn text_attributed<R: ThreadRuntime>(db: &DbHandle, rt: &R, http: Arc<
     match send(db, &tx, &n.owner, &thread_id, &SendReq { text: body, ..Default::default() }).await {
         Ok(SendOutcome::Sent { remote_id, .. }) => Ok((thread_id, remote_id)),
         Ok(SendOutcome::Rejected(m)) => Err(match plain_slug(&m) {
-            "no_consent" => OutError::NoConsent(to.to_string()),
+            "no_consent" => OutError::NoTextConsent(to.to_string()),
             "recipient_opted_out" => OutError::OptedOut(to.to_string()),
             "sms_not_active" => OutError::NotActive,
             "daily_limit" => OutError::DailyLimit,
@@ -506,8 +512,8 @@ mod tests {
         let n = pick_number(&st.db, "user-a", None, None).unwrap();
         let http = fake(vec![(403, json!({ "error": "no_consent" }))]);
         let err = text(&st.db, &Rt, http, &n, "+14155550123", "hi").await.unwrap_err();
-        assert_eq!(err, OutError::NoConsent("+14155550123".into()));
-        assert!(err.sentence().contains("hasn't texted or called this number"));
+        assert_eq!(err, OutError::NoTextConsent("+14155550123".into()));
+        assert!(err.sentence().contains("hasn't texted this number"));
         let (thread, _) = crate::channel_phone::resolve_thread_async(&st.db, &Rt, "num-1", "+14155550123").await.unwrap();
         // The thread shows it as a failed message, never as a delivered one.
         let delivery: String = st.db.connect().unwrap().query_row("SELECT json_extract(payload, '$.delivery') FROM bot_events WHERE thread_id = ?1 AND event_type = 'channel.message.sent'", params![thread], |r| r.get(0)).unwrap();
@@ -531,7 +537,7 @@ mod tests {
             (403, "recipient_opted_out", OutError::OptedOut("+14155550123".into())),
             (403, "sms_not_active", OutError::NotActive),
             (429, "daily_limit", OutError::DailyLimit),
-            (403, "no_consent", OutError::NoConsent("+14155550123".into())),
+            (403, "no_consent", OutError::NoTextConsent("+14155550123".into())),
         ] {
             let http = fake(vec![(status, json!({ "error": slug }))]);
             assert_eq!(text(&st.db, &Rt, http.clone(), &n, "+14155550123", "hi").await.unwrap_err(), want, "{slug}");

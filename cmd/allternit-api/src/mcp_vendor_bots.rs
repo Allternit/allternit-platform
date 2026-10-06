@@ -363,6 +363,7 @@ fn directing_line(db: &DbHandle, s: &Session) -> Result<PhoneLine, String> {
 fn refusal_for(e: phone_outbound::OutError, to: &str) -> String {
     match e {
         phone_outbound::OutError::NoConsent(_) => format!("{to} hasn't texted or called this number and isn't one of the owner's contacts, so I can't reach out. The owner can add them as a contact."),
+        phone_outbound::OutError::NoTextConsent(_) => format!("{to} hasn't texted this number, so I can't text them. Carrier rules only allow texting people who texted the number first."),
         other => other.sentence(),
     }
 }
@@ -1124,7 +1125,7 @@ mod tests {
     async fn each_cloud_refusal_on_a_text_comes_back_as_one_plain_sentence() {
         let st = setup("sms-no").await;
         for (status, slug, expect) in [
-            (403, "no_consent", "hasn't texted or called this number"),
+            (403, "no_consent", "hasn't texted this number"),
             (403, "recipient_opted_out", "replied STOP"),
             (403, "sms_not_active", "carrier registration"),
             (429, "daily_limit", "daily limit"),
