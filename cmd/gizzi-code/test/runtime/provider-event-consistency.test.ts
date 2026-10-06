@@ -117,6 +117,45 @@ describe("toolFramesForPart (agent-chat bridge)", () => {
   })
 })
 
+describe("fileFrameForPart (agent-chat bridge)", () => {
+  test("a generated file part → one artifact frame keyed by the part id", async () => {
+    const { fileFrameForPart } = await import("@/runtime/server/routes/tool-frames")
+    const part = {
+      id: "prt_1",
+      type: "file",
+      mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      filename: "a1.pptx",
+      url: "data:application/octet-stream;base64,AA==",
+      source: { type: "resource", clientName: "generated", uri: "fabric-artifact://a1", text: { value: "Q3 deck", start: 0, end: 7 } },
+    }
+    expect(fileFrameForPart(part, "m1")).toEqual({
+      type: "artifact",
+      messageId: "m1",
+      artifactId: "prt_1",
+      kind: "slides",
+      title: "Q3 deck",
+      url: part.url,
+      mimeType: part.mime,
+      filename: "a1.pptx",
+      sourceUri: "fabric-artifact://a1",
+    })
+    expect(fileFrameForPart({ ...part, type: "text" }, "m1")).toBeUndefined()
+    expect(fileFrameForPart({ id: "p2", type: "file", mime: "image/png", url: "data:image/png;base64,AA==" }, "m1")).toMatchObject({
+      kind: "image",
+    })
+  })
+
+  test("kinds follow the media type", async () => {
+    const { artifactKindForMime } = await import("@/runtime/server/routes/tool-frames")
+    expect(artifactKindForMime("image/png")).toBe("image")
+    expect(artifactKindForMime("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")).toBe("sheet")
+    expect(artifactKindForMime("text/csv")).toBe("sheet")
+    expect(artifactKindForMime("application/pdf")).toBe("document")
+    expect(artifactKindForMime("audio/mpeg")).toBe("audio")
+    expect(artifactKindForMime("text/html")).toBe("html")
+  })
+})
+
 describe("usageFromMessageInfo", () => {
   test("reports only what the provider gave", async () => {
     const { usageFromMessageInfo } = await import("@/runtime/server/routes/tool-frames")

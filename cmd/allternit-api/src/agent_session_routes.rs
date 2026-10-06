@@ -335,10 +335,21 @@ struct GizziMessageError {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub(crate) struct GizziMessagePart {
+    /// The part id — a generated file's artifact card is keyed by it, so a
+    /// reloaded chat shows the same card the live stream did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    id: Option<String>,
     #[serde(rename = "type")]
     part_type: String,
     #[serde(default)]
     text: Option<String>,
+    /// A file part's media type (image/png, application/pdf, …).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    mime: Option<String>,
+    /// A file part's origin, e.g. a generated file's title and
+    /// `fabric-artifact://<id>`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source: Option<serde_json::Value>,
     #[serde(default)]
     filename: Option<String>,
     #[serde(default)]
@@ -2784,8 +2795,11 @@ mod tests {
 
     fn part(part_type: &str, text: &str) -> GizziMessagePart {
         GizziMessagePart {
+            id: None,
             part_type: part_type.to_string(),
             text: Some(text.to_string()),
+            mime: None,
+            source: None,
             filename: None,
             url: None,
             tool: None,
@@ -3006,6 +3020,25 @@ mod tests {
         assert!(bot_job_payload(&db, "u2", "a://local/bot/b1", "d", None).is_none());
         assert!(bot_job_payload(&db, "u1", "a://workspace/acme/principal/al", "d", None).is_none());
         assert!(bot_job_payload(&db, "u1", "a://local/bot/b1", "d", Some(&json!({"steps": ["ls"]}))).is_none());
+    }
+
+    #[test]
+    fn history_file_parts_keep_what_the_artifact_card_needs() {
+        let parts: Vec<GizziMessagePart> = serde_json::from_value(json!([
+            {"id": "prt_1", "type": "file", "mime": "image/png", "filename": "a1.png",
+             "url": "data:image/png;base64,AA==",
+             "source": {"type": "resource", "clientName": "generated", "uri": "fabric-artifact://a1",
+                        "text": {"value": "A cat", "start": 0, "end": 5}}}
+        ]))
+        .unwrap();
+        let wire = serde_json::to_value(&parts).unwrap();
+        assert_eq!(wire[0]["id"], "prt_1");
+        assert_eq!(wire[0]["mime"], "image/png");
+        assert_eq!(wire[0]["source"]["text"]["value"], "A cat");
+        // Parts without them stay as they were on the wire.
+        let plain: Vec<GizziMessagePart> = serde_json::from_value(json!([{"type": "text", "text": "hi"}])).unwrap();
+        let wire = serde_json::to_value(&plain).unwrap();
+        assert!(wire[0].get("mime").is_none() && wire[0].get("source").is_none() && wire[0].get("id").is_none());
     }
 
     #[test]

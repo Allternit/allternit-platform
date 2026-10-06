@@ -932,6 +932,235 @@ fn tool_frames_for_part(
 }
 
 
+/// A client re-attaching to a turn that is still running (its stream dropped
+/// during a long reply): `resume: {cursor, messageId?}` in the agent-chat
+/// body. `cursor` is the last SSE id the client received — gizzi's durable
+/// session-trace sequence.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ResumeRequest {
+    cursor: u64,
+    message_id: Option<String>,
+}
+
+fn parse_resume(body: &serde_json::Value) -> Option<ResumeRequest> {
+    let resume = body.get("resume")?;
+    let cursor = resume.get("cursor").and_then(|v| v.as_u64())?;
+    let message_id = resume
+        .get("messageId")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    Some(ResumeRequest { cursor, message_id })
+}
+
+/// An SSE frame stamped with the resume cursor (omitted before one is known).
+fn sse_frame(cursor: u64) -> Event {
+    if cursor > 0 {
+        Event::default().id(cursor.to_string())
+    } else {
+        Event::default()
+    }
+}
+
+/// A live delta the resume replay already delivered (the live subscription
+/// opens before the replay is read, so the two overlap by design).
+fn skip_live_delta(trace_seq: u64, replayed: bool, replayed_through: u64) -> bool {
+    !replayed && trace_seq > 0 && trace_seq <= replayed_through
+}
+
+/// Artifact kind the chat renders for a generated file's media type.
+/// Mirrors `artifactKindForMime` in gizzi's agent-compat route.
+fn artifact_kind_for_mime(mime: &str) -> &'static str {
+    let m = mime.to_ascii_lowercase();
+    if m.starts_with("image/") {
+        "image"
+    } else if m.starts_with("audio/") {
+        "audio"
+    } else if m.starts_with("video/") {
+        "video"
+    } else if m == "text/html" {
+        "html"
+    } else if m.contains("presentationml") || m.contains("powerpoint") {
+        "slides"
+    } else if m.contains("spreadsheetml") || m.contains("ms-excel") || m == "text/csv" {
+        "sheet"
+    } else {
+        "document"
+    }
+}
+
+/// The `artifact` frame for a file part the model generated (image, deck,
+/// document). Keyed by the part id, so the client updates one card per file.
+fn artifact_frame_for_file_part(part: &serde_json::Value, msg_id: &str) -> Option<serde_json::Value> {
+    if part.get("type").and_then(|v| v.as_str()) != Some("file") {
+        return None;
+    }
+    let id = part.get("id").and_then(|v| v.as_str()).filter(|s| !s.is_empty())?;
+    let url = part.get("url").and_then(|v| v.as_str()).filter(|s| !s.is_empty())?;
+    let mime = part
+        .get("mime")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("application/octet-stream");
+    let filename = part.get("filename").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
+    let source_title = part
+        .pointer("/source/text/value")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let mut frame = json!({
+        "type": "artifact",
+        "messageId": msg_id,
+        "artifactId": id,
+        "kind": artifact_kind_for_mime(mime),
+        "url": url,
+        "mimeType": mime,
+    });
+    if let Some(title) = source_title.or(filename) {
+        frame["title"] = json!(title);
+    }
+    if let Some(filename) = filename {
+        frame["filename"] = json!(filename);
+    }
+    if let Some(uri) = part.pointer("/source/uri").and_then(|v| v.as_str()) {
+        frame["sourceUri"] = json!(uri);
+    }
+    Some(frame)
+}
+
+/// One gizzi session-trace entry → the bus event it records, as an SSE block
+/// the bridge's event loop reads like a live one (marked `replayed`).
+fn replay_block(entry: &serde_json::Value) -> Option<String> {
+    let kind = entry.get("kind").and_then(|v| v.as_str())?;
+    let seq = entry.get("sequence").and_then(|v| v.as_u64()).unwrap_or(0);
+    let data = entry.get("data")?;
+    let event = match kind {
+        "part.updated" => json!({ "type": "message.part.updated", "properties": { "part": data, "replayed": true } }),
+        "part.delta" => {
+            let mut props = data.clone();
+            if !props.is_object() {
+                return None;
+            }
+            props["traceSeq"] = json!(seq);
+            props["replayed"] = json!(true);
+            json!({ "type": "message.part.delta", "properties": props })
+        }
+        "message.updated" => json!({ "type": "message.updated", "properties": { "info": data, "replayed": true } }),
+        _ => return None,
+    };
+    Some(format!("data: {}\n\n", event))
+}
+
+/// The gizzi session a resume re-attaches to — never a new one: a chat whose
+/// session this process no longer knows cannot be resumed.
+async fn resumable_gizzi_session(client: &reqwest::Client, gizzi: &str, chat_id: &str) -> Option<String> {
+    let cached = GIZZI_CHAT_SESSIONS
+        .lock()
+        .ok()
+        .and_then(|lock| lock.get(chat_id).map(|(id, _)| id.clone()));
+    if cached.is_some() {
+        return cached;
+    }
+    if chat_id.starts_with("ses") {
+        let ok = client
+            .get(format!("{}/session/{}", gizzi, chat_id))
+            .send()
+            .await
+            .is_ok_and(|r| r.status().is_success());
+        if ok {
+            return Some(chat_id.to_string());
+        }
+    }
+    None
+}
+
+/// The session trace's newest sequence: the cursor a fresh turn starts from.
+async fn fetch_trace_head(client: &reqwest::Client, gizzi: &str, session_id: &str) -> Option<u64> {
+    let resp = client
+        .get(format!("{}/session/{}/replay?after=0&limit=1&snapshot=false", gizzi, session_id))
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    resp.json::<serde_json::Value>().await.ok()?.get("head")?.as_u64()
+}
+
+/// What a resumed stream needs before reading live events: the types of the
+/// parts already declared (so their later deltas route correctly), this
+/// session's assistant messages, the missed trace entries as SSE blocks, and
+/// whether the turn is still running.
+#[derive(Default)]
+struct ResumeSeed {
+    part_types: Vec<(String, String)>,
+    assistant_messages: Vec<String>,
+    blocks: String,
+    replayed_through: u64,
+    busy: bool,
+}
+
+async fn fetch_resume_seed(client: &reqwest::Client, gizzi: &str, session_id: &str, cursor: u64) -> ResumeSeed {
+    let mut seed = ResumeSeed { replayed_through: cursor, ..Default::default() };
+    if let Ok(resp) = client
+        .get(format!("{}/session/{}/messages?limit=4", gizzi, session_id))
+        .send()
+        .await
+    {
+        if let Ok(serde_json::Value::Array(messages)) = resp.json::<serde_json::Value>().await {
+            for message in &messages {
+                if message.pointer("/info/role").and_then(|v| v.as_str()) == Some("assistant") {
+                    if let Some(id) = message.pointer("/info/id").and_then(|v| v.as_str()) {
+                        seed.assistant_messages.push(id.to_string());
+                    }
+                }
+                for part in message.get("parts").and_then(|v| v.as_array()).into_iter().flatten() {
+                    if let (Some(id), Some(kind)) = (
+                        part.get("id").and_then(|v| v.as_str()),
+                        part.get("type").and_then(|v| v.as_str()),
+                    ) {
+                        seed.part_types.push((id.to_string(), kind.to_string()));
+                    }
+                }
+            }
+        }
+    }
+    let mut after = cursor;
+    for _ in 0..50 {
+        let Ok(resp) = client
+            .get(format!("{}/session/{}/replay?after={}&limit=2000&snapshot=false", gizzi, session_id, after))
+            .send()
+            .await
+        else {
+            break;
+        };
+        let Ok(page) = resp.json::<serde_json::Value>().await else { break };
+        for entry in page.get("entries").and_then(|v| v.as_array()).into_iter().flatten() {
+            if let Some(block) = replay_block(entry) {
+                seed.blocks.push_str(&block);
+            }
+            if let Some(seq) = entry.get("sequence").and_then(|v| v.as_u64()) {
+                seed.replayed_through = seed.replayed_through.max(seq);
+            }
+        }
+        let next = page.get("cursor").and_then(|v| v.as_u64()).unwrap_or(after);
+        if page.get("hasMore").and_then(|v| v.as_bool()) != Some(true) || next <= after {
+            break;
+        }
+        after = next;
+    }
+    seed.busy = match client.get(format!("{}/session/status", gizzi)).send().await {
+        Ok(resp) => resp
+            .json::<serde_json::Value>()
+            .await
+            .map(|all| all.get(session_id).is_some())
+            // Unknown: keep the stream open; the live idle event ends it.
+            .unwrap_or(true),
+        Err(_) => true,
+    };
+    seed
+}
+
 /// Bridge /api/agent-chat → gizzi session/event architecture.
 ///
 /// 1. Parse chatId and message from the request body.
@@ -1043,7 +1272,10 @@ async fn agent_chat_bridge(
         .filter(|v| v.is_object())
         .cloned();
 
-    if chat_id.is_empty() || message.is_empty() {
+    // A resume re-attaches to a turn already running on this chat (the
+    // client's stream dropped mid-reply): nothing new is sent to the model.
+    let resume = parse_resume(&body_json);
+    if chat_id.is_empty() || (message.is_empty() && resume.is_none()) {
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({"error": "chatId and message are required"})),
@@ -1145,7 +1377,7 @@ async fn agent_chat_bridge(
     // would skew the per-run counters; discrete run_agent executions remain
     // the unit there). Best-effort like all run recording: a recording
     // failure must never affect the chat.
-    let chat_run = agent_id.as_ref().map(|aid| ChatRunRecord {
+    let chat_run = agent_id.as_ref().filter(|_| resume.is_none()).map(|aid| ChatRunRecord {
         agent_id: aid.clone(),
         db: state.db.clone(),
         run_id: Uuid::new_v4().to_string(),
@@ -1246,14 +1478,21 @@ async fn agent_chat_bridge(
     };
 
     let gizzi = gizzi_base();
-    let assistant_message_id = format!("msg_{}", Uuid::new_v4().simple());
+    let assistant_message_id = resume
+        .as_ref()
+        .and_then(|r| r.message_id.clone())
+        .unwrap_or_else(|| format!("msg_{}", Uuid::new_v4().simple()));
     let model_label = format!("{}/{}", provider_id, model_id);
 
     // D16 — a send to a subscription (fabric) model is the human act behind
     // its task: mint the single-use action here, where the person pressed
     // send. gizzi hands it to the forwarder; nothing else can start the task.
-    let subscription_action =
-        chat_send_human_action(&state, &headers, &provider_id, &user_id_for_record).await;
+    // A resume re-attaches to a send already approved; it mints nothing new.
+    let subscription_action = if resume.is_none() {
+        chat_send_human_action(&state, &headers, &provider_id, &user_id_for_record).await
+    } else {
+        None
+    };
 
     // Auth-aware client: password-protected Gizzi daemons expect Basic auth
     // (GIZZI_PASSWORD/GIZZI_SERVER_PASSWORD env, or a Basic header forwarded by
@@ -1268,18 +1507,38 @@ async fn agent_chat_bridge(
     // the /api/agent-chat bridge.
     let harness = build_gizzi_harness_for_provider(&provider_id);
     let model_ref = json!({ "providerID": provider_id, "modelID": model_id });
-    configure_harness_on_gizzi(&client, &gizzi, harness.as_ref(), &model_ref).await;
+    if resume.is_none() {
+        configure_harness_on_gizzi(&client, &gizzi, harness.as_ref(), &model_ref).await;
+    }
 
-    let gizzi_session_id = match get_or_create_gizzi_session(
-        &client,
-        &gizzi,
-        &chat_id,
-        parse_permission_mode(&body_json),
-        agent_id.as_deref(),
-        chat_run.as_ref().map(|r| r.run_id.as_str()),
-    )
-    .await
-    {
+    let resumed_session = match &resume {
+        Some(_) => match resumable_gizzi_session(&client, &gizzi, &chat_id).await {
+            Some(id) => Some(id),
+            None => {
+                return (
+                    StatusCode::CONFLICT,
+                    Json(json!({ "error": "resume_unavailable" })),
+                )
+                    .into_response();
+            }
+        },
+        None => None,
+    };
+    let resolved_session = match resumed_session {
+        Some(id) => Ok(id),
+        None => {
+            get_or_create_gizzi_session(
+                &client,
+                &gizzi,
+                &chat_id,
+                parse_permission_mode(&body_json),
+                agent_id.as_deref(),
+                chat_run.as_ref().map(|r| r.run_id.as_str()),
+            )
+            .await
+        }
+    };
+    let gizzi_session_id = match resolved_session {
         Ok(id) => id,
         Err(err) => {
             warn!(error = %err, "Failed to get or create Gizzi session");
@@ -1349,15 +1608,27 @@ async fn agent_chat_bridge(
         let mut approval_by_call: std::collections::HashMap<String, String> = std::collections::HashMap::new();
         // Visible reply text, capped, for the turn's memory entry.
         let mut reply_text = String::new();
+        let resuming = resume.is_some();
+        // Resume cursor: the newest gizzi session-trace sequence whose effects
+        // this stream has delivered. Every frame carries it as its SSE id; a
+        // client whose stream drops re-attaches with it and gets exactly what
+        // it missed (see `resume` / `fetch_resume_seed`).
+        let mut trace_cursor: u64 = match &resume {
+            Some(r) => r.cursor,
+            None => fetch_trace_head(&client, &gizzi, &session_id).await.unwrap_or(0),
+        };
 
-        yield Ok::<Event, Infallible>(Event::default().data(
-            json!({
-                "type": "message_start",
-                "messageId": msg_id,
-                "modelId": model_label,
-                "runtimeModelId": model_label,
-            }).to_string()
-        ));
+        if !resuming {
+            yield Ok::<Event, Infallible>(sse_frame(trace_cursor).data(
+                json!({
+                    "type": "message_start",
+                    "messageId": msg_id,
+                    "modelId": model_label,
+                    "runtimeModelId": model_label,
+                    "cursor": trace_cursor,
+                }).to_string()
+            ));
+        }
 
         // Subscribe to the gizzi event stream BEFORE sending the message so we
         // don't miss any events that fire immediately after the POST.
@@ -1371,7 +1642,7 @@ async fn agent_chat_bridge(
             Err(e) => {
                 warn!("Failed to connect to gizzi event stream: {}", e);
                 settle_chat_run(&chat_run, false, Some(&format!("gizzi event stream unavailable: {}", e))).await;
-                yield Ok(Event::default().data(json!({
+                yield Ok(sse_frame(trace_cursor).data(json!({
                     "type": "finish",
                     "messageId": msg_id,
                     "status": "error",
@@ -1491,6 +1762,10 @@ async fn agent_chat_bridge(
         // prompt is in flight, and a failed prompt still ends the stream
         // with the runtime's error.
         let mut message_task = tokio::spawn(async move {
+            if resuming {
+                // Re-attaching to a running turn: nothing to send.
+                return Ok(());
+            }
             match message_req.send().await {
                 Ok(r) if r.status().is_success() => Ok(()),
                 Ok(r) => {
@@ -1501,7 +1776,7 @@ async fn agent_chat_bridge(
                 Err(e) => Err((None, e.to_string())),
             }
         });
-        let mut message_done = false;
+        let mut message_done = resuming;
 
         // If the message endpoint returned a body with an agent response, ignore
         // it; we rely on the event stream for streaming replies.
@@ -1517,7 +1792,8 @@ async fn agent_chat_bridge(
         // timeout that ends the stream while a turn is parked on approval.
         let mut buf = String::new();
         let mut byte_stream = event_resp.bytes_stream();
-        let mut was_busy = false;
+        // A resumed stream joins a turn already running (idle then ends it).
+        let mut was_busy = resuming;
         let mut saw_text = false;
         let mut saw_tool = false;
         let mut turn_error: Option<String> = None;
@@ -1545,6 +1821,40 @@ async fn agent_chat_bridge(
         // turn's token counts were estimated — folded into the finish usage.
         let mut last_context: Option<serde_json::Value> = None;
         let mut usage_estimated = false;
+        // This session's assistant messages: only their file parts are files
+        // the model generated (the user's attachments are file parts too).
+        let mut assistant_messages = std::collections::HashSet::<String>::new();
+        // File parts already framed (a replay and the live stream can overlap).
+        let mut file_frames_sent = std::collections::HashSet::<String>::new();
+        // Resume: deltas up to this trace sequence came from the replay; the
+        // live stream's copies of them are skipped.
+        let mut replayed_through: u64 = 0;
+        if let Some(resume) = &resume {
+            let seed = fetch_resume_seed(&client, &gizzi, &session_id, resume.cursor).await;
+            for (part_id, part_type) in seed.part_types {
+                match part_type.as_str() {
+                    "text" => {
+                        text_parts.insert(part_id.clone());
+                    }
+                    "reasoning" => {
+                        reasoning_parts.insert(part_id.clone());
+                    }
+                    _ => {}
+                }
+                known_parts.insert(part_id);
+            }
+            assistant_messages.extend(seed.assistant_messages);
+            replayed_through = seed.replayed_through;
+            // Read before the first live block (gizzi sends server.connected
+            // at once, so the loop wakes immediately).
+            buf.push_str(&seed.blocks);
+            if !seed.busy {
+                buf.push_str(&format!(
+                    "data: {}\n\n",
+                    json!({ "type": "session.status", "properties": { "sessionID": session_id, "status": { "type": "idle" } } })
+                ));
+            }
+        }
 
         'event_loop: loop {
             // Events first (biased): the prompt task finishing must not
@@ -1589,7 +1899,7 @@ async fn agent_chat_bridge(
                         .await;
                     }
                     settle_chat_run(&chat_run, false, Some(&error)).await;
-                    yield Ok(Event::default().data(json!({
+                    yield Ok(sse_frame(trace_cursor).data(json!({
                         "type": "finish",
                         "messageId": msg_id,
                         "status": "error",
@@ -1638,6 +1948,9 @@ async fn agent_chat_bridge(
                         let role = info.get("role").and_then(|v| v.as_str()).unwrap_or("");
                         let info_session = info.get("sessionID").and_then(|v| v.as_str()).unwrap_or("");
                         if role == "assistant" && info_session == session_id {
+                            if let Some(id) = info.get("id").and_then(|v| v.as_str()) {
+                                assistant_messages.insert(id.to_string());
+                            }
                             if let Some(usage) = usage_from_message_info(info) {
                                 last_usage = Some(usage);
                             }
@@ -1677,7 +1990,7 @@ async fn agent_chat_bridge(
                                         reply_text.truncate(2000);
                                     }
                                 }
-                                yield Ok(Event::default().data(delta_frame(&msg_id, part_id, &delta_text, is_reasoning).to_string()));
+                                yield Ok(sse_frame(trace_cursor).data(delta_frame(&msg_id, part_id, &delta_text, is_reasoning).to_string()));
                             }
                         }
                         // A:// §7: gizzi tool executions become lightweight
@@ -1691,12 +2004,27 @@ async fn agent_chat_bridge(
                                 saw_text = true;
                             }
                         }
+                        // A file the model generated → an artifact card.
+                        if part_type == "file"
+                            && part.get("sessionID").and_then(|v| v.as_str()) == Some(session_id.as_str())
+                            && part
+                                .get("messageID")
+                                .and_then(|v| v.as_str())
+                                .is_some_and(|m| assistant_messages.contains(m))
+                            && !part_id.is_empty()
+                            && !file_frames_sent.contains(part_id)
+                        {
+                            if let Some(frame) = artifact_frame_for_file_part(part, &msg_id) {
+                                file_frames_sent.insert(part_id.to_string());
+                                yield Ok(sse_frame(trace_cursor).data(frame.to_string()));
+                            }
+                        }
                         if part_type == "tool"
                             && part.get("sessionID").and_then(|v| v.as_str()) == Some(session_id.as_str())
                         {
                             for frame in tool_frames_for_part(part, &msg_id, &mut tool_frames_sent) {
                                 let settled_ok = frame["type"] == "tool_result";
-                                yield Ok(Event::default().data(frame.to_string()));
+                                yield Ok(sse_frame(trace_cursor).data(frame.to_string()));
                                 // MCP Apps: a completed tool whose connector declares a
                                 // ui:// resource also yields an `mcp_app` frame.
                                 if settled_ok {
@@ -1708,7 +2036,7 @@ async fn agent_chat_bridge(
                                     )
                                     .await
                                     {
-                                        yield Ok(Event::default().data(app.to_string()));
+                                        yield Ok(sse_frame(trace_cursor).data(app.to_string()));
                                     }
                                 }
                             }
@@ -1779,6 +2107,12 @@ async fn agent_chat_bridge(
                     "message.part.delta" => {
                         let delta_text = props.get("delta").and_then(|v| v.as_str()).unwrap_or("");
                         let part_id = props.get("partID").and_then(|v| v.as_str()).unwrap_or("text-1");
+                        let trace_seq = props.get("traceSeq").and_then(|v| v.as_u64()).unwrap_or(0);
+                        let replayed = props.get("replayed").and_then(|v| v.as_bool()).unwrap_or(false);
+                        if skip_live_delta(trace_seq, replayed, replayed_through) {
+                            continue;
+                        }
+                        trace_cursor = trace_cursor.max(trace_seq);
 
                         if delta_text.is_empty() {
                         } else if !known_parts.contains(part_id) {
@@ -1787,7 +2121,7 @@ async fn agent_chat_bridge(
                         } else if reasoning_parts.contains(part_id) {
                             // Reasoning part → thinking delta (the frontend's
                             // thought stream), not visible reply text.
-                            yield Ok(Event::default().data(delta_frame(&msg_id, part_id, delta_text, true).to_string()));
+                            yield Ok(sse_frame(trace_cursor).data(delta_frame(&msg_id, part_id, delta_text, true).to_string()));
                         } else if !text_parts.contains(part_id) {
                             // A tool (or other non-text) part's delta, e.g. the
                             // model's streamed tool-call input: shown through
@@ -1798,7 +2132,7 @@ async fn agent_chat_bridge(
                             if reply_text.len() > 2000 {
                                 reply_text.truncate(2000);
                             }
-                            yield Ok(Event::default().data(delta_frame(&msg_id, part_id, delta_text, false).to_string()));
+                            yield Ok(sse_frame(trace_cursor).data(delta_frame(&msg_id, part_id, delta_text, false).to_string()));
                         }
                     }
                     "session.status" => {
@@ -1817,7 +2151,7 @@ async fn agent_chat_bridge(
                         let error = props.get("error").cloned().unwrap_or(json!({"message": "Unknown Gizzi error"}));
                         let error_text = gizzi_error_text(&error);
                         turn_error = Some(error_text.clone());
-                        yield Ok(Event::default().data(json!({
+                        yield Ok(sse_frame(trace_cursor).data(json!({
                             "type": "error",
                             "messageId": msg_id,
                             "error": error_text,
@@ -1834,7 +2168,7 @@ async fn agent_chat_bridge(
                                 "window": props.get("window").cloned().unwrap_or(serde_json::Value::Null),
                                 "basis": props.get("basis").and_then(|v| v.as_str()).unwrap_or("estimated"),
                             });
-                            yield Ok(Event::default().data(json!({
+                            yield Ok(sse_frame(trace_cursor).data(json!({
                                 "type": "context_usage",
                                 "messageId": msg_id,
                                 "context": context.clone(),
@@ -1846,7 +2180,7 @@ async fn agent_chat_bridge(
                         // Context compaction ran on this session mid-turn —
                         // forward it so the chat can render a divider instead
                         // of going silent (mirrors gizzi's agent-compat route).
-                        yield Ok(Event::default().data(json!({
+                        yield Ok(sse_frame(trace_cursor).data(json!({
                             "type": "context_compacted",
                             "messageId": msg_id,
                         }).to_string()));
@@ -1894,7 +2228,7 @@ async fn agent_chat_bridge(
                             )
                             .await;
 
-                            yield Ok(Event::default().data(json!({
+                            yield Ok(sse_frame(trace_cursor).data(json!({
                                 "type": "tool_permission",
                                 "toolCallId": request_id,
                                 "toolName": props
@@ -1951,17 +2285,19 @@ async fn agent_chat_bridge(
         for (part_id, delta_text) in pending_deltas.drain(..) {
             saw_text = true;
             reply_text.push_str(&delta_text);
-            yield Ok(Event::default().data(delta_frame(&msg_id, &part_id, &delta_text, false).to_string()));
+            yield Ok(sse_frame(trace_cursor).data(delta_frame(&msg_id, &part_id, &delta_text, false).to_string()));
         }
 
         // Turn end: typed Result on the session run + the A-T2 memory grant.
         // Idle with no text and no tools is an error (quota 403s used to
         // look like a successful empty complete). Idempotent on the
         // assistant message id, so an SSE replay does not duplicate them.
-        let finish = cowork_turn_finish(saw_text, saw_tool, turn_error);
+        // A resumed stream's reply started before it attached: an empty tail
+        // is not "no model output".
+        let finish = cowork_turn_finish(saw_text || resuming, saw_tool, turn_error);
         if finish.status == "error" {
             if let Some(err) = &finish.error {
-                yield Ok(Event::default().data(json!({
+                yield Ok(sse_frame(trace_cursor).data(json!({
                     "type": "error",
                     "messageId": msg_id,
                     "error": err,
@@ -2020,7 +2356,7 @@ async fn agent_chat_bridge(
             finish.error.as_deref(),
         )
         .await;
-        yield Ok(Event::default().data(
+        yield Ok(sse_frame(trace_cursor).data(
             cowork_turn_finish_frame(&msg_id, &finish, last_usage.as_ref()).to_string(),
         ));
     };
@@ -2041,6 +2377,165 @@ async fn body_to_bytes(
 
 #[cfg(test)]
 mod tests {
+
+    use serde_json::json;
+
+    #[test]
+    fn resume_requests_need_a_cursor() {
+        assert_eq!(super::parse_resume(&json!({"chatId": "c"})), None);
+        assert_eq!(super::parse_resume(&json!({"resume": {}})), None);
+        assert_eq!(
+            super::parse_resume(&json!({"resume": {"cursor": 42, "messageId": "msg_1"}})),
+            Some(super::ResumeRequest { cursor: 42, message_id: Some("msg_1".into()) })
+        );
+        assert_eq!(
+            super::parse_resume(&json!({"resume": {"cursor": 0, "messageId": ""}})),
+            Some(super::ResumeRequest { cursor: 0, message_id: None })
+        );
+    }
+
+    #[test]
+    fn live_deltas_the_replay_covered_are_skipped() {
+        // Replay copies always pass; live copies at or below the replayed
+        // sequence are duplicates; deltas without a trace sequence pass.
+        assert!(!super::skip_live_delta(5, true, 10));
+        assert!(super::skip_live_delta(5, false, 10));
+        assert!(super::skip_live_delta(10, false, 10));
+        assert!(!super::skip_live_delta(11, false, 10));
+        assert!(!super::skip_live_delta(0, false, 10));
+    }
+
+    #[test]
+    fn generated_file_parts_become_artifact_frames() {
+        let part = json!({
+            "id": "prt_1", "type": "file", "messageID": "m",
+            "mime": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "filename": "a1.pptx", "url": "data:application/octet-stream;base64,AA==",
+            "source": {"type": "resource", "clientName": "generated", "uri": "fabric-artifact://a1",
+                       "text": {"value": "Q3 deck", "start": 0, "end": 7}}
+        });
+        assert_eq!(
+            super::artifact_frame_for_file_part(&part, "msg_1").unwrap(),
+            json!({
+                "type": "artifact", "messageId": "msg_1", "artifactId": "prt_1", "kind": "slides",
+                "url": "data:application/octet-stream;base64,AA==",
+                "mimeType": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                "title": "Q3 deck", "filename": "a1.pptx", "sourceUri": "fabric-artifact://a1"
+            })
+        );
+        // No title from the source → the filename; images are images.
+        let image = json!({"id": "p2", "type": "file", "mime": "image/png", "filename": "x.png", "url": "data:image/png;base64,AA=="});
+        let frame = super::artifact_frame_for_file_part(&image, "m").unwrap();
+        assert_eq!(frame["kind"], "image");
+        assert_eq!(frame["title"], "x.png");
+        // Not a file / no url → nothing.
+        assert!(super::artifact_frame_for_file_part(&json!({"id": "p", "type": "text"}), "m").is_none());
+        assert!(super::artifact_frame_for_file_part(&json!({"id": "p", "type": "file", "url": ""}), "m").is_none());
+    }
+
+    #[test]
+    fn artifact_kinds_follow_the_media_type() {
+        assert_eq!(super::artifact_kind_for_mime("image/webp"), "image");
+        assert_eq!(super::artifact_kind_for_mime("application/vnd.ms-excel"), "sheet");
+        assert_eq!(super::artifact_kind_for_mime("text/csv"), "sheet");
+        assert_eq!(super::artifact_kind_for_mime("application/pdf"), "document");
+        assert_eq!(super::artifact_kind_for_mime("video/mp4"), "video");
+        assert_eq!(super::artifact_kind_for_mime("text/html"), "html");
+    }
+
+    #[test]
+    fn trace_entries_replay_as_bus_events() {
+        let delta = super::replay_block(&json!({
+            "sequence": 7, "kind": "part.delta",
+            "data": {"sessionID": "s", "messageID": "m", "partID": "p", "field": "text", "delta": "hi"}
+        }))
+        .unwrap();
+        let event: serde_json::Value =
+            serde_json::from_str(delta.strip_prefix("data: ").unwrap().trim_end()).unwrap();
+        assert_eq!(event["type"], "message.part.delta");
+        assert_eq!(event["properties"]["traceSeq"], 7);
+        assert_eq!(event["properties"]["replayed"], true);
+        assert_eq!(event["properties"]["delta"], "hi");
+        assert!(delta.ends_with("\n\n"));
+
+        let updated = super::replay_block(&json!({"sequence": 8, "kind": "part.updated", "data": {"id": "p", "type": "text"}})).unwrap();
+        assert!(updated.contains("\"message.part.updated\""));
+        assert!(super::replay_block(&json!({"sequence": 9, "kind": "scratchpad.read", "data": {}})).is_none());
+    }
+
+    /// A fake gizzi: two replay pages after the cursor, the newest messages,
+    /// and a status map where the session is (or is not) busy.
+    async fn fake_gizzi(busy: bool) -> String {
+        use axum::{extract::Query, routing::get, Json, Router};
+        use std::collections::HashMap;
+        let app = Router::new()
+            .route(
+                "/session/ses_1/replay",
+                get(|Query(q): Query<HashMap<String, String>>| async move {
+                    let after: u64 = q.get("after").and_then(|v| v.parse().ok()).unwrap_or(0);
+                    let delta = |seq: u64, text: &str| json!({"sequence": seq, "kind": "part.delta",
+                        "data": {"sessionID": "ses_1", "messageID": "m2", "partID": "p_text", "field": "text", "delta": text}});
+                    Json(match after {
+                        10 => json!({"head": 12, "cursor": 11, "hasMore": true, "entries": [delta(11, " more")]}),
+                        11 => json!({"head": 12, "cursor": 12, "hasMore": false, "entries": [
+                            {"sequence": 12, "kind": "part.updated", "data": {"id": "p_file", "type": "file", "sessionID": "ses_1", "messageID": "m2"}}
+                        ]}),
+                        _ => json!({"head": 12, "cursor": after, "hasMore": false, "entries": []}),
+                    })
+                }),
+            )
+            .route(
+                "/session/ses_1/messages",
+                get(|| async {
+                    Json(json!([
+                        {"info": {"id": "m1", "role": "user"}, "parts": [{"id": "p_user", "type": "text"}]},
+                        {"info": {"id": "m2", "role": "assistant"}, "parts": [
+                            {"id": "p_think", "type": "reasoning"}, {"id": "p_text", "type": "text"}
+                        ]}
+                    ]))
+                }),
+            )
+            .route(
+                "/session/status",
+                get(move || async move {
+                    Json(if busy { json!({"ses_1": {"type": "busy"}}) } else { json!({}) })
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        format!("http://{addr}")
+    }
+
+    #[tokio::test]
+    async fn resume_seed_replays_every_page_after_the_cursor() {
+        let gizzi = fake_gizzi(true).await;
+        let client = reqwest::Client::new();
+        let seed = super::fetch_resume_seed(&client, &gizzi, "ses_1", 10).await;
+        assert_eq!(seed.replayed_through, 12);
+        assert!(seed.busy);
+        assert_eq!(seed.assistant_messages, vec!["m2".to_string()]);
+        assert!(seed.part_types.contains(&("p_think".into(), "reasoning".into())));
+        assert!(seed.part_types.contains(&("p_text".into(), "text".into())));
+        // Both pages, in order, as SSE blocks.
+        let blocks: Vec<&str> = seed.blocks.split("\n\n").filter(|b| !b.is_empty()).collect();
+        assert_eq!(blocks.len(), 2);
+        assert!(blocks[0].contains("\" more\"") && blocks[0].contains("\"traceSeq\":11"));
+        assert!(blocks[1].contains("p_file"));
+
+        assert_eq!(super::fetch_trace_head(&client, &gizzi, "ses_1").await, Some(12));
+    }
+
+    #[tokio::test]
+    async fn resume_seed_reports_a_turn_that_already_ended() {
+        let gizzi = fake_gizzi(false).await;
+        let seed = super::fetch_resume_seed(&reqwest::Client::new(), &gizzi, "ses_1", 12).await;
+        assert!(!seed.busy);
+        assert!(seed.blocks.is_empty());
+        assert_eq!(seed.replayed_through, 12);
+    }
 
     #[test]
     fn only_text_part_deltas_are_reply_text() {

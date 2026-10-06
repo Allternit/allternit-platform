@@ -431,6 +431,12 @@ export namespace MessageV2 {
         partID: z.string(),
         field: z.string(),
         delta: z.string(),
+        /**
+         * The delta's durable trace sequence (SessionTrace). Chat bridges use
+         * it as the resume cursor: after a dropped stream they replay the
+         * session trace after it and skip live deltas already replayed.
+         */
+        traceSeq: z.number().int().optional(),
       }),
     ),
     PartRemoved: BusEvent.define(

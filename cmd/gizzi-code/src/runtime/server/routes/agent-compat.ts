@@ -60,7 +60,7 @@ import { SessionSummary } from "@/runtime/session/summary"
 import { Provider } from "@/runtime/providers/provider"
 import { Bus } from "@/shared/bus"
 import { Log } from "@/shared/util/log"
-import { toolFramesForPart, usageFromMessageInfo } from "./tool-frames"
+import { fileFrameForPart, toolFramesForPart, usageFromMessageInfo } from "./tool-frames"
 
 const log = Log.create({ service: "agent-compat" })
 
@@ -750,6 +750,9 @@ export const AgentCompatRoutes = () =>
         const appFramesRequested = new Set<string>()
         const pendingApps = new Set<Promise<void>>()
         let wasBusy = false
+        // This session's assistant message ids: only their file parts are
+        // generated artifacts (user attachments are file parts too).
+        const assistantMessages = new Set<string>()
         const unsub = Bus.subscribeAll((event: any) => {
           const type = event?.type
           const props = event?.properties ?? {}
@@ -777,6 +780,11 @@ export const AgentCompatRoutes = () =>
                 pendingApps.add(pending)
               }
             }
+            // A file the model generated (not the user's own attachment).
+            if (part?.type === "file" && assistantMessages.has(part?.messageID)) {
+              const frame = fileFrameForPart(part, msgID)
+              if (frame) push(frame)
+            }
             return
           }
           if (type === "message.updated") {
@@ -784,6 +792,7 @@ export const AgentCompatRoutes = () =>
             // assistant usage so the finish frame can report real tokens.
             const info = props.info
             if (info?.sessionID !== sessionID || info?.role !== "assistant") return
+            if (typeof info?.id === "string") assistantMessages.add(info.id)
             lastUsage = usageFromMessageInfo(info) ?? lastUsage
             return
           }
