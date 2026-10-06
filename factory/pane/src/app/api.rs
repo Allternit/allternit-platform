@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 mod agent_view;
 mod agents;
 mod env;
+mod factory_terminal;
 mod integrations;
 mod layouts;
 mod pane_graphics;
@@ -1220,6 +1221,31 @@ impl App {
             }
             Method::PluginPaneClose(params) => {
                 return self.handle_plugin_pane_close(request.id, params);
+            }
+            Method::FactoryTerminalCreate(params) => {
+                return self.handle_factory_terminal_create(request.id, params);
+            }
+            Method::FactoryTerminalWrite(params) => {
+                return self.handle_factory_terminal_write(request.id, params);
+            }
+            Method::FactoryTerminalResize(params) => {
+                return self.handle_factory_terminal_resize(request.id, params);
+            }
+            Method::FactoryTerminalClose(params) => {
+                return self.handle_factory_terminal_close(request.id, params);
+            }
+            Method::FactoryTerminalGet(params) => {
+                return self.handle_factory_terminal_get(request.id, params);
+            }
+            Method::FactoryTerminalList(_) => {
+                return self.handle_factory_terminal_list(request.id);
+            }
+            Method::FactoryTerminalOutput(_) => {
+                return responses::encode_error(
+                    request.id,
+                    "stream_transport_required",
+                    "factory.terminal.output requires the streaming socket transport",
+                );
             }
             _ => {
                 return responses::encode_error(
