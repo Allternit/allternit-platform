@@ -46,7 +46,7 @@ use crate::{
     tool_bridge::McpToolBridge,
     tools_registry::McpToolsRegistry,
     transport::McpTransport,
-    types::{CallToolRequest, JsonRpcMessage, JsonRpcRequest, ToolResult},
+    types::{CallToolRequest, ToolResult},
 };
 use allternit_sdk_core::{ExecuteResponse, ToolGatewayDefinition};
 use async_trait::async_trait;
@@ -54,7 +54,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 
 /// Error type for MCP tool provider operations
 #[derive(Debug, thiserror::Error)]
@@ -126,14 +126,12 @@ pub trait ToolProvider: Send + Sync {
 /// a way to route tool execution requests to the correct server.
 pub struct McpClientPool {
     clients: Arc<RwLock<HashMap<String, Arc<Mutex<dyn McpTransport>>>>>,
-    request_counter: Arc<RwLock<u64>>,
 }
 
 impl std::fmt::Debug for McpClientPool {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("McpClientPool")
             .field("clients", &"<dyn McpTransport map>")
-            .field("request_counter", &self.request_counter)
             .finish()
     }
 }
@@ -143,7 +141,6 @@ impl McpClientPool {
     pub fn new() -> Self {
         Self {
             clients: Arc::new(RwLock::new(HashMap::new())),
-            request_counter: Arc::new(RwLock::new(0)),
         }
     }
 
@@ -174,13 +171,6 @@ impl McpClientPool {
         self.clients.read().await.contains_key(server_id)
     }
 
-    /// Generate a unique request ID
-    async fn next_request_id(&self) -> u64 {
-        let mut counter = self.request_counter.write().await;
-        *counter += 1;
-        *counter
-    }
-
     /// Execute a tool call on a specific MCP server
     ///
     /// # Arguments
@@ -201,58 +191,22 @@ impl McpClientPool {
             .await
             .ok_or_else(|| McpToolProviderError::ClientNotAvailable(server_id.to_string()))?;
 
-        let request_id = self.next_request_id().await;
-
         let params = serde_json::to_value(&request)?;
 
-        let json_rpc_request = JsonRpcRequest {
-            jsonrpc: "2.0".to_string(),
-            id: Some(request_id),
-            method: "tools/call".to_string(),
-            params: Some(params),
-        };
-
-        let message = JsonRpcMessage::Request(json_rpc_request);
-
-        // Send the request
-        {
+        // One request/response exchange through the transport (which matches
+        // the reply by id), instead of a separate send + receive that could
+        // miss a reply arriving before the receive subscribed.
+        let result = {
             let client_guard = client.lock().await;
-            client_guard
-                .send(message)
-                .await
-                .map_err(|e| McpToolProviderError::TransportError(e.to_string()))?;
-        }
-
-        // Receive the response
-        let response = {
-            let client_guard = client.lock().await;
-            client_guard
-                .receive()
-                .await
-                .map_err(|e| McpToolProviderError::TransportError(e.to_string()))?
+            client_guard.request("tools/call", Some(params)).await
         };
-
-        match response {
-            Some(JsonRpcMessage::Response(resp)) => {
-                if let Some(error) = resp.error {
-                    return Err(McpToolProviderError::ExecutionError(error.message));
-                }
-
-                let result: ToolResult = serde_json::from_value(resp.result.ok_or_else(|| {
-                    McpToolProviderError::ExecutionError("Empty response".to_string())
-                })?)?;
-
-                Ok(result)
+        match result {
+            Ok(value) => Ok(serde_json::from_value(value)?),
+            Err(crate::McpError::JsonRpc { message, .. }) => Err(McpToolProviderError::ExecutionError(message)),
+            Err(crate::McpError::ConnectionClosed) => {
+                Err(McpToolProviderError::ServerDisconnected(server_id.to_string()))
             }
-            Some(JsonRpcMessage::Error(err)) => {
-                Err(McpToolProviderError::ExecutionError(err.error.message))
-            }
-            None => Err(McpToolProviderError::ServerDisconnected(
-                server_id.to_string(),
-            )),
-            _ => Err(McpToolProviderError::ExecutionError(
-                "Unexpected response type".to_string(),
-            )),
+            Err(e) => Err(McpToolProviderError::TransportError(e.to_string())),
         }
     }
 
