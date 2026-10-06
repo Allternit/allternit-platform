@@ -138,6 +138,11 @@ use tokio::sync::RwLock;
 
 #[tokio::main]
 async fn main() {
+    // Git pre-receive hook mode for Memory Drive pushes: validate and exit
+    // before any config, database or secret is loaded.
+    if std::env::args().nth(1).as_deref() == Some(allternit_api::memory_drive_transport::HOOK_ARG) {
+        std::process::exit(allternit_api::memory_drive_transport::run_pre_receive());
+    }
     // P5 commerce is Stripe test-mode only. A live key configured for it
     // disables commerce (every commerce route answers 503 via service()); it
     // must not take the rest of the API down with it.
@@ -281,6 +286,13 @@ async fn main() {
         Ok(0) => {}
         Ok(n) => info!("Memory: removed {n} facts copied from raw chat turns"),
         Err(e) => warn!("Memory: prune of turn-derived facts failed: {e}"),
+    }
+
+    // Memory Drive: personal memory is a git repo per user under brains_dir;
+    // memory rows are rebuilt from it. Recording the root here switches every
+    // memory writer for this database to the drive.
+    if let Err(e) = allternit_api::memory_drive_writer::configure_root(&db, &std::path::absolute(app_config.brains_dir()).unwrap_or_else(|_| app_config.brains_dir())) {
+        warn!("Memory Drive: storage root not configured, memory stays row-based: {e}");
     }
 
     // Memory-plane index: background embedding backfill / re-embed (WP-M1a).
@@ -1431,6 +1443,8 @@ async fn main() {
     }
     // Canonical memory: merge duplicates (S1 RELATION shadow) + soft decay (WP-M1d).
     allternit_api::memory_consolidation::spawn(state.clone());
+    // Memory Drive nightly Dream (one commit + report per drive per night).
+    allternit_api::memory_dream::spawn(state.clone());
 
     // Mount cowork scheduler routes if scheduler is active. These routes
     // create/update/delete schedules and self-gate nothing, so they must be

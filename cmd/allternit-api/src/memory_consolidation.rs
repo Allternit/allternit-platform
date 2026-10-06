@@ -180,6 +180,11 @@ pub fn candidate_pairs(facts: &[FactRow], edges: &HashSet<(String, String)>) -> 
 /// Soft merge of `drop` into `keep`. Returns false when `drop` was already
 /// retired (a concurrent run or edit), so re-running is harmless.
 pub fn apply_merge(conn: &Connection, user_id: &str, pair: &Pair, origin: &str, decision_id: Option<&str>) -> rusqlite::Result<bool> {
+    // Drive-backed memories are consolidated by the nightly Dream as a git
+    // commit; this lexical job must not edit their index rows.
+    if crate::memory_drive_writer::is_drive_fact(conn, &pair.drop.id)? || crate::memory_drive_writer::is_drive_fact(conn, &pair.keep.id)? {
+        return Ok(false);
+    }
     let retired = conn.execute(
         "UPDATE memory_facts SET valid_until = CURRENT_TIMESTAMP WHERE id = ?1 AND user_id = ?2 AND valid_until IS NULL",
         params![pair.drop.id, user_id],
@@ -479,6 +484,133 @@ pub fn adapter_delete(conn: &Connection, user_id: &str, source: &str, external_i
     Ok(n)
 }
 
+/// Memory Drive path for adapters: all changed items land as ONE drive
+/// commit, then the adapter links point at the rebuilt index rows. `None`
+/// when this database has no drive (legacy `adapter_upsert` applies).
+pub fn adapter_upsert_drive(db: &crate::db::DbHandle, user_id: &str, source: &str, items: &[AdapterItem]) -> Result<Option<UpsertReport>, String> {
+    let conn = db.connect().map_err(|e| e.to_string())?;
+    if crate::memory_drive_writer::configured_root(&conn).map_err(|e| e.to_string())?.is_none() {
+        return Ok(None);
+    }
+    let mut report = UpsertReport::default();
+    // (external id, hash, previous fact)
+    let mut changed: Vec<(String, String, Option<String>)> = Vec::new();
+    let mut adds = Vec::new();
+    for item in items {
+        let text = item.text.trim();
+        if text.is_empty() || item.external_id.is_empty() {
+            continue;
+        }
+        let hash = content_hash(text);
+        let existing: Option<(String, String)> = conn
+            .query_row(
+                "SELECT l.fact_id, l.content_hash FROM memory_adapter_links l JOIN memory_facts f ON f.id = l.fact_id
+                 WHERE l.user_id = ?1 AND l.source = ?2 AND l.external_id = ?3 AND f.valid_until IS NULL",
+                params![user_id, source, item.external_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        if let Some((fact_id, h)) = &existing {
+            if *h == hash {
+                report.unchanged += 1;
+                report.fact_ids.push(fact_id.clone());
+                continue;
+            }
+        }
+        adds.push(crate::memory_drive_writer::NewFact {
+            text: text.to_string(),
+            memory_type: item.memory_type.as_deref().and_then(MemoryType::parse).map(|t| t.as_str().to_string()),
+            agent: item.agent_id.clone(),
+            confidence: Some(item.confidence.unwrap_or(0.9).clamp(0.0, 1.0)),
+            source: Some(format!("adapter:{source}")),
+            ..Default::default()
+        });
+        changed.push((item.external_id.clone(), hash, existing.map(|e| e.0)));
+    }
+    if adds.is_empty() {
+        return Ok(Some(report));
+    }
+    let retire: Vec<String> = changed.iter().filter_map(|c| c.2.clone()).collect();
+    let out = crate::memory_drive_writer::commit_facts(db, user_id, &adds, &retire, &format!("Sync memory from {source}"))
+        .map_err(|e| e.to_string())?
+        .ok_or("memory drive is not configured")?;
+    for legacy in &out.legacy_retire {
+        rel::supersede_fact(&conn, user_id, legacy).map_err(|e| e.to_string())?;
+    }
+    for (((external_id, hash, old), add), id) in changed.into_iter().zip(adds.iter()).zip(out.fact_ids) {
+        // A skipped add (same text already remembered) links to that memory.
+        let Some(fact_id) = id.or_else(|| {
+            conn.query_row(
+                "SELECT id FROM memory_facts WHERE user_id = ?1 AND lower(fact) = lower(?2) AND valid_until IS NULL LIMIT 1",
+                params![user_id, add.text],
+                |r| r.get::<_, String>(0),
+            )
+            .ok()
+        }) else {
+            continue;
+        };
+        if let Some(old) = &old {
+            if *old != fact_id {
+                rel::write_relation(&conn, user_id, (NodeKind::Fact, &fact_id), RelationType::Updates, (NodeKind::Fact, old), 1.0, rel::ORIGIN_USER, None)
+                    .map_err(|e| e.to_string())?;
+            }
+            report.updated += 1;
+        } else {
+            report.created += 1;
+        }
+        conn.execute(
+            "INSERT INTO memory_adapter_links (user_id, source, external_id, fact_id, content_hash) VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(user_id, source, external_id) DO UPDATE SET fact_id = excluded.fact_id,
+               content_hash = excluded.content_hash, updated_at = CURRENT_TIMESTAMP",
+            params![user_id, source, external_id, fact_id, hash],
+        )
+        .map_err(|e| e.to_string())?;
+        report.fact_ids.push(fact_id);
+    }
+    Ok(Some(report))
+}
+
+/// Memory Drive path for adapter deletes: one commit removing every linked
+/// entry. `None` when this database has no drive.
+pub fn adapter_delete_drive(db: &crate::db::DbHandle, user_id: &str, source: &str, external_ids: &[String]) -> Result<Option<usize>, String> {
+    let conn = db.connect().map_err(|e| e.to_string())?;
+    if crate::memory_drive_writer::configured_root(&conn).map_err(|e| e.to_string())?.is_none() {
+        return Ok(None);
+    }
+    let mut facts = Vec::new();
+    for ext in external_ids {
+        let fact: Option<String> = conn
+            .query_row(
+                "SELECT l.fact_id FROM memory_adapter_links l JOIN memory_facts f ON f.id = l.fact_id
+                 WHERE l.user_id = ?1 AND l.source = ?2 AND l.external_id = ?3 AND f.valid_until IS NULL",
+                params![user_id, source, ext],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        if let Some(f) = fact {
+            facts.push(f);
+        }
+    }
+    if !facts.is_empty() {
+        let out = crate::memory_drive_writer::commit_facts(db, user_id, &[], &facts, &format!("Remove memory synced from {source}"))
+            .map_err(|e| e.to_string())?
+            .ok_or("memory drive is not configured")?;
+        for legacy in &out.legacy_retire {
+            rel::supersede_fact(&conn, user_id, legacy).map_err(|e| e.to_string())?;
+        }
+    }
+    for ext in external_ids {
+        conn.execute(
+            "DELETE FROM memory_adapter_links WHERE user_id = ?1 AND source = ?2 AND external_id = ?3",
+            params![user_id, source, ext],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(Some(facts.len()))
+}
+
 // ─── Routes ─────────────────────────────────────────────────────────────────
 
 pub fn memory_consolidation_router() -> Router<Arc<AppState>> {
@@ -561,11 +693,14 @@ async fn upsert_route(State(state): State<Arc<AppState>>, Extension(user): Exten
         return bad(StatusCode::BAD_REQUEST, "at most 500 items per call");
     }
     let db = state.db.clone();
-    let res = tokio::task::spawn_blocking(move || -> rusqlite::Result<UpsertReport> {
-        let mut conn = db.connect()?;
-        let tx = conn.transaction()?;
-        let r = adapter_upsert(&tx, &user.user_id, &body.source, &body.items)?;
-        tx.commit()?;
+    let res = tokio::task::spawn_blocking(move || -> Result<UpsertReport, String> {
+        if let Some(r) = adapter_upsert_drive(&db, &user.user_id, &body.source, &body.items)? {
+            return Ok(r);
+        }
+        let mut conn = db.connect().map_err(|e| e.to_string())?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        let r = adapter_upsert(&tx, &user.user_id, &body.source, &body.items).map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
         Ok(r)
     })
     .await;
@@ -581,7 +716,13 @@ async fn delete_route(State(state): State<Arc<AppState>>, Extension(user): Exten
         return r;
     }
     let db = state.db.clone();
-    let res = tokio::task::spawn_blocking(move || db.connect().and_then(|c| adapter_delete(&c, &user.user_id, &body.source, &body.external_ids))).await;
+    let res = tokio::task::spawn_blocking(move || -> Result<usize, String> {
+        if let Some(n) = adapter_delete_drive(&db, &user.user_id, &body.source, &body.external_ids)? {
+            return Ok(n);
+        }
+        db.connect().and_then(|c| adapter_delete(&c, &user.user_id, &body.source, &body.external_ids)).map_err(|e| e.to_string())
+    })
+    .await;
     match res {
         Ok(Ok(n)) => Json(json!({ "retired": n })).into_response(),
         Ok(Err(e)) => bad(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),

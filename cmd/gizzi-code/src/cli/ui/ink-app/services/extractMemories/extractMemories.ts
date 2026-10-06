@@ -23,6 +23,7 @@ import {
   formatMemoryManifest,
   scanMemoryFiles,
 } from '../../memdir/memoryScan.js'
+import { commitMemoryDriveEdits } from '../memoryDrive/commit.js'
 import {
   getAutoMemPath,
   isAutoMemoryEnabled,
@@ -436,6 +437,8 @@ export function initExtractMemories(): void {
       }
 
       const writtenPaths = extractWrittenPaths(result.messages)
+      // Memory Drive: validate, commit and sync what the fork wrote.
+      if (writtenPaths.length > 0) await commitMemoryDriveEdits('Save memories extracted by gizzi')
       const turnCount = count(result.messages, m => m.type === 'assistant')
 
       const totalInput =

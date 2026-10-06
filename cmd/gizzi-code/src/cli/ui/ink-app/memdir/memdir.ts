@@ -1,7 +1,8 @@
 import { feature } from 'bun:bundle'
 import { join } from 'path'
 import { getFsImplementation } from '../utils/fsOperations.js'
-import { getAutoMemPath, isAutoMemoryEnabled } from './paths.js'
+import { getAutoMemPath, isAutoMemoryEnabled, isMemoryDriveActive } from './paths.js'
+import { MemoryDrive } from '../../../../runtime/memory/drive/drive.js'
 
 /* eslint-disable @typescript-eslint/no-require-imports */
 const teamMemPaths = feature('TEAMMEM')
@@ -429,7 +430,7 @@ export async function loadMemoryPrompt(): Promise<string | null> {
   // MEMORY.md that both sides read + write). Gating on `autoEnabled` here
   // means the !autoEnabled case falls through to the tengu_memdir_disabled
   // telemetry block below, matching the non-KAIROS path.
-  if (feature('KAIROS') && autoEnabled && getKairosActive()) {
+  if (feature('KAIROS') && autoEnabled && getKairosActive() && !isMemoryDriveActive()) {
     logMemoryDirCounts(getAutoMemPath(), {
       memory_type:
         'auto' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
@@ -472,11 +473,40 @@ export async function loadMemoryPrompt(): Promise<string | null> {
     }
   }
 
+  if (autoEnabled && isMemoryDriveActive()) {
+    // Memory Drive: the auto-memory dir is the drive checkout (a git repo
+    // gizzi creates and syncs — never a bare mkdir). Bounded wait for the
+    // session-start sync; mounted drives' MEMORY.md are included here, the
+    // personal one arrives with the other memory files.
+    const context = await MemoryDrive.sessionContext({
+      saveInstructions: MemoryDrive.fileSaveInstructions(),
+      omitPersonalEntrypoint: true,
+    }).catch(() => '')
+    if (context) {
+      return [
+        '# auto memory',
+        '',
+        context,
+        '',
+        "If the user explicitly asks you to remember something, save it immediately as whichever type fits best. If they ask you to forget something, find and remove the relevant line.",
+        '',
+        ...TYPES_SECTION_INDIVIDUAL,
+        ...WHAT_NOT_TO_SAVE_SECTION,
+        '',
+        ...WHEN_TO_ACCESS_SECTION,
+        '',
+        ...TRUSTING_RECALL_SECTION,
+        '',
+        ...(extraGuidelines ?? []),
+      ].join('\n')
+    }
+  }
+
   if (autoEnabled) {
     const autoDir = getAutoMemPath()
     // Harness guarantees the directory exists so the model can write without
     // checking. The prompt text reflects this ("already exists").
-    await ensureMemoryDirExists(autoDir)
+    if (!isMemoryDriveActive()) await ensureMemoryDirExists(autoDir)
     logMemoryDirCounts(autoDir, {
       memory_type:
         'auto' as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,

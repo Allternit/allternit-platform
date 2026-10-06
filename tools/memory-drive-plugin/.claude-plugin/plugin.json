@@ -1,0 +1,11 @@
+{
+  "name": "allternit-memory-drive",
+  "version": "1.0.0",
+  "description": "Use your Allternit Memory Drive (git-backed agent memory in the open Agent Memory Repo format) from Claude Code, Codex or any agent: load MEMORY.md at session start, read topic files, and write new memories with source and date.",
+  "author": {
+    "name": "Allternit"
+  },
+  "homepage": "https://docs.allternit.com/guides/memory-drive",
+  "keywords": ["memory", "agent-memory-repo", "git", "allternit"],
+  "license": "MIT"
+}

@@ -1,0 +1,186 @@
+---
+title: Memory Drive internals
+description: "How the git-backed Memory Drive works inside allternit-api and gizzi-code: storage, the writer, the rebuilt index, the push gate, the nightly Dream, shared drives and the twin and cowork mirrors."
+---
+
+The Memory Drive is the source of truth for what a user's agents remember. Each
+drive is a private bare git repo in the open
+[Agent Memory Repo](https://github.com/AgentMemoryRepo/agentmemoryrepo) format (MIT; Allternit
+implements the published format and includes none of its code). The kernel's
+`memory_facts` table is an index rebuilt from the drive. For routes see the
+[Memory Drive API](/api/memory-drive); for the user guide see [Memory Drive](/guides/memory-drive).
+
+## Where things live
+
+| Module (`cmd/allternit-api/src`) | Job |
+| --- | --- |
+| `memory_drive.rs` | Storage core: bare repo init, snapshot/tree/file/history/diff, the entry format, path/size/secret validation, batch commits published with `update-ref` compare-and-swap, `validate_push`. |
+| `memory_drive_service.rs` | Registry (`memory_drives`, one row per drive, pointing at a `brains` row), provisioning, the index projection, import. |
+| `memory_drive_writer.rs` | The one writer for personal memory. Every kernel write path calls `commit_facts`. |
+| `memory_drive_transport.rs` | The pre-receive hook (the API binary run as `allternit-api memory-drive-pre-receive`). |
+| `memory_drive_scopes.rs` | Shared drives, the permission matrix, mounts, the questions board, the cowork mirror. |
+| `memory_drive_twin.rs` | The read-only `twin/` mirror of twin memory. |
+| `memory_dream.rs` | The nightly Dream, its report and undo. |
+| `memory_drive_routes.rs` | `/api/v1/memory/drive/*`. |
+
+Repos live at `<brains_dir>/<owner>/<brain_id>.git`, the same layout as
+[hosted brains](/api/brain-git), so the existing smart-HTTP route serves clones and
+pushes. At startup the API records `brains_dir` for its database
+(`memory_drive_config`). A database without that record (unit tests, offline tools)
+keeps the legacy row writers.
+
+## Format
+
+```markdown
+# Memory
+
+- Pinned lines every session needs.
+
+## Index
+- [[facts]]
+- [[preferences]]
+```
+
+```markdown
+# facts
+
+- User lives in Saint Paul. [source: /?session=s_123; added: 2026-10-06; id: m-1f…; memory_type: fact; observation: obs_9a…]
+```
+
+- `source` is a product link (`/?session=<id>`), an `https` link, an opaque label
+  (`gizzi:session/<id>`, `claude-code:session/<id>`, `allternit:observation/<id>`), or
+  `imported:unknown`. `javascript:`, `data:`, `file:` and similar schemes are refused.
+- `id` is an Allternit extension. External lines without it get a deterministic id
+  (`entry-` + sha256 of text, source and date).
+- The server regenerates `## Index` from the topic files on every write.
+- Limits: 64 KiB per file, 2 MiB per drive, 256 files, regular non-executable
+  markdown only, no raw HTML or images, no transcripts or logs.
+
+## Writing
+
+`memory_drive_writer::commit_facts(db, owner, adds, retire, message)` is the only
+writer for personal memory. Retain (explicit and the model extractor, including its
+rule-based fallback), fact edits, deletes, adapters and reconstruction all call it.
+
+1. Skip empty text, possible credentials and duplicates of an active memory.
+2. Build entries: new stable id, today's date, source from the observation's session
+   when that session exists on this node and isn't incognito, otherwise
+   `allternit:observation/<id>`.
+3. Map `retire` fact ids to entry ids (`DeleteEntry`); legacy rows are retired in the archive.
+4. Apply everything as **one commit** against the current head; on a compare-and-swap
+   conflict re-read and retry (up to 6 times).
+5. Reindex. If the commit fails for any other reason, the intent goes to
+   `memory_drive_pending` and is retried on the next write or read; `/memory/drive/info`
+   shows `pending_writes`.
+
+## The index
+
+`reindex` snapshots the drive inside an `IMMEDIATE` SQLite transaction and projects
+every active entry into `memory_facts` with a deterministic id
+(`drive_` + sha256 of drive id and entry id) through `memory_drive_entries`. Retrieval
+counts and graph edges survive edits because the fact id follows the entry id. Entries
+removed from the drive are retired softly (`valid_until`), like the kernel's own
+supersession. Not indexed: `status: proposed|rejected`, `scope: twin*`,
+`memory_type: not_memory`, questions and answers. Every read checks the drive head
+against `indexed_revision` and repairs a stale index.
+
+`/memory/v2/recall` and `/memory/v2/facts` are unchanged; they read the index.
+
+## Import
+
+`import_plan` (dry run) lists every active legacy fact for the user, its target topic
+file and why any row is skipped (possible secret, foreign or incognito session,
+proposed twin). It creates nothing. `import_apply` writes one `Import existing memory`
+commit plus a receipt (`imports/kernel.md`), so a crash between the git commit and the
+database marker is recovered on the next reindex and a rerun makes no new commit.
+Converted rows are retired at once (kept, never deleted); skipped rows stay visible
+for 30 days, then `hide_expired_archives` retires them.
+
+## Pushes
+
+Smart-HTTP auth accepts legacy owner tokens (unchanged) and drive-scoped tokens
+(`git_tokens.brain_id`, `access` `read` or `write`). A read token gets `401`/`403` on
+`git-receive-pack`. For a Memory Drive the API installs `hooks/pre-receive`, which runs
+the API binary in validation mode before any config or database is loaded. It reads the
+quarantined objects and refuses: refs other than `refs/heads/main`, deletes, non
+fast-forwards, more than 200 commits, any commit whose tree fails the format, path,
+mode, size or secret checks, and any change under `twin/` or `cowork/`. After the push
+the API repairs the index from the actual head (a refused push still answers HTTP 200
+with a pack-protocol error, so the status code is not trusted).
+
+## Nightly Dream
+
+`memory_dream::spawn` checks every 15 minutes and, between 02:00 and 06:00 server
+time, runs one Dream per personal drive with `dreaming_enabled`. The
+`UNIQUE(drive_id, date)` row in `memory_dreams` is the lease; a run stuck for an hour
+or a failed run (up to 3 attempts) is retried.
+
+1. Snapshot the drive at the base revision (up to 300 entries, with use counts from
+   the index) and read the last day's turns from `memory_observations` (up to 80,
+   600 characters each, incognito excluded).
+2. Ask the model (through `gizzi_completion`, the same route as memory extraction,
+   with a JSON schema) for merges, contradictions, lessons, prunes and twin proposals.
+3. Check every suggestion in code (`memory_dream::check`): contradiction fixes, lessons
+   and twin proposals must cite turn ids that were actually shown; prunes only remove
+   entries never used and at least 30 days old; each entry is touched once; text must
+   pass the entry format and secret checks.
+4. Apply as one `Dream YYYY-MM-DD` commit by `Dream via Allternit`, and store a report
+   built from what was applied. Twin facts go to `twin_persona::propose` and wait for
+   the owner.
+5. No answer or an unusable answer marks the run `failed` and changes nothing.
+
+**Undo** compares the Dream's parent, the Dream commit and the current head entry by
+entry. It restores lines the Dream removed or rewrote and removes lines it added, as a
+new `Undo Dream YYYY-MM-DD` commit. If a line the Dream touched was edited later, undo
+refuses and lists the files instead of guessing.
+
+The lexical `memory_consolidation` merge skips drive-backed facts. Gizzi's local
+`autoDream` stays off while the server Dream is on.
+
+## Shared drives
+
+`memory_drives.kind` is `personal`, `team`, `project`, `bot` or `swarm`, with
+`scope_id` the workspace, project or agent id. The marker owner (the scope's owner) owns
+the repo; access is computed on every request and every git call
+(`memory_drive_scopes::access`):
+
+| Kind | Write | Read |
+| --- | --- | --- |
+| personal | the user | the user |
+| team | workspace owner and members | `viewer` members |
+| project | `cowork_projects.user_id` | same |
+| bot | `agents.user_id` | same |
+| swarm | `agents.user_id` with `type = 'orchestrator'` | same |
+
+Shared drives are separate repos and are not indexed into anyone's personal recall.
+Gizzi and other agents mount them next to the personal drive (`GET /memory/drive/mounts`).
+
+- **Questions board.** `questions.md` holds questions (`kind: question`, `status`) and
+  answers (`kind: answer`, `parent`), each with a stable id. Ask, answer and resolve
+  re-read and retry on conflict, so concurrent agents never lose each other's lines.
+- **Twin mirror.** After any twin change, `twin/active.md` and `twin/proposed.md` are
+  rewritten from `twin_memory` with status, visibility and provenance on every line.
+  `twin_memory` stays the only place a fact becomes active.
+- **Cowork mirror.** Opening a bot or project drive refreshes `cowork/memory.md` from
+  `cowork_memory_entries` (the cowork runtime keeps its grant model and stays that
+  store's writer).
+
+## Other memory stores
+
+| Store | Role now |
+| --- | --- |
+| `memory_facts`, `memory_adapter_links` | Index of the personal drive. |
+| `memory_observations` | Evidence log the Dream and source links cite. Never copied into a drive. |
+| `twin_memory` | Decides what's active (owner approval); mirrored to `twin/`. |
+| `cowork_memory_entries` | Bot and project memory with grants; mirrored to `cowork/memory.md`. |
+| `memory_notes` | Multi-line titled notes; a document store, not one-line memories. |
+| `session_memory` | Per-session scratch values, cleared with the session. |
+| `procedural_memory` | Structured procedures (triggers, steps, use counts). |
+| `beta_memory_stores` | Developer API key/value stores for API clients. |
+
+## gizzi-code
+
+Gizzi keeps a checkout of the personal drive (and any mounts) and writes with the same
+format: commit, push, and on a rejected push re-read, re-apply the same entry id once
+and push again, never force. Signed out, it uses a local repo per account and merges it
+up on first sign-in. See [Memory Drive](/guides/memory-drive#in-gizzi).

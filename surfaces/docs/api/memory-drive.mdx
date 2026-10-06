@@ -1,0 +1,179 @@
+---
+title: Memory Drive API
+description: "Routes for the git-backed Memory Drive: files, history, writes, clone tokens, nightly Dreams, shared drives and the questions board."
+---
+
+The Memory Drive is each user's agent memory, stored as a private git repo in the
+open [Agent Memory Repo](https://github.com/AgentMemoryRepo/agentmemoryrepo) format.
+These routes are served by the Allternit API data-plane node under `/api/v1`, next to
+the [Memory API](/api/memory) and [hosted brains](/api/brain-git). They use
+the normal signed-in session. For the user-facing guide see [Memory Drive](/guides/memory-drive).
+
+The drive is the source of truth. The kernel's `memory_facts` rows are an index
+rebuilt from it after every commit, so `/memory/v2/recall` keeps working unchanged.
+
+## Errors
+
+| Status | Meaning |
+| --- | --- |
+| 400 | Invalid input, for example a bad path, a possible credential, or a memory line without `source`/`added`. |
+| 401 | Not signed in. |
+| 403 | You don't have access to that drive, or you have read access and tried to write. |
+| 404 | No such drive, file or entry. |
+| 409 | The drive changed since `expected_revision`. The body has `expected_revision` and `actual_revision`. Re-read and retry. |
+| 503 | The commit landed (`committed: true`) but indexing is still pending. The next read repairs it. |
+
+## Choosing a drive
+
+Every route takes an optional `drive`, as a query parameter for `GET` or a body field
+for `POST`/`PUT`. The default is `personal`.
+
+| `drive` | Who can open it |
+| --- | --- |
+| `personal` | You. |
+| `team:<workspaceId>` | The workspace owner and members. Members with the `viewer` role can read only. |
+| `project:<projectId>` | The project's owner. |
+| `bot:<agentId>` | The bot's owner. |
+| `swarm:<orchestratorId>` | The swarm's owner. |
+
+Access is checked on every request, so removing someone from a workspace removes their
+access at once, including their git tokens for that drive.
+
+### `GET /memory/drive/mounts`
+
+Every drive you can open.
+
+```json
+{ "mounts": [
+  { "ref": "personal", "kind": "personal", "name": "Personal", "access": "write", "revision": "3f2a…" },
+  { "ref": "team:ws_42", "kind": "team", "name": "Acme", "access": "read", "revision": null }
+] }
+```
+
+`revision` is `null` for a drive that hasn't been created yet; opening it creates it.
+
+## Files and history
+
+### `GET /memory/drive/info`
+
+Creates your personal drive on first call.
+
+```json
+{
+  "ref": "personal", "kind": "personal", "name": "memory", "brain_id": "9c1e…", "branch": "main",
+  "revision": "3f2a…", "indexed_revision": "3f2a…", "index_dirty": false,
+  "imported_at": null, "pending_writes": 0, "access": "write",
+  "clone_url": "http://127.0.0.1:8013/api/v1/brains/9c1e…/git"
+}
+```
+
+`clone_url` never contains a credential. `pending_writes` counts writes whose commit
+failed and will be retried.
+
+| Route | Returns |
+| --- | --- |
+| `GET /memory/drive/tree?revision=` | `{ revision, files: [{ path, bytes }] }` |
+| `GET /memory/drive/file?path=&revision=` | `{ revision, path, content }` |
+| `GET /memory/drive/history?path=&limit=` | `{ commits: [{ revision, parents, author, timestamp, message }] }`, newest first, `limit` up to 100 (default 25). |
+| `GET /memory/drive/diff?from=&to=&path=` | `{ from, to, path, diff }` as a unified diff. For a drive's first commit use the empty tree `4b825dc642cb6eb9a060e54bf8d69288fbee4904` as `from`. |
+
+## Writing
+
+### `POST /memory/drive/write`
+
+Applies a batch as one commit, only if the drive is still at `expected_revision`.
+
+```json
+{
+  "expected_revision": "3f2a…",
+  "message": "Fix my city",
+  "operations": [
+    { "UpsertEntry": { "path": "facts.md", "entry": {
+      "id": "m-1a2b", "text": "User lives in Saint Paul.", "source": "/?session=s_123",
+      "added": "2026-10-06", "metadata": { "memory_type": "fact" } } } },
+    { "DeleteEntry": { "id": "m-9f8e" } },
+    { "SetFile": { "path": "projects/launch.md", "content": "# Launch\n\n" } },
+    { "DeleteFile": { "path": "old.md" } }
+  ]
+}
+```
+
+Returns `{ revision, changed }`. `MEMORY.md`'s `## Index` is regenerated from the topic
+files on every write. `twin/` and `cowork/` are managed by Allternit and can't be written.
+
+### `POST /memory/drive/remember`
+
+Saves one memory without building an entry yourself.
+
+```json
+{ "text": "Prefers short answers.", "memory_type": "preference", "session": "s_123" }
+```
+
+The server sets the id and date and picks the topic file from `memory_type` (`facts.md`,
+`preferences.md`, `events.md`, `procedures.md`, `people-and-things.md`,
+`relationships.md`, `tasks.md`) unless you pass `path`. With `session` the source is that
+session's link; without it, a manual save from Settings. Returns
+`{ revision, fact_id, path, entry_id }` for the personal drive.
+
+### `POST /memory/drive/import`
+
+Moves memories saved before the drive existed into it.
+
+- `{}` (dry run) returns the plan and changes nothing: `{ dry_run: true, plan: { total, converted, skipped, topic_files, already_imported, rows } }`.
+- `{ "apply": true, "expected_revision": "…" }` writes one `Import existing memory` commit. Running it again changes nothing.
+
+Old rows stay visible for 30 days after the import and are then hidden. They are never deleted.
+
+### `POST /memory/drive/reindex`, `GET /memory/drive/health`
+
+Rebuild the index from the drive now, and report `{ revision, indexed_revision, index_dirty, imported_at, pending_writes }`.
+
+## Clone tokens
+
+| Route | What it does |
+| --- | --- |
+| `GET /memory/drive/tokens` | `{ tokens: [{ id, label, access, created_at, last_used_at }] }` for that drive. |
+| `POST /memory/drive/tokens` | Body `{ access: "read" \| "write", label? }`. Returns `{ id, token, username, access, clone_url }`. The token is shown once. |
+| `DELETE /memory/drive/tokens/:id` | Revokes it at once. |
+
+A token opens exactly one drive. A `read` token can clone and fetch; a `write` token can
+also push. Use it as the git password, never in the URL:
+
+```sh
+export ALLTERNIT_MEMORY_TOKEN=allternit_git_…
+git -c credential.helper= \
+  -c 'credential.helper=!f() { echo username=x-access-token; echo "password=$ALLTERNIT_MEMORY_TOKEN"; }; f' \
+  clone "$CLONE_URL" memory
+```
+
+Every push is checked before the branch moves: only `main`, fast-forward only, at most
+200 commits, every file a markdown file in the standard format, no possible credentials,
+and no changes to `twin/` or `cowork/`. A refused push prints `Memory Drive refused this
+push:` and the reason. After an accepted push the index is rebuilt.
+
+## Nightly Dream
+
+| Route | What it does |
+| --- | --- |
+| `GET /memory/drive/settings` / `PUT` | `{ dreaming_enabled }`. On by default. |
+| `GET /memory/drive/dreams?limit=` | `{ dreams: [{ id, date, status, revision, base_revision, report, summary, error, undo_revision, created_at }] }` |
+| `POST /memory/drive/dreams/run` | Runs today's Dream now. Once per day; a second call returns today's result. |
+| `POST /memory/drive/dreams/:id/undo` | `{ undone: true, revision, dream }`. 409 with `conflicts: [paths]` when you edited a line the Dream changed. |
+
+`status` is `running`, `applied`, `no_changes`, `failed` or `undone`. `summary` counts
+`merged`, `resolved`, `lessons`, `pruned`, `proposals` and `skipped`. See
+[how Dreaming works](/core/memory-drive#nightly-dream).
+
+## Questions board
+
+For team, project and swarm drives. Questions and answers live in `questions.md`.
+
+| Route | Body | Returns |
+| --- | --- | --- |
+| `GET /memory/drive/questions?drive=` | | `{ revision, questions: [{ id, text, author, added, status, source, answers: [...] }] }` |
+| `POST /memory/drive/questions` | `{ drive, text, source? }` | `{ revision, question }` |
+| `POST /memory/drive/questions/:id/answer` | `{ drive, text, source? }` | `{ revision, answer }` |
+| `POST /memory/drive/questions/:id/resolve` | `{ drive }` | `{ revision }` |
+
+`status` is `open`, `answered` (at least one answer) or `resolved`. Concurrent askers and
+answerers never overwrite each other: each change is retried on the latest version.

@@ -4,8 +4,8 @@ const memory: Command = {
   type: 'local-jsx',
   name: 'memory',
   aliases: ['mem'],
-  description: 'Edit Gizzi memory files',
-  argumentHint: '[on|off]',
+  description: 'Show your Memory Drive and edit memory files',
+  argumentHint: '[view <path>|log|sync]',
   load: () => import('./memory.js'),
 }
 export default memory

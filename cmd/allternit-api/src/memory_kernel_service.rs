@@ -423,10 +423,66 @@ pub fn persist_facts(
     observation_id: &str,
     facts: &[String],
 ) -> Result<Vec<MemoryFact>, MemoryKernelError> {
+    let typed: Vec<(String, Option<&str>)> = facts.iter().map(|f| (f.clone(), None)).collect();
+    persist_facts_typed(db, user_id, agent_id, observation_id, &typed, &[])
+}
+
+/// Persist facts (with optional memory types) and retire `retire` fact ids in
+/// one step. With a Memory Drive this is ONE git commit, after which the rows
+/// are rebuilt from the drive; without one it is the legacy row writer.
+pub fn persist_facts_typed(
+    db: &DbHandle,
+    user_id: &str,
+    agent_id: Option<&str>,
+    observation_id: &str,
+    facts: &[(String, Option<&str>)],
+    retire: &[String],
+) -> Result<Vec<MemoryFact>, MemoryKernelError> {
+    let adds: Vec<crate::memory_drive_writer::NewFact> = facts
+        .iter()
+        .map(|(text, t)| crate::memory_drive_writer::NewFact {
+            text: text.clone(),
+            memory_type: t.map(str::to_string),
+            agent: agent_id.map(str::to_string),
+            observation: (!observation_id.is_empty()).then(|| observation_id.to_string()),
+            ..Default::default()
+        })
+        .collect();
+    match crate::memory_drive_writer::commit_facts(db, user_id, &adds, retire, "Remember from conversation") {
+        Ok(Some(out)) => {
+            let conn = db.connect()?;
+            for legacy in &out.legacy_retire {
+                crate::memory_relations::supersede_fact(&conn, user_id, legacy)?;
+            }
+            let mut persisted = Vec::new();
+            for ((text, t), id) in facts.iter().zip(out.fact_ids) {
+                if let Some(id) = id {
+                    persisted.push(MemoryFact {
+                        id,
+                        user_id: user_id.to_string(),
+                        agent_id: agent_id.map(|s| s.to_string()),
+                        fact: text.clone(),
+                        confidence: 0.85,
+                        valid_from: chrono::Utc::now().to_rfc3339(),
+                        valid_until: None,
+                        source_observation_id: Some(observation_id.to_string()),
+                        memory_type: t.map(str::to_string),
+                    });
+                }
+            }
+            return Ok(persisted);
+        }
+        Ok(None) => {}
+        Err(e) => return Err(MemoryKernelError::Internal(e.to_string())),
+    }
     let conn = db.connect()?;
+    for id in retire {
+        crate::memory_relations::supersede_fact(&conn, user_id, id)?;
+    }
     let mut persisted = Vec::new();
 
-    for fact in facts {
+    for (fact, _) in facts {
+        let fact = fact.as_str();
         if mentions_secret(fact) {
             continue;
         }
@@ -516,7 +572,8 @@ pub fn prune_turn_derived_facts(db: &DbHandle) -> Result<usize, MemoryKernelErro
     let mut stmt = conn.prepare(
         "SELECT f.id, f.fact, o.kind FROM memory_facts f
          JOIN memory_observations o ON o.id = f.source_observation_id
-         WHERE o.kind IN ('turn_user', 'turn_assistant', 'turn_tool', 'turn_system', 'dream_extraction')",
+         WHERE o.kind IN ('turn_user', 'turn_assistant', 'turn_tool', 'turn_system', 'dream_extraction')
+           AND NOT EXISTS(SELECT 1 FROM memory_drive_entries e WHERE e.fact_id = f.id)",
     )?;
     let rows: Vec<(String, String, String)> = stmt
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
@@ -778,6 +835,18 @@ pub fn list_observations(
 /// Delete one of the user's facts and its embedding. Returns whether a row was removed.
 pub fn delete_fact(db: &DbHandle, user_id: &str, fact_id: &str) -> Result<bool, MemoryKernelError> {
     let conn = db.connect()?;
+    // Drive-backed: remove the entry from the drive first (one commit), then
+    // drop the index row. Git history keeps the old line, as with any edit.
+    let owned_drive_fact: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM memory_drive_entries e JOIN memory_drives d ON d.id=e.drive_id
+          WHERE e.fact_id=?1 AND d.user_id=?2 AND d.kind='personal')",
+        params![fact_id, user_id],
+        |r| r.get(0),
+    )?;
+    if owned_drive_fact {
+        crate::memory_drive_writer::commit_facts(db, user_id, &[], &[fact_id.to_string()], "Forget memory")
+            .map_err(|e| MemoryKernelError::Internal(e.to_string()))?;
+    }
     let removed = conn.execute(
         "DELETE FROM memory_facts WHERE id = ?1 AND user_id = ?2",
         params![fact_id, user_id],

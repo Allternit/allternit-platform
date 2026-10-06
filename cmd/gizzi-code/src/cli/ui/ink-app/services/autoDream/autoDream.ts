@@ -11,6 +11,7 @@
 // State is closure-scoped inside initAutoDream() rather than module-level
 // (tests call initAutoDream() in beforeEach for a fresh closure).
 
+import { commitMemoryDriveEdits } from '../memoryDrive/commit.js'
 import type { REPLHookContext } from '../../utils/hooks/postSamplingHooks.js'
 import {
   createCacheSafeParams,
@@ -234,6 +235,8 @@ ${sessionIds.map(id => `- ${id}`).join('\n')}`
       })
 
       completeDreamTask(taskId, setAppState)
+      // Memory Drive: validate, commit and sync the dream's edits.
+      await commitMemoryDriveEdits('Local dream: consolidate memory')
       // Inline completion summary in the main transcript (same surface as
       // extractMemories's "Saved N memories" message).
       const dreamState = context.toolUseContext.getAppState().tasks?.[taskId]

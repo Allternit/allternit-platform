@@ -17,6 +17,8 @@ pub const MAX_DRIVE_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_FILES: usize = 256;
 pub const MAX_INDEX_LINES: usize = 200;
 const ZERO_OID: &str = "0000000000000000000000000000000000000000";
+/// git's empty tree object, the diff base for a first push.
+pub const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 const OWNER_FILE: &str = "allternit-memory-owner";
 const REF_PREFIX: &str = "refs/heads/";
 
@@ -194,7 +196,14 @@ pub struct MemoryDrive {
     repo: PathBuf,
     owner: String,
     branch: String,
+    /// Git object-quarantine variables, set only inside a pre-receive hook so
+    /// validation can read objects that are not yet published.
+    quarantine: Vec<(String, std::ffi::OsString)>,
 }
+
+/// Commits one push may add; larger histories are refused.
+pub const MAX_PUSH_COMMITS: usize = 200;
+const QUARANTINE_VARS: [&str; 3] = ["GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_QUARANTINE_PATH"];
 
 impl MemoryDrive {
     pub fn new(repo: PathBuf, authenticated_owner: &str, branch: &str) -> Result<Self> {
@@ -210,7 +219,62 @@ impl MemoryDrive {
             repo,
             owner: authenticated_owner.to_string(),
             branch: branch.to_string(),
+            quarantine: Vec::new(),
         })
+    }
+
+    /// For the pre-receive hook only: read the quarantined objects of the
+    /// push being validated.
+    pub fn with_quarantine_from_env(mut self) -> Self {
+        self.quarantine = QUARANTINE_VARS
+            .iter()
+            .filter_map(|k| std::env::var_os(k).map(|v| (k.to_string(), v)))
+            .collect();
+        self
+    }
+
+    /// Validate one pushed ref update before git publishes it: only the
+    /// drive branch, no deletion, fast-forward only, bounded commit count,
+    /// and every new commit's whole tree passes the same format, path, mode,
+    /// size and secret checks as a server write.
+    pub fn validate_push(&self, old: &str, new: &str, refname: &str) -> Result<()> {
+        self.check_repo()?;
+        validate_oid(old)?;
+        validate_oid(new)?;
+        if refname != self.reference() {
+            return Err(invalid("ref", format!("only {} can be pushed", self.reference())));
+        }
+        if new == ZERO_OID {
+            return Err(invalid("ref", "deleting the memory branch is not allowed"));
+        }
+        if old != ZERO_OID {
+            let ancestor = self.git_raw(&["merge-base", "--is-ancestor", old, new], None, None, None)?;
+            match ancestor.status.code() {
+                Some(0) => {}
+                Some(1) => return Err(invalid("push", "history rewrite refused; pull, merge, then push")),
+                _ => return Err(git_error("merge-base", &ancestor)),
+            }
+        }
+        // twin/ mirrors owner-approved twin memory; only Allternit writes it.
+        let base = if old == ZERO_OID { EMPTY_TREE } else { old };
+        let managed = self.git_text(&["diff", "--no-ext-diff", "--no-textconv", "--name-only", base, new, "--", "twin", "cowork"])?;
+        if !managed.trim().is_empty() {
+            return Err(invalid("push", "twin/ and cowork/ are managed by Allternit; change them in the app"));
+        }
+        let range = if old == ZERO_OID { new.to_string() } else { format!("{old}..{new}") };
+        let listed = self.git_text(&["rev-list", "--max-count=201", &range])?;
+        let commits: Vec<&str> = listed.lines().filter(|l| !l.is_empty()).collect();
+        if commits.len() > MAX_PUSH_COMMITS {
+            return Err(DriveError::Limit("commits per push"));
+        }
+        for commit in commits {
+            validate_oid(commit)?;
+            let snapshot = self.snapshot(Some(commit))?;
+            for content in snapshot.files.values() {
+                scan_secrets(content)?;
+            }
+        }
+        Ok(())
     }
 
     pub fn repo_path(&self) -> &Path {
@@ -241,6 +305,7 @@ impl MemoryDrive {
                 repo: staged.path.clone(),
                 owner: self.owner.clone(),
                 branch: self.branch.clone(),
+                quarantine: Vec::new(),
             };
             stage_drive.git(
                 &[
@@ -260,6 +325,7 @@ impl MemoryDrive {
                 None,
                 None,
             )?;
+            stage_drive.git(&["config", "receive.denyDeletes", "true"], None, None, None)?;
             match fs::rename(&staged.path, &self.repo) {
                 Ok(()) => {}
                 Err(e) if self.repo.exists() => {
@@ -448,8 +514,11 @@ impl MemoryDrive {
     }
 
     pub fn diff(&self, from: &str, to: &str, path: Option<&str>) -> Result<String> {
-        // Validate both complete trees, including historical content.
-        self.snapshot(Some(from))?;
+        // Validate both complete trees, including historical content. The
+        // empty tree is the base for a drive's first commit.
+        if from != EMPTY_TREE {
+            self.snapshot(Some(from))?;
+        }
         self.snapshot(Some(to))?;
         if let Some(path) = path {
             validate_path(path)?;
@@ -555,6 +624,8 @@ impl MemoryDrive {
         }
         let index = Scratch::absent_file(&self.repo, "index")?;
         self.git(&["read-tree", "--empty"], None, Some(&index.path), None)?;
+        // One index update for the whole tree (not one git process per file).
+        let mut records = String::new();
         for (path, content) in &files {
             let blob = String::from_utf8_lossy(&self.git(
                 &["hash-object", "-w", "--stdin"],
@@ -565,14 +636,14 @@ impl MemoryDrive {
             .trim()
             .to_string();
             validate_oid(&blob)?;
-            let record = format!("100644 {blob}\t{path}\0");
-            self.git(
-                &["update-index", "-z", "--index-info"],
-                Some(record.as_bytes()),
-                Some(&index.path),
-                None,
-            )?;
+            records.push_str(&format!("100644 {blob}\t{path}\0"));
         }
+        self.git(
+            &["update-index", "-z", "--index-info"],
+            Some(records.as_bytes()),
+            Some(&index.path),
+            None,
+        )?;
         let tree =
             String::from_utf8_lossy(&self.git(&["write-tree"], None, Some(&index.path), None)?)
                 .trim()
@@ -710,6 +781,9 @@ impl MemoryDrive {
             if let Some(value) = std::env::var_os(name) {
                 command.env(name, value);
             }
+        }
+        for (key, value) in &self.quarantine {
+            command.env(key, value);
         }
         if let Some(index) = index {
             command.env("GIT_INDEX_FILE", index);
@@ -965,6 +1039,25 @@ pub fn validate_source(source: &str) -> Result<()> {
         return Ok(());
     }
     let lower = source.to_ascii_lowercase();
+    // Opaque provenance labels from other agents and local sessions, e.g.
+    // `gizzi:session/abc` or `claude-code:session/xyz`. Never rendered as a
+    // link; dangerous schemes are refused.
+    static LABEL: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let label = LABEL.get_or_init(|| {
+        regex::Regex::new(r"^([a-z][a-z0-9+.-]{0,31}):([A-Za-z0-9._~/:@=&?+-]{1,512})$").expect("constant regex")
+    });
+    if let Some(caps) = label.captures(source) {
+        let scheme = &caps[1];
+        if !matches!(scheme, "http" | "https") {
+            if matches!(scheme, "javascript" | "data" | "file" | "vbscript" | "blob" | "about" | "ftp" | "ws" | "wss") {
+                return Err(invalid("source", "unsafe URL scheme"));
+            }
+            if caps[2].starts_with("//") {
+                return Err(invalid("source", "use a session URL or a provenance label"));
+            }
+            return Ok(());
+        }
+    }
     if source.chars().any(char::is_whitespace)
         || ["%00", "%0a", "%0d", "%5c"]
             .iter()

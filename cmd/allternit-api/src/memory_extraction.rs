@@ -283,6 +283,9 @@ pub fn apply_ops_typed(
     shown: &[(String, String)],
 ) -> Result<(usize, TurnOutcome), MemoryKernelError> {
     let conn = db.connect()?;
+    if crate::memory_drive_writer::configured_root(&conn).ok().flatten().is_some() {
+        return apply_ops_drive(db, &conn, user_id, agent_id, observation_id, ops, shown);
+    }
     let mut changed = 0;
     let mut outcome = TurnOutcome::default();
     // (fact text, type, fact id it updates)
@@ -350,6 +353,102 @@ pub fn apply_ops_typed(
     };
     if let Some(t) = outcome.observation_type {
         rel::set_observation_type(&conn, user_id, observation_id, t)?;
+    }
+    Ok((changed, outcome))
+}
+
+/// Memory Drive path: every add, update and forget of one turn lands as ONE
+/// drive commit; graph edges are written afterwards as index metadata.
+fn apply_ops_drive(
+    db: &DbHandle,
+    conn: &rusqlite::Connection,
+    user_id: &str,
+    agent_id: Option<&str>,
+    observation_id: &str,
+    ops: &[MemoryOp],
+    shown: &[(String, String)],
+) -> Result<(usize, TurnOutcome), MemoryKernelError> {
+    let mut changed = 0;
+    let mut outcome = TurnOutcome::default();
+    let mut writes: Vec<(String, MemoryType, Option<String>)> = Vec::new();
+    let mut forgets: Vec<String> = Vec::new();
+    let mut adds = 0;
+    for op in ops {
+        match op {
+            MemoryOp::Add { fact, memory_type } => {
+                let Some(fact) = clean_fact(fact) else { continue };
+                if let Some(existing) = existing_fact_id(conn, user_id, &fact)? {
+                    rel::write_relation(conn, user_id, (NodeKind::Observation, observation_id), RelationType::Same,
+                        (NodeKind::Fact, &existing), 0.85, rel::ORIGIN_INCUMBENT, None)?;
+                    outcome.relations.push((existing, RelationType::Same, None));
+                } else if adds < MAX_ADDS_PER_TURN {
+                    adds += 1;
+                    writes.push((fact, MemoryOp::typed(memory_type), None));
+                }
+            }
+            MemoryOp::Update { id, fact, memory_type } => {
+                if let Some(fact) = clean_fact(fact) {
+                    if shown_and_valid(conn, user_id, id, shown)? {
+                        writes.push((fact, MemoryOp::typed(memory_type), Some(id.clone())));
+                    }
+                }
+            }
+            MemoryOp::Forget { id } => {
+                if shown_and_valid(conn, user_id, id, shown)? && !forgets.contains(id) {
+                    forgets.push(id.clone());
+                }
+            }
+        }
+    }
+    let mut retire = forgets.clone();
+    retire.extend(writes.iter().filter_map(|(_, _, old)| old.clone()));
+    let new_facts: Vec<crate::memory_drive_writer::NewFact> = writes
+        .iter()
+        .map(|(fact, t, _)| crate::memory_drive_writer::NewFact {
+            text: fact.clone(),
+            memory_type: Some(t.as_str().to_string()),
+            agent: agent_id.map(str::to_string),
+            observation: Some(observation_id.to_string()),
+            ..Default::default()
+        })
+        .collect();
+    let out = crate::memory_drive_writer::commit_facts(db, user_id, &new_facts, &retire, "Remember from conversation")
+        .map_err(|e| MemoryKernelError::Internal(e.to_string()))?
+        .ok_or_else(|| MemoryKernelError::Internal("memory drive is not configured".into()))?;
+    for legacy in &out.legacy_retire {
+        rel::supersede_fact(conn, user_id, legacy)?;
+    }
+    for ((fact, t, updates), id) in writes.into_iter().zip(out.fact_ids) {
+        let new_id = match id {
+            Some(id) => {
+                changed += 1;
+                outcome.produced.push((id.clone(), t));
+                Some(id)
+            }
+            None => existing_fact_id(conn, user_id, &fact)?,
+        };
+        if let Some(old) = updates {
+            if let Some(n) = new_id.as_deref().filter(|n| *n != old) {
+                rel::write_relation(conn, user_id, (NodeKind::Fact, n), RelationType::Updates,
+                    (NodeKind::Fact, &old), 0.85, rel::ORIGIN_INCUMBENT, None)?;
+            }
+            changed += 1;
+            outcome.relations.push((old, RelationType::Updates, new_id.clone()));
+        }
+    }
+    for id in forgets {
+        rel::write_relation(conn, user_id, (NodeKind::Observation, observation_id), RelationType::Contradicts,
+            (NodeKind::Fact, &id), 0.85, rel::ORIGIN_INCUMBENT, None)?;
+        outcome.relations.push((id, RelationType::Contradicts, None));
+        changed += 1;
+    }
+    outcome.observation_type = match outcome.produced.first() {
+        Some((_, t)) => Some(*t),
+        None if ops.is_empty() => Some(MemoryType::NotMemory),
+        None => None,
+    };
+    if let Some(t) = outcome.observation_type {
+        rel::set_observation_type(conn, user_id, observation_id, t)?;
     }
     Ok((changed, outcome))
 }

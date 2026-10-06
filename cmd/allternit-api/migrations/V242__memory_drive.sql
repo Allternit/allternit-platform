@@ -1,9 +1,13 @@
 -- Canonical personal drive pointers; git is truth, these tables are projections.
 CREATE TABLE memory_drives (
     id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL UNIQUE,
-    name TEXT NOT NULL DEFAULT 'memory' CHECK(name = 'memory'),
-    directory_key TEXT NOT NULL UNIQUE,
+    -- Creating/owning account. For personal drives this is the owner; other
+    -- kinds (Phase 3) check membership of scope_id on every request.
+    user_id TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'personal' CHECK(kind IN ('personal','project','team','bot','swarm')),
+    scope_id TEXT NOT NULL,
+    name TEXT NOT NULL DEFAULT 'memory',
+    directory_key TEXT NOT NULL,
     brain_id TEXT NOT NULL UNIQUE REFERENCES brains(id),
     repo_path TEXT NOT NULL UNIQUE,
     branch TEXT NOT NULL DEFAULT 'main',
@@ -11,8 +15,25 @@ CREATE TABLE memory_drives (
     dirty_revision TEXT,
     imported_at TEXT,
     import_revision TEXT,
+    dreaming_enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(kind, scope_id)
+);
+CREATE INDEX idx_memory_drives_user ON memory_drives(user_id);
+-- Per-database storage root, written at startup from config. A database with
+-- no root (unit tests, tools) keeps the legacy row writers.
+CREATE TABLE memory_drive_config (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+-- Writes whose git commit failed (not a CAS conflict). Retried on the next
+-- write/read; visible in /memory/drive/health. Never silently dropped.
+CREATE TABLE memory_drive_pending (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    error TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE INDEX idx_memory_drive_pending_user ON memory_drive_pending(user_id);
 CREATE TABLE memory_drive_entries (
     drive_id TEXT NOT NULL REFERENCES memory_drives(id),
     file_path TEXT NOT NULL,
@@ -30,12 +51,33 @@ CREATE TABLE memory_drive_import_rows (
     imported_at TEXT NOT NULL,
     PRIMARY KEY(drive_id, legacy_fact_id)
 );
--- Converted rows are immediately deduplicated; skipped archives remain visible
--- for 30 days. Nothing deletes or overwrites the historical source rows.
-CREATE VIEW memory_drive_visible_facts AS
-SELECT f.* FROM memory_facts f WHERE NOT EXISTS (
-    SELECT 1 FROM memory_drive_import_rows i
-    JOIN memory_drives d ON d.id = i.drive_id AND d.user_id = f.user_id
-    WHERE i.legacy_fact_id = f.id
-      AND (i.entry_id IS NOT NULL OR datetime(i.imported_at, '+30 days') <= datetime('now'))
+-- Converted rows are soft-retired (valid_until) at import so recall isn't
+-- doubled; skipped rows stay visible for 30 days, then are soft-retired too
+-- (memory_drive_service::hide_expired_archives). Rows are never deleted.
+-- Repo-scoped git credentials. NULL brain_id = legacy owner token (all owned
+-- brains, read+write, unchanged behavior). Memory Drive tokens are scoped to
+-- one brain and are 'read' (clone/fetch only) or 'write' (push validated by
+-- the drive's pre-receive hook).
+ALTER TABLE git_tokens ADD COLUMN brain_id TEXT;
+ALTER TABLE git_tokens ADD COLUMN access TEXT NOT NULL DEFAULT 'write' CHECK(access IN ('read','write'));
+CREATE INDEX idx_git_tokens_brain ON git_tokens(brain_id);
+-- Nightly Dream runs: one per drive per date (the UNIQUE key is the lease).
+-- The report and summary describe exactly what the Dream commit changed.
+CREATE TABLE memory_dreams (
+    id TEXT PRIMARY KEY,
+    drive_id TEXT NOT NULL REFERENCES memory_drives(id),
+    user_id TEXT NOT NULL,
+    date TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('running','applied','no_changes','failed','undone')),
+    base_revision TEXT,
+    revision TEXT,
+    report TEXT,
+    summary TEXT,
+    error TEXT,
+    undo_revision TEXT,
+    attempts INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(drive_id, date)
 );
+CREATE INDEX idx_memory_dreams_user ON memory_dreams(user_id, date);

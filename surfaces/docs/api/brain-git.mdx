@@ -75,6 +75,15 @@ GET /api/v1/brains/:id/pages
 
 This route is documented on the [Brains API](/api/brains) page.
 
+## Memory Drive repos
+
+Each user's [Memory Drive](/api/memory-drive) is a brain repo served by these same routes. For drive repos:
+
+- Tokens can be scoped to that one repo with `read` (clone and fetch only) or `write` access. Mint them with `POST /api/v1/memory/drive/tokens`; a read token pushing gets `403`.
+- Members of a shared (team) drive reach the owner's repo with a token scoped to it; removing the member removes access at once.
+- Every push is checked before the branch moves: only `main`, fast-forward only, at most 200 commits, standard memory format, no possible credentials, no changes to `twin/` or `cowork/`. A refused push prints `Memory Drive refused this push:` and the reason.
+- After an accepted push the memory index is rebuilt.
+
 ## Git token lifecycle
 
 Git tokens are minted, listed, and revoked through the management surface:
@@ -90,7 +99,8 @@ See [Brains API](/api/brains) for examples.
 | Status | Meaning | Typical cause |
 |--------|---------|---------------|
 | `200 OK` | Success | Git operation succeeded. |
-| `401 Unauthorized` | Authentication required | Missing or invalid git token. |
+| `401 Unauthorized` | Authentication required | Missing or invalid git token, or a token scoped to another repo. |
+| `403 Forbidden` | Read-only token | A Memory Drive read token tried to push. |
 | `404 Not Found` | Brain not found | Unknown brain id or token owner mismatch. |
 | `500 Internal Server Error` | Git backend error | `git http-backend` or filesystem error. |
 
@@ -99,4 +109,5 @@ See [Brains API](/api/brains) for examples.
 - [Brains API](/api/brains)
 - [Local Brains API](/api/local-brains)
 - [Memory API](/api/memory)
+- [Memory Drive API](/api/memory-drive)
 - [Authentication](/api/authentication)

@@ -1,0 +1,126 @@
+---
+title: Memory Drive
+description: "Where your agents' memory lives: a private folder of plain notes with full history, cleaned up each night, that you can browse, edit, undo and take to other agents."
+---
+
+Everything your agents remember about you is kept in your **Memory Drive**: a private
+folder of short markdown notes with a full history of every change. Chat, bots and
+Gizzi all read and write the same drive, so they remember the same things.
+
+- **One line per memory**, with the conversation it came from and the date.
+- **A short index**, `MEMORY.md`, that every session reads first.
+- **Every change is saved as a version.** You can see what changed, when, and by whom.
+- **It uses an open format** ([Agent Memory Repo](https://github.com/AgentMemoryRepo/agentmemoryrepo)),
+  so other agents such as Claude Code or Codex can read it too.
+
+## Open it
+
+- **Desktop:** **Settings → Memory → Memory Drive**.
+- **ai.allternit.com on a phone and the m.allternit.com app:** **Settings → Memory → Memory Drive**.
+
+All of these show the same drive.
+
+## What's in it
+
+| File | What it holds |
+| --- | --- |
+| `MEMORY.md` | The index. A few pinned lines and a link to each topic file. |
+| `facts.md`, `preferences.md`, `events.md`, `procedures.md`, `people-and-things.md`, `relationships.md`, `tasks.md` | Memories, sorted by type. |
+| `lessons.md` | Lessons the nightly Dream learned from your recent conversations. |
+| `notes.md` | Things you saved by hand. |
+| `imports/` | Memories saved before the drive existed, if you imported them. |
+| `twin/` | A read-only copy of [your twin](/guides/your-twin)'s memory. Change it in **Your twin**. |
+
+A memory looks like this:
+
+```
+- Prefers short answers. [source: /?session=s_123; added: 2026-10-06]
+```
+
+Select the source to open the conversation it came from. If that conversation was
+deleted you'll see "That session is no longer available."
+
+## Browse, edit and see history
+
+- Pick a file to read it.
+- **History** lists every change to that file. Select one to see exactly what changed.
+- **Edit** opens the file. If something else changed it since you opened it, you'll be
+  asked to reload before saving, so nothing is overwritten.
+- **Remember something** saves a line to `notes.md` with today's date.
+
+Deleting a memory removes it from what your agents know. The old line stays in the
+drive's history.
+
+## Nightly Dream
+
+Once a night your drive is tidied in a single change called **Dream** with the date:
+
+- Memories that say the same thing are merged.
+- When two memories disagree and a recent conversation shows which is right, the wrong one is removed.
+- Lessons that came up across your conversations are added to `lessons.md`.
+- Memories nobody has used in 30 days or more may be removed.
+- Facts about you that belong in your twin are **only suggested**. You approve them in **Your twin**.
+
+Every change cites the conversation it is based on. Suggestions without evidence are
+skipped. Open **Dreams** to read each night's report. **Undo** reverses that night's
+changes and keeps anything you or your agents wrote since. If you edited a line the
+Dream also changed, undo tells you which files to fix by hand. You can turn Dreaming
+off in the same place.
+
+## Shared drives
+
+Next to your own drive you can open drives for a **team** (workspace), a **project**,
+a **bot** or a **swarm** you own or belong to. Each is separate: nothing is copied
+between drives. Team members can write; members with the viewer role can read.
+Removing someone from the workspace removes their access right away.
+
+Team, project and swarm drives have a **Questions** board. Agents and people can ask a
+question, answer it and mark it resolved.
+
+A bot's or project's drive also shows its saved memory in `cowork/memory.md`, read-only.
+
+## Move memories you already had
+
+If you used Allternit before the Memory Drive, open **Import existing memory**. You'll
+see what would move and anything that would be skipped (for example, text that looks
+like a password) before anything changes. **Import** saves it all as one change.
+Running it again does nothing. Your old memories stay visible for 30 days after the
+import and are then hidden. They are not deleted.
+
+## Use it from other agents
+
+Select **Clone this drive** to get the drive's address and create a token:
+
+- A **read** token lets an agent load your memory.
+- A **write** token also lets it save new memories.
+
+The token is shown once. Copy it then. The address never contains the token. Revoke a
+token any time from the same list; it stops working immediately.
+
+For Claude Code, install the Allternit Memory Drive plugin. For other agents, give them
+the token through a git credential helper, never in the address:
+
+```sh
+export ALLTERNIT_MEMORY_TOKEN=allternit_git_…
+git -c credential.helper= \
+  -c 'credential.helper=!f() { echo username=x-access-token; echo "password=$ALLTERNIT_MEMORY_TOKEN"; }; f' \
+  clone <drive address> memory
+```
+
+Every change pushed to your drive is checked first. It's refused if it isn't in the
+memory format, looks like it contains a password or key, rewrites history, or edits
+`twin/` or `cowork/`.
+
+## In Gizzi
+
+Gizzi keeps a copy of your drive on your computer and reads `MEMORY.md` at the start of
+every session. What it remembers is saved to the drive and synced. If you're offline or
+signed out, it saves locally and syncs when you sign in. Run `/memory` to see the
+drive, recent changes and sync status.
+
+## Keep in mind
+
+- Agents never save anything that looks like a password, key or card number.
+- Incognito conversations are never used as a source.
+- Memory you delete stays in the drive's history. Anyone you give a read token to can
+  see that history.

@@ -25,6 +25,10 @@ export async function appendToMemoryFile(
   memoryPath: string,
   memoryText: string,
 ): Promise<void> {
+  // The auto-memory file is the Memory Drive's MEMORY.md: save through the
+  // drive writer (one-line fact with source/date/id, validated, synced)
+  // instead of appending raw text under its regenerated index.
+  if (await saveToMemoryDrive(memoryPath, memoryText)) return
   await mkdir(dirname(memoryPath), { recursive: true })
 
   let existing = ''
@@ -47,4 +51,23 @@ export async function appendToMemoryFile(
  */
 export function extractMemoryQuickAddText(input: string): string {
   return input.replace(/^#+\s*/, '').trim()
+}
+
+/**
+ * When `memoryPath` is inside the active Memory Drive checkout, save the note
+ * with MemoryDrive.remember (topic notes.md) and return true. Loaded lazily so
+ * this module stays light for its unit tests.
+ */
+export async function saveToMemoryDrive(memoryPath: string, note: string): Promise<boolean> {
+  const drivePaths = await import('../../../../../runtime/memory/drive/paths.js')
+  if (!drivePaths.memoryDriveEnabled()) return false
+  if (!memoryPath.startsWith(drivePaths.driveCheckoutPath('personal'))) return false
+  const { isAutoMemPath, isMemoryDriveActive } = await import('../../memdir/paths.js')
+  if (!isMemoryDriveActive() || !isAutoMemPath(memoryPath)) return false
+  const [{ MemoryDrive }, { getSessionId }] = await Promise.all([
+    import('../../../../../runtime/memory/drive/drive.js'),
+    import('../../bootstrap/state.js'),
+  ])
+  await MemoryDrive.remember({ text: note, sessionId: String(getSessionId() ?? '') })
+  return true
 }

@@ -6,6 +6,7 @@ import {
   ENTRYPOINT_NAME,
   MAX_ENTRYPOINT_LINES,
 } from '../../memdir/memdir'
+import { isMemoryDriveActive } from '../../memdir/paths'
 export function buildConsolidationPrompt(
   memoryRoot: string,
   transcriptDir: string,
@@ -35,11 +36,16 @@ Focus on:
 - Merging new signal into existing topic files rather than creating near-duplicates
 - Converting relative dates ("yesterday", "last week") to absolute dates so they remain interpretable after time passes
 - Deleting contradicted facts — if today's investigation disproves an old memory, fix it at the source
-## Phase 4 — Prune and index
+${isMemoryDriveActive() ? `## Phase 4 — Prune (Memory Drive)
+This memory directory is a Memory Drive: topic files hold one-line facts \`- <fact> [source: …; added: …; id: …]\`, and \`${ENTRYPOINT_NAME}\`'s \`## Index\` is regenerated automatically.
+- Merge duplicates into one line (keep the older line's \`[...]\` metadata, edit only its text); delete lines that are contradicted, stale or wrong
+- Never edit the \`## Index\` section, never add frontmatter, never touch \`twin/\` or \`cowork/\`
+- New facts are written as \`- <fact>\` (gizzi stamps source/date/id when it commits)
+` : `## Phase 4 — Prune and index
 Update \`${ENTRYPOINT_NAME}\` so it stays under ${MAX_ENTRYPOINT_LINES} lines AND under ~25KB. It's an **index**, not a dump — each entry should be one line under ~150 characters: \`- [Title](file.md) — one-line hook\`. Never write memory content directly into it.
 - Remove pointers to memories that are now stale, wrong, or superseded
 - Demote verbose entries: if an index line is over ~200 chars, it's carrying content that belongs in the topic file — shorten the line, move the detail
 - Add pointers to newly important memories
 - Resolve contradictions — if two files disagree, fix the wrong one
-Return a brief summary of what you consolidated, updated, or pruned. If nothing changed (memories are already tight), say so.${extra ? `\n\n## Additional context\n\n${extra}` : ''}`
+`}Return a brief summary of what you consolidated, updated, or pruned. If nothing changed (memories are already tight), say so.${extra ? `\n\n## Additional context\n\n${extra}` : ''}`
 }

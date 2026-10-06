@@ -1,0 +1,4 @@
+This plugin writes and reads memory in the format published as the Agent
+Memory Repo specification (SPEC.md), https://github.com/AgentMemoryRepo/agentmemoryrepo,
+released under the MIT License. No code from that project is included; the
+format is implemented independently by Allternit.

@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { existsSync } from 'fs'
 import memoize from 'lodash-es/memoize.js'
+import { driveAccountSync, driveCheckoutPath, memoryDriveEnabled } from '@/runtime/memory/drive/paths'
 import { homedir } from 'os'
 import { isAbsolute, join, normalize, sep } from 'path'
 import {
@@ -245,18 +246,52 @@ function getAutoMemBase(): string {
  * env vars / settings.json / CLAUDE_CONFIG_DIR are session-stable in
  * production and covered by per-test cache.clear.
  */
+
+/**
+ * The user's Memory Drive checkout (personal drive of the current account),
+ * which IS the auto-memory directory whenever the drive is on and no explicit
+ * override (Cowork env / settings autoMemoryDirectory) is set. The old
+ * per-project `<base>/projects/<root>/memory/` dir is then only an import
+ * source (`gizzi memory import`). Shared with the other memdir copy.
+ */
+export function getMemoryDrivePath(): string | undefined {
+  if (!memoryDriveEnabled()) return undefined
+  return (driveCheckoutPath('personal') + sep).normalize('NFC')
+}
+
+/** True when auto-memory resolves to the Memory Drive checkout. */
+export function isMemoryDriveActive(): boolean {
+  return (
+    memoryDriveEnabled() &&
+    (getAutoMemPathOverride() ?? getAutoMemPathSetting()) === undefined
+  )
+}
+
+/**
+ * Pre-drive per-project memdir path (legacy frontmatter store), regardless
+ * of whether the drive is active. Used by the importer and diagnostics.
+ */
+export function getLegacyProjectMemPath(): string {
+  const projectsDir = join(getMemoryBaseDir(), 'projects')
+  return (
+    join(projectsDir, sanitizePath(getAutoMemBase()), AUTO_MEM_DIRNAME) + sep
+  ).normalize('NFC')
+}
+
 export const getAutoMemPath = memoize(
   (): string => {
     const override = getAutoMemPathOverride() ?? getAutoMemPathSetting()
     if (override) {
       return override
     }
+    const drive = getMemoryDrivePath()
+    if (drive) return drive
     const projectsDir = join(getMemoryBaseDir(), 'projects')
     return (
       join(projectsDir, sanitizePath(getAutoMemBase()), AUTO_MEM_DIRNAME) + sep
     ).normalize('NFC')
   },
-  () => getProjectRoot(),
+  () => `${getProjectRoot()}\0${driveAccountSync().key}\0${memoryDriveEnabled()}`,
 )
 
 /**
@@ -276,13 +311,15 @@ export const getAutoMemPathFor = memoize(
     if (override) {
       return override
     }
+    const drive = getMemoryDrivePath()
+    if (drive) return drive
     const base = findCanonicalGitRoot(directory) ?? directory
     const projectsDir = join(getMemoryBaseDir(), 'projects')
     return (
       join(projectsDir, sanitizePath(base), AUTO_MEM_DIRNAME) + sep
     ).normalize('NFC')
   },
-  (directory: string) => directory,
+  (directory: string) => `${directory}\0${driveAccountSync().key}\0${memoryDriveEnabled()}`,
 )
 
 /**

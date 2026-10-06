@@ -23,6 +23,8 @@ pub enum ServiceError {
     Database(#[from] rusqlite::Error),
     #[error("memory drive not found for this account; open drive info first")]
     NotFound,
+    #[error("you don't have access to this memory drive")]
+    Forbidden,
     #[error("owner directory collides with another registered account")]
     OwnerCollision,
     #[error("invalid memory provenance: {0}")]
@@ -45,6 +47,8 @@ pub struct DriveRecord {
     pub dirty_revision: Option<String>,
     pub imported_at: Option<String>,
     pub import_revision: Option<String>,
+    pub kind: String,
+    pub scope_id: String,
 }
 impl DriveRecord {
     pub fn storage(&self) -> Result<MemoryDrive> {
@@ -59,12 +63,31 @@ pub fn directory_key(owner: &str) -> Result<String> {
     Ok(owner.chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' }).collect())
 }
 
+const RECORD_SQL: &str = "SELECT d.id,d.user_id,d.name,d.brain_id,d.repo_path,d.branch,d.indexed_revision,d.dirty_revision,d.imported_at,d.import_revision,d.kind,d.scope_id
+     FROM memory_drives d JOIN brains b ON b.id=d.brain_id AND b.user_id=d.user_id AND b.path=d.repo_path";
+
+fn row_to_record(r: &rusqlite::Row) -> rusqlite::Result<DriveRecord> {
+    Ok(DriveRecord { id:r.get(0)?,user_id:r.get(1)?,name:r.get(2)?,brain_id:r.get(3)?,repo_path:PathBuf::from(r.get::<_,String>(4)?),branch:r.get(5)?,
+        indexed_revision:r.get(6)?,dirty_revision:r.get(7)?,imported_at:r.get(8)?,import_revision:r.get(9)?,kind:r.get(10)?,scope_id:r.get(11)? })
+}
+
 fn record(conn: &Connection, owner: &str) -> Result<Option<DriveRecord>> {
-    Ok(conn.query_row(
-        "SELECT d.id,d.user_id,d.name,d.brain_id,d.repo_path,d.branch,d.indexed_revision,d.dirty_revision,d.imported_at,d.import_revision
-         FROM memory_drives d JOIN brains b ON b.id=d.brain_id AND b.user_id=d.user_id AND b.path=d.repo_path WHERE d.user_id=?1",
-        params![owner], |r| Ok(DriveRecord { id:r.get(0)?,user_id:r.get(1)?,name:r.get(2)?,brain_id:r.get(3)?,repo_path:PathBuf::from(r.get::<_,String>(4)?),branch:r.get(5)?,indexed_revision:r.get(6)?,dirty_revision:r.get(7)?,imported_at:r.get(8)?,import_revision:r.get(9)? }),
-    ).optional()?)
+    record_kind(conn, "personal", owner)
+}
+
+/// Registry row for any drive kind; `scope_id` is the owner for personal
+/// drives, the workspace/project/bot/swarm id otherwise.
+pub fn record_kind(conn: &Connection, kind: &str, scope_id: &str) -> Result<Option<DriveRecord>> {
+    Ok(conn.query_row(&format!("{RECORD_SQL} WHERE d.kind=?1 AND d.scope_id=?2"), params![kind, scope_id], row_to_record).optional()?)
+}
+
+pub fn record_by_brain(conn: &Connection, brain_id: &str) -> Result<Option<DriveRecord>> {
+    Ok(conn.query_row(&format!("{RECORD_SQL} WHERE d.brain_id=?1"), params![brain_id], row_to_record).optional()?)
+}
+
+/// Marker owner of the Memory Drive stored in this brain, if it is one.
+pub fn drive_owner_for_brain(conn: &Connection, brain_id: &str) -> Result<Option<String>> {
+    Ok(conn.query_row("SELECT user_id FROM memory_drives WHERE brain_id=?1", params![brain_id], |r| r.get(0)).optional()?)
 }
 
 /// DbHandle-only writers resolve this durable pointer, never a global root.
@@ -72,33 +95,41 @@ pub fn resolve(db: &DbHandle, owner: &str) -> Result<DriveRecord> {
     record(&db.connect()?, owner)?.ok_or(ServiceError::NotFound)
 }
 
+/// Personal drive, provisioned on first use.
+pub fn provision(db: &DbHandle, brains_dir: &Path, owner: &str) -> Result<DriveRecord> {
+    let drive = provision_kind(db, brains_dir, owner, "personal", owner)?;
+    repair_index(db, owner)?;
+    resolve(db, owner).or(Ok(drive))
+}
+
 /// Immediate transaction serializes registry creation, including the owner
 /// collision check. A random physical brain id retains the existing smart-HTTP
 /// layout. On rollback, remove only the newly generated unpublished repo.
-pub fn provision(db: &DbHandle, brains_dir: &Path, owner: &str) -> Result<DriveRecord> {
+/// `owner` is the marker owner: the account that owns the scope (the user for
+/// personal drives, the workspace/project/bot owner otherwise).
+pub fn provision_kind(db: &DbHandle, brains_dir: &Path, owner: &str, kind: &str, scope_id: &str) -> Result<DriveRecord> {
     let key = directory_key(owner)?;
     let mut conn = db.connect()?;
     conn.busy_timeout(std::time::Duration::from_secs(10))?;
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    if let Some(existing) = record(&tx, owner)? {
-        let expected = brains_dir.join(&key).join(format!("{}.git", existing.brain_id));
+    if let Some(existing) = record_kind(&tx, kind, scope_id)? {
+        let expected = brains_dir.join(directory_key(&existing.user_id)?).join(format!("{}.git", existing.brain_id));
         if expected != existing.repo_path {
             return Err(ServiceError::Provenance("configured root differs from stored drive; explicit migration required".into()));
         }
         existing.storage()?.initialize()?;
         tx.commit()?;
-        repair_index(db, owner)?;
-        return resolve(db, owner);
+        return Ok(existing);
     }
     // A malformed/foreign registry cannot be silently replaced.
-    let exists: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM memory_drives WHERE user_id=?1)", params![owner], |r|r.get(0))?;
+    let exists: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM memory_drives WHERE kind=?1 AND scope_id=?2)", params![kind, scope_id], |r|r.get(0))?;
     if exists { return Err(ServiceError::NotFound); }
     let parent = brains_dir.join(&key);
     {
         let mut stmt = tx.prepare("SELECT user_id,path FROM brains WHERE user_id<>?1")?;
         for row in stmt.query_map(params![owner], |r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))? {
             let (other, path) = row?;
-            if Path::new(&path).parent() == Some(parent.as_path()) || directory_key(&other)? == key {
+            if Path::new(&path).parent() == Some(parent.as_path()) || directory_key(&other).map(|k| k == key).unwrap_or(false) {
                 return Err(ServiceError::OwnerCollision);
             }
         }
@@ -112,21 +143,35 @@ pub fn provision(db: &DbHandle, brains_dir: &Path, owner: &str) -> Result<DriveR
     drive.initialize()?;
     let registered = (|| -> Result<()> {
         tx.execute("INSERT INTO brains(id,user_id,path) VALUES(?1,?2,?3)", params![brain_id,owner,path.to_string_lossy()])?;
-        tx.execute("INSERT INTO memory_drives(id,user_id,directory_key,brain_id,repo_path,dirty_revision) VALUES(?1,?2,?3,?4,?5,'pending')", params![id,owner,key,brain_id,path.to_string_lossy()])?;
+        tx.execute("INSERT INTO memory_drives(id,user_id,kind,scope_id,directory_key,brain_id,repo_path,dirty_revision) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
+            params![id,owner,kind,scope_id,key,brain_id,path.to_string_lossy(),(kind=="personal").then_some("pending")])?;
         tx.commit()?;
         Ok(())
     })();
     if let Err(error) = registered {
         // Inspect after rollback before removing our UUID path. A successful
         // durable registration must survive even an ambiguous commit error.
-        if record(&db.connect()?, owner)?.is_none() { let _ = std::fs::remove_dir_all(&path); }
+        if record_kind(&db.connect()?, kind, scope_id)?.is_none() { let _ = std::fs::remove_dir_all(&path); }
         return Err(error);
     }
-    repair_index(db, owner)?;
-    resolve(db, owner)
+    record_kind(&db.connect()?, kind, scope_id)?.ok_or(ServiceError::NotFound)
 }
 
-fn entries(snapshot: &Snapshot) -> Result<Vec<(String, Entry)>> {
+/// Re-sync the index after an accepted push. Only personal drives are
+/// indexed into recall; shared drives are read from git directly.
+pub fn repair_index_for_brain(db: &DbHandle, brain_id: &str) -> Result<()> {
+    let Some(drive) = record_by_brain(&db.connect()?, brain_id)? else { return Ok(()) };
+    if drive.kind == "personal" { repair_index(db, &drive.user_id)?; }
+    Ok(())
+}
+
+/// Access of `user` to the shared drive in `brain_id` ("read"/"write").
+pub fn member_access(conn: &Connection, user: &str, brain_id: &str) -> Result<Option<String>> {
+    let Some(drive) = record_by_brain(conn, brain_id)? else { return Ok(None) };
+    Ok(crate::memory_drive_scopes::access(conn, user, &drive.kind, &drive.scope_id)?.map(str::to_string))
+}
+
+pub fn entries(snapshot: &Snapshot) -> Result<Vec<(String, Entry)>> {
     let mut entries = Vec::new();
     for (path, content) in &snapshot.files {
         for line in content.lines().filter(|l|l.starts_with("- ") && !l.starts_with("- [[")) {
@@ -142,12 +187,17 @@ fn known_session(conn: &Connection, owner: &str, session: &str) -> Result<bool> 
     }
     // Incognito turns must never become personal drive provenance.
     Ok(conn.query_row(
-        "SELECT (EXISTS(SELECT 1 FROM agent_sessions WHERE id=?1 AND user_id=?2)
+        // agent_sessions has no owner column: a data-plane node serves one
+        // account's sessions. beta_sessions are per user.
+        "SELECT (EXISTS(SELECT 1 FROM agent_sessions WHERE id=?1 AND ?2 IS NOT NULL)
                  OR EXISTS(SELECT 1 FROM beta_sessions WHERE id=?1 AND user_id=?2))
                 AND NOT EXISTS(SELECT 1 FROM ephemeral_sessions WHERE session_id=?1)",
         params![session,owner], |r|r.get(0),
     )?)
 }
+
+pub fn session_is_owned(conn: &Connection, owner: &str, session: &str) -> Result<bool> { known_session(conn, owner, session) }
+pub fn check_provenance(conn: &Connection, owner: &str, entry: &Entry) -> Result<()> { validate_provenance(conn, owner, entry) }
 
 fn validate_provenance(conn: &Connection, owner: &str, entry: &Entry) -> Result<()> {
     if let Some(obs) = entry.metadata.get("observation") {
@@ -170,7 +220,7 @@ fn validate_provenance(conn: &Connection, owner: &str, entry: &Entry) -> Result<
     if let Some(agent)=entry.metadata.get("agent") {
         // An owned observation or session can attest the agent assignment.
         let owned: bool=conn.query_row("SELECT EXISTS(SELECT 1 FROM memory_observations WHERE user_id=?1 AND agent_id=?2)
-            OR EXISTS(SELECT 1 FROM agent_sessions WHERE user_id=?1 AND agent_id=?2)",params![owner,agent],|r|r.get(0))?;
+            OR EXISTS(SELECT 1 FROM agents WHERE user_id=?1 AND id=?2)",params![owner,agent],|r|r.get(0))?;
         if !owned { return Err(ServiceError::Provenance("agent provenance is not owned by this account".into())); }
     }
     if let Some(kind)=entry.metadata.get("memory_type") {
@@ -185,6 +235,7 @@ fn active(entry: &Entry) -> bool {
     !matches!(entry.metadata.get("status").map(String::as_str),Some("proposed"|"rejected"))
         && entry.metadata.get("memory_type").map(String::as_str)!=Some("not_memory")
         && !entry.metadata.get("scope").map(|s|s.starts_with("twin")).unwrap_or(false)
+        && !matches!(entry.metadata.get("kind").map(String::as_str),Some("question"|"answer"))
 }
 fn digest(text: &str) -> String { hex::encode(Sha256::digest(text.as_bytes())) }
 
@@ -217,9 +268,12 @@ fn index_snapshot(conn: &Connection, drive: &DriveRecord, snapshot: &Snapshot) -
     }
     let old:Vec<(String,String)>={ let mut stmt=conn.prepare("SELECT entry_id,fact_id FROM memory_drive_entries WHERE drive_id=?1")?;
         let rows=stmt.query_map(params![drive.id],|r|Ok((r.get(0)?,r.get(1)?)))?.collect::<std::result::Result<Vec<_>,_>>()?; rows };
+    // A removed entry is retired softly (valid_until), like the kernel's own
+    // supersession, so relation edges and undo keep a stable target. Git
+    // history is the record; the row is only an index.
     for (id,fact) in old { if !seen.contains(&id) {
         conn.execute("DELETE FROM memory_drive_entries WHERE drive_id=?1 AND entry_id=?2",params![drive.id,id])?;
-        conn.execute("DELETE FROM memory_facts WHERE id=?1 AND user_id=?2",params![fact,drive.user_id])?;
+        crate::memory_relations::supersede_fact(conn,&drive.user_id,&fact)?;
     }}
     recover_import(conn,drive,snapshot)?;
     conn.execute("UPDATE memory_drives SET indexed_revision=?2,dirty_revision=NULL WHERE id=?1",params![drive.id,snapshot.revision])?;
@@ -249,6 +303,13 @@ pub fn read(db: &DbHandle, owner: &str, revision: Option<&str>) -> Result<Snapsh
     Ok(resolve(db,owner)?.storage()?.snapshot(revision)?)
 }
 pub fn apply(db: &DbHandle, owner: &str, expected: &str, operations: &[Operation], message: &str) -> Result<ApplyResult> {
+    crate::memory_drive_scopes::guard_managed_paths(operations)?;
+    apply_as(db, owner, expected, operations, message, "Agent via Allternit")
+}
+
+/// Commit as a named author (e.g. "Dream via Allternit"). Callers other than
+/// `apply` are trusted server components (Dream, twin projector).
+pub fn apply_as(db: &DbHandle, owner: &str, expected: &str, operations: &[Operation], message: &str, author: &str) -> Result<ApplyResult> {
     let drive=resolve(db,owner)?;
     // Validate complete candidate provenance before publishing, including raw
     // edits. Core validates format/size/secrets and executes the final CAS.
@@ -265,7 +326,7 @@ pub fn apply(db: &DbHandle, owner: &str, expected: &str, operations: &[Operation
     for (_,entry) in entries(&candidate)? { validate_provenance(&db.connect()?,owner,&entry)?; }
     candidate.files.clear(); // validation snapshot does not participate in writes
     db.connect()?.execute("UPDATE memory_drives SET dirty_revision='pending' WHERE id=?1 AND user_id=?2",params![drive.id,owner])?;
-    let result=drive.storage()?.apply_batch(Some(expected),operations,message,"Agent via Allternit")?;
+    let result=drive.storage()?.apply_batch(Some(expected),operations,message,author)?;
     if reindex(db,owner).is_err() { return Err(ServiceError::IndexPending{revision:result.revision}); }
     Ok(result)
 }
@@ -387,5 +448,23 @@ fn recover_import(conn:&Connection,drive:&DriveRecord,snapshot:&Snapshot)->Resul
         conn.execute("INSERT OR IGNORE INTO memory_drive_import_rows(drive_id,legacy_fact_id,entry_id,imported_at) VALUES(?1,?2,?3,?4)",params![drive.id,legacy,(id!="skipped").then_some(id),at])?;
     }
     conn.execute("UPDATE memory_drives SET imported_at=?2,import_revision=?3 WHERE id=?1",params![drive.id,at,snapshot.revision])?;
+    // Converted rows now live in the drive: retire the old copies (kept as
+    // archive, never deleted) so recall isn't doubled.
+    conn.execute("DELETE FROM memory_embeddings WHERE user_id=?2 AND target_type='fact' AND target_id IN
+        (SELECT legacy_fact_id FROM memory_drive_import_rows WHERE drive_id=?1 AND entry_id IS NOT NULL)",params![drive.id,drive.user_id])?;
+    conn.execute("UPDATE memory_facts SET valid_until=?3 WHERE user_id=?2 AND valid_until IS NULL AND id IN
+        (SELECT legacy_fact_id FROM memory_drive_import_rows WHERE drive_id=?1 AND entry_id IS NOT NULL)",params![drive.id,drive.user_id,at])?;
     Ok(())
+}
+
+/// Old rows the import skipped stay visible for 30 days after the import,
+/// then are retired (soft; rows are kept). Returns how many were hidden.
+pub fn hide_expired_archives(db:&DbHandle)->Result<usize> {
+    let conn=db.connect()?;
+    conn.execute("DELETE FROM memory_embeddings WHERE target_type='fact' AND target_id IN
+        (SELECT i.legacy_fact_id FROM memory_drive_import_rows i JOIN memory_facts f ON f.id=i.legacy_fact_id
+         WHERE i.entry_id IS NULL AND f.valid_until IS NULL AND datetime(i.imported_at,'+30 days')<=datetime('now'))",[])?;
+    Ok(conn.execute("UPDATE memory_facts SET valid_until=CURRENT_TIMESTAMP WHERE valid_until IS NULL AND id IN
+        (SELECT i.legacy_fact_id FROM memory_drive_import_rows i JOIN memory_drives d ON d.id=i.drive_id
+         WHERE d.user_id=memory_facts.user_id AND i.entry_id IS NULL AND datetime(i.imported_at,'+30 days')<=datetime('now'))",[])?)
 }

@@ -3,6 +3,7 @@ import { dirname } from 'path'
 import type { LocalCommandCall } from '../../types/command.js'
 import { getMemoryPath } from '../../utils/config.js'
 import { getErrnoCode } from '../../utils/errors.js'
+import { saveToMemoryDrive } from '../../utils/memory/quickAdd.js'
 import {
   buildRememberedContent,
   parseRememberArgs,
@@ -18,6 +19,9 @@ export const call: LocalCommandCall = async args => {
   }
 
   const memoryPath = getMemoryPath(parsed.target)
+  if (await saveToMemoryDrive(memoryPath, parsed.note)) {
+    return { type: 'text', value: `Saved to your Memory Drive (notes.md)\n- ${parsed.note}` }
+  }
   await mkdir(dirname(memoryPath), { recursive: true })
 
   let existing = ''

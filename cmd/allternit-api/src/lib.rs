@@ -259,6 +259,13 @@ pub mod memory_kernel_service;
 pub mod memory_drive;
 pub mod memory_drive_service;
 pub mod memory_drive_routes;
+pub mod memory_drive_writer;
+pub mod memory_drive_transport;
+pub mod memory_drive_scopes;
+pub mod memory_dream;
+pub mod memory_drive_twin;
+#[cfg(test)]
+mod memory_drive_tests;
 pub mod memory_index;
 pub mod memory_extraction;
 pub mod memory_relations;

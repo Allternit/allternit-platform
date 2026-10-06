@@ -1,60 +1,82 @@
 import z from "zod/v4"
 import { Tool } from "@/runtime/tools/builtins/tool"
-import { MemoryService, type MemoryType } from "@/runtime/memory/memory-service"
+import { Instance } from "@/runtime/context/project/instance"
+import { MemoryDrive } from "@/runtime/memory/drive/drive"
 
-const DESCRIPTION = `Save or update a persistent memory entry.
+const DESCRIPTION = `Save, update or delete a fact in the user's Memory Drive.
 
-Memories persist across conversations and are automatically loaded into future sessions.
-Use this tool when:
-- The user asks you to remember something
-- You learn a stable pattern, preference, or important project fact
-- You want to correct or remove an outdated memory
+The Memory Drive is a git repo of markdown topic files. Each memory is ONE line
+(a single durable fact); this tool records where it came from (this session)
+and today's date, gives it a stable id, regenerates MEMORY.md's index and syncs.
 
-Memory format uses frontmatter with name, description (one-line summary used to decide
-relevance in future sessions), and type (user | feedback | project | reference).
+Use it when:
+- The user asks you to remember something ("remember X" → save immediately)
+- You learn a stable preference, correction, or important project fact
+- A saved memory is wrong or outdated (pass its id to update, or action "delete")
 
-Do NOT save:
-- Session-specific details or in-progress work state
-- Information that's derivable from reading the code
-- Speculative or unverified conclusions`
+Do NOT save: session-specific details or in-progress work state, things
+derivable from the code, unverified guesses, transcripts, logs, or anything
+that looks like a credential (it will be refused).
+
+To find an existing memory's id, use memory_recall first.`
 
 export const MemoryWriteTool = Tool.define("memory_write", {
   description: DESCRIPTION,
   parameters: z.object({
-    name: z
+    action: z.enum(["save", "delete"]).default("save").describe("save (create or update) or delete"),
+    text: z
       .string()
-      .describe(
-        "Short kebab/snake_case identifier for this memory (e.g. 'user_role', 'testing_feedback'). Used as the filename stem.",
-      ),
-    description: z
-      .string()
-      .describe(
-        "One-line description used to determine relevance when loading context in future sessions. Be specific.",
-      ),
+      .optional()
+      .describe("The fact, as one plain sentence (required for save). Lead with the rule/fact; include the why briefly if useful."),
     type: z
       .enum(["user", "feedback", "project", "reference"])
+      .optional()
       .describe(
-        "Memory type: 'user' = user preferences/role, 'feedback' = corrections/guidance, 'project' = project context, 'reference' = pointers to external resources",
+        "'user' = who the user is / preferences, 'feedback' = corrections or guidance, 'project' = ongoing work context, 'reference' = pointers to external resources",
       ),
-    body: z
+    topic: z
       .string()
-      .describe(
-        "The memory content. For feedback/project types, lead with the fact/rule then add **Why:** and **How to apply:** lines.",
-      ),
+      .optional()
+      .describe("Optional topic file (e.g. 'preferences', 'people', 'projects/gizzi'). Defaults by type."),
+    id: z.string().optional().describe("Stable id of an existing memory to update or delete (from memory_recall)."),
+    drive: z
+      .string()
+      .optional()
+      .describe("Drive ref to write to (default 'personal'; e.g. 'project:<id>' for a mounted, writable drive)."),
   }),
-  async execute(params) {
-    const entry = await MemoryService.save(
-      {
-        name: params.name,
-        description: params.description,
-        type: params.type as MemoryType,
-      },
-      params.body,
-    )
+  async execute(params, ctx) {
+    const ref = params.drive?.trim() || "personal"
+    if (params.action === "delete") {
+      if (!params.id) throw new Error("Pass the id of the memory to delete (find it with memory_recall).")
+      const { found, result } = await MemoryDrive.forget(params.id, { ref, sessionId: ctx.sessionID })
+      if (!found) {
+        return { title: "Memory not found", output: `No memory with id ${params.id} in ${ref}.`, metadata: { id: params.id, path: "", ref, pending: false } }
+      }
+      return {
+        title: "Memory deleted",
+        output: `Deleted ${params.id} from ${ref}.${syncNote(result)}`,
+        metadata: { id: params.id, path: "", ref, pending: !!result?.pending },
+      }
+    }
+    if (!params.text?.trim()) throw new Error("Pass the fact to remember as text.")
+    const saved = await MemoryDrive.remember({
+      text: params.text,
+      type: params.type,
+      topic: params.topic,
+      id: params.id,
+      ref,
+      sessionId: ctx.sessionID,
+      projectDir: Instance.directory,
+    })
     return {
-      title: `Memory saved: ${entry.filename}`,
-      output: `Saved memory "${entry.name}" → ${entry.filepath}`,
-      metadata: { filename: entry.filename, filepath: entry.filepath, type: entry.type },
+      title: saved.result.changed ? `Memory saved: ${saved.path}` : "Memory already saved",
+      output: `Saved to ${saved.ref}:${saved.path} (id: ${saved.entry.id}).${syncNote(saved.result)}`,
+      metadata: { id: saved.entry.id, path: saved.path, ref: saved.ref, pending: saved.result.pending },
     }
   },
 })
+
+function syncNote(result?: { pending: boolean; error?: string }): string {
+  if (!result?.pending) return ""
+  return ` Saved locally; not synced yet${result.error ? ` (${result.error})` : ""}. gizzi retries next session.`
+}

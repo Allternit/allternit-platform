@@ -7,7 +7,7 @@
 import { mkdir, readFile, stat, unlink, utimes, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { getOriginalCwd } from '../../bootstrap/state.js'
-import { getAutoMemPath } from '../../memdir/paths.js'
+import { getAutoMemPath, isMemoryDriveActive } from '../../memdir/paths.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { isProcessRunning } from '../../utils/genericProcessUtils.js'
 import { listCandidates } from '../../utils/listSessionsImpl.js'
@@ -19,6 +19,8 @@ const LOCK_FILE = '.consolidate-lock'
 const HOLDER_STALE_MS = 60 * 60 * 1000
 
 function lockPath(): string {
+  // A Memory Drive checkout only holds markdown that syncs; keep the lock beside it.
+  if (isMemoryDriveActive()) return getAutoMemPath().replace(/[\\/]+$/, '') + LOCK_FILE
   return join(getAutoMemPath(), LOCK_FILE)
 }
 
