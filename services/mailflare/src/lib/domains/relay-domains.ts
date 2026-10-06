@@ -8,6 +8,7 @@ import { getDb } from "@/db";
 import { domains, mailboxes } from "@/db/schema";
 import { newId } from "@/lib/ids";
 import { relayFetch } from "@/lib/email/relay";
+import { RELAY_ZONE_ID } from "@/lib/cloudflare-api";
 
 export type RelayRecord = { type: string; host: string; value: string; purpose: string; ok: boolean | null };
 export type RelayDomainView = { id: string; domain: string; status: "pending" | "active" | "error"; verified: boolean; records: RelayRecord[] };
@@ -48,7 +49,7 @@ export async function addRelayDomain(env: CloudflareEnv, userId: string, host: s
 			id,
 			userId,
 			hostname: relay.domain,
-			zoneId: "relay",
+			zoneId: RELAY_ZONE_ID,
 			transport: "relay",
 			status: "pending",
 			routingEnabled: false,

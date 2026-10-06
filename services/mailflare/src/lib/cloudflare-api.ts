@@ -9,6 +9,15 @@ import {
 import { getZoneLookupCandidates } from "@/lib/domains/utils";
 export type { CfDnsRecord } from "@/lib/cloudflare-api.types";
 
+/**
+ * `domains.zone_id` of a customer domain served by Allternit's mail host
+ * (domains.transport = 'relay'). It is not a Cloudflare zone: every zone call
+ * below is a no-op for it, so mailbox create/delete and DNS views work the same
+ * for both kinds of domain.
+ */
+export const RELAY_ZONE_ID = "relay";
+const isRelayZone = (zoneId: string) => zoneId === RELAY_ZONE_ID;
+
 async function cfRequest<T>(
 	env: CloudflareEnv,
 	path: string,
@@ -53,6 +62,7 @@ export async function getEmailRoutingDns(
 	env: CloudflareEnv,
 	zoneId: string,
 ): Promise<{ records: CfDnsRecord[]; missing: CfDnsRecord[] }> {
+	if (isRelayZone(zoneId)) return { records: [], missing: [] };
 	const result = await cfRequest<{
 		record?: CfDnsRecord[];
 		errors?: { missing?: CfDnsRecord }[];
@@ -70,6 +80,7 @@ export async function enableEmailRouting(
 	zoneId: string,
 	hostname?: string,
 ) {
+	if (isRelayZone(zoneId)) return { status: "relay", enabled: true };
 	return cfRequest<{ status?: string; enabled?: boolean }>(
 		env,
 		`/zones/${zoneId}/email/routing/dns`,
@@ -81,6 +92,7 @@ export async function enableEmailRouting(
 }
 
 export async function disableEmailRouting(env: CloudflareEnv, zoneId: string) {
+	if (isRelayZone(zoneId)) return undefined;
 	return cfRequest<unknown>(env, `/zones/${zoneId}/email/routing/dns`, {
 		method: "DELETE",
 	});
@@ -90,6 +102,7 @@ export async function listSendingSubdomains(
 	env: CloudflareEnv,
 	zoneId: string,
 ) {
+	if (isRelayZone(zoneId)) return [];
 	return cfRequest<{ tag: string; name: string; enabled: boolean }[]>(
 		env,
 		`/zones/${zoneId}/email/sending/subdomains`,
@@ -116,6 +129,7 @@ export async function deleteSendingSubdomain(
 	zoneId: string,
 	subdomainTag: string,
 ) {
+	if (isRelayZone(zoneId)) return undefined;
 	return cfRequest<unknown>(
 		env,
 		`/zones/${zoneId}/email/sending/subdomains/${subdomainTag}`,
@@ -128,6 +142,7 @@ export async function getSendingSubdomainDns(
 	zoneId: string,
 	subdomainTag: string,
 ): Promise<CfDnsRecord[]> {
+	if (isRelayZone(zoneId)) return [];
 	return cfRequest<CfDnsRecord[]>(
 		env,
 		`/zones/${zoneId}/email/sending/subdomains/${subdomainTag}/dns`,
@@ -138,6 +153,7 @@ export async function getEmailRoutingSettings(
 	env: CloudflareEnv,
 	zoneId: string,
 ) {
+	if (isRelayZone(zoneId)) return { enabled: true, status: "relay" };
 	return cfRequest<{ enabled?: boolean; status?: string; name?: string }>(
 		env,
 		`/zones/${zoneId}/email/routing`,
@@ -145,6 +161,7 @@ export async function getEmailRoutingSettings(
 }
 
 export async function listEmailRoutingRules(env: CloudflareEnv, zoneId: string) {
+	if (isRelayZone(zoneId)) return [];
 	return cfRequest<CfEmailRoutingRule[]>(
 		env,
 		`/zones/${zoneId}/email/routing/rules`,
@@ -156,6 +173,7 @@ export async function deleteEmailRoutingRule(
 	zoneId: string,
 	ruleId: string,
 ) {
+	if (isRelayZone(zoneId)) return undefined;
 	return cfRequest<unknown>(
 		env,
 		`/zones/${zoneId}/email/routing/rules/${ruleId}`,
@@ -189,6 +207,7 @@ export async function ensureEmailRoutingRuleToWorker(
 	zoneId: string,
 	address: string,
 ) {
+	if (isRelayZone(zoneId)) return null;
 	const normalized = address.toLowerCase();
 	const workerName = getEmailWorkerName(env);
 	const rules = await listEmailRoutingRules(env, zoneId);
