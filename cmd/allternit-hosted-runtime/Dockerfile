@@ -54,8 +54,10 @@ ARG ZIG_AARCH64_LINUX_SHA256=958ed7d1e00d0ea76590d27666efbf7a932281b3d7ba0c6b01b
 
 WORKDIR /app
 
+# libssl-dev: openssl-sys. protobuf-compiler: the engine's build.rs compiles
+# proto/verification.proto with tonic-build, which needs protoc.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends pkg-config ca-certificates curl xz-utils \
+    && apt-get install -y --no-install-recommends pkg-config libssl-dev protobuf-compiler ca-certificates curl xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
 RUN arch="$(uname -m)" \
