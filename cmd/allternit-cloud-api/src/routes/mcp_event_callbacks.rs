@@ -154,7 +154,7 @@ pub async fn register(
             .bind(key)
             .fetch_optional(db)
             .await?;
-    let Some((owner, old_runtime, route_id, stored)) = existing else {
+    let Some((owner, _old_runtime, route_id, stored)) = existing else {
         let route_id = channel_inbound::create_internal_route(db, user, runtime, MCP_EVENTS_PROVIDER, &format!("mcp-events:{key}")).await?;
         sqlx::query(
             "INSERT INTO mcp_event_client_subscriptions (key, user_id, runtime_id, route_id, connector_id, event_name, secret)
@@ -185,7 +185,11 @@ pub async fn register(
     let route_id = match live {
         Some((id,)) => id,
         None => {
-            let _ = old_runtime;
+            // Retire the old queue (it pointed at another runtime) so its leftovers aren't relayed there.
+            sqlx::query("UPDATE channel_inbound_routes SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL")
+                .bind(&route_id)
+                .execute(db)
+                .await?;
             channel_inbound::create_internal_route(db, user, runtime, MCP_EVENTS_PROVIDER, &format!("mcp-events:{key}")).await?
         }
     };

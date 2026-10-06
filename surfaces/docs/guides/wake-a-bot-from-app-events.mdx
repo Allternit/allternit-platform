@@ -13,6 +13,10 @@ This is the opposite direction of [MCP Events on Allternit's own servers](/guide
 2. Open the connector. If the app offers events, an **Events** section lists them with a short description of each.
 3. Pick an event, fill in its filters if it has any (for example a mail label or a repository), and choose the bot to wake.
 4. Choose whether the bot asks before acting (**Ask first**, the default) or acts on its own.
+
+<Warning>
+Event data comes from outside your account: anyone can send you an email or open an issue. Treat it as untrusted input. Keep **Ask first** for events whose content other people control, and only let a bot act on its own when it has nothing risky it could be talked into doing.
+</Warning>
 5. Save. The status shows **Active** once the app has confirmed the subscription.
 
 Subscribing to the same event with the same filters again does not add a second one: it updates the existing subscription (for example to wake a different bot). One event + filter combination wakes one bot.
