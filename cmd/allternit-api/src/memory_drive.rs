@@ -257,9 +257,9 @@ impl MemoryDrive {
         }
         // twin/ mirrors owner-approved twin memory; only Allternit writes it.
         let base = if old == ZERO_OID { EMPTY_TREE } else { old };
-        let managed = self.git_text(&["diff", "--no-ext-diff", "--no-textconv", "--name-only", base, new, "--", "twin", "cowork"])?;
+        let managed = self.git_text(&["diff", "--no-ext-diff", "--no-textconv", "--name-only", base, new, "--", "twin"])?;
         if !managed.trim().is_empty() {
-            return Err(invalid("push", "twin/ and cowork/ are managed by Allternit; change them in the app"));
+            return Err(invalid("push", "twin/ is managed by Allternit; change twin memories in Settings"));
         }
         let range = if old == ZERO_OID { new.to_string() } else { format!("{old}..{new}") };
         let listed = self.git_text(&["rev-list", "--max-count=201", &range])?;

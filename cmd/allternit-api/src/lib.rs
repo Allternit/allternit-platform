@@ -264,6 +264,7 @@ pub mod memory_drive_transport;
 pub mod memory_drive_scopes;
 pub mod memory_dream;
 pub mod memory_drive_twin;
+pub mod memory_drive_cowork;
 #[cfg(test)]
 mod memory_drive_tests;
 pub mod memory_index;

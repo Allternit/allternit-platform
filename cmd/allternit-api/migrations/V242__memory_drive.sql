@@ -81,3 +81,7 @@ CREATE TABLE memory_dreams (
     UNIQUE(drive_id, date)
 );
 CREATE INDEX idx_memory_dreams_user ON memory_dreams(user_id, date);
+-- Bot/project memory rows rebuilt from a bot or project Memory Drive carry
+-- that drive's id; rows without one are archive or unscoped entries.
+ALTER TABLE cowork_memory_entries ADD COLUMN drive_id TEXT;
+CREATE INDEX idx_cowork_memory_drive ON cowork_memory_entries(drive_id);

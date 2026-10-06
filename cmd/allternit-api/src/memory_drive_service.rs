@@ -162,6 +162,7 @@ pub fn provision_kind(db: &DbHandle, brains_dir: &Path, owner: &str, kind: &str,
 pub fn repair_index_for_brain(db: &DbHandle, brain_id: &str) -> Result<()> {
     let Some(drive) = record_by_brain(&db.connect()?, brain_id)? else { return Ok(()) };
     if drive.kind == "personal" { repair_index(db, &drive.user_id)?; }
+    else { crate::memory_drive_cowork::reindex(db, &drive)?; }
     Ok(())
 }
 

@@ -64,12 +64,23 @@ pub fn promote_entry(db: &DbHandle, user_id: &str, id: &str, body: &PromoteBody)
         "global" => (None, None),
         _ => return Err((StatusCode::BAD_REQUEST, "scope must be bot, project or global".to_string())),
     };
-    conn.execute(
-        "UPDATE cowork_memory_entries SET owner_principal = ?3, project_id = ?4, session_id = NULL
-         WHERE id = ?1 AND user_id = ?2",
-        params![id, user_id, principal, project],
-    )
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    // Moves between Memory Drives when either side has one; else a row update.
+    let drive_scoped = crate::memory_drive_cowork::scope_for(&conn, user_id, owner.as_deref(), None)
+        .ok()
+        .flatten()
+        .is_some()
+        || crate::memory_drive_cowork::scope_for(&conn, user_id, principal.as_deref(), project.as_deref()).ok().flatten().is_some();
+    if drive_scoped {
+        crate::memory_drive_cowork::rescope(db, user_id, id, principal.as_deref(), project.as_deref())
+            .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    } else {
+        conn.execute(
+            "UPDATE cowork_memory_entries SET owner_principal = ?3, project_id = ?4, session_id = NULL
+             WHERE id = ?1 AND user_id = ?2",
+            params![id, user_id, principal, project],
+        )
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
 
     // Ledger: on the bot it came from or went to.
     let bot = body.bot_id.clone().or_else(|| owner.as_deref().and_then(bot_of_principal));
@@ -312,6 +323,15 @@ pub fn apply_curation(
     entries: &[(String, String)],
     plan: &CurationPlan,
 ) -> rusqlite::Result<()> {
+    // A bot with a Memory Drive is tidied as one drive commit.
+    let merged: Vec<(String, Vec<String>)> =
+        plan.merged.iter().map(|(c, from)| (c.clone(), from.iter().map(|i| entries[i - 1].0.clone()).collect())).collect();
+    let dropped: Vec<String> = plan.drop.iter().map(|i| entries[i - 1].0.clone()).collect();
+    match crate::memory_drive_cowork::curate(db, user_id, principal, &merged, &dropped) {
+        Ok(true) => return Ok(()),
+        Ok(false) => {}
+        Err(e) => return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(e))),
+    }
     let mut conn = db.connect()?;
     let tx = conn.transaction()?;
     for (content, from) in &plan.merged {

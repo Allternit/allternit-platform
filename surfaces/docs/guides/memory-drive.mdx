@@ -77,7 +77,9 @@ Removing someone from the workspace removes their access right away.
 Team, project and swarm drives have a **Questions** board. Agents and people can ask a
 question, answer it and mark it resolved.
 
-A bot's or project's drive also shows its saved memory in `cowork/memory.md`, read-only.
+A bot's drive holds what that bot remembers, and a project's drive holds the project's
+memory, in `memory.md`. Saving, forgetting or moving a bot's memory changes its drive, and
+editing the file changes what the bot knows.
 
 ## Move memories you already had
 
@@ -109,14 +111,14 @@ git -c credential.helper= \
 
 Every change pushed to your drive is checked first. It's refused if it isn't in the
 memory format, looks like it contains a password or key, rewrites history, or edits
-`twin/` or `cowork/`.
+`twin/`.
 
 ## In Gizzi
 
 Gizzi keeps a copy of your drive on your computer and reads `MEMORY.md` at the start of
 every session. What it remembers is saved to the drive and synced. If you're offline or
 signed out, it saves locally and syncs when you sign in. Run `/memory` to see the
-drive, recent changes and sync status.
+drive, recent changes and sync status. See [gizzi memory](/cli/memory) for the commands.
 
 ## Keep in mind
 

@@ -2,7 +2,7 @@ import { lstat, realpath } from 'fs/promises'
 import { dirname, join, resolve, sep } from 'path'
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/growthbook.js'
 import { getErrnoCode } from '../utils/errors.js'
-import { getAutoMemPath, isAutoMemoryEnabled } from './paths.js'
+import { getAutoMemPath, isAutoMemoryEnabled, isMemoryDriveActive } from './paths.js'
 
 /**
  * Error thrown when a path validation detects a traversal or injection attempt.
@@ -72,6 +72,11 @@ function sanitizePathKey(key: string): string {
  */
 export function isTeamMemoryEnabled(): boolean {
   if (!isAutoMemoryEnabled()) {
+    return false
+  }
+  // Allternit team memory is the team's Memory Drive (mounted next to the
+  // personal drive); the legacy team sync must never write beside it.
+  if (isMemoryDriveActive()) {
     return false
   }
   return getFeatureValue_CACHED_MAY_BE_STALE('tengu_herring_clock', false)

@@ -116,80 +116,14 @@ pub fn open(db: &DbHandle, root: &Path, user: &str, drive: &DriveRef, need_write
         None => service::provision_kind(db, root, &owner, &drive.kind, &drive.scope_id)?,
     };
     if matches!(d.kind.as_str(), "bot" | "project") {
-        if let Err(e) = sync_cowork_mirror(db, &d) {
-            tracing::warn!("cowork memory mirror for a {} drive failed: {e}", d.kind);
-        }
+        // The drive is canonical for this bot's or project's memory: import
+        // legacy rows once, keep the rows (index) in step with the drive.
+        crate::memory_drive_cowork::ensure_imported(db, &d)?;
+        let d = service::record_kind(&db.connect()?, &d.kind, &d.scope_id)?.ok_or(ServiceError::NotFound)?;
+        crate::memory_drive_cowork::reindex(db, &d)?;
+        return Ok(d);
     }
     Ok(d)
-}
-
-/// Bot and project memory written by the cowork runtime (principal-scoped
-/// `cowork_memory_entries`) is mirrored read-only into `cowork/memory.md` of
-/// the bot or project drive, so it is visible, versioned and clonable with
-/// the rest of that drive. The cowork store keeps its grants model and stays
-/// the writer for those entries (Phase 4 inventory: compatibility facade).
-pub fn sync_cowork_mirror(db: &DbHandle, drive: &DriveRecord) -> Result<()> {
-    let conn = db.connect()?;
-    let (sql, arg) = match drive.kind.as_str() {
-        "bot" => (
-            "SELECT e.id,e.content,e.type,COALESCE(e.created_at,''),e.session_id FROM cowork_memory_entries e
-             WHERE e.user_id=?1 AND (e.owner_principal = 'a://local/bot/' || ?2
-                OR e.owner_principal = (SELECT principal_id FROM agents WHERE id=?2 AND user_id=?1))
-             ORDER BY e.created_at, e.id LIMIT 400",
-            drive.scope_id.clone(),
-        ),
-        "project" => (
-            "SELECT e.id,e.content,e.type,COALESCE(e.created_at,''),e.session_id FROM cowork_memory_entries e
-             WHERE e.user_id=?1 AND e.project_id=?2 ORDER BY e.created_at, e.id LIMIT 400",
-            drive.scope_id.clone(),
-        ),
-        _ => return Ok(()),
-    };
-    let mut stmt = conn.prepare(sql)?;
-    let rows = stmt
-        .query_map(params![drive.user_id, arg], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?, r.get::<_, Option<String>>(4)?))
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    let mut body = String::new();
-    for (id, content, kind, created, session) in rows {
-        let text = content.split_whitespace().collect::<Vec<_>>().join(" ");
-        let safe_id: String = id.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').take(100).collect();
-        if text.is_empty() || safe_id.is_empty() || text.len() > 4000 {
-            continue;
-        }
-        let mut e = Entry {
-            id: format!("cw-{safe_id}"),
-            text,
-            source: session.filter(|s| s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')).map(|s| format!("/?session={s}")).unwrap_or_else(|| format!("allternit:cowork/{safe_id}")),
-            added: created.get(..10).filter(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").is_ok()).unwrap_or("1970-01-01").to_string(),
-            metadata: Default::default(),
-        };
-        e.metadata.insert("memory_type".into(), if crate::memory_relations::MemoryType::parse(&kind).is_some() { kind } else { "fact".into() });
-        e.metadata.insert("origin".into(), "cowork".into());
-        // Skip lines that would fail the drive's format or secret checks.
-        if let Ok(line) = e.render() {
-            body.push_str(&line);
-            body.push('\n');
-        }
-    }
-    let content = (!body.is_empty()).then(|| format!("# {} memory\n\n## Mirrored by Allternit from the {}; change it there\n\n{body}", if drive.kind == "bot" { "Bot" } else { "Project" }, drive.kind));
-    for _ in 0..4 {
-        let storage = drive.storage()?;
-        let Some(head) = storage.head()? else { return Ok(()) };
-        let current = storage.snapshot(Some(&head))?.files.remove("cowork/memory.md");
-        let op = match (&content, &current) {
-            (Some(c), cur) if cur.as_ref() != Some(c) => Operation::SetFile { path: "cowork/memory.md".into(), content: c.clone() },
-            (None, Some(_)) => Operation::DeleteFile { path: "cowork/memory.md".into() },
-            _ => return Ok(()),
-        };
-        match storage.apply_batch(Some(&head), &[op], "Sync cowork memory", "Allternit") {
-            Ok(_) => return Ok(()),
-            Err(DriveError::Conflict { .. }) => continue,
-            Err(e) => return Err(e.into()),
-        }
-    }
-    Ok(())
 }
 
 /// Read access only, without provisioning (used for listing).
@@ -243,9 +177,6 @@ pub fn guard_managed_paths(operations: &[Operation]) -> Result<()> {
             return Err(ServiceError::Provenance(
                 "twin/ is managed by Allternit; change twin memories in Settings → Twin".into(),
             ));
-        }
-        if path.starts_with("cowork/") {
-            return Err(ServiceError::Provenance("cowork/ mirrors bot and project memory; change it in the bot or project".into()));
         }
     }
     Ok(())

@@ -104,7 +104,7 @@ Smart-HTTP auth accepts legacy owner tokens (unchanged) and drive-scoped tokens
 the API binary in validation mode before any config or database is loaded. It reads the
 quarantined objects and refuses: refs other than `refs/heads/main`, deletes, non
 fast-forwards, more than 200 commits, any commit whose tree fails the format, path,
-mode, size or secret checks, and any change under `twin/` or `cowork/`. After the push
+mode, size or secret checks, and any change under `twin/`. After the push
 the API repairs the index from the actual head (a refused push still answers HTTP 200
 with a pack-protocol error, so the status code is not trusted).
 
@@ -161,9 +161,12 @@ Gizzi and other agents mount them next to the personal drive (`GET /memory/drive
 - **Twin mirror.** After any twin change, `twin/active.md` and `twin/proposed.md` are
   rewritten from `twin_memory` with status, visibility and provenance on every line.
   `twin_memory` stays the only place a fact becomes active.
-- **Cowork mirror.** Opening a bot or project drive refreshes `cowork/memory.md` from
-  `cowork_memory_entries` (the cowork runtime keeps its grant model and stays that
-  store's writer).
+- **Bot and project memory.** A bot's or project's drive is the source of truth for its
+  memory (`memory.md`); `cowork_memory_entries` rows for that scope are an index rebuilt from
+  it (`memory_drive_cowork`), each marked with `drive_id`. Store, forget, promote and the weekly
+  curation commit to the drive first. Legacy rows are imported once; rows that can't be
+  imported (text that looks like a credential) stay as untouched archive rows. Unscoped rows
+  (user-level entries, cowork turn summaries, bots that exist only on one device) stay rows.
 
 ## Other memory stores
 
@@ -172,7 +175,7 @@ Gizzi and other agents mount them next to the personal drive (`GET /memory/drive
 | `memory_facts`, `memory_adapter_links` | Index of the personal drive. |
 | `memory_observations` | Evidence log the Dream and source links cite. Never copied into a drive. |
 | `twin_memory` | Decides what's active (owner approval); mirrored to `twin/`. |
-| `cowork_memory_entries` | Bot and project memory with grants; mirrored to `cowork/memory.md`. |
+| `cowork_memory_entries` | Index of bot and project drives (grants kept); unscoped entries and turn summaries stay rows. |
 | `memory_notes` | Multi-line titled notes; a document store, not one-line memories. |
 | `session_memory` | Per-session scratch values, cleared with the session. |
 | `procedural_memory` | Structured procedures (triggers, steps, use counts). |
@@ -181,6 +184,7 @@ Gizzi and other agents mount them next to the personal drive (`GET /memory/drive
 ## gizzi-code
 
 Gizzi keeps a checkout of the personal drive (and any mounts) and writes with the same
-format: commit, push, and on a rejected push re-read, re-apply the same entry id once
+format. User-scope agent memory lives in the drive at `agents/<agent>/memory.md`; offline
+commits are replayed one by one, keeping their messages: commit, push, and on a rejected push re-read, re-apply the same entry id once
 and push again, never force. Signed out, it uses a local repo per account and merges it
 up on first sign-in. See [Memory Drive](/guides/memory-drive#in-gizzi).

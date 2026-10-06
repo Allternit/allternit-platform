@@ -807,27 +807,42 @@ export class DriveCheckout {
     await this.replayOnto(head, remote)
   }
 
-  /** Re-apply local work since the common base on top of `onto` as one commit. */
+  /**
+   * Re-apply local work since the common base on top of `onto`, one commit
+   * per local commit (oldest first, keeping each commit's message), so work
+   * saved offline keeps its history. Each step re-applies that commit's
+   * entry-level changes to the latest files; a step that changes nothing
+   * (already on the server) is skipped.
+   */
   private async replayOnto(head: string, onto: string): Promise<void> {
     const base = await this.mergeBase(head, onto)
-    const baseFiles = base ? (await this.readTree(base)).files : {}
-    const ours = await this.readTree(head)
+    const listed = await this.git(["rev-list", "--reverse", "--first-parent", base ? `${base}..${head}` : head])
+    const commits = listed.code === 0 ? listed.stdout.split("\n").filter(Boolean) : []
     const theirs = await this.readTree(onto)
-    const operations = diffOperations(baseFiles, ours.files)
-    const next = applyOperations(theirs.files, operations)
-    if (sameFiles(next, theirs.files)) {
+    let current = onto
+    let currentFiles = theirs.files
+    let previous = base ? (await this.readTree(base)).files : {}
+    for (const commit of commits.length ? commits : [head]) {
+      const ours = await this.readTree(commit)
+      const operations = diffOperations(previous, ours.files)
+      previous = ours.files
+      const next = applyOperations(currentFiles, operations)
+      if (sameFiles(next, currentFiles)) continue
+      const subject = await this.git(["log", "-1", "--format=%s", commit])
+      let message = subject.code === 0 && subject.stdout.trim() ? subject.stdout.trim().slice(0, 200) : `Sync memory from ${os.hostname().slice(0, 60) || "gizzi"}`
+      try {
+        validateCommitMessage(message)
+      } catch {
+        message = `Sync memory from ${os.hostname().slice(0, 60) || "gizzi"}`
+      }
+      current = await this.commitFiles(next, [current], message, theirs.oids, theirs.files)
+      currentFiles = next
+    }
+    if (current === onto) {
       await this.materialize(onto, theirs.files, head)
       return
     }
-    const changes = operations.length
-    const commit = await this.commitFiles(
-      next,
-      [onto],
-      `Sync memory from ${os.hostname().slice(0, 60) || "gizzi"} (${changes} change${changes === 1 ? "" : "s"})`,
-      theirs.oids,
-      theirs.files,
-    )
-    await this.materialize(commit, next, head)
+    await this.materialize(current, currentFiles, head)
   }
 
   private async pushUnlocked(): Promise<PushOutcome> {

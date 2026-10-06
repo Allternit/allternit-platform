@@ -99,7 +99,7 @@ Applies a batch as one commit, only if the drive is still at `expected_revision`
 ```
 
 Returns `{ revision, changed }`. `MEMORY.md`'s `## Index` is regenerated from the topic
-files on every write. `twin/` and `cowork/` are managed by Allternit and can't be written.
+files on every write. `twin/` is managed by Allternit and can't be written.
 
 ### `POST /memory/drive/remember`
 
@@ -148,7 +148,7 @@ git -c credential.helper= \
 
 Every push is checked before the branch moves: only `main`, fast-forward only, at most
 200 commits, every file a markdown file in the standard format, no possible credentials,
-and no changes to `twin/` or `cowork/`. A refused push prints `Memory Drive refused this
+and no changes to `twin/`. A refused push prints `Memory Drive refused this
 push:` and the reason. After an accepted push the index is rebuilt.
 
 ## Nightly Dream

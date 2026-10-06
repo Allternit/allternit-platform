@@ -81,7 +81,7 @@ Each user's [Memory Drive](/api/memory-drive) is a brain repo served by these sa
 
 - Tokens can be scoped to that one repo with `read` (clone and fetch only) or `write` access. Mint them with `POST /api/v1/memory/drive/tokens`; a read token pushing gets `403`.
 - Members of a shared (team) drive reach the owner's repo with a token scoped to it; removing the member removes access at once.
-- Every push is checked before the branch moves: only `main`, fast-forward only, at most 200 commits, standard memory format, no possible credentials, no changes to `twin/` or `cowork/`. A refused push prints `Memory Drive refused this push:` and the reason.
+- Every push is checked before the branch moves: only `main`, fast-forward only, at most 200 commits, standard memory format, no possible credentials, no changes to `twin/`. A refused push prints `Memory Drive refused this push:` and the reason.
 - After an accepted push the memory index is rebuilt.
 
 ## Git token lifecycle

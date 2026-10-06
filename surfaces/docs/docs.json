@@ -309,6 +309,7 @@
               "cli/mcp",
               "cli/plugin",
               "cli/session",
+              "cli/memory",
               "cli/native-sessions",
               "cli/tasks",
               "cli/doctor",

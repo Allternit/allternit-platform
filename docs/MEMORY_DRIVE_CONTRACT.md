@@ -128,3 +128,7 @@ phone layout and the PWA. If the session is missing or not the viewer's, show
 - 403 = no access / read-only member writing.
 - Managed folders `twin/` (twin projection, read-only) and `cowork/` (bot/project memory mirror, read-only):
   UI should show them read-only with a note; writes to them return 400.
+
+- Bot and project drives: `memory.md` is the bot's/project's memory (canonical; cowork rows are its index).
+  `cowork/` is no longer used or guarded. Entry metadata: `owner`, `grants` (comma list), `cowork_type`, `tags`,
+  `cowork_source`, `project`, `session`.

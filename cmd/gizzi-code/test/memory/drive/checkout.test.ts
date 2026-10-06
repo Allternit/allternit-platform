@@ -172,6 +172,24 @@ describe("memory drive checkout", () => {
     expect(notes).toContain("srv-1")
   })
 
+  test("several offline commits keep their own history when they sync", async () => {
+    const root = await scratch()
+    const remote = await bareRemote(root)
+    const dir = path.join(root, "a")
+    await new DriveCheckout({ dir, remote: remoteFor(remote), author }).ensure()
+    const offline = new DriveCheckout({ dir, remote: remoteFor(path.join(root, "gone.git")), author })
+    await offline.write([{ UpsertEntry: { path: "notes.md", entry: entry("off-1", "First offline note") } }], { message: "Remember: first offline note" })
+    await offline.write([{ UpsertEntry: { path: "notes.md", entry: entry("off-2", "Second offline note") } }], { message: "Remember: second offline note" })
+    const other = new DriveCheckout({ dir: path.join(root, "b"), remote: remoteFor(remote), author })
+    await other.write([{ UpsertEntry: { path: "notes.md", entry: entry("srv-1", "Written elsewhere") } }], { message: "elsewhere" })
+    const after = await new DriveCheckout({ dir, remote: remoteFor(remote), author }).sync()
+    expect(after.pending).toBe(false)
+    const log = await remoteLog(remote)
+    expect(log.slice(0, 3)).toEqual(["Remember: second offline note", "Remember: first offline note", "elsewhere"])
+    const notes = (await remoteFiles(remote))["notes.md"]!
+    for (const id of ["off-1", "off-2", "srv-1"]) expect(notes).toContain(id)
+  })
+
   test("first-login merge brings signed-out history up without force", async () => {
     const root = await scratch()
     const remote = await bareRemote(root)

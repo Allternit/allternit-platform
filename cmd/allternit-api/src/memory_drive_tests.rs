@@ -269,6 +269,7 @@ fn managed_folders_cannot_be_written_by_users() {
     let head = d.storage().unwrap().head().unwrap().unwrap();
     for path in ["twin/active.md", "cowork/memory.md"] {
         let op = Operation::SetFile { path: path.into(), content: "# x\n".into() };
+        if path.starts_with("cowork/") { continue; }
         assert!(service::apply(&f.db, "u1", &head, &[op], "x").is_err(), "{path} must be refused");
     }
 }
@@ -417,26 +418,61 @@ fn push_validation_refuses_bad_pushes() {
 }
 
 #[test]
-fn bot_drive_mirrors_cowork_memory_read_only() {
+fn bot_memory_is_canonical_in_the_bot_drive() {
+    use crate::memory_drive_cowork as cowork;
     let f = fixture();
     let conn = f.db.connect().unwrap();
     conn.execute("INSERT INTO agents (id, user_id, name, model, provider) VALUES ('b1','u1','Ledger','sonnet','claude-cli')", []).unwrap();
     conn.execute(
         "INSERT INTO cowork_memory_entries (id, user_id, content, type, owner_principal, grants, created_at)
-         VALUES ('m1','u1','Margin target is 35%','fact','a://local/bot/b1','[]','2026-09-27T10:00:00Z'),
-                ('m2','u1','Another bot''s note','fact','a://local/bot/other','[]','2026-09-27T10:00:00Z')",
+         VALUES ('m1','u1','Margin target is 35%','fact','a://local/bot/b1','[\"a://ws/al\"]','2026-09-27T10:00:00Z'),
+                ('m2','u1','Another bot''s note','fact','a://local/bot/other','[]','2026-09-27T10:00:00Z'),
+                ('m3','u1','The vault password is hunter2','fact','a://local/bot/b1','[]','2026-09-27T10:00:00Z')",
         [],
     )
     .unwrap();
     let bot = DriveRef::parse(Some("bot:b1"), "u1").unwrap();
     let d = scopes::open(&f.db, &f.root, "u1", &bot, false).unwrap();
     let files = d.storage().unwrap().snapshot(None).unwrap().files;
-    let mirror = &files["cowork/memory.md"];
-    assert!(mirror.contains("- Margin target is 35% [source: allternit:cowork/m1; added: 2026-09-27; id: cw-m1"));
-    assert!(!mirror.contains("Another bot"));
+    let mem = &files["memory.md"];
+    assert!(mem.contains("- Margin target is 35% [source: allternit:cowork; added: 2026-09-27; id: m1;"));
+    assert!(mem.contains("grants: a://ws/al") && mem.contains("owner: a://local/bot/b1"));
+    assert!(!mem.contains("Another bot") && !mem.contains("hunter2"));
+    // The secret-looking legacy row was not importable: kept as archive.
+    let archived: i64 = conn.query_row("SELECT COUNT(*) FROM cowork_memory_entries WHERE id='m3' AND drive_id IS NULL", [], |r| r.get(0)).unwrap();
+    assert_eq!(archived, 1);
     assert!(matches!(scopes::open(&f.db, &f.root, "u2", &bot, false), Err(service::ServiceError::Forbidden)));
-    // Opening again with no change makes no new commit.
-    let n = d.storage().unwrap().history(None, 100).unwrap().len();
-    scopes::open(&f.db, &f.root, "u1", &bot, false).unwrap();
-    assert_eq!(d.storage().unwrap().history(None, 100).unwrap().len(), n);
+
+    // Store goes to the drive and the row (index) follows.
+    let entry = cowork::CoworkEntry { content: "Close books on the 3rd".into(), type_: "fact".into(), owner_principal: Some("a://local/bot/b1".into()), ..Default::default() };
+    let id = cowork::store(&f.db, "u1", entry).unwrap().unwrap();
+    let d = service::record_kind(&conn, "bot", "b1").unwrap().unwrap();
+    assert!(d.storage().unwrap().snapshot(None).unwrap().files["memory.md"].contains("Close books on the 3rd"));
+    let grants: String = conn.query_row("SELECT grants FROM cowork_memory_entries WHERE id='m1'", [], |r| r.get(0)).unwrap();
+    assert_eq!(grants, "[\"a://ws/al\"]");
+    // A plain (unscoped) entry stays a row.
+    let plain = cowork::CoworkEntry { content: "User-level".into(), type_: "fact".into(), ..Default::default() };
+    assert!(cowork::store(&f.db, "u1", plain).unwrap().is_none());
+
+    // Forget and curation are drive commits.
+    assert_eq!(cowork::forget(&f.db, "u1", &id).unwrap(), Some(true));
+    assert!(!d.storage().unwrap().snapshot(None).unwrap().files["memory.md"].contains("Close books"));
+    let gone: i64 = conn.query_row("SELECT COUNT(*) FROM cowork_memory_entries WHERE id=?1", params![id], |r| r.get(0)).unwrap();
+    assert_eq!(gone, 0);
+    assert!(cowork::curate(&f.db, "u1", "a://local/bot/b1", &[("Margin target is 35 percent.".into(), vec!["m1".into()])], &[]).unwrap());
+    let rows: Vec<String> = {
+        let mut st = conn.prepare("SELECT content FROM cowork_memory_entries WHERE owner_principal='a://local/bot/b1' AND drive_id IS NOT NULL").unwrap();
+        let r = st.query_map([], |r| r.get(0)).unwrap().collect::<rusqlite::Result<Vec<String>>>().unwrap();
+        r
+    };
+    assert_eq!(rows, vec!["Margin target is 35 percent.".to_string()]);
+    // Editing the drive directly (e.g. a push) is reflected in the rows.
+    let storage = d.storage().unwrap();
+    let head = storage.head().unwrap().unwrap();
+    let snap = storage.snapshot(Some(&head)).unwrap();
+    let mid = service::entries(&snap).unwrap().into_iter().find(|(_, e)| e.text.contains("35 percent")).unwrap().1.id;
+    storage.apply_batch(Some(&head), &[Operation::DeleteEntry { id: mid }], "Pushed", "t").unwrap();
+    service::repair_index_for_brain(&f.db, &d.brain_id).unwrap();
+    let left: i64 = conn.query_row("SELECT COUNT(*) FROM cowork_memory_entries WHERE drive_id IS NOT NULL", [], |r| r.get(0)).unwrap();
+    assert_eq!(left, 0);
 }

@@ -12,7 +12,7 @@ beyond the opt-in, dry-run-first import.
 | `memory_relationships` / `memory_edges` | `write_relation` | **Nonredundant: graph index metadata** built after drive commits. | Edges point at index fact ids. |
 | `memory_adapter_links` | adapter routes | **Covered — mapping index** from external ids to drive-backed facts. | |
 | `twin_memory` | twin routes, `tool_twin_propose`, Dream proposals | **Canonical for activation, mirrored.** Owner accept is the only activation path; `twin/active.md` and `twin/proposed.md` are a read-only projection (pushes and edits to `twin/` are refused). | Keeps the owner-approval gate. |
-| `cowork_memory_entries` (bot/project memory) | cowork runtime crate (`allternit_cowork_runtime::sqlite_store`), `memory_curation` weekly job | **Compatibility facade, mirrored.** Principal/grant ACLs live here; each bot and project drive gets a read-only `cowork/memory.md` mirror, refreshed when the drive is opened. `cowork/` is refused for user writes and pushes. | The runtime's grant model has no drive equivalent yet; moving its writer is a separate change. |
+| `cowork_memory_entries` (bot/project memory) | cowork routes (store, forget), `memory_curation` (promote, weekly tidy), DAG turn summaries | **Covered — index for bot/project drives.** `memory_drive_cowork` commits store/forget/promote/curation to the bot's or project's drive, then rebuilds that scope's rows (marked `drive_id`; grants kept in entry metadata). Legacy rows are imported once; credential-looking rows stay as untouched archive. Unscoped user-level entries, cowork turn summaries (owned by the workspace principal) and device-only bots stay rows. | Drive canonical for bot and project memory. |
 | `memory_notes` | `memory_notes_routes`, `agent_gateway_routes` (gateway notes) | **Nonredundant: document store.** Multi-line titled notes (not one-line memories); indexed for search by `memory_index`. | Doesn't fit the one-line entry format. |
 | `session_memory` | `session_memory_service` (`/memory/session`) | **Nonredundant: per-session scratch key/value** state, cleared with the session. | Not long-term memory. |
 | `procedural_memory` | `procedural_memory_service` (`/memory/procedural`) | **Nonredundant: structured procedures** (trigger patterns, steps, use counts). | Structured records; Dream lessons cover prose procedures in `lessons.md`. |
@@ -24,6 +24,8 @@ beyond the opt-in, dry-run-first import.
 - `memory_consolidation::apply_merge` no longer edits drive-backed rows.
 - `prune_turn_derived_facts` no longer touches drive-backed rows.
 - Desktop gizzi `autoDream` stays off when the server Dream is enabled for the drive (gizzi checks `GET /memory/drive/settings`).
+- gizzi user-scope agent memory (`memory: user`) lives in the personal drive at `agents/<agent>/memory.md`; project/local scopes stay in the project on purpose.
+- gizzi's inherited TEAMMEM team sync (upstream server, build flag off) is disabled whenever the drive is active; Allternit team memory is the team drive.
 
 ## External agents
 
