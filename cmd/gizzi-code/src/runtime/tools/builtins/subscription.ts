@@ -78,6 +78,8 @@ export async function confirmSubscriptionTask(ctx: Tool.Context, input: Subscrip
         title: input.title,
         prompt: input.prompt.slice(0, 2_000),
         truncated: input.prompt.length > 2_000,
+        // The exact task submitted below: the human action is bound to it.
+        task: { capability: input.capability, provider: input.provider, prompt: input.prompt, options: input.options ?? {} },
       },
     },
   })

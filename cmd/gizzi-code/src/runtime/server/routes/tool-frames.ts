@@ -49,13 +49,20 @@ export function usageFromMessageInfo(info: any): Record<string, number> | undefi
     inputTokens: typeof tokens.input === "number" ? tokens.input : 0,
     outputTokens: typeof tokens.output === "number" ? tokens.output : 0,
   }
-  const positive = (n: unknown) => (typeof n === "number" && n > 0 ? n : undefined)
+  const positive = (n: unknown) => (typeof n === "number" && Number.isFinite(n) && n > 0 ? n : undefined)
   const cacheRead = positive(tokens?.cache?.read)
   const cacheWrite = positive(tokens?.cache?.write)
   const reasoning = positive(tokens?.reasoning)
   const cost = positive(info?.cost)
   if (cacheRead) usage.cacheReadTokens = cacheRead
   if (cacheWrite) usage.cacheWriteTokens = cacheWrite
+  const cacheTtl = positive(tokens?.cache?.ttlSeconds)
+  const refreshedAt = positive(tokens?.cache?.refreshedAt)
+  if (cacheTtl && refreshedAt) {
+    usage.cacheTtlSeconds = cacheTtl
+    usage.cacheExpiresAt = refreshedAt + cacheTtl * 1000
+    usage.cacheRecacheTokens = (tokens.input ?? 0) + (cacheRead ?? 0) + (cacheWrite ?? 0)
+  }
   if (reasoning) usage.reasoningTokens = reasoning
   if (cost) usage.cost = cost
   return usage

@@ -171,8 +171,7 @@ All source lives in this monorepo. The other repos exist only where a tool needs
 | [`allternit-tts`](https://github.com/Allternit/allternit-tts) | GPL-licensed Kokoro TTS child process, kept separate for licensing |
 
 The older extracted copies (`allternit-sdk`, `allternit-api-client`, `allternit-docs`,
-`gizzi-code-docs`, `allternit-assets`) stopped tracking this repo in September 2026 and are
-not maintained. Do not push to them; the code here is current.
+`gizzi-code-docs`, `allternit-assets`) were deleted on 2026-10-06. Their code lives here.
 
 ## Development Workflow
 

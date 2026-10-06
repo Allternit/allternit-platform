@@ -506,6 +506,8 @@ const shellAPI = {
     ipcRenderer.invoke('shell:open-session', options),
   openBotComputer: (options: { botId: string; title?: string; sandboxId?: string }): Promise<void> =>
     ipcRenderer.invoke('shell:open-bot-computer', options),
+  openBotPhone: (options: { botId: string; title?: string }): Promise<void> =>
+    ipcRenderer.invoke('shell:open-bot-phone', options),
   getOfficeHostStatus: (): Promise<Record<'word' | 'excel' | 'powerpoint', {
     installed: boolean;
     running: boolean;

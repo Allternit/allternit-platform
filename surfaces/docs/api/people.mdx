@@ -28,12 +28,13 @@ Replies use `people::choose_reply`: a channel the bot requests (only if the pers
 | `POST /people/:id/identities` | `{ "provider", "value" }` | `{ "linked": bool, "person": Person }`; `409 belongs_to_another_person` with `personId` when the handle is someone else's (a proposal is queued) |
 | `POST /people/:id/merge` | `{ "fromId" }` | the surviving `Person` |
 | `POST /people/:id/split` | `{ "identityId" }` | `{ "person": Person, "split": Person }` |
-| `POST /people/:id/facts` | `{ "fact", "botId"?, "threadId"? }` | `{ "personId", "facts": [string] }` |
+| `POST /people/:id/facts` | `{ "fact", "botId"?, "threadId"? }` | `{ "personId", "facts": [{ "id", "fact", "botId", "createdAt" }] }` |
+| `DELETE /people/:id/facts/:factId` | none | `{ "removed": true }`, 404 `not_found` when the note isn't the caller's |
 | `POST /people/:id/message` | `{ "text", "channel"? }` | `{ "sent": true, "provider", "reason": "requested" \| "pinned" \| "last_used" \| "fallback" }`; `409 no_channel`, `503 not_configured` |
 | `GET /people-links` | | `{ "links": [{ "id", "reason", "score", "a": Person, "b": Person }] }` |
 | `POST /people-links/:id/confirm` | | the surviving `Person` (the older one) |
 | `POST /people-links/:id/dismiss` | | `{ "dismissed": true }` |
 
-`Person` is `{ id, displayName, nameSource: "auto" | "contact" | "owner", avatar, notes, org, replyPin, identities: [{ id, provider, kind, externalId, label, confidence, source, lastSeenAt }], channels, lastChannel, lastSeenAt, threads: [{ threadId, botId, role }] }`.
+`Person` is `{ id, displayName, nameSource: "auto" | "contact" | "owner", avatar, notes, org, replyPin, identities: [{ id, provider, kind, externalId, label, confidence, source, lastSeenAt }], channels, lastChannel, lastSeenAt, threads: [{ threadId, botId, role }], facts: [{ id, fact, botId, createdAt }] }` (newest 50 notes; `botId` is null for notes the owner typed). Bots write notes with the `people_remember` tool, see [People](/guides/people).
 
 `GET /gateway/channel-accounts/:id/conversations` now also returns `personId` (and the person's `name` and `avatar`) for each chat, which is how Messages groups by person.
