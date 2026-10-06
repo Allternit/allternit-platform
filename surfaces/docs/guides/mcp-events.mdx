@@ -119,7 +119,7 @@ X-MCP-Subscription-Id: sub_3f2a…
 
 ## When access ends
 
-If you remove the app's approval in Allternit (or revoke a vendor bot CLI key), its subscriptions for that server end at once, and each callback gets one signed message:
+If you remove the app's approval in Allternit (or revoke a vendor bot CLI key), or stop one subscription in [Connected apps](#seeing-and-ending-subscriptions), the subscriptions end at once, and each callback gets one signed message:
 
 ```json
 { "type": "terminated", "subscriptionId": "sub_3f2a…",
@@ -127,6 +127,25 @@ If you remove the app's approval in Allternit (or revoke a vendor bot CLI key), 
 ```
 
 `events/unsubscribe` with the same name, arguments and URL ends one subscription. It always answers `{}`.
+
+## Seeing and ending subscriptions
+
+Owners see every app's subscriptions in **Settings › Connected apps** (Desktop, ai.allternit.com, the phone layout and the m.allternit.com app). Under each approved app it lists the events it gets in plain words, when each was last sent, the last delivery error, and **Stop** for one subscription. See [Connected apps](/guides/connected-apps).
+
+Stopping one ends it at once and its callback gets the same signed `terminated` message, with `"reason": "ended_by_owner"`. The app is still approved, so it can subscribe again; removing the approval ends all of them.
+
+The routes behind it (cloud API, Clerk session or `compute`-scoped API key; `503 mcp_edge_not_configured` until the edge is on):
+
+| Route | Answer |
+|---|---|
+| `GET /api/v1/mcp/approvals` | Each approval carries `subscriptions: [{id, name, arguments, createdAt, refreshBefore, active, lastDeliveryAt, lastError}]`: that app's subscriptions for the target that haven't ended. `active: false` means it is past `refreshBefore` and the app hasn't renewed it. `lastError` is the newest failed delivery's error (`HTTP 503`, `timed out`, `connection failed`, …) when nothing was delivered after it. `subscriptions: null` means they couldn't be read; the approvals still list. The callback URL and secret are never returned. |
+| `DELETE /api/v1/mcp/events/subscriptions/:id` | `{ok: true}`, and the callback gets a signed `terminated` message. `404 {"error":"not_found"}` for a subscription that isn't yours or has already ended. |
+| `GET /api/v1/events/catalog` | Signed-in users. `{events: [{name, title, description, servers}]}`: every registered event with a short plain-words `title` (for example `"Approval requests"`), its description, and which servers offer it (`agents` = the agents server, `bot` = a vendor bot connector, `platform` = [Platform API webhooks](/api/platform/webhooks)). |
+
+```bash
+curl https://api.allternit.com/api/v1/events/catalog -H "Authorization: Bearer $CLERK_SESSION"
+curl -X DELETE https://api.allternit.com/api/v1/mcp/events/subscriptions/sub_3f2a… -H "Authorization: Bearer $CLERK_SESSION"
+```
 
 ## Errors
 
@@ -161,5 +180,6 @@ x-allternit-runtime-sig: v1=<hex HMAC-SHA256(sha256_hex(device_token), "<ts>.POS
 
 ## Related
 
+- [Connected apps](/guides/connected-apps)
 - [MCP Servers API](/api/mcp-servers)
 - [Platform API webhooks](/api/platform/webhooks), which can use the same Standard Webhooks signatures
