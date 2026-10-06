@@ -52,14 +52,9 @@ use crate::thread_routes::ThreadRuntime;
 use crate::AppState;
 
 pub const BOT_SCOPE: &str = "bots:act";
-const PROTOCOL_VERSION: &str = "2025-06-18";
-const SUPPORTED_PROTOCOL_VERSIONS: [&str; 2] = ["2025-06-18", "2025-03-26"];
 const MAX_TEXT_CHARS: usize = 4000;
 
-pub const SERVER_INSTRUCTIONS: &str = "You act through your directing bot's phone and mailbox. send_text and start_call \
-only reach people who contacted that number first or were added as contacts; STOP always wins. send_email is queued \
-for the owner's approval. If a tool refuses, tell the user why in the refusal's words. When told to run an Allternit ticket, call \
-get_ticket, do the work, then post_result.";
+pub const SERVER_INSTRUCTIONS: &str = mcp_protocol::servers::VENDOR_BOT_INSTRUCTIONS;
 
 // ─── URLs and OAuth metadata ───────────────────────────────────────────────────
 
@@ -604,25 +599,26 @@ fn rpc_err(id: Value, code: i32, message: String) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } })
 }
 
+fn server_spec() -> mcp_protocol::ServerSpec {
+    mcp_protocol::servers::vendor_bot(env!("CARGO_PKG_VERSION"))
+}
+
 /// The JSON-RPC core, separate from the HTTP shell so tests drive it directly.
+/// Versions, `initialize` and `server/discover` come from `mcp-protocol`.
 pub async fn handle_rpc(db: &DbHandle, actions: &dyn Actions, s: &Session, req: &Value) -> Option<Value> {
     let id = req.get("id").cloned()?; // a notification gets no body
     let method = req["method"].as_str().unwrap_or_default();
-    Some(match method {
-        "initialize" => {
-            let requested = req["params"]["protocolVersion"].as_str();
-            let version = requested.filter(|v| SUPPORTED_PROTOCOL_VERSIONS.contains(v)).unwrap_or(PROTOCOL_VERSION);
-            rpc_ok(
-                id,
-                json!({
-                    "protocolVersion": version,
-                    "capabilities": { "tools": { "listChanged": false }, "resources": { "subscribe": false, "listChanged": false } },
-                    "serverInfo": { "name": "allternit-vendor-bot", "version": env!("CARGO_PKG_VERSION") },
-                    "instructions": SERVER_INSTRUCTIONS
-                }),
-            )
-        }
-        "ping" => rpc_ok(id, json!({})),
+    let spec = server_spec();
+    let era = mcp_protocol::Era::of(method, &req["params"], None);
+    if let Some(done) = mcp_protocol::preflight(&spec, &era, &id, method) {
+        return Some(done);
+    }
+    let response = dispatch_method(db, actions, s, req, method, id).await;
+    Some(mcp_protocol::finish(&spec, &era, method, response))
+}
+
+async fn dispatch_method(db: &DbHandle, actions: &dyn Actions, s: &Session, req: &Value, method: &str, id: Value) -> Value {
+    match method {
         "tools/list" => rpc_ok(id, json!({ "tools": tool_descriptors() })),
         "resources/list" => rpc_ok(id, json!({ "resources": crate::mcp_vendor_cards::resource_descriptors() })),
         "resources/read" => {
@@ -636,13 +632,13 @@ pub async fn handle_rpc(db: &DbHandle, actions: &dyn Actions, s: &Session, req: 
         "tools/call" => {
             let name = req["params"]["name"].as_str().unwrap_or_default();
             if !is_tool(name) {
-                return Some(rpc_err(id, -32602, format!("Unknown tool: {name}")));
+                return rpc_err(id, -32602, format!("Unknown tool: {name}"));
             }
             let args = req["params"].get("arguments").cloned().unwrap_or_else(|| json!({}));
             rpc_ok(id, call_tool(db, actions, s, name, args).await)
         }
         other => rpc_err(id, -32601, format!("Method not found: {other}")),
-    })
+    }
 }
 
 // ─── OAuth clients ─────────────────────────────────────────────────────────────
@@ -707,6 +703,10 @@ async fn handle_bot_rpc(
     headers: HeaderMap,
     Json(req): Json<Value>,
 ) -> Response {
+    let h = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
+    if let Some(err) = mcp_protocol::check_headers(&req["id"], req["method"].as_str().unwrap_or_default(), &req["params"], h("mcp-method"), h("mcp-name")) {
+        return (StatusCode::BAD_REQUEST, Json(err)).into_response();
+    }
     let client = match authorize_bot_bearer(&state, &headers, &user, &vendor_bot_id).await {
         Ok(c) => c,
         Err(resp) => return resp,
@@ -1252,6 +1252,26 @@ mod tests {
         let c = st.db.connect().unwrap();
         let (client, directing): (String, String) = c.query_row("SELECT client, directing_bot_id FROM vendor_bot_audit LIMIT 1", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
         assert_eq!((client.as_str(), directing.as_str()), ("claude-connector", "bot-native"));
+    }
+
+    #[tokio::test]
+    async fn rpc_speaks_stateless_2026_07_28() {
+        let st = setup("rpc-modern").await;
+        let (s, fake) = (session(&st), Fake::default());
+        let meta = json!({ "io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientCapabilities": {} });
+        let disc = handle_rpc(&st.db, &fake, &s, &json!({ "id": "d", "method": "server/discover", "params": { "_meta": meta } })).await.unwrap();
+        assert_eq!(disc["result"]["supportedVersions"][0], "2026-07-28");
+        assert_eq!(disc["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["name"], "allternit-vendor-bot");
+        assert!(disc["result"]["capabilities"]["resources"].get("subscribe").is_none());
+        // No initialize first: a modern tools/list just works and is decorated.
+        let list = handle_rpc(&st.db, &fake, &s, &json!({ "id": 2, "method": "tools/list", "params": { "_meta": meta } })).await.unwrap();
+        assert_eq!(list["result"]["resultType"], "complete");
+        assert_eq!(list["result"]["cacheScope"], "private");
+        assert!(!list["result"]["tools"].as_array().unwrap().is_empty());
+        let nf = handle_rpc(&st.db, &fake, &s, &json!({ "id": 3, "method": "resources/read", "params": { "uri": "ui://nope", "_meta": meta } })).await.unwrap();
+        assert_eq!(nf["error"]["code"], -32602, "modern resource-not-found code");
+        let bad = handle_rpc(&st.db, &fake, &s, &json!({ "id": 4, "method": "tools/list", "params": { "_meta": { "io.modelcontextprotocol/protocolVersion": "2099-01-01" } } })).await.unwrap();
+        assert_eq!(bad["error"]["code"], -32022);
     }
 
     #[tokio::test]

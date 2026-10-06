@@ -242,6 +242,7 @@ dependencies = [
  "instant-distance",
  "jsonwebtoken",
  "mcp-client",
+ "mcp-protocol",
  "md5",
  "once_cell",
  "openssl",
@@ -449,6 +450,7 @@ dependencies = [
  "image",
  "jsonwebtoken",
  "lazy_static",
+ "mcp-protocol",
  "md5",
  "prost 0.13.5",
  "prost-types 0.13.5",
@@ -8491,6 +8493,17 @@ dependencies = [
  "tokio-process",
  "tokio-test",
  "tracing",
+]
+
+[[package]]
+name = "mcp-protocol"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "hmac 0.12.1",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
 ]
 
 [[package]]

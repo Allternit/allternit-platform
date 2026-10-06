@@ -51,9 +51,9 @@ Everything works the same on Desktop, the ai.allternit.com phone layout and the 
 
 ## For developers
 
-**Endpoint.** `POST /mcp/bots/:vendorBotId` (MCP Streamable HTTP, JSON-RPC, protocol `2025-06-18`) is served in two places:
+**Endpoint.** `POST /mcp/bots/:vendorBotId` (MCP Streamable HTTP, JSON-RPC; stateless protocol `2026-07-28` with `server/discover`, plus `initialize` for 2025-11-25 and earlier, see [protocol versions](/api/mcp-servers#protocol-versions)) is served in two places:
 
-- **Public edge, cloud-api** (`cmd/allternit-cloud-api/src/routes/mcp_edge.rs`), at `api.allternit.com` and `mcp.allternit.com`. Both hosts use the same paths, with no prefix change. This is what Claude and ChatGPT call. It also serves the agents server (`POST /mcp/server`, `POST /mcp`) and the `.well-known` documents below. `GET` on a connector path answers `405` with `Allow: POST` after the token is checked.
+- **Public edge, cloud-api** (`cmd/allternit-cloud-api/src/routes/mcp_edge.rs`), at `api.allternit.com` and `mcp.allternit.com`. Both hosts use the same paths, with no prefix change. This is what Claude and ChatGPT call. It also serves the agents server (`POST /mcp/server`, `POST /mcp`) and the `.well-known` documents below. The edge answers `server/discover` itself after checking the token, so a client learns versions, capabilities and instructions without waking the computer; every other method is forwarded. `GET` on a connector path answers `405` with `Allow: POST` after the token is checked.
 - **Runtime, allternit-api** (`cmd/allternit-api/src/mcp_vendor_bots.rs`, next to the agents server in `mcp_agents.rs`), for a signed-in session on the computer itself. The edge never sends the OAuth token here.
 
 **How the edge forwards.**
