@@ -1250,8 +1250,9 @@ pub(crate) async fn call_mail_mcp_tool(
 /// Best-effort mailflare teardown for a deleted/disabled agent: delete the
 /// mailbox (removes the Cloudflare routing rule and disables it). mailflare
 /// has no admin-scope key-revoke endpoint yet, so the per-agent key is left
-/// revoked-by-mailbox-deletion only. Never fails the caller.
-pub async fn revoke_agent_mailbox(agent_id: &str, db: &crate::db::DbHandle) {
+/// revoked-by-mailbox-deletion only. Never fails the caller; returns false
+/// only when a mailbox existed and could not be removed.
+pub async fn revoke_agent_mailbox(agent_id: &str, db: &crate::db::DbHandle) -> bool {
     let mailbox_id = match db.connect() {
         Ok(conn) => conn
             .query_row(
@@ -1263,11 +1264,11 @@ pub async fn revoke_agent_mailbox(agent_id: &str, db: &crate::db::DbHandle) {
             .optional(),
         Err(e) => {
             warn!(error = %e, agent_id = %agent_id, "agent-email: revocation lookup failed");
-            return;
+            return false;
         }
     };
     let Ok(Some(Some(mailbox_id))) = mailbox_id else {
-        return;
+        return true;
     };
     let Some(client) = MailflareClient::from_env() else {
         // Cloud-brokered: the cloud holds the admin key and removes the mailbox, its key,
@@ -1275,16 +1276,25 @@ pub async fn revoke_agent_mailbox(agent_id: &str, db: &crate::db::DbHandle) {
         if let Some(bearer) = crate::phone_sync::runtime_bearer() {
             let url = format!("{}/api/v1/runtime-devices/me/bot-email/mailboxes/{}", crate::phone_sync::cloud_base().trim_end_matches('/'), mailbox_id);
             match reqwest::Client::new().delete(url).bearer_auth(bearer).timeout(std::time::Duration::from_secs(20)).send().await {
-                Ok(r) if r.status().is_success() || r.status() == StatusCode::NOT_FOUND => info!(agent_id = %agent_id, mailbox_id = %mailbox_id, "agent-email: mailbox removed through the cloud"),
+                Ok(r) if r.status().is_success() || r.status() == StatusCode::NOT_FOUND => {
+                    info!(agent_id = %agent_id, mailbox_id = %mailbox_id, "agent-email: mailbox removed through the cloud");
+                    return true;
+                }
                 Ok(r) => warn!(status = %r.status(), agent_id = %agent_id, "agent-email: cloud mailbox removal refused"),
                 Err(e) => warn!(error = %e, agent_id = %agent_id, "agent-email: cloud mailbox removal failed"),
             }
         }
-        return;
+        return false;
     };
     match client.delete_mailbox(&mailbox_id).await {
-        Ok(()) => info!(agent_id = %agent_id, mailbox_id = %mailbox_id, "agent-email: mailbox deleted"),
-        Err(e) => warn!(error = %e, agent_id = %agent_id, mailbox_id = %mailbox_id, "agent-email: mailbox deletion failed"),
+        Ok(()) => {
+            info!(agent_id = %agent_id, mailbox_id = %mailbox_id, "agent-email: mailbox deleted");
+            true
+        }
+        Err(e) => {
+            warn!(error = %e, agent_id = %agent_id, mailbox_id = %mailbox_id, "agent-email: mailbox deletion failed");
+            false
+        }
     }
 }
 
