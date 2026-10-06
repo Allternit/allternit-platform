@@ -33,39 +33,3 @@ declare module '@allternit/extension' {
   export function createClaudeForChromeMcpServer(context: ClaudeForChromeContext): any
 }
 
-declare module '@modelcontextprotocol/sdk/types' {
-  export interface PrimitiveSchemaDefinition {
-    type: string
-    description?: string
-    [key: string]: unknown
-  }
-
-  export interface ElicitRequestURLParams {
-    url: string
-    [key: string]: unknown
-  }
-
-  export interface ElicitRequestFormParams {
-    title?: string
-    fields?: Array<{
-      name: string
-      label?: string
-      type?: string
-      required?: boolean
-      [key: string]: unknown
-    }>
-    [key: string]: unknown
-  }
-
-  export interface ElicitResult {
-    values?: Record<string, unknown>
-    [key: string]: unknown
-  }
-
-  export interface Tool {
-    name: string
-    description?: string
-    inputSchema?: Record<string, unknown>
-    [key: string]: unknown
-  }
-}

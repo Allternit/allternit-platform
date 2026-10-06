@@ -31,11 +31,6 @@ const clearSkillIndexCache = feature('EXPERIMENTAL_SKILL_SEARCH')
     ).clearSkillIndexCache
   : null
 
-import {
-  PromptListChangedNotificationSchema,
-  ResourceListChangedNotificationSchema,
-  ToolListChangedNotificationSchema,
-} from '@modelcontextprotocol/sdk/types.js'
 import omit from 'lodash-es/omit.js'
 import reject from 'lodash-es/reject.js'
 import {
@@ -505,9 +500,13 @@ export function useManageMCPConnections(
             switch (gate.action) {
               case 'register':
                 logMCPDebug(client.name, 'Channel notifications registered')
+                // SDK v2: custom notification methods register by name with a
+                // params schema; the handler gets the validated params.
                 client.client.setNotificationHandler(
-                  ChannelMessageNotificationSchema(),
-                  async notification => {
+                  'notifications/claude/channel',
+                  { params: ChannelMessageNotificationSchema().shape.params },
+                  async params => {
+                    const notification = { params }
                     const { content, meta } = notification.params
                     logMCPDebug(
                       client.name,
@@ -543,8 +542,10 @@ export function useManageMCPConnections(
                   ] !== undefined
                 ) {
                   client.client.setNotificationHandler(
-                    ChannelPermissionNotificationSchema(),
-                    async notification => {
+                    CHANNEL_PERMISSION_METHOD,
+                    { params: ChannelPermissionNotificationSchema().shape.params },
+                    async params => {
+                      const notification = { params }
                       const { request_id, behavior } = notification.params
                       const resolved =
                         channelPermCallbacksRef.current?.resolve(
@@ -618,7 +619,7 @@ export function useManageMCPConnections(
           // These allow the server to notify us when tools, prompts, or resources change
           if (client.capabilities?.tools?.listChanged) {
             client.client.setNotificationHandler(
-              ToolListChangedNotificationSchema,
+              'notifications/tools/list_changed',
               async () => {
                 logMCPDebug(
                   client.name,
@@ -667,7 +668,7 @@ export function useManageMCPConnections(
 
           if (client.capabilities?.prompts?.listChanged) {
             client.client.setNotificationHandler(
-              PromptListChangedNotificationSchema,
+              'notifications/prompts/list_changed',
               async () => {
                 logMCPDebug(
                   client.name,
@@ -705,7 +706,7 @@ export function useManageMCPConnections(
 
           if (client.capabilities?.resources?.listChanged) {
             client.client.setNotificationHandler(
-              ResourceListChangedNotificationSchema,
+              'notifications/resources/list_changed',
               async () => {
                 logMCPDebug(
                   client.name,

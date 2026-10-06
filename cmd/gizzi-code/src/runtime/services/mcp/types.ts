@@ -1,8 +1,5 @@
-import type { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import type {
-  Resource,
-  ServerCapabilities,
-} from '@modelcontextprotocol/sdk/types.js'
+import type { Client } from '@modelcontextprotocol/client'
+import type { Resource, ServerCapabilities } from '@modelcontextprotocol/client'
 import { z } from 'zod/v4'
 import { lazySchema } from '../../../utils/lazySchema.js'
 
@@ -31,6 +28,9 @@ export const McpStdioServerConfigSchema = lazySchema(() =>
     command: z.string().min(1, 'Command cannot be empty'),
     args: z.array(z.string()).default([]),
     env: z.record(z.string(), z.string()).optional(),
+    // MCP protocol era: 'auto' probes server/discover (2026-07-28) with a legacy
+    // `initialize` fallback; 'legacy' forces initialize; 'modern' pins 2026-07-28.
+    protocol: z.enum(['auto', 'legacy', 'modern']).optional(),
   }),
 )
 
@@ -93,6 +93,9 @@ export const McpHTTPServerConfigSchema = lazySchema(() =>
     headers: z.record(z.string(), z.string()).optional(),
     headersHelper: z.string().optional(),
     oauth: McpOAuthConfigSchema().optional(),
+    // MCP protocol era: 'auto' probes server/discover (2026-07-28) with a legacy
+    // `initialize` fallback; 'legacy' forces initialize; 'modern' pins 2026-07-28.
+    protocol: z.enum(['auto', 'legacy', 'modern']).optional(),
   }),
 )
 

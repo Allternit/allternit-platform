@@ -7,14 +7,8 @@
  * MCP server auths. The id_token is cached in the keychain and reused until expiry.
  */
 
-import {
-  exchangeAuthorization,
-  startAuthorization,
-} from '@modelcontextprotocol/sdk/client/auth.js'
-import type {
-  OAuthClientInformation,
-  OpenIdProviderDiscoveryMetadata,
-} from '@modelcontextprotocol/sdk/shared/auth.js'
+import { exchangeAuthorization, startAuthorization } from '@modelcontextprotocol/client'
+import type { OAuthClientInformation, OpenIdProviderDiscoveryMetadata } from '@modelcontextprotocol/client'
 import { z } from 'zod/v4'
 import { randomBytes } from 'crypto'
 import { createServer, type Server } from 'http'
