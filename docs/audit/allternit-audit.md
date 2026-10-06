@@ -100,7 +100,7 @@ Key layout docs:
 | `allternit-api` | `cmd/allternit-api/src/main.rs` | Local REST/WebSocket API server (port 8013) |
 | `allternit-cloud-api` | `cmd/allternit-cloud-api/src/main.rs` | Centrally hosted cloud deployment API (Contabo VPS, systemd) |
 | `allternit-cloud-wizard` | `cmd/allternit-cloud-wizard/` | Cloud setup wizard library/crate |
-| `allternit-mux` | `cmd/allternit-mux/src/main.rs` | Agent terminal multiplexer daemon/CLI |
+| `allternit-factory` | `cmd/allternit-factory/src/main.rs` | Factory engine; its pane engine (`factory/pane`) runs every terminal and agent PTY (replaced `allternit-mux`) |
 | `allternit-platform` | `services/orchestration/platform-orchestration-service/src/main.rs` | Service orchestrator that starts all services |
 | `allternit-platform-launcher` | `cmd/launcher/src/main.rs` | Single-binary launcher + static UI server |
 | `voice-service` | `services/voice/src/main.rs` | Rust voice TTS/STT service (port 8001) |
