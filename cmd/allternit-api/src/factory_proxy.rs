@@ -4,7 +4,8 @@
 //! to the engine on loopback, behind the same auth as every other protected
 //! route. Approvals (`/api/factory/approvals*`) are NOT proxied: they're static
 //! routes in `factory_approvals`, which win over this wildcard (a nest or
-//! fallback at `/api/factory` would collide with them).
+//! fallback at `/api/factory` would collide with them). The cowork Tasks board
+//! (`/api/factory/tasks/*`, `factory_tasks`) is static and owned here too.
 //!
 //! - The engine is `$ALLTERNIT_FACTORY_URL`, else `http://127.0.0.1:3011`.
 //! - The caller's `Authorization` (or Desktop's access-token + user-id pair) goes through, plus `x-allternit-user` (the

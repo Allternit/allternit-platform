@@ -360,6 +360,86 @@ impl Gate {
         Ok((prompt_id, dag_id, node_id))
     }
 
+    /// Declare a DAG under a caller-chosen, stable id, with no root node.
+    /// Idempotent: returns `false` and writes nothing when `dag_id` already
+    /// has a `DagCreated` event. The prompt (`p_<dag_id>`) carries `raw_text`
+    /// as the DAG's intent. Used for standing DAGs such as a person's task
+    /// list (the folded cowork queue), whose nodes are added later through
+    /// [`Gate::mutate_with_decision`].
+    pub async fn ensure_dag(&self, dag_id: &str, raw_text: &str) -> Result<bool> {
+        self.ensure_policy_scope(&EventScope::default()).await?;
+        let existing = self
+            .ledger
+            .query(LedgerQuery { types: Some(vec!["DagCreated".to_string()]), ..Default::default() })
+            .await?;
+        if existing
+            .iter()
+            .any(|e| e.payload.get("dag_id").and_then(|v| v.as_str()) == Some(dag_id))
+        {
+            return Ok(false);
+        }
+        let prompt_id = format!("p_{dag_id}");
+        let delta_id = format!("d_{dag_id}");
+        self.emit(AllternitEvent {
+            event_id: create_event_id(),
+            ts: Utc::now().to_rfc3339(),
+            actor: gate_actor(&self.actor_id),
+            scope: None,
+            r#type: "PromptCreated".to_string(),
+            payload: json!({ "prompt_id": prompt_id, "source": "gate", "raw_text": raw_text }),
+            provenance: None,
+        })
+        .await?;
+        let mutation_prov = MutationProvenance {
+            prompt_id: Some(prompt_id.clone()),
+            delta_id: Some(delta_id.clone()),
+            agent_decision_id: None,
+        };
+        self.ensure_mutation_provenance(&mutation_prov)?;
+        let dag_created = AllternitEvent {
+            event_id: create_event_id(),
+            ts: Utc::now().to_rfc3339(),
+            actor: gate_actor(&self.actor_id),
+            scope: None,
+            r#type: "DagCreated".to_string(),
+            payload: json!({ "dag_id": dag_id }),
+            provenance: Some(self.provenance_from(&mutation_prov)),
+        };
+        let dag_created_id = dag_created.event_id.clone();
+        self.emit(dag_created).await?;
+        self.emit(AllternitEvent {
+            event_id: create_event_id(),
+            ts: Utc::now().to_rfc3339(),
+            actor: gate_actor(&self.actor_id),
+            scope: None,
+            r#type: "PromptDeltaAppended".to_string(),
+            payload: json!({
+                "prompt_id": prompt_id,
+                "delta_id": delta_id,
+                "author": "gate",
+                "category": "initial",
+                "delta_text": raw_text,
+                "valid_at": Utc::now().to_rfc3339(),
+                "links": { "mutations": [dag_created_id] }
+            }),
+            provenance: None,
+        })
+        .await?;
+        self.emit(AllternitEvent {
+            event_id: create_event_id(),
+            ts: Utc::now().to_rfc3339(),
+            actor: gate_actor(&self.actor_id),
+            scope: None,
+            r#type: "PromptLinkedToWork".to_string(),
+            payload: json!({ "prompt_id": prompt_id, "dag_id": dag_id }),
+            provenance: None,
+        })
+        .await?;
+        self.refresh_dag_view(dag_id).await?;
+        self.refresh_prompt_view(&prompt_id).await?;
+        Ok(true)
+    }
+
     pub async fn plan_refine(
         &self,
         dag_id: &str,

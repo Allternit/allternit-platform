@@ -422,8 +422,11 @@ fn apply_node_patch(node: &mut DagNode, patch: &Value) {
     {
         node.labels = extract_string_vec(labels);
     }
-    if let Some(assignee) = patch.get("assignee").and_then(|v| v.as_str()) {
-        node.assignee = Some(assignee.to_string());
+    match patch.get("assignee") {
+        Some(Value::String(assignee)) => node.assignee = Some(assignee.to_string()),
+        // An explicit null unassigns the node.
+        Some(Value::Null) => node.assignee = None,
+        _ => {}
     }
     if let Some(spec_id) = patch.get("spec_id").and_then(|v| v.as_str()) {
         node.spec_id = Some(spec_id.to_string());
