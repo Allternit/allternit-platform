@@ -33,7 +33,6 @@ use crate::subscription_routes::{
 };
 use crate::AppState;
 
-const PROTOCOL_VERSION: &str = "2025-03-26";
 const SERVER_NAME: &str = "allternit-subscriptions";
 /// `cowork_approvals.content.kind` of a prepared subscription task.
 pub const PREPARED_KIND: &str = "subscription_task";
@@ -115,18 +114,20 @@ pub async fn handle_rpc(
     let Some(id) = req.id.clone() else {
         return StatusCode::ACCEPTED.into_response();
     };
-    let reply = match req.method.as_str() {
-        "initialize" => success(
-            id,
-            json!({
-                "protocolVersion": PROTOCOL_VERSION,
-                "capabilities": {"tools": {"listChanged": false}},
-                "serverInfo": {"name": SERVER_NAME, "version": env!("CARGO_PKG_VERSION")},
-                "instructions": "Tools here prepare tasks for the user's own subscriptions (ChatGPT, Claude, Kimi). \
+    let spec = mcp_protocol::ServerSpec {
+        name: SERVER_NAME,
+        version: env!("CARGO_PKG_VERSION"),
+        capabilities: json!({"tools": {"listChanged": false}}),
+        instructions: Some(
+            "Tools here prepare tasks for the user's own subscriptions (ChatGPT, Claude, Kimi). \
 Nothing runs until the user approves it in the Allternit app.",
-            }),
         ),
-        "ping" => success(id, json!({})),
+    };
+    let era = mcp_protocol::Era::of(&req.method, &req.params, None);
+    if let Some(done) = mcp_protocol::preflight(&spec, &era, &id, &req.method) {
+        return Json(done).into_response();
+    }
+    let reply = match req.method.as_str() {
         "tools/list" => success(id, json!({"tools": tool_list(&state, &user).await})),
         "tools/call" => {
             let name = req.params.get("name").and_then(Value::as_str).unwrap_or_default();
@@ -139,7 +140,7 @@ Nothing runs until the user approves it in the Allternit app.",
         }
         other => rpc_error(id, -32601, format!("Method not found: {other}")),
     };
-    Json(reply).into_response()
+    Json(mcp_protocol::finish(&spec, &era, &req.method, reply)).into_response()
 }
 
 // ── Gateway access (in-process, through the forwarder) ───────────────────────

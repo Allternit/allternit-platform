@@ -8,6 +8,7 @@ on:
     branches: [main]
     paths:
       - 'cmd/allternit-api/**'
+      - 'mcp/protocol/**'
       - '.github/workflows/deploy-allternit-api-contabo.yml'
   workflow_dispatch:
 

@@ -56,6 +56,7 @@ rand = { workspace = true }
 # Legacy api_tokens rows hold MD5 digests; needed for the sha256 upgrade path.
 md5 = "0.7"
 base64 = { workspace = true }
+mcp-protocol = { workspace = true }
 bytes = { workspace = true }
 sha2 = { workspace = true }
 sha1 = { workspace = true }

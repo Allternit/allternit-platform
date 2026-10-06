@@ -34,10 +34,7 @@ const DEFAULT_MCP_PUBLIC_URL: &str = "https://mcp.allternit.com/mcp";
 const RUN_STATUS_HTML: &str = include_str!("../assets/run-status.v1.html");
 const MAX_RESULT_CHARS: usize = 20_000;
 
-pub const SERVER_INSTRUCTIONS: &str = "Read-only access to the caller's Allternit agents and their runs. \
-Use list_agents to find an agent, list_runs to find its runs (filter by agent_id or status), get_run for \
-status and timestamps, and get_run_result for the output of a finished run. Use render_run_status only \
-when the user wants to see a run's status displayed. Nothing here starts, changes, or deletes anything.";
+pub const SERVER_INSTRUCTIONS: &str = mcp_protocol::servers::AGENTS_INSTRUCTIONS;
 
 // ─── OAuth protected-resource metadata ─────────────────────────────────────────
 

@@ -27,6 +27,7 @@ members = [
     "services/etrid",
     "mcp/core",
     "mcp/mcp-client",
+    "mcp/protocol",
     "infrastructure/cloud",
     "infrastructure/cloud/allternit-cloud-deploy",
     "infrastructure/cloud/allternit-cloud-ssh",
@@ -252,6 +253,7 @@ allternit-tools-gateway = { path = "services/gateway/routing" }
 allternit-harness-engineering = { path = "domains/kernel/drivers/harness-engineering" }
 mcp = { path = "mcp/core" }
 mcp-client = { path = "mcp/mcp-client" }
+mcp-protocol = { path = "mcp/protocol" }
 allternit-workflows = { path = "services/orchestration/control-plane/allternit-agent-orchestration/workflows" }
 
 # Core dependencies
