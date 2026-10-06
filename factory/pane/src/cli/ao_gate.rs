@@ -171,31 +171,17 @@ pub(super) fn rewrite(line: &str, class: GateClass, settings: &str) -> (String, 
     }
 }
 
-/// Argv the gate binary needs before the maintenance CLI's own argv.
-const GATE_ARGV_PREFIX: [&str; 2] = ["internal", "rails"];
+/// Argv the gate binary needs before the hook's own argv:
+/// `allternit-factory internal hook --root … spawn-check|claude-settings …`.
+const GATE_ARGV_PREFIX: [&str; 2] = ["internal", "hook"];
 
-/// `$ALLTERNIT_COMMRAILS_BIN` (must be a file), else the current executable
-/// when it is `allternit-factory`, else a sibling `allternit-factory`, else
-/// `allternit-factory` on PATH — uhp-gateway `spawn_gate::commrails_bin`.
+/// The engine binary that carries the gate: this process when it is
+/// `allternit-factory` (the normal case), else `$ALLTERNIT_FACTORY_BIN` (or the
+/// deprecated `$ALLTERNIT_COMMRAILS_BIN`), else an `allternit-factory` next to
+/// this executable. Never one found on `PATH` — the same rule as the engine's
+/// `hook::find_commrails_bin`, which this delegates to.
 fn commrails_bin() -> Option<PathBuf> {
-    const NAME: &str = "allternit-factory";
-    if let Some(p) = std::env::var_os("ALLTERNIT_COMMRAILS_BIN").filter(|p| !p.is_empty()) {
-        let p = PathBuf::from(p);
-        return p.is_file().then_some(p);
-    }
-    if let Ok(exe) = std::env::current_exe() {
-        if exe.file_stem().and_then(|n| n.to_str()) == Some(NAME) {
-            return Some(exe);
-        }
-        if let Some(sibling) = exe.parent().map(|d| d.join(NAME)).filter(|p| p.is_file()) {
-            return Some(sibling);
-        }
-    }
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
-        .filter(|d| !d.as_os_str().is_empty())
-        .map(|d| d.join(NAME))
-        .find(|c| c.is_file())
+    allternit_factory_engine::hook::find_commrails_bin()
 }
 
 fn env_nonempty(key: &str) -> Option<String> {
@@ -231,7 +217,7 @@ pub(super) fn gate(session: &str, workdir: &str, line: &str, logs_dir: &Path, ao
                 .args(GATE_ARGV_PREFIX)
                 .arg("--root")
                 .arg(&root)
-                .args(["hook", "spawn-check", "--harness", harness_arg, "--wih", wih])
+                .args(["spawn-check", "--harness", harness_arg, "--wih", wih])
                 .stdin(Stdio::null())
                 .output();
             let refused = match &output {
@@ -252,7 +238,7 @@ pub(super) fn gate(session: &str, workdir: &str, line: &str, logs_dir: &Path, ao
             .args(GATE_ARGV_PREFIX)
             .arg("--root")
             .arg(&root)
-            .args(["hook", "claude-settings", "--workspace"])
+            .args(["claude-settings", "--workspace"])
             .arg(workdir)
             .arg("--out")
             .arg(&settings)
@@ -264,7 +250,7 @@ pub(super) fn gate(session: &str, workdir: &str, line: &str, logs_dir: &Path, ao
             .unwrap_or(false);
         if !ok {
             eprintln!(
-                "error: spawn gate: {} hook claude-settings failed; refusing to run {harness} without its gate",
+                "error: spawn gate: {} internal hook claude-settings failed; refusing to run {harness} without its gate",
                 bin.display()
             );
             return Err(());

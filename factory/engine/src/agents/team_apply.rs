@@ -255,6 +255,21 @@ impl ApiClient {
         Ok(Some(Self { base: base.trim_end_matches('/').to_string(), auth }))
     }
 
+    /// From the link allternit-api's proxy passes per request (its own base and
+    /// the caller's credentials). `None` without a base or credentials.
+    pub fn from_link(link: &crate::send::ApiLink) -> Option<Self> {
+        let base = link.base.as_deref()?.trim_end_matches('/').to_string();
+        let auth = match (&link.desktop, &link.authorization) {
+            (Some((token, user)), _) => Auth::Desktop { token: token.clone(), user: user.clone() },
+            (None, Some(h)) => {
+                let token = h.strip_prefix("Bearer ").or_else(|| h.strip_prefix("bearer ")).unwrap_or(h);
+                Auth::Bearer(token.trim().to_string())
+            }
+            (None, None) => return None,
+        };
+        Some(Self { base, auth })
+    }
+
     pub fn base_url(&self) -> &str {
         &self.base
     }

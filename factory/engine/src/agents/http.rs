@@ -82,20 +82,41 @@ fn team_error(e: &TeamError) -> Response {
     }
 }
 
+/// Every team.yaml under `root`: `{ teams: Team[], invalid: {name, errors}[] }`.
+pub fn team_yaml_listing(root: &std::path::Path) -> Value {
+    let mut teams = vec![];
+    let mut invalid = vec![];
+    for name in team::list_teams(root) {
+        match team::load_team(root, &name).and_then(|t| t.to_contract(None)) {
+            Ok(t) => teams.push(serde_json::to_value(t).unwrap_or_default()),
+            Err(e) => invalid.push(json!({ "name": name, "errors": e.to_string() })),
+        }
+    }
+    json!({ "teams": teams, "invalid": invalid })
+}
+
+/// `GET /api/factory/teams` as a value (the engine's `/api/factory` router
+/// merges registry-only teams into it).
+pub async fn teams_listing(root: PathBuf) -> Result<Value, Response> {
+    tokio::task::spawn_blocking(move || team_yaml_listing(&root))
+        .await
+        .map_err(|e| error_response("internal", format!("team listing failed: {e}"), "Retry.", Value::Null))
+}
+
+/// `POST /api/factory/teams/:name/up`. `api` is the allternit-api client for
+/// this request (the proxy's link); `None` reads it from the env.
+pub async fn up(root: PathBuf, api: Option<Arc<dyn FactoryApi>>, name: String, body: Option<Json<UpBody>>) -> Response {
+    team_up(State(TeamsState { root, api }), AxPath(name), body).await
+}
+
+/// `POST /api/factory/teams/:name/down`.
+pub async fn down(root: PathBuf, name: String, body: Option<Json<DownBody>>) -> Response {
+    team_down(State(TeamsState { root, api: None }), AxPath(name), body).await
+}
+
 async fn list_teams(State(st): State<TeamsState>) -> Response {
     let root = st.root.clone();
-    let res = tokio::task::spawn_blocking(move || {
-        let mut teams = vec![];
-        let mut invalid = vec![];
-        for name in team::list_teams(&root) {
-            match team::load_team(&root, &name).and_then(|t| t.to_contract(None)) {
-                Ok(t) => teams.push(serde_json::to_value(t).unwrap_or_default()),
-                Err(e) => invalid.push(json!({ "name": name, "errors": e.to_string() })),
-            }
-        }
-        json!({ "teams": teams, "invalid": invalid })
-    })
-    .await;
+    let res = tokio::task::spawn_blocking(move || team_yaml_listing(&root)).await;
     match res {
         Ok(v) => Json(v).into_response(),
         Err(e) => error_response("internal", format!("team listing failed: {e}"), "Retry.", Value::Null),
@@ -104,7 +125,7 @@ async fn list_teams(State(st): State<TeamsState>) -> Response {
 
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
-struct UpBody {
+pub struct UpBody {
     preset: Option<String>,
     on: Option<String>,
     dry_run: bool,
@@ -112,7 +133,7 @@ struct UpBody {
 
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
-struct DownBody {
+pub struct DownBody {
     dry_run: bool,
     rm_worktree: bool,
 }

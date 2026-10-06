@@ -596,37 +596,30 @@ fn live_team_bots(root: &Path) -> Vec<LiveBot> {
 }
 
 /// Fill team/address/role/reach and the delivered `fields` of `agents ps`
-/// rows that map to exactly one live team bot (same workdir and harness).
-/// Rows that don't map stay as they were (`fields` = `unavailable`); nothing
-/// is guessed.
-pub fn enrich_ps(mut doc: Value, root: &Path) -> Value {
+/// rows (the registry's `Agent[]`) that are a live team bot's pane: the row's
+/// slug is the pane slug `<bot>-<team>` and the pane runs in that bot's
+/// workdir. Rows that don't map stay as they were (`fields` = `unavailable`);
+/// nothing is guessed.
+pub fn enrich_ps(mut agents: Value, root: &Path) -> Value {
     let bots = live_team_bots(root);
-    let engine: Vec<Value> = doc["engine"]["agents"].as_array().cloned().unwrap_or_default();
-    let Some(agents) = doc["agents"].as_array_mut() else { return doc };
-    for a in agents.iter_mut() {
-        let pane = a["id"].as_str().unwrap_or_default().to_string();
-        let Some(src) = engine.iter().find(|e| e["paneId"].as_str() == Some(pane.as_str())) else { continue };
-        let Some(cwd) = src["cwd"].as_str().map(PathBuf::from) else { continue };
-        let harness = src["agent"].as_str().map(norm_harness);
-        let matches: Vec<&LiveBot> = bots
-            .iter()
-            .filter(|b| b.workdir == cwd && b.harness.as_deref().map(norm_harness) == harness)
-            .collect();
-        if let [b] = matches.as_slice() {
-            a["slug"] = json!(b.slug);
-            a["team"] = json!(b.team);
-            a["address"] = json!(b.address);
-            a["role"] = json!(b.role);
-            a["reach"] = json!(b.reach);
-            a["pane"]["slug"] = json!(team_apply::pane_slug(&b.slug, &b.team));
-            if let Some(f) = delivery::load_fields(&b.workdir, &b.slug) {
-                a["fields"] = json!(f);
-            }
-        } else if let Some(name) = src["name"].as_str().filter(|n| team::valid_slug(n)) {
-            if let Some(f) = delivery::load_fields(&cwd, name) {
-                a["fields"] = json!(f);
-            }
+    let Some(rows) = agents.as_array_mut() else { return agents };
+    for a in rows.iter_mut() {
+        let slug = a["slug"].as_str().unwrap_or_default().to_string();
+        let Some(b) = bots.iter().find(|b| team_apply::pane_slug(&b.slug, &b.team) == slug) else { continue };
+        a["slug"] = json!(b.slug);
+        a["team"] = json!(b.team);
+        a["address"] = json!(b.address);
+        a["role"] = json!(b.role);
+        a["reach"] = json!(b.reach);
+        if a["binding"]["harness"].is_null() {
+            a["binding"]["harness"] = json!(b.harness.as_deref().map(norm_harness));
+        }
+        if a["pane"].is_object() {
+            a["pane"]["slug"] = json!(slug);
+        }
+        if let Some(f) = delivery::load_fields(&b.workdir, &b.slug) {
+            a["fields"] = json!(f);
         }
     }
-    doc
+    agents
 }

@@ -78,6 +78,8 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 # P5 visibility panel (src/ao/peers/*, src/ao/visibility/*) and P6a Bus mailbox
 # (src/ao/mailbox.rs): durable SQLite Bus + Ledger shim crate.
 allternit-factory-engine = { workspace = true }
+# The engine's pane-backend trait returns anyhow errors (src/factory_backend.rs).
+anyhow = { workspace = true }
 
 # P6a UHP gateway (src/ao/serve.rs): `ao serve` mounts the UHP HTTP surface
 # in-process (not a sidecar); the gateway drives the engine over the socket API.

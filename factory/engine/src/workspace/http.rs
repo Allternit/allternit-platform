@@ -47,6 +47,28 @@ pub fn router(root: PathBuf, ledger: Arc<Ledger>, gate: Arc<Gate>) -> Router {
         .with_state(WsState { root, ledger, gate })
 }
 
+/// `GET /api/factory/campaigns/:id/board` over a workspace.
+pub async fn board(root: PathBuf, ledger: Arc<Ledger>, gate: Arc<Gate>, id: String) -> Response {
+    board_h(State(WsState { root, ledger, gate }), AxPath(id)).await
+}
+
+/// The node folder's page (`NodePage`) as a value, or the error response.
+pub async fn node_page_value(root: PathBuf, ledger: Arc<Ledger>, dag: &str, node: &str) -> Result<Value, Response> {
+    let evs = ledger
+        .query(LedgerQuery::default())
+        .await
+        .map_err(|e| error_response("internal", format!("reading the ledger failed: {e:#}"), "Check the workspace's .allternit/ledger.", Value::Null))?;
+    let page = node_page::build(&root, &evs, dag, node).map_err(|e| {
+        error_response("not_found", e.to_string(), "Check the dag and node ids (GET /api/factory/campaigns/:id/board).", Value::Null)
+    })?;
+    Ok(serde_json::to_value(page).unwrap_or_default())
+}
+
+/// `POST /api/factory/nodes/:dagId/:nodeId/proof` (multipart `line`, `file`).
+pub async fn proof_upload(root: PathBuf, ledger: Arc<Ledger>, gate: Arc<Gate>, dag: String, node: String, form: Multipart) -> Response {
+    proof_h(State(WsState { root, ledger, gate }), AxPath((dag, node)), form).await
+}
+
 async fn events(st: &WsState) -> Result<Vec<AllternitEvent>, Response> {
     st.ledger
         .query(LedgerQuery::default())

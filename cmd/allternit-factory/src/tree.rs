@@ -105,9 +105,9 @@ pub enum ServeSurface {
 pub enum AgentsCmd {
     /// Start a team from team.yaml (`--dry-run` prints the plan).
     Up(crate::bots::UpArgs),
-    /// Every agent session: engine panes, native CLI sessions, peers.
+    /// Every agent: the session registry reconciled against live panes, plus peers.
     Ps {
-        /// Only sessions working under this directory (with --json).
+        /// Only sessions working under this directory.
         #[arg(long)]
         cwd: Option<String>,
     },
@@ -183,6 +183,18 @@ pub enum OrchestrationCmd {
         /// Read the text from a file.
         #[arg(short = 'f', long, conflicts_with = "text")]
         file: Option<PathBuf>,
+        /// The bot thread this message belongs to.
+        #[arg(long)]
+        thread: Option<String>,
+        /// The node this message is about.
+        #[arg(long)]
+        node: Option<String>,
+        /// The DAG of --node.
+        #[arg(long)]
+        dag: Option<String>,
+        /// Idempotency key: the same key twice returns the first delivery.
+        #[arg(long)]
+        key: Option<String>,
         #[arg(long)]
         dry_run: bool,
     },
@@ -340,6 +352,10 @@ pub enum InternalCmd {
     /// The maintenance CLI with API.md exit codes (used by the part verbs).
     #[command(disable_help_flag = true, hide = true)]
     VerbRails(Rest),
+    /// The spawn-gate hooks a gated harness runs (`--root R claude-pretool …`,
+    /// `spawn-check`, `claude-settings`); the same as `rails hook …`.
+    #[command(disable_help_flag = true)]
+    Hook(Rest),
 }
 
 /// Pull `--json`, `--dry-run` and `--root DIR` out of raw passthrough args
@@ -401,6 +417,12 @@ pub fn dispatch(ctx: &Ctx, command: Top) -> u8 {
         Top::Workspace(cmd) => workspace(ctx, cmd),
         Top::Internal(InternalCmd::Rails(rest)) => run_rails_in_process(ctx.root.as_ref(), rest.args, false),
         Top::Internal(InternalCmd::VerbRails(rest)) => run_rails_in_process(ctx.root.as_ref(), rest.args, true),
+        Top::Internal(InternalCmd::Hook(rest)) => {
+            let split = split(rest.args, true);
+            let mut args = vec!["hook".to_string()];
+            args.extend(split.args);
+            run_rails_in_process(split.root.as_ref().or(ctx.root.as_ref()), args, false)
+        }
     }
 }
 
@@ -499,18 +521,7 @@ fn agents(ctx: &Ctx, cmd: AgentsCmd) -> u8 {
         AgentsCmd::Model(_) => not_built(ctx, "agents", "model", TEAM),
         AgentsCmd::Handoff(_) => not_built(ctx, "agents", "handoff", TEAM),
         AgentsCmd::Templates(_) => not_built(ctx, "agents", "templates", TEAM),
-        AgentsCmd::Ps { cwd } => {
-            if ctx.json {
-                let mut args = vec!["visibility".to_string()];
-                opt(&mut args, "--root", ctx.root.as_ref().map(|r| r.display().to_string()));
-                opt(&mut args, "--cwd", cwd);
-                let root = ctx.root_dir();
-                let shape = move |text: &str| crate::bots::enrich_ps(agents_ps_json(text), &root);
-                crate::exec::run_shaped_dyn(ctx, Target::Pane(args), Some(&shape))
-            } else {
-                run(ctx, Target::Pane(vec!["status".into()]))
-            }
-        }
+        AgentsCmd::Ps { cwd } => crate::part::ps(ctx, cwd),
         AgentsCmd::Down { slug, rm_worktree, dry_run: dry } => {
             if let Some(code) = crate::bots::down_team(ctx, &slug, rm_worktree, dry) {
                 return code;
@@ -577,27 +588,16 @@ fn agents(ctx: &Ctx, cmd: AgentsCmd) -> u8 {
 
 fn orchestration(ctx: &Ctx, cmd: OrchestrationCmd) -> u8 {
     match cmd {
-        OrchestrationCmd::Send { to, text, queue, file, dry_run: dry } => {
-            let mut args = vec!["send".to_string()];
-            if queue {
-                args.push("--queue".into());
-            }
-            args.push(to);
-            match file {
-                Some(file) => {
-                    args.push("-f".into());
-                    args.push(file.display().to_string());
-                }
-                None if text.is_empty() => {
-                    return fail(ctx, Code::Usage, "send needs text or -f <file>", None);
-                }
-                None => args.extend(text),
-            }
-            let target = Target::Pane(args);
-            if dry {
-                return dry_run(ctx, &target);
-            }
-            run(ctx, target)
+        OrchestrationCmd::Send { to, text, queue, file, thread, node, dag, key, dry_run: dry } => {
+            let text = match file {
+                Some(file) => match std::fs::read_to_string(&file) {
+                    Ok(t) => t.trim_end_matches('\n').to_string(),
+                    Err(e) => return fail(ctx, Code::NotFound, &format!("reading {}: {e}", file.display()), None),
+                },
+                None if text.is_empty() => return fail(ctx, Code::Usage, "send needs text or -f <file>", None),
+                None => text.join(" "),
+            };
+            crate::part::send(ctx, to, text, queue, thread, node, dag, key, dry)
         }
         OrchestrationCmd::Capture { to, lines } => {
             let mut args = vec!["status".to_string(), to];
@@ -766,70 +766,6 @@ fn workspace(ctx: &Ctx, cmd: WorkspaceCmd) -> u8 {
     }
 }
 
-/// `agents ps --json`: the pane engine's visibility document (engine panes,
-/// native CLI sessions, peers, harnesses, waiting-on-you), plus `agents`, the
-/// contract's `Agent[]` (types.ts) for the terminal panes it can see. Fields the
-/// engine does not know yet (team, avatar, role, machine, node, proof, reach)
-/// are null/empty rather than guessed; `fields` is `unavailable` until the
-/// engine delivers persona/memory/skills/tools/model/permissions to panes.
-pub(crate) fn agents_ps_json(text: &str) -> serde_json::Value {
-    let mut doc: serde_json::Value = match serde_json::from_str(text.trim()) {
-        Ok(doc) => doc,
-        Err(_) => return json!({ "agents": [], "text": text }),
-    };
-    let waiting: std::collections::HashSet<String> = doc["waitingOnYou"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|w| w["paneId"].as_str().map(str::to_string))
-        .collect();
-    let agents: Vec<serde_json::Value> = doc["engine"]["agents"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|a| {
-            let pane = a["paneId"].as_str()?;
-            let label = |k: &str| a[k].as_str().filter(|s| !s.is_empty());
-            let slug = label("name").unwrap_or(pane);
-            let name = label("name").or(label("title")).or(label("agent")).unwrap_or(pane);
-            let state = if waiting.contains(pane) {
-                "needs_you"
-            } else {
-                match a["status"].as_str() {
-                    Some("working") => "working",
-                    Some("blocked") => "blocked",
-                    Some("done") => "done",
-                    _ => "idle",
-                }
-            };
-            let fields = ["persona", "memory", "skills", "tools", "model", "permissions"]
-                .iter()
-                .map(|f| (f.to_string(), json!("unavailable")))
-                .collect::<serde_json::Map<_, _>>();
-            Some(json!({
-                "id": pane,
-                "slug": slug,
-                "name": name,
-                "team": null,
-                "address": slug,
-                "avatar": null,
-                "role": null,
-                "binding": { "type": "terminal", "harness": a["agent"].clone() },
-                "state": state,
-                "machine": null,
-                "pane": { "id": pane, "attachable": true },
-                "currentNode": null,
-                "proof": null,
-                "context": { "usedPct": null, "tokens": null },
-                "reach": [],
-                "fields": fields,
-            }))
-        })
-        .collect();
-    doc["agents"] = json!(agents);
-    doc
-}
-
 /// `wih list --ready` prints `<dag> <node> <title…>` per READY node.
 fn node_list_ready_json(text: &str) -> serde_json::Value {
     let nodes: Vec<_> = text
@@ -874,28 +810,5 @@ mod tests {
             json!({ "nodes": [{ "wih": "wih_1", "node": "n2", "state": "claimed" }] })
         );
         assert_eq!(node_list_claimed_json(""), json!({ "nodes": [] }));
-    }
-
-    #[test]
-    fn agents_ps_projects_engine_panes_to_contract_agents() {
-        let doc = json!({
-            "engine": { "agents": [
-                { "paneId": "p1", "workspaceId": "w1", "name": "fixer", "agent": "claude", "status": "working" },
-                { "paneId": "p2", "workspaceId": "w1", "name": null, "agent": "codex", "status": "blocked" }
-            ]},
-            "waitingOnYou": [{ "paneId": "p2" }],
-            "native": [], "peers": []
-        });
-        let out = agents_ps_json(&doc.to_string());
-        let agents = out["agents"].as_array().unwrap();
-        assert_eq!(agents.len(), 2);
-        assert_eq!(agents[0]["address"], "fixer");
-        assert_eq!(agents[0]["state"], "working");
-        assert_eq!(agents[0]["binding"], json!({ "type": "terminal", "harness": "claude" }));
-        assert_eq!(agents[1]["name"], "codex");
-        assert_eq!(agents[1]["state"], "needs_you");
-        assert_eq!(agents[1]["fields"]["persona"], "unavailable");
-        // The visibility document stays as it was.
-        assert_eq!(out["engine"]["agents"].as_array().unwrap().len(), 2);
     }
 }
