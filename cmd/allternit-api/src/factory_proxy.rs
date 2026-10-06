@@ -7,7 +7,7 @@
 //! fallback at `/api/factory` would collide with them).
 //!
 //! - The engine is `$ALLTERNIT_FACTORY_URL`, else `http://127.0.0.1:3011`.
-//! - The caller's `Authorization` goes through, plus `x-allternit-user` (the
+//! - The caller's `Authorization` (or Desktop's access-token + user-id pair) goes through, plus `x-allternit-user` (the
 //!   signed-in user) and `x-allternit-api-base` (this process), so the
 //!   engine's hosted / vendor / channel sends call back here as that user.
 //! - Engine down → `502 {error:{code:'transport'}}`; engine slow → `504`.
@@ -83,7 +83,16 @@ fn client(timeout: Option<Duration>) -> reqwest::Client {
 /// Headers forwarded to the engine.
 fn forward_headers(incoming: &HeaderMap, user: &AuthUser) -> reqwest::header::HeaderMap {
     let mut out = reqwest::header::HeaderMap::new();
-    for name in ["authorization", "content-type", "accept", "idempotency-key"] {
+    // The desktop pair is how Desktop callers authenticate; the engine needs it
+    // to call back here as them (sends, team registration).
+    for name in [
+        "authorization",
+        "content-type",
+        "accept",
+        "idempotency-key",
+        "x-allternit-desktop-access-token",
+        "x-allternit-user-id",
+    ] {
         if let Some(v) = incoming.get(name) {
             if let Ok(v) = reqwest::header::HeaderValue::from_bytes(v.as_bytes()) {
                 out.insert(name, v);

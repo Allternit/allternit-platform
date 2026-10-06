@@ -83,10 +83,10 @@ fn help_lists_the_four_parts_and_hides_internal() {
 fn not_built_verbs_say_so_with_exit_2() {
     let home = tempfile::tempdir().unwrap();
     for (args, fact) in [
-        (vec!["agents", "up", "--json"], "agents up is not built yet"),
-        (vec!["agents", "whoami", "--json"], "agents whoami is not built yet"),
-        (vec!["workspace", "board", "--json"], "workspace board is not built yet"),
-        (vec!["workspace", "proof", "add", "x", "--json"], "workspace proof is not built yet"),
+        (vec!["agents", "model", "builder", "opus", "--json"], "agents model is not built yet"),
+        (vec!["agents", "handoff", "builder", "--json"], "agents handoff is not built yet"),
+        (vec!["agents", "templates", "--json"], "agents templates is not built yet"),
+        (vec!["workspace", "tasks", "--json"], "workspace tasks is not built yet"),
         (vec!["orchestration", "threads", "list", "--json"], "orchestration threads is not built yet"),
         (vec!["orchestration", "coordinate", "p", "hi", "--json"], "orchestration coordinate is not built yet"),
     ] {
@@ -96,10 +96,10 @@ fn not_built_verbs_say_so_with_exit_2() {
     }
 
     // Without --json: nothing on stdout, the fact on stderr, same exit code.
-    let out = factory(home.path(), &["agents", "up"]);
+    let out = factory(home.path(), &["agents", "model", "builder", "opus"]);
     assert_eq!(out.status.code(), Some(2));
     assert!(out.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("agents up is not built yet"));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("agents model is not built yet"));
 }
 
 #[test]
@@ -167,7 +167,20 @@ fn template_list_reads_without_creating_anything() {
     let root = ws.path().to_str().unwrap();
     let out = factory(home.path(), &["workflows", "template", "list", "--json", "--root", root]);
     assert_eq!(out.status.code(), Some(0));
-    assert_eq!(one_json(&out), serde_json::json!({ "templates": [] }));
+    // A fresh workspace sees the built-in templates, and reading creates nothing.
+    let doc = one_json(&out);
+    let ids: Vec<&str> = doc["templates"].as_array().unwrap().iter().map(|t| t["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, ["build-check-prove", "fact-check"]);
+    assert_eq!(doc["templates"][0]["builtin"], true);
+    assert_eq!(doc["templates"][0]["stepCount"], 3);
+    assert!(!ws.path().join(".allternit").exists());
+
+    let out = factory(home.path(), &["workflows", "template", "show", "build-check-prove", "--json", "--root", root]);
+    assert_eq!(out.status.code(), Some(0));
+    let t = one_json(&out);
+    assert_eq!(t["id"], "build-check-prove");
+    assert_eq!(t["steps"][1]["onFail"], "build");
+    assert_eq!(t["maxRounds"], 3);
     assert!(!ws.path().join(".allternit").exists());
 
     let out = factory(home.path(), &["workflows", "template", "show", "nope", "--json", "--root", root]);

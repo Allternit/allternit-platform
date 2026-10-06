@@ -225,6 +225,14 @@ pub fn run(ctx: &Ctx, target: Target) -> u8 {
 /// Like [`run`], but with `--json` the implementation's stdout is turned into
 /// the contract's JSON document by `shape`.
 pub fn run_shaped(ctx: &Ctx, target: Target, shape: Option<fn(&str) -> Value>) -> u8 {
+    match shape {
+        Some(f) => run_shaped_dyn(ctx, target, Some(&f)),
+        None => run_shaped_dyn(ctx, target, None),
+    }
+}
+
+/// [`run_shaped`] with a shaping closure (it may capture, e.g. the root).
+pub fn run_shaped_dyn(ctx: &Ctx, target: Target, shape: Option<&dyn Fn(&str) -> Value>) -> u8 {
     match target {
         Target::Rails(args) if !ctx.json => run_rails_in_process(ctx.root.as_ref(), args, true),
         Target::Rails(args) => {
@@ -317,7 +325,7 @@ fn run_child(
     ctx: &Ctx,
     args: Vec<String>,
     classify: Classify,
-    shape: Option<fn(&str) -> Value>,
+    shape: Option<&dyn Fn(&str) -> Value>,
 ) -> u8 {
     let exe = match std::env::current_exe() {
         Ok(exe) => exe,

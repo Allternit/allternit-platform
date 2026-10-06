@@ -11,9 +11,11 @@
 //!
 //! Exit codes and the `--json` error shape follow API.md §2 (see `exec.rs`).
 
+mod bots;
 mod exec;
 mod part;
 mod tree;
+mod work;
 
 use std::process::ExitCode;
 

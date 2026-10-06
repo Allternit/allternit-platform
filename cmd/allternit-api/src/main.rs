@@ -1142,6 +1142,9 @@ async fn main() {
         // Factory approvals: owned here (not proxied to the engine) because
         // push and channels live in this process.
         .nest("/api", allternit_api::factory_approvals::router())
+        // Factory bots (create + bind in one call) and vendor tickets as node
+        // deliveries: /api/v1/factory/bots, /api/v1/factory/node-tickets.
+        .nest("/api", allternit_api::factory_bots::router())
         // Everything else under /api/factory goes to the Factory engine. A
         // wildcard route, not a nest: the static approvals routes above win.
         .nest("/api", allternit_api::factory_proxy::router())

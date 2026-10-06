@@ -5,9 +5,10 @@
 //! here for Desktop, web and phone, except approvals, which it owns.
 //!
 //! Every read is a projection of the workspace ledger plus live pane facts.
-//! Verbs whose substance belongs to another stream (team boot, the board,
-//! node folders and proof upload) answer `404 not_found` "… is not built yet"
-//! rather than pretending (API.md §2).
+//! Teams (team.yaml up/down), the board, node folders and proof upload are
+//! stream F6E's modules (`agents::http`, `workspace::http`); this router calls
+//! into them so every path has one route. Verbs not built yet answer
+//! `404 not_found` "… is not built yet" rather than pretending (API.md §2).
 
 use std::collections::{BTreeMap, HashMap};
 use std::convert::Infallible;
@@ -61,7 +62,12 @@ pub fn router() -> Router<Arc<ServiceState>> {
         .route("/api/factory/campaigns/:id/board", get(campaign_board))
         .route("/api/factory/nodes", get(nodes_list))
         .route("/api/factory/nodes/:dag_id/:node_id", get(node_get))
-        .route("/api/factory/nodes/:dag_id/:node_id/proof", post(node_proof))
+        .route(
+            "/api/factory/nodes/:dag_id/:node_id/proof",
+            post(node_proof).layer(axum::extract::DefaultBodyLimit::max(
+                crate::workspace::http::MAX_PROOF_BYTES + 64 * 1024,
+            )),
+        )
 }
 
 // ---------------------------------------------------------------- errors
@@ -214,32 +220,56 @@ async fn agent_transcript(State(state): S, Path(id): Path<String>, Query(q): Que
     Json(json!({ "chunks": chunks, "next": (!finished).then(|| end.to_string()) })).into_response()
 }
 
-/// Teams as the registry knows them (bots carrying a team). `team.yaml`
-/// presets and edges come with `agents up` (not built yet).
+/// Teams: every team.yaml (presets, edges, `invalid` for ones that don't
+/// parse), plus teams only the registry knows (bots carrying a team with no
+/// team.yaml), with no presets or edges.
 async fn teams_list(State(state): S) -> Response {
+    let mut listing = match crate::agents::http::teams_listing(state.root_dir.clone()).await {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
     let agents = match snapshot(&state).await {
         Ok(a) => a,
         Err(r) => return r,
     };
+    let known: std::collections::BTreeSet<String> = listing["teams"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .chain(listing["invalid"].as_array().into_iter().flatten())
+        .filter_map(|t| t["name"].as_str().map(str::to_string))
+        .collect();
     let mut teams: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for a in &agents {
-        if let Some(t) = &a.team {
+        if let Some(t) = a.team.as_ref().filter(|t| !known.contains(*t)) {
             teams.entry(t.clone()).or_default().push(a.id.clone());
         }
     }
-    let teams: Vec<Value> = teams
-        .into_iter()
-        .map(|(name, agents)| json!({ "name": name, "preset": null, "presets": [], "agents": agents, "edges": [] }))
-        .collect();
-    Json(json!({ "teams": teams })).into_response()
+    if let Some(list) = listing["teams"].as_array_mut() {
+        list.extend(
+            teams
+                .into_iter()
+                .map(|(name, agents)| json!({ "name": name, "preset": null, "presets": [], "agents": agents, "edges": [] })),
+        );
+    }
+    Json(listing).into_response()
 }
 
-async fn teams_up(Path(_name): Path<String>) -> Response {
-    not_built("agents", "up", "Teams (team.yaml) are not in the engine yet; spawn single agents with `allternit-factory pane ao spawn`.")
+async fn teams_up(
+    State(state): S,
+    headers: HeaderMap,
+    Path(name): Path<String>,
+    body: Option<Json<crate::agents::http::UpBody>>,
+) -> Response {
+    // Terminal bots register with allternit-api as the caller (the proxy's
+    // link); without one, the engine's own env decides.
+    let api = crate::agents::team_apply::ApiClient::from_link(&api_link(&headers))
+        .map(|c| Arc::new(c) as Arc<dyn crate::agents::team_apply::FactoryApi>);
+    crate::agents::http::up(state.root_dir.clone(), api, name, body).await
 }
 
-async fn teams_down(Path(_name): Path<String>) -> Response {
-    not_built("agents", "down (team)", "Stop single agents with `gizzi agents down <slug>`.")
+async fn teams_down(State(state): S, Path(name): Path<String>, body: Option<Json<crate::agents::http::DownBody>>) -> Response {
+    crate::agents::http::down(state.root_dir.clone(), name, body).await
 }
 
 // ---------------------------------------------------------------- send
@@ -262,6 +292,11 @@ fn api_link(headers: &HeaderMap) -> ApiLink {
     }
     if let Some(auth) = header(headers, "authorization") {
         link.authorization = Some(auth);
+    }
+    if let (Some(token), Some(user)) =
+        (header(headers, "x-allternit-desktop-access-token"), header(headers, "x-allternit-user-id"))
+    {
+        link.desktop = Some((token, user));
     }
     link
 }
@@ -755,8 +790,8 @@ async fn campaigns_list(State(state): S) -> Response {
     Json(json!({ "campaigns": list })).into_response()
 }
 
-async fn campaign_board(Path(_id): Path<String>) -> Response {
-    not_built("workspace", "board", "Read the campaign's DAGs with GET /api/factory/dags/:dagId for now.")
+async fn campaign_board(State(state): S, Path(id): Path<String>) -> Response {
+    crate::workspace::http::board(state.root_dir.clone(), state.ledger.clone(), state.gate.clone(), id).await
 }
 
 #[derive(Deserialize)]
@@ -812,14 +847,29 @@ async fn node_get(State(state): S, Path((dag_id, node_id)): Path<(String, String
         .filter(|d| d.dag_id.as_deref().map_or(true, |x| x == dag_id))
         .collect::<Vec<_>>();
     let wih = node.current_wih_id.as_ref().map(|id| json!({ "id": id, "status": node.status }));
-    // spec / progress / proof / files are the node folder (not built yet);
-    // approvals are served by allternit-api.
+    // spec / progress / proof / files come from the node folder; vendor
+    // tickets (ledger) join the send deliveries. Approvals are served by
+    // allternit-api.
+    let folder = crate::workspace::http::node_page_value(state.root_dir.clone(), state.ledger.clone(), &dag_id, &node_id)
+        .await
+        .unwrap_or(Value::Null);
+    let mut deliveries: Vec<Value> = deliveries.into_iter().map(|d| serde_json::to_value(d).unwrap_or_default()).collect();
+    let seen: std::collections::HashSet<String> =
+        deliveries.iter().filter_map(|d| d["id"].as_str().map(str::to_string)).collect();
+    deliveries.extend(
+        folder["deliveries"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|d| d["id"].as_str().map_or(true, |id| !seen.contains(id)))
+            .cloned(),
+    );
     Json(json!({
         "card": card,
-        "spec": null,
-        "progressMd": null,
-        "proofMd": null,
-        "files": [],
+        "spec": folder["spec"],
+        "progressMd": folder["progressMd"],
+        "proofMd": folder["proofMd"],
+        "files": folder.get("files").cloned().unwrap_or_else(|| json!([])),
         "deliveries": deliveries,
         "wih": wih,
         "approval": null,
@@ -827,8 +877,13 @@ async fn node_get(State(state): S, Path((dag_id, node_id)): Path<(String, String
     .into_response()
 }
 
-async fn node_proof(Path(_ids): Path<(String, String)>) -> Response {
-    not_built("workspace", "proof add", "Proof is recorded through receipts and the judge today.")
+async fn node_proof(
+    State(state): S,
+    Path((dag_id, node_id)): Path<(String, String)>,
+    form: axum::extract::Multipart,
+) -> Response {
+    crate::workspace::http::proof_upload(state.root_dir.clone(), state.ledger.clone(), state.gate.clone(), dag_id, node_id, form)
+        .await
 }
 
 /// The workspace root this server reads (for tests and the proxy's health).
