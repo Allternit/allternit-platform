@@ -62,7 +62,7 @@ jobs:
           FACTORY_BIN: ${{ github.workspace }}/target/release/allternit-factory
           IMAGE_NAME: ${{ github.event.inputs.image_name || 'allternit-desktop' }}
         run: |
-          sudo -E cmd/allternit-computer-cloud/guest/build-image.sh
+          sudo -E bash cmd/allternit-computer-cloud/guest/build-image.sh
 
       - name: Export image artifact
         run: |
