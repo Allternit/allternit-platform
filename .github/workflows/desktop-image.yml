@@ -27,14 +27,16 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Incus
+        # Incus isn't in the Snap Store ("snap incus not found" since 2026-09-19);
+        # Ubuntu 24.04 ships it in its archive. Commands run through sudo: a group
+        # added with usermod doesn't reach later steps. Docker on the runner sets
+        # FORWARD to DROP, which cuts Incus guests off the network.
+        # protobuf-compiler + libssl-dev: allternit-factory's build (tonic-build, openssl-sys).
         run: |
           sudo apt-get update
-          sudo apt-get install -y snapd
-          sudo snap install incus --classic
-          sudo usermod -aG incus-admin $USER
-          newgrp incus-admin <<'NEWGRP'
-          incus admin init --auto
-          NEWGRP
+          sudo apt-get install -y incus protobuf-compiler libssl-dev pkg-config
+          sudo incus admin init --auto
+          sudo iptables -P FORWARD ACCEPT
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -65,7 +67,7 @@ jobs:
       - name: Export image artifact
         run: |
           mkdir -p artifacts
-          incus image export "${{ github.event.inputs.image_name || 'allternit-desktop' }}" \
+          sudo incus image export "${{ github.event.inputs.image_name || 'allternit-desktop' }}" \
             "artifacts/allternit-desktop-${{ github.run_id }}"
 
       - name: Upload image artifact
