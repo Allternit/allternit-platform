@@ -37,6 +37,8 @@ pub fn mcp_router() -> Router<Arc<AppState>> {
             get(list_mcp_servers).post(attach_mcp_server),
         )
         .route("/servers/:id", get(get_mcp_server).delete(detach_mcp_server))
+        // MCP Events from the connector: list, subscribe a bot, unsubscribe.
+        .merge(crate::mcp_events_client::connector_events_router())
 }
 
 #[derive(Debug, Deserialize)]

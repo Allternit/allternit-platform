@@ -138,6 +138,19 @@ fn ct_eq(a: &[u8], b: &[u8]) -> bool {
 
 /// Verify the signature headers against the runtime's keys. Returns the owner.
 async fn authenticate(db: &PgPool, headers: &HeaderMap, body: &[u8], now: i64) -> Result<(String, String), Response> {
+    authenticate_runtime(db, headers, "POST", PATH, body, now).await
+}
+
+/// Verify a runtime → cloud request signed for `(method, path, body)` (the
+/// scheme above, any runtime → cloud route). Returns `(owner, runtime_id)`.
+pub(crate) async fn authenticate_runtime(
+    db: &PgPool,
+    headers: &HeaderMap,
+    method: &str,
+    path: &str,
+    body: &[u8],
+    now: i64,
+) -> Result<(String, String), Response> {
     let h = |n: &str| headers.get(n).and_then(|v| v.to_str().ok()).map(str::trim).filter(|v| !v.is_empty());
     let unauthorized = |why: &str| json_error(StatusCode::UNAUTHORIZED, why);
     let (Some(runtime_id), Some(ts), Some(sig)) = (h(RUNTIME_ID_HEADER), h(TS_HEADER), h(SIG_HEADER)) else {
@@ -156,7 +169,7 @@ async fn authenticate(db: &PgPool, headers: &HeaderMap, body: &[u8], now: i64) -
         }
     };
     let (user_id, keys) = keys;
-    let ok = keys.iter().any(|k| ct_eq(sign_runtime_request(k, ts, "POST", PATH, body).as_bytes(), sig.as_bytes()));
+    let ok = keys.iter().any(|k| ct_eq(sign_runtime_request(k, ts, method, path, body).as_bytes(), sig.as_bytes()));
     if !ok {
         return Err(unauthorized("invalid_signature"));
     }

@@ -621,7 +621,9 @@ async fn update_delivery_status(
     .map_err(|e: rusqlite::Error| ApiError::DbError(e.to_string()))
 }
 
-async fn create_ticket_for_trigger(
+/// Also the bot wake-up for MCP connector events (`mcp_events_client`), so a
+/// connector event and a signed inbound webhook make the same ticket.
+pub(crate) async fn create_ticket_for_trigger(
     rails: &RailsState,
     trigger: &WebhookTrigger,
     event: &str,

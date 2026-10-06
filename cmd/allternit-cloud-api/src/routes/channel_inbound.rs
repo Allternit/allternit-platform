@@ -36,6 +36,14 @@ use std::time::Duration;
 use super::runtime_relay::{relay_request_to_runtime_with, relay_signed_request_to_runtime_with, RelayRequest};
 use crate::{ApiError, ApiState};
 
+/// `channel_inbound_routes.provider` of an MCP Events client subscription's queue.
+pub const MCP_EVENTS_PROVIDER: &str = "mcp_events";
+/// Runtime path relayed MCP Events land on (allternit-api `mcp_events_client`).
+pub const MCP_EVENTS_RUNTIME_PATH: &str = "/api/v1/mcp/event-deliveries";
+/// Providers whose routes are internal queues, not channel addresses: never
+/// listed or revocable as a channel address.
+const INTERNAL_PROVIDERS: &[&str] = &[MCP_EVENTS_PROVIDER];
+
 /// Header carrying when cloud-api received a queued request (unix seconds).
 pub const QUEUED_AT_HEADER: &str = "x-allternit-channel-queued-at";
 /// Give up on a request this long after it arrived.
@@ -66,6 +74,9 @@ pub fn target_path(provider: &str) -> Option<&'static str> {
         "email" => Some("/api/v1/agent-email/inbound"),
         // Shared Allternit Discord app: cloud-built envelopes (routes::discord_app).
         "discord_app" => Some("/webhooks/channels/discord-app"),
+        // MCP Events from a user's connected app, verified by cloud-api
+        // (routes::mcp_event_callbacks) and relayed as a signed envelope.
+        MCP_EVENTS_PROVIDER => Some(MCP_EVENTS_RUNTIME_PATH),
         _ => None,
     }
 }
@@ -252,10 +263,11 @@ async fn list_routes(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> 
                 (SELECT count(*) FROM channel_inbound_queue q
                   WHERE q.route_id = r.id AND q.delivered_at IS NULL AND q.dead_at IS NULL)
            FROM channel_inbound_routes r
-          WHERE r.user_id = $1 AND r.revoked_at IS NULL
+          WHERE r.user_id = $1 AND r.revoked_at IS NULL AND r.provider <> ALL($2)
           ORDER BY r.created_at",
     )
     .bind(&user)
+    .bind(INTERNAL_PROVIDERS)
     .fetch_all(&state.db)
     .await?;
     let routes: Vec<_> = rows
@@ -277,10 +289,11 @@ async fn revoke_route(
 ) -> Result<Response, ApiError> {
     let user = user_id(&state, &headers).await?;
     let done = sqlx::query(
-        "UPDATE channel_inbound_routes SET revoked_at = now() WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL",
+        "UPDATE channel_inbound_routes SET revoked_at = now() WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL AND provider <> ALL($3)",
     )
     .bind(&id)
     .bind(&user)
+    .bind(INTERNAL_PROVIDERS)
     .execute(&state.db)
     .await?;
     if done.rows_affected() == 0 {
@@ -367,7 +380,7 @@ async fn relay(
 /// already checked). Their relays are signed with the runtime's device-token
 /// key; the runtime verifies with `relay_auth::RelayedAuth`.
 pub fn is_trusted_envelope(provider: &str) -> bool {
-    matches!(provider, "discord_app" | "email" | "sms")
+    matches!(provider, "discord_app" | "email" | "sms" | MCP_EVENTS_PROVIDER)
 }
 
 fn base64_encode(body: &[u8]) -> String {
@@ -515,6 +528,56 @@ async fn inbound_inner(
     Ok((StatusCode::OK, "ok").into_response())
 }
 
+/// A queue route nobody holds a key for (the key is dropped here), for a
+/// producer inside cloud-api that queues to a runtime itself
+/// ([`enqueue_internal`]). `/channels/in/:key` can never reach it.
+pub(crate) async fn create_internal_route(
+    db: &sqlx::PgPool,
+    user_id: &str,
+    runtime_id: &str,
+    provider: &str,
+    label: &str,
+) -> Result<String, sqlx::Error> {
+    let id = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO channel_inbound_routes (id, key_hash, user_id, runtime_id, provider, label) VALUES ($1, $2, $3, $4, $5, $6)",
+    )
+    .bind(&id)
+    .bind(sha256_hex(&new_key()))
+    .bind(user_id)
+    .bind(runtime_id)
+    .bind(provider)
+    .bind(label)
+    .execute(db)
+    .await?;
+    Ok(id)
+}
+
+/// Requests still waiting on `route_id`.
+pub(crate) async fn pending_count(db: &sqlx::PgPool, route_id: &str) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT count(*) FROM channel_inbound_queue WHERE route_id = $1 AND delivered_at IS NULL AND dead_at IS NULL",
+    )
+    .bind(route_id)
+    .fetch_one(db)
+    .await
+}
+
+/// Whether `route_id` already holds [`MAX_PENDING_PER_ROUTE`] requests.
+pub(crate) async fn route_is_full(db: &sqlx::PgPool, route_id: &str) -> Result<bool, sqlx::Error> {
+    Ok(pending_count(db, route_id).await? >= MAX_PENDING_PER_ROUTE)
+}
+
+/// Deliver `route_id`'s queue now in the background (the worker would reach it within its next tick).
+pub(crate) fn deliver_soon(state: &Arc<ApiState>, route_id: &str) {
+    let (state, route_id) = (state.clone(), route_id.to_string());
+    tokio::spawn(async move {
+        if let Err(error) = deliver_route(&state, &route_id).await {
+            tracing::warn!(%route_id, "queued delivery pass failed: {error}");
+        }
+    });
+}
+
 /// Start the background delivery loop and the 7-day cleanup.
 pub fn start_channel_inbound_worker(state: Arc<ApiState>) {
     tokio::spawn(async move {
@@ -531,6 +594,10 @@ pub fn start_channel_inbound_worker(state: Arc<ApiState>) {
                 )
                 .execute(&state.db)
                 .await;
+                // MCP Events dedupe marks outlive any sender's retry window by days.
+                let _ = sqlx::query("DELETE FROM mcp_event_client_seen WHERE seen_at < now() - interval '7 days'")
+                    .execute(&state.db)
+                    .await;
             }
             tokio::time::sleep(WORKER_INTERVAL).await;
         }
@@ -608,7 +675,10 @@ pub(crate) async fn deliver_route(state: &Arc<ApiState>, route_id: &str) -> Resu
                 .bind(status.map(i32::from))
                 .execute(&state.db)
                 .await?;
-            super::web_push::notify_channel_message(&state.db, &route.user_id, &route.id, &route.provider);
+            // A connector event is not a channel message: the runtime decides what (if anything) to tell the owner.
+            if route.provider != MCP_EVENTS_PROVIDER {
+                super::web_push::notify_channel_message(&state.db, &route.user_id, &route.id, &route.provider);
+            }
             continue;
         }
         let error = attempt_error(status, error);
