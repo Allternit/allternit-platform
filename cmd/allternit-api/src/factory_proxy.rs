@@ -13,6 +13,8 @@
 //!   engine's hosted / vendor / channel sends call back here as that user.
 //! - Engine down → `502 {error:{code:'transport'}}`; engine slow → `504`.
 //!   Never a silent fallback.
+//! - `/api/factory/agents/:id/stream` (the pane mirror SSE) is passed
+//!   through as it arrives, with no request timeout.
 //! - `/api/factory/events` merges the engine's SSE with this process's
 //!   approval events (`factory_approvals::subscribe()`). Engine events keep the
 //!   engine's ledger id. An approval event has no engine id, so its SSE id is
@@ -138,7 +140,12 @@ async fn proxy(
     let Ok(rmethod) = reqwest::Method::from_bytes(method.as_str().as_bytes()) else {
         return StatusCode::METHOD_NOT_ALLOWED.into_response();
     };
-    let mut rb = client(Some(Duration::from_secs(60))).request(rmethod, &url).headers(forward_headers(&headers, &user));
+    // A pane mirror stream (`/agents/:id/stream`, SSE) stays open as long as
+    // the tile does: no request timeout, and the body is passed through as it
+    // arrives instead of buffered.
+    let streaming = method == Method::GET && is_stream_path(&rest);
+    let timeout = (!streaming).then(|| Duration::from_secs(60));
+    let mut rb = client(timeout).request(rmethod, &url).headers(forward_headers(&headers, &user));
     if method != Method::GET && method != Method::HEAD {
         rb = rb.body(body);
     }
@@ -155,6 +162,13 @@ async fn proxy(
     };
     let status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
     let content_type = resp.headers().get("content-type").and_then(|v| v.to_str().ok()).map(str::to_string);
+    if streaming && content_type.as_deref().is_some_and(|c| c.starts_with("text/event-stream")) {
+        let mut out = Response::new(Body::from_stream(resp.bytes_stream()));
+        *out.status_mut() = status;
+        out.headers_mut().insert("content-type", HeaderValue::from_static("text/event-stream"));
+        out.headers_mut().insert("cache-control", HeaderValue::from_static("no-cache"));
+        return out;
+    }
     let bytes: Bytes = match resp.bytes().await {
         Ok(b) => b,
         Err(e) => return transport(format!("the Factory engine at {base} dropped the response: {e}")),
@@ -165,6 +179,13 @@ async fn proxy(
         out.headers_mut().insert("content-type", ct);
     }
     out
+}
+
+/// Engine routes that answer with a long-lived SSE body (besides `/events`,
+/// which is merged with approvals above): the pane mirror.
+pub fn is_stream_path(rest: &str) -> bool {
+    let parts: Vec<&str> = rest.trim_matches('/').split('/').collect();
+    matches!(parts.as_slice(), ["agents", id, "stream"] if !id.is_empty())
 }
 
 /// One SSE frame from the engine.
@@ -302,6 +323,16 @@ mod tests {
         assert_eq!(buf, "id: evt_2\nevent: node.status\ndata: {");
         buf.push_str("}\n\n");
         assert_eq!(take_frames(&mut buf)[0].id.as_deref(), Some("evt_2"));
+    }
+
+    #[test]
+    fn only_the_pane_mirror_streams() {
+        assert!(is_stream_path("agents/a1/stream"));
+        assert!(is_stream_path("/agents/a1/stream/"));
+        assert!(!is_stream_path("agents//stream"));
+        assert!(!is_stream_path("agents/a1/capture"));
+        assert!(!is_stream_path("agents/stream"));
+        assert!(!is_stream_path("events"));
     }
 
     #[test]

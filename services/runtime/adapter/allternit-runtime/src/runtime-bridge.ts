@@ -1,4 +1,9 @@
-import { OrchestrationContext } from '@allternit/orchestrator';
+/** The slice of a session's orchestration state this bridge reads and sets. */
+export interface OrchestrationContext {
+  sessionId: string;
+  agentId: string;
+  mode?: string;
+}
 
 // Stub for the optional native policy bridge until bindings are compiled.
 class NativeBridge {

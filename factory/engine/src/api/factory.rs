@@ -48,6 +48,9 @@ pub fn router() -> Router<Arc<ServiceState>> {
         .route("/api/factory/agents/:id", get(agent_get))
         .route("/api/factory/agents/:id/capture", get(agent_capture))
         .route("/api/factory/agents/:id/transcript", get(agent_transcript))
+        .route("/api/factory/agents/:id/screen", get(agent_screen))
+        .route("/api/factory/agents/:id/stream", get(agent_stream))
+        .route("/api/factory/agents/:id/input", post(agent_input))
         .route("/api/factory/teams", get(teams_list))
         .route("/api/factory/teams/:name/up", post(teams_up))
         .route("/api/factory/teams/:name/down", post(teams_down))
@@ -166,6 +169,113 @@ async fn agent_capture(State(state): S, Path(id): Path<String>, Query(q): Query<
     let lines = q.lines.unwrap_or(80).clamp(1, 2000);
     match backend::blocking(move || pane.capture(&session, lines)).await {
         Ok(text) => Json(json!({ "text": text, "at": chrono::Utc::now().to_rfc3339() })).into_response(),
+        Err(e) => internal(e),
+    }
+}
+
+// ---------------------------------------------------------------- pane mirror
+
+/// The live pane session of a terminal agent, or the error to answer with.
+async fn pane_session(state: &ServiceState, id: &str) -> Result<(Agent, String), Response> {
+    let agent = find_agent(state, id).await?;
+    if agent.pane.is_none() {
+        return Err(error("not_found", format!("{} has no live pane", agent.address), "Start it, or read its transcript."));
+    }
+    let session = registry::session_of(&agent.slug);
+    Ok((agent, session))
+}
+
+async fn read_screen(session: String) -> anyhow::Result<backend::PaneScreen> {
+    let pane = backend::backend()?;
+    backend::blocking(move || pane.screen(&session)).await
+}
+
+/// `GET /agents/:id/screen` → `{ ansi, revision, at }`: the pane's visible
+/// screen with its colors, the same screen the Rust pane wall draws.
+async fn agent_screen(State(state): S, Path(id): Path<String>) -> Response {
+    let (_, session) = match pane_session(&state, &id).await {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    match read_screen(session).await {
+        Ok(s) => Json(json!({ "ansi": s.ansi, "revision": s.revision, "at": chrono::Utc::now().to_rfc3339() })).into_response(),
+        Err(e) => internal(e),
+    }
+}
+
+/// How often the mirror stream re-reads the screen. Only changed screens are
+/// sent (the pane engine's `revision`).
+const SCREEN_POLL: Duration = Duration::from_millis(200);
+
+/// `GET /agents/:id/stream` (SSE): `screen` events `{ansi, revision, at}`
+/// whenever the pane's screen changes (the first one at once), then one
+/// `gone` event `{reason}` when the pane closes or can't be read, and the
+/// stream ends. A mirror of the engine pane: the same pane the TUI wall
+/// shows, so typing in either shows in both. Live only, no SSE ids.
+async fn agent_stream(State(state): S, Path(id): Path<String>) -> Response {
+    let session = match pane_session(&state, &id).await {
+        Ok((_, s)) => s,
+        Err(r) => return r,
+    };
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Event, Infallible>>(16);
+    tokio::spawn(async move {
+        let mut last: Option<u64> = None;
+        loop {
+            match read_screen(session.clone()).await {
+                Ok(s) => {
+                    if last != Some(s.revision) {
+                        last = Some(s.revision);
+                        let body = json!({ "ansi": s.ansi, "revision": s.revision, "at": chrono::Utc::now().to_rfc3339() });
+                        if tx.send(Ok(Event::default().event("screen").data(body.to_string()))).await.is_err() {
+                            return;
+                        }
+                    }
+                }
+                Err(e) => {
+                    let body = json!({ "reason": format!("{e:#}") });
+                    let _ = tx.send(Ok(Event::default().event("gone").data(body.to_string()))).await;
+                    return;
+                }
+            }
+            if tx.is_closed() {
+                return;
+            }
+            tokio::time::sleep(SCREEN_POLL).await;
+        }
+    });
+    Sse::new(tokio_stream::wrappers::ReceiverStream::new(rx))
+        .keep_alive(KeepAlive::default())
+        .into_response()
+}
+
+#[derive(Deserialize)]
+struct InputBody {
+    #[serde(default)]
+    text: String,
+    #[serde(default)]
+    keys: Vec<String>,
+}
+
+/// `POST /agents/:id/input` `{ text?, keys? }` → `{ ok: true }`: keystrokes
+/// into the pane, as a person at the wall would type them. Not a send: no
+/// delivery, no ledger record (use `POST /send` for a message to the agent).
+async fn agent_input(State(state): S, Path(id): Path<String>, body: Option<Json<InputBody>>) -> Response {
+    let Some(Json(body)) = body else {
+        return error("usage", "body must be JSON { text?, keys? }", "Send at least one of text or keys.");
+    };
+    if body.text.is_empty() && body.keys.is_empty() {
+        return error("usage", "nothing to type: text and keys are both empty", "Send at least one of text or keys.");
+    }
+    let session = match pane_session(&state, &id).await {
+        Ok((_, s)) => s,
+        Err(r) => return r,
+    };
+    let pane = match backend::backend() {
+        Ok(p) => p,
+        Err(e) => return internal(e),
+    };
+    match backend::blocking(move || pane.input(&session, &body.text, &body.keys)).await {
+        Ok(()) => Json(json!({ "ok": true })).into_response(),
         Err(e) => internal(e),
     }
 }

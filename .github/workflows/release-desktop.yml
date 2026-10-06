@@ -275,6 +275,21 @@ jobs:
           chmod +x surfaces/allternit-desktop/resources/bin/allternit-mux
           lipo -info surfaces/allternit-desktop/resources/bin/allternit-mux
 
+      # ── Step 3e2: Build the Allternit Factory engine ────────────────────────
+      - name: Build allternit-factory engine
+        # Desktop runs it (factory-engine-manager.ts) and gizzi finds it next
+        # to itself in resources/bin. Universal lipo matches api/gizzi/mux.
+        run: |
+          cargo build --release -p allternit-factory --target x86_64-apple-darwin
+          cargo build --release -p allternit-factory --target aarch64-apple-darwin
+          mkdir -p surfaces/allternit-desktop/resources/bin
+          lipo -create \
+            target/x86_64-apple-darwin/release/allternit-factory \
+            target/aarch64-apple-darwin/release/allternit-factory \
+            -output surfaces/allternit-desktop/resources/bin/allternit-factory
+          chmod +x surfaces/allternit-desktop/resources/bin/allternit-factory
+          lipo -info surfaces/allternit-desktop/resources/bin/allternit-factory
+
       # ── Step 3f: Stage CUA Lume (Apple Virtualization) ──────────────────────
       - name: Stage Lume virtualization helper
         # allternit-api looks for Resources/bin/lume next to itself. The CUA

@@ -36,6 +36,12 @@ flowchart TB
 - **One TUI, two renderers.** Gizzi's TUI draws the home screen, the agents list, the board and approvals. The engine's Rust pane view draws the wall of live terminals. You only ever launch `gizzi`.
 - **Windows.** Gizzi runs on Windows, but the pane engine is Unix-only. On Windows, Gizzi drives a Factory running on another machine (a Mac, Linux, or a cloud computer).
 
+### Where the engine comes from
+
+- **Desktop** bundles `allternit-factory` and runs it while Desktop is open. On first run it links `gizzi` (and only `gizzi`) into `~/.local/bin`, if nothing else is there. It also removes the retired `~/.local/bin/allternit-rails`, `ao-*` and `ao-consult` entries, but only after checking each one points at the old tools.
+- **The npm package, the Homebrew formula and the runtime packages** install `allternit-factory` next to `gizzi`.
+- **Code mode in Desktop** shows Terminal bots as live tiles mirroring their engine panes, with the bot's avatar, `bot@team`, harness and current node. On a phone (ai.allternit.com or the m.allternit.com app), the Code terminal has a strip of Terminal bots to switch between their panes.
+
 ## The four parts
 
 The Factory is organized into four parts. Each is a top-level Gizzi command and a section of these docs.

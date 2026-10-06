@@ -268,9 +268,6 @@ importers:
       '@allternit/native-sessions':
         specifier: workspace:*
         version: link:../../platform/packages/native-sessions
-      '@allternit/orchestrator':
-        specifier: workspace:*
-        version: link:../../services/orchestration/control-plane/allternit-orchestrator
       '@allternit/os-contracts':
         specifier: workspace:*
         version: link:../../platform/packages/os-contracts
@@ -1927,8 +1924,6 @@ importers:
         specifier: ^1.6.1
         version: 1.6.1(@edge-runtime/vm@3.2.0)(@types/node@24.10.11)(happy-dom@20.8.9)(jsdom@30.0.1(@noble/hashes@2.2.0))(lightningcss@1.32.0)(sass@1.51.0)(sugarss@5.0.1(postcss@8.5.14))(terser@5.47.1)
 
-  platform/packages/orchestrator: {}
-
   platform/packages/os-contracts:
     dependencies:
       zod:
@@ -2518,18 +2513,6 @@ importers:
       vitest:
         specifier: ^1.6.1
         version: 1.6.1(@edge-runtime/vm@3.2.0)(@types/node@20.19.40)(happy-dom@20.8.9)(jsdom@30.0.1(@noble/hashes@2.2.0)(canvas@3.2.1))(lightningcss@1.32.0)(sass@1.51.0)(sugarss@5.0.1(postcss@8.5.14))(terser@5.47.1)
-
-  services/orchestration/control-plane/allternit-orchestrator:
-    dependencies:
-      '@allternit/browser':
-        specifier: workspace:*
-        version: link:../../../../infrastructure/chrome-stream/agent-systems/allternit-browser
-      '@allternit/engine':
-        specifier: workspace:*
-        version: link:../../../../domains/kernel/core
-      '@allternit/governor':
-        specifier: workspace:*
-        version: link:../../../../domains/governance/governor
 
   services/page-agent:
     devDependencies:

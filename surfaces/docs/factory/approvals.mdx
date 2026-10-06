@@ -22,9 +22,23 @@ Every approval is a Gate event with you (the owner) as the actor and the surface
 
 A "needs you" push has **Approve** and **Open** buttons. Approve checks that the device session belongs to the owner before it counts. See [Call notifications](/guides/call-notifications) for how push is set up on your devices.
 
+- **Approve** answers from the notification without opening the app. Afterwards the notification is replaced by one that says what happened: approved, already answered, expired, or that you need to sign in or open the app to answer.
+- **Open** focuses the app, or opens it, on the node's page.
+- The buttons work in a browser or phone browser at ai.allternit.com and in the installed m.allternit.com app.
+- On Allternit Desktop, a new approval raises a system notification (turn it on in **Settings → Notifications → Approval requests**). Clicking it opens the node, where you approve.
+- A high-risk request shows why it's high-risk (`riskReason`) next to the Approve button in the app.
+
+For developers, the push payload is `data: { kind: "factory.approval", approvalId, dagId, nodeId, code, actionUrl, openUrl }` with actions `approve` and `open`. Approve POSTs `actionUrl` with `{ decision: "approve", code }`.
+
 ## Channels: Telegram, Slack, SMS and email
 
 The request is posted only to channels bound to **your own account**, never to a shared or team channel. It carries a one-time code tied to that node and to you.
+
+### Verify your account first
+
+A channel can only approve once you've proved the account is yours. In **Settings → Notifications → Factory approvals on your channels**, pick the account and choose **Use this account for approvals**. Then send `verify <code>` from that account within 15 minutes. The same panel lists your verified accounts and lets you forget one.
+
+For developers: `POST /api/factory/approvals/identities { accountId }` starts it, `GET` lists, and `DELETE /api/factory/approvals/identities?accountId=` forgets.
 
 - Telegram and Slack show buttons.
 - SMS and email: reply with `approve n_02 <code>` (or `reject n_02 <code>`).

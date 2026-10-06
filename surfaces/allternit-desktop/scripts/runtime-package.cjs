@@ -41,7 +41,9 @@ const FEED = path.join(DESKTOP_DIR, 'release', 'runtime', 'feed');
 const BUCKET = process.env.ALLTERNIT_RUNTIME_BUCKET || 'allternit-runtime';
 const ACCOUNT = process.env.CLOUDFLARE_ACCOUNT_ID || '7cd19487307235aedc039d3a64ad7039';
 const EXE = process.platform === 'win32' ? '.exe' : '';
-const BINARIES = [`allternit-api${EXE}`, `gizzi-code${EXE}`];
+// allternit-factory (the Factory engine) rides with gizzi-code so a runtime
+// update moves both together; it is Unix-only.
+const BINARIES = [`allternit-api${EXE}`, `gizzi-code${EXE}`, ...(process.platform === 'win32' ? [] : ['allternit-factory'])];
 
 const die = (msg) => { console.error(`✗ ${msg}`); process.exit(1); };
 const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
@@ -130,7 +132,7 @@ function signingKey() {
 function pack() {
   const info = fs.existsSync(STAMP) ? JSON.parse(fs.readFileSync(STAMP, 'utf8')) : stamp();
   const files = runtimeFiles();
-  if (!files) die('resources/bin/{allternit-api,gizzi-code} or resources/platform missing — build them first');
+  if (!files) die(`resources/bin/{${BINARIES.join(',')}} or resources/platform missing — build them first`);
   const key = signingKey();
   const objectsDir = path.join(FEED, 'objects');
   const platformDir = path.join(FEED, 'stable', PLATFORM);
