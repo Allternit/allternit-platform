@@ -236,6 +236,33 @@ The internal endpoint uses the same JSON-RPC contract but is intended for peer s
 | `x-allternit-user-id` | User id the request is running as. |
 | `x-allternit-organization-id` | Optional organization id. |
 
+## MCP Events (mcp.allternit.com)
+
+The public edge at `https://mcp.allternit.com/mcp` (agents server, scope `agents:read`) and `https://mcp.allternit.com/mcp/bots/<bot id>` (vendor bot connector, scope `bots:act`) supports the MCP Events extension with webhook delivery. Both advertise it in `server/discover` (and in a legacy `initialize` answer):
+
+```json
+"capabilities": { "tools": { "listChanged": false }, "events": { "listChanged": false } }
+```
+
+| Method | What it does |
+|--------|--------------|
+| `events/list` | The events this server offers, with `inputSchema` (filter arguments) and `payloadSchema`. |
+| `events/subscribe` | Create or refresh a webhook subscription. Idempotent: the same caller, URL, name and arguments always map to the same `id`. |
+| `events/unsubscribe` | End a subscription. Always answers `{}`. |
+
+The edge answers these itself; your computer doesn't need to be awake. Subscriptions last 24 hours by default, up to 7 days (`ttlMs: null` is clamped to 7 days); subscribe again before `refreshBefore` to keep them. Deliveries are signed with [Standard Webhooks](https://www.standardwebhooks.com) using the `whsec_` secret you supply, and carry `X-MCP-Subscription-Id`. See the [MCP Events guide](/guides/mcp-events) for the event catalog, the verification challenge, and delivery rules.
+
+| Code | Name | When |
+|------|------|------|
+| `-32602` | InvalidParams | Bad arguments, a non-https or private callback URL, or a `whsec_` secret outside 24–64 bytes. |
+| `-32011` | NotFound | The event isn't offered by this server (`data.kind: "event"`). |
+| `-32012` | Forbidden | A vendor bot connector asked for another bot's events. |
+| `-32013` | ResourceExhausted | 50 live subscriptions per app and server (`data.limit: "subscriptions"`). |
+| `-32014` | Unsupported | A delivery mode other than `webhook`. |
+| `-32015` | CallbackEndpointError | Your callback didn't pass verification; `data.reason` is `connection_refused`, `timeout`, `tls_error`, `http_4xx`, `http_5xx` or `challenge_failed`. |
+
+Opening `https://mcp.allternit.com/` (or the server URL in a browser) shows a short page with the server URLs, protocol versions and event catalog.
+
 ## Error codes
 
 JSON-RPC errors are returned with standard JSON-RPC error codes:
@@ -258,6 +285,7 @@ HTTP status codes:
 ## Related pages
 
 - [Authentication](/api/authentication)
+- [MCP Events guide](/guides/mcp-events)
 - [Connectors API](/api/connectors)
 - [Server Tools API](/api/server-tools)
 - [Tools guide](/tools/tool-belt)
