@@ -60,7 +60,7 @@ pub enum McpError {
 }
 
 /// Transport-specific errors
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, Error)]
 pub enum TransportError {
     /// Stdio transport errors
     #[error("stdio error: {0}")]
@@ -121,3 +121,6 @@ pub enum OAuthError {
 
 /// Result type alias for MCP operations
 pub type Result<T> = std::result::Result<T, McpError>;
+
+/// Result type alias for MCP operations (alternative name)
+pub type McpResult<T> = std::result::Result<T, McpError>;

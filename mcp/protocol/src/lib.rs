@@ -17,7 +17,9 @@
 
 use serde_json::{json, Map, Value};
 
+pub mod client;
 pub mod events;
+pub mod ordering;
 pub mod servers;
 pub mod webhooks;
 
@@ -185,7 +187,9 @@ pub fn check_headers(
             .or_else(|| params.get("uri"))
             .and_then(Value::as_str);
         if let Some(b) = body_name {
-            if b != h {
+            // Clients send names that aren't header-safe in the
+            // `=?base64?…?=` form; compare the decoded value.
+            if client::decode_header_value(h).as_deref() != Some(b) {
                 return Some(rpc_err(id, codes::HEADER_MISMATCH, format!("Mcp-Name header {h:?} does not match body {b:?}")));
             }
         }
@@ -261,11 +265,17 @@ fn is_cacheable(method: &str) -> bool {
     )
 }
 
-/// Decorate a response the server built for the request's era. Legacy
-/// responses pass through untouched. Modern results get `resultType`,
+/// Decorate a response the server built for the request's era. List
+/// results are put in canonical order ([`ordering::canonical_order`]) for
+/// every era; otherwise legacy responses pass through untouched. Modern results get `resultType`,
 /// `_meta.serverInfo` and, for list/read methods, `ttlMs` + `cacheScope`;
 /// modern errors get the renumbered resource-not-found code.
 pub fn finish(spec: &ServerSpec, era: &Era, method: &str, mut response: Value) -> Value {
+    // Deterministic list order for both eras (one canonical order, see
+    // `ordering`), so clients and caches see the same list every time.
+    if let Some(result) = response.get_mut("result") {
+        ordering::canonical_order(method, result);
+    }
     if !era.is_modern() {
         return response;
     }
@@ -289,6 +299,20 @@ pub fn finish(spec: &ServerSpec, era: &Era, method: &str, mut response: Value) -
         }
     }
     response
+}
+
+/// HTTP status for a JSON-RPC response on Streamable HTTP (2026-07-28):
+/// version / header / capability errors are `400`, an unknown method on a
+/// modern request is `404`, everything else `200`. Legacy requests always
+/// get `200` (legacy clients treat other statuses as transport failures).
+/// The modern errors only ever answer modern requests, so they are `400`
+/// whatever `modern` says.
+pub fn http_status(modern: bool, response: &Value) -> u16 {
+    match response.pointer("/error/code").and_then(Value::as_i64) {
+        Some(codes::UNSUPPORTED_PROTOCOL_VERSION | codes::HEADER_MISMATCH | codes::MISSING_REQUIRED_CLIENT_CAPABILITY) => 400,
+        Some(codes::METHOD_NOT_FOUND) if modern => 404,
+        _ => 200,
+    }
 }
 
 #[cfg(test)]
@@ -388,6 +412,28 @@ mod tests {
     }
 
     #[test]
+    fn http_status_per_spec() {
+        let id = json!(1);
+        assert_eq!(http_status(true, &rpc_ok(&id, json!({}))), 200);
+        assert_eq!(http_status(true, &rpc_err(&id, codes::UNSUPPORTED_PROTOCOL_VERSION, "v")), 400);
+        assert_eq!(http_status(false, &rpc_err(&id, codes::HEADER_MISMATCH, "h")), 400);
+        assert_eq!(http_status(true, &rpc_err(&id, codes::METHOD_NOT_FOUND, "m")), 404);
+        assert_eq!(http_status(false, &rpc_err(&id, codes::METHOD_NOT_FOUND, "m")), 200);
+        assert_eq!(http_status(true, &rpc_err(&id, codes::INVALID_PARAMS, "p")), 200);
+    }
+
+    #[test]
+    fn finish_orders_tools_in_both_eras() {
+        let s = spec();
+        let raw = rpc_ok(&json!(1), json!({ "tools": [{ "name": "b" }, { "name": "a" }] }));
+        for era in [Era::of("tools/list", &json!({}), None), Era::of("tools/list", &modern_params(), None)] {
+            let r = finish(&s, &era, "tools/list", raw.clone());
+            assert_eq!(r["result"]["tools"][0]["name"], "a");
+            assert_eq!(r["result"]["tools"][1]["name"], "b");
+        }
+    }
+
+    #[test]
     fn client_capabilities_from_either_era() {
         let p = modern_params();
         let era = Era::of("tools/list", &p, None);
@@ -412,5 +458,9 @@ mod tests {
         assert_eq!(e["error"]["code"], codes::HEADER_MISMATCH);
         let e = check_headers(&id, "tools/call", &json!({ "name": "a" }), None, Some("b")).unwrap();
         assert_eq!(e["error"]["code"], codes::HEADER_MISMATCH);
+        // base64 sentinel form decodes before comparing
+        let n = "Hello, 世界";
+        assert!(check_headers(&id, "tools/call", &json!({ "name": n }), None, Some(&client::encode_header_value(n))).is_none());
+        assert!(check_headers(&id, "tools/call", &json!({ "name": n }), None, Some("=?base64?!!?=")).is_some());
     }
 }

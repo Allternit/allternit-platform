@@ -739,7 +739,7 @@ pub async fn serve_bot_rpc(state: &Arc<AppState>, owner: &str, vendor_bot_id: &s
         session.client = Some(client);
     }
     match handle_rpc(&state.db, &LiveActions::production(state), &session, req).await {
-        Some(body) => Json(body).into_response(),
+        Some(body) => crate::mcp_server_routes::rpc_response(req["method"].as_str().unwrap_or_default(), &req["params"], body),
         None => StatusCode::ACCEPTED.into_response(),
     }
 }
@@ -1283,7 +1283,9 @@ mod tests {
         assert!(SERVER_INSTRUCTIONS.len() < 512);
         let list = handle_rpc(&st.db, &fake, &s, &json!({ "id": 2, "method": "tools/list" })).await.unwrap();
         let names: Vec<_> = list["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-        assert_eq!(names, ["list_threads", "read_thread", "send_text", "start_call", "send_email", "post_message", "ask_bot", "get_ticket", "post_result", "twin_context", "twin_propose", "list_open_tickets"]);
+        // The one canonical order every Allternit MCP server uses
+        // (`mcp_protocol::ordering`: ascending by name), applied by `finish`.
+        assert_eq!(names, ["ask_bot", "get_ticket", "list_open_tickets", "list_threads", "post_message", "post_result", "read_thread", "send_email", "send_text", "start_call", "twin_context", "twin_propose"]);
         for t in list["result"]["tools"].as_array().unwrap() {
             assert_eq!(t["inputSchema"]["type"], "object");
             assert_eq!(t["annotations"]["destructiveHint"], false);

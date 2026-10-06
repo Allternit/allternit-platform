@@ -578,36 +578,57 @@ pub async fn execute(action_id: &str, user_id: &str, input: Value) -> Result<Val
     serde_json::from_str(&text).map_err(ProxyError::decode)
 }
 
-/// Sidecar `POST /mcp` — stateless JSON-RPC (no SSE/long-lived session; the
-/// sidecar rejects `GET`/`DELETE` on this route by design, matching its own
-/// docs). `body` is the caller's raw JSON-RPC request, passed through as-is.
-/// `x-oo-connector-alias: user_id` on every call is what keeps `execute_action`
-/// (one of the sidecar's built-in MCP tools, alongside `list_apps`,
-/// `search_actions`, `get_action_guide`) resolving to the calling Allternit
-/// user's own connections instead of some other user's — same per-user
-/// isolation discipline as `execute()`, just over MCP instead of `/v1/actions`.
-/// Runtime-scope route, so this uses the runtime bearer token.
+/// Forward one JSON-RPC request to the sidecar's `/mcp` (per-user
+/// `x-oo-connector-alias`) through the `mcp-client` crate: a dual-era
+/// connect (MCP 2026-07-28 `server/discover` first, legacy `initialize`
+/// fallback, era cached per origin), then the request. Returns the
+/// JSON-RPC response envelope for `body`'s id: `result`, or the sidecar's
+/// JSON-RPC `error`. Callers answer `initialize` / `server/discover` /
+/// notifications themselves (`mcp_protocol::preflight`); `body` must be a
+/// request. Any protocol `_meta` the caller sent is replaced by the client's.
 pub async fn proxy_mcp(user_id: &str, body: Value) -> Result<Value, ProxyError> {
-    let url = format!("{}/mcp", sidecar_url());
-    // The sidecar's MCP transport (@modelcontextprotocol/sdk Streamable HTTP)
-    // requires the client to accept both media types, even for the
-    // stateless-JSON-response case actually used here — otherwise it answers
-    // 406 regardless of what the original inbound request's Accept header was.
-    let mut req = client()
-        .post(&url)
-        .header("x-oo-connector-alias", user_id)
-        .header("accept", "application/json, text/event-stream")
-        .json(&body);
-    if let Some(tok) = runtime_token() {
-        req = req.bearer_auth(tok);
+    use mcp_client::{McpClient, McpError, StreamableHttpConfig, StreamableHttpTransport, TransportError};
+
+    let id = body.get("id").cloned().unwrap_or(Value::Null);
+    let method = body
+        .get("method")
+        .and_then(|m| m.as_str())
+        .ok_or_else(|| ProxyError { status: 400, message: "JSON-RPC body has no method".into(), unreachable: false })?
+        .to_string();
+    let mut params = body.get("params").cloned();
+    if let Some(p) = params.as_mut() {
+        mcp_protocol::client::strip_modern_meta(p);
     }
-    let resp = req.send().await.map_err(ProxyError::down)?;
-    let status = resp.status().as_u16();
-    let text = resp.text().await.map_err(ProxyError::down)?;
-    if !(200..300).contains(&status) {
-        return Err(ProxyError::bad_status(status, &text));
+
+    let mut config = StreamableHttpConfig::new(format!("{}/mcp", sidecar_url()));
+    config.timeout_secs = 30;
+    config.auth_token = runtime_token();
+    config.headers.insert("x-oo-connector-alias".into(), user_id.to_string());
+    config.headers.insert("user-agent".into(), "Allternit-Connector-Proxy/1.0".into());
+    let transport = StreamableHttpTransport::new(config).map_err(ProxyError::down)?;
+    // The sidecar's connectors are not MCP Apps hosts' concern here.
+    let mut client = McpClient::new(transport)
+        .with_client_info("allternit-connector-proxy", env!("CARGO_PKG_VERSION"))
+        .with_client_capabilities(mcp_client::ClientCapabilities::default());
+
+    let map_err = |e: McpError| match e {
+        McpError::Transport(TransportError::Http { status, message }) => ProxyError::bad_status(status, &message),
+        McpError::Serialization(e) => ProxyError::decode(e),
+        other => ProxyError::down(other),
+    };
+    let outcome = match client.initialize().await {
+        Ok(_) => client.request(&method, params).await,
+        Err(e) => Err(e),
+    };
+    let _ = client.shutdown().await;
+    match outcome {
+        Ok(result) => Ok(mcp_protocol::rpc_ok(&id, result)),
+        Err(McpError::JsonRpc { code, message, data }) => Ok(match data {
+            Some(data) => mcp_protocol::rpc_err_data(&id, code as i64, message, data),
+            None => mcp_protocol::rpc_err(&id, code as i64, message),
+        }),
+        Err(e) => Err(map_err(e)),
     }
-    serde_json::from_str(&text).map_err(ProxyError::decode)
 }
 
 /// Sidecar `GET /oauth/callback?<query>` — the OAuth provider's redirect

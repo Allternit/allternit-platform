@@ -239,6 +239,8 @@ POST /api/v1/connectors/mcp
 
 Proxies a single JSON-RPC request to the open-connector sidecar's `/mcp` endpoint. Curated connectors are not reachable through this surface.
 
+Both `/api/v1/connectors/mcp` and `/internal/connectors/mcp` are MCP servers in their own right and speak both eras: `initialize`, `server/discover` (MCP 2026-07-28), `ping` and notifications are answered by the API, every other request is forwarded through the shared dual-era MCP client (2026-07-28 first, `initialize` fallback). `tools/list` comes back sorted by tool name, with the in-process `allternit_mail.*` and phone tools merged in on the internal endpoint. A modern request's version, header-mismatch and unknown-method errors use HTTP `400` / `404` as the spec requires. Toward the sidecar the client sets `MCP-Protocol-Version`, `Mcp-Method` and `Mcp-Name` itself for the era the sidecar speaks (so a modern sidecar gets them on every request, matching the `_meta` the client adds), and it reads either a JSON or an SSE (`text/event-stream`) reply.
+
 ### Example request
 
 ```bash
