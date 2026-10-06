@@ -576,6 +576,7 @@
               "api/endpoints",
               "api/rate-limits",
               "api/event-stream",
+              "api/runtime-events",
               "api/inbox",
               "api/status",
               "api/me",
