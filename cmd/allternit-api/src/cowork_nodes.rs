@@ -1199,6 +1199,10 @@ mod tests {
             .nest("/api/v1", crate::task_routes::task_router())
             .nest("/api/v1", crate::queue_routes::queue_router())
             .nest("/api", crate::factory_tasks::router())
+            // Mounted as in main.rs: the static Tasks routes must win over
+            // the engine proxy's `/factory/*rest` wildcard.
+            .nest("/api", crate::factory_approvals::router())
+            .nest("/api", crate::factory_proxy::router())
             .with_state(state.clone())
     }
 
