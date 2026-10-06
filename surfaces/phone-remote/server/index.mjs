@@ -187,8 +187,35 @@ async function main() {
 
   let viewer = null; // single-viewer: the one WSConnection holding the session
 
-  // Capture runs for the process lifetime so Fabric can poll /frame without a WS viewer.
-  if (capture) capture.start().catch((err) => console.error(`[capture] start: ${err.message}`));
+  // Capture runs on demand, not for the process lifetime: a WS viewer, a /hello or a /frame poll (the Fabric desktop
+  // viewer) starts it, and it stops after IDLE_MS with no viewer and no poll. An always-on capture kept the machine's
+  // screen-recording pipeline busy all day (on the screencapture fallback: one process per frame) with nobody watching.
+  const IDLE_MS = Number(process.env.PHONE_REMOTE_CAPTURE_IDLE_MS || 30000);
+  let lastDemand = 0;
+  function demandCapture() {
+    if (!capture) return;
+    lastDemand = Date.now();
+    if (!capture.running && !capture.dead) {
+      console.error('[capture] demand: starting');
+      capture.start().catch((err) => console.error(`[capture] start: ${err.message}`));
+    }
+  }
+  // First /frame after an idle stop: wait briefly for a fresh frame instead of failing the poll.
+  function nextFrame(ms) {
+    return new Promise((resolve) => {
+      const t = setTimeout(() => { capture.off('frame', on); resolve(capture.lastFrame); }, ms);
+      const on = (jpeg) => { clearTimeout(t); capture.off('frame', on); resolve(jpeg); };
+      capture.on('frame', on);
+    });
+  }
+  const idleTimer = capture ? setInterval(() => {
+    if (capture.running && !viewer && Date.now() - lastDemand > IDLE_MS) {
+      console.error(`[capture] idle ${Math.round(IDLE_MS / 1000)}s with no viewer or poll: stopping`);
+      capture.stop();
+      capture.lastFrame = null;   // never serve a stale screen after an idle stop
+    }
+  }, 5000) : null;
+  idleTimer?.unref?.();
 
   function sendJSON(conn, obj) { conn.sendText(JSON.stringify(obj)); }
 
@@ -225,7 +252,7 @@ async function main() {
       input: input ? { enabled: true, dryRun: cfg.inputDryRun, accessibilityTrusted: input.ready?.accessibilityTrusted ?? null } : { enabled: false },
       display: input?.display ?? null,
     });
-    // Capture is already running at process start; a second start() is a no-op.
+    demandCapture();   // a viewer is the strongest demand: it keeps capture alive until it disconnects
 
     conn.on('text', (t) => onViewerMessage(conn, t));
     conn.on('close', () => {
@@ -281,6 +308,7 @@ async function main() {
       if (!trustedLocal && !tokenMatches(cfg, presentedToken(req, url))) {
         res.writeHead(403, { 'content-type': 'text/plain' }); return res.end('403\n');
       }
+      demandCapture();   // a viewer opening the remote view asks /hello first
       const body = Buffer.from(JSON.stringify(helloBody({
         capture, captureMode: cfg.capture, fps: cfg.fps,
         input, inputDryRun: cfg.inputDryRun, display: input?.display ?? null,
@@ -292,7 +320,8 @@ async function main() {
       if (!trustedLocal && !tokenMatches(cfg, presentedToken(req, url))) {
         res.writeHead(403, { 'content-type': 'text/plain' }); return res.end('403\n');
       }
-      const jpeg = capture?.lastFrame;
+      demandCapture();
+      const jpeg = capture?.lastFrame || (capture ? await nextFrame(2500) : null);
       if (!jpeg) { res.writeHead(503, { 'content-type': 'text/plain' }); return res.end('no frame\n'); }
       res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'no-store', 'content-length': jpeg.length });
       return res.end(jpeg);
@@ -408,6 +437,7 @@ async function main() {
 
   const shutdown = () => {
     console.error('\n[server] shutting down');
+    if (idleTimer) clearInterval(idleTimer);
     capture?.stop();
     input?.stop();
     for (const s of servers) s.close();

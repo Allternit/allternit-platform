@@ -37,6 +37,14 @@ Single viewer at a time. A second WS connection is refused (1013).
 - **Standalone manual start still works** for development:
   `node server/index.mjs` from this directory. `PORT` env pins the port
   without argv.
+- **Capture runs on demand.** The server does not capture at boot. A WS
+  viewer, a `/hello` or a `/frame` request (the Fabric desktop viewer proxies
+  both) starts capture; it stops after 30 s with no viewer and no poll
+  (`PHONE_REMOTE_CAPTURE_IDLE_MS` overrides), and the cached frame is dropped
+  so a stale screen is never served. The first `/frame` after an idle stop
+  waits up to 2.5 s for a fresh frame. Before this, capture ran for the whole
+  app lifetime: on the `screencapture` fallback that is a process per frame
+  and a busy `replayd` all day with nobody watching.
 - **Watchdog.** In sckit mode, once capture has started, a frame must arrive
   at least every 5s (it runs at 10fps). If the helper freezes, the server
   kills it, tries ONE in-process sckit restart, and — if frames still don't
@@ -153,6 +161,8 @@ node server/index.mjs [options]
   --quality F          JPEG quality 0–1 (default 0.6)
   --no-input           view-only mode (input helper not started)
   --input-dry-run      input helper echoes commands, posts no events
+
+env PHONE_REMOTE_CAPTURE_IDLE_MS  stop capture after this long with no viewer/poll (default 30000)
 ```
 
 Optional HTTPS: `tailscale serve` can front the port with a valid cert
