@@ -28,6 +28,10 @@ The picker exposes the live provider catalog rather than a fixed list of every c
 
 A provider's native features are not automatically implemented in its Allternit adapter. Check the connected catalog and task result before relying on research, media, office, website, or agent-task capabilities. ChatGPT dots have an adapter on main, but their selectors and approval controls still require a consented live validation; they are not a verified general-purpose automation lane.
 
+## Files in a reply
+
+When a subscription reply makes a file (an image, a deck, a document, a spreadsheet), the file appears in the chat as an artifact card under the reply text. Allternit downloads it from your Sessions computer and checks it against the checksum the gateway recorded. A file that does not match is not shown; the reply says which file could not be downloaded intact, and it stays on your Sessions computer. Files over 24 MB are not copied into the chat: the card opens them from your Sessions computer instead. Reloading the chat shows the same cards.
+
 ## Pick a specific GPT, Project, Gem or bot
 
 After connecting a vendor login, use the bot connection's agent picker to choose

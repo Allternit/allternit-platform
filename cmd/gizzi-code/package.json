@@ -9,11 +9,11 @@
   "packageManager": "bun@1.3.14",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Gizziio/allternit-platform.git",
+    "url": "https://github.com/Allternit/allternit-platform.git",
     "directory": "cmd/gizzi-code"
   },
   "bugs": {
-    "url": "https://github.com/Gizziio/allternit-platform/issues"
+    "url": "https://github.com/Allternit/allternit-platform/issues"
   },
   "keywords": [
     "allternitchitect",
@@ -119,7 +119,9 @@
     "@growthbook/growthbook": "^1.6.5",
     "@hono/standard-validator": "0.1.5",
     "@hono/zod-validator": "*",
-    "@modelcontextprotocol/sdk": "1.29.0",
+    "@modelcontextprotocol/client": "2.3.1",
+    "@modelcontextprotocol/core": "2.3.1",
+    "@modelcontextprotocol/server": "2.3.1",
     "@modelcontextprotocol/server-sequential-thinking": "^2025.12.18",
     "@octokit/graphql": "9.0.2",
     "@octokit/rest": "*",
@@ -169,6 +171,7 @@
     "drizzle-orm": "1.0.0-beta.12-a5629fb",
     "emoji-regex": "10.6.0",
     "env-paths": "3.0.0",
+    "execa": "8.0.1",
     "express": "5.2.1",
     "figures": "3.2.0",
     "fuse.js": "6.6.2",

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Mirror a published Allternit Desktop release (Gizziio/desktop v<version>) to R2:
+# Mirror a published Allternit Desktop release (Allternit/desktop v<version>) to R2:
 #   allternit-runtime/desktop/v<version>/<assets>   (served at runtime.allternit.com)
 #   allternit-runtime/desktop/latest.json           {version, assets:{...}: url}
 # and delete every other desktop/v* (keeps only the current version).

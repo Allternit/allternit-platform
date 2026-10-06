@@ -42,7 +42,7 @@ print_mascot() {
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
-REPO="Gizziio/allternit-platform"
+REPO="Allternit/allternit-platform"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 VERSION="${VERSION:-latest}"
 GITHUB_API="https://api.github.com/repos/${REPO}"
@@ -225,7 +225,7 @@ install_binary() {
     print_step "Installing binary for ${BEIGE}${platform}-${arch}${RESET}..."
 
     # Delegate to the canonical installer (SOURCE OF TRUTH:
-    # cmd/gizzi-code/install in Gizziio/allternit-platform, served from
+    # cmd/gizzi-code/install in Allternit/allternit-platform, served from
     # https://install.gizziio.com/install). It resolves the version-named
     # release assets (gizzi-code-v<version>-<target>.tar.gz|zip), verifies
     # checksums.txt when present, and installs the `gizzi` alias.
@@ -318,7 +318,7 @@ print_post_install() {
     
     printf "${BOLD}Documentation:${RESET}\n"
     printf "  ${CYAN}https://docs.gizziio.com${RESET}\n"
-    printf "  ${CYAN}https://github.com/Gizziio/allternit-platform${RESET}\n"
+    printf "  ${CYAN}https://github.com/Allternit/allternit-platform${RESET}\n"
     printf "\n"
     
     printf "${DIM}Need help? Run: gizzi-code --help${RESET}\n"

@@ -36,7 +36,7 @@ The installer needs to download the backend binary. Options:
 
 **Option A: GitHub Releases (Recommended)**
 - Upload `gizzi-code` binary to GitHub releases
-- Set `ALLTERNIT_GITHUB_REPO=Gizziio/allternit`
+- Set `ALLTERNIT_GITHUB_REPO=Allternit/allternit-platform`
 - Set `ALLTERNIT_GITHUB_REF=v1.0.0`
 
 **Option B: Custom URL**

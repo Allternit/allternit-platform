@@ -1,0 +1,39 @@
+---
+title: Connected apps
+description: See which AI apps you approved to connect to your Allternit, which events each one gets, and stop or remove them.
+---
+
+**Settings › Connected apps** lists the AI apps (ChatGPT, Claude and others) you approved to connect to your Allternit. It looks the same on Allternit Desktop, ai.allternit.com, the phone layout of ai.allternit.com and the m.allternit.com app. On a phone, open **Settings** and tap **Connected apps**.
+
+You approve an app the first time it asks: it sends you to a page on ai.allternit.com that names the app and what it gets, with **Approve** and **Deny**. Each approval covers one thing: reading your agents and their runs, or using one bot's phone. The same list for one bot is under **Use the phone** on that vendor bot.
+
+## What each app shows
+
+For every approved app:
+
+- **The app's name** and what it was approved for ("Reads your agents and runs" or "Uses a bot's phone").
+- **Last used**: when the app last called Allternit, or "Not used yet".
+- **Gets events**: the events the app subscribed to, in plain words, for example "Approval requests" or "Threads that need you". An app subscribes to events so Allternit can tell it when something happens instead of it asking over and over. Each event shows:
+  - what it is, and whether it is narrowed down ("one bot", "one thread", "sms only");
+  - when it was last sent, or "Nothing sent yet";
+  - "Expired" if the app stopped renewing it. It gets nothing until the app renews it;
+  - the last delivery error, if the app's address didn't accept the last one. Allternit keeps retrying for 24 hours.
+- If the app hasn't subscribed to anything, it says "This app isn't subscribed to any events."
+
+## Stop one event
+
+Tap or click **Stop** next to an event. The app stops getting it right away, and Allternit tells the app the subscription ended. The app is still approved, so it can subscribe again the next time it connects. To stop everything, revoke the app.
+
+## Revoke an app
+
+**Revoke** removes the approval. The app's next call is refused, all of its event subscriptions end, and Allternit tells the app they ended. To use it again, connect the app again and approve it.
+
+## If something is missing
+
+- "Connecting AI apps isn't switched on yet" means the MCP edge isn't on for your account yet.
+- "Couldn't load this app's events" means the list of events couldn't be read just now. The apps still show and **Revoke** still works; reopen the page to try again.
+
+## Related
+
+- [MCP Events](/guides/mcp-events): what apps can subscribe to, and the routes behind this page
+- [Vendor bots use your phone](/guides/vendor-bots-use-your-phone)

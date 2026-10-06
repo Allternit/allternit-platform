@@ -1,0 +1,185 @@
+---
+title: MCP Events
+description: Get a webhook when your Allternit agents need you, from ChatGPT, Claude, or any MCP client that speaks the Events extension.
+---
+
+Allternit's public MCP servers support **MCP Events** with webhook delivery. Instead of polling, an AI app subscribes once and Allternit posts to it when something happens: an agent needs approval, a run finished, a thread needs you, a message arrived, a subscription needs you to sign in again.
+
+| Server | URL | Scope |
+|---|---|---|
+| Agents server | `https://mcp.allternit.com/mcp` | `agents:read` |
+| Vendor bot connector | `https://mcp.allternit.com/mcp/bots/<bot id>` | `bots:act`, bound to that bot |
+
+Both advertise `"events": { "listChanged": false }` in `server/discover`. The edge answers `events/*` itself, so subscribing works while your computer is asleep. Events are produced on your computer, so they arrive once it's back online.
+
+## Events
+
+### Agents server
+
+| Event | When | Filter arguments |
+|---|---|---|
+| `approval.requested` | An agent is waiting for you to approve an action. | `bot_id`, `thread_id` |
+| `approval.resolved` | An approval was granted or denied. | `bot_id`, `thread_id` |
+| `agent.run.completed` | An agent run finished. | `bot_id` |
+| `thread.needs_user` | A bot's thread needs you (a question, a held email, a blocked task). | `bot_id`, `thread_id` |
+| `message.received` | A new inbound message on one of your bots' channels. | `bot_id`, `thread_id`, `channel` |
+| `call.ended` | A phone or in-app call with a bot ended. | `bot_id` |
+| `inbox.item.created` | A new item landed in your Allternit inbox. | `bot_id` |
+| `subscription.login_needed` | A connected AI subscription needs you to sign in again. | `provider` |
+| `subscription.signed_in` | That subscription is signed in again. | `provider` |
+| `usage.threshold` | Your usage crossed a plan threshold. | `meter` |
+
+### Vendor bot connector
+
+| Event | When |
+|---|---|
+| `thread.needs_user` | One of this bot's threads needs attention. |
+| `message.received` | A new inbound message on this bot's channels. |
+| `vendor.ticket.created` | A ticket was opened for this bot: call `get_ticket`, do the work, then `post_result`. |
+
+On a bot connector, `bot_id` is always that bot. Passing a different `bot_id` is refused with `-32012`. Filter arguments are optional strings; an event is delivered when its `data` has every value you passed. `events/list` returns each event's `inputSchema` and `payloadSchema`.
+
+## Subscribe
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "events/subscribe",
+  "params": {
+    "name": "approval.requested",
+    "arguments": { "bot_id": "bot_123" },
+    "delivery": {
+      "mode": "webhook",
+      "url": "https://receiver.example.com/allternit/cb_1",
+      "secret": "whsec_<base64 of 24–64 random bytes>"
+    },
+    "ttlMs": 86400000
+  }
+}
+```
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "result": {
+    "id": "sub_3f2a…",
+    "refreshBefore": "2026-10-06T12:00:00Z",
+    "cursor": null,
+    "truncated": false,
+    "deliveryStatus": { "active": true, "lastDeliveryAt": null, "lastError": null }
+  }
+}
+```
+
+- **Callback URL**: `https://` only, no credentials, no private, loopback, link-local or carrier-grade NAT addresses. The address is checked again on every delivery, and we connect to exactly the address we checked. Redirects are not followed.
+- **Secret**: you choose it. `whsec_` plus base64 of 24 to 64 bytes.
+- **Idempotent**: the same app, server, URL, event name and arguments always give the same `id`. Subscribing again refreshes it.
+- **TTL**: leave out `ttlMs` for 24 hours. Anything you ask for is clamped to between 1 minute and 7 days; `ttlMs: null` (no expiry) gets 7 days. Subscribe again before `refreshBefore`, or deliveries stop.
+- **Secret rotation**: refresh with a new `secret`. For the next hour, deliveries are signed with both the new and the old key (two space-separated signatures), so you can switch over without dropping events.
+- **Replay**: not offered. `cursor` is always `null`; events that happen while a subscription is expired are not resent.
+- **Limit**: 50 live subscriptions per app per server (`-32013`).
+
+### Verification challenge
+
+Before a new subscription goes live (and again when you change the secret, or after a day), we POST a signed challenge to your URL:
+
+```json
+{ "type": "verification", "challenge": "6c1f…" }
+```
+
+Answer `2xx` with the same value:
+
+```json
+{ "challenge": "6c1f…" }
+```
+
+If you don't, `events/subscribe` fails with `-32015 CallbackEndpointError` and `data.reason` set to `connection_refused`, `timeout`, `tls_error`, `http_4xx`, `http_5xx` or `challenge_failed`.
+
+## Deliveries
+
+```http
+POST /allternit/cb_1
+Content-Type: application/json
+webhook-id: evt_9a0c…
+webhook-timestamp: 1759665600
+webhook-signature: v1,K5oZfzN95Z9UVu1EsfQmfVNQhnkZ2pj9o9NDN/H/pI4=
+X-MCP-Subscription-Id: sub_3f2a…
+
+{ "eventId": "evt_9a0c…", "name": "approval.requested", "timestamp": "2026-10-05T12:00:00Z",
+  "data": { "bot_id": "bot_123", "thread_id": "thr_9", "approval_id": "apr_4", "summary": "Send the invoice email" },
+  "cursor": null }
+```
+
+- Signed with [Standard Webhooks](https://www.standardwebhooks.com): base64 HMAC-SHA256 of `"<webhook-id>.<webhook-timestamp>.<raw body>"` keyed with your decoded secret. Reject timestamps more than five minutes old.
+- `webhook-id` equals `eventId` and stays the same on every retry. Deduplicate on it.
+- Any `2xx` within 10 seconds is delivered. Other answers and network errors are retried with backoff (30 s, 2 min, 10 min, 30 min, 1 h, then every 2 h) for 24 hours.
+- `410 Gone` ends the subscription. `413` drops that event without retrying. Bodies are never larger than 256 KiB.
+
+## When access ends
+
+If you remove the app's approval in Allternit (or revoke a vendor bot CLI key), or stop one subscription in [Connected apps](#seeing-and-ending-subscriptions), the subscriptions end at once, and each callback gets one signed message:
+
+```json
+{ "type": "terminated", "subscriptionId": "sub_3f2a…",
+  "error": { "code": -32012, "message": "Forbidden", "data": { "reason": "approval_revoked" } } }
+```
+
+`events/unsubscribe` with the same name, arguments and URL ends one subscription. It always answers `{}`.
+
+## Seeing and ending subscriptions
+
+Owners see every app's subscriptions in **Settings › Connected apps** (Desktop, ai.allternit.com, the phone layout and the m.allternit.com app). Under each approved app it lists the events it gets in plain words, when each was last sent, the last delivery error, and **Stop** for one subscription. See [Connected apps](/guides/connected-apps).
+
+Stopping one ends it at once and its callback gets the same signed `terminated` message, with `"reason": "ended_by_owner"`. The app is still approved, so it can subscribe again; removing the approval ends all of them.
+
+The routes behind it (cloud API, Clerk session or `compute`-scoped API key; `503 mcp_edge_not_configured` until the edge is on):
+
+| Route | Answer |
+|---|---|
+| `GET /api/v1/mcp/approvals` | Each approval carries `subscriptions: [{id, name, arguments, createdAt, refreshBefore, active, lastDeliveryAt, lastError}]`: that app's subscriptions for the target that haven't ended. `active: false` means it is past `refreshBefore` and the app hasn't renewed it. `lastError` is the newest failed delivery's error (`HTTP 503`, `timed out`, `connection failed`, …) when nothing was delivered after it. `subscriptions: null` means they couldn't be read; the approvals still list. The callback URL and secret are never returned. |
+| `DELETE /api/v1/mcp/events/subscriptions/:id` | `{ok: true}`, and the callback gets a signed `terminated` message. `404 {"error":"not_found"}` for a subscription that isn't yours or has already ended. |
+| `GET /api/v1/events/catalog` | Signed-in users. `{events: [{name, title, description, servers}]}`: every registered event with a short plain-words `title` (for example `"Approval requests"`), its description, and which servers offer it (`agents` = the agents server, `bot` = a vendor bot connector, `platform` = [Platform API webhooks](/api/platform/webhooks)). |
+
+```bash
+curl https://api.allternit.com/api/v1/events/catalog -H "Authorization: Bearer $CLERK_SESSION"
+curl -X DELETE https://api.allternit.com/api/v1/mcp/events/subscriptions/sub_3f2a… -H "Authorization: Bearer $CLERK_SESSION"
+```
+
+## Errors
+
+| Code | Name | When |
+|---|---|---|
+| `-32602` | InvalidParams | Unknown argument, bad URL, or bad secret. |
+| `-32011` | NotFound | The event isn't offered by this server. |
+| `-32012` | Forbidden | Another bot's events on a bot connector. |
+| `-32013` | ResourceExhausted | Too many subscriptions (`data.limit`, `data.max`). |
+| `-32014` | Unsupported | A delivery mode other than `webhook`. |
+| `-32015` | CallbackEndpointError | Verification failed (`data.reason`). |
+
+## For runtime developers: forwarding events to the cloud
+
+Events start in each runtime's `bot_events` ledger. A runtime forwards them to `POST https://api.allternit.com/api/v1/runtime/events`, signed with its device credential the same way cloud-api signs relayed requests to it:
+
+```http
+x-allternit-runtime-id: <runtime id>
+x-allternit-runtime-ts: <unix seconds, ±300 s>
+x-allternit-runtime-sig: v1=<hex HMAC-SHA256(sha256_hex(device_token), "<ts>.POST./api/v1/runtime/events.<hex sha256(raw body)>")>
+```
+
+```json
+{ "events": [ { "id": "ledger-row-81", "type": "channel.message.received", "at": "2026-10-05T12:00:00Z",
+                "bot_id": "bot_123", "thread_id": "thr_9", "data": { "text": "hi" } } ] }
+```
+
+- Up to 100 events and 1 MiB per request. `id` (1–128 characters) is the idempotency key for that runtime; resending it answers `duplicate`.
+- Ledger names map onto the event list above (`channel.message.received` becomes `message.received`, `agent.approval.requested` becomes `approval.requested`, `run.completed` becomes `agent.run.completed`). Other types are answered `ignored`, so a forwarder can send its whole outbox. Outbound echoes (`own: true`) are ignored.
+- `bot_id` and `thread_id` are copied into `data`. `data` must be an object of at most 250 KiB.
+- The answer lists one result per event, in order: `{"results":[{"id","status","eventId"?}],"accepted","duplicates","ignored","rejected"}` with `status` one of `accepted`, `duplicate`, `ignored`, `too_large`, `invalid`. Advance the cursor past every result; on `5xx` resend the same batch. `401` means the signature, clock or device credential is wrong.
+
+## Related
+
+- [Connected apps](/guides/connected-apps)
+- [MCP Servers API](/api/mcp-servers)
+- [Platform API webhooks](/api/platform/webhooks), which can use the same Standard Webhooks signatures

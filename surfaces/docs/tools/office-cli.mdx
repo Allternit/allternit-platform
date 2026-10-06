@@ -278,6 +278,8 @@ Response:
 
 The gateway exposes the officecli MCP server over `POST /api/v1/office/cli/mcp`. The gateway maintains one stdio MCP session per user, lazily spawns it, and retries once if the child dies.
 
+The endpoint is itself an MCP server and speaks both eras: it answers `initialize`, `server/discover` (MCP 2026-07-28), `ping` and notifications itself, and forwards every other method to the officecli child. `tools/list` comes back sorted by tool name. Toward the child the gateway uses the shared dual-era client: a `server/discover` probe first, then the `initialize` handshake when officecli turns out to be a pre-2026 server.
+
 ```bash
 curl -X POST http://127.0.0.1:8013/api/v1/office/cli/mcp \
   -H "Authorization: Bearer <token>" \

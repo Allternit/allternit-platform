@@ -7,14 +7,14 @@ Scope `webhooks`. Endpoints are project-wide, so account-bound keys can't manage
 
 | Method | Path | |
 |---|---|---|
-| `POST` | `/v1/webhooks` | Create: `{ "url", "events", "description"? }` (the response includes `secret` once) |
+| `POST` | `/v1/webhooks` | Create: `{ "url", "events", "description"?, "signer"? }` (the response includes `secret` once) |
 | `GET` | `/v1/webhooks` | List |
 | `GET` / `DELETE` | `/v1/webhooks/{id}` | Retrieve / delete (pending deliveries stop) |
 | `POST` | `/v1/webhooks/{id}/test` | Send a `webhook.test` event to this endpoint |
 | `GET` | `/v1/webhooks/{id}/deliveries` | Delivery log |
 | `POST` | `/v1/webhooks/{id}/deliveries/{delivery_id}/redeliver` | Try again now |
 
-`url` must be public `https` (not a private, loopback or link-local address). `events` lists what you want, or `["*"]` for everything:
+`url` must be public `https` (not a private, loopback or link-local address). `signer` is `allternit` (the default, below) or `standard_webhooks` ([Standard Webhooks](#standard-webhooks)); endpoint objects show which one they use. `events` lists what you want, or `["*"]` for everything:
 
 | Event | When |
 |---|---|
@@ -68,3 +68,26 @@ def verify(raw_body: bytes, header: str, secret: str, tolerance_sec: int = 300) 
     return hmac.compare_digest(expected, parts.get("v1", ""))
 ```
 </CodeGroup>
+
+## Standard Webhooks
+
+Create the endpoint with `"signer": "standard_webhooks"` to get [Standard Webhooks](https://www.standardwebhooks.com) signatures instead, so any Standard Webhooks library (Svix, `standardwebhooks` on npm/PyPI) can verify them. The body is the same event object. The `secret` is then `whsec_` followed by base64 of 32 random bytes, and every request carries:
+
+```http
+webhook-id: evt_3b1…
+webhook-timestamp: 1759601822
+webhook-signature: v1,K5oZfzN95Z9UVu1EsfQmfVNQhnkZ2pj9o9NDN/H/pI4=
+```
+
+`webhook-id` is the event `id` (the same on every retry, so deduplicate on it). The signature is base64 HMAC-SHA256 of `"<webhook-id>.<webhook-timestamp>.<raw body>"` keyed with the base64-decoded secret. The same headers are what [MCP Events](/guides/mcp-events) deliveries use.
+
+```js Node
+import { Webhook } from "standardwebhooks";
+
+const wh = new Webhook(process.env.ALLTERNIT_WEBHOOK_SECRET); // "whsec_…"
+const event = wh.verify(rawBody, {
+  "webhook-id": req.headers["webhook-id"],
+  "webhook-timestamp": req.headers["webhook-timestamp"],
+  "webhook-signature": req.headers["webhook-signature"],
+}); // throws when the signature or timestamp is bad
+```

@@ -3,6 +3,31 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// JSON-RPC version string
+pub const JSONRPC_VERSION: &str = "2.0";
+
+/// Any JSON-RPC message (raw transport send/receive)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum JsonRpcMessage {
+    /// Request message
+    Request(JsonRpcRequest),
+    /// Response message
+    Response(JsonRpcResponse),
+    /// Notification message (no id, no response expected)
+    Notification(JsonRpcNotification),
+    /// Error response without a usable id
+    Error(JsonRpcErrorResponse),
+}
+
+/// JSON-RPC error response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JsonRpcErrorResponse {
+    pub jsonrpc: String,
+    pub id: Option<u64>,
+    pub error: JsonRpcError,
+}
+
 /// JSON-RPC 2.0 request object
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcRequest {
@@ -47,6 +72,18 @@ pub struct JsonRpcResponse {
     pub error: Option<JsonRpcError>,
 }
 
+impl JsonRpcResponse {
+    /// Create a successful response
+    pub fn success(id: u64, result: Value) -> Self {
+        Self { jsonrpc: JSONRPC_VERSION.to_string(), id, result: Some(result), error: None }
+    }
+
+    /// Create an error response
+    pub fn error(id: u64, error: JsonRpcError) -> Self {
+        Self { jsonrpc: JSONRPC_VERSION.to_string(), id, result: None, error: Some(error) }
+    }
+}
+
 /// JSON-RPC 2.0 error object
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcError {
@@ -54,6 +91,47 @@ pub struct JsonRpcError {
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<Value>,
+}
+
+impl JsonRpcError {
+    /// Standard JSON-RPC error codes
+    pub const PARSE_ERROR: i32 = -32700;
+    pub const INVALID_REQUEST: i32 = -32600;
+    pub const METHOD_NOT_FOUND: i32 = -32601;
+    pub const INVALID_PARAMS: i32 = -32602;
+    pub const INTERNAL_ERROR: i32 = -32603;
+    pub const SERVER_ERROR_START: i32 = -32099;
+    pub const SERVER_ERROR_END: i32 = -32000;
+
+    /// Create a new JSON-RPC error
+    pub fn new(code: i32, message: impl Into<String>) -> Self {
+        Self { code, message: message.into(), data: None }
+    }
+
+    /// Create a parse error
+    pub fn parse_error(message: impl Into<String>) -> Self {
+        Self::new(Self::PARSE_ERROR, message)
+    }
+
+    /// Create an invalid request error
+    pub fn invalid_request(message: impl Into<String>) -> Self {
+        Self::new(Self::INVALID_REQUEST, message)
+    }
+
+    /// Create a method not found error
+    pub fn method_not_found(method: impl AsRef<str>) -> Self {
+        Self::new(Self::METHOD_NOT_FOUND, format!("Method not found: {}", method.as_ref()))
+    }
+
+    /// Create an invalid params error
+    pub fn invalid_params(message: impl Into<String>) -> Self {
+        Self::new(Self::INVALID_PARAMS, message)
+    }
+
+    /// Create an internal error
+    pub fn internal_error(message: impl Into<String>) -> Self {
+        Self::new(Self::INTERNAL_ERROR, message)
+    }
 }
 
 /// JSON-RPC 2.0 notification (server -> client)
@@ -65,8 +143,17 @@ pub struct JsonRpcNotification {
     pub params: Option<Value>,
 }
 
-/// MCP protocol version (streamable HTTP transport requires 2025-03-26 or later)
-pub const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
+impl JsonRpcNotification {
+    /// Create a new JSON-RPC notification
+    pub fn new(method: impl Into<String>, params: Option<Value>) -> Self {
+        Self { jsonrpc: JSONRPC_VERSION.to_string(), method: method.into(), params }
+    }
+}
+
+/// Newest MCP protocol revision this client speaks. The version list lives
+/// in `mcp-protocol` (one place for every Allternit client and server); this
+/// is a re-export, not a second constant.
+pub use mcp_protocol::LATEST as MCP_PROTOCOL_VERSION;
 
 /// MCP Apps extension id (SEP-1865), advertised under `capabilities.extensions`
 pub const MCP_APPS_EXTENSION_ID: &str = "io.modelcontextprotocol/ui";
@@ -170,6 +257,12 @@ pub struct InitializeResult {
 pub struct Implementation {
     pub name: String,
     pub version: String,
+}
+
+impl Implementation {
+    pub fn new(name: impl Into<String>, version: impl Into<String>) -> Self {
+        Self { name: name.into(), version: version.into() }
+    }
 }
 
 /// MCP Tool definition

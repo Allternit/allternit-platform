@@ -223,7 +223,7 @@ export async function openCurrentSessionInDesktop(): Promise<{
     return {
       success: false,
       error:
-        'Allternit Desktop is not installed. Install it from https://github.com/Gizziio/desktop/releases',
+        'Allternit Desktop is not installed. Install it from https://github.com/Allternit/desktop/releases',
     }
   }
 
@@ -273,7 +273,7 @@ export async function openDesignStudioInDesktop(prompt?: string): Promise<{
       success: false,
       notInstalled: true,
       error:
-        'Allternit Desktop is not installed. Install it from https://github.com/Gizziio/desktop/releases',
+        'Allternit Desktop is not installed. Install it from https://github.com/Allternit/desktop/releases',
       deepLinkUrl,
     }
   }

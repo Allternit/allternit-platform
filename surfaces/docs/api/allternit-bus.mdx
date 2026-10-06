@@ -47,6 +47,7 @@ All authenticated routes require a valid bearer token in the `Authorization` hea
 | `POST` | `/api/v1/agents/:agent_id/connectors/resolve` | Resolve connector credentials for an agent. |
 | `GET` | `/api/v1/agents/:agent_id/identity` | Get an agent's identity channels. |
 | `POST` | `/api/v1/agents/:agent_id/identity/email` | Provision an email address for an agent. |
+| `DELETE` | `/api/v1/agents/:agent_id/identity/email` | Give up the agent's address so a new one can be provisioned. |
 | `POST` | `/api/v1/agents/:agent_id/identity/phone` | Provision a phone number for an agent. |
 | `POST` | `/api/v1/photon/sessions/:session_id/bridge` | Bridge a session to another surface. |
 | `POST` | `/webhooks/photon` | Public webhook for inbound Photon messages. |
@@ -374,7 +375,7 @@ Provisions an email address for the agent on `ALLTERNIT_BOT_EMAIL_DOMAIN` (defau
 
 When the mailflare agent-email rail is configured (`ALLTERNIT_MAILFLARE_URL` + `ALLTERNIT_MAILFLARE_ADMIN_KEY`), this creates a **real mailbox** on the mailflare worker, mints a mailbox-scoped send/read API key, seals it server-side, and stores the channel with provider `"mailflare"`. The agent can then genuinely receive and (subject to approval) send internet email. When mailflare is not configured, the endpoint falls back to minting an address record only (provider `"commrails"`) with no send/receive transport.
 
-Provisioning is idempotent: re-provisioning an agent returns its existing channel, and the address never changes once created.
+Provisioning is idempotent: re-provisioning an agent returns its existing channel. A platform address (provider `mailflare`) is owned by the server: a `PATCH /api/v1/agents/:id` that sends a different `identityChannels.email.address` keeps the stored one. To change it, release it and provision again (below). Switching the bot to its own mail account (`provider` other than `mailflare` / `commrails`) still saves the new address.
 
 The part before the `@` comes from the optional body `{ "localPart": "ledger-bot" }`: 3-40 lowercase letters, numbers and single hyphens (invalid values return `400 invalid_local_part`; role names such as `postmaster` return `400 reserved_local_part`). A requested name that is already taken returns `409 email_local_part_taken`. Without `localPart`, the address is a slug of the bot's name (`ledger-bot`), with `-2`, `-3` and so on added only when that address is taken. The mailbox's display name, which becomes the From name on outbound mail, is the bot's name.
 
@@ -394,6 +395,20 @@ curl -X POST http://127.0.0.1:8013/api/v1/agents/agent_018f3a7c.../identity/emai
   "address": "ledger-bot@agents.example.com",
   "provider": "mailflare"
 }
+```
+
+### Change an agent's address
+
+```http
+DELETE /api/v1/agents/:agent_id/identity/email
+```
+
+Removes the agent's mailbox (on a cloud-provisioned runtime, cloud-api also removes its key, its webhook and the relay route), then clears the address and the mailbox credentials from the agent. Reply settings (`replyMode`, `replyAllowlist`) stay. Mail sent to the old address stops arriving. Follow it with `POST …/identity/email {"localPart": "<new name>"}`.
+
+If the mailbox can't be removed, the call returns `502 mailbox_not_removed` and the agent keeps its address. The app's email wizard and the bot's Identity settings do both steps; when the new name is taken they provision the default address again and say which address the bot is on.
+
+```json
+{ "released": true }
 ```
 
 ## Agent email rail

@@ -38,7 +38,7 @@ pub fn allternit_bus_router() -> Router<Arc<AppState>> {
             post(resolve_agent_connectors),
         )
         // Identity channels (mailflare-aware provision_email lives here)
-        .route("/agents/:agent_id/identity/email", post(provision_email))
+        .route("/agents/:agent_id/identity/email", post(provision_email).delete(release_email))
 }
 
 /// Public webhook surface for inbound Photon.codes messages.
@@ -627,6 +627,39 @@ async fn provision_email(
     Ok(Json(ProvisionEmailResponse { address, provider: "commrails" }).into_response())
 }
 
+/// `DELETE /agents/:id/identity/email`: give up the bot's address so a new one can be chosen.
+/// The mailbox (and, on the cloud, its key, webhook and relay route) is removed first; if that
+/// fails the address is kept, so the bot never ends up with a mailbox it can no longer read.
+/// Reply settings stay on the bot.
+async fn release_email(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(agent_id): Path<String>,
+) -> Result<Response, ApiError> {
+    require_agent_owner(&state, &user, &agent_id)?;
+    if !crate::agent_email_routes::revoke_agent_mailbox(&agent_id, &state.db).await {
+        return Err(err(
+            StatusCode::BAD_GATEWAY,
+            "mailbox_not_removed",
+            "The old address couldn't be removed right now, so the bot keeps it. Try again in a minute.",
+        ));
+    }
+    clear_email_channel(&state.db.connect().map_err(internal)?, &agent_id).map_err(internal)?;
+    Ok(Json(json!({ "released": true })).into_response())
+}
+
+/// Forget the bot's address and mailbox credentials; its reply settings stay.
+fn clear_email_channel(conn: &rusqlite::Connection, agent_id: &str) -> rusqlite::Result<usize> {
+    conn.execute(
+        "UPDATE agent_identity_channels SET
+             email_address = NULL, email_provider = NULL, email_send_enabled = 0, email_receive_enabled = 0,
+             email_mailbox_id = NULL, email_api_key_sealed = NULL, email_webhook_secret_sealed = NULL,
+             email_mail_url = NULL, email_domain_verified = 0, updated_at = CURRENT_TIMESTAMP
+         WHERE agent_id = ?1",
+        params![agent_id],
+    )
+}
+
 /// Provision a real mailflare mailbox for the agent: resolve the domain id,
 /// create the mailbox (+ Cloudflare routing rule), mint a mailbox-scoped
 /// send+read API key, seal it, and persist the channel row. On any failure no
@@ -1121,5 +1154,29 @@ mod email_local_part_tests {
         assert_eq!((taken.0, taken.1 .0["error"].as_str()), (StatusCode::CONFLICT, Some("email_local_part_taken")));
         assert!(state.db.connect().unwrap()
             .query_row("SELECT COUNT(*) FROM agent_identity_channels WHERE agent_id = 'agent-b'", [], |r| r.get::<_, i64>(0)).unwrap() == 0);
+    }
+
+    #[tokio::test]
+    async fn a_released_address_can_be_replaced_and_keeps_reply_settings() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = crate::test_helpers::app_state(temp.path()).await;
+        let fake = Arc::new(Fake::default());
+        let url = fake_mailflare(fake.clone()).await;
+        add_agent(&state, "agent-a", "Ledger Bot");
+
+        let first = provision_email_mailflare(&state, "u1", "agent-a", client(url.clone()), None).await.unwrap();
+        assert_eq!(first, "ledger-bot@bus.test");
+        let conn = state.db.connect().unwrap();
+        conn.execute("UPDATE agent_identity_channels SET email_reply_mode = 'auto_known' WHERE agent_id = 'agent-a'", []).unwrap();
+
+        assert_eq!(clear_email_channel(&conn, "agent-a").unwrap(), 1);
+        assert!(crate::agent_email_routes::lookup_email_channel(&conn, "agent-a").unwrap().is_none());
+
+        let second = provision_email_mailflare(&state, "u1", "agent-a", client(url.clone()), Some("billing-desk")).await.unwrap();
+        assert_eq!(second, "billing-desk@bus.test");
+        let (mode, mailbox): (String, Option<String>) = conn
+            .query_row("SELECT email_reply_mode, email_mailbox_id FROM agent_identity_channels WHERE agent_id = 'agent-a'", [], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap();
+        assert_eq!((mode.as_str(), mailbox.as_deref()), ("auto_known", Some("mb-billing-desk")));
     }
 }

@@ -70,8 +70,11 @@ export function setupVscodeSdkMcp(sdkClients: MCPServerConnection[]): void {
     vscodeMcpClient = client
 
     client.client.setNotificationHandler(
-      LogEventNotificationSchema(),
-      async notification => {
+      LogEventNotificationSchema().shape.method.value,
+      { params: LogEventNotificationSchema().shape.params },
+      async params => {
+        // SDK v2: custom notifications register by method name + params schema.
+        const notification = { params }
         const { eventName, eventData } = notification.params
         logEvent(
           `tengu_vscode_${eventName}`,

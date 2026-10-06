@@ -68,7 +68,7 @@ The main ext4 filesystem containing:
 
 ```bash
 # Clone repository
-git clone https://github.com/Gizziio/allternit.git
+git clone https://github.com/Allternit/allternit-platform.git
 cd allternit
 
 # Build the image builder

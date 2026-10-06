@@ -37,24 +37,96 @@ struct StreamQuery {
     after: Option<i64>,
 }
 
-/// Maps a ledger row to a feed kind, or `None` when it isn't notification-worthy.
-fn classify(event_type: &str, payload: &Value) -> Option<&'static str> {
+/// What one ledger row means. The single classification shared by the Desktop
+/// feed (`/events/stream`, [`Kind::feed`]) and the runtime → cloud forwarder
+/// (`runtime_events`, [`Kind::registry`]), so the two can't disagree about which
+/// rows matter. Every ledger type not matched here is ignored by both.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    /// An inbound channel message from someone else (never our own echo).
+    MessageReceived,
+    /// A call ended; `missed` when nobody answered.
+    CallEnded { missed: bool },
+    /// A thread is waiting on its owner (includes an email held for review).
+    NeedsUser,
+    /// The owner handled an inbox item on another device: refresh, never notify.
+    InboxChanged,
+    /// A new Inbox card (autonomy draft / digest).
+    InboxItemCreated,
+    ApprovalRequested,
+    ApprovalResolved,
+    /// An agent run, or a routine run, finished successfully.
+    RunCompleted,
+    VendorTicketCreated,
+    SubscriptionLoginNeeded,
+    SubscriptionSignedIn,
+    /// A Subscriptions task stopped for the person (`needs_user`).
+    SubscriptionTaskNeedsUser,
+}
+
+impl Kind {
+    /// The Desktop feed's `kind`, or `None` when the feed doesn't show it.
+    pub fn feed(self) -> Option<&'static str> {
+        match self {
+            Kind::MessageReceived => Some("channel_message"),
+            Kind::CallEnded { missed: true } => Some("missed_call"),
+            Kind::NeedsUser => Some("needs_you"),
+            Kind::InboxChanged => Some("inbox_changed"),
+            _ => None,
+        }
+    }
+
+    /// The event registry name the cloud backbone knows it by, or `None` when
+    /// it stays on this runtime.
+    pub fn registry(self) -> Option<&'static str> {
+        match self {
+            Kind::MessageReceived => Some("message.received"),
+            Kind::CallEnded { .. } => Some("call.ended"),
+            Kind::NeedsUser | Kind::SubscriptionTaskNeedsUser => Some("thread.needs_user"),
+            Kind::InboxChanged => None,
+            Kind::InboxItemCreated => Some("inbox.item.created"),
+            Kind::ApprovalRequested => Some("approval.requested"),
+            Kind::ApprovalResolved => Some("approval.resolved"),
+            Kind::RunCompleted => Some("agent.run.completed"),
+            Kind::VendorTicketCreated => Some("vendor.ticket.created"),
+            Kind::SubscriptionLoginNeeded => Some("subscription.login_needed"),
+            Kind::SubscriptionSignedIn => Some("subscription.signed_in"),
+        }
+    }
+}
+
+/// Classifies a ledger row (`bot_events` or `runtime_user_events`), or `None`
+/// when nothing downstream cares about it.
+pub fn classify(event_type: &str, payload: &Value) -> Option<Kind> {
     match event_type {
         // Our own echoes are not "new messages".
-        "channel.message.received" if payload["own"].as_bool() != Some(true) => Some("channel_message"),
+        "channel.message.received" if payload["own"].as_bool() != Some(true) => Some(Kind::MessageReceived),
         "call.ended" => {
             let missed = payload["missed"].as_bool() == Some(true)
                 || payload["answered"].as_bool() == Some(false)
                 || matches!(payload["reason"].as_str(), Some("missed" | "no_answer"));
-            missed.then_some("missed_call")
+            Some(Kind::CallEnded { missed })
         }
         // Includes an outbound email held for human approval (request_review).
-        "thread.needs_user" => Some("needs_you"),
-        // The owner handled an inbox item (another device): refresh, never notify.
-        "inbox.changed" => Some("inbox_changed"),
+        "thread.needs_user" => Some(Kind::NeedsUser),
+        "inbox.changed" => Some(Kind::InboxChanged),
+        "inbox.item.created" => Some(Kind::InboxItemCreated),
+        "approval.requested" => Some(Kind::ApprovalRequested),
+        "approval.resolved" => Some(Kind::ApprovalResolved),
+        // `run.completed` mirrors allternit-api's `agent.run.completed`;
+        // `routine.completed` is a scheduled run of the bot that succeeded.
+        "run.completed" | "routine.completed" => Some(Kind::RunCompleted),
+        "vendor.ticket.created" => Some(Kind::VendorTicketCreated),
+        "subscription.login_needed" => Some(Kind::SubscriptionLoginNeeded),
+        "subscription.signed_in" => Some(Kind::SubscriptionSignedIn),
+        "subscription.task.needs_user" => Some(Kind::SubscriptionTaskNeedsUser),
         _ => None,
     }
 }
+
+/// The ledger types the Desktop feed reads (an index filter, kept in step
+/// with [`Kind::feed`] by `feed_types_match_classify`).
+const FEED_TYPES: &[&str] = &["channel.message.received", "call.ended", "thread.needs_user", "inbox.changed"];
 
 fn max_rowid(conn: &Connection, user_id: &str) -> rusqlite::Result<i64> {
     conn.query_row(
@@ -67,15 +139,16 @@ fn max_rowid(conn: &Connection, user_id: &str) -> rusqlite::Result<i64> {
 /// Feed items after `after` for this user. Returns (items, new cursor). The
 /// cursor advances past rows that are filtered out so they are not rescanned.
 pub fn fetch_batch(conn: &Connection, user_id: &str, after: i64) -> rusqlite::Result<(Vec<(i64, Value)>, i64)> {
-    let mut stmt = conn.prepare(
+    let in_list = FEED_TYPES.iter().map(|t| format!("'{t}'")).collect::<Vec<_>>().join(", ");
+    let mut stmt = conn.prepare(&format!(
         "SELECT e.rowid, e.event_type, e.bot_id, e.thread_id, e.payload, e.occurred_at, a.name, t.title
          FROM bot_events e
          JOIN agents a ON a.id = e.bot_id
          LEFT JOIN bot_threads t ON t.id = e.thread_id
          WHERE a.user_id = ?1 AND e.rowid > ?2
-           AND e.event_type IN ('channel.message.received', 'call.ended', 'thread.needs_user', 'inbox.changed')
-         ORDER BY e.rowid LIMIT ?3",
-    )?;
+           AND e.event_type IN ({in_list})
+         ORDER BY e.rowid LIMIT ?3"
+    ))?;
     let rows = stmt.query_map(params![user_id, after, BATCH], |r| {
         Ok((
             r.get::<_, i64>(0)?,
@@ -94,7 +167,7 @@ pub fn fetch_batch(conn: &Connection, user_id: &str, after: i64) -> rusqlite::Re
         let (rowid, event_type, bot_id, thread_id, payload, at, bot_name, title) = row?;
         cursor = cursor.max(rowid);
         let payload: Value = serde_json::from_str(&payload).unwrap_or(Value::Null);
-        let Some(kind) = classify(&event_type, &payload) else { continue };
+        let Some(kind) = classify(&event_type, &payload).and_then(Kind::feed) else { continue };
         out.push((
             rowid,
             json!({
@@ -194,6 +267,22 @@ mod tests {
         put(&c, "bot-a", 6, "channel.message.received", json!({ "text": "again" }));
         assert_eq!(fetch_batch(&c, "user-a", cur).unwrap().0.len(), 1);
         assert_eq!(max_rowid(&c, "user-b").unwrap() > 0, true);
+    }
+
+    #[test]
+    fn feed_types_match_classify() {
+        // Every type the feed can show is in its SQL filter, and vice versa.
+        let samples = [
+            ("channel.message.received", json!({})),
+            ("call.ended", json!({ "reason": "no_answer" })),
+            ("thread.needs_user", json!({})),
+            ("inbox.changed", json!({})),
+        ];
+        for (ty, payload) in &samples {
+            assert!(classify(ty, payload).and_then(Kind::feed).is_some(), "{ty}");
+        }
+        assert_eq!(FEED_TYPES.len(), samples.len());
+        assert!(classify("call.ended", &json!({ "reason": "hangup" })).and_then(Kind::feed).is_none());
     }
 
     #[tokio::test]

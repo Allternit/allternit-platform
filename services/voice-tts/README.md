@@ -63,5 +63,5 @@ parent even if the parent is killed. Logs go to stderr.
 ## Licence
 
 GPL-3.0-or-later (`LICENSE`). Third-party components: `THIRD_PARTY_NOTICES.md`.
-Its published source is https://github.com/Gizziio/allternit-tts. This directory is the complete corresponding source of the `allternit-tts`
+Its published source is https://github.com/Allternit/allternit-tts. This directory is the complete corresponding source of the `allternit-tts`
 binary, together with sherpa-onnx 1.13.8, whose static libraries it links.

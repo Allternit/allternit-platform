@@ -404,7 +404,7 @@ Transport does not redefine principal identity, run state, attribution, or appro
 - **Routines** — `/api/v1/cowork/routines` tick fires a canonical
   attributed intent per due schedule; Cowork Fabric Transport view
   creates/runs/deletes them.
-- **Updater feed lock** — `Gizziio/desktop` is the single publish +
+- **Updater feed lock** — `Allternit/desktop` is the single publish +
   auto-update target; preflight refuses a mismatch. Signed/notarized
   `desktop-v1.2.0` remains an owner action (Apple secrets).
 

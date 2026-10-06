@@ -58,7 +58,7 @@ allternit.settings.v1.<key>
 
 The hook JSON-serializes values, initializes from localStorage when available, and falls back to in-memory state if storage is unavailable. This was chosen because the migrated settings are local UI preferences and do not belong to external service-owned state. Existing external components and backend-owned settings were left alone.
 
-Persisted settings now cover migrated general, appearance, privacy, Gizziio Code, cowork, and extensions state.
+Persisted settings now cover migrated general, appearance, privacy, Gizzi Code, cowork, and extensions state.
 
 ## Pickup work completed
 

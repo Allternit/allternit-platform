@@ -117,8 +117,63 @@ pub fn connector_router() -> Router<Arc<AppState>> {
 /// `open_connector_proxy::proxy_mcp`); the curated 3 (github/notion/slack)
 /// are NOT reachable through this surface, only through the REST routes
 /// above — they never went through the sidecar to begin with.
+///
+/// Both entry points are MCP servers built on `mcp-protocol` (dual-era:
+/// `initialize`, `server/discover`, `ping` and notifications answered here;
+/// list results in canonical order; modern results decorated). The sidecar is
+/// reached through the `mcp-client` crate.
 async fn mcp_proxy(headers: axum::http::HeaderMap, Json(body): Json<Value>) -> impl IntoResponse {
-    proxy_mcp_response(caller(&headers), body).await
+    let user_id = caller(&headers);
+    serve_connectors_mcp(&headers, body, |body| async move { proxy_mcp_value(user_id, body).await }).await
+}
+
+fn connectors_server_spec() -> mcp_protocol::ServerSpec {
+    mcp_protocol::ServerSpec {
+        name: "allternit-connectors",
+        version: env!("CARGO_PKG_VERSION"),
+        capabilities: json!({ "tools": { "listChanged": false } }),
+        instructions: None,
+    }
+}
+
+/// The MCP server front shared by `/connectors/mcp` and
+/// `/internal/connectors/mcp`: header checks, era, preflight, then
+/// `dispatch` (a JSON-RPC response envelope, or an HTTP error response for
+/// a sidecar outage), then `finish` + the spec's HTTP status.
+async fn serve_connectors_mcp<F, Fut>(headers: &axum::http::HeaderMap, body: Value, dispatch: F) -> axum::response::Response
+where
+    F: FnOnce(Value) -> Fut,
+    Fut: std::future::Future<Output = Result<Value, axum::response::Response>>,
+{
+    let h = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
+    let id = body.get("id").cloned().unwrap_or(Value::Null);
+    let Some(method) = body.get("method").and_then(|m| m.as_str()).map(str::to_string) else {
+        return (StatusCode::BAD_REQUEST, Json(mcp_protocol::rpc_err(&id, -32600, "Invalid Request: no method"))).into_response();
+    };
+    let params = body.get("params").cloned().unwrap_or_else(|| json!({}));
+    if let Some(err) = mcp_protocol::check_headers(&id, &method, &params, h("mcp-method"), h("mcp-name")) {
+        return (StatusCode::BAD_REQUEST, Json(err)).into_response();
+    }
+    let spec = connectors_server_spec();
+    let era = mcp_protocol::Era::of(&method, &params, h("mcp-protocol-version"));
+    let modern = era.is_modern();
+    let reply = |v: Value| {
+        let status = StatusCode::from_u16(mcp_protocol::http_status(modern, &v)).unwrap_or(StatusCode::OK);
+        (status, Json(v)).into_response()
+    };
+    if let Some(done) = mcp_protocol::preflight(&spec, &era, &id, &method) {
+        if done.is_null() {
+            return StatusCode::ACCEPTED.into_response();
+        }
+        return reply(done);
+    }
+    if body.get("id").is_none() {
+        return StatusCode::ACCEPTED.into_response();
+    }
+    match dispatch(body).await {
+        Ok(response) => reply(mcp_protocol::finish(&spec, &era, &method, response)),
+        Err(http_error) => http_error,
+    }
 }
 
 /// Prefix of cloud-issued runtime-device tokens, mirroring
@@ -376,29 +431,27 @@ pub async fn mcp_proxy_internal(
     // Allternit Mail is served in-process, not by the sidecar: intercept its
     // tools here (ownership is enforced against the authenticated user_id
     // inside the tool handlers, same as the REST surface).
-    if let Some(resp) = handle_allternit_mail_mcp(&state, &user_id, &body).await {
-        return resp;
-    }
-    proxy_mcp_response(user_id, body).await
+    serve_connectors_mcp(&headers, body, |body| async move {
+        if let Some(resp) = handle_allternit_mail_mcp(&state, &user_id, &body).await {
+            return Ok(resp);
+        }
+        proxy_mcp_value(user_id, body).await
+    })
+    .await
 }
 
 /// Serve the `allternit_mail.*` tools on the internal MCP endpoint. Returns
 /// `None` (caller should proxy to the sidecar) for anything that isn't a
-/// `tools/list` or an `allternit_mail.*` `tools/call`.
+/// `tools/list` or an `allternit_mail.*` `tools/call`; otherwise the JSON-RPC
+/// response envelope.
 async fn handle_allternit_mail_mcp(
     state: &Arc<AppState>,
     user_id: &str,
     body: &Value,
-) -> Option<axum::response::Response> {
+) -> Option<Value> {
     let method = body.get("method").and_then(|m| m.as_str())?;
     let id = body.get("id").cloned().unwrap_or(Value::Null);
-    let rpc_ok = |result: Value| {
-        (
-            StatusCode::OK,
-            Json(json!({ "jsonrpc": "2.0", "id": id, "result": result })),
-        )
-            .into_response()
-    };
+    let rpc_ok = |result: Value| json!({ "jsonrpc": "2.0", "id": id, "result": result });
     // MCP tool results carry payloads as text content; handler errors map to
     // isError:true (JSON-RPC 200), so MCP clients surface them as tool errors.
     let rpc_tool = |out: Result<Value, (StatusCode, Json<Value>)>| match out {
@@ -430,6 +483,7 @@ async fn handle_allternit_mail_mcp(
                 tools.extend(own.iter().cloned());
             }
             tools.extend(crate::phone_outbound::mcp_tools(&state.db, user_id));
+            mcp_protocol::ordering::sort_tools(&mut tools);
             Some(rpc_ok(json!({ "tools": tools })))
         }
         "tools/call" => {
@@ -460,21 +514,21 @@ async fn handle_allternit_mail_mcp(
 
 /// Shared core of both MCP proxy entry points: forward the JSON-RPC body to
 /// the sidecar with the per-user `x-oo-connector-alias` header.
-async fn proxy_mcp_response(user_id: String, body: Value) -> axum::response::Response {
+async fn proxy_mcp_value(user_id: String, body: Value) -> Result<Value, axum::response::Response> {
     match crate::open_connector_proxy::proxy_mcp(&user_id, body).await {
-        Ok(resp) => (StatusCode::OK, Json(resp)).into_response(),
-        Err(e) if e.unreachable => (
+        Ok(resp) => Ok(resp),
+        Err(e) if e.unreachable => Err((
             StatusCode::BAD_GATEWAY,
             Json(
                 json!({ "error": "sidecar_unavailable", "message": "Connector sidecar unavailable — the open-connector process is down or still starting." }),
             ),
         )
-            .into_response(),
-        Err(e) => (
+            .into_response()),
+        Err(e) => Err((
             StatusCode::from_u16(e.status).unwrap_or(StatusCode::BAD_GATEWAY),
             Json(json!({ "error": "mcp_proxy_failed", "message": e.message })),
         )
-            .into_response(),
+            .into_response()),
     }
 }
 
@@ -3128,7 +3182,7 @@ mod tests {
         )
         .await
         .expect("tools/list intercepted");
-        let body = body_json(resp.into_body()).await;
+        let body = resp;
         let tools = body["result"]["tools"].as_array().unwrap();
         let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
         assert!(names.contains(&"allternit_mail.send"), "tools: {names:?}");
@@ -3147,7 +3201,7 @@ mod tests {
         )
         .await
         .expect("status tool intercepted");
-        let body = body_json(resp.into_body()).await;
+        let body = resp;
         assert_eq!(body["result"]["isError"], false);
         let payload: Value =
             serde_json::from_str(body["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
@@ -3164,7 +3218,7 @@ mod tests {
         )
         .await
         .expect("unknown mail tool intercepted");
-        let body = body_json(resp.into_body()).await;
+        let body = resp;
         assert_eq!(body["result"]["isError"], true);
 
         // Non-mail tools/call and other methods fall through to the sidecar.
@@ -3205,7 +3259,7 @@ mod tests {
         )
         .await
         .expect("send intercepted");
-        let body = body_json(resp.into_body()).await;
+        let body = resp;
         assert_eq!(body["result"]["isError"], true);
         let payload: Value =
             serde_json::from_str(body["result"]["content"][0]["text"].as_str().unwrap()).unwrap();

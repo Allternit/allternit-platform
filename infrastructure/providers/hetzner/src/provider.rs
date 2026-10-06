@@ -145,7 +145,7 @@ set -euo pipefail
 command -v curl >/dev/null 2>&1 || {{ apt-get update -qq && apt-get install -y -qq curl ca-certificates; }}
 mkdir -p /opt/gizzi/bin
 if [ ! -f /opt/gizzi/bin/gizzi-code ]; then
-    curl -fsSL "https://github.com/Gizziio/gizzi-code/releases/download/{release}/gizzi-code-linux-x64-native" -o /tmp/gizzi-code.download
+    curl -fsSL "https://github.com/Allternit/gizzi-code/releases/download/{release}/gizzi-code-linux-x64-native" -o /tmp/gizzi-code.download
     echo "{sha256}  /tmp/gizzi-code.download" | sha256sum -c -
     mv /tmp/gizzi-code.download /opt/gizzi/bin/gizzi-code
     chmod +x /opt/gizzi/bin/gizzi-code

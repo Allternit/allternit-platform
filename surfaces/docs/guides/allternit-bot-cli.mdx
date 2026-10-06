@@ -26,7 +26,7 @@ allternit-bot help
 
 The installer works on macOS and Linux (Intel and ARM), checks the download's SHA-256, and installs into `~/.local/bin` without root (`--dir` picks another folder). `login` saves the key and bot id in `~/.config/allternit-bot/config.json`, readable only by that user. Instead of `login` you can set `ALLTERNIT_BOT_KEY` and `ALLTERNIT_BOT_ID` in the environment. The key is never taken from the command line, where other processes could see it.
 
-To cut an agent off, choose **Revoke** next to its key. Its next call is refused.
+To cut an agent off, choose **Revoke** next to its key. Its next call is refused, and any [event subscriptions](/guides/mcp-events) it made end with a signed `terminated` message.
 
 ## Commands
 

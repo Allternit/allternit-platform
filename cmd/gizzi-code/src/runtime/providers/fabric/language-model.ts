@@ -18,15 +18,21 @@
  * - Thought stream: until the reply starts, what the Sessions computer is
  *   doing (sending, queued, sent, the provider's step labels, still
  *   working) goes out as a reasoning part — see thoughts.ts.
+ * - Files: a finished task's artifacts are downloaded through the forwarder,
+ *   sha256-checked, and emitted after the reply text as a raw
+ *   `__gizzi: "generated_file"` part (filename, title, origin) followed by
+ *   the AI SDK `file` part. The processor stores them as FileParts on the
+ *   assistant message; the chat bridges turn them into artifact cards.
  * - Abort → `POST /v1/tasks/:id/cancel`. A dropped event stream reconnects
  *   (the gateway replays missed events) until the task is terminal.
  */
 
+import { createHash } from "crypto"
 import type { LanguageModelV2, LanguageModelV2StreamPart } from "@ai-sdk/provider"
 import { Log } from "@/shared/util/log"
 import { Token } from "@/shared/util/token"
 import { resolveTaskSessionID } from "@/runtime/session/stream-context"
-import { FabricError, HUMAN_ACTION_HEADER, providerDisplayName } from "./client"
+import { FabricError, HUMAN_ACTION_HEADER, fabricFetch, fabricJson, providerDisplayName } from "./client"
 import { askProviderQuestion, confirmSend } from "./human-gate"
 import { cancelFabricTask, followFabricTask, submitFabricTask, type FabricTask, type FabricTaskBody, type FollowHandlers } from "./tasks"
 import { createThoughtStream } from "./thoughts"
@@ -35,6 +41,17 @@ const log = Log.create({ service: "fabric-lm" })
 
 /** Provider questions answered in one turn before it stops asking. */
 const MAX_QUESTION_ROUNDS = 5
+/** Files up to this size are inlined into the message (data URL). */
+export const FABRIC_INLINE_LIMIT_BYTES = 24 * 1024 * 1024
+
+interface FabricArtifactMeta {
+  artifact_id: string
+  type?: string
+  mime_type?: string | null
+  format?: string | null
+  title?: string | null
+  storage?: { sha256?: string | null; size_bytes?: number | null }
+}
 
 export class SubscriptionFabricLanguageModel implements LanguageModelV2 {
   readonly specificationVersion = "v2" as const
@@ -195,6 +212,35 @@ export class SubscriptionFabricLanguageModel implements LanguageModelV2 {
             if (full.startsWith(streamed)) text(full.slice(streamed.length))
             else if (!streamed) text(full)
             else log.warn("final text diverged from the streamed text", { taskID })
+            const ids = outcome.result?.artifact_ids ?? []
+            if (ids.length > 0) {
+              thoughts.progress(ids.length === 1 ? "Downloading the file" : `Downloading ${ids.length} files`)
+              const missing: string[] = []
+              for (const id of ids) {
+                const parts = await fetchArtifact(id, abortSignal).catch((error) => {
+                  log.warn("artifact download failed", { taskID, artifactID: id, error: String(error) })
+                  return undefined
+                })
+                if (!parts) {
+                  missing.push(id)
+                  continue
+                }
+                // Close the reply text first so each file follows it in order.
+                thoughts.end()
+                if (textOpen) {
+                  controller.enqueue({ type: "text-end", id: "text-1" })
+                  textOpen = false
+                }
+                for (const part of parts) controller.enqueue(part)
+              }
+              if (missing.length > 0) {
+                const noun = missing.length === 1 ? "A file" : `${missing.length} files`
+                text(
+                  `${emitted ? "\n\n" : ""}${noun} from this reply could not be downloaded intact. ` +
+                    `They are still on your Sessions computer (${missing.join(", ")}).`,
+                )
+              }
+            }
             finish("stop")
             return
           }
@@ -284,4 +330,61 @@ function lastUserText(prompt: any[]): string {
 
 function hasAssistantTurn(prompt: any[]): boolean {
   return prompt.some((m) => m?.role === "assistant")
+}
+
+/**
+ * One artifact → stream parts: a raw `generated_file` part (name, title,
+ * origin) then the AI SDK `file` part with the verified bytes. Over the
+ * inline limit: only the raw part, pointing at the forwarder download URL.
+ * Throws when the bytes do not match the gateway's sha256.
+ */
+export async function fetchArtifact(artifactID: string, signal?: AbortSignal): Promise<LanguageModelV2StreamPart[]> {
+  const id = encodeURIComponent(artifactID)
+  const meta = await fabricJson<FabricArtifactMeta>("GET", `/v1/artifacts/${id}`, { signal }).catch(
+    () => undefined as FabricArtifactMeta | undefined,
+  )
+  const title = meta?.title?.trim() || undefined
+  const described = {
+    __gizzi: "generated_file",
+    title,
+    sourceUri: `fabric-artifact://${artifactID}`,
+  }
+  const size = meta?.storage?.size_bytes
+  if (typeof size === "number" && size > FABRIC_INLINE_LIMIT_BYTES) {
+    const mediaType = meta?.mime_type || "application/octet-stream"
+    return [
+      {
+        type: "raw",
+        raw: {
+          ...described,
+          mediaType,
+          filename: artifactFilename(artifactID, meta?.format),
+          url: `/api/v1/subscriptions/gateway/v1/artifacts/${id}/download`,
+        },
+      } as unknown as LanguageModelV2StreamPart,
+    ]
+  }
+  const res = await fabricFetch("GET", `/v1/artifacts/${id}/download`, { signal })
+  if (!res.ok) throw new FabricError(`artifact download failed (${res.status})`, res.status)
+  const bytes = new Uint8Array(await res.arrayBuffer())
+  const expected = (res.headers.get("x-artifact-sha256") || meta?.storage?.sha256 || "").toLowerCase()
+  const actual = createHash("sha256").update(bytes).digest("hex")
+  if (!expected || expected !== actual) {
+    throw new Error(expected ? `sha256 mismatch (expected ${expected}, got ${actual})` : "no sha256 to check against")
+  }
+  const mediaType = (res.headers.get("content-type") || meta?.mime_type || "application/octet-stream").split(";")[0].trim()
+  const filename = dispositionFilename(res.headers.get("content-disposition")) ?? artifactFilename(artifactID, meta?.format)
+  return [
+    { type: "raw", raw: { ...described, mediaType, filename } } as unknown as LanguageModelV2StreamPart,
+    { type: "file", mediaType, data: bytes } as LanguageModelV2StreamPart,
+  ]
+}
+
+function artifactFilename(artifactID: string, format?: string | null): string {
+  return format ? `${artifactID}.${format}` : artifactID
+}
+
+function dispositionFilename(header: string | null): string | undefined {
+  const match = header ? /filename="?([^";]+)"?/i.exec(header) : null
+  return match?.[1]?.trim() || undefined
 }

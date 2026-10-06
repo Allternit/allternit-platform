@@ -9,7 +9,7 @@ import { readDesignAck } from '../../../../../shared/utils/designPromptAck.js';
 import { errorMessage } from '../../../../../shared/utils/errors.js';
 import { LoadingState } from '../../components/design-system/LoadingState.js';
 
-const DESKTOP_DOWNLOAD_URL = 'https://github.com/Gizziio/desktop/releases';
+const DESKTOP_DOWNLOAD_URL = 'https://github.com/Allternit/desktop/releases';
 
 // How long the command waits for the studio to report prompt consumption
 // (~/.allternit/design-prompt-ack.json, written via POST /v1/design/ack).

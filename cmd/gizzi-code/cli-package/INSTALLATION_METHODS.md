@@ -23,7 +23,7 @@ irm https://install.gizziio.com/install.ps1 | iex
 ### Homebrew (macOS)
 
 ```bash
-brew tap Gizziio/tap
+brew tap Allternit/tap
 brew install gizzi-code
 ```
 
@@ -42,7 +42,7 @@ winget install Allternit.GizziCode
 ### Scoop (Windows)
 
 ```powershell
-scoop bucket add gizziio https://github.com/Gizziio/scoop-bucket
+scoop bucket add allternit https://github.com/Allternit/scoop-bucket
 scoop install gizzi-code
 ```
 
@@ -53,17 +53,17 @@ scoop install gizzi-code
 ### Download Binary
 
 1. Download the latest release from GitHub (assets are version-named, e.g.
-   `gizzi-code-v2.0.1-<target>.tar.gz`; see
-   https://github.com/Gizziio/allternit-platform/releases):
+   `gizzi-code-v2.1.9-<target>.tar.gz`; see
+   https://github.com/Allternit/allternit-platform/releases):
    ```bash
    # macOS (Apple Silicon)
-   curl -LO https://github.com/Gizziio/allternit-platform/releases/download/gizzi-code/v2.0.1/gizzi-code-v2.0.1-darwin-arm64.tar.gz
+   curl -LO https://github.com/Allternit/allternit-platform/releases/download/gizzi-code/v2.1.9/gizzi-code-v2.1.9-darwin-arm64.tar.gz
 
    # Linux (x64)
-   curl -LO https://github.com/Gizziio/allternit-platform/releases/download/gizzi-code/v2.0.1/gizzi-code-v2.0.1-linux-x64.tar.gz
+   curl -LO https://github.com/Allternit/allternit-platform/releases/download/gizzi-code/v2.1.9/gizzi-code-v2.1.9-linux-x64.tar.gz
 
    # Windows (x64)
-   curl -LO https://github.com/Gizziio/allternit-platform/releases/download/gizzi-code/v2.0.1/gizzi-code-v2.0.1-windows-x64.zip
+   curl -LO https://github.com/Allternit/allternit-platform/releases/download/gizzi-code/v2.1.9/gizzi-code-v2.1.9-windows-x64.zip
    ```
 
 2. Make executable (macOS/Linux):
@@ -83,7 +83,7 @@ scoop install gizzi-code
 
 ```bash
 # Clone repository
-git clone https://github.com/Gizziio/allternit-platform.git
+git clone https://github.com/Allternit/allternit-platform.git
 cd gizzi-code/cli-package
 
 # Install dependencies
@@ -103,7 +103,7 @@ npm link
 Build the image from the repo (no prebuilt image is published yet):
 
 ```bash
-git clone https://github.com/Gizziio/allternit-platform.git
+git clone https://github.com/Allternit/allternit-platform.git
 cd allternit-platform/cmd/gizzi-code
 bun run build --target=linux-x64   # produces dist/gizzi-code-linux-x64
 docker build -t gizzi-code .
@@ -178,7 +178,7 @@ rm -rf ~/.config/gizzi
 
 ```bash
 brew uninstall gizzi-code
-brew untap gizziio/gizzi
+brew untap allternit/tap
 ```
 
 ### npm
@@ -227,5 +227,5 @@ winget upgrade Allternit.GizziCode  # Winget
 ## Support
 
 - **Documentation**: https://docs.gizziio.com
-- **Issues**: https://github.com/Gizziio/allternit-platform/issues
+- **Issues**: https://github.com/Allternit/allternit-platform/issues
 - **Discord**: https://discord.gg/allternit

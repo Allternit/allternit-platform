@@ -197,23 +197,23 @@ final class SettingsStore: ObservableObject {
 
     // MARK: - Products (Settings > Products parity)
 
-    /// Gizziio Code: bypass desktop permission checks (developer-only).
+    /// Gizzi Code: bypass desktop permission checks (developer-only).
     @Published var gizziBypassPermissions: Bool {
         didSet { defaults.set(gizziBypassPermissions, forKey: Keys.gizziBypassPermissions) }
     }
-    /// Gizziio Code: draw-attention notifications.
+    /// Gizzi Code: draw-attention notifications.
     @Published var gizziDrawAttentionNotifications: Bool {
         didSet { defaults.set(gizziDrawAttentionNotifications, forKey: Keys.gizziDrawAttentionNotifications) }
     }
-    /// Gizziio Code: enable browser tools.
+    /// Gizzi Code: enable browser tools.
     @Published var gizziBrowserTools: Bool {
         didSet { defaults.set(gizziBrowserTools, forKey: Keys.gizziBrowserTools) }
     }
-    /// Gizziio Code: auto-create pull requests.
+    /// Gizzi Code: auto-create pull requests.
     @Published var gizziAutoCreatePRs: Bool {
         didSet { defaults.set(gizziAutoCreatePRs, forKey: Keys.gizziAutoCreatePRs) }
     }
-    /// Gizziio Code: autofix failing PRs.
+    /// Gizzi Code: autofix failing PRs.
     @Published var gizziAutofixPRs: Bool {
         didSet { defaults.set(gizziAutofixPRs, forKey: Keys.gizziAutofixPRs) }
     }

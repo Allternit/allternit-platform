@@ -3,6 +3,8 @@
 use async_trait::async_trait;
 use serde_json::Value;
 
+use crate::protocol::JsonRpcMessage;
+
 pub mod sse;
 pub mod stdio;
 pub mod streamable_http;
@@ -19,7 +21,8 @@ pub enum TransportType {
     Stdio,
     /// Server-Sent Events transport (HTTP)
     Sse,
-    /// Streamable HTTP transport (MCP spec 2025-06-18)
+    /// Streamable HTTP transport (legacy 2025-03-26..2025-11-25 sessions, and
+    /// stateless 2026-07-28)
     StreamableHttp,
 }
 
@@ -56,6 +59,26 @@ pub trait McpTransport: Send + Sync + std::fmt::Debug {
     /// * `params` - Optional parameters for the method
     async fn notify(&self, method: &str, params: Option<Value>) -> crate::error::Result<()>;
 
+    /// Send a raw JSON-RPC message. Only the stdio transport (and the POST
+    /// half of the HTTP transports) support this; the default refuses.
+    async fn send(&self, message: JsonRpcMessage) -> crate::error::Result<()> {
+        let _ = message;
+        Err(crate::error::McpError::Protocol(format!(
+            "{} transport does not support raw send; use request()",
+            self.transport_type()
+        )))
+    }
+
+    /// Receive the next raw JSON-RPC message the server sends (stdio only;
+    /// subscribe before sending — earlier messages are not replayed). The
+    /// default refuses.
+    async fn receive(&self) -> crate::error::Result<Option<JsonRpcMessage>> {
+        Err(crate::error::McpError::Protocol(format!(
+            "{} transport does not support raw receive; use request()",
+            self.transport_type()
+        )))
+    }
+
     /// Check if the transport is healthy and connected
     async fn is_healthy(&self) -> bool;
 
@@ -64,6 +87,52 @@ pub trait McpTransport: Send + Sync + std::fmt::Debug {
 
     /// Get the transport type
     fn transport_type(&self) -> TransportType;
+
+    /// Key under which the server's protocol era is cached process-wide
+    /// (the HTTP origin). `None` (the default) disables caching, e.g. for a
+    /// stdio child whose era lives only as long as the process.
+    fn era_cache_key(&self) -> Option<String> {
+        None
+    }
+}
+
+// Any shared transport is a transport.
+#[async_trait]
+impl<T> McpTransport for std::sync::Arc<T>
+where
+    T: McpTransport + ?Sized,
+{
+    async fn request(&self, method: &str, params: Option<Value>) -> crate::error::Result<Value> {
+        (**self).request(method, params).await
+    }
+
+    async fn notify(&self, method: &str, params: Option<Value>) -> crate::error::Result<()> {
+        (**self).notify(method, params).await
+    }
+
+    async fn send(&self, message: JsonRpcMessage) -> crate::error::Result<()> {
+        (**self).send(message).await
+    }
+
+    async fn receive(&self) -> crate::error::Result<Option<JsonRpcMessage>> {
+        (**self).receive().await
+    }
+
+    async fn is_healthy(&self) -> bool {
+        (**self).is_healthy().await
+    }
+
+    async fn close(&self) -> crate::error::Result<()> {
+        (**self).close().await
+    }
+
+    fn transport_type(&self) -> TransportType {
+        (**self).transport_type()
+    }
+
+    fn era_cache_key(&self) -> Option<String> {
+        (**self).era_cache_key()
+    }
 }
 
 /// Transport configuration

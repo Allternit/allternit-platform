@@ -562,7 +562,7 @@ echo "setup-stage: deps installed"
 GIZZI_RELEASE="hosted-runtime-2026.07.16"
 GIZZI_SHA256="f1d29bad0b3903d77261e7706ff80fd292fefece3ebeaa4bb7f08a51ad2fc694"
 mkdir -p /opt/gizzi/bin
-curl -fsSL "https://github.com/Gizziio/gizzi-code/releases/download/${{GIZZI_RELEASE}}/gizzi-code-linux-x64-native" -o /opt/gizzi/bin/gizzi-code
+curl -fsSL "https://github.com/Allternit/gizzi-code/releases/download/${{GIZZI_RELEASE}}/gizzi-code-linux-x64-native" -o /opt/gizzi/bin/gizzi-code
 echo "${{GIZZI_SHA256}}  /opt/gizzi/bin/gizzi-code" | sha256sum -c -
 chmod +x /opt/gizzi/bin/gizzi-code
 echo "setup-stage: gizzi-code installed"

@@ -235,7 +235,7 @@ app.on('render-process-gone', (_event, webContents, details) => {
 // Defaults read package.json repository, but we make the feed explicit so
 // local/self-hosted builds never accidentally phone home to the wrong repo.
 updateElectronApp({
-  repo: 'Gizziio/desktop',
+  repo: 'Allternit/desktop',
   updateInterval: '1 hour',
   logger: log,
   notifyUser: false, // renderer will observe app:update-status and prompt

@@ -220,12 +220,15 @@ Allternit can also expose its tool registry as an MCP server at `/mcp/server`. T
 
 | Method | Description |
 |--------|-------------|
-| `initialize` | Exchange protocol version and capabilities |
+| `server/discover` | Supported protocol versions, capabilities, server info, and instructions (MCP 2026-07-28) |
+| `initialize` | Legacy handshake (2025-11-25 and earlier) |
 | `ping` | Health check |
 | `tools/list` | List all available tools, including attached MCP server tools |
 | `tools/call` | Execute a tool by name |
 
-### Initialize
+The server speaks MCP 2026-07-28 (stateless: the version rides in each request's `_meta`, no `initialize`) and the older handshake versions on the same endpoint. See [MCP servers API: protocol versions](/api/mcp-servers#protocol-versions).
+
+### Initialize (legacy clients)
 
 ```bash
 curl -X POST http://127.0.0.1:8013/mcp/server \
@@ -251,8 +254,9 @@ Response:
   "id": 1,
   "result": {
     "protocolVersion": "2025-03-26",
-    "capabilities": { "tools": {} },
-    "serverInfo": { "name": "allternit-api", "version": "0.1.0" }
+    "capabilities": { "tools": { "listChanged": false }, "resources": { "subscribe": false, "listChanged": false } },
+    "serverInfo": { "name": "allternit-api", "version": "0.1.0" },
+    "instructions": "Read-only access to the caller's Allternit agents and their runs. …"
   }
 }
 ```

@@ -37,7 +37,7 @@ Allternit Desktop is a **cloud-connected client** for self-hosted Allternit back
 │  • Docker container                                            │
 │                                                                  │
 │  Contains:                                                      │
-│  • Vite + React SPA workspace UI (private Gizziio/allternit-ai)                                   │
+│  • Vite + React SPA workspace UI (private Allternit/allternit-ai)                                   │
 │  • Rust API Services (15+ services)                           │
 │  • SQLite/PostgreSQL database                                 │
 │  • All AI/ML infrastructure                                   │

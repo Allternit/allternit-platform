@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Settings > Products parity — Gizziio Code, Cowork, and Extensions.
+/// Settings > Products parity — Gizzi Code, Cowork, and Extensions.
 ///
 /// Phase 1 surfaces the user-facing toggles that map to the web's products
 /// group. Most are local preference flags.
@@ -21,7 +21,7 @@ struct ProductsSettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
     }
 
-    // MARK: - Gizziio Code
+    // MARK: - Gizzi Code
 
     private var gizziioCodeSection: some View {
         Section {
@@ -29,7 +29,7 @@ struct ProductsSettingsView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Browser tools")
                         .font(.subheadline)
-                    Text("Allow Gizziio Code to read from browser contexts.")
+                    Text("Allow Gizzi Code to read from browser contexts.")
                         .font(.caption)
                         .foregroundColor(Color("TextSecondary"))
                 }
@@ -72,7 +72,7 @@ struct ProductsSettingsView: View {
             .tint(Color("AccentPrimary"))
             #endif
         } header: {
-            Text("Gizziio Code")
+            Text("Gizzi Code")
         }
     }
 

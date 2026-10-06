@@ -13,7 +13,7 @@ on:
   workflow_dispatch:
 
 env:
-  IMAGE_NAME: ghcr.io/gizziio/allternit-hosted-runtime
+  IMAGE_NAME: ghcr.io/allternit/allternit-hosted-runtime
 
 jobs:
   publish:

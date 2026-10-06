@@ -248,8 +248,11 @@ const bundlePlugin = {
             loader: "js",
         }));
 
-        build.onResolve({ filter: /^@modelcontextprotocol\/sdk\/types/ }, () => ({
-            path: resolve("node_modules/@modelcontextprotocol/sdk/dist/cjs/types.js"),
+        // MCP SDK v2 (@modelcontextprotocol/client|server): the bundle is built with the
+        // "browser" condition, which would pick the SDK's browser shims (CORS-aware fetch
+        // errors, cfworker JSON-schema validator). gizzi runs on Bun, so pin the Node shims.
+        build.onResolve({ filter: /^@modelcontextprotocol\/(client|server)\/_shims$/ }, (args) => ({
+            path: resolve(`node_modules/@modelcontextprotocol/${args.path.split("/")[1]}/dist/shimsNode.mjs`),
         }));
         build.onResolve({ filter: /^@allternit\/orchestrator$/ }, () => ({
             path: resolve("../../platform/packages/orchestrator/src/index.ts"),
@@ -447,6 +450,14 @@ if (migrations.length > 0) {
 }
 await Bun.write(BUNDLE_FILE, bundleCode);
 console.log(`   ✓ Bundle written: ${BUNDLE_FILE} (${Math.round(bundleCode.length / 1024)} KB)`);
+// The MCP SDK v2 client must be inlined (npm/brew ship only the compiled binary; there is
+// no node_modules next to it). "EraNegotiationFailed" is an SDK v2 error code literal
+// (dual-era negotiation) that gizzi's own source never spells.
+if (!bundleCode.includes("EraNegotiationFailed")) {
+    console.error("✗ MCP SDK v2 is not inlined in the bundle (dual-era negotiation code missing)");
+    process.exit(1);
+}
+console.log("   ✓ MCP SDK v2 inlined (2026-07-28 + legacy fallback)");
 const { code: patchedBundleCode, patched } = patchEsmAsyncWrappers(bundleCode);
 if (patched > 0) {
     await Bun.write(BUNDLE_FILE, patchedBundleCode);

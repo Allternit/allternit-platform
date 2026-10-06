@@ -4,7 +4,7 @@ name: Deploy Platform to Cloudflare Pages
 # Office add-in runtime. It must NEVER deploy --project-name=ai-allternit.
 #
 # ai.allternit.com is the agent workspace. Its source lives in the private
-# repo Gizziio/allternit-ai (not this public repo; not Gizziio/allternit-cloud —
+# repo Allternit/allternit-ai (not this public repo; not Gizziio/allternit-cloud —
 # that name was a misleading dump label and has been renamed). Pages Git on
 # project ai-allternit is that private repo; this workflow must never deploy it.
 

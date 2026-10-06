@@ -849,6 +849,19 @@ async fn main() {
         });
     }
 
+    // Runtime → cloud event forwarder: user-facing ledger events (bot_events +
+    // runtime_user_events) go up to the cloud event backbone (inert until paired).
+    {
+        let state = Arc::clone(&state);
+        let mut shutdown_rx = shutdown_tx.subscribe();
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = shutdown_rx.recv() => {}
+                _ = allternit_api::runtime_events::run(state) => {}
+            }
+        });
+    }
+
     // OfficeCLI idle reaper: evicts stale docs, closes idle resident sessions,
     // kills idle watch processes and MCP sessions.
     {
@@ -907,6 +920,7 @@ async fn main() {
         .merge(allternit_api::rails::fabric_transport_routes::fabric_transport_routes())
         .merge(agent_router())
         .merge(allternit_api::agent_email_routes::agent_email_router())
+        .merge(allternit_api::phone_seen_routes::phone_seen_router())
         .merge(agent_preferences_router())
         .merge(agent_workspace_router())
         // A thread placed on another Allternit (P4.2): its session's calls

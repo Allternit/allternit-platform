@@ -23,6 +23,17 @@
 //! that, or with every computer offline, the caller gets a JSON-RPC error in
 //! plain words.
 //!
+//! **MCP Events** (`events/list|subscribe|unsubscribe`) are answered here,
+//! never relayed: the edge owns the subscriptions, knows the verified
+//! principal and the owner's approvals, and delivery runs from the cloud
+//! event backbone. See `routes::mcp_events`. `server/discover` (and a relayed
+//! `initialize` answer) advertise `"events": {"listChanged": false}`.
+//!
+//! **Human page**: `GET /` on the MCP host, and `GET /mcp` from a browser
+//! (`Accept: text/html`, no token), return a small self-contained "Allternit
+//! MCP" page (server URLs, protocol versions, event catalog, how to connect).
+//! JSON clients keep the behaviour above.
+//!
 //! Inert until `MCP_PUBLIC_URL` is set: every route answers 503
 //! `{"error":"mcp_edge_not_configured"}`. `MCP_OAUTH_ISSUER` (default
 //! `https://allternit.com/__clerk`) is advertised as the authorization server.
@@ -65,6 +76,7 @@ pub const OFFLINE_MESSAGE: &str = "Your Allternit computer is offline; it will b
 
 pub fn routes() -> Router<Arc<ApiState>> {
     Router::new()
+        .route("/", get(home_page))
         .route("/mcp/bots/:vendor_bot_id", get(bot_endpoint).post(bot_endpoint))
         .route("/mcp/server", get(agents_endpoint).post(agents_endpoint))
         .route("/mcp", get(agents_endpoint).post(agents_endpoint))
@@ -276,6 +288,10 @@ pub trait EdgeBackend: Send + Sync {
     async fn verify_cli_key(&self, _token: &str, _vendor_bot_id: &str) -> Result<Option<(String, String)>, String> {
         Ok(None)
     }
+    /// Where `events/*` subscriptions live; `None` = events unavailable.
+    fn events_store(&self) -> Option<&dyn crate::routes::mcp_events::EventsStore> {
+        None
+    }
 }
 
 /// Which of the owner's runtimes answered for a bot last time.
@@ -298,6 +314,15 @@ fn forget_holder(user_id: &str, bot_id: &str) {
 }
 
 // ─── core ─────────────────────────────────────────────────────────────────────
+
+/// A reply the edge answers itself, with the Streamable HTTP status its era
+/// calls for (`mcp_protocol::http_status`: 400 version/header errors, 404 an
+/// unknown method on a modern request, else 200) — the same rule the
+/// runtime servers apply.
+fn rpc_reply(era: &mcp_protocol::Era, reply: Value) -> Response {
+    let status = StatusCode::from_u16(mcp_protocol::http_status(era.is_modern(), &reply)).unwrap_or(StatusCode::OK);
+    (status, Json(reply)).into_response()
+}
 
 fn rpc_error(id: Value, message: &str) -> Response {
     Json(json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32000, "message": message } })).into_response()
@@ -412,6 +437,32 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
         Err(_) => return (StatusCode::BAD_REQUEST, Json(json!({ "error": "invalid_json" }))).into_response(),
     };
     let id = request.get("id").cloned().unwrap_or(Value::Null);
+    let rpc_method = request["method"].as_str().unwrap_or_default();
+    let h = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
+    if let Some(err) = mcp_protocol::check_headers(&id, rpc_method, &request["params"], h("mcp-method"), h("mcp-name")) {
+        return (StatusCode::BAD_REQUEST, Json(err)).into_response();
+    }
+    let spec = edge_spec(&target);
+    let era = mcp_protocol::Era::of(rpc_method, &request["params"], h("mcp-protocol-version"));
+    // `server/discover` is static: answer it here so a modern client learns
+    // versions, capabilities and instructions without waking the computer.
+    if rpc_method == "server/discover" {
+        if let Some(reply) = mcp_protocol::preflight(&spec, &era, &id, rpc_method) {
+            return rpc_reply(&era, reply);
+        }
+    }
+    // MCP Events: the edge owns subscriptions; nothing goes to the runtime.
+    if rpc_method.starts_with("events/") {
+        if let Some(reply) = mcp_protocol::preflight(&spec, &era, &id, rpc_method) {
+            return rpc_reply(&era, reply);
+        }
+        let Some(store) = backend.events_store() else {
+            return rpc_reply(&era, mcp_protocol::rpc_err(&id, mcp_protocol::codes::METHOD_NOT_FOUND, "Events are not available"));
+        };
+        let principal = crate::routes::mcp_events::Principal { user_id: caller.user_id.clone(), client: caller.client.clone(), target: target.approval_target() };
+        let reply = crate::routes::mcp_events::handle(store, &principal, &id, rpc_method, &request["params"], chrono::Utc::now()).await;
+        return rpc_reply(&era, mcp_protocol::finish(&spec, &era, rpc_method, reply));
+    }
 
     let outcome = match tokio::time::timeout(BUDGET, deliver(backend, &target, &caller, &body)).await {
         Ok(o) => o,
@@ -421,6 +472,7 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
         Outcome::Unreachable => rpc_error(id, OFFLINE_MESSAGE),
         Outcome::NotFound => (StatusCode::NOT_FOUND, Json(json!({ "error": "not_found" }))).into_response(),
         Outcome::Answer(status, reply) => {
+            let reply = if rpc_method == "initialize" && status == 200 { advertise_events(reply) } else { reply };
             let status = StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY);
             let mut resp = Response::new(axum::body::Body::from(reply));
             *resp.status_mut() = status;
@@ -434,16 +486,138 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
     }
 }
 
+/// The spec the edge answers `server/discover` (and `events/*` decoration) with.
+fn edge_spec(target: &Target) -> mcp_protocol::ServerSpec {
+    let spec = match target {
+        Target::Bot(_) => mcp_protocol::servers::vendor_bot(env!("CARGO_PKG_VERSION")),
+        Target::Agents => mcp_protocol::servers::agents(env!("CARGO_PKG_VERSION")),
+    };
+    mcp_protocol::servers::with_events(spec)
+}
+
+/// A relayed `initialize` answer comes from the runtime, which doesn't know
+/// the edge serves events: add the capability so legacy-era clients see it too.
+fn advertise_events(reply: Vec<u8>) -> Vec<u8> {
+    let Ok(mut v) = serde_json::from_slice::<Value>(&reply) else { return reply };
+    match v.pointer_mut("/result/capabilities").and_then(Value::as_object_mut) {
+        Some(caps) => {
+            caps.insert("events".into(), json!({ "listChanged": false }));
+            serde_json::to_vec(&v).unwrap_or(reply)
+        }
+        None => reply,
+    }
+}
+
+// ─── human page ───────────────────────────────────────────────────────────────
+
+fn wants_html(headers: &HeaderMap) -> bool {
+    headers.get(header::ACCEPT).and_then(|v| v.to_str().ok()).is_some_and(|a| a.contains("text/html"))
+}
+
+fn esc(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+}
+
+const DOCS_BASE: &str = "https://docs.allternit.com";
+
+/// The "Allternit MCP" page: plain, self-contained (no external assets),
+/// light/dark, readable without JavaScript.
+pub fn home_html(base: &str) -> String {
+    use crate::routes::allternit_events::{visible, Audience};
+    let base = esc(base.trim_end_matches('/'));
+    let versions = mcp_protocol::SUPPORTED.iter().map(|v| format!("<code>{v}</code>")).collect::<Vec<_>>().join(", ");
+    let rows = |aud: Audience| {
+        visible(aud)
+            .map(|e| format!("<tr><td><code>{}</code></td><td>{}</td></tr>", esc(e.name), esc(e.description)))
+            .collect::<String>()
+    };
+    format!(
+        r#"<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Allternit MCP</title>
+<style>
+:root{{--bg:#ffffff;--fg:#1a1a1a;--muted:#5c5c5c;--line:#e3e3e3;--code:#f4f4f4;--link:#0b57d0}}
+@media (prefers-color-scheme: dark){{:root{{--bg:#141414;--fg:#ececec;--muted:#a8a8a8;--line:#2e2e2e;--code:#1f1f1f;--link:#8ab4f8}}}}
+*{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--fg);font:16px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}}
+main{{max-width:760px;margin:0 auto;padding:32px 16px 64px}}h1{{font-size:1.7rem;margin:0 0 4px}}h2{{font-size:1.15rem;margin:32px 0 8px}}
+p,li{{color:var(--fg)}}.muted{{color:var(--muted)}}a{{color:var(--link)}}code{{background:var(--code);padding:1px 5px;border-radius:4px;font-size:.92em;word-break:break-all}}
+table{{width:100%;border-collapse:collapse;font-size:.95rem}}th,td{{text-align:left;vertical-align:top;padding:8px 6px;border-bottom:1px solid var(--line)}}
+th{{color:var(--muted);font-weight:600}}ol{{padding-left:20px}}
+</style></head>
+<body><main>
+<h1>Allternit MCP</h1>
+<p class="muted">Model Context Protocol servers for your Allternit agents. Connect them from ChatGPT, Claude, or any MCP client.</p>
+
+<h2>Servers</h2>
+<table><thead><tr><th scope="col">URL</th><th scope="col">What it is</th></tr></thead><tbody>
+<tr><td><code>{base}</code></td><td>Agents server: read your agents and their runs. OAuth scope <code>agents:read</code>.</td></tr>
+<tr><td><code>{base}/bots/&lt;bot id&gt;</code></td><td>Vendor bot connector: act through one bot. OAuth scope <code>bots:act</code>.</td></tr>
+</tbody></table>
+<p>Protocol versions: {versions}. Streamable HTTP, <code>POST</code> JSON-RPC. Modern clients can call <code>server/discover</code>.</p>
+
+<h2>How to connect</h2>
+<ol>
+<li><strong>ChatGPT</strong>: Settings, Apps &amp; Connectors, add a custom connector with the server URL above, then sign in with your Allternit account.</li>
+<li><strong>Claude</strong>: Settings, Connectors, add custom connector with the server URL, then sign in.</li>
+<li>The first time an app connects, approve it in Allternit when asked. You can remove that approval at any time, which also ends its event subscriptions.</li>
+</ol>
+
+<h2>Events</h2>
+<p>Both servers support MCP Events (<code>events/list</code>, <code>events/subscribe</code>, <code>events/unsubscribe</code>) with signed webhook delivery (Standard Webhooks). Subscriptions last 24 hours by default and up to 7 days; refresh them before <code>refreshBefore</code>.</p>
+<h3 class="muted" style="font-size:1rem">Agents server</h3>
+<table><thead><tr><th scope="col">Event</th><th scope="col">When</th></tr></thead><tbody>{agents}</tbody></table>
+<h3 class="muted" style="font-size:1rem">Vendor bot connector</h3>
+<table><thead><tr><th scope="col">Event</th><th scope="col">When</th></tr></thead><tbody>{bot}</tbody></table>
+
+<h2>Docs</h2>
+<ul>
+<li><a href="{docs}/api/mcp-servers">MCP servers reference</a></li>
+<li><a href="{docs}/guides/mcp-events">MCP Events guide</a></li>
+</ul>
+</main></body></html>
+"#,
+        agents = rows(Audience::Agents),
+        bot = rows(Audience::Bot),
+        docs = DOCS_BASE,
+    )
+}
+
+fn html_response(body: String) -> Response {
+    let mut resp = Response::new(axum::body::Body::from(body));
+    resp.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static("text/html; charset=utf-8"));
+    resp.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("public, max-age=300"));
+    resp
+}
+
+/// The MCP host's base (`mcp.allternit.com`), from `MCP_PUBLIC_URL`.
+fn public_host(base: &str) -> Option<String> {
+    reqwest::Url::parse(base).ok().and_then(|u| u.host_str().map(str::to_ascii_lowercase))
+}
+
+/// `GET /`: the human page, only on the MCP host (api.allternit.com's root is untouched).
+async fn home_page(headers: HeaderMap) -> Response {
+    let Some(base) = public_mcp_url() else { return (StatusCode::NOT_FOUND, Json(json!({ "error": "not_found" }))).into_response() };
+    let host = headers.get(header::HOST).and_then(|v| v.to_str().ok()).map(|h| h.split(':').next().unwrap_or(h).to_ascii_lowercase());
+    if host.is_none() || host != public_host(&base) {
+        return (StatusCode::NOT_FOUND, Json(json!({ "error": "not_found" }))).into_response();
+    }
+    html_response(home_html(&base))
+}
+
 // ─── handlers ─────────────────────────────────────────────────────────────────
 
 async fn bot_endpoint(State(state): State<Arc<ApiState>>, Path(vendor_bot_id): Path<String>, method: Method, headers: HeaderMap, body: Bytes) -> Response {
     let Some(base) = public_mcp_url() else { return not_configured() };
-    serve(&ProdBackend { state: &state }, &base, Target::Bot(vendor_bot_id), &method, &headers, body).await
+    serve(&ProdBackend::new(&state), &base, Target::Bot(vendor_bot_id), &method, &headers, body).await
 }
 
 async fn agents_endpoint(State(state): State<Arc<ApiState>>, method: Method, headers: HeaderMap, body: Bytes) -> Response {
     let Some(base) = public_mcp_url() else { return not_configured() };
-    serve(&ProdBackend { state: &state }, &base, Target::Agents, &method, &headers, body).await
+    // A browser opening the server URL gets the human page, not a 401.
+    if method == Method::GET && wants_html(&headers) && !headers.contains_key(header::AUTHORIZATION) {
+        return html_response(home_html(&base));
+    }
+    serve(&ProdBackend::new(&state), &base, Target::Agents, &method, &headers, body).await
 }
 
 async fn well_known_agents() -> Response {
@@ -465,10 +639,21 @@ async fn well_known_at(Path(rest): Path<String>) -> Response {
 
 struct ProdBackend<'a> {
     state: &'a ApiState,
+    events: crate::routes::mcp_events::PgEventsStore<'a>,
+}
+
+impl<'a> ProdBackend<'a> {
+    fn new(state: &'a ApiState) -> Self {
+        Self { state, events: crate::routes::mcp_events::PgEventsStore { db: &state.db } }
+    }
 }
 
 #[async_trait::async_trait]
 impl EdgeBackend for ProdBackend<'_> {
+    fn events_store(&self) -> Option<&dyn crate::routes::mcp_events::EventsStore> {
+        Some(&self.events)
+    }
+
     async fn verify_cli_key(&self, token: &str, vendor_bot_id: &str) -> Result<Option<(String, String)>, String> {
         crate::routes::vendor_bot_keys::verify_key(&self.state.db, token, vendor_bot_id).await.map_err(|e| e.to_string())
     }
@@ -555,11 +740,12 @@ mod tests {
         cli_keys: HashMap<String, (String, String, String)>,
         /// (owner, client, target) the owner approved.
         approvals: Vec<(String, String, String)>,
+        events: crate::routes::mcp_events::testing::MemStore,
     }
 
     impl Fake {
         fn new(runtimes: &[&str]) -> Self {
-            Self { tokens: HashMap::new(), runtimes: runtimes.iter().map(|r| r.to_string()).collect(), replies: Mutex::new(HashMap::new()), calls: Mutex::new(vec![]), verified: AtomicUsize::new(0), cli_keys: HashMap::new(), approvals: vec![] }
+            Self { tokens: HashMap::new(), runtimes: runtimes.iter().map(|r| r.to_string()).collect(), replies: Mutex::new(HashMap::new()), calls: Mutex::new(vec![]), verified: AtomicUsize::new(0), cli_keys: HashMap::new(), approvals: vec![], events: Default::default() }
         }
         fn approved(mut self, user: &str, client: &str, target: &str) -> Self {
             self.approvals.push((user.into(), client.into(), target.into()));
@@ -584,6 +770,9 @@ mod tests {
 
     #[async_trait::async_trait]
     impl EdgeBackend for Fake {
+        fn events_store(&self) -> Option<&dyn crate::routes::mcp_events::EventsStore> {
+            Some(&self.events)
+        }
         async fn verify(&self, token: &str) -> Result<Value, String> {
             self.verified.fetch_add(1, Ordering::SeqCst);
             self.tokens.get(token).cloned().ok_or_else(|| "Invalid Clerk signature".to_string())
@@ -740,6 +929,115 @@ mod tests {
         assert!(f.paths().is_empty(), "nothing reaches a runtime until the token is right");
         // aud as an array, scope as `scp`, trailing slash: accepted.
         assert_eq!(post(&f, bot("b-auth-3"), &bearer("array-aud"), LIST).await.0, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn edge_answered_errors_get_the_spec_http_status() {
+        let f = Fake::new(&["rt1"]).token("agents", claims(BASE, AGENTS_SCOPE, "user-a"));
+        let bad_version = r#"{"jsonrpc":"2.0","id":"d","method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2099-01-01"}}}"#;
+        let (status, body) = { let (s, _, b) = post(&f, Target::Agents, &bearer("agents"), bad_version).await; (s, b) };
+        assert_eq!((status, body["error"]["code"].as_i64()), (StatusCode::BAD_REQUEST, Some(-32022)));
+        let ok = r#"{"jsonrpc":"2.0","id":"d","method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}"#;
+        assert_eq!(post(&f, Target::Agents, &bearer("agents"), ok).await.0, StatusCode::OK);
+        assert!(f.paths().is_empty());
+    }
+
+    #[tokio::test]
+    async fn server_discover_is_answered_at_the_edge_without_a_runtime() {
+        let f = Fake::new(&["rt1"]).token("agents", claims(BASE, AGENTS_SCOPE, "user-a")).token("bot", claims("https://mcp.allternit.com/mcp/bots/b-d", BOT_SCOPE, "user-a"));
+        let discover = r#"{"jsonrpc":"2.0","id":"d","method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}"#;
+        let (status, _, body) = post(&f, Target::Agents, &bearer("agents"), discover).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["result"]["supportedVersions"][0], "2026-07-28");
+        assert_eq!(body["result"]["instructions"], mcp_protocol::servers::AGENTS_INSTRUCTIONS);
+        let (_, _, body) = post(&f, bot("b-d"), &bearer("bot"), discover).await;
+        assert_eq!(body["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["name"], "allternit-vendor-bot");
+        assert!(f.paths().is_empty(), "discover never wakes a computer");
+        // Still behind auth.
+        assert_eq!(post(&f, Target::Agents, &HeaderMap::new(), discover).await.0, StatusCode::UNAUTHORIZED);
+    }
+
+    // ── MCP Events ────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn both_servers_advertise_events_in_discover_and_a_relayed_initialize() {
+        let f = Fake::new(&["rt1"])
+            .token("agents", claims(BASE, AGENTS_SCOPE, "user-a"))
+            .token("bot", claims("https://mcp.allternit.com/mcp/bots/b-d", BOT_SCOPE, "user-a"))
+            .reply("rt1", Ok((200, r#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{"tools":{}},"serverInfo":{"name":"x"}}}"#)));
+        let discover = r#"{"jsonrpc":"2.0","id":"d","method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}"#;
+        for (target, token) in [(Target::Agents, "agents"), (bot("b-d"), "bot")] {
+            let (_, _, body) = post(&f, target, &bearer(token), discover).await;
+            assert_eq!(body["result"]["capabilities"]["events"], json!({ "listChanged": false }));
+        }
+        let init = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#;
+        let (_, _, body) = post(&f, Target::Agents, &bearer("agents"), init).await;
+        assert_eq!(body["result"]["capabilities"]["events"], json!({ "listChanged": false }));
+        assert_eq!(body["result"]["capabilities"]["tools"], json!({}));
+    }
+
+    #[tokio::test]
+    async fn events_are_answered_at_the_edge_scoped_to_the_server_and_never_relayed() {
+        let f = Fake::new(&["rt1"]).token("agents", claims(BASE, AGENTS_SCOPE, "user-a")).token("bot", claims("https://mcp.allternit.com/mcp/bots/b-d", BOT_SCOPE, "user-a"));
+        let list = r#"{"jsonrpc":"2.0","id":3,"method":"events/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}"#;
+        let (status, _, body) = post(&f, Target::Agents, &bearer("agents"), list).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["result"]["resultType"], "complete", "modern results are decorated");
+        let names: Vec<_> = body["result"]["events"].as_array().unwrap().iter().map(|e| e["name"].as_str().unwrap().to_string()).collect();
+        assert!(names.contains(&"approval.requested".to_string()));
+        let (_, _, body) = post(&f, bot("b-d"), &bearer("bot"), list).await;
+        assert!(body["result"]["events"].as_array().unwrap().iter().any(|e| e["name"] == "vendor.ticket.created"));
+
+        let sub = json!({ "jsonrpc": "2.0", "id": 4, "method": "events/subscribe", "params": {
+            "name": "vendor.ticket.created", "arguments": {},
+            "delivery": { "mode": "webhook", "url": "https://cb.example.com/x", "secret": crate::routes::mcp_events::testing::secret(1) } } });
+        let (_, _, body) = post(&f, bot("b-d"), &bearer("bot"), &sub.to_string()).await;
+        assert!(body["result"]["id"].as_str().unwrap().starts_with("sub_"), "{body}");
+        let stored = f.events.subs.lock().unwrap().values().next().cloned().unwrap();
+        assert_eq!(stored.principal, crate::routes::mcp_events::Principal { user_id: "user-a".into(), client: "claude-connector".into(), target: "bot:b-d".into() });
+        assert_eq!(stored.arguments, json!({ "bot_id": "b-d" }));
+        assert!(f.paths().is_empty(), "events/* never reach a runtime");
+    }
+
+    #[tokio::test]
+    async fn events_sit_behind_the_same_token_and_approval_checks() {
+        let f = Fake::new(&["rt1"]).token("tok", clerk_claims("user_c", Some("client-abc")));
+        let list = r#"{"jsonrpc":"2.0","id":3,"method":"events/list"}"#;
+        let (status, _, body) = post(&f, Target::Agents, &bearer("tok"), list).await;
+        assert_eq!((status, body["error"].as_str()), (StatusCode::FORBIDDEN, Some("approval_required")));
+        assert_eq!(post(&f, Target::Agents, &HeaderMap::new(), list).await.0, StatusCode::UNAUTHORIZED);
+        let f = f.approved("user_c", "client-abc", "agents");
+        assert_eq!(post(&f, Target::Agents, &bearer("tok"), list).await.0, StatusCode::OK);
+    }
+
+    #[test]
+    fn the_human_page_lists_servers_versions_and_the_event_catalog_without_external_assets() {
+        let html = home_html("https://mcp.allternit.com/mcp");
+        assert!(html.starts_with("<!doctype html>"));
+        assert!(html.contains("<title>Allternit MCP</title>"));
+        assert!(html.contains("https://mcp.allternit.com/mcp/bots/&lt;bot id&gt;"));
+        for v in mcp_protocol::SUPPORTED {
+            assert!(html.contains(v));
+        }
+        assert!(html.contains("approval.requested") && html.contains("vendor.ticket.created"));
+        assert!(html.contains("prefers-color-scheme: dark"));
+        assert!(html.contains("https://docs.allternit.com/guides/mcp-events"));
+        assert!(!html.contains("<script") && !html.contains("<link") && !html.contains("src="));
+        assert!(wants_html(&{ let mut h = HeaderMap::new(); h.insert(header::ACCEPT, "text/html,application/xhtml+xml".parse().unwrap()); h }));
+        assert!(!wants_html(&{ let mut h = HeaderMap::new(); h.insert(header::ACCEPT, "application/json, text/event-stream".parse().unwrap()); h }));
+        assert_eq!(public_host("https://MCP.allternit.com/mcp").as_deref(), Some("mcp.allternit.com"));
+    }
+
+    #[tokio::test]
+    async fn a_mismatched_mcp_method_header_is_a_400() {
+        let f = Fake::new(&["rt1"]).token("agents", claims(BASE, AGENTS_SCOPE, "user-a"));
+        let mut h = bearer("agents");
+        h.insert("mcp-method", "tools/call".parse().unwrap());
+        let (status, _, body) = post(&f, Target::Agents, &h, LIST).await;
+        assert_eq!((status, body["error"]["code"].as_i64()), (StatusCode::BAD_REQUEST, Some(-32020)));
+        assert!(f.paths().is_empty());
+        h.insert("mcp-method", "tools/list".parse().unwrap());
+        assert_eq!(post(&f, Target::Agents, &h, LIST).await.0, StatusCode::OK);
     }
 
     #[tokio::test]
@@ -912,7 +1210,7 @@ mod tests {
         seed_runtime_device(&state.db, "mcp-edge-rt-2", "user-a").await;
         seed_runtime_device(&state.db, "mcp-edge-rt-other", "user-b").await;
         let (connection, mut outgoing) = register_test_connection("mcp-edge-rt-2").await;
-        let backend = ProdBackend { state: &state };
+        let backend = ProdBackend::new(&state);
 
         let order = backend.runtimes("user-a").await.unwrap();
         assert_eq!(order, ["mcp-edge-rt-2", "mcp-edge-rt-1"], "the connected computer is tried first, and only the user's own");

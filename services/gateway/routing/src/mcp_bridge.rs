@@ -163,6 +163,9 @@ impl McpToolBridge {
                     auth_token: sse_config.auth_token,
                     timeout_secs: sse_config.timeout_secs,
                     reconnect: mcp_client::transport::sse::ReconnectConfig::default(),
+                    // No address pinning here: this bridge connects to
+                    // operator-configured servers, not user-supplied URLs.
+                    pin: None,
                 };
 
                 let transport = SseTransport::new(transport_config)

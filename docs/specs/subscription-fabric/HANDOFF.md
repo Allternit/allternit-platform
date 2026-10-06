@@ -2,7 +2,7 @@
 
 > Written for session-continuation. State as of ~22:30 CDT 2026-09-26 (§8
 > continuation). Repo:
-> `Gizziio/allternit-platform`, shared checkout `~/Desktop/allternit-workspace/allternit`
+> `Allternit/allternit-platform`, shared checkout `~/Desktop/allternit-workspace/allternit`
 > (update this file in the shared checkout, commit direct on main with
 > `STEER_GUARD_OFF=1`, push — precedent: commits 5d3e51367/e036f0dbc).
 > Specs: `docs/specs/subscription-fabric/` (SPEC.md → HARDENING.md →

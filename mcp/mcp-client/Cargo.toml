@@ -8,6 +8,7 @@ description = "MCP (Model Context Protocol) client for Allternit"
 
 [dependencies]
 # Workspace dependencies
+mcp-protocol = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }

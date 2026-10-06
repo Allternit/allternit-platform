@@ -51,7 +51,7 @@ curl -N -X POST http://127.0.0.1:8013/api/agent-chat \
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `chatId` | string | yes | Platform agent session id (also the Gizzi session id). |
-| `message` | string | yes | User message to forward. |
+| `message` | string | yes | User message to forward. Optional when `resume` is set. |
 | `runtimeModelId` | string | no | Model override for this turn. |
 | `agentProvider` | string | no | Provider override for this turn. |
 | `agentModel` | string | no | Model identifier override. |
@@ -59,6 +59,7 @@ curl -N -X POST http://127.0.0.1:8013/api/agent-chat \
 | `harness` | object | no | Harness configuration for the turn. |
 | `runtimeEnv` | object | no | Map of string environment variables for the runtime. |
 | `systemPrompt` | string | no | System prompt override, read from the flattened request context. |
+| `resume` | object | no | `{ "cursor": <number>, "messageId"?: string }` — re-attach to the turn already running on `chatId` after a dropped stream. `cursor` is the last SSE `id` received. Nothing new is sent; the bridge replays what happened after the cursor, then continues live. Returns `409 {"error":"resume_unavailable"}` when the session is no longer known. |
 
 ### Response
 
@@ -68,6 +69,20 @@ Returns a server-sent event stream from Gizzi Runtime. Each event is a JSON payl
 event: content_block_delta
 data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Here is the refactored module..."}}
 ```
+
+### Resume cursor
+
+Frames after a turn's first trace entry carry an SSE `id`: the session-trace sequence. Keep the last one and send it as `resume.cursor` to pick up a dropped stream without duplicating text.
+
+### Generated files
+
+A file the model made (an image, deck or document — for example from a connected subscription) arrives after the reply text as an `artifact` frame:
+
+```text
+data: {"type":"artifact","messageId":"msg_…","artifactId":"prt_…","kind":"image","title":"A cat","url":"data:image/png;base64,…","mimeType":"image/png","filename":"art_1.png","sourceUri":"fabric-artifact://art_1"}
+```
+
+`kind` is one of `image`, `audio`, `video`, `html`, `slides`, `sheet`, `document`. `url` is a data URL, or the forwarder download URL for files over 24 MB. Reloaded chat history keeps the file part's `id`, `mime` and `source`, so the same card can be rebuilt.
 
 ## Chat action
 

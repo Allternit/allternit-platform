@@ -3,27 +3,21 @@
 //! Maintains a registry of attached MCP servers and forwards `tools/call`
 //! requests to them. Tool names are namespaced as `<server_id>.<tool_name>`
 //! so they do not collide with the built-in registry in `tool_routes.rs`.
+//!
+//! Talks to the servers through the `mcp-client` crate (dual-era: MCP
+//! 2026-07-28 stateless first, legacy `initialize` fallback, era cached per
+//! origin), advertising the MCP Apps extension like every Allternit host.
 
-use reqwest::Client;
+use mcp_client::{McpClient, McpError, StreamableHttpConfig, StreamableHttpTransport};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-const MCP_PROTOCOL_VERSION: &str = "2025-03-26";
 const CLIENT_NAME: &str = "allternit-api";
-
-/// Client capabilities sent on `initialize`: this host renders MCP Apps
-/// (SEP-1865), so servers may attach `_meta.ui` to tools and serve `ui://`
-/// resources.
-fn client_capabilities() -> Value {
-    json!({
-        "extensions": {
-            "io.modelcontextprotocol/ui": { "mimeTypes": ["text/html;profile=mcp-app"] }
-        }
-    })
-}
+/// Per-request timeout for attached servers.
+const REQUEST_TIMEOUT_SECS: u64 = 30;
 
 /// Descriptor for a tool advertised by an attached MCP server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,9 +68,7 @@ impl McpDispatcher {
         url: String,
         headers: HashMap<String, String>,
     ) -> Result<McpAttachedServer, String> {
-        let client = Client::new();
-        let _ = Self::initialize(&client, &url, &headers).await?;
-        let tools = Self::list_tools_remote(&client, &url, &headers).await?;
+        let tools = Self::list_tools_remote(&url, &headers).await?;
         let server = McpAttachedServer {
             id: id.clone(),
             url,
@@ -98,11 +90,15 @@ impl McpDispatcher {
     }
 
     /// List all attached servers.
+    /// List all attached servers, ordered by id.
     pub async fn list_servers(&self) -> Vec<McpAttachedServer> {
-        self.servers.read().await.values().cloned().collect()
+        let mut servers: Vec<_> = self.servers.read().await.values().cloned().collect();
+        servers.sort_by(|a, b| a.id.cmp(&b.id));
+        servers
     }
 
-    /// Return all remote tools as namespaced JSON-RPC tool descriptors.
+    /// Return all remote tools as namespaced JSON-RPC tool descriptors, in
+    /// the canonical (name) order so `tools/list` is deterministic.
     pub async fn list_tools(&self) -> Vec<Value> {
         let mut out = Vec::new();
         for server in self.servers.read().await.values() {
@@ -114,6 +110,7 @@ impl McpDispatcher {
                 }));
             }
         }
+        mcp_protocol::ordering::sort_tools(&mut out);
         out
     }
 
@@ -143,111 +140,80 @@ impl McpDispatcher {
             ));
         }
 
-        let client = Client::new();
-        Self::call_tool_remote(&client, &server.url, &server.headers, tool_name, arguments).await
+        Self::call_tool_remote(&server.url, &server.headers, tool_name, arguments).await
     }
 
-    async fn initialize(
-        client: &Client,
-        url: &str,
-        headers: &HashMap<String, String>,
-    ) -> Result<Value, String> {
-        let result = Self::request(
-            client,
-            url,
-            headers,
-            "initialize",
-            json!({
-                "protocolVersion": MCP_PROTOCOL_VERSION,
-                "capabilities": client_capabilities(),
-                "clientInfo": { "name": CLIENT_NAME, "version": env!("CARGO_PKG_VERSION") }
-            }),
-        )
+    /// Open a connection: the crate client negotiates the era (modern
+    /// `server/discover`, else legacy `initialize`).
+    async fn connect(url: &str, headers: &HashMap<String, String>) -> Result<McpClient, String> {
+        let mut config = StreamableHttpConfig::new(url.trim_end_matches('/'));
+        config.headers = headers.clone();
+        config.timeout_secs = REQUEST_TIMEOUT_SECS;
+        let transport = StreamableHttpTransport::new(config).map_err(describe)?;
+        let mut client = McpClient::new(transport).with_client_info(CLIENT_NAME, env!("CARGO_PKG_VERSION"));
+        client.initialize().await.map_err(describe)?;
+        Ok(client)
+    }
+
+    /// Run `f` on a fresh connection and always close it afterwards.
+    async fn with_client<T, F, Fut>(url: &str, headers: &HashMap<String, String>, f: F) -> Result<T, String>
+    where
+        F: FnOnce(McpClient) -> Fut,
+        Fut: std::future::Future<Output = (McpClient, Result<T, String>)>,
+    {
+        let client = Self::connect(url, headers).await?;
+        let (mut client, out) = f(client).await;
+        let _ = client.shutdown().await;
+        out
+    }
+
+    async fn list_tools_remote(url: &str, headers: &HashMap<String, String>) -> Result<Vec<McpToolDescriptor>, String> {
+        let pages = Self::with_client(url, headers, |client| async move {
+            let mut tools = Vec::new();
+            let mut cursor: Option<String> = None;
+            // Follow pagination (bounded).
+            for _ in 0..20 {
+                let params = cursor.as_ref().map(|c| json!({ "cursor": c }));
+                match client.request("tools/list", params).await {
+                    Ok(page) => {
+                        tools.extend(page.get("tools").and_then(|v| v.as_array()).cloned().unwrap_or_default());
+                        cursor = page.get("nextCursor").and_then(|c| c.as_str()).map(String::from);
+                        if cursor.is_none() {
+                            break;
+                        }
+                    }
+                    Err(e) => return (client, Err(describe(e))),
+                }
+            }
+            (client, Ok(tools))
+        })
         .await?;
-        // Fire-and-forget initialized notification.
-        let _ = Self::request(
-            client,
-            url,
-            headers,
-            "notifications/initialized",
-            Value::Null,
-        )
-        .await;
-        Ok(result)
-    }
-
-    async fn list_tools_remote(
-        client: &Client,
-        url: &str,
-        headers: &HashMap<String, String>,
-    ) -> Result<Vec<McpToolDescriptor>, String> {
-        let result = Self::request(client, url, headers, "tools/list", Value::Object(Default::default())).await?;
-        let tools = result
-            .get("tools")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
-        tools
+        pages
             .into_iter()
             .map(|v| serde_json::from_value(v).map_err(|e| format!("Invalid tool descriptor: {}", e)))
             .collect()
     }
 
     async fn call_tool_remote(
-        client: &Client,
         url: &str,
         headers: &HashMap<String, String>,
         name: &str,
         arguments: Value,
     ) -> Result<Value, String> {
-        Self::request(
-            client,
-            url,
-            headers,
-            "tools/call",
-            json!({ "name": name, "arguments": arguments }),
-        )
+        let params = json!({ "name": name, "arguments": arguments });
+        Self::with_client(url, headers, |client| async move {
+            let out = client.request("tools/call", Some(params)).await.map_err(describe);
+            (client, out)
+        })
         .await
     }
+}
 
-    async fn request(
-        client: &Client,
-        url: &str,
-        headers: &HashMap<String, String>,
-        method: &str,
-        params: Value,
-    ) -> Result<Value, String> {
-        let id = uuid::Uuid::new_v4().to_string();
-        let body = json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": method,
-            "params": params,
-        });
-
-        let mut req = client
-            .post(url.trim_end_matches('/'))
-            .json(&body)
-            .timeout(std::time::Duration::from_secs(30));
-        for (k, v) in headers {
-            req = req.header(k, v);
-        }
-
-        let resp = req.send().await.map_err(|e| format!("MCP request failed: {}", e))?;
-        let status = resp.status();
-        let body: Value = resp.json().await.map_err(|e| format!("MCP response decode failed: {}", e))?;
-
-        if let Some(error) = body.get("error") {
-            let message = error
-                .get("message")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown MCP error");
-            return Err(format!("MCP error ({}): {}", status, message));
-        }
-
-        body.get("result")
-            .cloned()
-            .ok_or_else(|| "MCP response missing result".to_string())
+/// Human-readable error, same shape callers already showed.
+fn describe(e: McpError) -> String {
+    match e {
+        McpError::JsonRpc { code, message, .. } => format!("MCP error ({code}): {message}"),
+        other => format!("MCP request failed: {other}"),
     }
 }
 
@@ -363,6 +329,28 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result["content"][0]["text"], "echo hello");
+    }
+
+    #[tokio::test]
+    async fn list_tools_is_in_canonical_order_across_servers() {
+        let dispatcher = McpDispatcher::new();
+        for (id, tools) in [("zeta", vec!["b", "a"]), ("alpha", vec!["c"])] {
+            dispatcher
+                .attach(McpAttachedServer {
+                    id: id.into(),
+                    url: "http://unused".into(),
+                    headers: HashMap::new(),
+                    tools: tools
+                        .into_iter()
+                        .map(|n| McpToolDescriptor { name: n.into(), description: String::new(), input_schema: json!({}) })
+                        .collect(),
+                })
+                .await;
+        }
+        let names: Vec<_> = dispatcher.list_tools().await.iter().map(|t| t["name"].as_str().unwrap().to_string()).collect();
+        assert_eq!(names, ["alpha.c", "zeta.a", "zeta.b"]);
+        let ids: Vec<_> = dispatcher.list_servers().await.into_iter().map(|s| s.id).collect();
+        assert_eq!(ids, ["alpha", "zeta"]);
     }
 
     #[tokio::test]

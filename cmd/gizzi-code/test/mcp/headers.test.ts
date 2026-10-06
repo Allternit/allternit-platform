@@ -8,35 +8,59 @@ const transportCalls: Array<{
   options: { authProvider?: unknown; requestInit?: RequestInit }
 }> = []
 
-// Mock the transport constructors to capture their arguments
-mock.module("@modelcontextprotocol/sdk/client/streamableHttp.js", () => ({
-  StreamableHTTPClientTransport: class MockStreamableHTTP {
+// Mock the transport constructors to capture their arguments (SDK v2: one package entry)
+const realClient = await import("@modelcontextprotocol/client")
+// The mock is process-wide in the shared smoke run, so subclass the real transports and only
+// fail the example.com URL these tests use; every other test keeps real transports.
+const isTestUrl = (url: URL | string) => new URL(String(url)).hostname === "example.com"
+class MockStreamableHTTP extends realClient.StreamableHTTPClientTransport {
     constructor(url: URL, options?: { authProvider?: unknown; requestInit?: RequestInit }) {
+      super(url, options as any)
+      this.testUrl = isTestUrl(url)
+      if (!this.testUrl) return
       transportCalls.push({
         type: "streamable",
         url: url.toString(),
         options: options ?? {},
       })
     }
+    testUrl: boolean
     async start() {
+      if (!this.testUrl) return super.start()
       throw new Error("Mock transport cannot connect")
     }
-  },
-}))
+    async send(...args: any[]) {
+      if (!this.testUrl) return (super.send as any)(...args)
+      throw new Error("Mock transport cannot connect")
+    }
+}
 
-mock.module("@modelcontextprotocol/sdk/client/sse.js", () => ({
-  SSEClientTransport: class MockSSE {
+class MockSSE extends realClient.SSEClientTransport {
     constructor(url: URL, options?: { authProvider?: unknown; requestInit?: RequestInit }) {
+      super(url, options as any)
+      this.testUrl = isTestUrl(url)
+      if (!this.testUrl) return
       transportCalls.push({
         type: "sse",
         url: url.toString(),
         options: options ?? {},
       })
     }
+    testUrl: boolean
     async start() {
+      if (!this.testUrl) return super.start()
       throw new Error("Mock transport cannot connect")
     }
-  },
+    async send(...args: any[]) {
+      if (!this.testUrl) return (super.send as any)(...args)
+      throw new Error("Mock transport cannot connect")
+    }
+}
+
+mock.module("@modelcontextprotocol/client", () => ({
+  ...realClient,
+  StreamableHTTPClientTransport: MockStreamableHTTP,
+  SSEClientTransport: MockSSE,
 }))
 
 beforeEach(() => {

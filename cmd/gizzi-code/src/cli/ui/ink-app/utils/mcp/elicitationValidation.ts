@@ -1,10 +1,5 @@
 // @ts-nocheck
-import type {
-  EnumSchema,
-  MultiSelectEnumSchema,
-  PrimitiveSchemaDefinition,
-  StringSchema,
-} from '@modelcontextprotocol/sdk/types.js'
+import type { EnumSchema, MultiSelectEnumSchema, PrimitiveSchemaDefinition, StringSchema } from '@modelcontextprotocol/client'
 import { z } from 'zod/v4'
 import { jsonStringify } from '../slowOperations.js'
 import { plural } from '../stringUtils.js'

@@ -1612,7 +1612,7 @@ mod tests {
     /// A schema-per-test pool with the real 020 (relay) and 024 (phone) migrations.
     async fn pool() -> PgPool {
         let db = test_pool().await;
-        for sql in [include_str!("../../migrations_pg/003_api_keys.sql"), include_str!("../../migrations_pg/020_channel_inbound_queue.sql"), include_str!("../../migrations_pg/024_phone_numbers.sql"), include_str!("../../migrations_pg/050_platform_api_foundation.sql"), include_str!("../../migrations_pg/051_platform_numbers_messaging.sql")] {
+        for sql in [include_str!("../../migrations_pg/003_api_keys.sql"), include_str!("../../migrations_pg/020_channel_inbound_queue.sql"), include_str!("../../migrations_pg/024_phone_numbers.sql"), include_str!("../../migrations_pg/050_platform_api_foundation.sql"), include_str!("../../migrations_pg/051_platform_numbers_messaging.sql"), include_str!("../../migrations_pg/057_allternit_events_backbone.sql")] {
             sqlx::raw_sql(&sql.replace("public.", "")).execute(&db).await.unwrap();
         }
         seed_runtime_device(&db, "rt1", USER).await;

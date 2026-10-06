@@ -350,6 +350,10 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // Keys for the allternit-bot CLI (issue/list/revoke by the owner; instructions by key). Part of the MCP edge: 503 until MCP_PUBLIC_URL is set.
         .merge(routes::vendor_bot_keys::routes())
         .merge(routes::mcp_oauth_approvals::routes())
+        // The event registry in plain words (signed-in users; Settings › Connected apps).
+        .merge(routes::allternit_events::routes())
+        // Runtimes forward their bot_events ledger into the event backbone (relay-signature auth in the handler).
+        .merge(routes::runtime_events::routes())
         // Phone numbers + SMS: Clerk-checked per request; 503 phone_not_configured when the carrier env is unset.
         .merge(routes::phone::routes())
         // The runtime pulls its own numbers with its device credential.

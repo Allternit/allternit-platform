@@ -8,7 +8,7 @@ URL:            https://docs.gizziio.com
 # Glob/Grep use rg on PATH (gizzi-code does not statically link ripgrep)
 Requires:       ripgrep
 # Binary release asset (version-named tarball, tag gizzi-code/v%{version})
-Source0:        https://github.com/Gizziio/allternit-platform/releases/download/gizzi-code/v%{version}/gizzi-code-v%{version}-linux-x64.tar.gz
+Source0:        https://github.com/Allternit/allternit-platform/releases/download/gizzi-code/v%{version}/gizzi-code-v%{version}-linux-x64.tar.gz
 
 %description
 Gizzi Code is an AI-powered terminal interface and runtime

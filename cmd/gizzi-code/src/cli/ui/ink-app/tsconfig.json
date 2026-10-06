@@ -16,9 +16,6 @@
       "src/*": [
         "./*"
       ],
-      "@modelcontextprotocol/sdk/*": [
-        "./vendor/@modelcontextprotocol/sdk/dist/esm/*"
-      ],
       "@allternit/sdk": [
         "../../../../packages/sdk/src"
       ],

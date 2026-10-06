@@ -17,11 +17,8 @@
  * a future SDK swap is mechanical) + one Layer-3 orchestrator that composes them.
  */
 
-import {
-  discoverAuthorizationServerMetadata,
-  discoverOAuthProtectedResourceMetadata,
-} from '@modelcontextprotocol/sdk/client/auth.js'
-import type { FetchLike } from '@modelcontextprotocol/sdk/shared/transport.js'
+import { discoverAuthorizationServerMetadata, discoverOAuthProtectedResourceMetadata } from '@modelcontextprotocol/client'
+import type { FetchLike } from '@modelcontextprotocol/client'
 import { z } from 'zod/v4'
 import { lazySchema } from '../../utils/lazySchema.js'
 import { logMCPDebug } from '../../utils/log.js'

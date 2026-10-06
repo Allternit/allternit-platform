@@ -1,30 +1,28 @@
 //! MCP stdio bridge to the officecli MCP server.
 //!
-//! One long-lived `officecli mcp` child per user; newline-delimited
-//! JSON-RPC 2.0 over stdio. Docs are passed per tool call as file paths, so a
-//! single server per user suffices. The add-in reaches it through
-//! `POST /office/cli/mcp`, which forwards envelopes verbatim — giving it
-//! `tools/list` (dynamic discovery of officecli's full MCP tool surface) and
-//! `tools/call` with no per-tool server code to maintain.
+//! One long-lived `officecli mcp` child per user, driven by the `mcp-client`
+//! crate's stdio transport (dual-era: a `server/discover` probe, falling back
+//! to the legacy `initialize` handshake officecli speaks). Docs are passed
+//! per tool call as file paths, so a single server per user suffices.
+//!
+//! The add-in reaches it through `POST /office/cli/mcp`, which is itself an
+//! MCP endpoint built on `mcp-protocol`: `initialize`, `server/discover`,
+//! `ping` and notifications are answered here (both eras), every other
+//! method is forwarded to the child — giving the add-in `tools/list`
+//! (dynamic discovery of officecli's full tool surface, in canonical order)
+//! and `tools/call` with no per-tool server code to maintain.
 
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
     Json,
 };
+use mcp_client::{ClientCapabilities, McpClient, McpError, StdioConfig, StdioTransport};
 use serde_json::{json, Value};
 use std::{
-    collections::HashMap,
-    sync::{
-        atomic::{AtomicI64, Ordering},
-        Arc, Mutex,
-    },
+    sync::Arc,
     time::{Duration, Instant},
-};
-use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    process::{Child, ChildStdin},
-    sync::oneshot,
 };
 use uuid::Uuid;
 
@@ -34,136 +32,80 @@ use crate::AppState;
 
 /// Timeout for a single forwarded JSON-RPC request.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
-/// Timeout for the initialize handshake on spawn.
+/// Timeout for the connect (era probe + handshake) on spawn.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
 
+const SERVER_NAME: &str = "allternit-office-cli";
+
+fn server_spec() -> mcp_protocol::ServerSpec {
+    mcp_protocol::ServerSpec {
+        name: SERVER_NAME,
+        version: env!("CARGO_PKG_VERSION"),
+        capabilities: json!({ "tools": { "listChanged": false } }),
+        instructions: None,
+    }
+}
+
 pub struct McpSession {
-    child: Child,
-    stdin: ChildStdin,
-    pending: Arc<Mutex<HashMap<i64, oneshot::Sender<Value>>>>,
-    /// Next id for gateway-initiated messages (client envelopes keep their id).
-    next_id: Arc<AtomicI64>,
+    client: McpClient,
     pub last_active: Instant,
-    _reader_task: tokio::task::JoinHandle<()>,
 }
 
 impl McpSession {
-    /// Spawn the officecli MCP stdio server and complete the MCP handshake:
-    /// `initialize` request, then the `notifications/initialized` notification.
+    /// Spawn the officecli MCP stdio server and connect to it.
     pub async fn spawn(config: &AppConfig) -> Result<McpSession, String> {
-        let mut child = tokio::process::Command::new(config.officecli_bin())
-            .args(config.officecli_mcp_args())
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .kill_on_drop(true)
-            .spawn()
-            .map_err(|e| format!("Failed to spawn officecli MCP server: {}", e))?;
-
-        let stdin = child.stdin.take().ok_or("officecli MCP stdin unavailable")?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or("officecli MCP stdout unavailable")?;
-
-        let pending: Arc<Mutex<HashMap<i64, oneshot::Sender<Value>>>> =
-            Arc::new(Mutex::new(HashMap::new()));
-        let reader_pending = Arc::clone(&pending);
-        let reader_task = tokio::spawn(async move {
-            let mut lines = BufReader::new(stdout).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                let Ok(value) = serde_json::from_str::<Value>(&line) else {
-                    continue;
-                };
-                // Responses carry an id and are routed to their waiter;
-                // notifications are ignored.
-                if let Some(id) = value.get("id").and_then(|v| v.as_i64()) {
-                    if let Some(sender) = reader_pending.lock().unwrap().remove(&id) {
-                        let _ = sender.send(value);
-                    }
-                }
-            }
-            // stdout closed (child died): drop every pending sender so callers
-            // fail fast instead of hanging until their timeout.
-            reader_pending.lock().unwrap().clear();
-        });
-
-        let mut session = McpSession {
-            child,
-            stdin,
-            pending,
-            next_id: Arc::new(AtomicI64::new(1)),
-            last_active: Instant::now(),
-            _reader_task: reader_task,
+        let stdio = StdioConfig {
+            command: config.officecli_bin().to_string_lossy().into_owned(),
+            args: config.officecli_mcp_args(),
+            env: Default::default(),
+            cwd: None,
+            timeout_secs: REQUEST_TIMEOUT.as_secs(),
         };
-
-        let initialize = json!({
-            "jsonrpc": "2.0",
-            "id": 0,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": { "name": "allternit-gateway", "version": "1.0" }
-            }
-        });
-        session.request(initialize, HANDSHAKE_TIMEOUT).await?;
-        session
-            .notify(json!({
-                "jsonrpc": "2.0",
-                "method": "notifications/initialized"
-            }))
-            .await?;
-
-        Ok(session)
-    }
-
-    /// Send a JSON-RPC request and await the response with the matching id.
-    pub async fn request(&mut self, message: Value, timeout: Duration) -> Result<Value, String> {
-        let id = message
-            .get("id")
-            .and_then(|v| v.as_i64())
-            .ok_or("Missing JSON-RPC 'id'")?;
-        let (tx, rx) = oneshot::channel();
-        self.pending.lock().unwrap().insert(id, tx);
-        if let Err(e) = self.write_line(&message).await {
-            self.pending.lock().unwrap().remove(&id);
-            return Err(e);
-        }
-        self.last_active = Instant::now();
-        match tokio::time::timeout(timeout, rx).await {
-            Ok(Ok(response)) => Ok(response),
-            Ok(Err(_)) => Err("officecli MCP server closed the response channel".to_string()),
-            Err(_) => {
-                self.pending.lock().unwrap().remove(&id);
-                Err("officecli MCP request timed out".to_string())
-            }
-        }
-    }
-
-    /// Send a JSON-RPC notification (no response expected).
-    pub async fn notify(&mut self, message: Value) -> Result<(), String> {
-        self.write_line(&message).await
-    }
-
-    async fn write_line(&mut self, message: &Value) -> Result<(), String> {
-        let mut line = serde_json::to_string(message).map_err(|e| e.to_string())?;
-        line.push('\n');
-        self.stdin
-            .write_all(line.as_bytes())
+        let transport = StdioTransport::spawn(stdio)
             .await
-            .map_err(|e| format!("Failed to write to officecli MCP stdin: {}", e))?;
-        self.stdin.flush().await.map_err(|e| e.to_string())
+            .map_err(|e| format!("Failed to spawn officecli MCP server: {}", e))?;
+        // officecli renders nothing, so no MCP Apps extension here.
+        let mut client = McpClient::new(transport)
+            .with_client_info("allternit-gateway", env!("CARGO_PKG_VERSION"))
+            .with_client_capabilities(ClientCapabilities::default());
+        match tokio::time::timeout(HANDSHAKE_TIMEOUT, client.initialize()).await {
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => {
+                let _ = client.shutdown().await;
+                return Err(format!("officecli MCP handshake failed: {e}"));
+            }
+            Err(_) => {
+                let _ = client.shutdown().await;
+                return Err("officecli MCP handshake timed out".to_string());
+            }
+        }
+        Ok(McpSession { client, last_active: Instant::now() })
+    }
+
+    /// Forward one request; the result, or the server's JSON-RPC error.
+    pub async fn request(&mut self, method: &str, params: Option<Value>) -> Result<Value, McpError> {
+        self.last_active = Instant::now();
+        self.client.request(method, params).await
     }
 
     pub async fn shutdown(&mut self) {
-        let _ = self.child.kill().await;
+        let _ = self.client.shutdown().await;
     }
 }
 
-/// `POST /office/cli/mcp` — JSON-RPC envelope passthrough. Lazily spawns the
-/// user's session; on child death the session is dropped, respawned once and
-/// the request retried once. Failures map to JSON-RPC error responses.
+fn header<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+    headers.get(name).and_then(|v| v.to_str().ok())
+}
+
+fn reply(modern: bool, body: Value) -> Response {
+    let status = StatusCode::from_u16(mcp_protocol::http_status(modern, &body)).unwrap_or(StatusCode::OK);
+    (status, Json(body)).into_response()
+}
+
+/// `POST /office/cli/mcp` — the add-in's MCP endpoint. Lazily spawns the
+/// user's session; on a transport failure (child died) the session is
+/// dropped, respawned once and the request retried once. JSON-RPC errors
+/// from officecli are returned as-is; transport failures map to `-32603`.
 ///
 /// NOTE: the session map stays write-locked across the forwarded request, so
 /// MCP calls are serialized process-wide — acceptable for v1 (one user per
@@ -172,52 +114,58 @@ pub async fn mcp_handler(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(body): Json<Value>,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+) -> Response {
     let user_id = caller_id(&headers);
-    let mut message = body;
-    let rpc_id = message
-        .get("id")
-        .and_then(|v| v.as_i64())
-        .ok_or_else(|| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(json!({ "error": "Bad request", "message": "Missing JSON-RPC 'id'" })),
-            )
-        })?;
+    let Some(method) = body.get("method").and_then(|m| m.as_str()).map(str::to_string) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "Bad request", "message": "Missing JSON-RPC 'method'" })),
+        )
+            .into_response();
+    };
+    let id = body.get("id").cloned().unwrap_or(Value::Null);
+    let mut params = body.get("params").cloned().unwrap_or_else(|| json!({}));
+
+    let spec = server_spec();
+    if let Some(err) = mcp_protocol::check_headers(&id, &method, &params, header(&headers, "mcp-method"), header(&headers, "mcp-name")) {
+        return (StatusCode::BAD_REQUEST, Json(err)).into_response();
+    }
+    let era = mcp_protocol::Era::of(&method, &params, header(&headers, "mcp-protocol-version"));
+    let modern = era.is_modern();
+    if let Some(done) = mcp_protocol::preflight(&spec, &era, &id, &method) {
+        if done.is_null() {
+            return StatusCode::ACCEPTED.into_response();
+        }
+        return reply(modern, done);
+    }
+    if body.get("id").is_none() {
+        // Any other notification: nothing to forward to a per-request bridge.
+        return StatusCode::ACCEPTED.into_response();
+    }
 
     // `doc_id` is a gateway extension: resolve it to an absolute path (with
-    // ownership check), rewrite "@doc" placeholders inside params, then strip
-    // it before forwarding so the officecli server never sees it.
-    if let Some(doc_id) = message
-        .get("doc_id")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-    {
-        let uuid = doc_id.parse::<Uuid>().map_err(|_| {
-            (
+    // ownership check), rewrite "@doc" placeholders inside params. It never
+    // reaches the officecli server.
+    if let Some(doc_id) = body.get("doc_id").and_then(|v| v.as_str()) {
+        let Ok(uuid) = doc_id.parse::<Uuid>() else {
+            return (
                 StatusCode::BAD_REQUEST,
                 Json(json!({ "error": "Bad request", "message": "Invalid doc_id" })),
             )
-        })?;
+                .into_response();
+        };
         let path = {
             let docs = state.office_cli_docs.read().await;
-            docs.get(&uuid)
-                .filter(|doc| doc.user_id == user_id)
-                .map(|doc| doc.path.clone())
-                .ok_or_else(|| {
-                    (
-                        StatusCode::NOT_FOUND,
-                        Json(json!({ "error": "Office CLI document not found" })),
-                    )
-                })?
+            docs.get(&uuid).filter(|doc| doc.user_id == user_id).map(|doc| doc.path.clone())
         };
-        if let Some(params) = message.get_mut("params") {
-            rewrite_doc_placeholders(params, &path);
-        }
-        if let Some(object) = message.as_object_mut() {
-            object.remove("doc_id");
-        }
+        let Some(path) = path else {
+            return (StatusCode::NOT_FOUND, Json(json!({ "error": "Office CLI document not found" }))).into_response();
+        };
+        rewrite_doc_placeholders(&mut params, &path);
     }
+    // The add-in's protocol `_meta` is for this endpoint; the session client
+    // adds its own for the child's era.
+    mcp_protocol::client::strip_modern_meta(&mut params);
 
     let mut sessions = state.office_cli_mcp_sessions.write().await;
     let mut last_error: Option<String> = None;
@@ -234,10 +182,20 @@ pub async fn mcp_handler(
             }
         }
         let session = sessions.get_mut(&user_id).expect("session inserted above");
-        match session.request(message.clone(), REQUEST_TIMEOUT).await {
-            Ok(response) => return Ok(Json(response)),
+        match session.request(&method, Some(params.clone())).await {
+            Ok(result) => {
+                let response = mcp_protocol::rpc_ok(&id, result);
+                return reply(modern, mcp_protocol::finish(&spec, &era, &method, response));
+            }
+            Err(McpError::JsonRpc { code, message, data }) => {
+                let response = match data {
+                    Some(data) => mcp_protocol::rpc_err_data(&id, code as i64, message, data),
+                    None => mcp_protocol::rpc_err(&id, code as i64, message),
+                };
+                return reply(modern, mcp_protocol::finish(&spec, &era, &method, response));
+            }
             Err(e) => {
-                last_error = Some(e);
+                last_error = Some(e.to_string());
                 // Drop the (possibly dead) session; the next loop iteration
                 // respawns it and retries the request once.
                 if let Some(mut dead) = sessions.remove(&user_id) {
@@ -247,14 +205,10 @@ pub async fn mcp_handler(
         }
     }
 
-    Ok(Json(json!({
-        "jsonrpc": "2.0",
-        "id": rpc_id,
-        "error": {
-            "code": -32603,
-            "message": last_error.unwrap_or_else(|| "officecli MCP request failed".to_string()),
-        }
-    })))
+    reply(
+        modern,
+        mcp_protocol::rpc_err(&id, -32603, last_error.unwrap_or_else(|| "officecli MCP request failed".to_string())),
+    )
 }
 
 /// Recursively rewrite "@doc" inside any string value in a JSON-RPC params
@@ -274,13 +228,6 @@ fn rewrite_doc_placeholders(value: &mut Value, path: &std::path::Path) {
             .for_each(|item| rewrite_doc_placeholders(item, path)),
         _ => {}
     }
-}
-
-/// Allocate the next gateway-side JSON-RPC id (reserved for future use, e.g.
-/// gateway-initiated pings).
-#[allow(dead_code)]
-fn next_rpc_id(session: &McpSession) -> i64 {
-    session.next_id.fetch_add(1, Ordering::Relaxed)
 }
 
 #[cfg(test)]

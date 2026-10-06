@@ -1,6 +1,6 @@
 # P3 Activation — worker pool, connect/probe endpoint, task drain (subscription-gateway)
 
-You are working in a git worktree of `Gizziio/allternit-platform` (branch
+You are working in a git worktree of `Allternit/allternit-platform` (branch
 `session/subsfab-activate`, cut from main @ 5fb680ccd). Zero prior context — this file is
 your whole brief. Read the files it points at before writing code.
 

@@ -1,5 +1,5 @@
 // Auto-generated shim to satisfy TypeScript imports
-import type { Server } from '@modelcontextprotocol/sdk/server/index.js'
+import type { Server } from '@modelcontextprotocol/server'
 
 export async function createComputerUseMcpServerForCli(): Promise<Server> {
   // Stub implementation

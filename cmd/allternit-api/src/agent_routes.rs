@@ -757,8 +757,15 @@ fn persist_agent_identity_channels(
             updated_at
         ) VALUES (?1, ?2, ?3, ?4, COALESCE(?5, 'custom'), COALESCE(?6, 0), COALESCE(?7, 0), COALESCE(?8, 'approve'), ?9, COALESCE(?10, 1), ?11, COALESCE(?12, 'vapi'), COALESCE(?13, 0), COALESCE(?14, 0), ?15, COALESCE(?16, 'etrid'), ?17, ?18, CURRENT_TIMESTAMP)
         ON CONFLICT(agent_id) DO UPDATE SET
-            email_address = COALESCE(excluded.email_address, email_address),
-            email_provider = COALESCE(?5, email_provider),
+            -- A platform mailbox's address is server-owned: it changes only through
+            -- DELETE + POST /identity/email, never by a PATCH (that would leave the
+            -- bot's address and its real mailbox apart).
+            email_address = CASE WHEN email_provider = 'mailflare' AND email_mailbox_id IS NOT NULL
+                                      AND COALESCE(?5, 'mailflare') IN ('mailflare', 'commrails')
+                                 THEN email_address ELSE COALESCE(excluded.email_address, email_address) END,
+            email_provider = CASE WHEN email_provider = 'mailflare' AND email_mailbox_id IS NOT NULL
+                                       AND COALESCE(?5, 'mailflare') IN ('mailflare', 'commrails')
+                                  THEN email_provider ELSE COALESCE(?5, email_provider) END,
             email_send_enabled = COALESCE(?6, email_send_enabled),
             email_receive_enabled = COALESCE(?7, email_receive_enabled),
             email_reply_mode = COALESCE(?8, email_reply_mode),
@@ -4583,7 +4590,8 @@ mod tests {
         conn.execute_batch(include_str!("../migrations/V47__session_memory.sql")).unwrap();
         conn.execute_batch("ALTER TABLE agent_identity_channels ADD COLUMN email_reply_mode TEXT NOT NULL DEFAULT 'approve';
              ALTER TABLE agent_identity_channels ADD COLUMN email_reply_allowlist TEXT;
-             ALTER TABLE agent_identity_channels ADD COLUMN email_reply_enabled INTEGER NOT NULL DEFAULT 1;").unwrap();
+             ALTER TABLE agent_identity_channels ADD COLUMN email_reply_enabled INTEGER NOT NULL DEFAULT 1;
+             ALTER TABLE agent_identity_channels ADD COLUMN email_mailbox_id TEXT;").unwrap();
         let read = |c: &rusqlite::Connection| -> (String, i64, i64, String, i64, String, i64) {
             c.query_row("SELECT email_provider, email_send_enabled, email_receive_enabled, email_reply_mode, email_reply_enabled, phone_provider, phone_voice_enabled FROM agent_identity_channels WHERE agent_id = 'a1'", [], |r| {
                 Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?))
@@ -4598,6 +4606,17 @@ mod tests {
         // Phone saves don't touch email, and explicit values still win.
         persist_agent_identity_channels(&conn, "a1", "u1", Some(&serde_json::json!({ "phone": { "provider": "telnyx", "voiceEnabled": true }, "email": { "sendEnabled": false } }))).unwrap();
         assert_eq!(read(&conn), ("mailflare".into(), 0, 1, "auto_known".into(), 1, "telnyx".into(), 1));
+
+        // Once a real mailbox backs the address, a PATCH can't rename it (only DELETE + POST
+        // /identity/email can); switching to the bot's own mail account still works.
+        conn.execute("UPDATE agent_identity_channels SET email_mailbox_id = 'mb-1' WHERE agent_id = 'a1'", []).unwrap();
+        let addr = |c: &rusqlite::Connection| -> (String, String) {
+            c.query_row("SELECT email_address, email_provider FROM agent_identity_channels WHERE agent_id = 'a1'", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap()
+        };
+        persist_agent_identity_channels(&conn, "a1", "u1", Some(&serde_json::json!({ "email": { "address": "typed@bots.allternit.com", "provider": "commrails" } }))).unwrap();
+        assert_eq!(addr(&conn), ("a@bots.allternit.com".into(), "mailflare".into()));
+        persist_agent_identity_channels(&conn, "a1", "u1", Some(&serde_json::json!({ "email": { "address": "me@acme.com", "provider": "google_workspace" } }))).unwrap();
+        assert_eq!(addr(&conn), ("me@acme.com".into(), "google_workspace".into()));
     }
 
     fn request(path: &str, method: &str, body: &serde_json::Value, user: &str) -> Request<Body> {

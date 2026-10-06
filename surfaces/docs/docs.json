@@ -74,7 +74,9 @@
               "guides/bot-autonomy",
               "guides/calls-and-texts",
               "guides/voice",
-              "guides/mcp-apps-status"
+              "guides/mcp-apps-status",
+              "guides/mcp-events",
+              "guides/connected-apps"
             ],
             "icon": "/icons/window.svg"
           },
@@ -577,6 +579,7 @@
               "api/endpoints",
               "api/rate-limits",
               "api/event-stream",
+              "api/runtime-events",
               "api/inbox",
               "api/status",
               "api/me",
@@ -806,7 +809,7 @@
         {
           "anchor": "GitHub",
           "icon": "github",
-          "href": "https://github.com/Gizziio"
+          "href": "https://github.com/Allternit"
         },
         {
           "anchor": "Courses",
@@ -819,7 +822,7 @@
   "footer": {
     "socials": {
       "x": "https://x.com/allternit",
-      "github": "https://github.com/Gizziio",
+      "github": "https://github.com/Allternit",
       "youtube": "https://www.youtube.com/@gizziioagi",
       "linkedin": "https://www.linkedin.com/in/allternit-llc"
     }
