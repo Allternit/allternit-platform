@@ -277,7 +277,21 @@ pub fn relayed_post(path: &str, body: &[u8], signed_as: Option<(&str, &str)>) ->
 /// One instance, so its identity-file cache is shared by every relayed route.
 pub fn process_secret() -> Arc<dyn RelaySecret> {
     static SECRET: std::sync::OnceLock<Arc<dyn RelaySecret>> = std::sync::OnceLock::new();
-    SECRET.get_or_init(|| Arc::new(EnvOrFileRelaySecret::from_process_env())).clone()
+    SECRET.get_or_init(|| Arc::new(process_env_secret())).clone()
+}
+
+#[cfg(not(test))]
+fn process_env_secret() -> EnvOrFileRelaySecret {
+    EnvOrFileRelaySecret::from_process_env()
+}
+
+/// Unit tests never read the developer's real paired identity
+/// (`~/.config/allternit/runtime-identity.json`): on a paired Mac it made
+/// "is this runtime paired?" checks true and tests depend on the machine.
+/// An explicit identity path or device-token env still works.
+#[cfg(test)]
+fn process_env_secret() -> EnvOrFileRelaySecret {
+    EnvOrFileRelaySecret::with_env(Box::new(|k| if k == "HOME" { None } else { std::env::var(k).ok() }))
 }
 
 /// Layer that gives [`RelayedAuth`] handlers their secret.
