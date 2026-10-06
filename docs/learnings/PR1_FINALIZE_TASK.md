@@ -1,6 +1,6 @@
 # Finalize PR #1 — HTML artifact publish pipeline
 
-PR: https://github.com/Gizziio/allternit-platform/pull/1 (branch `ao/html-artifacts`)
+PR: https://github.com/Allternit/allternit-platform/pull/1 (branch `ao/html-artifacts`)
 
 ## Context
 

@@ -18,7 +18,7 @@ const WATCH_PATHS = [
 ];
 
 if (!existsSync(SW_PATH)) {
-  console.log('Fabric Session SW lives in Gizziio/allternit-ai; skipping this public-repo guard.');
+  console.log('Fabric Session SW lives in Allternit/allternit-ai; skipping this public-repo guard.');
   process.exit(0);
 }
 

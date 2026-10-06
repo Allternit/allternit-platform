@@ -12,5 +12,5 @@ import pkg from '../../package.json'
   VERSION: pkg.version,
   BUILD_TIME: new Date().toISOString(),
   PACKAGE_URL: pkg.name,
-  ISSUES_EXPLAINER: 'https://github.com/Gizziio/ai-allternit/issues',
+  ISSUES_EXPLAINER: 'https://github.com/Allternit/allternit-platform/issues',
 }

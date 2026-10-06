@@ -67,7 +67,7 @@ export function buildPrVerdicts(gitDir: string): PrVerdicts {
     const pr = firstPrRef(text);
     if (pr && !merged.has(pr) && !closed.has(pr)) {
       try {
-        const v = JSON.parse(run("gh", ["pr", "view", pr, "--repo", "Gizziio/allternit-platform", "--json", "state,mergedAt"])) as { state?: string; mergedAt?: string | null };
+        const v = JSON.parse(run("gh", ["pr", "view", pr, "--repo", "Allternit/allternit-platform", "--json", "state,mergedAt"])) as { state?: string; mergedAt?: string | null };
         if (v.state === "CLOSED" && !v.mergedAt) closed.add(pr);
       } catch { /* unknown: no label */ }
     }

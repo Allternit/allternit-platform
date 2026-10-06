@@ -13,7 +13,7 @@
 |---|---|
 | **Status** | Secrets set 2026-09-04. Remaining: merge `session/ci-oauth` and watch the first green deploy. |
 | **What** | Tailscale OAuth + root SSH key for the deploy workflow |
-| **Where** | GitHub repo `Gizziio/allternit-platform` → Settings → Secrets |
+| **Where** | GitHub repo `Allternit/allternit-platform` → Settings → Secrets |
 | **How** | Done: `TS_OAUTH_CLIENT_ID` / `TS_OAUTH_CLIENT_SECRET` / `CONTABO_SSH_KEY`. Workflow deploys to `root@45.84.138.187` (tailnet SSH is check-mode and hangs). Optional later: ACL `tag:ci` → `tag:mail` so deploys can leave the public IP. |
 | **Verify** | Merge PR #91; `deploy-cloud-api-contabo.yml` test + deploy go green |
 

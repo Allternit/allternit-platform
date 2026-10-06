@@ -68,7 +68,7 @@ export const AllternitCommand = cmd({
     prompts.log.warn("Allternit Desktop not found on this machine.")
 
     const arch = process.arch === "arm64" ? "arm64" : "x64"
-    const defaultUrl = `https://github.com/Gizziio/desktop/releases/download/v1.0.0/Allternit-Desktop-1.0.0-${arch}.dmg`
+    const defaultUrl = `https://github.com/Allternit/desktop/releases/download/v1.0.0/Allternit-Desktop-1.0.0-${arch}.dmg`
     const downloadUrl = args["download-url"] || defaultUrl
 
     const shouldDownload = await prompts.confirm({

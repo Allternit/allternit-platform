@@ -42,7 +42,7 @@ pub fn resolve_static_path() -> PathBuf {
         if packaged.exists() {
             return packaged;
         }
-        // Dev: sibling private checkout of Gizziio/allternit-ai, or CI .hosted-ui
+        // Dev: sibling private checkout of Allternit/allternit-ai, or CI .hosted-ui
         for rel in ["../allternit-ai/dist", ".hosted-ui/dist"] {
             let p = root.join(rel);
             if p.exists() {

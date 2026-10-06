@@ -81,8 +81,8 @@ jobs:
         run: |
           ssh vps "cd /opt/allternit-src/infrastructure/vps-desktop-cloud && SELF_HOSTED_TOKEN='$SETUP_TOKEN' ./seed-e2e.sh"
 
-      # Workspace Playwright lived in Gizziio/allternit-ai. This public repo
+      # Workspace Playwright lived in Allternit/allternit-ai. This public repo
       # no longer has that tree. VPS seed above is the remaining check here.
       - name: Skip workspace Playwright (UI not in this repo)
         if: steps.vps.outputs.present == 'true'
-        run: echo "desktop-cloud.spec.ts lives in Gizziio/allternit-ai, not this public repo."
+        run: echo "desktop-cloud.spec.ts lives in Allternit/allternit-ai, not this public repo."

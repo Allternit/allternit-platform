@@ -223,7 +223,7 @@ export function hasAutoMemPathOverride(): boolean {
 /**
  * Returns the canonical git repo root if available, otherwise falls back to
  * the stable project root. Uses findCanonicalGitRoot so all worktrees of the
- * same repo share one auto-memory directory (Gizziio/allternit-platform#24382).
+ * same repo share one auto-memory directory (Allternit/allternit-platform#24382).
  */
 function getAutoMemBase(): string {
   return findCanonicalGitRoot(getProjectRoot()) ?? getProjectRoot()

@@ -14,7 +14,7 @@
 # used "gizzi-code/<version>" (no v); set TAG_V= to match those.
 set -euo pipefail
 
-REPO="Gizziio/allternit-platform"
+REPO="Allternit/allternit-platform"
 TAG_PREFIX="${TAG_PREFIX:-gizzi-code}"
 TAG_V="${TAG_V-v}"
 

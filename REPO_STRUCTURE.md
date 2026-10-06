@@ -71,7 +71,7 @@ allternit/
 ```
 
 > The agent workspace surface (`ai.allternit.com`) is **not** in this repo — it moved to the private
-> satellite `Gizziio/allternit-ai` in the 2026-09-15 OSS split. The root `ui` symlink and the old
+> satellite `Allternit/allternit-ai` in the 2026-09-15 OSS split. The root `ui` symlink and the old
 > `rails/` directory were deleted the same week; the real communication substrate is `commrails/`.
 
 Inside `docs/`:
@@ -162,13 +162,13 @@ All source lives in this monorepo. The other repos exist only where a tool needs
 
 | Repo | Purpose |
 |------|---------|
-| [`allternit-ai`](https://github.com/Gizziio/allternit-ai) (private) | Workspace UI for ai.allternit.com, m.allternit.com and the Desktop app |
-| [`allternit-websites`](https://github.com/Gizziio/allternit-websites) (private) | Marketing, services, labs and docs-adjacent sites |
-| [`desktop`](https://github.com/Gizziio/desktop) | Allternit Desktop release downloads (Mac + Windows). Built by `release-desktop.yml` here |
-| [`gizzi-code`](https://github.com/Gizziio/gizzi-code) | Hosts the `hosted-runtime-*` Linux binary the cloud runtime downloads (`cmd/allternit-hosted-runtime`) |
-| [`homebrew-tap`](https://github.com/Gizziio/homebrew-tap) | `brew install --cask allternit` and the gizzi formula |
-| [`scoop-bucket`](https://github.com/Gizziio/scoop-bucket) | Windows `scoop install gizzi-code` |
-| [`allternit-tts`](https://github.com/Gizziio/allternit-tts) | GPL-licensed Kokoro TTS child process, kept separate for licensing |
+| [`allternit-ai`](https://github.com/Allternit/allternit-ai) (private) | Workspace UI for ai.allternit.com, m.allternit.com and the Desktop app |
+| [`allternit-websites`](https://github.com/Allternit/allternit-websites) (private) | Marketing, services, labs and docs-adjacent sites |
+| [`desktop`](https://github.com/Allternit/desktop) | Allternit Desktop release downloads (Mac + Windows). Built by `release-desktop.yml` here |
+| [`gizzi-code`](https://github.com/Allternit/gizzi-code) | Hosts the `hosted-runtime-*` Linux binary the cloud runtime downloads (`cmd/allternit-hosted-runtime`) |
+| [`homebrew-tap`](https://github.com/Allternit/homebrew-tap) | `brew install --cask allternit` and the gizzi formula |
+| [`scoop-bucket`](https://github.com/Allternit/scoop-bucket) | Windows `scoop install gizzi-code` |
+| [`allternit-tts`](https://github.com/Allternit/allternit-tts) | GPL-licensed Kokoro TTS child process, kept separate for licensing |
 
 The older extracted copies (`allternit-sdk`, `allternit-api-client`, `allternit-docs`,
 `gizzi-code-docs`, `allternit-assets`) stopped tracking this repo in September 2026 and are

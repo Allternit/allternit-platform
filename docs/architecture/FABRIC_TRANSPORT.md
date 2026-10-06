@@ -440,7 +440,7 @@ Folders larger than 20 MiB / files larger than 1 MiB are skipped.
 
 - **Updater feed** — electron-builder `build.publish`,
   `updateElectronApp({ repo })`, and `PLATFORM_MANIFEST.update.desktopFeedUrl`
-  all point at `Gizziio/desktop`. `allternit/desktop` does not exist (404).
+  all point at `Allternit/desktop`. `allternit/desktop` does not exist (404).
   `scripts/release-preflight.mjs` fails the release if those three diverge.
 - **Signing / notarization** — owner action. `build.mac.identity` stays
   `null` so unsigned local builds keep working; CI already forwards

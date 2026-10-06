@@ -53,13 +53,13 @@ pnpm run dist
 The download links in the website point to GitHub Releases:
 
 ```
-https://github.com/Gizziio/allternit-platform/releases/latest/download/Allternit-1.0.0.dmg
-https://github.com/Gizziio/allternit-platform/releases/latest/download/Allternit-1.0.0.exe
-https://github.com/Gizziio/allternit-platform/releases/latest/download/Allternit-1.0.0.AppImage
+https://github.com/Allternit/allternit-platform/releases/latest/download/Allternit-1.0.0.dmg
+https://github.com/Allternit/allternit-platform/releases/latest/download/Allternit-1.0.0.exe
+https://github.com/Allternit/allternit-platform/releases/latest/download/Allternit-1.0.0.AppImage
 ```
 
 **To publish:**
-1. Go to https://github.com/Gizziio/allternit-platform/releases
+1. Go to https://github.com/Allternit/allternit-platform/releases
 2. Click "Draft a new release"
 3. Tag version: `v1.0.0`
 4. Upload the DMG/EXE/AppImage files

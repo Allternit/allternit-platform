@@ -169,7 +169,7 @@ Format: `Feature — description — size`. Grouped loosely. Desktop-only items 
 - Settings — Central settings shell with grouped sections: Account, Platform, Products, Infrastructure, Customize, About — large umbrella (settings.config.ts defines ~29 sections)
   - Account: Sign-in/Account, Organization & Access, Usage, Plans & Compute (billing), Privacy
   - Platform: General, Appearance, Models, API Keys, Shortcuts, Permissions, Dispatch, Devices, Cloud Instances, Diagnostics
-  - Products: Gizziio Code settings, Cowork settings, Extensions
+  - Products: Gizzi Code settings, Cowork settings, Extensions
   - Infrastructure: Infrastructure, VPS & Servers, Enterprise BYOC, Environment, Security, Agents
   - Customize: Skills, Response Style, Connectors, Allternit Plugins
   - About
@@ -191,7 +191,7 @@ Format: `Feature — description — size`. Grouped loosely. Desktop-only items 
 - QA — Small internal QA utility directory — small
 
 ## Empty / not-yet-implemented stubs found
-- views/gizzi (with a `tabs` subfolder), components/mesh, lib/mesh-network — directories exist but contain zero files; appear to be placeholders/removed features, not active functionality. Worth flagging for the cross-surface audit since a "gizzi" and "mesh" view are referenced elsewhere (nav labels "Gizziio Code" in Settings) but have no dedicated implementation file in this surface — likely because Gizzi/mesh functionality lives in the separate gizzi-code CLI and is only surfaced here via Device Pairing / Dispatch, not a standalone view.
+- views/gizzi (with a `tabs` subfolder), components/mesh, lib/mesh-network — directories exist but contain zero files; appear to be placeholders/removed features, not active functionality. Worth flagging for the cross-surface audit since a "gizzi" and "mesh" view are referenced elsewhere (nav labels "Gizzi Code" in Settings) but have no dedicated implementation file in this surface — likely because Gizzi/mesh functionality lives in the separate gizzi-code CLI and is only surfaced here via Device Pairing / Dispatch, not a standalone view.
 
 ## Desktop-only / platform-specific (NOT expected on iOS or gizzi-code CLI)
 Files containing explicit Electron/desktop bridge checks (`window.electron`, `window.allternit` preload bridge, `isElectron`, etc.) — flagged as desktop-platform-specific, not gaps:

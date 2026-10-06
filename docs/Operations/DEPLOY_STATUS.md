@@ -8,7 +8,7 @@
 ## Deployment Status
 Web surfaces deploy to **Cloudflare Pages**, not Vercel.
 
-Check status: GitHub Actions `deploy-cloudflare-pages.yml` on `Gizziio/allternit-platform`.
+Check status: GitHub Actions `deploy-cloudflare-pages.yml` on `Allternit/allternit-platform`.
 
 ## What's Deployed
 

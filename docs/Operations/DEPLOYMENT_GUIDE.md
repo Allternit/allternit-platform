@@ -359,4 +359,4 @@ NODE_ENV=production
 
 - **Desktop Architecture**: `projects/platform-desktop/README.md`
 - **Desktop Specs**: `allternit-workspace/DESKTOP_FIRST_REORGANIZATION_PLAN.md`
-- **Main Repo**: https://github.com/Gizziio/allternit-platform
+- **Main Repo**: https://github.com/Allternit/allternit-platform

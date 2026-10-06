@@ -12,14 +12,14 @@
 ### Step 1: Build Platform Static Export (Vite)
 
 The desktop app loads the hosted workspace UI by default; a Vite static
-export of private `Gizziio/allternit-ai` is bundled as the offline fallback
+export of private `Allternit/allternit-ai` is bundled as the offline fallback
 and served by the Rust API (`cmd/allternit-api/src/platform_static.rs`).
 Do not package `surfaces/platform.allternit.com` — that is the cloud console.
 
 ```bash
 cd surfaces/allternit-desktop
 
-# Builds Gizziio/allternit-ai (sibling, ALLTERNIT_AI_PATH, or .hosted-ui) → resources/platform/
+# Builds Allternit/allternit-ai (sibling, ALLTERNIT_AI_PATH, or .hosted-ui) → resources/platform/
 npm run prepare:platform-static
 ```
 

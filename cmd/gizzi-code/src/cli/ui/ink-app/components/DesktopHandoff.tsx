@@ -10,7 +10,7 @@ import { flushSessionStorage } from '../../../../shared/utils/sessionStorage.js'
 import { LoadingState } from './design-system/LoadingState.js';
 const DESKTOP_DOCS_URL = 'https://docs.allternit.com/desktop';
 export function getDownloadUrl(): string {
-  return 'https://github.com/Gizziio/desktop/releases';
+  return 'https://github.com/Allternit/desktop/releases';
 }
 type DesktopHandoffState = 'checking' | 'prompt-download' | 'flushing' | 'opening' | 'success' | 'error';
 type Props = {

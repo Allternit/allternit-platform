@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SOURCE OF TRUTH: cmd/gizzi-code/install in the Gizziio/allternit-platform
+# SOURCE OF TRUTH: cmd/gizzi-code/install in the Allternit/allternit-platform
 # repo — edit there and copy. The copy served from
 # https://install.gizziio.com/install must stay byte-identical to this file.
 set -euo pipefail
@@ -207,9 +207,9 @@ else
         return 1
     }
 
-    base="https://github.com/Gizziio/allternit-platform/releases"
+    base="https://github.com/Allternit/allternit-platform/releases"
     if [ -z "$requested_version" ]; then
-        tag=$(curl -s https://api.github.com/repos/Gizziio/allternit-platform/releases/latest | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')
+        tag=$(curl -s https://api.github.com/repos/Allternit/allternit-platform/releases/latest | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')
 
         if [[ -z "$tag" ]]; then
             echo -e "${RED}Failed to fetch version information${NC}"
@@ -229,7 +229,7 @@ else
         # "gizzi-code/<version>" or "gizzi-code/v<version>".
         if ! release_exists "$specific_version"; then
             echo -e "${RED}Error: Release ${specific_version} not found${NC}"
-            echo -e "${MUTED}Available releases: https://github.com/Gizziio/allternit-platform/releases${NC}"
+            echo -e "${MUTED}Available releases: https://github.com/Allternit/allternit-platform/releases${NC}"
             exit 1
         fi
     fi
@@ -248,7 +248,7 @@ else
             url="$base/latest/download/$asset"
         else
             echo -e "${RED}Error: asset ${asset} not found for ${specific_version}${NC}"
-            echo -e "${MUTED}Available releases: https://github.com/Gizziio/allternit-platform/releases${NC}"
+            echo -e "${MUTED}Available releases: https://github.com/Allternit/allternit-platform/releases${NC}"
             exit 1
         fi
     fi
@@ -379,7 +379,7 @@ verify_checksum() {
     local file="$1"
     local checksums_url=""
     for tag in "gizzi-code/v${specific_version}" "gizzi-code/${specific_version}"; do
-        local candidate="https://github.com/Gizziio/allternit-platform/releases/download/${tag}/checksums.txt"
+        local candidate="https://github.com/Allternit/allternit-platform/releases/download/${tag}/checksums.txt"
         if url_ok "$candidate"; then
             checksums_url="$candidate"
             break

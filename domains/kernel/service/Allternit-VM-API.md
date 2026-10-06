@@ -82,7 +82,7 @@ use allternit_vm_image_builder::{ImageDownloader, ImageConfig, LocalBuilder};
 
 // Download images
 let downloader = ImageDownloader::new(
-    "Gizziio/allternit",
+    "Allternit/allternit-platform",
     "1.1.0",
     Path::new("~/.allternit/vm-images")
 );
@@ -556,7 +556,7 @@ use std::path::Path;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1. Download images
     let downloader = ImageDownloader::new(
-        "Gizziio/allternit",
+        "Allternit/allternit-platform",
         "1.1.0",
         Path::new("~/.allternit/vm-images")
     );

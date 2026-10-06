@@ -46,7 +46,7 @@ async function fetchReleases() {
     let page = 1;
     const per = 100;
     while (true) {
-        const url = `https://api.github.com/repos/Gizziio/allternit-platform/releases?page=${page}&per_page=${per}`;
+        const url = `https://api.github.com/repos/Allternit/allternit-platform/releases?page=${page}&per_page=${per}`;
         const response = await fetch(url);
         if (!response.ok) {
             throw new Error(`GitHub API error: ${response.status} ${response.statusText}`);
@@ -137,7 +137,7 @@ async function save(githubTotal, npmDownloads) {
     await Bun.spawn(["bunx", "prettier", "--write", file]).exited;
     console.log(`\nAppended stats to ${file}: GitHub ${githubTotal.toLocaleString()}${githubChangeStr}, npm ${npmDownloads.toLocaleString()}${npmChangeStr}, Total ${total.toLocaleString()}${totalChangeStr}`);
 }
-console.log("Fetching GitHub releases for Gizziio/allternit-platform...\n");
+console.log("Fetching GitHub releases for Allternit/allternit-platform...\n");
 const releases = await fetchReleases();
 console.log(`\nFetched ${releases.length} releases total\n`);
 const { total: githubTotal, stats } = calculate(releases);
