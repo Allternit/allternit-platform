@@ -877,6 +877,19 @@ fn usage_from_message_info(info: &serde_json::Value) -> Option<serde_json::Value
     if let Some(cost) = info.get("cost").and_then(|v| v.as_f64()).filter(|c| *c > 0.0) {
         usage["cost"] = json!(cost);
     }
+    // Preserve the native runtime's request-TTL estimate through both bridges.
+    if let (Some(ttl), Some(at)) = (
+        tokens.pointer("/cache/ttlSeconds").and_then(|v| v.as_f64()),
+        tokens.pointer("/cache/refreshedAt").and_then(|v| v.as_f64()),
+    ) {
+        if ttl.is_finite() && ttl > 0.0 && at.is_finite() && at > 0.0 {
+            usage["cacheTtlSeconds"] = json!(ttl);
+            usage["cacheExpiresAt"] = json!(at + ttl * 1000.0);
+            let total = ["inputTokens", "cacheReadTokens", "cacheWriteTokens"].iter()
+                .filter_map(|key| usage.get(*key).and_then(|v| v.as_f64())).sum::<f64>();
+            usage["cacheRecacheTokens"] = json!(total);
+        }
+    }
     Some(usage)
 }
 

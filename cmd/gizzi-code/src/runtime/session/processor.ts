@@ -166,6 +166,7 @@ export namespace SessionProcessor {
             let reasoningMap: Record<string, MessageV2.ReasoningPart> = {}
             // Metadata a provider sent (raw `generated_file`) for the next `file` part.
             let pendingFileMeta: GeneratedFileMeta | undefined
+            const cacheRequestAt = Date.now()
             const stream = await LLM.stream(streamInput)
 
             // State machine for splitting <think> tags
@@ -458,6 +459,16 @@ export namespace SessionProcessor {
                   input.assistantMessage.finish = value.finishReason
                   input.assistantMessage.cost += usage.cost
                   input.assistantMessage.tokens = usage.tokens
+                  // Native Anthropic requests use ephemeral markers without a TTL override
+                  // (ProviderTransform.applyCaching). Do not infer expiry for other providers.
+                  if (input.model.providerID === "anthropic" && !input.assistantMessage.tokensEstimated &&
+                      usage.tokens.cache.read + usage.tokens.cache.write > 0) {
+                    input.assistantMessage.tokens.cache = {
+                      ...usage.tokens.cache,
+                      ttlSeconds: 300,
+                      refreshedAt: cacheRequestAt,
+                    }
+                  }
                   await Session.updatePart({
                     id: Identifier.ascending("part"),
                     reason: value.finishReason ?? "unknown",
