@@ -320,6 +320,14 @@ pub trait Carrier: Send + Sync {
         Ok(None)
     }
 
+    /// Put a corrected form on a rejected 10DLC campaign in place (no new brand,
+    /// no new campaign). `Ok(false)` when this carrier can't, so the caller files
+    /// a new registration instead.
+    async fn update_campaign(&self, campaign_id: &str, form: &RegistrationForm) -> Result<bool, CarrierError> {
+        let _ = (campaign_id, form);
+        Ok(false)
+    }
+
     /// Sole proprietor brands: (re)send the verification code to the brand's mobile number.
     async fn send_brand_otp(&self, brand_id: &str) -> Result<(), CarrierError> {
         let _ = brand_id;

@@ -669,6 +669,23 @@ pub async fn submit_registration(db: &PgPool, carrier: &dyn Carrier, user: &str,
         if existing.state != "rejected" {
             return Err(PhoneError::Conflict("already_registered"));
         }
+        // A rejected campaign under a brand that cleared: correct it in place instead of
+        // filing (and paying for) a new brand and campaign.
+        if kind == RegistrationKind::TenDlc && existing.kind == "10dlc" && existing.brand_id.is_some() {
+            if let Some(campaign_id) = existing.campaign_id.as_deref() {
+                if carrier.update_campaign(campaign_id, &form).await? {
+                    sqlx::query("UPDATE sms_registrations SET fields = $2, state = 'pending', rejection_reason = NULL, updated_at = now() WHERE id = $1")
+                        .bind(&existing.id)
+                        .bind(mask_ein(&form))
+                        .execute(db)
+                        .await?;
+                    sqlx::query("UPDATE phone_numbers SET sms_state = 'pending_registration' WHERE id = $1 AND sms_state <> 'blocked'").bind(number_id).execute(db).await?;
+                    let number = number_for_user(db, user, number_id).await?;
+                    let row = latest_registration(db, number_id).await?.ok_or(PhoneError::NotFound("no_registration"))?;
+                    return Ok(reg_json(&row, &number));
+                }
+            }
+        }
     }
     let handle = carrier.submit_registration(kind, &number.e164, number.carrier_number_id.as_deref(), number.messaging_ref.as_deref(), &form).await?;
     let id = uuid::Uuid::new_v4().to_string();
@@ -1646,6 +1663,9 @@ mod tests {
         /// Submit returns no campaign (brand still verifying); `Some(ready)` once set.
         defer_campaign: bool,
         campaign_ready: Mutex<Option<Result<String, String>>>,
+        /// Campaigns this carrier corrected in place (`update_campaign`), when it can.
+        updates_in_place: bool,
+        updated: Mutex<Vec<(String, String)>>,
     }
 
     #[async_trait]
@@ -1688,6 +1708,12 @@ mod tests {
         }
         async fn send_brand_otp(&self, _b: &str) -> Result<(), CarrierError> {
             Ok(())
+        }
+        async fn update_campaign(&self, campaign_id: &str, form: &RegistrationForm) -> Result<bool, CarrierError> {
+            if self.updates_in_place {
+                self.updated.lock().unwrap().push((campaign_id.to_string(), form.use_case_summary.clone()));
+            }
+            Ok(self.updates_in_place)
         }
         async fn verify_brand_otp(&self, _b: &str, pin: &str) -> Result<bool, CarrierError> {
             Ok(pin == "123456")
@@ -2021,6 +2047,24 @@ mod tests {
         let reg = latest_registration(&db, &n.id).await.unwrap().unwrap();
         refresh_registration(&db, &c, &number, &reg).await.unwrap();
         assert_eq!(number_for_user(&db, USER, &n.id).await.unwrap().sms_state, "active");
+    }
+
+    #[tokio::test]
+    async fn a_rejected_campaign_is_corrected_in_place_not_refiled() {
+        let db = pool().await;
+        let c = FakeCarrier { updates_in_place: true, ..Default::default() };
+        let n = buy(&db, &c, &e164(53)).await.unwrap();
+        submit_registration(&db, &c, USER, &n.id, None, RegistrationForm { use_case_summary: "first".into(), ..Default::default() }).await.unwrap();
+        let first = latest_registration(&db, &n.id).await.unwrap().unwrap();
+        sqlx::query("UPDATE sms_registrations SET state = 'rejected', rejection_reason = 'opt-in' WHERE id = $1").bind(&first.id).execute(&db).await.unwrap();
+        let out = submit_registration(&db, &c, USER, &n.id, None, RegistrationForm { use_case_summary: "fixed".into(), ..Default::default() }).await.unwrap();
+        assert_eq!(out["registration"]["state"].as_str(), Some("pending"));
+        assert_eq!(c.updated.lock().unwrap().as_slice(), &[("camp-1".to_string(), "fixed".to_string())]);
+        let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM sms_registrations WHERE number_id = $1").bind(&n.id).fetch_one(&db).await.unwrap();
+        assert_eq!(rows, 1, "no second brand or campaign");
+        let stored: Value = sqlx::query_scalar("SELECT fields FROM sms_registrations WHERE id = $1").bind(&first.id).fetch_one(&db).await.unwrap();
+        assert_eq!(stored["useCaseSummary"], "fixed");
+        assert_eq!(number_for_user(&db, USER, &n.id).await.unwrap().sms_state, "pending_registration");
     }
 
     #[tokio::test]
