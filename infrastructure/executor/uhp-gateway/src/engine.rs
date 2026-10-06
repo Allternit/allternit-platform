@@ -1,6 +1,6 @@
 //! Blocking client for the ao engine (herdr) Unix-domain-socket NDJSON JSON-RPC API.
 //!
-//! Wire format (verified against `infrastructure/executor/ao-engine/src/api/schema*.rs`):
+//! Wire format (verified against `factory/pane/src/api/schema*.rs`):
 //! one request line `{"id":..,"method":..,"params":{..}}`, one response line that is either
 //! `{"id":..,"result":..}` or `{"id":..,"error":{"code":..,"message":..}}`.
 //! Layout nodes serialize as `{"type":"pane","cwd":..,"command":[..],"env":{..}}`
@@ -161,7 +161,7 @@ impl EngineClient {
 
     /// Presence probe: the engine removes dead panes' workspaces, so liveness
     /// is exactly "the workspace is listed" (see `session_alive` in
-    /// `ao-engine/src/cli/ao.rs:181`).
+    /// `factory/pane/src/cli/ao.rs:181`).
     pub async fn workspace_list(&self) -> Result<Vec<serde_json::Value>, EngineError> {
         let client = self.clone();
         tokio::task::spawn_blocking(move || {
@@ -280,7 +280,7 @@ fn join_err(err: tokio::task::JoinError) -> EngineError {
     EngineError::Io(std::io::Error::other(err))
 }
 
-/// cfg-split connection mirroring `ao-engine/src/ipc.rs::connect_local_stream`.
+/// cfg-split connection mirroring `factory/pane/src/ipc.rs::connect_local_stream`.
 fn connect_local_stream(path: &Path) -> std::io::Result<interprocess::local_socket::Stream> {
     #[cfg(unix)]
     {

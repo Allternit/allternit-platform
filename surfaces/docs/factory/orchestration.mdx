@@ -1,0 +1,105 @@
+---
+title: "Orchestration"
+description: "Threads, send and delivery states, vendor tickets as node deliveries, mail, attention and the Coordinator."
+---
+
+<Note>
+Shipping with the Allternit Factory build. The `gizzi orchestration` commands and per-send delivery states are the approved design and are not live yet. Bot threads and vendor tickets are live today.
+</Note>
+
+`gizzi orchestration` is where conversation and handoffs happen: who said what to whom, whether it arrived, and what's waiting on a person.
+
+## Threads
+
+A Thread is a conversation or an assignment with a bot. There are two kinds, and every surface labels them differently.
+
+| Kind | What it is | Lives |
+|---|---|---|
+| `standing` | The ongoing conversation with a bot | As long as the bot |
+| `task` | One assignment. A task thread mirrors a node and shows a node strip | Until the node closes |
+
+```bash
+gizzi orchestration threads list
+gizzi orchestration threads show <thread>
+gizzi orchestration threads new <bot@team>
+```
+
+Vendor threads keep the vendor's own look, and channel threads keep the channel's look. See [Bot threads](/guides/bot-threads).
+
+## Send
+
+One verb works for every bot, whatever its binding:
+
+```bash
+gizzi orchestration send builder@product-build "Rebase on main and rerun the tests"
+gizzi orchestration send builder@product-build "…" --queue
+```
+
+A node pickup (`gizzi workspace node claim`, or `drive`) uses the same path. The engine picks the delivery from the bot's binding, and always reports which delivery happened.
+
+| Binding | Delivery | What "delivered" means |
+|---|---|---|
+| Hosted | A turn posted into the bot's Gizzi session | `verified`: the session accepted it |
+| Terminal | A verified paste into the bot's pane, or queued in its mailbox when the pane is busy | `verified` or `queued` |
+| Vendor | A vendor ticket (`T-n`) through the connector, plus a one-line nudge in the vendor chat | Depends on the lane's guarantee: `exact`, `best_effort` or `read_only` |
+
+### Delivery states
+
+Every message shows its real delivery state, never a guess.
+
+| State | Meaning |
+|---|---|
+| `verified` | The session or pane confirmed it received the text |
+| `queued` | The pane was busy. The message waits in the bot's mailbox and is delivered when the pane is free. `--queue` asks for this up front |
+| `best_effort` | Sent on a lane that can't confirm receipt. It's never shown as read |
+| `read_only` | The lane can show the vendor's conversation but can't post into it |
+| `failed` | Not delivered. The record says why |
+
+This is [rule 7 of the determinism contract](/factory/determinism#7-no-silent-fallbacks): if a message can't be delivered verified, it's queued and says so.
+
+## Vendor tickets are node deliveries
+
+A node assigned to a Vendor bot is delivered as a **vendor ticket**. The node is the work item. The ticket (`T-n`) is its delivery record: what was sent, on which lane, and the `post_result` that came back. The `post_result` becomes the node's output, and the same judge checks it.
+
+There's no separate ticket list. The ticket shows inside the node and inside the thread, and `T-n` links to its node. See [How vendor bots connect](/guides/how-vendor-bots-connect).
+
+## Capture, transcript and feed
+
+```bash
+gizzi orchestration capture builder@product-build 80   # the pane's last 80 lines
+gizzi orchestration transcript builder@product-build   # the full recorded transcript
+gizzi orchestration feed                               # ledger events as they happen
+```
+
+## Mail
+
+Mail is the durable, reviewable message log between bots and people. A message that needs a decision (for example an outbound email waiting for your OK) is a review thread you decide on.
+
+```bash
+gizzi orchestration mail list
+gizzi orchestration mail read <thread>
+gizzi orchestration mail send <to> "…"
+gizzi orchestration mail decide <thread> approve
+```
+
+This replaces `gizzi mail` and `gizzi ac`.
+
+## Attention
+
+Attention is the list of things waiting on a person. It feeds the [Needs you inbox](/guides/needs-you-inbox) on every surface.
+
+```bash
+gizzi orchestration attention list
+gizzi orchestration attention ack <id>
+```
+
+## Steering and the Coordinator
+
+- `gizzi orchestration steer checkpoint|consult` records a steering checkpoint or consults the steering backend before a risky step.
+- `gizzi orchestration coordinate <project> "…"` hands a request to the Coordinator (Al), which splits it across the team.
+
+## Related
+
+- [Command reference: `gizzi orchestration`](/factory/commands#gizzi-orchestration)
+- [Agents](/factory/agents)
+- [Approvals](/factory/approvals)

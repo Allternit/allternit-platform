@@ -5,7 +5,7 @@ Cloudflare edge Web Push delivery service for the Allternit Remote Control dashb
 ## What it does
 
 - **Push subscriptions**: stores browser Push API subscriptions in KV, keyed by runtime, so a runtime can fan out notifications when it needs user attention.
-- **Push delivery**: receives a notify request and sends a Web Push to every subscribed browser for a runtime.
+- **Push delivery**: receives a notify request and sends a Web Push to every subscribed browser for a runtime. Payloads are encrypted to each subscription (RFC 8291 `aes128gcm`, `src/webpush.ts`); push services reject plain bodies. `pnpm test` checks the encryption against the RFC 8291 test vector.
 
 The runtime relay (WebSocket / HTTP proxy / socket tickets) lives in `cmd/allternit-cloud-api/src/routes/runtime_relay.rs`, not in this worker.
 
@@ -16,7 +16,7 @@ The runtime relay (WebSocket / HTTP proxy / socket tickets) lives in `cmd/allter
 | GET | `/vapid-public-key` | None | VAPID public key for browser subscription (plain text) |
 | POST | `/subscribe` | Clerk Bearer | Store a browser push subscription. Body: `{ runtimeId, endpoint, keys: { p256dh, auth }, label? }` |
 | POST | `/unsubscribe` | None | Remove a browser push subscription. Body: `{ runtimeId, endpoint }` |
-| POST | `/notify` | Service secret | Send a push to all subscriptions for a runtime. Body: `{ runtimeId, title?, body?, tag?, sessionId? }` |
+| POST | `/notify` | Service secret or paired device token | Send a push to all subscriptions for a runtime. Body: `{ runtimeId, title?, body?, tag?, sessionId?, type?, data?, actions? }`. `data` is a flat object of strings/numbers/booleans (max 2 KB) passed to the service worker as `notification.data`; `actions` is up to two `{ action, title }` buttons. Factory approvals use `data.kind: "factory.approval"` with Approve / Open. |
 | GET | `/pending` | None | Fetch the payload that triggered a background push. Query: `?endpoint=...` |
 | GET | `/health` | None | Health check |
 

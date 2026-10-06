@@ -1,0 +1,110 @@
+---
+title: "Workspace"
+description: "Campaigns, nodes and their folders, proof and the judge, and the Board."
+---
+
+<Note>
+Shipping with the Allternit Factory build. Campaigns, DAG nodes, WIH pickups, receipts and the judge exist in the work runtime today. Node folders, proof contracts, the Board and the `gizzi workspace` commands are the approved design and are not live yet.
+</Note>
+
+`gizzi workspace` is the work itself: what you asked for, how it was split, who picked up each piece, and the proof that it's done.
+
+## Campaigns
+
+A Campaign is one piece of intent ("Saved views"). In Desktop, a project is a Campaign. It holds a plan of nodes and a summary of where they stand.
+
+```bash
+gizzi workspace campaign new "Saved views"
+gizzi workspace campaign list
+gizzi workspace campaign status <campaign>
+gizzi workspace campaign pause <campaign>
+gizzi workspace campaign finish <campaign>
+```
+
+`gizzi workspace plan new|refine` creates or changes the plan behind a Campaign. Every change is a Gate event with provenance. See [Campaigns](/architecture/work-runtime/campaigns).
+
+## Nodes
+
+A node is one unit of work in the plan's DAG. It has a status (`new`, `ready`, `working`, `checking`, `needs_you`, `done`, `failed` or `blocked`), an assignee (`bot@team`), the nodes blocking it, and a proof count.
+
+```bash
+gizzi workspace node add
+gizzi workspace node list --mine
+gizzi workspace node claim <node>
+gizzi workspace node handoff <node> checker@product-build
+gizzi workspace node close <node>
+```
+
+A claim is a **WIH** (work identity handle) pickup through the Gate. The bot gets a context pack, works inside a lease, and closes the pickup with evidence. A bot never marks a node done by itself: the judge decides.
+
+## The node folder
+
+Every node gets a folder. It's what a bot reads before it starts and what you read before you approve.
+
+```text
+<node>/
+├── SPEC.md        intent, mini-requirements, proof contract
+├── PROGRESS.md    the bot's running notes (narrative)
+├── PROOF.md       evidence paired with each contract line
+└── proof/         the evidence files: logs, screenshots, test output
+```
+
+`SPEC.md` has three sections:
+
+```markdown
+## Intent
+Users can save a filtered view and reopen it from the sidebar.
+
+## Mini-requirements
+- A "Save view" action on the filter bar
+- Saved views persist across sign-out
+- The sidebar lists saved views, newest first
+
+## Proof contract
+- [ ] Unit tests for the saved-view store pass (checked by: checker)
+- [ ] Screenshot of the sidebar with two saved views (checked by: checker)
+- [ ] A saved view survives sign-out and sign-in (checked by: owner)
+```
+
+- **Intent** is the outcome in one or two sentences.
+- **Mini-requirements** are the concrete pieces of that outcome.
+- **Proof contract** is the list of things that must be shown, each with who checks it. A line isn't proven by ticking its box. It's proven when evidence in `proof/` gets an `accomplished` verdict from the judge.
+
+`PROGRESS.md` is narrative. Screens show it to the side and label it that way. It never counts toward proof.
+
+Any ```` ```mermaid ```` block in `SPEC.md`, `PROGRESS.md` or a Campaign doc renders as a diagram in Desktop and on the phone.
+
+## Proof and the judge
+
+```bash
+gizzi workspace proof add <node> --line 2 screenshot.png
+gizzi workspace proof show <node>
+gizzi workspace judge show <node>
+gizzi workspace judge resolve <node> --line 3 accomplished
+```
+
+Each proof contract line gets evidence (a file in `proof/`, with a receipt) and a verdict: `accomplished`, `not_accomplished` or `needs_human`. A `needs_human` verdict lands in Needs you. Receipts are written when the pickup closes, and they're what [replay](/architecture/replay) checks. See [Verification](/architecture/verification) and [Receipts](/architecture/receipts).
+
+## The Board
+
+```bash
+gizzi workspace board [<campaign>]
+```
+
+The Board is a Campaign's dashboard. It's built from the node folders and the judge's verdicts:
+
+- **Summary line:** NOW (being worked on), NEXT (ready), PROVEN `k/n`, NEEDS YOU.
+- **Waves:** nodes grouped by how deep they are in the `blocked_by` chain, so wave 1 is what can start now.
+- **One card per node:** title, assignee and binding, status, proof `k/n`.
+
+The same input always draws the same Board. Empty shows "—". Counts come from the judge, never from narrative. In Desktop the Board is a tab on the project page, and the Node page opens in the shared pane: intent, plan and delivered, with proof paired to each contract line and an Approve button. On the phone it's a one-column list.
+
+## Tasks
+
+`gizzi workspace tasks` lists the cowork queue. It replaces `gizzi cowork`. The cowork queue folds into nodes last, once node folders are in use everywhere.
+
+## Related
+
+- [Command reference: `gizzi workspace`](/factory/commands#gizzi-workspace)
+- [Approvals](/factory/approvals)
+- [How work moves](/factory/how-work-moves)

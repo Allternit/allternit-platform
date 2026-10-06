@@ -44,7 +44,7 @@ export async function tui(options?: any): Promise<void> {
   // fork subagent, memory extraction, etc.
   setIsInteractive(true)
 
-  // Honor -s/--session (e.g. `gizzi bot chat <name>` launches the TUI on the
+  // Honor -s/--session (e.g. `gizzi agents bot chat <name>` launches the TUI on the
   // bot's pinned canonical session): point the ink session id at the pinned
   // id up front so transcripts, session identity, and the Bot Mode composer
   // guard (D2: /new reroutes to compact) all see the same session id.

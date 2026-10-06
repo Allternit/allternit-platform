@@ -81,9 +81,6 @@ const bundlePlugin = {
             const found = probe(candidates);
             return { path: found ?? candidates[0] };
         });
-        build.onResolve({ filter: /^@allternit\/orchestrator$/ }, () => ({
-            path: resolve("../../platform/packages/orchestrator/src/index.ts"),
-        }));
         // Resolve @allternit workspace packages to their source or dist
         build.onResolve({ filter: /^@allternit\/(plugin|script|sdk|util|gizzi-util)/ }, (args) => {
             const parts = args.path.split("/");

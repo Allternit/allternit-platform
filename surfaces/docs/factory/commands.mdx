@@ -1,0 +1,111 @@
+---
+title: "Command reference"
+description: "Every gizzi agents, orchestration, workflows and workspace command, with the OpenRig equivalent, --json, --dry-run and exit codes."
+---
+
+<Note>
+Shipping with the Allternit Factory build. These commands are the approved design. A command that's specified but not built yet exits `2` with the fact `"<part> <verb> is not built yet"`. It never pretends.
+</Note>
+
+You type `gizzi <part> <verb> …`. Gizzi runs the engine (`allternit-factory <part> <verb> … --json`) and renders the result. The **OpenRig** column shows the equivalent OpenRig command, for anyone coming from it.
+
+## Rules for every command
+
+- **`--json`** works on every command, read or write. With `--json`, stdout is exactly one JSON document and nothing else.
+- **`--dry-run`** works on every mutation. It prints exactly what would change, and the real run does exactly that.
+- **Idempotent.** Running a create twice with the same key doesn't make two things.
+- **Errors** with `--json` print `{"error":{"code":"…","fact":"…","action":"…"}}`: what happened, and what to do about it.
+
+### Exit codes
+
+| Code | `error.code` | Meaning |
+|---|---|---|
+| `0` | — | OK |
+| `1` | `refused` | Refused by the Gate (policy, lease, kill switch) |
+| `2` | `not_found` | Not found (or not built yet) |
+| `3` | `transport` | Transport broken, or the engine is missing |
+| `4` | `timeout` | Timed out |
+| `5` | `needs_person` | Needs a person (an approval, a gate, a `needs_human` verdict) |
+| `64` | `usage` | Usage error (bad flags or arguments) |
+
+If Gizzi can't find the engine, it exits `3` and tells you how to install it. It looks next to the `gizzi` executable, then `$ALLTERNIT_FACTORY_BIN`, then `~/.allternit/bin/allternit-factory`, then `PATH`.
+
+## `gizzi agents`
+
+The crew. See [Agents](/factory/agents).
+
+| Command | OpenRig | What it does |
+|---|---|---|
+| `gizzi agents up [<team>] [--preset P] [--on <computer>] [--dry-run]` | `rig up` | Boot a team from `team.yaml`: spawn Terminal panes, bind Hosted and Vendor bots |
+| `gizzi agents ps` | `rig ps` | Every bot with binding, state, node and proof, reconciled against live panes |
+| `gizzi agents down [<team>]` | `rig down` | Stop a team's panes |
+| `gizzi agents whoami` | `rig whoami` | Which bot and team this session is |
+| `gizzi agents recover [--apply]` | `rig seat handover`, `rig restore` | Show (or, with `--apply`, do) what to restart after a crash |
+| `gizzi agents snapshot` / `restore` | `rig snapshot` / `restore` | Save or restore a whole team |
+| `gizzi agents model <bot> <model>` | `rig seat set-model` | Change a bot's model |
+| `gizzi agents handoff <bot>` | `rig seat handover` | Hand a bot's thread to a fresh session |
+| `gizzi agents harness list\|sync` | (runtimes) | List or rescan the agent CLIs on a machine |
+| `gizzi agents pack` / `install <path\|github-url>` | `rig bundle create` / `install` | Package a team, or install one |
+| `gizzi agents templates` | (agent specs) | Browse bot templates |
+| `gizzi agents wall [<team>]` | `rig tui` terminals view | Open the live wall of panes |
+| `gizzi agents attach <bot@team>` | drop into a terminal | Open one bot: its pane, its session or its thread |
+| `gizzi agents doctor` | `rig doctor`, `rig health` | Check harnesses, panes and transport |
+
+## `gizzi orchestration`
+
+Conversation and handoffs. See [Orchestration](/factory/orchestration).
+
+| Command | OpenRig | What it does |
+|---|---|---|
+| `gizzi orchestration send <bot@team> "…" [--queue]` | `rig send` | Send to a bot. Reports the delivery state. Recorded in mail |
+| `gizzi orchestration capture <bot@team> [lines]` | `rig capture` | Read a pane's last lines |
+| `gizzi orchestration transcript <bot@team>` | `rig transcript` | The recorded transcript |
+| `gizzi orchestration threads list\|show\|new` | `rig chatroom` | Bot threads (`standing` / `task`) |
+| `gizzi orchestration mail list\|read\|send\|decide` | — | Durable mail and review decisions |
+| `gizzi orchestration feed` | `rig stream` | Ledger events as they happen |
+| `gizzi orchestration attention list\|ack` | needs-you | What's waiting on a person |
+| `gizzi orchestration steer checkpoint\|consult` | — | Steering checkpoints and consults |
+| `gizzi orchestration coordinate <project> "…"` | orchestrator seat | Hand a request to the Coordinator |
+
+## `gizzi workflows`
+
+Repeatable plans. See [Workflows](/factory/workflows).
+
+| Command | OpenRig | What it does |
+|---|---|---|
+| `gizzi workflows run <template> [--param k=v]` | `rig workflow instantiate` + `run` | Make nodes from a Template, then drive |
+| `gizzi workflows drive <dag> [--once] [--dry-run]` | `rig workflow watch` | Pick up READY nodes, in the foreground |
+| `gizzi workflows template list\|show\|check\|save` | `rig workflow validate` / `show` | Manage and validate Templates |
+| `gizzi workflows wake list\|due\|run` | `rig watchdog` | Scheduled checks |
+| `gizzi workflows gate add\|resolve\|list` | human gate | Wait-gates |
+| `gizzi workflows status <run>` | `rig workflow status` | Render a run's DAG and status |
+
+## `gizzi workspace`
+
+The work and its proof. See [Workspace](/factory/workspace).
+
+| Command | OpenRig | What it does |
+|---|---|---|
+| `gizzi workspace campaign new\|list\|status\|pause\|finish` | `rig scope mission` | Campaigns |
+| `gizzi workspace plan new\|refine` | — | Create or change a plan |
+| `gizzi workspace node add` | `rig queue create`, `rig scope slice create` | Add a node and its folder |
+| `gizzi workspace node list [--mine]` | `rig queue list --owned`, `rig scope slice ls` | List nodes |
+| `gizzi workspace node claim\|handoff\|close` | `rig queue claim` / `handoff` | Pick up, hand off or close a node |
+| `gizzi workspace approve <node>` | `rig queue resolve` | Approve a node at its gate |
+| `gizzi workspace proof add\|show` | `rig proof add` / `show` | Add or show evidence |
+| `gizzi workspace judge show\|resolve` | `rig proof judge` | Verdicts per contract line |
+| `gizzi workspace board [<campaign>]` | the project board | The Board |
+| `gizzi workspace tasks` | — | The cowork queue |
+
+## Top level
+
+| Command | What it does |
+|---|---|
+| `gizzi` | The TUI: one agent plus the factory floor (agents, board, approvals) |
+| `gizzi doctor` | Checks Gizzi, the engine, harnesses, transport and the install, including the one-time move of `~/.agent-orchestrator/` to `~/.allternit/factory/` |
+| `gizzi serve` | Unchanged: Gizzi's own harness server. The Factory API is the engine's, at `/api/factory` |
+
+## Related
+
+- [Migrating from the old names](/factory/migration)
+- [Determinism contract](/factory/determinism)

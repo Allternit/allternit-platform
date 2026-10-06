@@ -1,5 +1,5 @@
 /**
- * `gizzi bot` — Bot Mode command group (phases B1+B2+B3 — see
+ * `gizzi agents bot` — Bot Mode command group (phases B1+B2+B3 — see
  * docs/programs/gizzi/GIZZI_BOT_MODE_SPEC.md).
  *
  * A Bot is a profile (D1): `~/.gizzi/bots/<name>/` holds `bot.json`
@@ -92,9 +92,9 @@ export const BotCreateCommand = cmd({
         type: "string",
         describe: "path to a SOUL.md file to seed the persona (default: starter template)",
       })
-      .example("gizzi bot create research-buddy --title 'Research Buddy'", "create a bot")
+      .example("gizzi agents bot create research-buddy --title 'Research Buddy'", "create a bot")
       .example(
-        "gizzi bot create reviewer --model anthropic/claude-sonnet-4-5 --soul ./SOUL.md",
+        "gizzi agents bot create reviewer --model anthropic/claude-sonnet-4-5 --soul ./SOUL.md",
         "with a model pin and custom persona",
       ),
   handler: async (args) => {
@@ -119,7 +119,7 @@ export const BotCreateCommand = cmd({
         UI.Style.TEXT_SUCCESS + `🤖 Bot '${bot.name}' created` + UI.Style.RESET,
       )
       UI.println(`  Home: ${botDir(bot.name)}`)
-      UI.println("  Edit SOUL.md to give the bot a persona, then `gizzi bot chat " + bot.name + "`.")
+      UI.println("  Edit SOUL.md to give the bot a persona, then `gizzi agents bot chat " + bot.name + "`.")
       exitOk()
     })
   },
@@ -138,7 +138,7 @@ export const BotListCommand = cmd({
       const bots = await listBots()
       if (bots.length === 0) {
         UI.println("No bots yet.")
-        UI.println("Create one with: gizzi bot create <name>")
+        UI.println("Create one with: gizzi agents bot create <name>")
         exitOk()
       }
       const rows = bots.map((bot) => [
@@ -372,8 +372,8 @@ export const BotChatCommand = cmd({
         type: "string",
         array: true,
       })
-      .example("gizzi bot chat research-buddy", "open the bot's canonical chat in the TUI")
-      .example("gizzi bot chat research-buddy 'summarize today's notes'", "one headless turn"),
+      .example("gizzi agents bot chat research-buddy", "open the bot's canonical chat in the TUI")
+      .example("gizzi agents bot chat research-buddy 'summarize today's notes'", "one headless turn"),
   handler: async (args) => {
     await guard(async () => {
       const name = args.name as string
@@ -384,7 +384,7 @@ export const BotChatCommand = cmd({
       }
       if (!message && !process.stdin.isTTY) {
         throw new BotStoreError(
-          "no message given and stdin is not a terminal — usage: gizzi bot chat <name> [message..]",
+          "no message given and stdin is not a terminal — usage: gizzi agents bot chat <name> [message..]",
         )
       }
 
@@ -499,11 +499,11 @@ export const BotRoutineAddCommand = cmd({
         describe: "text delivered to the bot's canonical chat on each run",
       })
       .example(
-        "gizzi bot routine add research-buddy --schedule 'daily at 9am' --prompt 'summarize new papers'",
+        "gizzi agents bot routine add research-buddy --schedule 'daily at 9am' --prompt 'summarize new papers'",
         "daily routine for a bot",
       )
       .example(
-        "gizzi bot routine add research-buddy --label 'paper sweep' --schedule '0 */6 * * *' --prompt '...'",
+        "gizzi agents bot routine add research-buddy --label 'paper sweep' --schedule '0 */6 * * *' --prompt '...'",
         "named routine on a cron expression",
       ),
   handler: async (args) => {
@@ -542,7 +542,7 @@ export const BotRoutineListCommand = cmd({
       if (jobs.length === 0) {
         UI.println(`No routines for bot '${args.name as string}'.`)
         UI.println(
-          "Add one with: gizzi bot routine add " + (args.name as string) + " --schedule <cron> --prompt <text>",
+          "Add one with: gizzi agents bot routine add " + (args.name as string) + " --schedule <cron> --prompt <text>",
         )
         exitOk()
       }
@@ -576,7 +576,7 @@ export const BotRoutineRemoveCommand = cmd({
         demandOption: true,
       })
       .positional("jobId", {
-        describe: "cron job id (see `gizzi bot routine list <name>`)",
+        describe: "cron job id (see `gizzi agents bot routine list <name>`)",
         type: "string",
         demandOption: true,
       }),
@@ -611,7 +611,7 @@ export const BotRoutineCommand = cmd({
 
 export const BotCommand = cmd({
   command: "bot",
-  describe: "Bot Mode — bot profiles over gizzi-code sessions (see docs/GIZZI_BOT_MODE_SPEC.md)",
+  describe: "hosted bots: profiles, chats, threads, routines (Bot Mode)",
   builder: (yargs) =>
     yargs
       .command(BotCreateCommand)

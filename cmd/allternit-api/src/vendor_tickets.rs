@@ -20,6 +20,12 @@
 //! `vendor.ticket.result` card. If none arrives by the deadline the vendor's reply is read
 //! instead (`resultVia: "reply"`); with no reply either the ticket expires.
 //!
+//! **Node deliveries** (Factory, SPEC §9 "Vendor tickets"). A ticket can be linked to a Factory
+//! node (`dag_id`, `node_id`, `wih_id`, `workspace_root`; migration V239): it is then how that
+//! node reaches the vendor bot. When it completes, its result is recorded as the node's output
+//! and the WIH is closed through the Gate ([`crate::factory_bots::close_linked_node`]). A refused
+//! close keeps the result and shows up as `nodeClose.state = "failed"` with the reason.
+//!
 //! Inert unless used: nothing here runs until a ticket is created.
 
 use std::sync::Arc;
@@ -165,17 +171,39 @@ pub fn nudge(lane: &str, ticket: &Value, connector_url: &str) -> String {
 
 // ─── Tickets ───────────────────────────────────────────────────────────────────
 
-const COLS: &str = "id, n, directing_bot_id, vendor_bot_id, thread_id, instructions, allowed_tools, status, lane, result_json, result_via, error, deadline_at, created_at, updated_at, completed_at";
+pub(crate) const COLS: &str = "id, n, directing_bot_id, vendor_bot_id, thread_id, instructions, allowed_tools, status, lane, result_json, result_via, error, deadline_at, created_at, updated_at, completed_at, \
+    dag_id, node_id, wih_id, workspace_root, node_close_state, node_close_error, node_close_json, node_close_at";
 
-fn ticket_json(r: &rusqlite::Row) -> rusqlite::Result<Value> {
+pub(crate) fn ticket_json(r: &rusqlite::Row) -> rusqlite::Result<Value> {
     let parse = |s: Option<String>| s.and_then(|s| serde_json::from_str::<Value>(&s).ok());
+    let lane = r.get::<_, Option<String>>(8)?;
+    let dag_id = r.get::<_, Option<String>>(16)?;
+    let close_state = r.get::<_, Option<String>>(20)?;
+    let close = parse(r.get(22)?).unwrap_or(json!({}));
+    let node_close = close_state.map(|state| {
+        json!({ "state": state, "error": r.get::<_, Option<String>>(21).ok().flatten(), "at": r.get::<_, Option<String>>(23).ok().flatten(),
+                "receiptId": close["receiptId"], "finalStatus": close["finalStatus"], "nodeStatus": close["nodeStatus"] })
+    });
     Ok(json!({
         "id": r.get::<_, String>(0)?, "n": r.get::<_, i64>(1)?, "directingBotId": r.get::<_, Option<String>>(2)?,
         "vendorBotId": r.get::<_, String>(3)?, "threadId": r.get::<_, String>(4)?, "instructions": r.get::<_, String>(5)?,
-        "allowedTools": parse(r.get(6)?).unwrap_or(json!([])), "status": r.get::<_, String>(7)?, "lane": r.get::<_, Option<String>>(8)?,
+        "allowedTools": parse(r.get(6)?).unwrap_or(json!([])), "status": r.get::<_, String>(7)?, "lane": lane,
+        "guarantee": lane.as_deref().map(lane_guarantee),
         "result": parse(r.get(9)?), "resultVia": r.get::<_, Option<String>>(10)?, "error": r.get::<_, Option<String>>(11)?,
         "deadlineAt": r.get::<_, String>(12)?, "createdAt": r.get::<_, String>(13)?, "updatedAt": r.get::<_, String>(14)?, "completedAt": r.get::<_, Option<String>>(15)?,
+        "dagId": dag_id, "nodeId": r.get::<_, Option<String>>(17)?, "wihId": r.get::<_, Option<String>>(18)?,
+        "workspaceRoot": r.get::<_, Option<String>>(19)?, "nodeClose": node_close,
     }))
+}
+
+/// What a lane can promise about delivery (SPEC §9: a `best_effort` delivery is never shown as read).
+/// A local run returns its own output and an API key call is direct (`exact`); the website lanes
+/// paste a nudge into a vendor's web chat (`best_effort`).
+pub fn lane_guarantee(lane: &str) -> &'static str {
+    match lane {
+        LANE_LOCAL | LANE_API_KEY => "exact",
+        _ => "best_effort",
+    }
 }
 
 pub fn get_ticket(db: &DbHandle, owner: &str, id: &str) -> Result<Option<Value>, String> {
@@ -193,6 +221,7 @@ pub fn list_tickets(db: &DbHandle, owner: &str, vendor_bot_id: &str, open_only: 
     Ok(rows)
 }
 
+#[derive(Default)]
 pub struct NewTicket<'a> {
     pub owner: &'a str,
     pub vendor_bot_id: &'a str,
@@ -201,6 +230,41 @@ pub struct NewTicket<'a> {
     pub instructions: &'a str,
     pub allowed_tools: Vec<String>,
     pub deadline_secs: Option<i64>,
+    /// The Factory node this ticket delivers (V239). Unique per (owner, dag, node, WIH).
+    pub node: Option<NodeLink<'a>>,
+}
+
+/// A ticket's Factory node: the WIH it closes and the workspace whose Gate closes it.
+#[derive(Clone, Copy, Debug)]
+pub struct NodeLink<'a> {
+    pub dag_id: &'a str,
+    pub node_id: &'a str,
+    pub wih_id: &'a str,
+    pub workspace_root: &'a str,
+}
+
+/// The ticket already delivering (dag, node, WIH) for `owner`, if any.
+pub fn ticket_for_node(db: &DbHandle, owner: &str, dag_id: &str, node_id: &str, wih_id: &str) -> Result<Option<Value>, String> {
+    let conn = db.connect().map_err(|e| e.to_string())?;
+    conn.query_row(
+        &format!("SELECT {COLS} FROM vendor_tickets WHERE owner = ?1 AND dag_id = ?2 AND node_id = ?3 AND wih_id = ?4"),
+        params![owner, dag_id, node_id, wih_id],
+        ticket_json,
+    )
+    .optional()
+    .map_err(|e| e.to_string())
+}
+
+/// The owner's tickets for a DAG (and node), newest first.
+pub fn tickets_for_node(db: &DbHandle, owner: &str, dag_id: Option<&str>, node_id: Option<&str>) -> Result<Vec<Value>, String> {
+    let conn = db.connect().map_err(|e| e.to_string())?;
+    let mut q = conn
+        .prepare(&format!(
+            "SELECT {COLS} FROM vendor_tickets WHERE owner = ?1 AND dag_id IS NOT NULL AND (?2 IS NULL OR dag_id = ?2) AND (?3 IS NULL OR node_id = ?3) ORDER BY n DESC LIMIT 200"
+        ))
+        .map_err(|e| e.to_string())?;
+    let rows = q.query_map(params![owner, dag_id, node_id], ticket_json).map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+    Ok(rows)
 }
 
 /// The thread's bot, when the thread is the owner's.
@@ -222,16 +286,35 @@ pub fn create_ticket(db: &DbHandle, t: NewTicket) -> Result<Value, String> {
     let secs = t.deadline_secs.unwrap_or(DEFAULT_DEADLINE_SECS).clamp(30, 86_400);
     let created = chrono::Utc::now();
     let deadline = (created + chrono::Duration::seconds(secs)).to_rfc3339();
+    if let Some(l) = &t.node {
+        if [l.dag_id, l.node_id, l.wih_id, l.workspace_root].iter().any(|v| v.trim().is_empty()) {
+            return Err("A node ticket needs dagId, nodeId, wihId and workspaceRoot.".into());
+        }
+        if let Some(existing) = ticket_for_node(db, t.owner, l.dag_id, l.node_id, l.wih_id)? {
+            return Ok(existing);
+        }
+    }
     let conn = db.connect().map_err(|e| e.to_string())?;
     let n: i64 = conn.query_row("SELECT COALESCE(MAX(n), 0) + 1 FROM vendor_tickets WHERE owner = ?1", params![t.owner], |r| r.get(0)).map_err(|e| e.to_string())?;
     let id = format!("T-{n}");
     let tools = serde_json::to_string(&t.allowed_tools).unwrap();
-    conn.execute(
-        "INSERT INTO vendor_tickets (owner, id, n, directing_bot_id, vendor_bot_id, thread_id, instructions, allowed_tools, status, deadline_at, created_at, updated_at)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'open',?9,?10,?10)",
-        params![t.owner, id, n, t.directing_bot_id, t.vendor_bot_id, t.thread_id, instructions, tools, deadline, created.to_rfc3339()],
-    )
-    .map_err(|e| e.to_string())?;
+    let link = t.node;
+    let inserted = conn.execute(
+        "INSERT INTO vendor_tickets (owner, id, n, directing_bot_id, vendor_bot_id, thread_id, instructions, allowed_tools, status, deadline_at, created_at, updated_at,
+                                     dag_id, node_id, wih_id, workspace_root)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'open',?9,?10,?10,?11,?12,?13,?14)",
+        params![t.owner, id, n, t.directing_bot_id, t.vendor_bot_id, t.thread_id, instructions, tools, deadline, created.to_rfc3339(),
+                link.map(|l| l.dag_id), link.map(|l| l.node_id), link.map(|l| l.wih_id), link.map(|l| l.workspace_root)],
+    );
+    if let Err(e) = inserted {
+        // A concurrent create for the same node won the unique index: that ticket is the answer.
+        if let Some(l) = link {
+            if let Some(existing) = ticket_for_node(db, t.owner, l.dag_id, l.node_id, l.wih_id)? {
+                return Ok(existing);
+            }
+        }
+        return Err(e.to_string());
+    }
     record_participation(db, t.owner, t.vendor_bot_id, t.thread_id, "ticket");
     // Ledger → Desktop/cloud event backbone (`vendor.ticket.created`), on the owner's thread bot.
     if let Some(owner_bot) = thread_bot(db, t.owner, t.thread_id) {
@@ -260,15 +343,27 @@ fn set_status(db: &DbHandle, owner: &str, id: &str, from: &[&str], to: &str, lan
     .unwrap_or(false)
 }
 
-/// Finish a ticket (once) and put the result in its thread as a card.
+/// Finish a ticket (once) and put the result in its thread as a card. A ticket linked to a
+/// Factory node also closes that node's WIH through the Gate, in the background.
 pub fn complete(db: &DbHandle, owner: &str, id: &str, result: Value, via: &str) -> Result<Value, String> {
+    let done = complete_ticket(db, owner, id, result, via)?;
+    if done["nodeClose"]["state"] == "pending" {
+        crate::factory_bots::spawn_node_close(db.clone(), owner.to_string(), id.to_string());
+    }
+    Ok(done)
+}
+
+/// [`complete`] without starting the node close: a linked ticket is left with
+/// `nodeClose.state = "pending"` for the caller to close (and await).
+pub fn complete_ticket(db: &DbHandle, owner: &str, id: &str, result: Value, via: &str) -> Result<Value, String> {
     let t = get_ticket(db, owner, id)?.ok_or("There's no such ticket.")?;
     let ts = now();
     let n = db
         .connect()
         .map_err(|e| e.to_string())?
         .execute(
-            "UPDATE vendor_tickets SET status = 'done', result_json = ?3, result_via = ?4, pending_reply = NULL, error = NULL, updated_at = ?5, completed_at = ?5
+            "UPDATE vendor_tickets SET status = 'done', result_json = ?3, result_via = ?4, pending_reply = NULL, error = NULL, updated_at = ?5, completed_at = ?5,
+                    node_close_state = CASE WHEN dag_id IS NOT NULL THEN 'pending' ELSE node_close_state END
              WHERE owner = ?1 AND id = ?2 AND status IN ('open','sent')",
             params![owner, id, result.to_string(), via, ts],
         )
@@ -394,7 +489,9 @@ pub fn tool_post_result(db: &DbHandle, owner: &str, vendor_bot_id: &str, args: &
         return Err("Each attachment is an object, and its url must be https.".into());
     }
     let t = tool_get_ticket(db, owner, vendor_bot_id, &json!({ "id": id }))?;
-    let done = complete(db, owner, id, json!({ "summary": summary, "data": data, "attachments": attachments }), "connector")?;
+    // A linked node is closed by the caller (`mcp_vendor_bots::call_tool` awaits it), so the
+    // vendor's post_result answer can say whether the node closed.
+    let done = complete_ticket(db, owner, id, json!({ "summary": summary, "data": data, "attachments": attachments }), "connector")?;
     let _ = t;
     Ok(json!({ "ok": true, "ticket": done }))
 }
@@ -554,27 +651,32 @@ async fn create_h(State(state): State<Arc<AppState>>, Extension(user): Extension
     let directing = b.directing_bot_id.clone().or(session.directing_bot_id.clone());
     let ticket = create_ticket(
         &state.db,
-        NewTicket { owner: &user.user_id, vendor_bot_id: &id, directing_bot_id: directing.as_deref(), thread_id: &b.thread_id, instructions: &b.instructions, allowed_tools: b.allowed_tools, deadline_secs: b.deadline_seconds },
+        NewTicket { owner: &user.user_id, vendor_bot_id: &id, directing_bot_id: directing.as_deref(), thread_id: &b.thread_id, instructions: &b.instructions, allowed_tools: b.allowed_tools, deadline_secs: b.deadline_seconds, node: None },
     );
     let ticket = match ticket {
         Ok(t) => t,
         Err(e) => return err(StatusCode::BAD_REQUEST, e),
     };
     if !b.hold {
-        let (st, owner, tid) = (state.clone(), user.user_id.clone(), ticket["id"].as_str().unwrap_or_default().to_string());
-        let deadline = ticket["deadlineAt"].as_str().and_then(|d| chrono::DateTime::parse_from_rfc3339(d).ok()).map(|d| d.with_timezone(&chrono::Utc));
-        tokio::spawn(async move {
-            let sender = LiveSender { state: st.clone(), runner: Arc::new(local::SystemRunner) };
-            let _ = dispatch(&st.db, &sender, &owner, &tid).await;
-            // The deadline fallback: read the reply if the connector never answered.
-            if let Some(d) = deadline {
-                let wait = (d - chrono::Utc::now()).num_seconds().max(0) as u64;
-                tokio::time::sleep(std::time::Duration::from_secs(wait + 1)).await;
-                settle_deadlines(&st.db, Some(&owner), &now());
-            }
-        });
+        spawn_dispatch(&state, &user.user_id, &ticket);
     }
     (StatusCode::CREATED, Json(json!({ "ticket": ticket }))).into_response()
+}
+
+/// Send `ticket` on its best lane in the background, then settle it at its deadline
+/// (the vendor's reply is read if the connector never answered).
+pub fn spawn_dispatch(state: &Arc<AppState>, owner: &str, ticket: &Value) {
+    let (st, owner, tid) = (state.clone(), owner.to_string(), ticket["id"].as_str().unwrap_or_default().to_string());
+    let deadline = ticket["deadlineAt"].as_str().and_then(|d| chrono::DateTime::parse_from_rfc3339(d).ok()).map(|d| d.with_timezone(&chrono::Utc));
+    tokio::spawn(async move {
+        let sender = LiveSender { state: st.clone(), runner: Arc::new(local::SystemRunner) };
+        let _ = dispatch(&st.db, &sender, &owner, &tid).await;
+        if let Some(d) = deadline {
+            let wait = (d - chrono::Utc::now()).num_seconds().max(0) as u64;
+            tokio::time::sleep(std::time::Duration::from_secs(wait + 1)).await;
+            settle_deadlines(&st.db, Some(&owner), &now());
+        }
+    });
 }
 
 async fn tickets_h(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(id): Path<String>) -> Response {
@@ -776,7 +878,7 @@ mod tests {
     }
 
     fn ticket(st: &AppState) -> Value {
-        create_ticket(&st.db, NewTicket { owner: "user-a", vendor_bot_id: "bot-vendor", directing_bot_id: Some("bot-native"), thread_id: "th-vendor", instructions: "Do the thing", allowed_tools: vec!["read_thread".into()], deadline_secs: Some(60) }).unwrap()
+        create_ticket(&st.db, NewTicket { owner: "user-a", vendor_bot_id: "bot-vendor", directing_bot_id: Some("bot-native"), thread_id: "th-vendor", instructions: "Do the thing", allowed_tools: vec!["read_thread".into()], deadline_secs: Some(60), node: None }).unwrap()
     }
 
     fn status(st: &AppState, id: &str) -> Value {
@@ -798,12 +900,12 @@ mod tests {
         let b = ticket(&st);
         assert_eq!((a["id"].as_str(), b["id"].as_str()), (Some("T-1"), Some("T-2")));
         assert_eq!((a["status"].as_str(), a["directingBotId"].as_str(), a["allowedTools"].clone()), (Some("open"), Some("bot-native"), json!(["read_thread"])));
-        let bad = |instructions: &str, thread: &str| create_ticket(&st.db, NewTicket { owner: "user-a", vendor_bot_id: "bot-vendor", directing_bot_id: None, thread_id: thread, instructions, allowed_tools: vec![], deadline_secs: None });
+        let bad = |instructions: &str, thread: &str| create_ticket(&st.db, NewTicket { owner: "user-a", vendor_bot_id: "bot-vendor", directing_bot_id: None, thread_id: thread, instructions, allowed_tools: vec![], deadline_secs: None, node: None });
         assert!(bad("  ", "th-vendor").is_err());
         assert!(bad("x", "nope").is_err(), "someone else's or unknown thread");
         assert!(bad(&"x".repeat(MAX_INSTRUCTIONS + 1), "th-vendor").is_err());
         // deadline is clamped
-        let c = create_ticket(&st.db, NewTicket { owner: "user-a", vendor_bot_id: "bot-vendor", directing_bot_id: None, thread_id: "th-vendor", instructions: "x", allowed_tools: vec![], deadline_secs: Some(1) }).unwrap();
+        let c = create_ticket(&st.db, NewTicket { owner: "user-a", vendor_bot_id: "bot-vendor", directing_bot_id: None, thread_id: "th-vendor", instructions: "x", allowed_tools: vec![], deadline_secs: Some(1), node: None }).unwrap();
         let secs = (chrono::DateTime::parse_from_rfc3339(c["deadlineAt"].as_str().unwrap()).unwrap() - chrono::DateTime::parse_from_rfc3339(c["createdAt"].as_str().unwrap()).unwrap()).num_seconds();
         assert_eq!(secs, 30);
     }

@@ -2,7 +2,7 @@
  * Client for the platform's durable bot threads (`/api/v1/threads`, server
  * `cmd/allternit-api/src/thread_routes.rs`, spec BOT_THREAD_PARITY_SPEC.md
  * P3.1–P3.4). One thread object for every surface: Desktop's Threads panel,
- * the TUI pet HUD, and `gizzi bot threads` all read and steer the same rows.
+ * the TUI pet HUD, and `gizzi agents bot threads` all read and steer the same rows.
  *
  * A thread spans context generations, each backed by one gizzi session
  * (`currentSessionId`). A turn is posted to the current session through

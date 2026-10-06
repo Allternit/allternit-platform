@@ -71,7 +71,7 @@ pub async fn list(State(st): State<Arc<AppState>>, Extension(u): Extension<AuthU
     let mut all: Vec<Value> = vec![];
     let privileged = u.organization_id.as_deref().map_or(true, |o| o.is_empty()) || matches!(u.organization_role.as_deref(), Some("owner" | "admin" | "org:admin"));
     if privileged {
-        for ev in s.events_of_type(allternit_commrails::hook::HOOK_EVENT).await.map_err(KErr::internal)? {
+        for ev in s.events_of_type(allternit_factory_engine::hook::HOOK_EVENT).await.map_err(KErr::internal)? {
             all.push(hook_entry(&ev.payload, &ev.ts));
         }
     }

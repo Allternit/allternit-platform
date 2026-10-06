@@ -5,12 +5,12 @@
  * Provides commands for run lifecycle, scheduling, approvals, and checkpoints.
  *
  * Usage:
- *   gizzi cowork list                    # List all runs
- *   gizzi cowork start <name>            # Create and start a run
- *   gizzi cowork attach <run-id>         # Attach to a running run
- *   gizzi cowork stop <run-id>           # Stop a run
- *   gizzi cowork schedule create <name>  # Create a schedule
- *   gizzi cowork approval list           # List pending approvals
+ *   gizzi workspace tasks list                    # List all runs
+ *   gizzi workspace tasks start <name>            # Create and start a run
+ *   gizzi workspace tasks attach <run-id>         # Attach to a running run
+ *   gizzi workspace tasks stop <run-id>           # Stop a run
+ *   gizzi workspace tasks schedule create <name>  # Create a schedule
+ *   gizzi workspace tasks approval list           # List pending approvals
  *
  * @module cowork-command
  * @see ../../COWORK.md for full documentation
@@ -196,9 +196,8 @@ async function apiCall<T>(
 // ============================================================================
 
 export const CoworkCommand = cmd({
-  command: "cowork",
-  aliases: ["cw"],
-  describe: "manage cowork runtime runs, schedules, and approvals",
+  command: "tasks",
+  describe: "the task queue: runs, schedules, approvals and checkpoints",
   builder: (yargs: Argv) => {
     return yargs
       .command(CoworkListCommand)
@@ -249,7 +248,7 @@ export const CoworkCommand = cmd({
     UI.println("  runtime           List or register runtimes")
     UI.println("  workspace         List or switch workspaces")
     UI.println("")
-    UI.println(`Run ${UI.Style.TEXT_NORMAL_BOLD}gizzi cowork <command> --help${UI.Style.TEXT_NORMAL} for more information`)
+    UI.println(`Run ${UI.Style.TEXT_NORMAL_BOLD}gizzi workspace tasks <command> --help${UI.Style.TEXT_NORMAL} for more information`)
   },
 })
 
@@ -1494,7 +1493,7 @@ export const CoworkWebCommand = cmd({
           // Get most recent running run
           const runs = await apiCall<RunSummary[]>("GET", "/api/v1/runs?status=running&limit=1")
           if (runs.length === 0) {
-            UI.error("No active run found. Start a run with 'gizzi cowork start' or provide a run-id.")
+            UI.error("No active run found. Start a run with 'gizzi workspace tasks start' or provide a run-id.")
             process.exit(1)
           }
           runId = runs[0].id
@@ -1588,7 +1587,7 @@ export const CoworkTasksCommand = cmd({
       if (tasks.length === 0) {
         UI.println(UI.Style.TEXT_WARNING + "No tasks found in workspace." + UI.Style.TEXT_NORMAL)
         UI.println("Create tasks in the Allternit platform or run:")
-        UI.println("  gizzi cowork tasks create \"<title>\" --workspace=" + args.workspace)
+        UI.println("  gizzi workspace tasks tasks create \"<title>\" --workspace=" + args.workspace)
         return
       }
 
@@ -2440,18 +2439,80 @@ async function streamMirrorEvents(runId: string, port: number): Promise<void> {
 // NEW: Multica / Taskdog Integration Commands
 // ============================================================================
 
+/** Exit codes from the Factory contract (API.md §2). */
+function exitCodeForStatus(status: number): number {
+  if (status === 0 || status === 502 || status === 503) return 3
+  if (status === 404) return 2
+  if (status === 403 || status === 409) return 1
+  if (status === 504) return 4
+  if (status === 400) return 64
+  return 70
+}
+
+interface TasksBoardCard {
+  nodeId: string
+  title: string
+  status: string
+  assignee: string | null
+  needsYou: boolean
+  proof: { proven: number; total: number }
+}
+
+interface TasksBoard {
+  campaign: { id: string; title: string }
+  summary: { now: TasksBoardCard[]; next: TasksBoardCard[]; proven: { k: number; n: number }; needsYou: TasksBoardCard[] }
+  waves: { depth: number; nodes: TasksBoardCard[] }[]
+}
+
+/**
+ * `gizzi workspace tasks board`: cowork tasks are Factory workspace nodes;
+ * this prints their board (GET /api/factory/tasks/board).
+ */
 export const CoworkBoardCommand = cmd({
   command: "board",
-  describe: "open board view (simplified list)",
-  builder: (yargs: Argv) => yargs,
-  handler: async () => {
-    UI.println(UI.Style.TEXT_NORMAL_BOLD + "Board View" + UI.Style.TEXT_NORMAL)
-    UI.println("Use the Allternit platform console drawer for full Kanban board.")
+  describe: "your tasks as a Factory board (needs you, now, next, proof)",
+  builder: (yargs: Argv) =>
+    yargs
+      .option("workspace", { alias: "w", type: "string", describe: "workspace id (default: your personal list)" })
+      .option("json", { type: "boolean", default: false, describe: "print the Board as JSON" }),
+  handler: async (args) => {
+    const ws = (args.workspace as string | undefined)?.trim()
+    const path = `/api/factory/tasks/board${ws ? `?workspace=${encodeURIComponent(ws)}` : ""}`
+    let board: TasksBoard
+    try {
+      board = await apiCall<TasksBoard>("GET", path)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      const status = Number(/API Error (\d+)/.exec(message)?.[1] ?? 0)
+      const code = exitCodeForStatus(status)
+      if (args.json) {
+        const codes: Record<number, string> = { 1: "refused", 2: "not_found", 3: "transport", 4: "timeout", 64: "usage", 70: "internal" }
+        console.log(JSON.stringify({ error: { code: codes[code], fact: status ? message : `Couldn't reach allternit-api at ${API_BASE}.`, action: "Check that Allternit is running and you're signed in (gizzi login)." } }))
+      } else {
+        UI.error(status ? `Couldn't load your tasks board: ${message}` : `Couldn't reach allternit-api at ${API_BASE}. Is Allternit running?`)
+      }
+      process.exit(code)
+    }
+    if (args.json) {
+      console.log(JSON.stringify(board))
+      return
+    }
+    const cards = new Map<string, TasksBoardCard>()
+    for (const wave of board.waves) for (const c of wave.nodes) cards.set(c.nodeId, c)
+    UI.println(UI.Style.TEXT_NORMAL_BOLD + board.campaign.title + UI.Style.TEXT_NORMAL)
+    UI.println(
+      `Needs you ${board.summary.needsYou.length} · Now ${board.summary.now.length} · Next ${board.summary.next.length} · Proven ${board.summary.proven.k}/${board.summary.proven.n}`,
+    )
+    if (cards.size === 0) {
+      UI.println("No tasks yet. Add one with: gizzi workspace tasks tasks create \"<title>\" -w <workspace>")
+      return
+    }
     UI.println("")
-    UI.println("Keyboard shortcuts in TUI:")
-    UI.println("  j/k    navigate tasks")
-    UI.println("  o      optimize schedule")
-    UI.println("  Enter  select task")
+    for (const c of cards.values()) {
+      const who = c.assignee ? c.assignee.replace(/^user:/, "") : "unassigned"
+      const proof = c.proof.total > 0 ? ` · proof ${c.proof.proven}/${c.proof.total}` : ""
+      UI.println(`  ${c.status.padEnd(9)} ${c.title}  (${who}${proof})  ${UI.Style.TEXT_DIM}${c.nodeId}${UI.Style.TEXT_NORMAL}`)
+    }
   },
 })
 

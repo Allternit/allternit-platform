@@ -5,11 +5,11 @@
  * Supports interactive TUI mode and direct template selection.
  *
  * Usage:
- *   allternit agent-hub                    # Interactive TUI
- *   allternit agent-hub list               # List all templates
- *   allternit agent-hub create <template>  # Create from template
- *   allternit agent-hub export <agent-id>  # Export agent
- *   allternit agent-hub import <file>      # Import agent
+ *   gizzi agents templates                    # Interactive TUI
+ *   gizzi agents templates list               # List all templates
+ *   gizzi agents templates create <template>  # Create from template
+ *   gizzi agents templates export <agent-id>  # Export agent
+ *   gizzi agents templates import <file>      # Import agent
  *
  * @module agent-hub-command
  */
@@ -29,9 +29,8 @@ import path from "path"
 // ============================================================================
 
 export const AgentHubCommand = cmd({
-  command: "agent-hub",
-  aliases: ["agents", "hub"],
-  describe: "browse and create agents from specialist templates",
+  command: "templates",
+  describe: "agent templates: browse, create, export, import",
   builder: (yargs: Argv) => {
     return yargs
       .command(AgentHubListCommand)
@@ -98,7 +97,7 @@ export const AgentHubListCommand = cmd({
         }
       }
 
-      prompts.outro("Use 'allternit agent-hub create <template-id>' to create an agent")
+      prompts.outro("Use 'gizzi agents templates create <template-id>' to create an agent")
     })
   },
 })
@@ -143,7 +142,7 @@ export const AgentHubCreateCommand = cmd({
       
       if (!template) {
         prompts.log.error(`Template not found: ${templateId}`)
-        prompts.outro("Use 'allternit agent-hub list' to see available templates")
+        prompts.outro("Use 'gizzi agents templates list' to see available templates")
         process.exit(1)
       }
 
@@ -194,7 +193,7 @@ export const AgentHubCreateCommand = cmd({
         writeFileSync(outputFile, JSON.stringify(config, null, 2))
         prompts.log.warn(`Could not register agent via API: ${err instanceof Error ? err.message : err}`)
         prompts.log.success(`Agent configuration saved to: ${outputFile}`)
-        prompts.outro("Run 'gizzi-code agent-hub import' to register it when the server is running")
+        prompts.outro("Run 'gizzi agents templates import' to register it when the server is running")
       }
     })
   },

@@ -25,8 +25,8 @@ use super::executor::{self, apply_policy, policy_for_run, speed_fields, Ws, EV_P
 use super::safety;
 use super::store::{now, AgencyStore};
 use crate::AppState;
-use allternit_commrails::kernel::graph::ComputeGraph;
-use allternit_commrails::kernel::router::{fetch_model_pool, BudgetLedger, RouteError, Router, RouterConfig, StaticModelPool};
+use allternit_factory_engine::kernel::graph::ComputeGraph;
+use allternit_factory_engine::kernel::router::{fetch_model_pool, BudgetLedger, RouteError, Router, RouterConfig, StaticModelPool};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::time::Instant;
@@ -188,7 +188,7 @@ pub(crate) fn drive(h: &Handle, st: &AppState, s: &AgencyStore, run_id: &str, or
                     let argv: Vec<String> = step["command"].as_array().into_iter().flatten().filter_map(|x| x.as_str().map(str::to_string)).collect();
                     let refs: Vec<&str> = argv.iter().map(String::as_str).collect();
                     let key = cmd_key(&id);
-                    let args_hash = allternit_commrails::receipts::jcs::hash_value(&json!({ "argv": argv }))?;
+                    let args_hash = allternit_factory_engine::receipts::jcs::hash_value(&json!({ "argv": argv }))?;
                     match safety::prepare(&st.db, &key, run_id, &id, "s0.command", &args_hash, epoch, true)? {
                         safety::Prepared::Stale => return Ok(()),
                         safety::Prepared::Committed(prev) => {

@@ -2,7 +2,7 @@
 name = "uhp-gateway"
 version = "0.1.0"
 edition = "2021"
-description = "UHP (Unified Harness Protocol) 2026-08-11 gateway over the ao engine (herdr) Unix-socket JSON-RPC API"
+description = "UHP (Unified Harness Protocol) 2026-08-11 gateway over the factory pane engine (herdr fork) Unix-socket JSON-RPC API"
 
 [dependencies]
 axum = { workspace = true }

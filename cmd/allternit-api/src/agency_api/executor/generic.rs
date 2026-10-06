@@ -114,7 +114,7 @@ impl Exec<'_> {
             Some(self.c3b_ctx(node, write_set, content)?)
         } else { None };
         // ── end WP-C3b ──
-        let digest = allternit_commrails::receipts::jcs::sha256_tagged(content.as_bytes());
+        let digest = allternit_factory_engine::receipts::jcs::sha256_tagged(content.as_bytes());
         let tool = if primitive == "mut.create_file" { "tool.write_file" } else { "tool.execute" };
         let (ws, body) = (write_set.to_vec(), content.to_string());
         // ── WP-C3a: connector context (the run's owner identity, no new auth) ──
@@ -206,7 +206,7 @@ impl Exec<'_> {
 
     /// Drive a task type's graph to verifier-owned completion.
     pub(super) fn run_task_type(&mut self, t: &TaskType, goal: &str, write_set: &[String]) -> Step<()> {
-        let events = self.h.block_on(self.s.events_of_type(allternit_commrails::judge::events::POLICY_SET))?;
+        let events = self.h.block_on(self.s.events_of_type(allternit_factory_engine::judge::events::POLICY_SET))?;
         if effective_policy(&events, &self.dag_id, Some("gate")).close_by != CloseBy::Verifier {
             return Err(StepErr::Fail(anyhow!("completion is not verifier-owned for this run (fail closed)")));
         }
@@ -309,7 +309,7 @@ impl Exec<'_> {
                     _ => true,
                 };
                 if pass {
-                    let v = format!("{}:{}", node.primitive_id, allternit_commrails::receipts::jcs::sha256_tagged(input.as_bytes()));
+                    let v = format!("{}:{}", node.primitive_id, allternit_factory_engine::receipts::jcs::sha256_tagged(input.as_bytes()));
                     for o in &node.outputs { out.entry(o.clone()).or_insert_with(|| v.clone()); }
                     if node.primitive_id == "ctl.checkpoint" {
                         let jk = format!("{}:{cur}:checkpoint:1", self.run_id);
@@ -377,7 +377,7 @@ impl Exec<'_> {
         let mut arts = vec![];
         if let Some((r, content)) = doc {
             let art = json!({ "id": new_id("art"), "object": "artifact", "run_id": self.run_id, "name": r.trim_start_matches("fs:"),
-                "kind": "document", "mime_type": "text/markdown", "hash": allternit_commrails::receipts::jcs::sha256_tagged(content.as_bytes()),
+                "kind": "document", "mime_type": "text/markdown", "hash": allternit_factory_engine::receipts::jcs::sha256_tagged(content.as_bytes()),
                 "size_bytes": content.len(), "verification_status": "verified", "created_at": now(),
                 "content": if content.len() <= 256 * 1024 { json!(content) } else { Value::Null } });
             self.emit("artifact.created", art.clone())?;

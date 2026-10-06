@@ -21,9 +21,9 @@ import { EOL } from "os"
 const PROGRAM_REGISTRY: Record<string, { description: string; command: string }> = {
   research: { description: "Research and analysis workspace", command: "gizzi research" },
   code: { description: "Code mode workspace", command: "gizzi code" },
-  cowork: { description: "Cowork task runner", command: "gizzi cowork" },
-  tasks: { description: "Task queue and scheduling", command: "gizzi tasks" },
-  agents: { description: "Agent hub", command: "gizzi agent-hub" },
+  cowork: { description: "Cowork task runner", command: "gizzi workspace tasks" },
+  tasks: { description: "Task queue and scheduling", command: "gizzi workspace tasks queue" },
+  agents: { description: "Agent hub", command: "gizzi agents templates" },
   skills: { description: "Skill registry", command: "gizzi skills list" },
 }
 
@@ -126,7 +126,7 @@ const ProgramsRunCommand = cmd({
         const agent = agents.find((a) => a.name === name)
         if (agent) {
           UI.println(`Launching agent program: ${agent.name}`)
-          UI.println(`Use ${UI.Style.TEXT_DIM}gizzi agent select ${agent.name}${UI.Style.TEXT_NORMAL} then start a chat to run it.`)
+          UI.println(`Use ${UI.Style.TEXT_DIM}gizzi agents modes select ${agent.name}${UI.Style.TEXT_NORMAL} then start a chat to run it.`)
         } else {
           UI.println(UI.Style.TEXT_DANGER + `Unknown program: ${name}` + UI.Style.TEXT_NORMAL)
           process.exit(1)

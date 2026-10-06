@@ -127,7 +127,7 @@ impl CoordinatorRuntime for GizziCoordinator {
         crate::agent_session_routes::send_bot_turn(&self.state.db, session_id, bot_id, text).await
     }
     async fn mirror_plan(&self, goal: &str, project_id: &str, steps: &[(String, String, Vec<String>)]) -> Option<(String, HashMap<String, String>)> {
-        use allternit_commrails::DagMutation;
+        use allternit_factory_engine::DagMutation;
         let gate = &self.state.rails.gate;
         let (_, dag_id, root) = gate
             .plan_new(goal, Some(project_id.to_string()))
@@ -166,7 +166,7 @@ impl CoordinatorRuntime for GizziCoordinator {
         Some((dag_id, nodes))
     }
     async fn node_status(&self, dag_id: &str, node_id: &str, from: &str, to: &str) {
-        use allternit_commrails::DagMutation;
+        use allternit_factory_engine::DagMutation;
         let change = DagMutation::ChangeStatus { node_id: node_id.into(), from: from.into(), to: to.into(), reason: Some("bot thread".into()) };
         if let Err(e) = self.state.rails.gate.mutate_with_decision(dag_id, "thread status", None, vec![change]).await {
             warn!(dag = %dag_id, node = %node_id, error = %e, "thread status → DAG failed");
@@ -1529,16 +1529,16 @@ mod tests {
             ("engine".to_string(), "Pricing engine".to_string(), vec!["econ".to_string()]),
         ];
         let (dag_id, nodes) = rt.mirror_plan("Price the cloud", "p1", &steps).await.expect("dag");
-        let events = state.rails.ledger.query(allternit_commrails::LedgerQuery::default()).await.unwrap();
-        let dag = allternit_commrails::work::project_dag(&events, &dag_id);
+        let events = state.rails.ledger.query(allternit_factory_engine::LedgerQuery::default()).await.unwrap();
+        let dag = allternit_factory_engine::work::project_dag(&events, &dag_id);
         assert_eq!(dag.nodes[&nodes["engine"]].title, "Pricing engine");
         assert!(dag
             .edges
             .iter()
             .any(|e| e.from_node_id == nodes["econ"] && e.to_node_id == nodes["engine"] && e.edge_type == "blocked_by"));
         rt.node_status(&dag_id, &nodes["econ"], "READY", "DONE").await;
-        let events = state.rails.ledger.query(allternit_commrails::LedgerQuery::default()).await.unwrap();
-        assert_eq!(allternit_commrails::work::project_dag(&events, &dag_id).nodes[&nodes["econ"]].status, "DONE");
+        let events = state.rails.ledger.query(allternit_factory_engine::LedgerQuery::default()).await.unwrap();
+        assert_eq!(allternit_factory_engine::work::project_dag(&events, &dag_id).nodes[&nodes["econ"]].status, "DONE");
     }
 
     #[tokio::test]

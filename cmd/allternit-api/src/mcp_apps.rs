@@ -495,7 +495,7 @@ pub(crate) async fn load_user_connectors(state: &Arc<AppState>, user_id: &str, a
 
 /// Shared egress policy (commrails): only publicly routable unicast addresses.
 fn is_forbidden_ip(ip: IpAddr) -> bool {
-    !allternit_commrails::egress::is_public_ip(ip)
+    !allternit_factory_engine::egress::is_public_ip(ip)
 }
 
 /// Addresses refused even when local development is allowed

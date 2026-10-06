@@ -3,7 +3,7 @@
 use super::runner::{run_scripted, Script, Status};
 use super::*;
 use crate::agency_api::{catalog, compiler::TemplateRegistry};
-use allternit_commrails::kernel::router::Role;
+use allternit_factory_engine::kernel::router::Role;
 use serde_json::{json, Value};
 
 const EVALS: &[&str] = &[
@@ -189,7 +189,7 @@ fn eval_sets_pass_with_the_scripted_executor() {
             if out.status == Status::Completed {
                 // Verifier-owned completion: every contract criterion is backed by a receipt ref.
                 let p = completion_policy(get(tt).unwrap()).unwrap();
-                assert!(allternit_commrails::judge::completion::missing_evidence(&p, &out.evidence).is_empty(), "{tag}");
+                assert!(allternit_factory_engine::judge::completion::missing_evidence(&p, &out.evidence).is_empty(), "{tag}");
                 assert!(out.visited.iter().all(|(_, ok)| *ok) || out.visited.iter().any(|(n, _)| n.ends_with("_deep")), "{tag}");
             }
         }

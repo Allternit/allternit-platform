@@ -1,91 +1,24 @@
 /**
  * Agent Communication CLI (ac - Agent Communicate)
  * 
- * CLI tool for agents to communicate and coordinate.
- * Similar to agenthub's `ah` tool but integrated with allternit rails.
+ * CLI tool for agents to communicate and coordinate, mounted as
+ * `gizzi orchestration ac`. Its send/read (local JSONL) were folded into
+ * the engine's `gizzi orchestration send` / `feed`; what remains here is
+ * the local channel, key, rate-limit and git-bundle tooling.
  */
 
 import { AgentAuth } from '@/runtime/integrations/agent-auth/agent-auth'
 import { AgentRateLimiter } from '@/runtime/integrations/rate-limiter/rate-limiter'
 import { GitBundle } from '@/runtime/integrations/git-bundle/git-bundle'
 import { GitDAGTracker } from '@/runtime/integrations/git-dag/dag-tracker'
-import { AgentCommunicate } from '@/runtime/tools/builtins/agent-communicate'
 import { AgentWorkspaceCommunication } from '@/runtime/integrations/agent-workspace-communication'
 import { cmd } from './cmd'
 
 export const AcCommand = cmd({
   command: "ac",
-  describe: "agent communication commands",
+  describe: "local agent channels, API keys, rate limits and git bundles",
   builder: (yargs) =>
     yargs
-      .command(
-        'send <message>',
-        'Send a message to an agent or channel',
-        (yargs) =>
-          yargs
-            .positional('message', {
-              type: 'string',
-              describe: 'Message content',
-            })
-            .option('to', {
-              type: 'string',
-              describe: 'Target agent, role, or channel',
-            })
-            .option('correlation-id', {
-              type: 'string',
-              describe: 'Thread/correlation ID',
-            }),
-        async (argv) => {
-          await AgentWorkspaceCommunication.initialize()
-
-          const result = await AgentCommunicate.sendMessage({
-            sessionID: 'cli-session',
-            agentId: (argv._[1] as string) || 'cli-agent',
-            agentName: 'CLI Agent',
-            agentRole: 'user',
-            content: argv.message as string,
-            to: argv.to ? { agentRole: argv.to } : undefined,
-            correlationId: argv.correlationId as string,
-          })
-
-          console.log(`✅ Message sent: ${result.id}`)
-          console.log(`   To: ${result.to.agentRole || result.to.channel || 'broadcast'}`)
-          console.log(`   Mentions: ${result.mentions?.join(', ') || 'none'}`)
-        },
-      )
-      .command(
-        'read',
-        'Read messages',
-        (yargs) =>
-          yargs
-            .option('channel', {
-              type: 'string',
-              describe: 'Filter by channel',
-            })
-            .option('limit', {
-              type: 'number',
-              default: 10,
-              describe: 'Max messages to read',
-            })
-            .option('unread', {
-              type: 'boolean',
-              describe: 'Only unread messages',
-            }),
-        async (argv) => {
-          await AgentWorkspaceCommunication.initialize()
-
-          const messages = await AgentWorkspaceCommunication.readMessages({
-            channel: argv.channel as string,
-            limit: argv.limit as number,
-            unreadOnly: argv.unread as boolean,
-          })
-
-          console.log(`📬 Messages (${messages.length}):`)
-          for (const msg of messages) {
-            console.log(`   [${msg.type}] ${msg.from.agentName}: ${msg.content.slice(0, 60)}`)
-          }
-        },
-      )
       .command(
         'channels',
         'List available channels',

@@ -11,8 +11,9 @@ members = [
     "cmd/allternit-cloud-wizard",
     "cmd/allternit-computer-cloud",
     "cmd/launcher",
-    "commrails",
-    "commrails/cli",
+    "factory/engine",
+    "factory/pane",
+    "cmd/allternit-factory",
     "domains/kernel/core/kernel-contracts",
     "domains/kernel/core/wasm-runtime",
     "platform/contracts/driver-interface",
@@ -32,7 +33,6 @@ members = [
     "infrastructure/cloud/allternit-cloud-deploy",
     "infrastructure/cloud/allternit-cloud-ssh",
     "infrastructure/executor",
-    "infrastructure/executor/ao-engine",
     "infrastructure/executor/cowork/cowork/allternit-cowork-runtime",
     "infrastructure/executor/cowork/cowork/allternit-cowork-scheduler",
     "infrastructure/executor/uhp-gateway",
@@ -151,7 +151,7 @@ allternit-firecracker-driver = { path = "drivers/firecracker" }
 allternit-session-manager = { path = "services/session-manager" }
 allternit-vm-executor = { path = "services/vm-executor" }
 allternit-self-improve = { path = "services/self-improve" }
-allternit-commrails = { path = "commrails" }
+allternit-factory-engine = { path = "factory/engine" }
 allternit-cowork-runtime = { path = "infrastructure/executor/cowork/cowork/allternit-cowork-runtime" }
 allternit-cowork-scheduler = { path = "infrastructure/executor/cowork/cowork/allternit-cowork-scheduler" }
 allternit-workspace-service = { path = "services/workspace-service" }
@@ -379,12 +379,13 @@ tonic-build = "0.12"
 protoc-bin-vendored = "3"
 
 # Vendored engine crates
-# ao-engine (herdr v0.9.0 fork) requires a patched portable-pty 0.9.0.
+# factory/pane (allternit-factory-pane, the herdr v0.9.0 fork) requires a patched
+# portable-pty 0.9.0.
 # Patches apply version-specifically: only dependents requesting portable-pty
 # 0.9.x resolve to this; members pinned to 0.8 (allternit-mux, vps-node, ...)
 # keep crates.io 0.8 and are unaffected.
 [patch.crates-io]
-portable-pty = { path = "infrastructure/executor/ao-engine/vendor/portable-pty" }
+portable-pty = { path = "factory/pane/vendor/portable-pty" }
 
 # `allternit-bot` ships as one small static binary (.github/workflows/publish-allternit-bot.yml).
 [profile.bot-dist]

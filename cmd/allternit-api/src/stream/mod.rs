@@ -20,7 +20,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 use crate::AppState;
-use allternit_commrails::{project_dag, LedgerQuery};
+use allternit_factory_engine::{project_dag, LedgerQuery};
 
 // ============================================================================
 // Routes
@@ -213,7 +213,7 @@ async fn handle_ledger_socket(
             );
 
             // Query ledger for events since cursor
-            let query = allternit_commrails::LedgerQuery {
+            let query = allternit_factory_engine::LedgerQuery {
                 r#type: None,
                 types: None,
                 scope: None,

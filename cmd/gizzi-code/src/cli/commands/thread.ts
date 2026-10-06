@@ -1,5 +1,5 @@
 /**
- * `gizzi thread` / `gizzi bot threads` (spec P9.3): the bot threads Desktop
+ * `gizzi agents bot threads` (spec P9.3): the bot threads Desktop
  * shows, from the terminal — list them, read one, steer it (send a message
  * into it; a running turn picks it up at its next step), resolve it. Uses the
  * platform threads client the pet HUD shares (`runtime/bots/platform-threads`).
@@ -141,17 +141,20 @@ export const ThreadResolveCommand = cmd({
     }),
 })
 
-export const ThreadCommand = cmd({
-  command: "thread",
-  describe: "Bot threads: list, show, steer, resolve",
-  builder: (y) => y.command(ThreadListCommand).command(ThreadShowCommand).command(ThreadSteerCommand).command(ThreadResolveCommand).demandCommand(1),
-  handler: async () => {},
-})
-
-/** `gizzi bot threads [bot]` — the same list, under `bot`. */
+/**
+ * `gizzi agents bot threads list|show|steer|resolve` — the hosted bots'
+ * threads (folded in from the old `gizzi thread`). The engine's threads
+ * across every binding are `gizzi orchestration threads`.
+ */
 export const BotThreadsCommand = cmd({
-  command: "threads [bot]",
-  describe: "List bot threads (see also: gizzi thread)",
-  builder: ThreadListCommand.builder as never,
-  handler: ThreadListCommand.handler as never,
+  command: "threads",
+  describe: "Hosted bot threads: list, show, steer, resolve",
+  builder: (y) =>
+    y
+      .command(ThreadListCommand)
+      .command(ThreadShowCommand)
+      .command(ThreadSteerCommand)
+      .command(ThreadResolveCommand)
+      .demandCommand(1, "Specify a threads command: list | show | steer | resolve"),
+  handler: async () => {},
 })

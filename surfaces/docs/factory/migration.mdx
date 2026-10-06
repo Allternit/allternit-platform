@@ -1,0 +1,116 @@
+---
+title: "Migrating from the old names"
+description: "Old CommRails, allternit-rails, ao and Gizzi commands, env vars and routes, and what replaces each one."
+---
+
+<Note>
+Shipping with the Allternit Factory build. Until it lands, the old commands still work. When it lands, they're gone.
+</Note>
+
+<Warning>
+The old names are **removed, not aliased**. `allternit-rails`, `allternit-commrails`, `commrails`, `rails`, `ao` and the `ao-*` scripts don't exist after the Factory build, and the old env vars and routes stop working in the same release. Update your scripts, skills and agent instructions.
+</Warning>
+
+CommRails (the work engine) and the agent orchestrator (`ao`) are now one engine, `allternit-factory`, and you drive it through `gizzi`. The internal maintenance commands that had no user-facing home (ledger, index, lease, vault, replay) live under the engine's hidden `allternit-factory internal …` group.
+
+## Commands
+
+### Work engine (`allternit-rails`, `rails`)
+
+| Old | New |
+|---|---|
+| `allternit-rails plan new "…"` / `plan create "…"` | `gizzi workspace plan new "…"` |
+| `allternit-rails plan refine <dag> --delta "…"` | `gizzi workspace plan refine <dag> --delta "…"` |
+| `allternit-rails plan show <dag>` / `dag render <dag>` | `gizzi workflows status <dag>` |
+| `allternit-rails plan new --template <id> --param k=v` | `gizzi workflows run <template> --param k=v` |
+| `allternit-rails drive <dag>` | `gizzi workflows drive <dag>` |
+| `allternit-rails wake list\|run-due` | `gizzi workflows wake list\|due\|run` |
+| `allternit-rails wait-gate add\|resolve\|list\|pending` | `gizzi workflows gate add\|resolve\|list` |
+| `allternit-rails campaign declare\|list\|pause` | `gizzi workspace campaign new\|list\|pause` (plus `status`, `finish`) |
+| `allternit-rails wih list` | `gizzi workspace node list` |
+| `allternit-rails wih pickup <node> --dag <dag> --agent <id>` | `gizzi workspace node claim <node>` |
+| `allternit-rails wih close <wih> <status> [evidence…]` | `gizzi workspace node close <node>` (evidence via `gizzi workspace proof add`) |
+| `allternit-rails work status` | `gizzi workspace board` |
+| `allternit-rails judge show\|resolve\|pending` | `gizzi workspace judge show\|resolve` |
+| `allternit-rails node add` | `gizzi workspace node add` |
+| `allternit-rails mail send\|thread\|decide` | `gizzi orchestration mail send\|read\|decide` |
+| `allternit-rails attention list\|release` | `gizzi orchestration attention list\|ack` |
+| `allternit-rails steer checkpoint\|consult` | `gizzi orchestration steer checkpoint\|consult` |
+| `allternit-rails ledger tail` / `ledger trace` | `gizzi orchestration feed` |
+| `allternit-rails peer list` | `gizzi agents ps` |
+| `allternit-rails peer send <name> "…"` | `gizzi orchestration send <bot@team> "…"` |
+| `allternit-rails peer register` | Automatic: `gizzi agents up` registers every bot on the team |
+| `allternit-rails doctor` | `gizzi doctor` |
+| `allternit-rails-service`, `allternit-commrails-service` | `allternit-factory serve` (started by Desktop or by `gizzi`) |
+| `rails ticket …`, `rails ready` | The portable ticket tool, kept apart from the four parts |
+
+### Agent orchestrator (`ao`)
+
+| Old | New |
+|---|---|
+| `ao` (the TUI) | `gizzi`, then `gizzi agents wall` for the live terminals |
+| `ao spawn <harness>` | `gizzi agents up <team>` (a pane per Terminal bot in `team.yaml`) |
+| `ao send <session> "…"` | `gizzi orchestration send <bot@team> "…"` |
+| `ao send … --queue` / the mailbox | `gizzi orchestration send <bot@team> "…" --queue` |
+| `ao status` | `gizzi agents ps` |
+| `ao status <session> <n>` | `gizzi orchestration capture <bot@team> <n>` |
+| `ao transcript <session>` | `gizzi orchestration transcript <bot@team>` |
+| `ao attach <session>` | `gizzi agents attach <bot@team>` |
+| `ao kill <session>` | `gizzi agents down <team>` |
+| `ao recover` | `gizzi agents recover [--apply]` |
+| `ao harness …` | `gizzi agents harness list\|sync` |
+| `ao doctor` | `gizzi agents doctor` |
+| `ao watch` | `gizzi workflows wake` (checks) or `gizzi workflows drive` (pickups) |
+| `ao serve`, `ao fabric serve` | `allternit-factory serve uhp`, `allternit-factory serve fabric` |
+| `ao-consult`, other `ao-*` scripts | Removed. Use `gizzi orchestration steer consult` |
+
+### Gizzi's older commands
+
+| Old | New |
+|---|---|
+| `gizzi agent …`, `gizzi agent-hub` | `gizzi agents` (`gizzi agents templates` for the hub) |
+| `gizzi runtime list\|register\|status` | `gizzi agents harness list\|sync` |
+| `gizzi mail …`, `gizzi ac …` | `gizzi orchestration mail …`, `gizzi orchestration send` |
+| `gizzi cron …` | `gizzi workflows wake …` |
+| `gizzi cowork …` | `gizzi workspace tasks` |
+
+`gizzi agent list` no longer prints four hardcoded names. `gizzi agents ps` lists the bots that exist.
+
+## Environment variables
+
+Every old prefix moves to `ALLTERNIT_FACTORY_*`.
+
+| Old | New |
+|---|---|
+| `ALLTERNIT_COMMRAILS_*` | `ALLTERNIT_FACTORY_*` |
+| `ALLTERNIT_RAILS_*` (for example `ALLTERNIT_RAILS_HOST`, `ALLTERNIT_RAILS_PORT`, `ALLTERNIT_RAILS_ROOT`) | `ALLTERNIT_FACTORY_*` (`ALLTERNIT_FACTORY_HOST`, `ALLTERNIT_FACTORY_PORT`, `ALLTERNIT_FACTORY_ROOT`) |
+| `AO_*` | `ALLTERNIT_FACTORY_*` |
+| `HERDR_*` | `ALLTERNIT_FACTORY_*` |
+| — | `ALLTERNIT_FACTORY_BIN`: where Gizzi looks for the engine, if not next to `gizzi` |
+
+## HTTP routes
+
+| Old | New |
+|---|---|
+| `/rails/*`, `/api/rails/*`, `/commrails/*`, `/api/commrails/*` | `/api/factory/*` |
+| `/api/v1/orchestrator/*` and Gizzi's `/v1/orchestrator/*` | `/api/factory/*` (agents, send, events) |
+
+See the [Factory API reference](/factory/api-reference) for the new resources.
+
+## On-disk state
+
+| Old | New |
+|---|---|
+| `~/.agent-orchestrator/` | `~/.allternit/factory/`. Moved once; `gizzi doctor` checks it |
+| The workspace's `.allternit/` | Unchanged. It's data, not a name |
+| Ledger event names | Unchanged, so old ledgers still replay |
+| `~/.local/bin/allternit-rails`, `ao-*` symlinks | Removed by the Desktop installer |
+
+## Pages that moved
+
+| Old page | Now |
+|---|---|
+| CommRails | [Allternit Factory](/factory/overview) and [Architecture](/factory/architecture) |
+| CommRails CLI | [Command reference](/factory/commands) and this page |
+| Runtime discovery (`gizzi runtime`) | [Agents: harnesses](/factory/agents#harnesses) |
+| Orchestrator API | [Factory API reference](/factory/api-reference) |

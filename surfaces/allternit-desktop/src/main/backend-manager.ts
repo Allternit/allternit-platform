@@ -23,7 +23,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
 import log from 'electron-log';
 import { runtimeResource } from './runtime-home.js';
-import { PORTS, URLS, webhookReceiverUrl } from './config.js';
+import { PORTS, URLS, factoryEngineUrl, webhookReceiverUrl } from './config.js';
 import { resolveApiDataDir } from './desktop-data-dir.js';
 import { spawnSidecar } from './process-lifeline.js';
 import { systemOne } from './system-one-manager.js';
@@ -282,6 +282,10 @@ export class BackendManager {
       ALLTERNIT_PLATFORM_STATIC: platformStatic ?? '',
       ALLTERNIT_WEBHOOK_RECEIVER_PORT: process.env.ALLTERNIT_WEBHOOK_RECEIVER_PORT ?? String(PORTS.WEBHOOK_RECEIVER),
       ALLTERNIT_WEBHOOK_RECEIVER_URL: process.env.ALLTERNIT_WEBHOOK_RECEIVER_URL ?? webhookReceiverUrl(),
+      // The Factory engine Desktop runs (factory-engine-manager): the
+      // /api/factory proxy forwards here. Not the engine's default 3011,
+      // which is Desktop's extension bridge.
+      ALLTERNIT_FACTORY_URL: process.env.ALLTERNIT_FACTORY_URL ?? factoryEngineUrl(),
       TERMINAL_SERVER_URL: config.gizziUrl ?? process.env.TERMINAL_SERVER_URL ?? URLS.GIZZI,
       GIZZI_USERNAME: config.gizziUsername ?? process.env.GIZZI_USERNAME ?? 'gizzi',
       GIZZI_PASSWORD: config.gizziPassword ?? process.env.GIZZI_PASSWORD ?? '',

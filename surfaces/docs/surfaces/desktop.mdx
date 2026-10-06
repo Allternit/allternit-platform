@@ -71,6 +71,26 @@ allternit-desktop/
 
 The main process registers many other channels (for example `miniApps:*`); see `src/main/unified-main.ts`.
 
+## Allternit Factory views
+
+<Note>
+Shipping with the Allternit Factory build. These views are the approved design and are not live yet.
+</Note>
+
+Desktop is the graphical product for the [Allternit Factory](/factory/overview). There's no new mode: the Factory's four parts show up in places Desktop already has, and every view reads the same engine as Gizzi.
+
+| Part | Where it shows |
+|---|---|
+| Front door | Bot Mode's launch screen: "What should the team work on?" starts a Campaign |
+| [Agents](/factory/agents) | The team strip on the launch screen and the project page. Each card shows the avatar, `bot@team`, a binding badge (Hosted · Gizzi, Terminal · harness name, Vendor · vendor name · official · exact), state, current node, proof `k/n` and reach. A Team graph shows who delegates to and checks whom |
+| [Orchestration](/factory/orchestration) | Threads, with `standing` and `task` labeled differently. Task threads carry a node strip. Every message shows its delivery state |
+| [Workflows](/factory/workflows) | A template picker in the composer ("Run as: Build, check, prove") and a Flow graph tab on the project page, with live node status, the fail route and the human gate |
+| [Workspace](/factory/workspace) | Project = Campaign. A Board tab on the project page, and the Node page in the shared pane: intent, plan and delivered, `PROGRESS.md` to the side, proof paired to each contract line, and [Approve](/factory/approvals) |
+| Live terminals | Code mode's terminal wall shows every Terminal bot's pane with a `bot@team` and node header. These are the same panes as `gizzi agents wall`, so a keystroke in either shows up in both. Hosted bots open their Gizzi session, and Vendor bots open their thread |
+| Per-bot device | The bot phone gets a Work app: that bot's nodes and approvals |
+
+The views draw the same picture for the same input (no random layout), show "—" when empty, and take counts from the judge, never from narrative. Desktop ships `allternit-factory` and `gizzi` in `resources/bin` and puts `gizzi` on your PATH at first run.
+
 ## How this relates to the Agency Kernel
 
 Desktop hosts the Allternit API and Gizzi runtime locally. It is not part of the [Agency Kernel](/architecture); the kernel's Agency API is a Cloud API surface. See [Architecture](/architecture).

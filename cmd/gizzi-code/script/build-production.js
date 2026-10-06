@@ -254,9 +254,6 @@ const bundlePlugin = {
         build.onResolve({ filter: /^@modelcontextprotocol\/(client|server)\/_shims$/ }, (args) => ({
             path: resolve(`node_modules/@modelcontextprotocol/${args.path.split("/")[1]}/dist/shimsNode.mjs`),
         }));
-        build.onResolve({ filter: /^@allternit\/orchestrator$/ }, () => ({
-            path: resolve("../../platform/packages/orchestrator/src/index.ts"),
-        }));
         // OTel metrics/trace/exporters are optional; not all are in
         // package.json. Inline a no-op module so Bun.build does not fail.
         const otelNs = "optional-otel";

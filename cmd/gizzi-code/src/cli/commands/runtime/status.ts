@@ -36,6 +36,6 @@ export async function runtimeStatusCommand(args: string[]): Promise<void> {
   process.stdout.write(`  Offline: ${offline}\n\n`);
 
   if (runtimes.length > 0) {
-    process.stdout.write('Run `gizzi runtime list` to see details.\n');
+    process.stdout.write('Run `gizzi agents harness runtimes` to see details.\n');
   }
 }

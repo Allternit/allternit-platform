@@ -61,7 +61,7 @@ impl DriverKind {
     }
 
     /// How this harness is held to Allternit policy (see `spawn_gate` and the
-    /// README table). Must agree with `allternit_commrails::hook::harness_gate`.
+    /// README table). Must agree with `allternit_factory_engine::hook::harness_gate`.
     pub fn gate(&self) -> GateKind {
         match self {
             Self::Claude => GateKind::Hook,

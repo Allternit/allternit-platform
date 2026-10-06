@@ -209,11 +209,11 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm 0.10.3",
  "allternit-apple-vf-driver",
- "allternit-commrails",
  "allternit-computer-cloud",
  "allternit-cowork-runtime",
  "allternit-cowork-scheduler",
  "allternit-driver-interface",
+ "allternit-factory-engine",
  "allternit-firecracker-driver",
  "allternit-gc-agents",
  "allternit-session-manager",
@@ -568,45 +568,6 @@ dependencies = [
  "tokio-test",
  "tracing",
  "uuid",
-]
-
-[[package]]
-name = "allternit-commrails"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "axum",
- "base64 0.22.1",
- "blake3",
- "chrono",
- "chrono-tz",
- "clap",
- "ed25519-dalek 2.2.0",
- "hex",
- "libc",
- "prost 0.13.5",
- "prost-types 0.13.5",
- "rand 0.8.6",
- "regex",
- "reqwest 0.12.28",
- "serde",
- "serde_bytes",
- "serde_json",
- "serde_yaml",
- "sha2 0.10.9",
- "sqlx",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "tonic",
- "tonic-build",
- "tower-http",
- "tracing",
- "tracing-subscriber",
- "urlencoding",
- "uuid",
- "worktree-manager",
 ]
 
 [[package]]
@@ -999,6 +960,112 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "allternit-factory"
+version = "0.1.0"
+dependencies = [
+ "allternit-factory-engine",
+ "allternit-factory-pane",
+ "anyhow",
+ "clap",
+ "reqwest 0.12.28",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "allternit-factory-engine"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "base64 0.22.1",
+ "blake3",
+ "chrono",
+ "chrono-tz",
+ "clap",
+ "ed25519-dalek 2.2.0",
+ "flate2",
+ "hex",
+ "hyper-util",
+ "libc",
+ "prost 0.13.5",
+ "prost-types 0.13.5",
+ "rand 0.8.6",
+ "regex",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_bytes",
+ "serde_json",
+ "serde_yaml",
+ "sha2 0.10.9",
+ "sqlx",
+ "tar",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-stream",
+ "toml_edit",
+ "tonic",
+ "tonic-build",
+ "tower 0.5.3",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "urlencoding",
+ "uuid",
+ "worktree-manager",
+]
+
+[[package]]
+name = "allternit-factory-pane"
+version = "0.9.0"
+dependencies = [
+ "allternit-factory-engine",
+ "anyhow",
+ "axum",
+ "base64 0.22.1",
+ "bincode",
+ "bytes 1.12.0",
+ "clap",
+ "clap_complete",
+ "crossterm 0.29.0",
+ "ctrlc",
+ "ed25519-dalek 2.2.0",
+ "futures-util",
+ "interprocess",
+ "jsonc-parser",
+ "libc",
+ "png",
+ "portable-pty 0.9.0",
+ "rand 0.8.6",
+ "ratatui 0.30.0",
+ "ratatui-core",
+ "regex",
+ "reqwest 0.12.28",
+ "schemars 1.2.1",
+ "serde",
+ "serde_ignored",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "time",
+ "tokio",
+ "tokio-stream",
+ "tokio-tungstenite 0.21.0",
+ "toml 0.8.23",
+ "tracing",
+ "tracing-subscriber",
+ "uhp-gateway",
+ "unicode-width 0.2.2",
+ "widestring",
+ "windows-sys 0.61.2",
+ "wmi",
 ]
 
 [[package]]
@@ -4135,18 +4202,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "commrails"
-version = "0.1.0"
-dependencies = [
- "allternit-commrails",
- "anyhow",
- "chrono",
- "clap",
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "compact_str"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6758,51 +6813,6 @@ name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
-
-[[package]]
-name = "herdr"
-version = "0.9.0"
-dependencies = [
- "allternit-commrails",
- "axum",
- "base64 0.22.1",
- "bincode",
- "bytes 1.12.0",
- "clap",
- "clap_complete",
- "crossterm 0.29.0",
- "ctrlc",
- "ed25519-dalek 2.2.0",
- "futures-util",
- "interprocess",
- "jsonc-parser",
- "libc",
- "png",
- "portable-pty 0.9.0",
- "rand 0.8.6",
- "ratatui 0.30.0",
- "ratatui-core",
- "regex",
- "reqwest 0.12.28",
- "schemars 1.2.1",
- "serde",
- "serde_ignored",
- "serde_json",
- "sha2 0.10.9",
- "tempfile",
- "time",
- "tokio",
- "tokio-stream",
- "tokio-tungstenite 0.21.0",
- "toml 0.8.23",
- "tracing",
- "tracing-subscriber",
- "uhp-gateway",
- "unicode-width 0.2.2",
- "widestring",
- "windows-sys 0.61.2",
- "wmi",
-]
 
 [[package]]
 name = "hermit-abi"

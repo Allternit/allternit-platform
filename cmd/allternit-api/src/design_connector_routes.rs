@@ -760,7 +760,7 @@ fn host_ip_literal_is_forbidden(host: &str) -> bool {
     host.trim_start_matches('[')
         .trim_end_matches(']')
         .parse::<IpAddr>()
-        .map(|ip| !allternit_commrails::egress::is_public_ip(ip))
+        .map(|ip| !allternit_factory_engine::egress::is_public_ip(ip))
         .unwrap_or(false)
 }
 
@@ -791,7 +791,7 @@ async fn validate_target(url: &url::Url) -> Result<(), ImportError> {
     if addrs.is_empty() {
         return Err(ImportError::Fetch(format!("Could not resolve {}", host)));
     }
-    if addrs.iter().any(|a| !allternit_commrails::egress::is_public_ip(a.ip())) {
+    if addrs.iter().any(|a| !allternit_factory_engine::egress::is_public_ip(a.ip())) {
         return Err(ImportError::ForbiddenTarget(
             "URL resolves to a local or private address, which is not allowed".to_string(),
         ));
@@ -1314,7 +1314,7 @@ mod import_url_tests {
             "::ffff:10.0.0.1".parse::<IpAddr>().unwrap(),
         ];
         for ip in forbidden {
-            assert!(!allternit_commrails::egress::is_public_ip(ip), "{} should be forbidden", ip);
+            assert!(!allternit_factory_engine::egress::is_public_ip(ip), "{} should be forbidden", ip);
         }
 
         let allowed: Vec<IpAddr> = vec![
@@ -1324,7 +1324,7 @@ mod import_url_tests {
             "2606:4700:4700::1111".parse::<IpAddr>().unwrap(),
         ];
         for ip in allowed {
-            assert!(allternit_commrails::egress::is_public_ip(ip), "{} should be allowed", ip);
+            assert!(allternit_factory_engine::egress::is_public_ip(ip), "{} should be allowed", ip);
         }
     }
 

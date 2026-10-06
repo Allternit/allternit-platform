@@ -44,7 +44,7 @@ use serde_json::{json, Value};
 use tracing::debug;
 use uuid::Uuid;
 
-use allternit_commrails::kernel::s1_outcome::OutcomeReporter;
+use allternit_factory_engine::kernel::s1_outcome::OutcomeReporter;
 
 use crate::db::DbHandle;
 use crate::memory_kernel_service::MemoryKernelError;

@@ -743,7 +743,7 @@ fn is_allowed_internal(url: &reqwest::Url, allow: &[String]) -> bool {
 /// Destination policy for a webhook URL: http(s) only, and no literal
 /// loopback / private / link-local (cloud metadata) host unless it is an
 /// explicitly configured internal endpoint. Domain names are vetted at
-/// connect time by [`allternit_commrails::egress::PublicOnlyResolver`].
+/// connect time by [`allternit_factory_engine::egress::PublicOnlyResolver`].
 fn check_webhook_target(raw: &str, allow: &[String]) -> Result<(), String> {
     let url = reqwest::Url::parse(raw).map_err(|_| "url is not a valid URL".to_string())?;
     if !matches!(url.scheme(), "http" | "https") {
@@ -753,7 +753,7 @@ fn check_webhook_target(raw: &str, allow: &[String]) -> Result<(), String> {
     if is_allowed_internal(&url, allow) {
         return Ok(());
     }
-    if allternit_commrails::egress::host_is_forbidden_literal(host) {
+    if allternit_factory_engine::egress::host_is_forbidden_literal(host) {
         return Err("url points to a local or private address".into());
     }
     Ok(())
@@ -768,7 +768,7 @@ fn webhook_client(url: &str, allow: &[String]) -> Result<reqwest::Client, String
         .timeout(std::time::Duration::from_secs(30))
         .redirect(reqwest::redirect::Policy::none());
     if !is_allowed_internal(&parsed, allow) {
-        b = b.dns_resolver(Arc::new(allternit_commrails::egress::PublicOnlyResolver));
+        b = b.dns_resolver(Arc::new(allternit_factory_engine::egress::PublicOnlyResolver));
     }
     b.build().map_err(|e| e.to_string())
 }

@@ -1,0 +1,25 @@
+[package]
+name = "allternit-factory"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "Allternit Factory engine binary (internal; users run gizzi)"
+
+[[bin]]
+name = "allternit-factory"
+path = "src/main.rs"
+
+[dependencies]
+allternit-factory-engine = { workspace = true }
+allternit-factory-pane = { path = "../../factory/pane" }
+anyhow = { workspace = true }
+clap = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+# Tests moved from the engine crate that drive the binary end to end.
+reqwest = { workspace = true }

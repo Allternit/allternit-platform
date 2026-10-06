@@ -10,8 +10,8 @@
 //! threshold event or opens the `budget_exhausted` attention request, and
 //! `admit_effect` refuses every effect while halted.
 
-use allternit_commrails::core::types::{Actor, ActorType, AllternitEvent, EventScope, LedgerQuery};
-use allternit_commrails::ledger::Ledger;
+use allternit_factory_engine::core::types::{Actor, ActorType, AllternitEvent, EventScope, LedgerQuery};
+use allternit_factory_engine::ledger::Ledger;
 use chrono::Utc;
 use serde_json::{json, Value};
 use std::collections::HashMap;
