@@ -152,6 +152,9 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
       if (mdxPath.endsWith('plugins/guides/porting.mdx')) continue;
       // Connecting AI apps (approvals, MCP Events subscriptions) has to name the apps people connect.
       if (['guides/connected-apps.mdx', 'guides/mcp-events.mdx'].some((p) => mdxPath.endsWith(p))) continue;
+      // The Allternit Factory runs bots on named harnesses and vendor accounts; these pages
+      // and the generated contract reference have to name which ones (binding badges, harness ids).
+      if (['factory/agents.mdx', 'factory/overview.mdx', 'factory/api-reference.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // Provider env vars (OPENAI_API_KEY etc.) are configuration, not endorsement.
       if (mdxPath.endsWith('tools/open-notebook.mdx')) continue;
       fail(
