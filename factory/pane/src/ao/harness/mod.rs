@@ -6,8 +6,8 @@
 //! phase spec on disagreement). The manifest is the single source of truth —
 //! the JS driver config bodies are dead code (gizzi drifted) and are NOT
 //! ported; only each driver's `key`/`label`/`installed()` probe sequence is,
-//! via the [`DRIVERS`] table (conformance-checked against the JS driver files
-//! by tests/ao_harness_parity/run.sh via drivers.tsv).
+//! via the [`DRIVERS`] table (it was checked against the JS driver files by a
+//! parity harness, retired with the pre-Factory CLI).
 //!
 //! Pure filesystem CLI: no engine socket, no network. The only subprocesses
 //! are the `cli`-kind MCP tool invocations (`grok`/`agy`/`opencode`/`qwen`),
@@ -35,8 +35,7 @@ use serde::Deserialize;
 
 use json_val::JVal;
 
-/// Verbatim copy of `Allternit Brain/Ops/harness.json` (checked by
-/// tests/ao_harness_parity/run.sh).
+/// Verbatim copy of `Allternit Brain/Ops/harness.json`.
 const EMBEDDED_MANIFEST: &str = include_str!("harness.json");
 
 // ---------------------------------------------------------------------------
@@ -589,8 +588,7 @@ pub(crate) fn run(args: &[String]) -> std::io::Result<i32> {
         "uninstall" => cmd_uninstall(&manifest, &tools_filter, dry_run),
         "install" => install::cmd_install(&manifest, &install_tools, &accepts_terms, dry_run),
         other => {
-            // Byte-parity: the JS harness-sync prints exactly this list; the
-            // parity harness diffs the error line (ao_harness_parity/run.sh).
+            // The same error line the JS harness-sync printed.
             eprintln!("Unknown command: {other} (expected status | sync | uninstall)");
             Ok(1)
         }
@@ -834,38 +832,6 @@ mod tests {
         assert_eq!(class_of("dsh"), LicenseClass::Undeclared);
         assert_eq!(class_of("kimi"), LicenseClass::Mit);
         assert_eq!(class_of("codex"), LicenseClass::Apache);
-    }
-
-    #[test]
-    fn driver_table_matches_checked_in_tsv() {
-        // Conformance gate for the gizzi-drift class of bug: the Rust
-        // key/label/probe table must match tests/ao_harness_parity/drivers.tsv,
-        // which run.sh diffs against the live JS driver files.
-        let tsv = std::fs::read_to_string(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/ao_harness_parity/drivers.tsv"
-        ))
-        .expect("drivers.tsv exists");
-        let expected: Vec<Vec<String>> = tsv
-            .lines()
-            .filter(|line| !line.is_empty() && !line.starts_with('#'))
-            .map(|line| line.split('\t').map(str::to_string).collect())
-            .collect();
-        assert_eq!(expected.len(), DRIVERS.len(), "driver count mismatch");
-        for (row, driver) in expected.iter().zip(DRIVERS.iter()) {
-            assert_eq!(row[0], driver.key, "key mismatch");
-            assert_eq!(row[1], driver.label, "label mismatch for {}", driver.key);
-            let probes: Vec<String> = driver
-                .probes
-                .iter()
-                .map(|probe| match probe {
-                    Probe::Exists(path) => format!("exists:{path}"),
-                    Probe::Which(bin) => format!("which:{bin}"),
-                })
-                .collect();
-            let tsv_probes: Vec<&str> = row[2..].iter().map(String::as_str).collect();
-            assert_eq!(probes, tsv_probes, "probe mismatch for {}", driver.key);
-        }
     }
 
     #[test]

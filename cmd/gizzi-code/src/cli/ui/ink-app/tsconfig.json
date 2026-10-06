@@ -16,6 +16,12 @@
       "src/*": [
         "./*"
       ],
+      "@allternit/gizzi-sdk": [
+        "../../../../packages/sdk/src"
+      ],
+      "@allternit/gizzi-sdk/*": [
+        "../../../../packages/sdk/src/*"
+      ],
       "@allternit/sdk": [
         "../../../../packages/sdk/src"
       ],

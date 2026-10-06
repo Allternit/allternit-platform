@@ -90,6 +90,8 @@ fn write_requested_help(
     }
 
     let mut root = command();
+    // Help names the command a person types, `allternit-factory pane …`.
+    root.set_bin_name("allternit-factory pane");
     root.build();
     let mut selected = &mut root;
     let mut path = vec!["allternit-factory pane".to_string()];

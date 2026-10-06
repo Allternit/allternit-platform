@@ -169,6 +169,11 @@ describe("forwardedArgs", () => {
       forwardedArgs("orchestration", ["--print-logs", "orchestration", "send", "a@t", "hi there", "--queue", "--json", "--log-level", "DEBUG"]),
     ).toEqual({ args: ["orchestration", "send", "a@t", "hi there", "--queue"], json: true })
     expect(forwardedArgs("agents", ["agents", "ps"])).toEqual({ args: ["agents", "ps"], json: false })
+    // The mailbox drain (the engine's, now that the pane engine has no verbs of its own).
+    expect(forwardedArgs("orchestration", ["orchestration", "drain", "a@t", "--all", "--dry-run", "--json"])).toEqual({
+      args: ["orchestration", "drain", "a@t", "--all", "--dry-run"],
+      json: true,
+    })
   })
 })
 

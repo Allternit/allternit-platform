@@ -210,7 +210,7 @@ let warnedOldPeerVar = false
 
 /**
  * Factory peer registration is default-on; `ALLTERNIT_FACTORY_PEER=0` opts
- * out. `GIZZI_ENABLE_RAILS_PEER` is the name shells set before the Factory,
+ * out. `GIZZI_ENABLE_RAILS_PEER` is the name shells set before the Factory, // old-names: keep (migration note)
  * still read (with a one-time notice) so an opt-out keeps working.
  */
 export function isFactoryPeerDisabled(env: NodeJS.ProcessEnv = process.env): boolean {

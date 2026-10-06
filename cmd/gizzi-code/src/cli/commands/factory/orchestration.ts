@@ -33,6 +33,14 @@ export const OrchestrationCommand = cmd({
       .command(engineVerb(P, { command: "capture <bot> [lines]", describe: "the last lines of a bot's pane" }))
       .command(engineVerb(P, { command: "transcript <bot>", describe: "a bot's full transcript" }))
       .command(
+        engineVerb(P, {
+          command: "drain <bot>",
+          describe: "deliver a bot's queued messages (oldest first, each once its paste is verified)",
+          mutation: true,
+          options: { all: { type: "boolean", describe: "every queued message, not just the oldest" } },
+        }),
+      )
+      .command(
         engineGroup(P, "threads", "Factory threads (standing / task) across every binding", [
           { command: "list", describe: "list threads" },
           { command: "show <thread>", describe: "show a thread" },

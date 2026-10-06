@@ -13,7 +13,7 @@
 //! This module replicates that collation with a fixed weight table. It was
 //! validated exhaustively against `node localeCompare`: all 9,025 single-char
 //! pairs over printable ASCII plus 30,000 random multi-char strings produced
-//! identical order (see tests/ao_harness_parity evidence in the P4 notes).
+//! identical order (evidence in the P4 harness port notes under docs/programs/).
 //!
 //! Known limitation (accepted, see the P7 harness port notes in docs/programs/):
 //! non-ASCII names fall back to code-point order, which may diverge from ICU
