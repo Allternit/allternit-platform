@@ -64,7 +64,11 @@ Nothing is sent without you tapping **Send**. Developers: see [Starting conversa
 
 ## Unread
 
-A conversation counts as unread when it has new activity since you last opened it on this device. The Phones button, the pills on the home screen and the badges on app tiles all use the same count.
+A conversation counts as unread when it has new activity since you last opened it on any of your devices: open it on your phone and the badge clears on Desktop and the web app too (on their next refresh, within about a minute). The Phones button, the pills on the home screen and the badges on app tiles all use the same count.
+
+The home screen shows the bot's own email address when the bot has the Email channel on.
+
+Developers: your computer keeps the read marks. `GET /api/v1/bot-phone/seen` returns `{"seen": {"<conversationId>": <epoch ms>}}` for the signed-in owner, and `PUT /api/v1/bot-phone/seen {"seen": {…}}` records marks (a mark only moves forward; up to 500 per call, the newest 5,000 are kept). Each device also keeps a local copy, so a computer that is briefly unreachable doesn't bring badges back.
 
 ## What the bot can do on its own
 

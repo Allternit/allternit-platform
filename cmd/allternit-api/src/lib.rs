@@ -26,6 +26,7 @@ pub mod agent_execution;
 pub mod agent_operations_routes;
 pub mod agent_email_reply;
 pub mod agent_email_routes;
+pub mod phone_seen_routes;
 pub mod agent_preferences_routes;
 pub mod agent_cloud_routes;
 pub mod agent_routes;
