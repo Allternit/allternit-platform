@@ -19,6 +19,15 @@
 //! * `DELETE /api/v1/runtime-devices/me/bot-email/mailboxes/:mailbox_id` undoes
 //!   it (webhook, key, mailbox, route).
 //!
+//! * `PUT /api/v1/runtime-devices/me/bot-email/domains/:domain` adds a customer
+//!   domain (support@acme.com) for the device's user and answers the DNS records
+//!   to add; `GET …/domains` lists the user's domains with a live record check;
+//!   `DELETE …/domains/:domain` removes one that has no bot mailboxes left. The
+//!   domain is served by Allternit's mail host (mx.allternit.com, services/mail-relay),
+//!   which Allternit Mail reaches through `/api/v1/relay/domains/:host`. Ownership is
+//!   `bot_email_domains` (one user per domain).
+//! * The mailbox provision takes `domain` to put the bot on a verified customer domain.
+//!
 //! Unset env → 503 `bot_email_not_configured` (nothing changes for anyone).
 
 use std::sync::Arc;
@@ -27,7 +36,7 @@ use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::{delete, post},
+    routing::{delete, get, post, put},
     Json, Router,
 };
 use serde::Deserialize;
@@ -43,6 +52,8 @@ pub fn routes() -> Router<Arc<ApiState>> {
     Router::new()
         .route("/api/v1/runtime-devices/me/bot-email/mailboxes", post(provision))
         .route("/api/v1/runtime-devices/me/bot-email/mailboxes/:mailbox_id", delete(teardown))
+        .route("/api/v1/runtime-devices/me/bot-email/domains", get(list_domains))
+        .route("/api/v1/runtime-devices/me/bot-email/domains/:domain", put(add_domain).delete(remove_domain))
 }
 
 #[derive(Clone)]
@@ -108,6 +119,114 @@ struct ProvisionBody {
     agent_id: String,
     local_part: Option<String>,
     display_name: Option<String>,
+    /// A verified customer domain of this user; the platform bot domain when absent.
+    domain: Option<String>,
+}
+
+/// `acme.com`, lower-cased and without a trailing dot; `None` unless it is a
+/// plain domain name that isn't Allternit's own.
+pub fn clean_domain(raw: &str) -> Option<String> {
+    let d = raw.trim().trim_end_matches('.').to_ascii_lowercase();
+    let labels: Vec<&str> = d.split('.').collect();
+    let ok = d.len() <= 253
+        && labels.len() >= 2
+        && labels.iter().all(|l| !l.is_empty() && l.len() <= 63 && !l.starts_with('-') && !l.ends_with('-') && l.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'))
+        && labels.last().is_some_and(|tld| tld.len() >= 2 && tld.bytes().all(|b| b.is_ascii_alphabetic()));
+    (ok && d != "allternit.com" && !d.ends_with(".allternit.com")).then_some(d)
+}
+
+/// The user's claim on a domain: `Ok(true)` theirs, `Ok(false)` free, `Err` someone else's.
+async fn domain_claim(db: &sqlx::PgPool, user_id: &str, domain: &str) -> Result<Option<bool>, ApiError> {
+    let owner: Option<(String,)> = sqlx::query_as("SELECT user_id FROM bot_email_domains WHERE domain = $1").bind(domain).fetch_optional(db).await?;
+    Ok(match owner {
+        None => Some(false),
+        Some((u,)) if u == user_id => Some(true),
+        Some(_) => None,
+    })
+}
+
+fn domain_taken() -> Response {
+    (StatusCode::CONFLICT, Json(json!({ "error": "domain_taken", "message": "That domain is already used for bot email on another Allternit account." }))).into_response()
+}
+
+/// Allternit Mail's answer for a domain, as `{domain, state, records}` for the app.
+fn domain_json(v: &Value) -> Value {
+    let verified = v.get("verified").and_then(Value::as_bool).unwrap_or(false);
+    json!({
+        "domain": v.get("domain").cloned().unwrap_or(Value::Null),
+        "state": if verified { "verified" } else { "pending" },
+        "records": v.get("records").cloned().unwrap_or_else(|| json!([])),
+    })
+}
+
+async fn add_domain(State(state): State<Arc<ApiState>>, headers: HeaderMap, Path(domain): Path<String>) -> Result<Response, ApiError> {
+    let Some(cfg) = MailConfig::from_env() else { return Ok(not_configured()) };
+    let (_, user_id) = device(&state, &headers).await?;
+    let Some(domain) = clean_domain(&domain) else {
+        return Err(ApiError::BadRequest("Enter a domain like acme.com or mail.acme.com.".into()));
+    };
+    match domain_claim(&state.db, &user_id, &domain).await? {
+        None => return Ok(domain_taken()),
+        Some(true) => {}
+        Some(false) => {
+            sqlx::query("INSERT INTO bot_email_domains (domain, user_id) VALUES ($1, $2) ON CONFLICT (domain) DO NOTHING").bind(&domain).bind(&user_id).execute(&state.db).await?;
+            if domain_claim(&state.db, &user_id, &domain).await? != Some(true) {
+                return Ok(domain_taken());
+            }
+        }
+    }
+    match call(&cfg, reqwest::Method::PUT, &format!("/api/v1/relay/domains/{domain}"), None).await {
+        Ok(v) => Ok(Json(domain_json(&v)).into_response()),
+        Err((Some(503), _)) => Ok((StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "error": "custom_domains_unavailable", "message": "Company domains for bot email aren't switched on yet." }))).into_response()),
+        Err((s, d)) => Ok(mail_error("add the domain", s, &d)),
+    }
+}
+
+/// The user's domains, each checked live; a domain that passes is marked verified.
+async fn list_domains(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> Result<Response, ApiError> {
+    let Some(cfg) = MailConfig::from_env() else { return Ok(not_configured()) };
+    let (_, user_id) = device(&state, &headers).await?;
+    let rows: Vec<(String,)> = sqlx::query_as("SELECT domain FROM bot_email_domains WHERE user_id = $1 ORDER BY created_at").bind(&user_id).fetch_all(&state.db).await?;
+    let mut out = Vec::new();
+    for (domain,) in rows {
+        match call(&cfg, reqwest::Method::GET, &format!("/api/v1/relay/domains/{domain}"), None).await {
+            Ok(v) => {
+                let d = domain_json(&v);
+                if d["state"] == "verified" {
+                    sqlx::query("UPDATE bot_email_domains SET verified_at = COALESCE(verified_at, now()) WHERE domain = $1").bind(&domain).execute(&state.db).await?;
+                }
+                out.push(d);
+            }
+            Err((s, d)) => {
+                tracing::warn!("bot email: check {domain} failed ({s:?}): {d}");
+                out.push(json!({ "domain": domain, "state": "unknown", "records": [] }));
+            }
+        }
+    }
+    Ok(Json(json!({ "domains": out })).into_response())
+}
+
+async fn remove_domain(State(state): State<Arc<ApiState>>, headers: HeaderMap, Path(domain): Path<String>) -> Result<Response, ApiError> {
+    let Some(cfg) = MailConfig::from_env() else { return Ok(not_configured()) };
+    let (_, user_id) = device(&state, &headers).await?;
+    let Some(domain) = clean_domain(&domain) else { return Err(ApiError::NotFound("Domain not found".into())) };
+    if domain_claim(&state.db, &user_id, &domain).await? != Some(true) {
+        return Err(ApiError::NotFound("Domain not found".into()));
+    }
+    let in_use: Option<(String,)> = sqlx::query_as("SELECT address FROM bot_email_mailboxes WHERE user_id = $1 AND deleted_at IS NULL AND lower(address) LIKE $2 LIMIT 1")
+        .bind(&user_id)
+        .bind(format!("%@{domain}"))
+        .fetch_optional(&state.db)
+        .await?;
+    if let Some((address,)) = in_use {
+        return Ok((StatusCode::CONFLICT, Json(json!({ "error": "domain_in_use", "message": format!("{address} still uses this domain. Move or remove that bot's address first.") }))).into_response());
+    }
+    match call(&cfg, reqwest::Method::DELETE, &format!("/api/v1/relay/domains/{domain}"), None).await {
+        Ok(_) | Err((Some(404), _)) => {}
+        Err((s, d)) => return Ok(mail_error("remove the domain", s, &d)),
+    }
+    sqlx::query("DELETE FROM bot_email_domains WHERE domain = $1 AND user_id = $2").bind(&domain).bind(&user_id).execute(&state.db).await?;
+    Ok(Json(json!({ "domain": domain, "deleted": true })).into_response())
 }
 
 async fn device(state: &ApiState, headers: &HeaderMap) -> Result<(String, String), ApiError> {
@@ -131,6 +250,21 @@ async fn provision(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json(
         return Ok((StatusCode::CONFLICT, Json(json!({ "error": "already_provisioned", "address": address }))).into_response());
     }
 
+    // A customer domain must be this user's and verified.
+    let mail_domain = match body.domain.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
+        None => cfg.domain.clone(),
+        Some(raw) => {
+            let Some(d) = clean_domain(raw) else { return Err(ApiError::BadRequest("domain is not a valid domain name".into())) };
+            let verified: Option<(Option<chrono::DateTime<chrono::Utc>>,)> =
+                sqlx::query_as("SELECT verified_at FROM bot_email_domains WHERE domain = $1 AND user_id = $2").bind(&d).bind(&user_id).fetch_optional(&state.db).await?;
+            match verified {
+                Some((Some(_),)) => d,
+                Some((None,)) => return Ok((StatusCode::CONFLICT, Json(json!({ "error": "domain_not_verified", "message": "That domain's DNS records haven't all checked yet." }))).into_response()),
+                None => return Err(ApiError::NotFound("Domain not found".into())),
+            }
+        }
+    };
+
     // The domain's id on Allternit Mail.
     let domains = match call(&cfg, reqwest::Method::GET, "/api/domains", None).await {
         Ok(v) => v,
@@ -139,11 +273,11 @@ async fn provision(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json(
     let list = domains.get("domains").and_then(Value::as_array).cloned().or_else(|| domains.as_array().cloned()).unwrap_or_default();
     let Some(domain_id) = list
         .iter()
-        .find(|d| d.get("hostname").and_then(Value::as_str).is_some_and(|h| h.eq_ignore_ascii_case(&cfg.domain)))
+        .find(|d| d.get("hostname").and_then(Value::as_str).is_some_and(|h| h.eq_ignore_ascii_case(&mail_domain)))
         .and_then(|d| d.get("id").and_then(Value::as_str))
         .map(str::to_string)
     else {
-        return Ok(mail_error("find the bot mail domain", None, &cfg.domain));
+        return Ok(mail_error("find the bot mail domain", None, &mail_domain));
     };
 
     // 1. The relay route to this runtime (the URL is only ever given to Allternit Mail).
@@ -189,7 +323,7 @@ async fn provision(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json(
         .get("address")
         .and_then(Value::as_str)
         .map(str::to_string)
-        .unwrap_or_else(|| format!("{}@{}", mb.get("localPart").and_then(Value::as_str).unwrap_or(&base), cfg.domain));
+        .unwrap_or_else(|| format!("{}@{}", mb.get("localPart").and_then(Value::as_str).unwrap_or(&base), mail_domain));
     let undo_mailbox = |cfg: MailConfig, id: String| async move {
         let _ = call(&cfg, reqwest::Method::DELETE, &format!("/api/mailboxes/{id}"), None).await;
     };
@@ -274,6 +408,26 @@ mod tests {
         assert_eq!(clean_local_part("  --Ops.Bot_2 "), "ops-bot-2");
         assert_eq!(clean_local_part("✨"), "bot");
         assert_eq!(clean_local_part(&"a".repeat(80)).len(), 48);
+    }
+
+    #[test]
+    fn customer_domains_are_plain_names_and_never_allternits() {
+        assert_eq!(clean_domain(" Mail.Acme.COM. ").as_deref(), Some("mail.acme.com"));
+        assert_eq!(clean_domain("acme.co.uk").as_deref(), Some("acme.co.uk"));
+        for bad in ["acme", "-acme.com", "acme-.com", "ac me.com", "acme.c0m", "allternit.com", "bots.allternit.com", "a@acme.com", ""] {
+            assert_eq!(clean_domain(bad), None, "{bad}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_domain_belongs_to_one_user() {
+        let db = crate::routes::test_support::test_pool().await;
+        sqlx::query("CREATE TABLE bot_email_domains (domain text PRIMARY KEY, user_id text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), verified_at timestamptz)").execute(&db).await.unwrap();
+        let d = format!("t{}.example", uuid::Uuid::new_v4().simple());
+        assert_eq!(domain_claim(&db, "u1", &d).await.unwrap(), Some(false));
+        sqlx::query("INSERT INTO bot_email_domains (domain, user_id) VALUES ($1, 'u1')").bind(&d).execute(&db).await.unwrap();
+        assert_eq!(domain_claim(&db, "u1", &d).await.unwrap(), Some(true));
+        assert_eq!(domain_claim(&db, "u2", &d).await.unwrap(), None, "someone else's domain");
     }
 
 }

@@ -649,7 +649,7 @@ async fn connect_allternit_mail(
     let provisioned = if let Some(client) = crate::mailflare_client::MailflareClient::from_env() {
         crate::allternit_bus_routes::provision_email_mailflare(state, user_id, &agent_id, client, None).await
     } else if crate::mailflare_client::brokered_available() {
-        crate::allternit_bus_routes::provision_email_brokered(state, user_id, &agent_id, None).await
+        crate::allternit_bus_routes::provision_email_brokered(state, user_id, &agent_id, None, None).await
     } else {
         return (
             StatusCode::NOT_IMPLEMENTED,

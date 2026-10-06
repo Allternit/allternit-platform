@@ -66,6 +66,9 @@
 		// Outbound transport: "cloudflare" (default, requires Workers Paid + Email
 		// Sending entitlement) or "resend" (uses resend.com; free tier 100/day).
 		"EMAIL_TRANSPORT": "cloudflare",
+		// Customer domains run through Allternit's mail host (services/mail-relay).
+		// MAIL_RELAY_SECRET is a secret: `wrangler secret put MAIL_RELAY_SECRET`.
+		"MAIL_RELAY_URL": "https://mx.allternit.com/relay",
 	},
 	"observability": {
 		"enabled": true,

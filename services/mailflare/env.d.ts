@@ -20,6 +20,10 @@ interface CloudflareEnv {
 	EMAIL_TRANSPORT?: string;
 	RESEND_API_KEY?: string;
 	RESEND_API_BASE?: string;
+	/** Allternit mail host for customer domains, e.g. https://mx.allternit.com/relay */
+	MAIL_RELAY_URL?: string;
+	/** Shared secret with the mail relay (both directions). */
+	MAIL_RELAY_SECRET?: string;
 	CF_TOKEN?: string;
 	CF_API_KEY?: string;
 	CF_EMAIL?: string;

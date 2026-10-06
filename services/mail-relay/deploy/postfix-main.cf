@@ -1,0 +1,44 @@
+# Postfix for mx.allternit.com: bot email on customer domains only.
+# It is not a general mail server: no local mailboxes, no open relay.
+# Accepts mail only for verified customer domains and existing bot mailboxes
+# (live lookups to allternit-mail-relay over socketmap), hands it to the relay
+# on 127.0.0.1:2525, and delivers the relay's DKIM-signed outgoing mail.
+
+compatibility_level = 3.6
+myhostname = mx.allternit.com
+mydomain = allternit.com
+myorigin = $myhostname
+mydestination =
+local_recipient_maps =
+local_transport = error:local delivery is disabled
+inet_interfaces = all
+inet_protocols = ipv4
+# Only the relay (same host, loopback) may send out.
+mynetworks = 127.0.0.0/8
+
+relay_domains = socketmap:inet:127.0.0.1:2526:relay_domain
+relay_recipient_maps = socketmap:inet:127.0.0.1:2526:recipient
+relay_transport = smtp:[127.0.0.1]:2525
+
+smtpd_banner = $myhostname ESMTP
+smtpd_helo_required = yes
+disable_vrfy_command = yes
+smtpd_relay_restrictions = permit_mynetworks, reject_unauth_destination
+smtpd_recipient_restrictions = permit_mynetworks, reject_unauth_destination, reject_unknown_recipient_domain
+smtpd_sender_restrictions = permit_mynetworks, reject_non_fqdn_sender, reject_unknown_sender_domain
+smtpd_client_connection_rate_limit = 60
+smtpd_client_message_rate_limit = 120
+anvil_rate_time_unit = 60s
+message_size_limit = 26214400
+
+smtpd_tls_cert_file = /etc/letsencrypt/live/mx.allternit.com/fullchain.pem
+smtpd_tls_key_file = /etc/letsencrypt/live/mx.allternit.com/privkey.pem
+smtpd_tls_security_level = may
+smtpd_tls_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1
+smtp_tls_security_level = may
+smtp_tls_loglevel = 1
+
+# Bounces of the bots' own mail go back to the sender; never to forged senders.
+notify_classes = resource, software
+maximal_queue_lifetime = 2d
+bounce_queue_lifetime = 1d

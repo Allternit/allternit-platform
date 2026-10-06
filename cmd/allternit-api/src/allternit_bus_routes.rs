@@ -531,6 +531,8 @@ struct ProvisionEmailResponse {
 struct ProvisionEmailBody {
     /// The part before the `@`. Defaults to a slug of the bot's name.
     local_part: Option<String>,
+    /// A verified company domain (`acme.com`) instead of the shared bot domain.
+    domain: Option<String>,
 }
 
 async fn provision_email(
@@ -540,19 +542,24 @@ async fn provision_email(
     body: Option<Json<ProvisionEmailBody>>,
 ) -> Result<Response, ApiError> {
     require_agent_owner(&state, &user, &agent_id)?;
-    let requested = body.and_then(|Json(b)| b.local_part);
+    let body = body.map(|Json(b)| b).unwrap_or_default();
+    let requested = body.local_part;
+    let domain = body.domain.map(|d| d.trim().trim_end_matches('.').to_ascii_lowercase()).filter(|d| !d.is_empty());
 
     // When mailflare is configured, provision a real mailbox + scoped API key.
     // Otherwise fall back to the legacy mint-only behavior below.
     if let Some(client) = crate::mailflare_client::MailflareClient::from_env() {
         let address =
-            provision_email_mailflare(&state, &user.user_id, &agent_id, client, requested.as_deref())
+            provision_email_mailflare(&state, &user.user_id, &agent_id, match domain.as_deref() {
+                Some(d) => client.for_domain(d),
+                None => client,
+            }, requested.as_deref())
                 .await?;
         return Ok(Json(ProvisionEmailResponse { address, provider: "mailflare" }).into_response());
     }
     // No local admin key: Allternit's cloud provisions the mailbox for this runtime.
     if crate::mailflare_client::brokered_available() {
-        let address = provision_email_brokered(&state, &user.user_id, &agent_id, requested.as_deref()).await?;
+        let address = provision_email_brokered(&state, &user.user_id, &agent_id, requested.as_deref(), domain.as_deref()).await?;
         return Ok(Json(ProvisionEmailResponse { address, provider: "mailflare" }).into_response());
     }
 
@@ -675,6 +682,7 @@ pub(crate) async fn provision_email_brokered(
     user_id: &str,
     agent_id: &str,
     requested_local_part: Option<&str>,
+    domain: Option<&str>,
 ) -> Result<String, ApiError> {
     let existing = {
         let conn = state.db.connect().map_err(internal)?;
@@ -682,6 +690,11 @@ pub(crate) async fn provision_email_brokered(
     };
     if let Some(channel) = existing {
         if channel.mailbox_id.is_some() && channel.api_key_sealed.is_some() {
+            if let Some(d) = domain {
+                if !channel.address.to_ascii_lowercase().ends_with(&format!("@{d}")) {
+                    return Err(err(StatusCode::CONFLICT, "email_address_exists", "The bot already has an address. Release it first to move the bot to this domain."));
+                }
+            }
             return Ok(channel.address);
         }
     }
@@ -696,7 +709,7 @@ pub(crate) async fn provision_email_brokered(
         .post(format!("{}/api/v1/runtime-devices/me/bot-email/mailboxes", crate::phone_sync::cloud_base().trim_end_matches('/')))
         .bearer_auth(bearer)
         .timeout(std::time::Duration::from_secs(30))
-        .json(&serde_json::json!({ "agentId": agent_id, "localPart": local, "displayName": bot_name }))
+        .json(&serde_json::json!({ "agentId": agent_id, "localPart": local, "displayName": bot_name, "domain": domain }))
         .send()
         .await
         .map_err(|e| err(StatusCode::BAD_GATEWAY, "cloud_unreachable", e.to_string()))?;
@@ -704,6 +717,9 @@ pub(crate) async fn provision_email_brokered(
     let body: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
     if status == StatusCode::SERVICE_UNAVAILABLE {
         return Err(err(StatusCode::NOT_IMPLEMENTED, "email_domain_not_configured", "Bot email isn't available on Allternit's cloud yet."));
+    }
+    if status == StatusCode::CONFLICT && body.get("error").and_then(|v| v.as_str()) == Some("domain_not_verified") {
+        return Err(err(StatusCode::CONFLICT, "domain_not_verified", "That domain's DNS records haven't all checked yet."));
     }
     if !status.is_success() {
         let msg = body.get("message").or_else(|| body.get("error")).and_then(|v| v.as_str()).unwrap_or("the cloud refused to create the mailbox").to_string();
@@ -746,13 +762,16 @@ pub(crate) async fn provision_email_mailflare(
     requested_local_part: Option<&str>,
 ) -> Result<String, ApiError> {
     // Idempotent re-provision: an existing, fully-configured mailflare channel
-    // is returned as-is.
+    // is returned as-is (when it is on the domain asked for).
     let existing = {
         let conn = state.db.connect().map_err(internal)?;
         crate::agent_email_routes::lookup_email_channel(&conn, agent_id).map_err(internal)?
     };
     if let Some(channel) = existing {
         if channel.mailbox_id.is_some() && channel.api_key_sealed.is_some() {
+            if !channel.address.to_ascii_lowercase().ends_with(&format!("@{}", client.config().domain.to_ascii_lowercase())) {
+                return Err(err(StatusCode::CONFLICT, "email_address_exists", "The bot already has an address. Release it first to move the bot to this domain."));
+            }
             return Ok(channel.address);
         }
     }

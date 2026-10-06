@@ -57,6 +57,16 @@ Everything is declared in `wrangler.jsonc`: D1 `allternit-agent-mail`, R2 bucket
 `LOGIN_RATE_LIMIT` / `SEND_RATE_LIMIT` rate-limit bindings. The D1 `database_id` is
 **per-account** and is written into `wrangler.jsonc` by the installer — never commit one.
 
+## Customer domains (mx.allternit.com)
+
+A domain that isn't a zone in this Cloudflare account (a customer's `acme.com`) is a
+`relay` domain (`domains.transport`, migration `0012_relay_domains.sql`). Its mail runs
+through Allternit's mail host and `services/mail-relay`: `PUT/GET/DELETE
+/api/v1/relay/domains/:host` (admin scope) add it, check its DNS and remove it; the relay
+calls `POST /api/v1/relay/inbound` and `GET /api/v1/relay/recipient`; outgoing mail from a
+relay domain is sent by the relay, DKIM-signed with the domain's key. Set `MAIL_RELAY_URL`
+and `MAIL_RELAY_SECRET` (`wrangler secret put MAIL_RELAY_SECRET`).
+
 ## Approval-gated outbound
 
 This fork never lets an agent send mail directly to the internet by default

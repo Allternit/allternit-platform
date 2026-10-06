@@ -377,6 +377,8 @@ When the mailflare agent-email rail is configured (`ALLTERNIT_MAILFLARE_URL` + `
 
 Provisioning is idempotent: re-provisioning an agent returns its existing channel. A platform address (provider `mailflare`) is owned by the server: a `PATCH /api/v1/agents/:id` that sends a different `identityChannels.email.address` keeps the stored one. To change it, release it and provision again (below). Switching the bot to its own mail account (`provider` other than `mailflare` / `commrails`) still saves the new address.
 
+To put the bot on a verified company domain, send `{ "localPart": "support", "domain": "acme.com" }` (see [Company domains](#company-domains)). A domain whose records haven't all checked returns `409 domain_not_verified`; a bot that already has an address elsewhere returns `409 email_address_exists` (release it first).
+
 The part before the `@` comes from the optional body `{ "localPart": "ledger-bot" }`: 3-40 lowercase letters, numbers and single hyphens (invalid values return `400 invalid_local_part`; role names such as `postmaster` return `400 reserved_local_part`). A requested name that is already taken returns `409 email_local_part_taken`. Without `localPart`, the address is a slug of the bot's name (`ledger-bot`), with `-2`, `-3` and so on added only when that address is taken. The mailbox's display name, which becomes the From name on outbound mail, is the bot's name.
 
 #### Example request
@@ -423,6 +425,34 @@ Real inbound/outbound email for agents, backed by a per-installation mailflare w
 | **Admin** (an operator runtime) | The runtime itself, with `ALLTERNIT_MAILFLARE_URL` + `ALLTERNIT_MAILFLARE_ADMIN_KEY`. | The admin key; one runtime-wide `ALLTERNIT_MAILFLARE_WEBHOOK_SECRET`. |
 
 Inbound mail is verified with the receiving mailbox's own secret (cloud-provisioned) or the runtime-wide one (admin), before anything in the body is trusted; the bot is found by the event's `mailboxId`, then the delivered-to address, then `to`. A cloud-provisioned bot's direct replies (`auto`, `auto_known`) are sent with its own key and approved by the runtime itself once its review and autonomy rules allow them. A mailbox's mail is never delivered to another runtime: each webhook is scoped to one mailbox. `ALLTERNIT_BOT_EMAIL_BROKERED=0` turns the cloud mode off. cloud-api answers `503 bot_email_not_configured` until `ALLTERNIT_MAILFLARE_URL` and `ALLTERNIT_MAILFLARE_ADMIN_KEY` are set on it.
+
+### Company domains
+
+Bots can use a customer's own domain (`support@acme.com`) instead of `bots.allternit.com`. The domain's mail runs through Allternit's mail host, `mx.allternit.com` (Postfix plus `services/mail-relay`), not through Cloudflare: the customer's domain never needs to be in Allternit's Cloudflare account.
+
+| Call (runtime, signed in) | What it does |
+|---|---|
+| `PUT /api/v1/agent-email/domains/:domain` | Adds the domain for the signed-in account and answers `{domain, state, records}`: four records to add where the domain's DNS is managed. |
+| `GET /api/v1/agent-email/domains[?domain=acme.com]` | Checks each record live at public DNS and answers `{domains: [{domain, state, records}]}`; `state` turns `verified` when all four are found. |
+| `DELETE /api/v1/agent-email/domains/:domain` | Removes a domain no bot uses (`409 domain_in_use` names the address that still does). |
+
+The records (each comes back with `ok: true | false` after a check):
+
+| Type | Host | Value | Why |
+|---|---|---|---|
+| MX | `acme.com` | `10 mx.allternit.com` | Receives the bots' mail |
+| TXT | `acme.com` | `v=spf1 a:mx.allternit.com ~all` | Allows Allternit to send as the domain (merge into an existing SPF record; a domain may have only one) |
+| TXT | `allternit._domainkey.acme.com` | `v=DKIM1; k=rsa; p=…` | Signs the bots' mail with the domain's own key |
+| TXT | `_allternit.acme.com` | `allternit-verify=…` | Proves ownership |
+
+Pointing a domain's MX at `mx.allternit.com` sends all of that domain's mail to the bots, so use a domain or subdomain (`bots.acme.com`) that doesn't already receive mail elsewhere. A domain belongs to one Allternit account (`409 domain_taken` for anyone else); `allternit.com` and its subdomains are refused.
+
+On a signed-in computer the runtime calls cloud-api (`PUT/GET/DELETE /api/v1/runtime-devices/me/bot-email/domains[/:domain]`, device credential), which records ownership in `bot_email_domains` (migration 062, applied by hand to prod) and calls Allternit Mail's `/api/v1/relay/domains/:host` with the admin key. A runtime with the admin key calls that route itself. Allternit Mail (D1 migration `0012_relay_domains.sql`, column `domains.transport = 'relay'`) asks the relay to make the domain's DKIM key and check DNS, marks the domain active once it verifies, and from then on:
+
+- **Inbound:** Postfix on `mx.allternit.com` accepts mail only for verified domains and existing bot mailboxes (live socketmap lookups to the relay, which asks the worker's `GET /api/v1/relay/recipient`), and the relay posts it to the worker's `POST /api/v1/relay/inbound`. From there it is the same path as any bot mail.
+- **Outbound:** mail from a relay domain goes to the relay's `POST /relay/send`, which signs it with the domain's DKIM key and queues it in Postfix (retries for up to two days).
+
+Worker env: `MAIL_RELAY_URL` (`https://mx.allternit.com/relay`) and `MAIL_RELAY_SECRET` (32+ characters, the same value as the relay's `RELAY_SECRET`). Without them, adding a domain answers `503 custom_domains_unavailable`. The relay's install script is `services/mail-relay/deploy/install.sh`.
 
 ### Send email (approval-gated)
 

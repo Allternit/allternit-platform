@@ -32,6 +32,8 @@ export const domains = sqliteTable(
 		sendingSubdomainTag: text("sending_subdomain_tag"),
 		sendingEnabled: integer("sending_enabled", { mode: "boolean" }).notNull().default(false),
 		routingEnabled: integer("routing_enabled", { mode: "boolean" }).notNull().default(false),
+		/** `cloudflare`: a zone in this Cloudflare account. `relay`: a customer domain on mx.allternit.com. */
+		transport: text("transport", { enum: ["cloudflare", "relay"] }).notNull().default("cloudflare"),
 		createdAt: integer("created_at", { mode: "timestamp" })
 			.notNull()
 			.$defaultFn(() => new Date()),
