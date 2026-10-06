@@ -297,8 +297,8 @@ async fn get_task(
     };
     match cowork_nodes::legacy_row(&conn, &id) {
         Ok(Some(t)) if t.user_id == user.user_id => (StatusCode::OK, Json(t)).into_response(),
-        Ok(Some(_)) => (StatusCode::FORBIDDEN, Json(json!({"error": "Access denied"}))).into_response(),
-        Ok(None) => (StatusCode::NOT_FOUND, Json(json!({"error": "Task not found"}))).into_response(),
+        // Another user's task reads as missing: a 403 would confirm it exists.
+        Ok(_) => (StatusCode::NOT_FOUND, Json(json!({"error": "Task not found"}))).into_response(),
         Err(e) => db_error(e),
     }
 }
