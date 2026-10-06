@@ -1,10 +1,12 @@
 /**
  * MCP server: wires the Computers tool specs to the REST API client.
  *
- * Idiom mirrors `cmd/gizzi-code/src/cli/ui/ink-app/utils/computerUse/mcpServer.ts`
- * (`Server` + `StdioServerTransport` + `setRequestHandler(ListToolsRequestSchema /
- * CallToolRequestSchema)`), with the tool surface declared separately in
- * `tool-spec.ts` per the `sdk/computer-use/src/mcp-tool-spec.ts` spec-module idiom.
+ * Official MCP SDK v2 (`@modelcontextprotocol/server`): low-level `Server` with
+ * `tools/list` + `tools/call` handlers, served over stdio by `serveStdio`, which
+ * speaks MCP 2026-07-28 (`server/discover`, per-request `_meta`) and the legacy
+ * `initialize` handshake from the same factory. The tool surface is declared
+ * separately in `tool-spec.ts` per the `sdk/computer-use/src/mcp-tool-spec.ts`
+ * spec-module idiom; tools/list returns it in that fixed order.
  *
  * Approval semantics: risky tools accept an optional `approvalId` argument,
  * threaded verbatim as `?approval_id=`. This server never mints or obtains
@@ -13,13 +15,8 @@
  * @module server
  */
 
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-  type CallToolResult,
-} from '@modelcontextprotocol/sdk/types.js';
+import { Server, type CallToolResult, type Tool, type Transport } from '@modelcontextprotocol/server';
+import { serveStdio } from '@modelcontextprotocol/server/stdio';
 
 import { ApiError, ComputersApiClient, configFromEnv } from './client.js';
 import { COMPUTER_TOOL_SPECS, type McpToolName } from './tool-spec.js';
@@ -284,15 +281,15 @@ export function createComputersMcpServer(client: ComputersApiClient = new Comput
     { capabilities: { tools: {} } },
   );
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  server.setRequestHandler('tools/list', async () => ({
     tools: COMPUTER_TOOL_SPECS.map(({ name, description, inputSchema }) => ({
       name,
       description,
-      inputSchema,
+      inputSchema: inputSchema as Tool['inputSchema'],
     })),
   }));
 
-  server.setRequestHandler(CallToolRequestSchema, async (request) =>
+  server.setRequestHandler('tools/call', async (request) =>
     executeToolCall(
       client,
       request.params.name,
@@ -303,19 +300,26 @@ export function createComputersMcpServer(client: ComputersApiClient = new Comput
   return server;
 }
 
-/** Run the stdio server (bin entry `computers-mcp`). */
-export async function runComputersMcpServer(): Promise<void> {
-  const server = createComputersMcpServer();
-  const transport = new StdioServerTransport();
-
-  let exiting = false;
-  const shutdown = (): void => {
-    if (exiting) return;
-    exiting = true;
-    process.exit(0);
-  };
-  process.stdin.on('end', shutdown);
-  process.stdin.on('error', shutdown);
-
-  await server.connect(transport);
+/**
+ * Run the stdio server (bin entry `computers-mcp`). Dual-era: a 2026-07-28
+ * client opens with `server/discover`, a 2025-era client with `initialize`.
+ * `transport` is for tests; the default is this process's stdio.
+ */
+export async function runComputersMcpServer(
+  client?: ComputersApiClient,
+  transport?: Transport,
+): Promise<{ close(): Promise<void> }> {
+  const make = () => createComputersMcpServer(client ?? new ComputersApiClient(configFromEnv()));
+  const handle = serveStdio(make, transport ? { transport } : {});
+  if (!transport) {
+    let exiting = false;
+    const shutdown = (): void => {
+      if (exiting) return;
+      exiting = true;
+      process.exit(0);
+    };
+    process.stdin.on('end', shutdown);
+    process.stdin.on('error', shutdown);
+  }
+  return handle;
 }

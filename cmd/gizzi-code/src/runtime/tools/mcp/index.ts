@@ -1,7 +1,13 @@
 import { dynamicTool, type Tool, jsonSchema, type JSONSchema7 } from "ai"
-import { Client } from "@modelcontextprotocol/sdk/client/index.js"
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
-import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js"
+import {
+  Client,
+  StreamableHTTPClientTransport,
+  SSEClientTransport,
+  UnauthorizedError,
+  type ClientOptions,
+  type Tool as MCPToolDef,
+} from "@modelcontextprotocol/client"
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio"
 import { createGuardedFetch } from "@/shared/utils/hooks/ssrfGuard"
 
 /**
@@ -10,13 +16,6 @@ import { createGuardedFetch } from "@/shared/utils/hooks/ssrfGuard"
  * after redirects.
  */
 const mcpGuardedFetch = createGuardedFetch({ allowLoopback: true }) as unknown as typeof fetch
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
-import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js"
-import {
-  CallToolResultSchema,
-  ToolListChangedNotificationSchema,
-  type Tool as MCPToolDef,
-} from "@modelcontextprotocol/sdk/types.js"
 import { Config } from "@/runtime/context/config/config"
 import { Log } from "@/shared/util/log"
 import { NamedError } from "@allternit/gizzi-util/error.js"
@@ -43,6 +42,7 @@ import {
   mcpAppResourceUri,
 } from "@/runtime/tools/mcp/apps"
 import { McpUserProxy } from "@/runtime/tools/mcp/user-proxy"
+import { McpEra } from "@/runtime/tools/mcp/era"
 
 export namespace MCP {
   const log = Log.create({ service: "mcp" })
@@ -97,6 +97,9 @@ export namespace MCP {
       z
         .object({
           status: z.literal("connected"),
+          /** `modern` = 2026-07-28 (stateless, server/discover); `legacy` = 2025-era initialize session. */
+          era: z.enum(["modern", "legacy"]).optional(),
+          protocolVersion: z.string().optional(),
         }),
       z
         .object({
@@ -120,9 +123,31 @@ export namespace MCP {
     
   export type Status = z.infer<typeof Status>
 
-  // Register notification handlers for MCP client
+  /** A gizzi MCP client: MCP Apps capability + the connect's era negotiation. */
+  export function newClient(versionNegotiation?: ClientOptions["versionNegotiation"]): MCPClient {
+    return new Client(
+      { name: "gizzi", version: Installation.VERSION },
+      { capabilities: MCP_APPS_CLIENT_CAPABILITIES, ...(versionNegotiation ? { versionNegotiation } : {}) },
+    )
+  }
+
+  function connectedStatus(client: MCPClient): Status {
+    return {
+      status: "connected",
+      era: client.getProtocolEra(),
+      protocolVersion: client.getNegotiatedProtocolVersion(),
+    }
+  }
+
+  // Register notification handlers before connecting, so a modern-era connection's
+  // listen stream and a legacy session both deliver `tools/list_changed`.
+  function withNotificationHandlers(client: MCPClient, serverName: string): MCPClient {
+    registerNotificationHandlers(client, serverName)
+    return client
+  }
+
   function registerNotificationHandlers(client: MCPClient, serverName: string) {
-    client.setNotificationHandler(ToolListChangedNotificationSchema, async () => {
+    client.setNotificationHandler("notifications/tools/list_changed", async () => {
       log.info("tools list changed notification received", { server: serverName })
       Bus.publish(ToolsChanged, { server: serverName })
     })
@@ -153,7 +178,6 @@ export namespace MCP {
             arguments: (args || {}) as Record<string, unknown>,
             ...(approved ? { _meta: { [MCP_APPROVED_META]: true } } : {}),
           },
-          CallToolResultSchema,
           {
             resetTimeoutOnProgress: true,
             timeout,
@@ -372,38 +396,42 @@ export namespace MCP {
         )
       }
 
-      const transports: Array<{ name: string; transport: TransportWithAuth }> = [
+      const requestInit = mcp.headers ? { headers: mcp.headers } : undefined
+      // Streamable HTTP first (era-negotiated: 2026-07-28 or the 2025 handshake), then the
+      // legacy HTTP+SSE transport, which predates 2026-07-28 and never probes.
+      const transports: Array<{ name: string; mode: McpEra.Mode; transport: () => TransportWithAuth }> = [
         {
           name: "StreamableHTTP",
-          transport: new StreamableHTTPClientTransport(new URL(mcp.url), {
-            authProvider,
-            requestInit: mcp.headers ? { headers: mcp.headers } : undefined,
-            fetch: mcpGuardedFetch,
-          }),
+          mode: mcp.protocol ?? "auto",
+          transport: () =>
+            new StreamableHTTPClientTransport(new URL(mcp.url), { authProvider, requestInit, fetch: mcpGuardedFetch }),
         },
         {
           name: "SSE",
-          transport: new SSEClientTransport(new URL(mcp.url), {
-            authProvider,
-            requestInit: mcp.headers ? { headers: mcp.headers } : undefined,
-            fetch: mcpGuardedFetch,
-          }),
+          mode: "legacy",
+          transport: () => new SSEClientTransport(new URL(mcp.url), { authProvider, requestInit, fetch: mcpGuardedFetch }),
         },
       ]
 
       let lastError: Error | undefined
       const connectTimeout = mcp.timeout ?? DEFAULT_TIMEOUT
-      for (const { name, transport } of transports) {
+      for (const { name, mode, transport: makeTransport } of transports) {
+        // `protocol: "modern"` pins 2026-07-28; the legacy SSE transport can't speak it.
+        if (mcp.protocol === "modern" && mode === "legacy") continue
+        let transport: TransportWithAuth | undefined
         try {
-          const client = new Client(
-            { name: "gizzi", version: Installation.VERSION },
-            { capabilities: MCP_APPS_CLIENT_CAPABILITIES },
-          )
-          await withTimeout(client.connect(transport), connectTimeout)
-          registerNotificationHandlers(client, key)
-          mcpClient = client
+          const connected = await McpEra.connect({
+            key,
+            target: mcp.url,
+            mode,
+            timeoutMs: connectTimeout,
+            client: (negotiation) => withNotificationHandlers(newClient(negotiation), key),
+            transport: makeTransport,
+            onTransport: (t) => (transport = t),
+          })
+          mcpClient = connected.client
           log.info("connected", { key, transport: name })
-          status = { status: "connected" }
+          status = connectedStatus(connected.client)
           authToastShown.delete(`${key}:needs_auth`)
           authToastShown.delete(`${key}:needs_client_registration`)
           break
@@ -432,7 +460,7 @@ export namespace MCP {
               }
             } else {
               // Store transport for later finishAuth call
-              pendingOAuthTransports.set(key, transport)
+              if (transport) pendingOAuthTransports.set(key, transport)
               status = { status: "needs_auth" as const }
               const toastKey = `${key}:needs_auth`
               if (!authToastShown.has(toastKey)) {
@@ -465,33 +493,39 @@ export namespace MCP {
     if (mcp.type === "local") {
       const [cmd, ...args] = mcp.command
       const cwd = Instance.directory
-      const transport = new StdioClientTransport({
-        stderr: "pipe",
-        command: cmd,
-        args,
-        cwd,
-        env: {
-          ...process.env,
-          ...(cmd === "gizzi" ? { BUN_BE_BUN: "1" } : {}),
-          ...mcp.environment,
-        },
-      })
-      transport.stderr?.on("data", (chunk: Buffer) => {
-        log.info(`mcp stderr: ${chunk.toString()}`, { key })
-      })
+      const makeTransport = () => {
+        const transport = new StdioClientTransport({
+          stderr: "pipe",
+          command: cmd,
+          args,
+          cwd,
+          env: {
+            ...process.env,
+            ...(cmd === "gizzi" ? { BUN_BE_BUN: "1" } : {}),
+            ...mcp.environment,
+          } as Record<string, string>,
+        })
+        transport.stderr?.on("data", (chunk: Buffer) => {
+          log.info(`mcp stderr: ${chunk.toString()}`, { key })
+        })
+        return transport
+      }
 
       const connectTimeout = mcp.timeout ?? DEFAULT_TIMEOUT
       try {
-        const client = new Client(
-          { name: "gizzi", version: Installation.VERSION },
-          { capabilities: MCP_APPS_CLIENT_CAPABILITIES },
-        )
-        await withTimeout(client.connect(transport), connectTimeout)
-        registerNotificationHandlers(client, key)
+        // On a first connect the SDK probes `server/discover` on a short-lived sibling
+        // process; the verdict is cached, so later connects spawn the server once.
+        const { client } = await McpEra.connect({
+          key,
+          target: JSON.stringify(mcp.command),
+          mode: mcp.protocol ?? "auto",
+          timeoutMs: connectTimeout,
+          probeTimeoutMs: Math.min(connectTimeout, McpEra.STDIO_PROBE_TIMEOUT_MS),
+          client: (negotiation) => withNotificationHandlers(newClient(negotiation), key),
+          transport: makeTransport,
+        })
         mcpClient = client
-        status = {
-          status: "connected",
-        }
+        status = connectedStatus(client)
       } catch (error) {
         log.error("local mcp startup failed", {
           key,
@@ -650,9 +684,15 @@ export namespace MCP {
     const clientsSnapshot = await clients()
     const defaultTimeout = cfg.experimental?.mcp_timeout
 
+    // Deterministic: servers connect concurrently, so `clients` insertion order varies run to
+    // run. Merge in name order (configured servers before turn-scoped ones) and each server's
+    // tools in name order, so collision suffixes and the model's tool list are stable.
+    const byName = <T,>(a: [string, T], b: [string, T]) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)
     const connectedClients = [
-      ...Object.entries(clientsSnapshot).filter(([clientName]) => s.status[clientName]?.status === "connected"),
-      ...Object.entries(extraClients),
+      ...Object.entries(clientsSnapshot)
+        .filter(([clientName]) => s.status[clientName]?.status === "connected")
+        .sort(byName),
+      ...Object.entries(extraClients).sort(byName),
     ]
 
     const toolsResults = await Promise.all(
@@ -677,7 +717,8 @@ export namespace MCP {
       const mcpConfig = config[clientName]
       const entry = isMcpConfigured(mcpConfig) ? mcpConfig : undefined
       const timeout = entry?.timeout ?? defaultTimeout
-      for (const mcpTool of toolsResult.tools) {
+      const sortedTools = [...toolsResult.tools].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+      for (const mcpTool of sortedTools) {
         // MCP Apps: tools scoped to the rendered app (`_meta.ui.visibility` without "model")
         // are reachable only through the app bridge and are never offered to the model.
         if (!isVisibleToModel(mcpTool)) continue
@@ -732,6 +773,11 @@ export namespace MCP {
     return `${base.slice(0, 64 - tail.length)}${tail}`
   }
 
+  /** Record entries in key order, so merged prompts/resources don't depend on connect timing. */
+  function sortedEntries<T>(record: Record<string, T>): Array<[string, T]> {
+    return Object.entries(record).sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+  }
+
   export async function prompts() {
     const s = await state()
     const clientsSnapshot = await clients()
@@ -739,7 +785,7 @@ export namespace MCP {
     const prompts = Object.fromEntries<PromptInfo & { client: string }>(
       (
         await Promise.all(
-          Object.entries(clientsSnapshot).map(async ([clientName, client]) => {
+          sortedEntries(clientsSnapshot).map(async ([clientName, client]) => {
             if (s.status[clientName]?.status !== "connected") {
               return []
             }
@@ -760,7 +806,7 @@ export namespace MCP {
     const result = Object.fromEntries<ResourceInfo & { client: string }>(
       (
         await Promise.all(
-          Object.entries(clientsSnapshot).map(async ([clientName, client]) => {
+          sortedEntries(clientsSnapshot).map(async ([clientName, client]) => {
             if (s.status[clientName]?.status !== "connected") {
               return []
             }
@@ -882,23 +928,23 @@ export namespace MCP {
       },
     )
 
-    // Create transport with auth provider
-    const transport = new StreamableHTTPClientTransport(new URL(mcpConfig.url), {
-      authProvider,
-      fetch: mcpGuardedFetch,
-    })
-
     // Try to connect - this will trigger the OAuth flow
+    let transport: StreamableHTTPClientTransport | undefined
     try {
-      const client = new Client(
-        { name: "gizzi", version: Installation.VERSION },
-        { capabilities: MCP_APPS_CLIENT_CAPABILITIES },
-      )
-      await client.connect(transport)
+      const { client } = await McpEra.connect({
+        key: mcpName,
+        target: mcpConfig.url,
+        mode: mcpConfig.protocol ?? "auto",
+        timeoutMs: mcpConfig.timeout ?? DEFAULT_TIMEOUT,
+        client: newClient,
+        transport: () => new StreamableHTTPClientTransport(new URL(mcpConfig.url), { authProvider, fetch: mcpGuardedFetch }),
+        onTransport: (t) => (transport = t),
+      })
       // If we get here, we're already authenticated
+      await client.close().catch(() => {})
       return { authorizationUrl: "" }
     } catch (error) {
-      if (error instanceof UnauthorizedError && capturedUrl) {
+      if (error instanceof UnauthorizedError && capturedUrl && transport) {
         // Store transport for finishAuth
         pendingOAuthTransports.set(mcpName, transport)
         return { authorizationUrl: capturedUrl.toString() }
@@ -932,7 +978,7 @@ export namespace MCP {
 
     // Register the callback BEFORE opening the browser to avoid race condition
     // when the IdP has an active SSO session and redirects immediately
-    const callbackPromise = McpOAuthCallback.waitForCallback(oauthState)
+    const callbackPromise = McpOAuthCallback.waitForCallbackResult(oauthState)
 
     try {
       const subprocess = await open(authorizationUrl)
@@ -962,7 +1008,7 @@ export namespace MCP {
     }
 
     // Wait for callback using the already-registered promise
-    const code = await callbackPromise
+    const { code, iss } = await callbackPromise
 
     // Validate and clear the state
     const storedState = await McpAuth.getOAuthState(mcpName)
@@ -974,13 +1020,13 @@ export namespace MCP {
     await McpAuth.clearOAuthState(mcpName)
 
     // Finish auth
-    return finishAuth(mcpName, code)
+    return finishAuth(mcpName, code, iss)
   }
 
   /**
    * Complete OAuth authentication with the authorization code.
    */
-  export async function finishAuth(mcpName: string, authorizationCode: string): Promise<Status> {
+  export async function finishAuth(mcpName: string, authorizationCode: string, iss?: string): Promise<Status> {
     const transport = pendingOAuthTransports.get(mcpName)
 
     if (!transport) {
@@ -988,7 +1034,10 @@ export namespace MCP {
     }
 
     try {
-      await transport.finishAuth(authorizationCode)
+      // `iss` (RFC 9207) is validated by the SDK against the issuer it recorded.
+      await transport.finishAuth(authorizationCode, iss)
+      // New credentials, new authorization context: re-probe the server's era.
+      await McpEra.forget(mcpName)
 
       // Clear the code verifier after successful auth
       await McpAuth.clearCodeVerifier(mcpName)
@@ -1028,6 +1077,7 @@ export namespace MCP {
     McpOAuthCallback.cancelPending(mcpName)
     pendingOAuthTransports.delete(mcpName)
     await McpAuth.clearOAuthState(mcpName)
+    await McpEra.forget(mcpName)
     log.info("removed oauth credentials", { mcpName })
   }
 

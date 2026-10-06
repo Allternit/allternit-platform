@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import {
   appTool,
+  createHandler,
   defineApp,
+  eventsError,
+  EventsErrorCode,
   hasErrors,
   listen,
   toPluginFiles,
@@ -180,29 +182,131 @@ describe("listen (real MCP round trip)", () => {
     running = undefined;
   });
 
-  it("serves tools with _meta.ui.resourceUri, the View resource and the manifest", async () => {
-    running = await listen(weather(), { port: 0 });
-    const client = new Client({ name: "check", version: "1.0.0" });
-    await client.connect(new StreamableHTTPClientTransport(new URL(running.url)));
+  for (const mode of ["legacy", { pin: "2026-07-28" }] as const) {
+    it(`serves tools with _meta.ui.resourceUri, the View resource and the manifest (${JSON.stringify(mode)} client)`, async () => {
+      running = await listen(weather(), { port: 0 });
+      const client = new Client({ name: "check", version: "1.0.0" }, { versionNegotiation: { mode } });
+      await client.connect(new StreamableHTTPClientTransport(new URL(running.url)));
+      expect(client.getProtocolEra()).toBe(mode === "legacy" ? "legacy" : "modern");
 
-    const { tools } = await client.listTools();
-    const show = tools.find((t) => t.name === "show_weather")!;
-    expect((show._meta as any).ui.resourceUri).toBe("ui://weather/card.html");
-    expect(show.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
-    expect(tools.find((t) => t.name === "get_temperature")!._meta).toBeUndefined();
+      const { tools } = await client.listTools();
+      expect(tools.map((t) => t.name)).toEqual(["get_temperature", "show_weather"]);
+      const show = tools.find((t) => t.name === "show_weather")!;
+      expect((show._meta as any).ui.resourceUri).toBe("ui://weather/card.html");
+      expect(show.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
+      expect(tools.find((t) => t.name === "get_temperature")!._meta).toBeUndefined();
 
-    const res: any = await client.callTool({ name: "show_weather", arguments: { city: "Tokyo" } });
-    expect(res.structuredContent).toEqual({ city: "Tokyo", temperatureC: 22 });
+      const res: any = await client.callTool({ name: "show_weather", arguments: { city: "Tokyo" } });
+      expect(res.structuredContent).toEqual({ city: "Tokyo", temperatureC: 22 });
 
-    const read = await client.readResource({ uri: "ui://weather/card.html" });
-    expect(read.contents[0].mimeType).toBe("text/html;profile=mcp-app");
-    expect(String(read.contents[0].text)).toContain("allternit-detail");
-    expect((read.contents[0]._meta as any).ui.csp).toEqual({ connectDomains: [], resourceDomains: [] });
-    await client.close();
+      const read = await client.readResource({ uri: "ui://weather/card.html" });
+      expect(read.contents[0].mimeType).toBe("text/html;profile=mcp-app");
+      expect(String((read.contents[0] as any).text)).toContain("allternit-detail");
+      expect((read.contents[0]._meta as any).ui.csp).toEqual({ connectDomains: [], resourceDomains: [] });
+      await client.close();
 
-    const base = new URL(running.url).origin;
-    expect(await (await fetch(`${base}/healthz`)).text()).toBe("ok");
-    expect((await (await fetch(`${base}/allternit.app.json`)).json()).schema).toBe("allternit.app/1");
-    expect((await fetch(`${base}/nope`)).status).toBe(404);
+      const base = new URL(running.url).origin;
+      expect(await (await fetch(`${base}/healthz`)).text()).toBe("ok");
+      expect((await (await fetch(`${base}/allternit.app.json`)).json()).schema).toBe("allternit.app/1");
+      expect((await fetch(`${base}/nope`)).status).toBe(404);
+    });
+  }
+});
+
+const META = {
+  "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+  "io.modelcontextprotocol/clientInfo": { name: "smoke", version: "1" },
+  "io.modelcontextprotocol/clientCapabilities": {},
+};
+
+async function rpc(handler: ReturnType<typeof createHandler>, method: string, params: Record<string, unknown>, era: "modern" | "legacy", id = 1) {
+  const headers: Record<string, string> = { "content-type": "application/json", accept: "application/json, text/event-stream" };
+  if (era === "modern") Object.assign(headers, { "mcp-protocol-version": "2026-07-28", "mcp-method": method }, params.name ? { "mcp-name": String(params.name) } : {});
+  const body = { jsonrpc: "2.0", id, method, params: era === "modern" ? { ...params, _meta: META } : params };
+  const res = await handler.fetch(new Request("http://app.test/mcp", { method: "POST", headers, body: JSON.stringify(body) }));
+  const text = await res.text();
+  const json = text.startsWith("{") ? text : text.split("\n").find((l) => l.startsWith("data: "))!.slice(6);
+  return JSON.parse(json);
+}
+
+describe("dual-era smoke (raw wire)", () => {
+  it("answers server/discover and tools/list with _meta (2026-07-28)", async () => {
+    const h = createHandler(weather());
+    const discover = await rpc(h, "server/discover", {}, "modern");
+    expect(discover.result.supportedVersions).toContain("2026-07-28");
+    expect(discover.result.capabilities.tools).toBeDefined();
+    expect(discover.result.resultType).toBe("complete");
+    const list = await rpc(h, "tools/list", {}, "modern", 2);
+    expect(list.result.tools.map((t: any) => t.name)).toEqual(["get_temperature", "show_weather"]);
+    expect(list.result._meta["io.modelcontextprotocol/serverInfo"].name).toBe("weather-demo");
+    await h.close();
   });
+
+  it("answers legacy initialize and tools/list", async () => {
+    const h = createHandler(weather());
+    const init = await rpc(h, "initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "old", version: "1" } }, "legacy");
+    expect(init.result.protocolVersion).toBe("2025-06-18");
+    const list = await rpc(h, "tools/list", {}, "legacy", 2);
+    expect(list.result.tools.map((t: any) => t.name)).toEqual(["get_temperature", "show_weather"]);
+    await h.close();
+  });
+});
+
+describe("events", () => {
+  const secret = `whsec_${Buffer.alloc(32, 9).toString("base64")}`;
+  const subs = new Map<string, unknown>();
+  const app = () =>
+    defineApp({
+      name: "Alerts",
+      tools: [appTool({ name: "ping", title: "Ping", description: "Answers pong to check the app.", annotations: { readOnlyHint: true, destructiveHint: false }, handler: async () => ({ content: [{ type: "text", text: "pong" }] }) })],
+      events: {
+        definitions: [
+          { name: "price.changed", description: "A price moved.", delivery: ["webhook"], inputSchema: { type: "object" }, payloadSchema: { type: "object" } },
+          { name: "alert.fired", description: "An alert fired.", delivery: ["webhook"], inputSchema: { type: "object" }, payloadSchema: { type: "object" } },
+        ],
+        async subscribe(sub) {
+          if (sub.arguments.symbol === "NOPE") throw eventsError(EventsErrorCode.Forbidden, "not yours");
+          subs.set(sub.id, sub);
+          return { refreshBefore: null, cursor: "c0" };
+        },
+        async unsubscribe(sub) {
+          subs.delete(sub.id);
+        },
+      },
+    });
+
+  it("rejects bad definitions at defineApp", () => {
+    const t = appTool({ name: "x", title: "X", description: "Does x for the user.", annotations: { readOnlyHint: true, destructiveHint: false }, handler: async () => ({ content: [] }) });
+    const def = { name: "a", description: "a", delivery: ["webhook" as const], inputSchema: {}, payloadSchema: {} };
+    const noop = { subscribe: async () => ({ refreshBefore: null, cursor: null }), unsubscribe: async () => {} };
+    expect(() => defineApp({ name: "A", tools: [t], events: { definitions: [def, def], ...noop } })).toThrow(/duplicate event/);
+    expect(() => defineApp({ name: "A", tools: [t], events: { definitions: [{ ...def, delivery: ["poll"] }], ...noop } })).toThrow(/webhook/);
+  });
+
+  for (const era of ["modern", "legacy"] as const) {
+    it(`serves events/list|subscribe|unsubscribe (${era})`, async () => {
+      subs.clear();
+      const h = createHandler(app());
+      if (era === "legacy") await rpc(h, "initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "old", version: "1" } }, "legacy");
+      else expect((await rpc(h, "server/discover", {}, "modern")).result.capabilities.events).toEqual({ listChanged: false });
+      const list = await rpc(h, "events/list", {}, era, 2);
+      expect(list.result.events.map((e: any) => e.name)).toEqual(["alert.fired", "price.changed"]);
+      const params = { name: "price.changed", arguments: { symbol: "ACME" }, delivery: { mode: "webhook", url: "https://cb.example.com/1", secret } };
+      const sub = await rpc(h, "events/subscribe", params, era, 3);
+      expect(sub.result).toMatchObject({ refreshBefore: null, cursor: "c0", truncated: false });
+      expect(sub.result.id).toMatch(/^sub_[0-9a-f]{24}$/);
+      expect(subs.has(sub.result.id)).toBe(true);
+      const again = await rpc(h, "events/subscribe", { ...params, arguments: { symbol: "ACME" } }, era, 4);
+      expect(again.result.id).toBe(sub.result.id);
+      expect((await rpc(h, "events/subscribe", { ...params, name: "nope" }, era, 5)).error.code).toBe(-32011);
+      expect((await rpc(h, "events/subscribe", { ...params, arguments: { symbol: "NOPE" } }, era, 6)).error.code).toBe(-32012);
+      expect((await rpc(h, "events/subscribe", { ...params, delivery: { ...params.delivery, url: "https://10.0.0.1/x" } }, era, 7)).error.code).toBe(-32602);
+      expect((await rpc(h, "events/subscribe", { ...params, delivery: { mode: "poll" } }, era, 8)).error.code).toBe(-32014);
+      const { secret: _s, ...noSecret } = params.delivery;
+      expect((await rpc(h, "events/unsubscribe", { name: params.name, arguments: params.arguments, delivery: noSecret }, era, 9)).result).toEqual(expect.objectContaining({}));
+      expect(subs.size).toBe(0);
+      await h.close();
+    });
+  }
+
 });

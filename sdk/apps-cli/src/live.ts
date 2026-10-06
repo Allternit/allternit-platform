@@ -1,10 +1,10 @@
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { MCP_APP_RESOURCE_MIME_TYPE, scanInput, type DirectoryFinding, type ScanInput, type ScanResource } from "@allternit/apps-server";
 
 /** Connect to a running server, list tools/resources, read each ui:// resource, and run the directory scan rules. */
 export async function liveScan(url: string, headers?: Record<string, string>): Promise<{ findings: DirectoryFinding[]; input: ScanInput }> {
-  const client = new Client({ name: "allternit-cli", version: "0.1.0" });
+  // auto: try 2026-07-28 (server/discover) first, fall back to the legacy initialize handshake.
+  const client = new Client({ name: "allternit-cli", version: "0.1.0" }, { versionNegotiation: { mode: "auto" } });
   await client.connect(new StreamableHTTPClientTransport(new URL(url), headers ? { requestInit: { headers } } : undefined));
   try {
     const tools: ScanInput["tools"] = [];

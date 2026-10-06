@@ -241,7 +241,7 @@ pub static REGISTRY: &[EventType] = &[
         agents: true,
         bot: false,
         filters: &[("meter", "Only this meter.")],
-        payload: &[("meter", "Meter name."), ("percent", "Threshold crossed (number)."), ("used", "Amount used (number)."), ("limit", "Plan amount (number).")],
+        payload: &[("meter", "Meter name (`cloud_spend` = the monthly cloud budget, in USD)."), ("percent", "Threshold crossed (number)."), ("used", "Amount used (number)."), ("limit", "Plan amount (number)."), ("period", "Billing period, e.g. 2026-10.")],
         runtime_aliases: &["usage.threshold"],
     },
 ];

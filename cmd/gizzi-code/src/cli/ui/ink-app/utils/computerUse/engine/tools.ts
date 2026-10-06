@@ -6,7 +6,7 @@
  * dispatches — keep the three in sync when adding tools.
  */
 
-import type { Tool } from '@modelcontextprotocol/sdk/types.js'
+import type { Tool } from '@modelcontextprotocol/client'
 import type {
   CoordinateMode,
   CuCapabilities,

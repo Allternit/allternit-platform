@@ -1,187 +1,111 @@
 #!/usr/bin/env bun
 /**
- * Production-quality MCP SDK vendoring script
- * 
- * This script:
- * 1. Copies @modelcontextprotocol/sdk from node_modules to vendor/
- * 2. Updates all imports to use the vendored path
- * 3. Updates tsconfig.json with proper path mappings
+ * MCP SDK v2 vendoring / packaging check.
+ *
+ * gizzi-code uses the official TypeScript SDK v2 split packages
+ * (`@modelcontextprotocol/client`, `/server`, `/core`; protocol 2026-07-28 with the
+ * 2025-era fallback). The production build (`script/build-production.js`) bundles them
+ * from node_modules into the compiled binary, so a release needs no vendored copy. This
+ * script exists for the two jobs the v1-era vendoring script did:
+ *
+ *   bun script/vendor-mcp-sdk.ts            # check (default): pinned versions installed,
+ *                                           # every entry gizzi imports resolves, no v1 imports
+ *   bun script/vendor-mcp-sdk.ts --vendor   # also copy the three packages (package.json +
+ *                                           # dist) to vendor/@modelcontextprotocol/ for an
+ *                                           # offline/air-gapped build
+ *
+ * The v1 script rewrote source imports to relative vendored paths; v2 packages are
+ * single-entry ESM with `exports`, so imports stay `@modelcontextprotocol/<pkg>` and a
+ * vendored copy is used via the package manager (e.g. `file:` overrides), never by
+ * rewriting source.
  */
 
-import { readdir, readFile, writeFile, copyFile, mkdir, rm } from 'fs/promises'
-import { resolve, dirname, relative, join } from 'path'
+import { cp, mkdir, readFile, rm } from "fs/promises"
+import { dirname, join, resolve } from "path"
+import { $ } from "bun"
 
-const ROOT = resolve(process.cwd())
-const SRC_DIR = resolve(ROOT, 'src/cli/ui/ink-app')
-const VENDOR_DIR = resolve(SRC_DIR, 'vendor/@modelcontextprotocol/sdk')
-const NODE_MODULES_SDK = resolve(ROOT, 'node_modules/@modelcontextprotocol/sdk')
-
-// SDK subpath imports that need to be rewritten
-const SDK_IMPORTS = [
-  '@modelcontextprotocol/sdk/client',
-  '@modelcontextprotocol/sdk/client/sse',
-  '@modelcontextprotocol/sdk/client/stdio',
-  '@modelcontextprotocol/sdk/client/streamableHttp',
-  '@modelcontextprotocol/sdk/client/auth',
-  '@modelcontextprotocol/sdk/server',
-  '@modelcontextprotocol/sdk/server/auth/errors',
-  '@modelcontextprotocol/sdk/shared',
-  '@modelcontextprotocol/sdk/shared/auth',
-  '@modelcontextprotocol/sdk/types',
+const ROOT = resolve(import.meta.dir, "..")
+const PACKAGES = ["client", "server", "core"] as const
+/** Every entry point gizzi's source imports. */
+const ENTRIES = [
+  "@modelcontextprotocol/client",
+  "@modelcontextprotocol/client/stdio",
+  "@modelcontextprotocol/server",
+  "@modelcontextprotocol/server/stdio",
+  "@modelcontextprotocol/core",
 ]
 
-async function* walkDir(dir: string): AsyncGenerator<string> {
-  const entries = await readdir(dir, { withFileTypes: true })
-  for (const entry of entries) {
-    const path = resolve(dir, entry.name)
-    if (entry.isDirectory() && 
-        !entry.name.startsWith('.') && 
-        entry.name !== 'node_modules' && 
-        entry.name !== 'vendor') {
-      yield* walkDir(path)
-    } else if (entry.isFile() && 
-               (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx'))) {
-      yield path
+/** Package dir of an installed v2 package (its `exports` don't expose package.json). */
+async function packageDir(name: string): Promise<string> {
+  let dir = dirname(Bun.resolveSync(`@modelcontextprotocol/${name}`, ROOT))
+  while (dir !== dirname(dir)) {
+    const pkg = await readFile(join(dir, "package.json"), "utf8").catch(() => undefined)
+    if (pkg && JSON.parse(pkg).name === `@modelcontextprotocol/${name}`) return dir
+    dir = dirname(dir)
+  }
+  throw new Error(`cannot locate @modelcontextprotocol/${name}`)
+}
+
+async function pinnedVersions(): Promise<Record<string, string>> {
+  const pkg = JSON.parse(await readFile(join(ROOT, "package.json"), "utf8"))
+  const deps = { ...pkg.dependencies, ...pkg.devDependencies } as Record<string, string>
+  if (deps["@modelcontextprotocol/sdk"]) {
+    throw new Error("package.json still depends on the v1 @modelcontextprotocol/sdk; gizzi uses the v2 packages")
+  }
+  const out: Record<string, string> = {}
+  for (const name of PACKAGES) {
+    const spec = deps[`@modelcontextprotocol/${name}`]
+    if (!spec) throw new Error(`package.json is missing @modelcontextprotocol/${name}`)
+    out[name] = spec
+  }
+  return out
+}
+
+async function check() {
+  const pinned = await pinnedVersions()
+  for (const name of PACKAGES) {
+    const installed = JSON.parse(await readFile(join(await packageDir(name), "package.json"), "utf8")).version as string
+    if (installed !== pinned[name]) {
+      throw new Error(`@modelcontextprotocol/${name}: package.json pins ${pinned[name]}, installed ${installed}`)
     }
+    console.log(`  ✓ @modelcontextprotocol/${name}@${installed}`)
   }
+  for (const entry of ENTRIES) {
+    Bun.resolveSync(entry, ROOT)
+    console.log(`  ✓ resolves ${entry}`)
+  }
+  const v1 = await $`grep -rlE ${"--include=*.ts"} ${"--include=*.tsx"} ${"from ['\"]@modelcontextprotocol/sdk"} src test`
+    .cwd(ROOT)
+    .nothrow()
+    .quiet()
+  const offenders = v1.stdout.toString().trim()
+  if (offenders) throw new Error(`v1 SDK imports remain:\n${offenders}`)
+  console.log("  ✓ no @modelcontextprotocol/sdk (v1) imports in src/ or test/")
 }
 
-function getRelativePath(fromFile: string, toFile: string): string {
-  const fromDir = dirname(fromFile)
-  let relPath = relative(fromDir, toFile)
-  
-  // Ensure it starts with ./ or ../
-  if (!relPath.startsWith('.')) {
-    relPath = './' + relPath
-  }
-  
-  // Remove .ts extension for imports
-  relPath = relPath.replace(/\.ts$/, '')
-  
-  return relPath
-}
-
-async function copySdk() {
-  console.log('Copying MCP SDK to vendor directory...')
-  
-  // Clean and recreate vendor directory
-  await rm(VENDOR_DIR, { recursive: true, force: true })
-  await mkdir(VENDOR_DIR, { recursive: true })
-  
-  // Copy only the ESM dist files we need
-  const copyRecursive = async (src: string, dest: string) => {
-    const entries = await readdir(src, { withFileTypes: true })
-    await mkdir(dest, { recursive: true })
-    
-    for (const entry of entries) {
-      const srcPath = join(src, entry.name)
-      const destPath = join(dest, entry.name)
-      
-      if (entry.isDirectory()) {
-        await copyRecursive(srcPath, destPath)
-      } else if (entry.name.endsWith('.ts') || entry.name.endsWith('.js') || entry.name.endsWith('.json')) {
-        await copyFile(srcPath, destPath)
-      }
+async function vendor() {
+  const dest = join(ROOT, "vendor/@modelcontextprotocol")
+  for (const name of PACKAGES) {
+    const pkgDir = await packageDir(name)
+    const out = join(dest, name)
+    await rm(out, { recursive: true, force: true })
+    await mkdir(out, { recursive: true })
+    await cp(join(pkgDir, "package.json"), join(out, "package.json"))
+    await cp(join(pkgDir, "dist"), join(out, "dist"), { recursive: true })
+    for (const extra of ["LICENSE", "README.md"]) {
+      await cp(join(pkgDir, extra), join(out, extra)).catch(() => {})
     }
+    console.log(`  ✓ vendored @modelcontextprotocol/${name} → ${out}`)
   }
-  
-  // Copy dist/esm and package.json
-  await copyRecursive(resolve(NODE_MODULES_SDK, 'dist/esm'), resolve(VENDOR_DIR, 'dist/esm'))
-  await copyFile(resolve(NODE_MODULES_SDK, 'package.json'), resolve(VENDOR_DIR, 'package.json'))
-  
-  console.log('SDK copied successfully')
-}
-
-async function fixImportsInFile(filePath: string) {
-  let content = await readFile(filePath, 'utf-8')
-  let modified = false
-  
-  for (const importPath of SDK_IMPORTS) {
-    // Create regex that matches the import (with or without .js extension)
-    const escapedPath = importPath.replace(/\//g, '\\/')
-    const pattern = new RegExp(
-      `from ['"]${escapedPath}(?:\.js)?['"]`,
-      'g'
-    )
-    
-    if (pattern.test(content)) {
-      // Map to vendored path
-      const subpath = importPath.replace('@modelcontextprotocol/sdk/', '')
-      const vendoredFile = resolve(VENDOR_DIR, 'dist/esm', subpath + '.ts')
-      const relativePath = getRelativePath(filePath, vendoredFile)
-      
-      content = content.replace(pattern, `from '${relativePath}'`)
-      modified = true
-    }
-  }
-  
-  if (modified) {
-    await writeFile(filePath, content)
-    console.log(`  Fixed: ${relative(ROOT, filePath)}`)
-  }
-}
-
-async function updateTsConfig() {
-  console.log('\nUpdating tsconfig.json...')
-  
-  const tsconfigPath = resolve(SRC_DIR, 'tsconfig.json')
-  const tsconfig = JSON.parse(await readFile(tsconfigPath, 'utf-8'))
-  
-  // Add path mappings for the vendored SDK
-  tsconfig.compilerOptions = tsconfig.compilerOptions || {}
-  tsconfig.compilerOptions.paths = {
-    ...tsconfig.compilerOptions.paths,
-    "@modelcontextprotocol/sdk/*": ["./vendor/@modelcontextprotocol/sdk/dist/esm/*"]
-  }
-  
-  await writeFile(tsconfigPath, JSON.stringify(tsconfig, null, 2))
-  console.log('tsconfig.json updated')
-}
-
-async function fixSdkInternalImports() {
-  console.log('\nFixing SDK internal imports...')
-  
-  // The vendored SDK uses .js extensions in imports, change to .ts
-  for await (const filePath of walkDir(VENDOR_DIR)) {
-    let content = await readFile(filePath, 'utf-8')
-    
-    // Replace .js imports with .ts (but not for external packages)
-    const original = content
-    content = content.replace(/from ['"](\.\/[^'"]+)\.js['"]/g, "from '$1'")
-    content = content.replace(/from ['"](\.\.\/[^'"]+)\.js['"]/g, "from '$1'")
-    
-    if (content !== original) {
-      await writeFile(filePath, content)
-    }
-  }
-  
-  console.log('SDK internal imports fixed')
 }
 
 async function main() {
-  console.log('='.repeat(60))
-  console.log('Vendoring @modelcontextprotocol/sdk')
-  console.log('='.repeat(60))
-  
-  await copySdk()
-  await fixSdkInternalImports()
-  
-  console.log('\nFixing imports in source files...')
-  let count = 0
-  for await (const filePath of walkDir(SRC_DIR)) {
-    await fixImportsInFile(filePath)
-    count++
-  }
-  console.log(`  Processed ${count} files`)
-  
-  await updateTsConfig()
-  
-  console.log('\n' + '='.repeat(60))
-  console.log('Done! MCP SDK vendored successfully.')
-  console.log('='.repeat(60))
+  console.log("MCP SDK v2 check")
+  await check()
+  if (process.argv.includes("--vendor")) await vendor()
 }
 
-main().catch(err => {
-  console.error('Error:', err)
+main().catch((err) => {
+  console.error(`✗ ${err instanceof Error ? err.message : String(err)}`)
   process.exit(1)
 })

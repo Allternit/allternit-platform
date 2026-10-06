@@ -8,11 +8,7 @@
  * description with installed-app names.
  */
 
-import { Server } from '@modelcontextprotocol/sdk/server/index.js'
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from '@modelcontextprotocol/sdk/types.js'
+import { Server } from '@modelcontextprotocol/server'
 
 import { buildComputerUseTools } from './tools.js'
 import type {
@@ -29,7 +25,7 @@ export function createComputerUseMcpServer(
     { capabilities: { tools: {} } },
   )
 
-  server.setRequestHandler(CallToolRequestSchema, async () => ({
+  server.setRequestHandler('tools/call', async () => ({
     content: [
       {
         type: 'text' as const,
@@ -39,7 +35,7 @@ export function createComputerUseMcpServer(
     isError: true,
   }))
 
-  server.setRequestHandler(ListToolsRequestSchema, async () =>
+  server.setRequestHandler('tools/list', async () =>
     adapter.isDisabled()
       ? { tools: [] }
       : { tools: buildComputerUseTools(adapter.executor.capabilities, coordinateMode) },

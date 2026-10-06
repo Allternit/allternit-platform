@@ -677,7 +677,7 @@ pub(crate) async fn deliver_route(state: &Arc<ApiState>, route_id: &str) -> Resu
                 .await?;
             // A connector event is not a channel message: the runtime decides what (if anything) to tell the owner.
             if route.provider != MCP_EVENTS_PROVIDER {
-                super::web_push::notify_channel_message(&state.db, &route.user_id, &route.id, &route.provider);
+                super::web_push::notify_channel_message(&state.db, &route.user_id, &route.id, &route.provider, &route.runtime_id);
             }
             continue;
         }

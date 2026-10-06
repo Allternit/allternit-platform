@@ -1,13 +1,8 @@
-import type { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import {
-  ElicitationCompleteNotificationSchema,
-  ElicitRequestSchema,
-} from '@modelcontextprotocol/sdk/types.js'
+import type { Client } from '@modelcontextprotocol/client'
 
-// TODO(types): the ambient '@modelcontextprotocol/sdk/types.js' declaration
-// predates the real SDK elicitation surface (ElicitResult.values wrongly
-// required, URL/form params split differently). Local mirrors keep the
-// runtime values identical until the ambient decls catch up.
+// Local mirrors of the elicitation params/result shapes this UI reads. They
+// are structurally looser than the SDK's ElicitRequestParams/ElicitResult
+// (form and URL modes in one bag) so the queue/dialog code stays mode-agnostic.
 type ElicitRequestParams = {
   url?: string
   title?: string
@@ -24,19 +19,19 @@ type ElicitResult = {
   [key: string]: unknown
 }
 
-// TODO(types): the ambient Client decl has no typed elicitation-handler
-// overloads — its generic setRequestHandler/setNotificationHandler infer the
-// request/extra types as unknown. Local interface cast at registration.
+// SDK v2 registers handlers by method name; the handler's second argument is
+// the request context (`ctx.mcpReq.signal`, `ctx.mcpReq.id`). Narrowed to the
+// local mirror types above at registration.
 type ElicitationClient = {
   setRequestHandler(
-    schema: typeof ElicitRequestSchema,
+    method: 'elicitation/create',
     handler: (
       request: { params: ElicitRequestParams },
-      extra: { signal: AbortSignal; requestId: string | number },
+      ctx: { mcpReq: { signal: AbortSignal; id: string | number } },
     ) => Promise<ElicitResult>,
   ): void
   setNotificationHandler(
-    schema: typeof ElicitationCompleteNotificationSchema,
+    method: 'notifications/elicitation/complete',
     handler: (notification: { params: { elicitationId: string } }) => void,
   ): void
 }
@@ -105,7 +100,8 @@ export function registerElicitationHandler(
   // created with elicitation capability declared.
   try {
     const elicitationClient = client as unknown as ElicitationClient
-    elicitationClient.setRequestHandler(ElicitRequestSchema, async (request, extra) => {
+    elicitationClient.setRequestHandler('elicitation/create', async (request, ctx) => {
+      const extra = { signal: ctx.mcpReq.signal, requestId: ctx.mcpReq.id }
       logMCPDebug(
         serverName,
         `Received elicitation request: ${jsonStringify(request)}`,
@@ -204,7 +200,7 @@ export function registerElicitationHandler(
     // Register handler for elicitation completion notifications (URL mode).
     // Sets `completed: true` on the matching queue event; the dialog reacts to this flag.
     elicitationClient.setNotificationHandler(
-      ElicitationCompleteNotificationSchema,
+      'notifications/elicitation/complete',
       notification => {
         const { elicitationId } = notification.params
         logMCPDebug(

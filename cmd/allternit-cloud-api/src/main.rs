@@ -340,6 +340,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Voice calls: deliver queued call.* events to runtimes (wake on demand).
     allternit_cloud_api::routes::voice_calls_cloud::start_voice_calls_worker(state.clone());
     allternit_cloud_api::routes::inapp_calls::start_inapp_calls_worker(state.clone());
+    // Web Push from the event backbone, per the owner's notification preferences (no-op without VAPID env).
+    allternit_cloud_api::routes::notifications::spawn_push_sink(state.db.clone());
     // Teams shared app: deliver queued Bot Framework activities to runtimes.
     allternit_cloud_api::channels::teams_app::start_teams_app_worker(state.clone());
     // Slack shared app: deliver queued Slack events to the installing users' runtimes.

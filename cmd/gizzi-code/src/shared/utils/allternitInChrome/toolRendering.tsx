@@ -7,7 +7,7 @@ import { renderToolResultMessage as renderDefaultMCPToolResultMessage } from '..
 import type { MCPToolResult } from '../../utils/mcpValidation.js';
 import { truncateToWidth } from '../format.js';
 import { trackAllternitInChromeTabId } from './common.js';
-export type { Tool } from '@modelcontextprotocol/sdk/types.js';
+export type { Tool } from '@modelcontextprotocol/client'
 
 /**
  * All tool names from BROWSER_TOOLS in @allternit/extension.

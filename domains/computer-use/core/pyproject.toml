@@ -54,7 +54,8 @@ gateway = [
 ]
 
 mcp = [
-    "mcp>=1.0.0",
+    # Pinned with the TS SDK (MCP 2026-07-28, dual-era). mcp 2.x needs Python >= 3.10.
+    "mcp==2.3.0; python_version >= '3.10'",
 ]
 
 # DroidRun mobile harness integration (Android via mobilerun_core)

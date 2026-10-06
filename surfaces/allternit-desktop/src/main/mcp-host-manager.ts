@@ -1,8 +1,10 @@
 /**
  * Native MCP Host — manages Model Context Protocol servers in the Electron main process.
  *
- * Architecture: one McpClient per configured server, all running as child processes
- * via stdio transport. Works even when gizzi-code is down.
+ * Architecture: one official-SDK MCP Client per configured server, each running as a
+ * lifeline-wrapped child process over stdio. The client negotiates the protocol era:
+ * MCP 2026-07-28 (`server/discover`) when the server offers it, otherwise the legacy
+ * `initialize` handshake. Works even when gizzi-code is down.
  *
  * Config: ~/.allternit/mcp-config.json  (Claude-compatible format)
  */
@@ -12,6 +14,8 @@ import * as path from 'node:path';
 import * as child_process from 'node:child_process';
 import { app, BrowserWindow } from 'electron';
 import log from 'electron-log';
+import type { Client } from '@modelcontextprotocol/client';
+import { createNegotiatingClient, ProcStdioTransport } from './mcp-stdio-transport.js';
 import { spawnSidecar } from './process-lifeline.js';
 
 // ── Config shape (Claude Desktop compatible) ─────────────────────────────────
@@ -46,26 +50,22 @@ interface ServerEntry {
   proc: child_process.ChildProcess | null;
   restartCount: number;
   errorMessage?: string;
-  // Message buffer for the simple JSON-RPC over stdio protocol
-  buffer: string;
-  pendingRequests: Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>;
-  nextRequestId: number;
+  client: Client | null;
 }
 
 const MAX_RESTARTS = 3;
 const RESTART_BACKOFF_BASE_MS = 1000;
 const TOOL_CALL_TIMEOUT_MS = 30_000;
 
-// ── MCP JSON-RPC helpers ─────────────────────────────────────────────────────
-// We implement a minimal MCP client without the full SDK to avoid adding a
-// dependency. If @modelcontextprotocol/sdk is installed, this can be replaced.
-
-function makeRequest(method: string, params?: unknown, id?: number) {
-  return JSON.stringify({ jsonrpc: '2.0', id: id ?? null, method, params: params ?? {} }) + '\n';
-}
-
 class McpHostManager {
   private servers = new Map<string, ServerEntry>();
+  /**
+   * Servers that exited while answering the `server/discover` probe (2025-era
+   * servers built on SDKs that quit on any pre-`initialize` request). They are
+   * restarted once with the plain legacy handshake and stay legacy until the
+   * app restarts.
+   */
+  private legacyOnly = new Set<string>();
   private configPath: string;
   private configWatcher: fs.FSWatcher | null = null;
 
@@ -121,7 +121,11 @@ class McpHostManager {
       // Permission enforcement is handled by the IPC handler (shows dialog before calling here)
     }
 
-    return this.sendRequest(entry, 'tools/call', { name: toolName, arguments: args });
+    if (!entry.client) throw new Error(`MCP server "${serverId}" is not connected`);
+    return entry.client.callTool(
+      { name: toolName, arguments: (args ?? {}) as Record<string, unknown> },
+      { timeout: TOOL_CALL_TIMEOUT_MS },
+    );
   }
 
   async addServer(id: string, config: McpServerConfig): Promise<void> {
@@ -173,9 +177,6 @@ class McpHostManager {
 
       entry.proc = proc;
 
-      proc.stdout?.setEncoding('utf-8');
-      proc.stdout?.on('data', (chunk: string) => this.handleStdout(entry, chunk));
-
       proc.stderr?.setEncoding('utf-8');
       proc.stderr?.on('data', (chunk: string) => {
         log.warn(`[MCPHost:${id}] stderr:`, chunk.trim());
@@ -189,7 +190,16 @@ class McpHostManager {
       proc.on('exit', (code) => {
         log.warn(`[MCPHost:${id}] exited (code ${code})`);
         entry.proc = null;
-        this.rejectAllPending(entry, `Server "${id}" exited unexpectedly`);
+        entry.client = null;
+        if (entry.status === 'stopped' || this.servers.get(id) !== entry) return;
+
+        if (entry.status === 'connecting' && !this.legacyOnly.has(id)) {
+          // Exited during era negotiation: retry once on the legacy handshake.
+          this.legacyOnly.add(id);
+          log.info(`[MCPHost:${id}] exited during server/discover probe; retrying with legacy initialize`);
+          this.startServer(id, config, restartCount);
+          return;
+        }
 
         if (restartCount < MAX_RESTARTS) {
           const delay = RESTART_BACKOFF_BASE_MS * Math.pow(2, restartCount);
@@ -210,90 +220,60 @@ class McpHostManager {
   }
 
   private async initializeServer(entry: ServerEntry): Promise<void> {
+    const proc = entry.proc;
+    if (!proc?.stdin || !proc.stdout) {
+      this.markError(entry, 'Server process stdio not available');
+      return;
+    }
+    const client = createNegotiatingClient('allternit-desktop', '1.0.0', this.legacyOnly.has(entry.id) ? 'legacy' : 'auto');
+    client.onerror = (err) => log.warn(`[MCPHost:${entry.id}] ${err.message}`);
     try {
-      // Send initialize request
-      await this.sendRequest(entry, 'initialize', {
-        protocolVersion: '2024-11-05',
-        capabilities: { roots: {}, sampling: {} },
-        clientInfo: { name: 'allternit-desktop', version: '1.0.0' },
-      });
+      await client.connect(
+        new ProcStdioTransport({
+          stdin: proc.stdin,
+          stdout: proc.stdout,
+          stderr: proc.stderr,
+          pid: proc.pid,
+          kill: () => proc.kill('SIGTERM'),
+          onExit: (cb) => proc.once('exit', cb),
+        }),
+        { timeout: TOOL_CALL_TIMEOUT_MS },
+      );
+      entry.client = client;
 
-      // Send initialized notification
-      if (entry.proc?.stdin) {
-        entry.proc.stdin.write(makeRequest('notifications/initialized'));
+      // Discover tools (all pages), in the server's order.
+      const tools: ToolInfo[] = [];
+      let cursor: string | undefined;
+      for (let page = 0; page < 50; page++) {
+        const result = await client.listTools(cursor ? { cursor } : undefined, { timeout: TOOL_CALL_TIMEOUT_MS });
+        for (const t of result.tools) tools.push({ name: t.name, description: t.description, inputSchema: t.inputSchema as Record<string, unknown> });
+        cursor = result.nextCursor;
+        if (!cursor) break;
       }
-
-      // Discover tools
-      const toolsResult = await this.sendRequest(entry, 'tools/list', {}) as { tools: ToolInfo[] };
-      entry.tools = toolsResult.tools ?? [];
+      entry.tools = tools;
       entry.status = 'running';
 
-      log.info(`[MCPHost:${entry.id}] Running with ${entry.tools.length} tools`);
+      log.info(`[MCPHost:${entry.id}] Running with ${entry.tools.length} tools (${client.getProtocolEra() ?? 'legacy'} era, ${client.getNegotiatedProtocolVersion() ?? 'unknown'})`);
       this.broadcast('mcp:server-ready', { serverId: entry.id, tools: entry.tools });
 
     } catch (err) {
+      if (!entry.proc) return; // exited mid-handshake; the exit handler decides what happens next
       this.markError(entry, (err as Error).message);
     }
-  }
-
-  private handleStdout(entry: ServerEntry, chunk: string): void {
-    entry.buffer += chunk;
-    const lines = entry.buffer.split('\n');
-    entry.buffer = lines.pop() ?? '';
-
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      try {
-        const msg = JSON.parse(line) as { id?: number; result?: unknown; error?: { message: string } };
-        if (msg.id !== undefined && entry.pendingRequests.has(msg.id)) {
-          const req = entry.pendingRequests.get(msg.id)!;
-          entry.pendingRequests.delete(msg.id);
-          if (msg.error) req.reject(new Error(msg.error.message));
-          else req.resolve(msg.result);
-        }
-      } catch {
-        log.warn(`[MCPHost:${entry.id}] Unparseable stdout:`, line.slice(0, 200));
-      }
-    }
-  }
-
-  private sendRequest(entry: ServerEntry, method: string, params: unknown): Promise<unknown> {
-    return new Promise((resolve, reject) => {
-      if (!entry.proc?.stdin) {
-        reject(new Error('Server process stdin not available'));
-        return;
-      }
-
-      const id = entry.nextRequestId++;
-      const timer = setTimeout(() => {
-        entry.pendingRequests.delete(id);
-        reject(new Error(`Request "${method}" timed out after ${TOOL_CALL_TIMEOUT_MS}ms`));
-      }, TOOL_CALL_TIMEOUT_MS);
-
-      entry.pendingRequests.set(id, {
-        resolve: (v) => { clearTimeout(timer); resolve(v); },
-        reject: (e) => { clearTimeout(timer); reject(e); },
-      });
-
-      entry.proc.stdin.write(makeRequest(method, params, id));
-    });
   }
 
   private stopServer(id: string): void {
     const entry = this.servers.get(id);
     if (!entry) return;
-    this.rejectAllPending(entry, `Server "${id}" stopped`);
+    entry.status = 'stopped';
+    void entry.client?.close().catch(() => undefined);
+    entry.client = null;
     if (entry.proc) {
       try { entry.proc.stdin?.end(); } catch { /* ignore */ }
       setTimeout(() => { try { entry.proc?.kill('SIGTERM'); } catch { /* ignore */ } }, 500);
     }
     entry.status = 'stopped';
     entry.proc = null;
-  }
-
-  private rejectAllPending(entry: ServerEntry, reason: string): void {
-    for (const req of entry.pendingRequests.values()) req.reject(new Error(reason));
-    entry.pendingRequests.clear();
   }
 
   private markError(entry: ServerEntry, message: string): void {
@@ -303,7 +283,7 @@ class McpHostManager {
   }
 
   private makeEntry(id: string, config: McpServerConfig, status: ServerStatus, restartCount = 0): ServerEntry {
-    return { id, config, status, tools: [], proc: null, restartCount, buffer: '', pendingRequests: new Map(), nextRequestId: 1 };
+    return { id, config, status, tools: [], proc: null, restartCount, client: null };
   }
 
   private loadConfig(): McpConfig {

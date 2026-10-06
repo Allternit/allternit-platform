@@ -26,6 +26,8 @@ allternit-bot help
 
 The installer works on macOS and Linux (Intel and ARM), checks the download's SHA-256, and installs into `~/.local/bin` without root (`--dir` picks another folder). `login` saves the key and bot id in `~/.config/allternit-bot/config.json`, readable only by that user. Instead of `login` you can set `ALLTERNIT_BOT_KEY` and `ALLTERNIT_BOT_ID` in the environment. The key is never taken from the command line, where other processes could see it.
 
+Under each key, Allternit lists the events the agent subscribed to with it, when each was last sent, and **Stop** to end one subscription.
+
 To cut an agent off, choose **Revoke** next to its key. Its next call is refused, and any [event subscriptions](/guides/mcp-events) it made end with a signed `terminated` message.
 
 ## Commands
@@ -55,7 +57,8 @@ An agent that can fetch a URL can also read the same instructions from `https://
 | Route | Result |
 | --- | --- |
 | `POST /api/v1/vendor-bots/:id/cli-keys` `{label?}` | `201 {id, key, prefix, label, createdAt, mcpUrl, instructionsUrl}`. The only time `key` is returned. `429 {"error":"too_many_keys"}` at 10. |
-| `GET /api/v1/vendor-bots/:id/cli-keys` | `{keys:[{id, label, prefix, createdAt, lastUsedAt}]}`, revoked keys omitted. |
+| `GET /api/v1/vendor-bots/:id/cli-keys` | `{keys:[{id, label, prefix, createdAt, lastUsedAt, subscriptions}]}`, revoked keys omitted. `subscriptions` lists the [MCP Events](/guides/mcp-events) subscriptions the agent made with that key on this bot: `[{id, name, arguments, createdAt, refreshBefore, active, lastDeliveryAt, lastError}]`, the same shape as the approvals list, or `null` when they couldn't be read (the keys still list). Callback URLs and secrets are never returned. |
+| `DELETE /api/v1/mcp/events/subscriptions/:id` | Stops one of those subscriptions: `{ok:true}`, and the agent's callback gets a signed `terminated` message. `404` for one that isn't yours or has already ended. |
 | `DELETE /api/v1/vendor-bots/:id/cli-keys/:keyId` | `{ok:true}`; `404` for a key that isn't the caller's or is already revoked. |
 | `GET /bots/:id/instructions` (also `/mcp/bots/:id/instructions`), key as Bearer | `text/plain`: the instructions plus the bot's MCP endpoint. `401 {"error":"invalid_key"}` for a missing, wrong, revoked or other-bot key. |
 

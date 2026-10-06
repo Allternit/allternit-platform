@@ -49,12 +49,15 @@ The service worker receives JSON `{type, title, body, url, tag, data}`. `url` is
 | `missed_call` | A ring ended unanswered or was cancelled | `/?allternit_thread=<threadId>&bot=<botId>&from=<userId>` | Same `tag` as the ring, so it replaces it |
 | `message` | A new in-app thread message | `/?allternit_thread=<threadId>&bot=<botId>&from=<userId>` | One push per thread per 20 seconds |
 | `channel_message` | A message reached your bot through a channel | `/?allternit_channel=<provider>` | One push per address per 20 seconds. Says where it came from, not the text |
+| `event` | An event on the event backbone the owner gets notified about (approvals, threads that need you, sign-in needed, usage alerts, …) | See [Notification preferences](/api/notifications#copy-and-links) | Sent by the push sink. `data.event` names the registry event. `message.received` from the backbone arrives as `type: "message"` |
+
+`channel_message` only goes out for a runtime that doesn't forward its events yet; a forwarding runtime's messages come from the push sink with the sender and text instead, never both. Missed calls and in-app messages follow the person's `call.ended` and `message.received` [preferences](/api/notifications); rings always go out.
 
 Message-type pushes are also capped at 40 an hour per person. Calls are not (rings are already limited to 5 per person in 10 minutes). The `tag` is also sent as the push `Topic`, so a push service holds only the latest of each.
 
 ## Where it lives
 
-`cmd/allternit-cloud-api/src/routes/web_push.rs`. Senders: `spawn_notify` (background, does nothing without the env) and `send_to_user`. `inapp_calls.rs` calls them for rings, missed calls and messages; `channel_inbound.rs` calls `notify_channel_message` after a relayed message is delivered to the runtime. Tests use a fake transport and the RFC 8291 appendix A test vector.
+`cmd/allternit-cloud-api/src/routes/web_push.rs`. Senders: the push sink in `notifications.rs` for every backbone event ([Notification preferences](/api/notifications)), `spawn_notify` for rings and `spawn_notify_pref` for missed calls and in-app messages (background, do nothing without the env), all through `send_to_user`. `channel_inbound.rs` calls `notify_channel_message` after a relayed message is delivered to the runtime; it pushes only when that runtime doesn't forward its events. Tests use a fake transport and the RFC 8291 appendix A test vector.
 
 ## Clients
 
