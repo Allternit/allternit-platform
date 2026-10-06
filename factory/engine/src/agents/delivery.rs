@@ -477,11 +477,16 @@ fn deliver_claude_hook(req: &DeliveryRequest<'_>, gate: &GateTarget, w: &mut Wri
     let arr = list.as_array_mut().ok_or_else(|| anyhow!("hooks.PreToolUse is not a list"))?;
     // Drop an earlier Allternit gate entry (re-entry, moved binary, new WIH),
     // keep every other hook.
-    let marker = format!("hook {}", HookFlavor::Claude.subcommand());
+    // The gate command is `<engine> internal hook --root <ws> <flavor>-pretool …`
+    // (see `hook_command`), so match the engine's hook verb and the flavor, not a
+    // fixed substring that a --root in between would break.
+    let sub = HookFlavor::Claude.subcommand();
+    let legacy = format!("hook {sub}"); // entries written before the --root form
+    let is_gate = |c: &str| (c.contains("internal hook") && c.contains(sub)) || c.contains(&legacy);
     arr.retain(|e| {
         !e.get("hooks")
             .and_then(|h| h.as_array())
-            .map(|hs| hs.iter().any(|h| h.get("command").and_then(|c| c.as_str()).map(|c| c.contains(&marker)).unwrap_or(false)))
+            .map(|hs| hs.iter().any(|h| h.get("command").and_then(|c| c.as_str()).map(is_gate).unwrap_or(false)))
             .unwrap_or(false)
     });
     arr.push(json!({
@@ -721,7 +726,9 @@ mod tests {
         let settings: Value = serde_json::from_str(&std::fs::read_to_string(wd.join(".claude/settings.json")).unwrap()).unwrap();
         assert_eq!(settings["theme"], "dark");
         assert_eq!(settings["hooks"]["PreToolUse"].as_array().unwrap().len(), 2);
-        assert!(settings["hooks"]["PreToolUse"][1]["hooks"][0]["command"].as_str().unwrap().contains("hook claude-pretool"));
+        let gate_cmd = settings["hooks"]["PreToolUse"][1]["hooks"][0]["command"].as_str().unwrap();
+        // The gate hook is the engine itself: `allternit-factory internal hook --root <ws> claude-pretool …`.
+        assert!(gate_cmd.contains("internal hook --root") && gate_cmd.contains("claude-pretool"), "{gate_cmd}");
         let mcp: Value = serde_json::from_str(&std::fs::read_to_string(wd.join(".mcp.json")).unwrap()).unwrap();
         assert_eq!(mcp["mcpServers"]["other"]["command"], "x");
         assert_eq!(mcp["mcpServers"]["allternit"]["headers"]["Authorization"], "Bearer ${ALLTERNIT_MCP_TOKEN}");
