@@ -1,4 +1,4 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { createMcpHandler, McpServer, type McpHttpHandler } from "@modelcontextprotocol/server";
 import { registerAppResource, registerAppTool, RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/server";
 
 import { validateLookPack, type LookPack } from "@allternit/look-packs";
@@ -11,6 +11,8 @@ import {
   type ScanResource,
 } from "./lint.js";
 import { MANIFEST_SCHEMA, type AppManifest, type ManifestPermissions } from "./manifest.js";
+import { z } from "zod";
+import { checkEventDefinitions, registerEvents, type AppEventsInput } from "./events.js";
 import type { AppToolDef } from "./tool.js";
 import type { ViewDef } from "./view.js";
 
@@ -36,6 +38,12 @@ export interface DefineAppInput {
   instructions?: string;
   /** Path the server answers on. Default /mcp. */
   path?: string;
+  /**
+   * Optional MCP Events (`events/list|subscribe|unsubscribe`, webhook delivery
+   * signed with Standard Webhooks). See `@allternit/mcp-events` for envelopes
+   * and `deliverWebhook`.
+   */
+  events?: AppEventsInput;
 }
 
 export interface AllternitApp {
@@ -43,9 +51,25 @@ export interface AllternitApp {
   manifest(options?: { url?: string }): AppManifest;
   /** Static checks: the directory scan rules over the declared tools and views. */
   lint(): DirectoryFinding[];
-  /** A fresh MCP server with every tool and View registered. */
+  /**
+   * A fresh MCP server with every tool and View registered. It serves both
+   * protocol eras: 2026-07-28 (`server/discover`, per-request `_meta`) and the
+   * legacy `initialize` handshake. Tools list in name order.
+   */
   createServer(): McpServer;
+  /**
+   * The MCP endpoint as a web-standard `fetch` handler (Workers, Bun, Deno, or
+   * Node via `listen`): 2026-07-28 requests are served statelessly by a fresh
+   * server per request, legacy `initialize` clients get the stateless 2025-era
+   * fallback from the same factory. Built here, next to `createServer`, so the
+   * handler and the servers always come from one copy of the SDK (a loader such
+   * as tsx can otherwise hand `listen` a second copy, and the SDK's
+   * `instanceof` checks fail across copies).
+   */
+  createHandler(options?: { onerror?: (error: Error) => void }): McpHttpHandler;
 }
+
+const byKey = <T>(xs: T[], key: (x: T) => string) => [...xs].sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
 
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "app";
 
@@ -68,6 +92,7 @@ export function defineApp(input: DefineAppInput): AllternitApp {
   for (const t of input.tools) {
     if (t.viewUri && !uris.has(t.viewUri)) throw new Error(`defineApp: tool ${t.name} renders into ${t.viewUri}, which is not in views`);
   }
+  if (input.events) checkEventDefinitions(input.events.definitions);
   if (input.lookPack) {
     const errors = validateLookPack(input.lookPack).filter((x) => x.severity === "error");
     if (errors.length) throw new Error(`defineApp: look pack invalid: ${errors.map((e) => e.message).join("; ")}`);
@@ -158,12 +183,12 @@ export function defineApp(input: DefineAppInput): AllternitApp {
       { name: slug(input.name), version },
       input.instructions ? { instructions: input.instructions } : undefined,
     );
-    for (const t of input.tools) {
+    for (const t of byKey(input.tools, (x) => x.name)) {
       const config: Record<string, unknown> = {
         title: t.title,
         description: t.description,
         annotations: { ...t.annotations },
-        ...(t.input ? { inputSchema: t.input } : {}),
+        ...(t.input ? { inputSchema: z.object(t.input) } : {}),
       };
       const handler = ((args: unknown) => t.handler(args as never)) as never;
       if (t.viewUri) {
@@ -172,7 +197,7 @@ export function defineApp(input: DefineAppInput): AllternitApp {
         server.registerTool(t.name, config as never, handler);
       }
     }
-    for (const v of views) {
+    for (const v of byKey(views, (x) => x.uri)) {
       registerAppResource(server, v.name, v.uri, { mimeType: RESOURCE_MIME_TYPE, ...(v.description ? { description: v.description } : {}) }, async () => ({
         contents: [
           {
@@ -184,9 +209,16 @@ export function defineApp(input: DefineAppInput): AllternitApp {
         ],
       }));
     }
+    if (input.events) registerEvents(server, input.events);
     return server;
   }
 
-  return { input, manifest, lint, createServer };
+  function createHandler(options: { onerror?: (error: Error) => void } = {}): McpHttpHandler {
+    return createMcpHandler(() => createServer(), {
+      onerror: options.onerror ?? ((error) => console.error(`[${input.name}] mcp:`, error)),
+    });
+  }
+
+  return { input, manifest, lint, createServer, createHandler };
 }
 

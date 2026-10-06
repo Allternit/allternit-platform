@@ -69,7 +69,7 @@ describe("test / package / submit on the scaffolded app", () => {
   it("test passes the template with no errors (declared lint + live MCP round trip)", async () => {
     logs.length = 0;
     const code = await run(ctxFor(dir), ["test"]);
-    expect(code, logs.join("\n")).toBe(0);
+    expect(code, logs.join("\n") + errors.join("\n")).toBe(0);
     expect(logs.join("\n")).toContain("PASSED");
   });
 

@@ -17,6 +17,8 @@ The Allternit client:
 - Sends a `DELETE` with the session id when it closes a session.
 - Treats a `404` on a request that carries a session id as an expired session and initializes again.
 
+Build the server dual-era: answer MCP `2026-07-28` (stateless, [`server/discover`](https://modelcontextprotocol.io/specification/2026-07-28/server/discover), a `_meta` envelope on every request) and the older `initialize` handshake, so it works with every host. The official SDK v2 does this from one server definition (`createMcpHandler` in `@modelcontextprotocol/server`; see the [Quickstart](/plugins/quickstart)), and so does the [Apps SDK](/plugins/sdk/server).
+
 Stateless servers (no session id) work. The chat runtime tries streamable HTTP first and falls back to the older SSE transport, but new servers should use streamable HTTP.
 
 Requests that reach your server are made by Allternit's servers, not by the user's browser. Your server does not need to allow cross-origin requests from Allternit's web origin.
