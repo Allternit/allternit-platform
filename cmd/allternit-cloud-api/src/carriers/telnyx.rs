@@ -454,6 +454,20 @@ impl Carrier for Telnyx {
         }
     }
 
+    /// `PUT /10dlc/campaign/{id}` with the corrected texts. A Telnyx-rejected campaign goes back
+    /// into review on the update (TELNYX_FAILED → TCR_ACCEPTED, seen 2026-10-06) with no new
+    /// brand or campaign fee. The brand, use case and keywords stay as filed.
+    async fn update_campaign(&self, campaign_id: &str, form: &RegistrationForm) -> Result<bool, CarrierError> {
+        let mut body = campaign_body("", form);
+        if let Some(o) = body.as_object_mut() {
+            for k in ["brandId", "usecase", "optinKeywords", "optoutKeywords", "helpKeywords", "webhookURL"] {
+                o.remove(k);
+            }
+        }
+        self.call("PUT", &format!("/10dlc/campaign/{campaign_id}"), Some(body)).await?;
+        Ok(true)
+    }
+
     async fn send_brand_otp(&self, brand_id: &str) -> Result<(), CarrierError> {
         self.call(
             "POST",
@@ -735,4 +749,16 @@ mod tests {
         let lower = flow.to_lowercase();
         assert!(!lower.contains("signed") && !lower.contains("verbal"), "the business's notes never add a second opt-in path");
     }
+
+    #[test]
+    fn a_campaign_update_sends_only_the_corrected_texts() {
+        let f = RegistrationForm { display_name: "Acme".into(), use_case: "CUSTOMER_CARE".into(), use_case_summary: "help".into(), ..Default::default() };
+        let mut body = campaign_body("", &f);
+        for k in ["brandId", "usecase", "optinKeywords", "optoutKeywords", "helpKeywords", "webhookURL"] {
+            body.as_object_mut().unwrap().remove(k);
+        }
+        assert!(body.get("messageFlow").is_some() && body.get("optinMessage").is_some() && body.get("description").is_some());
+        assert!(body.get("brandId").is_none() && body.get("usecase").is_none());
+    }
+
 }
