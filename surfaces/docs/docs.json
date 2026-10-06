@@ -74,7 +74,8 @@
               "guides/bot-autonomy",
               "guides/calls-and-texts",
               "guides/voice",
-              "guides/mcp-apps-status"
+              "guides/mcp-apps-status",
+              "guides/mcp-events"
             ],
             "icon": "/icons/window.svg"
           },

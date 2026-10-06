@@ -47,6 +47,9 @@ pub struct EventDef {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Delivery {
+    /// The design sketch's `events/unsubscribe` omits `mode`; webhook is the
+    /// only mode either profile has for a URL, so it is the default.
+    #[serde(default = "webhook_mode")]
     pub mode: DeliveryMode,
     #[serde(default)]
     pub url: Option<String>,
@@ -76,6 +79,10 @@ pub struct UnsubscribeParams {
     #[serde(default = "empty_object")]
     pub arguments: Value,
     pub delivery: Delivery,
+}
+
+fn webhook_mode() -> DeliveryMode {
+    DeliveryMode::Webhook
 }
 
 fn empty_object() -> Value {
@@ -220,8 +227,61 @@ pub fn verification_envelope(challenge: &str) -> Value {
 }
 
 /// Control envelope ending a subscription (auth revoked, event removed).
-pub fn terminated_envelope(subscription_id: &str, code: i64, message: &str) -> Value {
-    json!({ "type": "terminated", "subscriptionId": subscription_id, "error": { "code": code, "message": message } })
+/// `message` is the error's name (`Forbidden`, `NotFound`, see [`code_name`]);
+/// `data` says why (e.g. `{"reason": "approval_revoked"}`).
+pub fn terminated_envelope(subscription_id: &str, code: i64, data: Value) -> Value {
+    json!({ "type": "terminated", "subscriptionId": subscription_id, "error": { "code": code, "message": code_name(code), "data": data } })
+}
+
+/// The draft's message string for an `events/*` error code.
+pub fn code_name(code: i64) -> &'static str {
+    match code {
+        codes::NOT_FOUND => "NotFound",
+        codes::FORBIDDEN => "Forbidden",
+        codes::RESOURCE_EXHAUSTED => "ResourceExhausted",
+        codes::UNSUPPORTED => "Unsupported",
+        codes::CALLBACK_ENDPOINT_ERROR => "CallbackEndpointError",
+        -32602 => "InvalidParams",
+        _ => "Error",
+    }
+}
+
+/// Default TTL a subscription gets when `ttlMs` is omitted.
+pub const DEFAULT_TTL_MS: u64 = 24 * 60 * 60 * 1000;
+/// Longest TTL granted; `ttlMs: null` (no expiry) is clamped to this, as the
+/// draft allows ("SHOULD be ≤ the suggested ttlMs, except server-side clamping").
+pub const MAX_TTL_MS: u64 = 7 * 24 * 60 * 60 * 1000;
+/// Shortest TTL granted (floor clamp), so a client can't make us re-verify constantly.
+pub const MIN_TTL_MS: u64 = 60 * 1000;
+
+/// The TTL to grant for a requested one: omitted → default, `null` → max,
+/// otherwise clamped into `[MIN_TTL_MS, MAX_TTL_MS]`. Never `None` (no
+/// expiry): every subscription we hold ends unless refreshed.
+pub fn grant_ttl_ms(requested: Option<Option<u64>>) -> u64 {
+    match requested {
+        None => DEFAULT_TTL_MS,
+        Some(None) => MAX_TTL_MS,
+        Some(Some(ms)) => ms.clamp(MIN_TTL_MS, MAX_TTL_MS),
+    }
+}
+
+/// `-32015` `data.reason` values (design sketch).
+pub mod callback_reasons {
+    pub const CONNECTION_REFUSED: &str = "connection_refused";
+    pub const TIMEOUT: &str = "timeout";
+    pub const TLS_ERROR: &str = "tls_error";
+    pub const HTTP_4XX: &str = "http_4xx";
+    pub const HTTP_5XX: &str = "http_5xx";
+    pub const CHALLENGE_FAILED: &str = "challenge_failed";
+}
+
+/// Did a verification answer echo `challenge`? Constant-time compare on the
+/// `challenge` field of a JSON body.
+pub fn challenge_echoed(body: &[u8], challenge: &str) -> bool {
+    let Ok(v) = serde_json::from_slice::<Value>(body) else { return false };
+    let Some(got) = v.get("challenge").and_then(Value::as_str) else { return false };
+    let (a, b) = (got.as_bytes(), challenge.as_bytes());
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 #[cfg(test)]
@@ -288,6 +348,27 @@ mod tests {
         assert_ne!(a, subscription_id("u2", "https://x/cb", "n", &json!({ "a": 1, "b": { "d": 2, "c": 3 } })));
         // Length-prefixing stops ("ab","c") colliding with ("a","bc").
         assert_ne!(subscription_id("ab", "c", "n", &json!({})), subscription_id("a", "bc", "n", &json!({})));
+    }
+
+    #[test]
+    fn ttl_grants_are_clamped_and_never_unbounded() {
+        assert_eq!(grant_ttl_ms(None), DEFAULT_TTL_MS);
+        assert_eq!(grant_ttl_ms(Some(None)), MAX_TTL_MS);
+        assert_eq!(grant_ttl_ms(Some(Some(1))), MIN_TTL_MS);
+        assert_eq!(grant_ttl_ms(Some(Some(3_600_000))), 3_600_000);
+        assert_eq!(grant_ttl_ms(Some(Some(u64::MAX))), MAX_TTL_MS);
+    }
+
+    #[test]
+    fn unsubscribe_without_mode_is_webhook_and_challenge_echo_is_exact() {
+        let p: UnsubscribeParams = serde_json::from_value(json!({ "name": "n", "delivery": { "url": "https://cb.example.com/1" } })).unwrap();
+        assert_eq!(p.delivery.mode, DeliveryMode::Webhook);
+        assert!(challenge_echoed(br#"{"challenge":"abc"}"#, "abc"));
+        assert!(!challenge_echoed(br#"{"challenge":"abd"}"#, "abc"));
+        assert!(!challenge_echoed(b"abc", "abc"));
+        let t = terminated_envelope("sub_1", codes::FORBIDDEN, json!({ "reason": "approval_revoked" }));
+        assert_eq!(t["error"]["message"], "Forbidden");
+        assert_eq!(t["error"]["data"]["reason"], "approval_revoked");
     }
 
     #[test]

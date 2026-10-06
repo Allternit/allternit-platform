@@ -326,8 +326,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     allternit_cloud_api::routes::channel_onboarding::start_telegram_manager_onboarding();
 
     // Platform API: signed webhook delivery + monthly number usage (only when switched on).
+    // The same queue delivers MCP Events from the mcp.allternit.com edge, so with the
+    // Platform API off but the edge on, the delivery worker still runs (no number fees).
     if allternit_cloud_api::routes::platform_v1::platform_api_enabled() {
         allternit_cloud_api::routes::platform_v1::events::spawn_worker(state.db.clone());
+    } else if allternit_cloud_api::routes::mcp_edge::public_mcp_url_for_keys().is_some() {
+        allternit_cloud_api::routes::platform_v1::events::spawn_delivery_worker(state.db.clone());
     }
 
     // 10DLC / toll-free registrations: retry pending ones (missed webhooks, campaigns waiting on our carrier account).

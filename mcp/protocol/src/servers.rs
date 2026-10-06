@@ -31,3 +31,26 @@ pub fn agents(version: &'static str) -> ServerSpec {
 pub fn vendor_bot(version: &'static str) -> ServerSpec {
     ServerSpec { name: VENDOR_BOT_NAME, version, capabilities: tools_and_resources(), instructions: Some(VENDOR_BOT_INSTRUCTIONS) }
 }
+
+/// Advertise the MCP Events extension (`"events": {"listChanged": false}`):
+/// the edge answers `events/list|subscribe|unsubscribe` itself for both
+/// servers, webhook delivery only.
+pub fn with_events(mut spec: ServerSpec) -> ServerSpec {
+    if let Some(caps) = spec.capabilities.as_object_mut() {
+        caps.insert("events".into(), json!({ "listChanged": false }));
+    }
+    spec
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn with_events_adds_the_capability_and_keeps_the_rest() {
+        let s = with_events(agents("1.0"));
+        assert_eq!(s.capabilities["events"]["listChanged"], false);
+        assert_eq!(s.capabilities["tools"]["listChanged"], false);
+        assert!(agents("1.0").capabilities.get("events").is_none());
+    }
+}

@@ -171,7 +171,13 @@ async fn revoke_route(State(state): State<Arc<ApiState>>, headers: HeaderMap, Pa
         .execute(&state.db)
         .await
     {
-        Ok(r) if r.rows_affected() > 0 => Json(json!({ "ok": true })).into_response(),
+        Ok(r) if r.rows_affected() > 0 => {
+            // A key is its own MCP principal (`cli-key:<id>`): its event subscriptions end with it.
+            if let Err(e) = crate::routes::mcp_events::terminate_principal(&state.db, &user, &format!("cli-key:{key_id}"), &format!("bot:{vendor_bot_id}"), "key_revoked").await {
+                tracing::error!("vendor bot keys: ending subscriptions failed: {e}");
+            }
+            Json(json!({ "ok": true })).into_response()
+        }
         Ok(_) => (StatusCode::NOT_FOUND, Json(json!({ "error": "not_found" }))).into_response(),
         Err(e) => internal(e),
     }

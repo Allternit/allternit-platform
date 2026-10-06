@@ -74,6 +74,12 @@ pub fn headers(key: &[u8], msg_id: &str, timestamp: i64, body: &[u8]) -> [(&'sta
     ]
 }
 
+/// Signature header for a key rotation window: one `v1,…` per key,
+/// space-separated (receivers accept any match).
+pub fn sign_all(keys: &[&[u8]], msg_id: &str, timestamp: i64, body: &[u8]) -> String {
+    keys.iter().map(|k| sign(k, msg_id, timestamp, body)).collect::<Vec<_>>().join(" ")
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VerifyError {
     BadTimestamp,
@@ -138,6 +144,16 @@ mod tests {
         assert_eq!(verify(&key, MSG_ID, "x", SIG, BODY.as_bytes(), TS), Err(VerifyError::BadTimestamp));
         let multi = format!("v1,AAAA {SIG}");
         assert!(verify(&key, MSG_ID, &ts, &multi, BODY.as_bytes(), TS).is_ok());
+    }
+
+    #[test]
+    fn dual_signature_verifies_under_either_key() {
+        let old = parse_secret(SECRET).unwrap();
+        let new = vec![9u8; 32];
+        let both = sign_all(&[&new, &old], MSG_ID, TS, BODY.as_bytes());
+        assert_eq!(both.split(' ').count(), 2);
+        assert!(verify(&old, MSG_ID, &TS.to_string(), &both, BODY.as_bytes(), TS).is_ok());
+        assert!(verify(&new, MSG_ID, &TS.to_string(), &both, BODY.as_bytes(), TS).is_ok());
     }
 
     #[test]
