@@ -75,7 +75,8 @@
               "guides/calls-and-texts",
               "guides/voice",
               "guides/mcp-apps-status",
-              "guides/mcp-events"
+              "guides/mcp-events",
+              "guides/connected-apps"
             ],
             "icon": "/icons/window.svg"
           },
