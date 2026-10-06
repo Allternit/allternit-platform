@@ -65,6 +65,8 @@ The inline frame is sized from the height you report. Send `ui/notifications/siz
 - **Private address.** A connector URL that resolves to a loopback, private, link-local, or shared-address range is refused. Use a public `https` URL. See the [Quickstart](/plugins/quickstart#4-make-the-server-reachable).
 - **Wrong transport.** Serve streamable HTTP at a single endpoint.
 - **Session errors.** If you issue `Mcp-Session-Id`, return `404` for an unknown session so the client re-initializes.
+- **Server only speaks 2026-07-28 but tools never load.** Implement `server/discover` with a `supportedVersions` list. The client treats a discover answer without it as a legacy server and sends `initialize`.
+- **Legacy server rejects the first request.** Expected: the first request is a 2026-07-28 probe. Answer it with a `4xx` (or a JSON-RPC error) and the client falls back to `initialize`. Do not answer it with `401`, `403` or `429`: those are reported as errors, not as "legacy server".
 
 ## OAuth fails
 
