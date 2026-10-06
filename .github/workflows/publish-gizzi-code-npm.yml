@@ -105,13 +105,16 @@ jobs:
       matrix:
         include:
           - target: darwin-arm64
-            os: macos-latest
+            # macos-15, not macos-latest: macos-latest is macOS 26, and Zig
+            # 0.15.2 (pinned by libghostty-vt for allternit-factory) can't link
+            # against the macOS 26 SDK (undefined _abort, _bzero, ...).
+            os: macos-15
             node_os: darwin
             node_cpu: arm64
           - target: darwin-x64
             # bun --target cross-compiles darwin-x64 from the arm64 pool;
-            # macos-13 (Intel) runners queue for hours.
-            os: macos-latest
+            # macos-13 (Intel) runners queue for hours. macos-15 for Zig, as above.
+            os: macos-15
             node_os: darwin
             node_cpu: x64
           - target: linux-x64
