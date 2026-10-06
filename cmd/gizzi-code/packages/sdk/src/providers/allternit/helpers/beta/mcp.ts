@@ -118,7 +118,7 @@ export type MCPResourceContentsLike = MCPTextResourceContentsLike | MCPBlobResou
 
 /**
  * Interface for an MCP client that can call tools.
- * Matches the relevant methods of `Client` from `@modelcontextprotocol/sdk`.
+ * Matches the relevant methods of `Client` from `@modelcontextprotocol/client` (SDK v2; the v1 `@modelcontextprotocol/sdk` Client has the same shape).
  */
 export interface MCPClientLike {
   callTool(params: { name: string; arguments?: Record<string, unknown> }): Promise<MCPCallToolResultLike>;
@@ -200,7 +200,7 @@ export class UnsupportedMCPValueError extends Error {
  *
  * @example
  * ```ts
- * import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+ * import { Client } from "@modelcontextprotocol/client";
  * import Allternit from "@allternit/gizzi-sdk";
  * import { mcpTool } from "@allternit/gizzi-sdk/helpers/beta/mcp";
  *
@@ -309,7 +309,7 @@ export function mcpTools(
  *
  * @example
  * ```ts
- * import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+ * import { Client } from "@modelcontextprotocol/client";
  * import Allternit from "@allternit/gizzi-sdk";
  * import { mcpMessage } from "@allternit/gizzi-sdk/helpers/beta/mcp";
  *
@@ -534,7 +534,7 @@ function mcpResourceContentToContentBlock(
  *
  * @example
  * ```ts
- * import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+ * import { Client } from "@modelcontextprotocol/client";
  * import Allternit from "@allternit/gizzi-sdk";
  * import { mcpResourceToContent } from "@allternit/gizzi-sdk/helpers/beta/mcp";
  *
@@ -596,7 +596,7 @@ function textSourceFromResource(resource: MCPResourceContentsLike): BetaPlainTex
  *
  * @example
  * ```ts
- * import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+ * import { Client } from "@modelcontextprotocol/client";
  * import Allternit from "@allternit/gizzi-sdk";
  * import { mcpResourceToFile } from "@allternit/gizzi-sdk/helpers/beta/mcp";
  *

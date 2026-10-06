@@ -7,12 +7,12 @@
 // memory, keyed by session, for the length of the turn, and dropped afterwards.
 
 import { createGuardedFetch } from "@/shared/utils/hooks/ssrfGuard"
-import { Client } from "@modelcontextprotocol/sdk/client/index.js"
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client"
 import z from "zod/v4"
 import { Log } from "@/shared/util/log"
 import { Installation } from "@/shared/installation"
 import { withTimeout } from "@/shared/util/timeout"
+import { McpEra } from "@/runtime/tools/mcp/era"
 import {
   MCP_APPS_CLIENT_CAPABILITIES,
   MCP_CONNECTOR_META_KEY,
@@ -91,22 +91,32 @@ export namespace McpUserProxy {
   }
 
   export async function connect(entry: Entry): Promise<Client | undefined> {
-    const transport = new StreamableHTTPClientTransport(new URL(entry.url), {
-      requestInit: { headers: { Authorization: `Bearer ${entry.token}`, [SESSION_HEADER]: entry.sessionId } },
-      // allternit-api is usually on localhost; metadata/link-local/private stay refused.
-      fetch: createGuardedFetch({ allowLoopback: true }) as unknown as typeof fetch,
-    })
-    const c = new Client({ name: "gizzi", version: Installation.VERSION }, { capabilities: MCP_APPS_CLIENT_CAPABILITIES })
     try {
-      await withTimeout(c.connect(transport), CONNECT_TIMEOUT)
-      return c
+      // Dual-era like every other server: allternit-api's proxy answers `server/discover`
+      // (2026-07-28, stateless) and still accepts `initialize` from older gizzi builds.
+      const { client } = await McpEra.connect({
+        key: `allternit-user-proxy\0${entry.url}`,
+        target: entry.url,
+        timeoutMs: CONNECT_TIMEOUT,
+        client: (versionNegotiation) =>
+          new Client(
+            { name: "gizzi", version: Installation.VERSION },
+            { capabilities: MCP_APPS_CLIENT_CAPABILITIES, versionNegotiation },
+          ),
+        transport: () =>
+          new StreamableHTTPClientTransport(new URL(entry.url), {
+            requestInit: { headers: { Authorization: `Bearer ${entry.token}`, [SESSION_HEADER]: entry.sessionId } },
+            // allternit-api is usually on localhost; metadata/link-local/private stay refused.
+            fetch: createGuardedFetch({ allowLoopback: true }) as unknown as typeof fetch,
+          }),
+      })
+      return client
     } catch (error) {
       // The message can echo the URL but never the token (it is only in a header).
       log.warn("connector proxy unreachable", {
         server: entry.server,
         error: error instanceof Error ? error.message : String(error),
       })
-      await c.close().catch(() => {})
       return undefined
     }
   }

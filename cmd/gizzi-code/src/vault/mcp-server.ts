@@ -19,14 +19,11 @@
  * this does not yet integrate with).
  */
 
-import { Server } from "@modelcontextprotocol/sdk/server/index.js"
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-  type CallToolResult,
-  type ListToolsResult,
-} from "@modelcontextprotocol/sdk/types.js"
+// SDK v2: `serveStdio` answers both `server/discover` (2026-07-28, stateless) and the
+// 2025-era `initialize` handshake from one server factory, so any MCP client era can use
+// the Lens server. (A bare `server.connect(new StdioServerTransport())` is 2025-era only.)
+import { Server, type CallToolResult, type ListToolsResult } from "@modelcontextprotocol/server"
+import { serveStdio } from "@modelcontextprotocol/server/stdio"
 import { Log } from "@/shared/util/log"
 import { VaultManager } from "./index"
 import type { Vault } from "./types"
@@ -51,12 +48,17 @@ export async function startLensMcpServer(vaultPath?: string): Promise<void> {
   const vault = new VaultManager(vaultPath ? { vaultPath } : undefined)
   await vault.initialize()
 
+  serveStdio(() => lensServer(vault))
+  log.info("Lens MCP server started", { vaultPath: vault.rootPath })
+}
+
+function lensServer(vault: VaultManager): Server {
   const server = new Server(
     { name: "allternit-lens", version: "0.1.0" },
     { capabilities: { tools: {} } },
   )
 
-  server.setRequestHandler(ListToolsRequestSchema, async (): Promise<ListToolsResult> => ({
+  server.setRequestHandler("tools/list", async (): Promise<ListToolsResult> => ({
     tools: [
       {
         name: "search_context",
@@ -98,7 +100,7 @@ export async function startLensMcpServer(vaultPath?: string): Promise<void> {
     ],
   }))
 
-  server.setRequestHandler(CallToolRequestSchema, async ({ params }): Promise<CallToolResult> => {
+  server.setRequestHandler("tools/call", async ({ params }): Promise<CallToolResult> => {
     const { name, arguments: args } = params as { name: string; arguments?: Record<string, unknown> }
     try {
       switch (name) {
@@ -147,7 +149,5 @@ export async function startLensMcpServer(vaultPath?: string): Promise<void> {
     }
   })
 
-  const transport = new StdioServerTransport()
-  await server.connect(transport)
-  log.info("Lens MCP server started", { vaultPath: vault.rootPath })
+  return server
 }

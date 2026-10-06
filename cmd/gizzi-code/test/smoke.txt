@@ -27,6 +27,7 @@ test/keybind.test.ts
 test/lsp/client.test.ts
 test/mcp/bundled.test.ts
 test/mcp/catalog.test.ts
+test/mcp/era.test.ts
 test/mcp/headers.test.ts
 test/memory/abort-leak.test.ts
 test/package/native-assets.test.ts
