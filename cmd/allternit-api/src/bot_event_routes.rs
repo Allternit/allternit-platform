@@ -170,7 +170,7 @@ struct OperationalStateView {
 
 #[derive(Debug, Clone)]
 pub(crate) struct StoredBotEvent {
-    id: String,
+    pub(crate) id: String,
     bot_id: String,
     seq: i64,
     session_id: Option<String>,

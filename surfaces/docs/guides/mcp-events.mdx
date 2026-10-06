@@ -180,8 +180,13 @@ x-allternit-runtime-sig: v1=<hex HMAC-SHA256(sha256_hex(device_token), "<ts>.POS
 - `bot_id` and `thread_id` are copied into `data`. `data` must be an object of at most 250 KiB.
 - The answer lists one result per event, in order: `{"results":[{"id","status","eventId"?}],"accepted","duplicates","ignored","rejected"}` with `status` one of `accepted`, `duplicate`, `ignored`, `too_large`, `invalid`. Advance the cursor past every result; on `5xx` resend the same batch. `401` means the signature, clock or device credential is wrong.
 
+## The other direction: apps that send events to Allternit
+
+Allternit is also an MCP Events **client**. When a server you connected as a connector advertises `events`, a bot can subscribe to its events and wake on them: the runtime subscribes with a webhook URL on `api.allternit.com`, which verifies each Standard Webhooks delivery and relays it to your computer. See [Wake a bot from a connected app's events](/guides/wake-a-bot-from-app-events) and the [Connector events API](/api/connector-events).
+
 ## Related
 
 - [Connected apps](/guides/connected-apps)
+- [Wake a bot from a connected app's events](/guides/wake-a-bot-from-app-events)
 - [MCP Servers API](/api/mcp-servers)
 - [Platform API webhooks](/api/platform/webhooks), which can use the same Standard Webhooks signatures

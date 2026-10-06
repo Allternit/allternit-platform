@@ -34,6 +34,7 @@ pub mod livekit_admin;
 pub mod me_usage;
 pub mod mcp_edge;
 pub mod mcp_events;
+pub mod mcp_event_callbacks;
 pub mod allternit_events;
 pub mod runtime_events;
 pub mod mesh;

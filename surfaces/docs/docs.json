@@ -95,7 +95,8 @@
               "guides/voice",
               "guides/mcp-apps-status",
               "guides/mcp-events",
-              "guides/connected-apps"
+              "guides/connected-apps",
+              "guides/wake-a-bot-from-app-events"
             ],
             "icon": "/icons/window.svg"
           },
@@ -708,6 +709,8 @@
               "api/files",
               "api/server-tools",
               "api/mcp-servers",
+              "api/connector-events",
+              "api/webhook-triggers",
               "api/design-connector",
               "api/automation",
               "api/library",

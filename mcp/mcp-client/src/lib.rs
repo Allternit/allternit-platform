@@ -444,6 +444,57 @@ impl McpClient {
         self.send(method, params).await
     }
 
+    /// Whether the connected server advertises MCP Events.
+    pub fn supports_events(&self) -> bool {
+        self.capabilities.as_ref().is_some_and(ServerCapabilities::supports_events)
+    }
+
+    /// `events/list`, following pagination (at most `max_pages`). Returns the
+    /// raw event definitions (`name`, `description`, `delivery`,
+    /// `inputSchema`, `payloadSchema`).
+    pub async fn list_events(&self, max_pages: usize) -> Result<Vec<Value>> {
+        let mut events = Vec::new();
+        let mut cursor: Option<String> = None;
+        for _ in 0..max_pages.max(1) {
+            let page = self.send("events/list", cursor.as_ref().map(|c| json!({ "cursor": c }))).await?;
+            if let Some(items) = page.get("events").and_then(Value::as_array) {
+                events.extend(items.iter().cloned());
+            }
+            cursor = page.get("nextCursor").and_then(Value::as_str).map(String::from);
+            if cursor.is_none() {
+                break;
+            }
+        }
+        Ok(events)
+    }
+
+    /// `events/subscribe` in webhook mode. `ttl_ms` `None` = server default.
+    /// Returns the raw result (`id`, `refreshBefore`, `cursor`).
+    pub async fn subscribe_event(
+        &self,
+        name: &str,
+        arguments: &Value,
+        url: &str,
+        secret: &str,
+        ttl_ms: Option<u64>,
+    ) -> Result<Value> {
+        let mut params = json!({
+            "name": name,
+            "arguments": arguments,
+            "delivery": { "mode": "webhook", "url": url, "secret": secret },
+        });
+        if let Some(ttl) = ttl_ms {
+            params["ttlMs"] = json!(ttl);
+        }
+        self.send("events/subscribe", Some(params)).await
+    }
+
+    /// `events/unsubscribe` for the webhook identity `(name, arguments, url)`.
+    pub async fn unsubscribe_event(&self, name: &str, arguments: &Value, url: &str) -> Result<Value> {
+        let params = json!({ "name": name, "arguments": arguments, "delivery": { "mode": "webhook", "url": url } });
+        self.send("events/unsubscribe", Some(params)).await
+    }
+
     /// Check if the client is initialized
     pub fn is_initialized(&self) -> bool {
         self.initialized

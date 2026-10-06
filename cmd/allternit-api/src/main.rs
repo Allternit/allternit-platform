@@ -891,6 +891,19 @@ async fn main() {
         });
     }
 
+    // MCP Events client lifecycle: refresh subscriptions before they lapse, resume after
+    // re-auth, unsubscribe when a connector is removed or its OAuth grant revoked.
+    {
+        let state = Arc::clone(&state);
+        let mut shutdown_rx = shutdown_tx.subscribe();
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = shutdown_rx.recv() => {}
+                _ = allternit_api::mcp_events_client::run(state) => {}
+            }
+        });
+    }
+
     // OfficeCLI idle reaper: evicts stale docs, closes idle resident sessions,
     // kills idle watch processes and MCP sessions.
     {
@@ -1273,6 +1286,9 @@ async fn main() {
         // Discord shared-app envelopes: cloud-api checks Discord's signature,
         // then signs the relay with the device token (RelayedAuth verifies).
         .merge(allternit_api::channel_discord_app::discord_app_router())
+        // MCP Events from a user's connected apps: cloud-api verified the Standard Webhooks
+        // signature, queued the event and relays it here signed with the device token.
+        .merge(allternit_api::mcp_events_client::delivery_router(allternit_api::relay_auth::process_secret()))
         // Public MCP edge: cloud-api verifies the OAuth token, then relays the
         // JSON-RPC call here signed with the device token (RelayedAuth verifies).
         .merge(allternit_api::mcp_edge_relay::mcp_edge_router())

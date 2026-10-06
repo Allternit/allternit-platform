@@ -327,6 +327,7 @@ pub mod subscription_routes;
 pub mod subscription_sync;
 pub mod webhook_subscription_routes;
 pub mod webhook_trigger_routes;
+pub mod mcp_events_client;
 pub mod workflow_routes;
 pub mod workspace_routes;
 pub mod remote_peers;

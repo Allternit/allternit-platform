@@ -210,6 +210,27 @@ pub struct ServerCapabilities {
     pub resources: Option<ResourcesCapability>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<ToolsCapability>,
+    /// MCP Events extension (draft experimental-ext-triggers-events):
+    /// present when the server answers `events/list|subscribe|unsubscribe`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub events: Option<Value>,
+    /// 2026-07-28 extension capabilities, keyed by extension id.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extensions: Option<Value>,
+}
+
+/// Extension id the events draft may be advertised under.
+pub const EVENTS_EXTENSION_ID: &str = "io.modelcontextprotocol/events";
+
+impl ServerCapabilities {
+    /// Whether the server advertises MCP Events: `capabilities.events`, the
+    /// extension id under `extensions`, or `experimental.events`.
+    pub fn supports_events(&self) -> bool {
+        let present = |v: Option<&Value>| v.is_some_and(|v| !v.is_null() && v != &Value::Bool(false));
+        present(self.events.as_ref())
+            || present(self.extensions.as_ref().and_then(|e| e.get(EVENTS_EXTENSION_ID)))
+            || present(self.experimental.as_ref().and_then(|e| e.get("events")))
+    }
 }
 
 /// Prompts capability
@@ -369,4 +390,22 @@ pub struct ListPromptsResult {
     pub prompts: Vec<Prompt>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
+}
+
+#[cfg(test)]
+mod events_capability_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn events_capability_is_detected_in_every_place_it_may_be_advertised() {
+        let caps = |v: Value| serde_json::from_value::<ServerCapabilities>(v).unwrap();
+        assert!(caps(json!({ "events": { "listChanged": false } })).supports_events());
+        assert!(caps(json!({ "events": {} })).supports_events());
+        assert!(caps(json!({ "extensions": { "io.modelcontextprotocol/events": {} } })).supports_events());
+        assert!(caps(json!({ "experimental": { "events": {} } })).supports_events());
+        assert!(!caps(json!({ "tools": {} })).supports_events());
+        assert!(!caps(json!({ "events": null })).supports_events());
+        assert!(!caps(json!({ "events": false })).supports_events());
+    }
 }

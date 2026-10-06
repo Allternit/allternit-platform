@@ -175,6 +175,16 @@ impl std::fmt::Debug for Connector {
 }
 
 impl Connector {
+    /// Whether a credential is on file for this connector (OAuth access token).
+    pub(crate) fn has_token(&self) -> bool {
+        self.token.is_some()
+    }
+
+    /// Set when the stored token expired and could not be renewed.
+    pub(crate) fn auth_failed(&self) -> bool {
+        self.auth_failed
+    }
+
     #[cfg(test)]
     pub fn for_test(id: &str, name_id: &str, url: &str, token: Option<&str>) -> Self {
         Self {
@@ -403,7 +413,7 @@ async fn request_refresh(connector: &Connector, refresh_token: &str, allow_priva
 
 /// The caller's enabled connector `connector_id`, or `None` when it does not
 /// exist, is disabled, or belongs to another user.
-async fn load_connector(
+pub(crate) async fn load_connector(
     state: &Arc<AppState>,
     user_id: &str,
     connector_id: &str,

@@ -354,6 +354,9 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         .merge(routes::allternit_events::routes())
         // Runtimes forward their bot_events ledger into the event backbone (relay-signature auth in the handler).
         .merge(routes::runtime_events::routes())
+        // MCP Events client (P6): public Standard Webhooks receiver for events from a user's
+        // connected MCP servers + the runtime's signed subscription registration.
+        .merge(routes::mcp_event_callbacks::routes())
         // Phone numbers + SMS: Clerk-checked per request; 503 phone_not_configured when the carrier env is unset.
         .merge(routes::phone::routes())
         // The runtime pulls its own numbers with its device credential.
