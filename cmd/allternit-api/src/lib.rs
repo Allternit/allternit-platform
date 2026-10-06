@@ -85,6 +85,7 @@ pub mod phone_outbound;
 pub mod phone_sync;
 pub mod cloud_files;
 pub mod relay_auth;
+pub mod runtime_events;
 pub mod runtime_viewer;
 pub mod voice_calls;
 pub mod voice_turn_stream;
