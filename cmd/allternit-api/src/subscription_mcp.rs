@@ -125,7 +125,7 @@ Nothing runs until the user approves it in the Allternit app.",
     };
     let era = mcp_protocol::Era::of(&req.method, &req.params, None);
     if let Some(done) = mcp_protocol::preflight(&spec, &era, &id, &req.method) {
-        return Json(done).into_response();
+        return crate::mcp_server_routes::rpc_response(&req.method, &req.params, done);
     }
     let reply = match req.method.as_str() {
         "tools/list" => success(id, json!({"tools": tool_list(&state, &user).await})),
@@ -140,7 +140,7 @@ Nothing runs until the user approves it in the Allternit app.",
         }
         other => rpc_error(id, -32601, format!("Method not found: {other}")),
     };
-    Json(mcp_protocol::finish(&spec, &era, &req.method, reply)).into_response()
+    crate::mcp_server_routes::rpc_response(&req.method, &req.params, mcp_protocol::finish(&spec, &era, &req.method, reply))
 }
 
 // ── Gateway access (in-process, through the forwarder) ───────────────────────

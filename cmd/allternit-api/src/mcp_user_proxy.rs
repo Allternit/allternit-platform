@@ -311,7 +311,7 @@ async fn proxy_post(State(state): State<Arc<AppState>>, headers: HeaderMap, Json
         Err(r) => return r,
     };
     match handle_rpc(&state, &claims, &body, allow_private_hosts()).await {
-        Some(payload) => Json(payload).into_response(),
+        Some(payload) => crate::mcp_server_routes::rpc_response(body["method"].as_str().unwrap_or_default(), &body["params"], payload),
         // Notification (e.g. notifications/initialized): acknowledged, nothing to do.
         None => StatusCode::ACCEPTED.into_response(),
     }

@@ -739,7 +739,7 @@ pub async fn serve_bot_rpc(state: &Arc<AppState>, owner: &str, vendor_bot_id: &s
         session.client = Some(client);
     }
     match handle_rpc(&state.db, &LiveActions::production(state), &session, req).await {
-        Some(body) => Json(body).into_response(),
+        Some(body) => crate::mcp_server_routes::rpc_response(req["method"].as_str().unwrap_or_default(), &req["params"], body),
         None => StatusCode::ACCEPTED.into_response(),
     }
 }

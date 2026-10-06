@@ -200,6 +200,16 @@ async fn tool_catalog(state: &AppState) -> Vec<Value> {
 
 /// A modern client's `Mcp-Method` / `Mcp-Name` headers must agree with the
 /// body (MCP 2026-07-28); a mismatch is HTTP 400 with `-32020`.
+/// A JSON-RPC reply as a Streamable HTTP response, with the status the
+/// request's era calls for (`mcp_protocol::http_status`): 400 for version /
+/// header errors, 404 for an unknown method on a modern request, else 200.
+/// Every allternit-api MCP server answers through this.
+pub(crate) fn rpc_response(method: &str, params: &Value, body: Value) -> axum::response::Response {
+    let modern = mcp_protocol::Era::of(method, params, None).is_modern();
+    let status = StatusCode::from_u16(mcp_protocol::http_status(modern, &body)).unwrap_or(StatusCode::OK);
+    (status, Json(body)).into_response()
+}
+
 pub(crate) fn header_mismatch(headers: &axum::http::HeaderMap, req: &JsonRpcRequest) -> Option<axum::response::Response> {
     let h = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
     let id = req.id.clone().unwrap_or_default();
@@ -357,7 +367,8 @@ async fn handle_rpc_inner(
         return StatusCode::ACCEPTED.into_response();
     }
 
-    Json(handle_rpc_inner_value(state, user_id, org_id, req, agents_only).await).into_response()
+    let (method, params) = (req.method.clone(), req.params.clone());
+    rpc_response(&method, &params, handle_rpc_inner_value(state, user_id, org_id, req, agents_only).await)
 }
 
 /// The agents server for a call the cloud edge already verified (OAuth token
