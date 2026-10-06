@@ -7,7 +7,7 @@ const t = (id: string, title: string, status: string, mins: number, incognito = 
   lastActivityAt: new Date(Date.now() - mins * 60_000).toISOString(), createdAt: "",
 })
 
-describe("gizzi thread list", () => {
+describe("gizzi agents bot threads list", () => {
   test("groups like the Threads panel and hides incognito asks", () => {
     const rows = formatThreadRows([
       t("aaaaaaaa11", "Monthly close", "done", 60 * 30),

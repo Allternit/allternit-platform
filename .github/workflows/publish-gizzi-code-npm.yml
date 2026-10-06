@@ -181,11 +181,33 @@ jobs:
             "./$BIN" --version || echo "::warning::binary smoke test failed ($BIN)"
           fi
 
+      - name: Build the Allternit Factory engine
+        # gizzi agents|orchestration|workflows|workspace run allternit-factory,
+        # found next to the gizzi binary (cli/factory/engine.ts). It ships in
+        # the npm platform package, the release tarball and the brew formula.
+        # Unix only: the pane engine does not build for Windows.
+        if: matrix.node_os != 'win32'
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ matrix.target }}" in
+            darwin-arm64) TRIPLE=aarch64-apple-darwin ;;
+            darwin-x64)   TRIPLE=x86_64-apple-darwin ;;
+            linux-x64)    TRIPLE=x86_64-unknown-linux-gnu ;;
+            linux-arm64)  TRIPLE=aarch64-unknown-linux-gnu ;;
+          esac
+          rustup target add "$TRIPLE"
+          cargo build --release -p allternit-factory --target "$TRIPLE"
+          cp "target/$TRIPLE/release/allternit-factory" "cmd/gizzi-code/dist/allternit-factory-${{ matrix.target }}"
+          chmod +x "cmd/gizzi-code/dist/allternit-factory-${{ matrix.target }}"
+
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
           name: binary-${{ matrix.target }}
-          path: cmd/gizzi-code/dist/gizzi-code-${{ matrix.target }}*
+          path: |
+            cmd/gizzi-code/dist/gizzi-code-${{ matrix.target }}*
+            cmd/gizzi-code/dist/allternit-factory-${{ matrix.target }}
           if-no-files-found: error
 
       - name: Setup Node for NPM
@@ -220,6 +242,15 @@ jobs:
           mkdir -p "$PKG_DIR/vendor/ripgrep/${RG_LAYOUT}"
           cp "vendor/ripgrep/${RG_LAYOUT}/${RG_FILE}" "$PKG_DIR/vendor/ripgrep/${RG_LAYOUT}/"
           chmod +x "$PKG_DIR/vendor/ripgrep/${RG_LAYOUT}/${RG_FILE}"
+          # The Factory engine next to the binary (Unix only).
+          ENGINE_FILES=""
+          if [ "$NODE_OS" != "win32" ]; then
+            test -f "dist/allternit-factory-${TARGET}"
+            cp "dist/allternit-factory-${TARGET}" "$PKG_DIR/allternit-factory"
+            chmod +x "$PKG_DIR/allternit-factory"
+            ENGINE_FILES="allternit-factory"
+          fi
+          export ENGINE_FILES
           node -e '
             const fs = require("fs");
             const pkg = {
@@ -229,7 +260,7 @@ jobs:
               license: "MIT",
               os: [process.env.NODE_OS],
               cpu: [process.env.NODE_CPU],
-              files: [process.env.BIN_BASENAME, "vendor"],
+              files: [process.env.BIN_BASENAME, "vendor", ...(process.env.ENGINE_FILES ? [process.env.ENGINE_FILES] : [])],
               repository: {
                 type: "git",
                 url: "https://github.com/Allternit/allternit-platform.git",
@@ -424,7 +455,17 @@ jobs:
             local stage
             stage="$(mktemp -d)"
             cp "$bin" "${stage}/gizzi-code"
-            tar -C "$stage" -czf "release-assets/gizzi-code-v${VERSION}-${target}.tar.gz" gizzi-code
+            # The Factory engine ships beside gizzi-code (brew installs both
+            # into libexec so gizzi finds it next to itself).
+            local engine="artifacts/allternit-factory-${target}"
+            if [ ! -f "$engine" ]; then
+              echo "::error::missing Factory engine $engine"
+              missing=1
+              return
+            fi
+            cp "$engine" "${stage}/allternit-factory"
+            chmod +x "${stage}/allternit-factory"
+            tar -C "$stage" -czf "release-assets/gizzi-code-v${VERSION}-${target}.tar.gz" gizzi-code allternit-factory
             rm -rf "$stage"
           }
           pack_unix darwin-arm64

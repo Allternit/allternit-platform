@@ -24,7 +24,7 @@ pub fn jev_available() -> bool {
 fn s1_available(id: &str) -> bool {
     match id {
         "off" | "laya_bundled" => true,
-        "system_one_local" => allternit_commrails::kernel::s1_outcome::OutcomeReporter::from_env().enabled,
+        "system_one_local" => allternit_factory_engine::kernel::s1_outcome::OutcomeReporter::from_env().enabled,
         "jev_api" => jev_available(),
         _ => false,
     }
@@ -160,7 +160,7 @@ pub async fn backends() -> KRes {
         Err(e) => (vec![], json!(e)),
     };
     // Decisions go through the local S1 server; Laya also needs its own server.
-    let s1_url = allternit_commrails::kernel::s1_outcome::OutcomeReporter::from_env().base_url;
+    let s1_url = allternit_factory_engine::kernel::s1_outcome::OutcomeReporter::from_env().base_url;
     let laya_url = std::env::var("SYSTEM_ONE_LAYA_URL").ok().filter(|u| !u.trim().is_empty())
         .unwrap_or_else(|| "http://127.0.0.1:7718".into());
     let (s1_up, laya_up) = tokio::join!(reachable(format!("{s1_url}/healthz")), reachable(format!("{}/health", laya_url.trim_end_matches('/'))));

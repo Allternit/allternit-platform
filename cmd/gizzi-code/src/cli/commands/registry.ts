@@ -23,24 +23,14 @@ import { WebCommand } from "@/cli/commands/web"
 import { PrCommand } from "@/cli/commands/pr"
 import { SessionCommand } from "@/cli/commands/session"
 import { DbCommand } from "@/cli/commands/db"
-import { CronCommand } from "@/cli/commands/cron"
 import { PluginCommand } from "@/cli/commands/plugin"
 import { InitCommand } from "@/cli/commands/init"
 import { DoctorCommand } from "@/cli/commands/doctor"
 import { VerificationCommand } from "@/cli/commands/verification"
-import { AgentHubCommand } from "@/cli/commands/agent-hub"
-import { AcCommand } from "@/cli/commands/ac"
-import { MailCommand } from "@/cli/commands/mail"
-import { CoworkCommand } from "@/cli/commands/cowork"
-import { CoworkTeamCommand } from "@/cli/commands/cowork-team"
 import { FabricWorkerCommand } from "@/cli/commands/fabric-worker"
-import { AgentCommand } from "@/cli/commands/agent"
 import { ProviderCommand } from "@/cli/commands/provider"
-import { RuntimeCommand } from "@/cli/commands/runtime"
 import { AllternitCommand } from "@/cli/commands/allternit"
 import { BrainCommand } from "@/cli/commands/brain"
-import { BotCommand } from "@/cli/commands/bot"
-import { ThreadCommand } from "@/cli/commands/thread"
 import { ProductsCommand } from "@/cli/commands/products"
 import { HtmlArtifactCommand } from "@/cli/commands/html-artifact"
 import { ArtifactCommand } from "@/cli/commands/artifact"
@@ -56,6 +46,11 @@ import { ConfigCommand } from "@/cli/commands/config"
 import { ProfileCommand } from "@/cli/commands/profile"
 import { PermissionProfileCommand } from "@/cli/commands/permission-profile"
 import { RemoteCommand } from "@/cli/commands/remote"
+import { CronLegacyStartCommand } from "@/cli/commands/cron"
+import { AgentsCommand } from "@/cli/commands/factory/agents"
+import { OrchestrationCommand } from "@/cli/commands/factory/orchestration"
+import { WorkflowsCommand } from "@/cli/commands/factory/workflows"
+import { WorkspaceCommand } from "@/cli/commands/factory/workspace"
 
 /**
  * Structural shape shared by every module in the registry. Deliberately
@@ -78,6 +73,13 @@ export interface RegisteredCommand {
  * this module stays dependency-cycle-free.
  */
 export const COMMANDS: RegisteredCommand[] = [
+  // The four Allternit Factory parts (SPEC §7). Gizzi's older agent-control
+  // commands (agent, agent-hub, runtime, bot, thread, mail, ac, cron,
+  // cowork, cowork-team) are folded in under these.
+  AgentsCommand,
+  OrchestrationCommand,
+  WorkflowsCommand,
+  WorkspaceCommand,
   AcpCommand,
   McpCommand,
   TuiThreadCommand,
@@ -105,24 +107,14 @@ export const COMMANDS: RegisteredCommand[] = [
   PrCommand,
   SessionCommand,
   DbCommand,
-  CronCommand,
   PluginCommand,
   InitCommand,
   DoctorCommand,
   VerificationCommand,
-  AgentHubCommand,
-  AcCommand,
-  MailCommand,
-  CoworkCommand,
-  CoworkTeamCommand,
   FabricWorkerCommand,
-  AgentCommand,
   ProviderCommand,
-  RuntimeCommand,
   AllternitCommand,
   BrainCommand,
-  BotCommand,
-  ThreadCommand,
   HtmlArtifactCommand,
   ArtifactCommand,
   ProgramsCommand,
@@ -137,4 +129,6 @@ export const COMMANDS: RegisteredCommand[] = [
   ProfileCommand,
   PermissionProfileCommand,
   RemoteCommand,
+  // Hidden: installed cron supervisors still exec `gizzi cron start`.
+  CronLegacyStartCommand,
 ]

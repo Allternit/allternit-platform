@@ -48,8 +48,8 @@ build/
 # without build/LICENSE.txt (desktop-v1.1.1 run 13).
 !surfaces/allternit-desktop/build/
 # vendored libghostty-vt ships Zig source dirs literally named `build/` — keep them
-!infrastructure/executor/ao-engine/vendor/libghostty-vt/src/build/
-!infrastructure/executor/ao-engine/vendor/libghostty-vt/src/apprt/gtk/build/
+!factory/pane/vendor/libghostty-vt/src/build/
+!factory/pane/vendor/libghostty-vt/src/apprt/gtk/build/
 out/
 .next/
 *.tsbuildinfo

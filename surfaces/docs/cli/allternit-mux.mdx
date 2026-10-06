@@ -5,6 +5,10 @@ description: 'Unified agent terminal multiplexer daemon and CLI.'
 
 ## Overview
 
+<Note>
+Shipping with the Allternit Factory build: `allternit-mux` folds into the Factory's pane engine (`factory/pane`), and Gizzi and Desktop read terminals through the engine instead. See [Allternit Factory architecture](/factory/architecture). Until then, this page describes the shipped daemon.
+</Note>
+
 `allternit-mux` is a local terminal multiplexer daemon designed for agent workflows. It manages sessions, panes, and PTY processes over a Unix domain socket and exposes an NDJSON request/response API. The CLI can start the daemon, create sessions, split panes, run commands, send input, and inspect agent state.
 
 `allternit-mux` is used by Gizzi Code for terminal and PTY features and is bundled into the Allternit Hosted Runtime image.

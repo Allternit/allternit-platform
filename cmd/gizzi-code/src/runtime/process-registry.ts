@@ -4,7 +4,7 @@
  * Gizzi used to spawn sidecar/CLI/shell children with `detached: true` +
  * `unref()`, which lets them outlive the parent after Ctrl+C, SIGHUP, or a
  * desktop close. Track every session child here and kill the tree on
- * shutdown. Intentional daemons (`gizzi cron --background`) must not be
+ * shutdown. Intentional daemons (`gizzi workflows wake jobs --background`) must not be
  * registered.
  */
 

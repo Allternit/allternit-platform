@@ -19,7 +19,7 @@ let configDir: string
 let cronDbPath: string
 
 async function runBot(args: string[]): Promise<RunResult> {
-  const proc = Bun.spawn(["bun", "src/cli/main.ts", "bot", ...args], {
+  const proc = Bun.spawn(["bun", "src/cli/main.ts", "agents", "bot", ...args], {
     cwd: REPO_ROOT,
     stdout: "pipe",
     stderr: "pipe",
@@ -51,7 +51,7 @@ afterAll(() => {
   rmSync(configDir, { recursive: true, force: true })
 })
 
-describe("gizzi bot (phase B1)", () => {
+describe("gizzi agents bot (phase B1)", () => {
   test("create -- writes bot.json, SOUL.md, memory/ under GIZZI_CONFIG_DIR", { timeout: 60000 }, async () => {
     const res = await runBot([
       "create",
@@ -166,7 +166,7 @@ describe("gizzi bot (phase B1)", () => {
   test("chat -- non-interactive without a message prints a usage hint and exits 1", { timeout: 60000 }, async () => {
     const res = await runBot(["chat", "cli-bot"])
     expect(res.code).toBe(1)
-    expect(res.output).toContain("usage: gizzi bot chat <name> [message..]")
+    expect(res.output).toContain("usage: gizzi agents bot chat <name> [message..]")
     // nothing was pinned — the chat never opened
     const bot = JSON.parse(readFileSync(join(configDir, "bots", "cli-bot", "bot.json"), "utf8"))
     expect(bot.canonicalSession).toBeNull()
@@ -191,7 +191,7 @@ describe("gizzi bot (phase B1)", () => {
   })
 })
 
-describe("gizzi bot routine (phase B3)", () => {
+describe("gizzi agents bot routine (phase B3)", () => {
   test("add -- creates a [bot:<name>] agent job with config.bot", { timeout: 60000 }, async () => {
     const created = await runBot(["create", "routine-bot", "--title", "Routine Bot"])
     expect(created.code).toBe(0)

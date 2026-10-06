@@ -135,6 +135,10 @@ impl ApiErr {
     pub(crate) fn new(s: StatusCode, m: impl Into<String>) -> Self {
         ApiErr(s, json!({ "error": m.into() }))
     }
+    /// Status and JSON body (`{ "error": ... }`), for callers that render their own response.
+    pub(crate) fn into_parts(self) -> (StatusCode, Value) {
+        (self.0, self.1)
+    }
     pub(crate) fn response(self) -> Response {
         (self.0, Json(self.1)).into_response()
     }
@@ -245,7 +249,8 @@ const ACCT_COLS: &str = "id, owner, vendor, auth_type, external_account_id, disp
     restricted_bot_id, state, verified_at, expires_at, created_at, updated_at, \
     host_kind, host_runtime_id, host_state, host_remote_account_id, host_last_seen_at, host_changed_at";
 pub(crate) const EXEC_COLS: &str = "id, owner, bot_id, type, mode, vendor, adapter_id, account_binding_id, preferred_lane, \
-    external_agent_id, external_agent_name, external_agent_avatar, capabilities_json, health_json, state, created_at, updated_at, directing_bot_id";
+    external_agent_id, external_agent_name, external_agent_avatar, capabilities_json, health_json, state, created_at, updated_at, directing_bot_id, \
+    harness, machine, pane_id";
 pub(crate) const REMOTE_COLS: &str = "id, owner, thread_id, generation, bot_id, execution_binding_id, external_context_id, \
     external_task_id, continuation_token, sync_cursor, last_remote_event_id, capability_snapshot, lane, state, \
     created_at, updated_at, closed_at";
@@ -724,22 +729,94 @@ async fn list_exec(State(state): State<Arc<AppState>>, Extension(user): Extensio
 
 // ---------------------------------------------------------------- execution bindings
 
-#[derive(Deserialize)]
+/// Body of `PUT /bots/:bot_id/execution-binding` (and the Factory's
+/// `POST /api/v1/factory/bots`, which reuses [`upsert_exec_binding`]).
+///
+/// `type` is `allternit` (a.k.a. `hosted`: Gizzi's own session loop),
+/// `vendor` (a vendor agent through the gateway) or `terminal` (a CLI harness
+/// in an engine pane; SPEC §9). A terminal binding names its `harness` and may
+/// name the `machine` and `paneId` it runs in; it never carries vendor fields,
+/// so no lane or vendor dispatch path can pick it up.
+#[derive(Deserialize, Default, Clone)]
 #[serde(rename_all = "camelCase")]
-struct PutExec {
-    r#type: Option<String>,
-    mode: Option<String>,
-    vendor: Option<String>,
-    adapter_id: Option<String>,
-    account_binding_id: Option<String>,
-    preferred_lane: Option<String>,
-    external_agent_id: Option<String>,
-    external_agent_name: Option<String>,
-    external_agent_avatar: Option<String>,
+pub(crate) struct PutExec {
+    pub(crate) r#type: Option<String>,
+    pub(crate) mode: Option<String>,
+    pub(crate) vendor: Option<String>,
+    pub(crate) adapter_id: Option<String>,
+    pub(crate) account_binding_id: Option<String>,
+    pub(crate) preferred_lane: Option<String>,
+    pub(crate) external_agent_id: Option<String>,
+    pub(crate) external_agent_name: Option<String>,
+    pub(crate) external_agent_avatar: Option<String>,
     /// The bot that directs this vendor bot (set on deploy).
-    directing_bot_id: Option<String>,
-    capabilities: Option<Value>,
-    health: Option<Value>,
+    pub(crate) directing_bot_id: Option<String>,
+    pub(crate) capabilities: Option<Value>,
+    pub(crate) health: Option<Value>,
+    /// Terminal only: the CLI harness (`claude`, `codex`, `kimi`, `grok`, `agy`, `gizzi`, ...).
+    pub(crate) harness: Option<String>,
+    /// Terminal only: the machine the pane runs on.
+    pub(crate) machine: Option<String>,
+    /// Terminal only: the engine pane id.
+    pub(crate) pane_id: Option<String>,
+}
+
+/// Stored binding types. `hosted` is accepted on write as the Factory's name for `allternit`.
+pub(crate) const BINDING_TYPES: &[&str] = &["allternit", "vendor", "terminal"];
+
+/// A harness name: lowercase letters, digits, `.`, `_`, `-`; 1-40 chars.
+pub(crate) fn valid_harness(h: &str) -> bool {
+    !h.is_empty()
+        && h.len() <= 40
+        && h.chars().next().is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        && h.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '_' | '-'))
+}
+
+fn clean_opt(v: &Option<String>) -> Option<String> {
+    v.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string)
+}
+
+/// The stored (type, mode) for a binding body, or a 400.
+pub(crate) fn binding_type_and_mode(b: &PutExec) -> Api<(String, String)> {
+    let ty = match clean_opt(&b.r#type).as_deref() {
+        None => "vendor".to_string(),
+        Some("hosted") => "allternit".to_string(),
+        Some(t) => t.to_string(),
+    };
+    if !BINDING_TYPES.contains(&ty.as_str()) {
+        return Err(ApiErr::bad("type must be allternit|hosted|vendor|terminal"));
+    }
+    let terminal_fields = [&b.harness, &b.machine, &b.pane_id].iter().any(|f| clean_opt(f).is_some());
+    if ty == "terminal" {
+        let harness = clean_opt(&b.harness).ok_or_else(|| ApiErr::bad("a terminal binding needs a harness (claude, codex, kimi, grok, agy, gizzi, ...)"))?;
+        if !valid_harness(&harness) {
+            return Err(ApiErr::bad("harness must be 1-40 lowercase letters, digits, '.', '_' or '-'"));
+        }
+        for (name, v) in [("machine", &b.machine), ("paneId", &b.pane_id)] {
+            if v.as_deref().is_some_and(|s| s.len() > 200 || s.chars().any(char::is_control)) {
+                return Err(ApiErr::bad(format!("{name} must be at most 200 printable characters")));
+            }
+        }
+        let vendorish = [&b.vendor, &b.adapter_id, &b.account_binding_id, &b.preferred_lane, &b.external_agent_id, &b.directing_bot_id]
+            .iter()
+            .any(|f| clean_opt(f).is_some());
+        if vendorish {
+            return Err(ApiErr::bad("a terminal binding has no vendor, adapterId, accountBindingId, preferredLane, externalAgentId or directingBotId"));
+        }
+        let mode = clean_opt(&b.mode).unwrap_or_else(|| "native".into());
+        if mode != "native" {
+            return Err(ApiErr::bad("a terminal binding's mode is native"));
+        }
+        return Ok((ty, mode));
+    }
+    if terminal_fields {
+        return Err(ApiErr::bad("harness, machine and paneId are for terminal bindings only"));
+    }
+    let mode = clean_opt(&b.mode).unwrap_or_else(|| "hosted".into());
+    if !["native", "hosted", "linked", "mirror"].contains(&mode.as_str()) {
+        return Err(ApiErr::bad("mode must be native|hosted|linked|mirror"));
+    }
+    Ok((ty, mode))
 }
 
 /// Largest inline avatar we keep (the data URI string, not the decoded bytes).
@@ -766,13 +843,22 @@ async fn put_exec(State(state): State<Arc<AppState>>, Extension(user): Extension
     }
     run(&state, move |db| {
         let conn = db.connect()?;
-        let owner = user.user_id;
-        let ty = b.r#type.clone().unwrap_or_else(|| "vendor".into());
-        let mode = b.mode.clone().unwrap_or_else(|| "hosted".into());
-        if !["allternit", "vendor"].contains(&ty.as_str()) || !["native", "hosted", "linked", "mirror"].contains(&mode.as_str()) {
-            return Err(ApiErr::bad("type must be allternit|vendor and mode native|hosted|linked|mirror"));
-        }
-        require_account(&conn, &owner, &b.account_binding_id)?;
+        upsert_exec_binding(db, &conn, &user.user_id, &bot_id, &b)
+    })
+    .await
+}
+
+/// Create or rebind `bot_id`'s execution binding (one per bot; rebinding never
+/// changes the bot id or the binding's state). The caller has checked the bot
+/// belongs to `owner`. `201` on create, `200` on rebind; body `{ binding }`.
+pub(crate) fn upsert_exec_binding(db: &DbHandle, conn: &Connection, owner: &str, bot_id: &str, b: &PutExec) -> Reply {
+    {
+        let owner = owner.to_string();
+        let bot_id = bot_id.to_string();
+        let (ty, mode) = binding_type_and_mode(b)?;
+        let terminal = ty == "terminal";
+        let (harness, machine, pane_id) = if terminal { (clean_opt(&b.harness), clean_opt(&b.machine), clean_opt(&b.pane_id)) } else { (None, None, None) };
+        require_account(conn, &owner, &b.account_binding_id)?;
         // An account restricted to one bot can't back any other bot.
         if let Some(aid) = &b.account_binding_id {
             let restricted: Option<String> = conn
@@ -802,8 +888,10 @@ async fn put_exec(State(state): State<Arc<AppState>>, Extension(user): Extension
                     "UPDATE bot_execution_bindings SET type = ?1, mode = ?2, vendor = ?3, adapter_id = ?4, account_binding_id = ?5,
                         preferred_lane = ?6, external_agent_id = ?7, capabilities_json = COALESCE(?8, capabilities_json),
                         health_json = COALESCE(?9, health_json), updated_at = ?10,
-                        external_agent_name = ?12, external_agent_avatar = ?13 WHERE id = ?11",
-                    params![ty, mode, b.vendor, b.adapter_id, b.account_binding_id, b.preferred_lane, b.external_agent_id, caps, health, now(), s(&e, "id"), agent_name, agent_avatar],
+                        external_agent_name = ?12, external_agent_avatar = ?13,
+                        harness = ?14, machine = ?15, pane_id = ?16,
+                        directing_bot_id = CASE WHEN ?1 = 'terminal' THEN NULL ELSE directing_bot_id END WHERE id = ?11",
+                    params![ty, mode, b.vendor, b.adapter_id, b.account_binding_id, b.preferred_lane, b.external_agent_id, caps, health, now(), s(&e, "id"), agent_name, agent_avatar, harness, machine, pane_id],
                 )?;
                 (StatusCode::OK, s(&e, "id"))
             }
@@ -812,14 +900,14 @@ async fn put_exec(State(state): State<Arc<AppState>>, Extension(user): Extension
                 conn.execute(
                     "INSERT INTO bot_execution_bindings (id, owner, bot_id, type, mode, vendor, adapter_id, account_binding_id,
                         preferred_lane, external_agent_id, capabilities_json, health_json, state, created_at, updated_at,
-                        external_agent_name, external_agent_avatar)
-                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,'UNBOUND',?13,?13,?14,?15)",
+                        external_agent_name, external_agent_avatar, harness, machine, pane_id)
+                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,'UNBOUND',?13,?13,?14,?15,?16,?17,?18)",
                     params![bid, owner, bot_id, ty, mode, b.vendor, b.adapter_id, b.account_binding_id, b.preferred_lane,
                             b.external_agent_id, caps.unwrap_or_else(|| "{}".into()), health.unwrap_or_else(|| "{}".into()), now(),
-                            agent_name, agent_avatar],
+                            agent_name, agent_avatar, harness, machine, pane_id],
                 )?;
-                let row = one(&conn, &format!("SELECT {EXEC_COLS} FROM bot_execution_bindings WHERE id = ?1"), &[&bid])?.unwrap();
-                set_exec_state(db, &conn, &owner, &row, "BOUND", "binding created")?;
+                let row = one(conn, &format!("SELECT {EXEC_COLS} FROM bot_execution_bindings WHERE id = ?1"), &[&bid])?.unwrap();
+                set_exec_state(db, conn, &owner, &row, "BOUND", "binding created")?;
                 (StatusCode::CREATED, bid)
             }
         };
@@ -836,10 +924,9 @@ async fn put_exec(State(state): State<Arc<AppState>>, Extension(user): Extension
                 params![bot_id, owner, d, now()],
             )?;
         }
-        let row = one(&conn, &format!("SELECT {EXEC_COLS} FROM bot_execution_bindings WHERE id = ?1"), &[&bid])?;
+        let row = one(conn, &format!("SELECT {EXEC_COLS} FROM bot_execution_bindings WHERE id = ?1"), &[&bid])?;
         Ok((status, json!({ "binding": row })))
-    })
-    .await
+    }
 }
 
 fn load_exec(conn: &Connection, owner: &str, bot_id: &str) -> Api<Value> {

@@ -14,6 +14,7 @@ import {
   checkProjectInstructions,
   checkVoiceEngine,
   type DoctorCheck,
+  checkFactoryEngine,
 } from "@/cli/commands/doctorChecks"
 import { isDaemonRunning } from "@/runtime/automation/cron/daemon"
 import { supervisionState } from "@/runtime/automation/cron/supervision"
@@ -188,6 +189,9 @@ export const DoctorCommand = cmd({
       // ── Cloud gateway reachability ──
       checks.push(await checkGatewayReachability())
       checks.push(await checkVoiceEngine())
+
+      // ── Allternit Factory engine ──
+      checks.push(...(await checkFactoryEngine()))
 
       // ── Project ──
       {

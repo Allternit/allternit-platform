@@ -9,7 +9,7 @@ is the checkpoint.
 
 Every third-party harness used to run in full-bypass mode with no Allternit
 gate in front of it. Each turn now goes through `src/spawn_gate.rs` before
-launch, and the policy lives in CommRails (`commrails/src/hook`):
+launch, and the policy lives in CommRails (`factory/engine/src/gate/hook`):
 
 - **Hard floor**: denied for every hooked harness, bound or not, in every
   permission mode. It covers recursive `rm` of `/`, `~` or `$HOME` (and
@@ -54,14 +54,14 @@ behaves as before. The hard floor still applies to Claude.
 
 The same classification and argv rewrite apply to
 `allternit-commrails orchestrator spawn [--wih <id>] ...`
-(`commrails/src/orchestrator`): it rewrites Claude's and Codex's bypass flags
+(`factory/engine/src/agents/orchestrator`): it rewrites Claude's and Codex's bypass flags
 and refuses ungated harnesses (including `agy`) on a leased WIH.
 
 The agent-orchestrator `ao-spawn` shim and the ao engine's `ao spawn` /
 `ao recover --apply` apply the same classes to the shell launch line through
 `tools/agent-orchestrator/scripts/ao-spawn-gate` and its byte-for-byte engine
-mirror `infrastructure/executor/ao-engine/src/cli/ao_gate.rs` (parity:
-`infrastructure/executor/ao-engine/tests/ao_parity/gate_parity.sh` and
+mirror `factory/pane/src/cli/ao_gate.rs` (parity:
+`factory/pane/tests/ao_parity/gate_parity.sh` and
 `run.sh`). Claude's `--dangerously-skip-permissions` becomes
 `--permission-mode acceptEdits --settings <hook settings>`, codex's bypass
 becomes the `-c` sandbox flags above (the same flags `gate_argv` now emits),

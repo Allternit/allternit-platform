@@ -33,7 +33,7 @@ Why this is separate from cognition: a run has to survive a model being evicted,
 
 ## Current implementation
 
-The work runtime is [CommRails](/core/commrails). On main today:
+The work runtime is the [Allternit Factory](/factory/overview) engine. On main today:
 
 - Node outputs, manual and timer wait gates, leases with heartbeat and reclaim, campaigns, a keyed wake queue and the attention gate.
 - A typed node lifecycle with a legal-transition table and a mapping from the stored node statuses. It is merged as a library and is not yet the enforced path for every transition.
@@ -60,5 +60,5 @@ If you write an executor, a tool or a verifier, you run inside a node. You recei
 ## Related
 
 - [The kernel](/architecture/kernel)
-- [CommRails](/core/commrails)
+- [Allternit Factory](/factory/overview)
 - [Policy and safety](/architecture/policy)

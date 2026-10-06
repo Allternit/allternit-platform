@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { Context, Env } from "hono";
 import { jwtVerify, createRemoteJWKSet, type JWTPayload } from "jose";
+import { encryptWebPush, sanitizeActions, sanitizeData, type NotificationAction } from "./webpush";
 
 interface PushSubscriptionRecord {
   runtimeId: string;
@@ -23,6 +24,10 @@ interface PendingNotification {
   type: NotificationType;
   runtimeId: string;
   sessionId?: string;
+  /** Extra data for the app's service worker, e.g. `{ kind: 'factory.approval', approvalId, code, actionUrl, openUrl }`. */
+  data?: Record<string, string | number | boolean>;
+  /** Notification buttons, e.g. Approve / Open. */
+  actions?: NotificationAction[];
 }
 
 interface WorkerEnv {
@@ -247,21 +252,29 @@ async function sendPushNotification(
     "mailto:remote-control@allternit.com"
   );
 
-  const body = JSON.stringify({
+  const message = JSON.stringify({
     title: payload.title,
     body: payload.body,
     tag: payload.tag,
+    type: payload.type,
+    runtimeId: subscription.runtimeId,
+    sessionId: payload.sessionId,
     data: {
+      ...(payload.data ?? {}),
       runtimeId: subscription.runtimeId,
       type: payload.type,
       sessionId: payload.sessionId,
     },
+    ...(payload.actions ? { actions: payload.actions } : {}),
   });
+  // Push services only deliver payloads encrypted to the subscription (RFC 8291).
+  const body = await encryptWebPush(new TextEncoder().encode(message), subscription.keys.p256dh, subscription.keys.auth);
 
   return fetch(subscription.endpoint, {
     method: "POST",
     headers: {
-      "Content-Type": "application/json",
+      "Content-Type": "application/octet-stream",
+      "Content-Encoding": "aes128gcm",
       TTL: "60",
       Urgency: "high",
       Authorization: `vapid t=${jwt}, k=${publicKey}`,
@@ -412,6 +425,8 @@ app.post("/notify", async (c) => {
     tag?: string;
     sessionId?: string;
     type?: NotificationType;
+    data?: unknown;
+    actions?: unknown;
   }>();
   if (!body.runtimeId) {
     return c.json({ error: "runtimeId is required" }, 400);
@@ -443,6 +458,8 @@ app.post("/notify", async (c) => {
     type: body.type ?? "permission",
     runtimeId: body.runtimeId,
     sessionId: body.sessionId,
+    data: sanitizeData(body.data),
+    actions: sanitizeActions(body.actions),
   };
 
   const prefix = `sub:${body.runtimeId}:`;

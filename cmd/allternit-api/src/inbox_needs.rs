@@ -16,6 +16,7 @@
 //! | `failed_send` | `channel_message_log` outbound `failed` / `unconfirmed`   | open                   |
 //! | `vendor_result` | `vendor_tickets` finished / failed / expired            | review (open)          |
 //! | `draft`       | `inbox_items` `autonomy.draft` cards (autonomy level kept a draft) | review (open) |
+//! | `factory_approval` | `factory_approvals` pending (a Factory node waiting on you) | approve / reject |
 //!
 //! `inbox_state` (V232) only remembers dismissals and snoozes. Routes live in
 //! `inbox_routes::inbox_router` (`GET /inbox` carries `needsYou`).
@@ -274,6 +275,16 @@ pub fn collect(conn: &Connection, user_id: &str, unanswered_min: i64) -> rusqlit
         out.push(item(format!("draft:{id}"), "draft", &source, &bot, &bot_name, meta["threadId"].as_str(), person, summary, &at, ("open", "Review"), false));
     }
 
+    // Factory nodes waiting on the owner (wait-gates and judge NEEDS_HUMAN).
+    for a in crate::factory_approvals::inbox_items(conn, user_id)? {
+        let bot = a.bot_id.clone().unwrap_or_default();
+        let bot_name: String = if bot.is_empty() { String::new() } else { conn.query_row("SELECT COALESCE(name, '') FROM agents WHERE id = ?1", params![bot], |r| r.get(0)).optional()?.unwrap_or_default() };
+        let summary = if a.summary.is_empty() { format!("Factory: {} needs your OK", a.title) } else { format!("Factory: {} needs your OK: {}", a.title, snippet(&a.summary, 120)) };
+        let mut it = item(format!("factory:{}", a.id), "factory_approval", "factory", &bot, &bot_name, None, None, summary, &a.created_at, ("approve", "Approve"), true);
+        it["approval"] = a.to_json();
+        out.push(it);
+    }
+
     // Drop what the owner already handled (unless the item changed since).
     let mut st = conn.prepare("SELECT item_id, state, until, item_at FROM inbox_state WHERE owner = ?1")?;
     let handled: std::collections::HashMap<String, (String, Option<String>, String)> = st
@@ -365,6 +376,13 @@ async fn approve(State(state): State<Arc<AppState>>, Extension(user): Extension<
                 Err(e) => Err(e.into_response()),
                 Ok(v) if approve && it["kind"] == "held_send" => Ok(json!({ "state": "approved", "send": send_held(&state, &user.user_id, &aid).await, "approval": v })),
                 Ok(v) => Ok(v),
+            }
+        }
+        "factory_approval" => {
+            let aid = id.trim_start_matches("factory:");
+            match crate::factory_approvals::resolve(&state, aid, approve, &user.user_id, crate::factory_approvals::Provenance::app(), None).await {
+                Ok(a) => Ok(json!({ "state": a.state, "approval": a.to_json() })),
+                Err(e) => Err(e.into_response()),
             }
         }
         _ => Err(err(StatusCode::BAD_REQUEST, "NOT_APPROVABLE", "open this item to deal with it, or dismiss it")),

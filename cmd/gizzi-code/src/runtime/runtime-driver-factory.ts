@@ -7,7 +7,7 @@
  *
  * It also provides auto-discovery fallback: if no runtime is registered for a
  * given CLI, the local runtime is discovered on-demand and persisted, so
- * gizzi-code works out of the box without a separate `gizzi runtime register`.
+ * gizzi-code works out of the box without a separate `gizzi agents harness register`.
  */
 
 import type { RuntimeDriver } from "@/runtime/runtime-driver"
@@ -52,7 +52,7 @@ export namespace RuntimeDriverFactory {
 
     if (!runtime) {
       throw new Error(
-        `No runtime found for CLI ${cliName}. Install and authenticate the CLI, then run \`gizzi runtime register\`.`,
+        `No runtime found for CLI ${cliName}. Install and authenticate the CLI, then run \`gizzi agents harness register\`.`,
       )
     }
 

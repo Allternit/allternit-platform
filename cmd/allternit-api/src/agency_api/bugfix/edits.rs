@@ -182,7 +182,7 @@ impl Planned {
             }
             s.push('\0');
         }
-        allternit_commrails::receipts::jcs::sha256_tagged(s.as_bytes())
+        allternit_factory_engine::receipts::jcs::sha256_tagged(s.as_bytes())
     }
 }
 

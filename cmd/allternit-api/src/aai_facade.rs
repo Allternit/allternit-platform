@@ -53,6 +53,15 @@ pub fn provenance(row: &Value) -> Value {
             "guarantee": caps["guarantee"].as_str().unwrap_or("unspecified"),
             "bindingState": s(row, "bindingState"),
         })
+    } else if s(row, "bindingType") == "terminal" {
+        // A CLI harness in an engine pane: never a vendor, so no lane or guarantee.
+        json!({
+            "kind": "terminal",
+            "harness": s(row, "harness"),
+            "machine": row.get("machine").cloned().unwrap_or(Value::Null),
+            "paneId": row.get("paneId").cloned().unwrap_or(Value::Null),
+            "bindingState": s(row, "bindingState"),
+        })
     } else {
         json!({ "kind": "native" })
     }
@@ -64,7 +73,8 @@ pub fn agents_list(state: &AppState, user_id: &str, only: Option<&str>) -> Resul
     let mut out = rows(
         &conn,
         "SELECT a.id AS id, a.name AS name, e.type AS binding_type, e.vendor AS vendor, e.preferred_lane AS lane, \
-                e.state AS binding_state, e.capabilities_json AS capabilities_json \
+                e.state AS binding_state, e.capabilities_json AS capabilities_json, \
+                e.harness AS harness, e.machine AS machine, e.pane_id AS pane_id \
          FROM agents a LEFT JOIN bot_execution_bindings e ON e.bot_id = a.id AND e.owner = a.user_id \
          WHERE a.user_id = ?1 AND a.is_bot = 1 AND a.id LIKE ?2 ORDER BY a.name, a.id",
         &[&user_id, &filter],

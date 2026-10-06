@@ -44,6 +44,24 @@
             "icon": "/icons/play.svg"
           },
           {
+            "group": "Allternit Factory",
+            "pages": [
+              "factory/overview",
+              "factory/how-work-moves",
+              "factory/agents",
+              "factory/orchestration",
+              "factory/workflows",
+              "factory/workspace",
+              "factory/approvals",
+              "factory/commands",
+              "factory/determinism",
+              "factory/architecture",
+              "factory/api-reference",
+              "factory/migration"
+            ],
+            "icon": "/icons/team.svg"
+          },
+          {
             "group": "Workspace workflows",
             "pages": [
               "guides/platform-workflows",
@@ -254,7 +272,6 @@
             "pages": [
               "core/gizzi-runtime",
               "core/gizzi-core",
-              "core/commrails",
               "core/communication",
               "core/memory-fabric",
               "core/agent-workspace",
@@ -288,7 +305,6 @@
               "cli/skills",
               "cli/mcp",
               "cli/plugin",
-              "cli/runtime",
               "cli/session",
               "cli/native-sessions",
               "cli/tasks",
@@ -297,7 +313,6 @@
               "cli/usage",
               "cli/plan",
               "cli/ci-mode",
-              "cli/commrails-cli",
               "cli/agent-daemon",
               "cli/allternit-mux",
               "cli/allternit-wrapper"
@@ -715,7 +730,6 @@
               "api/cowork-teams",
               "api/workflows",
               "api/tasks",
-              "api/orchestrator",
               "api/swarm"
             ],
             "icon": "/icons/team.svg"
@@ -822,6 +836,24 @@
       ]
     }
   },
+  "redirects": [
+    {
+      "source": "/core/commrails",
+      "destination": "/factory/overview"
+    },
+    {
+      "source": "/cli/commrails-cli",
+      "destination": "/factory/migration"
+    },
+    {
+      "source": "/cli/runtime",
+      "destination": "/factory/agents"
+    },
+    {
+      "source": "/api/orchestrator",
+      "destination": "/factory/api-reference"
+    }
+  ],
   "footer": {
     "socials": {
       "x": "https://x.com/allternit",

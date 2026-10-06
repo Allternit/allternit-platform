@@ -56,7 +56,7 @@ pub struct HttpTransport {
 
 impl HttpTransport {
     pub fn from_env() -> Self {
-        let r = allternit_commrails::kernel::s1_outcome::OutcomeReporter::from_env();
+        let r = allternit_factory_engine::kernel::s1_outcome::OutcomeReporter::from_env();
         let http = reqwest::Client::builder()
             .timeout(r.timeout.max(Duration::from_secs(2)))
             .build()

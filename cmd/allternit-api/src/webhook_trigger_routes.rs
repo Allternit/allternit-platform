@@ -21,8 +21,8 @@ use tracing::info;
 
 use crate::{auth::AuthUser, error::ApiError, AppState};
 use crate::rails::RailsState;
-use allternit_commrails::rails_id::{HierarchicalId, TicketId};
-use allternit_commrails::tickets::{
+use allternit_factory_engine::rails_id::{HierarchicalId, TicketId};
+use allternit_factory_engine::tickets::{
     Ticket, TicketKind, TicketPriority, TicketStatus, TicketStore,
 };
 
