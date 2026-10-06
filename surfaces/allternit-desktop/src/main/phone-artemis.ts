@@ -16,7 +16,7 @@
 import { execFile, type ChildProcess } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import type { Readable, Writable } from 'node:stream';
+import { createNegotiatingClient, ProcStdioTransport, type McpProc } from './mcp-stdio-transport.js';
 import { spawnSidecar } from './process-lifeline.js';
 import type { ArtemisClient } from './phone-tools.js';
 
@@ -32,91 +32,42 @@ export interface ArtemisStatus {
   error?: string;
 }
 
-// ── Minimal MCP stdio client ────────────────────────────────────────────────
+// ── MCP stdio client (official SDK over the lifeline-wrapped process) ──────
 
-export interface McpProc {
-  stdin: Writable;
-  stdout: Readable;
-  kill(): void;
-  onExit(cb: () => void): void;
-}
+export type { McpProc };
 
 export class McpStdioClient {
-  private nextId = 1;
-  private buffer = '';
-  private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+  private readonly client = createNegotiatingClient('allternit-desktop-phone', '1.0.0');
   private ready: Promise<void> | null = null;
   closed = false;
 
   constructor(private readonly proc: McpProc, private readonly requestTimeoutMs = 30_000) {
-    proc.stdout.setEncoding('utf-8');
-    proc.stdout.on('data', (chunk: string) => this.onData(chunk));
     proc.onExit(() => {
       this.closed = true;
-      for (const p of this.pending.values()) p.reject(new Error('ARTEMIS server exited'));
-      this.pending.clear();
     });
   }
 
-  private onData(chunk: string): void {
-    this.buffer += chunk;
-    const lines = this.buffer.split('\n');
-    this.buffer = lines.pop() ?? '';
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      try {
-        const msg = JSON.parse(line) as { id?: number; result?: unknown; error?: { message: string } };
-        if (msg.id === undefined) continue;
-        const waiter = this.pending.get(msg.id);
-        if (!waiter) continue;
-        this.pending.delete(msg.id);
-        if (msg.error) waiter.reject(new Error(msg.error.message));
-        else waiter.resolve(msg.result);
-      } catch {
-        // Non-JSON noise on stdout is ignored; ARTEMIS logs to stderr.
-      }
-    }
-  }
-
-  private request(method: string, params: unknown, timeoutMs = this.requestTimeoutMs): Promise<unknown> {
-    return new Promise((resolve, reject) => {
-      if (this.closed) return reject(new Error('ARTEMIS server is not running'));
-      const id = this.nextId++;
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        reject(new Error(`ARTEMIS ${method} timed out`));
-      }, timeoutMs);
-      this.pending.set(id, {
-        resolve: (v) => {
-          clearTimeout(timer);
-          resolve(v);
-        },
-        reject: (e) => {
-          clearTimeout(timer);
-          reject(e);
-        },
-      });
-      this.proc.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
-    });
-  }
-
-  private async initialize(): Promise<void> {
-    await this.request('initialize', {
-      protocolVersion: '2024-11-05',
-      capabilities: {},
-      clientInfo: { name: 'allternit-desktop-phone', version: '1.0.0' },
-    });
-    this.proc.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} })}\n`);
+  private connect(): Promise<void> {
+    if (this.closed) return Promise.reject(new Error('ARTEMIS server is not running'));
+    return this.client.connect(new ProcStdioTransport(this.proc), { timeout: this.requestTimeoutMs });
   }
 
   async callTool(name: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {
-    this.ready ??= this.initialize();
+    if (this.closed) throw new Error('ARTEMIS server is not running');
+    this.ready ??= this.connect();
     await this.ready;
-    const result = (await this.request('tools/call', { name, arguments: args })) as {
+    let result: {
       content?: Array<{ type: string; text?: string }>;
       structuredContent?: Record<string, unknown>;
       isError?: boolean;
     };
+    try {
+      result = (await this.client.callTool({ name, arguments: args }, { timeout: this.requestTimeoutMs })) as typeof result;
+    } catch (error) {
+      if (this.closed) throw new Error('ARTEMIS server exited');
+      if (/timed? ?out/i.test(String((error as Error).message))) throw new Error(`ARTEMIS tools/call timed out`);
+      throw error;
+    }
     if (result.isError) throw new Error(result.content?.[0]?.text ?? `${name} failed`);
     if (result.structuredContent) return result.structuredContent;
     const text = result.content?.find((c) => c.type === 'text')?.text;
@@ -130,6 +81,7 @@ export class McpStdioClient {
 
   close(): void {
     this.closed = true;
+    void this.client.close().catch(() => undefined);
     this.proc.kill();
   }
 }
@@ -241,8 +193,9 @@ export class ArtemisManager implements ArtemisClient {
     });
     child.stderr?.resume();
     const client = new McpStdioClient({
-      stdin: child.stdin as Writable,
-      stdout: child.stdout as Readable,
+      stdin: child.stdin!,
+      stdout: child.stdout!,
+      pid: child.pid,
       kill: () => child.kill('SIGTERM'),
       onExit: (cb) => child.once('exit', cb),
     });

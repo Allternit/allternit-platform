@@ -27,21 +27,23 @@ from pathlib import Path
 from typing import Any, Optional
 
 import httpx
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 # ---------------------------------------------------------------------------
-# FastMCP app
+# MCPServer app (official mcp >= 2.3: serves MCP 2026-07-28 `server/discover`
+# and the legacy `initialize` handshake on every transport)
 # ---------------------------------------------------------------------------
 
 import os as _os_init
-mcp = FastMCP(
-    name="allternit-computer-use",
+ACU_MCP_PORT = int(_os_init.environ.get("ACU_MCP_PORT", "8765"))
+
+mcp = MCPServer(
+    "allternit-computer-use",
     instructions=(
         "Allternit Computer Use Engine — automates browser and desktop actions. "
         "All tools accept a session_id that identifies an active engine session. "
         "Use screenshot to observe the current state before acting."
     ),
-    port=int(_os_init.environ.get("ACU_MCP_PORT", "8765")),
 )
 
 # ---------------------------------------------------------------------------
@@ -560,6 +562,71 @@ async def scratchpad_reflect(
 
 
 # ---------------------------------------------------------------------------
+# 12. history_status
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+async def history_status(
+    session_id: Optional[str] = None,
+    provider_id: Optional[str] = None,
+) -> dict:
+    """
+    Check whether CUA Driver Computer History is supported, admitted, and enabled.
+
+    session_id: optional session context (not passed to the driver).
+    provider_id: canonical provider to query; defaults to desktop.cua-driver.
+    Returns the full history status payload including health, retention, and quota.
+    """
+    return await _post(
+        "/v1/computer-use/canonical/history/status",
+        {
+            "provider_id": provider_id or "desktop.cua-driver",
+            "session_id": session_id or _DEFAULT_SESSION_ID,
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# 13. history_query
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+async def history_query(
+    limit: Optional[int] = None,
+    session_id: Optional[str] = None,
+    since_sequence: Optional[int] = None,
+    until_sequence: Optional[int] = None,
+    provider_id: Optional[str] = None,
+) -> dict:
+    """
+    Query a bounded, metadata-only slice of CUA Driver Computer History.
+
+    Results are metadata-only CloudEvents and may enter model context. Use this
+    for continuation or recent-work requests, after calling history_status.
+
+    limit: max events to return (1-200, default 50 on the driver).
+    session_id: optional opaque history session ID to filter by.
+    since_sequence: inclusive lower sequence bound.
+    until_sequence: inclusive upper sequence bound.
+    provider_id: canonical provider to query; defaults to desktop.cua-driver.
+    """
+    body: dict[str, Any] = {
+        "provider_id": provider_id or "desktop.cua-driver",
+    }
+    if limit is not None:
+        body["limit"] = limit
+    if session_id is not None:
+        body["session_id"] = session_id
+    if since_sequence is not None:
+        body["since_sequence"] = since_sequence
+    if until_sequence is not None:
+        body["until_sequence"] = until_sequence
+    return await _post("/v1/computer-use/canonical/history/query", body)
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -569,7 +636,7 @@ if __name__ == "__main__":
     if mode == "stdio":
         mcp.run(transport="stdio")
     elif mode == "sse":
-        mcp.run(transport="sse")
+        mcp.run(transport="sse", port=ACU_MCP_PORT)
     else:
         print(f"Unknown mode: {mode!r}. Use 'stdio' or 'sse'.", file=sys.stderr)
         sys.exit(1)
