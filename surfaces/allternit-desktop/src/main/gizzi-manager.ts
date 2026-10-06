@@ -162,18 +162,10 @@ export class GizziManager {
 
     log.info(`[GizziManager] Starting gizzi-code on port ${GIZZI_PORT} from ${binaryPath}`);
 
-    // Point gizzi at the vendored allternit-mux (auto-spawned for /pty);
-    // when absent, gizzi falls back to its own resolution (vendor tree, PATH,
-    // repo target builds).
-    const muxBinaryPath = this.resolveMuxBinaryPath(binaryPath);
-    if (muxBinaryPath) {
-      env.ALLTERNIT_MUX_BIN = muxBinaryPath;
-      log.info(`[GizziManager] allternit-mux at: ${muxBinaryPath}`);
-    }
-
-    // `gizzi agents|orchestration|workflows|workspace` run the Factory engine
-    // that shipped with this Desktop (it also sits next to gizzi in
-    // resources/bin, which gizzi checks first).
+    // `gizzi agents|orchestration|workflows|workspace` and gizzi's /pty
+    // terminals (the Factory pane engine) run the Factory engine that shipped
+    // with this Desktop (it also sits next to gizzi in resources/bin, which
+    // gizzi checks first).
     const factoryBin = factoryEngineManager.getBinaryPath();
     if (factoryBin && !env.ALLTERNIT_FACTORY_BIN) {
       env.ALLTERNIT_FACTORY_BIN = factoryBin;
@@ -398,22 +390,6 @@ export class GizziManager {
 
     log.error('[GizziManager] gizzi-code binary not found. Searched:', candidates);
     this.resolvedBinaryPath = null;
-    return null;
-  }
-
-  /** Locate the vendored allternit-mux sibling of the resolved gizzi binary. */
-  private resolveMuxBinaryPath(gizziBinaryPath: string): string | null {
-    const muxName = process.platform === 'win32' ? 'allternit-mux.exe' : 'allternit-mux';
-    const gizziDir = path.dirname(gizziBinaryPath);
-    const platformArch = `${process.platform}-${process.arch}`;
-    const candidates = [
-      path.join(gizziDir, muxName), // resources/bin or dist sibling
-      path.join(gizziDir, 'vendor', 'allternit-mux', platformArch, muxName), // vendor tree
-      app.isPackaged ? path.join(process.resourcesPath ?? '', 'bin', muxName) : '',
-    ].filter(Boolean);
-    for (const p of candidates) {
-      if (fs.existsSync(p)) return p;
-    }
     return null;
   }
 }

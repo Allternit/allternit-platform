@@ -91,16 +91,8 @@ cp "$GIZZI_BIN" "$RESOURCES_DIR/bin/gizzi-code"
 chmod +x "$RESOURCES_DIR/bin/gizzi-code"
 ok "gizzi-code → $RESOURCES_DIR/bin/gizzi-code"
 
-# ── 2a. Vendor allternit-mux (PTY daemon gizzi auto-spawns for /pty) ────────
-step "Vendoring allternit-mux…"
-(cd "$WORKSPACE_ROOT" && cargo build --release -p allternit-mux)
-MUX_BIN="$CARGO_OUT/release/allternit-mux"
-[ -f "$MUX_BIN" ] || die "allternit-mux build failed — binary not found at $MUX_BIN"
-cp "$MUX_BIN" "$RESOURCES_DIR/bin/allternit-mux"
-chmod +x "$RESOURCES_DIR/bin/allternit-mux"
-ok "allternit-mux → $RESOURCES_DIR/bin/allternit-mux"
-
-# ── 2b. Vendor allternit-factory (the Factory engine Desktop runs) ──────────
+# ── 2a. Vendor allternit-factory (the Factory engine Desktop runs; its pane
+#        engine runs every terminal: allternit-api /terminal, gizzi /pty) ──
 step "Vendoring allternit-factory…"
 (cd "$WORKSPACE_ROOT" && cargo build --release -p allternit-factory)
 FACTORY_BIN="$CARGO_OUT/release/allternit-factory"

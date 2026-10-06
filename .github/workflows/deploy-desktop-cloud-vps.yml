@@ -6,7 +6,7 @@ on:
     paths:
       - 'cmd/allternit-api/**'
       - 'cmd/allternit-computer-cloud/**'
-      - 'cmd/allternit-mux/**'
+      - 'cmd/allternit-factory/**'
       - 'infrastructure/vps-desktop-cloud/**'
       - '.github/workflows/deploy-desktop-cloud-vps.yml'
   workflow_dispatch:
