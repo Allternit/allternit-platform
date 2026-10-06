@@ -1216,3 +1216,5 @@ Cross-compiled gizzi-code-win32-x64 from macOS (`bun build --target=win32-x64` �
 
 - 2026-09-30 Codex: [Unified project coordinator](summaries/2026-09-30-0837-project-coordinator-codex-desktop.md) — backend #1001 and UI #290 merged; 18 backend/20 UI tests passed; Desktop build/install verification in progress; shared sync blocked by other sessions’ work.
 - 2026-10-06 Claude Code: [GitHub production cleanup + move to the Allternit org](summaries/2026-10-06-0300-github-cleanup-claude-allternit-org-move.md) — #1322 + #1323 merged; 10 repos transferred to Allternit; branches 526→29 / 382→11 / 44→1; old releases/tags removed; installer Latest bug fixed; Cloudflare app on the org still needed for ai.allternit.com auto-deploys.
+
+- 2026-10-06 Codex: [Prompt-cache countdown and builder handoff](summaries/2026-10-06-0724-cache-countdown-codex.md) — platform #1336 and UI #438 merged; 13 focused tests pass and docs links clean; build/install explicitly deferred to another agent.
