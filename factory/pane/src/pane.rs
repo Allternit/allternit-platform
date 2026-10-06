@@ -142,6 +142,10 @@ fn apply_pane_launch_env(cmd: &mut CommandBuilder, launch_env: &PaneLaunchEnv) {
         if key == crate::ao::transcript::TRANSCRIPT_ENV_VAR {
             continue;
         }
+        // Same for the Factory terminal id (src/factory_terminal.rs).
+        if key == crate::factory_terminal::TERMINAL_ENV_VAR {
+            continue;
+        }
         cmd.env(key, value);
     }
     cmd.env(crate::HERDR_ENV_VAR, crate::HERDR_ENV_VALUE);
@@ -2272,6 +2276,10 @@ impl PaneRuntime {
         // ao transcript tee (additive `src/ao/` patch): raw output bytes are
         // written from the on_read closure below, before parsing/filtering.
         let mut transcript_tee = crate::ao::transcript::tee_from_launch_env(&launch_env.extra);
+        // Factory terminal tap (src/factory_terminal.rs, an Allternit addition):
+        // raw output for clients that draw the terminal themselves, plus the
+        // exit code.
+        let terminal_tap = crate::factory_terminal::tap_from_launch_env(&launch_env.extra, pane_id);
 
         let (response_tx, _response_rx) = mpsc::channel::<Bytes>(1);
         let mut terminal = crate::ghostty::Terminal::new(cols, rows, scrollback_limit_bytes)
@@ -2296,7 +2304,12 @@ impl PaneRuntime {
         let content_write_lock = Arc::new(Mutex::new(()));
 
         let spawned = crate::pty::backend::spawn_with_portable_pty(rows, cols, cmd)
-            .inspect_err(|err| error!(pane = pane_id.raw(), err = %err, "{spawn_error_message}"))?;
+            .inspect_err(|err| {
+                error!(pane = pane_id.raw(), err = %err, "{spawn_error_message}");
+                if let Some(tap) = &terminal_tap {
+                    tap.exited(Some(127));
+                }
+            })?;
 
         // --- Child watcher task ---
         let child_pid = Arc::new(AtomicU32::new(0));
@@ -2311,19 +2324,29 @@ impl PaneRuntime {
             let events = events.clone();
             let rt = tokio::runtime::Handle::current();
             let mut child = spawned.child;
+            let terminal_tap = terminal_tap.clone();
             if let Some(pid) = child.process_id() {
                 child_pid.store(pid, Ordering::Release);
                 crate::logging::pane_spawned(pane_id.raw(), pid);
+                if let Some(tap) = &terminal_tap {
+                    tap.set_pid(pid);
+                }
             }
             tokio::task::spawn_blocking(move || {
                 let exit_reason = match child.wait() {
                     Ok(status) => {
+                        if let Some(tap) = &terminal_tap {
+                            tap.exited(Some(status.exit_code() as i32));
+                        }
                         let exit_reason = crate::platform::classify_child_exit(&status);
                         let status_text = format!("{status:?}");
                         crate::logging::pane_exited(pane_id.raw(), &status_text);
                         exit_reason
                     }
                     Err(e) => {
+                        if let Some(tap) = &terminal_tap {
+                            tap.exited(None);
+                        }
                         crate::logging::pane_exit_failed(pane_id.raw(), &e.to_string());
                         crate::platform::ChildExitReason::WaitFailed
                     }
@@ -2352,9 +2375,13 @@ impl PaneRuntime {
             let reported_cwd = reported_cwd.clone();
             let compression_wake = compression.notifier();
             let rt = tokio::runtime::Handle::current();
+            let terminal_tap = terminal_tap.clone();
             let on_read = Box::new(move |bytes: &[u8]| {
                 if let Some(tee) = transcript_tee.as_mut() {
                     tee.write(bytes);
+                }
+                if let Some(tap) = &terminal_tap {
+                    tap.push(bytes);
                 }
                 let _content_write_guard = match content_write_lock.lock() {
                     Ok(guard) => guard,
@@ -2399,9 +2426,13 @@ impl PaneRuntime {
                         );
                     }
                 }
-                PtyReadResult {
-                    terminal_responses: result.terminal_responses,
-                }
+                // A client drawing this terminal answers its queries itself.
+                let terminal_responses = if terminal_tap.as_ref().is_some_and(|t| t.has_viewers()) {
+                    Vec::new()
+                } else {
+                    result.terminal_responses
+                };
+                PtyReadResult { terminal_responses }
             });
             PaneRuntimeIo::Actor(PtyIoActor::spawn(PtyIoActorConfig {
                 pane_id: pane_id.raw(),

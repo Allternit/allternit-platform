@@ -1,9 +1,10 @@
-//! Bot desktop allternit-mux integration.
+//! Run a command in a bot desktop's terminal.
 //!
-//! Provides an API endpoint that orchestrates `allternit-mux` inside the guest
-//! to create a persistent terminal session, run a command, and return the
-//! screen/scrollback output. This establishes `allternit-mux` as the
-//! standardized Linux guest runtime for shell sessions.
+//! `POST /bots/:bot_id/desktop/mux/run` (path kept for existing callers)
+//! opens a terminal on the guest's Allternit Factory pane engine
+//! (`/opt/allternit-factory/allternit-factory pane tty`), types the command,
+//! and returns the visible screen. The terminal stays open in the guest's
+//! agent session, so the same pane can be watched or continued later.
 
 use axum::extract::{Extension, Path, Query, State};
 use axum::http::StatusCode;
@@ -29,9 +30,9 @@ pub fn bot_desktop_mux_router() -> Router<Arc<AppState>> {
 
 #[derive(Debug, Deserialize)]
 pub struct MuxRunInput {
-    /// Command and arguments to execute in the mux pane.
+    /// Command and arguments to type into the terminal.
     pub command: Vec<String>,
-    /// Optional label for the mux session.
+    /// Optional label for the terminal (its workspace in the agent wall).
     pub session_label: Option<String>,
 }
 
@@ -81,8 +82,16 @@ pub(crate) async fn run_desktop_mux(
         }
     };
 
-    let mux_bin = "/opt/allternit-mux/allternit-mux";
+    let factory_bin = "/opt/allternit-factory/allternit-factory";
     let session_label = input.session_label.unwrap_or_else(|| "desktop".to_string());
+    // Terminal ids are [A-Za-z0-9_-]{1,64}: the label, cleaned, plus a
+    // unique suffix so repeated runs never collide.
+    let label_part: String = session_label
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+        .take(40)
+        .collect();
+    let terminal_id = format!("{label_part}-{}", &uuid::Uuid::new_v4().simple().to_string()[..12]);
     // Reconstruct the argv as a single shell-escaped command string.
     let command_shell: String = input
         .command
@@ -93,30 +102,27 @@ pub(crate) async fn run_desktop_mux(
     let command_b64 = BASE64_STANDARD.encode(command_shell);
 
     // One-shot script inside the guest:
-    // 1. Ensure mux daemon is running.
-    // 2. Create a mux session.
-    // 3. Create a pane in that session.
-    // 4. Decode and send the command to the pane.
-    // 5. Wait briefly for output, then read the screen.
-    // 6. Emit JSON with session_id, pane_id, and output.
+    // 1. Open a terminal on the pane engine (`tty create` starts the engine
+    //    when it is down).
+    // 2. Decode and type the command.
+    // 3. Wait briefly for output, then read the visible screen.
+    // 4. Emit JSON with session_id (the terminal id), pane_id, and output.
     let script = format!(
         r#"set -e
 export HOME=/root
-MUX={mux_bin}
-mkdir -p /root/.allternit/mux
-if ! $MUX session list >/dev/null 2>&1; then
-  nohup $MUX serve >/tmp/allternit-mux.log 2>&1 &
-  sleep 1
-fi
-SESSION=$($MUX session create --label {session_label} | python3 -c 'import sys,json; print(json.load(sys.stdin)["session"]["session_id"])')
-PANE=$($MUX pane create "$SESSION" | python3 -c 'import sys,json; print(json.load(sys.stdin)["pane"]["pane_id"])')
+export HERDR_SESSION=ao
+FACTORY={factory_bin}
+TID={terminal_id}
+CREATED=$($FACTORY pane tty create "$TID" --label {session_label} --cols 120 --rows 40)
+PANE=$(printf '%s' "$CREATED" | python3 -c 'import sys,json; print(json.load(sys.stdin)["terminal"]["pane_id"] or "")')
 CMD=$(printf '%s' '{command_b64}' | base64 -d)
-$MUX pane send "$PANE" "$CMD" >/dev/null
+$FACTORY pane tty write "$TID" "$CMD" --enter >/dev/null
 sleep 1
-OUTPUT=$($MUX pane read "$PANE" --source screen)
-python3 -c 'import json,sys; print(json.dumps({{"session_id":sys.argv[1],"pane_id":sys.argv[2],"output":sys.argv[3]}}))' "$SESSION" "$PANE" "$OUTPUT"
+OUTPUT=$($FACTORY pane pane read "$PANE" --source visible)
+python3 -c 'import json,sys; print(json.dumps({{"session_id":sys.argv[1],"pane_id":sys.argv[2],"output":sys.argv[3]}}))' "$TID" "$PANE" "$OUTPUT"
 "#,
-        mux_bin = mux_bin,
+        factory_bin = factory_bin,
+        terminal_id = shell_escape(&terminal_id),
         session_label = shell_escape(&session_label),
         command_b64 = command_b64,
     );
@@ -140,7 +146,7 @@ python3 -c 'import json,sys; print(json.dumps({{"session_id":sys.argv[1],"pane_i
                 return (
                     StatusCode::SERVICE_UNAVAILABLE,
                     Json(json!({
-                        "error": "mux run failed",
+                        "error": "desktop terminal run failed",
                         "exit_code": result.exit_code,
                         "stderr": stderr.trim(),
                     })),
@@ -160,11 +166,11 @@ python3 -c 'import json,sys; print(json.dumps({{"session_id":sys.argv[1],"pane_i
                 )
                     .into_response(),
                 Err(e) => {
-                    warn!(bot_id, sandbox_id = %sandbox_id, error = %e, stdout = %stdout, "Mux run produced invalid JSON");
+                    warn!(bot_id, sandbox_id = %sandbox_id, error = %e, stdout = %stdout, "Desktop terminal run produced invalid JSON");
                     (
                         StatusCode::SERVICE_UNAVAILABLE,
                         Json(json!({
-                            "error": format!("invalid mux output: {}", e),
+                            "error": format!("invalid terminal output: {}", e),
                             "raw_stdout": stdout,
                         })),
                     )
@@ -173,10 +179,10 @@ python3 -c 'import json,sys; print(json.dumps({{"session_id":sys.argv[1],"pane_i
             }
         }
         Err(e) => {
-            warn!(bot_id, sandbox_id = %sandbox_id, error = %e, "Failed to run desktop mux");
+            warn!(bot_id, sandbox_id = %sandbox_id, error = %e, "Failed to run desktop terminal");
             (
                 StatusCode::SERVICE_UNAVAILABLE,
-                Json(json!({"error": format!("failed to run mux: {}", e)})),
+                Json(json!({"error": format!("failed to run the desktop terminal: {}", e)})),
             )
                 .into_response()
         }
@@ -417,7 +423,7 @@ mod tests {
         driver.set_exec_result(Ok(ExecResult {
             exit_code: 1,
             stdout: None,
-            stderr: Some(b"mux not installed".to_vec()),
+            stderr: Some(b"allternit-factory not installed".to_vec()),
             duration_ms: 10,
             resource_usage: allternit_driver_interface::ResourceConsumption::default(),
         }));

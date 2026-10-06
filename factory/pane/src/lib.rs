@@ -28,6 +28,7 @@ mod detect;
 mod events;
 pub mod factory_backend;
 pub mod factory_host;
+pub mod factory_terminal;
 mod ghostty;
 mod handoff_runtime;
 mod input;

@@ -93,7 +93,7 @@ impl ApiClient {
         }
     }
 
-    fn connect(&self) -> io::Result<LocalStream> {
+    pub(crate) fn connect(&self) -> io::Result<LocalStream> {
         crate::ipc::connect_local_stream(&self.socket_path())
     }
 }

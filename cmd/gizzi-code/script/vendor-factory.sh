@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
-# Vendor allternit-mux into gizzi-code's distribution tree, gizzi-code
-# ripgrep style: vendor/allternit-mux/<platform>-<arch>/allternit-mux
+# Vendor allternit-factory (the Factory engine; its pane engine owns gizzi's
+# PTYs) into gizzi-code's distribution tree, gizzi-code ripgrep style:
+# vendor/allternit-factory/<platform>-<arch>/allternit-factory
 #
 # Usage:
-#   script/vendor-mux.sh           # current platform only (default)
-#   script/vendor-mux.sh --all     # all targets present in rustup (skips missing)
+#   script/vendor-factory.sh           # current platform only (default)
+#   script/vendor-factory.sh --all     # all targets present in rustup (skips missing)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GIZZI_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$GIZZI_DIR/../.." && pwd)"
-VENDOR_DIR="$GIZZI_DIR/vendor/allternit-mux"
+VENDOR_DIR="$GIZZI_DIR/vendor/allternit-factory"
 
 host_platform() {
   local os arch
@@ -50,13 +51,14 @@ build_one() {
     echo "skip $pa (rust target $triple not installed)"
     return 0
   fi
-  echo "building allternit-mux for $pa ($triple)…"
-  (cd "$REPO_ROOT" && cargo build --release -p allternit-mux --target "$triple")
+  echo "building allternit-factory for $pa ($triple)…"
+  (cd "$REPO_ROOT" && cargo build --release -p allternit-factory --target "$triple")
 
+  local target_dir="${CARGO_TARGET_DIR:-$REPO_ROOT/target}"
   mkdir -p "$VENDOR_DIR/$pa"
-  cp "$REPO_ROOT/target/$triple/release/allternit-mux$suffix" "$VENDOR_DIR/$pa/allternit-mux$suffix"
-  chmod +x "$VENDOR_DIR/$pa/allternit-mux$suffix" || true
-  echo "  → $VENDOR_DIR/$pa/allternit-mux$suffix"
+  cp "$target_dir/$triple/release/allternit-factory$suffix" "$VENDOR_DIR/$pa/allternit-factory$suffix"
+  chmod +x "$VENDOR_DIR/$pa/allternit-factory$suffix" || true
+  echo "  → $VENDOR_DIR/$pa/allternit-factory$suffix"
 }
 
 if [ "${1:-}" = "--all" ]; then

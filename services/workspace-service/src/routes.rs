@@ -63,10 +63,15 @@ pub async fn delete_session(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    if let Some(session) = state.sessions.delete_session(&id) {
-        // Close the backing mux session (real PTYs) if one was provisioned.
-        if let Some(mux_id) = session.mux_session_id {
-            let _ = crate::mux::mux_call("session.close", json!({ "session_id": mux_id })).await;
+    let terminals: Vec<String> = state
+        .sessions
+        .get_session(&id)
+        .map(|s| s.pane_ids.iter().filter_map(|p| state.sessions.get_pane(p)?.terminal_id).collect())
+        .unwrap_or_default();
+    if state.sessions.delete_session(&id).is_some() {
+        // Close the panes' terminals (real PTYs on the Factory pane engine).
+        for terminal_id in terminals {
+            let _ = crate::pane::call("factory.terminal.close", json!({ "terminal_id": terminal_id })).await;
         }
         StatusCode::NO_CONTENT
     } else {
@@ -106,58 +111,32 @@ pub async fn create_pane(
         return (StatusCode::NOT_FOUND, Json(json!({ "error": "Session not found" }))).into_response();
     };
 
-    // Provision the backing mux session lazily (first pane for this session).
-    let mux_session_id = match &session.mux_session_id {
-        Some(id) => Some(id.clone()),
-        None => {
-            let created = crate::mux::mux_call(
-                "session.create",
-                json!({
-                    "label": format!("ws-{}", session.id),
-                    "cwd": session.working_dir,
-                }),
-            )
-            .await;
-            match created {
-                Ok(v) => v["session"]["session_id"].as_str().map(|s| {
-                    state.sessions.set_mux_session_id(&session.id, s.to_string());
-                    s.to_string()
-                }),
-                Err(err) => {
-                    tracing::warn!(%err, "mux unavailable; pane will be metadata-only");
-                    None
-                }
-            }
-        }
-    };
-
     let Some(pane) = state.sessions.create_pane(&session_id, body.name, body.metadata) else {
         return (StatusCode::NOT_FOUND, Json(json!({ "error": "Session not found" }))).into_response();
     };
 
-    // Back the pane with a real mux PTY (command or default shell).
-    if let Some(mux_sid) = mux_session_id {
-        let argv: Vec<String> = match &body.command {
-            Some(cmd) if !cmd.trim().is_empty() => vec!["/bin/sh".into(), "-c".into(), cmd.clone()],
-            _ => vec![std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into())],
-        };
-        let created = crate::mux::mux_call(
-            "pane.create",
-            json!({
-                "session_id": mux_sid,
-                "command": argv,
-                "env": session.env,
-            }),
-        )
-        .await;
-        match created {
-            Ok(v) => {
-                if let Some(pid) = v["pane"]["pane_id"].as_str() {
-                    state.sessions.set_mux_pane_id(&pane.id, pid.to_string());
-                }
-            }
-            Err(err) => tracing::warn!(%err, "failed to provision mux pane"),
-        }
+    // Back the pane with a real PTY on the Factory pane engine (command or
+    // default shell). When the engine is unavailable the pane stays
+    // metadata-only, as before.
+    let argv: Vec<String> = match &body.command {
+        Some(cmd) if !cmd.trim().is_empty() => vec!["/bin/sh".into(), "-c".into(), cmd.clone()],
+        _ => vec![std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into())],
+    };
+    let terminal_id = format!("ws-{}", pane.id);
+    let created = crate::pane::call(
+        "factory.terminal.create",
+        json!({
+            "terminal_id": terminal_id,
+            "label": format!("ws-{}", session.name),
+            "cwd": session.working_dir,
+            "command": argv,
+            "env": session.env,
+        }),
+    )
+    .await;
+    match created {
+        Ok(_) => state.sessions.set_terminal_id(&pane.id, terminal_id),
+        Err(err) => tracing::warn!(%err, "Factory pane engine unavailable; pane will be metadata-only"),
     }
 
     (
@@ -170,10 +149,10 @@ pub async fn delete_pane(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    let mux_pane_id = state.sessions.get_pane(&id).and_then(|p| p.mux_pane_id);
+    let terminal_id = state.sessions.get_pane(&id).and_then(|p| p.terminal_id);
     if state.sessions.delete_pane(&id) {
-        if let Some(mux_pid) = mux_pane_id {
-            let _ = crate::mux::mux_call("pane.close", json!({ "pane_id": mux_pid })).await;
+        if let Some(terminal_id) = terminal_id {
+            let _ = crate::pane::call("factory.terminal.close", json!({ "terminal_id": terminal_id })).await;
         }
         StatusCode::NO_CONTENT
     } else {
@@ -188,12 +167,11 @@ pub async fn capture_pane(
     let Some(pane) = state.sessions.get_pane(&id) else {
         return (StatusCode::NOT_FOUND, Json(json!({ "error": "Pane not found" }))).into_response();
     };
-    // Real PTY scrollback from mux when provisioned; legacy buffer otherwise.
-    if let Some(mux_pid) = &pane.mux_pane_id {
-        if let Ok(v) = crate::mux::mux_call("pane.read", json!({ "pane_id": mux_pid })).await {
-            if let Some(output) = v["output"].as_str() {
-                return Json(json!({ "output": output })).into_response();
-            }
+    // Real PTY scrollback from the pane engine when provisioned; legacy
+    // buffer otherwise.
+    if let Some(terminal_id) = &pane.terminal_id {
+        if let Ok(output) = crate::pane::read_output(terminal_id).await {
+            return Json(json!({ "output": output })).into_response();
         }
     }
     match state.sessions.capture_pane_output(&id) {
@@ -215,16 +193,16 @@ pub async fn send_keys(
     let Some(pane) = state.sessions.get_pane(&id) else {
         return (StatusCode::NOT_FOUND, Json(json!({ "error": "Pane not found" }))).into_response();
     };
-    if let Some(mux_pid) = &pane.mux_pane_id {
+    if let Some(terminal_id) = &pane.terminal_id {
         // Real PTY input: keys + Enter (send-keys semantics).
         let data = if body.keys.ends_with('\n') {
             body.keys.clone()
         } else {
             format!("{}\n", body.keys)
         };
-        return match crate::mux::mux_call(
-            "pane.send_input",
-            json!({ "pane_id": mux_pid, "data": data }),
+        return match crate::pane::call(
+            "factory.terminal.write",
+            json!({ "terminal_id": terminal_id, "data": data }),
         )
         .await
         {
@@ -236,7 +214,7 @@ pub async fn send_keys(
                 .into_response(),
         };
     }
-    // Metadata-only fallback (mux unavailable at pane creation time).
+    // Metadata-only fallback (pane engine unavailable at pane creation time).
     state.sessions.append_pane_output(&id, format!("$ {}", body.keys));
     Json(json!({ "ok": true })).into_response()
 }
@@ -248,11 +226,9 @@ pub async fn stream_pane_logs(
     let Some(pane) = state.sessions.get_pane(&id) else {
         return (StatusCode::NOT_FOUND, Json(json!({ "error": "Pane not found" }))).into_response();
     };
-    if let Some(mux_pid) = &pane.mux_pane_id {
-        if let Ok(v) = crate::mux::mux_call("pane.read", json!({ "pane_id": mux_pid })).await {
-            if let Some(logs) = v["output"].as_str() {
-                return Json(json!({ "logs": logs })).into_response();
-            }
+    if let Some(terminal_id) = &pane.terminal_id {
+        if let Ok(logs) = crate::pane::read_output(terminal_id).await {
+            return Json(json!({ "logs": logs })).into_response();
         }
     }
     match state.sessions.capture_pane_output(&id) {

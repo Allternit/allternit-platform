@@ -13,7 +13,7 @@ also point it at your own Allternit instance running on a VPS.
 │  ┌─────────────────────────────────────────────────────────┐   │
 │  │  • Electron UI + bundled web build (~850MB total)        │   │
 │  │  • Rust API server (allternit-api, spawned locally)      │   │
-│  │  • gizzi-code brain, allternit-mux, voice service       │   │
+│  │  • gizzi-code brain, allternit-factory, voice service   │   │
 │  │  • vendored ripgrep, Lume, platform static export       │   │
 │  │  • Auto-updater (update-electron-app / Squirrel)        │   │
 │  │  • System tray                                          │   │
@@ -199,7 +199,7 @@ npm run verify:packaged-resources
 npm run dist
 ```
 
-Full pipeline (platform static export, gizzi-code, allternit-mux, ripgrep,
+Full pipeline (platform static export, gizzi-code, allternit-factory, ripgrep,
 voice service, Rust API, Lume, Electron package, checksum patch) in one shot:
 
 ```bash

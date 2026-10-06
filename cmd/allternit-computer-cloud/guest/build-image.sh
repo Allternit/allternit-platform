@@ -1,18 +1,22 @@
 #!/bin/bash
 # Build the Allternit Ubuntu desktop Incus image.
 # Run this on an Incus host. It creates a throw-away container,
-# installs the desktop stack, bakes in the allternit-mux binary,
-# and publishes the result as a local image named "allternit-desktop".
+# installs the desktop stack, bakes in the allternit-factory binary (the
+# Allternit Factory engine; its pane engine runs the guest's terminals), and
+# publishes the result as a local image named "allternit-desktop".
 #
 # Environment variables:
-#   MUX_SRC_DIR  - path to the allternit-mux source tree (default: /tmp/allternit-mux-src)
+#   FACTORY_BIN     - prebuilt Linux allternit-factory binary (skips the build)
+#   FACTORY_SRC_DIR - allternit-platform checkout to build it from
+#                     (default: /tmp/allternit-platform-src; needs Rust and
+#                     Zig 0.15.2 for the pane engine's libghostty-vt)
 #   IMAGE_NAME   - published image alias (default: allternit-desktop)
 #   UBUNTU_IMAGE - source image alias (default: images:ubuntu/24.04/cloud)
 #   KEEP_BUILDER - if set, do not delete the build container
 
 set -euo pipefail
 
-MUX_SRC_DIR="${MUX_SRC_DIR:-/tmp/allternit-mux-src}"
+FACTORY_SRC_DIR="${FACTORY_SRC_DIR:-/tmp/allternit-platform-src}"
 IMAGE_NAME="${IMAGE_NAME:-allternit-desktop}"
 UBUNTU_IMAGE="${UBUNTU_IMAGE:-images:ubuntu/24.04/cloud}"
 BUILD_CONTAINER="allternit-desktop-builder-$$"
@@ -30,18 +34,18 @@ cleanup() {
 trap cleanup EXIT
 
 # ---------------------------------------------------------------------------
-# 1. Build allternit-mux for the guest.
+# 1. Build allternit-factory for the guest.
 # ---------------------------------------------------------------------------
-if [ -n "${MUX_BIN:-}" ]; then
-    log "using prebuilt allternit-mux binary: ${MUX_BIN}"
-    if [ ! -x "${MUX_BIN}" ]; then
-        echo "ERROR: MUX_BIN does not exist or is not executable: ${MUX_BIN}" >&2
+if [ -n "${FACTORY_BIN:-}" ]; then
+    log "using prebuilt allternit-factory binary: ${FACTORY_BIN}"
+    if [ ! -x "${FACTORY_BIN}" ]; then
+        echo "ERROR: FACTORY_BIN does not exist or is not executable: ${FACTORY_BIN}" >&2
         exit 1
     fi
 else
-    log "building allternit-mux from ${MUX_SRC_DIR}"
-    if [ ! -d "${MUX_SRC_DIR}" ]; then
-        echo "ERROR: MUX_SRC_DIR does not exist: ${MUX_SRC_DIR}" >&2
+    log "building allternit-factory from ${FACTORY_SRC_DIR}"
+    if [ ! -d "${FACTORY_SRC_DIR}" ]; then
+        echo "ERROR: FACTORY_SRC_DIR does not exist: ${FACTORY_SRC_DIR}" >&2
         exit 1
     fi
 
@@ -51,20 +55,24 @@ else
         . "${HOME}/.cargo/env"
     fi
     if ! command -v cargo >/dev/null 2>&1; then
-        echo "ERROR: cargo not found. Install Rust, set MUX_SRC_DIR, or pass MUX_BIN" >&2
+        echo "ERROR: cargo not found. Install Rust, set FACTORY_SRC_DIR, or pass FACTORY_BIN" >&2
+        exit 1
+    fi
+    if ! command -v "${ZIG:-zig}" >/dev/null 2>&1; then
+        echo "ERROR: zig not found. The pane engine needs Zig 0.15.2 (set ZIG), or pass FACTORY_BIN" >&2
         exit 1
     fi
 
     (
-        cd "${MUX_SRC_DIR}"
-        cargo build --release
+        cd "${FACTORY_SRC_DIR}"
+        cargo build --release -p allternit-factory
     )
-    MUX_BIN="${MUX_SRC_DIR}/target/release/allternit-mux"
-    if [ ! -x "${MUX_BIN}" ]; then
-        echo "ERROR: allternit-mux binary not found at ${MUX_BIN}" >&2
+    FACTORY_BIN="${CARGO_TARGET_DIR:-${FACTORY_SRC_DIR}/target}/release/allternit-factory"
+    if [ ! -x "${FACTORY_BIN}" ]; then
+        echo "ERROR: allternit-factory binary not found at ${FACTORY_BIN}" >&2
         exit 1
     fi
-    log "allternit-mux binary: ${MUX_BIN}"
+    log "allternit-factory binary: ${FACTORY_BIN}"
 fi
 
 # ---------------------------------------------------------------------------
@@ -129,12 +137,12 @@ apt-get install -y tailscale
 '
 
 # ---------------------------------------------------------------------------
-# 4. Install allternit-mux runtime and services.
+# 4. Install the allternit-factory runtime and services.
 # ---------------------------------------------------------------------------
-log "installing allternit-mux runtime"
-incus exec "${BUILD_CONTAINER}" -- mkdir -p /opt/allternit-mux /opt/allternit-desktop
-incus file push "${MUX_BIN}" "${BUILD_CONTAINER}/opt/allternit-mux/allternit-mux"
-incus exec "${BUILD_CONTAINER}" -- chmod +x /opt/allternit-mux/allternit-mux
+log "installing allternit-factory runtime"
+incus exec "${BUILD_CONTAINER}" -- mkdir -p /opt/allternit-factory /opt/allternit-desktop
+incus file push "${FACTORY_BIN}" "${BUILD_CONTAINER}/opt/allternit-factory/allternit-factory"
+incus exec "${BUILD_CONTAINER}" -- chmod +x /opt/allternit-factory/allternit-factory
 
 cat > /tmp/allternit-desktop-run.sh <<'EOF'
 #!/bin/bash
@@ -181,16 +189,18 @@ WantedBy=multi-user.target
 EOF
 incus file push /tmp/allternit-desktop.service "${BUILD_CONTAINER}/etc/systemd/system/allternit-desktop.service"
 
-cat > /tmp/allternit-mux.service <<'EOF'
+cat > /tmp/allternit-factory-pane.service <<'EOF'
 [Unit]
-Description=Allternit mux guest runtime
+Description=Allternit Factory pane engine (guest terminals)
 After=network.target systemd-user-sessions.service
-ConditionPathExists=/opt/allternit-mux/allternit-mux
+ConditionPathExists=/opt/allternit-factory/allternit-factory
 
 [Service]
 Type=simple
 Environment="HOME=/root"
-ExecStart=/opt/allternit-mux/allternit-mux serve
+# The Factory's agent session: the one `allternit-factory pane tty` reaches.
+Environment="HERDR_SESSION=ao"
+ExecStart=/opt/allternit-factory/allternit-factory pane server
 ExecStop=/bin/kill -TERM $MAINPID
 KillMode=mixed
 Restart=on-failure
@@ -199,11 +209,11 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 EOF
-incus file push /tmp/allternit-mux.service "${BUILD_CONTAINER}/etc/systemd/system/allternit-mux.service"
+incus file push /tmp/allternit-factory-pane.service "${BUILD_CONTAINER}/etc/systemd/system/allternit-factory-pane.service"
 
 incus exec "${BUILD_CONTAINER}" -- systemctl daemon-reload
 incus exec "${BUILD_CONTAINER}" -- systemctl enable allternit-desktop.service
-incus exec "${BUILD_CONTAINER}" -- systemctl enable allternit-mux.service
+incus exec "${BUILD_CONTAINER}" -- systemctl enable allternit-factory-pane.service
 
 # ---------------------------------------------------------------------------
 # 5. Clean up build artifacts to keep the image small.
@@ -220,7 +230,7 @@ incus stop "${BUILD_CONTAINER}"
 
 log "publishing image as ${IMAGE_NAME}"
 incus publish "${BUILD_CONTAINER}" --alias "${IMAGE_NAME}" \
-    description="Allternit Ubuntu 24.04 desktop with XFCE, Chrome, Tailscale, and allternit-mux" \
+    description="Allternit Ubuntu 24.04 desktop with XFCE, Chrome, Tailscale, and allternit-factory" \
     --compression=zstd
 
 log "image build complete: ${IMAGE_NAME}"

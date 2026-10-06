@@ -1,11 +1,11 @@
 ---
 title: 'Terminal API'
-description: 'Create, interact with, resize, stream, and close persistent terminal sessions backed by allternit-mux.'
+description: 'Create, interact with, resize, stream, and close persistent terminal sessions on the Allternit Factory pane engine.'
 ---
 
 ## Overview
 
-The Terminal API provides persistent PTY-based terminals backed by `allternit-mux`. Each terminal session is a real shell process owned by the mux daemon, survives API restarts, and supports scrollback replay plus live streaming. 
+The Terminal API provides persistent PTY-based terminals on the [Allternit Factory](/factory/architecture) pane engine. Each terminal session is a real shell process owned by the pane engine: it survives API restarts and UI reconnects, replays its scrollback (the last 2 MiB) to every new stream, and reports its exit code. A terminal is a pane like any Factory agent pane: it shows in the agent wall as `term-<session_id>`, and an agent started in it is detected there.
 
 ## Base URL
 
@@ -15,7 +15,7 @@ https://api.allternit.com/terminal
 
 All endpoints require a valid Bearer token in the `Authorization` header. See [Authentication](/api/authentication) for details.
 
-The API connects to `allternit-mux` over a Unix domain socket. By default the socket is at `~/.allternit/mux/mux.sock`; override with `ALLTERNIT_MUX_SOCKET`.
+The API reaches the pane engine over its Unix domain socket. It finds the socket with `allternit-factory pane tty ensure`, which also starts the pane engine when it isn't running. `ALLTERNIT_FACTORY_BIN` names the binary (default: `allternit-factory` next to allternit-api, then on `PATH`; Allternit Desktop sets it), and `ALLTERNIT_FACTORY_PANE_SOCKET` names the socket directly. See [allternit-mux (folded into the Factory)](/cli/allternit-mux) for the socket methods.
 
 ## Endpoints
 
@@ -136,7 +136,7 @@ Response:
 GET /terminal/f47ac10b-58cc-4372-a567-0e02b2c3d479/stream
 ```
 
-The response is a `text/event-stream`. The server first replays the full persistent scrollback, then subscribes to live `pane.output` events from the mux daemon. Ping events are emitted every 15 seconds when no output is available.
+The response is a `text/event-stream`. The server first replays the kept scrollback, then streams live output. Ping events are emitted every 15 seconds when no output is available.
 
 Example event:
 
@@ -144,17 +144,27 @@ Example event:
 data: {"type":"data","data":"total 128\r\ndrwxr-xr-x ..."}
 ```
 
+When the shell exits, one exit event follows its last output. The stream then stays open with pings only, so an `EventSource` doesn't reconnect and replay the scrollback again. Clients that don't know the `exit` type ignore it.
+
+```text
+data: {"type":"exit","exit_code":0}
+```
+
+`exit_code` is `null` when the pane engine couldn't read it.
+
 ## Error codes
 
 | Status | Code | Description |
 |--------|------|-------------|
 | 200 | — | Success. |
-| 404 | `not_found` | Terminal session not found. |
-| 503 | `service_unavailable` | `allternit-mux` is not reachable. |
-| 500 | `internal_error` | Unexpected server or mux error. |
+| 404 | `not_found` | Terminal session not found (never created, or closed). |
+| 503 | `service_unavailable` | The Factory pane engine isn't reachable and couldn't be started (for example, `allternit-factory` isn't installed). |
+| 500 | `internal_error` | The pane engine refused the request. |
+
+Input and resize on a terminal whose shell already exited succeed and do nothing, as typing into a closed terminal does. Close always succeeds.
 
 ## Related links
 
 - [Authentication](/api/authentication)
-- [allternit-mux CLI](/cli/allternit-mux)
+- [allternit-mux (folded into the Factory)](/cli/allternit-mux)
 - [VM Sessions API](/api/vm-sessions)

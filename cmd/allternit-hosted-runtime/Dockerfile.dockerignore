@@ -42,7 +42,7 @@ services/open-connector/
 services/computer-use-operator/
 services/gateway/
 # ...except the two Rust workspace members under it: cargo loads every member's
-# manifest, so excluding them fails `cargo build -p allternit-mux` (red since 2026-09-26).
+# manifest, so excluding them fails the factory-builder stage's cargo build.
 !services/gateway/routing/
 !services/gateway/routing/**
 !services/gateway/stdio/
@@ -83,3 +83,12 @@ services/gateway/
 !cmd/gizzi-code/packages/script/dist/**
 !cmd/gizzi-code/packages/sdk/dist/
 !cmd/gizzi-code/packages/sdk/dist/**
+
+# The factory-builder stage compiles the pane engine: it embeds its sounds
+# (include_bytes! of assets/sounds/*.mp3) and Zig builds libghostty-vt from its
+# vendored tree, whose sources include a src/build/ directory and fixtures the
+# media/build patterns above would drop.
+!factory/pane/assets/
+!factory/pane/assets/**
+!factory/pane/vendor/
+!factory/pane/vendor/**

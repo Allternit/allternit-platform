@@ -24,7 +24,7 @@ for i in $(seq 1 120); do
 done
 
 echo "[validate-image] checking binaries"
-incus exec "${TEST_CONTAINER}" -- test -x /opt/allternit-mux/allternit-mux
+incus exec "${TEST_CONTAINER}" -- test -x /opt/allternit-factory/allternit-factory
 incus exec "${TEST_CONTAINER}" -- test -x /opt/allternit-desktop/run.sh
 incus exec "${TEST_CONTAINER}" -- which google-chrome
 incus exec "${TEST_CONTAINER}" -- which tailscale
@@ -33,6 +33,6 @@ incus exec "${TEST_CONTAINER}" -- which xfce4-session
 
 echo "[validate-image] checking services"
 incus exec "${TEST_CONTAINER}" -- systemctl is-enabled allternit-desktop.service
-incus exec "${TEST_CONTAINER}" -- systemctl is-enabled allternit-mux.service
+incus exec "${TEST_CONTAINER}" -- systemctl is-enabled allternit-factory-pane.service
 
 echo "[validate-image] validation passed"

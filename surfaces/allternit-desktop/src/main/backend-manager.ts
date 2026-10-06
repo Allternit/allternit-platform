@@ -27,8 +27,15 @@ import { PORTS, URLS, factoryEngineUrl, webhookReceiverUrl } from './config.js';
 import { resolveApiDataDir } from './desktop-data-dir.js';
 import { spawnSidecar } from './process-lifeline.js';
 import { systemOne } from './system-one-manager.js';
+import { factoryEngineManager } from './factory-engine-manager.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+/** ALLTERNIT_FACTORY_BIN for allternit-api: the engine this Desktop ships. */
+function factoryBinEnv(): { ALLTERNIT_FACTORY_BIN?: string } {
+  const bin = process.env.ALLTERNIT_FACTORY_BIN || factoryEngineManager.getBinaryPath();
+  return bin ? { ALLTERNIT_FACTORY_BIN: bin } : {};
+}
 
 /**
  * Computer Cloud (tart host) credentials. Operators keep them in
@@ -286,6 +293,9 @@ export class BackendManager {
       // /api/factory proxy forwards here. Not the engine's default 3011,
       // which is Desktop's extension bridge.
       ALLTERNIT_FACTORY_URL: process.env.ALLTERNIT_FACTORY_URL ?? factoryEngineUrl(),
+      // The /terminal routes run every terminal on this engine's pane engine
+      // (`allternit-factory pane tty ensure` finds or starts it).
+      ...factoryBinEnv(),
       TERMINAL_SERVER_URL: config.gizziUrl ?? process.env.TERMINAL_SERVER_URL ?? URLS.GIZZI,
       GIZZI_USERNAME: config.gizziUsername ?? process.env.GIZZI_USERNAME ?? 'gizzi',
       GIZZI_PASSWORD: config.gizziPassword ?? process.env.GIZZI_PASSWORD ?? '',

@@ -689,8 +689,8 @@ export namespace Server {
 
     _url = server.url
 
-    // Eagerly start the mux daemon so platform /terminal routes (served by
-    // allternit-api) find the socket ready instead of failing on first use.
+    // Eagerly start the Factory pane engine so the first PTY (and
+    // allternit-api's /terminal routes) don't wait for it.
     void Pty.warmup()
 
     // Initialize local cron scheduler so /cron routes are functional.

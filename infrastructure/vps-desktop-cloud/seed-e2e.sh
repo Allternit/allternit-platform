@@ -42,7 +42,7 @@ curl -s -X POST "${API_BASE_URL}/api/v1/desktop-templates" \
     "disk_mib": 20480,
     "network_enabled": true,
     "env": {},
-    "packages": ["allternit-mux"],
+    "packages": ["allternit-factory"],
     "tags": ["e2e"],
     "public": true
   }' | python3 -m json.tool 2>/dev/null || true

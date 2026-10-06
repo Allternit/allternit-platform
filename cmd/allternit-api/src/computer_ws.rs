@@ -3,7 +3,7 @@
 //!
 //! Guest-side helpers (PTY bridge, event collector) are plain python3 scripts
 //! pushed into the guest on first use and started with `nohup` — no image
-//! rebuild required (precedent: mux bootstrap in `bot_desktop_mux`). Bridge
+//! rebuild required (precedent: the guest terminal script in `bot_desktop_mux`). Bridge
 //! tokens are random per bootstrap, kept in memory in `AppState`, and never
 //! persisted; a stale bridge is detected via connection refusal and
 //! re-bootstrapped once.
