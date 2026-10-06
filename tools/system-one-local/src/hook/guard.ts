@@ -263,7 +263,7 @@ async function callServer(
 
 // ---------------------------------------------------------------- outcome labels (WP-S1U-3)
 //
-// The shadow GATEs about one tool call (this guard's, the CommRails judge's, the judge first
+// The shadow GATEs about one tool call (this guard's, the Factory Gate judge's, the judge first
 // pass) all carry x-subject_ref = cc-tool:<tool_use_id>. Outcome labels, by subject_ref:
 //   PostToolUse         the call ran → true
 //   PostToolUseFailure  the call ran (and failed) → true: it was allowed

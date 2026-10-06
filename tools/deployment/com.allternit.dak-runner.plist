@@ -37,7 +37,7 @@
         <key>NODE_ENV</key>
         <string>production</string>
         <key>Allternit_RAILS_CLI</key>
-        <string>~/Desktop/allternit-workspace/allternit/target/release/allternit-rails</string>
+        <string>~/Desktop/allternit-workspace/allternit/target/release/allternit-factory</string>
         <key>Allternit_PROJECT_PATH</key>
         <string>~/Desktop/allternit-workspace/allternit</string>
         <key>Allternit_OUTPUT_DIR</key>

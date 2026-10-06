@@ -4,7 +4,7 @@ Two mockup HTML files sit next to this file: `mockup-v1.html` and `mockup-v2.htm
 
 ## Context: what this is actually for
 
-Allternit (the product, this repo) has a real, already-functional backend feature called **Rails Mail** — an internal agent-to-agent / agent-to-human coordination system (`cmd/allternit-api/src/rails/mod.rs`, the `allternit_commrails` crate). It's the exact mechanism this repo's own `agent-orchestrator` skill uses to post executor progress. Real capabilities, all already live:
+Allternit (the product, this repo) has a real, already-functional backend feature called **Factory mail** — an internal agent-to-agent / agent-to-human coordination system (`cmd/allternit-api/src/rails/mod.rs`, the Factory engine crate under `factory/engine`). It's the exact mechanism this repo's own `agent-orchestrator` skill uses to post executor progress. Real capabilities, all already live:
 
 - `ensureThread(topic)` — create/get a thread
 - `send(threadId, ...)` — post a message into a thread
@@ -28,7 +28,7 @@ Today, **no surface has a real, discoverable UI for this.** Web's only entry poi
 Don't re-research Claude Code Agent View / GitHub Agents panel / Cursor Background Agents in depth (already covered, cited in `mockup-v2.html`'s banner). Instead, research and pull real, concrete UI patterns from:
 
 - **Linear's Triage inbox** (`linear.app/docs/triage`, `linear.app/now/how-we-built-triage-intelligence`) — a genuinely different pattern (a dedicated queue for items awaiting a human decision, with AI-suggested triage) worth comparing against a "needs review" queue.
-- **Incident-management / on-call tools** (PagerDuty, Opsgenie, or similar) — these have decades of refined UX specifically for "here's something that needs a human decision, here's the context, here's how fast they can act on it" — a very close analog to Rails Mail's `requestReview`/`decide` flow.
+- **Incident-management / on-call tools** (PagerDuty, Opsgenie, or similar) — these have decades of refined UX specifically for "here's something that needs a human decision, here's the context, here's how fast they can act on it" — a very close analog to Factory mail's `requestReview`/`decide` flow.
 - **Slack's approval workflows / Workflow Builder approval steps**, and/or **GitHub's own Notifications inbox** (different from the Agents panel — the general `/notifications` page) — both handle "a stream of things that happened, some need action, most don't."
 - Pick at least one more you judge relevant (your call) — e.g. Vercel's deployment/comment notifications, Notion AI's inline suggestion UI, or a mobile-specific pattern (push-notification-driven approval flows) given this design also has to work on iOS eventually.
 
@@ -38,10 +38,10 @@ Cite real sources (URLs) for everything, the way the existing mockups' banners d
 
 Don't just validate it — find real problems. Consider at minimum:
 
-- **Does the simplified "Approve/Deny + quick reply" model actually cover Rails Mail's real action surface**, or does it flatten away real, distinct actions (`reserve` for path-locking, `share` for assets, `archive`, `guard`) into something that looks complete but isn't? Should some of these be visible/actionable from this UI at all, or are some legitimately backend-only/agent-only actions a human never needs to see?
+- **Does the simplified "Approve/Deny + quick reply" model actually cover Factory mail's real action surface**, or does it flatten away real, distinct actions (`reserve` for path-locking, `share` for assets, `archive`, `guard`) into something that looks complete but isn't? Should some of these be visible/actionable from this UI at all, or are some legitimately backend-only/agent-only actions a human never needs to see?
 - **Information density and scannability** — with a realistic volume of threads (this repo alone generated ~10 executor threads in one session; a heavy user could have dozens), does the flat list + inline-accordion-expand pattern hold up, or does it get unwieldy? How do the reference products you researched handle volume/scale?
 - **Cross-surface translatability** — this design is the reference for iOS and a CLI too. A 380px desktop slide-over won't translate directly to a phone screen or a terminal. Does the underlying information architecture (not the literal pixels) translate cleanly to a narrow mobile view and to a text-based CLI list? Flag anything that's web-idiom-specific and won't generalize (e.g. hover states, a fixed-width panel, mouse-driven accordion expand).
-- **The "View diff" link** — v2 says review items should route to "the real review surface" rather than reinventing one. What IS the real review surface in this specific repo, concretely? (Hint: check how this session's own PRs got reviewed — GitHub PR pages via `gh pr view`/`gh pr diff`. Does routing a Rails Mail review-request to a GitHub PR make sense for every `requestReview` call, or only some? What about review requests that aren't about a code diff at all?)
+- **The "View diff" link** — v2 says review items should route to "the real review surface" rather than reinventing one. What IS the real review surface in this specific repo, concretely? (Hint: check how this session's own PRs got reviewed — GitHub PR pages via `gh pr view`/`gh pr diff`. Does routing a Factory mail review-request to a GitHub PR make sense for every `requestReview` call, or only some? What about review requests that aren't about a code diff at all?)
 - **Visual/interaction execution** — actual UI critique: hierarchy, whether the status-dot-pulse animation is meaningful or decorative, whether the tab bar (All/Review) is sufficient filtering for real volume, whether an accordion-per-row is the right disclosure pattern vs. something else.
 - Anything else you find. Be honest and specific — vague "looks fine" verdicts are not useful. Every finding needs a concrete failure scenario (what a real user would hit).
 

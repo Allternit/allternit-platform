@@ -168,11 +168,11 @@ mod tests {
         let env = resolve(&req(&[], &[]));
         let out = filter_env(
             &env,
-            [("PATH", "/bin"), ("AWS_SECRET_ACCESS_KEY", "s"), ("ALLTERNIT_COMMRAILS_WIH", "w"), ("GITHUB_TOKEN", "t")]
+            [("PATH", "/bin"), ("AWS_SECRET_ACCESS_KEY", "s"), ("ALLTERNIT_FACTORY_WIH", "w"), ("GITHUB_TOKEN", "t")]
                 .map(|(k, v)| (k.to_string(), v.to_string())),
         );
         let keys: Vec<_> = out.iter().map(|(k, _)| k.as_str()).collect();
-        assert_eq!(keys, ["PATH", "ALLTERNIT_COMMRAILS_WIH"]);
+        assert_eq!(keys, ["PATH", "ALLTERNIT_FACTORY_WIH"]);
     }
 
     #[test]

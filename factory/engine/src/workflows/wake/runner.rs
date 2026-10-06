@@ -363,7 +363,7 @@ async fn run_command(
         .env("ALLTERNIT_CAMPAIGN_ID", &c.campaign_id)
         .env("ALLTERNIT_WAKE_ID", &wake.wake_id)
         .env("ALLTERNIT_WAKE_MESSAGE", &wake.message)
-        .env("ALLTERNIT_RAILS_ROOT", root)
+        .env("ALLTERNIT_FACTORY_ROOT", root)
         .stdin(std::process::Stdio::null())
         .kill_on_drop(true);
     if let Some(dag) = &c.dag_id {

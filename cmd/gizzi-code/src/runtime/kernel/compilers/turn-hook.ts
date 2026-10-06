@@ -212,7 +212,7 @@ export namespace KernelTurn {
    * this call, and record a ToolReceiptV1. The run's result or error passes
    * through as-is.
    *
-   * External receipts are appended to the local commrails chain after the
+   * External receipts are appended to the local Factory engine chain after the
    * unchanged tool call. Transport errors are logged and never break a turn.
    */
   export async function withToolReceipt<T>(
@@ -288,12 +288,32 @@ export namespace KernelTurn {
     }
   }
 
-  /** Direct local service (3011), or an explicitly configured existing rails URL.
+  let warnedOldEngineUrl = false
+  /**
+   * The Factory engine URL: `$ALLTERNIT_FACTORY_URL`, else the local engine
+   * (3011). A URL a user still exports under the pre-Factory names is honoured
+   * with a one-time deprecation notice.
+   */
+  export function engineUrl(env: NodeJS.ProcessEnv = process.env): string {
+    const current = env.ALLTERNIT_FACTORY_URL
+    if (current) return current.replace(/\/+$/, "")
+    const old = env.GIZZI_COMMRAILS_URL ?? env.GIZZI_RAILS_URL // old-names: keep (user shell config from before the Factory rename)
+    if (old) {
+      if (!warnedOldEngineUrl) {
+        warnedOldEngineUrl = true
+        process.stderr.write("gizzi: GIZZI_RAILS_URL / GIZZI_COMMRAILS_URL are deprecated; set ALLTERNIT_FACTORY_URL instead.\n") // old-names: keep (deprecation notice names the old vars)
+      }
+      return old.replace(/\/+$/, "")
+    }
+    return "http://127.0.0.1:3011"
+  }
+
+  /** Factory engine receipt chain (see engineUrl).
    * Read per call so long-lived sessions can follow service configuration.
    * No retries: an uncertain response must not blindly duplicate evidence.
    */
   async function appendReceipt(receipt: ToolReceiptV1, rec: TurnRecord): Promise<void> {
-    const base = (process.env.GIZZI_COMMRAILS_URL ?? process.env.GIZZI_RAILS_URL ?? "http://127.0.0.1:3011").replace(/\/+$/, "")
+    const base = engineUrl()
     try {
       const response = await fetch(`${base}/v1/receipts/chain/${encodeURIComponent(receipt.envelope.run_id)}`, {
         method: "POST",

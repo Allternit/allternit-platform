@@ -19,7 +19,7 @@ pub(crate) fn sanitize_window_title_text(value: &str) -> Option<String> {
 /// A value the server can substitute into `ui.window_title`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WindowTitleToken {
-    /// Host the ao server runs on.
+    /// Host the allternit-factory pane server runs on.
     Hostname,
     /// Active workspace display name.
     Workspace,

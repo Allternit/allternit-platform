@@ -25,7 +25,7 @@ export interface TerminalNotification {
 }
 
 export interface NotifierDeps {
-  apiBase?: string; // CommRails (allternit-api) base URL
+  apiBase?: string; // allternit-api base URL (Factory peer messages)
   notificationsDir?: string; // desktop-shell drop directory
   fetchImpl?: typeof fetch;
   log?: EventLog;
@@ -65,7 +65,7 @@ export class Notifier {
   private async dispatch(n: TerminalNotification): Promise<void> {
     try {
       if (n.requester_kind === "bot") {
-        await this.sendCommRails(n);
+        await this.sendFactoryPeer(n);
       } else {
         this.writeDesktopDrop(n);
       }
@@ -74,9 +74,9 @@ export class Notifier {
     }
   }
 
-  private async sendCommRails(n: TerminalNotification): Promise<void> {
+  private async sendFactoryPeer(n: TerminalNotification): Promise<void> {
     const res = await this.fetchImpl(
-      `${this.apiBase}/api/rails/peers/${encodeURIComponent(n.caller_id)}/send`,
+      `${this.apiBase}/api/factory/peers/${encodeURIComponent(n.caller_id)}/send`,
       {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -87,7 +87,7 @@ export class Notifier {
       }
     );
     if (!res.ok) {
-      throw new Error(`commrails send failed: HTTP ${res.status}`);
+      throw new Error(`factory peer send failed: HTTP ${res.status}`);
     }
   }
 

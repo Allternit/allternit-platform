@@ -151,7 +151,7 @@ async function main() {
     case "hook-outcome": {
       // Harness outcome hook (PermissionRequest / PostToolUse / PostToolUseFailure / Stop),
       // same as hooks/s1-outcome but runnable from the compiled binary. Never prints a
-      // decision, always exits 0. CommRails registers it in its session settings by default.
+      // decision, always exits 0. The Factory engine registers it in its session settings by default.
       try {
         const { handleOutcomeHook } = await import("./hook/guard.ts");
         await handleOutcomeHook(JSON.parse(readFileSync(0, "utf8")));

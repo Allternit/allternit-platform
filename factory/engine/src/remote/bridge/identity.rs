@@ -1,4 +1,4 @@
-//! Scoped bearer identities for the CommRails bridge.
+//! Scoped bearer identities for the Factory bridge.
 //!
 //! A token file (JSON, mode 0600) maps the SHA-256 of each bearer token to an
 //! actor id (`bot:<slug>` / `agent:<slug>`) and a scope set. Tokens are
@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 /// Env override for the identities file location.
-pub const IDENTITIES_ENV: &str = "ALLTERNIT_COMMRAILS_BRIDGE_IDENTITIES";
+pub const IDENTITIES_ENV: &str = "ALLTERNIT_FACTORY_BRIDGE_IDENTITIES";
 
 /// Prefix of every bridge bearer token (lets secret scanners spot leaks).
 pub const TOKEN_PREFIX: &str = "crb_";
@@ -225,9 +225,11 @@ pub struct IdentityStore {
     path: PathBuf,
 }
 
-/// Default identities file: `$ALLTERNIT_COMMRAILS_BRIDGE_IDENTITIES`, else
-/// `~/.allternit/commrails-bridge/identities.json`. Kept outside any
-/// workspace root so it is never swept into a repo.
+/// Default identities file: `$ALLTERNIT_FACTORY_BRIDGE_IDENTITIES`, else
+/// `~/.allternit/factory/bridge/identities.json`. Kept outside any
+/// workspace root so it is never swept into a repo. Grants made before the
+/// Factory live in the old bridge folder; while only that file exists it is
+/// still used (with a one-time notice) so no granted identity stops working.
 pub fn default_identities_path() -> PathBuf {
     if let Some(p) = std::env::var_os(IDENTITIES_ENV) {
         if !p.is_empty() {
@@ -237,7 +239,20 @@ pub fn default_identities_path() -> PathBuf {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."));
-    home.join(".allternit/commrails-bridge/identities.json")
+    let new = home.join(".allternit/factory/bridge/identities.json");
+    let old = home.join(".allternit/commrails-bridge/identities.json"); // old-names: keep (grants written before the Factory)
+    if !new.exists() && old.is_file() {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            eprintln!(
+                "allternit-factory: bridge identities are still in {}; move the file to {} (same contents)",
+                old.display(),
+                new.display()
+            )
+        });
+        return old;
+    }
+    new
 }
 
 pub fn hash_token(token: &str) -> String {
@@ -316,7 +331,7 @@ impl IdentityStore {
             use std::os::unix::fs::PermissionsExt;
             // Tighten only a dir we own and that is not a shared parent like
             // $HOME: the dedicated default dir, or any dir named for us.
-            if parent.ends_with("commrails-bridge") {
+            if parent.ends_with("factory/bridge") || parent.ends_with("commrails-bridge") { // old-names: keep (the pre-Factory grants folder)
                 let _ = std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o700));
             }
         }

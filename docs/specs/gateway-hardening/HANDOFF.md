@@ -16,8 +16,8 @@ Scope this session: **P0.1–P0.4 + two console pages.** P1/P2 items stay in the
 - `export CARGO_TARGET_DIR="$HOME/Desktop/allternit-workspace/.shared-target"` before every cargo command. Never `cargo clean` it.
 - **NEVER set `ALLTERNIT_API_PORT=8013`** — that port belongs to the installed Desktop app; use 18013 with a scratch `ALLTERNIT_DATA_DIR` for any live boot.
 - pnpm only, never npm install (console surface).
-- Repo process rules are in the root `AGENTS.md`: session worktree mandatory, CommRails DAG required for multi-step work, full lifecycle (commit → push → PR → merge → sync main → ledger attestation → cleanup → `scripts/git-discipline-check.sh` PASS) before the session counts as done.
-- Multi-step work must be registered in the CommRails WIH DAG: `allternit-commrails plan new "<goal>"`. The CLI is not on PATH; build with `cargo build -p allternit-commrails --release` (shared target) and run the binary from the target dir.
+- Repo process rules are in the root `AGENTS.md`: session worktree mandatory, a Factory workspace DAG required for multi-step work, full lifecycle (commit → push → PR → merge → sync main → ledger attestation → cleanup → `scripts/git-discipline-check.sh` PASS) before the session counts as done.
+- Multi-step work must be registered in a Factory workspace DAG: `gizzi workspace plan new "<goal>"` (or `allternit-factory workspace plan new`). If neither is on PATH, build with `cargo build -p allternit-factory --release` (shared target) and run the binary from the target dir.
 
 ## Current state (paused 2026-09-19)
 
@@ -46,7 +46,7 @@ Do NOT trust or commit these until: (1) you review the diff, (2) `cargo test -p 
 
 - **P0.3 wire conformance harness** — new mock-provider fixture server + cases, all localhost, in `cargo test`. NOT a live smoke test (owner decision removed those; fixtures in CI don't conflict with that). Cases: non-stream happy path, SSE stream, 429→failover, 500→retry, validation error shape, auth 401. The upstream the gateway proxies to is the **gizzi runtime** (`cmd/gizzi-code`, default http://127.0.0.1:4096) — the mock must mirror what the gateway expects from gizzi, which is the tricky part; read `proxy.rs` + `gizzi_bus.rs` carefully first. If full in-process boot is impractical, test proxy handlers directly with test state and document the choice.
 - **P0.2 streaming failover** — currently streams get ONE attempt (retry loop is non-streaming only, proxy.rs ~2097-2118). Spec decision: implement a structured `allternit.retry_hint` SSE event on upstream stream failure (`{retryable, reason, next_fallback}`) for gizzi to re-drive; gateway-owned transparent resume is deferred.
-- CommRails DAG registration for the remaining nodes.
+- Factory workspace DAG registration for the remaining nodes.
 - Entire landing lifecycle: push, PR (merge commit), sync shared checkout main, ledger attestation in `agent-ledger/summaries/` + `LEDGER.md` (STEER_GUARD_OFF=1 for the ledger commit on main), worktree cleanup, `scripts/git-discipline-check.sh` PASS output pasted in the summary.
 - Checkpoint steering: update `.steering/checkpoint.md` at milestones (Goal/Just did/Next/Open questions).
 

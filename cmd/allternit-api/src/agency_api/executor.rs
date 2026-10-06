@@ -7,7 +7,7 @@
 //! What one run does (the WP10 BUG_FIX graph, driven like WP10's e2e rig):
 //! * the graph is re-instantiated from the TaskIR (`bug_fix::instantiate`) and
 //!   each visited node walks the kernel lifecycle (declared → … → closed);
-//! * every node is routed by the commrails [`Router`] into an `ExecutionPlanV1`
+//! * every node is routed by the Factory engine [`Router`] into an `ExecutionPlanV1`
 //!   over the ModelPool gizzi-code serves at `GET /model-pool`; S0 nodes
 //!   (tests, parsers, diff review, policy) run deterministically here;
 //! * cognition (the patch-proposing S2 nodes) goes to gizzi-code over HTTP
@@ -517,7 +517,7 @@ impl Ws {
                 c.env(k, v);
             }
         }
-        c.env("HOME", self.root.join("home")).env("TMPDIR", self.root.join("tmp")).env("CI", "1").env("NO_COLOR", "1").env("ALLTERNIT_FENCE", "strict") // commrails hook::FENCE_ENV
+        c.env("HOME", self.root.join("home")).env("TMPDIR", self.root.join("tmp")).env("CI", "1").env("NO_COLOR", "1").env("ALLTERNIT_FENCE", "strict") // the Factory engine's hook::FENCE_ENV
             .env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1").env("GIT_TERMINAL_PROMPT", "0");
         let out_path = self.root.join("tmp").join(format!("cmd-{}.out", uuid::Uuid::new_v4().simple()));
         let out = std::fs::OpenOptions::new().create_new(true).read(true).write(true).open(&out_path)?;

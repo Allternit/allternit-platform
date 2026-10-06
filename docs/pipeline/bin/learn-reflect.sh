@@ -4,7 +4,7 @@
 #
 #   1. reads docs/pipeline/learn/events.jsonl since the last reflection
 #      (watermark = line count already reflected, in docs/pipeline/learn/watermark);
-#   2. consults ao-consult with the distillation prompt
+#   2. consults `allternit-factory orchestration steer consult` with the distillation prompt
 #      (docs/pipeline/learn/reflect-prompt.md) + the new events
 #      (LEARN_CONSULT_CMD overrides the consult for tests, same pattern as
 #      SPEC_CHECK_CMD);
@@ -224,8 +224,8 @@ request="$(mktemp -t learn-reflect)"
 
 if [ -n "${LEARN_CONSULT_CMD:-}" ]; then
   answer="$($LEARN_CONSULT_CMD < "$request")"
-elif command -v ao-consult >/dev/null 2>&1; then
-  answer="$(ao-consult < "$request")"
+elif command -v allternit-factory >/dev/null 2>&1; then
+  answer="$(allternit-factory orchestration steer consult --cwd "$PWD" --prompt-file "$request")"
 else
   answer=""
 fi

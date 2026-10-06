@@ -233,7 +233,7 @@ mod tests {
 
     #[test]
     fn unknown_command_needs_attestation() {
-        assert!(resolve_read_only("ao-consult", false).is_err());
+        assert!(resolve_read_only("some-advisor", false).is_err());
         let a = resolve_read_only("my-advisor --x", true).unwrap();
         assert_eq!(a.profile, "attested");
         assert_eq!(a.args, vec!["-c", "my-advisor --x"]);

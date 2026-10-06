@@ -1,7 +1,7 @@
 /**
- * Rails peer registration + inbox poller for gizzi-code.
+ * Allternit Factory peer registration + inbox poller for gizzi-code.
  *
- * When a session starts, it registers itself as a local Rails peer so other
+ * When a session starts, it registers itself as a local Factory peer so other
  * agents on this machine can discover and message it. Instead of a UDS push
  * listener (which is brittle across Bun/Node versions and blocks the TUI queue
  * timing), we poll the allternit-api inbox endpoint for pending envelopes and
@@ -15,7 +15,7 @@ import { getCwd } from 'src/shared/utils/cwd.js'
 import { errorMessage } from 'src/shared/utils/errors.js'
 import { generateRequestId } from 'src/shared/utils/agentId.js'
 import { enqueuePendingNotification } from 'src/shared/utils/messageQueueManager.js'
-import { isEnvDefinedFalsy } from 'src/shared/utils/envUtils.js'
+import { isFactoryPeerDisabled } from 'src/shared/utils/envUtils.js'
 import type { QueuedCommand } from '@/types/textInputTypes.js'
 import { Log } from 'src/shared/util/log.js'
 import {
@@ -46,8 +46,8 @@ export async function registerRailsPeer(
   sessionId: string,
 ): Promise<ApiPeerRegisterResponse | null> {
   // Gate is evaluated at runtime so the bundler cannot tree-shake the module.
-  // Rails peer registration is default-on; set GIZZI_ENABLE_RAILS_PEER=0 to opt out.
-  if (isEnvDefinedFalsy(process.env.GIZZI_ENABLE_RAILS_PEER)) {
+  // Factory peer registration is default-on; set ALLTERNIT_FACTORY_PEER=0 to opt out.
+  if (isFactoryPeerDisabled()) {
     return null
   }
   try {
@@ -61,9 +61,9 @@ export async function registerRailsPeer(
       cwd,
     })
     registeredPeer = peer
-    process.env.ALLTERNIT_RAILS_PEER_NAME = peer.name
-    process.env.ALLTERNIT_RAILS_INBOX = peer.inbox_socket
-    // The Rails registry marks peers dead if the inbox socket path does not
+    process.env.ALLTERNIT_FACTORY_PEER_NAME = peer.name
+    process.env.ALLTERNIT_FACTORY_INBOX = peer.inbox_socket
+    // The Factory peer registry marks peers dead if the inbox socket path does not
     // exist. HTTP-polling peers do not bind a real UDS server, so create a
     // placeholder file to keep the peer status active.
     try {
@@ -188,7 +188,7 @@ async function heartbeatRailsPeer(name: string): Promise<void> {
   try {
     const config = getAllternitApiConfig()
     const res = await fetch(
-      `${config.baseUrl}/api/rails/peers/${encodeURIComponent(name)}/heartbeat`,
+      `${config.baseUrl}/api/factory/peers/${encodeURIComponent(name)}/heartbeat`,
       {
         method: 'POST',
         // Best-effort liveness ping: never let a hung gateway hold the

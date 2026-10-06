@@ -66,8 +66,8 @@ export class IntegrityService {
       JSON.stringify(receipt, null, 2)
     );
 
-    // 2. Sync to Rails (The Nerves bridge)
-    await this.syncToRails(receipt);
+    // 2. Sync to the Factory (The Nerves bridge)
+    await this.syncToFactory(receipt);
 
     return receipt;
   }
@@ -90,19 +90,19 @@ export class IntegrityService {
   }
 
   /**
-   * REAL: Syncs receipt to the Rails control plane
+   * REAL: Syncs receipt to the Factory control plane (allternit-api)
    */
-  private static async syncToRails(receipt: OperatorReceipt): Promise<void> {
-    const railsUrl = process.env.ALLTERNIT_RAILS_URL || 'http://127.0.0.1:3000';
+  private static async syncToFactory(receipt: OperatorReceipt): Promise<void> {
+    const factoryApiUrl = process.env.ALLTERNIT_FACTORY_API_URL || 'http://127.0.0.1:3000';
     try {
-      const resp = await fetch(`${railsUrl}/api/v1/receipts`, {
+      const resp = await fetch(`${factoryApiUrl}/api/v1/receipts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(receipt)
       });
-      if (!resp.ok) console.warn('[Integrity] Failed to sync receipt to Rails:', resp.statusText);
+      if (!resp.ok) console.warn('[Integrity] Failed to sync receipt to the Factory:', resp.statusText);
     } catch (err) {
-      console.warn('[Integrity] Rails sync network error:', err);
+      console.warn('[Integrity] Factory sync network error:', err);
     }
   }
 }

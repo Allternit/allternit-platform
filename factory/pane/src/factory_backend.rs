@@ -3,9 +3,7 @@
 //!
 //! `allternit-factory` calls [`install`] at startup; from then on every engine
 //! spawn (`workflows drive` executors, `agents up` later), send, capture and
-//! kill goes through this pane engine's socket API — the same calls
-//! `allternit-factory pane ao spawn|send|status|kill` make. There is no tmux
-//! path.
+//! kill goes through this pane engine's socket API. There is no tmux path.
 //!
 //! [`PaneBackend`]: allternit_factory_engine::backend::PaneBackend
 
@@ -14,7 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use allternit_factory_engine::backend::{
-    self, EngineStatus, LivePane, PaneBackend, PaneScreen, PaneSend, PaneSpawn, Transport,
+    self, EngineStatus, LivePane, PaneBackend, PaneScreen, PaneSend, PaneSpawn, Queued, Transport,
 };
 use anyhow::{anyhow, Result};
 use serde_json::Value;
@@ -240,6 +238,33 @@ impl PaneBackend for PaneEngine {
         };
         let (id, depth) = crate::ao::mailbox::enqueue(root, session, sender, text).map_err(|e| anyhow!("mailbox: {e}"))?;
         Ok(PaneSend::Queued { message_id: id.to_string(), depth, reason })
+    }
+
+    fn mailbox(&self, root: &Path, session: &str) -> Result<Vec<Queued>> {
+        let rows = crate::ao::mailbox::pending(root, session).map_err(|e| anyhow!("mailbox: {e}"))?;
+        Ok(rows
+            .iter()
+            .map(|row| Queued { id: row.id.to_string(), text: crate::ao::mailbox::message_text(row) })
+            .collect())
+    }
+
+    fn deliver(&self, session: &str, text: &str) -> Result<bool> {
+        let client = client();
+        let pane = match find(&client, session) {
+            Ok(Some(pane)) => pane,
+            Ok(None) | Err(CallError::EngineDown) => return Ok(false),
+            Err(e) => return Err(err(e)),
+        };
+        let Some(marker) = ao::prompt_marker(text) else { return Ok(false) };
+        if !ao::pane_idle(&client, &pane.pane_id).map_err(err)? {
+            return Ok(false);
+        }
+        ao::paste_and_verify(&client, &pane.pane_id, text, &marker).map_err(err)
+    }
+
+    fn settle(&self, root: &Path, id: &str) -> Result<()> {
+        let id: i64 = id.parse().map_err(|_| anyhow!("mailbox: bad message id {id}"))?;
+        crate::ao::mailbox::settle(root, id).map_err(|e| anyhow!("mailbox: {e}"))
     }
 
     fn capture(&self, session: &str, lines: u32) -> Result<String> {

@@ -125,11 +125,11 @@ fn tab_create(args: &[String]) -> std::io::Result<i32> {
 
 fn tab_get(args: &[String]) -> std::io::Result<i32> {
     let Some(raw_tab_id) = args.first() else {
-        eprintln!("usage: ao tab get <tab_id>");
+        eprintln!("usage: allternit-factory pane tab get <tab_id>");
         return Ok(2);
     };
     if args.len() != 1 {
-        eprintln!("usage: ao tab get <tab_id>");
+        eprintln!("usage: allternit-factory pane tab get <tab_id>");
         return Ok(2);
     }
 
@@ -138,11 +138,11 @@ fn tab_get(args: &[String]) -> std::io::Result<i32> {
 
 fn tab_focus(args: &[String]) -> std::io::Result<i32> {
     let Some(raw_tab_id) = args.first() else {
-        eprintln!("usage: ao tab focus <tab_id>");
+        eprintln!("usage: allternit-factory pane tab focus <tab_id>");
         return Ok(2);
     };
     if args.len() != 1 {
-        eprintln!("usage: ao tab focus <tab_id>");
+        eprintln!("usage: allternit-factory pane tab focus <tab_id>");
         return Ok(2);
     }
 
@@ -151,7 +151,7 @@ fn tab_focus(args: &[String]) -> std::io::Result<i32> {
 
 fn tab_rename(args: &[String]) -> std::io::Result<i32> {
     if args.len() < 2 {
-        eprintln!("usage: ao tab rename <tab_id> <label>");
+        eprintln!("usage: allternit-factory pane tab rename <tab_id> <label>");
         return Ok(2);
     }
 
@@ -163,11 +163,11 @@ fn tab_rename(args: &[String]) -> std::io::Result<i32> {
 
 fn tab_close(args: &[String]) -> std::io::Result<i32> {
     let Some(raw_tab_id) = args.first() else {
-        eprintln!("usage: ao tab close <tab_id>");
+        eprintln!("usage: allternit-factory pane tab close <tab_id>");
         return Ok(2);
     };
     if args.len() != 1 {
-        eprintln!("usage: ao tab close <tab_id>");
+        eprintln!("usage: allternit-factory pane tab close <tab_id>");
         return Ok(2);
     }
 
@@ -175,13 +175,13 @@ fn tab_close(args: &[String]) -> std::io::Result<i32> {
 }
 
 fn print_tab_help() {
-    eprintln!("ao tab commands:");
-    eprintln!("  ao tab list [--workspace <workspace_id>]");
+    eprintln!("allternit-factory pane tab commands:");
+    eprintln!("  allternit-factory pane tab list [--workspace <workspace_id>]");
     eprintln!(
-        "  ao tab create [--workspace <workspace_id>] [--cwd PATH] [--label TEXT] [--env KEY=VALUE] [--focus] [--no-focus]"
+        "  allternit-factory pane tab create [--workspace <workspace_id>] [--cwd PATH] [--label TEXT] [--env KEY=VALUE] [--focus] [--no-focus]"
     );
-    eprintln!("  ao tab get <tab_id>");
-    eprintln!("  ao tab focus <tab_id>");
-    eprintln!("  ao tab rename <tab_id> <label>");
-    eprintln!("  ao tab close <tab_id>");
+    eprintln!("  allternit-factory pane tab get <tab_id>");
+    eprintln!("  allternit-factory pane tab focus <tab_id>");
+    eprintln!("  allternit-factory pane tab rename <tab_id> <label>");
+    eprintln!("  allternit-factory pane tab close <tab_id>");
 }

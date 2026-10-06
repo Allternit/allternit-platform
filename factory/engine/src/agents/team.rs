@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-/// Folder under the CommRails root that holds every team.
+/// Folder under the Factory root that holds every team.
 pub const TEAMS_DIR: &str = ".allternit/teams";
 /// The team file name.
 pub const TEAM_FILE: &str = "team.yaml";

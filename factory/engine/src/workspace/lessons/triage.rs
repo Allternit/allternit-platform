@@ -6,7 +6,7 @@
 //!   Three CONFIDENCE_GATE questions on bank `bank.lesson_worthiness`; P(true)
 //!   of each is the score. It writes **no lesson text**. Each answer's
 //!   `x-decision_id` is recorded on the triage result, the `LessonTriaged`
-//!   event and the draft (`x_commrails.s1_decision_ids`).
+//!   event and the draft (`x_commrails.s1_decision_ids`). (old-names: keep: Brain draft data key)
 //! - Outcome labels: `report_applied_outcomes` reports `true` for drafts a human
 //!   applied (`apply-brain-updates.js` moves them to `.incoming/applied/`) and
 //!   `report_rejected_outcomes` reports `false` for drafts a human rejected
@@ -45,7 +45,7 @@ pub const LESSON_OUTCOME_EVENT: &str = "LessonOutcomeReported";
 /// S1 decision bank, motif and producer for the three triage questions.
 pub const TRIAGE_BANK: &str = "bank.lesson_worthiness";
 pub const TRIAGE_MOTIF: &str = "CONFIDENCE_GATE";
-pub const TRIAGE_PRODUCER: &str = "commrails.lessons_triage";
+pub const TRIAGE_PRODUCER: &str = "commrails.lessons_triage"; // old-names: keep (ledger/decision data: old records must still match)
 /// Questions an applied (human-approved) draft is ground truth for. Approval
 /// says the lesson is reusable and supported; it says nothing about whether
 /// the original task succeeded, so `task_success` gets no label from it.
@@ -259,7 +259,7 @@ pub async fn score_candidate(cfg: &TriageConfig, candidate: &MemoryCandidate) ->
 }
 
 /// Report outcome labels for human-approved drafts: every draft in
-/// `<brain_root>/.incoming/applied/` that carries `x_commrails.s1_decision_ids`
+/// `<brain_root>/.incoming/applied/` that carries `x_commrails.s1_decision_ids` (old-names: keep: Brain draft data key)
 /// reports `true` for the `APPROVAL_LABELLED` questions, once per candidate
 /// (deduped by a `LessonOutcomeReported` ledger event). Returns how many
 /// candidates were labelled.
@@ -318,7 +318,7 @@ async fn report_reviewed(
     for f in files {
         let Ok(text) = std::fs::read_to_string(&f) else { continue };
         let Ok(d) = serde_json::from_str::<Value>(&text) else { continue };
-        let x = &d["x_commrails"];
+        let x = &d["x_commrails"]; // old-names: keep (Brain draft key / lesson file names already in the Brain)
         let (Some(cid), Some(ids)) = (x["candidate_id"].as_str(), x["s1_decision_ids"].as_object()) else { continue };
         if done.contains(cid) {
             continue;
@@ -393,7 +393,7 @@ pub fn draft_markdown(
             ));
         }
     }
-    md.push_str("\n## Evidence (from the CommRails ledger)\n\n");
+    md.push_str("\n## Evidence (from the Factory ledger)\n\n");
     md.push_str(&format!(
         "- dag `{}` · node `{}` · wih `{}` · candidate `{}`\n",
         candidate.dag_id, candidate.node_id, candidate.wih_id, candidate.candidate_id
@@ -468,12 +468,12 @@ pub fn write_brain_draft(
     std::fs::create_dir_all(&incoming)
         .with_context(|| format!("creating {}", incoming.display()))?;
     let doc = format!(
-        "Sessions/lessons/commrails-{}-{}.md",
+        "Sessions/lessons/commrails-{}-{}.md", // old-names: keep (Brain draft key / lesson file names already in the Brain)
         candidate.dag_id, candidate.candidate_id
     );
     let draft = json!({
         "source": format!(
-            "allternit-commrails lessons triage (dag:{} wih:{})",
+            "allternit-factory internal core lessons triage (dag:{} wih:{})",
             candidate.dag_id, candidate.wih_id
         ),
         "date": Utc::now().format("%Y-%m-%d").to_string(),
@@ -483,7 +483,7 @@ pub fn write_brain_draft(
             "action": "create-or-replace",
             "content": draft_markdown(candidate, verdict, scores, unscored_reason),
         }],
-        "x_commrails": {
+        "x_commrails": { // old-names: keep (Brain draft key / lesson file names already in the Brain)
             "candidate_id": candidate.candidate_id,
             "dag_id": candidate.dag_id,
             "node_id": candidate.node_id,
@@ -800,11 +800,11 @@ mod tests {
         assert_eq!(d["date"].as_str().unwrap().len(), 10);
         let u = &d["updates"][0];
         assert_eq!(u["action"], json!("create-or-replace"));
-        assert_eq!(u["doc"], json!("Sessions/lessons/commrails-dag_x-mc_x.md"));
+        assert_eq!(u["doc"], json!("Sessions/lessons/commrails-dag_x-mc_x.md")); // old-names: keep (Brain draft key / lesson file names already in the Brain)
         let content = u["content"].as_str().unwrap();
         assert!(content.starts_with("---\ndoc: project\n"));
         assert!(content.contains("UNSCORED: down"));
         assert!(content.contains("Human writes the lesson"));
-        assert_eq!(d["x_commrails"]["scored"], json!(false));
+        assert_eq!(d["x_commrails"]["scored"], json!(false)); // old-names: keep (Brain draft key / lesson file names already in the Brain)
     }
 }

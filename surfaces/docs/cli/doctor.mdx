@@ -69,6 +69,21 @@ The project section inspects the current working directory.
 | `.gizzi` directory | Pass if present; otherwise noted as not found |
 | Git repository | Pass if `.git` exists; otherwise noted as not a git repository |
 
+### Factory: home move
+
+The [Allternit Factory](/factory/overview) engine keeps its state in `~/.allternit/factory/`. Older installs kept the orchestrator's state in a different home folder (named on the [migration page](/factory/migration#on-disk-state)). The engine moves it once, when `allternit-factory serve` starts (Desktop starts the engine for you). The move never overwrites a file, drops files that are identical in both places, and is skipped when `$ALLTERNIT_FACTORY_HOME` is set.
+
+`gizzi doctor` only reads: it checks `~/.allternit/factory/migrated-agent-orchestrator.json` (the move's record) and whether the old folder still exists, then reports one of these.
+
+| Result | Status | What to do |
+|--------|--------|------------|
+| Moved on `<date>` | Pass | Nothing |
+| Nothing to move | Pass | Nothing |
+| Kept in place: Python venvs or linked checkouts, which can't move | Pass | Nothing. They keep working where they are |
+| Not moved yet | Warn | Start the engine once (open Desktop, or run any `gizzi` command that needs it), or run `allternit-factory internal migrate-home` |
+| `N` items left, because `~/.allternit/factory` has different files with the same names | Warn | Compare the two copies and remove the one you don't need by hand. The engine never picks one for you |
+| The folder came back after the move | Warn | An old orchestrator script wrote to it again. Remove the old script, then run `allternit-factory internal migrate-home --again` |
+
 ## Basic usage
 
 ```bash
@@ -115,6 +130,7 @@ When a check fails, `gizzi doctor` prints an `✗` line with a specific message:
 - **Git missing** — Install Git. Version control features such as diff context and branch awareness depend on it.
 - **No providers configured** — Run `gizzi connect login` to add credentials for at least one provider.
 - **Database or config directory missing** — These are created automatically during normal use. If they remain missing, verify permissions in `~/.local/share/gizzi` and `~/.config/gizzi-code`.
+- **Factory home move warning** — Follow the "What to do" column in [Factory: home move](#factory-home-move).
 
 ## Interactive diagnostics
 

@@ -1,4 +1,4 @@
-//! `ao harness status|sync|uninstall` — Rust port of the Allternit ops harness
+//! `allternit-factory pane harness status|sync|uninstall` — Rust port of the Allternit ops harness
 //! sync (`Allternit Brain/Ops/harness-sync.js` + `harness-sync/lib.js`) with
 //! byte-parity across all 16 tools in `Ops/harness.json`.
 //!
@@ -6,8 +6,8 @@
 //! phase spec on disagreement). The manifest is the single source of truth —
 //! the JS driver config bodies are dead code (gizzi drifted) and are NOT
 //! ported; only each driver's `key`/`label`/`installed()` probe sequence is,
-//! via the [`DRIVERS`] table (conformance-checked against the JS driver files
-//! by tests/ao_harness_parity/run.sh via drivers.tsv).
+//! via the [`DRIVERS`] table (it was checked against the JS driver files by a
+//! parity harness, retired with the pre-Factory CLI).
 //!
 //! Pure filesystem CLI: no engine socket, no network. The only subprocesses
 //! are the `cli`-kind MCP tool invocations (`grok`/`agy`/`opencode`/`qwen`),
@@ -15,7 +15,7 @@
 //!
 //! The manifest ships embedded below (`harness.json`, a verbatim copy of
 //! `Ops/harness.json` — run.sh asserts the copy stays byte-identical).
-//! `AO_HARNESS_MANIFEST` overrides the path for tests and future phases.
+//! `ALLTERNIT_FACTORY_HARNESS_MANIFEST` overrides the path for tests and future phases.
 
 mod collate;
 mod json_val;
@@ -35,8 +35,7 @@ use serde::Deserialize;
 
 use json_val::JVal;
 
-/// Verbatim copy of `Allternit Brain/Ops/harness.json` (checked by
-/// tests/ao_harness_parity/run.sh).
+/// Verbatim copy of `Allternit Brain/Ops/harness.json`.
 const EMBEDDED_MANIFEST: &str = include_str!("harness.json");
 
 // ---------------------------------------------------------------------------
@@ -81,7 +80,7 @@ pub(crate) struct ToolCfg {
     pub(crate) sync_when_absent: bool,
     #[serde(default)]
     pub(crate) mcp: Option<McpCfg>,
-    // P7 (ao harness install): per-tool license class + install recipe. Both
+    // P7 (allternit-factory pane harness install): per-tool license class + install recipe. Both
     // verified ABSENT before P7 (spec binding 2); `_licenseNote` in the
     // manifest carries the evidence URL for each class assignment.
     #[serde(default)]
@@ -160,7 +159,7 @@ pub(crate) struct McpCfg {
 }
 
 fn load_manifest() -> std::io::Result<Manifest> {
-    let text = if let Ok(override_path) = std::env::var("AO_HARNESS_MANIFEST") {
+    let text = if let Ok(override_path) = std::env::var("ALLTERNIT_FACTORY_HARNESS_MANIFEST") {
         std::fs::read_to_string(&override_path).map_err(|err| {
             std::io::Error::new(
                 err.kind(),
@@ -246,8 +245,8 @@ pub(crate) struct FsCtx {
 
 impl FsCtx {
     fn from_env() -> Self {
-        // P7: a managed-dir install (AO_HARNESS_HOME or ~/.ao/harness) must be
-        // visible to the installed() probes so `ao harness sync` reaches tools
+        // P7: a managed-dir install (ALLTERNIT_FACTORY_HARNESS_HOME or ~/.allternit/factory/harness) must be
+        // visible to the installed() probes so `allternit-factory pane harness sync` reaches tools
         // ao itself installed — the managed bin dir joins PATH exactly the way
         // HR CE puts $TOOLS/bin on PATH for its entrypoint (spec binding 5:
         // executor registration is P4 machinery; P7 just feeds it a reachable
@@ -533,7 +532,7 @@ fn mcp_remove(m: &McpCfg, server: &McpServer, dry_run: bool) -> std::io::Result<
 }
 
 // ---------------------------------------------------------------------------
-// CLI surface (`ao harness [status|sync|uninstall] [--dry-run] [--tools=a,b]`)
+// CLI surface (`allternit-factory pane harness [status|sync|uninstall] [--dry-run] [--tools=a,b]`)
 // ---------------------------------------------------------------------------
 
 pub(crate) fn run(args: &[String]) -> std::io::Result<i32> {
@@ -561,7 +560,7 @@ pub(crate) fn run(args: &[String]) -> std::io::Result<i32> {
         }
     }
     let command = positionals.first().map(String::as_str).unwrap_or("status");
-    // `positionals.get(1..)` — a bare `ao harness` (no positional at all)
+    // `positionals.get(1..)` — a bare `allternit-factory pane harness` (no positional at all)
     // must not slice-panic on an empty vec.
     let install_tools: Vec<&str> = positionals
         .get(1..)
@@ -589,8 +588,7 @@ pub(crate) fn run(args: &[String]) -> std::io::Result<i32> {
         "uninstall" => cmd_uninstall(&manifest, &tools_filter, dry_run),
         "install" => install::cmd_install(&manifest, &install_tools, &accepts_terms, dry_run),
         other => {
-            // Byte-parity: the JS harness-sync prints exactly this list; the
-            // parity harness diffs the error line (ao_harness_parity/run.sh).
+            // The same error line the JS harness-sync printed.
             eprintln!("Unknown command: {other} (expected status | sync | uninstall)");
             Ok(1)
         }
@@ -834,38 +832,6 @@ mod tests {
         assert_eq!(class_of("dsh"), LicenseClass::Undeclared);
         assert_eq!(class_of("kimi"), LicenseClass::Mit);
         assert_eq!(class_of("codex"), LicenseClass::Apache);
-    }
-
-    #[test]
-    fn driver_table_matches_checked_in_tsv() {
-        // Conformance gate for the gizzi-drift class of bug: the Rust
-        // key/label/probe table must match tests/ao_harness_parity/drivers.tsv,
-        // which run.sh diffs against the live JS driver files.
-        let tsv = std::fs::read_to_string(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/ao_harness_parity/drivers.tsv"
-        ))
-        .expect("drivers.tsv exists");
-        let expected: Vec<Vec<String>> = tsv
-            .lines()
-            .filter(|line| !line.is_empty() && !line.starts_with('#'))
-            .map(|line| line.split('\t').map(str::to_string).collect())
-            .collect();
-        assert_eq!(expected.len(), DRIVERS.len(), "driver count mismatch");
-        for (row, driver) in expected.iter().zip(DRIVERS.iter()) {
-            assert_eq!(row[0], driver.key, "key mismatch");
-            assert_eq!(row[1], driver.label, "label mismatch for {}", driver.key);
-            let probes: Vec<String> = driver
-                .probes
-                .iter()
-                .map(|probe| match probe {
-                    Probe::Exists(path) => format!("exists:{path}"),
-                    Probe::Which(bin) => format!("which:{bin}"),
-                })
-                .collect();
-            let tsv_probes: Vec<&str> = row[2..].iter().map(String::as_str).collect();
-            assert_eq!(probes, tsv_probes, "probe mismatch for {}", driver.key);
-        }
     }
 
     #[test]

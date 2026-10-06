@@ -1,22 +1,20 @@
-//! Dispatch mailbox — Bus-backed queue-not-drop messaging for `ao` sessions.
+//! Dispatch mailbox: Bus-backed queue-not-drop messaging for agent sessions.
 //!
-//! When a dispatch targets a busy or unverifiable session, the message is
-//! enqueued on the Rails Bus (`allternit-commrails`, durable SQLite
-//! at `<root>/.allternit/bus/queue.db`) with recipient `peer:ao-<slug>` and
-//! transport `mailbox`. The drainer (owned by ao-engine — exactly one per
-//! recipient; the Bus delivery status is global per recipient, so two
-//! drainers would race) later takes the oldest pending row, injects it
-//! through the same verified-paste path `ao send` uses, and only on verified
-//! delivery calls `mark_delivered`. A failed injection leaves the row
-//! `pending` — rollback for free.
+//! When a send targets a busy or unverifiable session, the message is
+//! enqueued on the Factory bus (the engine's durable SQLite at
+//! `<root>/.allternit/bus/queue.db`) with recipient `peer:ao-<slug>` and
+//! transport `mailbox`. `allternit-factory orchestration drain` later takes
+//! the oldest pending row, injects it through the same verified paste a send
+//! uses, and only on verified delivery calls `mark_delivered`. A failed
+//! injection leaves the row `pending` (rollback for free). Run one drain per
+//! session at a time: the Bus delivery status is global per recipient.
 //!
-//! The HTTP inbox endpoint (`GET /api/rails/peers/:name/inbox`) marks
+//! The HTTP inbox endpoint (`GET /api/factory/peers/:name/inbox`) marks
 //! delivered on read; it is deliberately NOT used here. Settlement happens
 //! only after verified pane delivery, server-free (no 8013 dependency).
 //!
-//! Root resolution matches the peers feed (`--root` flag > `AO_PEERS_ROOT`
-//! env > process cwd): the Bus is local to a root, so a mailbox enqueued
-//! under one root is invisible to a drainer running under another.
+//! The Bus is local to a workspace root (the engine's `--root`), so a message
+//! queued under one root is invisible to a drain run under another.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -107,11 +105,6 @@ pub fn pending(root: &Path, session: &str) -> Result<Vec<BusMessage>, String> {
             .await
             .map_err(|err| format!("bus poll: {err}"))
     })
-}
-
-/// Pending depth only (cheap registry refresh).
-pub fn pending_depth(root: &Path, session: &str) -> Result<usize, String> {
-    Ok(pending(root, session)?.len())
 }
 
 /// Settle a row after verified pane delivery. Callers must have already

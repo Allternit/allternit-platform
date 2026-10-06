@@ -28,8 +28,8 @@ use crate::api::schema::{
     ReadFormat, ReadSource, Request,
 };
 
-/// ao session registry (`~/.agent-orchestrator/state.json`) — the same file
-/// `ao spawn|kill` maintains; read-only here.
+/// The Factory session registry (`~/.allternit/factory/registry.json`) — the same file
+/// `allternit-factory pane spawn|kill` maintains; read-only here.
 #[derive(Default, Deserialize)]
 struct AoRegistry {
     sessions: BTreeMap<String, AoRegistryEntry>,
@@ -49,10 +49,7 @@ pub(crate) struct ShimState {
 }
 
 fn registry_path() -> std::path::PathBuf {
-    let home = std::env::var_os("HOME")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| std::path::PathBuf::from("/"));
-    home.join(".agent-orchestrator").join("state.json")
+    allternit_factory_engine::registry::Registry::open_default().path().to_path_buf()
 }
 
 fn registry_mtime_ms() -> u64 {
@@ -165,7 +162,7 @@ async fn list_sessions() -> Result<Vec<Value>, String> {
             continue;
         }
         // Presence probe: the engine removes dead workspaces, so listing
-        // means alive (same semantics as `ao status`).
+        // means alive (same semantics as `allternit-factory pane status`).
         let alive = workspaces
             .iter()
             .any(|ws| ws["label"].as_str() == Some(id.as_str()));
@@ -374,13 +371,13 @@ async fn reply_ok() -> Json<bool> {
 }
 
 async fn create_session() -> Response {
-    // Creating a gizzi-style chat session has no ao-engine equivalent; ao
-    // sessions come from `ao spawn`. Surfaced explicitly rather than faked.
+    // Creating a gizzi-style chat session has no pane-engine equivalent; ao
+    // sessions come from `allternit-factory pane spawn`. Surfaced explicitly rather than faked.
     (
         StatusCode::NOT_IMPLEMENTED,
         Json(json!({
             "error": "not_implemented",
-            "message": "ao sessions are created with `ao spawn <slug> <repo-dir> <agent-cmd…>` on the node"
+            "message": "ao sessions are created with `allternit-factory pane spawn <slug> <repo-dir> <agent-cmd…>` on the node"
         })),
     )
         .into_response()
@@ -881,7 +878,7 @@ async fn invoke_capability(Json(body): Json<InvokeBody>) -> Response {
             StatusCode::NOT_IMPLEMENTED,
             Json(json!({
                 "error": "not_implemented",
-                "message": "ao sessions are created with `ao spawn <slug> <repo-dir> <agent-cmd…>` on the node"
+                "message": "ao sessions are created with `allternit-factory pane spawn <slug> <repo-dir> <agent-cmd…>` on the node"
             })),
         )
             .into_response(),
@@ -1034,7 +1031,7 @@ pub(crate) async fn serve(port: u16, state: Arc<ShimState>) -> Result<(), String
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
         .await
         .map_err(|err| format!("cannot bind 127.0.0.1:{port}: {err}"))?;
-    println!("[ao-fabric] loopback shim listening on http://127.0.0.1:{port}");
+    println!("[factory-fabric] loopback shim listening on http://127.0.0.1:{port}");
     axum::serve(listener, app)
         .await
         .map_err(|err| format!("shim server failed: {err}"))

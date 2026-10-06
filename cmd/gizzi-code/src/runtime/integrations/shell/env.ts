@@ -151,7 +151,7 @@ export namespace ShellEnv {
     "HOMEBREW_",
     "GIT_",
     "GIZZI_",
-    // gizzi exports its CommRails peer name / inbox for commands to use.
+    // gizzi exports its Factory peer name / inbox for commands to use.
     "ALLTERNIT_",
   ]
 

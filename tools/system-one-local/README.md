@@ -169,8 +169,8 @@ in the dry-run record as `s1_gate` and never changes what the hook emits; S1 may
 (`tighten()`), never allow. To give those decisions outcome labels, add `hooks/s1-outcome` for
 the `PermissionRequest`, `PostToolUse`, `PostToolUseFailure` and `Stop` events (same matcher for
 the tool events). It never prints a decision. Labels go by `subject_ref = cc-tool:<tool_use_id>`
-with no `question_id`, so every gate on that call (this guard, the CommRails judge and its first
-pass, when `allternit judge tool --tool-call-id` or the CommRails hook passed the id) is labelled:
+with no `question_id`, so every gate on that call (this guard, the Factory Gate judge and its first
+pass, when `allternit judge tool --tool-call-id` or the Factory hook passed the id) is labelled:
 
 - `PostToolUse`: the call ran → `true`.
 - `PostToolUseFailure`: the call ran and failed → `true` (it was allowed).
@@ -184,9 +184,10 @@ pass, when `allternit judge tool --tool-call-id` or the CommRails hook passed th
 `hooks/posttooluse-outcome` still works and dispatches the same way. The compiled binary runs the
 same hook as `system-one hook-outcome` (stdin in, nothing out, exit 0).
 
-CommRails registers `system-one hook-outcome` for those four events in the session `--settings`
-file it writes for every gated Claude Code or Qwen spawn (`commrails::hook::claude_settings` / `qwen_settings`), whenever it
-finds a `system-one` binary (`ALLTERNIT_SYSTEM_ONE_BIN`, next to the CommRails binary or the
+The Factory engine registers `system-one hook-outcome` for those four events in the session `--settings`
+file it writes for every gated Claude Code or Qwen spawn (`gate::hook::claude_settings` / `qwen_settings`
+in `factory/engine`), whenever it
+finds a `system-one` binary (`ALLTERNIT_SYSTEM_ONE_BIN`, next to the engine binary or the
 current executable, or on `PATH`). Set `ALLTERNIT_S1_OUTCOME_HOOKS=0` to turn that off. Personal
 `~/.claude` settings are never edited; use the snippet above for a hand-run harness.
 

@@ -81,9 +81,9 @@ verify:
 - **events/outbox.ts** — the D12 spine: enqueue (INSERT OR IGNORE),
   deliverUndelivered/replay with cursor + task scoping, ack (re-ack no-op),
   markDelivered for live SSE writes, pruneAckedOlderThan(7d).
-- **events/notify.ts** — terminal push: bot requesters get a CommRails peer
-  message (`POST {apiBase}/api/rails/peers/:name/send`, body `{ body, from }`
-  matching the rails route); user/cli/system requesters get a JSON drop file
+- **events/notify.ts** — terminal push: bot requesters get a Factory peer
+  message (`POST {apiBase}/api/factory/peers/:name/send`, body `{ body, from }`
+  matching the Factory peers route); user/cli/system requesters get a JSON drop file
   in `.allternit/notifications/`; MCP via stub interface + NoopMcpNotifier.
   Failures never throw into the event path — they land as `notify.failed`
   ledger rows. Injectable fetch; `drain()` for tests/shutdown.

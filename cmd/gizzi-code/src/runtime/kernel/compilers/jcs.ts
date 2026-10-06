@@ -1,6 +1,6 @@
 /**
  * RFC 8785 (JCS) canonical JSON + `sha256:<hex>` hashing, matching the WP3
- * receipt chain in commrails/src/receipts/jcs.rs so hashes computed here are
+ * receipt chain in factory/engine/src/workspace/receipts/jcs.rs so hashes computed here are
  * the same material the chain signs.
  */
 import { createHash } from "crypto"

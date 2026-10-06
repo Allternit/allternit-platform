@@ -1,4 +1,5 @@
 import fs from "fs"
+import os from "os"
 import path from "path"
 import { readAuthProfiles } from "@/runtime/context/config/auth-profiles"
 import { ALLTERNIT_GATEWAY_BASE } from "@/shared/constants/allternitGateway"
@@ -321,4 +322,97 @@ export async function checkFactoryEngine(deps: FactoryEngineCheckDeps = {}): Pro
     })
   }
   return checks
+}
+
+export type FactoryHomeMoveCheckDeps = {
+  env?: NodeJS.ProcessEnv
+  home?: string
+  exists?: (p: string) => boolean
+  readFile?: (p: string) => string
+}
+
+type HomeMoveMarker = {
+  from?: string
+  to?: string
+  at?: string
+  dryRun?: boolean
+  moved?: unknown[]
+  deduplicated?: unknown[]
+  conflicts?: unknown[]
+  kept?: unknown[]
+  removedOldHome?: boolean
+}
+
+/**
+ * `gizzi doctor` — the engine's one-time move of the pre-Factory orchestrator
+ * home into the Factory home (`$ALLTERNIT_FACTORY_HOME`, default
+ * ~/.allternit/factory). Reads the engine's migration marker and checks
+ * whether the old folder is still there.
+ */
+export function checkFactoryHomeMove(deps: FactoryHomeMoveCheckDeps = {}): DoctorCheck {
+  const id = "factory-home-move"
+  const section = "Factory"
+  const env = deps.env ?? process.env
+  const home = deps.home ?? os.homedir()
+  const exists = deps.exists ?? fs.existsSync
+  const readFile = deps.readFile ?? ((p: string) => fs.readFileSync(p, "utf8"))
+  const factoryHome = env.ALLTERNIT_FACTORY_HOME || path.join(home, ".allternit", "factory")
+  const oldHome = path.join(home, ".agent-orchestrator") // old-names: keep (the folder the engine migrates from)
+  const markerPath = path.join(factoryHome, "migrated-agent-orchestrator.json")
+
+  let marker: HomeMoveMarker | null = null
+  if (exists(markerPath)) {
+    try {
+      marker = JSON.parse(readFile(markerPath)) as HomeMoveMarker
+    } catch (e) {
+      return {
+        id,
+        section,
+        status: "warn",
+        message: `Couldn't read ${markerPath}: ${e instanceof Error ? e.message : String(e)}`,
+      }
+    }
+  }
+  const oldExists = exists(oldHome)
+
+  if (!oldExists) {
+    return marker
+      ? { id, section, status: "pass", message: `Moved ~/.agent-orchestrator into ${factoryHome} on ${marker.at ?? "an unknown date"}` } // old-names: keep (reports the move)
+      : { id, section, status: "pass", message: "Nothing to move" }
+  }
+  if (!marker) {
+    return {
+      id,
+      section,
+      status: "warn",
+      message: "~/.agent-orchestrator hasn't moved yet. Start the engine once (Allternit Desktop does), or run `allternit-factory internal migrate-home`", // old-names: keep (names the folder to move)
+    }
+  }
+  const conflicts = Array.isArray(marker.conflicts) ? marker.conflicts : []
+  if (conflicts.length) {
+    const first = conflicts.slice(0, 3).map((c) => (typeof c === "string" ? c : JSON.stringify(c))).join(", ")
+    const more = conflicts.length > 3 ? ", …" : ""
+    return {
+      id,
+      section,
+      status: "warn",
+      message: `${conflicts.length} item(s) left in ~/.agent-orchestrator because ${factoryHome} has different files with the same names: ${first}${more}. Compare and remove them by hand`, // old-names: keep (names the folder holding conflicts)
+    }
+  }
+  const kept = Array.isArray(marker.kept) ? marker.kept : []
+  if (kept.length) {
+    const names = kept.map((k) => (typeof k === "string" ? k : JSON.stringify(k))).join(", ")
+    return {
+      id,
+      section,
+      status: "pass",
+      message: `Moved ~/.agent-orchestrator into ${factoryHome} on ${marker.at ?? "an unknown date"}; kept in place: ${names} (venvs/worktrees can't move)`, // old-names: keep (reports the move)
+    }
+  }
+  return {
+    id,
+    section,
+    status: "warn",
+    message: "~/.agent-orchestrator came back after the move (an old ao-* script ran). Run `allternit-factory internal migrate-home --again`", // old-names: keep (names the folder that came back)
+  }
 }

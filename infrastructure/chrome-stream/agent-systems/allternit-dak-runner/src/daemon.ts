@@ -133,7 +133,7 @@ async function startDaemon(config: DaemonConfig): Promise<void> {
   } else {
     // Use unified adapter's HTTP mode with a local fallback
     railsHttp = createRailsHttpAdapter({
-      baseURL: 'http://localhost:3010/api/rails',
+      baseURL: 'http://localhost:3010/api/factory',
     });
   }
 

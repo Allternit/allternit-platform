@@ -74,7 +74,7 @@ pub struct RailsState {
 
 impl RailsState {
     pub async fn new(root_dir: std::path::PathBuf) -> anyhow::Result<Self> {
-        info!("Initializing Rails service state...");
+        info!("Initializing Factory core state...");
 
         // Initialize Ledger
         let ledger = Arc::new(Ledger::new(LedgerOptions {
@@ -174,7 +174,7 @@ impl RailsState {
         // Initialize steering coordinator.
         let steer = Arc::new(Steer::new(ledger.clone()));
 
-        info!("Rails service state initialized successfully");
+        info!("Factory core state initialized");
 
         Ok(Self {
             root_dir,
@@ -199,18 +199,23 @@ impl RailsState {
 // Routes
 // ============================================================================
 
-pub fn rails_router() -> Router<Arc<AppState>> {
+/// The Factory routes allternit-api serves in-process (ledger, Gate, mail,
+/// peers, steer, WIHs, tickets, plans …), mounted under `/api/factory` next to
+/// the engine proxy (`factory_proxy`). Paths are static, so they win over the
+/// proxy's `/api/factory/*rest`; none of them repeats an engine route
+/// (`health`, `dags/:id`, `runs` belong to the engine), which is why health,
+/// the dag views and run cancel live under `ledger/` and `plan/` here.
+pub fn factory_core_router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/", get(rails_status))
-        // Health
-        .route("/health", get(health_check))
+        // Health of the in-process ledger/Gate/leases (the engine's own is /api/factory/health)
+        .route("/ledger/health", get(health_check))
         // Peers (cross-session messaging)
         .route("/peers", get(list_peers).post(register_peer))
         .route("/peers/:id_or_name", delete(unregister_peer))
         .route("/peers/:id_or_name/heartbeat", post(heartbeat_peer))
         .route("/peers/:id_or_name/send", post(send_to_peer))
         .route("/peers/:id_or_name/inbox", get(poll_peer_inbox))
-        // Bot Agents BA-1: read-only ao/peer visibility DTO (empty panes if none)
+        // Bot Agents BA-1: read-only pane/peer visibility DTO (empty panes if none)
         .route("/visibility", get(visibility))
         // Steer
         .route("/steer/checkpoint", post(steer_checkpoint))
@@ -269,17 +274,16 @@ pub fn rails_router() -> Router<Arc<AppState>> {
         )
         // Plan (unscoped planning data plane; mirrors the standalone /v1/plan* surface)
         .route("/plans", get(list_plans))
-        .route("/dags", get(dags_view))
+        .route("/plans/dags", get(dags_view))
         .route("/plan", post(plan_new))
         .route("/plan/from-text", post(plan_from_text))
         .route("/plan/refine", post(plan_refine))
         .route("/plan/:dag_id", get(plan_show))
-        .route("/dags/:dag_id/render", get(dag_render))
-        .route("/dags/:dag_id/execute", post(dag_execute))
-        .route("/dags/:dag_id/nodes", post(create_dag_node))
-        .route("/dags/:dag_id/nodes/:node_id", patch(update_dag_node))
-        .route("/dags/:dag_id/nodes/:node_id", delete(delete_dag_node))
-        .route("/runs/:run_id/cancel", post(run_cancel))
+        .route("/plan/:dag_id/render", get(dag_render))
+        .route("/plan/:dag_id/execute", post(dag_execute))
+        .route("/plan/:dag_id/nodes", post(create_dag_node))
+        .route("/plan/:dag_id/nodes/:node_id", patch(update_dag_node).delete(delete_dag_node))
+        .route("/plan/runs/:run_id/cancel", post(run_cancel))
         // Leases
         .route("/leases", get(list_leases).post(request_lease))
         .route("/leases/:lease_id", get(get_lease).delete(release_lease))
@@ -311,22 +315,31 @@ pub fn rails_router() -> Router<Arc<AppState>> {
         .route("/vault/archive", post(vault_archive))
 }
 
+/// [`factory_core_router`] plus the subpaths it renamed (`/`, `/health`,
+/// `/dags…`, `/runs/:id/cancel`) in their old form. Mounted only under the old
+/// prefixes, for callers already deployed (see main.rs); nothing new calls it.
+pub fn legacy_alias_router() -> Router<Arc<AppState>> {
+    factory_core_router()
+        .route("/", get(health_check))
+        .route("/health", get(health_check))
+        .route("/dags", get(dags_view))
+        .route("/dags/:dag_id/render", get(dag_render))
+        .route("/dags/:dag_id/execute", post(dag_execute))
+        .route("/dags/:dag_id/nodes", post(create_dag_node))
+        .route("/dags/:dag_id/nodes/:node_id", patch(update_dag_node).delete(delete_dag_node))
+        .route("/runs/:run_id/cancel", post(run_cancel))
+}
+
 // ============================================================================
 // Handlers
 // ============================================================================
-
-async fn rails_status() -> impl IntoResponse {
-    Json(json!({
-        "status": "ok",
-        "service": "rails",
-    }))
-}
 
 async fn health_check(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let _ = state;
     Json(serde_json::json!({
         "status": "healthy",
-        "rails": {
+        "service": "allternit-factory-core",
+        "core": {
             "ledger": true,
             "gate": true,
             "leases": true,
@@ -450,9 +463,9 @@ pub(crate) struct VisibilityDto {
     pub(crate) needs_you: Vec<VisibilityNeed>,
 }
 
-/// Read-only visibility DTO for the CommRails rail. Prefers `ao visibility`
-/// (engine blocked/idle panes + waiting-on-you); falls back to the local
-/// peer registry when ao is down.
+/// Read-only visibility DTO for the Factory rail. Prefers the pane engine's
+/// `allternit-factory pane visibility` (blocked/idle panes + waiting-on-you);
+/// falls back to the local peer registry when the engine is down.
 async fn visibility(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let dto = visibility::load_visibility(&state.rails.root_dir, &state.rails.peers, &state.rails.ledger).await;
     (StatusCode::OK, Json(dto))
@@ -1956,7 +1969,7 @@ async fn close_wih(
         return resp.into_response();
     }
     let evidence = req.evidence.clone().unwrap_or_default();
-    // Read-only observer hooks (commrails/spec/OBSERVER.md): opt-in pre-close
+    // Read-only observer hooks (factory/engine/spec/OBSERVER.md): opt-in pre-close
     // advice, repeat-failure advice after the close. Advisory only.
     allternit_factory_engine::observer::hook_before_close(
         state.rails.root_dir.clone(),
@@ -4951,12 +4964,12 @@ mod tests {
     #[tokio::test]
     async fn mail_e1_endpoints_round_trip() {
         let temp = std::env::temp_dir().join(format!(
-            "allternit-rails-mail-e1-test-{}",
+            "allternit-factory-core-mail-e1-test-{}",
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&temp).unwrap();
         let state = test_app_state(&temp).await;
-        let app = rails_router().with_state(state.clone());
+        let app = factory_core_router().with_state(state.clone());
 
         // R4: legacy send with only {"body": ...} and no thread lands in
         // mail:general (previously a 500 on the "default" topic).
@@ -5083,12 +5096,12 @@ mod tests {
     #[tokio::test]
     async fn mail_e2_search_round_trip() {
         let temp = std::env::temp_dir().join(format!(
-            "allternit-rails-mail-e2-test-{}",
+            "allternit-factory-core-mail-e2-test-{}",
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&temp).unwrap();
         let state = test_app_state(&temp).await;
-        let app = rails_router().with_state(state.clone());
+        let app = factory_core_router().with_state(state.clone());
 
         // Typed send with a searchable subject.
         let resp = post_json(
@@ -5145,12 +5158,12 @@ mod tests {
     #[tokio::test]
     async fn mail_e3_overdue_round_trip() {
         let temp = std::env::temp_dir().join(format!(
-            "allternit-rails-mail-e3-test-{}",
+            "allternit-factory-core-mail-e3-test-{}",
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&temp).unwrap();
         let state = test_app_state(&temp).await;
-        let app = rails_router().with_state(state.clone());
+        let app = factory_core_router().with_state(state.clone());
 
         // ack_required message alpha -> beta.
         let resp = post_json(
@@ -5229,7 +5242,7 @@ mod tests {
     #[tokio::test]
     async fn graph_endpoints_over_diamond_fixture() {
         let temp = std::env::temp_dir().join(format!(
-            "allternit-rails-graph-test-{}",
+            "allternit-factory-core-graph-test-{}",
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&temp).unwrap();
@@ -5251,7 +5264,7 @@ mod tests {
             .unwrap();
         }
 
-        let app = rails_router().with_state(state.clone());
+        let app = factory_core_router().with_state(state.clone());
 
         // ── Insights ─────────────────────────────────────────────────────
         let resp = get(&app, "/graph/insights").await;
@@ -5303,12 +5316,12 @@ mod tests {
     #[tokio::test]
     async fn plan_data_plane_round_trip() {
         let temp = std::env::temp_dir().join(format!(
-            "allternit-rails-plan-test-{}",
+            "allternit-factory-core-plan-test-{}",
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&temp).unwrap();
         let state = test_app_state(&temp).await;
-        let app = rails_router().with_state(state.clone());
+        let app = factory_core_router().with_state(state.clone());
 
         // Create a plan.
         let resp = post_json(
@@ -5347,13 +5360,13 @@ mod tests {
         assert_eq!(body["dag"]["nodes"].as_object().unwrap().len(), 1);
 
         // Render: JSON and markdown formats.
-        let resp = get(&app, &format!("/dags/{dag_id}/render?format=json")).await;
+        let resp = get(&app, &format!("/plan/{dag_id}/render?format=json")).await;
         assert_eq!(resp.status(), StatusCode::OK);
         let body = body_json(resp.into_body()).await;
         assert_eq!(body["format"], json!("json"));
         assert!(body["content"].as_str().unwrap().contains(&dag_id));
 
-        let resp = get(&app, &format!("/dags/{dag_id}/render?format=markdown")).await;
+        let resp = get(&app, &format!("/plan/{dag_id}/render?format=markdown")).await;
         let body = body_json(resp.into_body()).await;
         assert_eq!(body["format"], json!("markdown"));
         assert!(body["content"].as_str().unwrap().starts_with("# DAG "));
@@ -5398,18 +5411,18 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
         // Execute flips the root node to RUNNING and returns a run id.
-        let resp = post_json(&app, &format!("/dags/{dag_id}/execute"), json!({})).await;
+        let resp = post_json(&app, &format!("/plan/{dag_id}/execute"), json!({})).await;
         assert_eq!(resp.status(), StatusCode::OK);
         let body = body_json(resp.into_body()).await;
         assert_eq!(body["status"], json!("started"));
         let run_id = body["run_id"].as_str().unwrap().to_string();
 
         // Executing an unknown DAG 404s.
-        let resp = post_json(&app, "/dags/dag_missing/execute", json!({})).await;
+        let resp = post_json(&app, "/plan/dag_missing/execute", json!({})).await;
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 
         // Cancel records a RunCancelled ledger event.
-        let resp = post_json(&app, &format!("/runs/{run_id}/cancel"), json!({})).await;
+        let resp = post_json(&app, &format!("/plan/runs/{run_id}/cancel"), json!({})).await;
         assert_eq!(resp.status(), StatusCode::OK);
         let body = body_json(resp.into_body()).await;
         assert_eq!(body["cancelled"], json!(true));
@@ -5424,12 +5437,12 @@ mod tests {
     #[tokio::test]
     async fn leases_data_plane_round_trip() {
         let temp = std::env::temp_dir().join(format!(
-            "allternit-rails-leases-test-{}",
+            "allternit-factory-core-leases-test-{}",
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&temp).unwrap();
         let state = test_app_state(&temp).await;
-        let app = rails_router().with_state(state.clone());
+        let app = factory_core_router().with_state(state.clone());
 
         // Request a lease (wih_id follows the dag:node convention).
         let resp = post_json(
@@ -5501,12 +5514,12 @@ mod tests {
     #[tokio::test]
     async fn context_packs_data_plane_round_trip() {
         let temp = std::env::temp_dir().join(format!(
-            "allternit-rails-packs-test-{}",
+            "allternit-factory-core-packs-test-{}",
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&temp).unwrap();
         let state = test_app_state(&temp).await;
-        let app = rails_router().with_state(state.clone());
+        let app = factory_core_router().with_state(state.clone());
 
         let inputs = json!({
             "wih_id": "wih_1",
@@ -5567,12 +5580,12 @@ mod tests {
     #[tokio::test]
     async fn mail_review_archive_round_trip() {
         let temp = std::env::temp_dir().join(format!(
-            "allternit-rails-mail-review-test-{}",
+            "allternit-factory-core-mail-review-test-{}",
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&temp).unwrap();
         let state = test_app_state(&temp).await;
-        let app = rails_router().with_state(state.clone());
+        let app = factory_core_router().with_state(state.clone());
 
         let resp = post_json(
             &app,
@@ -5615,12 +5628,12 @@ mod tests {
     #[tokio::test]
     async fn gate_data_plane_round_trip() {
         let temp = std::env::temp_dir().join(format!(
-            "allternit-rails-gate-test-{}",
+            "allternit-factory-core-gate-test-{}",
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&temp).unwrap();
         let state = test_app_state(&temp).await;
-        let app = rails_router().with_state(state.clone());
+        let app = factory_core_router().with_state(state.clone());
 
         // Status + rules (dev checkout ships GATE_RULES.md next to the crate).
         let resp = get(&app, "/gate/status").await;
@@ -5746,12 +5759,12 @@ mod tests {
     #[tokio::test]
     async fn index_rebuild_round_trip() {
         let temp = std::env::temp_dir().join(format!(
-            "allternit-rails-index-test-{}",
+            "allternit-factory-core-index-test-{}",
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&temp).unwrap();
         let state = test_app_state(&temp).await;
-        let app = rails_router().with_state(state.clone());
+        let app = factory_core_router().with_state(state.clone());
 
         // Seed a few ledger events.
         post_json(&app, "/plan", json!({ "text": "Index me" })).await;
@@ -5777,12 +5790,12 @@ mod tests {
     #[tokio::test]
     async fn delete_node_with_active_wih_conflicts() {
         let temp = std::env::temp_dir().join(format!(
-            "allternit-rails-delwih-test-{}",
+            "allternit-factory-core-delwih-test-{}",
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&temp).unwrap();
         let state = test_app_state(&temp).await;
-        let app = rails_router().with_state(state.clone());
+        let app = factory_core_router().with_state(state.clone());
 
         // Plan with a parent + child so we can also exercise the children guard.
         let resp = post_json(
@@ -5801,7 +5814,7 @@ mod tests {
         let body = body_json(resp.into_body()).await;
         let dag_id = body["dag_id"].as_str().unwrap().to_string();
 
-        let resp = get(&app, "/dags?view=all").await;
+        let resp = get(&app, "/plans/dags?view=all").await;
         let body = body_json(resp.into_body()).await;
         let dag = body["dags"]
             .as_array()
@@ -5825,7 +5838,7 @@ mod tests {
         let (leaf_id, _) = nodes.iter().find(|(_, t)| t == "leaf").unwrap().clone();
 
         // Children guard: parent has a non-DONE child.
-        let resp = delete_req(&app, &format!("/dags/{dag_id}/nodes/{parent_id}")).await;
+        let resp = delete_req(&app, &format!("/plan/{dag_id}/nodes/{parent_id}")).await;
         assert_eq!(resp.status(), StatusCode::CONFLICT);
 
         // Pick up the leaf; active WIH must block its deletion.
@@ -5835,7 +5848,7 @@ mod tests {
             .wih_pickup(&dag_id, &leaf_id, "agent-a")
             .await
             .unwrap();
-        let resp = delete_req(&app, &format!("/dags/{dag_id}/nodes/{leaf_id}")).await;
+        let resp = delete_req(&app, &format!("/plan/{dag_id}/nodes/{leaf_id}")).await;
         assert_eq!(resp.status(), StatusCode::CONFLICT);
         let body = body_json(resp.into_body()).await;
         assert!(
@@ -5854,7 +5867,7 @@ mod tests {
             .wih_close(&wih_id, "DONE", &evidence)
             .await
             .unwrap();
-        let resp = delete_req(&app, &format!("/dags/{dag_id}/nodes/{leaf_id}")).await;
+        let resp = delete_req(&app, &format!("/plan/{dag_id}/nodes/{leaf_id}")).await;
         assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 
         let _ = std::fs::remove_dir_all(&temp);
@@ -5866,12 +5879,12 @@ mod tests {
     #[tokio::test]
     async fn patch_reparent_nodes_with_cycle_409() {
         let temp = std::env::temp_dir().join(format!(
-            "allternit-rails-reparent-test-{}",
+            "allternit-factory-core-reparent-test-{}",
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&temp).unwrap();
         let state = test_app_state(&temp).await;
-        let app = rails_router().with_state(state.clone());
+        let app = factory_core_router().with_state(state.clone());
 
         let resp = post_json(
             &app,
@@ -5892,7 +5905,7 @@ mod tests {
 
         // (node_id, parent_node_id) for a node title, via the dags view.
         async fn node_info(app: &Router, dag_id: &str, title: &str) -> (String, Value) {
-            let resp = get(app, "/dags?view=all").await;
+            let resp = get(app, "/plans/dags?view=all").await;
             let body = body_json(resp.into_body()).await;
             let dag = body["dags"]
                 .as_array()
@@ -5924,7 +5937,7 @@ mod tests {
         // Reparent C to the root (explicit null — serde double-Option).
         let resp = patch_json(
             &app,
-            &format!("/dags/{dag_id}/nodes/{c_id}"),
+            &format!("/plan/{dag_id}/nodes/{c_id}"),
             json!({ "parent_node_id": null }),
         )
         .await;
@@ -5936,7 +5949,7 @@ mod tests {
         // parent actually changed via the dags view each time.
         let resp = patch_json(
             &app,
-            &format!("/dags/{dag_id}/nodes/{c_id}"),
+            &format!("/plan/{dag_id}/nodes/{c_id}"),
             json!({ "parent_node_id": b_id }),
         )
         .await;
@@ -5945,7 +5958,7 @@ mod tests {
         assert_eq!(c_parent, json!(b_id));
         let resp = patch_json(
             &app,
-            &format!("/dags/{dag_id}/nodes/{c_id}"),
+            &format!("/plan/{dag_id}/nodes/{c_id}"),
             json!({ "parent_node_id": null }),
         )
         .await;
@@ -5956,7 +5969,7 @@ mod tests {
         // Set up the cycle chain: B under C ...
         let resp = patch_json(
             &app,
-            &format!("/dags/{dag_id}/nodes/{b_id}"),
+            &format!("/plan/{dag_id}/nodes/{b_id}"),
             json!({ "parent_node_id": c_id }),
         )
         .await;
@@ -5967,7 +5980,7 @@ mod tests {
         // ... then reparenting C under its own descendant must 409.
         let resp = patch_json(
             &app,
-            &format!("/dags/{dag_id}/nodes/{c_id}"),
+            &format!("/plan/{dag_id}/nodes/{c_id}"),
             json!({ "parent_node_id": b_id }),
         )
         .await;
@@ -5981,20 +5994,20 @@ mod tests {
         // Unknown parent maps the library error to 400.
         let resp = patch_json(
             &app,
-            &format!("/dags/{dag_id}/nodes/{c_id}"),
+            &format!("/plan/{dag_id}/nodes/{c_id}"),
             json!({ "parent_node_id": "n_bogus" }),
         )
         .await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
         // Empty PATCH is rejected.
-        let resp = patch_json(&app, &format!("/dags/{dag_id}/nodes/{c_id}"), json!({})).await;
+        let resp = patch_json(&app, &format!("/plan/{dag_id}/nodes/{c_id}"), json!({})).await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
         // Title-only PATCH keeps the v4 rename contract.
         let resp = patch_json(
             &app,
-            &format!("/dags/{dag_id}/nodes/{c_id}"),
+            &format!("/plan/{dag_id}/nodes/{c_id}"),
             json!({ "title": "task C renamed" }),
         )
         .await;
@@ -6014,12 +6027,12 @@ mod tests {
     #[tokio::test]
     async fn patch_node_labels_description_priority() {
         let temp = std::env::temp_dir().join(format!(
-            "allternit-rails-node-meta-test-{}",
+            "allternit-factory-core-node-meta-test-{}",
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&temp).unwrap();
         let state = test_app_state(&temp).await;
-        let app = rails_router().with_state(state.clone());
+        let app = factory_core_router().with_state(state.clone());
 
         let resp = post_json(
             &app,
@@ -6037,7 +6050,7 @@ mod tests {
         let dag_id = body["dag_id"].as_str().unwrap().to_string();
 
         async fn node_meta(app: &Router, dag_id: &str, title: &str) -> Value {
-            let resp = get(app, "/dags?view=all").await;
+            let resp = get(app, "/plans/dags?view=all").await;
             let body = body_json(resp.into_body()).await;
             let dag = body["dags"]
                 .as_array()
@@ -6064,7 +6077,7 @@ mod tests {
         // One PATCH sets labels + description + priority together.
         let resp = patch_json(
             &app,
-            &format!("/dags/{dag_id}/nodes/{x_id}"),
+            &format!("/plan/{dag_id}/nodes/{x_id}"),
             json!({
                 "labels": ["backend", "urgent"],
                 "description": "wire the meta endpoint",
@@ -6081,7 +6094,7 @@ mod tests {
         // Labels replace: the old set is gone.
         let resp = patch_json(
             &app,
-            &format!("/dags/{dag_id}/nodes/{x_id}"),
+            &format!("/plan/{dag_id}/nodes/{x_id}"),
             json!({ "labels": ["frontend"] }),
         )
         .await;
@@ -6095,7 +6108,7 @@ mod tests {
         // Empty array clears the label set.
         let resp = patch_json(
             &app,
-            &format!("/dags/{dag_id}/nodes/{x_id}"),
+            &format!("/plan/{dag_id}/nodes/{x_id}"),
             json!({ "labels": [] }),
         )
         .await;
@@ -6106,7 +6119,7 @@ mod tests {
         // Priority clear is not supported: null is a no-op, not a clear.
         let resp = patch_json(
             &app,
-            &format!("/dags/{dag_id}/nodes/{x_id}"),
+            &format!("/plan/{dag_id}/nodes/{x_id}"),
             json!({ "priority": null }),
         )
         .await;
@@ -6121,7 +6134,7 @@ mod tests {
         // Empty description string passes through and clears the text.
         let resp = patch_json(
             &app,
-            &format!("/dags/{dag_id}/nodes/{x_id}"),
+            &format!("/plan/{dag_id}/nodes/{x_id}"),
             json!({ "description": "" }),
         )
         .await;
@@ -6129,6 +6142,32 @@ mod tests {
         let x = node_meta(&app, &dag_id, "task X").await;
         assert_eq!(x["description"], json!(""));
 
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[tokio::test]
+    async fn old_prefix_aliases_serve_the_old_paths_beside_the_factory_routes() {
+        // The same three mounts as main.rs: a duplicate or conflicting route
+        // panics here instead of crash-looping the server at boot.
+        let temp = std::env::temp_dir().join(format!("old-prefix-aliases-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp).unwrap();
+        let app = Router::new()
+            .nest("/api/factory", factory_core_router())
+            .nest("/api/rails", legacy_alias_router()) // old-names: keep (tests the deployed-caller aliases)
+            .nest("/api/commrails", legacy_alias_router()) // old-names: keep (tests the deployed-caller aliases)
+            .with_state(test_app_state(&temp).await);
+        // What deployed callers send (allternit-ai use-rails-dags, gizzi <= 2.1.9).
+        for (path, want) in [
+            ("/api/commrails/dags?view=mine", StatusCode::OK), // old-names: keep (tests the deployed-caller aliases)
+            ("/api/rails/health", StatusCode::OK), // old-names: keep (tests the deployed-caller aliases)
+            ("/api/rails/mail/threads", StatusCode::OK), // old-names: keep (tests the deployed-caller aliases)
+            ("/api/factory/plans/dags?view=mine", StatusCode::OK),
+            // The old subpaths exist only under the old prefixes.
+            ("/api/factory/dags", StatusCode::NOT_FOUND),
+        ] {
+            let res = app.clone().oneshot(Request::get(path).body(Body::empty()).unwrap()).await.unwrap();
+            assert_eq!(res.status(), want, "{path}");
+        }
         let _ = std::fs::remove_dir_all(&temp);
     }
 }

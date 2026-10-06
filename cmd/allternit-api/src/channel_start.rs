@@ -806,7 +806,7 @@ fn thread_for_key(conn: &rusqlite::Connection, bot: &str, key: &str) -> Option<S
 
 /// The bot's mail as threads. `inbox`: mail received (one per sender+subject,
 /// unread while the bot hasn't answered). `needs_ok`: outbound waiting for
-/// your approval (the id is the review thread `POST /api/rails/mail/decide`
+/// your approval (the id is the review thread `POST /api/factory/mail/decide`
 /// takes). `sent`: mail that went out.
 pub fn mail_threads(db: &DbHandle, owner: &str, bot: &str, folder: &str) -> Result<Value, StartError> {
     if !owns_bot(db, owner, bot) {

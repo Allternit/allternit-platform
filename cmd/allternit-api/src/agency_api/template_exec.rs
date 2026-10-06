@@ -4,7 +4,7 @@
 //! attention / wait / parallel) are compiled into a kernel `ComputeGraph`
 //! (one node per step, a NORMAL chain; an s1_decision also gets an explicit S2
 //! fallback node `Fnn`, like the bug-fix graph's F-nodes). Model nodes are
-//! routed by the commrails `Router` over the same pool and the same routing
+//! routed by the Factory engine `Router` over the same pool and the same routing
 //! policy as agency runs; cognition goes to gizzi-code over HTTP (or the dev
 //! scripted executor). S0 commands run under the strict fence (Q25: cleared
 //! env + allowlist, per-run dir, bounded time). Completion is `all_pass`

@@ -8,7 +8,7 @@ Allternit Agents is one product with two specialties:
   own session model. See [Sessions](sessions.md) for the full reference.
 - **Bot Agents** — the same Agent, packaged as a teammate (Hub, Desktop,
   Fabric, @mention). Same `agents` table with `is_bot`. Persistent Computer
-  Cloud desktop. Talk over CommRails. Run via ao. Sessions use
+  Cloud desktop. Talk and run through the Allternit Factory. Sessions use
   `/api/v1/sessions` with `bot_id`.
 
 Underneath both sits the model access layer, exposed directly for callers
@@ -124,8 +124,8 @@ Same primitive as Cloud Agents. Extra packaging:
 | Layer | What it is |
 |---|---|
 | Bot Mode | Who you talk to (profile, brain bind, roster) |
-| CommRails | How they talk (`/api/commrails/*`, Desktop rail) |
-| ao | How they run (spawn / watch / harness) |
+| Factory orchestration | How they talk (`/api/factory/*`: send, mail, peers; Desktop rail) |
+| Factory agents | How they run (`gizzi agents up` / `ps` / harnesses) |
 | Computer | Persistent desktop bound by `bot_id` |
 | Policy | Fail-closed ACI before computer acts |
 

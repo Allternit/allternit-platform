@@ -55,7 +55,7 @@ The store serializes `args` and `env` as JSON strings for SQLite compatibility.
 async fn execute(&self, ctx: JobContext) -> Result<()>;
 ```
 
-`ApiJobHandler` is the default implementation. It POSTs a JSON payload to `{api_url}/rails/cowork/runs` with tenant/workspace/initiator/mode/entrypoint/args/env.
+`ApiJobHandler` is the default implementation. It POSTs a JSON payload to `{api_url}/api/v1/runs` with tenant/workspace/initiator/mode/entrypoint/args/env.
 
 Custom handlers can be supplied via `Scheduler::with_handler` for testing or alternative execution backends.
 

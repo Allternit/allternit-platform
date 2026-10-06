@@ -1,13 +1,13 @@
 /**
  * Allternit gateway base URL — the single place that decides where gizzi-code
- * points for the rails mail bridge, task API, and internal MCP routes.
+ * points for the Factory mail bridge, task API, and internal MCP routes.
  *
  * Precedence: ALLTERNIT_API_URL ?? Allternit_API_URL ?? GIZZI_GATEWAY_URL,
  * falling back to the local loopback gateway for dev. The fallback flips to
  * the public Backend B URL once it is deployed — change it here and only
  * here.
  *
- * NOTE: port 8013 is the gateway (rails mail bridge + task API). Port 3001
+ * NOTE: port 8013 is the gateway (Factory mail bridge + task API). Port 3001
  * is a DIFFERENT service (allternit-api / desktop-cloud) — never use it here.
  */
 

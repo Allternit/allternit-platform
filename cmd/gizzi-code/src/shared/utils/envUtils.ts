@@ -205,3 +205,21 @@ export default {
   isInProtectedNamespace,
   getVertexRegionForModel,
 }
+
+let warnedOldPeerVar = false
+
+/**
+ * Factory peer registration is default-on; `ALLTERNIT_FACTORY_PEER=0` opts
+ * out. `GIZZI_ENABLE_RAILS_PEER` is the name shells set before the Factory, // old-names: keep (migration note)
+ * still read (with a one-time notice) so an opt-out keeps working.
+ */
+export function isFactoryPeerDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (env.ALLTERNIT_FACTORY_PEER !== undefined) return isEnvDefinedFalsy(env.ALLTERNIT_FACTORY_PEER)
+  const old = env.GIZZI_ENABLE_RAILS_PEER // old-names: keep (opt-out set before the Factory)
+  if (old === undefined) return false
+  if (!warnedOldPeerVar) {
+    warnedOldPeerVar = true
+    process.stderr.write('gizzi: GIZZI_ENABLE_RAILS_PEER is deprecated; set ALLTERNIT_FACTORY_PEER instead.\n') // old-names: keep (the deprecation notice)
+  }
+  return isEnvDefinedFalsy(old)
+}

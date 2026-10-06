@@ -1,0 +1,49 @@
+# Allowlist for scripts/check-old-names.sh (allternit-platform).
+# Format: <git pathspec glob> [@<pattern-id>]   # reason
+# A tagged entry allows only that pattern in those files. Keep this short:
+# a hit in living code or docs gets renamed, not allowlisted.
+
+# The check itself
+scripts/check-old-names.sh                    # spells the patterns
+scripts/check-old-names.allow                 # this file
+
+# Migration and rename record (names the old things on purpose)
+surfaces/docs/factory/migration.mdx           # the docs migration page: old → new tables
+docs/specs/allternit-factory/**               # the Factory design + build rules: §12 is the rename table
+**/CHANGELOG*.md                              # release history under the names of the time
+
+# History: dated records of what was decided or done at the time. Rewriting
+# them would falsify history; the Factory docs record the supersession.
+agent-ledger/**                               # signed session attestations
+archive/**                                    # archived code and notes
+docs/archive/**                               # archived docs
+docs/learnings/**                             # dated session learnings
+docs/programs/**                              # finished program plans and notes (rails, ao)
+docs/pipeline/**                              # dated track plans
+docs/parity-reports/**                        # dated parity reports
+docs/parity-reports-archive/**                # dated parity reports
+docs/agent-tasks/**                           # dated task briefs
+docs/reports/**                               # dated reports
+docs/audit/**                                 # dated audits
+docs/jobs/**                                  # dated job notes
+docs/Core_System/**                           # superseded 2026 architecture snapshot (pre-Factory)
+docs/architecture/2026-09-04-p1-route-inventory.md   # dated route inventory
+docs/Operations/OWNER_ACTIONS.md              # dated owner-action log
+.steering/plans/**                            # dated steering plans
+.allternit/shared-context.md                  # dated shared-context log
+alabs-generated-courses/**                    # generated course content (regenerated from sources)
+
+# The pane engine is a fork of Herdr v0.9.0. HERDR_* is its env contract: the
+# agent hooks it installs into harness configs (claude, codex, …) read them,
+# so renaming would break hooks already on users' machines.
+factory/pane/** @herdr-env                    # upstream Herdr env contract
+cmd/allternit-factory/tests/** @herdr-env     # tests set the pane's HERDR_SESSION / HERDR_SOCKET_PATH for an isolated pane server
+THIRD-PARTY-NOTICES.md @herdr-env             # license notice names upstream
+
+# Data and fingerprints that name old paths
+.gitleaksignore @commrails                    # gitleaks fingerprints of past commits name the files' old paths
+surfaces/docs/docs.json @commrails            # redirects from the old CommRails doc URLs to the Factory pages
+cmd/allternit-api/src/bot_desktop_mux.rs @herdr-env              # sets the pane engine's session env (HERDR_SESSION is its upstream contract)
+cmd/allternit-computer-cloud/guest/build-image.sh @herdr-env      # cloud guest unit sets the pane engine's session env
+cmd/allternit-computer-cloud/guest/cloud-init.yaml @herdr-env     # same, for cloud-init guests
+services/workspace-service/tests/** @herdr-env                    # tests isolate a pane server via HERDR_SESSION / HERDR_SOCKET_PATH

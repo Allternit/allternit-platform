@@ -2,7 +2,7 @@
  * Agent Workspace Communication State
  * 
  * Manages communication state in .allternit/communication/
- * Syncs with kernel and Rails receipt system.
+ * Syncs with kernel and Factory receipt system.
  * 
  * Structure:
  * .allternit/communication/

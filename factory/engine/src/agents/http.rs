@@ -252,15 +252,26 @@ mod tests {
     #[tokio::test]
     async fn teams_list_and_dry_run_up() {
         let root = workspace();
-        // A pane engine binary that lists no sessions keeps the test hermetic.
-        let fake = root.path().join("fake-factory");
-        std::fs::write(&fake, "#!/bin/sh\necho 'no ao-* sessions'\n").unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // A pane engine with no live panes keeps the test hermetic.
+        struct NoPanes;
+        impl crate::agents::backend::PaneBackend for NoPanes {
+            fn spawn(&self, req: &crate::agents::backend::PaneSpawn) -> anyhow::Result<crate::agents::backend::LivePane> {
+                anyhow::bail!("not in this test ({})", req.session)
+            }
+            fn list(&self) -> anyhow::Result<Vec<crate::agents::backend::LivePane>> {
+                Ok(vec![])
+            }
+            fn send(&self, _: &std::path::Path, s: &str, _: &str, _: &str, _: bool) -> anyhow::Result<crate::agents::backend::PaneSend> {
+                anyhow::bail!("not in this test ({s})")
+            }
+            fn capture(&self, s: &str, _: u32) -> anyhow::Result<String> {
+                anyhow::bail!("not in this test ({s})")
+            }
+            fn kill(&self, _: &str) -> anyhow::Result<()> {
+                Ok(())
+            }
         }
-        std::env::set_var(team_apply::ENV_FACTORY_BIN, &fake);
+        crate::agents::backend::install(std::sync::Arc::new(NoPanes));
         let app = router(root.path().to_path_buf());
 
         let (st, v) = call(&app, "GET", "/api/factory/teams", None).await;
@@ -293,6 +304,5 @@ mod tests {
         let (st, v) = call(&app, "POST", "/api/factory/teams/product-build/down", Some(json!({ "dryRun": true }))).await;
         assert_eq!(st, StatusCode::OK, "{v}");
         assert_eq!(v["stopped"], json!([]));
-        std::env::remove_var(team_apply::ENV_FACTORY_BIN);
     }
 }

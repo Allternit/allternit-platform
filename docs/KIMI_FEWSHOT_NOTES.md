@@ -20,7 +20,7 @@ files_changed:
   - docs/KIMI_FEWSHOT_NOTES.md
 deviations:
   - "JEV_KIMI_HEAD_NOTES.md was expected at docs/ but lives at docs/learnings/JEV_KIMI_HEAD_NOTES.md; this notes file follows the done-criteria path docs/KIMI_FEWSHOT_NOTES.md."
-  - "allternit-commrails is not on PATH in this environment, so no CommRails DAG plan was created; progress is tracked in .steering/checkpoint.md instead (repo rule noted, pragmatic substitution)."
+  - "the Factory CLI is not on PATH in this environment, so no workspace DAG plan was created; progress is tracked in .steering/checkpoint.md instead (repo rule noted, pragmatic substitution)."
   - "4 ruff findings in touched files (unused imports in decision_head.py/shadow_eval.py, an f-string without placeholder in shadow_head_eval.py) pre-exist on origin/main and were left untouched per 'do not silently fix unrelated files'."
   - "evaluation/tier-a/traces.jsonl is covered by the repo-root *.jsonl gitignore; force-added because the make-traces docstring designates it as a committed experiment record and a unit test consumes it."
 remaining:

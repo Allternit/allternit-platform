@@ -3,7 +3,7 @@ import type { Command } from '../../commands.js'
 import { ALLTERNIT_GATEWAY_BASE } from '@/shared/constants/allternitGateway'
 
 const API_BASE = process.env.Allternit_API_URL || ALLTERNIT_GATEWAY_BASE
-const RAILS_BASE = `${API_BASE}/api/rails`
+const FACTORY_BASE = `${API_BASE}/api/factory`
 
 type ReceiptKind =
   | 'tool_call_post'
@@ -77,7 +77,7 @@ async function queryReceipts(options: QueryOptions): Promise<string> {
   if (options.wihId) body.wih_id = options.wihId
   if (options.kinds && options.kinds.length > 0) body.kinds = options.kinds
 
-  const res = await fetch(`${RAILS_BASE}/receipts`, {
+  const res = await fetch(`${FACTORY_BASE}/receipts`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -104,7 +104,7 @@ async function queryReceipts(options: QueryOptions): Promise<string> {
 }
 
 async function showReceipt(id: string): Promise<string> {
-  const res = await fetch(`${RAILS_BASE}/receipts/${encodeURIComponent(id)}`)
+  const res = await fetch(`${FACTORY_BASE}/receipts/${encodeURIComponent(id)}`)
   if (!res.ok) {
     const text = await res.text().catch(() => '')
     throw new Error(`Receipt fetch failed (${res.status} ${res.statusText}): ${text}`)

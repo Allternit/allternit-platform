@@ -3,7 +3,7 @@ import type { Command } from '../../commands.js'
 import { ALLTERNIT_GATEWAY_BASE } from '@/shared/constants/allternitGateway'
 
 const API_BASE = process.env.Allternit_API_URL || ALLTERNIT_GATEWAY_BASE
-const RAILS_BASE = `${API_BASE}/api/rails`
+const FACTORY_BASE = `${API_BASE}/api/factory`
 
 interface WihInfo {
   wih_id: string
@@ -22,10 +22,10 @@ interface GateVerifyResult {
 
 async function loadStatus(): Promise<string> {
   const [wihsRes, vaultRes, gateRes, rulesRes] = await Promise.all([
-    fetch(`${RAILS_BASE}/wihs`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) }),
-    fetch(`${RAILS_BASE}/vault/status`),
-    fetch(`${RAILS_BASE}/gate/verify`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) }),
-    fetch(`${RAILS_BASE}/gate/rules`),
+    fetch(`${FACTORY_BASE}/wihs`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) }),
+    fetch(`${FACTORY_BASE}/vault/status`),
+    fetch(`${FACTORY_BASE}/gate/verify`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) }),
+    fetch(`${FACTORY_BASE}/gate/rules`),
   ])
 
   const wihsData = await wihsRes.json().catch(() => ({}))
@@ -53,7 +53,7 @@ async function loadStatus(): Promise<string> {
 }
 
 async function archiveWih(wihId: string): Promise<string> {
-  const res = await fetch(`${RAILS_BASE}/vault/archive`, {
+  const res = await fetch(`${FACTORY_BASE}/vault/archive`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ wih_id: wihId }),
@@ -66,7 +66,7 @@ async function archiveWih(wihId: string): Promise<string> {
 }
 
 async function verifyGraph(): Promise<string> {
-  const res = await fetch(`${RAILS_BASE}/gate/verify`, {
+  const res = await fetch(`${FACTORY_BASE}/gate/verify`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({}),
@@ -79,7 +79,7 @@ async function verifyGraph(): Promise<string> {
 }
 
 async function rebuildIndex(): Promise<string> {
-  const res = await fetch(`${RAILS_BASE}/index/rebuild`, { method: 'POST' })
+  const res = await fetch(`${FACTORY_BASE}/index/rebuild`, { method: 'POST' })
   if (!res.ok) {
     throw new Error(`Index rebuild failed (${res.status} ${res.statusText})`)
   }

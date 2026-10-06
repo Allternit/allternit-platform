@@ -1362,7 +1362,7 @@ export class DesktopAuthManager {
     const requestPath = typeof message.path === 'string' ? message.path : '';
     if (!requestId || !requestPath.startsWith('/') || requestPath.includes('..') || requestPath.includes('://')) return;
     const allowedPrefixes = [
-      '/api/', '/viz', '/sandbox', '/vm-session', '/rails', '/stream',
+      '/api/', '/viz', '/sandbox', '/vm-session', '/stream',
       '/terminal', '/mcp', '/platform', '/metrics', '/alabs', '/cowork',
       '/webhooks', '/status', '/health',
       '/ws', '/panes',
@@ -1609,7 +1609,7 @@ export class DesktopAuthManager {
     const socketId = typeof message.socket_id === 'string' ? message.socket_id : '';
     const requestPath = typeof message.path === 'string' ? message.path : '';
     const allowedPrefixes = [
-      '/api/', '/viz', '/sandbox', '/vm-session', '/rails', '/stream',
+      '/api/', '/viz', '/sandbox', '/vm-session', '/stream',
       '/terminal', '/mcp', '/platform', '/metrics', '/alabs', '/cowork',
       '/webhooks', '/ws', '/panes', '/status', '/health',
       '/v1/',

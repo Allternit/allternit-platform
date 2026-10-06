@@ -241,7 +241,7 @@ peach = "#f59e0b"
 # headless_rows = 40
 
 # [worktrees]
-# directory = "~/.ao/worktrees"
+# directory = "~/.allternit/factory/worktrees"
 
 [ui]
 # Sidebar width (auto-scaled based on workspace names, this sets the default)
@@ -329,14 +329,14 @@ peach = "#f59e0b"
 
 # Ordered status entries at the right edge of the desktop tab bar.
 # Supported types: zoom, hostname, datetime, text, and command.
-# Hostname, datetime, and command entries resolve on the ao server.
+# Hostname, datetime, and command entries resolve on the allternit-factory pane server.
 # tab_bar_right = []
 # tab_bar_right_separator = " "
 
 # Title ao writes to the terminal it runs in, which is what window managers
 # show in title, tab, and group bars. Tokens are {hostname}, {workspace}, {tab},
 # {pane}, and {terminal_title}; {{ and }} are literal braces.
-# The title renders on the ao server, so {hostname} names the host the panes
+# The title renders on the allternit-factory pane server, so {hostname} names the host the panes
 # run on even when attaching from a remote client.
 # Set to "" to leave the outer terminal title alone.
 window_title = "{hostname}: {workspace}"
@@ -405,7 +405,7 @@ window_title = "{hostname}: {workspace}"
 
 [session]
 # Resume supported AI-agent panes into their native conversation sessions after
-# an ao server restart. Requires official integrations that report session refs.
+# an allternit-factory pane server restart. Requires official integrations that report session refs.
 # resume_agents_on_restore = true
 
 [remote]
@@ -509,7 +509,7 @@ where
         Ok(args) => args,
         Err(err) => {
             eprintln!("error: {err}");
-            eprintln!("run 'ao --help' for usage");
+            eprintln!("run 'allternit-factory pane --help' for usage");
             std::process::exit(2);
         }
     };
@@ -517,7 +517,7 @@ where
         Ok(args) => args,
         Err(err) => {
             eprintln!("error: {err}");
-            eprintln!("run 'ao --help' for usage");
+            eprintln!("run 'allternit-factory pane --help' for usage");
             std::process::exit(2);
         }
     };
@@ -525,7 +525,7 @@ where
         Ok(parsed) => parsed,
         Err(err) => {
             eprintln!("error: {err}");
-            eprintln!("run 'ao --help' for usage");
+            eprintln!("run 'allternit-factory pane --help' for usage");
             std::process::exit(2);
         }
     };
@@ -540,7 +540,7 @@ where
         })
     {
         eprintln!("error: --remote can only be used with the default launch command");
-        eprintln!("run 'ao --help' for usage");
+        eprintln!("run 'allternit-factory pane --help' for usage");
         std::process::exit(2);
     }
 
@@ -582,82 +582,82 @@ where
         println!("Usage: ao [options]");
         println!("       ao --session <name> [options]");
         println!("       ao --remote <ssh-target> [--session <name>]");
-        println!("       ao session attach <name>");
-        println!("       ao completion zsh");
-        println!("       ao spawn [--worktree] <slug> <repo-dir> <agent-cmd...>");
-        println!("       ao send <slug> <prompt...> | ao send <slug> -f <file>");
-        println!("       ao watch <slug> <sentinel-file> [timeout] [interval]");
-        println!("       ao status [slug] [lines=25]");
-        println!("       ao kill <slug> [--rm-worktree]");
-        println!("       ao doctor");
-        println!("       ao serve [--addr ADDR] [--token TOKEN]  (UHP surface, full class)");
-        println!("       ao machine <subcommand> ...");
-        println!("       ao server stop");
-        println!("       ao server reload-config");
-        println!("       ao api <subcommand> ...");
-        println!("       ao completion <shell>");
-        println!("       ao config <subcommand> ...");
-        println!("       ao workspace <subcommand> ...");
-        println!("       ao worktree <subcommand> ...");
-        println!("       ao tab <subcommand> ...");
-        println!("       ao notification <subcommand> ...");
-        println!("       ao agent <subcommand> ...");
-        println!("       ao pane <subcommand> ...");
-        println!("       ao session <subcommand> ...");
-        println!("       ao integration <subcommand> ...");
+        println!("       allternit-factory pane session attach <name>");
+        println!("       allternit-factory pane completion zsh");
+        println!("       allternit-factory pane spawn [--worktree] <slug> <repo-dir> <agent-cmd...>");
+        println!("       allternit-factory pane send <slug> <prompt...> | allternit-factory pane send <slug> -f <file>");
+        println!("       allternit-factory pane watch <slug> <sentinel-file> [timeout] [interval]");
+        println!("       allternit-factory pane status [slug] [lines=25]");
+        println!("       allternit-factory pane kill <slug> [--rm-worktree]");
+        println!("       allternit-factory pane doctor");
+        println!("       allternit-factory pane serve [--addr ADDR] [--token TOKEN]  (UHP surface, full class)");
+        println!("       allternit-factory pane machine <subcommand> ...");
+        println!("       allternit-factory pane server stop");
+        println!("       allternit-factory pane server reload-config");
+        println!("       allternit-factory pane api <subcommand> ...");
+        println!("       allternit-factory pane completion <shell>");
+        println!("       allternit-factory pane config <subcommand> ...");
+        println!("       allternit-factory pane workspace <subcommand> ...");
+        println!("       allternit-factory pane worktree <subcommand> ...");
+        println!("       allternit-factory pane tab <subcommand> ...");
+        println!("       allternit-factory pane notification <subcommand> ...");
+        println!("       allternit-factory pane agent <subcommand> ...");
+        println!("       allternit-factory pane pane <subcommand> ...");
+        println!("       allternit-factory pane session <subcommand> ...");
+        println!("       allternit-factory pane integration <subcommand> ...");
         println!();
         println!("Common commands:");
         for (command, description) in [
             ("ao", "Launch or attach to the persistent session"),
             (
-                "ao status [server|client]",
+                "allternit-factory pane status [server|client]",
                 "Show local client and running server status",
             ),
-            ("ao completion zsh", "Generate shell completions for zsh"),
+            ("allternit-factory pane completion zsh", "Generate shell completions for zsh"),
             (
-                "ao server stop",
+                "allternit-factory pane server stop",
                 "Stop the running server via the API socket",
             ),
             (
-                "ao server reload-config",
+                "allternit-factory pane server reload-config",
                 "Reload config.toml in the running server",
             ),
             (
-                "ao config reset-keys",
+                "allternit-factory pane config reset-keys",
                 "Back up config.toml and remove custom keybindings",
             ),
-            ("ao machine <subcommand>", "Manage saved SSH machines"),
+            ("allternit-factory pane machine <subcommand>", "Manage saved SSH machines"),
             (
-                "ao api <subcommand>",
+                "allternit-factory pane api <subcommand>",
                 "Inspect socket API metadata and live runtime state",
             ),
             (
-                "ao workspace <subcommand>",
+                "allternit-factory pane workspace <subcommand>",
                 "Workspace helpers over the socket API",
             ),
             (
-                "ao worktree <subcommand>",
+                "allternit-factory pane worktree <subcommand>",
                 "Git worktree helpers over the socket API",
             ),
-            ("ao tab <subcommand>", "Tab helpers over the socket API"),
+            ("allternit-factory pane tab <subcommand>", "Tab helpers over the socket API"),
             (
-                "ao notification <subcommand>",
+                "allternit-factory pane notification <subcommand>",
                 "Notification helpers over the socket API",
             ),
             (
-                "ao agent <subcommand>",
+                "allternit-factory pane agent <subcommand>",
                 "Agent/terminal helpers over the socket API",
             ),
             (
-                "ao pane <subcommand>",
+                "allternit-factory pane pane <subcommand>",
                 "Pane control helpers over the socket API",
             ),
             (
-                "ao session <subcommand>",
+                "allternit-factory pane session <subcommand>",
                 "Manage named persistent sessions",
             ),
             (
-                "ao integration <subcommand>",
+                "allternit-factory pane integration <subcommand>",
                 "Manage built-in agent integrations",
             ),
         ] {
@@ -665,11 +665,11 @@ where
         }
         println!();
         println!("Advanced commands:");
-        println!("  {:<32} Run as headless server", "ao server");
+        println!("  {:<32} Run as headless server", "allternit-factory pane server");
         println!();
         println!("Options:");
         println!("  --session <name>    Use or create a named persistent session");
-        println!("  --remote <target>   Attach through SSH to a remote ao server");
+        println!("  --remote <target>   Attach through SSH to a remote allternit-factory pane server");
         println!("  --remote-keybindings <local|server>");
         println!("                      Keybindings for --remote app attach (default: local)");
         println!("  --handoff           Opt into live handoff for update or remote attach");
@@ -721,7 +721,7 @@ where
         let arg_name = arg.split_once('=').map(|(name, _)| name).unwrap_or(arg);
         if arg.starts_with('-') && !known_flags.contains(&arg_name) {
             eprintln!("unknown option: {arg}");
-            eprintln!("run 'ao --help' for usage");
+            eprintln!("run 'allternit-factory pane --help' for usage");
             std::process::exit(2);
         }
         if !arg.starts_with('-')
@@ -746,7 +746,7 @@ where
             .contains(&arg.as_str())
         {
             eprintln!("unknown command: {arg}");
-            eprintln!("run 'ao --help' for usage");
+            eprintln!("run 'allternit-factory pane --help' for usage");
             std::process::exit(2);
         }
     }

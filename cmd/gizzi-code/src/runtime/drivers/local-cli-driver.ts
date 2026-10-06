@@ -965,7 +965,7 @@ export class LocalCliDriver implements RuntimeDriver {
 
         // Allternit spawn gate (hard floor + Gate 2): answer right away, so
         // the turn never waits on a person. Plan mode (read-only) is checked
-        // first; with no commrails binary the in-process catastrophic floor
+        // first; with no Factory engine binary the in-process catastrophic floor
         // decides. Nothing here prompts.
         const gateTool = (request.toolCall ?? {}) as { kind?: unknown; title?: unknown }
         const gateMode = await PermissionNext.getMode(sessionID).catch(() => "default" as const)
@@ -976,8 +976,8 @@ export class LocalCliDriver implements RuntimeDriver {
           cwd: taskCwd,
           harness: this.cliName,
           sessionId: sessionID,
-          wihId: process.env.ALLTERNIT_COMMRAILS_WIH,
-          root: process.env.ALLTERNIT_COMMRAILS_ROOT,
+          wihId: process.env.ALLTERNIT_FACTORY_WIH,
+          root: process.env.ALLTERNIT_FACTORY_ROOT,
         })
         {
           log.info("acp gate decision", { taskId: handle.taskId, allow: verdict.allow, fallback: verdict.fallback ?? false, ...("reason" in verdict ? { reason: verdict.reason } : {}) })

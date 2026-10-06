@@ -1,6 +1,6 @@
 //! Remote peer fabric — BOT_TEAMMATES_SPEC Phase 3 (AD-1: direct peer model).
 //!
-//! Extends the local Rails peer concept (`.allternit/peers/`, `/api/rails/peers`)
+//! Extends the local Factory peer concept (`.allternit/peers/`, `/api/factory/peers`)
 //! across machines. Each node keeps:
 //!
 //! - `remote-peers.json` — registered remote peers `{ name, url, key_ref }`.
@@ -1396,7 +1396,7 @@ async fn get_roster(State(app_state): State<Arc<AppState>>, headers: HeaderMap) 
 struct OpRequest {
     message: String,
     /// Local rails peer on the REMOTE node that receives the envelope
-    /// (`/api/rails/peers/<local-name>/send`-compatible). Defaults to the
+    /// (`/api/factory/peers/<local-name>/send`-compatible). Defaults to the
     /// remote's first live local peer.
     to: Option<String>,
     #[serde(rename = "idempotencyKey")]

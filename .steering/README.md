@@ -27,12 +27,11 @@ shell tools): `git commit` / `git push` only execute after the steering agent
 APPROVES them. All other commands pass without a consult.
 
 The steering agent is deliberately a **different model family** than the usual
-worker — same-model reviewers share the worker's blind spots. Default: claude
-(see `AO_CONSULT_AGENT_CMD` below).
+worker — same-model reviewers share the worker's blind spots. The Factory's
+steering coordinator picks the consult backend (see Controls below).
 
-Operational note: a cold consult (fresh `ao-steer` spawn) includes the agent's
-first-turn repo exploration and can exceed five minutes; the hook's 600s timeout
-covers it, and subsequent consults reuse the warm session.
+Operational note: a cold consult (the steering agent's first turn) includes its
+repo exploration and can exceed five minutes; the hook's 600s timeout covers it.
 
 ## Per-CLI wiring
 
@@ -93,14 +92,12 @@ current entries).
 - Status: `.steering/bin/steer-status.sh` prints `steering: ENABLED|DISABLED` and
   the last 5 consults (exit 0 enabled, 1 disabled).
 - State and consult log: `.steering/state/` (gitignored).
-- Consult backend: `ao-consult` (tools/agent-orchestrator/scripts/, on PATH via
-  `~/.local/bin`) — a persistent `ao-steer` tmux session that accumulates context
-  across checkpoints. Falls back to `kimi -p` (fresh session per consult) when
-  ao-consult is unavailable. Override either with `STEER_CONSULT_CMD` (reads the
-  prompt on stdin, writes the answer on stdout). The steering agent itself is
-  CLI-agnostic: set `AO_CONSULT_AGENT_CMD` to change it (default
-  `claude --dangerously-skip-permissions`; takes effect when `ao-steer` is
-  (re)spawned — `ao-kill steer` to force a respawn).
+- Consult backend: `gizzi orchestration steer consult` — the Allternit Factory's
+  steering coordinator, which builds the steering context and consults the
+  configured backend. Falls back to `kimi -p` (fresh session per consult) when
+  `gizzi` is not on PATH. Override either with `STEER_CONSULT_CMD` (reads the
+  prompt on stdin, writes the answer on stdout). The old consult scripts are
+  gone; see the Factory migration page (`surfaces/docs/factory/migration.mdx`).
 - Test evidence: put a runnable shell script at `.steering/test-command` and the
   Stop hook will run it (2 min cap where `timeout`/`gtimeout` exists) and attach
   the output tail to every consult.

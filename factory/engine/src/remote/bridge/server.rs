@@ -1,4 +1,4 @@
-//! `allternit-factory internal rails bridge serve`: the scoped remote listener.
+//! `allternit-factory internal core bridge serve`: the scoped remote listener.
 //!
 //! Every request is authenticated (bearer token -> [`Identity`]), rate
 //! limited per identity, classified against a fixed route table
@@ -90,7 +90,7 @@ pub fn check_bind(cfg: &BridgeConfig, store: &IdentityStore) -> Result<()> {
     if active == 0 {
         bail!(
             "refusing to bind non-loopback address {}: no active identities in {} \
-             (run `allternit-factory internal rails identity add` first)",
+             (run `allternit-factory internal core identity add` first)",
             cfg.bind,
             store.path().display()
         );
@@ -502,7 +502,7 @@ async fn guard(State(st): State<Arc<BridgeState>>, mut req: Request, next: Next)
             );
             resp.headers_mut().insert(
                 header::WWW_AUTHENTICATE,
-                header::HeaderValue::from_static("Bearer realm=\"commrails-bridge\""),
+                header::HeaderValue::from_static("Bearer realm=\"allternit-factory-bridge\""),
             );
             return resp;
         }
@@ -859,7 +859,7 @@ async fn node_output(
     )
         .into_response();
     if let Ok(v) = header::HeaderValue::from_str(&output.sha256) {
-        resp.headers_mut().insert("x-commrails-sha256", v);
+        resp.headers_mut().insert("x-allternit-factory-sha256", v);
     }
     Ok(with_audit(
         resp,
@@ -1059,7 +1059,7 @@ pub async fn serve(cfg: BridgeConfig) -> Result<()> {
         .await
         .with_context(|| format!("bind {}", cfg.bind))?;
     eprintln!(
-        "commrails bridge listening on {} (root {}, identities {}, {} req/min per identity)",
+        "factory bridge listening on {} (root {}, identities {}, {} req/min per identity)",
         cfg.bind,
         root.display(),
         cfg.identities_path.display(),

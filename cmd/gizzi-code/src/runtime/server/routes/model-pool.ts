@@ -4,7 +4,7 @@
  *   GET /model-pool[?capability=&role=&mode=]  → { schema_version, entries: ModelPoolEntryV1[] }
  *   GET /model-pool/capabilities               → { schema_version, capabilities: CapabilitySummary[] }
  *
- * The commrails router reads this (`fetch_model_pool`) and routes by
+ * The Factory engine router reads this (`fetch_model_pool`) and routes by
  * capability; it never sees provider or model names outside entry
  * `extensions` registry data.
  */

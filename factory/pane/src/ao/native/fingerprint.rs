@@ -148,12 +148,12 @@ mod tests {
     /// when the env is absent so plain `cargo test` stays hermetic.
     #[test]
     fn fingerprint_parity_with_ts() {
-        let Ok(expected_single) = std::env::var("AO_FP_PARITY_SINGLE") else {
+        let Ok(expected_single) = std::env::var("ALLTERNIT_FACTORY_FP_PARITY_SINGLE") else {
             return;
         };
-        let expected_multi = std::env::var("AO_FP_PARITY_MULTI").unwrap();
-        let target = std::env::var("AO_FP_PARITY_TARGET").unwrap();
-        let target2 = std::env::var("AO_FP_PARITY_TARGET2").unwrap();
+        let expected_multi = std::env::var("ALLTERNIT_FACTORY_FP_PARITY_MULTI").unwrap();
+        let target = std::env::var("ALLTERNIT_FACTORY_FP_PARITY_TARGET").unwrap();
+        let target2 = std::env::var("ALLTERNIT_FACTORY_FP_PARITY_TARGET2").unwrap();
         assert_eq!(fingerprint_path(std::path::Path::new(&target)), expected_single);
         assert_eq!(
             fingerprint_paths(&[

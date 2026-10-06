@@ -158,7 +158,7 @@ GET /api/v1/mail/threads?botId={botId}&folder=inbox|needs_ok|sent
 ```
 
 - `inbox`: mail the bot received, one entry per sender and subject (without `Re:`), newest first. `unread` is true until the bot's reply was sent or is waiting for approval. Mail dropped by the loop guards is left out. `id` is the bot's thread when one exists.
-- `needs_ok`: outbound mail waiting for approval. `id` is the review thread; approve or reject it with `POST /api/factory/mail/decide` (`/api/rails/mail/decide` until the [Allternit Factory](/factory/migration#http-routes) build ships), or with `gizzi orchestration mail decide`.
+- `needs_ok`: outbound mail waiting for approval. `id` is the review thread; approve or reject it with `POST /api/factory/mail/decide`, or with `gizzi orchestration mail decide`.
 - `sent`: mail that went out.
 
 An invalid `folder` is `400 invalid_folder`.

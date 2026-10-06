@@ -237,7 +237,7 @@ This is the semantic heart of the transport layer. A green happy-path claim test
 - a second orchestration persona;
 - a model/planner;
 - an authorization-by-prompt system;
-- a second CommRails implementation;
+- a second Factory peer-messaging implementation;
 - an in-memory queue whose database is merely observational;
 - a place where connector secrets are handed directly to workers;
 - a UI-derived state machine.

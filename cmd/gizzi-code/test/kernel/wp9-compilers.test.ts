@@ -268,7 +268,7 @@ describe("Tool Call Compiler", () => {
     })
     const r = buildToolReceipt(invocation, { started_at: NOW, finished_at: NOW, exit_class: "SUCCESS", exit_code: 0, output: "ok", policy_receipt_id: "pr-1" }, writeOp)
     expect(valid("tool.schema.json", "ToolReceiptV1", r)).toBe(true)
-    // commrails ChainStore::append requires these
+    // the Factory engine ChainStore::append requires these
     expect(r.envelope).toMatchObject({ schema_id: "allternit.kernel.ToolReceiptV1", schema_version: "1.0.0", run_id: "run-1" })
     expect(r.content_hashes).toHaveLength(2)
     expect(JSON.stringify(r)).not.toContain("s3cr3t")
@@ -315,7 +315,7 @@ describe("feature flag wiring (GIZZI_KERNEL_COMPILERS)", () => {
     const err = new Error("boom")
     await expect(KernelTurn.withToolReceipt({ sessionID: "ses_1", tool: "webfetch", args: { url: "https://x" } }, async () => { throw err })).rejects.toBe(err)
     const rec = KernelTurn.record("ses_1")!
-    // No commrails service in this test: WP10 chain-append failures are logged, not compiler errors.
+    // No Factory engine in this test: WP10 chain-append failures are logged, not compiler errors.
     expect(rec.errors.filter((e) => !e.startsWith("chain_append:"))).toEqual([])
     expect(rec.projection!.projection_id).toBe(compiled.projection.projection_id)
     expect(rec.receipts.map((r) => r.exit_class)).toEqual(["SUCCESS", "FAILURE"])

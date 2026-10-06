@@ -2,7 +2,7 @@
  * ModelPool (Agency Kernel WP7) — the capability + residency registry.
  *
  * gizzi-code owns providers, so gizzi-code owns the pool and serves it over
- * HTTP (`GET /model-pool`). The commrails Cognitive Execution Router consumes
+ * HTTP (`GET /model-pool`). The Factory engine Cognitive Execution Router consumes
  * it by capability and emits ExecutionPlanV1s that carry only ids.
  *
  * Single source of what exists: gizzi's provider registry, which already

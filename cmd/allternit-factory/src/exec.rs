@@ -191,7 +191,7 @@ fn shell_join(argv: &[String]) -> String {
 
 /// Which existing implementation a verb runs, with that implementation's argv.
 pub enum Target {
-    /// The engine maintenance CLI (`allternit-factory internal rails …`).
+    /// The engine maintenance CLI (`allternit-factory internal core …`).
     Rails(Vec<String>),
     /// The pane engine's own argv (`allternit-factory pane …`).
     Pane(Vec<String>),
@@ -202,7 +202,7 @@ impl Target {
         let mut argv = vec!["allternit-factory".to_string()];
         match self {
             Target::Rails(args) => {
-                argv.extend(["internal".into(), "rails".into()]);
+                argv.extend(["internal".into(), "core".into()]);
                 if let Some(root) = &ctx.root {
                     argv.extend(["--root".into(), root.display().to_string()]);
                 }
@@ -236,7 +236,7 @@ pub fn run_shaped_dyn(ctx: &Ctx, target: Target, shape: Option<&dyn Fn(&str) -> 
     match target {
         Target::Rails(args) if !ctx.json => run_rails_in_process(ctx.root.as_ref(), args, true),
         Target::Rails(args) => {
-            let mut child = vec!["internal".to_string(), "verb-rails".to_string()];
+            let mut child = vec!["internal".to_string(), "verb-core".to_string()];
             if let Some(root) = &ctx.root {
                 child.extend(["--root".into(), root.display().to_string()]);
             }
@@ -273,11 +273,11 @@ pub fn run_pane_interactive(args: Vec<String>) -> u8 {
 
 /// Run the maintenance CLI in this process.
 ///
-/// `table == false` is `internal rails`: the old binary's exit codes
+/// `table == false` is `internal core`: the old binary's exit codes
 /// (Gate denial 2, other errors 1) so hooks and scripts that read them keep
 /// working. `table == true` is a part verb: API.md §2 codes.
 pub fn run_rails_in_process(root: Option<&PathBuf>, args: Vec<String>, table: bool) -> u8 {
-    let mut argv = vec!["allternit-factory internal rails".to_string()];
+    let mut argv = vec!["allternit-factory internal core".to_string()];
     if let Some(root) = root {
         argv.extend(["--root".to_string(), root.display().to_string()]);
     }
@@ -314,7 +314,7 @@ pub fn run_rails_in_process(root: Option<&PathBuf>, args: Vec<String>, table: bo
 
 #[derive(Clone, Copy)]
 enum Classify {
-    /// The child already speaks the table (`internal verb-rails`).
+    /// The child already speaks the table (`internal verb-core`).
     Table,
     /// The pane engine's legacy codes (0 ok, 1 failure, 2 usage, 3 pane dead,
     /// 4 timeout) plus its stderr wording.
@@ -465,7 +465,7 @@ mod tests {
 
     #[test]
     fn pane_usage_and_missing_session() {
-        assert_eq!(classify_pane(2, "usage: ao kill <slug>\n"), Code::Usage);
+        assert_eq!(classify_pane(2, "usage: allternit-factory pane kill <slug>\n"), Code::Usage);
         assert_eq!(classify_pane(2, "error: no session ao-x in /h/state.json\n"), Code::NotFound);
         assert_eq!(classify_pane(4, "TIMEOUT after 5s\n"), Code::Timeout);
     }

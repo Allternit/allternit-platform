@@ -588,9 +588,9 @@ async fn triage_promotes_and_rejects_by_thresholds() {
                 &std::fs::read_to_string(r[0].draft_path.as_ref().unwrap()).unwrap(),
             )
             .unwrap();
-            assert_eq!(d["x_commrails"]["scored"], json!(true));
-            assert_eq!(d["x_commrails"]["verdict"], json!("promoted"));
-            assert_eq!(d["x_commrails"]["s1_decision_ids"]["reusable_pattern"], json!("dec-reusable_pattern"));
+            assert_eq!(d["x_commrails"]["scored"], json!(true)); // old-names: keep (Brain draft data key)
+            assert_eq!(d["x_commrails"]["verdict"], json!("promoted")); // old-names: keep (Brain draft data key)
+            assert_eq!(d["x_commrails"]["s1_decision_ids"]["reusable_pattern"], json!("dec-reusable_pattern")); // old-names: keep (Brain draft data key)
         }
         assert_eq!(r[0].decision_ids.len(), 3);
     }

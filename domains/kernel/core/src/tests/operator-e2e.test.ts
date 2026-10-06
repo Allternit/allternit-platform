@@ -24,7 +24,7 @@ async function runE2ETest() {
     "Thought: I see the icon.\nAction: click(start_box='(100,100)')";
 
   // Mock Rails sync to avoid 404s
-  (IntegrityService as any).syncToRails = async () => console.log('   [Mock] Sync to Rails: OK');
+  (IntegrityService as any).syncToFactory = async () => console.log('   [Mock] Sync to the Factory: OK');
 
   console.log(`\nTask: "Click the screen icon" (Session: ${sessionId})`);
   console.log('----------------------------------------------------');

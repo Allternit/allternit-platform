@@ -3,20 +3,20 @@ use serde::Serialize;
 use crate::client::endpoint::{EndpointCatalog, ProfileId};
 
 const HELP: &str = "Usage:
-  ao machine list [--json]
-  ao machine add <ssh-target> --label <label> [--remote-session <name>]
-  ao machine connect <profile-id> [--keybindings local|server]
-  ao machine rename <profile-id> --label <label>
-  ao machine remove <profile-id>
-  ao machine enable <profile-id>
-  ao machine disable <profile-id>
+  allternit-factory pane machine list [--json]
+  allternit-factory pane machine add <ssh-target> --label <label> [--remote-session <name>]
+  allternit-factory pane machine connect <profile-id> [--keybindings local|server]
+  allternit-factory pane machine rename <profile-id> --label <label>
+  allternit-factory pane machine remove <profile-id>
+  allternit-factory pane machine enable <profile-id>
+  allternit-factory pane machine disable <profile-id>
 
 Add prepares the remote ao installation and starts its server before saving.
 Missing or incompatible installations require approval in an interactive terminal.
 connect attaches through the saved SSH profile and its remote session.
 Changes apply automatically to open local ao clients.
 Removing or disabling a machine leaves its remote sessions running.
-Saved machines contain only a label, SSH target, explicit ao session, and enabled state.
+Saved machines contain only a label, SSH target, explicit allternit-factory pane session, and enabled state.
 SSH credentials and key material remain owned by OpenSSH.";
 
 #[derive(Serialize)]
@@ -54,7 +54,7 @@ fn list(args: &[String]) -> std::io::Result<i32> {
         [] => false,
         [flag] if flag == "--json" => true,
         _ => {
-            eprintln!("usage: ao machine list [--json]");
+            eprintln!("usage: allternit-factory pane machine list [--json]");
             return Ok(2);
         }
     };
@@ -96,7 +96,7 @@ fn add(args: &[String]) -> std::io::Result<i32> {
     let args = super::expand_equals_args(args, &["--label", "--remote-session"]);
     let Some(target) = args.first().filter(|value| !value.starts_with('-')) else {
         eprintln!(
-            "usage: ao machine add <ssh-target> --label <label> [--remote-session <name>]"
+            "usage: allternit-factory pane machine add <ssh-target> --label <label> [--remote-session <name>]"
         );
         return Ok(2);
     };
@@ -174,7 +174,7 @@ fn add(args: &[String]) -> std::io::Result<i32> {
 }
 
 fn connect(args: &[String]) -> std::io::Result<i32> {
-    const USAGE: &str = "usage: ao machine connect <profile-id> [--keybindings local|server]";
+    const USAGE: &str = "usage: allternit-factory pane machine connect <profile-id> [--keybindings local|server]";
     let args = super::expand_equals_args(args, &["--keybindings"]);
     let mut keybindings = crate::remote::RemoteKeybindings::Local;
     let mut positional = Vec::with_capacity(args.len());
@@ -234,11 +234,11 @@ fn connect(args: &[String]) -> std::io::Result<i32> {
 fn rename(args: &[String]) -> std::io::Result<i32> {
     let args = super::expand_equals_args(args, &["--label"]);
     let [raw_id, flag, label] = args.as_slice() else {
-        eprintln!("usage: ao machine rename <profile-id> --label <label>");
+        eprintln!("usage: allternit-factory pane machine rename <profile-id> --label <label>");
         return Ok(2);
     };
     if flag != "--label" {
-        eprintln!("usage: ao machine rename <profile-id> --label <label>");
+        eprintln!("usage: allternit-factory pane machine rename <profile-id> --label <label>");
         return Ok(2);
     }
     let id = match ProfileId::parse(raw_id.clone()) {
@@ -266,7 +266,7 @@ fn rename(args: &[String]) -> std::io::Result<i32> {
 }
 
 fn remove(args: &[String]) -> std::io::Result<i32> {
-    let Some(id) = one_profile_id(args, "usage: ao machine remove <profile-id>")? else {
+    let Some(id) = one_profile_id(args, "usage: allternit-factory pane machine remove <profile-id>")? else {
         return Ok(2);
     };
     let mut catalog = load_catalog()?;
@@ -285,7 +285,7 @@ fn remove(args: &[String]) -> std::io::Result<i32> {
 
 fn set_enabled(args: &[String], enabled: bool) -> std::io::Result<i32> {
     let action = if enabled { "enable" } else { "disable" };
-    let usage = format!("usage: ao machine {action} <profile-id>");
+    let usage = format!("usage: allternit-factory pane machine {action} <profile-id>");
     let Some(id) = one_profile_id(args, &usage)? else {
         return Ok(2);
     };

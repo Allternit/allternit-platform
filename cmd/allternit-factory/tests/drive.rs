@@ -40,7 +40,7 @@ fn test_root() -> TempDir {
     tempfile::Builder::new().prefix("drive-").tempdir_in(base).unwrap()
 }
 
-fn commrails_bin() -> &'static str {
+fn factory_bin() -> &'static str {
     env!("CARGO_BIN_EXE_allternit-factory")
 }
 
@@ -60,7 +60,7 @@ fn panes() -> Arc<fake_panes::FakePanes> {
 
 async fn build_gate(root: &Path) -> (Arc<Ledger>, Arc<Gate>) {
     // The spawn gate installs its hook with this binary.
-    std::env::set_var("ALLTERNIT_FACTORY_BIN", commrails_bin());
+    std::env::set_var("ALLTERNIT_FACTORY_BIN", factory_bin());
     panes();
     let ledger = Arc::new(Ledger::new(LedgerOptions {
         root_dir: Some(root.to_path_buf()),
@@ -354,7 +354,7 @@ async fn global_caps_are_shared_across_two_drive_processes() {
     let pane_config = tempfile::Builder::new().prefix("f3dt").tempdir_in("/tmp").unwrap();
     let pane_config_dir = pane_config.path().to_path_buf();
     let engine = |args: &[&str]| {
-        let mut cmd = tokio::process::Command::new(commrails_bin());
+        let mut cmd = tokio::process::Command::new(factory_bin());
         cmd.env("HERDR_SESSION", &pane_session)
             .env("XDG_CONFIG_HOME", &pane_config_dir)
             .env("ALLTERNIT_FACTORY_HOME", &factory_home)
@@ -364,7 +364,7 @@ async fn global_caps_are_shared_across_two_drive_processes() {
     struct StopPanes(String, PathBuf, PathBuf, Option<TempDir>);
     impl Drop for StopPanes {
         fn drop(&mut self) {
-            let _ = std::process::Command::new(commrails_bin())
+            let _ = std::process::Command::new(factory_bin())
                 .env("HERDR_SESSION", &self.0)
                 .env("XDG_CONFIG_HOME", &self.2)
                 .env("ALLTERNIT_FACTORY_HOME", &self.1)
@@ -374,7 +374,7 @@ async fn global_caps_are_shared_across_two_drive_processes() {
         }
     }
     let _stop = StopPanes(pane_session.clone(), factory_home.clone(), pane_config_dir.clone(), Some(pane_config));
-    let run = |dag: String| engine(&["internal", "rails", "--root", root.to_str().unwrap(), "drive", &dag]).output();
+    let run = |dag: String| engine(&["internal", "core", "--root", root.to_str().unwrap(), "drive", &dag]).output();
     let (o1, o2) = tokio::join!(run(dag1.clone()), run(dag2.clone()));
     let (o1, o2) = (o1.unwrap(), o2.unwrap());
     assert!(o1.status.success(), "{}", String::from_utf8_lossy(&o1.stderr));
@@ -402,7 +402,7 @@ async fn global_caps_are_shared_across_two_drive_processes() {
 
     // Hourly: 4 of 4 global spawns used. A third DAG is deferred, not spawned.
     let (dag3, _) = plan(&gate, vec![node("g3_a", "", Some("ao:claude"), None)]).await;
-    let out = engine(&["internal", "rails", "--root", root.to_str().unwrap(), "drive", &dag3, "--once"])
+    let out = engine(&["internal", "core", "--root", root.to_str().unwrap(), "drive", &dag3, "--once"])
         .output()
         .await
         .unwrap();
@@ -424,7 +424,7 @@ async fn global_caps_are_shared_across_two_drive_processes() {
     )
     .unwrap()
     .unwrap();
-    let out = engine(&["internal", "rails", "--root", root.to_str().unwrap(), "drive", &dag3, "--once"])
+    let out = engine(&["internal", "core", "--root", root.to_str().unwrap(), "drive", &dag3, "--once"])
         .output()
         .await
         .unwrap();

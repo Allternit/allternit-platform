@@ -60,7 +60,7 @@ use tokio::sync::OnceCell;
 use tokio::time::{sleep, Duration as TokioDuration};
 
 #[derive(Parser)]
-#[command(name = "allternit-factory internal rails")]
+#[command(name = "allternit-factory internal core")]
 #[command(about = "Allternit Factory engine maintenance commands (ledger, gate, vault, …)", long_about = None)]
 struct Cli {
     #[arg(long)]
@@ -186,7 +186,7 @@ enum HookCmd {
     #[command(aliases = ["codex-pretool", "qwen-pretool"])]
     ClaudePretool {
         /// WIH the spawned session is bound to. Without it only the hard floor applies.
-        #[arg(long, env = "ALLTERNIT_COMMRAILS_WIH")]
+        #[arg(long, env = "ALLTERNIT_FACTORY_WIH")]
         wih: Option<String>,
         /// Harness label recorded on ledger events.
         #[arg(long, default_value = "claude-code")]
@@ -198,7 +198,7 @@ enum HookCmd {
     },
     /// Print the session-scoped Claude Code settings (for `claude --settings`).
     ClaudeSettings {
-        #[arg(long, env = "ALLTERNIT_COMMRAILS_WIH")]
+        #[arg(long, env = "ALLTERNIT_FACTORY_WIH")]
         wih: Option<String>,
         /// Directory the harness works in. Defaults to --root.
         #[arg(long)]
@@ -230,8 +230,8 @@ enum IdentityCmd {
         scopes: Vec<String>,
         #[arg(long)]
         note: Option<String>,
-        /// Identities file (default $ALLTERNIT_COMMRAILS_BRIDGE_IDENTITIES or
-        /// ~/.allternit/commrails-bridge/identities.json).
+        /// Identities file (default $ALLTERNIT_FACTORY_BRIDGE_IDENTITIES or
+        /// ~/.allternit/factory/bridge/identities.json).
         #[arg(long)]
         identities: Option<PathBuf>,
     },
@@ -1120,7 +1120,7 @@ where
                     use std::io::IsTerminal;
                     crate::cli::judge::check_human_channel(
                         c,
-                        std::env::var("ALLTERNIT_COMMRAILS_WIH").ok().as_deref(),
+                        std::env::var("ALLTERNIT_FACTORY_WIH").ok().as_deref(),
                         std::io::stdin().is_terminal(),
                         true,
                     )?;
@@ -1765,7 +1765,7 @@ where
             }
         },
         // Graph analytics: same view-model builders as the HTTP surface
-        // (`graph::views`), so the printed JSON matches /api/rails/graph/*.
+        // (`graph::views`), so the printed JSON matches /api/factory/graph/*.
         Commands::Graph(cmd) => {
             let store = TicketStore::new(&root)?;
             let graph = load_graph(&root)?;
@@ -2096,9 +2096,9 @@ async fn run_hook_command(root: &Path, stores: &Stores, ledger: &Arc<Ledger>, cm
             }
         }
         HookCmd::ClaudeSettings { wih, out, workspace } => {
-            let bin = hook::find_commrails_bin().context("locating the allternit-factory gate binary")?;
+            let bin = hook::find_factory_bin().context("locating the allternit-factory gate binary")?;
             let settings = hook::claude_settings(hook::HookTarget {
-                commrails_bin: &bin,
+                factory_bin: &bin,
                 root,
                 workspace: workspace.as_deref(),
                 wih_id: wih.as_deref(),

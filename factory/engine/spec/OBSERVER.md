@@ -10,7 +10,7 @@ command profiles, `context.rs` prompt, `config.rs`). CLI: `src/cli/observe.rs`.
 
 ## What it does
 
-`allternit-commrails observe --dag <id> [--wih <id>] --trigger plan|repeat-failure|pre-close`
+`allternit-factory internal core observe --dag <id> [--wih <id>] --trigger plan|repeat-failure|pre-close`
 
 1. Builds a prompt from:
    - a DAG slice — the whole DAG (≤ 60 nodes) or, with `--wih`, the WIH's node,

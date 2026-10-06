@@ -123,7 +123,7 @@ impl RailsHttpClient {
 #[async_trait]
 impl allternit_cowork_runtime::RailsClient for RailsHttpClient {
     async fn create_dag(&self, run_id: RunId, spec: &CreateRunSpec) -> anyhow::Result<String> {
-        info!(run_id = %run_id, "Creating DAG in Rails");
+        info!(run_id = %run_id, "Creating DAG in the Factory ledger");
 
         let dag_spec = serde_json::json!({
             "name": format!("cowork-run-{}", run_id),
@@ -146,7 +146,7 @@ impl allternit_cowork_runtime::RailsClient for RailsHttpClient {
         job_id: JobId,
         spec: &CreateJobSpec,
     ) -> anyhow::Result<String> {
-        debug!(dag_id = %dag_id, job_id = %job_id, "Creating node in Rails DAG");
+        debug!(dag_id = %dag_id, job_id = %job_id, "Creating node in Factory DAG");
 
         let node_spec = serde_json::json!({
             "name": format!("job-{}", job_id),
@@ -284,7 +284,7 @@ impl allternit_cowork_runtime::RailsClient for RailsHttpClient {
     }
 
     async fn append_event(&self, event: &CoworkEvent) -> anyhow::Result<()> {
-        debug!("Appending event to Rails ledger");
+        debug!("Appending event to the Factory ledger");
         self.append_ledger_event(event).await
     }
 }

@@ -11,7 +11,7 @@ use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 
-use allternit_factory_engine::backend::{self, LivePane, PaneBackend, PaneSend, PaneSpawn};
+use allternit_factory_engine::backend::{self, LivePane, PaneBackend, PaneSend, PaneSpawn, Queued};
 
 #[derive(Default)]
 pub struct FakePanes {
@@ -19,7 +19,17 @@ pub struct FakePanes {
     pub sent: Mutex<Vec<(String, String)>>,
     /// When true, sends to a live pane are "busy" and go to the queue.
     pub busy: Mutex<bool>,
+    /// Queued messages per session, oldest first: `(id, text)`.
+    pub queue: Mutex<HashMap<String, Vec<(String, String)>>>,
     next: Mutex<u64>,
+}
+
+impl FakePanes {
+    fn next_id(&self) -> u64 {
+        let mut next = self.next.lock().unwrap();
+        *next += 1;
+        *next
+    }
 }
 
 impl FakePanes {
@@ -51,9 +61,7 @@ impl PaneBackend for FakePanes {
             .stdout(log)
             .stderr(Stdio::null())
             .spawn()?;
-        let mut next = self.next.lock().unwrap();
-        *next += 1;
-        let pane_id = format!("p{}", *next);
+        let pane_id = format!("p{}", self.next_id());
         let cwd = req.cwd.to_string_lossy().to_string();
         children.insert(req.session.clone(), (pane_id.clone(), child, cwd.clone()));
         Ok(LivePane { session: req.session.clone(), pane_id, cwd: Some(cwd), agent_status: None })
@@ -82,7 +90,36 @@ impl PaneBackend for FakePanes {
             return Ok(PaneSend::Verified);
         }
         let reason = if queue_only { "queued on request" } else if live { "the pane is busy" } else { "the pane is not running" };
-        Ok(PaneSend::Queued { message_id: "1".into(), depth: 1, reason: reason.into() })
+        let id = self.next_id().to_string();
+        let mut queue = self.queue.lock().unwrap();
+        let q = queue.entry(session.to_string()).or_default();
+        q.push((id.clone(), text.to_string()));
+        Ok(PaneSend::Queued { message_id: id, depth: q.len(), reason: reason.into() })
+    }
+
+    fn mailbox(&self, _root: &Path, session: &str) -> anyhow::Result<Vec<Queued>> {
+        Ok(self
+            .queue
+            .lock()
+            .unwrap()
+            .get(session)
+            .map(|q| q.iter().map(|(id, text)| Queued { id: id.clone(), text: text.clone() }).collect())
+            .unwrap_or_default())
+    }
+
+    fn deliver(&self, session: &str, text: &str) -> anyhow::Result<bool> {
+        if self.find(session)?.is_none() || *self.busy.lock().unwrap() {
+            return Ok(false);
+        }
+        self.sent.lock().unwrap().push((session.to_string(), text.to_string()));
+        Ok(true)
+    }
+
+    fn settle(&self, _root: &Path, id: &str) -> anyhow::Result<()> {
+        for q in self.queue.lock().unwrap().values_mut() {
+            q.retain(|(i, _)| i != id);
+        }
+        Ok(())
     }
 
     fn capture(&self, session: &str, _lines: u32) -> anyhow::Result<String> {

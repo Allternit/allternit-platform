@@ -12,7 +12,7 @@
 //!   (08 residual gap) — even if a template asks for `false`.
 //!
 //! Templates are looked up through [`TemplateRegistry`]. BUG_FIX is the
-//! kernel's WP10 graph (`commrails::kernel::bug_fix::agency_graph`); it fails
+//! kernel's WP10 graph (`allternit_factory_engine::kernel::bug_fix::agency_graph`); it fails
 //! closed without a declared workspace/write set, which maps to a 422.
 
 use super::catalog;
@@ -246,7 +246,7 @@ fn resolve_workspace(obj: &Map<String, Value>, m: &Value) -> Result<Value, Compi
 }
 
 /// Q25: Agency API (hosted, customer) runs always use the strict fence
-/// profile: commrails `JudgePolicy.fence = strict` (#1045), which makes the
+/// profile: the Factory engine `JudgePolicy.fence = strict` (#1045), which makes the
 /// gate deny unresolved write effects; the executor adds the disposable
 /// workspace, env allowlist and egress check.
 pub const FENCE: &str = "strict";

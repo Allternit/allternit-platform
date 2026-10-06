@@ -61,7 +61,7 @@ fn worktree_list(args: &[String]) -> std::io::Result<i32> {
         }
     }
     if workspace_id.is_some() && cwd.is_some() {
-        eprintln!("usage: ao worktree list [--workspace ID | --cwd PATH] [--trust-repository]");
+        eprintln!("usage: allternit-factory pane worktree list [--workspace ID | --cwd PATH] [--trust-repository]");
         return Ok(2);
     }
 
@@ -154,7 +154,7 @@ fn worktree_create(args: &[String]) -> std::io::Result<i32> {
     }
     if workspace_id.is_some() && cwd.is_some() {
         eprintln!(
-            "usage: ao worktree create [--workspace ID | --cwd PATH] [--branch NAME] [--base REF] [--path PATH] [--label TEXT] [--focus] [--no-focus] [--trust-repository]"
+            "usage: allternit-factory pane worktree create [--workspace ID | --cwd PATH] [--branch NAME] [--base REF] [--path PATH] [--label TEXT] [--focus] [--no-focus] [--trust-repository]"
         );
         return Ok(2);
     }
@@ -244,13 +244,13 @@ fn worktree_open(args: &[String]) -> std::io::Result<i32> {
     }
     if workspace_id.is_some() && cwd.is_some() {
         eprintln!(
-            "usage: ao worktree open [--workspace ID | --cwd PATH] (--path PATH | --branch NAME) [--label TEXT] [--focus] [--no-focus] [--trust-repository]"
+            "usage: allternit-factory pane worktree open [--workspace ID | --cwd PATH] (--path PATH | --branch NAME) [--label TEXT] [--focus] [--no-focus] [--trust-repository]"
         );
         return Ok(2);
     }
     if path.is_some() == branch.is_some() {
         eprintln!(
-            "usage: ao worktree open [--workspace ID | --cwd PATH] (--path PATH | --branch NAME) [--label TEXT] [--focus] [--no-focus] [--trust-repository]"
+            "usage: allternit-factory pane worktree open [--workspace ID | --cwd PATH] (--path PATH | --branch NAME) [--label TEXT] [--focus] [--no-focus] [--trust-repository]"
         );
         return Ok(2);
     }
@@ -299,7 +299,7 @@ fn worktree_remove(args: &[String]) -> std::io::Result<i32> {
     }
 
     let Some(workspace_id) = workspace_id else {
-        eprintln!("usage: ao worktree remove --workspace ID [--force] [--trust-repository]");
+        eprintln!("usage: allternit-factory pane worktree remove --workspace ID [--force] [--trust-repository]");
         return Ok(2);
     };
 
@@ -311,15 +311,15 @@ fn worktree_remove(args: &[String]) -> std::io::Result<i32> {
 }
 
 fn print_worktree_help() {
-    eprintln!("ao worktree commands:");
-    eprintln!("  ao worktree list [--workspace ID | --cwd PATH] [--trust-repository]");
+    eprintln!("allternit-factory pane worktree commands:");
+    eprintln!("  allternit-factory pane worktree list [--workspace ID | --cwd PATH] [--trust-repository]");
     eprintln!(
-        "  ao worktree create [--workspace ID | --cwd PATH] [--branch NAME] [--base REF] [--path PATH] [--label TEXT] [--focus] [--no-focus] [--trust-repository]"
+        "  allternit-factory pane worktree create [--workspace ID | --cwd PATH] [--branch NAME] [--base REF] [--path PATH] [--label TEXT] [--focus] [--no-focus] [--trust-repository]"
     );
     eprintln!(
-        "  ao worktree open [--workspace ID | --cwd PATH] (--path PATH | --branch NAME) [--label TEXT] [--focus] [--no-focus] [--trust-repository]"
+        "  allternit-factory pane worktree open [--workspace ID | --cwd PATH] (--path PATH | --branch NAME) [--label TEXT] [--focus] [--no-focus] [--trust-repository]"
     );
-    eprintln!("  ao worktree remove --workspace ID [--force] [--trust-repository]");
+    eprintln!("  allternit-factory pane worktree remove --workspace ID [--force] [--trust-repository]");
 }
 
 fn normalize_path_arg(value: &str) -> std::io::Result<String> {

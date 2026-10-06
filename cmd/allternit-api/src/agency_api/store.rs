@@ -1,4 +1,4 @@
-//! Durable Agency run/campaign/replay store on the commrails ledger.
+//! Durable Agency run/campaign/replay store on the Factory ledger.
 //!
 //! Every mutation appends a full snapshot event (`agency.run.state`, …) to the
 //! on-disk ledger, so a Run survives restart and its current state is the last

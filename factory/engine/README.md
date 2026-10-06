@@ -4,12 +4,11 @@ Unified system for **work execution under policy gates** across DAG/WIH/runs/lea
 It is the library half of the Allternit Factory; the binary is `allternit-factory`
 (`cmd/allternit-factory`), which also runs the pane engine (`factory/pane`).
 
-> Formerly CommRails (`allternit-commrails`, before that `allternit-agent-system-rails`).
-> The old binaries (`allternit-commrails`, `allternit-rails`, `allternit-commrails-service`,
-> `allternit-rails-service`, and the portable `commrails`/`rails` CLI) are gone, not aliased:
 > `allternit-factory serve` is the service, the four parts (`agents`, `orchestration`,
 > `workflows`, `workspace`) are the commands, and every maintenance command lives under the
-> hidden `allternit-factory internal rails …`.
+> hidden `allternit-factory internal core …`. The binaries this replaced, and where each old
+> command, env var and route went, are on the docs migration page
+> (`surfaces/docs/factory/migration.mdx`).
 
 ## Naming Locks
 
@@ -59,9 +58,16 @@ factory/engine/
   first (`agents::spawn`). A gated harness's hook is this engine's own
   executable, `allternit-factory internal hook …` (never a binary found on
   `PATH`; `$ALLTERNIT_FACTORY_BIN` overrides it for tests and dev harnesses).
+- **One home.** `~/.allternit/factory/` (`$ALLTERNIT_FACTORY_HOME` moves it). At
+  `serve` start the engine moves the old agent-orchestrator home into it once
+  (`agents::home_migrate`; `allternit-factory internal migrate-home [--dry-run]`
+  by hand): free names are moved, shared folders merged, identical files
+  deduplicated, and a file that differs is left in the old folder and reported.
+  The marker `migrated-agent-orchestrator.json` records the result and
+  `gizzi doctor` reads it.
 - **One registry.** `~/.allternit/factory/registry.json` (`$ALLTERNIT_FACTORY_HOME`
-  moves it), migrated once from `~/.agent-orchestrator/state.json`. Engine
-  spawns and `allternit-factory pane ao spawn` both record there. It is
+  moves it), migrated once from the old orchestrator registry. Engine
+  spawns and `allternit-factory pane spawn` both record there. It is
   reconciled against the live panes when the server starts and on every
   `agents ps`: a session whose pane is gone is `dead`, a live agent pane with no
   record is adopted (`ao-pane-<paneId>` for panes a person opened), and every
@@ -104,22 +110,22 @@ See [spec/SPEC_OVERVIEW.md](./spec/SPEC_OVERVIEW.md) for details on:
 
 ## Ticket area (library only)
 
-The portable ticket/DAG CLI (`commrails` / `rails`, with `install.sh`) was
-removed when the engine became the Allternit Factory. Its library code stays in
+The portable ticket/DAG CLI (with `install.sh`) was removed when the engine
+became the Allternit Factory. Its library code stays in
 `src/tickets/` (tickets, typed dependencies, ready-list, sync providers for
 GitHub, Linear, Jira, Azure DevOps, GitLab and Notion, setup recipes, batch,
 doctor), and the engine's own ticket verbs remain under
-`allternit-factory internal rails ticket …`.
+`allternit-factory internal core ticket …`.
 
 ## Remote bridge (default off)
 
-`allternit-factory internal rails bridge serve` is a scoped listener that lets a remote agent
+`allternit-factory internal core bridge serve` is a scoped listener that lets a remote agent
 (e.g. Chief on the shared box, over the mesh) create/read plans and send/read
-mail with a bearer identity from `allternit-factory internal rails identity add`. Pickup,
+mail with a bearer identity from `allternit-factory internal core identity add`. Pickup,
 close, leases, wait-gate resolution and gate decisions are never available to
 it. Loopback only unless `--allow-remote`. Spec, threat model and enablement
 steps: [spec/BRIDGE.md](./spec/BRIDGE.md); box client:
-[`tools/commrails-bridge-client/`](../../tools/commrails-bridge-client/).
+[`tools/factory-bridge-client/`](../../tools/factory-bridge-client/).
 
 See [docs/architecture/README.md](./docs/architecture/README.md) for a full feature/architecture breakdown before you run the test suites.
 Hidden runtime stores (`.allternit/`) are documented in [docs/architecture/README.md](./docs/architecture/README.md#layer-c---ledger-bus-transports).

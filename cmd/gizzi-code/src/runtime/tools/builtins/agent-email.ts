@@ -7,7 +7,7 @@ const SEND_DESCRIPTION = `Send an external email from this agent's provisioned A
 
 Approval gate: sends are held for human approval by default — the tool does NOT deliver
 the email directly. It returns a review thread id (mail:email-out-<uuid>) that a human
-approves or rejects in the Rails Mail review queue (CLI: gizzi orchestration mail decide <threadId> --approve).
+approves or rejects in the Factory mail review queue (CLI: gizzi orchestration mail decide <threadId> --approve).
 Only when the operator has disabled the approval requirement does the send go straight to
 the provider queue (status "sent").
 
@@ -89,7 +89,7 @@ export const GetAgentEmailStatusTool = Tool.define("get_agent_email_status", {
       return {
         title: "Agent email rail not configured",
         output:
-          "Agent email rail: not configured (mailflare env unset on allternit-api; agent provisioning falls back to a CommRails mint address).",
+          "Agent email rail: not configured (mailflare env unset on allternit-api; agent provisioning falls back to a Factory mint address).",
         metadata: { ...status },
       }
     }

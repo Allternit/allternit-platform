@@ -1,10 +1,10 @@
 /**
- * Rails DAG Bridge
+ * Factory DAG Bridge
  *
- * Polls the CommRails DAG view (startRailsDagListener) and mirrors each
+ * Polls the Factory DAG view (startRailsDagListener) and mirrors each
  * update into the AppState railsDag slice, which the RailsTaskList panel
  * renders. Null-rendering sibling of RailsInboxBridge; mounts only when
- * Rails peer mode is on.
+ * Factory peer mode is on.
  */
 
 import { useEffect } from 'react'
@@ -21,7 +21,7 @@ export function RailsDagBridge(): null {
   useEffect(() => {
     if (!isRailsPeerMode()) return
 
-    Log.Default.info('tui: rails dag bridge mounted')
+    Log.Default.info('tui: Factory dag bridge mounted')
 
     const stop = startRailsDagListener(dto => {
       setAppState(prev => ({

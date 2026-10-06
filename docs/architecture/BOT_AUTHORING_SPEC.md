@@ -113,7 +113,7 @@ Implemented today:
 
 **Specified / Planned:** webhook/connector events (`webhook_subscription_routes`,
 `webhook_trigger_routes` exist but create their own pipeline, not canonical
-Intent/Run work), file/system events, CommRails messages, condition/watch
+Intent/Run work), file/system events, Factory peer messages, condition/watch
 triggers. The convergence rule stands: every trigger must produce canonical
 run/job state, not a parallel engine (§11 of the architecture doc).
 

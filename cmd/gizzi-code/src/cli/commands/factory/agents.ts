@@ -35,14 +35,25 @@ export const AgentsCommand = cmd({
         }),
       )
       .command(engineVerb(P, { command: "ps", describe: "every bot of every binding: state, node, proof" }))
-      .command(engineVerb(P, { command: "down [team]", describe: "stop a team's bots", mutation: true }))
+      .command(
+        engineVerb(P, {
+          command: "down <target>",
+          describe: "stop a team's bots, or one bot's pane (bot@team)",
+          mutation: true,
+          options: { "rm-worktree": { type: "boolean", describe: "also remove the worktree it was started in" } },
+        }),
+      )
       .command(engineVerb(P, { command: "whoami", describe: "which bot and team this terminal is" }))
       .command(
         engineVerb(P, {
-          command: "recover",
-          describe: "find dead or orphaned panes and plan a handover",
+          command: "recover [bot]",
+          describe: "plan (or --apply) restarts of dead, unfinished sessions you own, with the harness's resume",
           mutation: true,
-          options: { apply: { type: "boolean", describe: "apply the recovery plan" } },
+          options: {
+            apply: { type: "boolean", describe: "apply the recovery plan" },
+            lead: { type: "string", describe: "act as this lead (default $ALLTERNIT_FACTORY_LEAD, else your user)" },
+            "as-human": { type: "boolean", describe: "override the owning-lead check" },
+          },
         }),
       )
       .command(engineVerb(P, { command: "snapshot", describe: "snapshot the whole team", mutation: true }))

@@ -1,14 +1,14 @@
-//! `ao serve` — run the UHP (Unified Harness Protocol) HTTP surface in-process
+//! `allternit-factory pane serve` — run the UHP (Unified Harness Protocol) HTTP surface in-process
 //! under the ao binary (P6a core + P6b full; plan §2.6). Operator doc: `docs/programs/ao/UHP.md`.
 //!
 //! Not a sidecar: the gateway lives in the `uhp-gateway` workspace crate and
-//! is mounted here so the `ao serve` process IS the UHP server. The gateway
+//! is mounted here so the `allternit-factory pane serve` process IS the UHP server. The gateway
 //! drives the engine over its Unix-socket JSON-RPC API — the same substrate
-//! `ao spawn/send/watch` use — so a missing engine is auto-started, exactly
+//! `allternit-factory pane spawn/send/watch` use — so a missing engine is auto-started, exactly
 //! like the ao contract commands.
 //!
-//! Surface: `ao serve` (foreground; Ctrl-C/SIGTERM stops) and
-//! `ao serve health` (probe the discovery endpoint of a running surface).
+//! Surface: `allternit-factory pane serve` (foreground; Ctrl-C/SIGTERM stops) and
+//! `allternit-factory pane serve health` (probe the discovery endpoint of a running surface).
 
 use std::io;
 use std::net::SocketAddr;
@@ -21,15 +21,15 @@ use crate::api::client::ApiClient;
 use crate::api::schema::{Method, PingParams, Request};
 
 const USAGE: &str = concat!(
-    "usage: ao serve [--addr 127.0.0.1:8410] [--token TOKEN]\n",
+    "usage: allternit-factory pane serve [--addr 127.0.0.1:8410] [--token TOKEN]\n",
     "                [--data-dir DIR] [--engine-socket PATH]\n",
-    "       ao serve health [--addr 127.0.0.1:8410] [--token TOKEN]\n",
+    "       allternit-factory pane serve health [--addr 127.0.0.1:8410] [--token TOKEN]\n",
     "\n",
     "Run the UHP 2026-08-11 HTTP surface in-process (full class).\n",
     "\n",
     "  --addr           bind address (default 127.0.0.1:8410)\n",
     "  --token          bearer token (env UHP_TOKEN; random if unset)\n",
-    "  --data-dir       state directory (default $HOME/.ao/uhp)\n",
+    "  --data-dir       state directory (default ~/.allternit/factory/uhp)\n",
     "  --engine-socket  herdr engine socket (default: the running engine's;\n",
     "                   the engine is auto-started when absent)\n",
     "\n",
@@ -66,10 +66,7 @@ pub(crate) fn run(args: &[String]) -> io::Result<i32> {
     };
     let token = flags.token.unwrap_or_else(generate_token);
     let data_dir = flags.data_dir.unwrap_or_else(|| {
-        std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".ao/uhp")
+        crate::factory_host::factory_path("uhp", Some(crate::factory_host::home_path(".ao/uhp"))) // old-names: keep (sessions written before the Factory)
     });
 
     let _ = tracing_subscriber::fmt()
@@ -79,10 +76,10 @@ pub(crate) fn run(args: &[String]) -> io::Result<i32> {
         )
         .try_init();
 
-    eprintln!("ao serve: UHP surface on http://{}", flags.addr);
-    eprintln!("ao serve: bearer token: {token}");
-    eprintln!("ao serve: engine socket: {}", engine_socket.display());
-    eprintln!("ao serve: data dir: {}", data_dir.display());
+    eprintln!("allternit-factory pane serve: UHP surface on http://{}", flags.addr);
+    eprintln!("allternit-factory pane serve: bearer token: {token}");
+    eprintln!("allternit-factory pane serve: engine socket: {}", engine_socket.display());
+    eprintln!("allternit-factory pane serve: data dir: {}", data_dir.display());
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -181,7 +178,7 @@ fn serve_health(flags: &ServeFlags) -> io::Result<i32> {
             Ok(if status.is_success() { 0 } else { 1 })
         }
         Err(err) => {
-            eprintln!("ao serve health: {err}");
+            eprintln!("allternit-factory pane serve health: {err}");
             Ok(1)
         }
     }

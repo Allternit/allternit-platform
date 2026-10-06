@@ -13,9 +13,9 @@
 //! This module replicates that collation with a fixed weight table. It was
 //! validated exhaustively against `node localeCompare`: all 9,025 single-char
 //! pairs over printable ASCII plus 30,000 random multi-char strings produced
-//! identical order (see tests/ao_harness_parity evidence in the P4 notes).
+//! identical order (evidence in the P4 harness port notes under docs/programs/).
 //!
-//! Known limitation (accepted, documented in docs/programs/ao/AO_HARNESS_PORT_NOTES.md):
+//! Known limitation (accepted, see the P7 harness port notes in docs/programs/):
 //! non-ASCII names fall back to code-point order, which may diverge from ICU
 //! for scripts with complex collation. The current 17 skills and their
 //! contents are pure ASCII. If a non-ASCII skill/file name ever lands, the

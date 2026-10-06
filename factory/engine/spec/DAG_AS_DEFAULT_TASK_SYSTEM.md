@@ -10,8 +10,8 @@ planning rules amended in the same change.
 Today, whether multi-step work is tracked in the WIH DAG or in an ad-hoc plan
 file is the agent's discretion. The repo's own `AGENTS.md:67-76` prescribes
 plain plan files as "the source of truth for the session" and never mentions
-`allternit-commrails plan`/`wih`. Result: the DAG is the architecturally
-canonical work representation *inside* commrails, but most agent sessions never
+`allternit-factory internal core plan`/`wih`. Result: the DAG is the architecturally
+canonical work representation *inside* the Factory engine, but most agent sessions never
 touch it, so cross-session work has no provable identity, no gate receipts, and
 no vault trail.
 
@@ -37,7 +37,7 @@ extends the boundary outward so work must *enter* the system to count.
    `dag:<dag_id>` / `wih:<wih_id>` (matching `spec/MAIL_SCOPE.md:11-14`),
    never a path to a plan file.
 2. **`AGENTS.md:67-76` is amended** to say: multi-step work starts with
-   `allternit-commrails plan new`, todos live as DAG node statuses, and
+   `allternit-factory internal core plan new`, todos live as DAG node statuses, and
    readiness comes from `ready_nodes` — not from a checklist in a markdown
    file.
 3. **Research pipeline and queue docs migrate last.** The Research queue's
@@ -55,7 +55,7 @@ extends the boundary outward so work must *enter* the system to count.
   system.
 - No background executor; `drive` is an explicit operator command.
   `ready_nodes` stays derived-on-demand; runners and orchestrators keep driving
-  execution per-WIH, and `allternit-commrails drive <dag_id>` (spec/DRIVE.md) is
+  execution per-WIH, and `allternit-factory internal core drive <dag_id>` (spec/DRIVE.md) is
   a foreground command an operator starts, which exits when nothing is READY or
   running. Nothing spawns agents from a schedule, a hook, or a service.
 
@@ -75,13 +75,13 @@ option (b) (merge/remove) reopens — but as of ratification, (a) is the law.
 ## Templates target the WIH DAG (2026-09-29)
 
 Workflow templates (`.allternit/rails/templates/<id>.json|.md`) instantiate into the
-WIH DAG with `allternit-commrails plan new --template <id> [--param k=v ...]`: one
+WIH DAG with `allternit-factory internal core plan new --template <id> [--param k=v ...]`: one
 `plan new` plus one `plan refine` delta carrying DagNodeCreated + DagEdgeAdded
 (blocked_by) + DagNodeWaitGateAdded mutations, all with prompt-delta provenance.
 Markdown templates hold YAML frontmatter (`name`, `description`) and one
 ```` ```yaml template-spec ```` block (`params`, `steps`: id, title, description,
 blocked_by, optional `executor`, optional `wait_gate`); format in
-`cli/COMMANDS.md`. Ticket instantiation (`commrails template instantiate`) stays
+`cli/COMMANDS.md`. Ticket instantiation (`allternit-factory internal core template instantiate`) stays
 as the portable out-of-scope surface per decision (a).
 
 Nodes pass work forward through **outputs**: `wih close --output <file>` records

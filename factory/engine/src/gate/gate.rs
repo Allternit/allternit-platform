@@ -100,7 +100,7 @@ pub struct MutationProvenance {
 }
 
 /// Who submitted a plan's raw intent when it is not the local operator —
-/// e.g. a scoped remote identity on the CommRails bridge. See
+/// e.g. a scoped remote identity on the Factory bridge. See
 /// [`Gate::plan_new_with_origin`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PromptOrigin {

@@ -1,4 +1,4 @@
-//! `allternit-factory internal rails lessons …` — vault memory candidates and triage.
+//! `allternit-factory internal core lessons …` — vault memory candidates and triage.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

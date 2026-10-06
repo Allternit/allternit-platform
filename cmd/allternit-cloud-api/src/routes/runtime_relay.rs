@@ -1453,7 +1453,6 @@ fn is_allowed_runtime_path(path: &str) -> bool {
         "/viz",
         "/sandbox",
         "/vm-session",
-        "/rails",
         "/stream",
         "/terminal",
         "/mcp",

@@ -74,7 +74,7 @@ export function withLocalMailCommands(yargs: Argv): Argv {
           try {
             const status = await getAgentEmailStatus()
             if (!status.configured) {
-              console.log("✉️  Agent email rail: not configured (mailflare env unset; provisioning falls back to CommRails mint)")
+              console.log("✉️  Agent email rail: not configured (mailflare env unset; provisioning falls back to a Factory mint address)")
             } else {
               console.log(`✉️  Agent email rail: configured — domain ${status.domain ?? "?"} — ${status.reachable ? "reachable" : "UNREACHABLE"}`)
             }

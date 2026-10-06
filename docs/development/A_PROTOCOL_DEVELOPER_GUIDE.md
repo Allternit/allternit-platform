@@ -138,7 +138,7 @@ while worker_active:
     POST complete
 ```
 
-CommRails or push notification can wake a worker faster, but correctness must not depend on receiving the push.
+Factory peer messaging or push notification can wake a worker faster, but correctness must not depend on receiving the push.
 
 ## 8. Never bypass lease ownership
 

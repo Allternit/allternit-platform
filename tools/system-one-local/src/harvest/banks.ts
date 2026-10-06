@@ -26,16 +26,16 @@ export const BANKS = {
     caller: "cmd/gizzi-code/src/runtime/routing/turn-router.ts s1Decide(ROUTE_MODEL_BANK, ...)",
   },
   permission_judge: {
-    bank: "bank.permission_gate", primitive_id: "permission.commrails_judge", operation: "GATE", question_id: "may_proceed",
+    bank: "bank.permission_gate", primitive_id: "permission.commrails_judge", operation: "GATE", question_id: "may_proceed", // old-names: keep (stored data: S1 ledger primitive id the engine Gate judge records)
     instructions: PERMISSION_INSTRUCTIONS,
-    caller: "commrails/src/gate/gate_judge.rs:938-960 (outcomes: cli_hook.* by cc-tool subject_ref)",
+    caller: "factory/engine/src/gate/gate_judge.rs:938-960 (outcomes: cli_hook.* by cc-tool subject_ref)",
   },
   permission_cli_guard: {
     bank: "bank.permission_gate", primitive_id: "permission.cli_guard", operation: "GATE", question_id: "may_proceed",
     instructions: PERMISSION_INSTRUCTIONS,
     caller: "tools/system-one-local/src/hook/guard.ts:151-160 (state = buildPack JSON)",
   },
-  // commrails/src/judge/backends.rs SystemOneFirstPass::node_verdict — the state
+  // factory/engine/src/workspace/judge/backends.rs SystemOneFirstPass::node_verdict — the state
   // JSON and the question/criteria are copied verbatim.
   judge_node: {
     bank: "bank.judge_first_pass", primitive_id: "judge.first_pass.node", operation: "GATE", question_id: "task_complete",
@@ -44,7 +44,7 @@ export const BANKS = {
       true: "The worker output shows the task is fully done.",
       false: "The output clearly shows the task is not done (missing, empty, error, or off-task).",
     },
-    caller: "commrails/src/judge/backends.rs:355-378 (state = {task, untrusted_worker_output (8000), evidence_refs})",
+    caller: "factory/engine/src/workspace/judge/backends.rs:355-378 (state = {task, untrusted_worker_output (8000), evidence_refs})",
   },
   judge_tool: {
     bank: "bank.judge_first_pass", primitive_id: "judge.first_pass.tool", operation: "GATE", question_id: "tool_safe",
@@ -53,7 +53,7 @@ export const BANKS = {
       true: "Read-only or clearly within the node's task.",
       false: "Destructive, irreversible, touches secrets, money, deploys, or other people.",
     },
-    caller: "commrails/src/judge/backends.rs:415-437 (state = {tool, untrusted_command (4000), untrusted_paths, node_title})",
+    caller: "factory/engine/src/workspace/judge/backends.rs:415-437 (state = {tool, untrusted_command (4000), untrusted_paths, node_title})",
   },
   // cmd/allternit-api/src/gateway_routing.rs before_send — GATE with the caller's
   // own consequential flag as x-incumbent; labelled with that flag (tighten-only).
@@ -74,9 +74,9 @@ export const BANKS = {
       "TEST_ASSERTION", "TEST_TIMEOUT", "RUNTIME_EXCEPTION", "RESOURCE_EXHAUSTION", "PERMISSION_ERROR",
       "NETWORK_ERROR", "ENVIRONMENT_ERROR", "VERSION_MISMATCH", "FLAKY_TEST", "REGRESSION", "LOGIC_ERROR",
     ].map((c) => ({ candidate_id: c, label: c })).concat([{ candidate_id: "UNKNOWN", label: "UNKNOWN", is_unknown: true }]),
-    caller: "cmd/allternit-api/src/agency_api/executor.rs:626-660 (state = failure output tail 4000; classes from commrails error_ontology.v0.1.json)",
+    caller: "cmd/allternit-api/src/agency_api/executor.rs:626-660 (state = failure output tail 4000; classes from the Factory engine error_ontology.v0.1.json)",
   },
-  // commrails/src/lessons/triage.rs — three CONFIDENCE_GATE Nouls on one candidate
+  // factory/engine/src/workspace/lessons/triage.rs — three CONFIDENCE_GATE Nouls on one candidate
   // state (build_state). Human-applied/rejected Brain drafts are the labels.
   lesson_task_success: {
     bank: "bank.lesson_worthiness", primitive_id: "lessons.triage.task_success", operation: "GATE", question_id: "task_success",
@@ -86,21 +86,21 @@ export const BANKS = {
       true: "the task finished successfully",
       false: "the task failed, was abandoned, or the outcome is unclear",
     },
-    caller: "commrails/src/lessons/triage.rs:157-166 (state = build_state(candidate) JSON)",
+    caller: "factory/engine/src/workspace/lessons/triage.rs:157-166 (state = build_state(candidate) JSON)",
   },
   lesson_reusable: {
     bank: "bank.lesson_worthiness", primitive_id: "lessons.triage.reusable_pattern", operation: "GATE", question_id: "reusable_pattern",
     motif: "CONFIDENCE_GATE",
     instructions: "Does this trace show a reusable correction or debugging pattern worth remembering for future work (for example failed attempts followed by a fix), rather than routine one-off work?",
     criteria: { true: "a reusable correction/debug pattern", false: "routine work with nothing reusable" },
-    caller: "commrails/src/lessons/triage.rs:157-166",
+    caller: "factory/engine/src/workspace/lessons/triage.rs:157-166",
   },
   lesson_supported: {
     bank: "bank.lesson_worthiness", primitive_id: "lessons.triage.supported_by_events", operation: "GATE", question_id: "supported_by_events",
     motif: "CONFIDENCE_GATE",
     instructions: "Would a lesson drawn from this trace be supported by concrete recorded events (`event_counts`, `receipt_ids`, `evidence_refs`), not speculation?",
     criteria: { true: "supported by concrete events", false: "not supported by recorded events" },
-    caller: "commrails/src/lessons/triage.rs:157-166",
+    caller: "factory/engine/src/workspace/lessons/triage.rs:157-166",
   },
   // cmd/allternit-api/src/memory_relations.rs shadow_turn — RELATION per candidate
   // memory; the incumbent/user edge type is the label. (MEMORY_TYPE's live caller

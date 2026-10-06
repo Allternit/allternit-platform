@@ -31,7 +31,7 @@ pub(super) fn run_workspace_command(args: &[String]) -> std::io::Result<i32> {
 
 fn workspace_list(args: &[String]) -> std::io::Result<i32> {
     if !args.is_empty() {
-        eprintln!("usage: ao workspace list");
+        eprintln!("usage: allternit-factory pane workspace list");
         return Ok(2);
     }
 
@@ -104,11 +104,11 @@ fn workspace_create(args: &[String]) -> std::io::Result<i32> {
 
 fn workspace_get(args: &[String]) -> std::io::Result<i32> {
     let Some(raw_workspace_id) = args.first() else {
-        eprintln!("usage: ao workspace get <workspace_id>");
+        eprintln!("usage: allternit-factory pane workspace get <workspace_id>");
         return Ok(2);
     };
     if args.len() != 1 {
-        eprintln!("usage: ao workspace get <workspace_id>");
+        eprintln!("usage: allternit-factory pane workspace get <workspace_id>");
         return Ok(2);
     }
 
@@ -117,11 +117,11 @@ fn workspace_get(args: &[String]) -> std::io::Result<i32> {
 
 fn workspace_focus(args: &[String]) -> std::io::Result<i32> {
     let Some(raw_workspace_id) = args.first() else {
-        eprintln!("usage: ao workspace focus <workspace_id>");
+        eprintln!("usage: allternit-factory pane workspace focus <workspace_id>");
         return Ok(2);
     };
     if args.len() != 1 {
-        eprintln!("usage: ao workspace focus <workspace_id>");
+        eprintln!("usage: allternit-factory pane workspace focus <workspace_id>");
         return Ok(2);
     }
 
@@ -130,7 +130,7 @@ fn workspace_focus(args: &[String]) -> std::io::Result<i32> {
 
 fn workspace_rename(args: &[String]) -> std::io::Result<i32> {
     if args.len() < 2 {
-        eprintln!("usage: ao workspace rename <workspace_id> <label>");
+        eprintln!("usage: allternit-factory pane workspace rename <workspace_id> <label>");
         return Ok(2);
     }
 
@@ -142,7 +142,7 @@ fn workspace_rename(args: &[String]) -> std::io::Result<i32> {
 
 fn workspace_report_metadata(args: &[String]) -> std::io::Result<i32> {
     let Some(raw_workspace_id) = args.first() else {
-        eprintln!("usage: ao workspace report-metadata <workspace_id> --source ID [--token NAME=VALUE] [--clear-token NAME] [--seq N] [--ttl-ms N]");
+        eprintln!("usage: allternit-factory pane workspace report-metadata <workspace_id> --source ID [--token NAME=VALUE] [--clear-token NAME] [--seq N] [--ttl-ms N]");
         return Ok(2);
     };
     let workspace_id = super::normalize_workspace_id(raw_workspace_id);
@@ -230,7 +230,7 @@ fn workspace_close(args: &[String]) -> std::io::Result<i32> {
         [workspace_id] => (workspace_id, false),
         [workspace_id, flag] if flag == "--group" => (workspace_id, true),
         _ => {
-            eprintln!("usage: ao workspace close <workspace_id> [--group]");
+            eprintln!("usage: allternit-factory pane workspace close <workspace_id> [--group]");
             return Ok(2);
         }
     };
@@ -242,12 +242,12 @@ fn workspace_close(args: &[String]) -> std::io::Result<i32> {
 }
 
 fn print_workspace_help() {
-    eprintln!("ao workspace commands:");
-    eprintln!("  ao workspace list");
-    eprintln!("  ao workspace create [--cwd PATH] [--label TEXT] [--env KEY=VALUE] [--focus] [--no-focus]");
-    eprintln!("  ao workspace get <workspace_id>");
-    eprintln!("  ao workspace focus <workspace_id>");
-    eprintln!("  ao workspace rename <workspace_id> <label>");
-    eprintln!("  ao workspace report-metadata <workspace_id> --source ID [--token NAME=VALUE] [--clear-token NAME] [--seq N] [--ttl-ms N]");
-    eprintln!("  ao workspace close <workspace_id> [--group]");
+    eprintln!("allternit-factory pane workspace commands:");
+    eprintln!("  allternit-factory pane workspace list");
+    eprintln!("  allternit-factory pane workspace create [--cwd PATH] [--label TEXT] [--env KEY=VALUE] [--focus] [--no-focus]");
+    eprintln!("  allternit-factory pane workspace get <workspace_id>");
+    eprintln!("  allternit-factory pane workspace focus <workspace_id>");
+    eprintln!("  allternit-factory pane workspace rename <workspace_id> <label>");
+    eprintln!("  allternit-factory pane workspace report-metadata <workspace_id> --source ID [--token NAME=VALUE] [--clear-token NAME] [--seq N] [--ttl-ms N]");
+    eprintln!("  allternit-factory pane workspace close <workspace_id> [--group]");
 }

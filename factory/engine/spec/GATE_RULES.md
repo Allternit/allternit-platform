@@ -192,7 +192,7 @@ Emits:
 - DagNodeWaitGateResolved (payload: dag_id, node_id, gate_id, kind, outcome, resolved_by, reason)
 
 Readiness: a node with any unsatisfied gate stays projected `NEW` and is excluded from
-`ready_nodes` / `wih list --ready`. Ticket wait-gates (`commrails gate ...`,
+`ready_nodes` / `wih list --ready`. Ticket wait-gates (`allternit-factory internal core gate ...`,
 `.allternit/rails/wait_gates/`) are unchanged and separate.
 
 ## Judged nodes (EXCEPTION / NEEDS_HUMAN)

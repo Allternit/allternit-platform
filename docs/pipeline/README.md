@@ -23,7 +23,7 @@ briefs for the most relevant new items, announces them over rails mail, and
   ingestion of rejection patterns.
   - `spec-rubric.md` — the reviewer's prompt: verdict-able requirements,
     acceptance that proves its requirement, right-sizing, phase boundaries.
-  - `bin/check-spec.sh` — consults the independent reviewer (`ao-consult`;
+  - `bin/check-spec.sh` — consults the independent reviewer (`allternit-factory orchestration steer consult`;
     `SPEC_CHECK_CMD` overrides for tests) per unverdicted spec. READY →
     `queue/` + rails announce to `wih:pipeline-queue` (hard error on
     failure); NEEDS-WORK → findings in `specs/<slug>.review.md`, 3 rounds →
@@ -147,7 +147,7 @@ mirroring how humans learn (program: `docs/pipeline/PROGRAM-meta-learning.md`):
 - **Reflection points** fire when a run completes (end of `check-spec.sh`
   and `build-queue.sh`): `bin/learn-reflect.sh` reads the events since the
   last reflection (watermark in `docs/pipeline/learn/watermark`), consults
-  ao-consult with the distillation prompt
+  `allternit-factory orchestration steer consult` with the distillation prompt
   (`docs/pipeline/learn/reflect-prompt.md`; `LEARN_CONSULT_CMD` overrides the
   consult for tests), and appends the returned rules to
   `docs/pipeline/playbook.md` — each rule imperative, with `confidence`,

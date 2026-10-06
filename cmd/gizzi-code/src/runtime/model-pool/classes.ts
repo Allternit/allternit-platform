@@ -1,7 +1,7 @@
 /**
  * Capability classes (O1) and output caps by call type (O5).
  *
- * Mirror of the kernel router's table (`commrails/src/kernel/classes.rs`).
+ * Mirror of the kernel router's table (`factory/engine/src/workflows/kernel/classes.rs`).
  * Both sides pin the same values in tests; change them together.
  * Classes are logical: no vendor or model name appears here.
  */

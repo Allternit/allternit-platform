@@ -76,8 +76,10 @@ pub struct CompanyConfig {
     #[serde(rename = "tenantId")]
     pub tenant_id: Option<String>,
 
-    /// URL of the Rails service (ledger/gate/leases). Baked into packaged apps.
-    #[serde(rename = "railsUrl")]
+    /// Base URL of the Factory's in-process API (ledger/gate/leases, served
+    /// under `/api/factory`). Baked into packaged apps. `railsUrl` is the key
+    /// company.json files written before the Factory used.
+    #[serde(rename = "factoryApiUrl", alias = "railsUrl")]
     pub rails_url: Option<String>,
 
     /// Canonical AllternitOS lease authority. Unset means fabric lease
@@ -88,8 +90,9 @@ pub struct CompanyConfig {
     #[serde(rename = "allternitOSLeaseAuthorityUrl")]
     pub allternitos_lease_authority_url: Option<String>,
 
-    /// Rails workspace ID for this packaged deployment.
-    #[serde(rename = "railsWorkspaceId")]
+    /// Factory workspace ID for this packaged deployment (`railsWorkspaceId`
+    /// in company.json files written before the Factory).
+    #[serde(rename = "factoryWorkspaceId", alias = "railsWorkspaceId")]
     pub rails_workspace_id: Option<String>,
 
     /// Default directory for VM storage. Baked into packaged apps.
@@ -629,11 +632,9 @@ impl AppConfig {
             .unwrap_or_else(|| self.company.self_hosted.unwrap_or(false))
     }
 
-    /// URL of the Rails service.
+    /// Base URL of the Factory's in-process API.
     pub fn rails_url(&self) -> String {
-        std::env::var("ALLTERNIT_RAILS_URL")
-            .ok()
-            .filter(|s| !s.is_empty())
+        factory_env("ALLTERNIT_FACTORY_API_URL", "ALLTERNIT_RAILS_URL") // old-names: keep (env set before the Factory)
             .or_else(|| self.company.rails_url.clone())
             .unwrap_or_else(|| "http://127.0.0.1:8080".to_string())
     }
@@ -657,11 +658,9 @@ impl AppConfig {
             .or_else(|| self.company.push_worker_url.clone())
     }
 
-    /// Rails workspace ID for this deployment.
+    /// Factory workspace ID for this deployment.
     pub fn rails_workspace_id(&self) -> String {
-        std::env::var("ALLTERNIT_RAILS_WORKSPACE_ID")
-            .ok()
-            .filter(|s| !s.is_empty())
+        factory_env("ALLTERNIT_FACTORY_WORKSPACE_ID", "ALLTERNIT_RAILS_WORKSPACE_ID") // old-names: keep (env set before the Factory)
             .or_else(|| self.company.rails_workspace_id.clone())
             .unwrap_or_else(|| "default".to_string())
     }
@@ -1320,4 +1319,21 @@ fn migrate_legacy_gizzi_config() {
             warn!(error = %err, from = %source.display(), to = %target.display(), "Failed to migrate legacy gizzi brain config")
         }
     }
+}
+
+/// Read `new`, else the pre-Factory name `old` (a deployment or shell may still
+/// export it), warning once per old name. Empty values count as unset.
+fn factory_env(new: &str, old: &str) -> Option<String> {
+    if let Some(v) = std::env::var(new).ok().filter(|v| !v.is_empty()) {
+        return Some(v);
+    }
+    let v = std::env::var(old).ok().filter(|v| !v.is_empty())?;
+    static WARNED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+    if let Ok(mut warned) = WARNED.lock() {
+        if !warned.iter().any(|w| w == old) {
+            warned.push(old.to_string());
+            tracing::warn!("{old} is deprecated; set {new} instead (read {old} for now)");
+        }
+    }
+    Some(v)
 }

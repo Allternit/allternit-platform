@@ -40,7 +40,7 @@ fn allowed_path(path: &str) -> bool {
     // index.ts:287-296 (request list; socket_open uses the same list in this
     // port — see module doc).
     const ALLOWED_PREFIXES: &[&str] = &[
-        "/api/", "/viz", "/sandbox", "/vm-session", "/rails", "/stream",
+        "/api/", "/viz", "/sandbox", "/vm-session", "/stream",
         "/terminal", "/mcp", "/platform", "/metrics", "/alabs", "/cowork",
         "/webhooks", "/status", "/health",
         "/ws", "/panes",
@@ -117,7 +117,7 @@ pub(crate) async fn run(
         http: match reqwest::Client::builder().build() {
             Ok(client) => client,
             Err(err) => {
-                eprintln!("[ao-fabric] relay: cannot build http client: {err}");
+                eprintln!("[factory-fabric] relay: cannot build http client: {err}");
                 return;
             }
         },
@@ -148,7 +148,7 @@ pub(crate) async fn run(
             RunOutcome::ReconnectNow => continue,
             RunOutcome::Disconnected => {}
         }
-        eprintln!("[ao-fabric] relay: reconnecting in {}s", retry.as_secs());
+        eprintln!("[factory-fabric] relay: reconnecting in {}s", retry.as_secs());
         tokio::select! {
             _ = tokio::time::sleep(retry) => {}
             _ = shutdown.changed() => {
@@ -177,7 +177,7 @@ async fn connect_and_run(
 ) -> RunOutcome {
     let identity = state.snapshot().await;
     let (Ok(runtime_id), Ok(token)) = (identity.runtime_id(), identity.device_token()) else {
-        eprintln!("[ao-fabric] relay: identity is not paired; cannot connect");
+        eprintln!("[factory-fabric] relay: identity is not paired; cannot connect");
         return RunOutcome::Shutdown;
     };
     let url = relay_ws_url(&cloud.base_url, runtime_id);
@@ -185,7 +185,7 @@ async fn connect_and_run(
     let (ws_stream, _response) = match connect_async(&url).await {
         Ok(pair) => pair,
         Err(err) => {
-            eprintln!("[ao-fabric] relay: connect failed: {err}");
+            eprintln!("[factory-fabric] relay: connect failed: {err}");
             return RunOutcome::Disconnected;
         }
     };
@@ -225,7 +225,7 @@ async fn connect_and_run(
             }
             changed = reconnect.changed() => {
                 if changed.is_ok() {
-                    eprintln!("[ao-fabric] relay: credential rotated — reconnecting on the new token");
+                    eprintln!("[factory-fabric] relay: credential rotated — reconnecting on the new token");
                     outcome = RunOutcome::ReconnectNow;
                 }
                 break;
@@ -235,7 +235,7 @@ async fn connect_and_run(
                 let frame = match frame {
                     Ok(frame) => frame,
                     Err(err) => {
-                        eprintln!("[ao-fabric] relay: {err}");
+                        eprintln!("[factory-fabric] relay: {err}");
                         break;
                     }
                 };
@@ -269,7 +269,7 @@ async fn handle_cloud_message(
 ) {
     match message {
         CloudMessage::Authenticated { .. } => {
-            println!("[ao-fabric] Secure runtime relay connected.");
+            println!("[factory-fabric] Secure runtime relay connected.");
         }
         CloudMessage::Ping => {
             let _ = out_tx.send(NodeMessage::Pong);
@@ -475,7 +475,7 @@ async fn handle_relay_socket_open(
     let mut request = match url.as_str().into_client_request() {
         Ok(request) => request,
         Err(err) => {
-            eprintln!("[ao-fabric] local runtime socket: bad url {url}: {err}");
+            eprintln!("[factory-fabric] local runtime socket: bad url {url}: {err}");
             return;
         }
     };
@@ -506,7 +506,7 @@ async fn handle_relay_socket_open(
     }
 
     let Ok((local, _)) = connect_async(request).await else {
-        eprintln!("[ao-fabric] local runtime socket: dial failed for {path}");
+        eprintln!("[factory-fabric] local runtime socket: dial failed for {path}");
         let _ = out_tx.send(NodeMessage::SocketClose {
             socket_id,
             code: 1011,

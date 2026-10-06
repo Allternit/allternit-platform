@@ -1,4 +1,4 @@
-# Research-pipeline mechanical sweep, expressed as a CommRails campaign.
+# Research-pipeline mechanical sweep, expressed as a Factory campaign.
 #
 # DISABLED BY DEFAULT (status: paused). The live schedule is still the launchd
 # job `com.allternit.research-pipeline-sweep` (Mon-Fri 09:05 America/Chicago:

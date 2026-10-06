@@ -81,7 +81,7 @@ allternit-factory-engine = { workspace = true }
 # The engine's pane-backend trait returns anyhow errors (src/factory_backend.rs).
 anyhow = { workspace = true }
 
-# P6a UHP gateway (src/ao/serve.rs): `ao serve` mounts the UHP HTTP surface
+# P6a UHP gateway (src/ao/serve.rs): `allternit-factory pane serve` (`serve uhp`) mounts the UHP HTTP surface
 # in-process (not a sidecar); the gateway drives the engine over the socket API.
 uhp-gateway = { path = "../../infrastructure/executor/uhp-gateway" }
 

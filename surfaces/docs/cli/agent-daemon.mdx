@@ -99,7 +99,7 @@ Relay message types handled by the daemon:
 | `socket_close` | Both | Close a bridged WebSocket. |
 | `ping` / `pong` | Both | Keepalive. |
 
-The daemon validates that every proxied path starts with an allowed gateway prefix such as `/api`, `/terminal`, `/cowork`, `/rails`, `/ws`, `/panes`, or `/v1`.
+The daemon validates that every proxied path starts with an allowed gateway prefix such as `/api` (which covers `/api/factory`), `/terminal`, `/cowork`, `/ws`, `/panes`, or `/v1`.
 
 ## Heartbeat and credential rotation
 

@@ -1,4 +1,4 @@
-//! CommRails bridge: a scoped, default-off HTTP listener that lets a remote
+//! Factory bridge: a scoped, default-off HTTP listener that lets a remote
 //! agent (e.g. Chief on the shared box, over the mesh) create and read WIH
 //! DAGs and send/read coordination mail — and nothing else.
 //!

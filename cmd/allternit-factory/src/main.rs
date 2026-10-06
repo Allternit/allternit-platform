@@ -1,8 +1,8 @@
 //! `allternit-factory`: the Allternit Factory engine binary.
 //!
 //! Internal. Users run `gizzi agents|orchestration|workflows|workspace …`, and
-//! Gizzi runs this binary with `--json`. One process tree replaces the old
-//! CommRails binaries and the agent-orchestrator engine:
+//! Gizzi runs this binary with `--json`. One process tree for the whole
+//! engine:
 //!
 //! - `serve`          the engine's HTTP service (+ `serve uhp`, `serve fabric`)
 //! - `pane …`         the pane engine (the Herdr fork); no args opens the TUI

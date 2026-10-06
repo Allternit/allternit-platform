@@ -42,10 +42,10 @@ pub fn configure_from_args(args: &[String]) -> Result<Vec<String>, String> {
             return Ok(args.to_vec());
         }
         let Some(name) = args.get(3) else {
-            return Err("usage: ao session attach <name>".to_string());
+            return Err("usage: allternit-factory pane session attach <name>".to_string());
         };
         if args.len() != 4 {
-            return Err("usage: ao session attach <name>".to_string());
+            return Err("usage: allternit-factory pane session attach <name>".to_string());
         }
         apply_explicit_name(name)?;
         return Ok(cleaned);
@@ -133,7 +133,7 @@ pub fn active_restart_after_update_guidance() -> String {
         if let Ok(socket_path) = std::env::var(crate::api::SOCKET_PATH_ENV_VAR) {
             return restart_after_update_guidance(
                 &format!(
-                    "{}={} ao server stop",
+                    "{}={} allternit-factory pane server stop",
                     crate::api::SOCKET_PATH_ENV_VAR,
                     socket_path
                 ),
@@ -844,7 +844,7 @@ mod tests {
         let _guard = env_lock().lock().unwrap();
         std::env::set_var(SESSION_ENV_VAR, "work");
 
-        assert_eq!(local_attach_command(), "ao session attach work");
+        assert_eq!(local_attach_command(), "allternit-factory pane session attach work");
 
         std::env::remove_var(SESSION_ENV_VAR);
     }
@@ -854,7 +854,7 @@ mod tests {
         let _guard = env_lock().lock().unwrap();
         std::env::remove_var(SESSION_ENV_VAR);
 
-        assert_eq!(local_stop_command(), "ao server stop");
+        assert_eq!(local_stop_command(), "allternit-factory pane server stop");
 
         std::env::remove_var(SESSION_ENV_VAR);
     }
@@ -864,7 +864,7 @@ mod tests {
         let _guard = env_lock().lock().unwrap();
         std::env::set_var(SESSION_ENV_VAR, "work");
 
-        assert_eq!(local_stop_command(), "ao session stop work");
+        assert_eq!(local_stop_command(), "allternit-factory pane session stop work");
 
         std::env::remove_var(SESSION_ENV_VAR);
     }
@@ -873,10 +873,10 @@ mod tests {
     fn restart_after_update_guidance_names_stop_and_attach_commands() {
         assert_eq!(
             restart_after_update_guidance(
-                "ao session stop work",
-                Some("ao session attach work")
+                "allternit-factory pane session stop work",
+                Some("allternit-factory pane session attach work")
             ),
-            "Stop the old server to use the new version.\nStopping exits pane processes.\nRun `ao session stop work`, then run `ao session attach work` again."
+            "Stop the old server to use the new version.\nStopping exits pane processes.\nRun `allternit-factory pane session stop work`, then run `allternit-factory pane session attach work` again."
         );
     }
 
@@ -889,7 +889,7 @@ mod tests {
 
         assert_eq!(
             active_restart_after_update_guidance(),
-            "Stop the old server to use the new version.\nStopping exits pane processes.\nRun `HERDR_SOCKET_PATH=/tmp/custom-herdr.sock ao server stop`, then restart ao with the same socket override."
+            "Stop the old server to use the new version.\nStopping exits pane processes.\nRun `HERDR_SOCKET_PATH=/tmp/custom-herdr.sock allternit-factory pane server stop`, then restart ao with the same socket override."
         );
 
         std::env::remove_var(crate::api::SOCKET_PATH_ENV_VAR);

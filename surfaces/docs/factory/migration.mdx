@@ -4,14 +4,14 @@ description: "Old CommRails, allternit-rails, ao and Gizzi commands, env vars an
 ---
 
 <Note>
-Shipping with the Allternit Factory build. Until it lands, the old commands still work. When it lands, they're gone.
+The Allternit Factory build removed the old names. If a script, skill or agent instruction still uses one, it now fails; this page says what to use instead.
 </Note>
 
 <Warning>
-The old names are **removed, not aliased**. `allternit-rails`, `allternit-commrails`, `commrails`, `rails`, `ao` and the `ao-*` scripts don't exist after the Factory build, and the old env vars and routes stop working in the same release. Update your scripts, skills and agent instructions.
+The old names are **removed, not aliased**. `allternit-rails`, `allternit-commrails`, `commrails`, `rails`, `ao` and the `ao-*` scripts don't exist after the Factory build, and the old env vars stop working in the same release. Update your scripts, skills and agent instructions. The one exception is two HTTP route prefixes, kept for a short time for apps already installed (see [HTTP routes](#http-routes)).
 </Warning>
 
-CommRails (the work engine) and the agent orchestrator (`ao`) are now one engine, `allternit-factory`, and you drive it through `gizzi`. The internal maintenance commands that had no user-facing home (ledger, index, lease, vault, replay) live under the engine's hidden `allternit-factory internal …` group.
+CommRails (the work engine) and the agent orchestrator (`ao`) are now one engine, `allternit-factory`, and you drive it through `gizzi`. The internal maintenance commands that had no user-facing home (ledger, index, lease, vault, replay, hook, mail, steer, peer, plan, wih, identity, bridge) live under the engine's hidden `allternit-factory internal core …` group.
 
 ## Commands
 
@@ -43,6 +43,10 @@ CommRails (the work engine) and the agent orchestrator (`ao`) are now one engine
 | `allternit-rails doctor` | `gizzi doctor` |
 | `allternit-rails-service`, `allternit-commrails-service` | `allternit-factory serve` (started by Desktop or by `gizzi`) |
 | `rails ticket …`, `rails ready` | The portable ticket tool, kept apart from the four parts |
+| `allternit-rails ledger\|index\|lease\|vault\|replay\|hook …` and other maintenance verbs | `allternit-factory internal core <verb> …` |
+| `allternit-commrails identity add\|list\|revoke`, `bridge serve` | `allternit-factory internal core identity add\|list\|revoke`, `allternit-factory internal core bridge serve` |
+| `allternit-factory internal rails …`, `internal verb-rails` | `allternit-factory internal core …`, `internal verb-core` |
+| `tools/commrails-bridge-client/commrails-bridge` (box-side bridge client) | `tools/factory-bridge-client/factory-bridge` |
 
 ### Agent orchestrator (`ao`)
 
@@ -51,18 +55,20 @@ CommRails (the work engine) and the agent orchestrator (`ao`) are now one engine
 | `ao` (the TUI) | `gizzi`, then `gizzi agents wall` for the live terminals |
 | `ao spawn <harness>` | `gizzi agents up <team>` (a pane per Terminal bot in `team.yaml`) |
 | `ao send <session> "…"` | `gizzi orchestration send <bot@team> "…"` |
-| `ao send … --queue` / the mailbox | `gizzi orchestration send <bot@team> "…" --queue` |
+| `ao send … --queue`, `ao queue` | `gizzi orchestration send <bot@team> "…" --queue` |
+| `ao drain [--all]`, the auto-drain in `ao watch` | `gizzi orchestration drain <bot@team> [--all]` |
 | `ao status` | `gizzi agents ps` |
 | `ao status <session> <n>` | `gizzi orchestration capture <bot@team> <n>` |
 | `ao transcript <session>` | `gizzi orchestration transcript <bot@team>` |
 | `ao attach <session>` | `gizzi agents attach <bot@team>` |
-| `ao kill <session>` | `gizzi agents down <team>` |
-| `ao recover` | `gizzi agents recover [--apply]` |
+| `ao kill <session> [--rm-worktree]` | `gizzi agents down <bot@team> [--rm-worktree]`, or `gizzi agents down <team>` |
+| `ao recover [--apply] [--lead <id>\|--as-human]` | `gizzi agents recover [--apply] [--lead <id>\|--as-human]` |
 | `ao harness …` | `gizzi agents harness list\|sync` |
 | `ao doctor` | `gizzi agents doctor` |
 | `ao watch` | `gizzi workflows wake` (checks) or `gizzi workflows drive` (pickups) |
 | `ao serve`, `ao fabric serve` | `allternit-factory serve uhp`, `allternit-factory serve fabric` |
 | `ao-consult`, other `ao-*` scripts | Removed. Use `gizzi orchestration steer consult` |
+| `allternit-factory pane spawn\|send\|watch\|status <slug>\|kill\|queue\|drain\|recover\|transcript` (the pane engine's copy of the `ao` verbs) | Removed. The `agents` and `orchestration` verbs above. `allternit-factory pane status` is the pane engine's own status again, and `allternit-factory pane doctor` stays |
 
 ### Gizzi's older commands
 
@@ -85,26 +91,53 @@ Every old prefix moves to `ALLTERNIT_FACTORY_*`.
 | `ALLTERNIT_COMMRAILS_*` | `ALLTERNIT_FACTORY_*` |
 | `ALLTERNIT_RAILS_*` (for example `ALLTERNIT_RAILS_HOST`, `ALLTERNIT_RAILS_PORT`, `ALLTERNIT_RAILS_ROOT`) | `ALLTERNIT_FACTORY_*` (`ALLTERNIT_FACTORY_HOST`, `ALLTERNIT_FACTORY_PORT`, `ALLTERNIT_FACTORY_ROOT`) |
 | `AO_*` | `ALLTERNIT_FACTORY_*` |
-| `HERDR_*` | `ALLTERNIT_FACTORY_*` |
-| — | `ALLTERNIT_FACTORY_BIN`: where Gizzi looks for the engine, if not next to `gizzi` |
+| `HERDR_SOCKET_PATH` read outside the pane engine (the UHP gateway) | `ALLTERNIT_FACTORY_PANE_SOCKET` |
+| `HERDR_AO_TRANSCRIPT` (the pane transcript launch marker) | `ALLTERNIT_FACTORY_TRANSCRIPT`. The pane engine still accepts the old key from a client built before the rename |
+| `ALLTERNIT_AO_PORT`, `ALLTERNIT_AO_GATEWAY_URL` (`allternit-factory serve fabric`) | `ALLTERNIT_FACTORY_FABRIC_PORT`, `ALLTERNIT_FACTORY_FABRIC_GATEWAY_URL`. The old names are still read, with a one-time deprecation warning, because a saved launch config may set them |
+| The pane engine's own `HERDR_*` (its socket, session and config paths, the ids it exports into panes, its harness hooks) | Unchanged. It's the upstream Herdr env contract, kept so upstream fixes still merge |
+| `ALLTERNIT_COMMRAILS_BIN`, `ALLTERNIT_RAILS_CLI_PATH` | `ALLTERNIT_FACTORY_BIN`: where Gizzi looks for the engine, if not next to `gizzi` |
+| `ALLTERNIT_COMMRAILS_WIH` | `ALLTERNIT_FACTORY_WIH` |
+| `ALLTERNIT_COMMRAILS_PEER_NAME`, `ALLTERNIT_RAILS_PEER_NAME` | `ALLTERNIT_FACTORY_PEER_NAME` |
+| `ALLTERNIT_COMMRAILS_INBOX`, `ALLTERNIT_RAILS_INBOX` | `ALLTERNIT_FACTORY_INBOX` |
+| `ALLTERNIT_COMMRAILS_TASK_FILE`, `ALLTERNIT_RAILS_TASK_FILE` | `ALLTERNIT_FACTORY_TASK_FILE` |
+| `ALLTERNIT_COMMRAILS_BRIDGE_IDENTITIES` | `ALLTERNIT_FACTORY_BRIDGE_IDENTITIES` |
+| `COMMRAILS_BRIDGE_URL`, `COMMRAILS_BRIDGE_TOKEN_FILE`, `COMMRAILS_BRIDGE_TOKEN` (box-side bridge client) | `ALLTERNIT_FACTORY_BRIDGE_URL`, `ALLTERNIT_FACTORY_BRIDGE_TOKEN_FILE`, `ALLTERNIT_FACTORY_BRIDGE_TOKEN`. The client still reads the old names and `~/.config/commrails-bridge/token`, with a one-time deprecation, because remote boxes were set up with them |
+| `ALLTERNIT_RAILS_URL` (allternit-api / company config: base URL of the API) | `ALLTERNIT_FACTORY_API_URL`. The `company.json` key `railsUrl` becomes `factoryApiUrl`; the old key is still read, with a deprecation |
+| `ALLTERNIT_RAILS_WORKSPACE_ID` | `ALLTERNIT_FACTORY_WORKSPACE_ID` (`company.json` `railsWorkspaceId` → `factoryWorkspaceId`, same fallback) |
+| `GIZZI_COMMRAILS_URL`, `GIZZI_RAILS_URL` (the engine URL, default `:3011`) | `ALLTERNIT_FACTORY_URL` |
+| `GIZZI_ENABLE_RAILS_PEER` (gizzi-code peer registration, `0` opts out) | `ALLTERNIT_FACTORY_PEER` (`0` opts out). The old name is still read, with a deprecation notice |
+| — | `ALLTERNIT_FACTORY_HOME`: the engine's state folder. When set, the one-time home move is skipped |
+| — | `ALLTERNIT_FACTORY_HARNESS_HOME`: where the pane engine installs harness hooks (default `~/.allternit/factory/harness`) |
+| `NEXT_PUBLIC_ALLTERNIT_RAILS_API` (ai.allternit.com build flag) | `NEXT_PUBLIC_ALLTERNIT_FACTORY_API`. The old flag is still read as a fallback, with a console deprecation, because a deployment may still set it |
 
 ## HTTP routes
 
 | Old | New |
 |---|---|
-| `/rails/*`, `/api/rails/*`, `/commrails/*`, `/api/commrails/*` | `/api/factory/*` |
+| `/rails/*`, `/api/rails/*`, `/commrails/*`, `/api/commrails/*` | `/api/factory/*`, same subpath (for example `/api/rails/mail/decide` → `/api/factory/mail/decide`), except the five below |
+| `GET /` (status) and `GET /health` under an old prefix | `GET /api/factory/ledger/health` |
+| `GET /dags?view=…` | `GET /api/factory/plans/dags?view=…` |
+| `GET /dags/:dag/render`, `POST /dags/:dag/execute` | `GET /api/factory/plan/:dag/render`, `POST /api/factory/plan/:dag/execute` |
+| `POST /dags/:dag/nodes`, `PATCH\|DELETE /dags/:dag/nodes/:node` | `POST /api/factory/plan/:dag/nodes`, `PATCH\|DELETE /api/factory/plan/:dag/nodes/:node` |
+| `POST /runs/:run/cancel` | `POST /api/factory/plan/runs/:run/cancel` |
 | `/api/v1/orchestrator/*` and Gizzi's `/v1/orchestrator/*` | `/api/factory/*` (agents, send, events) |
 
-See the [Factory API reference](/factory/api-reference) for the new resources.
+`/api/rails/*` and `/api/commrails/*` still answer, with their old subpaths, as aliases of the routes above. They stay only until the apps already in people's hands stop calling them (ai.allternit.com and Desktop, through allternit-ai, and gizzi-code 2.1.9 and earlier), and are removed in the release after that. `/rails/*` and `/commrails/*` are gone. Don't write new callers against either old prefix.
+
+The moved routes are served in process by allternit-api, behind the same auth as before; the full list is in [Architecture: routes allternit-api serves in process](/factory/architecture#routes-allternit-api-serves-in-process). Allowed-prefix lists (Desktop, the agent daemon) dropped `/rails`; `/api/` already covers `/api/factory`. See the [Factory API reference](/factory/api-reference) for the engine's resources.
 
 ## On-disk state
 
 | Old | New |
 |---|---|
-| `~/.agent-orchestrator/` | `~/.allternit/factory/`. Moved once; `gizzi doctor` checks it |
+| `~/.agent-orchestrator/` | `~/.allternit/factory/`. The engine moves it once, at `serve` start: it never overwrites, drops identical files, and skips the move when `$ALLTERNIT_FACTORY_HOME` is set. `gizzi doctor` reports the result ([home move](/cli/doctor#factory-home-move)); `allternit-factory internal migrate-home` runs it by hand |
+| `~/.allternit/commrails-bridge/identities.json` (bridge identities) | `~/.allternit/factory/bridge/identities.json` |
+| `~/.ao/harness` (pane engine harness installs) | `~/.allternit/factory/harness` (`ALLTERNIT_FACTORY_HARNESS_HOME`). Existing `~/.ao/harness` installs keep working in place |
+| The orchestrator's UHP data folder | `~/.allternit/factory/uhp` |
+| Pane worktrees | `~/.allternit/factory/worktrees` |
 | The workspace's `.allternit/` | Unchanged. It's data, not a name |
 | Ledger event names | Unchanged, so old ledgers still replay |
-| `~/.local/bin/allternit-rails`, `ao-*` symlinks | Removed by the Desktop installer |
+| `~/.local/bin/allternit-rails`, `ao-*` symlinks, `ao-consult` | Removed by the Desktop installer, each only after checking it's the old tool |
 
 ## Pages that moved
 

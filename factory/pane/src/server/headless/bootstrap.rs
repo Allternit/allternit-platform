@@ -30,7 +30,7 @@ pub fn run_server() -> io::Result<()> {
     ) {
         Ok(server) => server,
         Err(err) if err.kind() == io::ErrorKind::AddrInUse => {
-            eprintln!("error: ao server is already running");
+            eprintln!("error: allternit-factory pane server is already running");
             eprintln!("api socket: {}", api::socket_path().display());
             std::process::exit(1);
         }
@@ -63,7 +63,7 @@ pub fn run_server() -> io::Result<()> {
         ) {
             Ok(server) => server,
             Err(err) if err.kind() == io::ErrorKind::AddrInUse => {
-                eprintln!("error: ao server is already running");
+                eprintln!("error: allternit-factory pane server is already running");
                 eprintln!("client socket: {}", client_socket_path().display());
                 std::process::exit(1);
             }
@@ -73,7 +73,7 @@ pub fn run_server() -> io::Result<()> {
         info!(
             api_socket = %api::socket_path().display(),
             client_socket = %client_socket_path().display(),
-            "ao server started"
+            "allternit-factory pane server started"
         );
         print_ready_message(&api::socket_path(), &client_socket_path());
         server.app.run_plugin_startup_hooks();
@@ -200,7 +200,7 @@ fn run_handoff_import_server(_socket_path: &Path, _token: &str) -> io::Result<()
 }
 
 fn print_ready_message(api_socket: &Path, client_socket: &Path) {
-    eprintln!("ao server running; you can use any ao CLI command in another terminal.");
+    eprintln!("allternit-factory pane server running; you can use any ao CLI command in another terminal.");
     eprintln!("api socket: {}", api_socket.display());
     eprintln!("client socket: {}", client_socket.display());
     eprintln!(
@@ -209,7 +209,7 @@ fn print_ready_message(api_socket: &Path, client_socket: &Path) {
             .join("ao-server.log")
             .display()
     );
-    eprintln!("did you mean to open the ao TUI? run `ao`; you do not need `ao server`.");
+    eprintln!("did you mean to open the ao TUI? run `ao`; you do not need `allternit-factory pane server`.");
 }
 
 /// Initialize logging for the server process.

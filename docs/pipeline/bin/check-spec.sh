@@ -4,7 +4,7 @@
 # For each docs/pipeline/specs/*.md without a READY/STALLED/REJECT verdict in
 # docs/pipeline/verdicts.json: assemble spec-rubric.md + charter.md + taste
 # precedents from memory (advisory) + the spec, consult the independent
-# reviewer (SPEC_CHECK_CMD test hook, else ao-consult), then:
+# reviewer (SPEC_CHECK_CMD test hook, else `allternit-factory orchestration steer consult`), then:
 #   READY      -> move spec to docs/pipeline/queue/, record verdict, announce to
 #                 wih:pipeline-queue (announce failure = hard error, R4/C3);
 #                 then create a rails ticket for the queued spec (B3-R1):
@@ -352,11 +352,11 @@ consult() { # consult <request-file> -> answer on stdout (may be empty)
   if [ -n "${SPEC_CHECK_CMD:-}" ]; then
     $SPEC_CHECK_CMD < "$1"
   else
-    ao-consult < "$1"
+    allternit-factory orchestration steer consult --cwd "$PWD" --prompt-file "$1"
   fi
 }
 
-# First line, bullet-stripped (ao-consult prefixes "• "), CR-free, uppercase.
+# First line, bullet-stripped (the consult prefixes "• "), CR-free, uppercase.
 verdict_of() {
   printf '%s\n' "$1" | sed 's/^• //' | head -1 | tr -d '\r' | tr '[:lower:]' '[:upper:]'
 }

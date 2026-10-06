@@ -75,10 +75,10 @@ pub struct Rest {
 #[derive(Args)]
 #[command(args_conflicts_with_subcommands = true)]
 pub struct ServeArgs {
-    /// HTTP port (default 3011, or $ALLTERNIT_COMMRAILS_PORT).
+    /// HTTP port (default 3011, or $ALLTERNIT_FACTORY_PORT).
     #[arg(long)]
     pub port: Option<u16>,
-    /// HTTP bind host (default 127.0.0.1, or $ALLTERNIT_COMMRAILS_HOST).
+    /// HTTP bind host (default 127.0.0.1, or $ALLTERNIT_FACTORY_HOST).
     #[arg(long)]
     pub host: Option<String>,
     /// Unix socket path (default ~/.allternit/factory/factory.sock).
@@ -205,6 +205,17 @@ pub enum OrchestrationCmd {
         to: String,
         #[arg(long)]
         tail: Option<usize>,
+    },
+    /// Deliver an agent's queued messages (oldest first, each only once its
+    /// paste is verified).
+    Drain {
+        to: String,
+        /// Every queued message, not just the oldest.
+        #[arg(long)]
+        all: bool,
+        /// List what is queued; deliver nothing.
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Threads (standing / task).
     Threads(Planned),
@@ -348,14 +359,27 @@ pub enum NodeCmd {
 pub enum InternalCmd {
     /// The maintenance CLI with its own exit codes (hooks rely on them).
     #[command(disable_help_flag = true)]
-    Rails(Rest),
+    Core(Rest),
     /// The maintenance CLI with API.md exit codes (used by the part verbs).
     #[command(disable_help_flag = true, hide = true)]
-    VerbRails(Rest),
+    VerbCore(Rest),
     /// The spawn-gate hooks a gated harness runs (`--root R claude-pretool …`,
-    /// `spawn-check`, `claude-settings`); the same as `rails hook …`.
+    /// `spawn-check`, `claude-settings`); the same as `core hook …`.
     #[command(disable_help_flag = true)]
     Hook(Rest),
+    /// Move the old agent-orchestrator home into ~/.allternit/factory once
+    /// (`serve` does this at start). Never overwrites; reports conflicts.
+    MigrateHome(MigrateHomeArgs),
+}
+
+#[derive(Args)]
+pub struct MigrateHomeArgs {
+    /// Print what would move; change nothing.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Run even if the marker says it ran before (moves whatever reappeared).
+    #[arg(long)]
+    pub again: bool,
 }
 
 /// Pull `--json`, `--dry-run` and `--root DIR` out of raw passthrough args
@@ -415,8 +439,9 @@ pub fn dispatch(ctx: &Ctx, command: Top) -> u8 {
         Top::Orchestration(cmd) => orchestration(ctx, cmd),
         Top::Workflows(cmd) => workflows(ctx, cmd),
         Top::Workspace(cmd) => workspace(ctx, cmd),
-        Top::Internal(InternalCmd::Rails(rest)) => run_rails_in_process(ctx.root.as_ref(), rest.args, false),
-        Top::Internal(InternalCmd::VerbRails(rest)) => run_rails_in_process(ctx.root.as_ref(), rest.args, true),
+        Top::Internal(InternalCmd::Core(rest)) => run_rails_in_process(ctx.root.as_ref(), rest.args, false),
+        Top::Internal(InternalCmd::VerbCore(rest)) => run_rails_in_process(ctx.root.as_ref(), rest.args, true),
+        Top::Internal(InternalCmd::MigrateHome(args)) => migrate_home(ctx, args),
         Top::Internal(InternalCmd::Hook(rest)) => {
             let split = split(rest.args, true);
             let mut args = vec!["hook".to_string()];
@@ -426,8 +451,72 @@ pub fn dispatch(ctx: &Ctx, command: Top) -> u8 {
     }
 }
 
-fn env_pref(new: &str, old: &str) -> Option<String> {
-    std::env::var(new).ok().or_else(|| std::env::var(old).ok())
+/// `new`, else the pre-Factory names (a user's shell or launchd job may still
+/// export them), with a one-time deprecation on stderr.
+fn env_pref(new: &str, old: &[&str]) -> Option<String> {
+    if let Some(v) = std::env::var(new).ok().filter(|v| !v.is_empty()) {
+        return Some(v);
+    }
+    for name in old {
+        if let Some(v) = std::env::var(name).ok().filter(|v| !v.is_empty()) {
+            eprintln!("allternit-factory: {name} is deprecated; set {new} instead");
+            return Some(v);
+        }
+    }
+    None
+}
+
+fn migrate_home(ctx: &Ctx, args: MigrateHomeArgs) -> u8 {
+    use allternit_factory_engine::agents::home_migrate;
+    let from = home_migrate::legacy_home();
+    let to = allternit_factory_engine::agents::registry::factory_home();
+    if !args.again && !args.dry_run {
+        if let Some(prev) = home_migrate::read_marker(&to) {
+            if !from.is_dir() {
+                return emit_migration(ctx, &prev, "already moved");
+            }
+        }
+    }
+    match home_migrate::migrate(&from, &to, args.dry_run) {
+        Ok(report) => emit_migration(ctx, &report, if args.dry_run { "would move" } else { "moved" }),
+        Err(err) => fail(ctx, Code::Internal, &format!("{err:#}"), Some("Fix the path named above and run it again; nothing was overwritten.")),
+    }
+}
+
+fn emit_migration(ctx: &Ctx, report: &allternit_factory_engine::agents::home_migrate::MigrationReport, verb: &str) -> u8 {
+    if ctx.json {
+        return crate::exec::ok_json(serde_json::to_value(report).unwrap_or_default());
+    }
+    println!(
+        "{verb} {} → {}: {} moved, {} identical, {} conflicts{}",
+        report.from,
+        report.to,
+        report.moved.len(),
+        report.deduplicated.len(),
+        report.conflicts.len(),
+        if report.removed_old_home { "; old folder removed" } else { "" }
+    );
+    for c in &report.conflicts {
+        println!("  conflict (left in place): {c}");
+    }
+    0
+}
+
+/// The automatic move at `serve` start. Logged, never fatal.
+fn migrate_home_at_start() {
+    use allternit_factory_engine::agents::home_migrate::{migrate_default_home, Outcome};
+    match migrate_default_home() {
+        Ok(Outcome::Migrated(r)) => eprintln!(
+            "allternit-factory: moved {} into {} ({} moved, {} identical, {} conflicts left in place)",
+            r.from,
+            r.to,
+            r.moved.len(),
+            r.deduplicated.len(),
+            r.conflicts.len()
+        ),
+        Ok(_) => {}
+        Err(err) => eprintln!("allternit-factory: the one-time home move failed (the engine keeps running): {err:#}"),
+    }
 }
 
 fn serve(ctx: &Ctx, args: ServeArgs) -> u8 {
@@ -446,17 +535,17 @@ fn serve(ctx: &Ctx, args: ServeArgs) -> u8 {
     }
     let host = args
         .host
-        .or_else(|| env_pref("ALLTERNIT_COMMRAILS_HOST", "ALLTERNIT_RAILS_HOST"))
+        .or_else(|| env_pref("ALLTERNIT_FACTORY_HOST", &["ALLTERNIT_COMMRAILS_HOST", "ALLTERNIT_RAILS_HOST"])) // old-names: keep (deprecated env read)
         .unwrap_or_else(|| "127.0.0.1".to_string());
     let port = match args.port {
         Some(port) => port.to_string(),
-        None => env_pref("ALLTERNIT_COMMRAILS_PORT", "ALLTERNIT_RAILS_PORT")
+        None => env_pref("ALLTERNIT_FACTORY_PORT", &["ALLTERNIT_COMMRAILS_PORT", "ALLTERNIT_RAILS_PORT"]) // old-names: keep (deprecated env read)
             .unwrap_or_else(|| "3011".to_string()),
     };
     let root = ctx
         .root
         .clone()
-        .or_else(|| env_pref("ALLTERNIT_COMMRAILS_ROOT", "ALLTERNIT_RAILS_ROOT").map(PathBuf::from))
+        .or_else(|| env_pref("ALLTERNIT_FACTORY_ROOT", &["ALLTERNIT_COMMRAILS_ROOT", "ALLTERNIT_RAILS_ROOT"]).map(PathBuf::from)) // old-names: keep (deprecated env read)
         .unwrap_or_else(|| ctx.root_dir());
     let socket = if args.no_socket {
         None
@@ -478,6 +567,7 @@ fn serve(ctx: &Ctx, args: ServeArgs) -> u8 {
     };
     let bind = format!("{host}:{port}");
     let _ = tracing_subscriber::fmt::try_init();
+    migrate_home_at_start();
     eprintln!(
         "allternit-factory: serving {} on http://{bind}{}",
         root.display(),
@@ -526,30 +616,13 @@ fn agents(ctx: &Ctx, cmd: AgentsCmd) -> u8 {
             if let Some(code) = crate::bots::down_team(ctx, &slug, rm_worktree, dry) {
                 return code;
             }
-            let mut args = vec!["kill".to_string(), slug];
-            if rm_worktree {
-                args.push("--rm-worktree".into());
-            }
-            let target = Target::Pane(args);
-            if dry {
-                return dry_run(ctx, &target);
-            }
-            run(ctx, target)
+            crate::part::down(ctx, slug, rm_worktree, dry)
         }
         AgentsCmd::Recover { slug, apply, dry_run: dry, lead, as_human } => {
             if apply && dry {
                 return fail(ctx, Code::Usage, "--apply and --dry-run contradict each other", None);
             }
-            let mut args = vec!["recover".to_string()];
-            args.extend(slug);
-            if apply {
-                args.push("--apply".into());
-            }
-            opt(&mut args, "--lead", lead);
-            if as_human {
-                args.push("--as-human".into());
-            }
-            run(ctx, Target::Pane(args))
+            crate::part::recover(ctx, slug, apply, lead, as_human)
         }
         AgentsCmd::Harness(rest) => {
             let split = split(rest.args, true);
@@ -599,16 +672,9 @@ fn orchestration(ctx: &Ctx, cmd: OrchestrationCmd) -> u8 {
             };
             crate::part::send(ctx, to, text, queue, thread, node, dag, key, dry)
         }
-        OrchestrationCmd::Capture { to, lines } => {
-            let mut args = vec!["status".to_string(), to];
-            args.extend(lines.map(|n| n.to_string()));
-            run(ctx, Target::Pane(args))
-        }
-        OrchestrationCmd::Transcript { to, tail } => {
-            let mut args = vec!["transcript".to_string(), to];
-            opt(&mut args, "--tail", tail.map(|n| n.to_string()));
-            run(ctx, Target::Pane(args))
-        }
+        OrchestrationCmd::Capture { to, lines } => crate::part::capture(ctx, to, lines),
+        OrchestrationCmd::Transcript { to, tail } => crate::part::transcript(ctx, to, tail),
+        OrchestrationCmd::Drain { to, all, dry_run: dry } => crate::part::drain(ctx, to, all, dry),
         OrchestrationCmd::Threads(_) => not_built(
             ctx,
             "orchestration",

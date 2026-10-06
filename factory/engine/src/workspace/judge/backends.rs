@@ -339,7 +339,7 @@ pub struct SystemOneFirstPass {
 }
 
 pub const FIRST_PASS_BANK: &str = "bank.judge_first_pass";
-pub const FIRST_PASS_PRODUCER: &str = "commrails.judge_first_pass";
+pub const FIRST_PASS_PRODUCER: &str = "commrails.judge_first_pass"; // old-names: keep (ledger/decision data: old records must still match)
 
 /// A first-pass answer: the S1 decision id and P(false) — the probability
 /// the work is *not* complete / the call is *not* safe.

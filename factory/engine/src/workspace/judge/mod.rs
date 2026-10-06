@@ -1,4 +1,4 @@
-//! Fail-closed judge for CommRails (spec: `spec/JUDGE.md`).
+//! Fail-closed judge for the Factory (spec: `spec/JUDGE.md`).
 //!
 //! One module, two questions:
 //! - **Node verdicts** at Gate 4 (`wih close`) when the node/plan policy has

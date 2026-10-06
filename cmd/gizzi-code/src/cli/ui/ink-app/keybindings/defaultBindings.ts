@@ -368,7 +368,7 @@ export const DEFAULT_BINDINGS: KeybindingBlock[] = [
       escape: 'select:cancel',
     },
   },
-  // Rails DAG todo panel (expanded tasks view). `tab` focuses the panel
+  // Factory DAG todo panel (expanded tasks view). `tab` focuses the panel
   // while it is visible; once focused it registers a modal overlay so the
   // prompt input releases keys, `esc` blurs back to the prompt. `e` edits
   // the selected node's title inline, `D` (shift+d) deletes it after a

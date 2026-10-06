@@ -492,7 +492,7 @@ fn client_error_display_connection_failed() {
         "should mention connection failure: {msg}"
     );
     assert!(
-        msg.contains("ao server"),
+        msg.contains("allternit-factory pane server"),
         "should suggest starting server: {msg}"
     );
 }
@@ -561,7 +561,7 @@ fn client_error_display_detached_named_session_reattach_hint() {
     };
     let msg = err.to_string();
     assert!(
-        msg.contains("Run `ao session attach work` to reattach"),
+        msg.contains("Run `allternit-factory pane session attach work` to reattach"),
         "should suggest named session reattach command: {msg}"
     );
 }

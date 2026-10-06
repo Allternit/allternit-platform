@@ -15,7 +15,7 @@ fn store() -> (tempfile::TempDir, ChainStore) {
 
 fn cx(run: &str, node: &str) -> EffectContext {
     EffectContext { run_id: run.into(), session_id: "s1".into(), task_id: "t1".into(), node_id: Some(node.into()),
-        trace_id: "tr1".into(), state_version: 1, producer_id: "commrails".into(), policy_decision_id: "dec1".into() }
+        trace_id: "tr1".into(), state_version: 1, producer_id: "allternit-factory".into(), policy_decision_id: "dec1".into() }
 }
 
 fn args(n: u32) -> Value { json!({"path": format!("f{n}.txt"), "content": n}) }

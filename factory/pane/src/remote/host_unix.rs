@@ -65,7 +65,7 @@ fn ensure_remote_server_running() -> io::Result<()> {
             return Ok(());
         }
         return Err(io::Error::other(
-            "remote ao server needs one final update before this bridge can attach; rerun `ao --remote` from an interactive terminal to approve it",
+            "remote allternit-factory pane server needs one final update before this bridge can attach; rerun `ao --remote` from an interactive terminal to approve it",
         ));
     }
 

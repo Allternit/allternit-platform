@@ -1,13 +1,15 @@
 //! The one session registry: `~/.allternit/factory/registry.json`.
 //!
-//! Every agent pane the engine (or `allternit-factory pane ao …`) starts is
+//! Every agent pane the engine starts (`agents up`, `workflows drive`) is
 //! recorded here, keyed by its session label (`ao-<slug>`). The record is a
 //! claim, never the truth: [`Registry::reconcile`] checks it against the live
 //! panes at engine start and on every `agents ps`, so a session whose pane is
 //! gone reads `dead`, never `running` (SPEC §6 rule 3).
 //!
-//! Migrated once from the agent orchestrator's `~/.agent-orchestrator/state.json`
-//! (same entry shape; the factory adds fields). The old file is left in place.
+//! Migrated once from the agent orchestrator's old registry `state.json`
+//! (same entry shape; the factory adds fields). The old file is left in place;
+//! [`super::home_migrate`] later moves it into the Factory home with the rest
+//! of the old folder.
 //!
 //! Every pane maps to a bot. A spawn with no bot gets a local placeholder
 //! binding (`local:<slug>`, `placeholder: true`) that allternit-api can later
@@ -44,9 +46,14 @@ pub fn logs_dir() -> PathBuf {
     factory_home().join("logs")
 }
 
-/// The agent orchestrator's registry, migrated from once.
+/// The agent orchestrator's registry, migrated from once: in the old home,
+/// or in the Factory home once [`super::home_migrate`] moved it there.
 pub fn legacy_state_path() -> PathBuf {
-    home_dir().join(".agent-orchestrator/state.json")
+    let old = super::home_migrate::legacy_home().join("state.json");
+    if old.is_file() {
+        return old;
+    }
+    factory_home().join("state.json")
 }
 
 /// The session label for a slug.
@@ -117,6 +124,17 @@ pub struct Entry {
     pub harness: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bot: Option<BotRef>,
+    /// The harness argv as asked for, before the spawn gate rewrote it
+    /// (`agents recover` rebuilds the launch from it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub argv: Option<Vec<String>>,
+    /// Extra pane environment the spawn asked for (a team bot's identity:
+    /// `ALLTERNIT_FACTORY_BOT`, `…_TEAM`, …). Never secrets.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: BTreeMap<String, String>,
+    /// The WIH the session was bound to (its Gate 2 policy).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wih: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

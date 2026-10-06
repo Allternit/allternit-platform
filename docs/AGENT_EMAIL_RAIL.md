@@ -14,7 +14,7 @@ shared allternit-hosted mail infrastructure.
 | Installer | `services/mailflare/setup.sh` | Per-user setup: token/zone checks, D1/R2/queue provisioning, deploy, Email Routing DNS, admin bootstrap, integration key, smoke test. |
 | Unified connector installer | `scripts/install-connectors.sh` | One-command setup for Allternit Mail, Gmail, and Google Drive. See [`docs/learnings/CONNECTOR_SETUP.md`](./learnings/CONNECTOR_SETUP.md). |
 | Backend integration | `cmd/allternit-api/src/agent_email_routes.rs`, `mailflare_client.rs` | Provisioning (`provision_email`), inbound webhook bridge, approval-gated outbound, status. |
-| Review gate | `rails/src/mail/` + `POST /api/rails/mail/decide` | The existing Rails Mail review flow releases or rejects pending outbound email. No separate approval UX. |
+| Review gate | `factory/engine/src/orchestration/mail/` + `POST /api/factory/mail/decide` | The existing Factory mail review flow releases or rejects pending outbound email. No separate approval UX. |
 | UI | `surfaces/ai.allternit.com` | Identity channels step, email-rail status line, `external email` badges in Mail Monitor / agent activity. |
 | Runtime client | `cmd/gizzi-code/src/cli/agent-email-client.ts` | `sendAgentEmail()`, `getAgentEmailStatus()`; `gizzi mail send-external` / `gizzi mail email-status`. |
 
@@ -23,7 +23,7 @@ shared allternit-hosted mail infrastructure.
 **Inbound**: Cloudflare Email Routing → worker `email()` handler → raw MIME to R2 →
 queue → parse + store (D1) → HMAC-SHA256-signed webhook (`message.inbound`) →
 `POST /api/v1/agent-email/inbound` (signature verified against
-`ALLTERNIT_MAILFLARE_WEBHOOK_SECRET`) → Rails Mail thread `mail:email-in-<agent>` →
+`ALLTERNIT_MAILFLARE_WEBHOOK_SECRET`) → Factory mail thread `mail:email-in-<agent>` →
 visible in Mail Monitor and the FTS mail index. Mailflare retries failed webhook
 deliveries with backoff (5 attempts).
 
@@ -31,7 +31,7 @@ deliveries with backoff (5 attempts).
 `gizzi mail send-external`) → ownership + `email_send_enabled` + hard-ban checks →
 pending row + mailflare `pending_approval` job (idempotency key `agent-email:<uuid>`)
 → `ReviewRequested` on thread `mail:email-out-<uuid>` → human approves via
-`/api/rails/mail/decide` (or the review card UI) → mailflare sends through the
+`/api/factory/mail/decide` (or the review card UI) → mailflare sends through the
 configured transport (Cloudflare Email Sending or Resend) → receipt with provider
 message id written to the ledger. Rejection marks the job failed; nothing is sent.
 
@@ -45,7 +45,7 @@ Written by the installer into the platform `.env`:
 - `ALLTERNIT_MAILFLARE_WEBHOOK_SECRET` — HMAC secret for the inbound webhook (returned by mailflare when the webhook is registered).
 
 Without `ALLTERNIT_MAILFLARE_URL`/`ALLTERNIT_MAILFLARE_ADMIN_KEY`, email
-provisioning falls back to the legacy mint-only `commrails` behavior and
+provisioning falls back to the legacy mint-only behavior (identity provider `commrails`) <!-- old-names: keep (stored data value) --> and
 `/api/v1/agent-email/send` returns `501 mailflare_not_configured`.
 
 ### Outbound transport
@@ -91,7 +91,7 @@ agent subdomain junked; if you ignored the subdomain advice, your root domain to
 ## Automated signups (agents registering for services)
 
 Agents can receive verification emails and magic links — the inbound path delivers
-them to the agent's Rails Mail thread, and full bodies are readable via
+them to the agent's Factory mail thread, and full bodies are readable via
 `GET /api/v1/messages/[id]` with the agent's key. Caveats:
 
 - Many services' ToS prohibit automated accounts; a signup spree can burn the

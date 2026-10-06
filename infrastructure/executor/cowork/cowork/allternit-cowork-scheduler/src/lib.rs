@@ -162,7 +162,7 @@ impl JobHandler for ApiJobHandler {
 
         let response = self
             .client
-            .post(format!("{}/rails/cowork/runs", ctx.api_url))
+            .post(format!("{}/api/v1/runs", ctx.api_url))
             .json(&request)
             .send()
             .await

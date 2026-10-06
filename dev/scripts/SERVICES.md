@@ -3,7 +3,7 @@
 ## Quick Start
 
 ```bash
-# Start all core services (API, Workspace, Rails)
+# Start all core services (API, Workspace, Factory engine)
 ./dev/scripts/start-all-services.sh core --detach
 
 # Check status
@@ -19,7 +19,7 @@
 |---------|------|---------|--------|--------|
 | **API** | 3000 | Main API service | `allternit-api` | ✅ Running |
 | **Workspace** | 3021 | Terminal workspace with tmux | `workspace-service` | ✅ Running |
-| **Rails** | 3011 | Agent system rails | `allternit-rails-service` | ✅ Running |
+| **Factory** | 3011 | Allternit Factory engine (agents, orchestration, workflows, workspace) | `allternit-factory serve` | ✅ Running |
 | Kernel | 3004 | Orchestration kernel | `kernel` | ⏸️ Not started |
 | Policy | 3003 | Policy enforcement | `policy-service` | ⏸️ Not started |
 | Voice | 8001 | AI Voice/TTS | `voice-service` | ⏸️ Not started |
@@ -33,7 +33,7 @@ For the **Console Drawer Terminal** to work fully, you need:
 ### Required (Now Running)
 1. **API Service** (port 3000) - Provides `/api/agents` endpoint
 2. **Workspace Service** (port 3021) - Provides terminal sessions via WebSocket
-3. **Rails Service** (port 3011) - Provides agent orchestration
+3. **Factory engine** (port 3011) - Provides agent orchestration (`/api/factory`)
 
 ### Optional (for extended features)
 - **Kernel** (3004) - For advanced orchestration
@@ -60,9 +60,9 @@ export Allternit_API_BIND="0.0.0.0:3000"
 export WORKSPACE_SERVICE_PORT=3021
 ./target/release/workspace-service
 
-# Rails (already running)
-export Allternit_RAILS_PORT=3011
-./target/release/allternit-rails-service
+# Factory engine (already running)
+export ALLTERNIT_FACTORY_PORT=3011
+./target/release/allternit-factory --root "$PWD" serve --port "$ALLTERNIT_FACTORY_PORT"
 ```
 
 ### Check logs
@@ -73,7 +73,7 @@ tail -f .logs/*.log
 
 # View specific service
 tail -f .logs/workspace.log
-tail -f .logs/rails.log
+tail -f .logs/factory.log
 ```
 
 ### Environment Variables
@@ -83,7 +83,7 @@ Source the service config to get all ports:
 ```bash
 source ./dev/scripts/service-config.sh
 echo $Allternit_API_PORT      # 3000
-echo $Allternit_RAILS_PORT    # 3011
+echo $ALLTERNIT_FACTORY_PORT  # 3011
 echo $WORKSPACE_SERVICE_PORT  # 3021 (not in config, defaults to 3021)
 ```
 
@@ -115,14 +115,14 @@ kill $(lsof -ti :3021)
 
 ### Build failures
 
-If workspace-service or allternit-agent-system-rails fail to build:
+If workspace-service or allternit-factory fail to build:
 
 ```bash
 # Ensure they're in workspace members
 grep "workspace-service" Cargo.toml
-grep "allternit-agent-system-rails" Cargo.toml
+grep "cmd/allternit-factory" Cargo.toml
 
 # Build from project root
 cargo build --release -p workspace-service
-cargo build --release -p allternit-agent-system-rails
+cargo build --release -p allternit-factory
 ```

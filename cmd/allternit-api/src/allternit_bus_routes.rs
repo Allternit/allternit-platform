@@ -615,7 +615,7 @@ async fn provision_email(
             let id = uuid::Uuid::new_v4().to_string();
             conn.execute(
                 "INSERT INTO agent_identity_channels (id, agent_id, user_id, email_address, email_provider, email_send_enabled, email_receive_enabled, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, 'commrails', 1, 1, CURRENT_TIMESTAMP)
+                 VALUES (?1, ?2, ?3, ?4, 'commrails', 1, 1, CURRENT_TIMESTAMP) -- old-names: keep (stored provider value)
                  ON CONFLICT(agent_id) DO UPDATE SET
                      email_address = excluded.email_address,
                      email_provider = excluded.email_provider,
@@ -631,7 +631,7 @@ async fn provision_email(
     .await
     .map_err(|e| internal(e))??;
 
-    Ok(Json(ProvisionEmailResponse { address, provider: "commrails" }).into_response())
+    Ok(Json(ProvisionEmailResponse { address, provider: "commrails" /* old-names: keep (stored provider value) */ }).into_response())
 }
 
 /// `DELETE /agents/:id/identity/email`: give up the bot's address so a new one can be chosen.

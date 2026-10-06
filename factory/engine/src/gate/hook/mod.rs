@@ -856,8 +856,8 @@ pub fn sh_quote(word: &str) -> String {
 pub struct HookTarget<'a> {
     /// The `allternit-factory` binary the hook runs (as
     /// `allternit-factory internal hook …`, see [`GATE_ARGV_PREFIX`]).
-    pub commrails_bin: &'a Path,
-    /// CommRails root holding `.allternit/` (ledger, leases).
+    pub factory_bin: &'a Path,
+    /// Factory root holding `.allternit/` (ledger, leases).
     pub root: &'a Path,
     /// Directory the harness works in; write paths are made relative to it
     /// for lease matching. `None` means the root itself.
@@ -875,7 +875,7 @@ pub fn claude_hook_command(target: HookTarget<'_>) -> String {
 pub fn hook_command(flavor: HookFlavor, target: HookTarget<'_>) -> String {
     let mut cmd = format!(
         "{} {} --root {} {} --harness {}",
-        sh_quote(&target.commrails_bin.to_string_lossy()),
+        sh_quote(&target.factory_bin.to_string_lossy()),
         GATE_ARGV_PREFIX.join(" "),
         sh_quote(&target.root.to_string_lossy()),
         flavor.subcommand(),
@@ -936,7 +936,7 @@ pub fn s1_outcome_hook_command() -> Option<String> {
 }
 
 /// Locate the `system-one` binary: `$ALLTERNIT_SYSTEM_ONE_BIN`, then a sibling
-/// of the CommRails binary or the current executable (Desktop ships both in
+/// of the Factory engine binary or the current executable (Desktop ships both in
 /// `bin/`), then `PATH`.
 pub fn find_system_one_bin() -> Option<PathBuf> {
     if let Some(p) = std::env::var_os("ALLTERNIT_SYSTEM_ONE_BIN") {
@@ -944,7 +944,7 @@ pub fn find_system_one_bin() -> Option<PathBuf> {
         return p.is_file().then_some(p);
     }
     let mut dirs: Vec<PathBuf> = vec![];
-    if let Some(dir) = find_commrails_bin().and_then(|b| b.parent().map(Path::to_path_buf)) {
+    if let Some(dir) = find_factory_bin().and_then(|b| b.parent().map(Path::to_path_buf)) {
         dirs.push(dir);
     }
     if let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf)) {
@@ -1024,19 +1024,19 @@ pub fn hook_settings_file(harness: &str, target: HookTarget<'_>) -> Option<(&'st
 /// Locate the `allternit-factory` binary a hook should run: the current
 /// executable when it is `allternit-factory` (the normal case: the engine
 /// spawns, so the hook is the engine itself), else `$ALLTERNIT_FACTORY_BIN`
-/// (or the deprecated `$ALLTERNIT_COMMRAILS_BIN`; tests and dev harnesses
+/// (tests and dev harnesses
 /// that link the engine use it), else an `allternit-factory` sitting next to
 /// the current executable. Never a binary found on `PATH`: a spawn must not
 /// depend on what happens to be installed. `None` means no hook can be
 /// installed — callers must refuse, never fall back to an unhooked run.
-pub fn find_commrails_bin() -> Option<PathBuf> {
+pub fn find_factory_bin() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok();
     if let Some(exe) = &exe {
         if exe.file_stem().and_then(|n| n.to_str()) == Some(GATE_BIN_NAME) {
             return Some(exe.clone());
         }
     }
-    for var in ["ALLTERNIT_FACTORY_BIN", "ALLTERNIT_COMMRAILS_BIN"] {
+    for var in ["ALLTERNIT_FACTORY_BIN"] {
         if let Some(p) = std::env::var_os(var).filter(|p| !p.is_empty()) {
             let p = PathBuf::from(p);
             if p.is_file() {

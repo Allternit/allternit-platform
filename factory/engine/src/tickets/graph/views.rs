@@ -100,7 +100,7 @@ pub struct QuickWin {
     pub downstream_impact: u64,
 }
 
-/// `GET /api/rails/graph/insights` / `rails graph insights` body.
+/// `GET /api/factory/graph/insights` / `internal core graph insights` body.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct InsightsView {
     pub content_hash: String,
@@ -122,7 +122,7 @@ pub struct TriageItem {
     pub unblocks: usize,
 }
 
-/// `GET /api/rails/graph/triage` / `rails graph triage` body. Bounded:
+/// `GET /api/factory/graph/triage` / `internal core graph triage` body. Bounded:
 /// `items` is capped at [`MAX_TRIAGE_ITEMS`].
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TriageView {
@@ -133,7 +133,7 @@ pub struct TriageView {
     pub items: Vec<TriageItem>,
 }
 
-/// `GET /api/rails/graph/impact/:ticket_id` / `rails graph impact` body.
+/// `GET /api/factory/graph/impact/:ticket_id` / `internal core graph impact` body.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ImpactView {
     pub content_hash: String,

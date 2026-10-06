@@ -44,20 +44,21 @@ enum AppConfig {
         return apiBase.appendingPathComponent("aci")
     }()
 
-    /// Base URL of the Rails Mail / ledger endpoints —
-    /// `GET /api/rails/mail/threads`, `GET /api/rails/mail/thread/:id`,
-    /// `POST /api/rails/mail/send`, `POST /api/rails/mail/decide`,
-    /// `POST /api/rails/mail/share`, `POST /api/rails/ledger/tail`.
+    /// Base URL of the Factory mail / ledger endpoints —
+    /// `GET /api/factory/mail/threads`, `GET /api/factory/mail/thread/:id`,
+    /// `POST /api/factory/mail/send`, `POST /api/factory/mail/decide`,
+    /// `POST /api/factory/mail/share`, `POST /api/factory/ledger/tail`.
     ///
-    /// Like ACI, the rails router is mounted directly under `/api` on
-    /// allternit-api (cmd/allternit-api/src/main.rs: `.nest("/api/rails", rails_router())`)
-    /// — NOT under the `/api/v1` router — so it can't be reached by appending a
-    /// path to `apiBaseURL`. Derived the same way as `aciBaseURL`.
-    static let railsBaseURL: URL = {
+    /// Like ACI, the Factory core router is mounted directly under `/api` on
+    /// allternit-api (cmd/allternit-api/src/main.rs:
+    /// `.nest("/api/factory", factory_core_router())`) — NOT under the
+    /// `/api/v1` router — so it can't be reached by appending a path to
+    /// `apiBaseURL`. Derived the same way as `aciBaseURL`.
+    static let factoryBaseURL: URL = {
         let apiBase = apiBaseURL.lastPathComponent == "v1"
             ? apiBaseURL.deletingLastPathComponent()
             : apiBaseURL
-        return apiBase.appendingPathComponent("rails")
+        return apiBase.appendingPathComponent("factory")
     }()
 
     /// Base URL of a standalone gizzi-code server (`gizzi serve`) hosting the

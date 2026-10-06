@@ -6,7 +6,7 @@
 #
 #   assemble proposal-rubric.md + charter.md + the proposal, consult the
 #   auditor (PROPOSAL_AUDIT_CMD test hook, else LEARN_CONSULT_CMD, else
-#   ao-consult), then:
+#   `allternit-factory orchestration steer consult`), then:
 #     ADOPT  -> data targets (.steering/prompt.md, docs/pipeline/playbook.md,
 #               docs/pipeline/*-rubric.md — COMPUTED from the target, never
 #               trusted from the consult): the proposal's fenced change is
@@ -145,7 +145,7 @@ consult() { # consult <request-file> -> answer on stdout (may be empty)
   elif [ -n "${LEARN_CONSULT_CMD:-}" ]; then
     $LEARN_CONSULT_CMD < "$1"
   else
-    ao-consult < "$1"
+    allternit-factory orchestration steer consult --cwd "$PWD" --prompt-file "$1"
   fi
 }
 

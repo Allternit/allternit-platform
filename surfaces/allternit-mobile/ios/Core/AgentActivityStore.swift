@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Agent Activity state: the fetched thread list (`GET rails/mail/threads`)
+/// Agent Activity state: the fetched thread list (`GET factory/mail/threads`)
 /// plus a ledger-tail-derived, read-only heuristic for review/guard/
 /// reservation visibility per thread — the same substring-match-on-
 /// `event_type` approach the web phase already proved out

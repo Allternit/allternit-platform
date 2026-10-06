@@ -462,7 +462,7 @@ export async function getApiCanvas(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Rails peers (cross-session messaging)
+// Factory peers (cross-session messaging)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export type ApiPeer = {
@@ -510,14 +510,14 @@ export type ApiPeerInboxResponse = {
 export async function listApiPeers(
   config: AllternitApiConfig,
 ): Promise<ApiPeerListResponse> {
-  return apiFetchJson<ApiPeerListResponse>(config, '/api/rails/peers')
+  return apiFetchJson<ApiPeerListResponse>(config, '/api/factory/peers')
 }
 
 export async function registerApiPeer(
   config: AllternitApiConfig,
   input: { name: string; vendor?: string; cwd?: string },
 ): Promise<ApiPeerRegisterResponse> {
-  return apiFetchJson<ApiPeerRegisterResponse>(config, '/api/rails/peers', {
+  return apiFetchJson<ApiPeerRegisterResponse>(config, '/api/factory/peers', {
     method: 'POST',
     body: JSON.stringify(input),
   })
@@ -531,7 +531,7 @@ export async function sendApiPeerMessage(
 ): Promise<ApiPeerSendResponse> {
   return apiFetchJson<ApiPeerSendResponse>(
     config,
-    `/api/rails/peers/${encodeURIComponent(name)}/send`,
+    `/api/factory/peers/${encodeURIComponent(name)}/send`,
     {
       method: 'POST',
       body: JSON.stringify({ body, ...(from ? { from } : {}) }),
@@ -549,7 +549,7 @@ export async function pollApiPeerInbox(
   const qs = params.toString()
   return apiFetchJson<ApiPeerInboxResponse>(
     config,
-    `/api/rails/peers/${encodeURIComponent(name)}/inbox${qs ? `?${qs}` : ''}`,
+    `/api/factory/peers/${encodeURIComponent(name)}/inbox${qs ? `?${qs}` : ''}`,
   )
 }
 

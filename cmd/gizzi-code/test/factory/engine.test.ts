@@ -18,7 +18,7 @@ import {
 } from "../../src/cli/factory/engine"
 import { forwardToEngine, forwardedArgs, forwardInteractive, type ForwardIO } from "../../src/cli/factory/forward"
 import { approveNode, loadFactoryFloor, openActionFor } from "../../src/cli/ui/tui/screens/factory-floor/data"
-import { checkFactoryEngine } from "../../src/cli/commands/doctorChecks"
+import { checkFactoryEngine, checkFactoryHomeMove } from "../../src/cli/commands/doctorChecks"
 
 const FAKE = path.join(import.meta.dir, "..", "fixture", "factory", "allternit-factory")
 let root: string
@@ -169,6 +169,11 @@ describe("forwardedArgs", () => {
       forwardedArgs("orchestration", ["--print-logs", "orchestration", "send", "a@t", "hi there", "--queue", "--json", "--log-level", "DEBUG"]),
     ).toEqual({ args: ["orchestration", "send", "a@t", "hi there", "--queue"], json: true })
     expect(forwardedArgs("agents", ["agents", "ps"])).toEqual({ args: ["agents", "ps"], json: false })
+    // The mailbox drain (the engine's, now that the pane engine has no verbs of its own).
+    expect(forwardedArgs("orchestration", ["orchestration", "drain", "a@t", "--all", "--dry-run", "--json"])).toEqual({
+      args: ["orchestration", "drain", "a@t", "--all", "--dry-run"],
+      json: true,
+    })
   })
 })
 
@@ -260,5 +265,60 @@ describe("gizzi doctor: Factory engine", () => {
     })
     expect(checks.at(-1)).toMatchObject({ id: "factory-serve", status: "pass" })
     expect(checks.at(-1)!.message).toContain("3999")
+  })
+})
+
+describe("gizzi doctor: Factory home move", () => {
+  const HOME = "/h"
+  const OLD = "/h/.agent-orchestrator" // old-names: keep (the folder the engine migrates from)
+  const MARKER = "/h/.allternit/factory/migrated-agent-orchestrator.json"
+  const run = (files: Record<string, string | true>, env: NodeJS.ProcessEnv = {}) =>
+    checkFactoryHomeMove({
+      env,
+      home: HOME,
+      exists: (p) => p in files,
+      readFile: (p) => String(files[p]),
+    })
+  const marker = (extra: object = {}) =>
+    JSON.stringify({ from: OLD, to: "/h/.allternit/factory", at: "2026-10-06T09:00:00Z", dryRun: false, moved: [], deduplicated: [], conflicts: [], removedOldHome: true, ...extra })
+
+  test("moved: no old folder + marker passes with the date", () => {
+    const c = run({ [MARKER]: marker() })
+    expect(c.status).toBe("pass")
+    expect(c.message).toContain("on 2026-10-06T09:00:00Z")
+  })
+  test("nothing to move", () => {
+    expect(run({})).toMatchObject({ status: "pass", message: "Nothing to move" })
+  })
+  test("old folder, no marker: not moved yet", () => {
+    const c = run({ [OLD]: true })
+    expect(c.status).toBe("warn")
+    expect(c.message).toContain("internal migrate-home`")
+  })
+  test("old folder + conflicts lists the first few", () => {
+    const c = run({ [OLD]: true, [MARKER]: marker({ conflicts: ["a.json", "b.json", "c.json", "d.json"], removedOldHome: false }) })
+    expect(c.status).toBe("warn")
+    expect(c.message).toStartWith("4 item(s) left")
+    expect(c.message).toContain("a.json, b.json, c.json, …")
+  })
+  test("old folder came back after a clean move", () => {
+    const c = run({ [OLD]: true, [MARKER]: marker() })
+    expect(c.status).toBe("warn")
+    expect(c.message).toContain("migrate-home --again")
+  })
+  test("old folder + kept items (venvs/worktrees) is a pass naming them", () => {
+    const c = run({ [OLD]: true, [MARKER]: marker({ kept: ["venv", "wt-a"], removedOldHome: false }) })
+    expect(c.status).toBe("pass")
+    expect(c.message).toContain("kept in place: venv, wt-a")
+  })
+  test("conflicts win over kept", () => {
+    const c = run({ [OLD]: true, [MARKER]: marker({ kept: ["venv"], conflicts: ["x"], removedOldHome: false }) })
+    expect(c.status).toBe("warn")
+    expect(c.message).toStartWith("1 item(s) left")
+  })
+  test("respects ALLTERNIT_FACTORY_HOME", () => {
+    const c = run({ "/fh/migrated-agent-orchestrator.json": marker() }, { ALLTERNIT_FACTORY_HOME: "/fh" })
+    expect(c.status).toBe("pass")
+    expect(c.message).toContain("/fh")
   })
 })

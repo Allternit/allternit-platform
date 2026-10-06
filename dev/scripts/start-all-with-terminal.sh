@@ -57,7 +57,7 @@ SHELL_UI_PORT=5177
 VITE_PREVIEW_PORT=4173
 GATEWAY_PORT=8013
 API_PORT=3000
-RAILS_PORT=3011
+FACTORY_PORT=3011
 OPENCLAW_PORT=18789
 LOCAL_HOST="127.0.0.1"
 
@@ -190,7 +190,7 @@ cleanup() {
     lsof -ti :${VITE_PREVIEW_PORT} | xargs kill -9 2>/dev/null || true
     lsof -ti :${GATEWAY_PORT} | xargs kill -9 2>/dev/null || true
     lsof -ti :${API_PORT} | xargs kill -9 2>/dev/null || true
-    lsof -ti :${RAILS_PORT} | xargs kill -9 2>/dev/null || true
+    lsof -ti :${FACTORY_PORT} | xargs kill -9 2>/dev/null || true
     lsof -ti :${OPENCLAW_PORT} | xargs kill -9 2>/dev/null || true
 
     # Kill by PID files

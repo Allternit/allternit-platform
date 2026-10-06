@@ -84,7 +84,7 @@ pub fn build_observer_prompt(input: &ObserverContextInput<'_>, fence: &Fence) ->
     let dag = input.dag;
     let mut p = String::new();
     p.push_str(&format!(
-        "READ-ONLY OBSERVER ({trigger}) — CommRails DAG {dag_id}\n\n",
+        "READ-ONLY OBSERVER ({trigger}) — Factory DAG {dag_id}\n\n",
         trigger = input.trigger.as_str(),
         dag_id = dag.dag_id
     ));

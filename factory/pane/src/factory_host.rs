@@ -59,15 +59,37 @@ pub(crate) fn shell_program(argv0: &str) -> String {
     program
 }
 
-/// The command a person types to reach this engine: `ao` upstream-style
-/// with no prefix, `allternit-factory pane` under the factory host. Used in
-/// "start/attach/stop it with …" hints so they name a command that exists.
+/// The command a person types to reach this engine: `allternit-factory pane`
+/// (also with no prefix: the `allternit-factory-pane` dev/test binary is never
+/// shipped, so hints name the shipped command). Used in "start/attach/stop it
+/// with …" hints so they name a command that exists.
 pub(crate) fn program_name() -> String {
     if argv_prefix().is_empty() {
-        "ao".to_string()
+        "allternit-factory pane".to_string()
     } else {
         shell_program("allternit-factory")
     }
+}
+
+/// `<Factory home>/<rel>` (`~/.allternit/factory`, or `$ALLTERNIT_FACTORY_HOME`).
+/// While only `legacy` exists (state written before the Factory, not moved yet
+/// by the engine's one-time home move) that path is returned instead, so a
+/// paired identity or an installed harness keeps working.
+pub fn factory_path(rel: &str, legacy: Option<PathBuf>) -> PathBuf {
+    let new = allternit_factory_engine::registry::factory_home().join(rel);
+    match legacy {
+        Some(old) if !new.exists() && old.exists() => old,
+        _ => new,
+    }
+}
+
+/// `$HOME/<rel>` (for the pre-Factory locations [`factory_path`] falls back to).
+pub fn home_path(rel: &str) -> PathBuf {
+    std::env::var_os("HOME")
+        .filter(|h| !h.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/"))
+        .join(rel)
 }
 
 /// A path a child process can execute with herdr's argv to reach this engine.

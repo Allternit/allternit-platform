@@ -1,9 +1,9 @@
 /**
- * Rails plan publishing for gizzi-code.
+ * Allternit Factory plan publishing for gizzi-code.
  *
  * When the user approves a plan in plan mode, the approved plan markdown is
- * parsed into a flat todo list and published to the CommRails WIH DAG via
- * POST /api/commrails/plan/from-text. The DAG then backs the Rails todo
+ * parsed into a flat todo list and published to the Factory WIH DAG via
+ * POST /api/factory/plan/from-text. The DAG then backs the Factory todo
  * panel in the TUI (see RailsTaskList.tsx).
  *
  * Everything here is best-effort: publishing must never throw into the
@@ -30,7 +30,7 @@ export type RailsPlanPublishResult = {
 }
 
 /**
- * Publish a parsed plan to the CommRails DAG. Returns the created DAG
+ * Publish a parsed plan to the Factory DAG. Returns the created DAG
  * identity on success, null on any failure (logged, never thrown).
  */
 export async function publishPlanToRails(
@@ -41,7 +41,7 @@ export async function publishPlanToRails(
     const config = getAllternitApiConfig()
     const result = await apiFetchJson<RailsPlanPublishResult>(
       config,
-      '/api/commrails/plan/from-text',
+      '/api/factory/plan/from-text',
       {
         method: 'POST',
         body: JSON.stringify({ title, todos }),

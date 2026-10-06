@@ -7,7 +7,7 @@
 //! Public surface (mounted on the public router in main.rs, HMAC-verified):
 //! - `POST /api/v1/agent-email/inbound` — mailflare `message.inbound` webhook.
 //!
-//! The Rails Mail review path (`POST /api/rails/mail/decide`) approves/rejects
+//! The Factory mail review path (`POST /api/factory/mail/decide`) approves/rejects
 //! pending outbound email through `decide_outbound_for_thread`, which is a
 //! no-op for threads that have no pending outbound email row.
 
@@ -204,7 +204,7 @@ impl AgentEmailChannel {
 }
 
 /// Look up the agent's mailflare email channel. Returns `None` when the agent
-/// has no mailflare-backed email (including legacy `commrails` rows).
+/// has no mailflare-backed email (including legacy mint-only rows). // old-names: keep (stored provider value `commrails`)
 pub fn lookup_email_channel(
     conn: &rusqlite::Connection,
     agent_id: &str,

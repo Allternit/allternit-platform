@@ -38,9 +38,9 @@ The crew. See [Agents](/factory/agents).
 |---|---|---|
 | `gizzi agents up [<team>] [--preset P] [--on <computer>] [--dry-run]` | `rig up` | Boot a team from `team.yaml`: spawn Terminal panes, bind Hosted and Vendor bots |
 | `gizzi agents ps` | `rig ps` | Every bot with binding, state, node and proof, reconciled against live panes |
-| `gizzi agents down [<team>]` | `rig down` | Stop a team's panes |
+| `gizzi agents down <team\|bot> [--rm-worktree]` | `rig down` | Stop a team's panes, or one bot's pane (`--rm-worktree` also removes the worktree it was started in) |
 | `gizzi agents whoami` | `rig whoami` | Which bot and team this session is |
-| `gizzi agents recover [--apply]` | `rig seat handover`, `rig restore` | Show (or, with `--apply`, do) what to restart after a crash |
+| `gizzi agents recover [<bot>] [--apply] [--lead <id>\|--as-human]` | `rig seat handover`, `rig restore` | Show (or, with `--apply`, do) what to restart after a crash: dead, unfinished sessions you own, relaunched with the harness's own resume when it recorded a session |
 | `gizzi agents snapshot` / `restore` | `rig snapshot` / `restore` | Save or restore a whole team |
 | `gizzi agents model <bot> <model>` | `rig seat set-model` | Change a bot's model |
 | `gizzi agents handoff <bot>` | `rig seat handover` | Hand a bot's thread to a fresh session |
@@ -59,7 +59,8 @@ Conversation and handoffs. See [Orchestration](/factory/orchestration).
 |---|---|---|
 | `gizzi orchestration send <bot@team> "…" [--queue]` | `rig send` | Send to a bot. Reports the delivery state. Recorded in mail |
 | `gizzi orchestration capture <bot@team> [lines]` | `rig capture` | Read a pane's last lines |
-| `gizzi orchestration transcript <bot@team>` | `rig transcript` | The recorded transcript |
+| `gizzi orchestration transcript <bot@team> [--tail N]` | `rig transcript` | The recorded transcript |
+| `gizzi orchestration drain <bot@team> [--all] [--dry-run]` | — | Deliver the bot's queued messages, oldest first. Each is marked delivered only after its paste is verified |
 | `gizzi orchestration threads list\|show\|new` | `rig chatroom` | Bot threads (`standing` / `task`) |
 | `gizzi orchestration mail list\|read\|send\|decide` | — | Durable mail and review decisions |
 | `gizzi orchestration feed` | `rig stream` | Ledger events as they happen |
@@ -102,7 +103,7 @@ The work and its proof. See [Workspace](/factory/workspace).
 | Command | What it does |
 |---|---|
 | `gizzi` | The TUI: one agent plus the factory floor (agents, board, approvals) |
-| `gizzi doctor` | Checks Gizzi, the engine, harnesses, transport and the install, including the one-time move of `~/.agent-orchestrator/` to `~/.allternit/factory/` |
+| `gizzi doctor` | Checks Gizzi, the engine, harnesses, transport and the install, including the one-time move of the old orchestrator's state folder to `~/.allternit/factory/` ([details](/factory/migration#on-disk-state)) |
 | `gizzi serve` | Unchanged: Gizzi's own harness server. The Factory API is the engine's, at `/api/factory` |
 
 ## Related

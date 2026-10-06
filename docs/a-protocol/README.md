@@ -25,7 +25,7 @@ Use these terms consistently:
 | **Gizzi** | Technical/code/terminal worker principal. Gizzi is not the Coworker. |
 | **Bot** | Durable user-created worker principal with its own identity and authority boundary. |
 | **Cowork** | Control room/workbench for conversations, runs, approvals, timelines, artifacts and workers. Cowork is not an agent identity. |
-| **CommRails** | Peer messaging / communication transport. It does not own run truth or lease exclusivity. |
+| **Factory peer messaging** | Peer messaging / communication transport. It does not own run truth or lease exclusivity. |
 | **Fabric Transport and Lease Protocol** | Durable worker-delivery layer implementing claim, lease, heartbeat, expiry, retry/reassignment, approval binding and completion. This supersedes the older “A:// dispatcher” wording. |
 | **Run/DAG runtime** | Canonical durable execution/state-machine substrate. |
 | **Fabric** | Compute/execution-placement layer. Placement must not change actor identity or attribution. |
@@ -49,7 +49,7 @@ Use these terms consistently:
         |                          |                          |
         +--------------------------+--------------------------+
                                    |
-                              CommRails
+                         Factory peer messaging
                          peer communication bus
                                    |
                                    v
@@ -95,9 +95,9 @@ Never use model output as an authorization decision. Planning may be probabilist
 
 ### 3. Transport and execution ownership
 
-CommRails moves messages between peers. Fabric Transport owns durable execution handoff. They are intentionally different concerns.
+Factory peer messaging moves messages between peers. Fabric Transport owns durable execution handoff. They are intentionally different concerns.
 
-For v0.1, workers discover work by long-polling the Fabric Transport claim endpoint. CommRails push may later reduce latency, but correctness does not depend on push delivery.
+For v0.1, workers discover work by long-polling the Fabric Transport claim endpoint. Factory push may later reduce latency, but correctness does not depend on push delivery.
 
 A job is not running because a chat message says it was delegated. A job is running only when an authenticated eligible principal holds the current valid lease generation and the runtime state reflects that fact.
 
@@ -141,7 +141,7 @@ Do not infer feature completion from a type or namespace existing. A component t
 
 As of the current `main` implementation, the Fabric Transport vertical slice includes authenticated principal registration, long-poll claim, persistence-level lease ownership, server-clock heartbeat/renew/expiry, completion validation, stale-generation rejection, lease-bound approvals, approval expiry, event idempotency, boot recovery, risk-policy evaluation and transport conformance tests.
 
-The broader A:// contract is larger. The following remain separate work unless/until the conformance matrix says otherwise: a universal IntentEnvelope entry path, connector credential brokerage, non-local compute placement, full bot lifecycle/product surfaces, CommRails push wakeups, complete Cowork visualization of transport state, and external/public protocol interoperability.
+The broader A:// contract is larger. The following remain separate work unless/until the conformance matrix says otherwise: a universal IntentEnvelope entry path, connector credential brokerage, non-local compute placement, full bot lifecycle/product surfaces, Factory push wakeups, complete Cowork visualization of transport state, and external/public protocol interoperability.
 
 See [`conformance.md`](conformance.md) before claiming parity or completion.
 

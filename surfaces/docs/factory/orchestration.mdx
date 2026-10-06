@@ -50,7 +50,7 @@ Every message shows its real delivery state, never a guess.
 | State | Meaning |
 |---|---|
 | `verified` | The session or pane confirmed it received the text |
-| `queued` | The pane was busy. The message waits in the bot's mailbox and is delivered when the pane is free. `--queue` asks for this up front |
+| `queued` | The pane was busy, gone, or the paste couldn't be read back. The message waits in the bot's mailbox until `gizzi orchestration drain` delivers it. `--queue` asks for this up front |
 | `best_effort` | Sent on a lane that can't confirm receipt. It's never shown as read |
 | `read_only` | The lane can show the vendor's conversation but can't post into it |
 | `failed` | Not delivered. The record says why |
@@ -63,6 +63,18 @@ A node assigned to a Vendor bot is delivered as a **vendor ticket**. The node is
 
 There's no separate ticket list. The ticket shows inside the node and inside the thread, and `T-n` links to its node. See [How vendor bots connect](/guides/how-vendor-bots-connect).
 
+## Queued messages
+
+A queued message waits in the bot's mailbox (on the workspace's Bus). Deliver it once the pane is free:
+
+```bash
+gizzi orchestration drain builder@product-build --dry-run   # what's queued, nothing delivered
+gizzi orchestration drain builder@product-build             # the oldest message
+gizzi orchestration drain builder@product-build --all       # every message, oldest first
+```
+
+Each message goes through the same verified paste as a send, and is marked delivered only after the paste is read back from the pane. The first message that can't be delivered (busy pane, pane gone, paste not verified) stays queued and stops the drain, so the order holds. Run one drain per bot at a time.
+
 ## Capture, transcript and feed
 
 ```bash
@@ -70,6 +82,8 @@ gizzi orchestration capture builder@product-build 80   # the pane's last 80 line
 gizzi orchestration transcript builder@product-build   # the full recorded transcript
 gizzi orchestration feed                               # ledger events as they happen
 ```
+
+The transcript is the pane's raw output, recorded from its first byte, and it outlives the pane.
 
 ## Mail
 

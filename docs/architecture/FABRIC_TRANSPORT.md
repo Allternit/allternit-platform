@@ -502,7 +502,7 @@ Do not put these concerns into Fabric Transport merely because work passes throu
 - user memory policy
 - connector secret storage
 - Cowork presentation
-- CommRails peer messaging semantics
+- Factory peer messaging semantics
 - public `a://` resolution
 
 Fabric Transport should remain narrow: authenticated execution ownership, lease lifecycle, protected action binding, and attributable completion.

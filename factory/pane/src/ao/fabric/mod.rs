@@ -1,7 +1,7 @@
 //! ao Fabric Transport node (P3, spec: Allternit Brain/Research/specs/
 //! ao-fabric-node.md; spike: Research/drafts/spike-p3-clerk-device-auth.md).
 //!
-//! Makes the `ao` binary a pairable Fabric node: `ao fabric pair|serve|status`.
+//! Makes the `ao` binary a pairable Fabric node: `allternit-factory pane fabric pair|serve|status`.
 //! Pairing is Allternit's own 3-leg Ed25519 protocol (the node never holds a
 //! Clerk token); `serve` runs the loopback HTTP+WS shim (this binary, port
 //! 8014 default) plus a line-faithful Rust port of cmd/agent-daemon's relay
@@ -17,16 +17,32 @@ pub(crate) mod wire;
 
 pub(crate) const DEFAULT_AO_PORT: u16 = 8014;
 
+/// `ALLTERNIT_FACTORY_FABRIC_<name>`, else the variable's name before the
+/// Factory rename (`ALLTERNIT_AO_<name>`, which a saved launch config may
+/// still set), logged once as deprecated.
+pub(crate) fn fabric_env(name: &str) -> Option<String> {
+    if let Ok(v) = std::env::var(format!("ALLTERNIT_FACTORY_FABRIC_{name}")) {
+        return Some(v);
+    }
+    let old = format!("ALLTERNIT_AO_{name}");
+    let v = std::env::var(&old).ok()?;
+    static WARNED: std::sync::Once = std::sync::Once::new();
+    WARNED.call_once(|| {
+        eprintln!("warning: {old} is deprecated; set ALLTERNIT_FACTORY_FABRIC_{name} instead");
+    });
+    Some(v)
+}
+
 /// Default loopback gateway the relay client forwards tunneled traffic to
 /// (the shim). Distinct from Desktop's 8013 so both can coexist (spike Q5.5).
 pub(crate) fn local_gateway_url() -> String {
-    std::env::var("ALLTERNIT_AO_GATEWAY_URL")
-        .unwrap_or_else(|_| format!("http://127.0.0.1:{DEFAULT_AO_PORT}"))
+    fabric_env("GATEWAY_URL")
+        .unwrap_or_else(|| format!("http://127.0.0.1:{DEFAULT_AO_PORT}"))
         .trim_end_matches('/')
         .to_string()
 }
 
-/// Loopback gateway the relay forwards tunneled traffic to. `ALLTERNIT_AO_GATEWAY_URL`
+/// Loopback gateway the relay forwards tunneled traffic to. `ALLTERNIT_FACTORY_FABRIC_GATEWAY_URL`
 /// wins when set (and non-empty); otherwise the gateway is the shim's own serve
 /// port — the relay and the shim must agree, or tunneled requests land on whatever
 /// unrelated service holds the default port (Desktop's connector sidecar holds

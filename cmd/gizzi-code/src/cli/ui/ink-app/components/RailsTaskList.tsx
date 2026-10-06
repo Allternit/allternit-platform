@@ -1,10 +1,10 @@
 /**
- * Rails Task List
+ * Factory Task List
  *
- * Renders the CommRails WIH DAGs mirrored into AppState (railsDag slice,
+ * Renders the Factory WIH DAGs mirrored into AppState (railsDag slice,
  * written by RailsDagBridge) using the same visual language as TaskListV2:
  * figures-style glyphs, 30s recent-completion TTL with a collapse summary
- * row, and the same terminal-height display budget. Self-hides when Rails
+ * row, and the same terminal-height display budget. Self-hides when Factory
  * peer mode is off (no updatedAt) or there are no dags.
  *
  * Focused keys (peer mode only): j/k move the selection across all node

@@ -1706,7 +1706,7 @@ pub fn check_client_version(client_version: u32) -> VersionCheck {
         ))
     } else {
         VersionCheck::Incompatible(format!(
-            "client version {client_version} is newer than server version {PROTOCOL_VERSION}; please upgrade the ao server"
+            "client version {client_version} is newer than server version {PROTOCOL_VERSION}; please upgrade the allternit-factory pane server"
         ))
     }
 }

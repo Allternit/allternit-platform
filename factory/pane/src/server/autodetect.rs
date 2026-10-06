@@ -145,7 +145,7 @@ fn client_protocol_accepts_hello(socket_path: &Path) -> io::Result<bool> {
 fn validate_running_server_compatibility(saved_federation: bool) -> io::Result<()> {
     let Some(status) = read_server_status()? else {
         return Err(io::Error::other(format!(
-            "an ao server is listening, but its status API is unavailable.\n\n{}\nIf that fails, stop the old server process manually.",
+            "an allternit-factory pane server is listening, but its status API is unavailable.\n\n{}\nIf that fails, stop the old server process manually.",
             crate::session::active_restart_after_update_guidance()
         )));
     };
@@ -195,7 +195,7 @@ pub fn spawn_server_daemon() -> io::Result<u32> {
     let exe = std::env::current_exe().map_err(|err| {
         io::Error::new(
             err.kind(),
-            format!("failed to determine ao executable path: {err}"),
+            format!("failed to determine the allternit-factory executable path: {err}"),
         )
     })?;
 
@@ -205,7 +205,7 @@ pub fn spawn_server_daemon() -> io::Result<u32> {
 
     let pid =
         crate::platform::launch_server_daemon_command(&mut command).map_err(|err: io::Error| {
-            io::Error::new(err.kind(), format!("failed to spawn ao server: {err}"))
+            io::Error::new(err.kind(), format!("failed to spawn allternit-factory pane server: {err}"))
         })?;
     info!(pid, "server daemon spawned");
 
@@ -221,6 +221,12 @@ fn build_server_daemon_command(exe: PathBuf) -> Command {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
     crate::platform::detach_server_daemon_command(&mut command);
+    // The server's environment is every pane's: never hand it the Allternit
+    // API credentials of the process that happened to start it (an engine
+    // `agents up` or `serve` holds them to register bots).
+    for secret in ["ALLTERNIT_API_TOKEN", "ALLTERNIT_DESKTOP_ACCESS_TOKEN"] {
+        command.env_remove(secret);
+    }
 
     match std::env::current_dir() {
         Ok(cwd) => {
@@ -583,11 +589,11 @@ test "$sid" = "$$"
             "unexpected error: {message}"
         );
         assert!(
-            message.contains("Run `ao session stop work`"),
+            message.contains("Run `allternit-factory pane session stop work`"),
             "unexpected error: {message}"
         );
         assert!(
-            message.contains("then run `ao session attach work` again"),
+            message.contains("then run `allternit-factory pane session attach work` again"),
             "unexpected error: {message}"
         );
         std::env::remove_var("XDG_CONFIG_HOME");

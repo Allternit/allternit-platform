@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Agent Activity's thread list — Rails Mail's real `GET /mail/threads`
+/// Agent Activity's thread list — Factory mail's real `GET /mail/threads`
 /// (`AgentActivityStore.shared`), presented as a sheet from
 /// `ComposerPlusSheet` (this app has no dedicated Agent Activity screen to
 /// push onto, same situation `CoworkTasksListView` solves) with its own
@@ -291,7 +291,7 @@ struct AgentActivityListView: View {
             style: .empty,
             icon: "bubble.left.and.bubble.right",
             title: "No agent activity yet",
-            message: "Threads show up here as agents send mail through Rails Mail."
+            message: "Threads show up here as agents send mail through the Factory."
         )
     }
 
