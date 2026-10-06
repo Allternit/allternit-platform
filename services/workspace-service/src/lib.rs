@@ -9,7 +9,7 @@
 pub mod sessions;
 pub mod skills;
 pub mod routes;
-pub mod mux;
+pub mod pane;
 
 use axum::{routing::{get, post, delete}, Router};
 use std::sync::Arc;
