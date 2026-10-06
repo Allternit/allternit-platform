@@ -213,6 +213,28 @@ impl MailflareClient {
         &self.config
     }
 
+    /// The same service and key, for mailboxes on another domain (a verified customer domain).
+    pub fn for_domain(&self, domain: &str) -> Self {
+        Self { config: MailflareConfig { domain: domain.to_string(), ..self.config.clone() }, http: self.http.clone() }
+    }
+
+    /// Customer domains on Allternit's mail host, through the worker's
+    /// `/api/v1/relay/domains/:host` (admin key): `PUT` adds (answers the DNS
+    /// records), `GET` checks the records live, `DELETE` removes.
+    pub async fn relay_domain(&self, method: reqwest::Method, domain: &str) -> Result<serde_json::Value, MailflareError> {
+        let response = Self::check(
+            self.http
+                .request(method, self.url(&format!("/api/v1/relay/domains/{domain}")))
+                .bearer_auth(&self.config.admin_key)
+                .timeout(std::time::Duration::from_secs(30))
+                .send()
+                .await
+                .map_err(|e| MailflareError { status: None, message: e.to_string() })?,
+        )
+        .await?;
+        response.json().await.map_err(|e| MailflareError { status: None, message: e.to_string() })
+    }
+
     fn url(&self, path: &str) -> String {
         format!("{}{}", self.config.base_url, path)
     }

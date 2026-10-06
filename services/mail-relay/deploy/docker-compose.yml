@@ -1,0 +1,20 @@
+# allternit-mail-relay on mx.allternit.com. Host networking so Postfix reaches
+# it on 127.0.0.1; it listens on loopback only. Capped so it can't crowd the
+# voice stack or cloud computers on the same host.
+services:
+  relay:
+    build: ..
+    image: allternit-mail-relay:local
+    network_mode: host
+    restart: unless-stopped
+    env_file: /etc/allternit-mail-relay/relay.env
+    volumes:
+      - /var/lib/allternit-mail-relay:/var/lib/allternit-mail-relay
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+    read_only: true
+    tmpfs:
+      - /tmp

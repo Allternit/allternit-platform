@@ -1,7 +1,9 @@
 /**
  * Outbound email transport abstraction for the allternit mailflare fork.
  *
- * Two transports are supported:
+ * Customer domains (domains.transport = 'relay') always send through
+ * Allternit's mail host (services/mail-relay), which signs with the domain's
+ * own DKIM key. For every other domain, two transports are supported:
  *   - cloudflare (default): uses the Cloudflare Email Service `send_email` binding.
  *   - resend: uses the Resend REST API (free tier 100 emails/day), which lets the
  *     rail work on Cloudflare's free Workers plan.
@@ -11,6 +13,7 @@
  */
 
 import type { AttachmentContent } from "@/lib/email/attachment-types";
+import { isRelaySender, relayFetch } from "@/lib/email/relay";
 
 export type TransportMessage = {
 	from: string;
@@ -158,10 +161,44 @@ async function deliverViaResend(
  * Deliver a message through the configured outbound transport.
  * Throws on failure; callers record status, webhooks, and audit logs.
  */
+async function deliverViaRelay(
+	env: CloudflareEnv,
+	message: TransportMessage,
+): Promise<TransportDeliveryResult> {
+	const response = await relayFetch(env, "/send", {
+		method: "POST",
+		body: JSON.stringify({
+			from: message.from,
+			to: message.to,
+			subject: message.subject,
+			html: message.html,
+			text: message.text,
+			headers: message.headers ?? {},
+			attachments: message.attachments.map((attachment) => ({
+				filename: attachment.filename,
+				type: attachment.type,
+				content: arrayBufferToBase64(attachment.content),
+				disposition: attachment.disposition,
+				contentId: attachment.contentId ?? null,
+			})),
+		}),
+	});
+	if (!response.ok) {
+		const detail = await response.text();
+		throw new Error(`Mail relay send failed (${response.status}): ${detail.slice(0, 300)}`);
+	}
+	const result = (await response.json()) as { messageId?: string };
+	if (!result.messageId) throw new Error("Mail relay response missing messageId");
+	return { providerMessageId: result.messageId };
+}
+
 export async function deliverMessage(
 	env: CloudflareEnv,
 	message: TransportMessage,
 ): Promise<TransportDeliveryResult> {
+	if (await isRelaySender(env, message.from)) {
+		return deliverViaRelay(env, message);
+	}
 	if (isResendEmailTransport(env)) {
 		return deliverViaResend(env, message);
 	}

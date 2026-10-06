@@ -12,7 +12,7 @@
 //! no-op for threads that have no pending outbound email row.
 
 use axum::{
-    extract::{Extension, State},
+    extract::{Extension, Path, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -54,6 +54,78 @@ pub fn agent_email_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/agent-email/send", post(send_agent_email))
         .route("/agent-email/status", get(agent_email_status))
+        .route("/agent-email/domains", get(email_domains_list))
+        .route("/agent-email/domains/:domain", axum::routing::put(email_domain_add).delete(email_domain_remove))
+}
+
+/// One customer-domain call: through the local admin key when this runtime has
+/// one, otherwise through Allternit's cloud with this runtime's device credential
+/// (the cloud records which account owns the domain). Answers what the service
+/// answered, so the app sees `{domain, state, records}` or `{domains}`.
+async fn email_domain_call(method: reqwest::Method, domain: Option<&str>) -> Response {
+    if let Some(client) = crate::mailflare_client::MailflareClient::from_env() {
+        let Some(domain) = domain else {
+            // A runtime with its own admin key has no per-account list; the app asks per domain.
+            return Json(json!({ "domains": [] })).into_response();
+        };
+        return match client.relay_domain(method.clone(), domain).await {
+            Ok(v) if method == reqwest::Method::DELETE => Json(json!({ "domain": domain, "deleted": true, "detail": v })).into_response(),
+            Ok(v) => {
+                let verified = v.get("verified").and_then(Value::as_bool).unwrap_or(false);
+                Json(json!({ "domain": v.get("domain").cloned().unwrap_or(json!(domain)), "state": if verified { "verified" } else { "pending" }, "records": v.get("records").cloned().unwrap_or(json!([])) })).into_response()
+            }
+            Err(e) => err(e.status.unwrap_or(StatusCode::BAD_GATEWAY), "email_domain_error", e.message).into_response(),
+        };
+    }
+    let Some(bearer) = crate::phone_sync::runtime_bearer() else {
+        return err(StatusCode::CONFLICT, "runtime_not_paired", "Sign this computer in to your Allternit account to use a company domain.").into_response();
+    };
+    let base = crate::phone_sync::cloud_base();
+    let url = match domain {
+        Some(d) => format!("{}/api/v1/runtime-devices/me/bot-email/domains/{}", base.trim_end_matches('/'), urlencoding::encode(d)),
+        None => format!("{}/api/v1/runtime-devices/me/bot-email/domains", base.trim_end_matches('/')),
+    };
+    match reqwest::Client::new().request(method, url).bearer_auth(bearer).timeout(std::time::Duration::from_secs(45)).send().await {
+        Ok(r) => {
+            let status = StatusCode::from_u16(r.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+            let body: Value = r.json().await.unwrap_or(Value::Null);
+            (status, Json(body)).into_response()
+        }
+        Err(e) => err(StatusCode::BAD_GATEWAY, "cloud_unreachable", e.to_string()).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct DomainQuery {
+    domain: Option<String>,
+}
+
+/// `GET /agent-email/domains[?domain=acme.com]`: the account's company domains, each checked
+/// live. A runtime with its own admin key keeps no per-account list, so it checks `domain`.
+async fn email_domains_list(Extension(_user): Extension<AuthUser>, axum::extract::Query(q): axum::extract::Query<DomainQuery>) -> Response {
+    let one = q.domain.map(|d| d.trim().to_ascii_lowercase()).filter(|d| !d.is_empty());
+    if crate::mailflare_client::MailflareClient::from_env().is_some() {
+        if let Some(d) = one {
+            let r = email_domain_call(reqwest::Method::GET, Some(&d)).await;
+            if !r.status().is_success() {
+                return r;
+            }
+            let body = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap_or_default();
+            let v: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+            return Json(json!({ "domains": [v] })).into_response();
+        }
+    }
+    email_domain_call(reqwest::Method::GET, None).await
+}
+
+/// `PUT /agent-email/domains/:domain`: add a company domain; answers the DNS records to add.
+async fn email_domain_add(Extension(_user): Extension<AuthUser>, Path(domain): Path<String>) -> Response {
+    email_domain_call(reqwest::Method::PUT, Some(domain.trim())).await
+}
+
+/// `DELETE /agent-email/domains/:domain`: remove a company domain no bot uses.
+async fn email_domain_remove(Extension(_user): Extension<AuthUser>, Path(domain): Path<String>) -> Response {
+    email_domain_call(reqwest::Method::DELETE, Some(domain.trim())).await
 }
 
 /// Public webhook surface for mailflare inbound messages. Server-to-server —

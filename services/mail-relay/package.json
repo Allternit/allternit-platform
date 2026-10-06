@@ -1,0 +1,19 @@
+{
+  "name": "@allternit/mail-relay",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Bot email on customer domains: Postfix lookups, DKIM-signed sending, inbound hand-off to the agent mail worker.",
+  "type": "module",
+  "main": "src/server.mjs",
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "nodemailer": "^6.9.16",
+    "smtp-server": "^3.13.6"
+  }
+}
