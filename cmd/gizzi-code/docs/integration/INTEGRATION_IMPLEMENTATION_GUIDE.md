@@ -227,7 +227,7 @@ export interface ConnectorAdapter {
 
 ```typescript
 // src/connectors/McpConnectorAdapter.ts
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { Client } from '@modelcontextprotocol/client'; // SDK v2
 
 export class McpConnectorAdapter implements Connector {
   private mcpClient: Client;

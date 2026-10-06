@@ -1,12 +1,13 @@
-import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js"
 import type {
+  OAuthClientProvider,
   OAuthClientMetadata,
   OAuthTokens,
   OAuthClientInformation,
   OAuthClientInformationFull,
-} from "@modelcontextprotocol/sdk/shared/auth.js"
+} from "@modelcontextprotocol/client"
 import { McpAuth } from "@/runtime/tools/mcp/auth"
 import { Log } from "@/shared/util/log"
+import { MCP_CLIENT_METADATA_URL } from "@/constants/oauth"
 
 const log = Log.create({ service: "mcp.oauth" })
 
@@ -30,6 +31,21 @@ export class McpOAuthProvider implements OAuthClientProvider {
     private config: McpOAuthConfig,
     private callbacks: McpOAuthCallbacks,
   ) {}
+
+  /**
+   * Client ID Metadata Document (CIMD), the 2026-07-28 replacement for dynamic client
+   * registration. When the authorization server advertises
+   * `client_id_metadata_document_supported`, the SDK uses this URL as the client_id and
+   * skips registration; otherwise it falls back to DCR. A configured `clientId` wins.
+   * The document lists this provider's loopback `redirectUrl`.
+   * `MCP_OAUTH_CLIENT_METADATA_URL` overrides it (testing); set it empty to disable CIMD.
+   */
+  get clientMetadataUrl(): string | undefined {
+    if (this.config.clientId) return undefined
+    const override = process.env.MCP_OAUTH_CLIENT_METADATA_URL
+    if (override !== undefined) return override || undefined
+    return MCP_CLIENT_METADATA_URL
+  }
 
   get redirectUrl(): string {
     return `http://127.0.0.1:${OAUTH_CALLBACK_PORT}${OAUTH_CALLBACK_PATH}`

@@ -2,10 +2,7 @@ import type {
   ToolResultBlockParam,
   ToolUseBlockParam,
 } from '@allternit/gizzi-sdk/providers/allternit/resources/index.mjs'
-import type {
-  ElicitRequestURLParams,
-  ElicitResult,
-} from '@modelcontextprotocol/sdk/types'
+import type { ElicitRequestURLParams, ElicitResult } from '@modelcontextprotocol/client'
 import type { UUID } from 'crypto'
 import type { z } from 'zod/v4'
 import type { Command } from './commands'

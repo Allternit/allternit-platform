@@ -2,9 +2,8 @@ import {
   buildComputerUseTools,
   createComputerUseMcpServer,
 } from './engine/index.js'
-import type { Server } from '@modelcontextprotocol/sdk/server/index.js'
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
-import { ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
+import type { Server } from '@modelcontextprotocol/server'
+import { serveStdio } from '@modelcontextprotocol/server/stdio'
 import { homedir } from 'os'
 
 import { shutdownDatadog } from '../../services/analytics/datadog.js'
@@ -58,18 +57,22 @@ async function tryGetInstalledAppNames(): Promise<string[] | undefined> {
  * Real dispatch still goes through `wrapper.tsx`'s `.call()` override; this
  * server exists only to answer ListTools.
  */
+let installedAppNamesPromise: ReturnType<typeof tryGetInstalledAppNames> | undefined
+
 export async function createComputerUseMcpServerForCli(): Promise<Server> {
   const adapter = getComputerUseHostAdapter()
   const coordinateMode = getChicagoCoordinateMode()
   const server = createComputerUseMcpServer(adapter, coordinateMode)
 
-  const installedAppNames = await tryGetInstalledAppNames()
+  // Memoized: the stdio entrypoint builds a server per 2026-07-28 request.
+  installedAppNamesPromise ??= tryGetInstalledAppNames()
+  const installedAppNames = await installedAppNamesPromise
   const tools = buildComputerUseTools(
     adapter.executor.capabilities,
     coordinateMode,
     installedAppNames,
   )
-  server.setRequestHandler(ListToolsRequestSchema, async () =>
+  server.setRequestHandler('tools/list', async () =>
     adapter.isDisabled() ? { tools: [] } : { tools },
   )
 
@@ -85,9 +88,6 @@ export async function runComputerUseMcpServer(): Promise<void> {
   enableConfigs()
   initializeAnalyticsSink()
 
-  const server = await createComputerUseMcpServerForCli()
-  const transport = new StdioServerTransport()
-
   let exiting = false
   const shutdownAndExit = async (): Promise<void> => {
     if (exiting) return
@@ -100,6 +100,9 @@ export async function runComputerUseMcpServer(): Promise<void> {
   process.stdin.on('error', () => void shutdownAndExit())
 
   logForDebugging('[Computer Use MCP] Starting MCP server')
-  await server.connect(transport)
+  // Dual-era stdio: 2026-07-28 clients get stateless per-request servers from
+  // the factory; 2025-era clients (initialize) are pinned to one instance.
+  await createComputerUseMcpServerForCli()
+  serveStdio(() => createComputerUseMcpServerForCli(), { legacy: 'serve' })
   logForDebugging('[Computer Use MCP] MCP server started')
 }

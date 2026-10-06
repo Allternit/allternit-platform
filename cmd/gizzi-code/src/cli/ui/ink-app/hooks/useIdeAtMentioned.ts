@@ -48,8 +48,11 @@ export function useIdeAtMentioned(
     // If we found a connected IDE client, register our handler
     if (ideClient) {
       ideClient.client.setNotificationHandler(
-        AtMentionedSchema(),
-        notification => {
+        AtMentionedSchema().shape.method.value,
+        { params: AtMentionedSchema().shape.params },
+        params => {
+          // SDK v2: custom notifications register by method name + params schema.
+          const notification = { params }
           if (ideClientRef.current !== ideClient) {
             return
           }

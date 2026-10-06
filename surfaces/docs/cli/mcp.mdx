@@ -9,6 +9,55 @@ description: Manage Model Context Protocol servers with gizzi mcp
 
 MCP servers declared through the CLI are written to your `gizzi.json` or `gizzi.jsonc` configuration, either in the current project or globally.
 
+## Protocol versions (2026-07-28 and older servers)
+
+Gizzi speaks MCP **2026-07-28** and every earlier revision, using the official TypeScript SDK v2 (`@modelcontextprotocol/client` / `server` / `core`). You don't configure anything: on the first connect to a server Gizzi sends `server/discover`.
+
+| Server | What Gizzi does |
+| ------ | --------------- |
+| Speaks 2026-07-28 | Stateless requests: each request carries the protocol version, client info and capabilities in `_meta`; no `initialize`, no session. |
+| Older (2025-era) server | Falls back to the `initialize` handshake and a normal session, byte-for-byte what older clients send. |
+| Legacy HTTP+SSE server | Connects over SSE with `initialize` (SSE predates 2026-07-28). |
+
+The verdict is cached per server in `mcp-era.json` in Gizzi's data directory, keyed by the server's URL or command:
+
+- A **2026-07-28** verdict skips the probe. Gizzi confirms it with one `server/discover` on the live connection. For local servers this saves spawning a second probe process.
+- An **older-server** verdict goes straight to `initialize` and expires after 24 hours, so an upgraded server is picked up the next day.
+- Changing a server's URL or command, `gizzi mcp auth`, or `gizzi mcp logout` clears the cached verdict.
+
+For a local (stdio) server, the first probe runs in a short-lived copy of the server process. A server that doesn't answer within 5 seconds is treated as an older server.
+
+`gizzi mcp list` shows the result next to each connected server. For example, `connected · 2026-07-28` is a 2026-07-28 server, and `connected · legacy 2025-06-18` is an older one.
+
+To override detection for one server, set `protocol` on its entry:
+
+| `protocol` | Behavior |
+| ---------- | -------- |
+| `auto` (default) | Probe with `server/discover`; fall back to `initialize` |
+| `legacy` | Always use `initialize` (for a server that misbehaves when probed) |
+| `modern` | Require 2026-07-28; fail instead of falling back |
+
+```json
+{
+  "mcp": {
+    "old-tools": {
+      "type": "local",
+      "command": ["node", "server.js"],
+      "protocol": "legacy"
+    }
+  }
+}
+```
+
+The behaviors below work the same in both protocol eras:
+
+- Tool names are namespaced as `mcp__<server>__<tool>`, in a stable order: servers by name, then each server's tools by name. Name collisions get the same suffix on every run.
+- Approval flags (`allternit/approved` in `_meta`) are sent on tool calls.
+- The MCP Apps UI capability is sent to every server.
+- `timeout` applies to connecting and to requests.
+
+Gizzi's own MCP servers answer both protocol eras. This includes the knowledge-vault Lens server.
+
 ## Command reference
 
 | Command | Alias | Description |
@@ -73,7 +122,7 @@ This writes an entry like:
 
 ### Remote server
 
-For a remote server, provide the HTTPS URL. You can then opt into OAuth and supply a pre-registered client ID and optional client secret, or leave OAuth empty to use dynamic client registration.
+For a remote server, provide the HTTPS URL. You can then opt into OAuth and supply a pre-registered client ID and optional client secret, or leave the client ID empty and let Gizzi identify itself (see [How Gizzi identifies itself to OAuth servers](#how-gizzi-identifies-itself-to-oauth-servers)).
 
 ```json
 {
@@ -128,6 +177,18 @@ gizzi mcp auth list
 
 Statuses shown are `authenticated`, `expired`, or `not authenticated`.
 
+### How Gizzi identifies itself to OAuth servers
+
+When `oauth.clientId` is not set, Gizzi picks the first method the authorization server supports:
+
+1. **Client ID Metadata Document (CIMD).** MCP 2026-07-28 prefers this method over dynamic client registration. If the authorization server advertises `client_id_metadata_document_supported`, Gizzi uses `https://platform.allternit.com/oauth/gizzi-client.json` as its `client_id`. That document lists Gizzi's loopback redirect URIs (`http://127.0.0.1:19876/mcp/oauth/callback` and `http://localhost:19876/mcp/oauth/callback`). Nothing is registered and nothing is stored per server.
+2. **Dynamic client registration (RFC 7591).** This is the fallback for servers without CIMD. MCP 2026-07-28 deprecates it, but Gizzi still supports it. The registered client is stored with the server's tokens.
+3. If the server supports neither method, `gizzi mcp list` shows `needs client registration`. Add a pre-registered `clientId` (and `clientSecret` if the server requires one) to the server's `oauth` block.
+
+A configured `clientId` always takes precedence. To turn CIMD off, set `MCP_OAUTH_CLIENT_METADATA_URL` to an empty string. To test against a different document, set it to that document's URL.
+
+The authorization callback is checked against the issuer the flow started with (RFC 9207 `iss`), so a mixed-up or forged callback is rejected.
+
 ## Logging out
 
 Delete stored OAuth tokens and client registration for a server:
@@ -152,6 +213,7 @@ The command prints:
 - Whether a refresh token is present
 - Client registration details
 - HTTP response status from the server
+- Which protocol era the server speaks. The probe is a `server/discover` request: a 2026-07-28 server lists its supported versions, and an older server rejects it.
 - `WWW-Authenticate` header analysis
 - Whether the OAuth flow can be triggered successfully
 
@@ -161,7 +223,7 @@ This is useful when a remote server shows `needs authentication` or `failed` in 
 
 | Status | Meaning |
 | ------ | ------- |
-| `connected` | The server is running and reachable |
+| `connected` | The server is running and reachable. The protocol revision is shown after it, for example `· 2026-07-28` or `· legacy 2025-06-18`. |
 | `disabled` | The server is configured but disabled |
 | `needs authentication` | OAuth credentials are missing or expired |
 | `needs client registration` | OAuth client registration is missing or invalid |

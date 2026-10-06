@@ -31,6 +31,7 @@ against the OSV API, not just advisory headlines.
 | Package | From | To | Advisories resolved |
 |---|---|---|---|
 | `@modelcontextprotocol/sdk` | 1.25.2 | 1.29.0 | GHSA-345p-7cg4-v4c7 (high, cross-client data leak; fix floor 1.26.0). Also dedupes with the copies pulled by `@upstash/context7-mcp` and `@modelcontextprotocol/server-sequential-thinking` |
+| `@modelcontextprotocol/sdk` → `@modelcontextprotocol/client`/`server`/`core` | 1.29.0 | 2.3.1 | 2026-10-05: moved to the SDK v2 split packages (MCP 2026-07-28 + legacy fallback). gizzi no longer depends on the v1 package; the bundled stdio servers (`@upstash/context7-mcp`, `server-sequential-thinking`) still pull their own v1 copy |
 | `@babel/core` (dev) | 7.28.4 | 7.29.7 | GHSA-4x5r-pxfx-6jf8 (low) |
 | `minimatch` | 10.0.3 | 10.2.6 | GHSA-3ppc-4f35-3m26, GHSA-7r86-cg39-jmmj, GHSA-23c5-xmqv-rm74 (high ReDoS family) |
 | `axios` | 1.15.0 | 1.20.0 | axios advisory family (incl. GHSA-pmwg-cvhr-8vh7 incomplete-fix in 1.15.0) |

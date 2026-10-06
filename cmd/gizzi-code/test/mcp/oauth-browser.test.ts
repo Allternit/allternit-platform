@@ -22,14 +22,6 @@ mock.module("open", () => ({
   },
 }))
 
-// Mock UnauthorizedError
-class MockUnauthorizedError extends Error {
-  constructor() {
-    super("Unauthorized")
-    this.name = "UnauthorizedError"
-  }
-}
-
 // Track what options were passed to each transport constructor
 const transportCalls: Array<{
   type: "streamable" | "sse"
@@ -37,60 +29,66 @@ const transportCalls: Array<{
   options: { authProvider?: unknown }
 }> = []
 
-// Mock the transport constructors
-mock.module("@modelcontextprotocol/sdk/client/streamableHttp.js", () => ({
-  StreamableHTTPClientTransport: class MockStreamableHTTP {
-    url: string
-    authProvider: { redirectToAuthorization?: (url: URL) => Promise<void> } | undefined
-    constructor(url: URL, options?: { authProvider?: { redirectToAuthorization?: (url: URL) => Promise<void> } }) {
-      this.url = url.toString()
-      this.authProvider = options?.authProvider
-      transportCalls.push({
-        type: "streamable",
-        url: url.toString(),
-        options: options ?? {},
-      })
-    }
-    async start() {
-      // Simulate OAuth redirect by calling the authProvider's redirectToAuthorization
-      if (this.authProvider?.redirectToAuthorization) {
-        await this.authProvider.redirectToAuthorization(new URL("https://auth.example.com/authorize?client_id=test"))
-      }
-      throw new MockUnauthorizedError()
-    }
-    async finishAuth(_code: string) {
-      // Mock successful auth completion
-    }
-  },
-}))
+// SDK v2 is one package entry, and bun's module mock is process-wide: subclass the real
+// classes and only intercept the example.com URL these tests use.
+const realClient = await import("@modelcontextprotocol/client")
+const MockUnauthorizedError = realClient.UnauthorizedError
+const isTestUrl = (url: URL | string) => new URL(String(url)).hostname === "example.com"
 
-mock.module("@modelcontextprotocol/sdk/client/sse.js", () => ({
-  SSEClientTransport: class MockSSE {
-    constructor(url: URL) {
-      transportCalls.push({
-        type: "sse",
-        url: url.toString(),
-        options: {},
-      })
+class MockStreamableHTTP extends realClient.StreamableHTTPClientTransport {
+  testUrl: boolean
+  mockAuthProvider: { redirectToAuthorization?: (url: URL) => Promise<void> } | undefined
+  constructor(url: URL, options?: { authProvider?: { redirectToAuthorization?: (url: URL) => Promise<void> } }) {
+    super(url, options as any)
+    this.testUrl = isTestUrl(url)
+    this.mockAuthProvider = options?.authProvider
+    if (this.testUrl) transportCalls.push({ type: "streamable", url: url.toString(), options: options ?? {} })
+  }
+  async mockStart() {
+    // Simulate OAuth redirect by calling the authProvider's redirectToAuthorization
+    if (this.mockAuthProvider?.redirectToAuthorization) {
+      await this.mockAuthProvider.redirectToAuthorization(new URL("https://auth.example.com/authorize?client_id=test"))
     }
-    async start() {
-      throw new Error("Mock SSE transport cannot connect")
-    }
-  },
-}))
+    throw new MockUnauthorizedError("Unauthorized")
+  }
+  async send(...args: any[]) {
+    if (!this.testUrl) return (super.send as any)(...args)
+    return this.mockStart()
+  }
+  async finishAuth(...args: any[]) {
+    if (!this.testUrl) return (super.finishAuth as any)(...args)
+  }
+}
 
-// Mock the MCP SDK Client to trigger OAuth flow
-mock.module("@modelcontextprotocol/sdk/client/index.js", () => ({
-  Client: class MockClient {
-    async connect(transport: { start: () => Promise<void> }) {
-      await transport.start()
-    }
-  },
-}))
+class MockSSE extends realClient.SSEClientTransport {
+  testUrl: boolean
+  constructor(url: URL, options?: any) {
+    super(url, options)
+    this.testUrl = isTestUrl(url)
+    if (this.testUrl) transportCalls.push({ type: "sse", url: url.toString(), options: {} })
+  }
+  async mockStart() {
+    throw new Error("Mock SSE transport cannot connect")
+  }
+  async send(...args: any[]) {
+    if (!this.testUrl) return (super.send as any)(...args)
+    return this.mockStart()
+  }
+}
 
-// Mock UnauthorizedError in the auth module
-mock.module("@modelcontextprotocol/sdk/client/auth.js", () => ({
-  UnauthorizedError: MockUnauthorizedError,
+// The Client triggers the OAuth flow for the test URL; everything else connects for real.
+class MockClient extends realClient.Client {
+  async connect(transport: any, options?: any) {
+    if (transport?.testUrl) return transport.mockStart()
+    return super.connect(transport, options)
+  }
+}
+
+mock.module("@modelcontextprotocol/client", () => ({
+  ...realClient,
+  Client: MockClient,
+  StreamableHTTPClientTransport: MockStreamableHTTP,
+  SSEClientTransport: MockSSE,
 }))
 
 beforeEach(() => {

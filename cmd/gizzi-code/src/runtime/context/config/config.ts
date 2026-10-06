@@ -682,6 +682,12 @@ export namespace Config {
         .positive()
         .optional()
         .describe("Timeout in ms for MCP server requests. Defaults to 5000 (5 seconds) if not specified."),
+      protocol: z
+        .enum(["auto", "legacy", "modern"])
+        .optional()
+        .describe(
+          "MCP protocol era. auto (default) probes with server/discover and falls back to initialize for older servers; legacy always uses initialize; modern pins 2026-07-28.",
+        ),
     })
     .strict()
     
@@ -691,7 +697,9 @@ export namespace Config {
       clientId: z
         .string()
         .optional()
-        .describe("OAuth client ID. If not provided, dynamic client registration (RFC 7591) will be attempted."),
+        .describe(
+          "OAuth client ID. If not provided, Gizzi uses its Client ID Metadata Document when the authorization server supports it, else dynamic client registration (RFC 7591).",
+        ),
       clientSecret: z.string().optional().describe("OAuth client secret (if required by the authorization server)"),
       scope: z.string().optional().describe("OAuth scopes to request during authorization"),
     })
@@ -717,6 +725,12 @@ export namespace Config {
         .positive()
         .optional()
         .describe("Timeout in ms for MCP server requests. Defaults to 5000 (5 seconds) if not specified."),
+      protocol: z
+        .enum(["auto", "legacy", "modern"])
+        .optional()
+        .describe(
+          "MCP protocol era. auto (default) probes with server/discover and falls back to initialize for older servers; legacy always uses initialize; modern pins 2026-07-28.",
+        ),
     })
     .strict()
     
