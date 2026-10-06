@@ -25,6 +25,10 @@ Each channel has a short wizard: intro, one action (usually the platform's own a
 
 "Coming soon" means Allternit's own app for that platform (Discord, Slack, Teams, WhatsApp) isn't switched on yet; each needs a one-time setup with that platform, and some need the platform's review. The wizard checks live (`GET /api/v1/channels/availability`) and shows a disabled **Coming soon** panel instead of an error, and turns into a working wizard as soon as the app is on.
 
+## Discord channels
+
+After the app joins your server, the wizard lists the server's text channels, all ticked. Untick the ones the bots should stay out of and save. Messages in unticked channels are dropped by Allternit's cloud and never reach your computer; threads follow their parent channel, and direct messages and slash commands always work. Keeping every channel ticked means no limit, so channels you add later work too. To change the list, run **Connect Discord** again.
+
 ## Switch it on per bot
 
 Open a bot, then **Agent Gateway → Messaging**. Each connection has a switch.
