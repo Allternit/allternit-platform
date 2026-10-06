@@ -27,21 +27,23 @@ from pathlib import Path
 from typing import Any, Optional
 
 import httpx
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 # ---------------------------------------------------------------------------
-# FastMCP app
+# MCPServer app (official mcp >= 2.3: serves MCP 2026-07-28 `server/discover`
+# and the legacy `initialize` handshake on every transport)
 # ---------------------------------------------------------------------------
 
 import os as _os_init
-mcp = FastMCP(
-    name="allternit-computer-use",
+ACU_MCP_PORT = int(_os_init.environ.get("ACU_MCP_PORT", "8765"))
+
+mcp = MCPServer(
+    "allternit-computer-use",
     instructions=(
         "Allternit Computer Use Engine — automates browser and desktop actions. "
         "All tools accept a session_id that identifies an active engine session. "
         "Use screenshot to observe the current state before acting."
     ),
-    port=int(_os_init.environ.get("ACU_MCP_PORT", "8765")),
 )
 
 # ---------------------------------------------------------------------------
@@ -634,7 +636,7 @@ if __name__ == "__main__":
     if mode == "stdio":
         mcp.run(transport="stdio")
     elif mode == "sse":
-        mcp.run(transport="sse")
+        mcp.run(transport="sse", port=ACU_MCP_PORT)
     else:
         print(f"Unknown mode: {mode!r}. Use 'stdio' or 'sse'.", file=sys.stderr)
         sys.exit(1)
