@@ -1,38 +1,30 @@
 //! Cowork Agent Queue Routes
 //!
-//! Handles claiming, starting, and completing agent tasks in the queue.
+//! Claiming, starting and completing agent work on a task. Since the cowork
+//! fold (stream F9) a queue item is a claim on the task's Factory node,
+//! written through the Gate (`cowork_nodes`), and only the signed-in user's
+//! own tasks are visible. The HTTP shapes are unchanged for one release.
+//!
+//! A completed item puts its task in review: it is never marked done by the
+//! worker's word. Done/failed rows from before the fold stay readable here.
 
 use axum::extract::State;
 use axum::{
     extract::{Path, Query},
     http::{HeaderMap, StatusCode},
-    response::IntoResponse,
+    response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
 
 use crate::auth::get_user;
+use crate::cowork_nodes::{self, CoworkError};
 use crate::AppState;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct QueueItem {
-    pub id: String,
-    pub task_id: String,
-    pub agent_id: Option<String>,
-    pub agent_role: Option<String>,
-    pub status: String,
-    pub claimed_at: Option<String>,
-    pub started_at: Option<String>,
-    pub completed_at: Option<String>,
-    pub result: Option<String>,
-    pub error: Option<String>,
-    pub retry_count: i64,
-    pub max_retries: i64,
-    pub created_at: String,
-}
+pub use crate::cowork_nodes::QueueItem;
 
 #[derive(Debug, Deserialize)]
 pub struct ListQueueQuery {
@@ -53,6 +45,7 @@ pub struct CreateQueueRequest {
     pub task_id: String,
     pub agent_id: Option<String>,
     pub agent_role: Option<String>,
+    /// Ignored: a new item is always `pending`. Kept so old bodies parse.
     pub status: Option<String>,
 }
 
@@ -70,253 +63,88 @@ pub fn queue_router() -> Router<Arc<AppState>> {
         .route("/queue/:id/complete", post(complete_queue))
 }
 
+fn unauthorized() -> Response {
+    (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized"}))).into_response()
+}
+
+fn cowork_error(e: CoworkError) -> Response {
+    (e.http_status(), Json(e.body())).into_response()
+}
+
+fn db_error(e: impl std::fmt::Display) -> Response {
+    (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": format!("Database error: {e}")}))).into_response()
+}
+
+/// Refresh the task's read-model row after a queue write.
+async fn refresh_row(state: &AppState, user_id: &str, queue_id: &str) {
+    if let (Some(task), Ok(conn)) = (cowork_nodes::task_for_queue(&state.rails, user_id, queue_id).await, state.db.connect()) {
+        if let Err(e) = cowork_nodes::write_row(&conn, &task) {
+            tracing::error!("tasks read model: {}", e);
+        }
+    }
+}
+
 async fn list_queue(
     State(state): State<Arc<AppState>>,
     Query(query): Query<ListQueueQuery>,
     headers: HeaderMap,
-) -> impl IntoResponse {
-    let _user = match get_user(&headers) {
-        Some(u) => u,
-        None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(json!({"error": "Unauthorized"})),
-            )
-                .into_response()
-        }
+) -> Response {
+    let Some(user) = get_user(&headers) else { return unauthorized() };
+    let events = match cowork_nodes::ledger_events(&state.rails).await {
+        Ok(e) => e,
+        Err(e) => return cowork_error(e),
     };
-
+    let ws = query.workspace_id.as_deref();
+    let status = query.status.as_deref();
+    let mut items = cowork_nodes::list_queue(&events, &user.user_id, ws, status);
     let conn = match state.db.connect() {
         Ok(c) => c,
-        Err(_e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Database error"})),
-            )
-                .into_response()
-        }
+        Err(e) => return db_error(e),
     };
-
-    let mut sql = "SELECT id, task_id, agent_id, agent_role, status, claimed_at, started_at, completed_at, result, error, retry_count, max_retries, created_at FROM cowork_queue WHERE 1=1".to_string();
-    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
-    let mut param_count = 0;
-
-    if let Some(ref status) = query.status {
-        param_count += 1;
-        sql.push_str(&format!(" AND status = ?{}", param_count));
-        params.push(Box::new(status.clone()));
+    match cowork_nodes::legacy_queue_rows(&conn, &user.user_id, ws, status) {
+        Ok(rows) => {
+            let known: std::collections::HashSet<String> = items.iter().map(|q| q.id.clone()).collect();
+            items.extend(rows.into_iter().filter(|q| !known.contains(&q.id)));
+        }
+        Err(e) if e.to_string().contains("no such table") => {}
+        Err(e) => return db_error(e),
     }
-
-    if let Some(ref workspace_id) = query.workspace_id {
-        param_count += 1;
-        sql.push_str(&format!(
-            " AND task_id IN (SELECT id FROM tasks WHERE workspace_id = ?{})",
-            param_count
-        ));
-        params.push(Box::new(workspace_id.clone()));
-    }
-
-    sql.push_str(" ORDER BY created_at DESC");
-
-    let mut stmt = match conn.prepare(&sql) {
-        Ok(s) => s,
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": e.to_string()})),
-            )
-                .into_response()
-        }
-    };
-
-    let items: Vec<QueueItem> = match stmt.query_map(rusqlite::params_from_iter(params), |row| {
-        Ok(QueueItem {
-            id: row.get(0)?,
-            task_id: row.get(1)?,
-            agent_id: row.get(2)?,
-            agent_role: row.get(3)?,
-            status: row.get(4)?,
-            claimed_at: row.get(5)?,
-            started_at: row.get(6)?,
-            completed_at: row.get(7)?,
-            result: row.get(8)?,
-            error: row.get(9)?,
-            retry_count: row.get(10)?,
-            max_retries: row.get(11)?,
-            created_at: row.get(12)?,
-        })
-    }) {
-        Ok(iter) => iter.filter_map(|r| r.ok()).collect(),
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": e.to_string()})),
-            )
-                .into_response()
-        }
-    };
-
+    items.sort_by(|a, b| b.created_at.cmp(&a.created_at));
     (StatusCode::OK, Json(items)).into_response()
 }
 
 async fn claim_queue(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Json(body): Json<ClaimQueueRequest>,
-) -> impl IntoResponse {
-    let _user = match get_user(&headers) {
-        Some(u) => u,
-        None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(json!({"error": "Unauthorized"})),
-            )
-                .into_response()
-        }
-    };
-
-    let mut conn = match state.db.connect() {
-        Ok(c) => c,
-        Err(_e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Database error"})),
-            )
-                .into_response()
-        }
-    };
-
-    // Find the next pending queue item
-    let tx = match conn.transaction() {
-        Ok(t) => t,
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": e.to_string()})),
-            )
-                .into_response()
-        }
-    };
-
-    let mut sql = "SELECT id, task_id FROM cowork_queue WHERE status = 'pending'".to_string();
-    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
-    let mut param_count = 0;
-
-    if let Some(ref workspace_id) = body.workspace_id {
-        param_count += 1;
-        sql.push_str(&format!(
-            " AND task_id IN (SELECT id FROM tasks WHERE workspace_id = ?{})",
-            param_count
-        ));
-        params.push(Box::new(workspace_id.clone()));
+    Json(payload): Json<ClaimQueueRequest>,
+) -> Response {
+    let Some(user) = get_user(&headers) else { return unauthorized() };
+    if payload.agent_id.trim().is_empty() {
+        return cowork_error(CoworkError::usage("agent_id is required", "Send the claiming agent's id."));
     }
-    sql.push_str(" ORDER BY created_at ASC LIMIT 1");
-
-    let next_item: Option<(String, String)> =
-        match tx.query_row(&sql, rusqlite::params_from_iter(params), |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        }) {
-            Ok(row) => Some(row),
-            Err(rusqlite::Error::QueryReturnedNoRows) => None,
-            Err(e) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({"error": e.to_string()})),
-                )
-                    .into_response()
-            }
-        };
-
-    let (id, task_id) = match next_item {
-        Some(item) => item,
-        None => return (StatusCode::OK, Json(serde_json::Value::Null)).into_response(),
-    };
-
-    // Update status to claimed
-    let result = tx.execute(
-        "UPDATE cowork_queue 
-         SET status = 'claimed', agent_id = ?1, agent_role = ?2, claimed_at = CURRENT_TIMESTAMP 
-         WHERE id = ?3",
-        rusqlite::params![
-            &body.agent_id,
-            body.agent_role.as_deref().unwrap_or(""),
-            &id
-        ],
-    );
-
-    if let Err(e) = result {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": e.to_string()})),
-        )
-            .into_response();
+    match cowork_nodes::claim(&state.rails, &user.user_id, &payload.agent_id, payload.agent_role.as_deref(), payload.workspace_id.as_deref()).await {
+        Ok(Some(item)) => {
+            refresh_row(&state, &user.user_id, &item.id).await;
+            (StatusCode::OK, Json(json!(item))).into_response()
+        }
+        // Nothing pending: `null`, as before.
+        Ok(None) => (StatusCode::OK, Json(serde_json::Value::Null)).into_response(),
+        Err(e) => cowork_error(e),
     }
-
-    if let Err(e) = tx.commit() {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": e.to_string()})),
-        )
-            .into_response();
-    }
-
-    (
-        StatusCode::OK,
-        Json(json!({
-            "id": id,
-            "task_id": task_id,
-            "status": "claimed",
-        })),
-    )
-        .into_response()
 }
 
 async fn start_queue(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
     headers: HeaderMap,
-) -> impl IntoResponse {
-    let _user = match get_user(&headers) {
-        Some(u) => u,
-        None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(json!({"error": "Unauthorized"})),
-            )
-                .into_response()
+) -> Response {
+    let Some(user) = get_user(&headers) else { return unauthorized() };
+    match cowork_nodes::start(&state.rails, &user.user_id, &id).await {
+        Ok(item) => {
+            refresh_row(&state, &user.user_id, &id).await;
+            (StatusCode::OK, Json(json!(item))).into_response()
         }
-    };
-
-    let conn = match state.db.connect() {
-        Ok(c) => c,
-        Err(_e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Database error"})),
-            )
-                .into_response()
-        }
-    };
-
-    let result = conn.execute(
-        "UPDATE cowork_queue 
-         SET status = 'running', started_at = CURRENT_TIMESTAMP 
-         WHERE id = ?1",
-        [&id],
-    );
-
-    match result {
-        Ok(0) => (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "Queue item not found"})),
-        )
-            .into_response(),
-        Ok(_) => (StatusCode::OK, Json(json!({"id": id, "status": "running"}))).into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": e.to_string()})),
-        )
-            .into_response(),
+        Err(e) => cowork_error(e),
     }
 }
 
@@ -325,59 +153,14 @@ async fn complete_queue(
     Path(id): Path<String>,
     headers: HeaderMap,
     Json(body): Json<CompleteQueueRequest>,
-) -> impl IntoResponse {
-    let _user = match get_user(&headers) {
-        Some(u) => u,
-        None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(json!({"error": "Unauthorized"})),
-            )
-                .into_response()
+) -> Response {
+    let Some(user) = get_user(&headers) else { return unauthorized() };
+    match cowork_nodes::complete(&state.rails, &user.user_id, &id, body.result.as_deref(), body.error.as_deref()).await {
+        Ok(item) => {
+            refresh_row(&state, &user.user_id, &id).await;
+            (StatusCode::OK, Json(json!(item))).into_response()
         }
-    };
-
-    let conn = match state.db.connect() {
-        Ok(c) => c,
-        Err(_e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Database error"})),
-            )
-                .into_response()
-        }
-    };
-
-    let status = if body.error.is_some() {
-        "failed"
-    } else {
-        "completed"
-    };
-
-    let result = conn.execute(
-        "UPDATE cowork_queue 
-         SET status = ?1, result = ?2, error = ?3, completed_at = CURRENT_TIMESTAMP 
-         WHERE id = ?4",
-        rusqlite::params![
-            status,
-            body.result.as_deref().unwrap_or(""),
-            body.error.as_deref().unwrap_or(""),
-            &id
-        ],
-    );
-
-    match result {
-        Ok(0) => (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "Queue item not found"})),
-        )
-            .into_response(),
-        Ok(_) => (StatusCode::OK, Json(json!({"id": id, "status": status}))).into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": e.to_string()})),
-        )
-            .into_response(),
+        Err(e) => cowork_error(e),
     }
 }
 
@@ -385,60 +168,21 @@ async fn create_queue(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(payload): Json<CreateQueueRequest>,
-) -> impl IntoResponse {
-    let _user = match get_user(&headers) {
-        Some(u) => u,
-        None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(json!({"error": "Unauthorized"})),
-            )
-                .into_response()
-        }
+) -> Response {
+    let Some(user) = get_user(&headers) else { return unauthorized() };
+    let queue_id = payload.id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let legacy = {
+        let conn = match state.db.connect() {
+            Ok(c) => c,
+            Err(e) => return db_error(e),
+        };
+        cowork_nodes::legacy_row(&conn, &payload.task_id).ok().flatten()
     };
-
-    let conn = match state.db.connect() {
-        Ok(c) => c,
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": e.to_string()})),
-            )
-                .into_response()
+    match cowork_nodes::enqueue(&state.rails, legacy, &user.user_id, &payload.task_id, &queue_id, payload.agent_id.as_deref(), payload.agent_role.as_deref()).await {
+        Ok(item) => {
+            refresh_row(&state, &user.user_id, &queue_id).await;
+            (StatusCode::CREATED, Json(json!(item))).into_response()
         }
-    };
-
-    let queue_id = payload
-        .id
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    let status = payload.status.unwrap_or_else(|| "pending".to_string());
-
-    match conn.execute(
-        "INSERT INTO cowork_queue (id, task_id, agent_id, agent_role, status, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, CURRENT_TIMESTAMP)",
-        rusqlite::params![
-            &queue_id,
-            &payload.task_id,
-            &payload.agent_id,
-            &payload.agent_role,
-            &status,
-        ],
-    ) {
-        Ok(_) => (
-            StatusCode::CREATED,
-            Json(json!({
-                "id": queue_id,
-                "task_id": payload.task_id,
-                "agent_id": payload.agent_id,
-                "agent_role": payload.agent_role,
-                "status": status,
-            })),
-        )
-            .into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": e.to_string()})),
-        )
-            .into_response(),
+        Err(e) => cowork_error(e),
     }
 }
