@@ -849,6 +849,19 @@ async fn main() {
         });
     }
 
+    // Runtime → cloud event forwarder: user-facing ledger events (bot_events +
+    // runtime_user_events) go up to the cloud event backbone (inert until paired).
+    {
+        let state = Arc::clone(&state);
+        let mut shutdown_rx = shutdown_tx.subscribe();
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = shutdown_rx.recv() => {}
+                _ = allternit_api::runtime_events::run(state) => {}
+            }
+        });
+    }
+
     // OfficeCLI idle reaper: evicts stale docs, closes idle resident sessions,
     // kills idle watch processes and MCP sessions.
     {

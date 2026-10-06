@@ -93,6 +93,8 @@ Allternit checks your subscription logins about once a minute. If a login needs 
 | The provider is down | The provider's site isn't answering | Check again later |
 | Restricted | The provider restricted the account | Check the account on the provider's site |
 
+When a login needs signing in again, or a check needs finishing, Allternit records it as an event (`subscription.login_needed`, then `subscription.signed_in` once it's ready again), which is sent to Allternit's cloud event service along with your other bot events. See [Runtime events forwarder](/api/runtime-events#subscriptions-logins).
+
 **Usage left** shows what the provider's own page shows, when it shows it. Some providers only show it sometimes. If the reading is older than a few hours, Allternit says when it was seen.
 
 ## Boundaries

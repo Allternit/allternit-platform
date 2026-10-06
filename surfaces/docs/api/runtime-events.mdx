@@ -1,0 +1,78 @@
+---
+title: 'Runtime events forwarder'
+description: 'How events on a paired runtime reach the cloud event backbone: one classification, a persisted cursor, signed batches, idempotent ids.'
+---
+
+# Runtime events forwarder
+
+Everything a person would want to hear about on a runtime (Allternit Desktop or a cloud computer running allternit-api) is written to a ledger first. The forwarder sends the rows that matter to the cloud event backbone, which fans them out to push, Platform API webhooks and MCP Events subscribers.
+
+## Ledgers
+
+| Ledger | What goes in it |
+|---|---|
+| `bot_events` | Everything a bot does: channel messages, calls, thread status, approvals from the Agent Gateway, runs, vendor tickets, Inbox cards. |
+| `runtime_user_events` (V236) | Owner-level events with no bot: Subscriptions logins, gateway tasks waiting on the person, approvals from the chat permission store (`cowork_approvals`, source `gizzi-permission`). |
+
+## One classification
+
+`events_feed::classify` decides what a ledger row means. The [notification feed](/api/event-stream#notification-feed) and the forwarder both use it, so Desktop notifications and cloud events can't disagree. Rows it doesn't match are ignored by both.
+
+| Ledger type | Registry event | Notes |
+|---|---|---|
+| `channel.message.received` | `message.received` | Never our own echo (`own: true`). |
+| `call.ended` | `call.ended` | `data.missed` is set from `missed`, `answered: false` or reason `missed`/`no_answer`. Call ledger entries are written by the voice service; the forwarder only reads them. |
+| `thread.needs_user` | `thread.needs_user` | Includes an email held for review. |
+| `subscription.task.needs_user` | `thread.needs_user` | A Subscriptions task stopped for the person. `data.source` is `subscriptions`. |
+| `approval.requested` | `approval.requested` | Agent Gateway approvals and chat permission requests. |
+| `approval.resolved` | `approval.resolved` | Approved, rejected or dismissed, from either store. |
+| `run.completed`, `routine.completed` | `agent.run.completed` | An agent run or a scheduled routine that succeeded. |
+| `vendor.ticket.created` | `vendor.ticket.created` | Written on the owner's thread bot when a ticket opens. |
+| `inbox.item.created` | `inbox.item.created` | A new Inbox card (an autonomy draft or digest). |
+| `subscription.login_needed` | `subscription.login_needed` | See [Subscriptions logins](#subscriptions-logins). |
+| `subscription.signed_in` | `subscription.signed_in` | |
+| `inbox.changed` | none | Desktop refresh only. |
+| everything else | none | Stays on the runtime. |
+
+`usage.threshold` is emitted by the cloud, not by runtimes.
+
+## Delivery
+
+```http
+POST {ALLTERNIT_CLOUD_API_URL}/api/v1/runtime/events
+x-allternit-runtime-id: <runtime id>
+x-allternit-runtime-sig: v1=<hex HMAC>
+x-allternit-runtime-ts: <unix seconds>
+x-allternit-owner: <paired owner>
+
+{"events":[{"id":"rt:be:…","type":"message.received","at":"2026-10-05T10:00:00+00:00","bot_id":"bot-1","thread_id":"th-1","data":{…}}]}
+```
+
+- The signature is the runtime relay scheme: HMAC-SHA256 keyed with `sha256(device_token)` over `<ts>.POST./api/v1/runtime/events.<sha256(body)>` (`relay_auth::signed_headers`).
+- The cloud finds the device key by `x-allternit-runtime-id` (`runtimeId` in the runtime identity file, or `ALLTERNIT_RUNTIME_ID`). The device token itself is never sent. Without a runtime id the forwarder sends nothing.
+- The cloud answers `200` with one result per event (`accepted`, `duplicate`, `ignored`, `too_large` or `invalid`). Any 2xx moves the cursor past the whole batch. `401`, `5xx` or no answer leaves it where it was.
+- Only the paired owner's rows are sent. Rows on incognito threads never leave the runtime. A runtime that isn't paired sends nothing.
+- `data` is an allowlist of payload fields (ids, provider, decision, `text` cut to 240 characters, bot and thread names). Other payload fields stay on the runtime.
+- Batches hold up to 100 ledger rows per source. A pass runs every 5 seconds, sooner while a backlog drains.
+
+## Exactly once (in effect)
+
+- **Deterministic ids.** `rt:be:<bot_events.id>` or `rt:ue:<runtime_user_events.id>`. Approvals use `rt:approval:<approvalId>:requested` / `:resolved`, so the same approval written to two stores is one event.
+- **Cursor after success.** `cloud_event_cursors` (V236) keeps the last forwarded row per cloud account and source. It moves only after the cloud answers 2xx. A failed post or a crash resends the same batch, and the cloud drops ids it has already seen.
+- **Backoff.** Failures retry after 10 s, doubling up to 5 minutes. The last error is kept in `cloud_event_cursors.last_error`.
+- **No replay on pairing.** A new cursor starts at the end of the ledger, so pairing a runtime doesn't send its history.
+
+## Subscriptions logins
+
+The subscription gateway doesn't push events. allternit-api's subscription sync pulls it every minute (and right after a sign-in in Settings) for every owner with a bound Sessions computer, a linked Agent Gateway account, or a local gateway:
+
+- `GET v1/accounts`: each login's `session_health` is compared with the last value seen (`subscription_login_health`, V236). A change to `auth_required` or `challenge_presented` records `subscription.login_needed`. A change from one of those back to `ready` records `subscription.signed_in`, as does a new login that is already ready. An outage and its recovery record nothing.
+- `GET v1/tasks?status=needs_user`: each task updated in the last 24 hours is recorded once as `subscription.task.needs_user`. The prompt is not copied.
+
+These go into `runtime_user_events` and reach the cloud through the forwarder like every other event. Clients that showed login state by polling `session_health` can subscribe to these events instead.
+
+## Related pages
+
+- [Event Stream](/api/event-stream)
+- [Needs you inbox](/api/inbox)
+- [Subscriptions](/surfaces/subscriptions)
