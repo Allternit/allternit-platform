@@ -40,6 +40,9 @@ import {
 import {
   buildBotComputerWindowUrl,
   isBotComputerWindowUrl,
+  isBotPhoneWindowUrl,
+  buildBotPhoneWindowUrl,
+  BOT_PHONE_WINDOW_SIZE,
 } from './bot-computer-window.js';
 import { bonsaiCompanion } from './bonsai-companion-manager.js';
 import { systemOne } from './system-one-manager.js';
@@ -975,6 +978,13 @@ function createMainWindow(): BrowserWindow {
             autoHideMenuBar: true,
             title: 'Allternit Code Session',
           },
+        };
+      }
+
+      if (isBotPhoneWindowUrl(requestedUrl)) {
+        return {
+          action: 'allow',
+          overrideBrowserWindowOptions: { ...BOT_PHONE_WINDOW_SIZE, backgroundColor: '#FFFFFF', autoHideMenuBar: true, title: 'Bot phone' },
         };
       }
 
@@ -3587,6 +3597,40 @@ ipcMain.on('shell:open-office', (_event, target?: unknown, artifactId?: unknown)
 
 const codeSessionWindows = new Map<string, BrowserWindow>();
 const botComputerWindows = new Map<string, BrowserWindow>();
+const botPhoneWindows = new Map<string, BrowserWindow>();
+
+ipcMain.handle('shell:open-bot-phone', (_event, options: { botId: string; title?: string }) => {
+  if (!options?.botId) throw new Error('A bot ID is required');
+  const existing = botPhoneWindows.get(options.botId);
+  if (existing && !existing.isDestroyed()) {
+    existing.show();
+    existing.focus();
+    return;
+  }
+  const phoneWindow = new BrowserWindow({
+    ...BOT_PHONE_WINDOW_SIZE,
+    title: options.title || 'Bot phone',
+    titleBarStyle: isMac ? 'hiddenInset' : 'default',
+    trafficLightPosition: { x: 16, y: 12 },
+    show: false,
+    backgroundColor: '#FFFFFF',
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  installWillNavigateGuard(phoneWindow.webContents);
+  botPhoneWindows.set(options.botId, phoneWindow);
+  phoneWindow.once('ready-to-show', () => phoneWindow.show());
+  phoneWindow.on('closed', () => { botPhoneWindows.delete(options.botId); });
+  phoneWindow.webContents.setWindowOpenHandler(({ url: target }) => {
+    void openExternalAllowlisted(target);
+    return { action: 'deny' };
+  });
+  void phoneWindow.loadURL(buildBotPhoneWindowUrl(activePlatformUrl, options.botId));
+});
 
 ipcMain.handle('shell:open-session', (_event, options: { sessionId: string; workspaceId?: string; title?: string }) => {
   if (!options?.sessionId) throw new Error('A session ID is required');

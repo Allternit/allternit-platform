@@ -483,6 +483,7 @@ async fn handle_allternit_mail_mcp(
                 tools.extend(own.iter().cloned());
             }
             tools.extend(crate::phone_outbound::mcp_tools(&state.db, user_id));
+            tools.extend(crate::people::mcp_tools());
             mcp_protocol::ordering::sort_tools(&mut tools);
             Some(rpc_ok(json!({ "tools": tools })))
         }
@@ -493,7 +494,8 @@ async fn handle_allternit_mail_mcp(
                 .and_then(|n| n.as_str())
                 .unwrap_or("");
             let phone = crate::phone_outbound::is_tool(name);
-            if !phone && !name.starts_with("allternit_mail.") {
+            let people = crate::people::is_tool(name);
+            if !phone && !people && !name.starts_with("allternit_mail.") {
                 return None;
             }
             let args = body
@@ -503,6 +505,11 @@ async fn handle_allternit_mail_mcp(
                 .unwrap_or_else(|| json!({}));
             if phone {
                 return Some(rpc_tool(crate::phone_outbound::call_mcp_tool(state, user_id, name, args).await));
+            }
+            if people {
+                let out = crate::people::call_mcp_tool(&state.db, user_id, name, &args)
+                    .map_err(|m| (StatusCode::BAD_REQUEST, Json(json!({ "error": "people_tool", "message": m }))));
+                return Some(rpc_tool(out));
             }
             Some(rpc_tool(
                 crate::agent_email_routes::call_mail_mcp_tool(state, user_id, name, args).await,

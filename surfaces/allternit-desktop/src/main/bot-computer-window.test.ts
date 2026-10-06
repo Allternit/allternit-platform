@@ -44,3 +44,14 @@ describe('isBotComputerWindowUrl', () => {
     expect(isBotComputerWindowUrl(code)).toBe(false);
   });
 });
+
+describe('bot phone window', () => {
+  it('builds and recognises the /bot-phone URL', async () => {
+    const { buildBotPhoneWindowUrl, isBotPhoneWindowUrl } = await import('./bot-computer-window.js');
+    const url = new URL(buildBotPhoneWindowUrl('https://platform.example', 'bot 1'));
+    expect([url.pathname, url.searchParams.get('botId')]).toEqual(['/bot-phone', 'bot 1']);
+    expect(isBotPhoneWindowUrl(url)).toBe(true);
+    expect(isBotPhoneWindowUrl(new URL('https://platform.example/bot-phone'))).toBe(false);
+    expect(() => buildBotPhoneWindowUrl('https://platform.example', '')).toThrow();
+  });
+});

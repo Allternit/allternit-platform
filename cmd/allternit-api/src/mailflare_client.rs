@@ -65,7 +65,16 @@ impl MailflareConfig {
 /// Bot email can be provisioned through Allternit's cloud: no local admin key,
 /// but this runtime is paired (it has a device credential). Off with
 /// `ALLTERNIT_BOT_EMAIL_BROKERED=0`.
+/// Tests run on machines that may be signed in to Allternit for real; brokered mode stays off in
+/// them unless a test switches it on, so results don't depend on the machine.
+#[cfg(test)]
+pub static TEST_BROKERED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 pub fn brokered_available() -> bool {
+    #[cfg(test)]
+    if !TEST_BROKERED.load(std::sync::atomic::Ordering::Relaxed) {
+        return false;
+    }
     MailflareConfig::from_env().is_none()
         && crate::phone_sync::runtime_bearer().is_some()
         && std::env::var("ALLTERNIT_BOT_EMAIL_BROKERED").map(|v| v != "0").unwrap_or(true)
