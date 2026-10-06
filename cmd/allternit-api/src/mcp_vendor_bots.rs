@@ -1151,9 +1151,15 @@ mod tests {
     async fn email_is_only_ever_the_approval_gated_path() {
         let st = setup("mail").await;
         let http = FakeHttp::answering(200, json!({}));
-        // Mailflare isn't configured here, so the approval-gated path refuses in a sentence; there is no other path.
+        // The bot has no address, so the approval-gated path refuses in a sentence; there is no other
+        // path. Which sentence depends on whether this computer could get it one (signed in → cloud).
         let e = live(&st, http).send_email(&session(&st), "a@b.co", "Hi", "Body").await.unwrap_err();
-        assert_eq!(e, "Email isn't switched on for this computer yet.");
+        let expected = if crate::mailflare_client::brokered_available() {
+            "Native doesn't have an email address yet."
+        } else {
+            "Email isn't switched on for this computer yet."
+        };
+        assert_eq!(e, expected);
     }
 
     #[tokio::test]
