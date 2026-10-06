@@ -21,6 +21,7 @@ import { dirname } from 'node:path';
 import log from 'electron-log';
 import { runtimeResource } from './runtime-home.js';
 import { PORTS, URLS } from './config.js';
+import { factoryEngineManager } from './factory-engine-manager.js';
 import { meshManager } from './mesh-manager.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -168,6 +169,14 @@ export class GizziManager {
     if (muxBinaryPath) {
       env.ALLTERNIT_MUX_BIN = muxBinaryPath;
       log.info(`[GizziManager] allternit-mux at: ${muxBinaryPath}`);
+    }
+
+    // `gizzi agents|orchestration|workflows|workspace` run the Factory engine
+    // that shipped with this Desktop (it also sits next to gizzi in
+    // resources/bin, which gizzi checks first).
+    const factoryBin = factoryEngineManager.getBinaryPath();
+    if (factoryBin && !env.ALLTERNIT_FACTORY_BIN) {
+      env.ALLTERNIT_FACTORY_BIN = factoryBin;
     }
 
     const serveArgs = ['serve', '--port', String(GIZZI_PORT), '--hostname', '127.0.0.1', '--print-logs'];

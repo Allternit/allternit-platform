@@ -100,6 +100,15 @@ cp "$MUX_BIN" "$RESOURCES_DIR/bin/allternit-mux"
 chmod +x "$RESOURCES_DIR/bin/allternit-mux"
 ok "allternit-mux → $RESOURCES_DIR/bin/allternit-mux"
 
+# ── 2b. Vendor allternit-factory (the Factory engine Desktop runs) ──────────
+step "Vendoring allternit-factory…"
+(cd "$WORKSPACE_ROOT" && cargo build --release -p allternit-factory)
+FACTORY_BIN="$CARGO_OUT/release/allternit-factory"
+[ -f "$FACTORY_BIN" ] || die "allternit-factory build failed — binary not found at $FACTORY_BIN"
+cp "$FACTORY_BIN" "$RESOURCES_DIR/bin/allternit-factory"
+chmod +x "$RESOURCES_DIR/bin/allternit-factory"
+ok "allternit-factory → $RESOURCES_DIR/bin/allternit-factory"
+
 # ── 2b. Vendor ripgrep (GrepTool backend, Claude Code layout) ───────────────
 step "Vendoring ripgrep…"
 RG_LAYOUT="$(uname -m | sed 's/x86_64/x64/')-$(uname | tr '[:upper:]' '[:lower:]' | sed 's/darwin/darwin/')"

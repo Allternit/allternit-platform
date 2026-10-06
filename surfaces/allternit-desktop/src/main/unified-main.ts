@@ -26,6 +26,7 @@ import { approvePairing, describePairingRequest } from './pairing-approval.js';
 import { backendManager } from './backend-manager.js';
 import { applyDesktopHumanProof, applyDesktopHumanProofTo, DESKTOP_PROOF_MARKER, HUMAN_PROOF_HEADER, takeDesktopProofParam } from './human-proof.js';
 import { officeEngineManager } from './office-engine-manager.js';
+import { factoryEngineManager, bundledGizziBinary } from './factory-engine-manager.js';
 import { fabricWorkerManager, type FabricWorkerState } from './fabric-worker-manager.js';
 import { readSecret, writeSecret, deleteSecret, FABRIC_WORKER_TOKEN_KEY } from './secure-store.js';
 import { createSiwcManager, SIWC_FLAG, type SiwcManager } from './siwc.js';
@@ -1286,12 +1287,31 @@ async function initializeBundledMode(): Promise<void> {
         return null;
       }
     })();
+    // Factory engine: allternit-api proxies /api/factory/* to it per request
+    // (ALLTERNIT_FACTORY_URL), so it starts in the parallel group. A packaged
+    // app also puts `gizzi` on PATH and removes the retired rails/ao tools.
+    const factoryTask = (async (): Promise<void> => {
+      try {
+        const url = await factoryEngineManager.start();
+        if (url) {
+          log.info(`[Main] Factory engine ready (${factoryEngineManager.getMode()}) at ${url}`);
+        } else {
+          log.warn('[Main] Factory engine unavailable; /api/factory will answer 502 until it starts');
+        }
+        if (app.isPackaged) {
+          factoryEngineManager.installCli(bundledGizziBinary(process.resourcesPath));
+        }
+      } catch (factoryErr) {
+        log.warn('[Main] Factory engine failed to start, continuing without it:', factoryErr);
+      }
+    })();
     const [gizziUrl, , , , localEngineUrl] = await Promise.all([
       gizziTask,
       officeTask,
       driverTask,
       acuTask,
       localEngineTask,
+      factoryTask,
     ]);
 
     // Step 2 — allternit-api (Rust operator API, port ${PORTS.API} — VM, rails, terminal)
@@ -2641,6 +2661,7 @@ async function shutdownAllServices(): Promise<void> {
   await localEngineManager.stop();
   connectorSidecarManager.stop();
   officeEngineManager.stop();
+  factoryEngineManager.stop();
   meshManager.stop().catch(() => {}); // best-effort mesh sidecar shutdown
   notebookManager.stop();
   voiceManager.stop();

@@ -67,6 +67,11 @@ const required = [
           label: 'allternit-mux (PTY daemon gizzi auto-spawns for /pty)',
           buildStep: 'npm run prepare:mux (or scripts/build-desktop.sh)',
         },
+        {
+          path: path.join(resourcesDir, 'bin', 'allternit-factory'),
+          label: 'allternit-factory (the Allternit Factory engine; Desktop runs it, gizzi finds it next to itself)',
+          buildStep: 'npm run prepare:factory',
+        },
       ]),
   {
     path: path.join(resourcesDir, 'bin', process.platform === 'win32' ? 'system-one.exe' : 'system-one'),

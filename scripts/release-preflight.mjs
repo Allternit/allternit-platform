@@ -319,6 +319,8 @@ function checkPackagingDryRun(jobs) {
   }
   bins.push({ name: 'mesh-node', optional: false, flag: null });
   bins.push({ name: 'allternit-mux', optional: false, flag: null });
+  // The Factory engine Desktop runs and gizzi finds next to itself (Unix-only).
+  bins.push({ name: 'allternit-factory', optional: false, flag: null, darwinOnly: true });
   bins.push({ name: 'lume', optional: false, flag: null, darwinOnly: true });
 
   // Platform jobs = jobs that invoke electron-builder. Jobs that invoke it

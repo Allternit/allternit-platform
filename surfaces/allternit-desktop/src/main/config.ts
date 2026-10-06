@@ -34,6 +34,12 @@ export const PORTS = {
   OFFICE_ENGINE: 8099,
   /** Local model engine (services/local-engine) serving Model Lab telemetry */
   LOCAL_ENGINE: 3015,
+  /**
+   * Allternit Factory engine (`allternit-factory serve`). Not the engine's own
+   * default 3011: EXTENSION_BRIDGE owns 3011 in Desktop. allternit-api reaches
+   * it through ALLTERNIT_FACTORY_URL.
+   */
+  FACTORY: 3018,
 } as const;
 
 export const HOSTS = {
@@ -102,6 +108,11 @@ export function acuRelayUrl(path?: string): string {
 /** Build a URL for the research notebook backend with an optional path. */
 export function notebookUrl(path?: string): string {
   return path ? `${URLS.NOTEBOOK}${path}` : URLS.NOTEBOOK;
+}
+
+/** Base URL of the Factory engine Desktop runs (factory-engine-manager). */
+export function factoryEngineUrl(port: number = PORTS.FACTORY): string {
+  return `http://${HOSTS.LOOPBACK}:${port}`;
 }
 
 /** Build a URL for the office-engine sidecar with an optional path and port override. */
