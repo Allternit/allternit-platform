@@ -1,0 +1,95 @@
+---
+title: 'Events'
+description: 'Offer MCP Events (events/list, events/subscribe, events/unsubscribe) from an Allternit app, with Standard Webhooks delivery'
+---
+
+<Warning>
+**Preview.** MCP Events is a draft MCP extension ([experimental-ext-triggers-events](https://github.com/modelcontextprotocol/experimental-ext-triggers-events)). AI apps that support it use its webhook profile. The official MCP SDK does not implement it yet; `@allternit/apps-server` adds it on top, using the shared `@allternit/mcp-events` package.
+</Warning>
+
+With events, a host subscribes to a named event once, and your server POSTs each occurrence to the host's callback URL. The host does not have to poll a tool.
+
+## Declare events
+
+```ts
+import { appTool, defineApp, deliverWebhook, eventEnvelope, eventsError, EventsErrorCode } from "@allternit/apps-server";
+
+const subscriptions = new Map(); // use real storage in production
+
+export default defineApp({
+  name: "Price alerts",
+  tools: [/* ... */],
+  events: {
+    definitions: [
+      {
+        name: "price.changed",
+        description: "A watched symbol moved by more than the threshold.",
+        delivery: ["webhook"],
+        inputSchema: { type: "object", properties: { symbol: { type: "string" } }, required: ["symbol"] },
+        payloadSchema: { type: "object", properties: { symbol: { type: "string" }, price: { type: "number" } } },
+      },
+    ],
+    async subscribe(sub) {
+      if (!isAllowed(sub.principal, sub.arguments)) throw eventsError(EventsErrorCode.Forbidden, "Not your symbol.");
+      subscriptions.set(sub.id, sub); // sub.url, sub.key, sub.arguments
+      return { refreshBefore: new Date(Date.now() + 24 * 3600_000).toISOString(), cursor: null };
+    },
+    async unsubscribe(sub) {
+      subscriptions.delete(sub.id);
+    },
+  },
+});
+
+// Later, when the event happens:
+async function emit(symbol: string, price: number) {
+  for (const sub of subscriptions.values()) {
+    if (sub.arguments.symbol !== symbol) continue;
+    const id = crypto.randomUUID();
+    await deliverWebhook({
+      url: sub.url,
+      key: sub.key,
+      subscriptionId: sub.id,
+      msgId: id,
+      body: eventEnvelope(id, "price.changed", new Date(), { symbol, price }),
+    });
+  }
+}
+```
+
+## What the SDK does for you
+
+- Advertises the `events` capability in `server/discover` and `initialize`.
+- Serves `events/list` (definitions in name order), `events/subscribe` and `events/unsubscribe` to both protocol eras.
+- Validates the delivery: `mode` must be `webhook`, the callback URL must be `https://` with no credentials and no localhost, private, link-local or CGNAT address literal, and `subscribe` needs a `whsec_` secret of 24–64 bytes.
+- Derives a deterministic subscription id from `(principal, url, name, arguments)` (argument key order does not matter), so a repeated subscribe is idempotent.
+- Maps errors to the extension codes: `-32011` NotFound (unknown event), `-32012` Forbidden, `-32013` ResourceExhausted, `-32014` Unsupported (non-webhook delivery), `-32015` CallbackEndpointError. A malformed callback or secret is `-32602`.
+
+The principal defaults to the authenticated client id (`ctx.http.authInfo.clientId`), or `anonymous`. Pass `principal(ctx)` to derive it yourself.
+
+## Delivery format
+
+Each POST carries [Standard Webhooks](https://www.standardwebhooks.com) headers signed with the subscriber's secret, plus `X-MCP-Subscription-Id`:
+
+```
+webhook-id:        <event id, stable across retries>
+webhook-timestamp: <unix seconds>
+webhook-signature: v1,<base64 HMAC-SHA256(key, "<id>.<timestamp>.<body>")>
+```
+
+The body is an event envelope `{ eventId, name, timestamp, data, cursor }` or a control envelope: `{ type: "verification", challenge }` (the receiver echoes `{ challenge }`), `{ type: "gap", cursor }`, or `{ type: "terminated", subscriptionId, error }`.
+
+`deliverWebhook` re-checks the URL literally but does not resolve DNS. A server that delivers to user-supplied URLs must also refuse private addresses at connect time, and owns its own retry policy.
+
+## Receiving events
+
+`@allternit/mcp-events` also verifies deliveries, for a receiver written in TypeScript:
+
+```ts
+import { parseSecret, verifyRequest } from "@allternit/mcp-events";
+
+const key = parseSecret(process.env.WEBHOOK_SECRET!); // the whsec_ you sent on subscribe
+const body = await request.text();
+verifyRequest(key, request.headers, body); // throws VerifyError (expired, bad signature, bad timestamp)
+```
+
+Signatures older or newer than five minutes are rejected, and a header with several space-separated signatures (key rotation) passes if any matches. The package is tested against the Standard Webhooks reference vector and mirrors the Rust `mcp/protocol` crate.

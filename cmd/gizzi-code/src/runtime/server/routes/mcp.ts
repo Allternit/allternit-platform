@@ -96,8 +96,9 @@ export const McpRoutes = lazy(() =>
         responses: { 200: { description: "OAuth flow completed", content: { "application/json": { schema: resolver(z.any()) } } }, ...errors(400, 404) },
       }),
       validator("param", z.object({ name: z.string() })),
-      validator("json", z.object({ code: z.string().min(1) })),
-      async (c) => c.json(await MCP.finishAuth(c.req.valid("param").name, c.req.valid("json").code)),
+      validator("json", z.object({ code: z.string().min(1), iss: z.string().min(1).optional() })),
+      async (c) =>
+        c.json(await MCP.finishAuth(c.req.valid("param").name, c.req.valid("json").code, c.req.valid("json").iss)),
     )
     .delete(
       "/:name/auth",

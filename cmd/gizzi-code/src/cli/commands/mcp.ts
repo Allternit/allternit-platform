@@ -1,7 +1,5 @@
 import { cmd } from "@/cli/commands/cmd"
-import { Client } from "@modelcontextprotocol/sdk/client/index.js"
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
-import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js"
+import { Client, StreamableHTTPClientTransport, UnauthorizedError } from "@modelcontextprotocol/client"
 import * as prompts from "@clack/prompts"
 import { UI } from "@/cli/ui"
 import { MCP } from "@/runtime/tools/mcp"
@@ -104,6 +102,10 @@ export const McpListCommand = cmd({
           } else if (status.status === "connected") {
             statusIcon = "✓"
             statusText = "connected"
+            // Which MCP era the server speaks: 2026-07-28 (stateless) or a 2025-era session.
+            if (status.protocolVersion) {
+              statusText += ` · ${status.era === "modern" ? "" : "legacy "}${status.protocolVersion}`
+            }
             if (hasOAuth && hasStoredTokens) {
               hint = " (OAuth)"
             }
@@ -731,13 +733,17 @@ export const McpDebugCommand = cmd({
               "Content-Type": "application/json",
               Accept: "application/json, text/event-stream",
             },
+            // 2026-07-28 probe: a modern server answers `server/discover` statelessly; a
+            // 2025-era server rejects it, and gizzi falls back to `initialize` on connect.
             body: JSON.stringify({
               jsonrpc: "2.0",
-              method: "initialize",
+              method: "server/discover",
               params: {
-                protocolVersion: "2024-11-05",
-                capabilities: {},
-                clientInfo: { name: "gizzi-debug", version: Installation.VERSION },
+                _meta: {
+                  "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                  "io.modelcontextprotocol/clientInfo": { name: "gizzi-debug", version: Installation.VERSION },
+                  "io.modelcontextprotocol/clientCapabilities": {},
+                },
               },
               id: 1,
             }),
@@ -793,7 +799,9 @@ export const McpDebugCommand = cmd({
                 if (clientInfo) {
                   prompts.log.info(`Client ID available: ${clientInfo.client_id}`)
                 } else {
-                  prompts.log.info("No client ID - dynamic registration will be attempted")
+                  prompts.log.info(
+                    "No client ID - Gizzi's Client ID Metadata Document is used if the server supports it, else dynamic registration",
+                  )
                 }
               } else {
                 prompts.log.error(`Connection error: ${error instanceof Error ? error.message : String(error)}`)
@@ -804,14 +812,21 @@ export const McpDebugCommand = cmd({
             const body = await response.text()
             try {
               const json = JSON.parse(body)
-              if (json.result?.serverInfo) {
-                prompts.log.info(`Server info: ${JSON.stringify(json.result.serverInfo)}`)
+              if (Array.isArray(json.result?.supportedVersions)) {
+                prompts.log.info(`Protocol: 2026-07-28 era (supports ${json.result.supportedVersions.join(", ")})`)
+                const info = json.result._meta?.["io.modelcontextprotocol/serverInfo"]
+                if (info) prompts.log.info(`Server info: ${JSON.stringify(info)}`)
+              } else if (json.error) {
+                prompts.log.info("Protocol: 2025 era (no server/discover); gizzi connects with initialize")
               }
             } catch {
               // Not JSON, ignore
             }
           } else {
             prompts.log.warn(`Unexpected status: ${response.status}`)
+            if (response.status === 400 || response.status === 404 || response.status === 405) {
+              prompts.log.info("Likely a 2025-era server (server/discover refused); gizzi connects with initialize")
+            }
             const body = await response.text().catch(() => "")
             if (body) {
               prompts.log.info(`Response body: ${body.substring(0, 500)}`)

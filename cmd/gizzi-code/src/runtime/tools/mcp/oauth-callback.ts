@@ -44,8 +44,14 @@ const HTML_ERROR = (error: string) => `<!DOCTYPE html>
 </body>
 </html>`
 
+/** What the authorization callback carried: the code, and the RFC 9207 `iss` when the server sends one. */
+export interface McpOAuthCallbackResult {
+  code: string
+  iss?: string
+}
+
 interface PendingAuth {
-  resolve: (code: string) => void
+  resolve: (result: McpOAuthCallbackResult) => void
   reject: (error: Error) => void
   timeout: ReturnType<typeof setTimeout>
 }
@@ -125,7 +131,7 @@ export namespace McpOAuthCallback {
 
         clearTimeout(pending.timeout)
         pendingAuths.delete(state)
-        pending.resolve(code)
+        pending.resolve({ code, iss: url.searchParams.get("iss") ?? undefined })
 
         return new Response(HTML_SUCCESS, {
           headers: { "Content-Type": "text/html" },
@@ -136,7 +142,16 @@ export namespace McpOAuthCallback {
     log.info("oauth callback server started", { port: OAUTH_CALLBACK_PORT })
   }
 
+  /** The authorization code only (kept for callers that predate issuer validation). */
   export function waitForCallback(oauthState: string): Promise<string> {
+    return waitForCallbackResult(oauthState).then((r) => r.code)
+  }
+
+  /**
+   * Code + `iss`. Pass both to `finishAuth`: SDK v2 validates `iss` (RFC 9207) and rejects
+   * the exchange when the server advertises issuer parameters but `iss` is missing.
+   */
+  export function waitForCallbackResult(oauthState: string): Promise<McpOAuthCallbackResult> {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         if (pendingAuths.has(oauthState)) {

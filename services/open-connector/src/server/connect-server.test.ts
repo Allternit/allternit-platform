@@ -671,6 +671,48 @@ describe("ConnectServer", () => {
     }
   });
 
+  it("serves MCP to both eras: 2026-07-28 server/discover + tools/list with _meta, and legacy initialize with JSON", async () => {
+    const app = createTestServer([apiKeyProvider]).createApp();
+    const meta = {
+      "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+      "io.modelcontextprotocol/clientInfo": { name: "smoke", version: "1" },
+      "io.modelcontextprotocol/clientCapabilities": {},
+    };
+    const post = (method: string, params: Record<string, unknown>, headers: Record<string, string> = {}) =>
+      app.request("/mcp", {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json, text/event-stream", ...headers },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+      });
+    const modern = (method: string) => ({ "mcp-protocol-version": "2026-07-28", "mcp-method": method });
+    const toolNames = ["list_apps", "search_actions", "get_action_guide", "execute_action"];
+
+    const discover = await post("server/discover", { _meta: meta }, modern("server/discover"));
+    expect(discover.status).toBe(200);
+    const discovered = (await discover.json()) as { result: { supportedVersions: string[]; capabilities: { tools?: unknown } } };
+    expect(discovered.result.supportedVersions).toContain("2026-07-28");
+    expect(discovered.result.capabilities.tools).toBeDefined();
+
+    const modernList = await post("tools/list", { _meta: meta }, modern("tools/list"));
+    const modernTools = (await modernList.json()) as { result: { tools: Array<{ name: string }>; resultType: string } };
+    expect(modernTools.result.resultType).toBe("complete");
+    expect(modernTools.result.tools.map((tool) => tool.name)).toEqual(toolNames);
+
+    const init = await post("initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "legacy", version: "1" },
+    });
+    expect(init.headers.get("content-type")).toContain("application/json");
+    const initialized = (await init.json()) as { result: { protocolVersion: string } };
+    expect(initialized.result.protocolVersion).toBe("2025-06-18");
+
+    const legacyList = await post("tools/list", {}, { "mcp-protocol-version": "2025-06-18" });
+    expect(legacyList.headers.get("content-type")).toContain("application/json");
+    const legacyTools = (await legacyList.json()) as { result: { tools: Array<{ name: string }> } };
+    expect(legacyTools.result.tools.map((tool) => tool.name)).toEqual(toolNames);
+  });
+
   it("accepts the shared OAuth callback route without a service path segment", async () => {
     const app = createTestServer([apiKeyProvider], { auth: { adminToken: "local-token" } }).createApp();
 

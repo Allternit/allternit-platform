@@ -7,10 +7,13 @@ import type {
 } from "../../core/types.ts";
 import type { FlomoActionName, FlomoMcpToolName } from "./actions.ts";
 
-import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport, StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { McpError } from "@modelcontextprotocol/sdk/types.js";
+import {
+  Client,
+  ProtocolError,
+  SdkHttpError,
+  StreamableHTTPClientTransport,
+  UnauthorizedError,
+} from "@modelcontextprotocol/client";
 import { createHash } from "node:crypto";
 import { optionalString, requiredString } from "../../core/cast.ts";
 import {
@@ -412,7 +415,6 @@ async function callFlomoMcpTool(input: {
         name: input.toolName,
         arguments: input.arguments,
       },
-      undefined,
       {
         timeout: flomoRequestTimeoutMs,
       },
@@ -443,6 +445,10 @@ async function withFlomoMcpClient<T>(
   const client = new Client({
     name: "oomol-connect-flomo",
     version: "1.0.0",
+  }, {
+    // Remote 2025-era server: keep the plain initialize handshake (one round trip per call).
+    // Switch to { mode: "auto" } once the provider answers server/discover.
+    versionNegotiation: { mode: "legacy" },
   });
 
   try {
@@ -499,15 +505,15 @@ function mapFlomoMcpError(error: unknown): ProviderRequestError {
   if (error instanceof UnauthorizedError) {
     return new ProviderRequestError(401, "flomo MCP token is invalid or expired", error);
   }
-  if (error instanceof StreamableHTTPError) {
-    const status = error.code;
+  if (error instanceof SdkHttpError) {
+    const status = error.status;
     return new ProviderRequestError(
       status === 401 || status === 403 ? 401 : status && status >= 400 && status < 500 ? 400 : 502,
       `flomo MCP request failed: ${error.message}`,
       error,
     );
   }
-  if (error instanceof McpError) {
+  if (error instanceof ProtocolError) {
     return new ProviderRequestError(502, `flomo MCP request failed: ${error.message}`, error);
   }
 

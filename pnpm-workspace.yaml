@@ -32,6 +32,9 @@ packages:
   # Public SDK packages
   - 'sdk/*'
 
+  # Standalone MCP servers (share the pinned MCP SDK catalog)
+  - 'tools/mcp-servers/*'
+
   # Services (heavily nested)
   - 'services/*'
   - 'services/*/*'
@@ -73,6 +76,17 @@ packages:
   # toolchains must never merge. See its VENDORED.md.
   - '!infrastructure/chrome-stream/agent-systems/allternit-browser-runtime'
   - '!infrastructure/chrome-stream/agent-systems/allternit-browser-runtime/**'
+
+# One pinned MCP SDK for the whole repo (MCP 2026-07-28, dual-era with the
+# legacy initialize handshake). Every package references these as
+# "catalog:" so the version cannot drift per package again. Bump here only.
+catalog:
+  '@modelcontextprotocol/server': 2.3.1
+  '@modelcontextprotocol/client': 2.3.1
+  '@modelcontextprotocol/core': 2.3.1
+  '@modelcontextprotocol/ext-apps': 2.0.3
+  # SDK v2 needs Zod >= 4.2 for tool schemas; packages still on Zod 3 keep their own range.
+  zod: ^4.2.0
 
 # pnpm 10 reads overrides from this file, not from package.json.
 overrides:

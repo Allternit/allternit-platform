@@ -17,9 +17,7 @@
  * a future SDK swap is mechanical) + one Layer-3 orchestrator that composes them.
  */
 
-import {
-  discoverAuthorizationServerMetadata,
-} from '@modelcontextprotocol/sdk/client/auth.js'
+import { discoverAuthorizationServerMetadata } from '@modelcontextprotocol/client'
 
 // RFC 9728 Protected Resource Metadata discovery
 // This is not exported by the SDK but we implement it here
@@ -31,7 +29,7 @@ declare function discoverOAuthProtectedResourceMetadata(
   resource: string
   authorization_servers: string[]
 }>
-import type { FetchLike } from '@modelcontextprotocol/sdk/shared/transport.js'
+import type { FetchLike } from '@modelcontextprotocol/client'
 import { z } from 'zod/v4'
 import { lazySchema } from '../../../utils/lazySchema.js'
 import { logMCPDebug } from '../../../shared/utils/log.js'

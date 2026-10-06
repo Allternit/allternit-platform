@@ -1,6 +1,6 @@
 {
   "name": "@allternit/apps-cli",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "The allternit CLI: create-allternit-app, allternit dev | test | package | submit.",
   "type": "module",
   "license": "MIT",
@@ -22,7 +22,7 @@
   "dependencies": {
     "@allternit/apps-server": "workspace:*",
     "@allternit/look-packs": "workspace:*",
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/client": "catalog:",
     "jszip": "^3.10.1",
     "tsx": "^4.21.0"
   },

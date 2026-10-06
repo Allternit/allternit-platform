@@ -7,7 +7,9 @@ description: 'Declare tools, Views and permissions with defineApp, appTool and v
 **Preview.** The Allternit Apps SDK packages and the `allternit` CLI are not published to npm yet, so the install commands on this page do not work outside the Allternit repository today. To build an MCP App now, follow the [Quickstart](/plugins/quickstart), which uses the open MCP SDK directly. Your app will not need changes to adopt the SDK later.
 </Warning>
 
-`@allternit/apps-server` is a thin layer over `@modelcontextprotocol/sdk` and `@modelcontextprotocol/ext-apps`. It does not hide them: `app.createServer()` returns a normal `McpServer`.
+`@allternit/apps-server` is a thin layer over the official MCP SDK v2 (`@modelcontextprotocol/server` 2.3.1) and `@modelcontextprotocol/ext-apps` 2.0.3. It does not hide them: `app.createServer()` returns a normal `McpServer`.
+
+Every app it builds is **dual-era** by default: it speaks MCP `2026-07-28` (stateless, `server/discover`, a `_meta` envelope on each request) and still answers clients that open with the older `initialize` handshake. Tools are listed in name order and Views in URI order, so `tools/list` and `resources/list` are the same on every request. Tool `input` shapes are Zod 4 (the `z` re-exported by the package).
 
 ```bash
 npm install @allternit/apps-server
@@ -108,7 +110,19 @@ const running = await listen(app, { port: 3000 });
 console.log(running.url); // http://localhost:3000/mcp
 ```
 
-`listen` runs streamable HTTP in stateless mode, a fresh server per request. It also answers `GET /healthz` and `GET /allternit.app.json`. `allternit dev` calls it for you.
+`listen` runs streamable HTTP in stateless mode, a fresh server per request, for both protocol eras. It also answers `GET /healthz` and `GET /allternit.app.json`. `allternit dev` calls it for you. Pass `onerror` to see tool errors (the default logs them to stderr).
+
+To deploy somewhere that takes a web-standard `fetch` handler (Cloudflare Workers, Bun, Deno), use the handler directly:
+
+```ts
+import app from "./server.js";
+
+export default app.createHandler(); // { fetch, close } — dual-era, stateless
+```
+
+## Events (optional)
+
+An app can offer [MCP Events](/plugins/sdk/events) so a host subscribes once and your server calls it back when something happens. Add `events` to `defineApp`; see the Events page for the full example.
 
 ## Validating a manifest
 
