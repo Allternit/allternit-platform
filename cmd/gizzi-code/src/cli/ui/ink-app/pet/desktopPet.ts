@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, renameSync, watch, writeFileSync, type FSWatcher } from 'node:fs'
+import { existsSync, readFileSync, renameSync, unwatchFile, watchFile, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 
@@ -66,26 +66,18 @@ export function writeDesktopPetAgentId(agentId: string): boolean {
 export function watchDesktopPetAgentId(onChange: (agentId: string | undefined) => void): () => void {
   const path = desktopPetSettingsPath()
   let last = readDesktopPetAgentId()
-  let timer: ReturnType<typeof setTimeout> | undefined
-  let watcher: FSWatcher | undefined
-  try {
-    watcher = watch(dirname(path), () => {
-      clearTimeout(timer)
-      timer = setTimeout(() => {
-        const next = readDesktopPetAgentId()
-        if (next !== last) {
-          last = next
-          onChange(next)
-        }
-      }, 150)
-    })
-    watcher.on('error', () => watcher?.close())
-    watcher.unref?.()
-  } catch {
-    // Desktop not installed (no directory): nothing to follow.
+  // Polls the path (stat), so Desktop replacing the file through a temp-file
+  // rename is seen, and a missing file (Desktop not installed) is fine. Not
+  // fs.watch: under Bun on macOS an unref'd fs.watch never delivers events,
+  // and a ref'd one would keep gizzi alive.
+  const listener = () => {
+    const next = readDesktopPetAgentId()
+    if (next !== last) {
+      last = next
+      onChange(next)
+    }
   }
-  return () => {
-    clearTimeout(timer)
-    watcher?.close()
-  }
+  const watcher = watchFile(path, { interval: 500, persistent: false }, listener)
+  watcher.unref?.()
+  return () => unwatchFile(path, listener)
 }
