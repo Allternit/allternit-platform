@@ -73,21 +73,21 @@ async fn complete_oauth_callback(
         let msg = params.error_description.as_deref().unwrap_or(error);
         return Err((
             StatusCode::BAD_REQUEST,
-            render_html("Connector authorization failed", msg, false),
+            render_html("Sign-in was cancelled", msg, false),
         ));
     }
 
     let code = params.code.ok_or_else(|| {
         (
             StatusCode::BAD_REQUEST,
-            render_html("Invalid MCP callback", "Missing OAuth code.", false),
+            render_html("Couldn’t finish signing in", "The app didn’t send back a sign-in code.", false),
         )
     })?;
 
     let state_val = params.state.ok_or_else(|| {
         (
             StatusCode::BAD_REQUEST,
-            render_html("Invalid MCP callback", "Missing OAuth state.", false),
+            render_html("Couldn’t finish signing in", "This sign-in link is incomplete.", false),
         )
     })?;
 
@@ -96,7 +96,7 @@ async fn complete_oauth_callback(
         warn!("DB error: {}", e);
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            render_html("Database error", "Failed to connect to database.", false),
+            render_html("Couldn’t finish signing in", "Allternit couldn’t save the sign-in on this computer.", false),
         )
     })?;
 
@@ -112,8 +112,8 @@ async fn complete_oauth_callback(
         (
             StatusCode::NOT_FOUND,
             render_html(
-                "MCP session not found",
-                "This authorization session is no longer available.",
+                "This sign-in has expired",
+                "Start connecting the app again from Allternit.",
                 false,
             ),
         )
@@ -132,8 +132,8 @@ async fn complete_oauth_callback(
         (
             StatusCode::NOT_FOUND,
             render_html(
-                "MCP connector not found",
-                "The connector for this authorization session could not be loaded.",
+                "App not found",
+                "The app you were connecting was removed. Add it again from Allternit.",
                 false,
             ),
         )
@@ -161,8 +161,8 @@ async fn complete_oauth_callback(
         return Err((
             StatusCode::INTERNAL_SERVER_ERROR,
             render_html(
-                "Connector authorization failed",
-                &format!("Failed to persist authorization code: {}", e),
+                "Couldn’t finish signing in",
+                &format!("Allternit couldn’t save the sign-in: {}", e),
                 false,
             ),
         ));
@@ -200,8 +200,8 @@ async fn complete_oauth_callback(
             );
 
             Ok(render_html(
-                "Connector connected",
-                "Authorization completed successfully. You can close this window and return to Allternit.",
+                &format!("{conn_name} is connected"),
+                "Allternit can now use it in your chats and bots.",
                 true,
             ))
         }
@@ -224,13 +224,9 @@ async fn complete_oauth_callback(
             // Code is already stored in metadata. Return a message that indicates
             // the auth code was received but token exchange needs manual completion.
             Ok(render_html(
-                "Authorization code received",
-                &format!(
-                    "The authorization code was received, but automatic token exchange failed: {}. \
-                     The code has been stored and can be completed manually.",
-                    e
-                ),
-                true,
+                &format!("Couldn’t finish connecting {conn_name}"),
+                &format!("The app accepted the sign-in, but Allternit couldn’t complete it: {e}"),
+                false,
             ))
         }
     }
@@ -427,28 +423,10 @@ async fn exchange_code_for_tokens(
     Ok(tokens)
 }
 
-fn render_html(title: &str, message: &str, close_window: bool) -> Html<String> {
-    let script = if close_window {
-        "<script>window.close();</script>"
-    } else {
-        ""
-    };
-
-    Html(format!(
-        r#"<!doctype html>
-<html>
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>{title}</title>
-{script}
-</head>
-<body style="font-family: 'Allternit Sans', Inter, ui-sans-serif, system-ui, sans-serif; padding: 24px; color: #111;">
-<h1 style="font-size: 18px; margin: 0 0 12px;">{title}</h1>
-<p style="margin: 0; line-height: 1.5;">{message}</p>
-</body>
-</html>"#
-    ))
+/// The branded sign-in result page (`oauth_result_page`); `ok` = connected (closes itself).
+fn render_html(title: &str, message: &str, ok: bool) -> Html<String> {
+    use crate::oauth_result_page::{render, Outcome};
+    render(if ok { Outcome::Connected } else { Outcome::Failed }, title, message)
 }
 
 #[derive(Serialize)]
