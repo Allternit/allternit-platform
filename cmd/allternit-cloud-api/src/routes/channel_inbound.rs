@@ -608,7 +608,7 @@ pub(crate) async fn deliver_route(state: &Arc<ApiState>, route_id: &str) -> Resu
                 .bind(status.map(i32::from))
                 .execute(&state.db)
                 .await?;
-            super::web_push::notify_channel_message(&state.db, &route.user_id, &route.id, &route.provider);
+            super::web_push::notify_channel_message(&state.db, &route.user_id, &route.id, &route.provider, &route.runtime_id);
             continue;
         }
         let error = attempt_error(status, error);

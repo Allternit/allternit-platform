@@ -27,7 +27,7 @@ Both advertise `"events": { "listChanged": false }` in `server/discover`. The ed
 | `inbox.item.created` | A new item landed in your Allternit inbox. | `bot_id` |
 | `subscription.login_needed` | A connected AI subscription needs you to sign in again. | `provider` |
 | `subscription.signed_in` | That subscription is signed in again. | `provider` |
-| `usage.threshold` | Your usage crossed a plan threshold. | `meter` |
+| `usage.threshold` | Your monthly cloud spend crossed your budget alert threshold, or reached the whole budget. Once per crossing; `data` is `{meter: "cloud_spend", percent, used, limit, period, currency}`. See [usage.threshold](/api/notifications#usage-alerts). | `meter` |
 
 ### Vendor bot connector
 
@@ -131,6 +131,8 @@ If you remove the app's approval in Allternit (or revoke a vendor bot CLI key), 
 ## Seeing and ending subscriptions
 
 Owners see every app's subscriptions in **Settings › Connected apps** (Desktop, ai.allternit.com, the phone layout and the m.allternit.com app). Under each approved app it lists the events it gets in plain words, when each was last sent, the last delivery error, and **Stop** for one subscription. See [Connected apps](/guides/connected-apps).
+
+Subscriptions a vendor agent made with an `allternit-bot` CLI key are listed under that key instead (`GET /api/v1/vendor-bots/:id/cli-keys`, see [allternit-bot CLI](/guides/allternit-bot-cli)), and stop the same way.
 
 Stopping one ends it at once and its callback gets the same signed `terminated` message, with `"reason": "ended_by_owner"`. The app is still approved, so it can subscribe again; removing the approval ends all of them.
 

@@ -1,0 +1,43 @@
+---
+title: Notifications
+description: Which Allternit events notify you on your phone or in your browser, what they say, and how to turn each one on or off.
+---
+
+Allternit can notify you when something needs you, even while the app is closed. It works the same on Allternit Desktop (while it's running), ai.allternit.com and the m.allternit.com phone app. First turn notifications on for each device: see [Call and message notifications](/guides/call-notifications#turn-it-on).
+
+## What notifies you
+
+Each kind of event has its own switch. These are on until you turn them off:
+
+| Event | What you see | Tapping it opens |
+|---|---|---|
+| **Approval requests** | "Approval needed: Olive wants to: send the invoice email" | The thread, when there is one |
+| **Threads that need you** | "Olive needs you", with the question or reason | That thread |
+| **New messages** | The sender and the start of the message. Messages in a direct thread with someone you invited show the same way | That thread, or the bot phone for that channel |
+| **Ended calls** | "Missed call from Sam", or "Call ended" after your bot finishes a call for you | The bot phone |
+| **AI subscription needs sign-in** | "Sign in to ChatGPT again" | Allternit |
+| **Usage alerts** | "You've used 80% of your monthly cloud budget" | Allternit |
+
+These are off until you turn them on:
+
+| Event | What you see |
+|---|---|
+| **Finished agent runs** | "Olive finished a run", or that it failed |
+| **Approval decisions** | "Approval approved". It replaces the "Approval needed" notification |
+| **New inbox items** | The item's title |
+| **AI subscription signed in again** | "ChatGPT is signed in again". It replaces the sign-in notification |
+| **New vendor tickets** | "New ticket for your vendor bot" |
+
+Incoming calls always ring a device that has notifications on. To stop rings on a device, turn notifications off on it.
+
+You get at most one message notification per conversation every 20 seconds, and at most 40 an hour, so a busy thread doesn't flood you. Something that happened more than 12 hours ago (for example on a computer that was offline overnight) doesn't notify you when it finally arrives. It's still in Allternit.
+
+Permission asks from a coding session on a paired computer notify you through that session's own remote-control notifications on m.allternit.com, not through this list.
+
+## Change what notifies you
+
+Open **Settings**, then **Notifications**. Each event above has a switch. Your choice applies to every device you've turned notifications on for, and you can put a switch back to its default at any time.
+
+Usage alerts follow your cloud budget's alert setting: you get one when your spending crosses your alert threshold (80% unless you changed it) and one when it reaches your whole monthly budget. Each comes once a month.
+
+For developers: the switches use [Notification preferences](/api/notifications).
