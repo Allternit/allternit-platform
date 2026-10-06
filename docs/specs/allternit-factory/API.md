@@ -29,6 +29,9 @@ All JSON uses camelCase. Times are RFC 3339. IDs are opaque strings.
 - `GET /api/factory/agents/:id` → `Agent`
 - `GET /api/factory/agents/:id/capture?lines=80` → `{ text: string, at: string }`
 - `GET /api/factory/agents/:id/transcript?cursor=` → `{ chunks: {at:string,text:string}[], next: string|null }`
+- `GET /api/factory/agents/:id/screen` → `{ ansi: string, revision: number, at: string }` (`not_found` when the agent has no live pane). (F5b)
+- `GET /api/factory/agents/:id/stream` (SSE) → `screen` events `{ ansi, revision, at }` on each screen change (first at once), then one `gone` `{ reason }` and the stream ends. Live only, no ids; proxied unbuffered with no timeout. (F5b)
+- `POST /api/factory/agents/:id/input` `{ text?: string, keys?: string[] }` → `{ ok: true }`: keystrokes into the pane, not a send (no delivery, no ledger). (F5b)
 - `GET /api/factory/teams` → `{ teams: Team[] }`
 - `POST /api/factory/teams/:name/up` body `{ preset?: string, on?: string, dryRun?: boolean }` → `{ plan: TeamPlanStep[], applied: boolean }`
 - `POST /api/factory/teams/:name/down` → `{ stopped: string[] }`
