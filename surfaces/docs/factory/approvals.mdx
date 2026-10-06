@@ -24,7 +24,8 @@ A "needs you" push has **Approve** and **Open** buttons. Approve checks that the
 
 - **Approve** answers from the notification without opening the app. Afterwards the notification is replaced by one that says what happened: approved, already answered, expired, or that you need to sign in or open the app to answer.
 - **Open** focuses the app, or opens it, on the node's page.
-- The same buttons work on Allternit Desktop, in a phone browser at ai.allternit.com and in the installed m.allternit.com app.
+- The buttons work in a browser or phone browser at ai.allternit.com and in the installed m.allternit.com app.
+- On Allternit Desktop, a new approval raises a system notification (turn it on in **Settings → Notifications → Approval requests**). Clicking it opens the node, where you approve.
 - A high-risk request shows why it's high-risk (`riskReason`) next to the Approve button in the app.
 
 For developers, the push payload is `data: { kind: "factory.approval", approvalId, dagId, nodeId, code, actionUrl, openUrl }` with actions `approve` and `open`. Approve POSTs `actionUrl` with `{ decision: "approve", code }`.
