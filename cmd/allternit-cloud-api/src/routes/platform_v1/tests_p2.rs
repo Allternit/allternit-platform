@@ -38,17 +38,7 @@ async fn ctx() -> Ctx {
 }
 
 async fn ctx_from(state: Arc<ApiState>) -> Ctx {
-    for sql in [
-        include_str!("../../../migrations_pg/003_api_keys.sql"),
-        include_str!("../../../migrations_pg/050_platform_api_foundation.sql"),
-        include_str!("../../../migrations_pg/063_platform_agents.sql"),
-        include_str!("../../../migrations_pg/064_platform_conversations.sql"),
-        include_str!("../../../migrations_pg/075_platform_channels.sql"),
-        include_str!("../../../migrations_pg/076_platform_twin.sql"),
-        include_str!("../../../migrations_pg/080_platform_billing.sql"),
-    ] {
-        sqlx::raw_sql(&sql.replace("public.", "")).execute(&state.db).await.expect("migration applies");
-    }
+    crate::routes::test_support::platform_schema(&state.db).await;
     let app = router_gated(&state, Gate::Forced(true)).with_state(state.clone());
     Ctx { state, app }
 }

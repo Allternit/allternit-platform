@@ -42,10 +42,26 @@ function collectStrings(obj, out = new Set()) {
   return out;
 }
 
+// Folders `.mintignore` keeps out of the build (unpublished drafts) are not
+// public docs: no navigation entry, no public-docs wording rules.
+const MINT_IGNORED = (() => {
+  try {
+    return fs
+      .readFileSync(path.join(DOCS_DIR, '.mintignore'), 'utf8')
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l && !l.startsWith('#'))
+      .map((l) => path.join(DOCS_DIR, l.replace(/\/$/, '')));
+  } catch {
+    return [];
+  }
+})();
+
 function collectMdxFiles(dir) {
   const results = [];
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
+    if (MINT_IGNORED.includes(full)) continue;
     if (entry.isDirectory()) {
       results.push(...collectMdxFiles(full));
     } else if (entry.name.endsWith('.mdx')) {
@@ -158,6 +174,9 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
       // Memory Drive is shared with other agents (install steps for Claude Code, Codex, their
       // session ids), and hosted agents name provider/model ids; these pages have to name them.
       if (['guides/memory-drive.mdx', 'core/memory-drive.mdx', 'cli/memory.mdx', 'api/platform/agents.mdx', 'api/memory-drive.mdx'].some((p) => mdxPath.endsWith(p))) continue;
+      // A project's own model key is set per provider (`PUT /v1/model_keys/anthropic`); the
+      // conversations billing note and the SDK examples have to name that provider id.
+      if (['api/platform/conversations.mdx', 'api/platform/sdks/python.mdx', 'api/platform/sdks/typescript.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // Release notes describe those same import/share features by the apps' names.
       if (mdxPath.endsWith('release-notes.mdx')) continue;
       // Provider env vars (OPENAI_API_KEY etc.) are configuration, not endorsement.
