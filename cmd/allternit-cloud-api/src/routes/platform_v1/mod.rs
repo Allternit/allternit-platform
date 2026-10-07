@@ -160,6 +160,8 @@ pub fn registered_routes() -> Vec<(&'static str, String)> {
 struct PlatformState {
     api: Arc<ApiState>,
     gate: Gate,
+    /// `/v1/agents` is also the Agency API's path: non-project credentials go there.
+    agency: Arc<crate::routes::agency_forward::AgencyForward>,
 }
 
 /// The Platform API router (`/v1/*` plus the console routes). Mount once from
@@ -169,7 +171,11 @@ pub fn router(state: &Arc<ApiState>) -> Router<Arc<ApiState>> {
 }
 
 pub fn router_gated(state: &Arc<ApiState>, gate: Gate) -> Router<Arc<ApiState>> {
-    let ps = PlatformState { api: state.clone(), gate };
+    router_with_agency(state, gate, Arc::new(crate::routes::agency_forward::AgencyForward::from_env()))
+}
+
+pub fn router_with_agency(state: &Arc<ApiState>, gate: Gate, agency: Arc<crate::routes::agency_forward::AgencyForward>) -> Router<Arc<ApiState>> {
+    let ps = PlatformState { api: state.clone(), gate, agency };
 
     let v1 = build_table()
         .router
@@ -205,6 +211,19 @@ async fn v1_middleware(
     mut request: Request,
     next: Next,
 ) -> Response {
+    // The Agency API owns `/v1/agents` for everything but project keys, whether or not
+    // the Platform API is switched on.
+    if request.uri().path() == "/v1/agents" {
+        let project_key = request
+            .headers()
+            .get(header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .is_some_and(|t| caller::is_project_key_token(t.trim()));
+        if !project_key {
+            return crate::routes::agency_forward::forward(ps.api.clone(), ps.agency.clone(), request).await;
+        }
+    }
     let beta = if ps.gate.enabled() { None } else { Some(ps.gate.beta_owners()) };
     if beta.as_ref().is_some_and(Vec::is_empty) {
         return PlatformError::disabled().into_response();

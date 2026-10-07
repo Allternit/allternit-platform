@@ -140,7 +140,9 @@ pub fn routes(forward: Arc<AgencyForward>) -> Router<Arc<ApiState>> {
         .route("/v1/capabilities", any(forward_handler))
         // WP-P1 production safety: org policy, approvals queue, run journal.
         .route("/v1/agency-safety/*rest", any(forward_handler))
-        .route("/v1/agents", any(forward_handler))
+        // `/v1/agents` is shared with the Platform API: its router sends every
+        // non-project-key call here (`platform_v1::v1_middleware`), so it is not
+        // registered twice.
         .route("/v1/authority-profiles", any(forward_handler))
         .route("/v1/completion-criteria", any(forward_handler))
         .layer(Extension(forward))
@@ -155,6 +157,13 @@ async fn forward_handler(
     Extension(fwd): Extension<Arc<AgencyForward>>,
     request: Request,
 ) -> Response {
+    forward(state, fwd, request).await
+}
+
+/// The forward itself, also called by the Platform API router for `GET /v1/agents`
+/// with a non-project credential (the two share that path; project keys
+/// `alt_live_…`/`alt_test_…` are the Platform API's, everything else is the Agency API's).
+pub(crate) async fn forward(state: Arc<ApiState>, fwd: Arc<AgencyForward>, request: Request) -> Response {
     // 1. Auth before anything touches the node.
     let user = match crate::auth::resolve_user_scoped(&state.db, request.headers(), "compute").await
     {
@@ -432,7 +441,6 @@ mod tests {
             ("POST", "/v1/campaigns"),
             ("GET", "/v1/replays/rp_1"),
             ("GET", "/v1/capabilities"),
-            ("GET", "/v1/agents"),
             ("GET", "/v1/authority-profiles"),
             ("GET", "/v1/completion-criteria"),
             ("POST", "/v1/decisions"),

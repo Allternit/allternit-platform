@@ -413,3 +413,22 @@ async fn beta_owners_use_the_api_while_it_is_off_for_everyone_else() {
     let off = router_gated(&c.state, Gate::BetaOnly(vec![])).with_state(c.state.clone());
     assert_eq!(call(&off, "GET", "/v1/agents", &beta_key, None).await.0, StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn v1_agents_is_shared_with_the_agency_api() {
+    let c = ctx().await;
+    let p = project(&c, "dev_11", ProjectEnv::Sandbox).await;
+    let key = mint(&c, &p, None, &["agents"]).await;
+    let agency = Arc::new(crate::routes::agency_forward::AgencyForward::new("http://127.0.0.1:9", Some("peer".into())));
+    // Platform API off: a non-project credential still reaches the Agency API (which
+    // authenticates it: 401 here), never `platform_api_disabled`.
+    let off = super::router_with_agency(&c.state, Gate::Forced(false), agency.clone()).with_state(c.state.clone());
+    let (s, e) = call(&off, "GET", "/v1/agents", "not-a-project-key", None).await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED, "{e}");
+    assert_ne!(e["error"]["code"], "platform_api_disabled");
+    // A project key is the Platform API's.
+    let on = super::router_with_agency(&c.state, Gate::Forced(true), agency).with_state(c.state.clone());
+    let (s, list) = call(&on, "GET", "/v1/agents", &key, None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(list["data"].is_array(), "{list}");
+}
