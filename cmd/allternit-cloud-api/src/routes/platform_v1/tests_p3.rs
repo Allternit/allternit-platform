@@ -109,6 +109,7 @@ async fn ctx() -> Ctx {
         include_str!("../../../migrations_pg/063_platform_agents.sql"),
         include_str!("../../../migrations_pg/064_platform_conversations.sql"),
         include_str!("../../../migrations_pg/070_platform_calls.sql"),
+        include_str!("../../../migrations_pg/080_platform_billing.sql"),
     ] {
         sqlx::raw_sql(&sql.replace("public.", "")).execute(&state.db).await.expect("migration applies");
     }
@@ -407,7 +408,7 @@ async fn a_live_call_dials_with_a_consent_ref_and_the_worker_closes_and_meters_i
     assert_eq!((got["status"].as_str(), got["duration_seconds"].as_i64(), got["end_reason"].as_str()), (Some("completed"), Some(90), Some("ended_by_api")), "{got}");
     let (_, t) = call(&c.app, "GET", &format!("/v1/calls/{id}/transcript"), &key, None).await;
     assert_eq!(t["lines"].as_array().unwrap().len(), 2, "final lines only, each once: {t}");
-    let usage: Vec<(String, f64)> = sqlx::query_as("SELECT meter, quantity::float8 FROM platform_usage_events WHERE project_id = $1").bind(&p.id).fetch_all(&c.state.db).await.unwrap();
+    let usage: Vec<(String, f64)> = sqlx::query_as("SELECT meter, quantity::float8 FROM platform_usage_events WHERE project_id = $1 AND meter LIKE 'voice_%'").bind(&p.id).fetch_all(&c.state.db).await.unwrap();
     assert_eq!(usage, vec![("voice_min_allternit".to_string(), 1.5)], "billed per second, once");
     assert_eq!(events_of(&c, &p.id, "call.ended").await.len(), 1);
     assert_eq!(events_of(&c, &p.id, "call.transcript.ready").await.len(), 1);

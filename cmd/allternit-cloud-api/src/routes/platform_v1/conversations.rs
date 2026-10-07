@@ -380,7 +380,7 @@ pub(crate) async fn open(db: &PgPool, project_id: &str, account_id: &str, agent_
 /// session opened if needed), plus the runtime path of that turn.
 pub(crate) async fn turn_target(state: &ApiState, host: &dyn AgentHost, caller: &PlatformCaller, conversation_id: &str) -> Result<(HostRuntime, String), PlatformError> {
     let conv = fetch_conversation(&state.db, caller, conversation_id).await?;
-    let (rt, session) = prepare(state, host, caller, &conv).await?;
+    let (rt, session, _own_key) = prepare(state, host, caller, &conv).await?;
     Ok((rt, format!("/api/v1/platform/agents/{}/sessions/{}/turn", conv.agent_id, session)))
 }
 
