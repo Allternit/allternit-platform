@@ -1,4 +1,4 @@
--- 067_paired_cloud_computers.sql
+-- 081_paired_cloud_computers.sql
 --
 -- Allternit Factory phase 4: a cloud computer (provisioned_instances) pairs
 -- itself as a paired computer so `gizzi agents up --on <computer>` can run

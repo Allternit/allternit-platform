@@ -3489,7 +3489,7 @@ pub(crate) mod pg_tests {
     // Retiring an instance removes its self-pairing (revoke_device).
     const MIGRATION_017: &str = include_str!("../../migrations_pg/017_paired_computers.sql");
     const MIGRATION_066: &str = include_str!("../../migrations_pg/066_paired_computer_orgs.sql");
-    const MIGRATION_067: &str = include_str!("../../migrations_pg/067_paired_cloud_computers.sql");
+    const MIGRATION_081: &str = include_str!("../../migrations_pg/081_paired_cloud_computers.sql");
 
     async fn test_pool() -> PgPool {
         let url = "postgres://allternit:allternit_pg_2026@localhost:5432/allternit_test";
@@ -3577,7 +3577,7 @@ pub(crate) mod pg_tests {
         apply_migration_sql(&pool, &schema, MIGRATION_018).await;
         apply_migration_sql(&pool, &schema, MIGRATION_019).await;
         apply_migration_sql(&pool, &schema, MIGRATION_019).await;
-        for sql in [MIGRATION_017, MIGRATION_066, MIGRATION_067] {
+        for sql in [MIGRATION_017, MIGRATION_066, MIGRATION_081] {
             apply_migration_sql(&pool, &schema, sql).await;
         }
         create_schedules_stub(&pool).await;
