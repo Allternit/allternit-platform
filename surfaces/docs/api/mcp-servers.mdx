@@ -65,6 +65,7 @@ The same `/mcp` mount also serves the routes that manage which external MCP serv
 | `GET` / `POST` | `/mcp/servers` | List or attach an MCP server. |
 | `GET` / `DELETE` | `/mcp/servers/:id` | Get or detach an attached server. |
 | `GET` / `POST` | `/mcp/connectors` | List or create MCP connectors. |
+| `DELETE` | `/mcp/connectors/:id` | Remove a connector: ends its [event subscriptions](/api/connector-events), deletes its stored OAuth tokens and agent bindings, then the row. `204`; `404` when it isn't the caller's. MCP Apps › Remove calls it. |
 | `POST` | `/mcp/test` | Test a connection to an MCP server. |
 | `GET` | `/mcp/oauth/callback` | OAuth callback for MCP servers that require it. |
 

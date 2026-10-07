@@ -67,6 +67,7 @@ Issuer comparison is case-insensitive and ignores a trailing slash. If no audien
 |--------|------|-------------|
 | GET | `/mcp/connectors` | List persisted MCP connectors |
 | POST | `/mcp/connectors` | Create a new MCP connector |
+| DELETE | `/mcp/connectors/:id` | Remove a connector you own and everything it left on this computer: its MCP Events subscriptions (stopped at the app and the cloud first), stored sign-in tokens and agent bindings. `204`, or `404` if it isn't yours |
 | POST | `/mcp/test` | Probe an MCP server URL |
 | GET | `/mcp/servers` | List currently attached MCP servers |
 | POST | `/mcp/servers` | Attach and sync an MCP server |
