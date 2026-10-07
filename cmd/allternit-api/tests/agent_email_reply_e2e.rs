@@ -182,11 +182,14 @@ async fn inbound_turns_into_one_threaded_reply_and_guards_hold() {
             [],
         )
         .unwrap();
+        // This test covers the reply guards (DMARC, loops, rate), not who may
+        // email the bot, so the channel takes mail from anyone.
         conn.execute(
             "INSERT INTO agent_identity_channels
                  (id, agent_id, user_id, email_address, email_provider,
-                  email_send_enabled, email_receive_enabled, email_mailbox_id, email_api_key_sealed)
-             VALUES ('ch-1', 'bot-1', 'user-a', 'bot@agents.test', 'mailflare', 1, 1, 'mb-1', ?1)",
+                  email_send_enabled, email_receive_enabled, email_mailbox_id, email_api_key_sealed,
+                  email_sender_policy)
+             VALUES ('ch-1', 'bot-1', 'user-a', 'bot@agents.test', 'mailflare', 1, 1, 'mb-1', ?1, 'anyone')",
             [allternit_api::token_crypto::seal("ep_mailbox_key")],
         )
         .unwrap();

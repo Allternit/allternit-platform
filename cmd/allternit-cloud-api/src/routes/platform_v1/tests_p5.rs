@@ -63,6 +63,8 @@ async fn ctx() -> Ctx {
         include_str!("../../../migrations_pg/057_allternit_events_backbone.sql"),
         include_str!("../../../migrations_pg/063_platform_agents.sql"),
         include_str!("../../../migrations_pg/064_platform_conversations.sql"),
+        include_str!("../../../migrations_pg/075_platform_channels.sql"),
+        include_str!("../../../migrations_pg/076_platform_twin.sql"),
         include_str!("../../../migrations_pg/080_platform_billing.sql"),
     ] {
         sqlx::raw_sql(&sql.replace("public.", "")).execute(&state.db).await.expect("migration applies");
