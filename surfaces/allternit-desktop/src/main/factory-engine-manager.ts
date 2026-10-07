@@ -108,8 +108,21 @@ export function factoryWorkspaceRoot(env: NodeJS.ProcessEnv = process.env, home 
   return fromEnv ? fromEnv : path.join(home, '.allternit', 'factory', 'workspace');
 }
 
-export function factoryServeArgs(root: string, port: number): string[] {
-  return ['--root', root, 'serve', '--port', String(port)];
+export function factoryServeArgs(root: string, port: number, peerPort: number | null = null): string[] {
+  return ['--root', root, 'serve', '--port', String(port), ...(peerPort ? ['--peer-port', String(peerPort)] : [])];
+}
+
+/** The Factory engine's peer port (matches `allternit computers serve`). */
+export const FACTORY_PEER_PORT = 3019;
+
+/**
+ * The peer port when this computer is paired as an Allternit remote computer
+ * (`allternit computer pair` wrote ~/.allternit/computer/paired.json), else
+ * null. With it, other computers' engines of the same account or its
+ * organization can run bots here, over the mesh, with a peer ticket.
+ */
+export function factoryPeerPort(home = os.homedir(), exists: (p: string) => boolean = fs.existsSync): number | null {
+  return exists(path.join(home, '.allternit', 'computer', 'paired.json')) ? FACTORY_PEER_PORT : null;
 }
 
 // ── PATH install and stale tool removal ─────────────────────────────────────
@@ -328,7 +341,7 @@ export class FactoryEngineManager {
     } catch (err) {
       log.warn('[FactoryEngine] Could not create the Factory workspace:', err);
     }
-    const args = factoryServeArgs(root, this.port);
+    const args = factoryServeArgs(root, this.port, factoryPeerPort());
     log.info(`[FactoryEngine] Starting ${bin} ${args.join(' ')}`);
     this.child = spawnSidecar(bin, args, {
       env: {

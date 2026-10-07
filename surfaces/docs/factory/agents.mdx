@@ -105,7 +105,18 @@ A hosted bot's thread hands off in the app, which opens a new window seeded with
 gizzi agents up product-build --on build-box
 ```
 
-`--on` boots the team's panes on another machine you've connected (a Mac, a Linux box or a cloud computer). This is also how Gizzi on Windows runs a team, because the pane engine is Unix-only.
+`--on` (or a bot's `machine:` in team.yaml) names one of your paired computers: a Mac, a Linux box or a VPS you paired with `allternit computer pair <code>`, or one your organization paired. The engine checks the name against your paired computers, by name (any case) or id:
+
+- A name that isn't paired is refused (exit `2`), and the message lists your paired computers.
+- A computer that hasn't joined the mesh yet is refused (exit `1`).
+- Checking needs allternit-api. Without it, the step fails as `transport`.
+
+**Running the bots there is being built.** Each computer runs its own Factory engine, and your engine asks the other computer's engine to run the bot. The pieces in place so far:
+
+- A paired computer's engine takes peer calls on port `3019`. Desktop starts it with `--peer-port 3019` when the Mac is paired, and `allternit computers serve` forwards that port over the mesh beside VNC.
+- Peer calls only get in with a peer ticket from cloud-api, for the computer's owner or a member of its organization ([peer tickets](/api/cloud-api#peer-tickets)). The ticket's user becomes the caller.
+
+Until spawning arrives, a known computer answers "not built yet". Run `agents up` on that computer itself. The same path will let Gizzi on Windows run a team on another computer, because the pane engine is Unix-only.
 
 ## Bot templates
 

@@ -123,6 +123,23 @@ While approval is pending, the endpoint returns HTTP `428`:
 | `providers:connect` | Write provider credentials. |
 | `providers:use` | Read and use provider connections. |
 
+## Paired computers
+
+A user can pair one of their own machines (a Mac, a Linux box, a VPS) as a remote computer. Their devices can then view it and take it over, and the Allternit Factory can run bots on it, all over the private Allternit mesh. Pairing records the organization that was active when the code was made. Members of that organization see the computer too and can use it, marked `shared: true`.
+
+| Method | Path | Auth | Description |
+| --- | --- | --- | --- |
+| POST | `/api/v1/computers/pairing-codes` | Clerk / device | A single-use code (`XXXX-XXXX`, 10 minutes) and the command to run on the machine: `allternit computer pair <code>`. |
+| POST | `/api/v1/computers/pair` | the code | Redeems a code: `{ code, name, os? }` → `{ computerId, secret, controlUrl, authKey, authKeyExpiresAt }`. `authKey` joins the mesh, and `secret` signs the machine's reports. |
+| POST | `/api/v1/computers/paired/:id/report` | `x-allternit-computer-secret` | The machine reports `{ meshIp, vncReady, name? }`. `meshIp` must be in `100.64.0.0/10`. `allternit computers serve` does this every minute. |
+| GET | `/api/v1/computers/paired` | Clerk / device | The caller's computers plus their organization's: `{ computers: [{ id, name, os, mesh_ip, vnc_ready, created_at, last_seen_at, shared }] }`. |
+| DELETE | `/api/v1/computers/paired/:id` | Clerk / device | Unpairs one of the caller's own computers. |
+| POST | `/api/v1/computers/paired/:id/peer-ticket` | Clerk / device | A Factory peer ticket for the computer's owner or an organization member: `{ ticket, computerId, meshIp, peerPort: 3019, expiresIn }`. A computer that isn't the caller's answers `404`. One that hasn't joined the mesh yet answers `409`. |
+
+### Peer tickets
+
+A peer ticket is a data-plane JWT (EdDSA) with `sub` = the user, `aud` = the computer id and `scope` = `factory:peer`. It lives 5 to 15 minutes (`ALLTERNIT_DP_JWT_TTL_SECS`, default 600). The computer's Factory engine checks it offline against `GET /api/v1/auth/dp-jwks`, and accepts only tickets addressed to itself. See [Factory agents](/factory/agents) (`--on <computer>`).
+
 ## Runtime relay
 
 Once paired, a runtime opens an outbound WebSocket to the cloud API. A Clerk-authenticated browser can then proxy HTTP requests and WebSocket traffic to that runtime without exposing the runtime's loopback API publicly.

@@ -3117,6 +3117,17 @@ pub async fn run_service_on(
     socket: Option<&std::path::Path>,
     root_dir: PathBuf,
 ) -> anyhow::Result<()> {
+    run_service_with_peer(bind_addr, socket, root_dir, None).await
+}
+
+/// [`run_service_on`] plus, with `peer`, the peer listener other computers'
+/// engines reach over the mesh (`api::peer`), on 127.0.0.1:`peer.port`.
+pub async fn run_service_with_peer(
+    bind_addr: &str,
+    socket: Option<&std::path::Path>,
+    root_dir: PathBuf,
+    peer: Option<crate::api::peer::PeerOptions>,
+) -> anyhow::Result<()> {
     // Initialize stores
     init_stores(&root_dir).await?;
 
@@ -3144,6 +3155,21 @@ pub async fn run_service_on(
             }
             Err(e) => tracing::warn!("registry reconcile at start failed: {e:#}"),
         }
+    }
+
+    if let Some(opts) = peer {
+        let addr = format!("127.0.0.1:{}", opts.port);
+        let peer_listener = tokio::net::TcpListener::bind(&addr)
+            .await
+            .map_err(|e| anyhow::anyhow!("peer port {addr} is already in use: {e}"))?;
+        tracing::info!(computer = %opts.computer_id, "peer listener on {addr}");
+        let verifier = Arc::new(crate::api::peer::PeerVerifier::new(opts));
+        let peer_app = crate::api::peer::peer_router(state.clone(), verifier);
+        tokio::spawn(async move {
+            if let Err(e) = axum::serve(peer_listener, peer_app).await {
+                tracing::error!("peer listener stopped: {}", e);
+            }
+        });
     }
 
     let app = create_router(state);
