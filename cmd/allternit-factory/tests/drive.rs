@@ -25,7 +25,6 @@ use allternit_factory_engine::leases::leases::LeasesOptions;
 use allternit_factory_engine::ledger::ledger::LedgerOptions;
 use allternit_factory_engine::templates::RETRY_SAFE_LABEL;
 use allternit_factory_engine::wait_gates::GateOutcome;
-use allternit_factory_engine::work::needs_you::pending_manual_gates;
 use allternit_factory_engine::work::{project_dag, DagState};
 use allternit_factory_engine::{
     Actor, ActorType, AllternitEvent, Gate, GateOptions, Leases, Ledger, LedgerQuery, ReceiptStore,

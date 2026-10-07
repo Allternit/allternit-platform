@@ -129,6 +129,13 @@ impl ClientWriter {
         self.render.queue.discard_pending_render();
     }
 
+    /// Waits until every control message queued so far is written to the
+    /// socket (or the writer is gone), up to `timeout`. Live handoff uses it so
+    /// the shutdown notice reaches clients before the old server exits.
+    pub(crate) fn wait_control_flushed(&self, timeout: std::time::Duration) -> bool {
+        self.control.queue.wait_control_flushed(timeout)
+    }
+
     #[cfg(test)]
     pub(crate) fn test_fill_render(&self, data: Vec<u8>) {
         self.render.try_send(data).unwrap();
@@ -156,7 +163,13 @@ impl ClientWriter {
         std::thread::spawn(move || {
             while let Some(item) = drain.recv() {
                 let sent = match item {
-                    ClientWriteItem::Control(data) => control.send(data).is_ok(),
+                    ClientWriteItem::Control(data) => {
+                        let ok = control.send(data).is_ok();
+                        if ok {
+                            drain.mark_control_written();
+                        }
+                        ok
+                    }
                     ClientWriteItem::Render(data) => render.send(data).is_ok(),
                 };
                 if !sent {
@@ -256,6 +269,9 @@ struct ClientWriterQueueState {
     render: Option<Vec<u8>>,
     senders: usize,
     writer_alive: bool,
+    /// Control messages queued, and how many of them the writer has written.
+    control_queued: u64,
+    control_written: u64,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -292,8 +308,34 @@ impl ClientWriterQueue {
             return Err(SendError(data));
         }
         state.control.push_back(data);
+        state.control_queued += 1;
         self.ready.notify_one();
         Ok(())
+    }
+
+    fn mark_control_written(&self) {
+        let mut state = self.lock_state();
+        state.control_written += 1;
+        self.ready.notify_all();
+    }
+
+    fn wait_control_flushed(&self, timeout: std::time::Duration) -> bool {
+        let deadline = std::time::Instant::now() + timeout;
+        let mut state = self.lock_state();
+        loop {
+            if !state.writer_alive || state.control_written >= state.control_queued {
+                return true;
+            }
+            let now = std::time::Instant::now();
+            if now >= deadline {
+                return false;
+            }
+            state = self
+                .ready
+                .wait_timeout(state, deadline - now)
+                .map(|(guard, _)| guard)
+                .unwrap_or_else(|poisoned| poisoned.into_inner().0);
+        }
     }
 
     fn try_send_render(&self, data: Vec<u8>) -> Result<(), TrySendError<Vec<u8>>> {
@@ -923,7 +965,13 @@ fn client_writer_loop(
 ) {
     while let Some(item) = writer_queue.recv() {
         let written = match item {
-            ClientWriteItem::Control(data) => write_framed_bytes(&mut stream, &data),
+            ClientWriteItem::Control(data) => {
+                let ok = write_framed_bytes(&mut stream, &data);
+                if ok {
+                    writer_queue.mark_control_written();
+                }
+                ok
+            }
             ClientWriteItem::Render(data) => {
                 let _ =
                     server_event_tx.blocking_send(ServerEvent::ClientWriterDrained { client_id });

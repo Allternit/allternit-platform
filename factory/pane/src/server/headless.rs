@@ -90,7 +90,6 @@ use crate::protocol::MAX_GRAPHICS_FRAME_SIZE;
 
 #[cfg(test)]
 use crate::protocol::RenderEncoding;
-#[cfg(test)]
 use crate::server::client_transport::ClientWriter;
 #[cfg(test)]
 use std::fs;
@@ -248,6 +247,9 @@ pub struct HeadlessServer {
     /// Imported panes get one app-safe resize nudge after the first client attaches.
     #[cfg(unix)]
     pending_handoff_repaint_nudge: bool,
+    /// Writers of the clients a live handoff disconnected; their shutdown
+    /// notice is flushed after the handoff response, before the old server exits.
+    handoff_flush: Vec<ClientWriter>,
     /// Flag set by Ctrl+C or `server stop` signal.
     should_quit: Arc<AtomicBool>,
     /// Channel for receiving server events from client connection threads.
@@ -376,6 +378,7 @@ impl HeadlessServer {
             handoff_in_progress: false,
             #[cfg(unix)]
             pending_handoff_repaint_nudge: false,
+            handoff_flush: Vec::new(),
             should_quit,
             server_event_rx,
             server_event_tx,
@@ -1754,7 +1757,15 @@ impl HeadlessServer {
     #[cfg(unix)]
     fn disconnect_all_clients_for_handoff(&mut self) {
         let client_ids = self.clients.keys().copied().collect::<Vec<_>>();
+        let mut flushing = Vec::new();
         for client_id in client_ids {
+            // A render frame the writer picks up first makes it wait on the
+            // server event channel, which this loop is not draining during the
+            // handoff; drop pending frames so the notice goes out first.
+            if let Some(writer) = self.clients.get(&client_id).and_then(|c| c.writer.clone()) {
+                writer.discard_pending_render();
+                flushing.push(writer);
+            }
             self.send_to_client(
                 client_id,
                 ServerMessage::ServerShutdown {
@@ -1768,9 +1779,25 @@ impl HeadlessServer {
             }
             let _ = self.remove_client(client_id);
         }
+        // Flushed by `flush_handoff_clients` once the handoff has answered.
+        self.handoff_flush = flushing;
         self.foreground_client_id = None;
         self.sync_foreground_client_state();
         self.resize_shared_runtime_to_effective_size();
+    }
+
+    /// The old server exits right after a live handoff. Wait (bounded) until
+    /// each disconnected client's shutdown notice is written, or it is lost.
+    /// This runs after the handoff response: a client may be blocked on that
+    /// response and not reading its own socket until it arrives.
+    fn flush_handoff_clients(&mut self) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        for writer in std::mem::take(&mut self.handoff_flush) {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if !writer.wait_control_flushed(left) {
+                warn!("live handoff: a client's shutdown notice was not written in time");
+            }
+        }
     }
 
     fn attach_terminal_client(
@@ -2949,7 +2976,10 @@ impl HeadlessServer {
             let _ = msg.respond_to.send(response);
             if handoff_succeeded {
                 wait_for_live_handoff_response_write(msg.response_write_complete);
+                self.flush_handoff_clients();
                 self.finish_live_handoff_shutdown();
+            } else {
+                self.handoff_flush.clear();
             }
             return true;
         }
