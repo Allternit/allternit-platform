@@ -653,12 +653,29 @@ async fn runs_create(State(state): S, headers: HeaderMap, body: Option<Json<RunB
         (Some(c), _) => return error("not_found", format!("campaign {c} not declared"), "Declare it with `gizzi workspace campaign new`."),
         (None, Some(p)) => match campaigns.keys().find(|id| *id == p || **id == format!("project-{p}")) {
             Some(id) => id.clone(),
+            // Project = Campaign: the project's first run declares its campaign.
             None => {
-                return not_built(
-                    "workflows",
-                    "run with a new project",
-                    "Creating a project's campaign from a run is not built yet; declare the campaign first and pass campaignId.",
-                )
+                let id = format!("project-{p}");
+                if b.dry_run {
+                    id
+                } else {
+                    let owner = header(&headers, "x-allternit-user").unwrap_or_else(|| "engine".to_string());
+                    let def = crate::campaign::CampaignDefinition {
+                        id: id.clone(),
+                        objective: b.intent.clone().filter(|i| !i.trim().is_empty()).unwrap_or_else(|| format!("Project {p}")),
+                        owner,
+                        status: Default::default(),
+                        executor: format!("bot:project-worker-{p}"),
+                        command: None,
+                        budget: None,
+                        dag_id: None,
+                        rearm: None,
+                    };
+                    if let Err(e) = campaign_ops(&state).declare(def, chrono::Utc::now()).await {
+                        return error("usage", format!("creating the project's campaign: {e:#}"), "Declare it with `gizzi workspace campaign new`, then pass campaignId.");
+                    }
+                    id
+                }
             }
         },
         (None, None) => return error("usage", "give campaignId or projectId", "Project = Campaign: name the one this run belongs to."),
@@ -889,7 +906,9 @@ async fn campaigns_list(State(state): S) -> Response {
                 }
             }
             let status = serde_json::to_value(c.status).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
-            json!({ "id": c.campaign_id, "projectId": null, "title": c.objective, "intent": c.objective,
+            // Project = Campaign: a project's campaign is `project-<projectId>`.
+            let project_id = c.campaign_id.strip_prefix("project-").map(str::to_string);
+            json!({ "id": c.campaign_id, "projectId": project_id, "title": c.objective, "intent": c.objective,
                     "status": status, "proven": proven, "total": total, "needsYou": needs })
         })
         .collect();

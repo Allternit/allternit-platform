@@ -343,6 +343,8 @@ fn factory_api_contract() {
     let keys: BTreeSet<&str> = c1.as_object().unwrap().keys().map(String::as_str).collect();
     assert_eq!(keys, BTreeSet::from(["id", "projectId", "title", "intent", "status", "proven", "total", "needsYou"]));
     assert_eq!((c1["total"].as_u64(), c1["needsYou"].as_u64(), c1["proven"].as_u64()), (Some(2), Some(1), Some(0)));
+    assert!(c1["projectId"].is_null(), "a plain campaign has no project");
+
 
     let (s, mine) = get(&e, "/api/factory/nodes?assignee=al");
     assert_eq!(s, 200);
@@ -391,6 +393,23 @@ fn factory_api_contract() {
     let ev: Value = serde_json::from_str(first.trim_start_matches("data: ")).unwrap();
     assert_shape(&md, "Delivery", &ev["data"]);
     assert!(ev["at"].is_string());
+
+    // Project = Campaign: a project's first run declares its campaign.
+    let (s, dry) = post(&e, "/api/factory/runs", json!({ "template": "promo", "projectId": "p-1", "params": { "topic": "Views" }, "dryRun": true }));
+    assert_eq!(s, 200, "{dry}");
+    assert_eq!(dry["plan"]["campaignId"], "project-p-1");
+    let (_, c) = get(&e, "/api/factory/campaigns");
+    assert!(!c["campaigns"].as_array().unwrap().iter().any(|c| c["id"] == "project-p-1"), "a dry run declares nothing");
+    let (s, run) = post(&e, "/api/factory/runs", json!({ "template": "promo", "projectId": "p-1", "intent": "Launch views", "params": { "topic": "Views" } }));
+    assert_eq!(s, 200, "{run}");
+    assert_eq!(run["campaignId"], "project-p-1");
+    let (_, c) = get(&e, "/api/factory/campaigns");
+    let p1 = c["campaigns"].as_array().unwrap().iter().find(|c| c["id"] == "project-p-1").unwrap().clone();
+    assert_eq!(p1["projectId"], "p-1");
+    assert_eq!(p1["intent"], "Launch views");
+    // A second run of the same project reuses its campaign.
+    let (s, run2) = post(&e, "/api/factory/runs", json!({ "template": "promo", "projectId": "p-1", "params": { "topic": "More" } }));
+    assert_eq!((s, run2["campaignId"].as_str()), (200, Some("project-p-1")));
 }
 
 /// API.md §2 exit codes and the `--json` error envelope, through the CLI.
