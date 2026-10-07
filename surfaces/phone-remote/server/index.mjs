@@ -21,6 +21,7 @@ import { homedir } from 'node:os';
 import { dirname, extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Capture, checkScreenRecordingPermission } from './lib/capture.mjs';
+import { CaptureDemand } from './lib/demand.mjs';
 import { InputBridge } from './lib/input.mjs';
 import { helloBody } from './lib/status.mjs';
 import { upgrade } from './lib/ws.mjs';
@@ -187,8 +188,8 @@ async function main() {
 
   let viewer = null; // single-viewer: the one WSConnection holding the session
 
-  // Capture runs for the process lifetime so Fabric can poll /frame without a WS viewer.
-  if (capture) capture.start().catch((err) => console.error(`[capture] start: ${err.message}`));
+  // Capture runs only while someone wants frames (a viewer, or Fabric polling /frame).
+  const demand = new CaptureDemand({ capture });
 
   function sendJSON(conn, obj) { conn.sendText(JSON.stringify(obj)); }
 
@@ -225,13 +226,14 @@ async function main() {
       input: input ? { enabled: true, dryRun: cfg.inputDryRun, accessibilityTrusted: input.ready?.accessibilityTrusted ?? null } : { enabled: false },
       display: input?.display ?? null,
     });
-    // Capture is already running at process start; a second start() is a no-op.
+    demand.viewerAttached();
 
     conn.on('text', (t) => onViewerMessage(conn, t));
     conn.on('close', () => {
       console.error('[server] viewer disconnected');
       if (viewer === conn) {
         viewer = null;
+        demand.viewerDetached();
         cfg.token = randomBytes(24).toString('base64url');
         const next = `http://${cfg.bind}:${cfg.port}/?t=${cfg.token}`;
         console.log(`  token rotated after viewer disconnect\n    ${next}\n`);
@@ -281,6 +283,7 @@ async function main() {
       if (!trustedLocal && !tokenMatches(cfg, presentedToken(req, url))) {
         res.writeHead(403, { 'content-type': 'text/plain' }); return res.end('403\n');
       }
+      demand.demand(); // a viewer says hello before it polls frames
       const body = Buffer.from(JSON.stringify(helloBody({
         capture, captureMode: cfg.capture, fps: cfg.fps,
         input, inputDryRun: cfg.inputDryRun, display: input?.display ?? null,
@@ -292,7 +295,7 @@ async function main() {
       if (!trustedLocal && !tokenMatches(cfg, presentedToken(req, url))) {
         res.writeHead(403, { 'content-type': 'text/plain' }); return res.end('403\n');
       }
-      const jpeg = capture?.lastFrame;
+      const jpeg = capture ? await demand.frame() : null;
       if (!jpeg) { res.writeHead(503, { 'content-type': 'text/plain' }); return res.end('no frame\n'); }
       res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'no-store', 'content-length': jpeg.length });
       return res.end(jpeg);
@@ -301,7 +304,9 @@ async function main() {
       if (!trustedLocal && !tokenMatches(cfg, presentedToken(req, url))) {
         res.writeHead(403, { 'content-type': 'text/plain' }); return res.end('403\n');
       }
-      const body = Buffer.from(JSON.stringify({ ok: true, already: true, pid: process.pid }));
+      const already = Boolean(capture?.running);
+      demand.demand();
+      const body = Buffer.from(JSON.stringify({ ok: true, already, pid: process.pid }));
       res.writeHead(200, { 'content-type': 'application/json', 'content-length': body.length });
       return res.end(body);
     }

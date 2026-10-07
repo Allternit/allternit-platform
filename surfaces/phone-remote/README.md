@@ -37,6 +37,13 @@ Single viewer at a time. A second WS connection is refused (1013).
 - **Standalone manual start still works** for development:
   `node server/index.mjs` from this directory. `PORT` env pins the port
   without argv.
+- **Capture on demand.** Capture starts when a viewer connects, or on
+  `/hello`, `/start` or `/frame` (the first `/frame` waits up to 3 s for a
+  frame), and stops after 15 s with no viewer and no request; the cached frame
+  is dropped when it stops. Before 2026-10-07 it ran for the whole process
+  lifetime: on a Linux cloud computer that was ~10 screenshot processes a
+  second with nobody watching. On Linux, `ffmpeg` is looked up once (it is
+  tried first, then `scrot`).
 - **Watchdog.** In sckit mode, once capture has started, a frame must arrive
   at least every 5s (it runs at 10fps). If the helper freezes, the server
   kills it, tries ONE in-process sckit restart, and — if frames still don't

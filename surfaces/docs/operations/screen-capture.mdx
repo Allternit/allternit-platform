@@ -1,0 +1,28 @@
+---
+title: "Screen capture server"
+description: "The phone-remote server that streams a computer's screen to viewers"
+---
+
+**Status: AVAILABLE (internal).** Every Allternit Desktop and cloud computer runs the phone-remote server (`surfaces/phone-remote/server`) on `127.0.0.1:8477`. The Desktop app starts and supervises it (`surfaces/allternit-desktop/src/main/phone-remote-manager.ts`). The Fabric desktop viewer and the phone remote proxy `/hello` and `/frame` to it; a phone viewer connects over WebSocket.
+
+## When it captures
+
+Capture runs only while someone wants frames:
+
+- It starts when a viewer connects, or on a `/hello`, `/start` or `/frame` request. The first `/frame` waits up to 3 seconds for a frame and answers `503 no frame` if none arrives (poll again).
+- It stops after 15 seconds with no viewer connected and no request, and drops its cached frame, so nobody is served an old screen.
+
+Until 2026-10-07 capture ran for the whole life of the process. On a Linux cloud computer that meant about ten screenshot processes a second with nobody watching, which slowed small computers and loaded their host.
+
+## How it captures
+
+| Platform | Method |
+|---|---|
+| macOS | ScreenCaptureKit helper (`sc_capture`), falling back to a `screencapture` loop |
+| Linux | `ffmpeg` x11grab if installed (checked once), otherwise `scrot`, at up to 10 fps |
+
+On macOS a watchdog requires a frame at least every 5 seconds while capture runs. If frames stop, the server restarts the helper once, then exits so the Desktop app restarts it. `/hello` reports `stale: true` with an `error` when capture is dead.
+
+## Where the change ships
+
+The server is part of the Desktop app bundle, not a runtime package. Desktop users get changes with the next app build; cloud computers get them with the next cloud computer image.
