@@ -93,7 +93,26 @@ impl AgentHost for ProdHost {
             .execute(&self.0.db)
             .await
             .map_err(|e| unavailable(&format!("runtime owner {owner}: {e}")))?;
-        let view = self.0.provisioning_service.create_free(&owner).await.map_err(|e| unavailable(&format!("provision {owner}: {e}")))?;
+        let mut view = self.0.provisioning_service.create_free(&owner).await.map_err(|e| unavailable(&format!("provision {owner}: {e}")))?;
+        // A runtime that paired but was never seen again (its pairing failed after
+        // the one-time code was used) stays offline forever: replace it.
+        if let Some(device) = view.device_id.as_deref() {
+            let never: Option<(bool,)> = sqlx::query_as(
+                // Never seen after it was created (a sleeping runtime has heartbeats behind it;
+                // `relay_connected_at` alone is cleared on every disconnect).
+                "SELECT relay_connected_at IS NULL AND COALESCE(last_seen_at, created_at) <= created_at + INTERVAL '1 minute' \
+                 AND created_at < NOW() - INTERVAL '10 minutes' FROM runtime_devices WHERE id = $1",
+            )
+            .bind(device)
+            .fetch_optional(&self.0.db)
+            .await
+            .map_err(|e| unavailable(&format!("runtime {device}: {e}")))?;
+            if never.is_some_and(|(stuck,)| stuck) {
+                tracing::warn!(%owner, instance = %view.id, %device, "platform hosting: runtime never connected; replacing it");
+                self.0.provisioning_service.delete(&view.id, &owner).await.map_err(|e| unavailable(&format!("replace {}: {e}", view.id)))?;
+                view = self.0.provisioning_service.create_free(&owner).await.map_err(|e| unavailable(&format!("provision {owner}: {e}")))?;
+            }
+        }
         if matches!(view.status.as_str(), "error" | "deleted") {
             return Err(unavailable(&format!("runtime {} is {}", view.id, view.status)));
         }
