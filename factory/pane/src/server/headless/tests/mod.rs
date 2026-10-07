@@ -5830,7 +5830,7 @@ fn update_notification_is_semantic_for_system_delivery() {
                 notification.kind,
                 protocol::SemanticNotificationKind::UpdateInstalled
             );
-            assert_eq!(notification.title, "ao v9.9.9 available");
+            assert_eq!(notification.title, "Allternit Factory v9.9.9 available");
             // The body is the install command as given (the fork words it).
             assert_eq!(
                 notification.body.as_deref(),
