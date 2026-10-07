@@ -9,8 +9,8 @@ const NESTED_HERDR_MESSAGES: [&str; 6] = [
     "inception detected. we need to go deeper... said no one ever.",
     "recursion is a pathway to many abilities some consider to be... unnatural.",
     "you were so preoccupied with whether you could, you didn't stop to think if you should. — dr. malcolm",
-    "recursive ao nesting is disabled. somewhere, a call stack breathes a sigh of relief.",
-    "recursive descent denied. there is, in fact, such a thing as too much ao.",
+    "recursive pane engine nesting is disabled. somewhere, a call stack breathes a sigh of relief.",
+    "recursive descent denied. there is, in fact, such a thing as too much Factory.",
     "recursion detected. base case not found. aborting.",
 ];
 
@@ -65,7 +65,7 @@ mod update;
 mod workspace;
 mod worktree;
 
-const DEFAULT_CONFIG: &str = r##"# ao configuration
+const DEFAULT_CONFIG: &str = r##"# Allternit Factory pane engine configuration
 # Place this file at ~/.config/ao/config.toml
 
 # Show first-run notification setup on startup.
@@ -129,7 +129,7 @@ peach = "#f59e0b"
 
 # CWD policy for new panes, tabs, and workspaces when no explicit --cwd is provided.
 # Use "follow" to inherit the source pane/workspace, "home" for $HOME,
-# "current" for ao's process directory, or a fixed path such as "~/Projects".
+# "current" for the pane engine's process directory, or a fixed path such as "~/Projects".
 # new_cwd = "follow"
 
 # Render pane images in Kitty graphics-compatible outer terminals.
@@ -271,8 +271,8 @@ peach = "#f59e0b"
 # copy_on_select = true
 
 # Host cursor policy: "auto", "native", or "drawn".
-# "auto" draws ao's own cursor on native Windows builds and WSL to avoid ConPTY cursor flicker, and uses the native terminal cursor elsewhere.
-# "native" always uses the outer terminal cursor. "drawn" always draws ao's cursor as terminal cell content.
+# "auto" draws the pane engine's own cursor on native Windows builds and WSL to avoid ConPTY cursor flicker, and uses the native terminal cursor elsewhere.
+# "native" always uses the outer terminal cursor. "drawn" always draws the pane engine's cursor as terminal cell content.
 # host_cursor = "auto"
 
 # Optional modifier that forwards right-click hold/drag gestures to pane apps instead of opening ao's pane menu.
@@ -406,7 +406,7 @@ window_title = "{hostname}: {workspace}"
 # resume_agents_on_restore = true
 
 [experimental]
-# Allow launching ao from inside an ao-managed pane.
+# Allow launching the pane engine from inside a Factory-managed pane.
 # allow_nested = false
 # Save recent pane screen history across full server restarts.
 pane_history = false
@@ -463,7 +463,7 @@ fn random_nested_message() -> &'static str {
 
 fn exit_if_nested_disabled(config: &config::Config) {
     if should_block_nested(config) {
-        eprintln!("\x1b[1merror:\x1b[0m nested ao is disabled by default.");
+        eprintln!("\x1b[1merror:\x1b[0m nesting the pane engine is disabled by default.");
         eprintln!("see configuration if you want to enable it.");
         eprintln!();
         eprintln!("\x1b[2m\"{}\"\x1b[0m", random_nested_message());
@@ -561,7 +561,7 @@ where
         println!();
         println!("Common commands:");
         for (command, description) in [
-            ("ao", "Launch or attach to the persistent session"),
+            ("allternit-factory pane", "Launch or attach to the persistent session"),
             (
                 "allternit-factory pane status [server|client]",
                 "Show local client and running server status",
@@ -630,7 +630,7 @@ where
         println!("Config: {}", config::config_path().display());
         println!("Logs:   {}", logging::help_log_paths_summary());
         println!("Env:    HERDR_CONFIG_PATH overrides config file path");
-        println!("Repo:   https://github.com/herdrdev/herdr (ao engine fork, Apache-2.0)");
+        println!("Repo:   https://github.com/herdrdev/herdr (Allternit Factory pane engine fork, Apache-2.0)");
         println!();
         println!("{}", cli::AGENT_HELP_FOOTER);
         return Ok(());
@@ -638,7 +638,7 @@ where
 
     if args.iter().any(|a| a == "--version" || a == "-V") {
         platform::begin_cli_output();
-        println!("ao {}", crate::build_info::version());
+        println!("allternit-factory pane {}", crate::build_info::version());
         return Ok(());
     }
 
@@ -702,7 +702,7 @@ where
     let saved_federation =
         client::endpoint::EndpointCatalog::load().is_ok_and(|catalog| catalog.has_enabled_ssh());
     if let Err(err) = server::autodetect::auto_detect_launch(saved_federation) {
-        eprintln!("ao: {err}");
+        eprintln!("allternit-factory pane: {err}");
         std::process::exit(1);
     }
     Ok(())

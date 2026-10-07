@@ -1702,7 +1702,7 @@ pub fn check_client_version(client_version: u32) -> VersionCheck {
         VersionCheck::Compatible
     } else if client_version < PROTOCOL_VERSION {
         VersionCheck::Incompatible(format!(
-            "client version {client_version} is older than server version {PROTOCOL_VERSION}; please upgrade your ao client"
+            "client version {client_version} is older than server version {PROTOCOL_VERSION}; please upgrade your Factory client"
         ))
     } else {
         VersionCheck::Incompatible(format!(

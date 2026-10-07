@@ -2093,7 +2093,7 @@ fn show_desktop_notification_on_thread(
     ready_tx: std::sync::mpsc::SyncSender<std::io::Result<bool>>,
 ) {
     let class_name = wide_null("STATIC");
-    let window_name = wide_null("ao notifications");
+    let window_name = wide_null("Allternit Factory notifications");
     let hwnd = unsafe {
         CreateWindowExW(
             0,
@@ -2124,11 +2124,11 @@ fn show_desktop_notification_on_thread(
     if !notification.hIcon.is_null() {
         notification.uFlags |= NIF_ICON;
     }
-    copy_wide_truncated(&mut notification.szTip, "ao");
+    copy_wide_truncated(&mut notification.szTip, "Allternit Factory");
 
     if unsafe { Shell_NotifyIconW(NIM_ADD, &notification) } == 0 {
         let _ = ready_tx.send(Err(std::io::Error::other(
-            "failed to add ao notification-area icon",
+            "failed to add the Factory notification-area icon",
         )));
         unsafe {
             DestroyWindow(hwnd);
@@ -2146,7 +2146,7 @@ fn show_desktop_notification_on_thread(
             DestroyWindow(hwnd);
         }
         let _ = ready_tx.send(Err(std::io::Error::other(
-            "failed to show ao desktop notification",
+            "failed to show the Factory desktop notification",
         )));
         return;
     }

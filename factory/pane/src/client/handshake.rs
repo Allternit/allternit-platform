@@ -183,7 +183,7 @@ pub(super) fn do_handshake(
             return Err(ClientError::Protocol(protocol::FramingError::Io(
                 io::Error::new(
                     io::ErrorKind::InvalidData,
-                    "server does not support the stable ao endpoint protocol; update this machine",
+                    "server does not support the stable Factory endpoint protocol; update this machine",
                 ),
             )));
         };

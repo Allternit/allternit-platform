@@ -144,8 +144,8 @@ async fn async_pair(
                     .filter(|output| output.status.success())
                     .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
             })
-            .unwrap_or_else(|| "ao-node".to_string());
-        format!("{host} ao")
+            .unwrap_or_else(|| "factory-node".to_string());
+        format!("{host} Factory")
     });
 
     let start = match cloud.create_pairing(&identity, &name, &runtime_type).await {
@@ -163,7 +163,7 @@ async fn async_pair(
     };
 
     println!();
-    println!("Pair this ao node with Allternit:");
+    println!("Pair this Factory node with Allternit:");
     println!("  {}", start.verification_url);
     println!("  Code: {}", start.user_code);
     println!();
@@ -369,7 +369,7 @@ async fn async_serve(identity: NodeIdentity, port: u16) -> i32 {
     match cloud.heartbeat(&identity).await {
         Ok(()) => {}
         Err(HeartbeatError::Revoked) => {
-            eprintln!("error: this ao node was revoked — run `allternit-factory pane fabric pair --re-pair`");
+            eprintln!("error: this Factory node was revoked — run `allternit-factory pane fabric pair --re-pair`");
             return 1;
         }
         Err(HeartbeatError::Transport(err)) => {
@@ -568,9 +568,9 @@ fn status(_args: &[String]) -> std::io::Result<i32> {
                 .unwrap_or_default();
             println!("relay: {relay} (via shim at {gateway})");
             if sessions.is_empty() {
-                println!("live ao sessions: none");
+                println!("live Factory sessions: none");
             } else {
-                println!("live ao sessions: {}", sessions.join(", "));
+                println!("live Factory sessions: {}", sessions.join(", "));
             }
         }
         _ => println!("relay: not serving (run `allternit-factory pane fabric serve`)"),

@@ -251,7 +251,7 @@ fn config_reset_keys(args: &[String]) -> std::io::Result<i32> {
         "Removed [keys], [keys.indexed], and [[keys.command]] from {}.",
         path.display()
     );
-    println!("Built-in v2 keybindings will apply after ao restarts or reloads config.");
+    println!("Built-in v2 keybindings will apply after the pane engine restarts or reloads config.");
     println!("If an allternit-factory pane server is running, run `allternit-factory pane server reload-config` to apply this now.");
     println!(
         "To restore: cp {} {}",
