@@ -585,6 +585,8 @@
               "api/platform/numbers",
               "api/platform/messaging",
               "api/platform/voice",
+              "api/platform/channels",
+              "api/platform/twin",
               "api/platform/webhooks",
               "api/platform/usage",
               "api/platform/pricing",

@@ -292,6 +292,33 @@ pub trait EdgeBackend: Send + Sync {
     fn events_store(&self) -> Option<&dyn crate::routes::mcp_events::EventsStore> {
         None
     }
+    /// A live Platform API project key (`alt_live_…` / `alt_test_…`) on a project
+    /// the Platform API is switched on for; `None` = invalid, revoked or switched off.
+    async fn verify_project_key(&self, _token: &str) -> Result<Option<crate::routes::platform_v1::PlatformCaller>, String> {
+        Ok(None)
+    }
+}
+
+/// A Platform API project key on the agents server (spec §4 MCP): the project's
+/// hosted runtime answers, as the project's runtime owner. Needs the `agents`
+/// scope. A key bound to one account is refused (fail closed): the agents server
+/// lists every agent of the project, so it would reach other accounts' agents.
+fn project_key_caller(target: &Target, resource: &str, key: &crate::routes::platform_v1::PlatformCaller) -> Result<Caller, Response> {
+    let refuse = |status: StatusCode, code: &str, msg: &str| refusal(resource, status, json!({ "error": code, "message": msg }), None);
+    if *target != Target::Agents {
+        return Err(refuse(StatusCode::FORBIDDEN, "insufficient_scope", "A project API key opens the agents server (/mcp) only."));
+    }
+    if !key.has_scope("agents") {
+        return Err(refuse(StatusCode::FORBIDDEN, "insufficient_scope", "This API key lacks the 'agents' scope."));
+    }
+    if key.account_id.is_some() {
+        return Err(refuse(
+            StatusCode::FORBIDDEN,
+            "account_bound_key",
+            "This API key is bound to one account; the MCP agents server needs a project-wide key with the 'agents' scope.",
+        ));
+    }
+    Ok(Caller { user_id: crate::routes::platform_v1::hosting::runtime_owner(&key.project_id), client: format!("platform-key:{}", key.key_id), needs_approval: false })
 }
 
 /// Which of the owner's runtimes answered for a bot last time.
@@ -395,7 +422,19 @@ async fn serve(backend: &dyn EdgeBackend, base: &str, target: Target, method: &M
     let Some(token) = headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()).and_then(|v| v.strip_prefix("Bearer ")).map(str::trim).filter(|t| !t.is_empty()) else {
         return refusal(&resource, StatusCode::UNAUTHORIZED, json!({ "error": "unauthorized" }), None);
     };
-    let caller = if token.starts_with(crate::routes::vendor_bot_keys::KEY_PREFIX) {
+    let caller = if crate::routes::platform_v1::caller::is_project_key_token(token) {
+        match backend.verify_project_key(token).await {
+            Ok(Some(key)) => match project_key_caller(&target, &resource, &key) {
+                Ok(c) => c,
+                Err(resp) => return resp,
+            },
+            Ok(None) => return refusal(&resource, StatusCode::UNAUTHORIZED, json!({ "error": "invalid_token", "message": "Invalid or revoked API key" }), Some(("invalid_token", "The key is invalid"))),
+            Err(error) => {
+                tracing::warn!("mcp edge: project key lookup failed: {error}");
+                return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "error": "unavailable" }))).into_response();
+            }
+        }
+    } else if token.starts_with(crate::routes::vendor_bot_keys::KEY_PREFIX) {
         // An `allternit-bot` CLI key opens one vendor bot and nothing else.
         let invalid = |msg: &str| refusal(&resource, StatusCode::UNAUTHORIZED, json!({ "error": "invalid_token", "message": msg }), Some(("invalid_token", "The key is invalid")));
         let Target::Bot(bot) = &target else { return invalid("This key opens one vendor bot only") };
@@ -658,6 +697,17 @@ impl EdgeBackend for ProdBackend<'_> {
         crate::routes::vendor_bot_keys::verify_key(&self.state.db, token, vendor_bot_id).await.map_err(|e| e.to_string())
     }
 
+    async fn verify_project_key(&self, token: &str) -> Result<Option<crate::routes::platform_v1::PlatformCaller>, String> {
+        use crate::routes::platform_v1 as p;
+        match p::caller::authenticate(&self.state.db, Some(token)).await {
+            // The same switch as `/v1`: on for everyone, or for the beta owners only.
+            Ok(c) if p::platform_api_enabled() || p::beta_owners_from_env().contains(&c.owner_user_id) => Ok(Some(c)),
+            Ok(_) => Ok(None),
+            Err(e) if e.status == StatusCode::UNAUTHORIZED => Ok(None),
+            Err(e) => Err(e.message),
+        }
+    }
+
     async fn is_approved(&self, user_id: &str, client: &str, target: &str) -> Result<bool, String> {
         crate::routes::mcp_oauth_approvals::is_approved(&self.state.db, user_id, client, target).await.map_err(|e| e.to_string())
     }
@@ -741,11 +791,12 @@ mod tests {
         /// (owner, client, target) the owner approved.
         approvals: Vec<(String, String, String)>,
         events: crate::routes::mcp_events::testing::MemStore,
+        project_keys: HashMap<String, crate::routes::platform_v1::PlatformCaller>,
     }
 
     impl Fake {
         fn new(runtimes: &[&str]) -> Self {
-            Self { tokens: HashMap::new(), runtimes: runtimes.iter().map(|r| r.to_string()).collect(), replies: Mutex::new(HashMap::new()), calls: Mutex::new(vec![]), verified: AtomicUsize::new(0), cli_keys: HashMap::new(), approvals: vec![], events: Default::default() }
+            Self { tokens: HashMap::new(), runtimes: runtimes.iter().map(|r| r.to_string()).collect(), replies: Mutex::new(HashMap::new()), calls: Mutex::new(vec![]), verified: AtomicUsize::new(0), cli_keys: HashMap::new(), approvals: vec![], events: Default::default(), project_keys: HashMap::new() }
         }
         fn approved(mut self, user: &str, client: &str, target: &str) -> Self {
             self.approvals.push((user.into(), client.into(), target.into()));
@@ -757,6 +808,22 @@ mod tests {
         }
         fn cli_key(mut self, key: &str, bot: &str, owner: &str, id: &str) -> Self {
             self.cli_keys.insert(key.to_string(), (bot.to_string(), owner.to_string(), id.to_string()));
+            self
+        }
+        fn project_key(mut self, key: &str, project: &str, account: Option<&str>, scopes: &[&str]) -> Self {
+            let c = crate::routes::platform_v1::PlatformCaller {
+                project_id: project.into(),
+                project_env: crate::routes::platform_v1::ProjectEnv::Sandbox,
+                account_id: account.map(str::to_string),
+                key_id: format!("ak_{project}"),
+                scopes: scopes.iter().map(|s| s.to_string()).collect(),
+                owner_user_id: "dev".into(),
+                org_id: None,
+                plan: crate::routes::platform_v1::caller::Plan::Sandbox,
+                rpm_override: None,
+                call_cap_override: None,
+            };
+            self.project_keys.insert(key.to_string(), c);
             self
         }
         fn reply(self, runtime: &str, r: Result<(u16, &str), Unreached>) -> Self {
@@ -782,6 +849,9 @@ mod tests {
         }
         async fn verify_cli_key(&self, token: &str, vendor_bot_id: &str) -> Result<Option<(String, String)>, String> {
             Ok(self.cli_keys.get(token).filter(|k| k.0 == vendor_bot_id).map(|k| (k.1.clone(), k.2.clone())))
+        }
+        async fn verify_project_key(&self, token: &str) -> Result<Option<crate::routes::platform_v1::PlatformCaller>, String> {
+            Ok(self.project_keys.get(token).cloned())
         }
         async fn runtimes(&self, _user: &str) -> Result<Vec<String>, String> {
             Ok(self.runtimes.clone())
@@ -888,6 +958,40 @@ mod tests {
             assert!(headers.contains_key(header::WWW_AUTHENTICATE));
         }
         assert!(f.calls.lock().unwrap().is_empty());
+    }
+
+    // ── Platform API project keys (spec §4 MCP) ──────────────────────────────
+
+    const PKEY: &str = "alt_test_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const PKEY_BOUND: &str = "alt_test_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const PKEY_NOSCOPE: &str = "alt_test_cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+
+    #[tokio::test]
+    async fn a_project_key_with_the_agents_scope_reaches_the_projects_runtime_as_its_owner() {
+        let f = Fake::new(&["rt1"]).project_key(PKEY, "proj_9", None, &["agents"]);
+        let (status, _, _) = post(&f, Target::Agents, &bearer(PKEY), LIST).await;
+        assert_eq!(status, StatusCode::OK);
+        let calls = f.calls.lock().unwrap();
+        assert_eq!((calls[0].0.as_str(), calls[0].3.as_str()), ("platform:proj_9", "platform-key:ak_proj_9"));
+        assert_eq!(f.verified.load(Ordering::SeqCst), 0, "a project key is never treated as a Clerk token");
+    }
+
+    #[tokio::test]
+    async fn project_keys_fail_closed_bound_unscoped_unknown_or_on_a_vendor_bot() {
+        let f = Fake::new(&["rt1"])
+            .project_key(PKEY, "proj_9", None, &["agents"])
+            .project_key(PKEY_BOUND, "proj_9", Some("acct_a"), &["agents"])
+            .project_key(PKEY_NOSCOPE, "proj_9", None, &["twin"]);
+        let (s, _, b) = post(&f, Target::Agents, &bearer(PKEY_BOUND), LIST).await;
+        assert_eq!((s, b["error"].as_str()), (StatusCode::FORBIDDEN, Some("account_bound_key")));
+        let (s, _, b) = post(&f, Target::Agents, &bearer(PKEY_NOSCOPE), LIST).await;
+        assert_eq!((s, b["error"].as_str()), (StatusCode::FORBIDDEN, Some("insufficient_scope")));
+        let (s, _, _) = post(&f, bot("b-1"), &bearer(PKEY), LIST).await;
+        assert_eq!(s, StatusCode::FORBIDDEN);
+        let unknown = format!("alt_test_{}", "d".repeat(64));
+        let (s, _, b) = post(&f, Target::Agents, &bearer(&unknown), LIST).await;
+        assert_eq!((s, b["error"].as_str()), (StatusCode::UNAUTHORIZED, Some("invalid_token")));
+        assert!(f.calls.lock().unwrap().is_empty(), "nothing reaches a runtime");
     }
 
     // ── auth at the edge ──────────────────────────────────────────────────────

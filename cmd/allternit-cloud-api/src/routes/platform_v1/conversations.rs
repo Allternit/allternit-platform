@@ -247,19 +247,28 @@ async fn insert_message(db: &PgPool, conversation_id: &str, role: &str, content:
     Ok(with_object(m))
 }
 
-/// The agent's definition as the runtime takes it (`PUT /api/v1/platform/agents/{id}`).
-fn runtime_spec(a: &agents::Agent) -> Value {
-    json!({
+/// The agent's definition as the runtime takes it (`PUT /api/v1/platform/agents/{id}`):
+/// its settings plus the twin settings kept here (autonomy rules, the account's memory).
+async fn runtime_spec(db: &PgPool, a: &agents::Agent) -> Result<Value, PlatformError> {
+    let (rules,): (Value,) = sqlx::query_as("SELECT autonomy_rules FROM platform_agents WHERE id = $1").bind(&a.id).fetch_one(db).await?;
+    let memory = super::twin::account_memory_for_runtime(db, &a.account_id).await?;
+    Ok(json!({
         "name": a.name, "instructions": a.instructions, "greeting": a.greeting, "model": a.model,
         "voice": a.voice, "tools": a.tools, "autonomy": a.autonomy, "transferTargets": a.transfer_targets,
-        "accountId": a.account_id,
-    })
+        "accountId": a.account_id, "autonomyRules": rules, "accountMemory": memory,
+    }))
 }
 
-/// Make sure the runtime has the agent's current definition and the conversation has a session there.
-/// Returns the runtime, the session and whether the agent runs on the project's own model key.
-async fn prepare(state: &ApiState, host: &dyn AgentHost, caller: &PlatformCaller, conv: &ConvRow) -> Result<(HostRuntime, String, bool), PlatformError> {
-    let agent = agents::fetch_visible(state, caller, &conv.agent_id).await?;
+/// Make sure the project's runtime holds the agent's current definition (and the
+/// project's model key it runs on). Used before a turn, a channel connection, and
+/// right after the agent's twin settings change.
+pub(crate) async fn ensure_agent(state: &ApiState, host: &dyn AgentHost, caller: &PlatformCaller, agent_id: &str) -> Result<HostRuntime, PlatformError> {
+    Ok(ensure_agent_key(state, host, caller, agent_id).await?.0)
+}
+
+/// [`ensure_agent`], also saying whether the agent runs on the project's own model key.
+async fn ensure_agent_key(state: &ApiState, host: &dyn AgentHost, caller: &PlatformCaller, agent_id: &str) -> Result<(HostRuntime, bool), PlatformError> {
+    let agent = agents::fetch_visible(state, caller, agent_id).await?;
     // An agent on a provider's model runs on the project's own key.
     let own_key = match agent.model.split_once('/') {
         Some((provider, _)) => {
@@ -282,7 +291,7 @@ async fn prepare(state: &ApiState, host: &dyn AgentHost, caller: &PlatformCaller
                 return Err(PlatformError::api_error("model_key_sync_failed", "The hosted runtime refused the project's model key."));
             }
         }
-        let (status, body) = host.call(&rt, "PUT", &format!("/api/v1/platform/agents/{}", agent.id), &runtime_spec(&agent)).await?;
+        let (status, body) = host.call(&rt, "PUT", &format!("/api/v1/platform/agents/{}", agent.id), &runtime_spec(&state.db, &agent).await?).await?;
         if status >= 400 {
             tracing::warn!(agent = %agent.id, status, %body, "platform: runtime refused the agent");
             return Err(PlatformError::api_error("agent_sync_failed", "The hosted runtime refused this agent's definition."));
@@ -293,11 +302,19 @@ async fn prepare(state: &ApiState, host: &dyn AgentHost, caller: &PlatformCaller
             .execute(&state.db)
             .await?;
     }
+    Ok((rt, own_key.is_some()))
+}
+
+/// Make sure the runtime has the agent's current definition and the conversation has a session there.
+/// Returns the runtime, the session and whether the agent runs on the project's own model key.
+async fn prepare(state: &ApiState, host: &dyn AgentHost, caller: &PlatformCaller, conv: &ConvRow) -> Result<(HostRuntime, String, bool), PlatformError> {
+    let (rt, own_key) = ensure_agent_key(state, host, caller, &conv.agent_id).await?;
+    let agent_id = &conv.agent_id;
     let session = match (&conv.runtime_id, &conv.runtime_session_id) {
         (Some(r), Some(s)) if r == &rt.runtime_id => s.clone(),
         _ => {
             let (status, body) = host
-                .call(&rt, "POST", &format!("/api/v1/platform/agents/{}/sessions", agent.id), &json!({ "conversationId": conv.id }))
+                .call(&rt, "POST", &format!("/api/v1/platform/agents/{agent_id}/sessions"), &json!({ "conversationId": conv.id }))
                 .await?;
             let Some(sid) = body["sessionId"].as_str().filter(|_| status < 400).map(str::to_string) else {
                 tracing::warn!(conv = %conv.id, status, %body, "platform: runtime refused a session");
@@ -312,7 +329,7 @@ async fn prepare(state: &ApiState, host: &dyn AgentHost, caller: &PlatformCaller
             sid
         }
     };
-    Ok((rt, session, own_key.is_some()))
+    Ok((rt, session, own_key))
 }
 
 /// Who a turn's usage belongs to.

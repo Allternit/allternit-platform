@@ -717,7 +717,7 @@ async fn release_email(
 }
 
 /// Forget the bot's address and mailbox credentials; its reply settings stay.
-fn clear_email_channel(conn: &rusqlite::Connection, agent_id: &str) -> rusqlite::Result<usize> {
+pub(crate) fn clear_email_channel(conn: &rusqlite::Connection, agent_id: &str) -> rusqlite::Result<usize> {
     conn.execute(
         "UPDATE agent_identity_channels SET
              email_address = NULL, email_provider = NULL, email_send_enabled = 0, email_receive_enabled = 0,

@@ -2442,8 +2442,15 @@ pub(crate) fn bot_turn_system(db: &DbHandle, session_id: &str, bot_id: &str) -> 
             out.push_str(&format!("\n\n## What you remember\n\n{}", lines.join("\n")));
         }
     }
-    // One persona and shared memory across every bot of the owner (the twin).
-    if let Some(twin) = crate::twin_persona::context_block(&conn, &user_id, crate::twin_persona::Audience::Bot(bot_id)) {
+    // One persona and shared memory across every bot of the owner (the twin). A
+    // Platform API agent gets its own account's memory instead (one project
+    // runtime holds many accounts; `platform_agents::account_owner`).
+    let twin_owner = if user_id.starts_with("platform:") {
+        crate::platform_twin::agent_account(&conn, &user_id, bot_id).map(|a| crate::platform_agents::account_owner(&user_id, &a))
+    } else {
+        Some(user_id.clone())
+    };
+    if let Some(twin) = twin_owner.and_then(|o| crate::twin_persona::context_block(&conn, &o, crate::twin_persona::Audience::Bot(bot_id))) {
         out.push_str(&format!("\n\n{twin}"));
     }
     Some(out)

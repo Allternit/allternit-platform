@@ -1319,6 +1319,7 @@ async fn main() {
         // Platform API hosted agents: cloud-api relays agent upserts, sessions and turns for a
         // project's hosted runtime, signed with the device token (RelayedAuth verifies).
         .merge(allternit_api::platform_agents::platform_agents_router())
+        .merge(allternit_api::platform_twin::platform_twin_router())
         // Live desktop for a cloud computer: the browser's ws is tunnelled here
         // by cloud-api's relay; the viewer token (signed with the per-runtime
         // relay key) is the credential, no Clerk session on this hop.

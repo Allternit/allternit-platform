@@ -294,16 +294,22 @@ fn app_base() -> String {
     std::env::var("ALLTERNIT_APP_URL").unwrap_or_else(|_| "https://ai.allternit.com".to_string())
 }
 
-async fn install_h(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> Result<Response, ApiError> {
-    let Some(cfg) = app_config() else { return Ok(not_configured()) };
-    let user = resolve_user_scoped(&state.db, &headers, "compute").await?;
-    let url = format!(
+/// Slack's OAuth consent URL for the shared app, with a signed `state` naming
+/// `subject` (a Clerk user id, or a Platform API channel: `platform-channel:…`).
+pub fn authorize_url(cfg: &SlackAppConfig, subject: &str) -> String {
+    format!(
         "https://slack.com/oauth/v2/authorize?client_id={}&scope={}&redirect_uri={}&state={}",
         urlencoding::encode(&cfg.client_id),
         urlencoding::encode(SCOPES),
         urlencoding::encode(&redirect_uri()),
-        sign_state(&cfg.client_secret, &user.id, unix_now()),
-    );
+        sign_state(&cfg.client_secret, subject, unix_now()),
+    )
+}
+
+async fn install_h(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> Result<Response, ApiError> {
+    let Some(cfg) = app_config() else { return Ok(not_configured()) };
+    let user = resolve_user_scoped(&state.db, &headers, "compute").await?;
+    let url = authorize_url(&cfg, &user.id);
     Ok(Json(json!({ "url": url, "configured": true })).into_response())
 }
 
@@ -350,6 +356,17 @@ pub async fn complete_install(
     let expires_at = resp.get("expires_in").and_then(Value::as_i64).map(|secs| {
         chrono::Utc::now() + chrono::Duration::seconds(secs.saturating_sub(60))
     });
+    // A Platform API project and an Allternit user never take a workspace from
+    // each other (the team's events would move to the other one's runtime).
+    let holder: Option<String> = sqlx::query_scalar("SELECT user_id FROM slack_installs WHERE team_id = $1")
+        .bind(&team_id)
+        .fetch_optional(&state.db)
+        .await?;
+    if let Some(holder) = holder.filter(|h| h != user_id) {
+        if holder.starts_with("platform:") || user_id.starts_with("platform:") {
+            return Err(ApiError::Conflict("This Slack workspace is already connected to another Allternit account.".to_string()));
+        }
+    }
     let sealed = seal(state, &token);
     let refresh = resp.get("refresh_token").and_then(Value::as_str).unwrap_or_default();
     sqlx::query(
@@ -371,7 +388,7 @@ pub async fn complete_install(
     .bind(expires_at)
     .execute(&state.db)
     .await?;
-    Ok(json!({ "ok": true, "teamId": team_id }))
+    Ok(json!({ "ok": true, "teamId": team_id, "teamName": resp.pointer("/team/name").and_then(Value::as_str).unwrap_or_default() }))
 }
 
 async fn install_callback_h(State(state): State<Arc<ApiState>>, Query(q): Query<CallbackQuery>) -> Response {
@@ -395,6 +412,17 @@ async fn install_callback_h(State(state): State<Arc<ApiState>>, Query(q): Query<
         Ok(u) => u,
         Err(_) => return redirect("slack=error&reason=bad_state"),
     };
+    // A Platform API end customer connecting Slack for one of their agents.
+    if let Some(subject) = user_id.strip_prefix(super::platform_v1::channels::SLACK_STATE_PREFIX) {
+        let host = super::platform_v1::hosting::host_for(&state, None);
+        return match super::platform_v1::channels::finish_slack(&state, host.as_ref(), &ReqwestSlackHttp, &cfg, subject, code).await {
+            Ok(f) => match f.redirect() {
+                Some(url) => (StatusCode::SEE_OTHER, [("location", url)]).into_response(),
+                None => axum::response::Html(super::platform_v1::channels::finish_page(&f)).into_response(),
+            },
+            Err(e) => (e.status, axum::response::Html(format!("<!doctype html><meta charset=\"utf-8\"><title>Slack not connected</title><p style=\"font-family:system-ui,sans-serif\">{}</p>", e.message.replace('<', "&lt;")))).into_response(),
+        };
+    }
     match complete_install(&state, &ReqwestSlackHttp, &cfg, code, &user_id).await {
         Ok(v) => redirect(&format!("slack=connected&team={}", v["teamId"].as_str().unwrap_or_default())),
         Err(e) => redirect(&format!("slack=error&reason={}", urlencoding::encode(&e.to_string()))),

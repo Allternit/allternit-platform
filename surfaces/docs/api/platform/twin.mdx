@@ -1,0 +1,65 @@
+---
+title: "Twin"
+description: "People, inbox, approvals, autonomy and memory for an account's agents."
+---
+
+The twin layer is what an account's agents know and what they are waiting on. Scope: `twin`. Every route is per account (or per agent, which belongs to one account). Another account's items answer `404`; a key bound to another account gets `403 account_mismatch`.
+
+## People
+
+| Method | Path | |
+|---|---|---|
+| `GET` | `/v1/accounts/{id}/people` | People the account's agents talk to (cursor `limit`/`after`) |
+| `GET` | `/v1/accounts/{id}/people/{person_id}` | One person, with `identities` and `facts` |
+| `PATCH` | `/v1/accounts/{id}/people/{person_id}` | `{name?, notes?, org?}` |
+
+A person is linked to an account through its agents' conversations. Only facts the account's own agents learned are shown. If the same person also talks to another account's agents (for example the same phone number), `PATCH` answers `409 person_shared`.
+
+## Inbox and approvals
+
+| Method | Path | |
+|---|---|---|
+| `GET` | `/v1/accounts/{id}/inbox?status=open\|resolved\|all` | Items the agents left for a person (held, drafted, sent-and-told actions) |
+| `POST` | `/v1/accounts/{id}/inbox/{item_id}/resolve` | Mark resolved |
+| `GET` | `/v1/accounts/{id}/approvals?status=pending\|approved\|denied\|all` | Actions held for a human under the agent's autonomy |
+| `POST` | `/v1/accounts/{id}/approvals/{approval_id}/approve` | Let the held action go ahead |
+| `POST` | `/v1/accounts/{id}/approvals/{approval_id}/deny` | Refuse it |
+
+The API key that approves is recorded as the actor. Payments are always held for approval.
+
+## Autonomy
+
+`GET` / `PUT /v1/agents/{id}/autonomy`:
+
+```json
+{ "level": "tell",
+  "rules": [
+    { "channel": "email", "level": "ask" },
+    { "person": "+16515550100", "level": "draft" },
+    { "channel": "chat", "level": "limits", "limits": { "max_messages_per_day": 50, "allowed_actions": ["message"] } }
+  ] }
+```
+
+Levels: `draft`, `ask`, `tell`, `limits`. `channel` is `email`, `sms`, `call`, `chat` (every chat channel) or one chat channel; a person rule beats a channel rule. `PUT` replaces every rule. `level` is the agent's `autonomy`.
+
+## Memory
+
+| Method | Path | |
+|---|---|---|
+| `GET` | `/v1/accounts/{id}/memory` | Facts every agent of the account knows |
+| `POST` | `/v1/accounts/{id}/memory` | `{content, subject?, kind?, source_ref?}` (`kind`: `fact`, `preference`, `schedule_rule`, `person`, `decision`) |
+| `DELETE` | `/v1/accounts/{id}/memory/{memory_id}` | Remove one |
+
+At most 500 items per account. Passwords, payment details and government ids are refused. Changes reach the agents on their next sync (right away when the hosted runtime is up).
+
+## Webhooks
+
+`approval.requested`, `inbox.item.created` and `message.received` are sent for the account of the agent they came from. See [Webhooks](/api/platform/webhooks).
+
+## MCP
+
+A project key with the `agents` scope can open the MCP agents server at `https://mcp.allternit.com/mcp` (`Authorization: Bearer alt_live_…`). Keys bound to one account are refused there (`403 account_bound_key`) because that server lists every agent of the project.
+
+## For contributors
+
+People, inbox and approvals live on the project's hosted runtime and are relayed (`cmd/allternit-api/src/platform_twin.rs`). Autonomy rules (`platform_agents.autonomy_rules`) and memory (`platform_memory`) are kept in cloud-api (migration `076_platform_twin.sql`) and sent to the runtime with the agent definition. Hosted agents don't get the `people_lookup` / `people_remember` tools, since one runtime holds every account's people.

@@ -483,7 +483,9 @@ async fn handle_allternit_mail_mcp(
                 tools.extend(own.iter().cloned());
             }
             tools.extend(crate::phone_outbound::mcp_tools(&state.db, user_id));
-            tools.extend(crate::people::mcp_tools());
+            if !user_id.starts_with("platform:") {
+                tools.extend(crate::people::mcp_tools());
+            }
             tools.extend(crate::platform_tools::mcp_tools(user_id));
             mcp_protocol::ordering::sort_tools(&mut tools);
             Some(rpc_ok(json!({ "tools": tools })))
@@ -507,6 +509,11 @@ async fn handle_allternit_mail_mcp(
                 .unwrap_or_else(|| json!({}));
             if phone {
                 return Some(rpc_tool(crate::phone_outbound::call_mcp_tool(state, user_id, name, args).await));
+            }
+            if people && user_id.starts_with("platform:") {
+                // A Platform API project runtime holds many accounts' people; these
+                // tools can't tell which account is asking, so they never run there.
+                return Some(rpc_tool(Err::<Value, _>((StatusCode::FORBIDDEN, Json(json!({ "error": "people_tool", "message": "People tools aren't available to hosted agents." }))))));
             }
             if platform {
                 // The calling session (set by gizzi) names the agent; never the model's input.
