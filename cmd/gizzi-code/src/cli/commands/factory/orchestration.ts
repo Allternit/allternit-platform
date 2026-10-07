@@ -12,10 +12,60 @@
 import type { Argv } from "yargs"
 import { cmd } from "@/cli/commands/cmd"
 import { engineGroup, engineVerb } from "@/cli/factory/forward"
+import { OrchestrationThreadsCommand } from "@/cli/commands/thread"
+import { platformRequest } from "@/runtime/bots/platform-api"
 import { withLocalMailCommands } from "@/cli/commands/mail"
 import { AcCommand } from "@/cli/commands/ac"
 
 const P = "orchestration" as const
+
+/**
+ * `gizzi orchestration coordinate <project> "…"`: hand a request to the
+ * project's Coordinator (Al), who plans it into threads for the project's
+ * bots. The Coordinator lives with the account in allternit-api, so this
+ * uses the person's own sign-in; the threads it opens show up in
+ * `gizzi orchestration threads list` and on the project page.
+ */
+const CoordinateCommand = cmd({
+  command: "coordinate <project> <text..>",
+  describe: "Hand a request to the project's Coordinator, who plans it into threads",
+  builder: (y: Argv) =>
+    y
+      .positional("project", { type: "string", demandOption: true, describe: "project id" })
+      .positional("text", { type: "string", array: true, demandOption: true })
+      .option("dry-run", { type: "boolean", default: false, describe: "print what would be sent and send nothing" })
+      .option("json", { type: "boolean", default: false, describe: "print the Coordinator's reply as JSON" }),
+  handler: async (args) => {
+    const project = String(args.project)
+    const text = (args.text as string[]).join(" ").trim()
+    if (!text) {
+      console.error("error: coordinate needs the request text")
+      process.exit(64)
+    }
+    if (args["dry-run"]) {
+      console.log(JSON.stringify({ dryRun: true, plan: { project, post: "the request to the project's Coordinator", text } }))
+      return
+    }
+    try {
+      const res = await platformRequest<{ message: unknown }>(
+        "POST",
+        `/api/v1/projects/${encodeURIComponent(project)}/messages`,
+        { text },
+      )
+      if (args.json) {
+        console.log(JSON.stringify(res))
+        return
+      }
+      const m = res.message as { content?: string; text?: string } | string
+      console.log(typeof m === "string" ? m : (m?.content ?? m?.text ?? JSON.stringify(m)))
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      if (args.json) console.log(JSON.stringify({ error: { code: /not found/i.test(msg) ? "not_found" : "transport", fact: msg, action: "Check the project id (gizzi workspace campaign list) and that you're signed in." } }))
+      else console.error(`error: ${msg}`)
+      process.exit(/not found/i.test(msg) ? 2 : 3)
+    }
+  },
+})
 
 export const OrchestrationCommand = cmd({
   command: "orchestration",
@@ -40,13 +90,7 @@ export const OrchestrationCommand = cmd({
           options: { all: { type: "boolean", describe: "every queued message, not just the oldest" } },
         }),
       )
-      .command(
-        engineGroup(P, "threads", "Factory threads (standing / task) across every binding", [
-          { command: "list", describe: "list threads" },
-          { command: "show <thread>", describe: "show a thread" },
-          { command: "new", describe: "open a thread", mutation: true },
-        ]),
-      )
+      .command(OrchestrationThreadsCommand)
       .command({
         command: "mail",
         describe: "Factory mail (list, read, send, decide) and the agent-email rail",
@@ -76,7 +120,7 @@ export const OrchestrationCommand = cmd({
           { command: "consult", describe: "ask for a consult", mutation: true },
         ]),
       )
-      .command(engineVerb(P, { command: "coordinate <project> <text..>", describe: "hand a goal to the Coordinator", mutation: true }))
+      .command(CoordinateCommand)
       .command(AcCommand)
       .demandCommand(1, "Specify an orchestration command (see gizzi orchestration --help)"),
   handler: () => {},

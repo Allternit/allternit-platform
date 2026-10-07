@@ -285,7 +285,7 @@ pub enum TemplateCmd {
     Show { template: String },
     /// Parse a template (id or file) and report its parameters.
     Check { template: String },
-    /// Save a DAG as a template.
+    /// Check a template file and save it to this workspace (--id, --force, --dry-run).
     Save(Planned),
 }
 
@@ -675,17 +675,19 @@ fn orchestration(ctx: &Ctx, cmd: OrchestrationCmd) -> u8 {
         OrchestrationCmd::Capture { to, lines } => crate::part::capture(ctx, to, lines),
         OrchestrationCmd::Transcript { to, tail } => crate::part::transcript(ctx, to, tail),
         OrchestrationCmd::Drain { to, all, dry_run: dry } => crate::part::drain(ctx, to, all, dry),
-        OrchestrationCmd::Threads(_) => not_built(
+        // Threads and the Coordinator live with the account in allternit-api,
+        // so Gizzi serves them with the person's own sign-in.
+        OrchestrationCmd::Threads(_) => fail(
             ctx,
-            "orchestration",
-            "threads",
-            "Threads live in Bot Mode today; the engine API for them is not built.",
+            Code::Usage,
+            "orchestration threads lives with your account, not in this workspace",
+            Some("Use `gizzi orchestration threads list|show|new|steer|resolve`."),
         ),
-        OrchestrationCmd::Coordinate(_) => not_built(
+        OrchestrationCmd::Coordinate(_) => fail(
             ctx,
-            "orchestration",
-            "coordinate",
-            "The Coordinator is not wired to the engine yet.",
+            Code::Usage,
+            "orchestration coordinate lives with your account, not in this workspace",
+            Some("Use `gizzi orchestration coordinate <project> \"…\"`."),
         ),
         OrchestrationCmd::Mail(rest) => rails_passthrough(ctx, &["mail"], rest, false),
         OrchestrationCmd::Attention(rest) => rails_passthrough(ctx, &["attention"], rest, false),
@@ -738,12 +740,7 @@ fn workflows(ctx: &Ctx, cmd: WorkflowsCmd) -> u8 {
 
 fn template(ctx: &Ctx, cmd: TemplateCmd) -> u8 {
     match cmd {
-        TemplateCmd::Save(_) => not_built(
-            ctx,
-            "workflows",
-            "template save",
-            "Write the template file under .allternit/rails/templates/ by hand for now.",
-        ),
+        TemplateCmd::Save(p) => crate::work::template_save(ctx, &p.args),
         TemplateCmd::List => crate::work::template(ctx, "list", None),
         TemplateCmd::Show { template } => crate::work::template(ctx, "show", Some(&template)),
         TemplateCmd::Check { template } => crate::work::template(ctx, "check", Some(&template)),
@@ -828,7 +825,15 @@ fn workspace(ctx: &Ctx, cmd: WorkspaceCmd) -> u8 {
         }
         WorkspaceCmd::Proof(cmd) => crate::work::proof_cmd(ctx, cmd),
         WorkspaceCmd::Board { campaign } => crate::work::board_cmd(ctx, &campaign),
-        WorkspaceCmd::Tasks(_) => not_built(ctx, "workspace", "tasks", "The cowork queue has not folded in yet."),
+        // Tasks live with the account in allternit-api (`/api/factory/tasks/*`),
+        // not in this workspace's ledger, so Gizzi serves them with the
+        // person's own sign-in.
+        WorkspaceCmd::Tasks(_) => fail(
+            ctx,
+            Code::Usage,
+            "workspace tasks lives with your account, not in this workspace",
+            Some("Use `gizzi workspace tasks board` (or `tasks`, `queue`); the app shows the same board."),
+        ),
     }
 }
 

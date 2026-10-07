@@ -157,7 +157,9 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
       if (['factory/agents.mdx', 'factory/overview.mdx', 'factory/api-reference.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // Memory Drive is shared with other agents (install steps for Claude Code, Codex, their
       // session ids), and hosted agents name provider/model ids; these pages have to name them.
-      if (['guides/memory-drive.mdx', 'core/memory-drive.mdx', 'cli/memory.mdx', 'api/platform/agents.mdx'].some((p) => mdxPath.endsWith(p))) continue;
+      if (['guides/memory-drive.mdx', 'core/memory-drive.mdx', 'cli/memory.mdx', 'api/platform/agents.mdx', 'api/memory-drive.mdx'].some((p) => mdxPath.endsWith(p))) continue;
+      // Release notes describe those same import/share features by the apps' names.
+      if (mdxPath.endsWith('release-notes.mdx')) continue;
       // Provider env vars (OPENAI_API_KEY etc.) are configuration, not endorsement.
       if (mdxPath.endsWith('tools/open-notebook.mdx')) continue;
       fail(

@@ -123,6 +123,81 @@ pub fn template(ctx: &Ctx, cmd: &str, template: Option<&str>) -> u8 {
     0
 }
 
+/// `workflows template save <file> [--id <id>] [--force] [--dry-run]`:
+/// check a template file (the same parse and validation as `template
+/// check`), then copy it into the workspace's templates folder as
+/// `<id>.md` / `<id>.json`. Never overwrites a workspace template without
+/// `--force`; an id equal to a built-in's overrides it in this workspace.
+pub fn template_save(ctx: &Ctx, args: &[String]) -> u8 {
+    let mut file: Option<String> = None;
+    let mut id: Option<String> = None;
+    let (mut force, mut dry_run) = (false, false);
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--force" => force = true,
+            "--dry-run" => dry_run = true,
+            "--json" => {}
+            "--id" => match it.next() {
+                Some(v) => id = Some(v.clone()),
+                None => return fail(ctx, Code::Usage, "--id needs a value", None),
+            },
+            _ if a.starts_with("--id=") => id = Some(a["--id=".len()..].to_string()),
+            _ if a.starts_with("--") => return fail(ctx, Code::Usage, &format!("unknown option {a}"), None),
+            _ if file.is_none() => file = Some(a.clone()),
+            _ => return fail(ctx, Code::Usage, &format!("unexpected argument {a}"), None),
+        }
+    }
+    let Some(file) = file else {
+        return fail(ctx, Code::Usage, "template save needs a template file (.md or .json)", Some("allternit-factory workflows template save <file> [--id <id>]"));
+    };
+    let src = PathBuf::from(&file);
+    let ext = match src.extension().and_then(|e| e.to_str()) {
+        Some(e @ ("md" | "markdown" | "json")) => if e == "json" { "json" } else { "md" },
+        _ => return fail(ctx, Code::Usage, &format!("{file} is not a .md or .json template"), None),
+    };
+    if !src.is_file() {
+        return fail(ctx, Code::NotFound, &format!("no template file at {file}"), None);
+    }
+    let t = match TemplateStore::load_file(&src) {
+        Ok(t) => t,
+        Err(e) => return fail(ctx, Code::Usage, &format!("{e:#}"), Some("Fix the template, then run `workflows template check <file>`.")),
+    };
+    if let Err(e) = t.validate() {
+        return fail(ctx, Code::Usage, &format!("{e:#}"), Some("Fix the template, then run `workflows template check <file>`."));
+    }
+    let id = id.unwrap_or_else(|| src.file_stem().and_then(|s| s.to_str()).unwrap_or("template").to_string());
+    if id.is_empty() || id.contains('/') || id.contains('\\') || id.contains("..") {
+        return fail(ctx, Code::Usage, &format!("invalid template id {id:?}"), None);
+    }
+    let dir = ctx.root_dir().join(TEMPLATE_DIR);
+    let dest = dir.join(format!("{id}.{ext}"));
+    let other = dir.join(format!("{id}.{}", if ext == "json" { "md" } else { "json" }));
+    let exists = dest.exists() || other.exists();
+    if exists && !force {
+        return fail(ctx, Code::Refused, &format!("a template {id} already exists in this workspace"), Some("Pick another --id, or pass --force to replace it."));
+    }
+    let plan = json!({ "id": id, "name": t.name, "steps": t.steps.len(), "path": dest.display().to_string(), "replaces": exists });
+    if dry_run {
+        if ctx.json {
+            return ok_json(json!({ "dryRun": true, "plan": plan }));
+        }
+        println!("would save {} ({} steps) to {}{}", id, t.steps.len(), dest.display(), if exists { " (replacing)" } else { "" });
+        return 0;
+    }
+    if let Err(e) = std::fs::create_dir_all(&dir).and_then(|_| std::fs::copy(&src, &dest).map(|_| ())) {
+        return fail(ctx, Code::Internal, &format!("saving {}: {e}", dest.display()), None);
+    }
+    if other.exists() {
+        let _ = std::fs::remove_file(&other);
+    }
+    if ctx.json {
+        return ok_json(json!({ "saved": plan }));
+    }
+    println!("saved {} ({} steps) to {}", id, t.steps.len(), dest.display());
+    0
+}
+
 /// `role:` executors a template uses, in step order, deduped.
 fn template_roles(t: &Template) -> Vec<String> {
     let mut seen = BTreeSet::new();

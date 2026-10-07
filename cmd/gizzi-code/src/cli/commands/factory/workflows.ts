@@ -39,7 +39,15 @@ export const WorkflowsCommand = cmd({
           { command: "list", describe: "list templates" },
           { command: "show <template>", describe: "show a template" },
           { command: "check <path>", describe: "validate a template" },
-          { command: "save <path>", describe: "save a template", mutation: true },
+          {
+            command: "save <path>",
+            describe: "check a template file and save it to this workspace",
+            mutation: true,
+            options: {
+              id: { type: "string", describe: "template id (default: the file name)" },
+              force: { type: "boolean", describe: "replace a workspace template with the same id" },
+            },
+          },
         ]),
       )
       .command(
