@@ -337,6 +337,9 @@ pub fn classify_error(err: &McpError) -> Failure {
                 _ => Failure { status: "error", code: Some(code), reason: "connector_error".into(), message: message.clone() },
             }
         }
+        McpError::Transport(TransportError::Http { status: 403, message }) if mcp_apps::approval_url_in(message).is_some() => {
+            approval_failure(mcp_apps::approval_url_in(message).unwrap_or_default())
+        }
         McpError::Transport(TransportError::Http { status: 401 | 403, .. }) | McpError::OAuth(_) => {
             Failure::reauth(None, "the connector rejected its credentials; reconnect it")
         }
@@ -345,7 +348,15 @@ pub fn classify_error(err: &McpError) -> Failure {
     }
 }
 
+/// The connector signed in, but its owner must still approve this app; `message` is the approve link.
+fn approval_failure(url: String) -> Failure {
+    Failure { status: "error", code: None, reason: "approval_required".into(), message: url }
+}
+
 fn apps_failure(e: mcp_apps::AppsError) -> Failure {
+    if e.code == "connector_approval_required" {
+        return approval_failure(e.message);
+    }
     if e.code == "connector_unauthorized" {
         Failure::reauth(None, e.message)
     } else {
@@ -593,7 +604,8 @@ pub fn due_for_refresh(refresh_before: Option<&str>, now: chrono::DateTime<chron
 
 /// Failure reasons [`tick`] retries by itself.
 pub fn is_transient(reason: &str) -> bool {
-    matches!(reason, "connector_unreachable" | "connector_timeout" | "cloud_unreachable" | "not_paired" | "timeout" | "connection_refused" | "http_5xx")
+    // `approval_required` heals once the owner approves the app on their account.
+    matches!(reason, "connector_unreachable" | "connector_timeout" | "cloud_unreachable" | "not_paired" | "timeout" | "connection_refused" | "http_5xx" | "approval_required")
 }
 
 /// One pass of the lifecycle loop. Returns how many rows it acted on.
@@ -811,7 +823,10 @@ async fn list_h(State(state): State<Arc<AppState>>, Extension(ctx): Extension<Ct
     }
     let (supported, events, error) = match connector_events(&state, &ctx, &user.user_id, &id).await {
         Ok((s, e)) => (s, e, Value::Null),
-        Err(f) => (false, vec![], json!({ "reason": f.reason, "message": f.message, "needsReauth": f.status == "needs_reauth" })),
+        Err(f) => {
+            let approve_url = (f.reason == "approval_required").then(|| f.message.clone());
+            (false, vec![], json!({ "reason": f.reason, "message": f.message, "needsReauth": f.status == "needs_reauth", "approveUrl": approve_url }))
+        }
     };
     Json(json!({
         "connectorId": id,
