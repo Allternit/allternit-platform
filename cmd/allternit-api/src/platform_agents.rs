@@ -17,7 +17,8 @@
 //! A session whose rules can't be applied is not handed out (fail closed).
 //!
 //! **Own model keys.** `anthropic/…`, `openai/…` and `xai/…` agents run on the
-//! project's key, set as gizzi provider auth on this runtime (`PUT /auth/{provider}`).
+//! project's key, set as gizzi provider auth on this runtime (`PUT /auth/{provider}`),
+//! after which gizzi's instance is reloaded so the key applies to the next turn.
 //!
 //! The bot id is the agent id. A bot answers only its signed owner. Turns run
 //! through the same turner as phone calls ([`crate::voice_calls::production_turner`]),
@@ -289,7 +290,17 @@ async fn gizzi_auth(method: reqwest::Method, provider: &str, body: Option<Value>
         req = req.json(&b);
     }
     let res = req.send().await.map_err(|e| e.to_string())?;
-    if res.status().is_success() { Ok(()) } else { Err(format!("gizzi answered {}", res.status())) }
+    if !res.status().is_success() {
+        return Err(format!("gizzi answered {}", res.status()));
+    }
+    // gizzi reads provider keys once per instance; reload it so the key applies to
+    // the next turn. A platform runtime serves one project and keys change rarely.
+    let res = client
+        .post(format!("{}/instance/dispose", crate::agent_session_routes::gizzi_base()))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if res.status().is_success() { Ok(()) } else { Err(format!("gizzi reload answered {}", res.status())) }
 }
 
 /// Only a platform runtime (owner `platform:…`) takes a project's model keys.

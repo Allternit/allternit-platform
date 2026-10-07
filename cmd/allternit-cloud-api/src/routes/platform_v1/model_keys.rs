@@ -4,7 +4,8 @@
 //! project's key for that provider; `allternit` uses Allternit's routed model and
 //! needs none. Keys are encrypted at rest with the credential cipher and only a
 //! masked form is ever returned. Before the next turn the project's hosted runtime
-//! gets the key (see `conversations::prepare`). Scope `agents`; not for
+//! gets the key (see `conversations::prepare`); setting a key marks the project's
+//! agents for a resync so a rotated key reaches the runtime too. Scope `agents`; not for
 //! account-bound keys (a model key is project-wide).
 
 use std::sync::Arc;
@@ -121,7 +122,13 @@ async fn put_key(
     caller.require_unbound()?;
     provider_ok(&provider)?;
     let c = cipher(&state)?;
-    Ok(Json(store_key(&state.db, c, &caller.project_id, &provider, &body.api_key).await?))
+    let key = store_key(&state.db, c, &caller.project_id, &provider, &body.api_key).await?;
+    // The runtime gets keys when an agent syncs; resync so a new or rotated key reaches it on the next turn.
+    sqlx::query("UPDATE platform_agents SET synced_at = NULL WHERE project_id = $1")
+        .bind(&caller.project_id)
+        .execute(&state.db)
+        .await?;
+    Ok(Json(key))
 }
 
 async fn list_keys(State(state): State<Arc<ApiState>>, caller: PlatformCaller) -> Result<Json<Value>, PlatformError> {

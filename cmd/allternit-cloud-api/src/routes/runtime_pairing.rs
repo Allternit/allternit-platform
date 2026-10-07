@@ -1098,6 +1098,16 @@ async fn authenticate_runtime(
     runtime_device_for_token(&state.db, token, Some(expected_id)).await
 }
 
+/// The device owner's email. A Platform API runtime's owner (`platform:…`) has
+/// none, so the column is read as nullable (a NULL here was a 500).
+async fn owner_email(db: &PgPool, user_id: &str) -> Result<Option<String>, sqlx::Error> {
+    Ok(sqlx::query_scalar::<_, Option<String>>("SELECT email FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_optional(db)
+        .await?
+        .flatten())
+}
+
 /// Token introspection for peer services (e.g. the local allternit-api
 /// proxying a headless gizzi MCP client that holds a device token). Public
 /// like the pairing exchange endpoint: possession of a valid device token is
@@ -1111,10 +1121,7 @@ async fn verify_device_token(
     let token = device_token_from_headers(&headers)
         .ok_or_else(|| ApiError::Unauthorized("Runtime credential required".to_string()))?;
     let device = runtime_device_for_token(&state.db, token, None).await?;
-    let email: Option<String> = sqlx::query_scalar("SELECT email FROM users WHERE id = $1")
-        .bind(&device.user_id)
-        .fetch_optional(&state.db)
-        .await?;
+    let email = owner_email(&state.db, &device.user_id).await?;
     // The device owner's Clerk org roles, so the peer service can keep an
     // org owner/admin an owner/admin locally (it never sees the Clerk
     // session). Best effort: empty on any Clerk failure.
@@ -1744,6 +1751,19 @@ mod tests {
         .execute(pool)
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn owner_email_is_none_for_an_owner_without_one() {
+        let pool = device_pool().await;
+        sqlx::query("CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT)").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO users (id, email) VALUES ('user_9', 'a@b.test'), ('platform:proj_1', NULL)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(owner_email(&pool, "user_9").await.unwrap().as_deref(), Some("a@b.test"));
+        assert_eq!(owner_email(&pool, "platform:proj_1").await.unwrap(), None);
+        assert_eq!(owner_email(&pool, "user_missing").await.unwrap(), None);
     }
 
     #[tokio::test]

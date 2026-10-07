@@ -34,7 +34,10 @@ struct Ctx {
 }
 
 async fn ctx() -> Ctx {
-    let state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
+    ctx_from(test_state(Arc::new(MockGateway::new(None, vec![]))).await).await
+}
+
+async fn ctx_from(state: Arc<ApiState>) -> Ctx {
     for sql in [
         include_str!("../../../migrations_pg/003_api_keys.sql"),
         include_str!("../../../migrations_pg/050_platform_api_foundation.sql"),
@@ -85,7 +88,17 @@ impl AgentHost for FakeHost {
 }
 
 async fn ctx_with_host() -> (Ctx, Arc<FakeHost>) {
-    let c = ctx().await;
+    host_on(ctx().await)
+}
+
+/// Like [`ctx_with_host`], with a credential cipher so model keys can be stored.
+async fn ctx_with_host_and_cipher() -> (Ctx, Arc<FakeHost>) {
+    let mut state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
+    Arc::get_mut(&mut state).expect("fresh state").credential_cipher = Some(Arc::new(allternit_cloud_core::CredentialCipher::new("test cipher key material")));
+    host_on(ctx_from(state).await)
+}
+
+fn host_on(c: Ctx) -> (Ctx, Arc<FakeHost>) {
     let host = Arc::new(FakeHost::default());
     let dyn_host: Arc<dyn AgentHost> = host.clone();
     let app = router_gated(&c.state, Gate::Forced(true)).layer(axum::Extension(dyn_host)).with_state(c.state.clone());
@@ -378,6 +391,32 @@ async fn model_keys_are_stored_encrypted_and_masked() {
     let (s, _) = call(&c.app, "DELETE", "/v1/model_keys/anthropic", &key, None).await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(call(&c.app, "DELETE", "/v1/model_keys/anthropic", &key, None).await.0, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn a_set_or_rotated_model_key_reaches_the_runtime_before_the_next_turn() {
+    let (c, host) = ctx_with_host_and_cipher().await;
+    let p = project(&c, "dev_11", ProjectEnv::Sandbox).await;
+    let key = mint(&c, &p, None, &["agents"]).await;
+    let acct = account(&c, &key, "A").await;
+    let (_, agent) = call(&c.app, "POST", "/v1/agents", &key, Some(json!({ "account_id": acct, "name": "Ada", "model": "openai/gpt-5-mini" }))).await;
+    let (_, conv) = call(&c.app, "POST", &format!("/v1/agents/{}/conversations", agent["id"].as_str().unwrap()), &key, None).await;
+    let send = |text: &'static str| {
+        let (app, key, path) = (c.app.clone(), key.clone(), format!("/v1/conversations/{}/messages", conv["id"].as_str().unwrap()));
+        async move { call(&app, "POST", &path, &key, Some(json!({ "content": text }))).await }
+    };
+    let key_pushes = || host.calls.lock().unwrap().iter().filter(|(m, p)| m == "PUT" && p == "/api/v1/platform/model-keys/openai").count();
+
+    let (s, _) = call(&c.app, "PUT", "/v1/model_keys/openai", &key, Some(json!({ "api_key": "sk-openai-first-123456" }))).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(send("one").await.1["content"], "echo: one");
+    assert_eq!(key_pushes(), 1, "the key goes with the first sync");
+    send("two").await;
+    assert_eq!(key_pushes(), 1, "not re-sent while nothing changed");
+
+    call(&c.app, "PUT", "/v1/model_keys/openai", &key, Some(json!({ "api_key": "sk-openai-second-123456" }))).await;
+    send("three").await;
+    assert_eq!(key_pushes(), 2, "a rotated key reaches the runtime before the next turn");
 }
 
 #[tokio::test]
