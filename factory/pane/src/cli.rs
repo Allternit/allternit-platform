@@ -27,7 +27,6 @@ pub(crate) mod ao;
 mod api;
 mod completion;
 mod integration;
-mod machine;
 mod notification;
 mod pane;
 mod plugin;
@@ -123,7 +122,6 @@ pub fn maybe_run(args: &[String]) -> std::io::Result<CommandOutcome> {
         "api" => api::run_api_command(&args[2..])?,
         "completion" | "completions" => completion::run_completion_command(&args[2..])?,
         "config" => run_config_command(&args[2..])?,
-        "machine" => machine::run_machine_command(&args[2..])?,
         "workspace" => workspace::run_workspace_command(&args[2..])?,
         "worktree" => worktree::run_worktree_command(&args[2..])?,
         "tab" => tab::run_tab_command(&args[2..])?,
@@ -253,7 +251,7 @@ fn config_reset_keys(args: &[String]) -> std::io::Result<i32> {
         "Removed [keys], [keys.indexed], and [[keys.command]] from {}.",
         path.display()
     );
-    println!("Built-in v2 keybindings will apply after ao restarts or reloads config.");
+    println!("Built-in v2 keybindings will apply after the pane engine restarts or reloads config.");
     println!("If an allternit-factory pane server is running, run `allternit-factory pane server reload-config` to apply this now.");
     println!(
         "To restore: cp {} {}",

@@ -1530,15 +1530,23 @@ mod tests {
                 panic!("expected retained Windows input events");
             };
             assert_eq!(events.len(), 1, "logical input batches must stay separate");
-            shortcut_preserved |=
-                crate::client::clipboard_images::should_bridge_clipboard_image_events(
-                    &events,
-                    true,
-                    Some((
-                        crossterm::event::KeyCode::Char('v'),
-                        crossterm::event::KeyModifiers::CONTROL,
-                    )),
-                );
+            // The Ctrl+V press must survive batching as its own key event.
+            shortcut_preserved |= matches!(
+                events.as_slice(),
+                [event]
+                    if matches!(
+                        event.to_raw_input_event(),
+                        crate::raw_input::RawInputEvent::Key(key)
+                            if key.kind == crossterm::event::KeyEventKind::Press
+                                && crate::config::terminal_key_matches_combo(
+                                    &key,
+                                    (
+                                        crossterm::event::KeyCode::Char('v'),
+                                        crossterm::event::KeyModifiers::CONTROL,
+                                    ),
+                                )
+                    )
+            );
             delivered.extend(events);
         }
         assert_eq!(delivered, expected);

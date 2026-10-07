@@ -128,14 +128,6 @@ impl Drop for EnvVarsRemovedGuard {
 }
 
 #[test]
-fn remote_client_uses_extended_handshake_timeout() {
-    let _guard = env_lock().lock().unwrap();
-    let _remote = EnvVarGuard::set(crate::remote::REMOTE_KEYBINDINGS_ENV_VAR, "local");
-
-    assert_eq!(handshake_read_timeout(), REMOTE_HANDSHAKE_READ_TIMEOUT);
-}
-
-#[test]
 fn host_cursor_policy_auto_uses_platform_default() {
     assert_eq!(
         should_draw_host_cursor(crate::config::HostCursorModeConfig::Auto),
@@ -154,148 +146,6 @@ fn host_cursor_policy_native_and_drawn_override_auto_detection() {
     assert!(should_draw_host_cursor(
         crate::config::HostCursorModeConfig::Drawn
     ));
-}
-
-#[test]
-fn image_bridge_follows_the_selected_remote_endpoint() {
-    let remote = crate::client::endpoint::ClientEndpointId::Ssh(
-        crate::client::endpoint::ProfileId::parse("0123456789abcdef0123456789abcdef").unwrap(),
-    );
-
-    assert!(endpoint_accepts_local_images(false, &remote, true));
-    assert!(endpoint_accepts_local_images(
-        true,
-        &crate::client::endpoint::ClientEndpointId::Local,
-        true,
-    ));
-    assert!(!endpoint_accepts_local_images(
-        false,
-        &crate::client::endpoint::ClientEndpointId::Local,
-        true,
-    ));
-    assert!(!endpoint_accepts_local_images(false, &remote, false));
-}
-
-#[cfg(unix)]
-#[test]
-fn clipboard_image_paste_bridge_triggers_on_configured_key_and_empty_paste() {
-    let ctrl_v = crate::config::parse_key_combo("ctrl+v").unwrap();
-    assert!(should_bridge_clipboard_image_paste(
-        &[0x16],
-        true,
-        Some(ctrl_v)
-    ));
-    assert!(should_bridge_clipboard_image_paste(
-        b"\x1b[118;5u",
-        true,
-        Some(ctrl_v)
-    ));
-    assert!(should_bridge_clipboard_image_paste(
-        b"\x1b[200~\x1b[201~",
-        true,
-        None
-    ));
-    assert!(!should_bridge_clipboard_image_paste(
-        b"\x1b[200~\x1b[201~",
-        false,
-        Some(ctrl_v)
-    ));
-    assert!(!should_bridge_clipboard_image_paste(
-        &[0x16],
-        false,
-        Some(ctrl_v)
-    ));
-    assert!(!should_bridge_clipboard_image_paste(
-        b"\x1b[200~text\x1b[201~",
-        true,
-        Some(ctrl_v)
-    ));
-    assert!(!should_bridge_clipboard_image_paste(&[0x16], true, None));
-    assert!(!should_bridge_clipboard_image_paste(
-        b"v",
-        true,
-        Some(ctrl_v)
-    ));
-}
-
-struct TempImageFile {
-    path: std::path::PathBuf,
-}
-
-impl TempImageFile {
-    fn new(extension: &str, bytes: &[u8]) -> Self {
-        Self::with_name_fragment("test", extension, bytes)
-    }
-
-    fn with_name_fragment(name_fragment: &str, extension: &str, bytes: &[u8]) -> Self {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "herdr-client-drop-{name_fragment}-{}-{nanos}.{extension}",
-            std::process::id()
-        ));
-        std::fs::write(&path, bytes).unwrap();
-        Self { path }
-    }
-}
-
-impl Drop for TempImageFile {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
-    }
-}
-#[cfg(unix)]
-#[test]
-fn remote_image_file_drop_bridge_reads_bracketed_absolute_image_path() {
-    let file = TempImageFile::new("PNG", b"image-bytes");
-    let input = format!("\x1b[200~{}\x1b[201~", file.path.display());
-
-    let image = read_image_file_from_terminal_drop(input.as_bytes(), true).unwrap();
-
-    assert_eq!(image.extension, "png");
-    assert_eq!(image.bytes, b"image-bytes");
-}
-
-#[cfg(unix)]
-#[test]
-fn remote_image_file_drop_bridge_reads_plain_quoted_path_with_newline() {
-    let file = TempImageFile::new("jpeg", b"jpeg-bytes");
-    let input = format!("'{}'\n", file.path.display());
-
-    let image = read_image_file_from_terminal_drop(input.as_bytes(), true).unwrap();
-
-    assert_eq!(image.extension, "jpg");
-    assert_eq!(image.bytes, b"jpeg-bytes");
-}
-
-#[cfg(unix)]
-#[test]
-fn remote_image_file_drop_bridge_unescapes_spaces_in_paths() {
-    let file = TempImageFile::with_name_fragment("space test", "png", b"image-bytes");
-    let escaped_path = file.path.display().to_string().replace(' ', "\\ ");
-
-    let image = read_image_file_from_terminal_drop(escaped_path.as_bytes(), true).unwrap();
-
-    assert_eq!(image.extension, "png");
-    assert_eq!(image.bytes, b"image-bytes");
-}
-
-#[cfg(unix)]
-#[test]
-fn remote_image_file_drop_bridge_ignores_non_remote_and_non_image_input() {
-    let file = TempImageFile::new("png", b"image-bytes");
-    let path = file.path.display().to_string();
-
-    assert!(read_image_file_from_terminal_drop(path.as_bytes(), false).is_none());
-    assert!(read_image_file_from_terminal_drop(b"relative.png\n", true).is_none());
-    assert!(read_image_file_from_terminal_drop(b"/tmp/file.txt\n", true).is_none());
-    assert!(read_image_file_from_terminal_drop(
-        format!("{}\nextra", file.path.display()).as_bytes(),
-        true
-    )
-    .is_none());
 }
 
 #[test]
@@ -537,10 +387,7 @@ fn client_error_display_server_shutdown_no_reason() {
 #[test]
 fn client_error_display_detached_default_session_reattach_hint() {
     let _guard = env_lock().lock().unwrap();
-    let _env = EnvVarsRemovedGuard::new(&[
-        crate::remote::REATTACH_COMMAND_ENV_VAR,
-        crate::session::SESSION_ENV_VAR,
-    ]);
+    let _env = EnvVarsRemovedGuard::new(&[crate::session::SESSION_ENV_VAR]);
     let err = ClientError::ServerShutdown {
         reason: Some("detached".into()),
     };
@@ -554,7 +401,6 @@ fn client_error_display_detached_default_session_reattach_hint() {
 #[test]
 fn client_error_display_detached_named_session_reattach_hint() {
     let _guard = env_lock().lock().unwrap();
-    let _remote_env = EnvVarsRemovedGuard::new(&[crate::remote::REATTACH_COMMAND_ENV_VAR]);
     let _session_env = EnvVarGuard::set(crate::session::SESSION_ENV_VAR, "work");
     let err = ClientError::ServerShutdown {
         reason: Some("detached".into()),
@@ -567,55 +413,13 @@ fn client_error_display_detached_named_session_reattach_hint() {
 }
 
 #[test]
-fn client_error_display_detached_remote_reattach_hint_takes_precedence() {
-    let _guard = env_lock().lock().unwrap();
-    let _remote_env = EnvVarGuard::set(
-        crate::remote::REATTACH_COMMAND_ENV_VAR,
-        "allternit-factory pane --remote host --session work",
-    );
-    let _session_env = EnvVarGuard::set(crate::session::SESSION_ENV_VAR, "work");
-    let err = ClientError::ServerShutdown {
-        reason: Some("detached".into()),
-    };
-    let msg = err.to_string();
-    assert!(
-        msg.contains("Run `allternit-factory pane --remote host --session work` to reattach"),
-        "should prefer remote reattach command: {msg}"
-    );
-}
-
-#[test]
 fn client_error_display_connection_lost() {
     let _guard = env_lock().lock().unwrap();
-    let _env = EnvVarsRemovedGuard::new(&[crate::remote::REATTACH_COMMAND_ENV_VAR]);
     let err = ClientError::ConnectionLost(io::Error::new(io::ErrorKind::BrokenPipe, "broken pipe"));
     let msg = err.to_string();
     assert!(
         msg.contains("lost connection to server"),
         "should mention lost connection: {msg}"
-    );
-}
-
-#[test]
-fn client_error_display_remote_connection_lost_has_reattach_hint() {
-    let _guard = env_lock().lock().unwrap();
-    let _remote_env = EnvVarGuard::set(
-        crate::remote::REATTACH_COMMAND_ENV_VAR,
-        "allternit-factory pane --remote host --session work",
-    );
-    let err = ClientError::ConnectionLost(io::Error::new(io::ErrorKind::BrokenPipe, "broken pipe"));
-    let msg = err.to_string();
-    assert!(
-        msg.contains("lost connection to remote ao"),
-        "should mention remote connection loss: {msg}"
-    );
-    assert!(
-        msg.contains("panes may still be running"),
-        "should explain possible persistence: {msg}"
-    );
-    assert!(
-        msg.contains("Run `allternit-factory pane --remote host --session work` to reattach"),
-        "should show remote reattach command: {msg}"
     );
 }
 
@@ -661,14 +465,12 @@ fn reload_local_client_config_refreshes_local_client_presentation_state() {
     let mut sound_config = crate::config::SoundConfig::default();
     let mut redraw_on_focus_gained = true;
     let mut draw_host_cursor = false;
-    let mut remote_image_paste_key = None;
     let mut mouse_capture = true;
 
     reload_local_client_config(
         &mut sound_config,
         &mut redraw_on_focus_gained,
         &mut draw_host_cursor,
-        &mut remote_image_paste_key,
         &mut mouse_capture,
     );
 
@@ -695,14 +497,12 @@ fn reload_local_client_config_keeps_ui_preferences_when_ui_is_invalid() {
     let mut sound_config = crate::config::SoundConfig::default();
     let mut redraw_on_focus_gained = false;
     let mut draw_host_cursor = true;
-    let mut remote_image_paste_key = None;
     let mut mouse_capture = false;
 
     reload_local_client_config(
         &mut sound_config,
         &mut redraw_on_focus_gained,
         &mut draw_host_cursor,
-        &mut remote_image_paste_key,
         &mut mouse_capture,
     );
 

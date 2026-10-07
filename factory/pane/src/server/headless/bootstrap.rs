@@ -200,7 +200,7 @@ fn run_handoff_import_server(_socket_path: &Path, _token: &str) -> io::Result<()
 }
 
 fn print_ready_message(api_socket: &Path, client_socket: &Path) {
-    eprintln!("allternit-factory pane server running; you can use any ao CLI command in another terminal.");
+    eprintln!("allternit-factory pane server running; you can use any `allternit-factory pane` command in another terminal.");
     eprintln!("api socket: {}", api_socket.display());
     eprintln!("client socket: {}", client_socket.display());
     eprintln!(
@@ -209,7 +209,7 @@ fn print_ready_message(api_socket: &Path, client_socket: &Path) {
             .join("ao-server.log")
             .display()
     );
-    eprintln!("did you mean to open the ao TUI? run `ao`; you do not need `allternit-factory pane server`.");
+    eprintln!("did you mean to open the Factory terminal? run `allternit-factory pane`; you do not need `allternit-factory pane server`.");
 }
 
 /// Initialize logging for the server process.

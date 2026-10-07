@@ -240,7 +240,7 @@ impl App {
                 encode_error(
                     id,
                     "not_linked_worktree",
-                    "workspace is not an ao-managed worktree checkout",
+                    "workspace is not a Factory-managed worktree checkout",
                 ),
             );
             return;

@@ -29,7 +29,7 @@ pub(super) fn mismatch_response(
         )
     } else {
         format!(
-            "client protocol {client_protocol} is older than server protocol {server_protocol}; upgrade the ao client before using this command"
+            "client protocol {client_protocol} is older than server protocol {server_protocol}; upgrade the Factory client before using this command"
         )
     };
 
@@ -96,7 +96,7 @@ mod tests {
             .error
             .message
             .contains("older than server protocol"));
-        assert!(response.error.message.contains("upgrade the ao client"));
+        assert!(response.error.message.contains("upgrade the Factory client"));
         assert!(!response.error.message.contains("unused restart guidance"));
     }
 

@@ -377,7 +377,7 @@ async fn create_session() -> Response {
         StatusCode::NOT_IMPLEMENTED,
         Json(json!({
             "error": "not_implemented",
-            "message": "ao sessions are created with `allternit-factory pane spawn <slug> <repo-dir> <agent-cmd…>` on the node"
+            "message": "Factory sessions are started with `gizzi agents up <team>` on the node"
         })),
     )
         .into_response()
@@ -878,7 +878,7 @@ async fn invoke_capability(Json(body): Json<InvokeBody>) -> Response {
             StatusCode::NOT_IMPLEMENTED,
             Json(json!({
                 "error": "not_implemented",
-                "message": "ao sessions are created with `allternit-factory pane spawn <slug> <repo-dir> <agent-cmd…>` on the node"
+                "message": "Factory sessions are started with `gizzi agents up <team>` on the node"
             })),
         )
             .into_response(),

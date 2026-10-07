@@ -5714,7 +5714,7 @@ fn oversized_paste_rejection_notifies_only_the_sending_client() {
     ) {
         ServerMessage::ClientShellError { message } => assert_eq!(
             message,
-            "Paste rejected: Input message is 5000012 bytes; ao's limit is 1048576 bytes"
+            "Paste rejected: Input message is 5000012 bytes; the pane engine's limit is 1048576 bytes"
         ),
         other => panic!("expected client shell paste error, got {other:?}"),
     }
@@ -5744,7 +5744,7 @@ fn oversized_paste_rejection_notifies_only_the_sending_client() {
     ) {
         ServerMessage::ClientShellError { message } => assert_eq!(
             message,
-            "Paste rejected: Input message is 7000000 bytes; ao's limit is 1048576 bytes"
+            "Paste rejected: Input message is 7000000 bytes; the pane engine's limit is 1048576 bytes"
         ),
         other => panic!("expected client shell paste error, got {other:?}"),
     }
@@ -5830,7 +5830,7 @@ fn update_notification_is_semantic_for_system_delivery() {
                 notification.kind,
                 protocol::SemanticNotificationKind::UpdateInstalled
             );
-            assert_eq!(notification.title, "ao v9.9.9 available");
+            assert_eq!(notification.title, "Allternit Factory v9.9.9 available");
             // The body is the install command as given (the fork words it).
             assert_eq!(
                 notification.body.as_deref(),

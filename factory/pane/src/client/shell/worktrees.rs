@@ -228,7 +228,7 @@ impl ClientShellState {
             },
             KeybindAction::RemoveWorktree if !linked => {
                 self.endpoint_error =
-                    Some("This workspace is not an ao-managed worktree checkout.".to_owned());
+                    Some("This workspace is not a Factory-managed worktree checkout.".to_owned());
                 outcome.repaint = true;
                 return;
             }
@@ -477,7 +477,7 @@ impl ClientShellState {
                     ));
                 } else {
                     self.endpoint_error =
-                        Some("This workspace is not an ao-managed worktree checkout.".to_owned());
+                        Some("This workspace is not a Factory-managed worktree checkout.".to_owned());
                 }
                 true
             }

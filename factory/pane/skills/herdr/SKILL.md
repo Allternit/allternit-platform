@@ -7,13 +7,13 @@ description: "Control ao, the Allternit agent orchestrator (terminal workspace m
 
 ao organizes terminals into workspaces, tabs, and panes, recognizes coding agents running inside panes, and exposes the current session through the `ao` CLI.
 
-Before issuing any control command, verify that this agent is running inside an ao-managed pane:
+Before issuing any control command, verify that this agent is running inside a Factory-managed pane:
 
 ```bash
 test "${HERDR_ENV:-}" = 1
 ```
 
-If the check fails, say that you are not running inside ao and stop. Do not inspect or control the focused allternit-factory pane session from outside ao.
+If the check fails, say that you are not running inside the Allternit Factory and stop. Do not inspect or control the focused allternit-factory pane session from outside the Factory.
 
 When the check passes, the `ao` binary in `PATH` talks to the current session. Use it to inspect neighboring work, create terminal layout, start agents and commands, read output, and wait for state changes.
 

@@ -254,13 +254,6 @@ pub(crate) fn read_limited_reader(
     }
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct RemoteSshConfigPaths {
-    pub(crate) user_config: Option<std::path::PathBuf>,
-    pub(crate) system_config: Option<std::path::PathBuf>,
-    pub(crate) multiplexing: bool,
-}
-
 #[cfg(unix)]
 mod unix_common;
 #[cfg(unix)]

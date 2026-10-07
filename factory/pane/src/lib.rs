@@ -9,8 +9,8 @@ const NESTED_HERDR_MESSAGES: [&str; 6] = [
     "inception detected. we need to go deeper... said no one ever.",
     "recursion is a pathway to many abilities some consider to be... unnatural.",
     "you were so preoccupied with whether you could, you didn't stop to think if you should. — dr. malcolm",
-    "recursive ao nesting is disabled. somewhere, a call stack breathes a sigh of relief.",
-    "recursive descent denied. there is, in fact, such a thing as too much ao.",
+    "recursive pane engine nesting is disabled. somewhere, a call stack breathes a sigh of relief.",
+    "recursive descent denied. there is, in fact, such a thing as too much Factory.",
     "recursion detected. base case not found. aborting.",
 ];
 
@@ -19,7 +19,6 @@ mod ao;
 mod api;
 mod app;
 mod build_info;
-mod checksum;
 mod cli;
 mod client;
 mod config;
@@ -50,7 +49,6 @@ mod protocol;
 mod pty;
 mod raw_input;
 mod release_notes;
-mod remote;
 mod render_prof;
 mod render_signal;
 mod selection;
@@ -67,7 +65,7 @@ mod update;
 mod workspace;
 mod worktree;
 
-const DEFAULT_CONFIG: &str = r##"# ao configuration
+const DEFAULT_CONFIG: &str = r##"# Allternit Factory pane engine configuration
 # Place this file at ~/.config/ao/config.toml
 
 # Show first-run notification setup on startup.
@@ -131,7 +129,7 @@ peach = "#f59e0b"
 
 # CWD policy for new panes, tabs, and workspaces when no explicit --cwd is provided.
 # Use "follow" to inherit the source pane/workspace, "home" for $HOME,
-# "current" for ao's process directory, or a fixed path such as "~/Projects".
+# "current" for the pane engine's process directory, or a fixed path such as "~/Projects".
 # new_cwd = "follow"
 
 # Render pane images in Kitty graphics-compatible outer terminals.
@@ -175,7 +173,6 @@ peach = "#f59e0b"
 # previous_agent = ""     # optional, unset by default
 # next_agent = ""         # optional, unset by default
 # focus_agent = ""        # optional indexed binding, e.g. "prefix+alt+1..9"
-# remote_image_paste = "ctrl+v" # only active in ao --remote; empty disables raw-key image paste
 # new_tab = "prefix+c"
 # rename_tab = "prefix+shift+t"
 # previous_tab = "prefix+p"
@@ -274,8 +271,8 @@ peach = "#f59e0b"
 # copy_on_select = true
 
 # Host cursor policy: "auto", "native", or "drawn".
-# "auto" draws ao's own cursor on native Windows builds and WSL to avoid ConPTY cursor flicker, and uses the native terminal cursor elsewhere.
-# "native" always uses the outer terminal cursor. "drawn" always draws ao's cursor as terminal cell content.
+# "auto" draws the pane engine's own cursor on native Windows builds and WSL to avoid ConPTY cursor flicker, and uses the native terminal cursor elsewhere.
+# "native" always uses the outer terminal cursor. "drawn" always draws the pane engine's cursor as terminal cell content.
 # host_cursor = "auto"
 
 # Optional modifier that forwards right-click hold/drag gestures to pane apps instead of opening ao's pane menu.
@@ -408,19 +405,8 @@ window_title = "{hostname}: {workspace}"
 # an allternit-factory pane server restart. Requires official integrations that report session refs.
 # resume_agents_on_restore = true
 
-[remote]
-# Whether ao manages the ssh config used for `ao --remote`.
-# When true (default), ao runs remote ssh through a generated config that
-# includes your ~/.ssh/config first and adds ServerAliveInterval/
-# ServerAliveCountMax as fallbacks (so any keepalive values you set yourself
-# still win) to survive idle network/NAT timeouts. ao also uses a private
-# per-attach OpenSSH control socket to reuse the first authenticated connection.
-# Set false to run plain ssh against your ssh config unchanged — this does not
-# force keepalive or multiplexing off, it only stops ao from adding its own.
-# manage_ssh_config = true
-
 [experimental]
-# Allow launching ao from inside an ao-managed pane.
+# Allow launching the pane engine from inside a Factory-managed pane.
 # allow_nested = false
 # Save recent pane screen history across full server restarts.
 pane_history = false
@@ -477,7 +463,7 @@ fn random_nested_message() -> &'static str {
 
 fn exit_if_nested_disabled(config: &config::Config) {
     if should_block_nested(config) {
-        eprintln!("\x1b[1merror:\x1b[0m nested ao is disabled by default.");
+        eprintln!("\x1b[1merror:\x1b[0m nesting the pane engine is disabled by default.");
         eprintln!("see configuration if you want to enable it.");
         eprintln!();
         eprintln!("\x1b[2m\"{}\"\x1b[0m", random_nested_message());
@@ -521,29 +507,6 @@ where
             std::process::exit(2);
         }
     };
-    let (args, remote_launch) = match remote::extract_remote_args(&args) {
-        Ok(parsed) => parsed,
-        Err(err) => {
-            eprintln!("error: {err}");
-            eprintln!("run 'allternit-factory pane --help' for usage");
-            std::process::exit(2);
-        }
-    };
-
-    if remote_launch.is_some()
-        && args.get(1).is_some()
-        && !args.iter().any(|a| {
-            matches!(
-                a.as_str(),
-                "--help" | "-h" | "--version" | "-V" | "--default-config" | "--skill"
-            )
-        })
-    {
-        eprintln!("error: --remote can only be used with the default launch command");
-        eprintln!("run 'allternit-factory pane --help' for usage");
-        std::process::exit(2);
-    }
-
     match cli::maybe_run(&args) {
         Ok(cli::CommandOutcome::Handled(code)) => std::process::exit(code),
         Ok(cli::CommandOutcome::NotCli) => {}
@@ -560,10 +523,6 @@ where
     }
 
     // Subcommands and flags (no TUI, no logging needed)
-    if args.get(1).map(|s| s.as_str()) == Some("remote-client-bridge") {
-        return remote::run_remote_client_bridge();
-    }
-
     if args.get(1).map(|s| s.as_str()) == Some("server") {
         return server::headless::run_server();
     }
@@ -577,21 +536,15 @@ where
 
     if args.iter().any(|a| a == "--help" || a == "-h") {
         platform::begin_cli_output();
-        println!("ao — terminal workspace manager for AI coding agents");
+        println!("allternit-factory pane — the Allternit Factory's terminal engine");
         println!();
-        println!("Usage: ao [options]");
-        println!("       ao --session <name> [options]");
-        println!("       ao --remote <ssh-target> [--session <name>]");
+        println!("Usage: allternit-factory pane [options]");
+        println!("       allternit-factory pane --session <name> [options]");
         println!("       allternit-factory pane session attach <name>");
         println!("       allternit-factory pane completion zsh");
-        println!("       allternit-factory pane spawn [--worktree] <slug> <repo-dir> <agent-cmd...>");
-        println!("       allternit-factory pane send <slug> <prompt...> | allternit-factory pane send <slug> -f <file>");
-        println!("       allternit-factory pane watch <slug> <sentinel-file> [timeout] [interval]");
         println!("       allternit-factory pane status [slug] [lines=25]");
-        println!("       allternit-factory pane kill <slug> [--rm-worktree]");
         println!("       allternit-factory pane doctor");
         println!("       allternit-factory pane serve [--addr ADDR] [--token TOKEN]  (UHP surface, full class)");
-        println!("       allternit-factory pane machine <subcommand> ...");
         println!("       allternit-factory pane server stop");
         println!("       allternit-factory pane server reload-config");
         println!("       allternit-factory pane api <subcommand> ...");
@@ -608,7 +561,7 @@ where
         println!();
         println!("Common commands:");
         for (command, description) in [
-            ("ao", "Launch or attach to the persistent session"),
+            ("allternit-factory pane", "Launch or attach to the persistent session"),
             (
                 "allternit-factory pane status [server|client]",
                 "Show local client and running server status",
@@ -626,7 +579,6 @@ where
                 "allternit-factory pane config reset-keys",
                 "Back up config.toml and remove custom keybindings",
             ),
-            ("allternit-factory pane machine <subcommand>", "Manage saved SSH machines"),
             (
                 "allternit-factory pane api <subcommand>",
                 "Inspect socket API metadata and live runtime state",
@@ -669,10 +621,7 @@ where
         println!();
         println!("Options:");
         println!("  --session <name>    Use or create a named persistent session");
-        println!("  --remote <target>   Attach through SSH to a remote allternit-factory pane server");
-        println!("  --remote-keybindings <local|server>");
-        println!("                      Keybindings for --remote app attach (default: local)");
-        println!("  --handoff           Opt into live handoff for update or remote attach");
+        println!("  --handoff           Opt into live handoff when updating the server");
         println!("  --default-config    Print default configuration and exit");
         println!("  --skill             Print the agent skill file and exit");
         println!("  --version, -V       Print version and exit");
@@ -681,7 +630,7 @@ where
         println!("Config: {}", config::config_path().display());
         println!("Logs:   {}", logging::help_log_paths_summary());
         println!("Env:    HERDR_CONFIG_PATH overrides config file path");
-        println!("Repo:   https://github.com/herdrdev/herdr (ao engine fork, Apache-2.0)");
+        println!("Repo:   https://github.com/herdrdev/herdr (Allternit Factory pane engine fork, Apache-2.0)");
         println!();
         println!("{}", cli::AGENT_HELP_FOOTER);
         return Ok(());
@@ -689,7 +638,7 @@ where
 
     if args.iter().any(|a| a == "--version" || a == "-V") {
         platform::begin_cli_output();
-        println!("ao {}", crate::build_info::version());
+        println!("allternit-factory pane {}", crate::build_info::version());
         return Ok(());
     }
 
@@ -708,8 +657,6 @@ where
     // Reject unknown flags
     let known_flags = [
         "--session",
-        "--remote",
-        "--remote-keybindings",
         "--version",
         "-V",
         "--default-config",
@@ -728,10 +675,8 @@ where
             && ![
                 "server",
                 "client",
-                "remote-client-bridge",
                 "status",
                 "config",
-                "machine",
                 "workspace",
                 "worktree",
                 "pane",
@@ -751,23 +696,13 @@ where
         }
     }
 
-    if let Some(remote_launch) = remote_launch {
-        let remote_target = remote_launch.target.clone();
-        if let Err(err) = remote::run_remote(remote_launch) {
-            eprintln!("error: {err}");
-            remote::print_remote_error_hint(&err, &remote_target);
-            std::process::exit(1);
-        }
-        return Ok(());
-    }
-
     let loaded_config = config::Config::load();
     exit_if_nested_disabled(&loaded_config.config);
 
     let saved_federation =
         client::endpoint::EndpointCatalog::load().is_ok_and(|catalog| catalog.has_enabled_ssh());
     if let Err(err) = server::autodetect::auto_detect_launch(saved_federation) {
-        eprintln!("ao: {err}");
+        eprintln!("allternit-factory pane: {err}");
         std::process::exit(1);
     }
     Ok(())

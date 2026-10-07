@@ -58,7 +58,6 @@ impl SavedSshEndpoint {
                 "SSH target must be at most {MAX_TARGET_BYTES} bytes and contain no control characters"
             ));
         }
-        crate::remote::validate_remote_target(&self.target).map(|_| ())?;
         let authority = self.target.strip_prefix("ssh://").unwrap_or(&self.target);
         if authority
             .rsplit_once('@')
@@ -99,13 +98,15 @@ impl Default for EndpointCatalog {
 }
 
 impl EndpointCatalog {
+    /// SSH remote attach was removed, so a live client loads no saved SSH
+    /// machines (an old endpoints.json is ignored). The multi-machine shell
+    /// stays for Allternit Computers.
     pub(crate) fn load() -> Result<Self, String> {
-        Self::load_from_paths(&catalog_path(), &selection_path())
+        Ok(Self::default())
     }
 
     pub(crate) fn load_profiles() -> Result<Vec<SavedSshEndpoint>, String> {
-        // Live clients keep their own selection, independent of other attached clients.
-        Self::load_from_path(&catalog_path()).map(|catalog| catalog.ssh)
+        Ok(Vec::new())
     }
 
     fn load_from_paths(catalog_path: &Path, selection_path: &Path) -> Result<Self, String> {
