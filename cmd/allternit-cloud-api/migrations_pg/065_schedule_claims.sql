@@ -1,4 +1,4 @@
--- 064_schedule_claims.sql
+-- 065_schedule_claims.sql
 --
 -- Row claims for the schedules poller (audit S12). Both the standalone
 -- `allternit-scheduler` daemon (infrastructure/scheduler) and the in-process
