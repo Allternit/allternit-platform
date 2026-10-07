@@ -155,6 +155,9 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
       // The Allternit Factory runs bots on named harnesses and vendor accounts; these pages
       // and the generated contract reference have to name which ones (binding badges, harness ids).
       if (['factory/agents.mdx', 'factory/overview.mdx', 'factory/api-reference.mdx'].some((p) => mdxPath.endsWith(p))) continue;
+      // Memory Drive is shared with other agents (install steps for Claude Code, Codex, their
+      // session ids), and hosted agents name provider/model ids; these pages have to name them.
+      if (['guides/memory-drive.mdx', 'core/memory-drive.mdx', 'cli/memory.mdx', 'api/platform/agents.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // Provider env vars (OPENAI_API_KEY etc.) are configuration, not endorsement.
       if (mdxPath.endsWith('tools/open-notebook.mdx')) continue;
       fail(
