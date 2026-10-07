@@ -794,6 +794,7 @@ function showOrReopenMainWindow(): void {
 }
 
 function createMainWindow(): BrowserWindow {
+  appWindowOpened = true;
   let bounds = store.get('windowBounds');
   
   // Ensure bounds are valid - if not, use defaults
@@ -1153,6 +1154,7 @@ async function initializeBundledMode(): Promise<void> {
   const showStartupWizard = !selfHosted && (!store.get('startupWizardCompleted') || !authManager.hasSession());
   log.info(`[Main] Startup window: ${showStartupWizard ? 'onboarding wizard' : 'loading only'}${selfHosted ? ' (self-hosted)' : ''}`);
   splashWindow = createStartupWindow({ initialStep: showStartupWizard ? 'welcome' : 'loading' });
+  appWindowOpened = true;
   // Device pairing is independent of local service readiness. Start waiting
   // immediately so the user can approve in parallel while the runtime boots.
   const startupSignIn = showStartupWizard
@@ -2556,8 +2558,16 @@ app.whenReady().then(async () => {
   app.quit();
 });
 
+/**
+ * Set once the app's own startup or main window exists. Before that the only
+ * window can be the hidden Clerk sign-in window, and its timing out must not
+ * quit the app (it did: a launch that verifies a staged runtime package takes
+ * long enough for it to close, and the app quit on every start).
+ */
+let appWindowOpened = false;
+
 app.on('window-all-closed', () => {
-  if (!isMac) app.quit();
+  if (!isMac && appWindowOpened) app.quit();
 });
 
 async function handoffInFlightToCloud(): Promise<void> {
