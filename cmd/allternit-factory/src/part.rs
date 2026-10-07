@@ -209,6 +209,36 @@ fn remote_of(entry: Option<&Entry>) -> Option<(String, String)> {
     Some((format!("{}@{}", bot.name.as_deref()?, bot.team.as_deref()?), computer))
 }
 
+/// A live bot another computer runs, by `bot@team`, slug or session:
+/// `(session, bot@team, computer id, computer name)`.
+pub fn remote_bot(key: &str) -> Option<(String, String, String, String)> {
+    let file = Registry::open_default().load().ok()?;
+    file.sessions.iter().filter(|(_, e)| !e.dead).find_map(|(session, e)| {
+        let (address, computer) = remote_of(Some(e))?;
+        let hit = key == address || key == session || key == registry_mod::slug_of(session);
+        hit.then(|| (session.clone(), address, computer.clone(), e.remote_name.clone().unwrap_or(computer)))
+    })
+}
+
+/// `agents mirror <bot@team>` (and `attach` on a remote bot): the bot's live
+/// pane from its computer, in this terminal.
+pub fn mirror(ctx: &Ctx, to: &str) -> u8 {
+    if ctx.json {
+        return fail(ctx, Code::Usage, "the mirror is interactive and has no JSON form", None);
+    }
+    let Some((_, address, computer, name)) = remote_bot(to) else {
+        return fail(ctx, Code::NotFound, &format!("no running bot {to} on another computer"), Some("List agents with `gizzi agents ps`."));
+    };
+    let api = match peer_api(ctx) {
+        Ok(a) => a,
+        Err(code) => return code,
+    };
+    match crate::mirror::run(api, &computer, &name, &address) {
+        Ok(()) => 0,
+        Err(e) => fail(ctx, Code::Transport, &e, Some("Check that the computer is online, then retry.")),
+    }
+}
+
 /// allternit-api, which carries calls to other computers' engines.
 fn peer_api(ctx: &Ctx) -> Result<allternit_factory_engine::agents::team_apply::ApiClient, u8> {
     use allternit_factory_engine::agents::team_apply::{ApiClient, API_ENV_ACTION, API_NOT_SET_FACT};
@@ -281,6 +311,10 @@ pub fn stop_remote(ctx: &Ctx, session: &str, address: &str, computer: &str) -> u
     };
     if let Err(e) = api.peer_call(computer, "POST", "stop", Some(json!({ "to": address }))) {
         return peer_fail(ctx, &e);
+    }
+    // A wall left open may still hold its mirror pane here; close it.
+    if let Ok(b) = backend::backend() {
+        let _ = b.kill(session);
     }
     let _ = Registry::open_default().update(|f| {
         if let Some(e) = f.sessions.get_mut(session) {
@@ -666,14 +700,19 @@ pub fn wall(ctx: &Ctx, team: &str) -> u8 {
         return fail(ctx, Code::Usage, "agents wall is interactive and has no JSON form", None);
     }
     let sessions = team_sessions(ctx, team);
+    // Bots on other computers get a pane here that mirrors theirs, labeled
+    // with their session so the team view picks them up. Closed on exit.
+    let mirrors = open_mirrors(&sessions);
     let live = match allternit_factory_pane::factory_backend::set_wall_view(team, &sessions) {
         Ok(n) => n,
         Err(e) => {
+            close_mirrors(&mirrors);
             let code = if backend::is_transport(&e) { Code::Transport } else { Code::Internal };
             return fail(ctx, code, &format!("{e:#}"), None);
         }
     };
     if live == 0 {
+        close_mirrors(&mirrors);
         return fail(
             ctx,
             Code::NotFound,
@@ -683,7 +722,49 @@ pub fn wall(ctx: &Ctx, team: &str) -> u8 {
     }
     let code = crate::exec::run_pane_interactive(vec!["--session".into(), "ao".into()]);
     let _ = allternit_factory_pane::factory_backend::clear_wall_view(team);
+    close_mirrors(&mirrors);
     code
+}
+
+/// Open a mirror pane for each live remote bot among `sessions`; the
+/// sessions opened. A bot whose mirror can't open is left out of the wall.
+fn open_mirrors(sessions: &[String]) -> Vec<String> {
+    use allternit_factory_engine::agents::team_apply::{ENV_API_TOKEN, ENV_API_URL, ENV_DESKTOP_TOKEN, ENV_USER_ID};
+    let Ok(pane) = backend::backend() else { return Vec::new() };
+    let Ok(exe) = std::env::current_exe() else { return Vec::new() };
+    // The pane runs in the pane engine's environment, so it gets the
+    // allternit-api link this command has.
+    let env: std::collections::BTreeMap<String, String> = [ENV_API_URL, ENV_API_TOKEN, ENV_DESKTOP_TOKEN, ENV_USER_ID]
+        .iter()
+        .filter_map(|k| std::env::var(k).ok().filter(|v| !v.is_empty()).map(|v| (k.to_string(), v)))
+        .collect();
+    let cwd = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
+    let mut opened = Vec::new();
+    for session in sessions {
+        let Some((_, address, _, _)) = remote_bot(session) else { continue };
+        if pane.find(session).ok().flatten().is_some() {
+            continue;
+        }
+        let req = backend::PaneSpawn {
+            session: session.clone(),
+            cwd: cwd.clone(),
+            argv: vec![exe.to_string_lossy().into_owned(), "agents".into(), "mirror".into(), address],
+            env: env.clone(),
+            transcript: None,
+        };
+        if pane.spawn(&req).is_ok() {
+            opened.push(session.clone());
+        }
+    }
+    opened
+}
+
+fn close_mirrors(sessions: &[String]) {
+    if let Ok(pane) = backend::backend() {
+        for s in sessions {
+            let _ = pane.kill(s);
+        }
+    }
 }
 
 /// `orchestration transcript <to> [--tail N]`: the session's recorded

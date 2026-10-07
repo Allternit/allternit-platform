@@ -161,11 +161,20 @@ struct LinesQ {
     lines: Option<u32>,
 }
 
-async fn agent_capture(State(state): S, Path(id): Path<String>, Query(q): Query<LinesQ>) -> Response {
+async fn agent_capture(State(state): S, headers: HeaderMap, Path(id): Path<String>, Query(q): Query<LinesQ>) -> Response {
     let agent = match find_agent(&state, &id).await {
         Ok(a) => a,
         Err(r) => return r,
     };
+    let lines = q.lines.unwrap_or(80).clamp(1, 2000);
+    if let Some((address, computer)) = remote_bot(&agent) {
+        let path = format!("capture?to={}&lines={lines}", enc(&address));
+        return match send::peer_json(&api_link(&headers), reqwest::Method::GET, &computer, &path, None).await {
+            Ok((200, v)) => Json(json!({ "text": v["text"], "at": chrono::Utc::now().to_rfc3339() })).into_response(),
+            Ok((status, v)) => peer_refusal(&computer, status, &v),
+            Err(e) => error("transport", e, "Check that allternit-api runs and the computer is online."),
+        };
+    }
     if agent.pane.is_none() {
         return error("not_found", format!("{} has no live pane", agent.address), "Start it, or read its transcript.");
     }
@@ -174,7 +183,6 @@ async fn agent_capture(State(state): S, Path(id): Path<String>, Query(q): Query<
         Err(e) => return internal(e),
     };
     let session = registry::session_of(&agent.slug);
-    let lines = q.lines.unwrap_or(80).clamp(1, 2000);
     match backend::blocking(move || pane.capture(&session, lines)).await {
         Ok(text) => Json(json!({ "text": text, "at": chrono::Utc::now().to_rfc3339() })).into_response(),
         Err(e) => internal(e),
@@ -182,6 +190,28 @@ async fn agent_capture(State(state): S, Path(id): Path<String>, Query(q): Query<
 }
 
 // ---------------------------------------------------------------- pane mirror
+
+/// A bot another computer runs: its `bot@team` and that computer's id.
+fn remote_bot(agent: &Agent) -> Option<(String, String)> {
+    send::remote_target(&Registry::open_default(), &registry::session_of(&agent.slug))
+}
+
+fn enc(address: &str) -> String {
+    address.replace('%', "%25").replace('@', "%40").replace('&', "%26").replace('#', "%23").replace(' ', "%20")
+}
+
+/// A refusal from the other computer's engine (or allternit-api on the way),
+/// passed on with its code and the computer named.
+fn peer_refusal(computer: &str, status: u16, v: &Value) -> Response {
+    let code = match status {
+        400 | 422 => "usage",
+        401 | 403 | 409 => "refused",
+        404 => "not_found",
+        504 => "timeout",
+        _ => "transport",
+    };
+    error(code, format!("on computer {computer}: {}", send::api_error(v)), "Check that the computer is online and the bot is still up there.")
+}
 
 /// The live pane session of a terminal agent, or the error to answer with.
 async fn pane_session(state: &ServiceState, id: &str) -> Result<(Agent, String), Response> {
@@ -193,14 +223,24 @@ async fn pane_session(state: &ServiceState, id: &str) -> Result<(Agent, String),
     Ok((agent, session))
 }
 
-async fn read_screen(session: String) -> anyhow::Result<backend::PaneScreen> {
+pub(crate) async fn read_screen(session: String) -> anyhow::Result<backend::PaneScreen> {
     let pane = backend::backend()?;
     backend::blocking(move || pane.screen(&session)).await
 }
 
 /// `GET /agents/:id/screen` → `{ ansi, revision, at }`: the pane's visible
 /// screen with its colors, the same screen the Rust pane wall draws.
-async fn agent_screen(State(state): S, Path(id): Path<String>) -> Response {
+async fn agent_screen(State(state): S, headers: HeaderMap, Path(id): Path<String>) -> Response {
+    if let Ok(agent) = find_agent(&state, &id).await {
+        if let Some((address, computer)) = remote_bot(&agent) {
+            let path = format!("screen?to={}", enc(&address));
+            return match send::peer_json(&api_link(&headers), reqwest::Method::GET, &computer, &path, None).await {
+                Ok((200, v)) => Json(v).into_response(),
+                Ok((status, v)) => peer_refusal(&computer, status, &v),
+                Err(e) => error("transport", e, "Check that allternit-api runs and the computer is online."),
+            };
+        }
+    }
     let (_, session) = match pane_session(&state, &id).await {
         Ok(v) => v,
         Err(r) => return r,
@@ -220,11 +260,41 @@ const SCREEN_POLL: Duration = Duration::from_millis(200);
 /// `gone` event `{reason}` when the pane closes or can't be read, and the
 /// stream ends. A mirror of the engine pane: the same pane the TUI wall
 /// shows, so typing in either shows in both. Live only, no SSE ids.
-async fn agent_stream(State(state): S, Path(id): Path<String>) -> Response {
+async fn agent_stream(State(state): S, headers: HeaderMap, Path(id): Path<String>) -> Response {
+    if let Ok(agent) = find_agent(&state, &id).await {
+        if let Some((address, computer)) = remote_bot(&agent) {
+            return remote_stream(&api_link(&headers), &computer, &address).await;
+        }
+    }
     let session = match pane_session(&state, &id).await {
         Ok((_, s)) => s,
         Err(r) => return r,
     };
+    screen_sse(session)
+}
+
+/// A remote bot's stream: the other computer's engine serves the same
+/// `screen` / `gone` events, and allternit-api carries them over the mesh.
+async fn remote_stream(link: &ApiLink, computer: &str, address: &str) -> Response {
+    let resp = match send::peer_stream(link, computer, &format!("stream?to={}", enc(address))).await {
+        Ok(r) => r,
+        Err(e) => return error("transport", e, "Check that allternit-api runs and the computer is online."),
+    };
+    let status = resp.status().as_u16();
+    let sse = resp.headers().get("content-type").and_then(|v| v.to_str().ok()).is_some_and(|c| c.starts_with("text/event-stream"));
+    if status != 200 || !sse {
+        let v = resp.json::<Value>().await.unwrap_or(Value::Null);
+        return peer_refusal(computer, status, &v);
+    }
+    let mut out = Response::new(axum::body::Body::from_stream(resp.bytes_stream()));
+    out.headers_mut().insert("content-type", axum::http::HeaderValue::from_static("text/event-stream"));
+    out.headers_mut().insert("cache-control", axum::http::HeaderValue::from_static("no-cache"));
+    out
+}
+
+/// The SSE mirror of a local pane session (see [`agent_stream`]). The peer
+/// listener serves the same stream for a bot another computer started here.
+pub(crate) fn screen_sse(session: String) -> Response {
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<Event, Infallible>>(16);
     tokio::spawn(async move {
         let mut last: Option<u64> = None;
@@ -256,23 +326,33 @@ async fn agent_stream(State(state): S, Path(id): Path<String>) -> Response {
         .into_response()
 }
 
-#[derive(Deserialize)]
-struct InputBody {
+#[derive(Debug, Deserialize)]
+pub(crate) struct InputBody {
     #[serde(default)]
-    text: String,
+    pub(crate) text: String,
     #[serde(default)]
-    keys: Vec<String>,
+    pub(crate) keys: Vec<String>,
 }
 
 /// `POST /agents/:id/input` `{ text?, keys? }` → `{ ok: true }`: keystrokes
 /// into the pane, as a person at the wall would type them. Not a send: no
 /// delivery, no ledger record (use `POST /send` for a message to the agent).
-async fn agent_input(State(state): S, Path(id): Path<String>, body: Option<Json<InputBody>>) -> Response {
+async fn agent_input(State(state): S, headers: HeaderMap, Path(id): Path<String>, body: Option<Json<InputBody>>) -> Response {
     let Some(Json(body)) = body else {
         return error("usage", "body must be JSON { text?, keys? }", "Send at least one of text or keys.");
     };
     if body.text.is_empty() && body.keys.is_empty() {
         return error("usage", "nothing to type: text and keys are both empty", "Send at least one of text or keys.");
+    }
+    if let Ok(agent) = find_agent(&state, &id).await {
+        if let Some((address, computer)) = remote_bot(&agent) {
+            let payload = json!({ "to": address, "text": body.text, "keys": body.keys });
+            return match send::peer_json(&api_link(&headers), reqwest::Method::POST, &computer, "input", Some(payload)).await {
+                Ok((200, _)) => Json(json!({ "ok": true })).into_response(),
+                Ok((status, v)) => peer_refusal(&computer, status, &v),
+                Err(e) => error("transport", e, "Check that allternit-api runs and the computer is online."),
+            };
+        }
     }
     let session = match pane_session(&state, &id).await {
         Ok((_, s)) => s,

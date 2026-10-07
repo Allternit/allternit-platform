@@ -163,8 +163,13 @@ pub enum AgentsCmd {
     Templates(Planned),
     /// Open the live terminal wall of running agents (one team's with `<team>`).
     Wall { team: Option<String> },
-    /// Attach to one agent terminal (by terminal id).
+    /// Attach to one agent terminal (by terminal id, or a bot's `bot@team`;
+    /// a bot on another computer opens its live mirror).
     Attach { terminal: String },
+    /// A bot on another computer, mirrored live in this terminal (what
+    /// `attach` and the team wall run for remote bots).
+    #[command(hide = true)]
+    Mirror { to: String },
     /// Check transport, tools and harnesses.
     Doctor,
 }
@@ -712,9 +717,13 @@ fn agents(ctx: &Ctx, cmd: AgentsCmd) -> u8 {
             }
             run_pane_interactive(vec!["--session".into(), "ao".into()])
         }
+        AgentsCmd::Mirror { to } => crate::part::mirror(ctx, &to),
         AgentsCmd::Attach { terminal } => {
             if ctx.json {
                 return fail(ctx, Code::Usage, "agents attach is interactive and has no JSON form", None);
+            }
+            if crate::part::remote_bot(&terminal).is_some() {
+                return crate::part::mirror(ctx, &terminal);
             }
             run_pane_interactive(vec![
                 "--session".into(),

@@ -337,6 +337,9 @@ pub fn peer_router(service: Arc<ServiceState>, verifier: Arc<PeerVerifier>) -> R
         .route("/api/factory/peer/stop", axum::routing::post(remote::stop))
         .route("/api/factory/peer/capture", get(remote::capture))
         .route("/api/factory/peer/agents", get(remote::agents))
+        .route("/api/factory/peer/screen", get(remote::screen))
+        .route("/api/factory/peer/stream", get(remote::stream))
+        .route("/api/factory/peer/input", axum::routing::post(remote::input))
         .layer(middleware::from_fn_with_state(st.clone(), require_ticket))
         .with_state(st)
 }
@@ -654,6 +657,55 @@ pub mod remote {
         match crate::agents::backend::blocking(move || crate::agents::backend::backend()?.capture(&s2, lines)).await {
             Ok(text) => Json(json!({ "to": q.to, "session": session, "lines": lines, "text": text })).into_response(),
             Err(e) => refusal(StatusCode::NOT_FOUND, "not_found", format!("{e:#}"), "The pane is not live."),
+        }
+    }
+
+    #[derive(Debug, Deserialize)]
+    pub struct ToQuery {
+        pub to: String,
+    }
+
+    /// One read of the bot's visible screen: `{ansi, revision, at}`.
+    pub async fn screen(Extension(caller): Extension<PeerCaller>, Query(q): Query<ToQuery>) -> Response {
+        let session = match owned_session(&caller.user_id, &q.to) {
+            Ok(s) => s,
+            Err(r) => return r,
+        };
+        match crate::api::factory::read_screen(session).await {
+            Ok(s) => Json(json!({ "ansi": s.ansi, "revision": s.revision, "at": chrono::Utc::now().to_rfc3339() })).into_response(),
+            Err(e) => refusal(StatusCode::NOT_FOUND, "not_found", format!("{e:#}"), "The pane is not live."),
+        }
+    }
+
+    /// The bot's live screen as SSE, the same stream `/api/factory/agents/:id/stream`
+    /// serves for a local bot (phase 3: remote panes on the wall).
+    pub async fn stream(Extension(caller): Extension<PeerCaller>, Query(q): Query<ToQuery>) -> Response {
+        match owned_session(&caller.user_id, &q.to) {
+            Ok(session) => crate::api::factory::screen_sse(session),
+            Err(r) => r,
+        }
+    }
+
+    #[derive(Debug, Deserialize)]
+    pub struct InputBody {
+        pub to: String,
+        #[serde(flatten)]
+        pub(crate) input: crate::api::factory::InputBody,
+    }
+
+    /// Keystrokes into the bot's pane, as at the wall. Not a send.
+    pub async fn input(Extension(caller): Extension<PeerCaller>, Json(body): Json<InputBody>) -> Response {
+        if body.input.text.is_empty() && body.input.keys.is_empty() {
+            return bad("nothing to type: text and keys are both empty");
+        }
+        let session = match owned_session(&caller.user_id, &body.to) {
+            Ok(s) => s,
+            Err(r) => return r,
+        };
+        let (text, keys) = (body.input.text, body.input.keys);
+        match crate::agents::backend::blocking(move || crate::agents::backend::backend()?.input(&session, &text, &keys)).await {
+            Ok(()) => Json(json!({ "ok": true })).into_response(),
+            Err(e) => refusal(StatusCode::BAD_GATEWAY, "transport", format!("{e:#}"), "Start the pane engine on this computer and retry."),
         }
     }
 

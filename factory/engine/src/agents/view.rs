@@ -175,7 +175,14 @@ pub fn entry_agent(session: &str, entry: &Entry, pane: Option<&LivePane>, machin
             Some(id) => Machine { id: id.to_string(), name: entry.remote_name.clone().unwrap_or_else(|| id.to_string()) },
             None => machine.clone(),
         }),
-        pane: if entry.remote_computer().is_some() { None } else { pane.map(|p| PaneRef { id: p.pane_id.clone(), attachable: true }) },
+        // A remote bot's pane lives on its computer; the mirror routes
+        // (`/agents/:id/stream`, `input`, `screen`) reach it through that
+        // computer's engine, so it is attachable by its session.
+        pane: match entry.remote_computer() {
+            Some(_) if entry.dead => None,
+            Some(_) => Some(PaneRef { id: session.to_string(), attachable: true }),
+            None => pane.map(|p| PaneRef { id: p.pane_id.clone(), attachable: true }),
+        },
         current_node: None,
         proof: None,
         context: ContextUse::default(),
@@ -281,6 +288,7 @@ pub fn refresh_remote(agents: &mut [Agent], api: &dyn super::team_apply::Factory
         if let Some(live) = live {
             if !live.contains(&a.address) {
                 a.state = "offline".into();
+                a.pane = None;
             }
         }
     }
@@ -376,6 +384,8 @@ mod tests {
         reg.sessions.insert("ao-gone-t".into(), remote("gone"));
         let mut list = agents(&reg, &[], &[]);
         assert!(list.iter().all(|a| a.state == "idle" && a.machine.as_ref().unwrap().name == "Mac mini"));
+        // Attachable by session: the mirror routes reach its computer's pane.
+        assert!(list.iter().all(|a| a.pane.as_ref().is_some_and(|p| p.attachable && p.id == format!("ao-{}", a.slug))));
         struct Peer;
         impl FactoryApi for Peer {
             fn upsert_bot(&self, _: &Value) -> Result<Value, ApiError> { unreachable!() }
@@ -389,6 +399,8 @@ mod tests {
         refresh_remote(&mut list, &Peer);
         let state = |addr: &str| list.iter().find(|a| a.address == addr).unwrap().state.clone();
         assert_eq!((state("up@t"), state("gone@t")), ("idle".to_string(), "offline".to_string()));
+        let pane = |addr: &str| list.iter().find(|a| a.address == addr).unwrap().pane.is_some();
+        assert_eq!((pane("up@t"), pane("gone@t")), (true, false));
     }
 
 }

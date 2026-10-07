@@ -328,6 +328,40 @@ impl ApiClient {
         &self.base
     }
 
+    /// A paired computer's engine stream (`GET …/factory-peer/<path>`), open
+    /// and unread, with no timeout: the remote pane mirror. Blocking, so call
+    /// it off any async runtime.
+    pub fn peer_stream(&self, computer: &str, path: &str) -> std::result::Result<reqwest::blocking::Response, ApiError> {
+        let computer: String = computer.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-').collect();
+        let url = format!("{}/api/v1/computers/{computer}/factory-peer/{}", self.base, path.trim_start_matches('/'));
+        let client = reqwest::blocking::Client::builder()
+            .timeout(None)
+            .build()
+            .map_err(|e| ApiError::new("internal", None, format!("http client: {e}")))?;
+        let req = match &self.auth {
+            Auth::Desktop { token, user } => client
+                .get(&url)
+                .header("x-allternit-desktop-access-token", token)
+                .header("x-allternit-user-id", user),
+            Auth::Bearer(token) => client.get(&url).bearer_auth(token),
+        };
+        let resp = req
+            .send()
+            .map_err(|e| ApiError::new("transport", None, format!("allternit-api at {url} is not reachable: {e}")))?;
+        let status = resp.status().as_u16();
+        if (200..300).contains(&status) {
+            return Ok(resp);
+        }
+        let value: Value = resp.json().unwrap_or(Value::Null);
+        let fact = value["error"]["fact"].as_str().or(value["error"].as_str()).unwrap_or("request failed").to_string();
+        let code = match status {
+            401 | 403 | 409 => "refused",
+            404 => "not_found",
+            _ => "transport",
+        };
+        Err(ApiError::new(code, Some(status), format!("allternit-api GET {path} → {status}: {fact}")))
+    }
+
     fn call(&self, method: &'static str, path: &str, body: Option<Value>) -> std::result::Result<Value, ApiError> {
         let url = format!("{}{}", self.base, path);
         let auth = self.auth.clone();
