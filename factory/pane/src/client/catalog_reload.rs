@@ -137,7 +137,6 @@ mod tests {
             attach_escape: None,
             #[cfg(unix)]
             mouse_scroll_lines: 3,
-            remote_image_paste_key: None,
             redraw_on_focus_gained: false,
             repaint_pending: false,
             presentation_frozen: false,

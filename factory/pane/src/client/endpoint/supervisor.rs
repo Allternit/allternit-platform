@@ -256,13 +256,14 @@ fn connect_once(
             })?;
             (stream, Box::new(()))
         }
-        ConnectTarget::Ssh(profile) => {
-            let connected = crate::remote::connect_saved_ssh(profile.id.as_str(), &profile.target, &profile.session).map_err(|error| {
-                if failure_needs_attention(&error) {
-                    std::io::Error::new(error.kind(), format!("{error}. Run `{}` interactively to approve setup, then restart this client", crate::remote::saved_ssh_bootstrap_command(&profile.target, &profile.session)))
-                } else { error }
-            })?;
-            (connected.stream, Box::new(connected.bridge))
+        // SSH remote attach was removed: other computers join through
+        // Allternit Computers. Live clients never load SSH profiles, so this
+        // only answers a profile constructed directly.
+        ConnectTarget::Ssh(_) => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "SSH machines are no longer supported; connect other computers through Allternit Computers",
+            ))
         }
     };
     let handshake = super::super::do_handshake(
@@ -307,8 +308,17 @@ fn connect_once(
     })
 }
 
+/// A failure retrying won't fix (bad config, missing install, refused
+/// handshake) shows Attention; anything else (network) keeps reconnecting.
 fn failure_needs_attention(error: &std::io::Error) -> bool {
-    crate::remote::saved_ssh_failure_needs_attention(error)
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::InvalidInput
+            | std::io::ErrorKind::InvalidData
+            | std::io::ErrorKind::NotFound
+            | std::io::ErrorKind::PermissionDenied
+            | std::io::ErrorKind::Unsupported
+    )
 }
 
 fn handshake_error(error: crate::client::ClientError) -> std::io::Error {

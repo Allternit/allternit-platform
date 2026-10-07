@@ -22,35 +22,17 @@ use crate::protocol::{
 use super::terminal_setup::is_ssh_session;
 use super::{shell, ClientError};
 
-/// Time to wait for the server's Welcome reply during the handshake.
-///
-/// A local client talks to an already-connected server, so 5s is plenty. The
-/// remote bridge client (`herdr --remote`) sits behind a fresh per-attach ssh
-/// connection whose cold-connect (TCP + key exchange + auth) happens inside this
-/// window; on a high-latency link that easily exceeds 5s, so it gets a far
-/// larger budget. See issue #753.
+/// Time to wait for the server's Welcome reply during the handshake. The
+/// client always talks to a server on this machine, so 5s is plenty.
 pub(super) const LOCAL_HANDSHAKE_READ_TIMEOUT: Duration = Duration::from_secs(5);
-pub(super) const REMOTE_HANDSHAKE_READ_TIMEOUT: Duration = Duration::from_secs(60);
 
-pub(super) fn is_remote_client_process() -> bool {
-    std::env::var(crate::remote::REMOTE_KEYBINDINGS_ENV_VAR).is_ok()
-}
-
+/// Keybindings come from this client's own config (SSH remote attach, which
+/// could take them from the server, was removed).
 pub(super) fn client_shell_keybinding_source() -> shell::ClientShellKeybindingSource {
-    match std::env::var(crate::remote::REMOTE_KEYBINDINGS_ENV_VAR)
-        .ok()
-        .as_deref()
-    {
-        Some("server") => shell::ClientShellKeybindingSource::Endpoint,
-        Some(_) => shell::ClientShellKeybindingSource::RemoteLocal,
-        None => shell::ClientShellKeybindingSource::Local,
-    }
+    shell::ClientShellKeybindingSource::Local
 }
 
 pub(super) fn handshake_read_timeout() -> Duration {
-    if is_remote_client_process() {
-        return REMOTE_HANDSHAKE_READ_TIMEOUT;
-    }
     LOCAL_HANDSHAKE_READ_TIMEOUT
 }
 
@@ -77,8 +59,7 @@ fn direct_graphics_profile_allowed() -> bool {
         &term_program,
         &term,
         std::env::var_os("KITTY_WINDOW_ID").is_some(),
-        is_remote_client_process()
-            || is_ssh_session()
+        is_ssh_session()
             || std::env::var_os("TMUX").is_some()
             || std::env::var_os("STY").is_some(),
         io::stdin().is_terminal() && io::stdout().is_terminal(),
@@ -206,11 +187,7 @@ pub(super) fn do_handshake(
     protocol::write_message(stream, &hello)
         .map_err(|e| ClientError::ConnectionFailed(io::Error::other(e.to_string())))?;
 
-    let read_timeout = if endpoint_shell && !surface_active {
-        REMOTE_HANDSHAKE_READ_TIMEOUT
-    } else {
-        handshake_read_timeout()
-    };
+    let read_timeout = handshake_read_timeout();
     set_handshake_recv_timeout(
         stream,
         Some(read_timeout),

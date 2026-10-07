@@ -128,14 +128,6 @@ impl Drop for EnvVarsRemovedGuard {
 }
 
 #[test]
-fn remote_client_uses_extended_handshake_timeout() {
-    let _guard = env_lock().lock().unwrap();
-    let _remote = EnvVarGuard::set(crate::remote::REMOTE_KEYBINDINGS_ENV_VAR, "local");
-
-    assert_eq!(handshake_read_timeout(), REMOTE_HANDSHAKE_READ_TIMEOUT);
-}
-
-#[test]
 fn host_cursor_policy_auto_uses_platform_default() {
     assert_eq!(
         should_draw_host_cursor(crate::config::HostCursorModeConfig::Auto),
@@ -537,10 +529,7 @@ fn client_error_display_server_shutdown_no_reason() {
 #[test]
 fn client_error_display_detached_default_session_reattach_hint() {
     let _guard = env_lock().lock().unwrap();
-    let _env = EnvVarsRemovedGuard::new(&[
-        crate::remote::REATTACH_COMMAND_ENV_VAR,
-        crate::session::SESSION_ENV_VAR,
-    ]);
+    let _env = EnvVarsRemovedGuard::new(&[crate::session::SESSION_ENV_VAR]);
     let err = ClientError::ServerShutdown {
         reason: Some("detached".into()),
     };
@@ -554,7 +543,6 @@ fn client_error_display_detached_default_session_reattach_hint() {
 #[test]
 fn client_error_display_detached_named_session_reattach_hint() {
     let _guard = env_lock().lock().unwrap();
-    let _remote_env = EnvVarsRemovedGuard::new(&[crate::remote::REATTACH_COMMAND_ENV_VAR]);
     let _session_env = EnvVarGuard::set(crate::session::SESSION_ENV_VAR, "work");
     let err = ClientError::ServerShutdown {
         reason: Some("detached".into()),
@@ -567,55 +555,13 @@ fn client_error_display_detached_named_session_reattach_hint() {
 }
 
 #[test]
-fn client_error_display_detached_remote_reattach_hint_takes_precedence() {
-    let _guard = env_lock().lock().unwrap();
-    let _remote_env = EnvVarGuard::set(
-        crate::remote::REATTACH_COMMAND_ENV_VAR,
-        "allternit-factory pane --remote host --session work",
-    );
-    let _session_env = EnvVarGuard::set(crate::session::SESSION_ENV_VAR, "work");
-    let err = ClientError::ServerShutdown {
-        reason: Some("detached".into()),
-    };
-    let msg = err.to_string();
-    assert!(
-        msg.contains("Run `allternit-factory pane --remote host --session work` to reattach"),
-        "should prefer remote reattach command: {msg}"
-    );
-}
-
-#[test]
 fn client_error_display_connection_lost() {
     let _guard = env_lock().lock().unwrap();
-    let _env = EnvVarsRemovedGuard::new(&[crate::remote::REATTACH_COMMAND_ENV_VAR]);
     let err = ClientError::ConnectionLost(io::Error::new(io::ErrorKind::BrokenPipe, "broken pipe"));
     let msg = err.to_string();
     assert!(
         msg.contains("lost connection to server"),
         "should mention lost connection: {msg}"
-    );
-}
-
-#[test]
-fn client_error_display_remote_connection_lost_has_reattach_hint() {
-    let _guard = env_lock().lock().unwrap();
-    let _remote_env = EnvVarGuard::set(
-        crate::remote::REATTACH_COMMAND_ENV_VAR,
-        "allternit-factory pane --remote host --session work",
-    );
-    let err = ClientError::ConnectionLost(io::Error::new(io::ErrorKind::BrokenPipe, "broken pipe"));
-    let msg = err.to_string();
-    assert!(
-        msg.contains("lost connection to remote ao"),
-        "should mention remote connection loss: {msg}"
-    );
-    assert!(
-        msg.contains("panes may still be running"),
-        "should explain possible persistence: {msg}"
-    );
-    assert!(
-        msg.contains("Run `allternit-factory pane --remote host --session work` to reattach"),
-        "should show remote reattach command: {msg}"
     );
 }
 
@@ -661,14 +607,12 @@ fn reload_local_client_config_refreshes_local_client_presentation_state() {
     let mut sound_config = crate::config::SoundConfig::default();
     let mut redraw_on_focus_gained = true;
     let mut draw_host_cursor = false;
-    let mut remote_image_paste_key = None;
     let mut mouse_capture = true;
 
     reload_local_client_config(
         &mut sound_config,
         &mut redraw_on_focus_gained,
         &mut draw_host_cursor,
-        &mut remote_image_paste_key,
         &mut mouse_capture,
     );
 
@@ -695,14 +639,12 @@ fn reload_local_client_config_keeps_ui_preferences_when_ui_is_invalid() {
     let mut sound_config = crate::config::SoundConfig::default();
     let mut redraw_on_focus_gained = false;
     let mut draw_host_cursor = true;
-    let mut remote_image_paste_key = None;
     let mut mouse_capture = false;
 
     reload_local_client_config(
         &mut sound_config,
         &mut redraw_on_focus_gained,
         &mut draw_host_cursor,
-        &mut remote_image_paste_key,
         &mut mouse_capture,
     );
 

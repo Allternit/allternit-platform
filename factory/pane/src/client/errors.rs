@@ -36,19 +36,12 @@ impl std::fmt::Display for ClientError {
             ClientError::ServerShutdown { reason } => {
                 match reason.as_deref() {
                     Some("detached") => {
-                        if let Ok(reattach_command) =
-                            std::env::var(crate::remote::REATTACH_COMMAND_ENV_VAR)
-                        {
-                            write!(f, "detached from remote server")?;
-                            write!(f, "\nRun `{reattach_command}` to reattach")?;
-                        } else {
-                            write!(f, "detached from server")?;
-                            write!(
-                                f,
-                                "\nRun `{}` to reattach",
-                                crate::session::local_attach_command()
-                            )?;
-                        }
+                        write!(f, "detached from server")?;
+                        write!(
+                            f,
+                            "\nRun `{}` to reattach",
+                            crate::session::local_attach_command()
+                        )?;
                     }
                     _ => {
                         write!(f, "server shut down")?;
@@ -59,16 +52,7 @@ impl std::fmt::Display for ClientError {
                 }
                 Ok(())
             }
-            ClientError::ConnectionLost(err) => {
-                if let Ok(reattach_command) = std::env::var(crate::remote::REATTACH_COMMAND_ENV_VAR)
-                {
-                    write!(f, "lost connection to remote ao: {err}")?;
-                    write!(f, "\nIf the remote server survived the SSH or network drop, its panes may still be running.")?;
-                    write!(f, "\nRun `{reattach_command}` to reattach")
-                } else {
-                    write!(f, "lost connection to server: {err}")
-                }
-            }
+            ClientError::ConnectionLost(err) => write!(f, "lost connection to server: {err}"),
             ClientError::Protocol(err) => write!(f, "protocol error: {err}"),
         }
     }
