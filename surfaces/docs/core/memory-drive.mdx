@@ -110,8 +110,9 @@ with a pack-protocol error, so the status code is not trusted).
 
 ## Nightly Dream
 
-`memory_dream::spawn` checks every 15 minutes and, between 02:00 and 06:00 server
-time, runs one Dream per personal drive with `dreaming_enabled`. The
+`memory_dream::spawn` checks every 15 minutes and runs one Dream per personal drive with
+`dreaming_enabled` when it is 02:00–06:00 in the drive's saved time zone
+(`memory_drives.timezone`, V243; server time when unset). The
 `UNIQUE(drive_id, date)` row in `memory_dreams` is the lease; a run stuck for an hour
 or a failed run (up to 3 attempts) is retried.
 
@@ -136,6 +137,22 @@ refuses and lists the files instead of guessing.
 
 The lexical `memory_consolidation` merge skips drive-backed facts. Gizzi's local
 `autoDream` stays off while the server Dream is on.
+
+## Delete forever
+
+`MemoryDrive::purge` rebuilds every commit without the chosen entry ids (keeping messages,
+authors and dates), moves the branch with compare-and-swap, expires the reflog and prunes
+objects. The ids and a digest of each removed text go to `allternit-memory-purged` in the
+repo; `apply_batch` and `validate_push` refuse them afterwards. `memory_drive_scopes::purge`
+remaps stored revisions and deletes the personal index rows. Gizzi replays only work made
+since its last sync (`refs/allternit/last-synced`) and prunes its local history when the
+server's history was rewritten.
+
+## Monitoring
+
+`memory_drive_events_total{event}` on `/metrics` counts `commit`, `commit_failed`,
+`pending_retry_failed`, `push_accepted`, `push_refused`, `dream_applied`, `dream_failed`,
+`dream_no_changes`, `purge` and `near_limit` (a drive at 80% of its size or file limit).
 
 ## Shared drives
 

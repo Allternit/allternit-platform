@@ -36,6 +36,10 @@ pub fn memory_drive_router() -> Router<Arc<AppState>> {
         .route("/memory/drive/reindex", post(reindex))
         .route("/memory/drive/health", get(health))
         .route("/memory/drive/import", post(import))
+        .route("/memory/drive/import-text", post(import_text))
+        .route("/memory/drive/purge", post(purge))
+        .route("/memory/drive/peers", get(list_peers))
+        .route("/memory/drive/peers/:peer_id", axum::routing::put(save_peer))
         .route("/memory/drive/tokens", get(list_tokens).post(mint_token))
         .route("/memory/drive/tokens/:id", delete(revoke_token))
         .route("/memory/drive/settings", get(get_settings).put(put_settings))
@@ -134,7 +138,16 @@ async fn info(State(state): State<Arc<AppState>>, Extension(user): Extension<Aut
         let d = if d.kind == "personal" { service::resolve(&ctx.0.db, &d.user_id)? } else { d };
         let conn = ctx.0.db.connect()?;
         let pending = crate::memory_drive_writer::pending_count(&conn, &ctx.1.user_id)?;
+        let tree = d.storage()?.snapshot(None)?;
+        let bytes: usize = tree.files.values().map(String::len).sum();
+        let usage = json!({ "bytes": bytes, "files": tree.files.len(),
+            "max_bytes": crate::memory_drive::MAX_DRIVE_BYTES, "max_files": crate::memory_drive::MAX_FILES });
+        if bytes * 10 >= crate::memory_drive::MAX_DRIVE_BYTES * 8 || tree.files.len() * 10 >= crate::memory_drive::MAX_FILES * 8 {
+            crate::metrics::inc_memory_drive_event("near_limit");
+        }
         Ok(json!({
+            "usage": usage,
+            "purged_ids": d.storage()?.purged_ids()?,
             "ref": r.label(), "kind": d.kind, "name": d.name, "brain_id": d.brain_id, "branch": d.branch,
             "revision": d.storage()?.head()?, "indexed_revision": d.indexed_revision,
             "index_dirty": d.kind == "personal" && d.dirty_revision.is_some(),
@@ -392,21 +405,29 @@ async fn revoke_token(State(state): State<Arc<AppState>>, Extension(user): Exten
 async fn get_settings(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>) -> Response {
     run(state, user, |ctx| {
         open(ctx, None, false)?;
-        Ok(json!({ "dreaming_enabled": dream::dreaming_enabled(&ctx.0.db.connect()?, &ctx.1.user_id)? }))
+        let conn = ctx.0.db.connect()?;
+        Ok(json!({ "dreaming_enabled": dream::dreaming_enabled(&conn, &ctx.1.user_id)?, "timezone": dream::timezone(&conn, &ctx.1.user_id)? }))
     })
     .await
 }
 
 #[derive(Deserialize)]
 struct SettingsBody {
-    dreaming_enabled: bool,
+    dreaming_enabled: Option<bool>,
+    timezone: Option<String>,
 }
 
 async fn put_settings(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Json(b): Json<SettingsBody>) -> Response {
     run(state, user, move |ctx| {
         open(ctx, None, true)?;
-        dream::set_dreaming(&ctx.0.db, &ctx.1.user_id, b.dreaming_enabled)?;
-        Ok(json!({ "dreaming_enabled": b.dreaming_enabled }))
+        if let Some(on) = b.dreaming_enabled {
+            dream::set_dreaming(&ctx.0.db, &ctx.1.user_id, on)?;
+        }
+        if let Some(tz) = b.timezone.as_deref().filter(|t| !t.is_empty()) {
+            dream::set_timezone(&ctx.0.db, &ctx.1.user_id, tz)?;
+        }
+        let conn = ctx.0.db.connect()?;
+        Ok(json!({ "dreaming_enabled": dream::dreaming_enabled(&conn, &ctx.1.user_id)?, "timezone": dream::timezone(&conn, &ctx.1.user_id)? }))
     })
     .await
 }
@@ -435,7 +456,12 @@ async fn run_dream(State(state): State<Arc<AppState>>, Extension(user): Extensio
         Ok(Err(e)) => return error(e),
         Err(_) => return err(StatusCode::INTERNAL_SERVER_ERROR, "Memory request failed. Retry later."),
     }
-    let today = chrono::Local::now().date_naive();
+    let tz = db.connect().ok().and_then(|c| dream::timezone(&c, &owner).ok().flatten());
+    let now = chrono::Utc::now();
+    let today = match tz.as_deref().and_then(|t| t.parse::<chrono_tz::Tz>().ok()) {
+        Some(z) => now.with_timezone(&z).date_naive(),
+        None => chrono::Local::now().date_naive(),
+    };
     match dream::run(db.clone(), owner.clone(), today, dream::gizzi_completer(owner.clone())).await {
         Ok(Some(row)) => Json(row).into_response(),
         Ok(None) => {
@@ -520,6 +546,112 @@ async fn resolve_question(State(state): State<Arc<AppState>>, Extension(user): E
     run(state, user, move |ctx| {
         let (_, d) = open(ctx, b.drive.as_deref(), true)?;
         Ok(json!({ "revision": scopes::resolve(&ctx.0.db, &ctx.1.user_id, &d, &id)? }))
+    })
+    .await
+}
+
+#[derive(Deserialize)]
+struct TextImportBody {
+    text: String,
+    from: String,
+    #[serde(default)]
+    apply: bool,
+}
+
+/// Import memories pasted or uploaded from another assistant. Dry run
+/// unless `apply` is true; apply is one commit.
+async fn import_text(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Json(b): Json<TextImportBody>) -> Response {
+    run(state, user, move |ctx| {
+        if b.text.len() > 512 * 1024 {
+            return Err(ServiceError::Provenance("That file is too large. Import up to 512 KB at a time.".into()));
+        }
+        open(ctx, None, b.apply)?;
+        if !b.apply {
+            let plan = crate::memory_drive_text_import::plan(&ctx.0.db, &ctx.1.user_id, &b.text, &b.from)?;
+            return Ok(json!({ "dry_run": true, "plan": plan }));
+        }
+        let (revision, imported) = crate::memory_drive_text_import::apply(&ctx.0.db, &ctx.1.user_id, &b.text, &b.from)?;
+        Ok(json!({ "dry_run": false, "revision": revision, "imported": imported }))
+    })
+    .await
+}
+
+#[derive(Deserialize)]
+struct PurgeBody {
+    drive: Option<String>,
+    expected_revision: String,
+    entry_ids: Vec<String>,
+    /// Must be exactly "delete forever".
+    confirm: String,
+}
+
+/// Permanently delete entries from the drive and its whole history.
+async fn purge(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Json(b): Json<PurgeBody>) -> Response {
+    run(state, user, move |ctx| {
+        if b.confirm != "delete forever" {
+            return Err(ServiceError::Provenance("Confirm with \"delete forever\" to remove memories from history.".into()));
+        }
+        if b.entry_ids.is_empty() || b.entry_ids.len() > 200 {
+            return Err(ServiceError::Provenance("Choose 1 to 200 memories to delete.".into()));
+        }
+        let (_, d) = open(ctx, b.drive.as_deref(), true)?;
+        let revision = scopes::purge(&ctx.0.db, &ctx.1.user_id, &d, &b.expected_revision, &b.entry_ids)?;
+        Ok(json!({ "revision": revision, "purged": b.entry_ids.len() }))
+    })
+    .await
+}
+
+/// Sync state with the owner's other computers (personal drive).
+async fn list_peers(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>) -> Response {
+    run(state, user, |ctx| {
+        let (_, d) = open(ctx, None, false)?;
+        let conn = ctx.0.db.connect()?;
+        let mut st = conn.prepare(
+            "SELECT peer_id,peer_name,local_revision,peer_revision,last_sync_at,last_error FROM memory_drive_peers WHERE drive_id=?1 ORDER BY peer_id",
+        )?;
+        let peers = st
+            .query_map(params![d.id], |r| {
+                Ok(json!({ "peer_id": r.get::<_, String>(0)?, "peer_name": r.get::<_, Option<String>>(1)?,
+                    "local_revision": r.get::<_, Option<String>>(2)?, "peer_revision": r.get::<_, Option<String>>(3)?,
+                    "last_sync_at": r.get::<_, Option<String>>(4)?, "last_error": r.get::<_, Option<String>>(5)? }))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(json!({ "peers": peers }))
+    })
+    .await
+}
+
+#[derive(Deserialize)]
+struct PeerBody {
+    peer_name: Option<String>,
+    local_revision: Option<String>,
+    peer_revision: Option<String>,
+    last_error: Option<String>,
+}
+
+async fn save_peer(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(peer_id): Path<String>, Json(b): Json<PeerBody>) -> Response {
+    run(state, user, move |ctx| {
+        if peer_id.is_empty() || peer_id.len() > 128 || !peer_id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_') {
+            return Err(ServiceError::Provenance("invalid computer id".into()));
+        }
+        for rev in [&b.local_revision, &b.peer_revision].into_iter().flatten() {
+            crate::memory_drive::validate_oid(rev)?;
+        }
+        let (_, d) = open(ctx, None, true)?;
+        let name: Option<String> = b.peer_name.as_deref().map(|n| n.chars().filter(|c| !c.is_control()).take(80).collect());
+        let err: Option<String> = b.last_error.as_deref().map(|n| n.chars().filter(|c| !c.is_control()).take(300).collect());
+        let synced = b.last_error.is_none() && b.local_revision.is_some() && b.peer_revision.is_some();
+        ctx.0.db.connect()?.execute(
+            "INSERT INTO memory_drive_peers(drive_id,peer_id,peer_name,local_revision,peer_revision,last_sync_at,last_error)
+             VALUES(?1,?2,?3,?4,?5,CASE WHEN ?7 THEN CURRENT_TIMESTAMP END,?6)
+             ON CONFLICT(drive_id,peer_id) DO UPDATE SET peer_name=COALESCE(excluded.peer_name,peer_name),
+               local_revision=CASE WHEN ?7 THEN excluded.local_revision ELSE local_revision END,
+               peer_revision=CASE WHEN ?7 THEN excluded.peer_revision ELSE peer_revision END,
+               last_sync_at=CASE WHEN ?7 THEN CURRENT_TIMESTAMP ELSE last_sync_at END,
+               last_error=excluded.last_error",
+            params![d.id, peer_id, name, b.local_revision, b.peer_revision, err, synced],
+        )?;
+        Ok(json!({ "saved": true }))
     })
     .await
 }

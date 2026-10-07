@@ -190,6 +190,32 @@ describe("memory drive checkout", () => {
     for (const id of ["off-1", "off-2", "srv-1"]) expect(notes).toContain(id)
   })
 
+  test("after a server purge, sync replays only new work and never re-adds the purged memory", async () => {
+    const root = await scratch()
+    const remote = await bareRemote(root)
+    const dir = path.join(root, "a")
+    const a = new DriveCheckout({ dir, remote: remoteFor(remote), author })
+    await a.write([{ UpsertEntry: { path: "notes.md", entry: entry("keep-1", "Keep this") } }], { message: "keep" })
+    await a.write([{ UpsertEntry: { path: "notes.md", entry: entry("gone-1", "Delete me forever") } }], { message: "gone" })
+    // Server purge: rewrite main without the gone-1 commit.
+    const work = path.join(root, "rewrite")
+    expect((await runGit(["clone", "--quiet", remote, work], { cwd: root })).code).toBe(0)
+    await runGit(["reset", "--quiet", "--hard", "HEAD~1"], { cwd: work })
+    expect((await runGit(["push", "--quiet", "--force", "origin", "HEAD:main"], { cwd: work })).code).toBe(0)
+    // Meanwhile this computer saved something new.
+    const offline = new DriveCheckout({ dir, remote: remoteFor(path.join(root, "gone.git")), author })
+    await offline.write([{ UpsertEntry: { path: "notes.md", entry: entry("new-1", "Saved after the purge") } }], { message: "new" })
+    const after = await new DriveCheckout({ dir, remote: remoteFor(remote), author }).sync()
+    expect(after.pending).toBe(false)
+    const notes = (await remoteFiles(remote))["notes.md"]!
+    expect(notes).toContain("keep-1")
+    expect(notes).toContain("new-1")
+    expect(notes).not.toContain("gone-1")
+    // The local copy no longer holds the purged text anywhere in its history.
+    const grep = await runGit(["log", "--all", "-p", "-S", "Delete me forever"], { cwd: dir })
+    expect(grep.stdout.trim()).toBe("")
+  })
+
   test("first-login merge brings signed-out history up without force", async () => {
     const root = await scratch()
     const remote = await bareRemote(root)

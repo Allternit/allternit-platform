@@ -67,7 +67,7 @@ Creates your personal drive on first call.
 }
 ```
 
-`clone_url` never contains a credential. `pending_writes` counts writes whose commit
+`clone_url` never contains a credential. `usage` is `{ bytes, files, max_bytes, max_files }`. `pending_writes` counts writes whose commit
 failed and will be retried.
 
 | Route | Returns |
@@ -124,6 +124,24 @@ Moves memories saved before the drive existed into it.
 
 Old rows stay visible for 30 days after the import and are then hidden. They are never deleted.
 
+### `POST /memory/drive/import-text`
+
+Imports memories from another assistant. Body `{ text, from: "chatgpt" | "claude" | "other", apply? }`.
+`text` is plain lines, bullets, a numbered list, or JSON (an array of strings, or objects
+with `content`, `memory` or `text`), up to 500 items and 512 KB.
+
+- Dry run: `{ dry_run: true, plan: { from, path, entries: [text], skipped: [{ text, reason }] } }`.
+- `apply: true`: one commit to `imports/<from>.md`, returns `{ dry_run: false, revision, imported }`.
+
+### `POST /memory/drive/purge`
+
+Permanently removes entries from the drive and its whole history.
+Body `{ drive?, expected_revision, entry_ids: [id], confirm: "delete forever" }` (1 to 200 ids;
+for lines without an `id`, use the derived `entry-<sha256>` id). Returns `{ revision, purged }`.
+Commit messages, authors and dates are kept; stored revisions (index, import, Dreams) are
+remapped; Dream reports that quoted a purged memory are replaced with a note. Purged ids and
+text are refused from then on, on writes and pushes. Clones made before the purge keep their copy.
+
 ### `POST /memory/drive/reindex`, `GET /memory/drive/health`
 
 Rebuild the index from the drive now, and report `{ revision, indexed_revision, index_dirty, imported_at, pending_writes }`.
@@ -155,7 +173,7 @@ push:` and the reason. After an accepted push the index is rebuilt.
 
 | Route | What it does |
 | --- | --- |
-| `GET /memory/drive/settings` / `PUT` | `{ dreaming_enabled }`. On by default. |
+| `GET /memory/drive/settings` / `PUT` | `{ dreaming_enabled, timezone }`. Dreaming is on by default; `timezone` is an IANA name (e.g. `America/Chicago`) and decides when the Dream runs (02:00–06:00 local). `PUT` takes either field. |
 | `GET /memory/drive/dreams?limit=` | `{ dreams: [{ id, date, status, revision, base_revision, report, summary, error, undo_revision, created_at }] }` |
 | `POST /memory/drive/dreams/run` | Runs today's Dream now. Once per day; a second call returns today's result. |
 | `POST /memory/drive/dreams/:id/undo` | `{ undone: true, revision, dream }`. 409 with `conflicts: [paths]` when you edited a line the Dream changed. |
@@ -175,5 +193,7 @@ For team, project and swarm drives. Questions and answers live in `questions.md`
 | `POST /memory/drive/questions/:id/answer` | `{ drive, text, source? }` | `{ revision, answer }` |
 | `POST /memory/drive/questions/:id/resolve` | `{ drive }` | `{ revision }` |
 
-`status` is `open`, `answered` (at least one answer) or `resolved`. Concurrent askers and
+`status` is `open`, `answered` (at least one answer) or `resolved`. Bots reach the same board
+through the MCP tools `memory_questions`, `memory_ask` and `memory_answer` (with `drive`), using
+their owner's membership. Concurrent askers and
 answerers never overwrite each other: each change is retried on the latest version.

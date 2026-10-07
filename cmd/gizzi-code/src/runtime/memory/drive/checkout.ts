@@ -155,6 +155,8 @@ const OS_JUNK = new Set([".DS_Store", "Thumbs.db", "desktop.ini", "Icon\r"])
 const LOCAL_BRANCH = "main"
 const LOCAL_REF = `refs/heads/${LOCAL_BRANCH}`
 const REMOTE_REF = "refs/remotes/origin/main"
+/** The server head before the latest fetch: the base for replaying local work. */
+const SYNCED_REF = "refs/allternit/last-synced"
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -772,6 +774,11 @@ export class DriveCheckout {
   }
 
   private async fetchUnlocked(): Promise<{ ok: boolean; message?: string }> {
+    // Remember what the server had before this fetch. If the server's history
+    // was rewritten (a "delete forever" purge), only work made after that
+    // point is replayed, so purged memories are not pushed back.
+    const before = await this.rev(REMOTE_REF)
+    if (before) await this.git(["update-ref", SYNCED_REF, before])
     if (!this.remote) return { ok: true }
     if (this.offline()) return { ok: false, message: "Could not reach the memory server; changes are saved locally and will sync later." }
     const branch = this.remote.branch ?? "main"
@@ -798,6 +805,13 @@ export class DriveCheckout {
     const head = await this.head()
     const remote = await this.rev(REMOTE_REF)
     if (!remote || head === remote) return
+    // The server rewrote its history (a "delete forever" purge): what we had
+    // synced is no longer in it. Replay only our own unpushed work.
+    const synced = await this.rev(SYNCED_REF)
+    if (head && synced && synced !== remote && !(await this.isAncestor(synced, remote))) {
+      await this.replayOnto(head, remote)
+      return
+    }
     if (!head || (await this.isAncestor(head, remote))) {
       const tree = await this.readTree(remote)
       await this.materialize(remote, tree.files, head)
@@ -815,7 +829,8 @@ export class DriveCheckout {
    * (already on the server) is skipped.
    */
   private async replayOnto(head: string, onto: string): Promise<void> {
-    const base = await this.mergeBase(head, onto)
+    const synced = await this.rev(SYNCED_REF)
+    const base = synced && (await this.isAncestor(synced, head)) ? synced : await this.mergeBase(head, onto)
     const listed = await this.git(["rev-list", "--reverse", "--first-parent", base ? `${base}..${head}` : head])
     const commits = listed.code === 0 ? listed.stdout.split("\n").filter(Boolean) : []
     const theirs = await this.readTree(onto)
@@ -838,11 +853,15 @@ export class DriveCheckout {
       current = await this.commitFiles(next, [current], message, theirs.oids, theirs.files)
       currentFiles = next
     }
-    if (current === onto) {
-      await this.materialize(onto, theirs.files, head)
-      return
+    if (current === onto) await this.materialize(onto, theirs.files, head)
+    else await this.materialize(current, currentFiles, head)
+    // The server rewrote history (a purge): drop the old local history too,
+    // so deleted memories don't linger in this computer's copy.
+    if (synced && !(await this.isAncestor(synced, onto))) {
+      await this.git(["update-ref", SYNCED_REF, onto])
+      await this.git(["reflog", "expire", "--expire=now", "--all"])
+      await this.git(["gc", "--prune=now", "--quiet"])
     }
-    await this.materialize(current, currentFiles, head)
   }
 
   private async pushUnlocked(): Promise<PushOutcome> {

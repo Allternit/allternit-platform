@@ -17,6 +17,7 @@
 //! | `vendor_result` | `vendor_tickets` finished / failed / expired            | review (open)          |
 //! | `draft`       | `inbox_items` `autonomy.draft` cards (autonomy level kept a draft) | review (open) |
 //! | `factory_approval` | `factory_approvals` pending (a Factory node waiting on you) | approve / reject |
+//! | `memory_import` | active `memory_facts` not yet in the Memory Drive (no import yet) | open Settings → Memory |
 //!
 //! `inbox_state` (V232) only remembers dismissals and snoozes. Routes live in
 //! `inbox_routes::inbox_router` (`GET /inbox` carries `needsYou`).
@@ -287,6 +288,26 @@ pub fn collect(conn: &Connection, user_id: &str, unanswered_min: i64) -> rusqlit
 
     // Drop what the owner already handled (unless the item changed since).
     let mut st = conn.prepare("SELECT item_id, state, until, item_at FROM inbox_state WHERE owner = ?1")?;
+    // Memories saved before the Memory Drive, not yet moved into it.
+    let legacy: (i64, Option<String>) = conn
+        .query_row(
+            "SELECT COUNT(*), MIN(f.valid_from) FROM memory_facts f
+             WHERE f.user_id = ?1 AND f.valid_until IS NULL
+               AND NOT EXISTS (SELECT 1 FROM memory_drive_entries e WHERE e.fact_id = f.id)
+               AND NOT EXISTS (SELECT 1 FROM memory_drives d WHERE d.kind = 'personal' AND d.scope_id = ?1 AND d.imported_at IS NOT NULL)",
+            params![user_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap_or((0, None));
+    if legacy.0 > 0 {
+        let n = legacy.0;
+        out.push(item(
+            "memory_import:personal".into(), "memory_import", "memory", "", "", None, None,
+            format!("You have {n} saved {} from before the Memory Drive. Review and move {} into your drive.", if n == 1 { "memory" } else { "memories" }, if n == 1 { "it" } else { "them" }),
+            legacy.1.as_deref().unwrap_or(""), ("open", "Review"), false,
+        ));
+    }
+
     let handled: std::collections::HashMap<String, (String, Option<String>, String)> = st
         .query_map(params![user_id], |r| Ok((r.get::<_, String>(0)?, (r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?, r.get::<_, String>(3)?))))?
         .filter_map(Result::ok)

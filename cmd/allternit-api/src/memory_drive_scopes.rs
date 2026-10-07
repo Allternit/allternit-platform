@@ -389,3 +389,107 @@ pub fn resolve(db: &DbHandle, user: &str, drive: &DriveRecord, question: &str) -
         Ok(vec![Operation::UpsertEntry { path: QUESTIONS.into(), entry }])
     })
 }
+
+/// Permanently delete entries from a drive and its whole history. Stored
+/// revisions (index, import, Dreams) are remapped to the rewritten commits;
+/// personal index rows for the purged entries are deleted, not retired.
+pub fn purge(db: &DbHandle, user: &str, drive: &DriveRecord, expected: &str, entry_ids: &[String]) -> Result<String> {
+    let ids: std::collections::BTreeSet<String> = entry_ids.iter().cloned().collect();
+    let conn = db.connect()?;
+    let facts: Vec<String> = if drive.kind == "personal" {
+        let mut out = Vec::new();
+        for id in &ids {
+            if let Some(f) = conn
+                .query_row("SELECT fact_id FROM memory_drive_entries WHERE drive_id=?1 AND entry_id=?2", params![drive.id, id], |r| r.get::<_, String>(0))
+                .optional()?
+            {
+                out.push(f);
+            }
+        }
+        out
+    } else {
+        vec![]
+    };
+    drop(conn);
+    let texts: Vec<String> = service::entries(&drive.storage()?.snapshot(Some(expected))?)?
+        .into_iter()
+        .filter(|(_, e)| ids.contains(&e.id))
+        .map(|(_, e)| e.text)
+        .collect();
+    let (head, map) = drive.storage()?.purge(expected, &ids)?;
+    let mut conn = db.connect()?;
+    let tx = conn.transaction()?;
+    for (old, new) in &map {
+        tx.execute("UPDATE memory_drives SET indexed_revision=?3 WHERE id=?1 AND indexed_revision=?2", params![drive.id, old, new])?;
+        tx.execute("UPDATE memory_drives SET import_revision=?3 WHERE id=?1 AND import_revision=?2", params![drive.id, old, new])?;
+        tx.execute("UPDATE memory_drive_peers SET local_revision=?3 WHERE drive_id=?1 AND local_revision=?2", params![drive.id, old, new])?;
+        for col in ["base_revision", "revision", "undo_revision"] {
+            tx.execute(&format!("UPDATE memory_dreams SET {col}=?3 WHERE drive_id=?1 AND {col}=?2"), params![drive.id, old, new])?;
+        }
+    }
+    for f in &facts {
+        tx.execute("DELETE FROM memory_drive_entries WHERE drive_id=?1 AND fact_id=?2", params![drive.id, f])?;
+        tx.execute("DELETE FROM memory_embeddings WHERE user_id=?1 AND target_type='fact' AND target_id=?2", params![drive.user_id, f])?;
+        tx.execute("DELETE FROM memory_facts WHERE id=?1 AND user_id=?2", params![f, drive.user_id])?;
+    }
+    // Dream reports quote the text they changed: blank the ones that quote it.
+    for t in &texts {
+        tx.execute(
+            "UPDATE memory_dreams SET report='# Dream\n\nThis report quoted a memory that was permanently deleted.\n' WHERE drive_id=?1 AND instr(report, ?2) > 0",
+            params![drive.id, t],
+        )?;
+    }
+    tx.commit()?;
+    tracing::info!(drive = %drive.id, by = %user, entries = ids.len(), "memory drive purge");
+    crate::metrics::inc_memory_drive_event("purge");
+    if drive.kind == "personal" {
+        service::reindex(db, &drive.user_id)?;
+    } else {
+        crate::memory_drive_cowork::reindex(db, drive)?;
+    }
+    Ok(head)
+}
+
+/// MCP tools for a vendor bot working for `owner`: read, ask on, answer and
+/// resolve a shared drive's questions board. Same access checks as the API
+/// (the bot acts with the owner's membership; personal drives are refused).
+pub fn tool_questions(db: &DbHandle, owner: &str, bot: &str, name: &str, args: &serde_json::Value) -> std::result::Result<serde_json::Value, String> {
+    let drive_ref = args["drive"].as_str().unwrap_or_default();
+    let r = DriveRef::parse(Some(drive_ref), owner).map_err(|e| e.to_string())?;
+    if r.kind == "personal" || r.kind == "bot" {
+        return Err("Use a team, project or swarm drive (for example team:<id>).".into());
+    }
+    let root = crate::memory_drive_writer::configured_root(&db.connect().map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())?
+        .ok_or("Memory Drive isn't available on this computer.")?;
+    let write = name != "memory_questions";
+    let d = open(db, &root, owner, &r, write).map_err(|e| e.to_string())?;
+    let author = format!("bot {bot}");
+    let text = || args["text"].as_str().map(str::trim).filter(|t| !t.is_empty()).ok_or("text is required".to_string());
+    match name {
+        "memory_questions" => {
+            let (revision, qs) = questions(&d).map_err(|e| e.to_string())?;
+            Ok(serde_json::json!({ "revision": revision, "questions": qs }))
+        }
+        "memory_ask" => {
+            let (revision, q) = ask(db, owner, &author, &d, &text()?, None).map_err(|e| e.to_string())?;
+            Ok(serde_json::json!({ "revision": revision, "id": q.id }))
+        }
+        _ => {
+            let id = args["id"].as_str().ok_or("id is required")?;
+            let mut out = serde_json::json!({});
+            if let Some(t) = args["text"].as_str().map(str::trim).filter(|t| !t.is_empty()) {
+                let (revision, a) = answer(db, owner, &author, &d, id, t, None).map_err(|e| e.to_string())?;
+                out = serde_json::json!({ "revision": revision, "answer_id": a.id });
+            }
+            if args["resolve"].as_bool() == Some(true) {
+                out["revision"] = serde_json::json!(resolve(db, owner, &d, id).map_err(|e| e.to_string())?);
+                out["resolved"] = serde_json::json!(true);
+            }
+            if out.as_object().is_some_and(|o| o.is_empty()) {
+                return Err("Give text to answer, or resolve: true.".into());
+            }
+            Ok(out)
+        }
+    }
+}

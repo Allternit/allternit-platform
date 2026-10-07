@@ -985,6 +985,12 @@ async fn git_smart_http(
         })
         .await;
     }
+    if drive_owner.is_some() && push && method == Method::POST {
+        if let Ok(Ok(out)) = &result {
+            let refused = find_subslice(out, b"ng refs/").is_some();
+            crate::metrics::inc_memory_drive_event(if refused { "push_refused" } else { "push_accepted" });
+        }
+    }
     match result {
         Ok(Ok(stdout)) => parse_cgi_response(&stdout),
         Ok(Err(e)) => {

@@ -477,3 +477,75 @@ fn bot_memory_is_canonical_in_the_bot_drive() {
     let left: i64 = conn.query_row("SELECT COUNT(*) FROM cowork_memory_entries WHERE drive_id IS NOT NULL", [], |r| r.get(0)).unwrap();
     assert_eq!(left, 0);
 }
+
+#[test]
+fn delete_forever_removes_from_all_history_and_refuses_it_back() {
+    let f = fixture();
+    let o = obs(&f.db, "u1", None);
+    kernel::persist_facts(&f.db, "u1", None, &o, &["Keep this one.".into()]).unwrap();
+    let gone = kernel::persist_facts(&f.db, "u1", None, &o, &["My diary secret word is plum.".into()]).unwrap().remove(0);
+    let entry_id: String = f.db.connect().unwrap().query_row("SELECT entry_id FROM memory_drive_entries WHERE fact_id=?1", params![gone.id], |r| r.get(0)).unwrap();
+    let d = service::resolve(&f.db, "u1").unwrap();
+    let storage = d.storage().unwrap();
+    let head = storage.head().unwrap().unwrap();
+    let before = storage.history(None, 100).unwrap().len();
+    scopes::purge(&f.db, "u1", &d, &head, &[entry_id.clone()]).unwrap();
+    // Same number of commits, but no version contains the line anymore.
+    assert_eq!(storage.history(None, 100).unwrap().len(), before);
+    let log = std::process::Command::new("git").args(["--git-dir", d.repo_path.to_str().unwrap(), "log", "--all", "-p", "-S", "plum"]).output().unwrap();
+    assert!(String::from_utf8_lossy(&log.stdout).trim().is_empty(), "purged text still in history");
+    assert_eq!(active_facts(&f.db, "u1"), vec!["Keep this one."]);
+    let row: i64 = f.db.connect().unwrap().query_row("SELECT COUNT(*) FROM memory_facts WHERE id=?1", params![gone.id], |r| r.get(0)).unwrap();
+    assert_eq!(row, 0, "purge deletes the index row");
+    assert_eq!(storage.purged_ids().unwrap(), vec![entry_id]);
+    // The same text can't come back.
+    assert!(kernel::persist_facts(&f.db, "u1", None, &o, &["My diary secret word is plum.".into()]).is_err());
+    assert_eq!(crate::memory_drive_writer::pending_count(&f.db.connect().unwrap(), "u1").unwrap(), 0, "refused content is not queued for retry");
+}
+
+#[test]
+fn import_from_another_assistant_previews_then_commits_once() {
+    let f = fixture();
+    let o = obs(&f.db, "u1", None);
+    kernel::persist_facts(&f.db, "u1", None, &o, &["Lives in Saint Paul.".into()]).unwrap();
+    let text = "- Prefers short answers\n- Lives in Saint Paul.\n1. Uses Rust daily\n- My password is hunter2\n- Prefers short answers";
+    let plan = crate::memory_drive_text_import::plan(&f.db, "u1", text, "chatgpt").unwrap();
+    assert_eq!(plan.entries, vec!["Prefers short answers", "Uses Rust daily"]);
+    let reasons: Vec<&str> = plan.skipped.iter().map(|s| s.reason).collect();
+    assert_eq!(reasons, vec!["already remembered", "looks like a password or key", "listed twice"]);
+    let n = commits(&f.db, "u1");
+    let (_, imported) = crate::memory_drive_text_import::apply(&f.db, "u1", text, "chatgpt").unwrap();
+    assert_eq!(imported, 2);
+    assert_eq!(commits(&f.db, "u1"), n + 1);
+    assert!(drive_files(&f.db, "u1")["imports/chatgpt.md"].contains("Uses Rust daily [source: chatgpt:memory-import;"));
+    assert!(crate::memory_drive_text_import::plan(&f.db, "u1", text, "nope").is_err());
+}
+
+#[test]
+fn needs_you_reminds_until_memories_are_imported() {
+    let f = fixture();
+    let conn = f.db.connect().unwrap();
+    conn.execute("INSERT INTO memory_facts (id, user_id, fact, confidence, valid_from) VALUES ('old1','u1','Likes chess.',0.9,'2026-01-02T00:00:00Z')", []).unwrap();
+    let has = |c: &rusqlite::Connection| crate::inbox_needs::collect(c, "u1", 60).unwrap().iter().any(|i| i["kind"] == "memory_import");
+    assert!(has(&conn));
+    let d = scopes::open(&f.db, &f.root, "u1", &DriveRef::personal("u1"), true).unwrap();
+    service::import_apply(&f.db, "u1", &d.storage().unwrap().head().unwrap().unwrap()).unwrap();
+    assert!(!has(&conn));
+}
+
+#[test]
+fn bots_use_the_questions_board_with_their_owners_access() {
+    let f = fixture();
+    let conn = f.db.connect().unwrap();
+    conn.execute("INSERT INTO workspaces (id, name, slug, owner_id) VALUES ('ws1','Acme','acme','owner')", []).unwrap();
+    scopes::open(&f.db, &f.root, "owner", &DriveRef::parse(Some("team:ws1"), "owner").unwrap(), true).unwrap();
+    let args = |v: serde_json::Value| v;
+    let asked = scopes::tool_questions(&f.db, "owner", "b1", "memory_ask", &args(serde_json::json!({ "drive": "team:ws1", "text": "Which region?" }))).unwrap();
+    let id = asked["id"].as_str().unwrap().to_string();
+    scopes::tool_questions(&f.db, "owner", "b1", "memory_answer", &args(serde_json::json!({ "drive": "team:ws1", "id": id, "text": "us-east", "resolve": true }))).unwrap();
+    let list = scopes::tool_questions(&f.db, "owner", "b1", "memory_questions", &args(serde_json::json!({ "drive": "team:ws1" }))).unwrap();
+    assert_eq!(list["questions"][0]["status"], "resolved");
+    assert_eq!(list["questions"][0]["answers"][0]["author"], "bot b1");
+    assert!(scopes::tool_questions(&f.db, "stranger", "b2", "memory_questions", &args(serde_json::json!({ "drive": "team:ws1" }))).is_err());
+    assert!(scopes::tool_questions(&f.db, "owner", "b1", "memory_questions", &args(serde_json::json!({ "drive": "personal" }))).is_err());
+}

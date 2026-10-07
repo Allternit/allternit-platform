@@ -454,6 +454,7 @@ fn claim(conn: &Connection, drive: &DriveRecord, date: &str, base: &str) -> Resu
 }
 
 fn finish(conn: &Connection, id: &str, status: &str, revision: Option<&str>, report: Option<&str>, summary: &Summary, error: Option<&str>) -> Result<()> {
+    crate::metrics::inc_memory_drive_event(match status { "applied" => "dream_applied", "failed" => "dream_failed", _ => "dream_no_changes" });
     conn.execute(
         "UPDATE memory_dreams SET status=?2,revision=?3,report=?4,summary=?5,error=?6,updated_at=CURRENT_TIMESTAMP WHERE id=?1",
         params![id, status, revision, report, serde_json::to_string(summary).unwrap_or_default(), error],
@@ -713,24 +714,78 @@ pub fn undo(db: &DbHandle, owner: &str, dream_id: &str) -> std::result::Result<D
 
 // ─── Scheduler ──────────────────────────────────────────────────────────────
 
-/// Nightly sweep: every 15 minutes, between 02:00 and 06:00 server local time,
-/// Dream each personal drive that has dreaming on and no run for today.
+/// Nightly sweep: every 15 minutes, Dream each personal drive whose owner's
+/// local time (their saved time zone, else server time) is 02:00–06:00 and
+/// that has dreaming on and no run for that local date.
 pub fn spawn(state: Arc<crate::AppState>) {
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(15 * 60));
         loop {
             tick.tick().await;
-            let now = chrono::Local::now();
-            let hour = chrono::Timelike::hour(&now);
-            if !(2..6).contains(&hour) {
-                continue;
-            }
-            sweep(&state.db, now.date_naive()).await;
+            sweep_due(&state.db, chrono::Utc::now()).await;
         }
     });
 }
 
+/// The owner's local date when it is Dream time (02:00–06:00) for them.
+pub fn dream_date(timezone: Option<&str>, now: chrono::DateTime<chrono::Utc>) -> Option<chrono::NaiveDate> {
+    use chrono::Timelike;
+    let local = match timezone.and_then(|t| t.parse::<chrono_tz::Tz>().ok()) {
+        Some(tz) => now.with_timezone(&tz).naive_local(),
+        None => now.with_timezone(&chrono::Local).naive_local(),
+    };
+    (2..6).contains(&local.hour()).then(|| local.date())
+}
+
+pub fn set_timezone(db: &DbHandle, owner: &str, timezone: &str) -> Result<()> {
+    if timezone.parse::<chrono_tz::Tz>().is_err() {
+        return Err(ServiceError::Provenance("unknown time zone".into()));
+    }
+    db.connect()?.execute("UPDATE memory_drives SET timezone=?2 WHERE kind='personal' AND scope_id=?1", params![owner, timezone])?;
+    Ok(())
+}
+
+pub fn timezone(conn: &Connection, owner: &str) -> Result<Option<String>> {
+    Ok(conn
+        .query_row("SELECT timezone FROM memory_drives WHERE kind='personal' AND scope_id=?1", params![owner], |r| r.get(0))
+        .optional()?
+        .flatten())
+}
+
+async fn sweep_due(db: &DbHandle, now: chrono::DateTime<chrono::Utc>) {
+    let drives: Vec<(String, Option<String>)> = match db.connect().and_then(|c| {
+        // A computer that syncs this drive with another computer (the
+        // Desktop app runs the sync) leaves the nightly Dream to the other,
+        // always-on one; the results reach it through the sync.
+        let mut s = c.prepare(
+            "SELECT d.user_id, d.timezone FROM memory_drives d WHERE d.kind='personal' AND d.dreaming_enabled=1
+             AND NOT EXISTS(SELECT 1 FROM memory_drive_peers p WHERE p.drive_id=d.id AND p.last_sync_at >= datetime('now','-7 days'))",
+        )?;
+        let rows = s.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect();
+        rows
+    }) {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::warn!("dream sweep: {e}");
+            return;
+        }
+    };
+    let mut by_date: BTreeMap<chrono::NaiveDate, Vec<String>> = BTreeMap::new();
+    for (owner, tz) in drives {
+        if let Some(date) = dream_date(tz.as_deref(), now) {
+            by_date.entry(date).or_default().push(owner);
+        }
+    }
+    for (date, owners) in by_date {
+        sweep_owners(db, date, Some(&owners)).await;
+    }
+}
+
 pub async fn sweep(db: &DbHandle, date: chrono::NaiveDate) {
+    sweep_owners(db, date, None).await
+}
+
+async fn sweep_owners(db: &DbHandle, date: chrono::NaiveDate, only: Option<&[String]>) {
     match service::hide_expired_archives(db) {
         Ok(0) => {}
         Ok(n) => tracing::info!("memory drive: hid {n} imported rows past their 30-day archive window"),
@@ -750,7 +805,7 @@ pub async fn sweep(db: &DbHandle, date: chrono::NaiveDate) {
             return;
         }
     };
-    for owner in owners {
+    for owner in owners.into_iter().filter(|o| only.map_or(true, |l| l.contains(o))) {
         if let Err(e) = run(db.clone(), owner.clone(), date, gizzi_completer(owner.clone())).await {
             tracing::warn!("dream for a user failed: {e}");
         }
@@ -808,6 +863,14 @@ mod tests {
         assert!(!c.ops.iter().any(|o| matches!(o, Operation::DeleteEntry { id } if id == "recent" || id == "used")));
         let lesson = c.ops.iter().find_map(|o| match o { Operation::UpsertEntry { path, entry } if path == "lessons.md" => Some(entry), _ => None }).unwrap();
         assert_eq!(lesson.source, "/?session=s1");
+    }
+
+    #[test]
+    fn dream_time_follows_the_owner_time_zone() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-10-07T08:30:00Z").unwrap().with_timezone(&chrono::Utc);
+        // 03:30 in Chicago, 09:30 in London.
+        assert_eq!(dream_date(Some("America/Chicago"), now), chrono::NaiveDate::from_ymd_opt(2026, 10, 7));
+        assert_eq!(dream_date(Some("Europe/London"), now), None);
     }
 
     #[test]

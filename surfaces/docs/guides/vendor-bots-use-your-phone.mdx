@@ -39,6 +39,9 @@ Under **Use the phone** you can see each app that has used the connector and whe
 | `ask_bot` | Hands off to your bot and returns its reply. |
 | `twin_context` | Reads how to speak for you (name, tone, signature, what it may say about you) and the shared facts you allowed all bots to know. Read only. See [Your twin](/guides/your-twin). |
 | `twin_propose` | Suggests something it learned about you. You review it before any bot uses it. |
+| `memory_questions` | Reads a team, project or swarm [Memory Drive](/guides/memory-drive) questions board. |
+| `memory_ask` | Asks a question on that board. |
+| `memory_answer` | Answers a question on that board, or marks it resolved. |
 | `list_open_tickets`, `get_ticket`, `post_result` | Lists, reads and finishes the [tickets](/guides/how-vendor-bots-connect) assigned to it. |
 
 **Cards.** In Claude and ChatGPT the results show as cards, not raw text: a thread card for `list_threads` and `read_thread`, a result card for `send_text` and `start_call` (it says the person contacted the bot first, or is a contact), an email card that reads "Waiting for the owner's OK", and a channel post card for `post_message`. A refused call still gets a card that says why nothing went out. The card takes its accent from the app it appears in (Claude, ChatGPT, Gemini or Hermes) and falls back to Allternit's neutral look in any other app.

@@ -1,6 +1,7 @@
 import { cmd } from "@/cli/commands/cmd"
 import { UI } from "@/cli/ui"
 import { MemoryDrive } from "@/runtime/memory/drive/drive"
+import { DrivePlatform } from "@/runtime/memory/drive/platform"
 import { applyMemdirImport, legacyMemdirRoots, planMemdirImport } from "@/runtime/memory/drive/import"
 import { formatDreams, formatFileView, formatHistory, formatOverview, formatSearch, syncLine } from "@/runtime/memory/drive/report"
 import { PlatformApiError, PlatformSignedOutError } from "@/runtime/bots/platform-api"
@@ -202,6 +203,60 @@ const UndoDreamCommand = cmd({
   },
 })
 
+const QuestionsCommand = cmd({
+  command: "questions",
+  describe: "show a shared drive's questions board (team, project or swarm)",
+  builder: (yargs) => yargs.option("drive", { type: "string", demandOption: true, describe: "team:<id>, project:<id> or swarm:<id>" }),
+  handler: async (args) => {
+    try {
+      const list = await DrivePlatform.questions(String(args.drive))
+      if (!list.length) return UI.println("No questions yet.")
+      for (const q of list) {
+        UI.println(`${q.id}  [${q.status}]  ${q.text}  — ${q.author}, ${q.added}`)
+        for (const a of q.answers) UI.println(`    ↳ ${a.text}  — ${a.author}, ${a.added}`)
+      }
+    } catch (error) {
+      fail(error)
+    }
+  },
+})
+
+const AskCommand = cmd({
+  command: "ask <text>",
+  describe: "ask a question on a shared drive's questions board",
+  builder: (yargs) => yargs.option("drive", { type: "string", demandOption: true }).positional("text", { type: "string", demandOption: true }),
+  handler: async (args) => {
+    try {
+      const r = await DrivePlatform.ask(String(args.drive), String(args.text))
+      UI.println(`Asked (${r.question.id}).`)
+    } catch (error) {
+      fail(error)
+    }
+  },
+})
+
+const AnswerCommand = cmd({
+  command: "answer <id> [text]",
+  describe: "answer a question; add --resolve to mark it resolved",
+  builder: (yargs) =>
+    yargs
+      .option("drive", { type: "string", demandOption: true })
+      .option("resolve", { type: "boolean", default: false })
+      .positional("id", { type: "string", demandOption: true })
+      .positional("text", { type: "string" }),
+  handler: async (args) => {
+    try {
+      const drive = String(args.drive)
+      if (args.text) await DrivePlatform.answer(drive, String(args.id), String(args.text))
+      if (args.resolve) await DrivePlatform.resolve(drive, String(args.id))
+      if (!args.text && !args.resolve) return UI.println("Give an answer, or --resolve.")
+      UI.println(args.resolve ? "Done. The question is resolved." : "Answered.")
+    } catch (error) {
+      fail(error)
+    }
+  },
+})
+
 export const MemoryCommand = cmd({
   command: "memory",
   describe: "your Memory Drive — status, sync, import, Dreams",
@@ -213,6 +268,9 @@ export const MemoryCommand = cmd({
       .command(ViewCommand)
       .command(SearchCommand)
       .command(ImportCommand)
+      .command(QuestionsCommand)
+      .command(AskCommand)
+      .command(AnswerCommand)
       .command(DreamsCommand)
       .command(UndoDreamCommand),
   handler: async () => {},
