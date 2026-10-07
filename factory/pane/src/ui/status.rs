@@ -104,8 +104,8 @@ pub(crate) fn render_config_diagnostic_buffer(
         .take(area.height as usize)
         .enumerate()
     {
-        let text = format!(" {line} ");
-        let width = (text.len() as u16).min(area.width);
+        let text = fit_keeping_end(&format!(" {line} "), area.width as usize);
+        let width = text.chars().count() as u16;
         let diagnostic_area = Rect::new(
             area.x + area.width.saturating_sub(width),
             area.y + row as u16,
@@ -121,9 +121,36 @@ pub(crate) fn render_config_diagnostic_buffer(
     rendered_rows
 }
 
+/// A diagnostic ends with the command that fixes it
+/// (`…; allternit-factory pane config check`). When the line is wider than
+/// the screen, drop characters from the start, not the end, so that command
+/// stays visible.
+fn fit_keeping_end(text: &str, width: usize) -> String {
+    let len = text.chars().count();
+    if len <= width {
+        return text.to_string();
+    }
+    if width == 0 {
+        return String::new();
+    }
+    let keep: String = text.chars().skip(len - (width - 1)).collect();
+    format!("…{keep}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn long_diagnostic_keeps_its_fix_command_visible() {
+        let line = " client + endpoint: config.toml invalid; using defaults; allternit-factory pane config check ";
+        let fitted = fit_keeping_end(line, 80);
+        assert_eq!(fitted.chars().count(), 80);
+        assert!(fitted.starts_with('…'));
+        assert!(fitted.ends_with("allternit-factory pane config check "), "{fitted}");
+        assert_eq!(fit_keeping_end(" short ", 80), " short ");
+        assert_eq!(fit_keeping_end("abc", 0), "");
+    }
 
     #[test]
     fn copy_feedback_rect_uses_configured_position() {

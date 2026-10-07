@@ -1359,8 +1359,12 @@ fn live_handoff_keeps_unmanaged_agent_name_bound_to_saved_session() {
     fs::write(
         &fake_pi,
         format!(
-            "#!/bin/sh\nexport HERDR_AGENT=pi\necho started > {}\nexec /bin/sleep 30\n",
-            started_marker.display()
+            // The agent must not be a system binary: macOS hides the environment
+            // of its own binaries (/bin/sleep), so HERDR_AGENT would be unreadable.
+            // This test binary is ours, and `fake_agent_process` just waits.
+            "#!/bin/sh\nexport HERDR_AGENT=pi FACTORY_FAKE_AGENT=1\necho started > {}\nexec '{}' --ignored --exact fake_agent_process --test-threads=1\n",
+            started_marker.display(),
+            std::env::current_exe().unwrap().display()
         ),
     )
     .unwrap();
@@ -1986,4 +1990,14 @@ fn live_handoff_import_failure_rolls_back_old_server_at(failure_point: &str) {
 #[test]
 fn live_handoff_after_restored_failure_rolls_back_old_server() {
     live_handoff_import_failure_rolls_back_old_server_at("after_restored");
+}
+
+/// Not a real test: `live_handoff_keeps_unmanaged_agent_name_bound_to_saved_session`
+/// runs this binary as a long-lived fake agent (see there).
+#[test]
+#[ignore]
+fn fake_agent_process() {
+    if std::env::var_os("FACTORY_FAKE_AGENT").is_some() {
+        thread::sleep(Duration::from_secs(30));
+    }
 }
