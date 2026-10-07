@@ -94,6 +94,7 @@ pub mod voice_turn_stream;
 pub mod channel_relay;
 pub mod channel_discord_dm;
 pub mod channel_attachments;
+pub mod channel_auth;
 pub mod channel_files;
 pub mod channel_start;
 pub mod people;

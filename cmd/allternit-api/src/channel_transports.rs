@@ -862,6 +862,9 @@ pub async fn route_inbound<R: crate::thread_routes::ThreadRuntime>(db: &DbHandle
 
 /// Conversations already told that no bot is switched on (once per process).
 static NO_BOT_TOLD: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>> = std::sync::LazyLock::new(Default::default);
+/// Senders already told they aren't allowed (`account:sender`), so a refused
+/// sender gets one explanation, not one per message.
+static SENDER_REFUSAL_TOLD: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>> = std::sync::LazyLock::new(Default::default);
 
 pub fn channel_webhook_router() -> Router<Arc<AppState>> {
     Router::new().route("/webhooks/channels/:provider", post(webhook_h).get(whatsapp_challenge))
@@ -938,6 +941,36 @@ pub async fn dispatch_events_with_files(st: &Arc<AppState>, acct: &Account, tx: 
             }
             crate::channel_attachments::discard_kept(tx.provider(), &e.remote_id);
             continue;
+        }
+        // Who may make the bot act (audit S16): a sender the account's policy
+        // doesn't allow is refused before anything is recorded or run.
+        if !e.own {
+            let rule = st.db.connect().map(|c| crate::channel_auth::account_rule(&c, &acct.id, tx.provider())).unwrap_or_default();
+            if !rule.allows(e.user.as_deref()) {
+                if let Ok(c) = st.db.connect() {
+                    crate::channel_auth::record_rejection(
+                        &c,
+                        &crate::channel_auth::Rejection { channel: tx.provider(), binding: &acct.id, bot_id: acct.restricted_bot.as_deref(), owner: Some(&acct.owner), sender: e.user.as_deref() },
+                    );
+                }
+                // Say why once per sender, so the owner can add themselves.
+                let first = e.kind == InboundKind::Message
+                    && SENDER_REFUSAL_TOLD.lock().map(|mut told| told.insert(format!("{}:{}", acct.id, e.user.as_deref().unwrap_or("")))).unwrap_or(false);
+                if first {
+                    let out = Outbound {
+                        workspace: e.workspace.clone(),
+                        channel: e.channel.clone(),
+                        thread: e.thread.clone(),
+                        text: crate::channel_auth::refusal_notice(tx.provider(), e.user.as_deref()),
+                        identity: None,
+                    };
+                    if let Err(err) = tx.post(&out).await {
+                        warn!(provider = tx.provider(), "sender refusal notice failed: {err:?}");
+                    }
+                }
+                crate::channel_attachments::discard_kept(tx.provider(), &e.remote_id);
+                continue;
+            }
         }
         let routed = route_inbound(&st.db, &rt, acct, tx.provider(), &e).await;
         // Files kept for a message that was not recorded (a replay) are dropped, not left behind.
@@ -1988,6 +2021,31 @@ mod tests {
             .query_row("SELECT pair_nonce FROM provider_account_bindings WHERE id = 'acct-1'", [], |r| r.get(0))
             .unwrap();
         assert_eq!(pending.as_deref(), Some("nonce-1"), "a wrong /start keeps the nonce pending");
+    }
+
+    #[tokio::test]
+    async fn dispatch_refuses_senders_the_account_does_not_allow() {
+        let (st, acct) = setup("senders", &json!({ "botToken": "t" }).to_string(), "telegram", Some("bot-1")).await;
+        let count = |sql: &str| -> i64 { st.db.connect().unwrap().query_row(sql, [], |r| r.get(0)).unwrap() };
+        // A new account answers its owner only; nobody is listed, so user 42 is refused:
+        // one notice naming their id, no thread, every refusal audited.
+        let tx = Arc::new(RecordingTelegram::default());
+        dispatch_events(&st, &acct, tx.clone(), vec![tg(1, 42, "hi"), tg(2, 42, "hello?")]).await;
+        {
+            let posts = tx.posted.lock().unwrap();
+            assert_eq!(posts.len(), 1, "told once, not once per message");
+            assert!(posts[0].text.contains("telegram ID 42"), "{}", posts[0].text);
+        }
+        assert_eq!(count("SELECT COUNT(*) FROM bot_threads"), 0);
+        assert_eq!(count("SELECT COUNT(*) FROM channel_sender_audit WHERE binding = 'acct-1' AND action = 'rejected' AND sender = '42'"), 2);
+        // Listed: the message reaches the bot.
+        st.db.connect().unwrap().execute("UPDATE provider_account_bindings SET allowed_senders = '[\"42\"]' WHERE id = 'acct-1'", []).unwrap();
+        dispatch_events(&st, &acct, tx.clone(), vec![tg(3, 42, "hi again")]).await;
+        assert_eq!(count("SELECT COUNT(*) FROM bot_threads"), 1);
+        // "anyone" lets a stranger through too.
+        st.db.connect().unwrap().execute("UPDATE provider_account_bindings SET sender_policy = 'anyone', allowed_senders = '[]' WHERE id = 'acct-1'", []).unwrap();
+        dispatch_events(&st, &acct, tx.clone(), vec![tg(4, 77, "anyone there?")]).await;
+        assert_eq!(count("SELECT COUNT(*) FROM channel_sender_audit WHERE sender = '77'"), 0);
     }
 
     #[tokio::test]

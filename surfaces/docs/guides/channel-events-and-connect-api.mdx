@@ -71,11 +71,24 @@ A 404 or 503 on a read means the provider's backend isn't there: availability ca
 | Area | Methods |
 | --- | --- |
 | Telegram managed bots | `telegramManagedAvailability`, `createManagedTelegramBot`, `managedTelegramStatus`, `cancelManagedTelegramBot` |
-| Email | `emailStatus`, `saveEmailSettings` (`replyMode`: `approve`, `known`, `auto`; `allowlist`), `setEmailDomain`, `emailDomainStatus`, `changeEmailAddress(botId, localPart)` |
+| Email | `emailStatus`, `saveEmailSettings` (`replyMode`: `approve`, `known`, `auto`; `allowlist`), `getEmailSenders(botId)`, `saveEmailSenders(botId, {senderPolicy, allowedSenders})`, `setEmailDomain`, `emailDomainStatus`, `changeEmailAddress(botId, localPart)` |
 | Phone numbers | `phoneAvailability`, `searchPhoneNumbers`, `buyPhoneNumber`, `submitPhoneRegistration`, `phoneRegistrationStatus`, `portPhoneNumber` |
 | Discord, Slack, Teams, WhatsApp | `startChannelConnect(provider, { botId })`, `channelConnectStatus`, `cancelChannelConnect`, `teamsAdminLink`, `listConnectChannels(provider, guildId)`, `saveConnectChannels(provider, guildId, channelIds)`, `whatsappModes`, `startWhatsAppPersonal` |
 
 Wizards live in `src/components/gateway/connect/`. `ConnectWizard` is the shared step engine (intro, action, form, waiting, code, done); each provider supplies its steps. `ConnectWizardDialog` maps a provider to its wizard and is mounted by `MessagingConnectorsSection` and `BotMessagingToggles`.
+
+## Sender allowlist
+
+Who may make a bot act by messaging one of its channels (`channel_auth.rs`, migration V244). Every inbound binding has `senderPolicy` (`owner` or `anyone`) and `allowedSenders` (a list of platform user ids, phone numbers or email addresses; compared case-insensitively, `@` and phone formatting ignored).
+
+| Binding | Where it's set | "Owner" means |
+| --- | --- | --- |
+| Messaging connection (Telegram, WhatsApp, Discord, Teams, the Slack app, SMS, phone numbers for calls) | `PATCH /api/v1/gateway/provider-accounts/:id {senderPolicy?, allowedSenders?}`; both are returned on the account | the owner's verified identity on the account (`factory_owner_identities`, the `verify <code>` pairing) |
+| Bot email | `GET`/`PUT /api/v1/agents/:id/identity/email/senders` (`ownerAddress` in the response), or `identityChannels.email.{senderPolicy, allowedSenders}` on `PATCH /api/v1/agents/:id` | the owner's account email |
+| Slack channel bound through `POST /api/v1/agents/:id/slack-channels` | the same body: a new binding must send `allowedSenders` (Slack user ids) or `senderPolicy: "anyone"`, else 400 | nobody (list only) |
+| Slack channel with no binding (the shared default agent) | `ALLTERNIT_SLACK_DEFAULT_ALLOWED_SENDERS` (comma-separated Slack user ids, `*` for everyone; unset = nobody) | — |
+
+New bindings default to `owner`; bindings that existed when V244 ran were set to `anyone` with a `backfilled_open` audit row. A refused sender gets no bot turn and an audit row in `channel_sender_audit` (`rejected`). On a messaging connection they also get one reply naming their id (once per sender per account while the runtime runs). A refused email is acknowledged (`202 {"delivered": false, "senderNotAllowed": true}`) without a reply, and a refused inbound call gets `403` from `POST /api/v1/voice/calls`. A phone number registered without a channel account has no setting and stays open (logged). Policy changes are audited as `policy_changed`. Unknown policy values fail closed.
 
 ## Phone device tools
 

@@ -77,9 +77,18 @@ async fn list_bindings(State(state): State<Arc<AppState>>, Extension(user): Exte
         .connect()
         .ok()
         .and_then(|c| {
-            let mut stmt = c.prepare("SELECT slack_channel_id, created_at FROM slack_channel_bots WHERE bot_id = ?1 ORDER BY created_at").ok()?;
+            let mut stmt = c
+                .prepare("SELECT slack_channel_id, created_at, sender_policy, allowed_senders FROM slack_channel_bots WHERE bot_id = ?1 ORDER BY created_at")
+                .ok()?;
             let rows = stmt
-                .query_map(params![bot_id], |r| Ok(json!({ "channel": r.get::<_, String>(0)?, "createdAt": r.get::<_, String>(1)? })))
+                .query_map(params![bot_id], |r| {
+                    Ok(json!({
+                        "channel": r.get::<_, String>(0)?,
+                        "createdAt": r.get::<_, String>(1)?,
+                        "senderPolicy": r.get::<_, String>(2)?,
+                        "allowedSenders": crate::channel_auth::parse_list(&r.get::<_, String>(3)?),
+                    }))
+                })
                 .ok()?
                 .filter_map(Result::ok)
                 .collect();
@@ -90,8 +99,13 @@ async fn list_bindings(State(state): State<Arc<AppState>>, Extension(user): Exte
 }
 
 #[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct BindBody {
     channel: String,
+    /// "owner" (only `allowedSenders`) or "anyone" (audit S16).
+    sender_policy: Option<String>,
+    /// Slack user ids (U0123ABCD) allowed to make the bot act.
+    allowed_senders: Option<Vec<String>>,
 }
 
 async fn bind_channel(
@@ -118,11 +132,31 @@ async fn bind_channel(
     if holder.as_deref().is_some_and(|h| h != user.user_id) {
         return (StatusCode::CONFLICT, Json(json!({ "error": "that channel is bound to someone else's bot" }))).into_response();
     }
+    let (policy, allowed) = match crate::channel_auth::validate(body.sender_policy.as_deref(), body.allowed_senders.as_deref()) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))).into_response(),
+    };
+    // A new binding must say who may make the bot act: Slack carries no owner
+    // identity here, so "owner" with an empty list would reach nobody.
+    let opens = policy.as_deref() == Some(crate::channel_auth::POLICY_ANYONE);
+    let lists = allowed.as_deref().is_some_and(|l| !crate::channel_auth::parse_list(l).is_empty());
+    if holder.is_none() && !opens && !lists {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "say who may message the bot: allowedSenders (Slack user ids such as U0123ABCD) or senderPolicy \"anyone\"" })),
+        )
+            .into_response();
+    }
     let _ = conn.execute(
-        "INSERT INTO slack_channel_bots (slack_channel_id, bot_id, user_id, created_at) VALUES (?1, ?2, ?3, ?4)
-         ON CONFLICT(slack_channel_id) DO UPDATE SET bot_id = excluded.bot_id, created_at = excluded.created_at",
-        params![channel, bot_id, user.user_id, chrono::Utc::now().to_rfc3339()],
+        "INSERT INTO slack_channel_bots (slack_channel_id, bot_id, user_id, created_at, sender_policy, allowed_senders)
+         VALUES (?1, ?2, ?3, ?4, COALESCE(?5, 'owner'), COALESCE(?6, '[]'))
+         ON CONFLICT(slack_channel_id) DO UPDATE SET bot_id = excluded.bot_id, created_at = excluded.created_at,
+             sender_policy = COALESCE(?5, sender_policy), allowed_senders = COALESCE(?6, allowed_senders)",
+        params![channel, bot_id, user.user_id, chrono::Utc::now().to_rfc3339(), policy, allowed],
     );
+    if policy.is_some() || allowed.is_some() {
+        crate::channel_auth::record_change(&conn, "slack", &channel, &user.user_id, policy.as_deref(), allowed.as_deref());
+    }
     (StatusCode::CREATED, Json(json!({ "channel": channel, "botId": bot_id }))).into_response()
 }
 
@@ -310,8 +344,26 @@ async fn handle_message_event(state: &Arc<AppState>, event: &Value) -> Result<()
         return Ok(());
     }
 
-    if let Some(bot_id) = bound_bot(&state.db, &channel) {
-        let from = event.get("user").and_then(|v| v.as_str()).unwrap_or("someone");
+    // Who may make a bot act from Slack (audit S16): the binding's rule, or
+    // for unbound channels (the shared default agent) the env allowlist.
+    let sender = event.get("user").and_then(|v| v.as_str());
+    let bound = bound_bot(&state.db, &channel);
+    let rule = match &bound {
+        Some(_) => state.db.connect().ok().and_then(|c| crate::channel_auth::slack_binding_rule(&c, &channel)).unwrap_or_default(),
+        None => default_channel_rule(),
+    };
+    if !rule.allows(sender) {
+        if let Ok(conn) = state.db.connect() {
+            crate::channel_auth::record_rejection(
+                &conn,
+                &crate::channel_auth::Rejection { channel: "slack", binding: &channel, bot_id: bound.as_deref(), owner: None, sender },
+            );
+        }
+        return Ok(());
+    }
+
+    if let Some(bot_id) = bound {
+        let from = sender.unwrap_or("someone");
         let rt = crate::thread_routes::GizziRuntime { db: state.db.clone() };
         let key = format!("slack:{channel}:{thread_ts}");
         let first = text.lines().find(|l| !l.trim().is_empty()).unwrap_or("Slack message").trim();
@@ -342,6 +394,16 @@ async fn handle_message_event(state: &Arc<AppState>, event: &Value) -> Result<()
 
     let reply = wait_for_reply(&client, &session_id).await?;
     post_slack_message(&channel, &thread_ts, &reply).await
+}
+
+/// Env var listing who may reach the shared default agent from a Slack channel
+/// not bound to a bot (comma-separated Slack user ids, or `*`). Unset: nobody.
+pub const SLACK_DEFAULT_ALLOWED_SENDERS_ENV: &str = "ALLTERNIT_SLACK_DEFAULT_ALLOWED_SENDERS";
+
+fn default_channel_rule() -> crate::channel_auth::Rule {
+    let raw = std::env::var(SLACK_DEFAULT_ALLOWED_SENDERS_ENV).unwrap_or_default();
+    let ids: Vec<String> = raw.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+    crate::channel_auth::Rule { anyone: ids.iter().any(|s| s == "*"), allowed: ids, owner_ids: vec![] }
 }
 
 /// Reuses the session mapped to this channel+thread, or creates a new Gizzi
@@ -538,11 +600,25 @@ mod binding_tests {
                 .unwrap();
             }
         }
-        let bind = |bot: &str, who: &str, channel: &str| {
-            bind_channel(State(state.clone()), Extension(user(who)), Path(bot.to_string()), Json(BindBody { channel: channel.into() }))
+        let bind_with = |bot: &str, who: &str, channel: &str, senders: Option<Vec<String>>| {
+            bind_channel(
+                State(state.clone()),
+                Extension(user(who)),
+                Path(bot.to_string()),
+                Json(BindBody { channel: channel.into(), sender_policy: None, allowed_senders: senders }),
+            )
         };
+        let bind = |bot: &str, who: &str, channel: &str| bind_with(bot, who, channel, Some(vec!["U0OWNER".into()]));
 
+        // A new binding must say who may message the bot (audit S16).
+        assert_eq!(bind_with("scout", "u", "C09NEW", None).await.status(), StatusCode::BAD_REQUEST);
+        assert!(bound_bot(&state.db, "C09NEW").is_none());
         assert_eq!(bind("scout", "u", "#C01ABC").await.status(), StatusCode::CREATED);
+        {
+            let conn = state.db.connect().unwrap();
+            let rule = crate::channel_auth::slack_binding_rule(&conn, "C01ABC").unwrap();
+            assert!(rule.allows(Some("U0OWNER")) && !rule.allows(Some("U0STRANGER")));
+        }
         assert_eq!(bound_bot(&state.db, "C01ABC").as_deref(), Some("scout"));
         assert_eq!(bind("scout", "u", "general chat").await.status(), StatusCode::BAD_REQUEST);
         assert_eq!(bind("other", "u", "C02").await.status(), StatusCode::NOT_FOUND, "not your bot");

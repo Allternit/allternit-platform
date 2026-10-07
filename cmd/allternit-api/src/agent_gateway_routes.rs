@@ -213,7 +213,7 @@ pub(crate) fn rows(conn: &Connection, sql: &str, p: &[&dyn ToSql]) -> rusqlite::
     let out = st.query_map(p, |r| {
         let mut m = Map::new();
         for (i, n) in names.iter().enumerate() {
-            let json_col = n.ends_with("_json") || n == "capability_snapshot";
+            let json_col = n.ends_with("_json") || n == "capability_snapshot" || n == "allowed_senders";
             let v = match r.get_ref(i)? {
                 ValueRef::Null => Value::Null,
                 ValueRef::Integer(x) if BOOL_COLS.contains(&n.as_str()) => Value::Bool(x != 0),
@@ -247,7 +247,8 @@ pub(crate) fn s(v: &Value, k: &str) -> String {
 const ACCT_COLS: &str = "id, owner, vendor, auth_type, external_account_id, display_name, workspace, \
     (secret_ref IS NOT NULL) AS has_secret_ref, (session_ref IS NOT NULL) AS has_session_ref, scopes_json, \
     restricted_bot_id, state, verified_at, expires_at, created_at, updated_at, \
-    host_kind, host_runtime_id, host_state, host_remote_account_id, host_last_seen_at, host_changed_at";
+    host_kind, host_runtime_id, host_state, host_remote_account_id, host_last_seen_at, host_changed_at, \
+    sender_policy, allowed_senders";
 pub(crate) const EXEC_COLS: &str = "id, owner, bot_id, type, mode, vendor, adapter_id, account_binding_id, preferred_lane, \
     external_agent_id, external_agent_name, external_agent_avatar, capabilities_json, health_json, state, created_at, updated_at, directing_bot_id, \
     harness, machine, pane_id";
@@ -436,6 +437,10 @@ struct PatchAccount {
     verified_at: Option<String>,
     /// Free-text reason recorded in connection_audit.
     reason: Option<String>,
+    /// Who may make the bot act by messaging this account: "owner" or "anyone" (channel_auth).
+    sender_policy: Option<String>,
+    /// Extra senders allowed under "owner" (platform user ids, phone numbers, emails).
+    allowed_senders: Option<Vec<String>>,
 }
 
 async fn patch_account(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(aid): Path<String>, Json(b): Json<PatchAccount>) -> Response {
@@ -456,6 +461,14 @@ async fn patch_account(State(state): State<Arc<AppState>>, Extension(user): Exte
                 verified_at = COALESCE(?5, verified_at), updated_at = ?6 WHERE id = ?7 AND owner = ?8",
             params![b.display_name, b.workspace, b.external_account_id, b.expires_at, b.verified_at, t, aid, owner],
         )?;
+        if b.sender_policy.is_some() || b.allowed_senders.is_some() {
+            let (policy, allowed) = crate::channel_auth::validate(b.sender_policy.as_deref(), b.allowed_senders.as_deref()).map_err(|e| ApiErr::bad(&e))?;
+            conn.execute(
+                "UPDATE provider_account_bindings SET sender_policy = COALESCE(?1, sender_policy), allowed_senders = COALESCE(?2, allowed_senders), updated_at = ?3 WHERE id = ?4 AND owner = ?5",
+                params![policy, allowed, t, aid, owner],
+            )?;
+            crate::channel_auth::record_change(&conn, &s(&acct, "vendor"), &aid, &owner, policy.as_deref(), allowed.as_deref());
+        }
         if moved {
             let to = b.state.as_deref().unwrap();
             apply_account_state(db, &conn, &owner, &aid, &from, to, b.verified_at.is_some(), json!({ "reason": b.reason }))?;

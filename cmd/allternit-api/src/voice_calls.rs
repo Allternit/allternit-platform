@@ -451,6 +451,29 @@ async fn create_h(State(state): State<Arc<AppState>>, Extension(deps): Extension
         return fail(StatusCode::FORBIDDEN, "that number does not belong to this owner and bot");
     }
     let caller = if b.direction == "inbound" { &b.from } else { &b.to };
+    // Who may call the bot (audit S16): the number's channel account decides.
+    // A number registered without an account (the backstop above) has no
+    // setting to check; it stays open and says so in the log.
+    if b.direction == "inbound" {
+        if let Ok(conn) = state.db.connect() {
+            let account: Option<String> = conn
+                .query_row("SELECT account_id FROM channel_phone_numbers WHERE number_id = ?1", params![b.number_id], |r| r.get(0))
+                .ok()
+                .flatten();
+            match account {
+                Some(acct) => {
+                    if !crate::channel_auth::account_rule(&conn, &acct, "sms").allows(Some(&b.from)) {
+                        crate::channel_auth::record_rejection(
+                            &conn,
+                            &crate::channel_auth::Rejection { channel: "phone", binding: &acct, bot_id: Some(&b.bot_id), owner: Some(&auth.owner), sender: Some(&b.from) },
+                        );
+                        return fail(StatusCode::FORBIDDEN, "this caller is not allowed to reach the bot");
+                    }
+                }
+                None => tracing::warn!(number_id = %b.number_id, "voice call: number has no channel account, so no sender allowlist applies"),
+            }
+        }
+    }
     let (thread_id, session_id) = match deps.resolver.resolve(&state.db, &b.number_id, caller).await {
         Ok(ids) => ids,
         Err(e) => return fail(StatusCode::BAD_GATEWAY, &e),
