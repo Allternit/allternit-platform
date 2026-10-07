@@ -31,8 +31,6 @@ pub(super) struct ClientState {
     pub(super) attach_escape: Option<AttachEscapeState>,
     #[cfg(unix)]
     pub(super) mouse_scroll_lines: usize,
-    pub(super) remote_image_paste_key:
-        Option<(crossterm::event::KeyCode, crossterm::event::KeyModifiers)>,
     pub(super) redraw_on_focus_gained: bool,
     pub(super) repaint_pending: bool,
     /// During a source-off-first handoff the currently blitted frame remains authoritative until

@@ -188,7 +188,7 @@ pub(super) fn render_settings_overlay(
                 content,
                 "notification popups",
                 "choose where background popup notifications should appear",
-                &["off", "inside ao", "via terminal", "via system"],
+                &["off", "inside the Factory", "via terminal", "via system"],
                 settings.selected,
                 palette,
                 &mut choice_hits,

@@ -89,7 +89,7 @@ fn schema_summary_text() -> std::io::Result<String> {
     schemas.sort();
 
     Ok(format!(
-        "ao API schema\nprotocol: {}\nschema_version: {}\nschemas: {}\n\nUse `allternit-factory pane api schema --json` to print the full schema.\nUse `allternit-factory pane api schema --output PATH` to write it to a file.\n",
+        "Factory pane API schema\nprotocol: {}\nschema_version: {}\nschemas: {}\n\nUse `allternit-factory pane api schema --json` to print the full schema.\nUse `allternit-factory pane api schema --output PATH` to write it to a file.\n",
         protocol,
         schema_version,
         schemas.join(", ")
@@ -111,7 +111,7 @@ mod tests {
     #[test]
     fn schema_summary_text_stays_human_sized() {
         let text = super::schema_summary_text().unwrap();
-        assert!(text.contains("ao API schema"));
+        assert!(text.contains("Factory pane API schema"));
         assert!(text.contains("Use `allternit-factory pane api schema --json`"));
         assert!(text.len() < 400);
     }

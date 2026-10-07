@@ -3,7 +3,6 @@ use std::io::Write;
 use clap::{Arg, ArgAction, ArgGroup, Command, ValueHint};
 
 mod completion;
-mod machine;
 
 pub(super) fn command() -> Command {
     let command = Command::new("allternit-factory-pane")
@@ -34,7 +33,6 @@ pub(super) fn command() -> Command {
         .subcommand(status_command())
         .subcommand(config_command())
         .subcommand(channel_command())
-        .subcommand(machine::command())
         .subcommand(server_command())
         .subcommand(api_command())
         .subcommand(workspace_command())

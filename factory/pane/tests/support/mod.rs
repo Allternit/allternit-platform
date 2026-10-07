@@ -431,6 +431,17 @@ where
     predicate()
 }
 
+/// `set_read_timeout`, tolerating EINVAL. macOS returns EINVAL for a socket the
+/// peer has already closed (as after a live handoff), while reads still return
+/// the buffered messages and then EOF, so the read loop can't block.
+pub fn set_read_timeout_tolerant(stream: &UnixStream, timeout: Option<Duration>) -> Result<(), String> {
+    match stream.set_read_timeout(timeout) {
+        Ok(()) => Ok(()),
+        Err(e) if e.raw_os_error() == Some(22) => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 pub fn wait_for_message_variant(
     stream: &mut UnixStream,
     timeout: Duration,
@@ -444,9 +455,7 @@ pub fn wait_for_message_variants(
     timeout: Duration,
     variants: &[u32],
 ) -> Result<bool, String> {
-    stream
-        .set_read_timeout(Some(Duration::from_millis(200)))
-        .map_err(|e| e.to_string())?;
+    set_read_timeout_tolerant(stream, Some(Duration::from_millis(200)))?;
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
         match read_server_message(stream) {
@@ -462,9 +471,7 @@ pub fn wait_for_client_shell_bootstrap(
     stream: &mut UnixStream,
     timeout: Duration,
 ) -> Result<(), String> {
-    stream
-        .set_read_timeout(Some(Duration::from_millis(200)))
-        .map_err(|e| e.to_string())?;
+    set_read_timeout_tolerant(stream, Some(Duration::from_millis(200)))?;
     let deadline = Instant::now() + timeout;
     let mut saw_snapshot = false;
     while Instant::now() < deadline {

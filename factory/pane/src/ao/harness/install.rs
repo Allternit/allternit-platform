@@ -503,7 +503,7 @@ pub(crate) fn install_tool(
     let mut lines = Vec::new();
     if block.method == "unsupported" {
         return Err(format!(
-            "{} has no version-pinned install channel ao can drive (method 'unsupported' — \
+            "{} has no version-pinned install channel the Factory can drive (method 'unsupported' — \
              see its _licenseNote in Ops/harness.json). Install it by its vendor's own \
              means; `allternit-factory pane harness` will pick it up via the normal installed() probes.",
             driver.label,
@@ -682,7 +682,7 @@ pub(crate) fn cmd_install(
         return Ok(1);
     }
     println!(
-        "\nDone.{} The managed bin dir is on PATH for ao-spawned subprocesses only — run `allternit-factory pane doctor` to verify.",
+        "\nDone.{} The managed bin dir is on PATH for Factory-spawned subprocesses only — run `allternit-factory pane doctor` to verify.",
         if already > 0 { format!(" {already} already at pin.") } else { String::new() }
     );
     Ok(0)
@@ -730,7 +730,7 @@ pub(crate) fn doctor(manifest: &Manifest, root: &Path, ctx: &super::FsCtx) -> Ha
         rows.push(DoctorRow {
             tool: "managed dir".to_string(),
             status: "absent",
-            detail: format!("{} — ao has installed nothing (run `allternit-factory pane harness install <tool>`)", root.display()),
+            detail: format!("{} — the Factory has installed nothing (run `allternit-factory pane harness install <tool>`)", root.display()),
         });
         return HarnessDoctor { root: root.to_path_buf(), rows, ok: true };
     }
@@ -743,7 +743,7 @@ pub(crate) fn doctor(manifest: &Manifest, root: &Path, ctx: &super::FsCtx) -> Ha
             rows.push(DoctorRow {
                 tool: driver.label.to_string(),
                 status: "external",
-                detail: "not ao-managed (no pinned install channel)".to_string(),
+                detail: "not Factory-managed (no pinned install channel)".to_string(),
             });
             continue;
         }

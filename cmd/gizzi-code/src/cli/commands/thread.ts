@@ -73,10 +73,17 @@ async function run(fn: () => Promise<void>) {
 export const ThreadListCommand = cmd({
   command: ["list [bot]", "ls [bot]"],
   describe: "List bot threads (optionally one bot's, by id)",
-  builder: (y) => y.positional("bot", { type: "string", describe: "bot id" }),
+  builder: (y) =>
+    y
+      .positional("bot", { type: "string", describe: "bot id" })
+      .option("json", { type: "boolean", default: false, describe: "print { threads } as JSON" }),
   handler: async (args) =>
     run(async () => {
       const threads = await threadApi.list(args.bot ? { botId: String(args.bot) } : {})
+      if (args.json) {
+        console.log(JSON.stringify({ threads }))
+        return
+      }
       if (threads.length === 0) {
         UI.println("No threads.")
         return
@@ -108,6 +115,34 @@ export const ThreadShowCommand = cmd({
         const who = m.role === "user" ? "You" : "Bot"
         UI.println(`${UI.Style.TEXT_DIM}${who}:${UI.Style.RESET} ${m.content.trim()}`)
       }
+    }),
+})
+
+export const ThreadNewCommand = cmd({
+  command: "new <bot> <title..>",
+  describe: "Open a thread with a bot (a task thread; --standing for its ongoing one)",
+  builder: (y) =>
+    y
+      .positional("bot", { type: "string", demandOption: true, describe: "bot id" })
+      .positional("title", { type: "string", array: true, demandOption: true })
+      .option("standing", { type: "boolean", default: false, describe: "the bot's standing thread instead of a task thread" })
+      .option("dry-run", { type: "boolean", default: false, describe: "print what would be created and create nothing" })
+      .option("json", { type: "boolean", default: false, describe: "print { thread } as JSON" }),
+  handler: async (args) =>
+    run(async () => {
+      const title = (args.title as string[]).join(" ").trim()
+      if (!title) throw new Error("A thread needs a title")
+      const input = { botId: String(args.bot), title, kind: args.standing ? ("standing" as const) : ("task" as const), createdBy: "user" }
+      if (args["dry-run"]) {
+        console.log(JSON.stringify({ dryRun: true, plan: { create: input } }))
+        return
+      }
+      const thread = await threadApi.create(input)
+      if (args.json) {
+        console.log(JSON.stringify({ thread }))
+        return
+      }
+      UI.println(`${thread.title}: opened (${thread.id})`)
     }),
 })
 
@@ -153,8 +188,29 @@ export const BotThreadsCommand = cmd({
     y
       .command(ThreadListCommand)
       .command(ThreadShowCommand)
+      .command(ThreadNewCommand)
       .command(ThreadSteerCommand)
       .command(ThreadResolveCommand)
-      .demandCommand(1, "Specify a threads command: list | show | steer | resolve"),
+      .demandCommand(1, "Specify a threads command: list | show | new | steer | resolve"),
+  handler: async () => {},
+})
+
+/**
+ * `gizzi orchestration threads`: the same threads, under orchestration (the
+ * spec's `threads list|show|new`). They live with the account in
+ * allternit-api, so Gizzi serves them with the person's own sign-in; a
+ * Terminal bot's conversation is its Factory mail (`orchestration mail`).
+ */
+export const OrchestrationThreadsCommand = cmd({
+  command: "threads",
+  describe: "Bot threads (standing / task) on your account: list, show, new, steer, resolve",
+  builder: (y) =>
+    y
+      .command(ThreadListCommand)
+      .command(ThreadShowCommand)
+      .command(ThreadNewCommand)
+      .command(ThreadSteerCommand)
+      .command(ThreadResolveCommand)
+      .demandCommand(1, "Specify a threads command: list | show | new | steer | resolve"),
   handler: async () => {},
 })

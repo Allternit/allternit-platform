@@ -15,7 +15,6 @@
 mod attach;
 mod catalog_reload;
 mod clipboard_forwarding;
-mod clipboard_images;
 mod config_reload;
 #[cfg(unix)]
 mod direct_graphics;
@@ -89,13 +88,6 @@ use attach::direct_attach_pixel_mouse;
 use attach::AttachEscapeState;
 #[cfg(unix)]
 use attach::{write_attach_semantic_action, AttachInputAction};
-use clipboard_images::{
-    client_remote_image_paste_key, endpoint_accepts_local_images, write_remote_image_to_server,
-};
-#[cfg(windows)]
-use clipboard_images::{read_image_file_from_client_events, should_bridge_clipboard_image_events};
-#[cfg(unix)]
-use clipboard_images::{read_image_file_from_terminal_drop, should_bridge_clipboard_image_paste};
 pub use errors::ClientError;
 #[cfg(test)]
 use frame_output::{clear_received_kitty_graphics, kitty_graphics_image_ids};
@@ -103,12 +95,9 @@ use frame_output::{
     contains_kitty_graphics_bytes, record_received_kitty_graphics,
     write_encoded_frame_with_graphics,
 };
-pub(crate) use handshake::probe_endpoint_negotiation;
-use handshake::{client_shell_keybinding_source, do_handshake, is_remote_client_process};
+use handshake::{client_shell_keybinding_source, do_handshake};
 #[cfg(test)]
-use handshake::{
-    direct_graphics_profile_values, handshake_read_timeout, REMOTE_HANDSHAKE_READ_TIMEOUT,
-};
+use handshake::direct_graphics_profile_values;
 use notifications::{handle_notify, handle_shell_notification_effects};
 #[cfg(test)]
 use notifications::{handle_notify_with_notifiers, sound_from_notify_message};
@@ -164,7 +153,6 @@ fn run_client_with_mode(
     let mouse_scroll_lines = loaded_config.config.ui.mouse_scroll_lines();
     let redraw_on_focus_gained = loaded_config.config.ui.redraw_on_focus_gained;
     let host_cursor = loaded_config.config.ui.host_cursor;
-    let remote_image_paste_key = client_remote_image_paste_key(&loaded_config.config);
     let kitty_graphics_enabled =
         loaded_config.config.kitty_graphics_enabled() && client_rendered_shell;
     let pixel_geometry_enabled = kitty_graphics_enabled || attach_escape.is_some();
@@ -181,14 +169,13 @@ fn run_client_with_mode(
         pixel_geometry_fallback: kitty_graphics_enabled,
         mouse_capture_active: mouse_capture,
         endpoint_keybindings,
-        remote_image_paste_key,
         shell_config,
     };
 
     crate::logging::startup("client");
     info!(path = %socket_path.display(), "{log_message}");
 
-    let endpoint_catalog = if client_rendered_shell && !is_remote_client_process() {
+    let endpoint_catalog = if client_rendered_shell {
         endpoint::EndpointCatalog::load().unwrap_or_else(|error| {
             warn!(%error, "saved SSH endpoint catalog is unavailable");
             endpoint::EndpointCatalog::default()
@@ -371,7 +358,6 @@ async fn run_client_loop(
     #[cfg(windows)]
     let _ = config.mouse_scroll_lines;
     let draw_host_cursor = attach_escape.is_none() && should_draw_host_cursor(config.host_cursor);
-    let is_remote_client = is_remote_client_process();
     let local_unavailable = initial.is_none();
 
     let mut state = ClientState {
@@ -400,7 +386,6 @@ async fn run_client_loop(
         attach_escape,
         #[cfg(unix)]
         mouse_scroll_lines: config.mouse_scroll_lines,
-        remote_image_paste_key: config.remote_image_paste_key,
         redraw_on_focus_gained: config.redraw_on_focus_gained,
         repaint_pending: false,
         presentation_frozen: false,
@@ -558,7 +543,7 @@ async fn run_client_loop(
     let mut pending_activation: Option<endpoint::PendingEndpointActivation> = None;
     let mut scheduled_activation = None;
     let mut pending_catalog: Option<Result<Vec<endpoint::SavedSshEndpoint>, String>> = None;
-    if state.shell.is_some() && !is_remote_client && state.attach_escape.is_none() {
+    if state.shell.is_some() && state.attach_escape.is_none() {
         catalog_reload::watch_profiles(event_tx.clone(), should_quit.clone());
         visibility_feed::watch_visibility(event_tx.clone(), should_quit.clone());
     }
@@ -735,52 +720,12 @@ async fn run_client_loop(
             }
             #[cfg(unix)]
             ClientLoopEvent::StdinInput(data) => {
-                let image_bridge_active = endpoint_accepts_local_images(
-                    is_remote_client,
-                    write_stream.active_id(),
-                    write_stream.active_surface_available(),
-                );
                 if state.shell.is_some() {
                     if will_query_host_cell_size {
                         let events = crate::raw_input::parse_raw_input_bytes_sync(&data);
                         if let Some((width_px, height_px)) = reported_cell_size_from_events(&events)
                         {
                             store_reported_cell_size(&reported_cell_size, width_px, height_px);
-                        }
-                    }
-                    let image_target = state
-                        .shell
-                        .as_ref()
-                        .and_then(|shell| shell.clipboard_image_target());
-                    if let Some(target) = image_target.clone() {
-                        if should_bridge_clipboard_image_paste(
-                            &data,
-                            image_bridge_active,
-                            state.remote_image_paste_key,
-                        ) {
-                            if let Some(image) = crate::platform::read_clipboard_image() {
-                                write_remote_image_to_server(
-                                    &mut write_stream,
-                                    target,
-                                    image,
-                                    "clipboard paste",
-                                )?;
-                                continue;
-                            }
-                            info!(
-                                "clipboard image paste trigger received, but local clipboard has no image"
-                            );
-                        }
-                        if let Some(image) =
-                            read_image_file_from_terminal_drop(&data, image_bridge_active)
-                        {
-                            write_remote_image_to_server(
-                                &mut write_stream,
-                                target,
-                                image,
-                                "file drop",
-                            )?;
-                            continue;
                         }
                     }
                     let (outcome, frame) = {
@@ -869,34 +814,6 @@ async fn run_client_loop(
                     }
                     data
                 };
-                if should_bridge_clipboard_image_paste(
-                    &data,
-                    image_bridge_active,
-                    state.remote_image_paste_key,
-                ) {
-                    if let Some(image) = crate::platform::read_clipboard_image() {
-                        write_remote_image_to_server(
-                            &mut write_stream,
-                            crate::protocol::ClientClipboardImageTarget::DirectTerminal,
-                            image,
-                            "clipboard paste",
-                        )?;
-                        continue;
-                    }
-                    info!(
-                        "clipboard image paste trigger received, but local clipboard has no image"
-                    );
-                }
-                if let Some(image) = read_image_file_from_terminal_drop(&data, image_bridge_active)
-                {
-                    write_remote_image_to_server(
-                        &mut write_stream,
-                        crate::protocol::ClientClipboardImageTarget::DirectTerminal,
-                        image,
-                        "file drop",
-                    )?;
-                    continue;
-                }
                 let msg = ClientMessage::Input { data };
                 if let Err(e) = write_to_server(&mut write_stream, &msg) {
                     return Err(ClientError::ConnectionLost(e));
@@ -1002,47 +919,7 @@ async fn run_client_loop(
             }
             #[cfg(windows)]
             ClientLoopEvent::StdinEvents(events) => {
-                let image_bridge_active = endpoint_accepts_local_images(
-                    is_remote_client,
-                    write_stream.active_id(),
-                    write_stream.active_surface_available(),
-                );
                 if state.shell.is_some() {
-                    let image_target = state
-                        .shell
-                        .as_ref()
-                        .and_then(|shell| shell.clipboard_image_target());
-                    if let Some(target) = image_target.clone() {
-                        if should_bridge_clipboard_image_events(
-                            &events,
-                            image_bridge_active,
-                            state.remote_image_paste_key,
-                        ) {
-                            if let Some(image) = crate::platform::read_clipboard_image() {
-                                write_remote_image_to_server(
-                                    &mut write_stream,
-                                    target,
-                                    image,
-                                    "clipboard paste",
-                                )?;
-                                continue;
-                            }
-                            info!(
-                                "clipboard image paste trigger received, but local clipboard has no image"
-                            );
-                        }
-                        if let Some(image) =
-                            read_image_file_from_client_events(&events, image_bridge_active)
-                        {
-                            write_remote_image_to_server(
-                                &mut write_stream,
-                                target,
-                                image,
-                                "file drop",
-                            )?;
-                            continue;
-                        }
-                    }
                     let (outcome, frame) = {
                         let shell = state.shell.as_mut().expect("checked shell mode");
                         let outcome = shell.handle_client_events(&events);

@@ -58,7 +58,7 @@ impl HeadlessServer {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 format!(
-                    "live handoff supports at most {} panes in one update; close panes or restart ao normally",
+                    "live handoff supports at most {} panes in one update; close panes or restart the pane engine normally",
                     crate::server::handoff::MAX_FDS_PER_HANDOFF
                 ),
             ));

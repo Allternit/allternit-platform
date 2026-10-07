@@ -838,7 +838,7 @@ impl App {
             && config.kitty_graphics_enabled() != self.state.kitty_graphics_enabled
         {
             diagnostics.push(
-                "terminal.kitty_graphics changes require restarting ao; kept current setting"
+                "terminal.kitty_graphics changes require restarting the pane engine; kept current setting"
                     .into(),
             );
         }
@@ -1711,7 +1711,7 @@ mod tests {
         assert_eq!(
             report.diagnostics,
             vec![
-                "terminal.kitty_graphics changes require restarting ao; kept current setting"
+                "terminal.kitty_graphics changes require restarting the pane engine; kept current setting"
                     .to_owned()
             ]
         );

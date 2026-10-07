@@ -566,7 +566,7 @@ impl HeadlessServer {
                 self.send_to_client_shells(ServerMessage::SemanticNotification(
                     protocol::SemanticNotification {
                         kind: protocol::SemanticNotificationKind::UpdateInstalled,
-                        title: format!("ao v{version} available"),
+                        title: format!("Allternit Factory v{version} available"),
                         body: Some(install_command.clone()),
                         sound: None,
                         agent: None,

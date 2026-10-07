@@ -65,7 +65,7 @@ impl ClientContextMenuOverlay {
                     item("Zoom", Action::Zoom),
                     item(
                         if *right_click_passthrough {
-                            "Use ao right-click menu"
+                            "Use the Factory right-click menu"
                         } else {
                             "Send right-clicks to pane"
                         },

@@ -80,6 +80,15 @@ A Template is checked before any node exists, so a bad Template leaves no orphan
 gizzi workflows template check build-check-prove.md
 ```
 
+### Save a Template
+
+`gizzi workflows template save <file>` runs the same check, then copies the file into this workspace's templates, where `template list`, `workflows run` and the app's Workflows view pick it up. The id is the file name unless you pass `--id`. Saving never replaces a workspace template unless you pass `--force`. A Template saved with a built-in's id (`build-check-prove`, `fact-check`) replaces that built-in in this workspace only.
+
+```bash
+gizzi workflows template save release-check.md --dry-run   # what would be saved, and where
+gizzi workflows template save release-check.md --id release
+```
+
 ## Build, check, prove
 
 ```mermaid
