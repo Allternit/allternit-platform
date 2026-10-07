@@ -564,6 +564,18 @@ enum WihCmd {
     Context {
         wih_id: String,
     },
+    /// Hand a claimed node to another agent (`workspace node handoff`).
+    Handoff {
+        node_id: String,
+        #[arg(long = "dag")]
+        dag_id: String,
+        #[arg(long = "to")]
+        to: String,
+        #[arg(long)]
+        note: Option<String>,
+        #[arg(long = "dry-run")]
+        dry_run: bool,
+    },
     SignOpen {
         wih_id: String,
         signature: String,
@@ -1038,6 +1050,40 @@ where
                         println!("{wih_id} {node_id}");
                     }
                 }
+            }
+            WihCmd::Handoff { dag_id, node_id, to, note, dry_run } => {
+                let events = ledger.query(LedgerQuery::default()).await?;
+                let Some(wih_id) = active_wih_nodes(&events).get(&node_id).cloned() else {
+                    eprintln!("refused: {dag_id}/{node_id} is not claimed; claim it first (workspace node claim) or assign it");
+                    std::process::exit(1);
+                };
+                let from = project_wih(&events, &wih_id).and_then(|w| w.agent_id).unwrap_or_else(|| "unknown".to_string());
+                if from == to {
+                    eprintln!("refused: {dag_id}/{node_id} is already held by {to}");
+                    std::process::exit(1);
+                }
+                if dry_run {
+                    println!("would hand {dag_id}/{node_id} ({wih_id}) from {from} to {to}");
+                    return Ok(());
+                }
+                let gate = stores.gate().await?;
+                gate.agent_handoff_request(&wih_id, &from, &to, note.as_deref(), None).await?;
+                // The handoff is written into the node folder, where the new owner reads.
+                if let Ok(dir) = crate::workspace::node_folder::node_folder_path(&root, &dag_id, &node_id) {
+                    let progress = dir.join("PROGRESS.md");
+                    if progress.is_file() {
+                        use std::io::Write;
+                        if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(&progress) {
+                            let _ = write!(
+                                f,
+                                "\n## Handoff {}\n\nFrom {from} to {to}.{}\n",
+                                Utc::now().format("%Y-%m-%d %H:%M UTC"),
+                                note.as_deref().map(|n| format!(" {n}")).unwrap_or_default()
+                            );
+                        }
+                    }
+                }
+                println!("handed {dag_id}/{node_id} ({wih_id}) from {from} to {to}");
             }
             WihCmd::Pickup {
                 dag_id,

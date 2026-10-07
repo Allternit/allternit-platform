@@ -60,6 +60,14 @@ pub fn project_wih(events: &[AllternitEvent], wih_id: &str) -> Option<WihState> 
                 terminal_context: None,
             });
         }
+            // A claimed node handed to another agent (`workspace node handoff`).
+            "AgentHandoffRequested" => {
+                if let Some(state) = wih.as_mut() {
+                    if let Some(target) = payload.get("target_agent_id").and_then(|v| v.as_str()) {
+                        state.agent_id = Some(target.to_string());
+                    }
+                }
+            }
             "ElicitationRequested" => {
                 if let Some(state) = wih.as_mut() {
                     state.pending_elicitation = payload.get("elicitation_id").and_then(|v| v.as_str()).map(|s| s.to_string());
@@ -185,4 +193,35 @@ pub fn project_wih(events: &[AllternitEvent], wih_id: &str) -> Option<WihState> 
     }
 
     wih
+}
+
+#[cfg(test)]
+mod handoff_tests {
+    use super::*;
+    use crate::core::types::{Actor, ActorType};
+    use serde_json::json;
+
+    fn evt(t: &str, payload: serde_json::Value) -> AllternitEvent {
+        AllternitEvent {
+            event_id: format!("e-{t}"),
+            ts: "2026-10-06T00:00:00Z".into(),
+            actor: Actor { r#type: ActorType::Gate, id: "gate".into() },
+            scope: None,
+            r#type: t.into(),
+            payload,
+            provenance: None,
+        }
+    }
+
+    #[test]
+    fn a_handoff_survives_reprojection() {
+        let events = vec![
+            evt("WIHCreated", json!({ "wih_id": "w1", "dag_id": "d", "node_id": "n" })),
+            evt("WIHPickedUp", json!({ "wih_id": "w1", "agent_id": "builder@team" })),
+            evt("AgentHandoffRequested", json!({ "wih_id": "w1", "source_agent_id": "builder@team", "target_agent_id": "reviewer@team" })),
+        ];
+        let w = project_wih(&events, "w1").unwrap();
+        assert_eq!(w.agent_id.as_deref(), Some("reviewer@team"));
+        assert_eq!(w.status, "ACTIVE");
+    }
 }
