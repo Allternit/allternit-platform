@@ -592,6 +592,22 @@ async fn end_at_cloud(state: &Arc<AppState>, ctx: &Ctx, row: &SubRow) {
     forget_list(&row.user_id, &row.connector_id);
 }
 
+/// End every subscription `user` has on `connector_id` (unsubscribe at the app, remove at the cloud, delete the
+/// row), before the connector itself is deleted: afterwards there is nothing left to unsubscribe with.
+pub async fn end_connector_subscriptions(state: &Arc<AppState>, ctx: &Ctx, user: &str, connector_id: &str) -> usize {
+    let rows = rows_where(state, "user_id = ?1 AND connector_id = ?2", vec![user.to_string(), connector_id.to_string()]).await.unwrap_or_default();
+    for row in &rows {
+        if row.status == "ended" {
+            end_at_cloud(state, ctx, row).await;
+        } else {
+            unsubscribe(state, ctx, row).await;
+        }
+    }
+    // Rows whose cloud removal failed stay `ended` for the lifecycle loop; it finishes them without the connector.
+    forget_list(user, connector_id);
+    rows.len()
+}
+
 /// When an active subscription is due for renewal.
 pub fn due_for_refresh(refresh_before: Option<&str>, now: chrono::DateTime<chrono::Utc>, updated_at: Option<&str>) -> bool {
     let Some(rb) = refresh_before.and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok()) else { return false };

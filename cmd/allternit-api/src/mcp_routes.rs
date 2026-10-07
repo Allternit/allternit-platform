@@ -27,6 +27,7 @@ pub fn mcp_router() -> Router<Arc<AppState>> {
             "/connectors",
             get(list_mcp_connectors).post(create_mcp_connector),
         )
+        .route("/connectors/:id", delete(delete_mcp_connector))
         .route(
             "/connectors/:id/oauth/start",
             post(crate::mcp_directory_routes::start_connector_oauth),
@@ -521,6 +522,79 @@ struct CreateMcpConnectorBody {
     connector_type: Option<String>,
     oauth_client_id: Option<String>,
     oauth_client_secret: Option<String>,
+}
+
+/// `DELETE /mcp/connectors/:id`: remove a connector the caller owns and everything it left on this computer:
+/// its MCP Events subscriptions (ended at the app and the cloud first), its stored OAuth tokens and sessions, its id
+/// in any agent's `mcp_connector_ids`, and the row. `204`, or `404` when it isn't the caller's.
+async fn delete_mcp_connector(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<String>,
+) -> impl axum::response::IntoResponse {
+    match delete_connector_with(&state, &crate::mcp_events_client::Ctx::production(), &user.user_id, &id).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "connector not found", "code": "connector_not_found"}))).into_response(),
+        Err(e) => {
+            warn!(connector_id = %id, "MCP connector delete failed: {e}");
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "could not delete the connector"}))).into_response()
+        }
+    }
+}
+
+/// The delete behind `DELETE /mcp/connectors/:id`. `Ok(false)` = not `user`'s connector.
+pub(crate) async fn delete_connector_with(
+    state: &Arc<AppState>,
+    ctx: &crate::mcp_events_client::Ctx,
+    user: &str,
+    id: &str,
+) -> Result<bool, String> {
+    let (db, uid, cid) = (state.db.clone(), user.to_string(), id.to_string());
+    let owned = tokio::task::spawn_blocking(move || -> rusqlite::Result<bool> {
+        let conn = db.connect()?;
+        match conn.query_row("SELECT 1 FROM mcp_connectors WHERE id = ?1 AND user_id = ?2", params![cid, uid], |_| Ok(())) {
+            Ok(()) => Ok(true),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(false),
+            Err(e) => Err(e),
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    if !owned {
+        return Ok(false);
+    }
+
+    // First, while the connector (and its credential) still exist: stop its event subscriptions at the app and the cloud.
+    let ended = crate::mcp_events_client::end_connector_subscriptions(state, ctx, user, id).await;
+
+    let (db, uid, cid) = (state.db.clone(), user.to_string(), id.to_string());
+    tokio::task::spawn_blocking(move || -> rusqlite::Result<()> {
+        let conn = db.connect()?;
+        let tx = conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM mcp_oauth_sessions WHERE mcp_connector_id = ?1", params![cid])?;
+        // Unbind it from this user's agents (`mcp_connector_ids` is a JSON array of ids).
+        let bound: Vec<(String, String)> = {
+            let mut stmt = tx.prepare("SELECT id, mcp_connector_ids FROM agents WHERE user_id = ?1 AND mcp_connector_ids LIKE '%' || ?2 || '%'")?;
+            let rows = stmt.query_map(params![uid, cid], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<Vec<_>, _>>()?;
+            rows
+        };
+        for (agent_id, ids) in bound {
+            if let Ok(list) = serde_json::from_str::<Vec<String>>(&ids) {
+                let kept: Vec<String> = list.into_iter().filter(|x| x != &cid).collect();
+                tx.execute("UPDATE agents SET mcp_connector_ids = ?1 WHERE id = ?2", params![serde_json::to_string(&kept).unwrap_or_else(|_| "[]".into()), agent_id])?;
+            }
+        }
+        // Ended rows whose cloud removal failed are kept for the lifecycle loop; anything else of this connector goes.
+        tx.execute("DELETE FROM mcp_event_subscriptions WHERE connector_id = ?1 AND user_id = ?2 AND status <> 'ended'", params![cid, uid])?;
+        tx.execute("DELETE FROM mcp_connectors WHERE id = ?1 AND user_id = ?2", params![cid, uid])?;
+        tx.commit()
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    info!(connector_id = %id, subscriptions_ended = ended, "MCP connector deleted");
+    Ok(true)
 }
 
 async fn create_mcp_connector(

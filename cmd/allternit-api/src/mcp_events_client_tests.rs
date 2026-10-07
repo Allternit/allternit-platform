@@ -445,6 +445,32 @@ async fn deleting_the_connector_ends_its_subscriptions() {
     assert!(get_row(&fx.state, &a.id).await.unwrap().is_none());
 }
 
+/// `DELETE /mcp/connectors/:id`: unsubscribes at the app and the cloud, then drops the tokens, the agent binding and the row.
+#[tokio::test]
+async fn deleting_a_connector_through_the_api_leaves_nothing_behind() {
+    let fx = fixture().await;
+    let c = fx.state.db.connect().unwrap();
+    c.execute("INSERT INTO mcp_oauth_sessions (id, mcp_connector_id, state, tokens, is_authenticated) VALUES ('s1', 'conn-1', 'st1', ?1, 1)", params![json!({ "access_token": "tok-1" }).to_string()]).unwrap();
+    c.execute("UPDATE agents SET mcp_connector_ids = '[\"conn-1\",\"conn-other\"]' WHERE id = 'bot-a'", []).unwrap();
+    let a = subscribe(&fx.state, &fx.ctx, OWNER, "conn-1", req("email.received", "bot-a")).await.unwrap();
+    assert_eq!(a.status, "active");
+
+    // Another user can't delete it.
+    assert_eq!(crate::mcp_routes::delete_connector_with(&fx.state, &fx.ctx, "user-b", "conn-1").await, Ok(false));
+    assert_eq!(crate::mcp_routes::delete_connector_with(&fx.state, &fx.ctx, OWNER, "conn-1").await, Ok(true));
+
+    assert!(fx.server.subs().is_empty(), "unsubscribed at the app");
+    assert!(fx.cloud.removed().contains(&a.id), "receiver stopped at the cloud");
+    let count = |sql: &str| -> i64 { c.query_row(sql, [], |r| r.get(0)).unwrap() };
+    assert_eq!(count("SELECT count(*) FROM mcp_connectors WHERE id = 'conn-1'"), 0);
+    assert_eq!(count("SELECT count(*) FROM mcp_oauth_sessions WHERE mcp_connector_id = 'conn-1'"), 0, "tokens gone");
+    assert_eq!(count("SELECT count(*) FROM mcp_event_subscriptions WHERE connector_id = 'conn-1'"), 0);
+    let ids: String = c.query_row("SELECT mcp_connector_ids FROM agents WHERE id = 'bot-a'", [], |r| r.get(0)).unwrap();
+    assert_eq!(ids, "[\"conn-other\"]");
+    // Gone: a second delete is a 404.
+    assert_eq!(crate::mcp_routes::delete_connector_with(&fx.state, &fx.ctx, OWNER, "conn-1").await, Ok(false));
+}
+
 #[tokio::test]
 async fn revoking_oauth_unsubscribes_and_reauth_resumes() {
     let fx = fixture().await;
