@@ -1,5 +1,34 @@
 # Changelog
 
+## 2.2.3 (2026-10-07)
+
+### Added
+- `gizzi agents model <bot@team> <model>`: change a Terminal bot's model.
+  It applies on the bot's next start; `--restart` relaunches it now and the
+  conversation resumes; `--clear` goes back to team.yaml's model. Saved in
+  `overrides.json` next to `team.yaml`, so your team file isn't rewritten.
+- `gizzi agents handoff <bot@team>`: hand a Terminal bot's seat to a fresh
+  session, with a handoff note of where it left off.
+- `gizzi workspace node handoff <dag>/<node> --to <agent>`: pass a claimed
+  node to another agent, with a note in its PROGRESS.md.
+- `gizzi orchestration threads list|show|new|steer|resolve` and
+  `gizzi orchestration coordinate <project> "…"` (the project's
+  Coordinator).
+- `gizzi workflows template save <file>`.
+- Starting a run from a project creates the project's campaign.
+
+### Changed
+- The Factory's terminal engine no longer has SSH remote attach (it could not
+  work in the Factory). Other computers will join through Allternit
+  Computers.
+- Messages, help and `--version` in the terminal engine use the Factory name
+  instead of `ao`.
+
+### Fixed
+- The config warning in the terminal view keeps its fix-it command visible on
+  narrow terminals.
+- A node handed to another agent keeps its new owner after a ledger rebuild.
+
 ## 2.2.2 (2026-10-06)
 
 ### Fixed
