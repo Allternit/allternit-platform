@@ -285,7 +285,7 @@ pub enum TemplateCmd {
     Show { template: String },
     /// Parse a template (id or file) and report its parameters.
     Check { template: String },
-    /// Save a DAG as a template.
+    /// Check a template file and save it to this workspace (--id, --force, --dry-run).
     Save(Planned),
 }
 
@@ -740,12 +740,7 @@ fn workflows(ctx: &Ctx, cmd: WorkflowsCmd) -> u8 {
 
 fn template(ctx: &Ctx, cmd: TemplateCmd) -> u8 {
     match cmd {
-        TemplateCmd::Save(_) => not_built(
-            ctx,
-            "workflows",
-            "template save",
-            "Write the template file under .allternit/rails/templates/ by hand for now.",
-        ),
+        TemplateCmd::Save(p) => crate::work::template_save(ctx, &p.args),
         TemplateCmd::List => crate::work::template(ctx, "list", None),
         TemplateCmd::Show { template } => crate::work::template(ctx, "show", Some(&template)),
         TemplateCmd::Check { template } => crate::work::template(ctx, "check", Some(&template)),

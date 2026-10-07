@@ -256,3 +256,44 @@ fn version_is_one_line() {
     assert_eq!(text.lines().count(), 1, "{text:?}");
     assert!(text.starts_with("allternit-factory "), "{text:?}");
 }
+
+#[test]
+fn template_save_checks_copies_and_refuses_to_overwrite() {
+    let home = tempfile::tempdir().unwrap();
+    let ws = home.path().join("ws");
+    std::fs::create_dir_all(&ws).unwrap();
+    let src = home.path().join("my-flow.md");
+    std::fs::write(&src, include_str!("../../../factory/engine/templates/fact-check.md")).unwrap();
+    let root = ws.to_str().unwrap();
+    let file = src.to_str().unwrap();
+    let saved = ws.join(".allternit/rails/templates/my-flow.md");
+
+    // --dry-run writes nothing and says what it would do.
+    let out = factory(home.path(), &["--root", root, "workflows", "template", "save", file, "--dry-run", "--json"]);
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    let doc = one_json(&out);
+    assert_eq!(doc["dryRun"], true);
+    assert_eq!(doc["plan"]["id"], "my-flow");
+    assert!(!saved.exists());
+
+    // Save, then it shows up in the list.
+    let out = factory(home.path(), &["--root", root, "workflows", "template", "save", file, "--json"]);
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(saved.is_file());
+    let out = factory(home.path(), &["--root", root, "workflows", "template", "list", "--json"]);
+    assert!(one_json(&out)["templates"].as_array().unwrap().iter().any(|t| t["id"] == "my-flow"));
+
+    // A second save is refused (exit 1) unless --force.
+    let out = factory(home.path(), &["--root", root, "workflows", "template", "save", file, "--json"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(error_of(&out).0, "refused");
+    let out = factory(home.path(), &["--root", root, "workflows", "template", "save", file, "--force", "--json"]);
+    assert_eq!(out.status.code(), Some(0));
+
+    // An invalid file is a usage error and saves nothing.
+    let bad = home.path().join("bad.md");
+    std::fs::write(&bad, "not a template").unwrap();
+    let out = factory(home.path(), &["--root", root, "workflows", "template", "save", bad.to_str().unwrap(), "--json"]);
+    assert_ne!(out.status.code(), Some(0));
+    assert!(!ws.join(".allternit/rails/templates/bad.md").exists());
+}
