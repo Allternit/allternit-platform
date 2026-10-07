@@ -46,6 +46,8 @@ import {
   ApiGatewayIcon,
   Route01Icon,
   Key02Icon,
+  CubeIcon,
+  BubbleChatIcon,
 } from "@hugeicons/core-free-icons";
 
 export type ConsoleNavIcon = typeof LayoutDashboardIcon;
@@ -85,6 +87,18 @@ export const consoleNav: ConsoleNavConfig = {
         { to: "/files", label: "Files", icon: File01Icon },
         { to: "/skills", label: "Skills", icon: SparklesIcon },
         { to: "/batches", label: "Batches", icon: Briefcase01Icon },
+      ],
+    },
+    {
+      label: "Platform API",
+      icon: CubeIcon,
+      defaultOpen: true,
+      items: [
+        { to: "/platform/projects", label: "Projects", icon: CubeIcon },
+        { to: "/platform/agents", label: "Agents", icon: BotIcon },
+        { to: "/platform/conversations", label: "Conversations", icon: BubbleChatIcon },
+        { to: "/platform/usage", label: "Usage", icon: Analytics01Icon },
+        { to: "/platform/webhooks", label: "Webhooks", icon: WebhookIcon },
       ],
     },
     {

@@ -1,0 +1,92 @@
+---
+title: 'Python SDK'
+description: 'The allternit-platform package: typed client, idempotency keys, typed exceptions, pagination and streaming replies.'
+---
+
+`allternit-platform` is a client for the Platform API for Python 3.9+, using only the standard library.
+
+<Note>
+Not yet published to PyPI; publishing needs approval. Until then, install it from the repository: `pip install /path/to/allternit/sdk/platform-python`.
+</Note>
+
+## Create a client
+
+```python
+from allternit_platform import AllternitPlatform
+
+client = AllternitPlatform()  # reads ALLTERNIT_API_KEY (alt_test_... or alt_live_...)
+# AllternitPlatform(api_key=..., base_url="https://api.allternit.com", timeout=60.0, default_headers={})
+```
+
+Every API area is an attribute: `client.accounts`, `client.agents` (also model keys), `client.conversations`, `client.numbers`, `client.messaging`, `client.webhooks`, `client.usage`. Path parameters are positional; body fields and query parameters are keyword arguments. Responses are dicts typed as `TypedDict`s.
+
+```python
+agent = client.agents.create(account_id="acct_7Hq…", name="Front desk")
+client.agents.update(agent["id"], autonomy="ask")
+client.agents.put_model_key("anthropic", api_key=os.environ["ANTHROPIC_API_KEY"])
+usage = client.usage.get(group_by="meter", from_="2026-10-01")
+```
+
+Parameters whose names are Python keywords get a trailing underscore (`from_`). Bodies that are free-form objects take `body={...}`. Every method takes `timeout=` and `extra_headers=`. For a route the SDK doesn't wrap yet: `client.http.request("GET", "/v1/…")`.
+
+## Idempotency
+
+Every `POST` carries an `Idempotency-Key` header. The SDK makes a random one per call; pass your own to make a retry safe across process restarts:
+
+```python
+client.messaging.send_message(number_id=n, to=to, body=text, idempotency_key=f"reminder-{appointment_id}")
+```
+
+See [Idempotency and limits](/api/platform/idempotency-and-limits).
+
+## Errors
+
+Non-2xx answers raise a subclass of `APIError` with `status`, `type`, `code`, `message`, `param` and `request_id`:
+
+| Exception | When |
+|---|---|
+| `InvalidRequestError` | 400, 422 |
+| `AuthenticationError` | 401 |
+| `PermissionDeniedError` | 403 (missing scope, other account) |
+| `NotFoundError` | 404 |
+| `ConflictError` | 409 (`conversation_busy`, idempotency key reused) |
+| `RateLimitError` | 429; `retry_after` in seconds |
+| `InternalServerError` | 5xx; `code == "runtime_starting"` means retry shortly |
+| `APIError` | anything else |
+
+Network failures raise `APIConnectionError`; a timeout raises `APITimeoutError`. Codes are listed in [Errors](/api/platform/errors).
+
+## Pagination
+
+```python
+page = client.agents.list(limit=50)            # {"data": [...], "has_more": ..., "next_cursor": ...}
+nxt = client.agents.list(after=page["next_cursor"])
+
+for agent in client.agents.list_all():         # every item, fetched page by page
+    print(agent["name"])
+```
+
+## Streaming replies
+
+```python
+from allternit_platform import MessageDelta, MessageCompleted
+
+stream = client.conversations.stream(conversation_id, content="Hi")
+for event in stream:
+    if isinstance(event, MessageDelta):
+        print(event.delta, end="", flush=True)
+    elif isinstance(event, MessageCompleted):
+        print("\nstored as", event.message["id"])
+```
+
+`stream.final_message` holds the stored reply once the loop ends, and `stream.until_done()` reads to the end and returns it. An `error` event raises a typed `APIError` (for example `code == "turn_failed"`). `timeout` applies to each read, so a reply with a pause longer than the timeout raises `APITimeoutError`; the reply is still stored on the server.
+
+## Regenerating
+
+The typed layer (`allternit_platform/_generated.py`) is generated from `cmd/allternit-cloud-api/openapi/platform-v1.yaml`:
+
+```bash
+python3 scripts/platform-sdk/generate.py           # write
+python3 scripts/platform-sdk/generate.py --check   # fail if stale
+cd sdk/platform-python && python3 -m unittest discover -s tests
+```

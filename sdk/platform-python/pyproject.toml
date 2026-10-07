@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "allternit-platform"
+version = "0.1.0"
+description = "Python SDK for the Allternit Platform API (agents, conversations, numbers, messaging, webhooks, usage)."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+dependencies = []
+
+[project.urls]
+Documentation = "https://docs.allternit.com/api/platform/sdks/python"
+
+[tool.setuptools]
+packages = ["allternit_platform"]
+
+[tool.setuptools.package-data]
+allternit_platform = ["py.typed"]

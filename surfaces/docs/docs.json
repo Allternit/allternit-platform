@@ -574,6 +574,7 @@
             "group": "Platform API",
             "pages": [
               "api/platform/overview",
+              "api/platform/quickstart",
               "api/platform/authentication",
               "api/platform/errors",
               "api/platform/idempotency-and-limits",
@@ -584,7 +585,10 @@
               "api/platform/numbers",
               "api/platform/messaging",
               "api/platform/webhooks",
-              "api/platform/usage"
+              "api/platform/usage",
+              "api/platform/pricing",
+              "api/platform/sdks/typescript",
+              "api/platform/sdks/python"
             ]
           },
           {

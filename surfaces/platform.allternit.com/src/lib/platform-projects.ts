@@ -85,3 +85,10 @@ export async function createProjectKey(
 export async function revokeProjectKey(projectId: string, keyId: string): Promise<void> {
   await api.delete(`/api/v1/platform/projects/${encodeURIComponent(projectId)}/keys/${encodeURIComponent(keyId)}`);
 }
+
+export async function updateProject(
+  projectId: string,
+  input: { name?: string; spend_cap_cents?: number; archived?: boolean },
+): Promise<PlatformProject> {
+  return api.patch<PlatformProject>(`/api/v1/platform/projects/${encodeURIComponent(projectId)}`, input);
+}

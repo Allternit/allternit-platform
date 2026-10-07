@@ -11,6 +11,11 @@
 //! `platform_api_disabled`). Console routes for projects and keys live in
 //! `console` under `/api/v1/platform/*` (Clerk session auth).
 //!
+//! The console also calls `/v1` itself: a Clerk session plus
+//! `X-Allternit-Project: proj_…` acts on that project as its owner (see
+//! [`caller::console_caller`]), so console pages use the same endpoints as
+//! developers and need no parallel admin routes.
+//!
 //! Request pipeline for `/v1`: gate → authenticate (`PlatformCaller`) →
 //! per-key and per-project rate limit → idempotency (POST + `Idempotency-Key`)
 //! → handler.
@@ -56,6 +61,50 @@ pub use error::PlatformError;
 pub use page::{build_page, Page, PageParams};
 pub use slots::{acquire_slot, release_slot, SlotGuard};
 pub use usage_events::{record_usage, UsageEvent};
+
+/// Header the console sends with its Clerk session to act on one project.
+pub const CONSOLE_PROJECT_HEADER: &str = "x-allternit-project";
+
+/// A principal tests put in place of a verified Clerk session.
+#[cfg(test)]
+#[derive(Clone)]
+pub struct TestSession(pub projects::Principal);
+
+fn console_project(request: &Request) -> Option<String> {
+    request
+        .headers()
+        .get(CONSOLE_PROJECT_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(str::to_string)
+}
+
+/// Console session → caller for the project named in [`CONSOLE_PROJECT_HEADER`].
+/// Takes the headers (and a test principal) by value: a `&Request` held across
+/// an await would make the middleware future non-`Send`.
+async fn console_v1_caller(
+    db: &sqlx::PgPool,
+    headers: axum::http::HeaderMap,
+    test_principal: Option<projects::Principal>,
+    project_id: &str,
+) -> Result<PlatformCaller, PlatformError> {
+    let who = match test_principal {
+        Some(who) => who,
+        None => console::principal(&headers).await?.0,
+    };
+    caller::console_caller(db, &who, project_id).await
+}
+
+#[cfg(test)]
+fn test_principal(request: &Request) -> Option<projects::Principal> {
+    request.extensions().get::<TestSession>().map(|t| t.0.clone())
+}
+
+#[cfg(not(test))]
+fn test_principal(_request: &Request) -> Option<projects::Principal> {
+    None
+}
 
 /// Is the Platform API switched on for this process?
 pub fn platform_api_enabled() -> bool {
@@ -216,6 +265,7 @@ async fn v1_middleware(
 ) -> Response {
     // The Agency API owns `/v1/agents` for everything but project keys, whether or not
     // the Platform API is switched on.
+    let console_project = console_project(&request);
     if request.uri().path() == "/v1/agents" {
         let project_key = request
             .headers()
@@ -223,7 +273,7 @@ async fn v1_middleware(
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.strip_prefix("Bearer "))
             .is_some_and(|t| caller::is_project_key_token(t.trim()));
-        if !project_key {
+        if !project_key && console_project.is_none() {
             return crate::routes::agency_forward::forward(ps.api.clone(), ps.agency.clone(), request).await;
         }
     }
@@ -239,7 +289,15 @@ async fn v1_middleware(
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .map(str::trim);
-    let caller = match caller::authenticate(db, token).await {
+    let authenticated = match (&console_project, token) {
+        // A project key always wins; the console header only applies to a session.
+        (Some(project_id), Some(t)) if !caller::is_project_key_token(t) => {
+            let (headers, test) = (request.headers().clone(), test_principal(&request));
+            console_v1_caller(db, headers, test, project_id).await
+        }
+        _ => caller::authenticate(db, token).await,
+    };
+    let caller = match authenticated {
         Ok(c) => c,
         // While switched off, nobody learns more than "disabled" from a bad key.
         Err(_) if beta.is_some() => return PlatformError::disabled().into_response(),
@@ -323,3 +381,5 @@ mod tests_p1;
 mod tests_p2;
 #[cfg(test)]
 mod tests_p2_tools;
+#[cfg(test)]
+mod tests_p5_console;

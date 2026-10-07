@@ -8,6 +8,7 @@ A conversation is a chat between your app and one [agent](/api/platform/agents).
 | Method | Path | |
 |---|---|---|
 | `POST` | `/v1/agents/{id}/conversations` | Start one: `{ "metadata"? }` |
+| `GET` | `/v1/agents/{id}/conversations` | The agent's conversations, oldest first, without messages (`?limit=&after=` pages) |
 | `GET` | `/v1/conversations/{id}` | The conversation with its latest 200 messages, oldest first |
 | `POST` | `/v1/conversations/{id}/messages` | Send `{ "content", "stream"? }`, get the agent's reply |
 
