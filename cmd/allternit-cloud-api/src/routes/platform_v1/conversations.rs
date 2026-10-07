@@ -290,9 +290,10 @@ async fn send_message(
     let lock = TurnLock::take(&conv.id).ok_or_else(|| PlatformError::conflict("conversation_busy", "The agent is still answering the previous message in this conversation."))?;
     let host = host_for(&state, layered);
     let (rt, session) = prepare(&state, host.as_ref(), &caller, &conv).await?;
-    insert_message(&state.db, &conv.id, "user", &content, "completed", None).await?;
     let path = format!("/api/v1/platform/agents/{}/sessions/{}/turn", conv.agent_id, session);
     let mut upstream = host.stream(&rt, &path, &json!({ "text": content })).await?;
+    // Stored once the runtime took the turn: a refused turn (still starting) leaves nothing behind.
+    insert_message(&state.db, &conv.id, "user", &content, "completed", None).await?;
     let db = state.db.clone();
 
     if !body.stream {

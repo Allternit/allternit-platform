@@ -55,6 +55,8 @@ async fn ctx_from(state: Arc<ApiState>) -> Ctx {
 struct FakeHost {
     starting: AtomicBool,
     fail_turn: AtomicBool,
+    /// The computer is up but its agent runtime isn't: turns are refused as starting.
+    refuse_turn: AtomicBool,
     runtime: Mutex<String>,
     calls: Mutex<Vec<(String, String)>>,
 }
@@ -74,6 +76,9 @@ impl AgentHost for FakeHost {
     }
     async fn stream(&self, _rt: &HostRuntime, path: &str, body: &Value) -> Result<RelayStream, PlatformError> {
         self.calls.lock().unwrap().push(("STREAM".into(), path.to_string()));
+        if self.refuse_turn.load(Ordering::SeqCst) {
+            return Err(hosting::starting());
+        }
         let text = body["text"].as_str().unwrap_or("").to_string();
         let sse = if self.fail_turn.load(Ordering::SeqCst) {
             "data: {\"type\":\"error\",\"message\":\"model unavailable\"}\n\n".to_string()
@@ -366,6 +371,30 @@ async fn conversations_are_isolated_and_deleting_an_agent_drops_its_bot() {
     assert_eq!(call(&c.app, "DELETE", &format!("/v1/agents/{agent_id}"), &admin, None).await.0, StatusCode::OK);
     assert!(host.calls.lock().unwrap().iter().any(|(m, p)| m == "DELETE" && p.ends_with(&agent_id)), "the runtime drops the bot");
     assert_eq!(call(&c.app, "GET", &format!("/v1/conversations/{conv_id}"), &admin, None).await.0, StatusCode::NOT_FOUND, "a deleted agent's conversations are gone");
+}
+
+#[tokio::test]
+async fn a_turn_refused_while_the_runtime_starts_stores_nothing() {
+    let (c, host) = ctx_with_host().await;
+    let p = project(&c, "dev_12", ProjectEnv::Sandbox).await;
+    let key = mint(&c, &p, None, &["agents"]).await;
+    let acct = account(&c, &key, "A").await;
+    let (_, agent) = call(&c.app, "POST", "/v1/agents", &key, Some(json!({ "account_id": acct, "name": "Ada" }))).await;
+    let (_, conv) = call(&c.app, "POST", &format!("/v1/agents/{}/conversations", agent["id"].as_str().unwrap()), &key, None).await;
+    let conv_id = conv["id"].as_str().unwrap().to_string();
+
+    host.refuse_turn.store(true, Ordering::SeqCst);
+    let (s, e) = call(&c.app, "POST", &format!("/v1/conversations/{conv_id}/messages"), &key, Some(json!({ "content": "hi" }))).await;
+    assert_eq!((s, e["error"]["code"].as_str()), (StatusCode::SERVICE_UNAVAILABLE, Some("runtime_starting")));
+    let (_, got) = call(&c.app, "GET", &format!("/v1/conversations/{conv_id}"), &key, None).await;
+    assert!(got["messages"].as_array().unwrap().is_empty(), "nothing stored: {got}");
+
+    host.refuse_turn.store(false, Ordering::SeqCst);
+    let (_, m) = call(&c.app, "POST", &format!("/v1/conversations/{conv_id}/messages"), &key, Some(json!({ "content": "hi" }))).await;
+    assert_eq!(m["content"], "echo: hi");
+    let (_, got) = call(&c.app, "GET", &format!("/v1/conversations/{conv_id}"), &key, None).await;
+    let roles: Vec<&str> = got["messages"].as_array().unwrap().iter().map(|m| m["role"].as_str().unwrap()).collect();
+    assert_eq!(roles, ["user", "assistant"]);
 }
 
 #[tokio::test]
