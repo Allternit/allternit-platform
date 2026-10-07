@@ -22,8 +22,9 @@ emulation.
 
 **Homebrew (macOS / Linux):**
 ```bash
-brew tap Allternit/tap
-brew install gizzi-code
+brew tap allternit/tap
+brew trust --formula allternit/tap/gizzi-code   # newer Homebrew asks you to trust a third-party tap first
+brew install allternit/tap/gizzi-code           # installs gizzi and the Allternit Factory engine
 ```
 
 **Scoop / winget (Windows):**
