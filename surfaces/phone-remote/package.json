@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "node server/index.mjs",
-    "test": "node test/ws.test.mjs && node test/watchdog.test.mjs",
+    "test": "node test/ws.test.mjs && node test/watchdog.test.mjs && node test/demand.test.mjs",
     "smoke": "node test/smoke.mjs",
     "build-capture": "swiftc -O -o server/capture/sc_capture server/capture/sc_capture.swift"
   },

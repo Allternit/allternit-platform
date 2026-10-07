@@ -199,8 +199,12 @@ export class Capture extends EventEmitter {
     const tmp = join(tmpdir(), `phone-remote-${process.pid}.jpg`);
     this.log(`[capture] X11 loop on DISPLAY=${display} (target ~${this.fps}fps)`);
     this.emit('info', { width: 0, height: 0 });
+    // Look for ffmpeg once: trying it on every frame doubled the processes per frame where it is missing.
+    let hasFfmpeg = null;
     const grab = async () => {
+      if (hasFfmpeg === null) hasFfmpeg = await execFileP('ffmpeg', ['-version'], { timeout: 4000 }).then(() => true, () => false);
       try {
+        if (!hasFfmpeg) throw new Error('no ffmpeg');
         await execFileP('ffmpeg', [
           '-y', '-loglevel', 'error',
           '-f', 'x11grab', '-video_size', '1280x720', '-i', `${display}.0`,
@@ -296,7 +300,7 @@ export class Capture extends EventEmitter {
       this.timer = setTimeout(tick, wait);
     };
     tick();
-    this.on('stop', () => { rmSync(dir, { recursive: true, force: true }); });
+    this.once('stop', () => { rmSync(dir, { recursive: true, force: true }); });
   }
 
   stop() {

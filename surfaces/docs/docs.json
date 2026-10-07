@@ -253,6 +253,7 @@
               "operations/rollout",
               "operations/recovery",
               "operations/owned-downloads",
+              "operations/screen-capture",
               "internal/channel-apps-owner-setup"
             ],
             "icon": "/icons/screen.svg"
