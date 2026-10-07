@@ -1,6 +1,7 @@
 //! Allternit Platform API (`/v1`): the developer-facing surface.
 //!
-//! One module per area (`accounts`, `agents`, `numbers`, `messages`, `webhooks`, `usage`).
+//! One module per area (`accounts`, `agents`, `conversations`, `numbers`, `messages`, `webhooks`, `usage`).
+//! Hosted agents run on a per-project runtime (`hosting`).
 //! Each area exposes `register(RouteTable) -> RouteTable`; `build_table` below
 //! is the single list. The route table records every `(method, path)` it
 //! registers, and the test `openapi_matches_router` compares that list with
@@ -18,10 +19,13 @@ pub mod accounts;
 pub mod agents;
 pub mod caller;
 pub mod console;
+pub mod conversations;
 pub mod error;
 pub mod events;
+pub mod hosting;
 pub mod limits;
 pub mod messages;
+pub mod model_keys;
 pub mod numbers;
 pub mod page;
 pub mod projects;
@@ -58,18 +62,42 @@ pub fn platform_api_enabled() -> bool {
         .unwrap_or(false)
 }
 
+/// Clerk user ids allowed to use the Platform API while it is switched off for
+/// everyone else (`ALLTERNIT_PLATFORM_API_BETA_OWNERS`, comma separated): their
+/// console and the projects they own work; every other caller still gets
+/// `platform_api_disabled`. Used for live tests before launch.
+pub fn beta_owners_from_env() -> Vec<String> {
+    std::env::var("ALLTERNIT_PLATFORM_API_BETA_OWNERS")
+        .unwrap_or_default()
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
 /// Where the on/off switch comes from. `FromEnv` in production; tests force it.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub enum Gate {
     FromEnv,
     Forced(bool),
+    /// Off, except for these owners (tests of the beta path).
+    BetaOnly(Vec<String>),
 }
 
 impl Gate {
-    fn enabled(self) -> bool {
+    fn enabled(&self) -> bool {
         match self {
             Gate::FromEnv => platform_api_enabled(),
-            Gate::Forced(on) => on,
+            Gate::Forced(on) => *on,
+            Gate::BetaOnly(_) => false,
+        }
+    }
+
+    fn beta_owners(&self) -> Vec<String> {
+        match self {
+            Gate::FromEnv => beta_owners_from_env(),
+            Gate::Forced(_) => Vec::new(),
+            Gate::BetaOnly(owners) => owners.clone(),
         }
     }
 }
@@ -115,6 +143,8 @@ fn build_table() -> RouteTable {
     let table = RouteTable::new();
     let table = accounts::register(table);
     let table = agents::register(table);
+    let table = conversations::register(table);
+    let table = model_keys::register(table);
     let table = numbers::register(table);
     let table = messages::register(table);
     let table = webhooks::register(table);
@@ -130,6 +160,8 @@ pub fn registered_routes() -> Vec<(&'static str, String)> {
 struct PlatformState {
     api: Arc<ApiState>,
     gate: Gate,
+    /// `/v1/agents` is also the Agency API's path: non-project credentials go there.
+    agency: Arc<crate::routes::agency_forward::AgencyForward>,
 }
 
 /// The Platform API router (`/v1/*` plus the console routes). Mount once from
@@ -139,7 +171,11 @@ pub fn router(state: &Arc<ApiState>) -> Router<Arc<ApiState>> {
 }
 
 pub fn router_gated(state: &Arc<ApiState>, gate: Gate) -> Router<Arc<ApiState>> {
-    let ps = PlatformState { api: state.clone(), gate };
+    router_with_agency(state, gate, Arc::new(crate::routes::agency_forward::AgencyForward::from_env()))
+}
+
+pub fn router_with_agency(state: &Arc<ApiState>, gate: Gate, agency: Arc<crate::routes::agency_forward::AgencyForward>) -> Router<Arc<ApiState>> {
+    let ps = PlatformState { api: state.clone(), gate, agency };
 
     let v1 = build_table()
         .router
@@ -157,7 +193,15 @@ async fn console_gate(
     next: Next,
 ) -> Response {
     if !ps.gate.enabled() {
-        return PlatformError::disabled().into_response();
+        let beta = ps.gate.beta_owners();
+        let allowed = !beta.is_empty()
+            && match console::principal(request.headers()).await {
+                Ok((p, _)) => beta.contains(&p.user_id),
+                Err(_) => false,
+            };
+        if !allowed {
+            return PlatformError::disabled().into_response();
+        }
     }
     next.run(request).await
 }
@@ -167,7 +211,21 @@ async fn v1_middleware(
     mut request: Request,
     next: Next,
 ) -> Response {
-    if !ps.gate.enabled() {
+    // The Agency API owns `/v1/agents` for everything but project keys, whether or not
+    // the Platform API is switched on.
+    if request.uri().path() == "/v1/agents" {
+        let project_key = request
+            .headers()
+            .get(header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .is_some_and(|t| caller::is_project_key_token(t.trim()));
+        if !project_key {
+            return crate::routes::agency_forward::forward(ps.api.clone(), ps.agency.clone(), request).await;
+        }
+    }
+    let beta = if ps.gate.enabled() { None } else { Some(ps.gate.beta_owners()) };
+    if beta.as_ref().is_some_and(Vec::is_empty) {
         return PlatformError::disabled().into_response();
     }
     let db = &ps.api.db;
@@ -180,8 +238,13 @@ async fn v1_middleware(
         .map(str::trim);
     let caller = match caller::authenticate(db, token).await {
         Ok(c) => c,
+        // While switched off, nobody learns more than "disabled" from a bad key.
+        Err(_) if beta.is_some() => return PlatformError::disabled().into_response(),
         Err(error) => return error.into_response(),
     };
+    if beta.as_ref().is_some_and(|owners| !owners.contains(&caller.owner_user_id)) {
+        return PlatformError::disabled().into_response();
+    }
 
     let rate = match limits::check_rate_limit(db, &caller).await {
         Ok(info) => info,

@@ -278,6 +278,155 @@ paths:
                   object: { type: string, const: agent }
                   deleted: { type: boolean, const: true }
         default: { $ref: "#/components/responses/Error" }
+  /v1/agents/{id}/conversations:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, examples: ["agent_0123456789abcdef01234567"] }
+    post:
+      operationId: createConversation
+      summary: Start a conversation
+      description: Opens a conversation with the agent, in the agent's account. No message is sent yet.
+      tags: [Conversations]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                metadata: { type: object, additionalProperties: true }
+      responses:
+        "201":
+          description: The new conversation, with an empty `messages` list.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Conversation" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/conversations/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, examples: ["conv_0123456789abcdef01234567"] }
+    get:
+      operationId: getConversation
+      summary: Retrieve a conversation
+      description: The conversation with its latest 200 messages, oldest first.
+      tags: [Conversations]
+      responses:
+        "200":
+          description: The conversation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Conversation" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/conversations/{id}/messages:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: sendConversationMessage
+      summary: Send a message
+      description: |
+        Sends a message and answers with the agent's reply. With `stream: true` the answer is
+        server-sent events: `message.delta` (`{"delta": "..."}`) while the agent writes, then
+        `message.completed` (the stored reply) or `error`. The first message starts the
+        project's hosted runtime: `503 runtime_starting` means retry in a few seconds.
+        One message at a time per conversation (`409 conversation_busy`).
+      tags: [Conversations]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              additionalProperties: false
+              properties:
+                content: { type: string, minLength: 1, maxLength: 16000 }
+                stream: { type: boolean, default: false }
+      responses:
+        "200":
+          description: The agent's reply (`status` is `failed`, with `error`, when the turn failed).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConversationMessage" }
+            text/event-stream:
+              schema: { type: string }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/model_keys:
+    get:
+      operationId: listModelKeys
+      summary: List the project's model keys
+      description: Masked; the key itself is never returned.
+      tags: [Agents]
+      responses:
+        "200":
+          description: The project's keys.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  object: { type: string, const: list }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/ModelKey" }
+                  has_more: { type: boolean }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/model_keys/{provider}:
+    parameters:
+      - name: provider
+        in: path
+        required: true
+        schema: { type: string, enum: [anthropic, openai, xai] }
+    put:
+      operationId: putModelKey
+      summary: Set a model key
+      description: The project's own key for a provider. Agents whose `model` is `provider/…` run on it. Not available to account-bound keys.
+      tags: [Agents]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [api_key]
+              additionalProperties: false
+              properties:
+                api_key: { type: string, minLength: 8, maxLength: 512 }
+      responses:
+        "200":
+          description: The stored key, masked.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ModelKey" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deleteModelKey
+      summary: Delete a model key
+      tags: [Agents]
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  provider: { type: string }
+                  object: { type: string, const: model_key }
+                  deleted: { type: boolean, const: true }
+        default: { $ref: "#/components/responses/Error" }
   /v1/usage:
     get:
       operationId: getUsage
@@ -755,6 +904,7 @@ components:
     AgentTool:
       type: string
       enum: [send_text, call, email, channel_post, calendar, web_fetch, web_search, knowledge_search, ask_human, transfer]
+      description: "channel_post, calendar, knowledge_search and transfer aren't available for hosted agents yet (tool_not_available)."
     Autonomy:
       type: string
       enum: [draft, ask, tell, limits]
@@ -763,6 +913,40 @@ components:
       type: string
       enum: [af_alloy, af_aoede, af_bella, af_heart, af_jessica, af_kore, af_nicole, af_nova, af_river, af_sarah, af_sky, am_adam, am_echo, am_eric, am_fenrir, am_liam, am_michael, am_onyx, am_puck, am_santa, bf_alice, bf_emma, bf_isabella, bf_lily, bm_daniel, bm_fable, bm_george, bm_lewis]
       default: af_heart
+    Conversation:
+      type: object
+      required: [id, object, agent_id, account_id, metadata, created_at]
+      properties:
+        id: { type: string }
+        object: { type: string, const: conversation }
+        agent_id: { type: string }
+        account_id: { type: string }
+        metadata: { type: object, additionalProperties: true }
+        created_at: { type: string, format: date-time }
+        messages:
+          type: array
+          items: { $ref: "#/components/schemas/ConversationMessage" }
+    ConversationMessage:
+      type: object
+      required: [id, object, conversation_id, role, content, status, error, created_at]
+      properties:
+        id: { type: string }
+        object: { type: string, const: conversation.message }
+        conversation_id: { type: string }
+        role: { type: string, enum: [user, assistant] }
+        content: { type: string }
+        status: { type: string, enum: [completed, failed] }
+        error: { type: [string, "null"] }
+        created_at: { type: string, format: date-time }
+    ModelKey:
+      type: object
+      required: [provider, object, masked, created_at, updated_at]
+      properties:
+        provider: { type: string, enum: [anthropic, openai, xai] }
+        object: { type: string, const: model_key }
+        masked: { type: string, description: "Last four characters, e.g. \"…7890\"." }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
     UsageRow:
       type: object
       required: [group, meter, unit, quantity, events]

@@ -1,0 +1,37 @@
+---
+title: 'Conversations'
+description: 'Talk to a hosted agent over REST, with the reply returned whole or streamed.'
+---
+
+A conversation is a chat between your app and one [agent](/api/platform/agents). Scope `agents`. A key bound to an account only sees that account's conversations.
+
+| Method | Path | |
+|---|---|---|
+| `POST` | `/v1/agents/{id}/conversations` | Start one: `{ "metadata"? }` |
+| `GET` | `/v1/conversations/{id}` | The conversation with its latest 200 messages, oldest first |
+| `POST` | `/v1/conversations/{id}/messages` | Send `{ "content", "stream"? }`, get the agent's reply |
+
+```bash
+curl https://api.allternit.com/v1/agents/agent_3f9…/conversations \
+  -H "Authorization: Bearer $ALLTERNIT_KEY" -H "Content-Type: application/json" -d '{}'
+
+curl https://api.allternit.com/v1/conversations/conv_81c…/messages \
+  -H "Authorization: Bearer $ALLTERNIT_KEY" -H "Content-Type: application/json" \
+  -d '{ "content": "Can I book a cleaning next Tuesday?" }'
+```
+
+```json
+{ "id": "cmsg_5a2…", "object": "conversation.message", "conversation_id": "conv_81c…", "role": "assistant",
+  "content": "Tuesday has openings at 10:00 and 2:30. Which works for you?", "status": "completed",
+  "error": null, "created_at": "2026-10-06T21:12:44Z" }
+```
+
+**Streaming.** With `"stream": true` the answer is server-sent events: `message.delta` events with `{ "delta": "…" }` while the agent writes, then one `message.completed` carrying the stored reply, or an `error` event (`{ "error": { "type", "code", "message" } }`). The reply is stored even if your client disconnects mid-stream.
+
+**Failures.** If the agent's turn fails, the reply comes back with `status: "failed"` and an `error` sentence (streamed: an `error` event with code `turn_failed`); your message and the failure both stay in the conversation.
+
+**Where the agent runs.** Each project gets its own hosted runtime in Allternit's cloud, started by the project's first message. While it starts, sending a message answers `503 runtime_starting`; retry after a few seconds. An idle runtime sleeps and wakes on the next message, which can take a few seconds longer. Agent changes reach the runtime before the next message. All of a project's agents share the project's runtime; each account's data stays separate in the API, and the runtime keeps each conversation in its own session.
+
+**Limits.** `content` is 1–16,000 characters. One message at a time per conversation: a second one while the agent is still answering gets `409 conversation_busy`.
+
+Errors: `model_key_missing`, `model_key_sync_failed`, `invalid_content`, `invalid_metadata`, `agent_not_found`, `conversation_not_found`, `conversation_busy`, `runtime_starting`, `runtime_unavailable`, `agent_sync_failed`, `session_failed`, `insufficient_scope`.
