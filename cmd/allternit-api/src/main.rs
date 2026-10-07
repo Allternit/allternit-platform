@@ -1315,6 +1315,9 @@ async fn main() {
         // Relayed phone calls: cloud-api signs each request with the runtime's
         // device token; `RelayedVoiceAuth` verifies it per handler (no Clerk session).
         .merge(allternit_api::voice_calls::voice_calls_router())
+        // Platform API hosted agents: cloud-api relays agent upserts, sessions and turns for a
+        // project's hosted runtime, signed with the device token (RelayedAuth verifies).
+        .merge(allternit_api::platform_agents::platform_agents_router())
         // Live desktop for a cloud computer: the browser's ws is tunnelled here
         // by cloud-api's relay; the viewer token (signed with the per-runtime
         // relay key) is the credential, no Clerk session on this hop.

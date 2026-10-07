@@ -96,6 +96,12 @@ pub trait VoiceTurner: Send + Sync {
 /// that cannot be streamed.
 struct ChannelTurner;
 
+/// The production turner (a native gizzi session streamed, a vendor lane's deltas,
+/// a placed session answered once): shared with Platform API agent turns.
+pub fn production_turner() -> Arc<dyn VoiceTurner> {
+    Arc::new(GizziStreamTurner { fallback: ChannelTurner })
+}
+
 #[async_trait]
 impl VoiceTurner for ChannelTurner {
     async fn run(&self, db: &DbHandle, session_id: &str, bot_id: &str, text: &str, _events: mpsc::UnboundedSender<Value>) -> Result<TurnReply, String> {

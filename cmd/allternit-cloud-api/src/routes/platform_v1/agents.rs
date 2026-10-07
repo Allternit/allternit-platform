@@ -68,6 +68,10 @@ pub const TOOLS: [&str; 10] = [
     "transfer",
 ];
 
+/// On the launch list but not yet backed by a hosted-agent tool: refused with
+/// `tool_not_available` rather than accepted and silently ignored.
+pub const COMING_TOOLS: [&str; 4] = ["channel_post", "calendar", "knowledge_search", "transfer"];
+
 /// Autonomy levels, the same four the runtime's policy check uses.
 pub const AUTONOMY: [&str; 4] = ["draft", "ask", "tell", "limits"];
 
@@ -249,9 +253,13 @@ pub fn validate_model(model: &str) -> Result<String, PlatformError> {
     let ok = !m.is_empty()
         && m.len() <= MAX_MODEL
         && m.bytes().all(|b| b.is_ascii_alphanumeric() || b"-._/:".contains(&b))
-        && (m == DEFAULT_MODEL || m.split_once('/').is_some_and(|(p, n)| !p.is_empty() && !n.is_empty()));
+        && (m == DEFAULT_MODEL || m.split_once('/').is_some_and(|(p, n)| super::model_keys::PROVIDERS.contains(&p) && !n.is_empty()));
     if !ok {
-        return Err(invalid("invalid_model", format!("model must be \"{DEFAULT_MODEL}\" or \"provider/model\" (for example \"anthropic/claude-sonnet-5-5\")."), "model"));
+        return Err(invalid(
+            "invalid_model",
+            format!("model must be \"{DEFAULT_MODEL}\" or \"provider/model\" with provider {} (for example \"anthropic/claude-sonnet-5-5\"), which runs on your own key.", super::model_keys::PROVIDERS.join(", ")),
+            "model",
+        ));
     }
     Ok(m.to_string())
 }
@@ -270,6 +278,9 @@ pub fn validate_tools(tools: &[String]) -> Result<Vec<String>, PlatformError> {
         let t = t.trim();
         if !TOOLS.contains(&t) {
             return Err(invalid("invalid_tool", format!("Unknown tool \"{t}\". Tools: {}.", TOOLS.join(", ")), "tools"));
+        }
+        if COMING_TOOLS.contains(&t) {
+            return Err(invalid("tool_not_available", format!("\"{t}\" isn't available for hosted agents yet."), "tools"));
         }
         if !out.iter().any(|x| x == t) {
             out.push(t.to_string());
@@ -505,10 +516,20 @@ async fn update_agent(
 async fn delete_agent(
     State(state): State<Arc<ApiState>>,
     caller: PlatformCaller,
+    layered: Option<axum::Extension<Arc<dyn super::hosting::AgentHost>>>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, PlatformError> {
     caller.require("agents")?;
     fetch_visible(&state, &caller, &id).await?;
+    // Best effort: the runtime that holds the bot drops it. Never provisions a runtime to do so.
+    let held: Option<(Option<String>,)> = sqlx::query_as("SELECT runtime_id FROM platform_agents WHERE id = $1").bind(&id).fetch_optional(&state.db).await?;
+    if let Some((Some(runtime_id),)) = held {
+        let host = super::hosting::host_for(&state, layered);
+        let rt = super::hosting::HostRuntime { owner: super::hosting::runtime_owner(&caller.project_id), runtime_id };
+        if let Err(e) = host.call(&rt, "DELETE", &format!("/api/v1/platform/agents/{id}"), &json!({})).await {
+            tracing::warn!(agent = %id, code = %e.code, "platform: runtime didn't drop the deleted agent");
+        }
+    }
     sqlx::query("UPDATE platform_agents SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1 AND project_id = $2 AND deleted_at IS NULL")
         .bind(&id)
         .bind(&caller.project_id)
@@ -543,6 +564,8 @@ mod unit {
         assert!(validate_voice("my_cloned_voice").is_err(), "no custom voices");
         assert_eq!(validate_tools(&["call".into(), "call".into(), "email".into()]).unwrap(), vec!["call", "email"]);
         assert!(validate_tools(&["shell".into()]).is_err());
+        assert!(matches!(validate_tools(&["calendar".into()]), Err(e) if e.code == "tool_not_available"));
+        assert!(validate_model("openai/gpt-5").is_ok() && validate_model("mistral/large").is_err());
         assert!(validate_transfer_targets(&["+14155550100".into()]).is_ok());
         assert!(validate_transfer_targets(&["415-555-0100".into()]).is_err());
         assert!(validate_autonomy("limits").is_ok() && validate_autonomy("yolo").is_err());
