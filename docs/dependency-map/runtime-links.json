@@ -1,0 +1,195 @@
+{
+  "nodes": [
+    {
+      "id": "surface:desktop",
+      "label": "Allternit Desktop app",
+      "kind": "surface",
+      "path": "allternit/surfaces/allternit-desktop"
+    },
+    {
+      "id": "surface:ai",
+      "label": "ai.allternit.com",
+      "kind": "surface",
+      "path": "allternit-ai"
+    },
+    {
+      "id": "surface:pwa",
+      "label": "m.allternit.com PWA",
+      "kind": "surface",
+      "path": "allternit-ai"
+    },
+    {
+      "id": "surface:platform",
+      "label": "platform.allternit.com",
+      "kind": "surface",
+      "path": "allternit/surfaces/platform.allternit.com"
+    },
+    {
+      "id": "surface:gizzi-cli",
+      "label": "gizzi CLI (brew, npm)",
+      "kind": "surface",
+      "path": "allternit/cmd/gizzi-code/cli-package"
+    },
+    {
+      "id": "surface:docs",
+      "label": "Developer docs site",
+      "kind": "surface",
+      "path": "allternit/surfaces/docs"
+    }
+  ],
+  "edges": [
+    {
+      "source": "surface:desktop",
+      "target": "allternit/surfaces/allternit-desktop",
+      "kind": "ships",
+      "evidence": [
+        "allternit/AGENTS.md"
+      ]
+    },
+    {
+      "source": "surface:ai",
+      "target": "allternit-ai",
+      "kind": "ships",
+      "evidence": [
+        "allternit/AGENTS.md"
+      ]
+    },
+    {
+      "source": "surface:pwa",
+      "target": "allternit-ai",
+      "kind": "ships",
+      "evidence": [
+        "allternit/AGENTS.md"
+      ]
+    },
+    {
+      "source": "surface:platform",
+      "target": "allternit/surfaces/platform.allternit.com",
+      "kind": "ships",
+      "evidence": [
+        "allternit/AGENTS.md"
+      ]
+    },
+    {
+      "source": "surface:gizzi-cli",
+      "target": "allternit/cmd/gizzi-code/cli-package",
+      "kind": "ships",
+      "evidence": [
+        "allternit/cmd/gizzi-code/cli-package/package.json"
+      ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/cli-package",
+      "target": "allternit/cmd/gizzi-code",
+      "kind": "bundles src/cli/main.ts",
+      "evidence": [
+        "allternit/cmd/gizzi-code/cli-package/package.json"
+      ]
+    },
+    {
+      "source": "surface:docs",
+      "target": "allternit/surfaces/docs",
+      "kind": "ships",
+      "evidence": [
+        "allternit/surfaces/docs/docs.json"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/allternit-desktop",
+      "target": "allternit-ai",
+      "kind": "packages UI",
+      "evidence": [
+        "allternit/surfaces/allternit-desktop/scripts/prepare-platform-static.cjs"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/allternit-desktop",
+      "target": "allternit/cmd/allternit-api",
+      "kind": "sidecar",
+      "evidence": [
+        "allternit/surfaces/allternit-desktop/scripts/prepare-platform-static.cjs"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/allternit-desktop",
+      "target": "allternit/cmd/gizzi-code",
+      "kind": "sidecar",
+      "evidence": [
+        "allternit/surfaces/allternit-desktop/scripts/prepare-platform-static.cjs"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/allternit-desktop",
+      "target": "allternit/services/voice",
+      "kind": "sidecar",
+      "evidence": [
+        "allternit/surfaces/allternit-desktop/scripts/prepare-platform-static.cjs"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/platform.allternit.com",
+      "target": "allternit/cmd/allternit-cloud-api",
+      "kind": "cloud HTTP",
+      "evidence": [
+        "allternit/surfaces/platform.allternit.com/src/lib/credits.ts"
+      ]
+    },
+    {
+      "source": "allternit-ai/src/lib",
+      "target": "allternit/cmd/allternit-cloud-api",
+      "kind": "cloud HTTP",
+      "evidence": [
+        "allternit-ai/src/lib/cloud-api.ts"
+      ]
+    },
+    {
+      "source": "allternit-ai/src/lib",
+      "target": "allternit/cmd/allternit-api",
+      "kind": "operator HTTP (/api)",
+      "evidence": [
+        "allternit-ai/src/lib/fetch-interceptor.ts"
+      ]
+    },
+    {
+      "source": "allternit-ai/src/agent-workspace",
+      "target": "allternit/cmd/gizzi-code",
+      "kind": "HTTP /v1/workspace",
+      "evidence": [
+        "allternit-ai/src/agent-workspace/http-client.ts"
+      ]
+    },
+    {
+      "source": "allternit-ai/src/lib/voice",
+      "target": "allternit/services/voice",
+      "kind": "voice session protocol",
+      "evidence": [
+        "allternit-ai/src/lib/voice/endpoint.ts"
+      ]
+    },
+    {
+      "source": "allternit-ai/src/lib/voice",
+      "target": "allternit/cmd/allternit-cloud-api",
+      "kind": "cloud HTTP (voice tickets)",
+      "evidence": [
+        "allternit-ai/src/lib/voice/endpoint.ts"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api",
+      "target": "allternit/cmd/gizzi-code",
+      "kind": "HTTP (terminal server)",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/config.rs",
+        "allternit/cmd/allternit-api/src/runtime_discover_routes.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api",
+      "target": "allternit/cmd/gizzi-code",
+      "kind": "spawns (cloud worker)",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/cloud_worker.rs"
+      ]
+    }
+  ]
+}

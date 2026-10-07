@@ -585,3 +585,7 @@ Factory peer registration is default-on (set `ALLTERNIT_FACTORY_PEER=0` to opt o
 - Verify changes with `npm run build` (lint has pre-existing upstream errors; don't add new ones). Type checking is `ignoreBuildErrors`-gated upstream, so run `npx tsc --noEmit` when touching TS.
 - Per-installation deploys go to the installing user's own Cloudflare account via `services/mailflare/setup.sh`.
 - Full architecture, ops, and reputation guidance: `docs/AGENT_EMAIL_RAIL.md`.
+
+## Living dependency map — feature impact
+
+Before touching a feature, read [docs/dependency-map/README.md](docs/dependency-map/README.md). Run `python3.11 scripts/dependency-map.py --impact <changed path>` to see the products, surfaces and components a change can reach, and put them in your plan. If you add, remove or move a product, a runtime call, a sidecar or a shipping path, update `docs/dependency-map/products.json` or `runtime-links.json` in the same PR, and run `--validate` before finishing. Never commit generated map output (graph.json, index.html, dist/admin-site): it lists the private allternit-ai repo and this repo is public. admin.allternit.com rebuilds itself after merge.
