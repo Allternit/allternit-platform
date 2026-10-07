@@ -149,9 +149,12 @@ pub fn entry_agent(session: &str, entry: &Entry, pane: Option<&LivePane>, machin
     let slug = slug_of(session).to_string();
     let bot = entry.bot.clone().unwrap_or_else(|| super::registry::BotRef::placeholder(&slug));
     let team = bot.team.clone();
-    let address = match &team {
-        Some(team) => format!("{slug}@{team}"),
-        None => slug.clone(),
+    // A team bot's pane is `<bot>-<team>`; its address is `<bot>@<team>`
+    // (what `ps`, the app and the docs show), not `<bot>-<team>@<team>`.
+    let address = match (&team, bot.name.as_deref()) {
+        (Some(team), Some(name)) if slug == super::team_apply::pane_slug(name, team) => format!("{name}@{team}"),
+        (Some(team), _) => format!("{slug}@{team}"),
+        (None, _) => slug.clone(),
     };
     Agent {
         id: bot.id.clone(),
@@ -248,15 +251,43 @@ pub async fn snapshot(root: &std::path::Path, registry: &Registry, cwd: Option<&
 /// Find an agent by id, address, slug or session label.
 pub fn find<'a>(agents: &'a [Agent], key: &str) -> Option<&'a Agent> {
     let key_slug = slug_of(key);
+    // `bot@team` names the pane `<bot>-<team>`.
+    let pane_slug = super::team_apply::pane_slug_for_address(key);
     agents
         .iter()
         .find(|a| a.id == key || a.address == key)
-        .or_else(|| agents.iter().find(|a| a.slug == key_slug))
+        .or_else(|| agents.iter().find(|a| a.slug == key_slug || a.slug == pane_slug))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn team_bot_is_addressed_as_bot_at_team() {
+        let mut reg = RegistryFile::default();
+        reg.sessions.insert(
+            "ao-noop-smoke".into(),
+            Entry {
+                harness: Some("bash".into()),
+                bot: Some(BotRef {
+                    id: "local:noop-smoke".into(),
+                    placeholder: true,
+                    name: Some("noop".into()),
+                    team: Some("smoke".into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        );
+        let all = agents(&reg, &[], &[]);
+        assert_eq!(all[0].address, "noop@smoke");
+        assert_eq!(all[0].slug, "noop-smoke");
+        for key in ["noop@smoke", "local:noop-smoke", "ao-noop-smoke", "noop-smoke"] {
+            assert_eq!(find(&all, key).map(|a| a.id.as_str()), Some("local:noop-smoke"), "key {key}");
+        }
+        assert!(find(&all, "other@smoke").is_none());
+    }
     use crate::agents::registry::{reconcile_file, BotRef};
 
     #[test]
