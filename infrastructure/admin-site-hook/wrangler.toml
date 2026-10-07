@@ -1,0 +1,4 @@
+name = "allternit-admin-site-hook"
+main = "index.js"
+compatibility_date = "2025-01-01"
+workers_dev = true

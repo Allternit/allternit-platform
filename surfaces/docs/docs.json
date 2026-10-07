@@ -105,6 +105,7 @@
             "group": "Architecture",
             "pages": [
               "architecture",
+              "architecture/dependency-map",
               "architecture/two-machines",
               "architecture/contracts-not-models",
               "architecture/agent-loop",

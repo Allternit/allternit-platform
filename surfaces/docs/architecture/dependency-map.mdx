@@ -1,0 +1,23 @@
+---
+title: Living dependency map
+description: See which products, surfaces and code a change can reach before you make it.
+---
+
+Allternit keeps one map of its products, the APIs and SDKs underneath, the surfaces and websites they ship on, and the code they are built from. The generator, the curated product and runtime-link files, and the viewer live in `docs/dependency-map/` and `scripts/dependency-map.py` at the platform repository root.
+
+## Query impact before a change
+
+```bash
+python3.11 scripts/dependency-map.py --impact allternit-ai/src/views/cowork
+python3.11 scripts/dependency-map.py --impact product:factory
+```
+
+The command reads your working tree, so the answer is always current. It returns the components your path belongs to, the products and shipped surfaces (Desktop, ai.allternit.com, the m.allternit.com PWA, platform.allternit.com, the docs site, the gizzi CLI) it can reach, and every other component that could be affected. Treat that list as review scope; inspect callers and contracts to decide what actually changes.
+
+## Keep the curated links true
+
+Imports and package manifests are read automatically. Products, runtime calls (HTTP, WebSocket, spawned processes), sidecars and shipping paths are recorded by hand with evidence in `products.json` and `runtime-links.json`. Update them in the same pull request as the change, then run `python3.11 scripts/dependency-map.py --validate`.
+
+## The viewer
+
+The map is published to an internal, access-controlled site that rebuilds from `main` after every merge. It has a product topology view (products from what people use down to the APIs underneath) and a code graph for any product, component or file. Generated output lists private repository paths, so it is never committed.

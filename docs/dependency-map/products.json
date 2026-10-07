@@ -1,0 +1,902 @@
+{
+  "lines": [
+    {
+      "id": "line:workspace",
+      "label": "Workspace apps",
+      "description": "The Allternit agent workspace, one allternit-ai build shipped as the Desktop app, ai.allternit.com and the m.allternit.com phone app."
+    },
+    {
+      "id": "line:gizzi",
+      "label": "Gizzi",
+      "description": "The gizzi terminal product and its editor and CI add-ons."
+    },
+    {
+      "id": "line:agents",
+      "label": "Agents & Factory",
+      "description": "Agent capabilities that run inside every surface: the Factory, bots on every channel, computer use, voice and memory."
+    },
+    {
+      "id": "line:apis-sdks",
+      "label": "APIs & SDKs",
+      "description": "The HTTP APIs and published packages developers build on."
+    },
+    {
+      "id": "line:cloud",
+      "label": "Cloud infrastructure",
+      "description": "Hosted control plane, cloud console and cloud computers that paid plans run on."
+    },
+    {
+      "id": "line:websites",
+      "label": "Websites",
+      "description": "Public marketing, learning, services, docs and install sites, mostly on Cloudflare Pages."
+    }
+  ],
+  "products": [
+    {
+      "id": "product:allternit-desktop",
+      "label": "Allternit Desktop",
+      "line": "line:workspace",
+      "type": "app",
+      "description": "Electron desktop app for macOS and Windows that packages the agent workspace with a local allternit-api, gizzi-code and Factory engine.",
+      "url": "https://download.allternit.com",
+      "surfaces": [
+        "surface:desktop"
+      ],
+      "components": [
+        "allternit/surfaces/allternit-desktop",
+        "allternit-ai",
+        "allternit-ai/src/shell",
+        "allternit/cmd/allternit-api",
+        "allternit/cmd/gizzi-code",
+        "allternit/cmd/allternit-factory"
+      ],
+      "uses": [
+        "product:allternit-api",
+        "product:gizzi-code",
+        "product:factory",
+        "product:cloud-api"
+      ],
+      "evidence": [
+        "allternit/surfaces/allternit-desktop/package.json",
+        "allternit/surfaces/docs/surfaces/desktop.mdx",
+        "brain/Products/Desktop.md",
+        "brain/Infra/deploy-runbook.md"
+      ]
+    },
+    {
+      "id": "product:ai-allternit",
+      "label": "ai.allternit.com",
+      "line": "line:workspace",
+      "type": "app",
+      "description": "The agent workspace in the browser (chat, Code, Cowork, Bots, Factory, Docs/Slides/Sheets), with a phone layout on small screens.",
+      "url": "https://ai.allternit.com",
+      "surfaces": [
+        "surface:ai"
+      ],
+      "components": [
+        "allternit-ai",
+        "allternit-ai/src/shell",
+        "allternit-ai/src/views/chat",
+        "allternit-ai/src/views/code",
+        "allternit-ai/src/views/cowork",
+        "allternit-ai/src/views/bots",
+        "allternit-ai/src/views/project",
+        "allternit-ai/src/views/settings"
+      ],
+      "uses": [
+        "product:allternit-api",
+        "product:cloud-api",
+        "product:factory"
+      ],
+      "evidence": [
+        "allternit-ai/src/main.tsx",
+        "brain/Products/SurfaceNames.md",
+        "brain/Infra/cloudflare.md",
+        "brain/Infra/deploy-runbook.md"
+      ]
+    },
+    {
+      "id": "product:allternit-mobile-pwa",
+      "label": "Allternit Mobile (m.allternit.com PWA)",
+      "line": "line:workspace",
+      "type": "app",
+      "description": "Installable phone web app (Fabric Session) for using the workspace and remote-controlling your computers from a phone.",
+      "url": "https://m.allternit.com",
+      "surfaces": [
+        "surface:pwa"
+      ],
+      "components": [
+        "allternit-ai/src/fabric-session",
+        "allternit-ai/src/remote-control",
+        "allternit-ai/src/shell"
+      ],
+      "uses": [
+        "product:allternit-api",
+        "product:cloud-api"
+      ],
+      "evidence": [
+        "allternit-ai/vite.fabric-session.config.ts",
+        "allternit-ai/scripts/prepare-fabric-session-pwa.mjs",
+        "allternit/surfaces/docs/surfaces/mobile.mdx",
+        "brain/Infra/deploy-runbook.md"
+      ]
+    },
+    {
+      "id": "product:office",
+      "label": "Allternit Docs, Slides & Sheets",
+      "line": "line:workspace",
+      "type": "app",
+      "description": "Document, slide and spreadsheet editors inside the workspace that agents can read and write.",
+      "surfaces": [
+        "surface:desktop",
+        "surface:ai",
+        "surface:pwa"
+      ],
+      "components": [
+        "allternit-ai/src/views/docs",
+        "allternit-ai/src/views/slides",
+        "allternit-ai/src/views/sheets",
+        "allternit/platform/packages/allternit-office-suite",
+        "allternit/services/office-engine",
+        "allternit/cmd/allternit-api/src/office_*"
+      ],
+      "uses": [
+        "product:allternit-api"
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/surfaces/office-suite.mdx",
+        "allternit/surfaces/docs/surfaces/office-docs.mdx"
+      ]
+    },
+    {
+      "id": "product:gizzi-code",
+      "label": "Gizzi Code (gizzi CLI/TUI)",
+      "line": "line:gizzi",
+      "type": "cli",
+      "description": "Open-source terminal coding agent and local agent server, installed with npm (@allternit/gizzi-code) or Homebrew.",
+      "url": "https://www.npmjs.com/package/@allternit/gizzi-code",
+      "surfaces": [
+        "surface:gizzi-cli",
+        "surface:desktop"
+      ],
+      "components": [
+        "allternit/cmd/gizzi-code",
+        "allternit/cmd/gizzi-code/cli-package",
+        "allternit/cmd/gizzi-code/src/cli",
+        "allternit/cmd/gizzi-code/src/cli/ui",
+        "allternit/cmd/gizzi-code/src/runtime",
+        "allternit/cmd/gizzi-code/src/runtime/server",
+        "allternit/cmd/gizzi-code/src/runtime/providers",
+        "allternit/cmd/gizzi-core"
+      ],
+      "uses": [
+        "product:cloud-api"
+      ],
+      "evidence": [
+        "allternit/cmd/gizzi-code/package.json",
+        "allternit/surfaces/docs/cli/overview.mdx",
+        "brain/Products/Gizzi.md",
+        "websites/projects/homebrew-tap"
+      ]
+    },
+    {
+      "id": "product:gizzi-vscode",
+      "label": "Gizzi for VS Code",
+      "line": "line:gizzi",
+      "type": "app",
+      "description": "VS Code extension that runs Gizzi Code inside the editor.",
+      "surfaces": [],
+      "components": [
+        "allternit/surfaces/gizzi-vscode",
+        "allternit/cmd/gizzi-code/sdks/vscode"
+      ],
+      "uses": [
+        "product:gizzi-code"
+      ],
+      "evidence": [
+        "allternit/surfaces/gizzi-vscode",
+        "allternit/surfaces/docs/surfaces/vscode.mdx"
+      ]
+    },
+    {
+      "id": "product:gizzi-github-action",
+      "label": "Gizzi GitHub Action",
+      "line": "line:gizzi",
+      "type": "service",
+      "description": "GitHub Action that runs Gizzi Code on pull requests and issues in CI.",
+      "surfaces": [],
+      "components": [
+        "allternit/surfaces/gizzi-github-action",
+        "allternit/cmd/gizzi-code/github"
+      ],
+      "uses": [
+        "product:gizzi-code"
+      ],
+      "evidence": [
+        "allternit/surfaces/gizzi-github-action/action.yml",
+        "allternit/surfaces/docs/ci-cd"
+      ]
+    },
+    {
+      "id": "product:factory",
+      "label": "Allternit Factory",
+      "line": "line:agents",
+      "type": "engine",
+      "description": "Harness of harnesses that runs agents, orchestrations, workflows and workspaces (gizzi agents|orchestration|workflows|workspace) on the hidden allternit-factory engine, with approvals.",
+      "surfaces": [
+        "surface:gizzi-cli",
+        "surface:desktop",
+        "surface:ai",
+        "surface:pwa"
+      ],
+      "components": [
+        "allternit/cmd/allternit-factory",
+        "allternit/factory/engine",
+        "allternit/factory/pane",
+        "allternit/cmd/gizzi-code/src/cli/factory",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/commands/factory",
+        "allternit/cmd/allternit-api/src/factory_*",
+        "allternit/cmd/allternit-api/src/rails",
+        "allternit/cmd/allternit-api/src/rails_*"
+      ],
+      "uses": [
+        "product:gizzi-code",
+        "product:allternit-api"
+      ],
+      "evidence": [
+        "allternit/cmd/allternit-factory/Cargo.toml",
+        "allternit/factory/README.md",
+        "allternit/cmd/allternit-api/src/factory_approvals.rs",
+        "allternit/surfaces/docs/factory",
+        "brain/Products/Factory.md"
+      ]
+    },
+    {
+      "id": "product:digital-twin",
+      "label": "Bot Agents & Digital Twin (channels)",
+      "line": "line:agents",
+      "type": "service",
+      "description": "Bots with one identity that can be reached and started from email, SMS, phone, WhatsApp, Teams, Slack, Discord and Telegram as well as the workspace.",
+      "surfaces": [
+        "surface:desktop",
+        "surface:ai",
+        "surface:pwa"
+      ],
+      "components": [
+        "allternit/cmd/allternit-bot",
+        "allternit/platform/protocols/channels/allternit-channels/allternit-channels",
+        "allternit/platform/protocols/communication/allternit-gateway/allternit-gateway",
+        "allternit/platform/packages/agent-gateway",
+        "allternit/platform/protocols/transport-sms",
+        "allternit/services/mail-relay",
+        "allternit/services/mailflare",
+        "allternit/services/wa-personal",
+        "allternit-ai/src/views/bots",
+        "allternit-ai/src/components/twin",
+        "allternit-ai/src/components/bot-phone",
+        "allternit/cmd/allternit-api/src/channel_*",
+        "allternit/cmd/allternit-api/src/bot_*",
+        "allternit/cmd/allternit-api/src/twin_*",
+        "allternit/cmd/allternit-api/src/phone_*",
+        "allternit/cmd/allternit-api/src/teams_*",
+        "allternit/cmd/allternit-api/src/slack_*",
+        "allternit/cmd/allternit-api/src/discord_*",
+        "allternit/cmd/allternit-api/src/mailflare_*",
+        "allternit/cmd/allternit-api/src/relay_*",
+        "allternit/cmd/allternit-api/src/inbox_*",
+        "allternit/cmd/allternit-cloud-api/src/routes/channel_*",
+        "allternit/cmd/allternit-cloud-api/src/routes/discord_*",
+        "allternit/cmd/allternit-cloud-api/src/carriers",
+        "allternit/cmd/allternit-cloud-api/src/channels"
+      ],
+      "uses": [
+        "product:allternit-api",
+        "product:cloud-api",
+        "product:memory-drive",
+        "product:voice"
+      ],
+      "evidence": [
+        "allternit/cmd/allternit-api/src/channel_gateway.rs",
+        "allternit/cmd/allternit-api/src/channel_teams_app.rs",
+        "allternit/cmd/allternit-api/src/channel_whatsapp_app.rs",
+        "allternit/cmd/allternit-api/src/channel_phone.rs",
+        "allternit/cmd/allternit-api/src/agent_email_routes.rs",
+        "allternit/cmd/allternit-api/src/twin_persona.rs",
+        "allternit/services/wa-personal/README.md",
+        "allternit/surfaces/docs/surfaces/bots.mdx",
+        "brain/Products/Agents.md"
+      ]
+    },
+    {
+      "id": "product:computer-use",
+      "label": "Computer Use (ACI)",
+      "line": "line:agents",
+      "type": "engine",
+      "description": "Lets agents see and drive a browser or a whole desktop, locally or on a cloud computer, with audit and leases.",
+      "surfaces": [
+        "surface:desktop",
+        "surface:ai",
+        "surface:pwa"
+      ],
+      "components": [
+        "allternit/platform/packages/computer-use-protocol",
+        "allternit/platform/packages/computer-use/plugins/allternit-computer-use",
+        "allternit/sdk/computer-use",
+        "allternit/mcp/computers-server",
+        "allternit/surfaces/computer-embed",
+        "allternit-ai/src/views/aci",
+        "allternit-ai/src/views/browser",
+        "allternit/cmd/allternit-api/src/computer_*",
+        "allternit/cmd/allternit-api/src/aci_*",
+        "allternit/cmd/allternit-api/src/vnc_*",
+        "allternit/cmd/allternit-api/src/vm_*"
+      ],
+      "uses": [
+        "product:allternit-api",
+        "product:cloud-computers"
+      ],
+      "evidence": [
+        "allternit/cmd/allternit-api/src/computer_control.rs",
+        "allternit/surfaces/docs/sdk/computer-use.mdx",
+        "brain/Products/ComputerUse.md",
+        "brain/Products/ComputerUsePackaging.md"
+      ]
+    },
+    {
+      "id": "product:voice",
+      "label": "Allternit Voice",
+      "line": "line:agents",
+      "type": "service",
+      "description": "Talk to agents by voice: speech in and out on any device, plus voice calls in the workspace and gizzi.",
+      "surfaces": [
+        "surface:desktop",
+        "surface:ai",
+        "surface:pwa",
+        "surface:gizzi-cli"
+      ],
+      "components": [
+        "allternit/services/voice",
+        "allternit/services/voice-tts",
+        "allternit-ai/src/components/voice",
+        "allternit-ai/src/lib/voice",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/voice",
+        "allternit/cmd/allternit-api/src/voice_*",
+        "allternit/cmd/allternit-cloud-api/src/routes/livekit_*",
+        "allternit/cmd/allternit-cloud-api/src/routes/voice_*"
+      ],
+      "uses": [
+        "product:allternit-api",
+        "product:gizzi-code"
+      ],
+      "evidence": [
+        "allternit/services/voice/README.md",
+        "allternit/cmd/allternit-api/src/voice_calls.rs",
+        "allternit/surfaces/docs/surfaces/voice.mdx"
+      ]
+    },
+    {
+      "id": "product:memory-drive",
+      "label": "Memory Drive",
+      "line": "line:agents",
+      "type": "service",
+      "description": "Agent memory as a synced drive: notes, retrieval and nightly consolidation shared by bots, the workspace and gizzi.",
+      "surfaces": [
+        "surface:desktop",
+        "surface:ai",
+        "surface:pwa",
+        "surface:gizzi-cli"
+      ],
+      "components": [
+        "allternit/services/memory",
+        "allternit/services/memory/data/memory-kernel",
+        "allternit/services/memory/data/memory-fabric",
+        "allternit-ai/src/components/memory",
+        "allternit/cmd/gizzi-code/src/runtime/memory",
+        "allternit/cmd/gizzi-code/src/memdir",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/commands/memory",
+        "allternit/cmd/allternit-api/src/memory_*",
+        "allternit/cmd/allternit-api/src/memory_consolidation",
+        "allternit/cmd/allternit-api/src/memory_relations",
+        "allternit/cmd/allternit-api/src/memory_retrieve"
+      ],
+      "uses": [
+        "product:allternit-api",
+        "product:gizzi-code"
+      ],
+      "evidence": [
+        "allternit/cmd/allternit-api/src/memory_routes.rs",
+        "allternit/cmd/allternit-api/src/memory_consolidation.rs",
+        "allternit/services/memory/README.md",
+        "allternit/surfaces/docs/core/memory-kernel.mdx"
+      ]
+    },
+    {
+      "id": "product:mcp-apps",
+      "label": "MCP Apps",
+      "line": "line:apis-sdks",
+      "type": "sdk",
+      "description": "Plugins and interactive MCP apps that run inside the workspace, built with the Apps SDK (apps-cli, apps-server, apps-ui, apps-bridge).",
+      "surfaces": [
+        "surface:desktop",
+        "surface:ai",
+        "surface:pwa",
+        "surface:docs"
+      ],
+      "components": [
+        "allternit/sdk/apps-cli",
+        "allternit/sdk/apps-server",
+        "allternit/sdk/apps-ui",
+        "allternit/sdk/apps-bridge",
+        "allternit/sdk/mcp-events",
+        "allternit/services/registry/apps-registry",
+        "allternit/mcp/core",
+        "allternit-ai/src/views/mini-apps",
+        "allternit-ai/src/components/mcp",
+        "allternit-ai/src/views/plugins",
+        "allternit/cmd/allternit-api/src/mcp_*"
+      ],
+      "uses": [
+        "product:allternit-api",
+        "product:plugin-sdk"
+      ],
+      "evidence": [
+        "allternit/cmd/allternit-api/src/mcp_apps.rs",
+        "allternit/sdk/apps-cli/package.json",
+        "allternit/surfaces/docs/plugins/overview.mdx"
+      ]
+    },
+    {
+      "id": "product:allternit-api",
+      "label": "Allternit API (allternit-api)",
+      "line": "line:apis-sdks",
+      "type": "api",
+      "description": "The workspace backend that every surface talks to (sessions, bots, channels, memory, computers, Factory proxy); it calls gizzi-code over HTTP for model work.",
+      "surfaces": [
+        "surface:desktop",
+        "surface:ai",
+        "surface:pwa"
+      ],
+      "components": [
+        "allternit/cmd/allternit-api",
+        "allternit/services/gateway/http",
+        "allternit/services/session-manager",
+        "allternit/services/memory",
+        "allternit/platform/protocols/allternit-protocol"
+      ],
+      "uses": [
+        "product:gizzi-code",
+        "product:factory"
+      ],
+      "evidence": [
+        "allternit/cmd/allternit-api/Cargo.toml",
+        "allternit/surfaces/docs/api/allternit-api.mdx",
+        "brain/Products/Platform.md"
+      ]
+    },
+    {
+      "id": "product:agents-api",
+      "label": "Allternit Agents API",
+      "line": "line:apis-sdks",
+      "type": "api",
+      "description": "Developer API for Completions, Responses, Cloud Agent sessions and Bot Agents under /api/agents/v1.",
+      "surfaces": [
+        "surface:docs"
+      ],
+      "components": [
+        "allternit/sdk/allternit-sdk",
+        "allternit/cmd/allternit-api/src/agents_*",
+        "allternit/cmd/allternit-api/src/agent_*",
+        "allternit/cmd/allternit-api/src/agent_execution",
+        "allternit/cmd/allternit-api/src/v1_*"
+      ],
+      "uses": [
+        "product:allternit-api",
+        "product:allternit-sdk"
+      ],
+      "evidence": [
+        "allternit/cmd/allternit-api/src/agents_v1_routes.rs",
+        "allternit/surfaces/docs/api/agents-v1.mdx",
+        "allternit/surfaces/docs/api/cloud-agents.mdx",
+        "brain/Products/Agents.md",
+        "brain/Products/SDK.md"
+      ]
+    },
+    {
+      "id": "product:agency-api",
+      "label": "Agency API (agency kernel, preview)",
+      "line": "line:apis-sdks",
+      "type": "api",
+      "description": "Preview API for long-running agent campaigns with decisions, attention, artifacts and events, run by the agency kernel and its learned judge banks.",
+      "surfaces": [
+        "surface:docs",
+        "surface:desktop"
+      ],
+      "components": [
+        "allternit/tools/system-one-local",
+        "allternit-ai/src/components/kernel-observe",
+        "allternit-ai/src/lib/kernel-observe",
+        "allternit/cmd/allternit-api/src/agency_api",
+        "allternit/cmd/allternit-api/src/kernel_ui",
+        "allternit/cmd/allternit-cloud-api/src/routes/agency_*"
+      ],
+      "uses": [
+        "product:allternit-api",
+        "product:gizzi-code"
+      ],
+      "evidence": [
+        "allternit/cmd/allternit-api/src/agency_api",
+        "allternit/surfaces/docs/api/agency/openapi-v0.3.yaml",
+        "allternit/tests/agency-conformance",
+        "allternit/tools/system-one-local/README.md"
+      ]
+    },
+    {
+      "id": "product:cloud-api",
+      "label": "Allternit Cloud API (allternit-cloud-api)",
+      "line": "line:cloud",
+      "type": "api",
+      "description": "Hosted control plane at api.allternit.com for accounts, pairing, relay, billing, models and provisioning.",
+      "url": "https://api.allternit.com",
+      "surfaces": [
+        "surface:desktop",
+        "surface:ai",
+        "surface:pwa",
+        "surface:platform"
+      ],
+      "components": [
+        "allternit/cmd/allternit-cloud-api",
+        "allternit/platform/protocols/allternit-cloud-contracts",
+        "allternit/services/subscription-gateway",
+        "allternit/infrastructure/clerk-proxy"
+      ],
+      "uses": [],
+      "evidence": [
+        "allternit/cmd/allternit-cloud-api/Cargo.toml",
+        "allternit/surfaces/docs/api/cloud-api.mdx",
+        "brain/Products/SurfaceNames.md"
+      ]
+    },
+    {
+      "id": "product:platform-api",
+      "label": "Allternit Platform API (v1)",
+      "line": "line:apis-sdks",
+      "type": "api",
+      "description": "Public developer API for accounts, messaging, numbers, channels, usage and webhooks, served by the cloud API and billed through the console.",
+      "url": "https://api.allternit.com",
+      "surfaces": [
+        "surface:platform",
+        "surface:docs"
+      ],
+      "components": [
+        "allternit/platform/packages/api-client",
+        "allternit/cmd/allternit-cloud-api/src/routes/platform_v1"
+      ],
+      "uses": [
+        "product:cloud-api",
+        "product:digital-twin"
+      ],
+      "evidence": [
+        "allternit/cmd/allternit-cloud-api/src/routes/platform_v1",
+        "allternit/surfaces/docs/api/platform/overview.mdx"
+      ]
+    },
+    {
+      "id": "product:cloud-console",
+      "label": "Cloud console (platform.allternit.com)",
+      "line": "line:cloud",
+      "type": "website",
+      "description": "Console for billing, API keys, organizations and the playground.",
+      "url": "https://platform.allternit.com",
+      "surfaces": [
+        "surface:platform"
+      ],
+      "components": [
+        "allternit/surfaces/platform.allternit.com"
+      ],
+      "uses": [
+        "product:cloud-api",
+        "product:platform-api"
+      ],
+      "evidence": [
+        "allternit/surfaces/platform.allternit.com",
+        "allternit/surfaces/docs/surfaces/platform.mdx",
+        "brain/Products/SurfaceNames.md",
+        "brain/Infra/cloudflare.md"
+      ]
+    },
+    {
+      "id": "product:cloud-computers",
+      "label": "Cloud computers",
+      "line": "line:cloud",
+      "type": "service",
+      "description": "Hosted Linux desktops provisioned for paid plans that you and your bots can view and drive from any surface.",
+      "surfaces": [
+        "surface:desktop",
+        "surface:ai",
+        "surface:pwa"
+      ],
+      "components": [
+        "allternit/cmd/allternit-computer-cloud",
+        "allternit/infrastructure/cloud",
+        "allternit/infrastructure/cloud/allternit-cloud-deploy",
+        "allternit/infrastructure/providers/hetzner",
+        "allternit/services/vm-executor",
+        "allternit/drivers/firecracker",
+        "allternit-ai/src/components/computers",
+        "allternit-ai/src/views/desktop-cloud",
+        "allternit/cmd/allternit-cloud-api/src/routes/instances_*",
+        "allternit/cmd/allternit-cloud-api/src/routes/hosted_*",
+        "allternit/cmd/allternit-cloud-api/src/routes/contabo_*",
+        "allternit/cmd/allternit-api/src/cloud_*"
+      ],
+      "uses": [
+        "product:cloud-api",
+        "product:allternit-api"
+      ],
+      "evidence": [
+        "allternit/cmd/allternit-computer-cloud/Cargo.toml",
+        "allternit/cmd/allternit-api/src/bot_desktop_routes.rs",
+        "allternit/cmd/allternit-api/src/subscription_routes.rs"
+      ]
+    },
+    {
+      "id": "product:allternit-sdk",
+      "label": "Allternit SDK (@allternit/sdk, allternit for Python)",
+      "line": "line:apis-sdks",
+      "type": "sdk",
+      "description": "TypeScript SDK (published on npm) and Python SDK (in-tree) for running agents and calling the Agents API.",
+      "url": "https://www.npmjs.com/package/@allternit/sdk",
+      "surfaces": [
+        "surface:docs"
+      ],
+      "components": [
+        "allternit/sdk/allternit-sdk"
+      ],
+      "uses": [
+        "product:agents-api",
+        "product:allternit-api"
+      ],
+      "evidence": [
+        "allternit/sdk/allternit-sdk/package.json",
+        "allternit/sdk/allternit-python/pyproject.toml",
+        "allternit/surfaces/docs/sdk/typescript.mdx",
+        "allternit/surfaces/docs/sdk/python.mdx",
+        "brain/Products/SDK.md"
+      ]
+    },
+    {
+      "id": "product:gizzi-sdk",
+      "label": "Gizzi SDK (@allternit/gizzi-sdk)",
+      "line": "line:apis-sdks",
+      "type": "sdk",
+      "description": "Published npm client for driving a gizzi-code server from your own code.",
+      "url": "https://www.npmjs.com/package/@allternit/gizzi-sdk",
+      "surfaces": [],
+      "components": [
+        "allternit/cmd/gizzi-code/packages/sdk"
+      ],
+      "uses": [
+        "product:gizzi-code"
+      ],
+      "evidence": [
+        "allternit/cmd/gizzi-code/packages/sdk/package.json"
+      ]
+    },
+    {
+      "id": "product:plugin-sdk",
+      "label": "Plugin SDK (@allternit/plugin-sdk)",
+      "line": "line:apis-sdks",
+      "type": "sdk",
+      "description": "Published npm package for writing Allternit and Gizzi plugins.",
+      "url": "https://www.npmjs.com/package/@allternit/plugin-sdk",
+      "surfaces": [
+        "surface:docs"
+      ],
+      "components": [
+        "allternit/platform/packages/plugin-sdk",
+        "allternit/cmd/gizzi-code/packages/plugin"
+      ],
+      "uses": [
+        "product:gizzi-code"
+      ],
+      "evidence": [
+        "allternit/platform/packages/plugin-sdk/package.json",
+        "allternit/surfaces/docs/sdk/plugin-sdk.mdx"
+      ]
+    },
+    {
+      "id": "product:api-client",
+      "label": "API client (@allternit/api-client)",
+      "line": "line:apis-sdks",
+      "type": "sdk",
+      "description": "Published typed HTTP client for the Allternit APIs.",
+      "url": "https://www.npmjs.com/package/@allternit/api-client",
+      "surfaces": [
+        "surface:docs"
+      ],
+      "components": [
+        "allternit/platform/packages/api-client"
+      ],
+      "uses": [
+        "product:allternit-api",
+        "product:platform-api"
+      ],
+      "evidence": [
+        "allternit/platform/packages/api-client/package.json",
+        "allternit/surfaces/docs/sdk/api-client.mdx"
+      ]
+    },
+    {
+      "id": "product:capsule-sdk",
+      "label": "Capsule SDK (@allternit/capsule-sdk)",
+      "line": "line:apis-sdks",
+      "type": "sdk",
+      "description": "Published npm package for building capsules, packaged agent apps that run in the workspace.",
+      "url": "https://www.npmjs.com/package/@allternit/capsule-sdk",
+      "surfaces": [
+        "surface:docs"
+      ],
+      "components": [
+        "allternit/sdk/capsule-sdk",
+        "allternit/platform/contracts/capsule/capsule-system/allternit-capsule"
+      ],
+      "uses": [
+        "product:allternit-api"
+      ],
+      "evidence": [
+        "allternit/sdk/capsule-sdk/package.json",
+        "allternit/surfaces/docs/sdk/capsule.mdx"
+      ]
+    },
+    {
+      "id": "product:docs-site",
+      "label": "Allternit docs (docs.allternit.com)",
+      "line": "line:websites",
+      "type": "website",
+      "description": "Developer and user docs for the workspace, Factory, gizzi CLI, MCP Apps, APIs and SDKs (Mintlify, Pages project allternit-docs).",
+      "url": "https://docs.allternit.com",
+      "surfaces": [
+        "surface:docs"
+      ],
+      "components": [
+        "allternit/surfaces/docs"
+      ],
+      "uses": [],
+      "evidence": [
+        "allternit/surfaces/docs/docs.json",
+        "brain/Infra/cloudflare.md"
+      ]
+    },
+    {
+      "id": "product:gizzi-docs-site",
+      "label": "Gizzi docs (docs.gizziio.com)",
+      "line": "line:websites",
+      "type": "website",
+      "description": "Docs site for Gizzi Code (Pages project gizzi-code-docs).",
+      "url": "https://docs.gizziio.com",
+      "surfaces": [],
+      "components": [],
+      "uses": [
+        "product:gizzi-code"
+      ],
+      "repo": "Allternit Websites",
+      "path": "projects/docs.gizziio.com",
+      "evidence": [
+        "websites/projects/docs.gizziio.com"
+      ]
+    },
+    {
+      "id": "product:install-sites",
+      "label": "Install and download sites",
+      "line": "line:websites",
+      "type": "website",
+      "description": "install.allternit.com, install.gizziio.com and download.allternit.com, which serve the install scripts and Desktop downloads.",
+      "url": "https://download.allternit.com",
+      "surfaces": [],
+      "components": [],
+      "uses": [
+        "product:allternit-desktop",
+        "product:gizzi-code"
+      ],
+      "repo": "Allternit Websites",
+      "path": "projects/install.allternit.com",
+      "evidence": [
+        "websites/projects/install.allternit.com",
+        "websites/projects/install.gizziio.com",
+        "websites/projects/download.allternit.com"
+      ]
+    },
+    {
+      "id": "product:www-allternit",
+      "label": "allternit.com",
+      "line": "line:websites",
+      "type": "website",
+      "description": "The main marketing site, including the MCP directory (Pages project allternit).",
+      "url": "https://www.allternit.com",
+      "surfaces": [],
+      "components": [],
+      "uses": [],
+      "repo": "Allternit Websites",
+      "path": "projects/www.allternit.com",
+      "evidence": [
+        "websites/projects/www.allternit.com",
+        "brain/Infra/cloudflare.md"
+      ]
+    },
+    {
+      "id": "product:alabs",
+      "label": "A://Labs (labs.allternit.com)",
+      "line": "line:websites",
+      "type": "website",
+      "description": "Course site with Allternit's AI courses and videos (Pages project allternit-learning-labs), also reachable from the workspace Labs view.",
+      "url": "https://labs.allternit.com",
+      "surfaces": [
+        "surface:ai",
+        "surface:desktop"
+      ],
+      "components": [
+        "allternit-ai/src/views/labs"
+      ],
+      "uses": [
+        "product:allternit-api"
+      ],
+      "repo": "Allternit Websites",
+      "path": "projects/labs.allternit.com",
+      "evidence": [
+        "websites/projects/labs.allternit.com",
+        "allternit/surfaces/docs/api/alabs.mdx"
+      ]
+    },
+    {
+      "id": "product:services-site",
+      "label": "Allternit Services (services.allternit.com)",
+      "line": "line:websites",
+      "type": "website",
+      "description": "Site for Allternit's done-for-you AI services, with Stripe checkout and booking (Pages project allternit-services).",
+      "url": "https://services.allternit.com",
+      "surfaces": [],
+      "components": [],
+      "uses": [],
+      "repo": "Allternit Websites",
+      "path": "projects/services.allternit.com",
+      "evidence": [
+        "websites/projects/services.allternit.com",
+        "brain/Infra/cloudflare.md"
+      ]
+    },
+    {
+      "id": "product:3dfacility",
+      "label": "Allternit 3D Facility",
+      "line": "line:websites",
+      "type": "website",
+      "description": "Interactive 3D campus tour of Allternit (try.allternit.com redirects here).",
+      "url": "https://3dfacility.allternit.com",
+      "surfaces": [],
+      "components": [],
+      "uses": [],
+      "repo": "Allternit Websites",
+      "path": "projects/3dfacility.allternit.com",
+      "evidence": [
+        "websites/projects/3dfacility.allternit.com",
+        "websites/projects/try.allternit.com"
+      ]
+    },
+    {
+      "id": "product:series-site",
+      "label": "Allternit Series (series.allternit.com)",
+      "line": "line:websites",
+      "type": "website",
+      "description": "Home of the Allternit monthly series and Gizzi Presents films.",
+      "url": "https://series.allternit.com",
+      "surfaces": [],
+      "components": [],
+      "uses": [],
+      "repo": "Allternit Websites",
+      "path": "projects/series.allternit.com",
+      "evidence": [
+        "websites/projects/series.allternit.com",
+        "brain/Infra/cloudflare.md"
+      ]
+    }
+  ]
+}
