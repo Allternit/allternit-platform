@@ -122,11 +122,12 @@ From then on the bot is yours like any other:
 
 - `gizzi agents ps` shows it with that computer as its machine. Your engine asks that computer which of your bots are live.
 - `orchestration send` and `orchestration capture` reach it, and `agents down <bot@team>` or `agents down <team>` stop it there.
-- The app's Factory screens show it the same way.
+- Its pane is live wherever local panes are. `gizzi agents attach <bot@team>` mirrors it in your terminal: you see its screen as it changes and your keystrokes go to it (`ctrl+]` leaves; the bot keeps running). `gizzi agents wall <team>` gives each of the team's remote bots a pane on the wall that mirrors it, and closes those panes when you close the wall.
+- The app's Factory screens show it the same way, with its terminal tile live and labeled with the computer it runs on (Desktop, ai.allternit.com and the phone layout).
 
 Things to know:
 
-- The live wall shows remote bots in a later phase. Until then, `capture` shows their screen.
+- The mirror redraws the other computer's screen at its own size, about five times a second at most. Typing over the mesh is a little slower than in a local pane.
 - Bots the other computer runs aren't registered with allternit-api from there, so they appear under your account through your engine.
 - A paired computer's engine takes peer calls on port `3019`. Desktop starts it with `--peer-port 3019` when the Mac is paired, and `allternit computers serve` forwards that port over the mesh beside VNC.
 - Peer calls need a peer ticket from cloud-api, which goes only to the computer's owner or a member of its organization ([peer tickets](/api/cloud-api#peer-tickets)). Your allternit-api asks for it and carries the call (`/api/v1/computers/:id/factory-peer/*`).
@@ -147,7 +148,7 @@ The same path lets Gizzi on Windows run a team on another computer, because the 
 - `gizzi agents ps` lists every bot with its binding, state, current node and proof count. Running sessions are checked against the live panes on every `ps`, so a dead process shows as dead, never as running.
 - `gizzi agents wall` opens the live wall of terminals in the engine's pane view. `ctrl+b q` returns you to Gizzi.
 - `gizzi agents wall <team>` opens the same wall with its Agents panel narrowed to that team's running bots (the panel is titled `team <name>`) and focused on the first one. The narrowed view goes away when you close the wall. With none of the team's bots running it says so (exit `2`) and suggests `gizzi agents up <team>`. The view belongs to the shared wall session, so anyone attached to the wall at the same time sees it too.
-- `gizzi agents attach <bot@team>` depends on the binding. A Terminal bot opens its pane. A Hosted bot opens its session right in Gizzi's TUI. A Vendor bot shows its thread and ticket status, because it has no terminal.
+- `gizzi agents attach <bot@team>` depends on the binding. A Terminal bot opens its pane (a bot on another computer opens a live mirror of it; see [`--on`](#--on-computer)). A Hosted bot opens its session right in Gizzi's TUI. A Vendor bot shows its thread and ticket status, because it has no terminal.
 - `gizzi agents recover` shows what it would restart after a crash. `--apply` does it. A session qualifies when its pane is gone, it isn't finished, and its notes sentinel (if it has one) doesn't say `status: done`. Only the lead that started it can restart it (`--lead <id>`, else `$ALLTERNIT_FACTORY_LEAD` or your user name), unless you pass `--as-human`. The restart goes through the same spawn gate as any spawn, with the bot's identity and WIH kept, and uses the harness's own resume when the original launch named a session (`claude --resume`, `codex resume`, `kimi --session`, `agy --conversation`, `grok --resume`).
 - `gizzi agents down <bot@team>` stops one bot's pane; `gizzi agents down <team>` stops the team's.
 

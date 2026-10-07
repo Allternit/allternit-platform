@@ -213,6 +213,8 @@ impl App {
         else {
             return agent_not_found(id, &params.target);
         };
+        // As `pane.read`: the content counter, read before the snapshot.
+        let revision = pane.content_seq();
         let snapshot = crate::app::api_helpers::read_terminal_snapshot(
             pane,
             params.source,
@@ -234,7 +236,7 @@ impl App {
                     source: params.source,
                     format: params.format,
                     text: snapshot.text,
-                    revision: 0,
+                    revision,
                     truncated: snapshot.truncated,
                 },
             },

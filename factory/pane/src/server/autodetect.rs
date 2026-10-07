@@ -192,6 +192,15 @@ fn validate_running_server_compatibility(saved_federation: bool) -> io::Result<(
 ///
 /// Returns the PID of the spawned server process.
 pub fn spawn_server_daemon() -> io::Result<u32> {
+    // The detached server's own errors go to /dev/null, so a folder it can't
+    // create would only show as "did not become ready". Say so up front.
+    let dir = crate::session::data_dir();
+    std::fs::create_dir_all(&dir).map_err(|err| {
+        io::Error::new(
+            err.kind(),
+            format!("the pane engine can't create its folder {}: {err}", dir.display()),
+        )
+    })?;
     let exe = std::env::current_exe().map_err(|err| {
         io::Error::new(
             err.kind(),

@@ -13,6 +13,7 @@
 
 mod bots;
 mod exec;
+mod mirror;
 mod part;
 mod tree;
 mod work;

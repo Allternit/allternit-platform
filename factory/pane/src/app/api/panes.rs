@@ -1504,6 +1504,10 @@ impl App {
         else {
             return pane_not_found(id, &params.pane_id);
         };
+        // The pane's content counter, read before the snapshot: a mirror
+        // that polls (the Factory pane stream) redraws only when it moves,
+        // and a write racing this read shows on the next poll.
+        let revision = pane.content_seq();
         let snapshot = crate::app::api_helpers::read_terminal_snapshot(
             pane,
             params.source,
@@ -1521,7 +1525,7 @@ impl App {
                     source: params.source,
                     format: params.format,
                     text: snapshot.text,
-                    revision: 0,
+                    revision,
                     truncated: snapshot.truncated,
                 },
             },
@@ -2672,6 +2676,36 @@ mod tests {
         };
         assert!(read.text.contains("line 19"));
         assert!(read.truncated);
+    }
+
+    #[tokio::test]
+    async fn api_pane_read_revision_moves_when_the_pane_prints() {
+        let (mut app, public_pane_id, pane_id) = app_with_scrollback_runtime();
+        let read = |app: &mut App| {
+            let response = app.handle_pane_read(
+                "req".into(),
+                PaneReadParams {
+                    pane_id: public_pane_id.clone(),
+                    source: crate::api::schema::ReadSource::Visible,
+                    lines: None,
+                    format: crate::api::schema::ReadFormat::Ansi,
+                    strip_ansi: false,
+                    intent: crate::api::schema::ReadIntent::Passive,
+                },
+            );
+            let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+            let ResponseResult::PaneRead { read } = success.result else {
+                panic!("expected pane read response");
+            };
+            read.revision
+        };
+        let first = read(&mut app);
+        assert_eq!(read(&mut app), first, "an unchanged pane keeps its revision");
+        app.state
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
+            .unwrap()
+            .test_process_pty_bytes(b"\r\nnew output");
+        assert_ne!(read(&mut app), first, "a mirror must see the screen change");
     }
 
     #[tokio::test]

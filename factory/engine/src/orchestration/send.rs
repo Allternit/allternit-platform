@@ -351,7 +351,7 @@ type Outcome = (String, String, Option<String>, Option<String>);
 
 /// `bot@team` and computer id of a bot another computer runs, from its
 /// registry record (`runner: remote:<computer>`).
-fn remote_target(registry: &crate::agents::registry::Registry, session: &str) -> Option<(String, String)> {
+pub(crate) fn remote_target(registry: &crate::agents::registry::Registry, session: &str) -> Option<(String, String)> {
     let entry = registry.load().ok()?.sessions.get(session).cloned()?;
     let computer = entry.remote_computer()?.to_string();
     let bot = entry.bot.as_ref()?;
@@ -361,7 +361,7 @@ fn remote_target(registry: &crate::agents::registry::Registry, session: &str) ->
 /// Send through the paired computer's engine (allternit-api carries it).
 async fn deliver_remote(api: &ApiLink, computer: &str, address: &str, req: &SendRequest) -> Outcome {
     let body = json!({ "to": address, "text": req.text, "queue": req.queue });
-    match api_call(api, reqwest::Method::POST, &format!("/api/v1/computers/{computer}/factory-peer/send"), Some(body)).await {
+    match peer_json(api, reqwest::Method::POST, computer, "send", Some(body)).await {
         Ok((200, v)) if v["state"] == "verified" => ("pane".into(), "verified".into(), None, Some(format!("on computer {computer}"))),
         Ok((200, v)) => (
             "pane_queue".into(),
@@ -404,11 +404,48 @@ fn client() -> reqwest::Client {
 }
 
 async fn api_call(api: &ApiLink, method: reqwest::Method, path: &str, body: Option<Value>) -> std::result::Result<(u16, Value), String> {
+    let resp = api_send(api, client(), method, path, body).await?;
+    let status = resp.status().as_u16();
+    let value = resp.json::<Value>().await.unwrap_or(Value::Null);
+    Ok((status, value))
+}
+
+/// A call to a paired computer's engine through allternit-api
+/// (`/api/v1/computers/:id/factory-peer/<path>`): `(status, body)`.
+pub(crate) async fn peer_json(
+    api: &ApiLink,
+    method: reqwest::Method,
+    computer: &str,
+    path: &str,
+    body: Option<Value>,
+) -> std::result::Result<(u16, Value), String> {
+    api_call(api, method, &peer_path(computer, path), body).await
+}
+
+/// [`peer_json`] for a stream (the remote pane mirror): the open response,
+/// with no timeout, for the caller to pass through.
+pub(crate) async fn peer_stream(api: &ApiLink, computer: &str, path: &str) -> std::result::Result<reqwest::Response, String> {
+    let client = reqwest::Client::builder().build().unwrap_or_else(|_| reqwest::Client::new());
+    api_send(api, client, reqwest::Method::GET, &peer_path(computer, path), None).await
+}
+
+fn peer_path(computer: &str, path: &str) -> String {
+    let computer: String = computer.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-').collect();
+    format!("/api/v1/computers/{computer}/factory-peer/{}", path.trim_start_matches('/'))
+}
+
+async fn api_send(
+    api: &ApiLink,
+    client: reqwest::Client,
+    method: reqwest::Method,
+    path: &str,
+    body: Option<Value>,
+) -> std::result::Result<reqwest::Response, String> {
     let Some(base) = &api.base else {
         return Err("no allternit-api link (set ALLTERNIT_FACTORY_API_URL)".to_string());
     };
     let url = format!("{}{}", base.trim_end_matches('/'), path);
-    let mut rb = client().request(method, &url);
+    let mut rb = client.request(method, &url);
     if let Some(auth) = &api.authorization {
         rb = rb.header("authorization", auth);
     }
@@ -418,13 +455,10 @@ async fn api_call(api: &ApiLink, method: reqwest::Method, path: &str, body: Opti
     if let Some(body) = body {
         rb = rb.json(&body);
     }
-    let resp = rb.send().await.map_err(|e| format!("allternit-api at {base} unreachable: {e}"))?;
-    let status = resp.status().as_u16();
-    let value = resp.json::<Value>().await.unwrap_or(Value::Null);
-    Ok((status, value))
+    rb.send().await.map_err(|e| format!("allternit-api at {base} unreachable: {e}"))
 }
 
-fn api_error(v: &Value) -> String {
+pub(crate) fn api_error(v: &Value) -> String {
     v.get("error")
         .and_then(|e| e.as_str().map(str::to_string).or_else(|| e.get("fact").and_then(Value::as_str).map(str::to_string)))
         .or_else(|| v.get("message").and_then(Value::as_str).map(str::to_string))

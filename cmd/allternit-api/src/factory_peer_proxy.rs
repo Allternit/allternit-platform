@@ -13,11 +13,14 @@
 //!    (`mesh_bridge::loopback_for`), and the call goes to its engine at
 //!    `/api/factory/peer/<path>` with the ticket. The engine there checks the
 //!    ticket; this module never decides who may run bots on a computer.
+//!
+//! `stream` (a remote bot's live screen, phase 3) is SSE: it is passed
+//! through as it arrives, with no timeout.
 
 use axum::{
-    body::Bytes,
+    body::{Body, Bytes},
     extract::{Path, RawQuery, State},
-    http::{Method, StatusCode},
+    http::{HeaderValue, Method, StatusCode},
     response::{IntoResponse, Response},
     routing::any,
     Extension, Json, Router,
@@ -43,7 +46,7 @@ fn refusal(status: StatusCode, code: &str, fact: impl Into<String>, action: &str
 /// Only these engine paths may be reached (the peer router's routes).
 pub fn allowed_path(path: &str) -> bool {
     let p = path.trim_start_matches('/');
-    matches!(p, "hello" | "send" | "stop" | "capture" | "agents")
+    matches!(p, "hello" | "send" | "stop" | "capture" | "agents" | "screen" | "stream" | "input")
         || p.strip_prefix("teams/").is_some_and(|rest| {
             rest.split_once('/').is_some_and(|(name, verb)| {
                 !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') && matches!(verb, "up" | "down")
@@ -172,12 +175,27 @@ async fn proxy(
         Method::POST => client.post(&url).header("content-type", "application/json").body(body),
         _ => return refusal(StatusCode::METHOD_NOT_ALLOWED, "usage", "peer calls are GET or POST", "Use GET or POST."),
     };
-    match req.bearer_auth(&ticket).timeout(Duration::from_secs(120)).send().await {
+    let streaming = method == Method::GET && path.trim_start_matches('/') == "stream";
+    let req = req.bearer_auth(&ticket);
+    let req = if streaming { req } else { req.timeout(Duration::from_secs(120)) };
+    match req.send().await {
         Ok(reply) => {
             let status = StatusCode::from_u16(reply.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
             if status == StatusCode::FORBIDDEN {
                 // A ticket the engine refused (rotated key, clock): ask anew next time.
                 cache().lock().unwrap_or_else(|p| p.into_inner()).remove(&native_id);
+            }
+            let sse = reply
+                .headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .is_some_and(|c| c.starts_with("text/event-stream"));
+            if streaming && sse {
+                let mut out = Response::new(Body::from_stream(reply.bytes_stream()));
+                *out.status_mut() = status;
+                out.headers_mut().insert("content-type", HeaderValue::from_static("text/event-stream"));
+                out.headers_mut().insert("cache-control", HeaderValue::from_static("no-cache"));
+                return out;
             }
             let bytes = reply.bytes().await.unwrap_or_default();
             (status, [("content-type", "application/json")], bytes).into_response()
@@ -197,7 +215,7 @@ mod tests {
 
     #[test]
     fn only_peer_routes_pass() {
-        for ok in ["hello", "send", "stop", "capture", "agents", "teams/docs/up", "teams/product-build/down"] {
+        for ok in ["hello", "send", "stop", "capture", "agents", "screen", "stream", "input", "teams/docs/up", "teams/product-build/down"] {
             assert!(allowed_path(ok), "{ok}");
         }
         for bad in ["teams/../up", "teams//up", "teams/docs/rm", "../agents", "agents/x", "", "teams/a b/up"] {

@@ -96,8 +96,11 @@ A paired computer's engine serves these on its peer port (`serve --peer-port 301
 - `POST /api/factory/peer/stop` body `{ to }` → `{ stopped: [to] }`
 - `GET /api/factory/peer/capture?to=bot@team&lines=25` → `{ to, session, lines, text }`
 - `GET /api/factory/peer/agents?team=…` → `{ agents: [{ address, session, harness, live }] }`
+- `GET /api/factory/peer/screen?to=bot@team` → `{ ansi, revision, at }`
+- `GET /api/factory/peer/stream?to=bot@team` (SSE) → the same `screen` / `gone` events as `GET /api/factory/agents/:id/stream`
+- `POST /api/factory/peer/input` body `{ to, text?, keys? }` → `{ ok: true }`
 
-Your own engine reaches these through allternit-api: `GET|POST /api/v1/computers/:id/factory-peer/<path>`. `:id` is the computer's id there or cloud-api's `pc_…`. allternit-api gets the ticket, opens the mesh bridge to the computer's peer port, and passes the answer back unchanged. A bot your engine started on another computer is recorded with `runner: "remote:<computer id>"`; its `Agent.machine` is that computer, and `send`, `capture` and `down` go there.
+Your own engine reaches these through allternit-api: `GET|POST /api/v1/computers/:id/factory-peer/<path>`. `:id` is the computer's id there or cloud-api's `pc_…`. allternit-api gets the ticket, opens the mesh bridge to the computer's peer port, and passes the answer back unchanged. A bot your engine started on another computer is recorded with `runner: "remote:<computer id>"`; its `Agent.machine` is that computer, and `send`, `capture` and `down` go there. While it is live its `Agent.pane` is `{ id: <session>, attachable: true }`, and `GET /agents/:id/screen`, `/stream` and `POST /agents/:id/input` reach its pane there (allternit-api passes the stream through unbuffered), so terminal tiles mirror it like a local pane.
 
 ### Workflows
 - `GET /api/factory/templates` → `{ templates: TemplateSummary[] }`, where `TemplateSummary { id, name, description, steps: number, params: number }`
