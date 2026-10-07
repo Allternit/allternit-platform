@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.2.1 (2026-10-06)
+
+### Fixed
+- `gizzi orchestration send` accepts a team bot's address (`bot@team`) on a
+  computer that isn't linked to allternit-api. Before, only the pane name
+  worked there. The engine and the app also show that address for team
+  bots, as `gizzi agents ps` already did.
+- `gizzi agents harness list` works. Before, the engine rejected `list`.
+
 ## 2.2.0 (2026-10-06)
 
 Gizzi now runs the Allternit Factory: teams of agents, workflows and a shared

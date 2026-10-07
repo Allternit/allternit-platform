@@ -583,13 +583,14 @@ pub(crate) fn run(args: &[String]) -> std::io::Result<i32> {
 
     let ctx = FsCtx::from_env();
     match command {
-        "status" => cmd_status(&manifest, &tools_filter, &ctx),
+        // `list` is what `gizzi agents harness list` and the docs call it.
+        "status" | "list" => cmd_status(&manifest, &tools_filter, &ctx),
         "sync" => cmd_sync(&manifest, &tools_filter, dry_run, &ctx),
         "uninstall" => cmd_uninstall(&manifest, &tools_filter, dry_run),
         "install" => install::cmd_install(&manifest, &install_tools, &accepts_terms, dry_run),
         other => {
             // The same error line the JS harness-sync printed.
-            eprintln!("Unknown command: {other} (expected status | sync | uninstall)");
+            eprintln!("Unknown command: {other} (expected list | status | sync | install | uninstall)");
             Ok(1)
         }
     }
