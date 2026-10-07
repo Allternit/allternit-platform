@@ -1510,8 +1510,10 @@ mod tests {
         for statement in VOICE_TABLES {
             sqlx::query(statement).execute(&state.db).await.unwrap();
         }
-        // The number directory reads phone_numbers (pg 024) on every call start.
-        sqlx::raw_sql(&include_str!("../../migrations_pg/024_phone_numbers.sql").replace("public.", "")).execute(&state.db).await.unwrap();
+        // A call start first asks whether a Platform API project owns the
+        // number (`platform_v1::calls::worker_start`: phone_numbers,
+        // platform_calls, platform_agents).
+        test_support::platform_schema(&state.db).await;
         state
     }
 

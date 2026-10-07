@@ -32,22 +32,7 @@ struct Ctx {
 
 async fn ctx() -> Ctx {
     let state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
-    for sql in [
-        include_str!("../../../migrations_pg/003_api_keys.sql"),
-        include_str!("../../../migrations_pg/020_channel_inbound_queue.sql"),
-        include_str!("../../../migrations_pg/024_phone_numbers.sql"),
-        include_str!("../../../migrations_pg/050_platform_api_foundation.sql"),
-        include_str!("../../../migrations_pg/051_platform_numbers_messaging.sql"),
-        // The event backbone generalises the webhook tables (kind, signer, subject).
-        include_str!("../../../migrations_pg/057_allternit_events_backbone.sql"),
-        include_str!("../../../migrations_pg/063_platform_agents.sql"),
-        include_str!("../../../migrations_pg/064_platform_conversations.sql"),
-        include_str!("../../../migrations_pg/075_platform_channels.sql"),
-        include_str!("../../../migrations_pg/076_platform_twin.sql"),
-        include_str!("../../../migrations_pg/080_platform_billing.sql"),
-    ] {
-        sqlx::raw_sql(&sql.replace("public.", "")).execute(&state.db).await.expect("migration applies");
-    }
+    crate::routes::test_support::platform_schema(&state.db).await;
     let app = router_gated(&state, Gate::Forced(true)).with_state(state.clone());
     Ctx { state, app }
 }

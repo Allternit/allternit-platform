@@ -324,3 +324,30 @@ pub async fn events_backbone_schema(db: &sqlx::PgPool) {
         sqlx::raw_sql(&sql.replace("public.", "")).execute(db).await.expect("migration applies");
     }
 }
+
+/// Every Platform API table, in migration order. The platform routes read
+/// across phases (a message checks the spend cap, a call start looks up the
+/// project's numbers), so a platform test applies the whole chain rather
+/// than a hand-picked part of it that goes stale when a later phase lands.
+pub async fn platform_schema(db: &sqlx::PgPool) {
+    for sql in [
+        include_str!("../../migrations_pg/003_api_keys.sql"),
+        include_str!("../../migrations_pg/020_channel_inbound_queue.sql"),
+        include_str!("../../migrations_pg/023_voice_calls_cloud.sql"),
+        include_str!("../../migrations_pg/024_phone_numbers.sql"),
+        include_str!("../../migrations_pg/026_slack_installs.sql"),
+        include_str!("../../migrations_pg/030_voice_worker_contract.sql"),
+        include_str!("../../migrations_pg/050_platform_api_foundation.sql"),
+        include_str!("../../migrations_pg/051_platform_numbers_messaging.sql"),
+        include_str!("../../migrations_pg/057_allternit_events_backbone.sql"),
+        include_str!("../../migrations_pg/063_platform_agents.sql"),
+        include_str!("../../migrations_pg/064_platform_conversations.sql"),
+        include_str!("../../migrations_pg/067_platform_agent_knowledge.sql"),
+        include_str!("../../migrations_pg/070_platform_calls.sql"),
+        include_str!("../../migrations_pg/075_platform_channels.sql"),
+        include_str!("../../migrations_pg/076_platform_twin.sql"),
+        include_str!("../../migrations_pg/080_platform_billing.sql"),
+    ] {
+        sqlx::raw_sql(&sql.replace("public.", "")).execute(db).await.expect("migration applies");
+    }
+}
