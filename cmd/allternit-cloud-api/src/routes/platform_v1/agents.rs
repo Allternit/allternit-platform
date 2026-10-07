@@ -70,7 +70,17 @@ pub const TOOLS: [&str; 10] = [
 
 /// On the launch list but not yet backed by a hosted-agent tool: refused with
 /// `tool_not_available` rather than accepted and silently ignored.
-pub const COMING_TOOLS: [&str; 4] = ["channel_post", "calendar", "knowledge_search", "transfer"];
+/// `calendar` waits for production Google and Microsoft OAuth apps; `transfer`
+/// arrives with voice calls (Phase 3).
+pub const COMING_TOOLS: [&str; 2] = ["calendar", "transfer"];
+
+fn not_available_message(tool: &str) -> String {
+    match tool {
+        "transfer" => "\"transfer\" arrives with voice calls for hosted agents; it isn't available yet.".to_string(),
+        "calendar" => "\"calendar\" isn't available for hosted agents yet: it needs the end customer's Google or Microsoft calendar connection, which isn't open yet.".to_string(),
+        t => format!("\"{t}\" isn't available for hosted agents yet."),
+    }
+}
 
 /// Autonomy levels, the same four the runtime's policy check uses.
 pub const AUTONOMY: [&str; 4] = ["draft", "ask", "tell", "limits"];
@@ -280,7 +290,7 @@ pub fn validate_tools(tools: &[String]) -> Result<Vec<String>, PlatformError> {
             return Err(invalid("invalid_tool", format!("Unknown tool \"{t}\". Tools: {}.", TOOLS.join(", ")), "tools"));
         }
         if COMING_TOOLS.contains(&t) {
-            return Err(invalid("tool_not_available", format!("\"{t}\" isn't available for hosted agents yet."), "tools"));
+            return Err(invalid("tool_not_available", not_available_message(t), "tools"));
         }
         if !out.iter().any(|x| x == t) {
             out.push(t.to_string());
@@ -565,6 +575,8 @@ mod unit {
         assert_eq!(validate_tools(&["call".into(), "call".into(), "email".into()]).unwrap(), vec!["call", "email"]);
         assert!(validate_tools(&["shell".into()]).is_err());
         assert!(matches!(validate_tools(&["calendar".into()]), Err(e) if e.code == "tool_not_available"));
+        assert!(matches!(validate_tools(&["transfer".into()]), Err(e) if e.code == "tool_not_available" && e.message.contains("voice")));
+        assert_eq!(validate_tools(&["knowledge_search".into(), "channel_post".into()]).unwrap(), vec!["knowledge_search", "channel_post"]);
         assert!(validate_model("openai/gpt-5").is_ok() && validate_model("mistral/large").is_err());
         assert!(validate_transfer_targets(&["+14155550100".into()]).is_ok());
         assert!(validate_transfer_targets(&["415-555-0100".into()]).is_err());

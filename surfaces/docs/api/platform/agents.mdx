@@ -38,7 +38,7 @@ curl https://api.allternit.com/v1/agents \
 | `greeting` | The first thing it says. **It must say it's an AI** (for example "I'm an AI assistant"); you can reword it but not remove it (`greeting_missing_ai_disclosure`). Default: "Hi, this is {name}, an AI assistant. How can I help?" |
 | `model` | `allternit` (default: Allternit's routed model), or `anthropic/…`, `openai/…` or `xai/…` (for example `anthropic/claude-sonnet-5-5`), which runs on your project's own key (see [Model keys](#model-keys)). |
 | `voice` | A stock voice: `af_heart` (default), `af_alloy`, `af_aoede`, `af_bella`, `af_jessica`, `af_kore`, `af_nicole`, `af_nova`, `af_river`, `af_sarah`, `af_sky`, `am_adam`, `am_echo`, `am_eric`, `am_fenrir`, `am_liam`, `am_michael`, `am_onyx`, `am_puck`, `am_santa`, `bf_alice`, `bf_emma`, `bf_isabella`, `bf_lily`, `bm_daniel`, `bm_fable`, `bm_george`, `bm_lewis`. Custom and cloned voices aren't available. |
-| `tools` | Any of `send_text`, `call`, `email`, `web_fetch`, `web_search`, `ask_human`. The agent can use only these (plus looking people up and noting facts about them); everything else is blocked in its conversations. `channel_post`, `calendar`, `knowledge_search` and `transfer` are coming and answer `tool_not_available` for now. |
+| `tools` | Which [tools](#tools) the agent may use. Everything else is blocked in its conversations. |
 | `autonomy` | How far it goes on its own: `draft` (writes, never sends), `ask` (default: a person approves each send), `tell` (sends, then reports), `limits` (sends within daily limits, then asks). Payments always wait for a person. |
 | `transfer_targets` | Up to 20 E.164 numbers a call may be transferred to. |
 | `business_hours` | A JSON object (up to 8 KB), for example `{ "tz": "America/Chicago", "mon": ["09:00", "17:00"] }`. `null` clears it. |
@@ -48,6 +48,25 @@ curl https://api.allternit.com/v1/agents \
 **Limits.** Sandbox projects can have 3 agents (`agent_limit_reached`; deleting one frees its slot). Live projects have no cap; agents after the first 3 are billed per agent per month (see [Usage](/api/platform/usage)).
 
 **Isolation.** A key bound to an account creates agents in that account and can only see that account's agents; another account's agent answers `404 agent_not_found`, as if it didn't exist.
+
+## Tools
+
+Each conversation runs with every tool denied except the ones in the agent's `tools` list (plus looking people up and noting facts about them, which every agent has). The model can't reach an unlisted tool, and the hosted runtime checks the list again before a tool runs.
+
+| Tool | What the agent can do | Notes |
+|---|---|---|
+| `send_text` | Text someone from the account's number | Consent and STOP rules apply ([Messaging](/api/platform/messaging)). |
+| `call` | Call someone from the account's number | Same consent rules. |
+| `email` | Send email from the agent's address | |
+| `web_fetch` | Read a web page | |
+| `web_search` | Search the web | |
+| `knowledge_search` | Search the agent's own [knowledge files](/api/platform/knowledge) | Only that agent's files, never another agent's or account's. |
+| `channel_post` | Post to a Slack or Discord channel connected for the agent's account | Only channels connected for that account. With none connected the tool answers `no_channel_connected` and the agent tells the person. Connecting channels for your accounts by API is not open yet, so for now the tool has nothing to post to. |
+| `ask_human` | Ask a person before going on | |
+| `calendar` | Free/busy and new events on the end customer's Google or Microsoft calendar | Not available yet (`tool_not_available`): the end-customer calendar connection isn't open. |
+| `transfer` | Transfer a call to one of `transfer_targets` | Not available yet (`tool_not_available`): it arrives with voice calls for hosted agents. |
+
+When a tool refuses (no channel connected, a file type the agent can't read), the agent gets a plain sentence saying why and passes it on; the conversation keeps going.
 
 ## Model keys
 
@@ -61,4 +80,4 @@ To run an agent on your own Anthropic, OpenAI or xAI account, store the project'
 
 Keys are encrypted at rest. The project's hosted runtime gets the key before the agent's next message. To rotate a key, `PUT` the new one: the next message uses it. An agent on a provider model with no key for it answers `model_key_missing` when you send it a message.
 
-Errors use the [standard format](/api/platform/errors): `invalid_name`, `invalid_instructions`, `invalid_greeting`, `greeting_missing_ai_disclosure`, `invalid_model`, `invalid_voice`, `invalid_tool`, `tool_not_available`, `invalid_autonomy`, `invalid_transfer_target`, `invalid_business_hours`, `invalid_metadata`, `missing_account_id`, `account_not_found`, `agent_not_found`, `agent_limit_reached`, `insufficient_scope`; model keys: `invalid_provider`, `invalid_api_key`, `model_key_not_found`, `model_keys_unavailable`.
+Errors use the [standard format](/api/platform/errors): `invalid_name`, `invalid_instructions`, `invalid_greeting`, `greeting_missing_ai_disclosure`, `invalid_model`, `invalid_voice`, `invalid_tool`, `tool_not_available` (calendar, transfer), `invalid_autonomy`, `invalid_transfer_target`, `invalid_business_hours`, `invalid_metadata`, `missing_account_id`, `account_not_found`, `agent_not_found`, `agent_limit_reached`, `insufficient_scope`; model keys: `invalid_provider`, `invalid_api_key`, `model_key_not_found`, `model_keys_unavailable`.

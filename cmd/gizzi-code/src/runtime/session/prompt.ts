@@ -1,3 +1,4 @@
+import { runWithStreamContext } from "@/runtime/session/stream-context"
 import path from "path"
 import os from "os"
 import fs from "fs/promises"
@@ -1583,7 +1584,11 @@ const message = await createUserMessage(input)
             messageID: ctx.messageID,
             tool: key,
             args,
-            run: () => ToolDispatcher.executeInitialized(key, args, ctx, (nextArgs) => execute(nextArgs, opts)),
+            // The session id rides along so Allternit's own MCP tools know which session called.
+            run: () =>
+              ToolDispatcher.executeInitialized(key, args, ctx, (nextArgs) =>
+                runWithStreamContext({ sessionID: ctx.sessionID }, () => execute(nextArgs, opts)),
+              ),
           })
         } finally {
           McpUserProxy.clearApproval(opts.toolCallId)

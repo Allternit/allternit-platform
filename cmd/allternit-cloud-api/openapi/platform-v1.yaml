@@ -278,6 +278,89 @@ paths:
                   object: { type: string, const: agent }
                   deleted: { type: boolean, const: true }
         default: { $ref: "#/components/responses/Error" }
+  /v1/agents/{id}/knowledge:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: listKnowledgeFiles
+      summary: List an agent's knowledge files
+      description: Oldest first. Requires the `agents` scope; a key bound to an account sees only its own account's agents.
+      tags: [Agents]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/After"
+      responses:
+        "200":
+          description: A page of knowledge files.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ListEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/KnowledgeFile" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      operationId: uploadKnowledgeFile
+      summary: Upload a knowledge file
+      description: "Text files the agent searches with the knowledge_search tool. Types: text/plain, text/markdown, text/csv, text/html, application/json (UTF-8). At most 1 MB per file, 20 files and 5 MB in total per agent. Send the text as `content`, or the bytes as `content_base64`. `content_type` defaults from the name's extension."
+      tags: [Agents]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 200 }
+                content_type: { type: string, enum: [text/plain, text/markdown, text/csv, text/html, application/json] }
+                content: { type: string }
+                content_base64: { type: string, contentEncoding: base64 }
+      responses:
+        "201":
+          description: The stored file.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KnowledgeFile" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/agents/{id}/knowledge/{file_id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: file_id
+        in: path
+        required: true
+        schema: { type: string, examples: ["kf_0123456789abcdef01234567"] }
+    delete:
+      operationId: deleteKnowledgeFile
+      summary: Delete a knowledge file
+      description: The agent stops finding it right away; the stored original is removed.
+      tags: [Agents]
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, object, deleted]
+                properties:
+                  id: { type: string }
+                  object: { type: string, const: knowledge_file }
+                  deleted: { type: boolean, const: true }
+        default: { $ref: "#/components/responses/Error" }
   /v1/agents/{id}/conversations:
     parameters:
       - name: id
@@ -901,10 +984,23 @@ components:
           description: "`ready` once the project's hosted runtime holds the agent."
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+    KnowledgeFile:
+      type: object
+      required: [id, object, agent_id, account_id, name, content_type, bytes, chunk_count, created_at]
+      properties:
+        id: { type: string }
+        object: { type: string, const: knowledge_file }
+        agent_id: { type: string }
+        account_id: { type: string }
+        name: { type: string }
+        content_type: { type: string }
+        bytes: { type: integer }
+        chunk_count: { type: integer, description: "Searchable pieces (about 1,200 characters each)." }
+        created_at: { type: string, format: date-time }
     AgentTool:
       type: string
       enum: [send_text, call, email, channel_post, calendar, web_fetch, web_search, knowledge_search, ask_human, transfer]
-      description: "channel_post, calendar, knowledge_search and transfer aren't available for hosted agents yet (tool_not_available)."
+      description: "calendar (needs end-customer Google/Microsoft calendar connections) and transfer (arrives with voice calls) aren't available for hosted agents yet (tool_not_available). knowledge_search searches the agent's knowledge files; channel_post posts to a channel connected for the agent's account."
     Autonomy:
       type: string
       enum: [draft, ask, tell, limits]

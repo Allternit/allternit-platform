@@ -16,6 +16,7 @@
 //! → handler.
 
 pub mod accounts;
+pub mod agent_tools;
 pub mod agents;
 pub mod caller;
 pub mod console;
@@ -23,6 +24,7 @@ pub mod conversations;
 pub mod error;
 pub mod events;
 pub mod hosting;
+pub mod knowledge;
 pub mod limits;
 pub mod messages;
 pub mod model_keys;
@@ -143,6 +145,7 @@ fn build_table() -> RouteTable {
     let table = RouteTable::new();
     let table = accounts::register(table);
     let table = agents::register(table);
+    let table = knowledge::register(table);
     let table = conversations::register(table);
     let table = model_keys::register(table);
     let table = numbers::register(table);
@@ -318,3 +321,5 @@ mod tests;
 mod tests_p1;
 #[cfg(test)]
 mod tests_p2;
+#[cfg(test)]
+mod tests_p2_tools;

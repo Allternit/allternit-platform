@@ -484,6 +484,7 @@ async fn handle_allternit_mail_mcp(
             }
             tools.extend(crate::phone_outbound::mcp_tools(&state.db, user_id));
             tools.extend(crate::people::mcp_tools());
+            tools.extend(crate::platform_tools::mcp_tools(user_id));
             mcp_protocol::ordering::sort_tools(&mut tools);
             Some(rpc_ok(json!({ "tools": tools })))
         }
@@ -495,7 +496,8 @@ async fn handle_allternit_mail_mcp(
                 .unwrap_or("");
             let phone = crate::phone_outbound::is_tool(name);
             let people = crate::people::is_tool(name);
-            if !phone && !people && !name.starts_with("allternit_mail.") {
+            let platform = crate::platform_tools::is_tool(name);
+            if !phone && !people && !platform && !name.starts_with("allternit_mail.") {
                 return None;
             }
             let args = body
@@ -505,6 +507,11 @@ async fn handle_allternit_mail_mcp(
                 .unwrap_or_else(|| json!({}));
             if phone {
                 return Some(rpc_tool(crate::phone_outbound::call_mcp_tool(state, user_id, name, args).await));
+            }
+            if platform {
+                // The calling session (set by gizzi) names the agent; never the model's input.
+                let meta = body.get("params").and_then(|p| p.get("_meta"));
+                return Some(rpc_tool(crate::platform_tools::call_mcp_tool(&state.db, user_id, name, args, meta).await));
             }
             if people {
                 let out = crate::people::call_mcp_tool(&state.db, user_id, name, &args)

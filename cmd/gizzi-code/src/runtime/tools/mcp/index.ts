@@ -42,6 +42,7 @@ import {
   mcpAppResourceUri,
 } from "@/runtime/tools/mcp/apps"
 import { McpUserProxy } from "@/runtime/tools/mcp/user-proxy"
+import { getStreamContext } from "@/runtime/session/stream-context"
 import { McpEra } from "@/runtime/tools/mcp/era"
 
 export namespace MCP {
@@ -154,7 +155,16 @@ export namespace MCP {
   }
 
   // Convert MCP tool definition to AI SDK Tool type
-  async function convertMcpTool(mcpTool: MCPToolDef, client: MCPClient, timeout?: number): Promise<Tool> {
+  /**
+   * Allternit's own connectors MCP gets the calling session's id in `_meta`
+   * (`allternit/session`): hosted-agent tools (knowledge search, channel post)
+   * use it to know which agent is calling, never the model's input. Only sent
+   * to that server; third-party servers never see session ids.
+   */
+  const SESSION_META = "allternit/session"
+  const SESSION_META_SERVERS = new Set(["allternit-connectors"])
+
+  async function convertMcpTool(mcpTool: MCPToolDef, client: MCPClient, timeout?: number, sendSession = false): Promise<Tool> {
     const inputSchema = mcpTool.inputSchema
 
     // Spread first, then override type to ensure it's always "object"
@@ -172,11 +182,16 @@ export namespace MCP {
         // Proxy tools marked "requires confirmation" run only with the user's approval, recorded by
         // the permission ask that precedes this call; the proxy checks the flag.
         const approved = McpUserProxy.requiresConfirmation(mcpTool) && McpUserProxy.consumeApproval(options?.toolCallId)
+        const sessionID = sendSession ? getStreamContext()?.sessionID : undefined
+        const meta = {
+          ...(approved ? { [MCP_APPROVED_META]: true } : {}),
+          ...(sessionID ? { [SESSION_META]: sessionID } : {}),
+        }
         return client.callTool(
           {
             name: mcpTool.name,
             arguments: (args || {}) as Record<string, unknown>,
-            ...(approved ? { _meta: { [MCP_APPROVED_META]: true } } : {}),
+            ...(Object.keys(meta).length ? { _meta: meta } : {}),
           },
           {
             resetTimeoutOnProgress: true,
@@ -733,7 +748,7 @@ export namespace MCP {
           let counter = 2
           while (descriptors[qualifiedName]) qualifiedName = withToolSuffix(normalizedBase, String(counter++))
         }
-        result[qualifiedName] = await convertMcpTool(mcpTool, client, timeout)
+        result[qualifiedName] = await convertMcpTool(mcpTool, client, timeout, SESSION_META_SERVERS.has(clientName))
         descriptors[qualifiedName] = {
           qualifiedName,
           ...incoming,

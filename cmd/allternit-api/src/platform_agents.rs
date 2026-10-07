@@ -14,6 +14,7 @@
 //!
 //! **Tools.** Each session gets a gizzi permission ruleset: deny everything, then
 //! allow only the agent's tools ([`tool_rules`]) plus the twin's people tools.
+//! `knowledge_search` and `channel_post` are served by [`crate::platform_tools`].
 //! A session whose rules can't be applied is not handed out (fail closed).
 //!
 //! **Own model keys.** `anthropic/…`, `openai/…` and `xai/…` agents run on the
@@ -227,6 +228,8 @@ pub fn tool_rules(tools: &[String]) -> Value {
             "web_fetch" => allow("webfetch"),
             "web_search" => allow("websearch"),
             "ask_human" => allow("question"),
+            "knowledge_search" => allow("*agent_knowledge_search*"),
+            "channel_post" => allow("*agent_channel_post*"),
             _ => {}
         }
     }
@@ -482,12 +485,15 @@ mod tests {
 
     #[test]
     fn tool_rules_deny_everything_then_allow_the_agents_tools() {
-        let rules = tool_rules(&["send_text".into(), "web_search".into(), "calendar".into()]);
+        let rules = tool_rules(&["send_text".into(), "web_search".into(), "calendar".into(), "knowledge_search".into()]);
         let perms: Vec<(&str, &str)> = rules.as_array().unwrap().iter().map(|r| (r["permission"].as_str().unwrap(), r["action"].as_str().unwrap())).collect();
         assert_eq!(perms[0], ("*", "deny"), "deny first; the last matching rule wins in gizzi");
         assert!(perms.contains(&("*phone_text*", "allow")) && perms.contains(&("websearch", "allow")));
         assert!(!perms.iter().any(|(p, _)| *p == "*phone_call*" || *p == "bash" || *p == "webfetch"));
         assert!(perms.contains(&("*people_lookup*", "allow")));
+        assert!(perms.contains(&("*agent_knowledge_search*", "allow")), "a listed tool is allowed");
+        assert!(!perms.iter().any(|(p, _)| *p == "*agent_channel_post*"), "an unlisted tool stays denied");
+        assert!(!perms.iter().any(|(p, _)| p.contains("calendar")), "a tool without a runtime backing allows nothing");
     }
 
     #[test]

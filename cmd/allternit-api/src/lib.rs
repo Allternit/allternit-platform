@@ -90,6 +90,7 @@ pub mod runtime_events;
 pub mod runtime_viewer;
 pub mod voice_calls;
 pub mod platform_agents;
+pub mod platform_tools;
 pub mod voice_turn_stream;
 pub mod channel_relay;
 pub mod channel_discord_dm;
