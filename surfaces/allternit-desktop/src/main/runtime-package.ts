@@ -18,7 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { pipeline } from 'node:stream/promises';
-import { Readable } from 'node:stream';
+import { Readable, Transform } from 'node:stream';
 import zlib from 'node:zlib';
 
 /** Bump when the preload/IPC contract the screens rely on changes. */
@@ -83,6 +83,53 @@ export function verifySignature(data: Buffer, signatureB64: string, publicKey = 
   }
 }
 
+/** No bytes for this long aborts a download (then it is retried). */
+export const STALL_MS = 60_000;
+const DOWNLOAD_TRIES = 3;
+
+/**
+ * Fetch `url` into `dest` (gunzipped when `gunzip`). A transfer that sends no
+ * bytes for `stallMs` is aborted and retried, up to DOWNLOAD_TRIES times: a
+ * fetch without a timeout can hang forever on a dead connection and freeze the
+ * whole update with no error. Resolves to the bytes received.
+ */
+async function fetchToFile(fetchImpl: typeof fetch, url: string, dest: string, gunzip: boolean, stallMs: number): Promise<number> {
+  for (let attempt = 1; ; attempt++) {
+    const ac = new AbortController();
+    let timer: NodeJS.Timeout | undefined;
+    const arm = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => ac.abort(new Error(`download stalled for ${stallMs / 1000}s`)), stallMs);
+    };
+    try {
+      arm();
+      const res = await fetchImpl(url, { signal: ac.signal });
+      if (!res.ok || !res.body) throw Object.assign(new Error(`${res.status}`), { status: res.status });
+      let bytes = 0;
+      const watch = new Transform({
+        transform(chunk: Buffer, _enc, cb) {
+          bytes += chunk.length;
+          arm();
+          cb(null, chunk);
+        },
+      });
+      const body = Readable.fromWeb(res.body as never);
+      if (gunzip) await pipeline(body, watch, zlib.createGunzip(), fs.createWriteStream(dest), { signal: ac.signal });
+      else await pipeline(body, watch, fs.createWriteStream(dest), { signal: ac.signal });
+      return bytes;
+    } catch (err) {
+      const status = (err as { status?: number }).status;
+      const reason = ac.signal.aborted ? (ac.signal.reason as Error) : (err as Error);
+      if (attempt >= DOWNLOAD_TRIES || (status !== undefined && status < 500)) {
+        throw new Error(`runtime download ${path.basename(dest)}: ${reason?.message ?? reason}`);
+      }
+      await new Promise((r) => setTimeout(r, 250 * attempt));
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+}
+
 function sha256File(file: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const hash = crypto.createHash('sha256');
@@ -98,18 +145,22 @@ export interface RuntimePackagesOptions {
   publicKey?: string;
   shellApi?: number;
   platform?: string;
+  /** Abort a download after this long with no bytes (default STALL_MS). */
+  stallMs?: number;
   log?: { info: (...a: unknown[]) => void; warn: (...a: unknown[]) => void };
 }
 
 export class RuntimePackages {
   private readonly opts: Required<Omit<RuntimePackagesOptions, 'log'>> & Pick<RuntimePackagesOptions, 'log'>;
   private activeRoot: string | null | undefined;
+  private checking: Promise<string | null> | null = null;
 
   constructor(options: RuntimePackagesOptions) {
     this.opts = {
       publicKey: RUNTIME_PUBLIC_KEY,
       shellApi: SHELL_API,
       platform: platformId(),
+      stallMs: STALL_MS,
       ...options,
     };
   }
@@ -255,12 +306,25 @@ export class RuntimePackages {
    * Check the feed and stage a newer package as pending. Resolves to the staged
    * version, or null when there is nothing newer.
    */
-  async checkForUpdate(feedUrl: string, fetchImpl: typeof fetch = fetch): Promise<string | null> {
+  checkForUpdate(feedUrl: string, fetchImpl: typeof fetch = fetch): Promise<string | null> {
+    // One check at a time: two would share (and delete) the same staging dir.
+    this.checking ??= this.runCheck(feedUrl, fetchImpl).finally(() => {
+      this.checking = null;
+    });
+    return this.checking;
+  }
+
+  /** A small feed file (latest.json, a manifest, a signature), bounded by the stall timeout. */
+  private fetchSmall(fetchImpl: typeof fetch, url: string) {
+    return fetchImpl(url, { cache: 'no-store', signal: AbortSignal.timeout(this.opts.stallMs) });
+  }
+
+  private async runCheck(feedUrl: string, fetchImpl: typeof fetch): Promise<string | null> {
     const base = `${feedUrl.replace(/\/$/, '')}/stable/${this.opts.platform}`;
-    const res = await fetchImpl(`${base}/latest.json`, { cache: 'no-store' });
+    const res = await this.fetchSmall(fetchImpl, `${base}/latest.json`);
     if (!res.ok) throw new Error(`runtime feed ${res.status}`);
     const raw = Buffer.from(await res.arrayBuffer());
-    const sigRes = await fetchImpl(`${base}/latest.json.sig`, { cache: 'no-store' });
+    const sigRes = await this.fetchSmall(fetchImpl, `${base}/latest.json.sig`);
     if (!sigRes.ok || !verifySignature(raw, await sigRes.text(), this.opts.publicKey)) {
       throw new Error('runtime feed signature invalid');
     }
@@ -287,9 +351,7 @@ export class RuntimePackages {
         this.opts.log?.info('[Runtime] update', entry.version, `reused ${stats.reused} files, downloaded ${stats.downloaded} (${(stats.downloadedBytes / 1e6).toFixed(1)} MB)`);
       } else {
         if (!entry.url || !entry.sha256) throw new Error('runtime feed entry has no package');
-        const dl = await fetchImpl(new URL(entry.url, `${base}/`).toString());
-        if (!dl.ok || !dl.body) throw new Error(`runtime download ${dl.status}`);
-        await pipeline(Readable.fromWeb(dl.body as never), fs.createWriteStream(archive));
+        await fetchToFile(fetchImpl, new URL(entry.url, `${base}/`).toString(), archive, false, this.opts.stallMs);
         if ((await sha256File(archive)) !== entry.sha256) throw new Error('runtime archive checksum mismatch');
         await new Promise<void>((resolve, reject) => {
           const tar = spawn('tar', ['-xzf', archive, '-C', staging], { stdio: 'ignore' });
@@ -362,11 +424,11 @@ export class RuntimePackages {
   private async stageDelta(entry: FeedEntry, base: string, feedRoot: string, staging: string, fetchImpl: typeof fetch): Promise<StageStats> {
     if (!entry.manifest || !entry.manifestSha256) throw new Error('runtime feed entry has no manifest');
     const manifestUrl = new URL(entry.manifest, `${base}/`).toString();
-    const manRes = await fetchImpl(manifestUrl, { cache: 'no-store' });
+    const manRes = await this.fetchSmall(fetchImpl, manifestUrl);
     if (!manRes.ok) throw new Error(`runtime manifest ${manRes.status}`);
     const raw = Buffer.from(await manRes.arrayBuffer());
     if (crypto.createHash('sha256').update(raw).digest('hex') !== entry.manifestSha256) throw new Error('runtime manifest checksum mismatch');
-    const sigRes = await fetchImpl(`${manifestUrl}.sig`, { cache: 'no-store' });
+    const sigRes = await this.fetchSmall(fetchImpl, `${manifestUrl}.sig`);
     const sig = sigRes.ok ? await sigRes.text() : '';
     if (!verifySignature(raw, sig, this.opts.publicKey)) throw new Error('runtime manifest signature invalid');
     const manifest = JSON.parse(raw.toString('utf8')) as RuntimeManifest;
@@ -403,11 +465,9 @@ export class RuntimePackages {
       }
     }
     const download = async ([rel, f]: [string, { sha256: string; size: number }]) => {
-      const res = await fetchImpl(`${feedRoot}/objects/${f.sha256}.gz`);
-      if (!res.ok || !res.body) throw new Error(`runtime object ${rel} ${res.status}`);
-      await pipeline(Readable.fromWeb(res.body as never), zlib.createGunzip(), fs.createWriteStream(path.join(staging, rel)));
+      const bytes = await fetchToFile(fetchImpl, `${feedRoot}/objects/${f.sha256}.gz`, path.join(staging, rel), true, this.opts.stallMs);
       stats.downloaded += 1;
-      stats.downloadedBytes += Number(res.headers.get('content-length') ?? 0) || f.size;
+      stats.downloadedBytes += bytes;
     };
     for (let i = 0; i < pending.length; i += 8) {
       await Promise.all(pending.slice(i, i + 8).map(download));
