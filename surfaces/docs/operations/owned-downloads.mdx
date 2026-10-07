@@ -27,3 +27,24 @@ Without those variables the script downloads and verifies every file, then print
 ### Release runbook step
 
 After publishing a Desktop release on GitHub, run `scripts/mirror-desktop-release.sh <version> --apply`. Until it runs, the installer keeps resolving to the previous mirrored version or the GitHub release.
+
+## Runtime packages
+
+Desktop and cloud computers update `allternit-api`, `gizzi-code`, `allternit-factory` and the app's screens from `runtime.allternit.com` without a new app build (`surfaces/allternit-desktop/src/main/runtime-package.ts`). The app checks `stable/<platform>/latest.json` (signed, Ed25519), downloads only the files whose hash changed (`objects/<sha256>.gz`, shared by every version and platform), and switches to the new version on its next start.
+
+| Platform | Who runs it |
+|---|---|
+| `darwin-arm64` | Allternit Desktop on Apple silicon Macs |
+| `linux-x64` | Cloud computers (the Linux app in the `allternit-cloud-computer` image) and Linux Desktop |
+
+A platform with no package published keeps the runtime its app was built with. Until 2026-10-07 that was true of every cloud computer: they ran the image's runtime from 2026-09-14.
+
+Publishing (`surfaces/allternit-desktop/scripts/runtime-package.cjs`):
+
+```bash
+node scripts/runtime-package.cjs stamp     # resources/runtime.json (version, platform and screen commits)
+node scripts/runtime-package.cjs pack      # the signed feed for resources/{bin,platform}
+node scripts/runtime-package.cjs publish   # dry run; add --confirm to upload
+```
+
+The packed binaries must be the target platform's. A Linux package is packed on any machine with `ALLTERNIT_RUNTIME_PLATFORM=linux-x64` and `ALLTERNIT_RUNTIME_RESOURCES=<dir>`, where `<dir>/bin` holds `allternit-api`, `gizzi-code` and `allternit-factory` built on Linux x64 (the build host is the `alt-linux-build` container on `allternit-standby`, sources in `/srv/alt-build/src`, script `/srv/alt-build/rt.sh`; `allternit-factory` needs Zig 0.15.2) and `<dir>/platform` holds the screens from `npm run prepare:platform-static`. The signing key stays on the publishing Mac (`~/.config/allternit/runtime-signing-ed25519.pem`).

@@ -36,14 +36,22 @@ const REPO_ROOT = path.resolve(DESKTOP_DIR, '..', '..');
 // ALLTERNIT_RUNTIME_RESOURCES packs another build's staged resources (e.g. a build worktree).
 const RESOURCES = process.env.ALLTERNIT_RUNTIME_RESOURCES ? path.resolve(process.env.ALLTERNIT_RUNTIME_RESOURCES) : path.join(DESKTOP_DIR, 'resources');
 const STAMP = path.join(RESOURCES, 'runtime.json');
-const PLATFORM = `${process.platform}-${process.arch}`;
+// ALLTERNIT_RUNTIME_PLATFORM packs another platform's staged build, e.g. `linux-x64`
+// from binaries built on a Linux host (cloud computers run the Linux app, which
+// polls stable/linux-x64). The binaries must already be that platform's.
+const PLATFORM = process.env.ALLTERNIT_RUNTIME_PLATFORM || `${process.platform}-${process.arch}`;
+const TARGET_OS = PLATFORM.split('-')[0];
+if (!['darwin', 'linux', 'win32'].includes(TARGET_OS)) {
+  console.error(`✗ unknown runtime platform ${PLATFORM}`);
+  process.exit(1);
+}
 const FEED = path.join(DESKTOP_DIR, 'release', 'runtime', 'feed');
 const BUCKET = process.env.ALLTERNIT_RUNTIME_BUCKET || 'allternit-runtime';
 const ACCOUNT = process.env.CLOUDFLARE_ACCOUNT_ID || '7cd19487307235aedc039d3a64ad7039';
-const EXE = process.platform === 'win32' ? '.exe' : '';
+const EXE = TARGET_OS === 'win32' ? '.exe' : '';
 // allternit-factory (the Factory engine) rides with gizzi-code so a runtime
 // update moves both together; it is Unix-only.
-const BINARIES = [`allternit-api${EXE}`, `gizzi-code${EXE}`, ...(process.platform === 'win32' ? [] : ['allternit-factory'])];
+const BINARIES = [`allternit-api${EXE}`, `gizzi-code${EXE}`, ...(TARGET_OS === 'win32' ? [] : ['allternit-factory'])];
 
 const die = (msg) => { console.error(`✗ ${msg}`); process.exit(1); };
 const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
