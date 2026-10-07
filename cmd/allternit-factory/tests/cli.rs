@@ -86,8 +86,6 @@ fn not_built_verbs_say_so_with_exit_2() {
         (vec!["agents", "model", "builder", "opus", "--json"], "agents model is not built yet"),
         (vec!["agents", "handoff", "builder", "--json"], "agents handoff is not built yet"),
         (vec!["agents", "templates", "--json"], "agents templates is not built yet"),
-        (vec!["orchestration", "threads", "list", "--json"], "orchestration threads is not built yet"),
-        (vec!["orchestration", "coordinate", "p", "hi", "--json"], "orchestration coordinate is not built yet"),
     ] {
         let out = factory(home.path(), &args);
         assert_eq!(out.status.code(), Some(2), "{args:?}");
@@ -102,16 +100,23 @@ fn not_built_verbs_say_so_with_exit_2() {
 }
 
 #[test]
-fn workspace_tasks_points_to_gizzi() {
-    // Tasks live with the account in allternit-api, so the engine sends you to Gizzi.
+fn account_verbs_point_to_gizzi() {
+    // Tasks, threads and the Coordinator live with the account in
+    // allternit-api, so the engine sends you to Gizzi (usage, exit 64).
     let home = tempfile::tempdir().unwrap();
-    let out = factory(home.path(), &["workspace", "tasks", "--json"]);
-    assert_eq!(out.status.code(), Some(64));
-    let (code, fact) = error_of(&out);
-    assert_eq!(code, "usage");
-    assert!(fact.contains("lives with your account"), "{fact}");
-    let doc: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert!(doc["error"]["action"].as_str().unwrap().contains("gizzi workspace tasks board"));
+    for (args, action) in [
+        (vec!["workspace", "tasks", "--json"], "gizzi workspace tasks board"),
+        (vec!["orchestration", "threads", "list", "--json"], "gizzi orchestration threads"),
+        (vec!["orchestration", "coordinate", "p", "hi", "--json"], "gizzi orchestration coordinate"),
+    ] {
+        let out = factory(home.path(), &args);
+        assert_eq!(out.status.code(), Some(64), "{args:?}");
+        let (code, fact) = error_of(&out);
+        assert_eq!(code, "usage", "{args:?}");
+        assert!(fact.contains("lives with your account"), "{fact}");
+        let doc: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert!(doc["error"]["action"].as_str().unwrap().contains(action), "{args:?}: {doc}");
+    }
 }
 
 #[test]

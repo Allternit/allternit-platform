@@ -3,10 +3,6 @@ title: "Orchestration"
 description: "Threads, send and delivery states, vendor tickets as node deliveries, mail, attention and the Coordinator."
 ---
 
-<Note>
-Shipping with the Allternit Factory build. The `gizzi orchestration` commands and per-send delivery states are the approved design and are not live yet. Bot threads and vendor tickets are live today.
-</Note>
-
 `gizzi orchestration` is where conversation and handoffs happen: who said what to whom, whether it arrived, and what's waiting on a person.
 
 ## Threads
@@ -19,10 +15,14 @@ A Thread is a conversation or an assignment with a bot. There are two kinds, and
 | `task` | One assignment. A task thread mirrors a node and shows a node strip | Until the node closes |
 
 ```bash
-gizzi orchestration threads list
-gizzi orchestration threads show <thread>
-gizzi orchestration threads new <bot@team>
+gizzi orchestration threads list [bot]              # --json for { threads }
+gizzi orchestration threads show <thread>           # status and the latest messages
+gizzi orchestration threads new <bot> "<title>"     # a task thread; --standing for the ongoing one
+gizzi orchestration threads steer <thread> "<text>" # a running turn picks it up at its next step
+gizzi orchestration threads resolve <thread>        # done, or --failed
 ```
+
+Threads live with your account, so Gizzi reads them with your sign-in, and Desktop, the web app and your phone show the same ones. A Terminal bot's conversation is its Factory mail (`gizzi orchestration mail`).
 
 Vendor threads keep the vendor's own look, and channel threads keep the channel's look. See [Bot threads](/guides/bot-threads).
 
@@ -110,7 +110,7 @@ gizzi orchestration attention ack <id>
 ## Steering and the Coordinator
 
 - `gizzi orchestration steer checkpoint|consult` records a steering checkpoint or consults the steering backend before a risky step.
-- `gizzi orchestration coordinate <project> "…"` hands a request to the Coordinator (Al), which splits it across the team.
+- `gizzi orchestration coordinate <project> "…"` hands a request to the project's Coordinator (Al). Al answers, plans the work into task threads for the project's bots, and starts them; they appear in `gizzi orchestration threads list` and on the project page. `--dry-run` shows what would be sent; `--json` prints Al's reply.
 
 ## Related
 

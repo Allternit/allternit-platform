@@ -675,17 +675,19 @@ fn orchestration(ctx: &Ctx, cmd: OrchestrationCmd) -> u8 {
         OrchestrationCmd::Capture { to, lines } => crate::part::capture(ctx, to, lines),
         OrchestrationCmd::Transcript { to, tail } => crate::part::transcript(ctx, to, tail),
         OrchestrationCmd::Drain { to, all, dry_run: dry } => crate::part::drain(ctx, to, all, dry),
-        OrchestrationCmd::Threads(_) => not_built(
+        // Threads and the Coordinator live with the account in allternit-api,
+        // so Gizzi serves them with the person's own sign-in.
+        OrchestrationCmd::Threads(_) => fail(
             ctx,
-            "orchestration",
-            "threads",
-            "Threads live in Bot Mode today; the engine API for them is not built.",
+            Code::Usage,
+            "orchestration threads lives with your account, not in this workspace",
+            Some("Use `gizzi orchestration threads list|show|new|steer|resolve`."),
         ),
-        OrchestrationCmd::Coordinate(_) => not_built(
+        OrchestrationCmd::Coordinate(_) => fail(
             ctx,
-            "orchestration",
-            "coordinate",
-            "The Coordinator is not wired to the engine yet.",
+            Code::Usage,
+            "orchestration coordinate lives with your account, not in this workspace",
+            Some("Use `gizzi orchestration coordinate <project> \"…\"`."),
         ),
         OrchestrationCmd::Mail(rest) => rails_passthrough(ctx, &["mail"], rest, false),
         OrchestrationCmd::Attention(rest) => rails_passthrough(ctx, &["attention"], rest, false),
