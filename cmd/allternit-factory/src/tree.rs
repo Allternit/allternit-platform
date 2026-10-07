@@ -828,7 +828,15 @@ fn workspace(ctx: &Ctx, cmd: WorkspaceCmd) -> u8 {
         }
         WorkspaceCmd::Proof(cmd) => crate::work::proof_cmd(ctx, cmd),
         WorkspaceCmd::Board { campaign } => crate::work::board_cmd(ctx, &campaign),
-        WorkspaceCmd::Tasks(_) => not_built(ctx, "workspace", "tasks", "The cowork queue has not folded in yet."),
+        // Tasks live with the account in allternit-api (`/api/factory/tasks/*`),
+        // not in this workspace's ledger, so Gizzi serves them with the
+        // person's own sign-in.
+        WorkspaceCmd::Tasks(_) => fail(
+            ctx,
+            Code::Usage,
+            "workspace tasks lives with your account, not in this workspace",
+            Some("Use `gizzi workspace tasks board` (or `tasks`, `queue`); the app shows the same board."),
+        ),
     }
 }
 

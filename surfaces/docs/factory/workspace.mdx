@@ -101,7 +101,13 @@ The same input always draws the same Board. Empty shows "—". Counts come from 
 
 ## Tasks
 
-`gizzi workspace tasks` lists the cowork queue. It replaces `gizzi cowork`. The cowork queue folds into nodes last, once node folders are in use everywhere.
+`gizzi workspace tasks` is your task list. It replaces `gizzi cowork`. Each cowork task is a node in your standing Tasks DAG (`tasks-<you>-<workspace>`), written through the Gate like any other node, so the board, approvals and proof work the same way:
+
+- `gizzi workspace tasks board [--workspace <id>]`: the Tasks board (needs you, now, next, done).
+- `gizzi workspace tasks tasks`: the task list, with scheduling.
+- `gizzi workspace tasks queue list`: work waiting for an agent to claim it.
+
+Tasks live with your account (`/api/factory/tasks/*` on allternit-api), so Desktop, the web app and your phone show the same list. The engine's own `allternit-factory workspace tasks` points you here.
 
 ## Related
 
