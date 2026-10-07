@@ -51,7 +51,7 @@ pub struct UpdateScheduleRequest {
 ///
 /// Supports 5-field cron (minute hour day month weekday) by prepending a seconds
 /// field, and 6/7-field cron as-is.
-fn calculate_next_run(cron_expr: &str, timezone: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+pub(crate) fn calculate_next_run(cron_expr: &str, timezone: &str) -> Option<chrono::DateTime<chrono::Utc>> {
     use chrono_tz::Tz;
     use std::str::FromStr;
 

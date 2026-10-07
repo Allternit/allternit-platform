@@ -119,8 +119,8 @@ if [[ "$INSTALL_SCHEDULER" == "yes" ]]; then
         DATABASE_URL="$ALLTERNIT_SCHEDULER_DATABASE_URL"
         print_info "Using database URL from environment."
     else
-        DEFAULT_DB="sqlite://$HOME/.allternit/allternit-cloud.db"
-        DATABASE_URL="$(prompt_with_default "Database URL" "$DEFAULT_DB")"
+        DEFAULT_DB="postgres://localhost/allternit"
+        DATABASE_URL="$(prompt_with_default "Postgres database URL (control-plane DB with the schedules table)" "$DEFAULT_DB")"
     fi
 
     if [[ -n "${ALLTERNIT_SCHEDULER_API_URL:-}" ]]; then

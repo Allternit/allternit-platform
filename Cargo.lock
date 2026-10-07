@@ -747,6 +747,7 @@ name = "allternit-cron-parser"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "chrono-tz",
  "cron 0.15.0",
  "once_cell",
  "regex",
@@ -1960,7 +1961,6 @@ dependencies = [
 name = "allternit-scheduler"
 version = "0.1.0"
 dependencies = [
- "allternit-cloud-api",
  "allternit-cron-parser",
  "anyhow",
  "async-trait",

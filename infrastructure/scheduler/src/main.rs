@@ -56,12 +56,16 @@ pub struct SchedulerConfig {
     pub misfire_policy: MisfirePolicy,
     /// Execution mode: api or local
     pub execution_mode: ExecutionMode,
+    /// How long a claim on a due schedule is honoured before another daemon
+    /// may take it over (covers a daemon that died mid-fire). Must exceed the
+    /// longest job trigger (local jobs default to a 300s timeout).
+    pub claim_ttl_secs: i64,
 }
 
 impl Default for SchedulerConfig {
     fn default() -> Self {
         Self {
-            database_url: "sqlite://allternit-cloud.db".to_string(),
+            database_url: "postgres://localhost/allternit".to_string(),
             api_url: "http://localhost:3001".to_string(),
             api_key: None,
             poll_interval_secs: 60,
@@ -69,6 +73,7 @@ impl Default for SchedulerConfig {
             misfire_threshold_secs: 300, // 5 minutes
             misfire_policy: MisfirePolicy::FireOnce,
             execution_mode: ExecutionMode::Api,
+            claim_ttl_secs: 900,
         }
     }
 }
@@ -98,9 +103,10 @@ impl std::str::FromStr for MisfirePolicy {
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// Database URL
+    /// Postgres database URL (postgres://…) — the control-plane database that
+    /// holds the `schedules` table
     #[arg(short, long, env = "ALLTERNIT_SCHEDULER_DATABASE_URL")]
-    database_url: Option<String>,
+    database_url: String,
 
     /// Control plane API URL
     #[arg(short, long, env = "ALLTERNIT_SCHEDULER_API_URL", default_value = "http://localhost:3001")]
@@ -122,6 +128,10 @@ struct Args {
     #[arg(long, env = "ALLTERNIT_SCHEDULER_EXECUTION_MODE", default_value = "api")]
     execution_mode: String,
 
+    /// Seconds a claim on a due schedule is honoured before it can be taken over
+    #[arg(long, env = "ALLTERNIT_SCHEDULER_CLAIM_TTL_SECS", default_value = "900")]
+    claim_ttl_secs: i64,
+
     /// Run once and exit (for testing)
     #[arg(long)]
     once: bool,
@@ -142,7 +152,7 @@ async fn main() -> Result<()> {
     // Build configuration
     let execution_mode = args.execution_mode.parse().unwrap_or(ExecutionMode::Api);
     let config = SchedulerConfig {
-        database_url: args.database_url.unwrap_or_else(|| "sqlite://allternit-cloud.db".to_string()),
+        database_url: args.database_url,
         api_url: args.api_url,
         api_key: args.api_key,
         poll_interval_secs: args.poll_interval_secs,
@@ -150,9 +160,9 @@ async fn main() -> Result<()> {
         misfire_threshold_secs: 300,
         misfire_policy: args.misfire_policy.parse().unwrap_or(MisfirePolicy::FireOnce),
         execution_mode,
+        claim_ttl_secs: args.claim_ttl_secs.max(60),
     };
 
-    info!("Database: {}", config.database_url);
     info!("API URL: {}", config.api_url);
     info!("Poll interval: {}s", config.poll_interval_secs);
     info!("Misfire policy: {:?}", config.misfire_policy);

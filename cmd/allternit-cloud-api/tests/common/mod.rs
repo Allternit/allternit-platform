@@ -20,6 +20,9 @@ pub struct TestApp {
     pub router: axum::Router,
     pub temp_dir: TempDir,
     pub event_tx: broadcast::Sender<allternit_cloud_api::DeploymentEvent>,
+    /// The API state behind `router`, for tests that drive background
+    /// services (e.g. the scheduler) directly.
+    pub state: Arc<ApiState>,
     /// Per-test schema this app's tables live in. Dropped (CASCADE) when the
     /// TestApp is dropped so test runs do not accumulate leftover schemas.
     schema: String,
@@ -98,13 +101,14 @@ impl TestApp {
         });
 
         // Create router
-        let router = create_router(state);
+        let router = create_router(state.clone());
 
         Self {
             db,
             router,
             temp_dir,
             event_tx,
+            state,
             schema,
         }
     }

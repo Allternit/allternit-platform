@@ -134,6 +134,40 @@ enum MisfireAction {
 /// Scheduler service that runs as a background task
 pub struct SchedulerService {
     config: SchedulerConfig,
+    /// Identity written to `schedules.claimed_by` (see `claim_due_sql`).
+    instance_id: String,
+}
+
+/// How long a claim on a due schedule is honoured before another poller may
+/// take it over (covers a process that died mid-fire). Firing here is a DB
+/// insert, so this only has to outlast one tick's worth of inserts.
+const CLAIM_TTL_SECS: i64 = 600;
+
+/// Columns of `cowork_models::Schedule`.
+const SCHEDULE_COLUMNS: &str = "id, name, description, cron_expr, natural_lang, timezone, \
+     job_template, enabled, misfire_policy, last_run_at, next_run_at, run_count, misfire_count, \
+     owner_id, tenant_id, region_id, created_at, updated_at";
+
+/// Atomically claim up to `$3` schedules due at `$2` for poller `$1`; `$4` is
+/// the stale-claim cutoff. Same claim as the standalone `allternit-scheduler`
+/// daemon (infrastructure/scheduler/src/daemon.rs), so any mix of pollers on
+/// one database fires each due occurrence once. Migration 018 adds the columns.
+fn claim_due_sql() -> String {
+    format!(
+        "UPDATE schedules \
+         SET claimed_by = $1, claimed_at = $2 \
+         WHERE id IN ( \
+             SELECT id FROM schedules \
+             WHERE enabled = TRUE \
+               AND next_run_at IS NOT NULL \
+               AND next_run_at <= $2 \
+               AND (claimed_by IS NULL OR claimed_at IS NULL OR claimed_at < $4) \
+             ORDER BY next_run_at ASC \
+             LIMIT $3 \
+             FOR UPDATE SKIP LOCKED \
+         ) \
+         RETURNING {SCHEDULE_COLUMNS}"
+    )
 }
 
 /// Region selection criteria
@@ -158,7 +192,19 @@ impl Default for RegionSelectionCriteria {
 impl SchedulerService {
     /// Create a new scheduler service
     pub fn new(config: SchedulerConfig) -> Self {
-        Self { config }
+        let host = std::env::var("HOSTNAME")
+            .ok()
+            .filter(|h| !h.is_empty())
+            .unwrap_or_else(|| "cloud-api".to_string());
+        let instance_id = format!(
+            "{host}:{}:{}",
+            std::process::id(),
+            &uuid::Uuid::new_v4().simple().to_string()[..8]
+        );
+        Self {
+            config,
+            instance_id,
+        }
     }
 
     /// Start the scheduler background task
@@ -181,102 +227,136 @@ impl SchedulerService {
         });
     }
 
+    /// Run one poll tick: claim due schedules and fire them.
+    pub async fn run_once(&self, state: &Arc<ApiState>) -> anyhow::Result<()> {
+        self.tick(state).await
+    }
+
     /// Single tick - check schedules and trigger due runs
     async fn tick(&self, state: &Arc<ApiState>) -> anyhow::Result<()> {
         let now = Utc::now();
         debug!("Scheduler tick at {}", now);
 
-        // Get enabled schedules that are due
-        let due_schedules = self.get_due_schedules(state).await?;
+        // Claim the enabled schedules that are due. A claimed row is ours
+        // alone until it is released, so a second API replica (or the
+        // standalone daemon) polling the same database never fires it too.
+        let due_schedules = self.claim_due_schedules(state, now).await?;
 
         if !due_schedules.is_empty() {
-            info!("Found {} due schedules", due_schedules.len());
+            info!("Claimed {} due schedules", due_schedules.len());
         }
 
+        // Misfires are claimed rows whose due time is past the threshold; they
+        // go through the misfire policy instead of a plain fire. (Previously a
+        // separate unclaimed misfire query could fire the same row again.)
+        let misfire_cutoff = now - chrono::Duration::seconds(self.config.misfire_threshold_secs);
         for schedule in due_schedules {
-            if let Err(e) = self.process_schedule(state, &schedule).await {
+            let result = match schedule.next_run_at {
+                Some(due) if due < misfire_cutoff => self.process_misfire(state, &schedule).await,
+                _ => self.process_schedule(state, &schedule, 0).await,
+            };
+            if let Err(e) = result {
                 error!("Failed to process schedule {}: {}", schedule.id, e);
             }
         }
 
-        // Handle misfires
-        self.handle_misfires(state).await?;
-
         Ok(())
     }
 
-    /// Get schedules that are due for execution
-    async fn get_due_schedules(&self, state: &Arc<ApiState>) -> anyhow::Result<Vec<Schedule>> {
-        let now = Utc::now();
-
-        let schedules = sqlx::query_as::<_, Schedule>(
-            r#"
-            SELECT 
-                id, name, description, cron_expr, natural_lang, timezone,
-                job_template as "job_template: sqlx::types::Json<serde_json::Value>",
-                enabled, misfire_policy, last_run_at, next_run_at, run_count, misfire_count,
-                owner_id, tenant_id, region_id, created_at, updated_at
-            FROM schedules
-            WHERE enabled = TRUE
-              AND next_run_at IS NOT NULL
-              AND next_run_at <= $1
-            ORDER BY next_run_at ASC
-            LIMIT $2
-            "#,
-        )
-        .bind(now)
-        .bind(self.config.max_schedules_per_tick)
-        .fetch_all(&state.db)
-        .await?;
+    /// Atomically claim the schedules due at `now`.
+    async fn claim_due_schedules(
+        &self,
+        state: &Arc<ApiState>,
+        now: chrono::DateTime<Utc>,
+    ) -> anyhow::Result<Vec<Schedule>> {
+        let stale_before = now - chrono::Duration::seconds(CLAIM_TTL_SECS);
+        let schedules = sqlx::query_as::<_, Schedule>(&claim_due_sql())
+            .bind(&self.instance_id)
+            .bind(now)
+            .bind(self.config.max_schedules_per_tick)
+            .bind(stale_before)
+            .fetch_all(&state.db)
+            .await?;
 
         Ok(schedules)
     }
 
-    /// Process a single schedule (check if due and trigger)
+    /// Fire a claimed schedule once and release the claim. `misfired` (0 or
+    /// 1) is added to `misfire_count` in the same update. Every path releases
+    /// the claim, so an error never leaves the row stuck until the TTL.
     async fn process_schedule(
         &self,
         state: &Arc<ApiState>,
         schedule: &Schedule,
+        misfired: i64,
     ) -> anyhow::Result<()> {
         info!("Processing schedule: {} ({})", schedule.id, schedule.name);
 
         let now = Utc::now();
 
         // Calculate next run time
-        let next_run = self.calculate_next_run(schedule).await?;
+        let next_run = match self.calculate_next_run(schedule).await {
+            Ok(next) => next,
+            Err(e) => {
+                // Unparseable cron: stop firing rather than re-claiming the
+                // row every tick.
+                error!("Schedule {} has an invalid cron expression; disabling future runs: {}", schedule.id, e);
+                return self.update_schedule_next_run(state, schedule, None, misfired).await;
+            }
+        };
 
         // Determine region for this run
         let region_id = if self.config.multi_region_enabled {
-            self.select_region_for_schedule(state, schedule).await?
+            self.select_region_for_schedule(state, schedule).await
         } else {
-            self.config.default_region.clone()
+            Ok(self.config.default_region.clone())
         };
 
-        if let Some(ref r) = region_id {
+        if let Ok(Some(ref r)) = region_id {
             debug!("Selected region '{}' for schedule {}", r, schedule.id);
         }
 
         // Trigger the run directly in the database
-        let trigger_result = self.trigger_run(state, schedule, region_id).await;
+        let trigger_result = match region_id {
+            Ok(region_id) => self.trigger_run(state, schedule, region_id).await,
+            Err(e) => Err(e),
+        };
 
         match trigger_result {
             Ok(run_id) => {
                 info!("Triggered run {} for schedule {}", run_id, schedule.id);
 
                 // Update schedule status
-                self.update_schedule_after_run(state, schedule, now, next_run)
+                self.update_schedule_after_run(state, schedule, now, next_run, misfired)
                     .await?;
             }
             Err(e) => {
                 error!("Failed to trigger run for schedule {}: {}", schedule.id, e);
 
                 // Still update next_run_at to prevent infinite retries
-                self.update_schedule_next_run(state, schedule, next_run)
+                self.update_schedule_next_run(state, schedule, next_run, misfired)
                     .await?;
             }
         }
 
         Ok(())
+    }
+
+    /// A claimed schedule whose due time is older than the misfire threshold.
+    async fn process_misfire(&self, state: &Arc<ApiState>, schedule: &Schedule) -> anyhow::Result<()> {
+        warn!("Misfired schedule: {} ({})", schedule.id, schedule.name);
+
+        match self.handle_misfire(schedule) {
+            MisfireAction::Ignore => {
+                let next_run = self.calculate_next_run(schedule).await.unwrap_or(None);
+                self.update_schedule_next_run(state, schedule, next_run, 1).await
+            }
+            MisfireAction::FireOnce | MisfireAction::FireAll => {
+                // FireAll catch-up of every missed occurrence is not
+                // implemented; one run is fired.
+                self.process_schedule(state, schedule, 1).await
+            }
+        }
     }
 
     /// Select appropriate region for a schedule
@@ -396,30 +476,17 @@ impl SchedulerService {
         Ok(selected.or_else(|| self.config.default_region.clone()))
     }
 
-    /// Calculate next run time for a schedule using cron parser
+    /// Calculate next run time for a schedule, with the cron fields read as
+    /// wall-clock time in the schedule's timezone. Shares the schedule
+    /// routes' parser so classic 5-field cron (`0 9 * * *`) works here too:
+    /// `cron::Schedule` alone requires a seconds field and rejected it.
     async fn calculate_next_run(
         &self,
         schedule: &Schedule,
     ) -> anyhow::Result<Option<chrono::DateTime<Utc>>> {
-        use chrono_tz::Tz;
-        use std::str::FromStr;
-
-        // Parse the cron expression
-        let cron = cron::Schedule::from_str(&schedule.cron_expr).map_err(|e| {
-            anyhow::anyhow!("Invalid cron expression '{}': {}", schedule.cron_expr, e)
-        })?;
-
-        // Parse timezone, fallback to UTC if invalid
-        let tz: Tz = schedule.timezone.parse().unwrap_or(chrono_tz::UTC);
-
-        // Get next occurrence in target timezone after now
-        let next = cron
-            .upcoming(tz)
-            .next()
-            .map(|dt| dt.with_timezone(&chrono::Utc))
-            .ok_or_else(|| anyhow::anyhow!("Failed to calculate next occurrence"))?;
-
-        Ok(Some(next))
+        crate::routes::schedules::calculate_next_run(&schedule.cron_expr, &schedule.timezone)
+            .map(Some)
+            .ok_or_else(|| anyhow::anyhow!("Invalid cron expression '{}'", schedule.cron_expr))
     }
     /// Trigger a run for a schedule - creates run directly in database
     async fn trigger_run(
@@ -438,7 +505,7 @@ impl SchedulerService {
                 id, name, description, mode, status, step_cursor, total_steps, completed_steps,
                 config, owner_id, tenant_id, runtime_id, runtime_type, schedule_id, region_id,
                 created_at, updated_at, started_at, completed_at, error_message, error_details
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+            ) VALUES ($1, $2, $3, $4::runmode, $5::runstatus, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21::json)
             "#,
         )
         .bind(&run_id)
@@ -505,18 +572,25 @@ impl SchedulerService {
         schedule: &Schedule,
         last_run: chrono::DateTime<Utc>,
         next_run: Option<chrono::DateTime<Utc>>,
+        misfired: i64,
     ) -> anyhow::Result<()> {
+        // Releases the claim; guarded by claimed_by so a poller whose claim
+        // expired and was taken over cannot overwrite the new holder.
         sqlx::query(
             r#"
             UPDATE schedules
-            SET last_run_at = $1, next_run_at = $2, run_count = run_count + 1, updated_at = $3
-            WHERE id = $4
+            SET last_run_at = $1, next_run_at = $2, run_count = COALESCE(run_count, 0) + 1,
+                misfire_count = COALESCE(misfire_count, 0) + $3, updated_at = $4,
+                claimed_by = NULL, claimed_at = NULL
+            WHERE id = $5 AND claimed_by = $6
             "#,
         )
         .bind(last_run)
         .bind(next_run)
+        .bind(misfired)
         .bind(Utc::now())
         .bind(&schedule.id)
+        .bind(&self.instance_id)
         .execute(&state.db)
         .await?;
 
@@ -529,70 +603,20 @@ impl SchedulerService {
         state: &Arc<ApiState>,
         schedule: &Schedule,
         next_run: Option<chrono::DateTime<Utc>>,
+        misfired: i64,
     ) -> anyhow::Result<()> {
-        sqlx::query("UPDATE schedules SET next_run_at = $1, updated_at = $2 WHERE id = $3")
-            .bind(next_run)
-            .bind(Utc::now())
-            .bind(&schedule.id)
-            .execute(&state.db)
-            .await?;
-
-        Ok(())
-    }
-
-    /// Handle misfired schedules
-    async fn handle_misfires(&self, state: &Arc<ApiState>) -> anyhow::Result<()> {
-        let now = Utc::now();
-        let threshold = chrono::Duration::seconds(self.config.misfire_threshold_secs);
-
-        // Find schedules that should have run but didn't
-        let misfired = sqlx::query_as::<_, Schedule>(
-            r#"
-            SELECT 
-                id, name, description, cron_expr, natural_lang, timezone,
-                job_template as "job_template: sqlx::types::Json<serde_json::Value>",
-                enabled, misfire_policy, last_run_at, next_run_at, run_count, misfire_count,
-                owner_id, tenant_id, region_id, created_at, updated_at
-            FROM schedules
-            WHERE enabled = TRUE
-              AND next_run_at IS NOT NULL
-              AND next_run_at < $1
-              AND (last_run_at IS NULL OR last_run_at < next_run_at)
-            "#,
+        sqlx::query(
+            "UPDATE schedules SET next_run_at = $1, misfire_count = COALESCE(misfire_count, 0) + $2, \
+             updated_at = $3, claimed_by = NULL, claimed_at = NULL \
+             WHERE id = $4 AND claimed_by = $5",
         )
-        .bind(now - threshold)
-        .fetch_all(&state.db)
+        .bind(next_run)
+        .bind(misfired)
+        .bind(Utc::now())
+        .bind(&schedule.id)
+        .bind(&self.instance_id)
+        .execute(&state.db)
         .await?;
-
-        for schedule in misfired {
-            warn!("Misfired schedule: {} ({})", schedule.id, schedule.name);
-
-            match self.handle_misfire(&schedule) {
-                MisfireAction::Ignore => {
-                    // Just update next_run_at
-                    if let Ok(next_run) = self.calculate_next_run(&schedule).await {
-                        let _ = self
-                            .update_schedule_next_run(state, &schedule, next_run)
-                            .await;
-                    }
-                }
-                MisfireAction::FireOnce => {
-                    // Trigger one run
-                    let _ = self.process_schedule(state, &schedule).await;
-                }
-                MisfireAction::FireAll => {
-                    // Trigger multiple runs (rare case)
-                    warn!("Firing misfired run for {}", schedule.id);
-                    let _ = self.process_schedule(state, &schedule).await;
-                }
-            }
-
-            // Increment misfire count
-            sqlx::query("UPDATE schedules SET misfire_count = misfire_count + 1 WHERE id = $1")
-                .bind(&schedule.id)
-                .execute(&state.db)
-                .await?;
-        }
 
         Ok(())
     }

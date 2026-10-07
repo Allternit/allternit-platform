@@ -47,6 +47,16 @@
 | **How** | `sudo -u postgres psql -d allternit -f 044_photo_avatar_usage.sql` (idempotent: `IF NOT EXISTS`), then `GRANT ALL ON photo_avatar_usage TO allternit;` if the service role doesn't own new tables. No restart needed. Optional: set `ALLTERNIT_AVATAR_MONTHLY_BUDGET_USD` in `/opt/allternit-cloud-api/.env` (default 4.00) and restart cloud-api. The key is the existing `OPENAI_API_KEY`. |
 | **Verify** | `SELECT COUNT(*) FROM photo_avatar_usage;` works. Spend this month: `SELECT COALESCE(SUM(cost_estimate_usd),0) FROM photo_avatar_usage WHERE period_start = date_trunc('month', now() at time zone 'utc')::date AND status = 'used';` |
 
+## 2d. Apply cloud migration 065 on `mail` (done 2026-10-07, scheduler claims)
+
+| | |
+|---|---|
+| **Status** | **Done 2026-10-07** (applied as postgres before #1367 merged; columns + index verified, `allternit` role can UPDATE). Was needed before the cloud-api build that contains the scheduler-claims PR deploys: its in-process scheduler claims due rows through `schedules.claimed_by/claimed_at`, and every tick errors until those columns exist. |
+| **What** | `065_schedule_claims.sql`: adds nullable `claimed_by text`, `claimed_at timestamptz` to `schedules`, plus the partial index `idx_schedules_due`. Additive, no data rewrite. |
+| **Where** | `mail`; DB `allternit`; file in `cmd/allternit-cloud-api/migrations_pg/` |
+| **How** | `sudo -u postgres psql -d allternit -f 065_schedule_claims.sql` (idempotent: `IF NOT EXISTS`). No restart needed. Only columns and an index, so no new grants. |
+| **Verify** | `\d schedules` shows `claimed_by`, `claimed_at`; after deploy the cloud-api log has no `Error during scheduler tick`. |
+
 ## 3. Retire the live 8013 nginx proxy on `mail`
 
 | | |

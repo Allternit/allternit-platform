@@ -24,14 +24,13 @@ pub struct Schedule {
     pub cron_expr: String,
     pub natural_lang: Option<String>,
     pub timezone: String,
-    #[sqlx(json)]
     pub job_template: sqlx::types::Json<serde_json::Value>,
     pub enabled: bool,
     pub misfire_policy: String,
     pub last_run_at: Option<DateTime<Utc>>,
     pub next_run_at: Option<DateTime<Utc>>,
-    pub run_count: i32,
-    pub misfire_count: i32,
+    pub run_count: i64,
+    pub misfire_count: i64,
     pub owner_id: Option<String>,
     pub tenant_id: Option<String>,
     pub created_at: DateTime<Utc>,
@@ -82,7 +81,7 @@ pub struct ScheduleResponse {
     pub enabled: bool,
     pub next_run_at: Option<DateTime<Utc>>,
     pub last_run_at: Option<DateTime<Utc>>,
-    pub run_count: i32,
+    pub run_count: i64,
 }
 
 #[allow(dead_code)]
