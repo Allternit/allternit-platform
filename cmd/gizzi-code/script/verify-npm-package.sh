@@ -138,7 +138,10 @@ fi
 while IFS= read -r name_ver; do
   name="${name_ver% *}"
   visible=false
-  for attempt in $(seq 1 10); do
+  # Same budget as the main tarball above (~27 min): 2.2.1's darwin-x64
+  # package took longer than the old 10 x 15s to show up, and the run was
+  # marked failed although everything had published.
+  for attempt in $(seq 1 30); do
     if npm view "$name@$VERSION" version >/dev/null 2>&1; then
       visible=true
       break
@@ -147,8 +150,10 @@ while IFS= read -r name_ver; do
       # Windows is optional; don't burn the full retry budget on it.
       break
     fi
-    log "Platform package $name@$VERSION not visible yet (attempt $attempt); sleeping 15s"
-    sleep 15
+    sleep_s=$((5 * (2 ** (attempt - 1))))
+    if [ "$sleep_s" -gt 60 ]; then sleep_s=60; fi
+    log "Platform package $name@$VERSION not visible yet (attempt $attempt); sleeping ${sleep_s}s"
+    sleep "$sleep_s"
   done
   if [ "$visible" != true ]; then
     if [ "$name" = "@allternit/gizzi-code-win32-x64" ]; then
