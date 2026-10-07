@@ -49,12 +49,16 @@ const MAX_TURN_CHARS: usize = 16_000;
 pub struct PlatformDeps {
     pub secret: Arc<dyn RelaySecret>,
     pub turner: Arc<dyn VoiceTurner>,
+    /// Refuse sessions and turns (503) until gizzi answers its health check.
+    /// Off in tests that use a fake turner and have no gizzi.
+    pub wait_for_gizzi: bool,
 }
 
 pub fn platform_agents_router() -> Router<Arc<AppState>> {
     platform_agents_router_with(Arc::new(PlatformDeps {
         secret: crate::relay_auth::process_secret(),
         turner: crate::voice_calls::production_turner(),
+        wait_for_gizzi: true,
     }))
 }
 
@@ -262,7 +266,12 @@ fn starting() -> Response {
     fail(StatusCode::SERVICE_UNAVAILABLE, "the agent runtime is starting")
 }
 
-async fn session_h(State(state): State<Arc<AppState>>, Path(agent_id): Path<String>, auth: RelayedAuth) -> Response {
+async fn session_h(
+    State(state): State<Arc<AppState>>,
+    Extension(deps): Extension<Arc<PlatformDeps>>,
+    Path(agent_id): Path<String>,
+    auth: RelayedAuth,
+) -> Response {
     let name = match state.db.connect().and_then(|c| {
         c.query_row("SELECT name, user_id FROM agents WHERE id = ?1", params![agent_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))).optional()
     }) {
@@ -270,7 +279,7 @@ async fn session_h(State(state): State<Arc<AppState>>, Path(agent_id): Path<Stri
         Ok(_) => return fail(StatusCode::NOT_FOUND, "agent not found"),
         Err(e) => return fail(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     };
-    if !gizzi_ready().await {
+    if deps.wait_for_gizzi && !gizzi_ready().await {
         return starting();
     }
     let body: SessionBody = if auth.body.is_empty() { SessionBody::default() } else { auth.json().unwrap_or_default() };
@@ -380,7 +389,7 @@ async fn turn_h(
     if text.is_empty() || text.chars().count() > MAX_TURN_CHARS {
         return fail(StatusCode::BAD_REQUEST, "text must be 1 to 16000 characters");
     }
-    if !gizzi_ready().await {
+    if deps.wait_for_gizzi && !gizzi_ready().await {
         return starting();
     }
     let (out_tx, out_rx) = mpsc::unbounded_channel::<Value>();
@@ -457,6 +466,7 @@ mod tests {
         let deps = Arc::new(PlatformDeps {
             secret: Arc::new(StaticRelaySecret { token: TOKEN.into(), owner: OWNER.into() }),
             turner: Arc::new(EchoTurner),
+            wait_for_gizzi: false,
         });
         (platform_agents_router_with(deps).with_state(state.clone()), state)
     }
