@@ -40,6 +40,11 @@ One writer (Gate) · state is derived (rebuildable projections) · registry reco
 ## Docs
 Stream F1 owns `surfaces/docs/` (Mintlify) in the platform repo. Other streams: put every user-facing or dev-facing fact your change needs documented into your notes under "Docs needed". F1 picks those up. If you're a platform stream and your change has a natural doc page already in your territory, update it.
 
+## Testing the pane engine (factory/pane)
+- Run its tests with **cargo-nextest**: `cargo nextest run -p allternit-factory-pane`. Upstream (Herdr) runs one process per test, and many pane tests change process-wide environment variables (`XDG_*`, `HERDR_*`). Under plain `cargo test` they run as threads in one process and race, so a few different tests fail each run (detect::manifest, session stop timeouts, autodetect). Under nextest the whole suite passes (3059/3059 on 2026-10-06).
+- Install: `curl -LsSf https://get.nexte.st/latest/mac | tar zxf - -C ~/.cargo/bin` (Linux: `/latest/linux`).
+- `cargo test -p allternit-factory-pane` is fine for a single test or one module, not for a pass/fail verdict on the whole crate.
+
 ## Reporting (how the orchestrator knows you're done)
 - Keep `docs/FACTORY_<STREAM>_NOTES.md` in your worktree, **untracked: never commit it**. Write: what you did, files changed, how you verified it (exact commands + results), "Outside territory", "Contract change requested", "Docs needed", and anything left undone with the reason.
 - Last step, after the PR is open: write `docs/FACTORY_<STREAM>.sentinel` containing `status: done` and `pr: <url>`, or `status: blocked` and `reason: <one line>`.
