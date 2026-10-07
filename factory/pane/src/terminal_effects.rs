@@ -13,7 +13,8 @@ pub(crate) fn write_terminal_bells<W: Write>(writer: &mut W, count: u16) -> io::
 }
 
 pub(crate) fn write_window_title<W: Write>(writer: &mut W, title: Option<&str>) -> io::Result<()> {
-    let title = title.unwrap_or("ao");
+    let default_title = crate::factory_host::program_name();
+    let title = title.unwrap_or(&default_title);
     let safe_title = title
         .chars()
         .filter(|ch| !matches!(*ch, '\u{1b}' | '\u{7}' | '\u{9c}'))
@@ -36,13 +37,13 @@ mod tests {
     }
 
     #[test]
-    fn window_title_strips_terminators_and_defaults_to_herdr() {
+    fn window_title_strips_terminators_and_defaults_to_program_name() {
         let mut output = Vec::new();
-        write_window_title(&mut output, Some("ao\x1b api\u{7}\u{9c}")).unwrap();
-        assert_eq!(output, b"\x1b]0;allternit-factory pane api\x07");
+        write_window_title(&mut output, Some("build\x1b api\u{7}\u{9c}")).unwrap();
+        assert_eq!(output, b"\x1b]0;build api\x07");
 
         output.clear();
         write_window_title(&mut output, None).unwrap();
-        assert_eq!(output, b"\x1b]0;ao\x07");
+        assert_eq!(output, format!("\x1b]0;{}\x07", crate::factory_host::program_name()).into_bytes());
     }
 }
