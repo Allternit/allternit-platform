@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-use super::{ClipboardImage, ForegroundJob, Signal};
+use super::{ForegroundJob, Signal};
 
 #[cfg(unix)]
 pub(crate) use super::unix_common::set_default_plugin_pane_pwd;
@@ -181,11 +181,6 @@ pub fn open_url(_url: &str) -> std::io::Result<Option<std::process::Child>> {
         std::io::ErrorKind::Unsupported,
         "opening URLs is not supported on this platform",
     ))
-}
-
-/// Unsupported platform stub.
-pub fn read_clipboard_image() -> Option<ClipboardImage> {
-    None
 }
 
 /// Unsupported platform stub.

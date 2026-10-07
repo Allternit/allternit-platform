@@ -397,6 +397,7 @@ pub(crate) enum InstallOutcome {
     Installed,
 }
 
+#[allow(dead_code)] // tool/label are kept for the report's Debug output
 #[derive(Debug)]
 pub(crate) struct InstallReport {
     pub(crate) tool: String,

@@ -7,6 +7,7 @@ use serde_json::json;
 use allternit_factory_engine::registry::Registry;
 use allternit_factory_engine::send::{self as send_mod, ApiLink, SendCtx, SendRequest};
 use allternit_factory_engine::view;
+use allternit_factory_engine::agents::team as team_mod;
 use allternit_factory_engine::agents::team_apply::pane_slug_for_address;
 use allternit_factory_engine::backend;
 use allternit_factory_engine::registry::{self as registry_mod, Entry};
@@ -264,6 +265,124 @@ pub fn recover(ctx: &Ctx, slug: Option<String>, apply: bool, lead: Option<String
         Code::Refused.exit()
     } else {
         0
+    }
+}
+
+/// `agents model <bot@team> <model> [--restart] [--clear] [--dry-run]`: set a
+/// Terminal bot's model. It is recorded in the team's `overrides.json` and
+/// applies on the bot's next start; `--restart` also relaunches a running
+/// bot now with its harness's resume (the conversation continues).
+pub fn model(ctx: &Ctx, args: &[String]) -> u8 {
+    let (mut restart, mut clear, mut dry_run) = (false, false, false);
+    let mut pos: Vec<&str> = vec![];
+    for a in args {
+        match a.as_str() {
+            "--restart" => restart = true,
+            "--clear" => clear = true,
+            "--dry-run" => dry_run = true,
+            "--json" => {}
+            _ if a.starts_with("--") => return fail(ctx, Code::Usage, &format!("unknown option {a}"), None),
+            _ => pos.push(a),
+        }
+    }
+    let usage = "allternit-factory agents model <bot@team> <model> [--restart] [--dry-run]  (or <bot@team> --clear)";
+    let (address, model) = match (pos.as_slice(), clear) {
+        ([a], true) => (*a, None),
+        ([a, m], false) => (*a, Some(*m)),
+        _ => return fail(ctx, Code::Usage, "agents model needs <bot@team> and a model (or --clear)", Some(usage)),
+    };
+    let Some((bot, team)) = address.split_once('@') else {
+        return fail(
+            ctx,
+            Code::Usage,
+            &format!("{address} is not a team bot address (bot@team)"),
+            Some("Hosted and vendor bots keep their model on your account: use `gizzi agents bot` or the app."),
+        );
+    };
+    let root = ctx.root_dir();
+    let loaded = match team_mod::load_team(&root, team) {
+        Ok(t) => t,
+        Err(e) => {
+            let code = if matches!(e, team_mod::TeamError::NotFound(_)) { Code::NotFound } else { Code::Usage };
+            return fail(ctx, code, &e.to_string(), None);
+        }
+    };
+    let Some(row) = loaded.file.bots.iter().find(|b| b.bot == bot) else {
+        return fail(ctx, Code::NotFound, &format!("{bot} is not on team {team}"), Some("List the team's bots with `gizzi agents ps`."));
+    };
+    let before = row.model.clone();
+    let session = registry_mod::session_of(&pane_slug_for_address(address));
+    let live = backend::backend().ok().and_then(|b| b.find(&session).ok().flatten()).is_some();
+    let will_restart = restart && live;
+    if dry_run {
+        let plan = json!({ "bot": address, "from": before, "to": model, "restart": will_restart, "session": session });
+        if ctx.json {
+            return ok_json(json!({ "dryRun": true, "plan": plan }));
+        }
+        println!(
+            "would set {address} model {} -> {}{}",
+            before.as_deref().unwrap_or("(harness default)"),
+            model.unwrap_or("(team.yaml)"),
+            if will_restart { ", then restart it with resume" } else if live { " (applies on its next start)" } else { "" }
+        );
+        return 0;
+    }
+    if let Err(e) = team_mod::set_bot_model(&root, team, bot, model) {
+        return fail(ctx, Code::Internal, &e.to_string(), None);
+    }
+    let mut restarted = false;
+    if will_restart {
+        let rt = match runtime(ctx) {
+            Ok(rt) => rt,
+            Err(code) => return code,
+        };
+        // The relaunch reuses the recorded argv, so swap its --model first.
+        let registry = Registry::open_default();
+        let new_model = model.map(str::to_string);
+        let _ = registry.update(|f| {
+            if let Some(e) = f.sessions.get_mut(&session) {
+                if let Some(argv) = e.argv.as_mut() {
+                    set_model_flag(argv, new_model.as_deref());
+                }
+            }
+        });
+        let spawner = match Spawner::new(root.clone()) {
+            Ok(s) => s,
+            Err(e) => return engine_err(ctx, &e),
+        };
+        if let Err(e) = rt.block_on(spawner.kill(registry_mod::slug_of(&session), false)) {
+            return engine_err(ctx, &e);
+        }
+        let caller = caller_identity(None);
+        let slug = registry_mod::slug_of(&session).to_string();
+        match rt.block_on(spawner.recover(RecoverOptions { only: Some(&slug), apply: true, caller: &caller, as_human: true })) {
+            Ok(steps) => {
+                if let Some(f) = steps.iter().find(|s| s.action == "failed" || s.action == "refuse") {
+                    return fail(ctx, Code::Refused, &format!("model saved, but restarting {session} failed: {}", f.detail), Some("It applies on the next start; or run `gizzi agents recover --apply`."));
+                }
+                restarted = steps.iter().any(|s| s.action == "recovered")
+            }
+            Err(e) => return engine_err(ctx, &e),
+        }
+    }
+    let applies = if restarted { "now" } else { "next start" };
+    if ctx.json {
+        return ok_json(json!({ "bot": address, "from": before, "to": model, "applies": applies, "restarted": restarted }));
+    }
+    println!("{address}: model {} (applies {applies})", model.unwrap_or("from team.yaml"));
+    0
+}
+
+/// Set (or drop) `--model <m>` in a harness argv.
+fn set_model_flag(argv: &mut Vec<String>, model: Option<&str>) {
+    if let Some(i) = argv.iter().position(|a| a == "--model") {
+        argv.drain(i..(i + 2).min(argv.len()));
+    }
+    argv.retain(|a| !a.starts_with("--model="));
+    if let Some(m) = model {
+        let at = if argv.is_empty() { 0 } else { 1 };
+        argv.insert(at, m.to_string());
+        argv.insert(at, "--model".to_string());
     }
 }
 

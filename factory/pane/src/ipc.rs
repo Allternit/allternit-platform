@@ -133,6 +133,7 @@ pub(crate) fn set_local_stream_polling(stream: &mut LocalStream, enabled: bool) 
 
 /// Binds a listener for private terminal traffic. Unix callers restrict the
 /// socket file after binding; Windows must set the named-pipe DACL at creation.
+#[cfg(test)]
 pub(crate) fn bind_private_local_listener(path: &Path) -> io::Result<LocalListener> {
     #[cfg(unix)]
     {

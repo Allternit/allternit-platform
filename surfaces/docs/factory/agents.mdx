@@ -71,6 +71,19 @@ gizzi agents up product-build --preset codex-heavy --dry-run
 
 `--dry-run` prints the plan: one step per bot (`spawn`, `bind`, `skip` or `stop`), with the harness, machine and reason. Run it again without `--dry-run` to do exactly that.
 
+### Changing a bot's model
+
+`gizzi agents model <bot@team> <model>` changes a Terminal bot's model. The change is saved in `overrides.json` next to `team.yaml`, so your hand-written `team.yaml` and its comments are never rewritten. It applies the next time the bot starts. A running bot keeps its current model until then.
+
+```bash
+gizzi agents model builder@product opus --dry-run   # what would change
+gizzi agents model builder@product opus             # applies on the next start
+gizzi agents model builder@product opus --restart   # relaunch now; the conversation resumes
+gizzi agents model builder@product --clear          # back to team.yaml's model
+```
+
+`--restart` stops the bot's pane and relaunches it with its harness's resume, the same way `gizzi agents recover` does. Hosted and vendor bots keep their model on your account; change it in the app or with `gizzi agents bot`.
+
 ### `--on <computer>`
 
 ```bash

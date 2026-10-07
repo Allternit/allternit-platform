@@ -979,38 +979,6 @@ impl ClientShellState {
             .and_then(|snapshot| snapshot.focused_pane_id.clone())
     }
 
-    pub(crate) fn clipboard_image_target(
-        &self,
-    ) -> Option<crate::protocol::ClientClipboardImageTarget> {
-        if matches!(
-            self.overlay,
-            Some(
-                ClientShellOverlay::Onboarding
-                    | ClientShellOverlay::ProductAnnouncement(_)
-                    | ClientShellOverlay::ReleaseNotes(_)
-            )
-        ) || self
-            .copy_mode
-            .as_ref()
-            .is_some_and(|copy_mode| copy_mode.search_prompt.is_some())
-        {
-            return None;
-        }
-        if let Some(terminal_id) = self.popup_input_target().and_then(|target| match target {
-            ClientInputTarget::Popup(terminal_id) => Some(terminal_id),
-            ClientInputTarget::Pane(_) => None,
-        }) {
-            return Some(crate::protocol::ClientClipboardImageTarget::Popup(
-                terminal_id,
-            ));
-        }
-        if self.popup_pending || self.overlay.is_some() || self.mode != ClientShellMode::Terminal {
-            return None;
-        }
-        self.focused_pane_id()
-            .map(crate::protocol::ClientClipboardImageTarget::Pane)
-    }
-
     fn popup_input_target(&self) -> Option<ClientInputTarget> {
         self.popup_terminal_id
             .as_ref()

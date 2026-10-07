@@ -214,41 +214,6 @@ fn check_and_update_local() -> Result<ManifestUpdateOutput, String> {
     })
 }
 
-fn process_agent_manifest(
-    agent: Agent,
-    content: &str,
-    _check_time: u64,
-) -> Result<Option<ManifestUpdateCommit>, String> {
-    let parsed = super::manifest::parse_remote_manifest_for_agent(agent, content)?;
-    if let Some(current) = cached_remote_version(agent) {
-        match parsed.version.cmp(&current) {
-            Ordering::Less => {
-                return Err(format!(
-                    "remote version {} is older than cached {current}",
-                    parsed.version
-                ))
-            }
-            Ordering::Equal => {
-                let committed = fs::read_to_string(remote_manifest_path(agent)).unwrap_or_default();
-                if committed != content {
-                    return Err(format!(
-                        "remote version {} changed content without a version bump",
-                        parsed.version
-                    ));
-                }
-                return Ok(None);
-            }
-            Ordering::Greater => {}
-        }
-    }
-
-    commit_remote_manifest(agent, content)?;
-    Ok(Some(ManifestUpdateCommit {
-        agent,
-        version: parsed.version,
-    }))
-}
-
 pub(crate) fn load_status() -> ManifestUpdateStatus {
     let path = status_path();
     let Ok(content) = fs::read_to_string(&path) else {
@@ -288,15 +253,6 @@ pub(crate) fn cached_remote_version(agent: Agent) -> Option<ManifestVersion> {
     super::manifest::parse_remote_manifest_for_agent(agent, &content)
         .ok()
         .map(|parsed| parsed.version)
-}
-
-fn commit_remote_manifest(agent: Agent, content: &str) -> Result<(), String> {
-    let path = remote_manifest_path(agent);
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("remote manifest path {} has no parent", path.display()))?;
-    fs::create_dir_all(parent).map_err(|err| err.to_string())?;
-    atomic_write(&path, content.as_bytes())
 }
 
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
@@ -378,54 +334,6 @@ fn now_nanos() -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn remote_manifest(version: &str, contains: &str) -> String {
-        remote_manifest_for("codex", version, contains)
-    }
-
-    fn remote_manifest_for(agent: &str, version: &str, contains: &str) -> String {
-        format!(
-            r#"
-id = "{agent}"
-version = "{version}"
-min_engine_version = 1
-updated_at = "2026-06-10T12:00:00Z"
-
-[[rules]]
-id = "idle"
-state = "idle"
-contains = ["{contains}"]
-"#
-        )
-    }
-
-    fn with_state_dir<T>(name: &str, f: impl FnOnce() -> T) -> T {
-        let _guard = crate::config::test_config_env_lock().lock().unwrap_or_else(|e| e.into_inner());
-        let old_config = std::env::var_os("XDG_CONFIG_HOME");
-        let old_state = std::env::var_os("XDG_STATE_HOME");
-        let dir = std::env::temp_dir().join(format!(
-            "herdr-manifest-update-{name}-{}",
-            std::process::id()
-        ));
-        let config_dir = dir.join("config");
-        let state_dir = dir.join("state");
-        let _ = fs::remove_dir_all(&dir);
-        std::env::set_var("XDG_CONFIG_HOME", &config_dir);
-        std::env::set_var("XDG_STATE_HOME", &state_dir);
-        crate::detect::manifest::reload_manifests();
-        let result = f();
-        match old_config {
-            Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
-            None => std::env::remove_var("XDG_CONFIG_HOME"),
-        }
-        match old_state {
-            Some(value) => std::env::set_var("XDG_STATE_HOME", value),
-            None => std::env::remove_var("XDG_STATE_HOME"),
-        }
-        crate::detect::manifest::reload_manifests();
-        let _ = fs::remove_dir_all(&dir);
-        result
-    }
-
     #[test]
     fn manifest_version_compares_dotted_numeric_segments() {
         assert!(
@@ -444,84 +352,4 @@ contains = ["{contains}"]
         assert!(ManifestVersion::parse("2026.999999999999999999999999999999").is_err());
     }
 
-    #[test]
-    fn process_agent_manifest_commits_newer_manifest_atomically() {
-        with_state_dir("commit-newer", || {
-            let content = remote_manifest("9999.01.01.1", "ready");
-            let commit = process_agent_manifest(Agent::Codex, &content, 1)
-                .unwrap()
-                .unwrap();
-
-            assert_eq!(commit.agent, Agent::Codex);
-            assert_eq!(
-                commit.version,
-                ManifestVersion::parse("9999.01.01.1").unwrap()
-            );
-            assert_eq!(
-                fs::read_to_string(remote_manifest_path(Agent::Codex)).unwrap(),
-                content
-            );
-        });
-    }
-
-
-
-
-
-    #[test]
-    fn process_agent_manifest_rejects_downgrade_and_keeps_cached_manifest() {
-        with_state_dir("reject-downgrade", || {
-            let current = remote_manifest("9999.01.01.1", "current");
-            process_agent_manifest(Agent::Codex, &current, 1).unwrap();
-
-            let older = remote_manifest("9999.01.01.0", "older");
-            assert!(process_agent_manifest(Agent::Codex, &older, 2).is_err());
-            assert_eq!(
-                fs::read_to_string(remote_manifest_path(Agent::Codex)).unwrap(),
-                current
-            );
-        });
-    }
-
-    #[test]
-    fn process_agent_manifest_rejects_equal_version_content_change() {
-        with_state_dir("reject-equal-change", || {
-            let current = remote_manifest("9999.01.01.1", "current");
-            process_agent_manifest(Agent::Codex, &current, 1).unwrap();
-
-            let changed = remote_manifest("9999.01.01.1", "changed");
-            assert!(process_agent_manifest(Agent::Codex, &changed, 2).is_err());
-            assert_eq!(
-                fs::read_to_string(remote_manifest_path(Agent::Codex)).unwrap(),
-                current
-            );
-        });
-    }
-
-    #[test]
-    fn process_agent_manifest_skips_same_version_same_content() {
-        with_state_dir("skip-same", || {
-            let current = remote_manifest("9999.01.01.1", "current");
-            process_agent_manifest(Agent::Codex, &current, 1).unwrap();
-
-            let result = process_agent_manifest(Agent::Codex, &current, 2).unwrap();
-            assert!(result.is_none());
-        });
-    }
-
-
-
-    #[test]
-    fn check_and_update_verifies_local_cache_without_network() {
-        with_state_dir("offline-check", || {
-            let content = remote_manifest("9999.01.01.1", "offline-ready");
-            process_agent_manifest(Agent::Codex, &content, 1).unwrap();
-
-            let output = check_and_update().unwrap();
-            assert!(output.updated.is_empty());
-            let codex = output.status.agent_status(Agent::Codex).unwrap();
-            assert_eq!(codex.last_result, "current");
-            assert_eq!(codex.cached_version.as_deref(), Some("9999.01.01.1"));
-        });
-    }
 }

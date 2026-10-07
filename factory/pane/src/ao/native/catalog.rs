@@ -1102,7 +1102,7 @@ fn list_amp(root: &Path) -> Vec<NativeSession> {
         let mut title = None;
         let mut created_at = None;
         let mut last_prompt = None;
-        let mut last_prompt_at = None;
+        let last_prompt_at = None;
         if let Ok(parsed) =
             serde_json::from_slice::<serde_json::Value>(&fs::read(&file).unwrap_or_default())
         {

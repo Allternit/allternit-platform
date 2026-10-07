@@ -7,6 +7,3 @@ pub(crate) fn command(program: impl AsRef<OsStr>) -> Command {
     command
 }
 
-pub(crate) fn curl_command() -> Command {
-    command("curl")
-}
