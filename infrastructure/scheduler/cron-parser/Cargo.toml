@@ -19,6 +19,7 @@ thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 cron = { workspace = true }
+chrono-tz = "0.9"
 
 [dev-dependencies]
 tokio-test = { workspace = true }

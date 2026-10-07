@@ -330,6 +330,57 @@ async fn test_schedule_create_trigger() {
     assert!(updated_schedule.last_run_at.is_some());
 }
 
+/// Two pollers on one database (two API replicas, or the API plus the
+/// standalone daemon) must fire a due schedule once: the tick claims rows
+/// with `FOR UPDATE SKIP LOCKED` (migration 018's claimed_by/claimed_at).
+#[tokio::test]
+async fn test_scheduler_two_pollers_fire_due_schedule_once() {
+    use allternit_cloud_api::services::{SchedulerConfig, SchedulerService};
+
+    let app = TestApp::new().await;
+    let schedule = app.create_schedule("Claimed", "0 9 * * *").await;
+    sqlx::query(
+        "UPDATE schedules SET next_run_at = now() - interval '5 seconds', timezone = 'America/New_York' WHERE id = $1",
+    )
+    .bind(&schedule.id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+
+    let config = SchedulerConfig {
+        multi_region_enabled: false,
+        ..SchedulerConfig::default()
+    };
+    let a = SchedulerService::new(config.clone());
+    let b = SchedulerService::new(config);
+    let (ra, rb) = tokio::join!(a.run_once(&app.state), b.run_once(&app.state));
+    ra.unwrap();
+    rb.unwrap();
+    // Nothing is due any more.
+    let (ra, rb) = tokio::join!(a.run_once(&app.state), b.run_once(&app.state));
+    ra.unwrap();
+    rb.unwrap();
+
+    let runs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM runs WHERE schedule_id = $1")
+        .bind(&schedule.id)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(runs, 1, "a due schedule fires exactly once across two pollers");
+
+    let (run_count, claimed_by, next_hour_utc): (i64, Option<String>, f64) = sqlx::query_as(
+        "SELECT run_count, claimed_by, EXTRACT(HOUR FROM next_run_at AT TIME ZONE 'UTC')::float8 FROM schedules WHERE id = $1",
+    )
+    .bind(&schedule.id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(run_count, 1);
+    assert!(claimed_by.is_none(), "claim released");
+    // 09:00 America/New_York is 13:00 UTC (EDT) or 14:00 UTC (EST).
+    assert!(next_hour_utc == 13.0 || next_hour_utc == 14.0, "next run at {next_hour_utc}h UTC");
+}
+
 #[tokio::test]
 async fn test_schedule_list() {
     let app = TestApp::new().await;

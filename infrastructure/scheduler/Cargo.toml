@@ -9,9 +9,8 @@ name = "allternit-scheduler"
 path = "src/main.rs"
 
 [dependencies]
-# Allternit internal
+# Allternit internal (the schedules table lives in the cloud-api Postgres DB; no Rust dependency on it)
 allternit-cron-parser = { workspace = true }
-allternit-cloud-api = { workspace = true }
 
 # Async runtime
 tokio = { workspace = true, features = ["full"] }
@@ -20,7 +19,7 @@ futures = { workspace = true }
 async-trait = { workspace = true }
 
 # Database
-sqlx = { workspace = true, features = ["postgres"] }
+sqlx = { workspace = true, features = ["postgres", "chrono", "json", "uuid"] }
 
 # Serialization
 serde = { workspace = true }

@@ -102,9 +102,12 @@ fn is_valid_cron(input: &str) -> bool {
     true
 }
 
+/// A pattern's converter from regex captures to a parsed schedule.
+type PatternFn = Box<dyn Fn(&regex::Captures) -> Result<Option<ParsedSchedule>, ParseError> + Send + Sync>;
+
 /// Get all parsing patterns
-fn get_patterns() -> &'static Vec<(String, Regex, Box<dyn Fn(&regex::Captures) -> Result<Option<ParsedSchedule>, ParseError> + Send + Sync>)> {
-    static PATTERNS: OnceLock<Vec<(String, Regex, Box<dyn Fn(&regex::Captures) -> Result<Option<ParsedSchedule>, ParseError> + Send + Sync>)>> = OnceLock::new();
+fn get_patterns() -> &'static Vec<(String, Regex, PatternFn)> {
+    static PATTERNS: OnceLock<Vec<(String, Regex, PatternFn)>> = OnceLock::new();
     
     PATTERNS.get_or_init(|| {
         vec![
@@ -440,6 +443,42 @@ pub fn next_occurrence(cron_expr: &str, after: Option<DateTime<Utc>>) -> Option<
     schedule.after(&after).next()
 }
 
+/// Get the next occurrence of a cron expression evaluated in an IANA timezone.
+///
+/// The cron fields are wall-clock time in `timezone` (e.g. `0 9 * * *` in
+/// `America/New_York` is 09:00 New York time, which is 13:00 UTC under EDT and
+/// 14:00 UTC under EST). The result is returned in UTC.
+///
+/// Errors when the timezone is not a valid IANA name or the expression does
+/// not parse; callers decide whether to fall back to UTC.
+pub fn next_occurrence_in_tz(
+    cron_expr: &str,
+    timezone: &str,
+    after: DateTime<Utc>,
+) -> Result<Option<DateTime<Utc>>, ParseError> {
+    use cron::Schedule;
+    use std::str::FromStr;
+
+    let tz: chrono_tz::Tz = timezone
+        .trim()
+        .parse()
+        .map_err(|_| ParseError::InvalidFormat(format!("unknown timezone '{timezone}'")))?;
+
+    let trimmed = cron_expr.trim();
+    let expression = if trimmed.split_whitespace().count() == 5 {
+        format!("0 {}", trimmed)
+    } else {
+        trimmed.to_string()
+    };
+    let schedule = Schedule::from_str(&expression)
+        .map_err(|e| ParseError::InvalidFormat(format!("invalid cron '{cron_expr}': {e}")))?;
+
+    Ok(schedule
+        .after(&after.with_timezone(&tz))
+        .next()
+        .map(|dt| dt.with_timezone(&Utc)))
+}
+
 /// Validate a cron expression
 pub fn validate(cron_expr: &str) -> Result<(), ParseError> {
     let parts: Vec<&str> = cron_expr.split_whitespace().collect();
@@ -530,6 +569,36 @@ mod tests {
         assert!(next > after);
         assert_eq!(next.hour(), 9);
         assert_eq!(next.minute(), 0);
+    }
+
+    #[test]
+    fn next_occurrence_in_tz_tracks_dst() {
+        use chrono::TimeZone;
+        // 09:00 New York is 13:00 UTC under EDT (summer)...
+        let summer = Utc.with_ymd_and_hms(2026, 7, 1, 0, 0, 0).unwrap();
+        let next = next_occurrence_in_tz("0 9 * * *", "America/New_York", summer).unwrap().unwrap();
+        assert_eq!(next, Utc.with_ymd_and_hms(2026, 7, 1, 13, 0, 0).unwrap());
+        // ...and 14:00 UTC under EST (winter).
+        let winter = Utc.with_ymd_and_hms(2026, 12, 1, 0, 0, 0).unwrap();
+        let next = next_occurrence_in_tz("0 9 * * *", "America/New_York", winter).unwrap().unwrap();
+        assert_eq!(next, Utc.with_ymd_and_hms(2026, 12, 1, 14, 0, 0).unwrap());
+        // Across the 2026-11-01 fall-back boundary: Oct 31 is EDT, Nov 2 is EST.
+        let before = Utc.with_ymd_and_hms(2026, 10, 31, 12, 0, 0).unwrap();
+        let first = next_occurrence_in_tz("0 9 * * *", "America/New_York", before).unwrap().unwrap();
+        assert_eq!(first, Utc.with_ymd_and_hms(2026, 10, 31, 13, 0, 0).unwrap());
+        let later = next_occurrence_in_tz("0 9 * * *", "America/New_York", first).unwrap().unwrap();
+        let later = next_occurrence_in_tz("0 9 * * *", "America/New_York", later).unwrap().unwrap();
+        assert_eq!(later, Utc.with_ymd_and_hms(2026, 11, 2, 14, 0, 0).unwrap());
+    }
+
+    #[test]
+    fn next_occurrence_in_tz_utc_and_errors() {
+        use chrono::TimeZone;
+        let at = Utc.with_ymd_and_hms(2026, 7, 1, 0, 0, 0).unwrap();
+        let next = next_occurrence_in_tz("0 9 * * *", "UTC", at).unwrap().unwrap();
+        assert_eq!(next, Utc.with_ymd_and_hms(2026, 7, 1, 9, 0, 0).unwrap());
+        assert!(next_occurrence_in_tz("0 9 * * *", "Mars/Olympus", at).is_err());
+        assert!(next_occurrence_in_tz("not a cron", "UTC", at).is_err());
     }
 
     #[test]
