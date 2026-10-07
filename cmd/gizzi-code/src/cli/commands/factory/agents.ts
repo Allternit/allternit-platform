@@ -69,7 +69,17 @@ export const AgentsCommand = cmd({
           },
         }),
       )
-      .command(engineVerb(P, { command: "handoff <bot>", describe: "hand a bot's seat to a fresh session", mutation: true }))
+      .command(
+        engineVerb(P, {
+          command: "handoff <bot>",
+          describe: "hand a Terminal bot's seat (bot@team) to a fresh session, with a note on where it left off",
+          mutation: true,
+          options: {
+            note: { type: "string", describe: "a note for the fresh session" },
+            lines: { type: "number", describe: "how many lines of the old pane to keep (default 200)" },
+          },
+        }),
+      )
       .command(
         engineGroup(
           P,

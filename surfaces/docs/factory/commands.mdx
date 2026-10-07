@@ -43,7 +43,7 @@ The crew. See [Agents](/factory/agents).
 | `gizzi agents recover [<bot>] [--apply] [--lead <id>\|--as-human]` | `rig seat handover`, `rig restore` | Show (or, with `--apply`, do) what to restart after a crash: dead, unfinished sessions you own, relaunched with the harness's own resume when it recorded a session |
 | `gizzi agents snapshot` / `restore` | `rig snapshot` / `restore` | Save or restore a whole team |
 | `gizzi agents model <bot@team> <model>\|--clear [--restart]` | `rig seat set-model` | Change a Terminal bot's model (next start, or `--restart` now) |
-| `gizzi agents handoff <bot>` | `rig seat handover` | Hand a bot's thread to a fresh session |
+| `gizzi agents handoff <bot@team> [--note]` | `rig seat handover` | Hand a Terminal bot's seat to a fresh session, with a handoff note |
 | `gizzi agents harness list\|sync` | (runtimes) | List or rescan the agent CLIs on a machine |
 | `gizzi agents pack` / `install <path\|github-url>` | `rig bundle create` / `install` | Package a team, or install one |
 | `gizzi agents templates` | (agent specs) | Browse bot templates |
