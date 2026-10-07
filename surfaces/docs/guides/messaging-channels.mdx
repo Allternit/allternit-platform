@@ -29,6 +29,19 @@ Each channel has a short wizard: intro, one action (usually the platform's own a
 
 After the app joins your server, the wizard lists the server's text channels, all ticked. Untick the ones the bots should stay out of and save. Messages in unticked channels are dropped by Allternit's cloud and never reach your computer; threads follow their parent channel, and direct messages and slash commands always work. Keeping every channel ticked means no limit, so channels you add later work too. To change the list, run **Connect Discord** again.
 
+## Who can message your bots
+
+Each connection decides who can make a bot act by messaging it. You set it in **Customize → Connectors → Messaging**, under each connection, and for a bot's email address in the email wizard's **Who can email this bot?** step.
+
+- **Only me and people I add** (the default for anything you connect): you, plus the people you list. On Slack and phone numbers you count as yourself once you've verified the account for Factory approvals. On Telegram, Discord, WhatsApp and Teams, add your own ID to the list. For bot email, your account email counts as you.
+- **Anyone**: everybody who finds the bot. Choose it on purpose, for a public support bot for example.
+
+Someone who isn't allowed gets one reply saying the bot only answers people its owner has allowed, with their ID in it. To find your own ID, message your bot once from that account and copy it from the reply. Refused email gets no reply, and a refused phone call doesn't connect.
+
+Connections made before this setting existed are set to **Anyone** so your bots keep answering. They show a warning until you choose **Only me and people I add**.
+
+This stops strangers who find your bot from using it. It isn't proof of who someone is: an email's sender address can be forged, so keep **Approve** on for email replies.
+
 ## Switch it on per bot
 
 Open a bot, then **Agent Gateway → Messaging**. Each connection has a switch.

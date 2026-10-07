@@ -1062,6 +1062,25 @@ async fn receive_inbound_email(
         return (StatusCode::ACCEPTED, Json(json!({"accepted": true, "delivered": false, "factoryApproval": true}))).into_response();
     }
 
+    // Who may email the bot (audit S16): a sender the email channel's policy
+    // doesn't allow is acknowledged, not delivered, and audited. No reply is
+    // sent, so a forged From can't turn the bot into a bounce relay.
+    {
+        let conn = match state.db.connect() {
+            Ok(conn) => conn,
+            Err(e) => return internal(e).into_response(),
+        };
+        let sender = crate::channel_auth::email_address(from);
+        let allowed = crate::channel_auth::email_rule(&conn, &agent_id).map(|(rule, _)| rule.allows(Some(&sender))).unwrap_or(false);
+        if !allowed {
+            crate::channel_auth::record_rejection(
+                &conn,
+                &crate::channel_auth::Rejection { channel: "email", binding: &agent_id, bot_id: Some(&agent_id), owner: Some(&relayed.owner), sender: Some(&sender) },
+            );
+            return (StatusCode::ACCEPTED, Json(json!({"accepted": true, "delivered": false, "senderNotAllowed": true}))).into_response();
+        }
+    }
+
     // Persist the webhook payload (raw body and threading headers), then
     // bridge into Rails Mail so the external email appears as a typed message
     // in the agent's inbound email thread.

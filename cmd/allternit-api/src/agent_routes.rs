@@ -816,6 +816,25 @@ fn persist_agent_identity_channels(
             }),
         ],
     )?;
+    // Who may email the bot (audit S16). Absent fields keep their value; an
+    // unknown policy or an invalid list is ignored rather than stored.
+    if let Some(email) = email {
+        let policy = as_str(email.get("senderPolicy"));
+        let list: Option<Vec<String>> = email
+            .get("allowedSenders")
+            .and_then(|a| a.as_array())
+            .map(|arr| arr.iter().filter_map(|x| x.as_str().map(str::to_string)).collect());
+        if policy.is_some() || list.is_some() {
+            if let Ok((policy, allowed)) = crate::channel_auth::validate(policy.as_deref(), list.as_deref()) {
+                conn.execute(
+                    "UPDATE agent_identity_channels SET email_sender_policy = COALESCE(?1, email_sender_policy),
+                         email_allowed_senders = COALESCE(?2, email_allowed_senders) WHERE agent_id = ?3",
+                    params![policy, allowed, agent_id],
+                )?;
+                crate::channel_auth::record_change(conn, "email", agent_id, user_id, policy.as_deref(), allowed.as_deref());
+            }
+        }
+    }
     Ok(())
 }
 

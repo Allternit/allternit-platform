@@ -39,6 +39,67 @@ pub fn allternit_bus_router() -> Router<Arc<AppState>> {
         )
         // Identity channels (mailflare-aware provision_email lives here)
         .route("/agents/:agent_id/identity/email", post(provision_email).delete(release_email))
+        .route("/agents/:agent_id/identity/email/senders", get(get_email_senders).put(put_email_senders))
+}
+
+/// `GET /agents/:id/identity/email/senders`: who may email the bot (audit S16).
+/// `ownerAddress` is the owner's account email, which is always allowed under
+/// the "owner" policy.
+async fn get_email_senders(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(agent_id): Path<String>,
+) -> Result<Response, ApiError> {
+    require_agent_owner(&state, &user, &agent_id)?;
+    let conn = state.db.connect().map_err(internal)?;
+    let row: Option<(String, String)> = conn
+        .query_row(
+            "SELECT email_sender_policy, email_allowed_senders FROM agent_identity_channels WHERE agent_id = ?1 AND email_address IS NOT NULL",
+            params![agent_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .map_err(internal)?;
+    let Some((policy, allowed)) = row else {
+        return Err(err(StatusCode::NOT_FOUND, "no_email_address", "The bot has no email address yet."));
+    };
+    let owner_address = crate::channel_auth::email_rule(&conn, &agent_id).and_then(|(r, _)| r.owner_ids.into_iter().next());
+    let mut body = crate::channel_auth::view(&policy, &allowed);
+    body["ownerAddress"] = json!(owner_address);
+    Ok(Json(body).into_response())
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SendersBody {
+    sender_policy: Option<String>,
+    allowed_senders: Option<Vec<String>>,
+}
+
+/// `PUT /agents/:id/identity/email/senders`: set who may email the bot.
+async fn put_email_senders(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(agent_id): Path<String>,
+    Json(body): Json<SendersBody>,
+) -> Result<Response, ApiError> {
+    require_agent_owner(&state, &user, &agent_id)?;
+    let (policy, allowed) = crate::channel_auth::validate(body.sender_policy.as_deref(), body.allowed_senders.as_deref())
+        .map_err(|m| err(StatusCode::BAD_REQUEST, "invalid_senders", &m))?;
+    let conn = state.db.connect().map_err(internal)?;
+    let n = conn
+        .execute(
+            "UPDATE agent_identity_channels SET email_sender_policy = COALESCE(?1, email_sender_policy),
+                 email_allowed_senders = COALESCE(?2, email_allowed_senders), updated_at = CURRENT_TIMESTAMP
+             WHERE agent_id = ?3 AND email_address IS NOT NULL",
+            params![policy, allowed, agent_id],
+        )
+        .map_err(internal)?;
+    if n == 0 {
+        return Err(err(StatusCode::NOT_FOUND, "no_email_address", "The bot has no email address yet."));
+    }
+    crate::channel_auth::record_change(&conn, "email", &agent_id, &user.user_id, policy.as_deref(), allowed.as_deref());
+    get_email_senders(State(state), Extension(user), Path(agent_id)).await
 }
 
 /// Public webhook surface for inbound Photon.codes messages.
