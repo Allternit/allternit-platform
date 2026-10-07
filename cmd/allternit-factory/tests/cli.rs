@@ -83,7 +83,6 @@ fn help_lists_the_four_parts_and_hides_internal() {
 fn not_built_verbs_say_so_with_exit_2() {
     let home = tempfile::tempdir().unwrap();
     for (args, fact) in [
-        (vec!["agents", "handoff", "builder", "--json"], "agents handoff is not built yet"),
         (vec!["agents", "templates", "--json"], "agents templates is not built yet"),
     ] {
         let out = factory(home.path(), &args);
@@ -92,10 +91,10 @@ fn not_built_verbs_say_so_with_exit_2() {
     }
 
     // Without --json: nothing on stdout, the fact on stderr, same exit code.
-    let out = factory(home.path(), &["agents", "handoff", "builder"]);
+    let out = factory(home.path(), &["agents", "templates"]);
     assert_eq!(out.status.code(), Some(2));
     assert!(out.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("agents handoff is not built yet"));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("agents templates is not built yet"));
 }
 
 #[test]
@@ -328,4 +327,24 @@ fn agents_model_records_an_override_for_the_next_start() {
     // Unknown bot on a real team: not found.
     let out = factory(home.path(), &["--root", root, "agents", "model", "ghost@smoke", "opus", "--json"]);
     assert_eq!(out.status.code(), Some(2));
+}
+
+#[test]
+fn agents_handoff_refuses_what_it_cannot_hand_off() {
+    let home = tempfile::tempdir().unwrap();
+    let ws = home.path().join("ws");
+    let team = ws.join(".allternit/teams/smoke");
+    std::fs::create_dir_all(&team).unwrap();
+    std::fs::write(team.join("team.yaml"), "name: smoke\nbots:\n  - { bot: noop, role: build, binding: terminal, harness: bash }\n").unwrap();
+    let root = ws.to_str().unwrap();
+    // Not a team address: usage (hosted threads hand off in the app).
+    let out = factory(home.path(), &["--root", root, "agents", "handoff", "somebot", "--json"]);
+    assert_eq!(out.status.code(), Some(64));
+    // Not on the team: not found.
+    let out = factory(home.path(), &["--root", root, "agents", "handoff", "ghost@smoke", "--json"]);
+    assert_eq!(out.status.code(), Some(2));
+    // On the team but not running: nothing to hand off, and nothing written.
+    let out = factory(home.path(), &["--root", root, "agents", "handoff", "noop@smoke", "--json"]);
+    assert_ne!(out.status.code(), Some(0));
+    assert!(!ws.join(".allternit/factory/handoffs").exists());
 }

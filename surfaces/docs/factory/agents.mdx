@@ -84,6 +84,21 @@ gizzi agents model builder@product --clear          # back to team.yaml's model
 
 `--restart` stops the bot's pane and relaunches it with its harness's resume, the same way `gizzi agents recover` does. Hosted and vendor bots keep their model on your account; change it in the app or with `gizzi agents bot`.
 
+### Handing a seat to a fresh session
+
+When a Terminal bot's context is full, or it's stuck, `gizzi agents handoff <bot@team>` gives its seat to a fresh session without losing track of the work:
+
+1. It saves the old pane's last screen (and your `--note`) to `.allternit/factory/handoffs/<bot>-<team>-<time>.md`.
+2. It stops the old session. That session is marked finished, so `gizzi agents recover` won't bring it back.
+3. It starts the bot fresh, in the same folder, and its first message tells it to read the handoff file.
+
+```bash
+gizzi agents handoff builder@product --note "tests pass; next: wire the API" --dry-run
+gizzi agents handoff builder@product --note "tests pass; next: wire the API"
+```
+
+A hosted bot's thread hands off in the app, which opens a new window seeded with a checkpoint.
+
 ### `--on <computer>`
 
 ```bash

@@ -2,6 +2,8 @@
 //! maintenance CLI or the pane CLI): `orchestration send|capture|transcript|drain`
 //! and `agents ps|down|recover`.
 
+use std::path::PathBuf;
+
 use serde_json::json;
 
 use allternit_factory_engine::registry::Registry;
@@ -384,6 +386,135 @@ fn set_model_flag(argv: &mut Vec<String>, model: Option<&str>) {
         argv.insert(at, m.to_string());
         argv.insert(at, "--model".to_string());
     }
+}
+
+/// `agents handoff <bot@team> [--note <text>] [--lines N] [--dry-run]`: hand
+/// a Terminal bot's seat to a fresh session (its context is full, or it's
+/// stuck). Saves the pane's last screen and the note to a handoff file,
+/// stops the old session (recover won't bring it back), starts the bot
+/// fresh, and tells the new session to read the handoff first.
+pub fn handoff(ctx: &Ctx, args: &[String]) -> u8 {
+    let mut note: Option<String> = None;
+    let mut lines: u32 = 200;
+    let mut dry_run = false;
+    let mut pos: Vec<&str> = vec![];
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--dry-run" => dry_run = true,
+            "--json" => {}
+            "--note" => match it.next() {
+                Some(v) => note = Some(v.clone()),
+                None => return fail(ctx, Code::Usage, "--note needs text", None),
+            },
+            "--lines" => match it.next().and_then(|v| v.parse().ok()) {
+                Some(n) => lines = n,
+                None => return fail(ctx, Code::Usage, "--lines needs a number", None),
+            },
+            _ if a.starts_with("--") => return fail(ctx, Code::Usage, &format!("unknown option {a}"), None),
+            _ => pos.push(a),
+        }
+    }
+    let [address] = pos.as_slice() else {
+        return fail(ctx, Code::Usage, "agents handoff needs one bot address (bot@team)", Some("allternit-factory agents handoff <bot@team> [--note <text>]"));
+    };
+    let Some((bot, team)) = address.split_once('@') else {
+        return fail(
+            ctx,
+            Code::Usage,
+            &format!("{address} is not a team bot address (bot@team)"),
+            Some("A hosted bot's thread hands off in the app (a new window seeded with a checkpoint)."),
+        );
+    };
+    let root = ctx.root_dir();
+    if let Err(e) = team_mod::load_team(&root, team).and_then(|t| {
+        if t.file.bots.iter().any(|b| b.bot == bot) { Ok(()) } else { Err(team_mod::TeamError::NotFound(format!("{bot}@{team}"))) }
+    }) {
+        return fail(ctx, Code::NotFound, &e.to_string(), Some("List the team's bots with `gizzi agents ps`."));
+    }
+    let session = registry_mod::session_of(&pane_slug_for_address(address));
+    let backend = match backend::backend() {
+        Ok(b) => b,
+        Err(e) => return engine_err(ctx, &e),
+    };
+    let screen = match backend.capture(&session, lines) {
+        Ok(t) => t,
+        Err(e) => {
+            let code = if backend::is_transport(&e) { Code::Transport } else { Code::NotFound };
+            return fail(ctx, code, &format!("{address} is not running ({e:#})"), Some("Start it with `gizzi agents up`; there's nothing to hand off."));
+        }
+    };
+    let entry = Registry::open_default().load().ok().and_then(|f| f.sessions.get(&session).cloned());
+    let workdir = entry.as_ref().map(|e| PathBuf::from(&e.cwd)).filter(|p| p.is_dir());
+    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0).to_string();
+    let note_path = root.join(".allternit/factory/handoffs").join(format!("{bot}-{team}-{stamp}.md"));
+    if dry_run {
+        let plan = json!({ "from": session, "note": note_path.display().to_string(), "lines": lines, "workdir": workdir.as_ref().map(|p| p.display().to_string()) });
+        if ctx.json {
+            return ok_json(json!({ "dryRun": true, "plan": plan }));
+        }
+        println!("would save {address}'s last {lines} lines to {}, stop {session}, start it fresh and point it at the note", note_path.display());
+        return 0;
+    }
+    let body = format!(
+        "# Handoff: {address}\n\nA fresh session takes over from `{session}` ({stamp}).\n\n## Note\n\n{}\n\n## Where it left off (last {lines} lines of the pane)\n\n```\n{}\n```\n",
+        note.as_deref().unwrap_or("(none)"),
+        screen.trim_end()
+    );
+    if let Err(e) = std::fs::create_dir_all(note_path.parent().unwrap()).and_then(|_| std::fs::write(&note_path, body)) {
+        return fail(ctx, Code::Internal, &format!("writing {}: {e}", note_path.display()), None);
+    }
+    let rt = match runtime(ctx) {
+        Ok(rt) => rt,
+        Err(code) => return code,
+    };
+    let spawner = match Spawner::new(root.clone()) {
+        Ok(s) => s,
+        Err(e) => return engine_err(ctx, &e),
+    };
+    if let Err(e) = rt.block_on(spawner.kill(registry_mod::slug_of(&session), false)) {
+        return engine_err(ctx, &e);
+    }
+    // Handed off, not crashed: `agents recover` must not relaunch it.
+    let _ = Registry::open_default().update(|f| {
+        if let Some(e) = f.sessions.get_mut(&session) {
+            e.lifecycle = Some("finished".to_string());
+        }
+    });
+    let started = match crate::bots::spawn_one(ctx, team, address, workdir) {
+        Ok(v) => v,
+        Err(code) => return code,
+    };
+    let text = format!(
+        "You are taking over as {address} from a previous session. Read {} first: it has the note and where that session left off. Then continue the work.",
+        note_path.display()
+    );
+    let sctx = SendCtx { root: root.clone(), registry: Registry::open_default(), api: ApiLink::from_env(), sender: cli_sender() };
+    let req = SendRequest { to: address.to_string(), text, queue: false, thread_id: None, node_id: None, dag_id: None, idempotency_key: None, dry_run: false };
+    let mut delivery = rt.block_on(send_mod::send(&sctx, &req)).map(|d| json!(d)).unwrap_or_else(|e| json!({ "state": "failed", "detail": e.fact }));
+    // A fresh pane is often still starting, so the paste lands in its
+    // mailbox. Drain it (no duplicate sends) until it's delivered.
+    if delivery["state"] == "queued" {
+        for _ in 0..15 {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            match backend::drain(&root, &session, true) {
+                Ok(d) if !d.is_empty() && d.iter().all(|m| m.delivered) => {
+                    delivery["state"] = json!("verified");
+                    delivery["detail"] = json!("delivered from the mailbox once the fresh session was ready");
+                    break;
+                }
+                _ => {}
+            }
+        }
+    }
+    if ctx.json {
+        return ok_json(json!({ "handedOff": session, "note": note_path.display().to_string(), "started": started, "delivery": delivery }));
+    }
+    println!("{address}: handed off to a fresh session; note at {}", note_path.display());
+    if delivery["state"] != "verified" {
+        println!("the first message is waiting in its mailbox; deliver it with `gizzi orchestration drain {address}`");
+    }
+    0
 }
 
 /// `orchestration capture <to> [lines]`: the last lines of the agent's pane.

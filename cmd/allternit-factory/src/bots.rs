@@ -242,6 +242,30 @@ pub fn up(ctx: &Ctx, a: UpArgs) -> u8 {
     finish(ctx, json!({ "plan": plan, "applied": true, "results": results }), &results)
 }
 
+/// Start one bot of a team (the `up` plan filtered to `address`), in
+/// `workdir`. Used by `agents handoff` for the fresh session; other stopped
+/// bots of the team are left alone.
+pub(crate) fn spawn_one(ctx: &Ctx, team_name: &str, address: &str, workdir: Option<PathBuf>) -> Result<Value, u8> {
+    let t = load(ctx, team_name)?;
+    let preset = t.resolve_preset(None).map_err(|e| team_fail(ctx, &e))?;
+    let live = live(ctx, &t)?;
+    let plan: Vec<_> = team_plan::plan_up(&t, preset.as_deref(), None, &live)
+        .map_err(|e| team_fail(ctx, &e))?
+        .into_iter()
+        .filter(|s| s.agent == address)
+        .collect();
+    if plan.is_empty() {
+        return Err(fail(ctx, Code::NotFound, &format!("{address} has nothing to start"), Some("Check `gizzi agents ps`.")));
+    }
+    let api = api(ctx)?;
+    let opts = ApplyOptions { workdir, api, ..Default::default() };
+    let results = team_apply::apply(&ctx.root_dir(), &t, preset.as_deref(), &plan, &opts);
+    if team_apply::worst_code(&results).is_some() {
+        return Err(fail(ctx, Code::Internal, &format!("starting the fresh session failed: {}", serde_json::to_string(&results).unwrap_or_default()), None));
+    }
+    Ok(json!({ "plan": plan, "results": results }))
+}
+
 /// `agents down <team>` when a team of that name exists; `None` otherwise
 /// (the caller stops the single pane).
 pub fn down_team(ctx: &Ctx, target: &str, rm_worktree: bool, dry_run: bool) -> Option<u8> {

@@ -609,7 +609,7 @@ fn agents(ctx: &Ctx, cmd: AgentsCmd) -> u8 {
         AgentsCmd::Install(args) => crate::bots::install(ctx, args),
         AgentsCmd::Bot(cmd) => crate::bots::bot(ctx, cmd),
         AgentsCmd::Model(p) => crate::part::model(ctx, &p.args),
-        AgentsCmd::Handoff(_) => not_built(ctx, "agents", "handoff", TEAM),
+        AgentsCmd::Handoff(p) => crate::part::handoff(ctx, &p.args),
         AgentsCmd::Templates(_) => not_built(ctx, "agents", "templates", TEAM),
         AgentsCmd::Ps { cwd } => crate::part::ps(ctx, cwd),
         AgentsCmd::Down { slug, rm_worktree, dry_run: dry } => {
