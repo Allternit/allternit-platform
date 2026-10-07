@@ -199,7 +199,7 @@ export namespace Provider {
     token?: string
     authType: "api_key" | "none" | "bearer" | "subprocess"
     extraHeaders: Record<string, string>
-    source: "profile" | "config" | "env" | "plugin" | "subprocess" | "none"
+    source: "profile" | "config" | "env" | "auth" | "plugin" | "subprocess" | "none"
     profileId?: string
   }
 
@@ -1043,6 +1043,17 @@ export namespace Provider {
       if (profile) {
         plan.source = "profile"
         applyProfile(profile)
+      }
+    }
+
+    // 5b. A plain API key in the auth store (`PUT /auth/{provider}`, `gizzi auth login`):
+    // the provider list counts it as connected, so the request must carry it.
+    if (!plan.source) {
+      const stored = await Auth.get(ref.providerID)
+      if (stored?.type === "api" && stored.key) {
+        plan.source = "auth"
+        plan.authType = "api_key"
+        plan.apiKey = stored.key
       }
     }
 

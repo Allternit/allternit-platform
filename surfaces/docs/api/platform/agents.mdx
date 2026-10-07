@@ -59,6 +59,6 @@ To run an agent on your own Anthropic, OpenAI or xAI account, store the project'
 | `GET` | `/v1/model_keys` | The project's keys, masked (`…7890`); the key itself is never returned |
 | `DELETE` | `/v1/model_keys/{provider}` | Remove it |
 
-Keys are encrypted at rest. The project's hosted runtime gets the key before the agent's next message. An agent on a provider model with no key for it answers `model_key_missing` when you send it a message.
+Keys are encrypted at rest. The project's hosted runtime gets the key before the agent's next message. To rotate a key, `PUT` the new one: the next message uses it. An agent on a provider model with no key for it answers `model_key_missing` when you send it a message.
 
 Errors use the [standard format](/api/platform/errors): `invalid_name`, `invalid_instructions`, `invalid_greeting`, `greeting_missing_ai_disclosure`, `invalid_model`, `invalid_voice`, `invalid_tool`, `tool_not_available`, `invalid_autonomy`, `invalid_transfer_target`, `invalid_business_hours`, `invalid_metadata`, `missing_account_id`, `account_not_found`, `agent_not_found`, `agent_limit_reached`, `insufficient_scope`; model keys: `invalid_provider`, `invalid_api_key`, `model_key_not_found`, `model_keys_unavailable`.
