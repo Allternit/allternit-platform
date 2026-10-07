@@ -2038,10 +2038,12 @@ mod tests {
         }
         assert_eq!(count("SELECT COUNT(*) FROM bot_threads"), 0);
         assert_eq!(count("SELECT COUNT(*) FROM channel_sender_audit WHERE binding = 'acct-1' AND action = 'rejected' AND sender = '42'"), 2);
-        // Listed: the message reaches the bot.
+        // Listed: the message passes the allowlist (no new refusal, no second notice).
+        // Whether a bot then answers depends on a gizzi runtime, which CI doesn't run.
         st.db.connect().unwrap().execute("UPDATE provider_account_bindings SET allowed_senders = '[\"42\"]' WHERE id = 'acct-1'", []).unwrap();
         dispatch_events(&st, &acct, tx.clone(), vec![tg(3, 42, "hi again")]).await;
-        assert_eq!(count("SELECT COUNT(*) FROM bot_threads"), 1);
+        assert_eq!(count("SELECT COUNT(*) FROM channel_sender_audit WHERE action = 'rejected' AND sender = '42'"), 2);
+        assert!(!tx.posted.lock().unwrap().iter().skip(1).any(|p| p.text.contains("only answers people")), "no second refusal notice");
         // "anyone" lets a stranger through too.
         st.db.connect().unwrap().execute("UPDATE provider_account_bindings SET sender_policy = 'anyone', allowed_senders = '[]' WHERE id = 'acct-1'", []).unwrap();
         dispatch_events(&st, &acct, tx.clone(), vec![tg(4, 77, "anyone there?")]).await;
