@@ -6,8 +6,11 @@
  */
 
 import type { BusEvent } from "@/shared/bus/bus-event"
+import { Log } from "@/shared/util/log"
 
 export namespace AgentCommunicationRuntime {
+  // Through the log, never stdout: `--json` commands and the TUI share it.
+  const log = Log.create({ service: "agent.communication" })
   // Deferred initialization state
   let initializationPromise: Promise<void> | null = null
   let initialized = false
@@ -22,7 +25,7 @@ export namespace AgentCommunicationRuntime {
     if (initializationPromise) return initializationPromise
 
     initializationPromise = (async () => {
-      console.log('[AgentCommunicationRuntime] Initializing...')
+      log.info('Initializing...')
 
       try {
         // Import Bus and Session lazily to avoid circular dependencies
@@ -42,7 +45,7 @@ export namespace AgentCommunicationRuntime {
         setupMentionHandlers(Bus, MentionRouter)
 
         initialized = true
-        console.log('[AgentCommunicationRuntime] Initialized successfully')
+        log.info('Initialized successfully')
 
         // Execute any pending handlers
         for (const handler of pendingHandlers) {
@@ -51,8 +54,8 @@ export namespace AgentCommunicationRuntime {
         pendingHandlers = []
       } catch (error: any) {
         initializationPromise = null // Allow retry
-        console.error('[AgentCommunicationRuntime] Initialization failed:', error.message)
-        console.log('[AgentCommunicationRuntime] Will retry on first use')
+        log.error('Initialization failed', { error: error.message })
+        log.info('Will retry on first use')
         throw error
       }
     })()
@@ -90,9 +93,9 @@ export namespace AgentCommunicationRuntime {
             lastActiveAt: Date.now(),
           })
 
-          console.log(`[AgentCommunicationRuntime] Agent registered: ${agentId} in session ${sessionID}`)
+          log.info(`Agent registered: ${agentId} in session ${sessionID}`)
         } catch (error: any) {
-          console.error('[AgentCommunicationRuntime] Failed to register agent:', error.message)
+          log.error('Failed to register agent', { error: error.message })
         }
       }
     })
@@ -131,7 +134,7 @@ export namespace AgentCommunicationRuntime {
         const agent = agents.find((a: { sessionId: string }) => a.sessionId === sessionID)
         if (agent) {
           MentionRouter.unregisterAgentSession(agent.agentId)
-          console.log(`[AgentCommunicationRuntime] Agent unregistered: ${agent.agentId}`)
+          log.info(`Agent unregistered: ${agent.agentId}`)
         }
       }
     })
@@ -145,7 +148,7 @@ export namespace AgentCommunicationRuntime {
     Bus.subscribe(AgentCommunicate.MessageSent, async (event: any) => {
       const props = event.properties
 
-      console.log(`[AgentCommunicationRuntime] Message sent: ${props.fromAgent} → ${props.toAgent || props.toRole || props.channel}`)
+      log.info(`Message sent: ${props.fromAgent} → ${props.toAgent || props.toRole || props.channel}`)
 
       // Broadcast to UI for display
       Bus.publish(AgentCommunicate.MessageBroadcastToUI, {
@@ -176,7 +179,7 @@ export namespace AgentCommunicationRuntime {
     Bus.subscribe(AgentCommunicate.LoopGuardTriggered, async (event: any) => {
       const props = event.properties
 
-      console.warn(`[AgentCommunicationRuntime] Loop guard triggered! Hops: ${props.hopCount}`)
+      log.warn(`Loop guard triggered! Hops: ${props.hopCount}`)
 
       // Create escalation message in session
       await createEscalationMessage(props)
@@ -190,7 +193,7 @@ export namespace AgentCommunicationRuntime {
     // Handle mention detection
     Bus.subscribe(MentionRouter.MentionDetected, async (event: any) => {
       const props = event.properties
-      console.log(`[AgentCommunicationRuntime] Mention detected: @${props.mention}`)
+      log.info(`Mention detected: @${props.mention}`)
     })
 
     // Handle mention routing
@@ -198,9 +201,9 @@ export namespace AgentCommunicationRuntime {
       const props = event.properties
 
       if (props.triggered) {
-        console.log(`[AgentCommunicationRuntime] Mention routed and agent triggered: @${props.mention} → ${props.targetAgent}`)
+        log.info(`Mention routed and agent triggered: @${props.mention} → ${props.targetAgent}`)
       } else {
-        console.log(`[AgentCommunicationRuntime] Mention routed but agent not triggered: @${props.mention}`)
+        log.info(`Mention routed but agent not triggered: @${props.mention}`)
       }
     })
   }
@@ -222,7 +225,7 @@ Agent communication chain has exceeded the maximum hop count (${props.hopCount}/
 This conversation chain requires human intervention. Please review the communication thread and provide guidance.`
 
     // Note: In full integration, this would create a system message in the session
-    console.log('[AgentCommunicationRuntime] Escalation message created')
+    log.info('Escalation message created')
   }
 
   /**

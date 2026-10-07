@@ -617,6 +617,189 @@ impl Template {
     }
 }
 
+/// The DAG of a run turned back into a template (`workflows template save
+/// --from-run <dag>`): the plan root's title becomes the name, every other
+/// node a step (in dependency order), `blocked_by` edges between them the
+/// step order, and the labels, wait-gates and root closure texts what the
+/// template declared. Node ids a template minted (`<step>-<4 hex>`) get
+/// their step ids back. Executors stay as the nodes carry them (`bot:` /
+/// `ao:`); params already substituted stay literal text.
+pub fn template_from_dag(dag: &crate::work::types::DagState, id: &str) -> Result<Template> {
+    use crate::work::types::DagNode;
+    let roots: Vec<&DagNode> = dag.nodes.values().filter(|n| n.parent_node_id.is_none()).collect();
+    let root = match roots.as_slice() {
+        [r] => *r,
+        [] => bail!("run {} has no plan root", dag.dag_id),
+        _ => bail!("run {} has {} root nodes; a template needs one plan root", dag.dag_id, roots.len()),
+    };
+    let mut nodes: Vec<&DagNode> = dag.nodes.values().filter(|n| n.node_id != root.node_id).collect();
+    if nodes.is_empty() {
+        bail!("run {} has no steps under its plan root", dag.dag_id);
+    }
+    nodes.sort_by(|a, b| a.created_at.cmp(&b.created_at).then_with(|| a.node_id.cmp(&b.node_id)));
+
+    // Strip the shared `-<4 hex>` suffix a template instantiation added.
+    let suffix_of = |id: &str| -> Option<String> {
+        let (stem, tail) = id.rsplit_once('-')?;
+        (!stem.is_empty() && tail.len() == 4 && tail.chars().all(|c| c.is_ascii_hexdigit())).then(|| tail.to_string())
+    };
+    let shared = suffix_of(&nodes[0].node_id)
+        .filter(|sfx| nodes.iter().all(|n| suffix_of(&n.node_id).as_deref() == Some(sfx.as_str())));
+    let step_ids: HashMap<String, String> = nodes
+        .iter()
+        .map(|n| {
+            let step = match &shared {
+                Some(sfx) => n.node_id[..n.node_id.len() - sfx.len() - 1].to_string(),
+                None => n.node_id.clone(),
+            };
+            (n.node_id.clone(), step)
+        })
+        .collect();
+
+    let mut blocked_by: HashMap<&str, Vec<String>> = HashMap::new();
+    for e in dag.edges.iter().filter(|e| e.edge_type == "blocked_by") {
+        if let (Some(from), true) = (step_ids.get(&e.from_node_id), step_ids.contains_key(&e.to_node_id)) {
+            let list = blocked_by.entry(e.to_node_id.as_str()).or_default();
+            if !list.contains(from) {
+                list.push(from.clone());
+            }
+        }
+    }
+
+    // Dependency order (Kahn), creation order breaking ties.
+    let mut order: Vec<&DagNode> = Vec::with_capacity(nodes.len());
+    let mut placed: HashSet<&str> = HashSet::new();
+    while order.len() < nodes.len() {
+        let next = nodes.iter().find(|n| {
+            !placed.contains(n.node_id.as_str())
+                && blocked_by.get(n.node_id.as_str()).is_none_or(|bs| {
+                    bs.iter().all(|b| nodes.iter().any(|m| step_ids[&m.node_id] == *b && placed.contains(m.node_id.as_str())))
+                })
+        });
+        let Some(n) = next else { bail!("run {} has a dependency cycle", dag.dag_id) };
+        placed.insert(n.node_id.as_str());
+        order.push(n);
+    }
+
+    let mut max_rounds = None;
+    let steps = order
+        .iter()
+        .map(|n| {
+            let mut on_fail = None;
+            let mut retry = None;
+            for label in &n.labels {
+                if label == RETRY_SAFE_LABEL {
+                    retry = Some("safe".to_string());
+                } else if let Some(target) = label.strip_prefix(ON_FAIL_LABEL_PREFIX) {
+                    on_fail = step_ids.get(target).cloned();
+                } else if let Some(r) = label.strip_prefix(MAX_ROUNDS_LABEL_PREFIX) {
+                    max_rounds = r.parse::<u32>().ok().or(max_rounds);
+                }
+            }
+            let wait_gate = n.wait_gates.first().map(|g| {
+                let mut params = g.params.clone();
+                let evidence = params.remove(EVIDENCE_PARAM).and_then(|v| v.as_str().map(str::to_string));
+                let mut description = g.description.clone();
+                if let Some(e) = &evidence {
+                    let tail = format!(" (look at: {e})");
+                    if let Some(base) = description.strip_suffix(&tail) {
+                        description = base.to_string();
+                    }
+                }
+                TemplateWaitGate {
+                    kind: g.kind.clone(),
+                    description: (!description.trim().is_empty() && description != n.title).then_some(description),
+                    evidence,
+                    params,
+                }
+            });
+            TemplateStep {
+                id: step_ids[&n.node_id].clone(),
+                title: n.title.clone(),
+                description: n
+                    .description
+                    .as_deref()
+                    .map(|d| placeholders::rewrite_node_ids(d, &step_ids))
+                    .unwrap_or_default(),
+                kind: TicketKind::default(),
+                priority: TicketPriority::default(),
+                blocked_by: blocked_by.remove(n.node_id.as_str()).unwrap_or_default(),
+                executor: n.executor.clone(),
+                wait_gate,
+                retry,
+                on_fail,
+            }
+        })
+        .collect();
+
+    let closure = TemplateClosure {
+        success: root.state.get(CLOSURE_SUCCESS_STATE).cloned(),
+        degraded: root.state.get(CLOSURE_DEGRADED_STATE).cloned(),
+        failed: root.state.get(CLOSURE_FAILED_STATE).cloned(),
+    };
+    let template = Template {
+        id: id.to_string(),
+        name: root.title.clone(),
+        description: format!("Saved from run {}.", dag.dag_id),
+        params: Vec::new(),
+        steps,
+        max_rounds: max_rounds.filter(|r| *r != DEFAULT_MAX_ROUNDS),
+        closure: (closure != TemplateClosure::default()).then_some(closure),
+        created_at: Utc::now(),
+        builtin: false,
+    };
+    template.validate()?;
+    Ok(template)
+}
+
+/// A template id from a plan title: lowercase letters, digits and single
+/// hyphens, at most 48 characters (`template` when nothing is left).
+pub fn template_id_from_title(title: &str) -> String {
+    let mut out = String::new();
+    for c in title.chars().flat_map(char::to_lowercase) {
+        if c.is_ascii_alphanumeric() {
+            out.push(c);
+        } else if !out.is_empty() && !out.ends_with('-') {
+            out.push('-');
+        }
+        if out.len() >= 48 {
+            break;
+        }
+    }
+    let out = out.trim_end_matches('-');
+    if out.is_empty() { "template".to_string() } else { out.to_string() }
+}
+
+/// A run saved as a template: what [`template_from_run`] returns.
+pub struct RunTemplate {
+    pub template: Template,
+    /// Every node of the run is DONE.
+    pub finished: bool,
+}
+
+/// [`template_from_dag`] for run `dag_id` among the workspace's ledger
+/// `events`; the id defaults to the plan root's title. `Ok(None)` when the
+/// workspace has no such run.
+pub fn template_from_run(
+    events: &[crate::core::types::AllternitEvent],
+    dag_id: &str,
+    id: Option<&str>,
+) -> Result<Option<RunTemplate>> {
+    let dag = crate::work::project_dag(events, dag_id);
+    if dag.nodes.is_empty() {
+        return Ok(None);
+    }
+    let id = match id {
+        Some(id) => id.to_string(),
+        None => template_id_from_title(
+            dag.nodes.values().find(|n| n.parent_node_id.is_none()).map(|n| n.title.as_str()).unwrap_or(dag_id),
+        ),
+    };
+    let template = template_from_dag(&dag, &id)?;
+    let finished = dag.nodes.values().all(|n| n.status == "DONE");
+    Ok(Some(RunTemplate { template, finished }))
+}
+
 /// Transitive blocked_by predecessors of `step_id` among `steps`.
 fn transitive_blockers(steps: &[TemplateStep], step_id: &str) -> HashSet<String> {
     let by_id: HashMap<&str, &TemplateStep> = steps.iter().map(|s| (s.id.as_str(), s)).collect();
@@ -1600,4 +1783,96 @@ closure:
         assert_eq!(p["a"], "b=c");
         assert!(parse_param_args(&["nope".to_string()]).is_err());
     }
+
+    fn dag_node(id: &str, parent: Option<&str>, title: &str, at: &str) -> crate::work::types::DagNode {
+        serde_json::from_value(serde_json::json!({
+            "node_id": id, "dag_id": "dag_x", "parent_node_id": parent, "node_kind": "task",
+            "title": title, "execution_mode": "shared", "labels": [], "status": "DONE",
+            "state": {}, "created_at": at,
+        }))
+        .unwrap()
+    }
+
+    fn blocked(from: &str, to: &str) -> DagEdge {
+        DagEdge { from_node_id: from.into(), to_node_id: to.into(), edge_type: "blocked_by".into() }
+    }
+
+    #[test]
+    fn a_finished_run_becomes_a_template_again() {
+        use crate::work::types::{DagState, NodeWaitGate};
+        let mut root = dag_node("root", None, "Ship the promo", "t0");
+        root.state.insert(CLOSURE_SUCCESS_STATE.into(), "Promo shipped".into());
+        let mut build = dag_node("build-a1f3", Some("root"), "Build", "t2");
+        build.executor = Some("ao:claude".into());
+        build.labels = vec![RETRY_SAFE_LABEL.into()];
+        let draft = dag_node("draft-a1f3", Some("root"), "Draft", "t1");
+        let mut check = dag_node("check-a1f3", Some("root"), "Check", "t3");
+        check.description = Some("Read {{ build-a1f3.output }}".into());
+        check.labels = vec!["on_fail:build-a1f3".into(), "max_rounds:5".into()];
+        check.wait_gates = vec![NodeWaitGate {
+            gate_id: "g1".into(),
+            kind: WaitGateKind::Manual,
+            description: "Check (look at: PROOF.md)".into(),
+            params: [(EVIDENCE_PARAM.to_string(), serde_json::json!("PROOF.md"))].into_iter().collect(),
+            created_at: "t3".into(),
+            outcome: None,
+            resolved_at: None,
+            resolved_by: None,
+            reason: None,
+        }];
+        let dag = DagState {
+            dag_id: "dag_x".into(),
+            nodes: [root, build, draft, check].into_iter().map(|n| (n.node_id.clone(), n)).collect(),
+            edges: vec![
+                blocked("draft-a1f3", "build-a1f3"),
+                blocked("build-a1f3", "check-a1f3"),
+                blocked("check-a1f3", "root"),
+            ],
+            relations: vec![],
+        };
+        let t = template_from_dag(&dag, "promo").unwrap();
+        assert_eq!(t.name, "Ship the promo");
+        let ids: Vec<&str> = t.steps.iter().map(|s| s.id.as_str()).collect();
+        assert_eq!(ids, ["draft", "build", "check"]);
+        assert_eq!(t.steps[1].blocked_by, ["draft"]);
+        assert_eq!(t.steps[1].executor.as_deref(), Some("ao:claude"));
+        assert_eq!(t.steps[1].retry.as_deref(), Some("safe"));
+        let check = &t.steps[2];
+        assert_eq!(check.description, "Read {{ build.output }}");
+        assert_eq!(check.on_fail.as_deref(), Some("build"));
+        let gate = check.wait_gate.as_ref().unwrap();
+        assert_eq!(gate.evidence.as_deref(), Some("PROOF.md"));
+        assert!(gate.description.is_none() && gate.params.is_empty());
+        assert_eq!(t.max_rounds, Some(5));
+        assert_eq!(t.closure.as_ref().unwrap().success.as_deref(), Some("Promo shipped"));
+        // It instantiates again like any template.
+        assert!(t.expand_dag("root2", &HashMap::new()).is_ok());
+    }
+
+    #[test]
+    fn hand_made_node_ids_stay_and_a_run_without_steps_is_refused() {
+        use crate::work::types::DagState;
+        let mut dag = DagState {
+            dag_id: "dag_y".into(),
+            nodes: [dag_node("root", None, "Plan", "t0"), dag_node("n_research", Some("root"), "Research", "t1")]
+                .into_iter()
+                .map(|n| (n.node_id.clone(), n))
+                .collect(),
+            edges: vec![],
+            relations: vec![],
+        };
+        let t = template_from_dag(&dag, "plan").unwrap();
+        assert_eq!(t.steps[0].id, "n_research");
+        dag.nodes.remove("n_research");
+        assert!(template_from_dag(&dag, "plan").unwrap_err().to_string().contains("no steps"));
+    }
+
+
+    #[test]
+    fn template_ids_from_titles() {
+        assert_eq!(template_id_from_title("Ship the promo!"), "ship-the-promo");
+        assert_eq!(template_id_from_title("  --  "), "template");
+        assert!(template_id_from_title(&"word ".repeat(30)).len() <= 48);
+    }
+
 }

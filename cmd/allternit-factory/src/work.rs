@@ -128,9 +128,14 @@ pub fn template(ctx: &Ctx, cmd: &str, template: Option<&str>) -> u8 {
 /// check`), then copy it into the workspace's templates folder as
 /// `<id>.md` / `<id>.json`. Never overwrites a workspace template without
 /// `--force`; an id equal to a built-in's overrides it in this workspace.
+///
+/// `--from-run <dag>` instead turns that run's DAG back into a template
+/// (`template_from_dag`) and saves it as `<id>.json`; the id defaults to
+/// the plan root's title.
 pub fn template_save(ctx: &Ctx, args: &[String]) -> u8 {
     let mut file: Option<String> = None;
     let mut id: Option<String> = None;
+    let mut from_run: Option<String> = None;
     let (mut force, mut dry_run) = (false, false);
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -142,31 +147,66 @@ pub fn template_save(ctx: &Ctx, args: &[String]) -> u8 {
                 Some(v) => id = Some(v.clone()),
                 None => return fail(ctx, Code::Usage, "--id needs a value", None),
             },
+            "--from-run" => match it.next() {
+                Some(v) => from_run = Some(v.clone()),
+                None => return fail(ctx, Code::Usage, "--from-run needs a run (DAG) id", None),
+            },
             _ if a.starts_with("--id=") => id = Some(a["--id=".len()..].to_string()),
+            _ if a.starts_with("--from-run=") => from_run = Some(a["--from-run=".len()..].to_string()),
             _ if a.starts_with("--") => return fail(ctx, Code::Usage, &format!("unknown option {a}"), None),
             _ if file.is_none() => file = Some(a.clone()),
             _ => return fail(ctx, Code::Usage, &format!("unexpected argument {a}"), None),
         }
     }
-    let Some(file) = file else {
-        return fail(ctx, Code::Usage, "template save needs a template file (.md or .json)", Some("allternit-factory workflows template save <file> [--id <id>]"));
-    };
-    let src = PathBuf::from(&file);
-    let ext = match src.extension().and_then(|e| e.to_str()) {
-        Some(e @ ("md" | "markdown" | "json")) => if e == "json" { "json" } else { "md" },
-        _ => return fail(ctx, Code::Usage, &format!("{file} is not a .md or .json template"), None),
-    };
-    if !src.is_file() {
-        return fail(ctx, Code::NotFound, &format!("no template file at {file}"), None);
+    // What gets written: a copy of the checked file, or the run's template.
+    enum Source {
+        File(PathBuf),
+        Run { json: String, finished: bool },
     }
-    let t = match TemplateStore::load_file(&src) {
-        Ok(t) => t,
-        Err(e) => return fail(ctx, Code::Usage, &format!("{e:#}"), Some("Fix the template, then run `workflows template check <file>`.")),
+    let (t, ext, source, id) = match (file, from_run) {
+        (Some(_), Some(_)) => {
+            return fail(ctx, Code::Usage, "pass a template file or --from-run <dag>, not both", None);
+        }
+        (None, None) => {
+            return fail(ctx, Code::Usage, "template save needs a template file (.md or .json) or --from-run <dag>", Some("allternit-factory workflows template save <file> [--id <id>]"));
+        }
+        (None, Some(dag_id)) => {
+            let events = match read_events(&ctx.root_dir()) {
+                Ok(e) => e,
+                Err(e) => return fail(ctx, Code::Internal, &format!("reading the ledger: {e:#}"), None),
+            };
+            let run = match allternit_factory_engine::templates::template_from_run(&events, &dag_id, id.as_deref()) {
+                Ok(Some(run)) => run,
+                Ok(None) => return fail(ctx, Code::NotFound, &format!("no run {dag_id} in this workspace"), Some("Check the run id; a campaign's board shows its runs: `workspace board <campaign>`.")),
+                Err(e) => return fail(ctx, Code::Usage, &format!("{e:#}"), None),
+            };
+            let json = match serde_json::to_string_pretty(&run.template) {
+                Ok(j) => j,
+                Err(e) => return fail(ctx, Code::Internal, &format!("encoding the template: {e}"), None),
+            };
+            let id = run.template.id.clone();
+            (run.template, "json", Source::Run { json, finished: run.finished }, id)
+        }
+        (Some(file), None) => {
+            let src = PathBuf::from(&file);
+            let ext = match src.extension().and_then(|e| e.to_str()) {
+                Some(e @ ("md" | "markdown" | "json")) => if e == "json" { "json" } else { "md" },
+                _ => return fail(ctx, Code::Usage, &format!("{file} is not a .md or .json template"), None),
+            };
+            if !src.is_file() {
+                return fail(ctx, Code::NotFound, &format!("no template file at {file}"), None);
+            }
+            let t = match TemplateStore::load_file(&src) {
+                Ok(t) => t,
+                Err(e) => return fail(ctx, Code::Usage, &format!("{e:#}"), Some("Fix the template, then run `workflows template check <file>`.")),
+            };
+            if let Err(e) = t.validate() {
+                return fail(ctx, Code::Usage, &format!("{e:#}"), Some("Fix the template, then run `workflows template check <file>`."));
+            }
+            let id = id.unwrap_or_else(|| src.file_stem().and_then(|s| s.to_str()).unwrap_or("template").to_string());
+            (t, ext, Source::File(src), id)
+        }
     };
-    if let Err(e) = t.validate() {
-        return fail(ctx, Code::Usage, &format!("{e:#}"), Some("Fix the template, then run `workflows template check <file>`."));
-    }
-    let id = id.unwrap_or_else(|| src.file_stem().and_then(|s| s.to_str()).unwrap_or("template").to_string());
     if id.is_empty() || id.contains('/') || id.contains('\\') || id.contains("..") {
         return fail(ctx, Code::Usage, &format!("invalid template id {id:?}"), None);
     }
@@ -177,15 +217,26 @@ pub fn template_save(ctx: &Ctx, args: &[String]) -> u8 {
     if exists && !force {
         return fail(ctx, Code::Refused, &format!("a template {id} already exists in this workspace"), Some("Pick another --id, or pass --force to replace it."));
     }
-    let plan = json!({ "id": id, "name": t.name, "steps": t.steps.len(), "path": dest.display().to_string(), "replaces": exists });
+    let mut plan = json!({ "id": id, "name": t.name, "steps": t.steps.len(), "path": dest.display().to_string(), "replaces": exists });
+    if let Source::Run { finished, .. } = &source {
+        plan["fromRun"] = json!({ "finished": finished });
+    }
+    let unfinished = matches!(source, Source::Run { finished: false, .. });
     if dry_run {
         if ctx.json {
             return ok_json(json!({ "dryRun": true, "plan": plan }));
         }
         println!("would save {} ({} steps) to {}{}", id, t.steps.len(), dest.display(), if exists { " (replacing)" } else { "" });
+        if unfinished {
+            println!("note: that run has not finished every step");
+        }
         return 0;
     }
-    if let Err(e) = std::fs::create_dir_all(&dir).and_then(|_| std::fs::copy(&src, &dest).map(|_| ())) {
+    let written = std::fs::create_dir_all(&dir).and_then(|_| match &source {
+        Source::File(src) => std::fs::copy(src, &dest).map(|_| ()),
+        Source::Run { json, .. } => std::fs::write(&dest, json),
+    });
+    if let Err(e) = written {
         return fail(ctx, Code::Internal, &format!("saving {}: {e}", dest.display()), None);
     }
     if other.exists() {
@@ -195,6 +246,9 @@ pub fn template_save(ctx: &Ctx, args: &[String]) -> u8 {
         return ok_json(json!({ "saved": plan }));
     }
     println!("saved {} ({} steps) to {}", id, t.steps.len(), dest.display());
+    if unfinished {
+        println!("note: that run has not finished every step; check the template with `workflows template show {id}`");
+    }
     0
 }
 

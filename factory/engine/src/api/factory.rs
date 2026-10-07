@@ -7,8 +7,9 @@
 //! Every read is a projection of the workspace ledger plus live pane facts.
 //! Teams (team.yaml up/down), the board, node folders and proof upload are
 //! stream F6E's modules (`agents::http`, `workspace::http`); this router calls
-//! into them so every path has one route. Verbs not built yet answer
-//! `404 not_found` "… is not built yet" rather than pretending (API.md §2).
+//! into them so every path has one route. A verb that is specified but not
+//! built would answer `404 not_found` "… is not built yet" (API.md §2);
+//! every route here is built.
 
 use std::collections::{BTreeMap, HashMap};
 use std::convert::Infallible;
@@ -32,7 +33,7 @@ use crate::api::service::ServiceState;
 use crate::core::types::{Actor, ActorType, AllternitEvent, EventScope, LedgerQuery};
 use crate::judge::state::project_node_judge;
 use crate::send::{self, ApiLink, DeliveryFilter, SendCtx, SendRequest};
-use crate::templates::{plan_from_template, Template, TemplateStore};
+use crate::templates::{Template, TemplateStore};
 use crate::work::graph::ready_nodes;
 use crate::work::{project_dag, DagNode, DagState};
 
@@ -57,7 +58,7 @@ pub fn router() -> Router<Arc<ServiceState>> {
         .route("/api/factory/send", post(send_h))
         .route("/api/factory/deliveries", get(deliveries_h))
         .route("/api/factory/events", get(events_h))
-        .route("/api/factory/templates", get(templates_list))
+        .route("/api/factory/templates", get(templates_list).post(templates_save))
         .route("/api/factory/templates/:id", get(template_get))
         .route("/api/factory/runs", post(runs_create))
         .route("/api/factory/dags/:dag_id", get(dag_get))
@@ -88,10 +89,6 @@ pub fn error(code: &str, fact: impl Into<String>, action: impl Into<String>) -> 
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     };
     (status, Json(json!({ "error": { "code": code, "fact": fact.into(), "action": action.into() } }))).into_response()
-}
-
-fn not_built(part: &str, verb: &str, action: &str) -> Response {
-    error("not_found", format!("{part} {verb} is not built yet"), action)
 }
 
 fn internal(e: anyhow::Error) -> Response {
@@ -563,10 +560,10 @@ fn template_json(t: &Template) -> Value {
                 "title": s.title,
                 "executor": s.executor,
                 "blockedBy": s.blocked_by,
-                "onFail": null,
+                "onFail": s.on_fail,
                 "waitGate": s.wait_gate.as_ref().map(|g| json!({
                     "kind": serde_json::to_value(&g.kind).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default(),
-                    "evidence": g.description,
+                    "evidence": g.evidence.as_ref().or(g.description.as_ref()),
                 })),
                 "retry": s.retry,
             })
@@ -578,8 +575,8 @@ fn template_json(t: &Template) -> Value {
         "description": t.description,
         "params": t.params.iter().map(|p| json!({ "name": p.name, "description": p.description, "default": p.default })).collect::<Vec<_>>(),
         "steps": steps,
-        "maxRounds": null,
-        "closure": null,
+        "maxRounds": t.effective_max_rounds(),
+        "closure": t.closure,
     })
 }
 
@@ -625,6 +622,59 @@ async fn template_get(State(state): S, Path(id): Path<String>) -> Response {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct TemplateSaveBody {
+    from_run: String,
+    id: Option<String>,
+    #[serde(default)]
+    force: bool,
+    #[serde(default)]
+    dry_run: bool,
+}
+
+/// Save a run as a workspace template (`workflows template save --from-run`).
+async fn templates_save(State(state): S, body: Option<Json<TemplateSaveBody>>) -> Response {
+    let Some(Json(b)) = body else {
+        return error("usage", "templates needs a JSON body { fromRun }", "See API.md: POST /api/factory/templates.");
+    };
+    let events = match all_events(&state).await {
+        Ok(e) => e,
+        Err(r) => return r,
+    };
+    let run = match crate::templates::template_from_run(&events, &b.from_run, b.id.as_deref()) {
+        Ok(Some(run)) => run,
+        Ok(None) => return error("not_found", format!("no run {}", b.from_run), "Check the id (runs return it as dagId)."),
+        Err(e) => return error("usage", format!("{e:#}"), "Only a run with one plan root and its steps can become a template."),
+    };
+    let t = &run.template;
+    if t.id.is_empty() || t.id.contains('/') || t.id.contains('\\') || t.id.contains("..") {
+        return error("usage", format!("invalid template id {:?}", t.id), "Pick another id.");
+    }
+    let dir = state.root_dir.join(crate::templates::TEMPLATE_DIR);
+    let dest = dir.join(format!("{}.json", t.id));
+    let other = dir.join(format!("{}.md", t.id));
+    let exists = dest.exists() || other.exists();
+    if exists && !b.force {
+        return error("refused", format!("a template {} already exists in this workspace", t.id), "Pick another id, or pass force: true to replace it.");
+    }
+    let plan = json!({ "id": t.id, "name": t.name, "steps": t.steps.len(), "replaces": exists, "fromRun": { "finished": run.finished } });
+    if b.dry_run {
+        return Json(json!({ "dryRun": true, "plan": plan })).into_response();
+    }
+    let text = match serde_json::to_string_pretty(t) {
+        Ok(text) => text,
+        Err(e) => return internal(e.into()),
+    };
+    if let Err(e) = std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(&dest, text)) {
+        return internal(e.into());
+    }
+    if other.exists() {
+        let _ = std::fs::remove_file(&other);
+    }
+    Json(json!({ "saved": plan })).into_response()
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct RunBody {
     template: String,
     intent: Option<String>,
@@ -632,8 +682,53 @@ struct RunBody {
     params: HashMap<String, String>,
     campaign_id: Option<String>,
     project_id: Option<String>,
+    /// The team whose role map fills `role:` executors (team.yaml name).
+    team: Option<String>,
+    preset: Option<String>,
     #[serde(default)]
     dry_run: bool,
+}
+
+/// The role map for a run: from `team`, or from the workspace's only team
+/// when the template assigns steps by role and none was named. `Ok(None)`
+/// when the template uses no roles and no team was named.
+fn run_roles(
+    root: &std::path::Path,
+    template: &Template,
+    team: Option<&str>,
+    preset: Option<&str>,
+) -> Result<Option<crate::templates::RoleMap>, Response> {
+    use crate::agents::team as team_mod;
+    let uses_roles = template.steps.iter().any(|s| s.executor.as_deref().is_some_and(|e| e.starts_with("role:")));
+    let name = match team {
+        Some(t) => t.to_string(),
+        None if !uses_roles => return Ok(None),
+        None => match team_mod::list_teams(root).as_slice() {
+            [only] => only.clone(),
+            [] => {
+                return Err(error(
+                    "usage",
+                    format!("template {} assigns steps by role, and this workspace has no team", template.id),
+                    "Add a team (gizzi agents up <team> after writing .allternit/teams/<team>/team.yaml), then pass team.",
+                ))
+            }
+            many => {
+                return Err(error(
+                    "usage",
+                    format!("template {} assigns steps by role; pick the team that runs it ({})", template.id, many.join(", ")),
+                    "Pass team in the request body.",
+                ))
+            }
+        },
+    };
+    let loaded = team_mod::load_team(root, &name).map_err(|e| match e {
+        team_mod::TeamError::NotFound(_) => error("not_found", format!("team {name} not found"), "List teams with GET /api/factory/teams."),
+        e => error("usage", e.to_string(), "Fix team.yaml (every problem is listed) and retry."),
+    })?;
+    loaded
+        .role_executors(preset)
+        .map(Some)
+        .map_err(|e| error("usage", e.to_string(), "Each role must be held by exactly one bot in team.yaml."))
 }
 
 async fn runs_create(State(state): S, headers: HeaderMap, body: Option<Json<RunBody>>) -> Response {
@@ -686,7 +781,11 @@ async fn runs_create(State(state): S, headers: HeaderMap, body: Option<Json<RunB
             params.entry("intent".to_string()).or_insert_with(|| intent.clone());
         }
     }
-    let expansion = match template.expand_dag("__root__", &params) {
+    let roles = match run_roles(&state.root_dir, &template, b.team.as_deref(), b.preset.as_deref()) {
+        Ok(r) => r,
+        Err(r) => return r,
+    };
+    let expansion = match template.expand_dag_with_roles("__root__", &params, roles.as_ref()) {
         Ok(x) => x,
         Err(e) => return error("usage", format!("{e:#}"), "Check the template's params."),
     };
@@ -694,13 +793,14 @@ async fn runs_create(State(state): S, headers: HeaderMap, body: Option<Json<RunB
         let nodes: Vec<Value> = template
             .steps
             .iter()
-            .map(|s| json!({ "nodeId": expansion.nodes.get(&s.id), "stepId": s.id, "title": s.title, "executor": s.executor }))
+            .map(|s| json!({ "nodeId": expansion.nodes.get(&s.id), "stepId": s.id, "title": s.title,
+                "executor": template.resolve_step_executor(s, roles.as_ref()).ok().flatten() }))
             .collect();
         return Json(json!({ "dryRun": true, "plan": { "template": template.id, "campaignId": campaign_id, "nodes": nodes,
             "records": ["PromptCreated", "DagCreated", "DagNodeCreated…", RUN_EVENT] } }))
         .into_response();
     }
-    let result = match plan_from_template(&state.gate, &template, &params, b.intent.as_deref(), Some(campaign_id.clone())).await {
+    let result = match crate::templates::plan_from_template_with_roles(&state.gate, &template, &params, b.intent.as_deref(), Some(campaign_id.clone()), None, roles.as_ref()).await {
         Ok(r) => r,
         Err(e) => return error("refused", format!("{e:#}"), "Read the Gate's reason, then change the request."),
     };

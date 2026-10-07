@@ -46,8 +46,8 @@ The crew. See [Agents](/factory/agents).
 | `gizzi agents handoff <bot@team> [--note]` | `rig seat handover` | Hand a Terminal bot's seat to a fresh session, with a handoff note |
 | `gizzi agents harness list\|sync` | (runtimes) | List or rescan the agent CLIs on a machine |
 | `gizzi agents pack` / `install <path\|github-url>` | `rig bundle create` / `install` | Package a team, or install one |
-| `gizzi agents templates` | (agent specs) | Browse bot templates |
-| `gizzi agents wall [<team>]` | `rig tui` terminals view | Open the live wall of panes |
+| `gizzi agents templates` | (agent specs) | Browse bot templates (served by Gizzi) |
+| `gizzi agents wall [<team>]` | `rig tui` terminals view | Open the live wall of panes, or one team's |
 | `gizzi agents attach <bot@team>` | drop into a terminal | Open one bot: its pane, its session or its thread |
 | `gizzi agents doctor` | `rig doctor`, `rig health` | Check harnesses, panes and transport |
 
@@ -76,7 +76,7 @@ Repeatable plans. See [Workflows](/factory/workflows).
 |---|---|---|
 | `gizzi workflows run <template> [--param k=v]` | `rig workflow instantiate` + `run` | Make nodes from a Template, then drive |
 | `gizzi workflows drive <dag> [--once] [--dry-run]` | `rig workflow watch` | Pick up READY nodes, in the foreground |
-| `gizzi workflows template list\|show\|check\|save` | `rig workflow validate` / `show` | Manage and validate Templates |
+| `gizzi workflows template list\|show\|check\|save` | `rig workflow validate` / `show` | Manage and validate Templates; `save --from-run <dag>` saves a run as one |
 | `gizzi workflows wake list\|due\|run` | `rig watchdog` | Scheduled checks |
 | `gizzi workflows gate add\|resolve\|list` | human gate | Wait-gates |
 | `gizzi workflows status <run>` | `rig workflow status` | Render a run's DAG and status |
