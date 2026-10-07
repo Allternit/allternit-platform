@@ -6,6 +6,7 @@ on:
     paths:
       - 'surfaces/docs/**'
       - '.github/workflows/ci-docs.yml'
+      - 'scripts/docs-lint.cjs'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
   pull_request:
@@ -13,6 +14,7 @@ on:
     paths:
       - 'surfaces/docs/**'
       - '.github/workflows/ci-docs.yml'
+      - 'scripts/docs-lint.cjs'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
 
