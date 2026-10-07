@@ -466,6 +466,9 @@ async fn main() {
     if stranded > 0 {
         tracing::warn!(stranded, "bot threads were mid-turn at restart; moved to waiting on you");
     }
+    // On an Allternit cloud computer: pair it as a Factory peer computer and
+    // keep its engine's peer port on the mesh (no-op anywhere else).
+    allternit_api::cloud_computer_peer::spawn_if_cloud_computer();
     if allternit_api::cloud_worker::should_run_cloud_worker(&app_config) {
         allternit_api::cloud_worker::spawn_cloud_fabric_worker(
             db.clone(),

@@ -435,7 +435,9 @@ impl FactoryApi for ApiClient {
         self.call(method, &format!("/api/v1/computers/{computer}/factory-peer/{}", path.trim_start_matches('/')), body)
     }
     fn paired_computers(&self) -> std::result::Result<Vec<PairedComputer>, ApiError> {
-        let v = self.call("GET", "/api/v1/computers", None)?;
+        // include_roles: cloud computers are mirrored as hidden
+        // `factory_peer` rows (allternit-api computer_routes::remote_mirror).
+        let v = self.call("GET", "/api/v1/computers?include_roles=1", None)?;
         Ok(v["computers"]
             .as_array()
             .into_iter()

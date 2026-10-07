@@ -164,8 +164,8 @@ impl MeshService {
         }
     }
 
-    #[cfg(test)]
-    fn with_admin(admin: Arc<dyn HeadscaleAdmin>, control_url: &str) -> Self {
+    /// A service over any admin backend (tests use a fake Headscale).
+    pub fn with_admin(admin: Arc<dyn HeadscaleAdmin>, control_url: &str) -> Self {
         Self {
             admin,
             control_url: control_url.to_string(),

@@ -124,6 +124,10 @@ allternit-apple-vf-driver = { path = "../../drivers/apple-vf" }
 [target.'cfg(unix)'.dependencies]
 allternit-firecracker-driver = { path = "../../drivers/firecracker" }
 
+# PR_SET_PDEATHSIG for the cloud computer's mesh-node (cloud_computer_peer).
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 axum-test = "14"
 tempfile = "3"

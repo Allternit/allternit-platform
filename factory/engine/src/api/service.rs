@@ -3157,19 +3157,27 @@ pub async fn run_service_with_peer(
         }
     }
 
-    if let Some(opts) = peer {
-        let addr = format!("127.0.0.1:{}", opts.port);
-        let peer_listener = tokio::net::TcpListener::bind(&addr)
-            .await
-            .map_err(|e| anyhow::anyhow!("peer port {addr} is already in use: {e}"))?;
-        tracing::info!(computer = %opts.computer_id, "peer listener on {addr}");
-        let verifier = Arc::new(crate::api::peer::PeerVerifier::new(opts));
-        let peer_app = crate::api::peer::peer_router(state.clone(), verifier);
-        tokio::spawn(async move {
-            if let Err(e) = axum::serve(peer_listener, peer_app).await {
-                tracing::error!("peer listener stopped: {}", e);
+    match peer {
+        Some(opts) => start_peer_listener(state.clone(), opts).await?,
+        // Not paired at start: listen once this computer is paired (a cloud
+        // computer pairs itself after its engine is already up).
+        None => {
+            if let Some(home) = std::env::var_os("HOME").filter(|h| !h.is_empty()) {
+                let state = state.clone();
+                tokio::spawn(async move {
+                    let opts = wait_until_paired(std::path::Path::new(&home), PAIRING_POLL).await;
+                    loop {
+                        match start_peer_listener(state.clone(), opts.clone()).await {
+                            Ok(()) => break,
+                            Err(e) => {
+                                tracing::warn!("{e:#}; retrying");
+                                sleep(PAIRING_POLL).await;
+                            }
+                        }
+                    }
+                });
             }
-        });
+        }
     }
 
     let app = create_router(state);
@@ -3198,6 +3206,45 @@ pub async fn run_service_with_peer(
 
     axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>()).await?;
     Ok(())
+}
+
+/// How often an unpaired engine looks for `~/.allternit/computer/paired.json`.
+const PAIRING_POLL: Duration = Duration::from_secs(30);
+
+/// Serve the peer router on 127.0.0.1:`opts.port`.
+async fn start_peer_listener(state: Arc<ServiceState>, opts: crate::api::peer::PeerOptions) -> anyhow::Result<()> {
+    let addr = format!("127.0.0.1:{}", opts.port);
+    let peer_listener = tokio::net::TcpListener::bind(&addr)
+        .await
+        .map_err(|e| anyhow::anyhow!("peer port {addr} is already in use: {e}"))?;
+    tracing::info!(computer = %opts.computer_id, "peer listener on {addr}");
+    let verifier = Arc::new(crate::api::peer::PeerVerifier::new(opts));
+    let peer_app = crate::api::peer::peer_router(state, verifier);
+    tokio::spawn(async move {
+        if let Err(e) = axum::serve(peer_listener, peer_app).await {
+            tracing::error!("peer listener stopped: {}", e);
+        }
+    });
+    Ok(())
+}
+
+/// Wait until this computer has a pairing config under `home`, checking
+/// every `every`, and return the peer options for the default peer port.
+/// A computer that is never paired just keeps waiting (one stat per poll).
+async fn wait_until_paired(home: &std::path::Path, every: Duration) -> crate::api::peer::PeerOptions {
+    let path = crate::api::peer::paired_config_path(home);
+    loop {
+        if path.is_file() {
+            match crate::api::peer::PeerOptions::resolve(crate::api::peer::DEFAULT_PEER_PORT, Some(home)) {
+                Ok(opts) => {
+                    tracing::info!(computer = %opts.computer_id, "this computer is now paired; taking peer calls");
+                    return opts;
+                }
+                Err(e) => tracing::debug!("pairing config not usable yet: {e:#}"),
+            }
+        }
+        sleep(every).await;
+    }
 }
 
 #[cfg(unix)]
@@ -3489,5 +3536,31 @@ mod closer_claim_tests {
         assert!(matches!(closer_from_claim(Some("agent:other")), Ok(None)));
         assert!(matches!(closer_from_claim(None), Ok(None)));
         assert_eq!(closer_from_claim(Some("bogus:x")).err(), Some(StatusCode::BAD_REQUEST));
+    }
+}
+
+#[cfg(test)]
+mod pairing_watch_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn an_unpaired_engine_starts_taking_peer_calls_once_paired() {
+        let home = tempfile::tempdir().unwrap();
+        let path = crate::api::peer::paired_config_path(home.path());
+        let watch = tokio::spawn({
+            let home = home.path().to_path_buf();
+            async move { wait_until_paired(&home, Duration::from_millis(20)).await }
+        });
+        // Not paired: still waiting.
+        sleep(Duration::from_millis(100)).await;
+        assert!(!watch.is_finished());
+        // Paired (a cloud computer writes this after its engine started).
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, r#"{"computerId":"pc_cloud","secret":"s","cloudUrl":"https://cloud.test"}"#).unwrap();
+        let opts = tokio::time::timeout(Duration::from_secs(5), watch).await.unwrap().unwrap();
+        assert_eq!(opts.port, crate::api::peer::DEFAULT_PEER_PORT);
+        if std::env::var_os("ALLTERNIT_FACTORY_COMPUTER_ID").is_none() {
+            assert_eq!(opts.computer_id, "pc_cloud");
+        }
     }
 }

@@ -19,6 +19,13 @@
 //!    or an organization member a short-lived data-plane JWT (`aud` = the
 //!    computer id, scope `factory:peer`) that the computer's engine verifies
 //!    against `GET /api/v1/auth/dp-jwks`.
+//! 6. A cloud computer pairs itself: its allternit-api calls
+//!    `POST /api/v1/computers/paired/self` with the runtime device token the
+//!    computer was provisioned with. It gets the same credentials a code
+//!    redemption gives, for a row owned by the instance's owner and linked to
+//!    the instance (`provisioned_instance_id`). Calling again rotates the
+//!    secret and mints a fresh mesh key for the same row. The row is deleted
+//!    with the instance (`services::provisioning`).
 
 use axum::{
     extract::{Path, State},
@@ -45,6 +52,7 @@ pub fn routes() -> Router<Arc<ApiState>> {
         .route("/api/v1/computers/pairing-codes", post(create_pairing_code))
         .route("/api/v1/computers/pair", post(redeem_pairing_code))
         .route("/api/v1/computers/paired", get(list_paired))
+        .route("/api/v1/computers/paired/self", post(pair_self))
         .route("/api/v1/computers/paired/:id", delete(remove_paired))
         .route("/api/v1/computers/paired/:id/report", post(report))
         .route("/api/v1/computers/paired/:id/peer-ticket", post(peer_ticket))
@@ -203,6 +211,86 @@ async fn redeem_pairing_code(State(state): State<Arc<ApiState>>, Json(body): Jso
         .into_response())
 }
 
+/// How a cloud computer is listed among paired computers.
+pub const CLOUD_COMPUTER_NAME: &str = "Cloud computer";
+
+/// A cloud computer pairs itself (see the module doc, step 6). Only the
+/// runtime device of a live provisioned instance may call this; anything
+/// else is refused.
+async fn pair_self(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> Result<Response, ApiError> {
+    let Some(token) = crate::routes::runtime_pairing::device_token_from_headers(&headers) else {
+        return Err(ApiError::Unauthorized("a cloud computer pairs itself with its runtime device token".into()));
+    };
+    let device = crate::routes::runtime_pairing::runtime_device_for_token(&state.db, token, None).await?;
+    let instance: Option<(String, String, String)> = sqlx::query_as(
+        "SELECT id, user_id, status FROM provisioned_instances WHERE device_id = $1 ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(&device.id)
+    .fetch_optional(&state.db)
+    .await?;
+    let Some((instance_id, owner, status)) = instance else {
+        return Err(ApiError::Forbidden("only an Allternit cloud computer can pair itself; pair other computers with a code".into()));
+    };
+    if matches!(status.as_str(), "deleted" | "error") {
+        return Err(ApiError::Forbidden(format!("this cloud computer is {status}, so it can't be paired")));
+    }
+    let organization_id: Option<String> =
+        sqlx::query_scalar("SELECT organization_id FROM runtime_devices WHERE id = $1")
+            .bind(&device.id)
+            .fetch_optional(&state.db)
+            .await?
+            .flatten();
+    let Some(mesh) = &state.mesh_service else {
+        return Err(ApiError::ServiceUnavailable("The Allternit mesh isn't configured on this server.".into()));
+    };
+    let enrollment = mesh
+        .enroll(&owner)
+        .await
+        .map_err(|e| ApiError::ServiceUnavailable(format!("Couldn't get a mesh key: {e}")))?;
+
+    let secret = hex::encode(rand::thread_rng().gen::<[u8; 32]>());
+    // One row per instance: a second call (a reinstalled image, lost
+    // credentials) keeps the row and its id and rotates the secret.
+    let id: String = sqlx::query_scalar(
+        "INSERT INTO paired_computers (id, user_id, name, os, secret_hash, organization_id, provisioned_instance_id)
+         VALUES ($1, $2, $3, 'linux', $4, $5, $6)
+         ON CONFLICT (provisioned_instance_id) DO UPDATE
+           SET secret_hash = EXCLUDED.secret_hash, user_id = EXCLUDED.user_id, organization_id = EXCLUDED.organization_id
+         RETURNING id",
+    )
+    .bind(format!("pc_{}", uuid::Uuid::new_v4().simple()))
+    .bind(&owner)
+    .bind(CLOUD_COMPUTER_NAME)
+    .bind(sha256_hex(&secret))
+    .bind(&organization_id)
+    .bind(&instance_id)
+    .fetch_one(&state.db)
+    .await?;
+    tracing::info!(computer = %id, instance = %instance_id, "cloud computer paired itself");
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::json!({
+            "computerId": id,
+            "secret": secret,
+            "name": CLOUD_COMPUTER_NAME,
+            "cloudUrl": public_api_url(),
+            "controlUrl": enrollment.control_url,
+            "authKey": enrollment.auth_key,
+            "authKeyExpiresAt": enrollment.expires_at.to_rfc3339(),
+        })),
+    )
+        .into_response())
+}
+
+/// The public address of this API, which the computer reports to.
+fn public_api_url() -> String {
+    std::env::var("ALLTERNIT_PUBLIC_API_URL")
+        .ok()
+        .map(|s| s.trim().trim_end_matches('/').to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "https://api.allternit.com".to_string())
+}
+
 #[derive(Deserialize)]
 struct ReportBody {
     #[serde(rename = "meshIp")]
@@ -255,12 +343,16 @@ struct PairedComputer {
     last_seen_at: Option<DateTime<Utc>>,
     /// Paired by someone else in the caller's organization.
     shared: bool,
+    /// One of the account's cloud computers, paired by itself. It takes
+    /// Factory peer calls over the mesh; its screen is not served there.
+    cloud_computer: bool,
 }
 
 async fn list_paired(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> Result<Response, ApiError> {
     let caller = signed_in_caller(&state, &headers).await?;
     let computers: Vec<PairedComputer> = sqlx::query_as(
-        "SELECT id, name, os, mesh_ip, vnc_ready, created_at, last_seen_at, user_id <> $1 AS shared
+        "SELECT id, name, os, mesh_ip, vnc_ready, created_at, last_seen_at, user_id <> $1 AS shared,
+                provisioned_instance_id IS NOT NULL AS cloud_computer
          FROM paired_computers
          WHERE user_id = $1 OR (organization_id IS NOT NULL AND organization_id = $2)
          ORDER BY created_at",

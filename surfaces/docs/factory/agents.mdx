@@ -105,7 +105,7 @@ A hosted bot's thread hands off in the app, which opens a new window seeded with
 gizzi agents up product-build --on build-box
 ```
 
-`--on` (or a bot's `machine:` in team.yaml) names one of your paired computers: a Mac, a Linux box or a VPS you paired with `allternit computer pair <code>`, or one your organization paired. The engine checks the name against your paired computers, by name (any case) or id:
+`--on` (or a bot's `machine:` in team.yaml) names one of your paired computers: a Mac, a Linux box or a VPS you paired with `allternit computer pair <code>`, one your organization paired, or your Allternit cloud computer. The engine checks the name against your paired computers, by name (any case) or id:
 
 - A name that isn't paired is refused (exit `2`), and the message lists your paired computers.
 - A computer that hasn't joined the mesh yet is refused (exit `1`).
@@ -129,7 +129,8 @@ Things to know:
 
 - The mirror redraws the other computer's screen at its own size, about five times a second at most. Typing over the mesh is a little slower than in a local pane.
 - Bots the other computer runs aren't registered with allternit-api from there, so they appear under your account through your engine.
-- A paired computer's engine takes peer calls on port `3019`. Desktop starts it with `--peer-port 3019` when the Mac is paired, and `allternit computers serve` forwards that port over the mesh beside VNC.
+- A paired computer's engine takes peer calls on port `3019`. Desktop starts it with `--peer-port 3019` when the Mac is paired, and `allternit computers serve` forwards that port over the mesh beside VNC. An engine started before the computer was paired starts taking peer calls within 30 seconds of the pairing.
+- Your cloud computer pairs itself, with nothing to run: it's listed as `Cloud computer` (`gizzi agents up product-build --on "Cloud computer"`). It puts only the peer port on the mesh, never its screen ([cloud computers as paired computers](/api/cloud-api#cloud-computers-as-paired-computers)). If `--on` says it isn't paired, open Computers once in the app so the paired list syncs.
 - Peer calls need a peer ticket from cloud-api, which goes only to the computer's owner or a member of its organization ([peer tickets](/api/cloud-api#peer-tickets)). Your allternit-api asks for it and carries the call (`/api/v1/computers/:id/factory-peer/*`).
 - On the other computer you can only reach the bots you started there, and only in your own workspace.
 

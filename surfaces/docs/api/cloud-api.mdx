@@ -132,9 +132,16 @@ A user can pair one of their own machines (a Mac, a Linux box, a VPS) as a remot
 | POST | `/api/v1/computers/pairing-codes` | Clerk / device | A single-use code (`XXXX-XXXX`, 10 minutes) and the command to run on the machine: `allternit computer pair <code>`. |
 | POST | `/api/v1/computers/pair` | the code | Redeems a code: `{ code, name, os? }` → `{ computerId, secret, controlUrl, authKey, authKeyExpiresAt }`. `authKey` joins the mesh, and `secret` signs the machine's reports. |
 | POST | `/api/v1/computers/paired/:id/report` | `x-allternit-computer-secret` | The machine reports `{ meshIp, vncReady, name? }`. `meshIp` must be in `100.64.0.0/10`. `allternit computers serve` does this every minute. |
-| GET | `/api/v1/computers/paired` | Clerk / device | The caller's computers plus their organization's: `{ computers: [{ id, name, os, mesh_ip, vnc_ready, created_at, last_seen_at, shared }] }`. |
+| POST | `/api/v1/computers/paired/self` | device (a cloud computer's) | A cloud computer pairs itself, so the Factory can run bots on it. Same answer as `/pair`, plus `{ name, cloudUrl }`. The computer is owned by the cloud computer's owner and named `Cloud computer`. Calling again keeps the same `computerId`, and rotates the secret and mesh key. Any other device answers `403`, and so does a deleted cloud computer. |
+| GET | `/api/v1/computers/paired` | Clerk / device | The caller's computers plus their organization's: `{ computers: [{ id, name, os, mesh_ip, vnc_ready, created_at, last_seen_at, shared, cloud_computer }] }`. `cloud_computer` is `true` for a cloud computer that paired itself. |
 | DELETE | `/api/v1/computers/paired/:id` | Clerk / device | Unpairs one of the caller's own computers. |
 | POST | `/api/v1/computers/paired/:id/peer-ticket` | Clerk / device | A Factory peer ticket for the computer's owner or an organization member: `{ ticket, computerId, meshIp, peerPort: 3019, expiresIn }`. A computer that isn't the caller's answers `404`. One that hasn't joined the mesh yet answers `409`. |
+
+### Cloud computers as paired computers
+
+An Allternit cloud computer pairs itself the first time its allternit-api starts, using the runtime device token it was provisioned with (`POST /api/v1/computers/paired/self`). It saves the answer in `~/.allternit/computer/paired.json`, the same file `allternit computer pair` writes. Then it joins the owner's mesh with `mesh-node`, forwarding only the Factory engine's peer port (`3019`), and reports its mesh address every minute. Its screen is never served over the mesh: you view a cloud computer through the app as before. The pairing is deleted when the cloud computer is deleted. The row links to the instance through `paired_computers.provisioned_instance_id` (migration `067`).
+
+Each runtime mirrors a cloud computer's pairing as a hidden computer (role `factory_peer`). That keeps it out of the Computers list, where the cloud computer already shows, while `--on` can still name it. Set `ALLTERNIT_CLOUD_PEER=0` on a cloud computer to turn this off.
 
 ### Peer tickets
 

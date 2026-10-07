@@ -88,7 +88,7 @@ Delivery { id, to: string, via: 'session'|'pane'|'pane_queue'|'vendor_ticket'|'c
 ```
 
 ### Peer routes (another computer's engine)
-A paired computer's engine serves these on its peer port (`serve --peer-port 3019`, 127.0.0.1, forwarded over the mesh). Every call needs `Authorization: Bearer <peer ticket>` for that computer. The ticket's user is the caller, and a caller only reaches its own workspace and bots there (`~/.allternit/factory/remote-work/<user>/<team>`).
+A paired computer's engine serves these on its peer port (`serve --peer-port 3019`, 127.0.0.1, forwarded over the mesh). An engine started without `--peer-port` starts serving them on `3019` once `~/.allternit/computer/paired.json` appears (checked every 30 seconds), which is how a cloud computer that pairs itself after start takes peer calls. Every call needs `Authorization: Bearer <peer ticket>` for that computer. The ticket's user is the caller, and a caller only reaches its own workspace and bots there (`~/.allternit/factory/remote-work/<user>/<team>`).
 - `GET /api/factory/peer/hello` → `{ computerId, engine, user }`
 - `POST /api/factory/peer/teams/:name/up` body `{ files: Record<path, text>, bots: string[], preset?: string, repo?: { url, commit }, dryRun?: boolean }` → `{ plan, applied, results, root }`. `files` is the team folder and must include `team.yaml`; paths are relative, with no `..` (at most 200 files and 4 MiB). Only the `bots` named start, here. `repo.url` must be `https` or `ssh`; the workspace is a clone checked out at `repo.commit`, with `.allternit/` excluded from git. A failed step answers 409 with the same body.
 - `POST /api/factory/peer/teams/:name/down` → like `POST /api/factory/teams/:name/down`, in the caller's workspace.

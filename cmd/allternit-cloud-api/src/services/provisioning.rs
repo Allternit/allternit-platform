@@ -1070,9 +1070,20 @@ impl InstanceRow {
     }
 }
 
+/// Every path that retires an instance (delete, the 30-day lifecycle, a
+/// failed or missing container) revokes its device here, so this is also
+/// where its self-pairing as a Factory peer computer goes
+/// (`routes::paired_computers`, `/paired/self`).
 async fn revoke_device(db: &PgPool, device_id: &str) -> Result<(), ApiError> {
     sqlx::query(
         "UPDATE runtime_devices SET status = 'revoked', revoked_at = CURRENT_TIMESTAMP WHERE id = $1 AND revoked_at IS NULL",
+    )
+    .bind(device_id)
+    .execute(db)
+    .await?;
+    sqlx::query(
+        "DELETE FROM paired_computers WHERE provisioned_instance_id IN
+           (SELECT id FROM provisioned_instances WHERE device_id = $1)",
     )
     .bind(device_id)
     .execute(db)
@@ -3475,6 +3486,10 @@ pub(crate) mod pg_tests {
     const MIGRATION_018: &str =
         include_str!("../../migrations_pg/018_cloud_computer_provisioning.sql");
     const MIGRATION_019: &str = include_str!("../../migrations_pg/019_free_sleeping_computer.sql");
+    // Retiring an instance removes its self-pairing (revoke_device).
+    const MIGRATION_017: &str = include_str!("../../migrations_pg/017_paired_computers.sql");
+    const MIGRATION_066: &str = include_str!("../../migrations_pg/066_paired_computer_orgs.sql");
+    const MIGRATION_067: &str = include_str!("../../migrations_pg/067_paired_cloud_computers.sql");
 
     async fn test_pool() -> PgPool {
         let url = "postgres://allternit:allternit_pg_2026@localhost:5432/allternit_test";
@@ -3562,6 +3577,9 @@ pub(crate) mod pg_tests {
         apply_migration_sql(&pool, &schema, MIGRATION_018).await;
         apply_migration_sql(&pool, &schema, MIGRATION_019).await;
         apply_migration_sql(&pool, &schema, MIGRATION_019).await;
+        for sql in [MIGRATION_017, MIGRATION_066, MIGRATION_067] {
+            apply_migration_sql(&pool, &schema, sql).await;
+        }
         create_schedules_stub(&pool).await;
         sqlx::query("INSERT INTO users (id) VALUES ('user_1'), ('user_2')")
             .execute(&pool)
@@ -4046,8 +4064,23 @@ pub(crate) mod pg_tests {
         bind_device_slot(&mut tx, &view.id, "rt_1").await.unwrap();
         tx.commit().await.unwrap();
         activate_registered_device(&pool, &view.id).await.unwrap();
+        // Its self-pairing as a Factory peer goes with it; a hand-paired
+        // computer of the same owner stays.
+        sqlx::query(
+            "INSERT INTO paired_computers (id, user_id, name, secret_hash, provisioned_instance_id)
+             VALUES ('pc_cloud', 'user_1', 'Cloud computer', 'x', $1), ('pc_mac', 'user_1', 'Mac', 'y', NULL)",
+        )
+        .bind(&view.id)
+        .execute(&pool)
+        .await
+        .unwrap();
 
         let deleted = service.delete(&view.id, "user_1").await.unwrap();
+        let paired: Vec<String> = sqlx::query_scalar("SELECT id FROM paired_computers ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(paired, ["pc_mac"], "the cloud computer's pairing is removed with it");
         assert_eq!(deleted.status, "deleted");
         assert!(backend.calls.lock().unwrap().contains(&format!("delete:{}", view.incus_name)));
 
