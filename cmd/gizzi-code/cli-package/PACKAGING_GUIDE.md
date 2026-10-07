@@ -15,8 +15,9 @@ curl -fsSL https://install.gizziio.com/install | bash
 ### 2. Homebrew (macOS)
 
 ```bash
-brew install allternit/tap/gizzi-code
-brew install gizzi-code
+brew tap allternit/tap
+brew trust --formula allternit/tap/gizzi-code   # newer Homebrew asks you to trust a third-party tap first
+brew install allternit/tap/gizzi-code           # installs gizzi and the Allternit Factory engine
 ```
 
 ### 3. npm

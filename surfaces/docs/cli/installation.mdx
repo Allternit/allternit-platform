@@ -55,5 +55,13 @@ gizzi --version
 Configuration lives at `~/.config/gizzi-code/config.toml` by default. Run `gizzi auth login` to authenticate — see [Authentication](/cli/authentication).
 
 <Tip>
-  On macOS you can also install via Homebrew: `brew install allternit/tap/gizzi-code`.
+  On macOS you can also install via Homebrew. Newer Homebrew asks you to trust a third-party tap before installing from it:
+
+  ```bash
+  brew tap allternit/tap
+  brew trust --formula allternit/tap/gizzi-code
+  brew install allternit/tap/gizzi-code
+  ```
+
+  This installs `gizzi` and the Allternit Factory engine (`allternit-factory`) next to it.
 </Tip>
