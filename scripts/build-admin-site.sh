@@ -6,7 +6,8 @@
 # without credentials. Merges here trigger the same build through infrastructure/admin-site-hook.
 # Pages build command (run from the allternit-ai checkout, output directory admin-dist):
 #   git clone -q --depth 1 https://github.com/Allternit/allternit-platform.git /tmp/platform &&
-#   OUT=$PWD/admin-dist AI_DIR=$PWD bash /tmp/platform/scripts/build-admin-site.sh
+#   OUT=$PWD/admin-dist PAGES_ROOT=$PWD AI_DIR=$(git rev-parse --show-toplevel) bash /tmp/platform/scripts/build-admin-site.sh
+# with Pages root directory docs/ (no package.json there, so no dependency install).
 #
 # The output lists every file in the private allternit-ai repo. It is served only through the
 # Access-checking worker in surfaces/admin.allternit.com/_worker.js; never commit it or deploy it
@@ -44,6 +45,14 @@ find "$OUT" -mindepth 1 -delete
 
 # Access guard: Pages runs _worker.js in front of every request (advanced mode).
 cp -R surfaces/admin.allternit.com/_worker.js "$OUT/_worker.js"
+"$PY" -c 'import json,sys; c=json.load(open(sys.argv[1])); print("export default " + json.dumps({"teamDomain": c["teamDomain"], "aud": c["aud"]}) + ";")' \
+  surfaces/admin.allternit.com/access.json > "$OUT/_worker.js/config.js"
+
+# allternit-ai has its own wrangler.toml (for ai.allternit.com) that Pages would otherwise find
+# by searching upward. A config in the Pages root directory wins and points at our output.
+if [ -n "${PAGES_ROOT:-}" ]; then
+  "$PY" -c 'import os,sys; print("name = \"allternit-admin\"\npages_build_output_dir = \"%s\"\ncompatibility_date = \"2025-01-01\"" % os.path.relpath(sys.argv[1], sys.argv[2]))' "$OUT" "$PAGES_ROOT" > "$PAGES_ROOT/wrangler.toml"
+fi
 
 # Defence in depth behind Access: keep it out of search engines, caches and frames.
 cat > "$OUT/_headers" <<'HEADERS'
