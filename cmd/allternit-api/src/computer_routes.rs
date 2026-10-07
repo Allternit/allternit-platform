@@ -1347,7 +1347,16 @@ struct RemoteComputer {
     mesh_ip: Option<String>,
     #[serde(default)]
     vnc_ready: bool,
+    /// One of the account's cloud computers, paired by itself so the Factory
+    /// can run bots on it (`--on`). Mirrored with role `factory_peer`: hidden
+    /// from the Computers list (the cloud computer is already there as
+    /// itself) and never viewed over the mesh (its screen isn't served there).
+    #[serde(default)]
+    cloud_computer: bool,
 }
+
+/// Role of a mirrored cloud computer's peer row (see `RemoteComputer`).
+pub(crate) const FACTORY_PEER_ROLE: &str = "factory_peer";
 
 #[derive(Debug, Deserialize)]
 struct RemoteSyncBody {
@@ -1362,6 +1371,17 @@ pub(crate) fn remote_status(mesh_ip: Option<&str>, vnc_ready: bool) -> &'static 
         (None, _) => "creating",
         (Some(_), true) => "running",
         (Some(_), false) => "error",
+    }
+}
+
+/// Status and role of a paired machine's mirror row. A cloud computer only
+/// serves Factory peer calls over the mesh, so being on the mesh is all
+/// "running" means for it, and its row is a hidden `factory_peer`.
+fn remote_mirror(remote: &RemoteComputer) -> (&'static str, &'static str) {
+    if remote.cloud_computer {
+        (remote_status(remote.mesh_ip.as_deref(), true), FACTORY_PEER_ROLE)
+    } else {
+        (remote_status(remote.mesh_ip.as_deref(), remote.vnc_ready), "user")
     }
 }
 
@@ -1382,7 +1402,7 @@ async fn sync_remote_computers(
         for remote in body.computers.iter().take(200) {
             let native_id: String = remote.id.chars().take(128).collect();
             let name: String = remote.name.trim().chars().take(80).collect();
-            let status = remote_status(remote.mesh_ip.as_deref(), remote.vnc_ready);
+            let (status, role) = remote_mirror(remote);
             let existing: Option<String> = conn
                 .query_row(
                     "SELECT id FROM computers WHERE provider = ?1 AND owner_type = 'user' AND owner_id = ?2 AND native_id = ?3",
@@ -1393,17 +1413,17 @@ async fn sync_remote_computers(
             let id = match existing {
                 Some(id) => {
                     conn.execute(
-                        "UPDATE computers SET name = ?2, os = ?3, host = ?4, status = ?5 WHERE id = ?1",
-                        rusqlite::params![id, name, remote.os, remote.mesh_ip, status],
+                        "UPDATE computers SET name = ?2, os = ?3, host = ?4, status = ?5, role = ?6 WHERE id = ?1",
+                        rusqlite::params![id, name, remote.os, remote.mesh_ip, status, role],
                     )?;
                     id
                 }
                 None => {
                     let id = format!("cmp_{}", uuid::Uuid::new_v4().simple());
                     conn.execute(
-                        "INSERT INTO computers (id, kind, provider, status, owner_type, owner_id, name, os, host, native_id, billing_source)
-                         VALUES (?1, 'byo_vps', ?2, ?3, 'user', ?4, ?5, ?6, ?7, ?8, 'free')",
-                        rusqlite::params![id, crate::mesh_bridge::FABRIC_PROVIDER, status, owner, name, remote.os, remote.mesh_ip, native_id],
+                        "INSERT INTO computers (id, kind, provider, status, owner_type, owner_id, name, os, host, native_id, billing_source, role)
+                         VALUES (?1, 'byo_vps', ?2, ?3, 'user', ?4, ?5, ?6, ?7, ?8, 'free', ?9)",
+                        rusqlite::params![id, crate::mesh_bridge::FABRIC_PROVIDER, status, owner, name, remote.os, remote.mesh_ip, native_id, role],
                     )?;
                     id
                 }
@@ -2783,6 +2803,18 @@ mod tests {
         assert_eq!(remote_status(Some("100.64.0.9"), true), "running");
         assert_eq!(remote_status(Some("100.64.0.9"), false), "error");
         assert_eq!(remote_status(Some("192.168.1.2"), true), "creating");
+    }
+
+    #[test]
+    fn cloud_computers_mirror_as_hidden_peers() {
+        let remote = |json: serde_json::Value| -> RemoteComputer { serde_json::from_value(json).unwrap() };
+        let mac = remote(serde_json::json!({ "id": "pc_1", "name": "Mac", "mesh_ip": "100.64.0.9", "vnc_ready": true }));
+        assert_eq!(remote_mirror(&mac), ("running", "user"));
+        // No VNC over the mesh, and none expected: running once on the mesh.
+        let cloud = remote(serde_json::json!({ "id": "pc_2", "name": "Cloud computer", "mesh_ip": "100.64.0.10", "vnc_ready": false, "cloud_computer": true }));
+        assert_eq!(remote_mirror(&cloud), ("running", FACTORY_PEER_ROLE));
+        let joining = remote(serde_json::json!({ "id": "pc_3", "name": "Cloud computer", "cloud_computer": true }));
+        assert_eq!(remote_mirror(&joining), ("creating", FACTORY_PEER_ROLE));
     }
 
     #[test]

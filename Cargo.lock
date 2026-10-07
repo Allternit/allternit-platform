@@ -242,6 +242,7 @@ dependencies = [
  "include_dir",
  "instant-distance",
  "jsonwebtoken",
+ "libc",
  "mcp-client",
  "mcp-protocol",
  "md5",

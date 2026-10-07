@@ -31,6 +31,12 @@ pub struct TestApp {
 impl TestApp {
     /// Create a new test application with Postgres database
     pub async fn new() -> Self {
+        Self::with_mesh(None).await
+    }
+
+    /// [`Self::new`] with a mesh enrollment service (e.g. over a fake
+    /// Headscale), for routes that hand out mesh keys.
+    pub async fn with_mesh(mesh_service: Option<Arc<routes::mesh::MeshService>>) -> Self {
         // Create temp directory for any file-based test artifacts
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
 
@@ -92,7 +98,7 @@ impl TestApp {
                 Arc::new(services::ProvisioningService::new(db.clone())),
             )),
             provisioning_service: Arc::new(services::ProvisioningService::new(db.clone())),
-            mesh_service: None,
+            mesh_service,
             credential_cipher: None,
             inference_key_service: None,
             metrics_state: Arc::new(allternit_cloud_api::middleware::metrics::MetricsState::new()),
