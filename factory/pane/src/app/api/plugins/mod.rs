@@ -825,12 +825,18 @@ mod tests {
     /// before the command writes, so waiting on existence alone can read EOF.
     /// `pump` advances any event loop the command depends on.
     fn read_capture_when_ready(path: &std::path::Path, mut pump: impl FnMut()) -> String {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        // A command may write its output in several pieces: return it once it
+        // is non-empty and has stopped changing (a loaded machine is slow).
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let mut last: Option<String> = None;
         loop {
             pump();
             if let Ok(contents) = std::fs::read_to_string(path) {
                 if !contents.is_empty() {
-                    return contents;
+                    if last.as_deref() == Some(contents.as_str()) {
+                        return contents;
+                    }
+                    last = Some(contents);
                 }
             }
             assert!(
@@ -838,7 +844,7 @@ mod tests {
                 "plugin command did not write {} within deadline",
                 path.display()
             );
-            std::thread::sleep(std::time::Duration::from_millis(10));
+            std::thread::sleep(std::time::Duration::from_millis(30));
         }
     }
 

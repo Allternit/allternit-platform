@@ -36,7 +36,7 @@ fn cli_sender() -> String {
     "user:human".to_string()
 }
 
-fn code_of(name: &str) -> Code {
+pub(crate) fn code_of(name: &str) -> Code {
     match name {
         "refused" => Code::Refused,
         "not_found" => Code::NotFound,
@@ -136,6 +136,13 @@ pub fn ps(ctx: &Ctx, cwd: Option<String>) -> u8 {
             return fail(ctx, code, &format!("{e:#}"), None);
         }
     };
+    let mut snap = snap;
+    // Remote bots: their computers' engines say which are live.
+    if snap.agents.iter().any(|a| a.machine.as_ref().is_some_and(|m| m.id != "local")) {
+        if let Ok(Some(api)) = allternit_factory_engine::agents::team_apply::ApiClient::from_env() {
+            view::refresh_remote(&mut snap.agents, &api);
+        }
+    }
     // Team bots' panes get their team/address/role/reach and delivered fields.
     let agents = crate::bots::enrich_ps(json!(snap.agents), &ctx.root_dir());
     if ctx.json {
@@ -194,6 +201,28 @@ fn local_session(ctx: &Ctx, rt: &tokio::runtime::Runtime, to: &str) -> Result<(S
     Ok((session, entry))
 }
 
+/// A remote bot's `bot@team` and computer (`runner: remote:<id>`).
+fn remote_of(entry: Option<&Entry>) -> Option<(String, String)> {
+    let e = entry?;
+    let computer = e.remote_computer()?.to_string();
+    let bot = e.bot.as_ref()?;
+    Some((format!("{}@{}", bot.name.as_deref()?, bot.team.as_deref()?), computer))
+}
+
+/// allternit-api, which carries calls to other computers' engines.
+fn peer_api(ctx: &Ctx) -> Result<allternit_factory_engine::agents::team_apply::ApiClient, u8> {
+    use allternit_factory_engine::agents::team_apply::{ApiClient, API_ENV_ACTION, API_NOT_SET_FACT};
+    match ApiClient::from_env() {
+        Ok(Some(c)) => Ok(c),
+        Ok(None) => Err(fail(ctx, Code::Transport, &format!("this bot runs on another computer, which needs allternit-api: {API_NOT_SET_FACT}"), Some(API_ENV_ACTION))),
+        Err(e) => Err(fail(ctx, Code::Usage, &e.fact, Some(API_ENV_ACTION))),
+    }
+}
+
+fn peer_fail(ctx: &Ctx, e: &allternit_factory_engine::agents::team_apply::ApiError) -> u8 {
+    fail(ctx, code_of(&e.code), &e.fact, None)
+}
+
 fn engine_err(ctx: &Ctx, e: &anyhow::Error) -> u8 {
     let code = if backend::is_transport(e) { Code::Transport } else { Code::Internal };
     fail(ctx, code, &format!("{e:#}"), None)
@@ -206,10 +235,20 @@ pub fn down(ctx: &Ctx, to: String, rm_worktree: bool, dry_run: bool) -> u8 {
         Ok(rt) => rt,
         Err(code) => return code,
     };
-    let (session, _) = match local_session(ctx, &rt, &to) {
+    let (session, entry) = match local_session(ctx, &rt, &to) {
         Ok(s) => s,
         Err(code) => return code,
     };
+    if let Some((address, computer)) = remote_of(entry.as_ref()) {
+        if dry_run {
+            if ctx.json {
+                return ok_json(json!({ "dryRun": true, "wouldStop": session, "computer": computer, "changed": false }));
+            }
+            println!("dry run: would stop {address} on computer {computer}\nnothing was changed");
+            return 0;
+        }
+        return stop_remote(ctx, &session, &address, &computer);
+    }
     if dry_run {
         if ctx.json {
             return ok_json(json!({ "dryRun": true, "wouldStop": session, "rmWorktree": rm_worktree, "changed": false }));
@@ -229,6 +268,30 @@ pub fn down(ctx: &Ctx, to: String, rm_worktree: bool, dry_run: bool) -> u8 {
         return ok_json(json!({ "stopped": session, "rmWorktree": rm_worktree }));
     }
     println!("stopped {session}");
+    0
+}
+
+/// Stop a bot another computer runs (its engine closes the pane), then mark
+/// the record here dead.
+pub fn stop_remote(ctx: &Ctx, session: &str, address: &str, computer: &str) -> u8 {
+    use allternit_factory_engine::agents::team_apply::FactoryApi;
+    let api = match peer_api(ctx) {
+        Ok(a) => a,
+        Err(code) => return code,
+    };
+    if let Err(e) = api.peer_call(computer, "POST", "stop", Some(json!({ "to": address }))) {
+        return peer_fail(ctx, &e);
+    }
+    let _ = Registry::open_default().update(|f| {
+        if let Some(e) = f.sessions.get_mut(session) {
+            e.dead = true;
+            e.lifecycle = Some("dead".into());
+        }
+    });
+    if ctx.json {
+        return ok_json(json!({ "stopped": session, "computer": computer }));
+    }
+    println!("stopped {address} on computer {computer}");
     0
 }
 
@@ -531,12 +594,31 @@ pub fn capture(ctx: &Ctx, to: String, lines: Option<u32>) -> u8 {
         Ok(rt) => rt,
         Err(code) => return code,
     };
-    let (session, _) = match local_session(ctx, &rt, &to) {
+    let (session, entry) = match local_session(ctx, &rt, &to) {
         Ok(s) => s,
         Err(code) => return code,
     };
     drop(rt);
     let lines = lines.unwrap_or(25);
+    if let Some((address, computer)) = remote_of(entry.as_ref()) {
+        use allternit_factory_engine::agents::team_apply::FactoryApi;
+        let api = match peer_api(ctx) {
+            Ok(a) => a,
+            Err(code) => return code,
+        };
+        let path = format!("capture?to={}&lines={lines}", address.replace('@', "%40"));
+        return match api.peer_call(&computer, "GET", &path, None) {
+            Ok(v) => {
+                let text = v["text"].as_str().unwrap_or_default().to_string();
+                if ctx.json {
+                    return ok_json(json!({ "session": session, "computer": computer, "lines": lines, "text": text }));
+                }
+                print!("{text}");
+                0
+            }
+            Err(e) => peer_fail(ctx, &e),
+        };
+    }
     let text = match backend::backend().and_then(|b| b.capture(&session, lines)) {
         Ok(t) => t,
         Err(e) => {

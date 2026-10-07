@@ -117,12 +117,23 @@ struct TeamQ {
     team: Option<String>,
 }
 
-async fn agents_list(State(state): S, Query(q): Query<TeamQ>) -> Response {
+async fn agents_list(State(state): S, headers: HeaderMap, Query(q): Query<TeamQ>) -> Response {
     let snap = match full_snapshot(&state).await {
         Ok(s) => s,
         Err(r) => return r,
     };
     let mut agents = snap.agents;
+    // Remote bots: their computers' engines say which are live.
+    if agents.iter().any(|a| a.machine.as_ref().is_some_and(|m| m.id != "local")) {
+        if let Some(api) = crate::agents::team_apply::ApiClient::from_link(&api_link(&headers)) {
+            agents = tokio::task::spawn_blocking(move || {
+                view::refresh_remote(&mut agents, &api);
+                agents
+            })
+            .await
+            .unwrap_or_default();
+        }
+    }
     if let Some(team) = q.team {
         agents.retain(|a| a.team.as_deref() == Some(team.as_str()));
     }

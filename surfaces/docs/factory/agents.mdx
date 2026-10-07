@@ -111,12 +111,28 @@ gizzi agents up product-build --on build-box
 - A computer that hasn't joined the mesh yet is refused (exit `1`).
 - Checking needs allternit-api. Without it, the step fails as `transport`.
 
-**Running the bots there is being built.** Each computer runs its own Factory engine, and your engine asks the other computer's engine to run the bot. The pieces in place so far:
+**How it runs.** Each computer runs its own Factory engine, and your engine asks the other computer's engine to run the bot:
 
+1. Your engine sends the team folder (team.yaml, CULTURE.md, `bots/…`) and the bots placed there.
+2. When your workspace is a git repo with an `https` or `ssh` origin, it also sends the commit you're on.
+3. The other computer clones the repo at that commit into a workspace of its own for you and that team (`~/.allternit/factory/remote-work/<you>/<team>/repo`), and the bots work there. The bots push their work there as a branch, so the other computer needs its own git access to the repo.
+4. Without a repo, the bots work in a plain folder there.
+
+From then on the bot is yours like any other:
+
+- `gizzi agents ps` shows it with that computer as its machine. Your engine asks that computer which of your bots are live.
+- `orchestration send` and `orchestration capture` reach it, and `agents down <bot@team>` or `agents down <team>` stop it there.
+- The app's Factory screens show it the same way.
+
+Things to know:
+
+- The live wall shows remote bots in a later phase. Until then, `capture` shows their screen.
+- Bots the other computer runs aren't registered with allternit-api from there, so they appear under your account through your engine.
 - A paired computer's engine takes peer calls on port `3019`. Desktop starts it with `--peer-port 3019` when the Mac is paired, and `allternit computers serve` forwards that port over the mesh beside VNC.
-- Peer calls only get in with a peer ticket from cloud-api, for the computer's owner or a member of its organization ([peer tickets](/api/cloud-api#peer-tickets)). The ticket's user becomes the caller.
+- Peer calls need a peer ticket from cloud-api, which goes only to the computer's owner or a member of its organization ([peer tickets](/api/cloud-api#peer-tickets)). Your allternit-api asks for it and carries the call (`/api/v1/computers/:id/factory-peer/*`).
+- On the other computer you can only reach the bots you started there, and only in your own workspace.
 
-Until spawning arrives, a known computer answers "not built yet". Run `agents up` on that computer itself. The same path will let Gizzi on Windows run a team on another computer, because the pane engine is Unix-only.
+The same path lets Gizzi on Windows run a team on another computer, because the pane engine is Unix-only.
 
 ## Bot templates
 

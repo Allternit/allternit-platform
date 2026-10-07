@@ -126,20 +126,21 @@ impl ApiLink {
     /// overrides both per request (`x-allternit-api-base`, the caller's own
     /// `Authorization`).
     pub fn from_env() -> Self {
-        let base = std::env::var("ALLTERNIT_FACTORY_API_URL")
-            .ok()
-            .filter(|v| !v.is_empty())
-            .or_else(|| {
-                std::env::var("ALLTERNIT_API_PORT")
-                    .ok()
-                    .filter(|p| p.parse::<u16>().is_ok())
-                    .map(|p| format!("http://127.0.0.1:{p}"))
-            });
-        let authorization = std::env::var("ALLTERNIT_FACTORY_API_TOKEN")
-            .ok()
-            .filter(|v| !v.is_empty())
+        let env = |k: &str| std::env::var(k).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+        // `ALLTERNIT_FACTORY_API_*`, else the variables the rest of the engine
+        // reads for allternit-api (`ALLTERNIT_API_URL`, `…_TOKEN`, the Desktop
+        // pair), so one setting reaches every caller.
+        let base = env("ALLTERNIT_FACTORY_API_URL")
+            .or_else(|| env(crate::agents::team_apply::ENV_API_URL))
+            .or_else(|| env("ALLTERNIT_API_PORT").filter(|p| p.parse::<u16>().is_ok()).map(|p| format!("http://127.0.0.1:{p}")));
+        let authorization = env("ALLTERNIT_FACTORY_API_TOKEN")
+            .or_else(|| env(crate::agents::team_apply::ENV_API_TOKEN))
             .map(|t| format!("Bearer {t}"));
-        Self { base, authorization, desktop: None }
+        let desktop = match (env(crate::agents::team_apply::ENV_DESKTOP_TOKEN), env(crate::agents::team_apply::ENV_USER_ID)) {
+            (Some(token), Some(user)) if authorization.is_none() => Some((token, user)),
+            _ => None,
+        };
+        Self { base, authorization, desktop }
     }
 }
 
@@ -348,8 +349,36 @@ pub async fn send(ctx: &SendCtx, req: &SendRequest) -> std::result::Result<Deliv
 
 type Outcome = (String, String, Option<String>, Option<String>);
 
+/// `bot@team` and computer id of a bot another computer runs, from its
+/// registry record (`runner: remote:<computer>`).
+fn remote_target(registry: &crate::agents::registry::Registry, session: &str) -> Option<(String, String)> {
+    let entry = registry.load().ok()?.sessions.get(session).cloned()?;
+    let computer = entry.remote_computer()?.to_string();
+    let bot = entry.bot.as_ref()?;
+    Some((format!("{}@{}", bot.name.as_deref()?, bot.team.as_deref()?), computer))
+}
+
+/// Send through the paired computer's engine (allternit-api carries it).
+async fn deliver_remote(api: &ApiLink, computer: &str, address: &str, req: &SendRequest) -> Outcome {
+    let body = json!({ "to": address, "text": req.text, "queue": req.queue });
+    match api_call(api, reqwest::Method::POST, &format!("/api/v1/computers/{computer}/factory-peer/send"), Some(body)).await {
+        Ok((200, v)) if v["state"] == "verified" => ("pane".into(), "verified".into(), None, Some(format!("on computer {computer}"))),
+        Ok((200, v)) => (
+            "pane_queue".into(),
+            "queued".into(),
+            None,
+            Some(format!("on computer {computer}: {}", v["reason"].as_str().unwrap_or("queued"))),
+        ),
+        Ok((_, v)) => ("pane".into(), "failed".into(), None, Some(format!("on computer {computer}: {}", api_error(&v)))),
+        Err(e) => ("pane".into(), "failed".into(), None, Some(e)),
+    }
+}
+
 async fn deliver_terminal(ctx: &SendCtx, agent: &Agent, req: &SendRequest) -> Outcome {
     let session = crate::agents::registry::session_of(&agent.slug);
+    if let Some((address, computer)) = remote_target(&ctx.registry, &session) {
+        return deliver_remote(&ctx.api, &computer, &address, req).await;
+    }
     let pane = match backend::backend() {
         Ok(p) => p,
         Err(e) => return ("pane".into(), "failed".into(), None, Some(format!("{e:#}"))),
