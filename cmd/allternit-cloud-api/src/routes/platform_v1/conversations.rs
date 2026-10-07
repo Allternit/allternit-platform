@@ -55,9 +55,9 @@ fn busy() -> &'static Mutex<HashSet<String>> {
     BUSY.get_or_init(Default::default)
 }
 
-struct TurnLock(String);
+pub(crate) struct TurnLock(String);
 impl TurnLock {
-    fn take(id: &str) -> Option<Self> {
+    pub(crate) fn take(id: &str) -> Option<Self> {
         busy().lock().unwrap().insert(id.to_string()).then(|| TurnLock(id.to_string()))
     }
 }
@@ -305,6 +305,52 @@ async fn prepare(state: &ApiState, host: &dyn AgentHost, caller: &PlatformCaller
         }
     };
     Ok((rt, session))
+}
+
+/// Open a conversation row for an agent (no runtime work yet). Calls use one
+/// per call so their turns run in a hosted-runtime session like any conversation.
+pub(crate) async fn open(db: &PgPool, project_id: &str, account_id: &str, agent_id: &str, metadata: &Value) -> Result<String, PlatformError> {
+    let id = new_id("conv_");
+    sqlx::query("INSERT INTO platform_conversations (id, project_id, account_id, agent_id, metadata) VALUES ($1, $2, $3, $4, $5)")
+        .bind(&id)
+        .bind(project_id)
+        .bind(account_id)
+        .bind(agent_id)
+        .bind(metadata)
+        .execute(db)
+        .await?;
+    Ok(id)
+}
+
+/// The runtime and session a conversation's next turn runs in (agent synced,
+/// session opened if needed), plus the runtime path of that turn.
+pub(crate) async fn turn_target(state: &ApiState, host: &dyn AgentHost, caller: &PlatformCaller, conversation_id: &str) -> Result<(HostRuntime, String), PlatformError> {
+    let conv = fetch_conversation(&state.db, caller, conversation_id).await?;
+    let (rt, session) = prepare(state, host, caller, &conv).await?;
+    Ok((rt, format!("/api/v1/platform/agents/{}/sessions/{}/turn", conv.agent_id, session)))
+}
+
+/// Read a buffered turn to its end: the reply text, or why it failed.
+pub(crate) async fn collect_turn(mut upstream: crate::routes::voice_calls_cloud::RelayStream) -> Result<String, String> {
+    let (mut lines, mut text, mut failure, mut done) = (SseLines::default(), String::new(), None::<String>, false);
+    while let Some(chunk) = upstream.next().await {
+        let chunk = chunk.map_err(|e| format!("the agent's reply was cut off: {e}"))?;
+        for ev in lines.push(&chunk) {
+            match ev["type"].as_str() {
+                Some("text.delta") => text.push_str(ev["text"].as_str().unwrap_or("")),
+                Some("done") => {
+                    text = ev["text"].as_str().unwrap_or(&text).to_string();
+                    done = true;
+                }
+                Some("error") => failure = Some(ev["message"].as_str().unwrap_or("the agent's turn failed").to_string()),
+                _ => {}
+            }
+        }
+    }
+    match failure.or_else(|| (!done).then(|| "the agent's reply ended early".to_string())) {
+        Some(f) => Err(f),
+        None => Ok(text),
+    }
 }
 
 fn error_event(code: &str, message: &str) -> Event {

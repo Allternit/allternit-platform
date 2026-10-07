@@ -1,6 +1,6 @@
 //! Allternit Platform API (`/v1`): the developer-facing surface.
 //!
-//! One module per area (`accounts`, `agents`, `conversations`, `numbers`, `messages`, `webhooks`, `usage`).
+//! One module per area (`accounts`, `agents`, `conversations`, `numbers`, `messages`, `calls` (voice and realtime), `webhooks`, `usage`).
 //! Hosted agents run on a per-project runtime (`hosting`).
 //! Each area exposes `register(RouteTable) -> RouteTable`; `build_table` below
 //! is the single list. The route table records every `(method, path)` it
@@ -24,6 +24,7 @@ pub mod accounts;
 pub mod agent_tools;
 pub mod agents;
 pub mod caller;
+pub mod calls;
 pub mod console;
 pub mod conversations;
 pub mod error;
@@ -37,6 +38,7 @@ pub mod numbers;
 pub mod page;
 pub mod projects;
 pub mod slots;
+pub mod spend;
 pub mod usage;
 pub mod usage_events;
 pub mod webhooks;
@@ -199,6 +201,7 @@ fn build_table() -> RouteTable {
     let table = model_keys::register(table);
     let table = numbers::register(table);
     let table = messages::register(table);
+    let table = calls::register(table);
     let table = webhooks::register(table);
     usage::register(table)
 }
@@ -383,3 +386,5 @@ mod tests_p2;
 mod tests_p2_tools;
 #[cfg(test)]
 mod tests_p5_console;
+#[cfg(test)]
+mod tests_p3;

@@ -483,6 +483,24 @@ async fn start_call_inner(
     if !matches!(body.direction.as_str(), "inbound" | "outbound") {
         return Err(ApiError::BadRequest("direction must be inbound or outbound".to_string()));
     }
+    // A Platform API project's number (or realtime session) is answered by its
+    // hosted agent: registered and answered by the platform module, not a user's runtime.
+    let platform = super::platform_v1::calls::worker_start(
+        &state.db,
+        super::platform_v1::calls::WorkerStart {
+            number_id: &body.number_id,
+            room: &body.room,
+            direction: &body.direction,
+            from: &body.from,
+            to: &body.to,
+            sip_call_id: body.sip_call_id.as_deref(),
+            consent_ref: body.consent_ref.as_deref(),
+        },
+    )
+    .await?;
+    if let Some(answer) = platform {
+        return Ok(Json(answer).into_response());
+    }
     let Some(owner) = directory.owner_for(&body.number_id).await? else {
         return Err(ApiError::NotFound("number not found".to_string()));
     };
@@ -813,6 +831,23 @@ async fn turn_inner(
     };
     if body.text.trim().is_empty() {
         return Err(ApiError::BadRequest("text is required".to_string()));
+    }
+    if super::platform_v1::calls::is_platform_owner(&user_id) {
+        // A hosted agent's call: the turn runs in its hosted-runtime session.
+        let Ok(opened) = tokio::time::timeout(TURN_FIRST_BYTE, super::platform_v1::calls::worker_turn(state, call_id, &body.text)).await else {
+            return Ok((StatusCode::GATEWAY_TIMEOUT, Json(json!({ "error": "runtime did not answer the turn in time" }))).into_response());
+        };
+        let Some(upstream) = opened? else {
+            return Err(ApiError::NotFound("call not found".to_string()));
+        };
+        // No barge-in abort on the hosted runtime: the turn finishes there and the next one queues behind it.
+        let finished = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let mut response = Response::new(axum::body::Body::from_stream(sse_to_ndjson(upstream, finished)));
+        response.headers_mut().insert(
+            axum::http::header::CONTENT_TYPE,
+            axum::http::HeaderValue::from_static("application/x-ndjson"),
+        );
+        return Ok(response);
     }
     let runtime_body = serde_json::to_vec(&json!({ "text": body.text, "segmentId": body.turn_id }))
         .unwrap_or_default();
@@ -1158,6 +1193,31 @@ async fn deliver_call(
             .await?;
             continue;
         };
+        if super::platform_v1::calls::is_platform_owner(&user_id) {
+            // A hosted agent's call: applied in the cloud (transcript, end, webhooks), never relayed.
+            let applied = super::platform_v1::calls::apply_worker_event(&state.db, call_id, &event_type, &payload).await;
+            let (delivered, error) = match &applied {
+                Ok(()) => (true, None),
+                Err(e) => (false, Some(e.to_string())),
+            };
+            sqlx::query(
+                "UPDATE voice_call_events SET delivered_at = CASE WHEN $2 THEN now() END, locked_until = NULL, last_error = $3,
+                        next_attempt_at = now() + make_interval(secs => $4),
+                        dead_at = CASE WHEN NOT $2 AND $5 THEN now() END
+                  WHERE id = $1",
+            )
+            .bind(id)
+            .bind(delivered)
+            .bind(error)
+            .bind(backoff_secs(attempts) as f64)
+            .bind(attempts >= 10)
+            .execute(&state.db)
+            .await?;
+            if delivered || attempts >= 10 {
+                continue;
+            }
+            return Ok(());
+        }
         // What the runtime's voice routes accept (allternit-api voice_calls.rs):
         // call.started becomes the create body, anything else a one-event batch.
         let (path, body) = if event_type == "call.started" {

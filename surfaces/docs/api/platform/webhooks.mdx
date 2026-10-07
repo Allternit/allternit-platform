@@ -21,6 +21,9 @@ Scope `webhooks`. Endpoints are project-wide, so account-bound keys can't manage
 | `message.received` | A text arrived on one of your numbers (`data.message`). |
 | `message.status` | A text you sent was recorded (`data.message`). |
 | `registration.updated` | A number's carrier registration changed (`data.number_id`, `data.state`, `data.rejection_reason`, `data.sms_state`). |
+| `call.started` | A call with one of your agents started (`data.call`). See [Voice](/api/platform/voice). |
+| `call.ended` | A call ended (`data.call`, with `status`, `duration_seconds`, `end_reason`). |
+| `call.transcript.ready` | A call's transcript is complete (`data.transcript`), sent right after `call.ended`. |
 
 ```json
 { "id": "evt_3b1…", "object": "event", "type": "message.received", "created": 1759601822,

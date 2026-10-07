@@ -584,6 +584,7 @@
               "api/platform/conversations",
               "api/platform/numbers",
               "api/platform/messaging",
+              "api/platform/voice",
               "api/platform/webhooks",
               "api/platform/usage",
               "api/platform/pricing",

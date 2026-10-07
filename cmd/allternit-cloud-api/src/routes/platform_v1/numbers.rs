@@ -35,7 +35,7 @@ pub fn register(table: RouteTable) -> RouteTable {
     table
         .add("/v1/numbers/available", &["GET"], get(available))
         .add("/v1/numbers", &["GET", "POST"], get(list_numbers).post(buy))
-        .add("/v1/numbers/:id", &["GET", "DELETE"], get(get_number).delete(release))
+        .add("/v1/numbers/:id", &["GET", "PATCH", "DELETE"], get(get_number).patch(update_number).delete(release))
         .add("/v1/numbers/:id/registration", &["GET", "POST"], get(registration_get).post(registration_post))
         .add("/v1/numbers/:id/registration/otp", &["POST"], post(registration_otp))
         .add("/v1/numbers/:id/consent", &["POST"], post(consent))
@@ -81,16 +81,20 @@ pub struct ApiNumber {
     pub kind: String,
     pub sms_state: String,
     pub simulated: bool,
+    /// The agent that answers calls to this number (`None`: calls aren't answered).
+    pub agent_id: Option<String>,
+    pub voice_state: String,
     pub created_at: DateTime<Utc>,
 }
 
-const COLUMNS: &str = "id, account_id, e164, type, sms_state, simulated, created_at";
+const COLUMNS: &str = "id, account_id, e164, type, sms_state, simulated, agent_id, voice_state, created_at";
 
 impl ApiNumber {
     fn to_json(&self) -> Value {
         json!({
             "id": self.id, "object": "phone_number", "account_id": self.account_id, "e164": self.e164,
-            "type": self.kind, "sms_state": self.sms_state, "simulated": self.simulated, "created_at": self.created_at,
+            "type": self.kind, "sms_state": self.sms_state, "simulated": self.simulated, "agent_id": self.agent_id,
+            "voice_state": if self.simulated { "active" } else { self.voice_state.as_str() }, "created_at": self.created_at,
         })
     }
 }
@@ -158,16 +162,26 @@ struct BuyBody {
     e164: Option<String>,
     #[serde(rename = "type")]
     kind: Option<String>,
+    /// The agent that answers calls to the number; it must be in the same account.
+    agent_id: Option<String>,
 }
 
 async fn buy(
     State(state): State<Arc<ApiState>>,
     caller: PlatformCaller,
+    voice: Option<axum::Extension<Arc<super::calls::VoiceDeps>>>,
     ApiJson(body): ApiJson<BuyBody>,
 ) -> Result<(StatusCode, Json<Value>), PlatformError> {
     caller.require("numbers")?;
     let account = caller.account_filter(Some(&body.account_id))?.unwrap_or(body.account_id.clone());
     projects::account_in_project(&state.db, &caller.project_id, &account).await?;
+    if let Some(agent_id) = body.agent_id.as_deref() {
+        // Checked before buying, so a bad agent never leaves a paid number behind.
+        let agent = super::agents::fetch_visible(&state, &caller, agent_id).await.map_err(|e| e.with_param("agent_id"))?;
+        if agent.account_id != account {
+            return Err(PlatformError::invalid_request("account_mismatch", "The number and the agent belong to different accounts.").with_param("agent_id"));
+        }
+    }
     let sandbox = caller.project_env == ProjectEnv::Sandbox;
     if !sandbox && !live_allowed(&caller) {
         return Err(PlatformError::permission("plan_required", "Buying real numbers needs a paid plan with a card on file."));
@@ -177,7 +191,15 @@ async fn buy(
     let row = phone::buy_platform_number(&state.db, carrier.as_deref(), &caller.owner_user_id, &caller.project_id, &account, body.e164.as_deref(), kind)
         .await
         .map_err(phone_error)?;
-    let number = api_number(&state.db, &caller, &row.id).await?;
+    let mut number = api_number(&state.db, &caller, &row.id).await?;
+    if let Some(agent_id) = body.agent_id.as_deref() {
+        // The number is bought either way: if voice setup fails it stays `voice_state: pending`
+        // and PATCH /v1/numbers/{id} with the same agent_id retries it.
+        if let Err(e) = super::calls::bind_agent(&state, &caller, &number, Some(agent_id), voice).await {
+            tracing::warn!(number = %number.id, code = %e.code, "platform: number bought, voice setup failed");
+        }
+        number = api_number(&state.db, &caller, &row.id).await?;
+    }
     if !number.simulated {
         let month = Utc::now().format("%Y-%m");
         let _ = record_usage(
@@ -237,9 +259,43 @@ async fn get_number(State(state): State<Arc<ApiState>>, caller: PlatformCaller, 
     Ok(Json(api_number(&state.db, &caller, &id).await?.to_json()))
 }
 
-async fn release(State(state): State<Arc<ApiState>>, caller: PlatformCaller, Path(id): Path<String>) -> Result<Json<Value>, PlatformError> {
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UpdateNumber {
+    /// `null` unbinds; the agent must be in the number's account.
+    #[serde(default, deserialize_with = "some_value")]
+    agent_id: Option<Option<String>>,
+}
+
+fn some_value<'de, D: serde::Deserializer<'de>>(de: D) -> Result<Option<Option<String>>, D::Error> {
+    Option::<String>::deserialize(de).map(Some)
+}
+
+/// `PATCH /v1/numbers/{id}` `{agent_id}`: choose the agent that answers calls to the number.
+async fn update_number(
+    State(state): State<Arc<ApiState>>,
+    caller: PlatformCaller,
+    voice: Option<axum::Extension<Arc<super::calls::VoiceDeps>>>,
+    Path(id): Path<String>,
+    ApiJson(body): ApiJson<UpdateNumber>,
+) -> Result<Json<Value>, PlatformError> {
     caller.require("numbers")?;
     let number = api_number(&state.db, &caller, &id).await?;
+    if let Some(agent_id) = body.agent_id {
+        super::calls::bind_agent(&state, &caller, &number, agent_id.as_deref(), voice).await?;
+    }
+    Ok(Json(api_number(&state.db, &caller, &id).await?.to_json()))
+}
+
+async fn release(
+    State(state): State<Arc<ApiState>>,
+    caller: PlatformCaller,
+    voice: Option<axum::Extension<Arc<super::calls::VoiceDeps>>>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, PlatformError> {
+    caller.require("numbers")?;
+    let number = api_number(&state.db, &caller, &id).await?;
+    super::calls::unprovision(&state.db, &number.id, voice).await;
     let row = phone::number_for_user(&state.db, &caller.owner_user_id, &number.id).await.map_err(phone_error)?;
     let carrier = if number.simulated { None } else { Some(phone::carrier().map_err(phone_error)?) };
     phone::release_platform_number(&state.db, carrier.as_deref(), &row).await.map_err(phone_error)?;

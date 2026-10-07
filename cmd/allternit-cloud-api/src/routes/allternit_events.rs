@@ -6,7 +6,7 @@
 //! and who may see it:
 //!
 //! * **Platform API webhooks** (`platform`): what a project endpoint may
-//!   subscribe to. [`PLATFORM_EVENTS`] is exactly the 051 list.
+//!   subscribe to. [`PLATFORM_EVENTS`] is the 051 list plus the P3 `call.*` events.
 //! * **MCP agents server** (`agents`, scope `agents:read`, `/mcp`): agent,
 //!   approval, thread, inbox, message, call, subscription and usage events.
 //! * **MCP vendor-bot connector** (`bot`, scope `bots:act`, `/mcp/bots/:id`):
@@ -179,15 +179,37 @@ pub static REGISTRY: &[EventType] = &[
         runtime_aliases: &[],
     },
     EventType {
+        name: "call.started",
+        title: "Started calls",
+        description: "Platform API: a call with a project's agent started (phone in or out, or a realtime session). data.call is the call.",
+        platform: true,
+        agents: false,
+        bot: false,
+        filters: &[],
+        payload: &[("call", "The call object (object).")],
+        runtime_aliases: &[],
+    },
+    EventType {
         name: "call.ended",
         title: "Ended calls",
-        description: "A phone or in-app call with a bot ended.",
-        platform: false,
+        description: "A phone or in-app call with a bot ended. Platform API: data.call is the call, with status, duration_seconds and end_reason.",
+        platform: true,
         agents: true,
         bot: false,
         filters: &[BOT],
         payload: &[P_BOT, P_THREAD, ("call_id", "Call id."), ("missed", "true when nobody answered (boolean)."), ("duration_s", "Seconds (number).")],
         runtime_aliases: &["call.ended"],
+    },
+    EventType {
+        name: "call.transcript.ready",
+        title: "Call transcripts",
+        description: "Platform API: a call's transcript is complete (sent right after call.ended). data.transcript has every line.",
+        platform: true,
+        agents: false,
+        bot: false,
+        filters: &[],
+        payload: &[("call_id", "Call id."), ("lines", "Number of lines (number)."), ("transcript", "The transcript object (object).")],
+        runtime_aliases: &[],
     },
     EventType {
         name: "inbox.item.created",
@@ -247,7 +269,7 @@ pub static REGISTRY: &[EventType] = &[
 ];
 
 /// Event types a Platform API webhook can subscribe to (unchanged from 051).
-pub const PLATFORM_EVENTS: [&str; 3] = ["message.received", "message.status", "registration.updated"];
+pub const PLATFORM_EVENTS: [&str; 6] = ["message.received", "message.status", "registration.updated", "call.started", "call.ended", "call.transcript.ready"];
 
 pub fn find(name: &str) -> Option<&'static EventType> {
     REGISTRY.iter().find(|e| e.name == name)

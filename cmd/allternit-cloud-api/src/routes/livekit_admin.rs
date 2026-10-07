@@ -147,6 +147,18 @@ pub trait LiveKitAdminClient: Send + Sync {
         identity: &str,
         can_publish: bool,
     ) -> Result<ParticipantAccess, LiveKitError>;
+    /// [`Self::participant_access`] with a token that expires after `ttl_secs`
+    /// (LiveKit checks expiry when the client joins: a short TTL is a short
+    /// window to start, not a limit on the session).
+    fn participant_access_ttl(
+        &self,
+        room: &str,
+        identity: &str,
+        can_publish: bool,
+        _ttl_secs: i64,
+    ) -> Result<ParticipantAccess, LiveKitError> {
+        self.participant_access(room, identity, can_publish)
+    }
 }
 
 pub struct LiveKitHttpAdmin {
@@ -218,7 +230,7 @@ impl LiveKitHttpAdmin {
             .map_err(|e| LiveKitError::Http(format!("minting server JWT: {e}")))
     }
 
-    fn participant_jwt(&self, room: &str, identity: &str, can_publish: bool) -> Result<String, LiveKitError> {
+    fn participant_jwt(&self, room: &str, identity: &str, can_publish: bool, ttl_secs: i64) -> Result<String, LiveKitError> {
         #[derive(Serialize)]
         struct Claims<'a> {
             iss: &'a str,
@@ -243,7 +255,7 @@ impl LiveKitHttpAdmin {
             sub: identity,
             iat: now,
             nbf: now - 10,
-            exp: now + PARTICIPANT_TOKEN_TTL_SECS,
+            exp: now + ttl_secs,
             video: Grant {
                 room_join: true,
                 room,
@@ -404,8 +416,18 @@ impl LiveKitAdminClient for LiveKitHttpAdmin {
         identity: &str,
         can_publish: bool,
     ) -> Result<ParticipantAccess, LiveKitError> {
+        self.participant_access_ttl(room, identity, can_publish, PARTICIPANT_TOKEN_TTL_SECS)
+    }
+
+    fn participant_access_ttl(
+        &self,
+        room: &str,
+        identity: &str,
+        can_publish: bool,
+        ttl_secs: i64,
+    ) -> Result<ParticipantAccess, LiveKitError> {
         let url = self.config.public_url.clone().ok_or(LiveKitError::PublicUrlMissing)?;
-        Ok(ParticipantAccess { token: self.participant_jwt(room, identity, can_publish)?, url })
+        Ok(ParticipantAccess { token: self.participant_jwt(room, identity, can_publish, ttl_secs.max(1))?, url })
     }
 }
 
