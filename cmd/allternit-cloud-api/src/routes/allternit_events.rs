@@ -271,7 +271,7 @@ pub static REGISTRY: &[EventType] = &[
 /// Event types a Platform API webhook can subscribe to: the 051 list, the P3
 /// `call.*` events, `usage.threshold` (P5 spend caps), and P4's `approval.requested`
 /// and `inbox.item.created` (from the project's hosted runtime, per account).
-pub const PLATFORM_EVENTS: [&str; 9] = ["approval.requested", "message.received", "message.status", "registration.updated", "inbox.item.created", "call.started", "call.ended", "call.transcript.ready", "usage.threshold"];
+pub const PLATFORM_EVENTS: [&str; 9] = ["approval.requested", "message.received", "message.status", "registration.updated", "call.started", "call.ended", "call.transcript.ready", "inbox.item.created", "usage.threshold"];
 
 pub fn find(name: &str) -> Option<&'static EventType> {
     REGISTRY.iter().find(|e| e.name == name)
@@ -448,7 +448,7 @@ mod tests {
             assert!(!e["servers"].as_array().unwrap().is_empty(), "{e}");
         }
         let approval = events.iter().find(|e| e["name"] == "approval.requested").unwrap();
-        assert_eq!(approval["servers"], json!(["agents"]));
+        assert_eq!(approval["servers"], json!(["agents", "platform"]));
         let msg = events.iter().find(|e| e["name"] == "message.received").unwrap();
         assert_eq!(msg["servers"], json!(["agents", "bot", "platform"]));
     }
