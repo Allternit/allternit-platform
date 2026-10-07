@@ -25,6 +25,7 @@ pub(crate) struct SavedSshEndpoint {
     pub(crate) enabled: bool,
 }
 
+#[allow(dead_code)] // saved-endpoint persistence, kept for Allternit Computers machines (SSH remote attach was removed)
 impl SavedSshEndpoint {
     pub(crate) fn new(
         label: impl Into<String>,
@@ -97,6 +98,7 @@ impl Default for EndpointCatalog {
     }
 }
 
+#[allow(dead_code)] // saved-endpoint persistence, kept for Allternit Computers machines (SSH remote attach was removed)
 impl EndpointCatalog {
     /// SSH remote attach was removed, so a live client loads no saved SSH
     /// machines (an old endpoints.json is ignored). The multi-machine shell
@@ -312,6 +314,7 @@ impl EndpointCatalog {
     }
 }
 
+#[allow(dead_code)] // saved-endpoint persistence, kept for Allternit Computers machines (SSH remote attach was removed)
 fn load_selection_from_path(path: &Path) -> Result<Option<EndpointSelection>, String> {
     let content = match std::fs::read(path) {
         Ok(content) => content,
@@ -367,6 +370,7 @@ fn store_private_json(path: &Path, content: &[u8], description: &str) -> Result<
         .map_err(|error| format!("failed to persist {description} directory: {error}"))
 }
 
+#[allow(dead_code)] // saved-endpoint persistence, kept for Allternit Computers machines (SSH remote attach was removed)
 pub(crate) fn catalog_path() -> PathBuf {
     crate::config::state_dir()
         .join("client")

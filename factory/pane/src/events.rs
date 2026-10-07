@@ -127,11 +127,13 @@ pub enum AppEvent {
         seq: Option<u64>,
     },
     /// A new version is available through the active installation manager.
+    #[allow(dead_code)] // the update-available UI stays for a Factory updater; the Herdr self-updater that sent these was removed
     UpdateReady {
         version: String,
         install_command: String,
     },
     /// Remote agent detection manifest update check finished.
+    #[allow(dead_code)] // sent by the removed remote-manifest downloader; handler kept
     AgentDetectionManifestsUpdated {
         updated: Vec<crate::detect::manifest_update::ManifestUpdateCommit>,
         activated: Vec<crate::detect::Agent>,

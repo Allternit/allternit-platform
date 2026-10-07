@@ -38,6 +38,7 @@ struct AoRegistry {
 #[derive(Clone, Deserialize)]
 struct AoRegistryEntry {
     cwd: String,
+    #[allow(dead_code)] // part of the wire shape we deserialize; not read yet
     #[serde(default)]
     log: Option<String>,
     #[serde(default)]
@@ -282,6 +283,7 @@ async fn remote_session_detail(AxumPath(id): AxumPath<String>) -> Response {
 #[derive(Deserialize)]
 struct SendMessageBody {
     text: String,
+    #[allow(dead_code)] // part of the wire shape we deserialize; not read yet
     #[serde(default)]
     attachments: Option<Value>,
 }

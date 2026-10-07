@@ -204,12 +204,6 @@ pub struct ClipboardCommand {
     pub args: &'static [&'static str],
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ClipboardImage {
-    pub bytes: Vec<u8>,
-    pub extension: &'static str,
-}
-
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum LimitedRead {
     Empty,

@@ -117,7 +117,7 @@ fn parse_flags(args: &[String]) -> Result<ServeFlags, String> {
             flag = name;
             value.to_string()
         });
-        let mut value = |index: &mut usize| -> Result<String, String> {
+        let value = |index: &mut usize| -> Result<String, String> {
             if let Some(inline) = inline.clone() {
                 return Ok(inline);
             }

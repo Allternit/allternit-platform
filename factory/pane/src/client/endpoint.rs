@@ -39,6 +39,7 @@ impl ProfileId {
         Ok(Self(value))
     }
 
+    #[allow(dead_code)] // used by the saved-endpoint catalog, kept for Allternit Computers machines
     pub(crate) fn generate() -> Self {
         use std::sync::atomic::{AtomicU64, Ordering};
         static NEXT_ID: AtomicU64 = AtomicU64::new(1);
@@ -57,6 +58,7 @@ impl ProfileId {
         )
     }
 
+    #[allow(dead_code)] // used by the saved-endpoint catalog, kept for Allternit Computers machines
     pub(crate) fn as_str(&self) -> &str {
         &self.0
     }

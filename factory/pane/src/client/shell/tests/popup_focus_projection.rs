@@ -1,36 +1,6 @@
 use super::*;
 
 #[test]
-fn clipboard_image_targets_the_focused_pane_or_active_popup() {
-    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
-    state.set_snapshot(Box::new(snapshot()));
-
-    assert_eq!(
-        state.clipboard_image_target(),
-        Some(crate::protocol::ClientClipboardImageTarget::Pane(
-            "pane_1".into()
-        ))
-    );
-
-    state.mode = ClientShellMode::Prefix;
-    assert_eq!(state.clipboard_image_target(), None);
-    state.mode = ClientShellMode::Terminal;
-    state.overlay = Some(ClientShellOverlay::Onboarding);
-    assert_eq!(state.clipboard_image_target(), None);
-    state.overlay = None;
-
-    state.set_pane_surface(surface_with_popup());
-    assert_eq!(
-        state.clipboard_image_target(),
-        Some(crate::protocol::ClientClipboardImageTarget::Popup(
-            "terminal-popup".into()
-        ))
-    );
-    state.overlay = Some(ClientShellOverlay::Onboarding);
-    assert_eq!(state.clipboard_image_target(), None);
-}
-
-#[test]
 fn modal_paste_target_requires_a_focused_editable_client_field() {
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
     assert!(!state.modal_paste_target_active());

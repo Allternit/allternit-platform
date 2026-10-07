@@ -60,6 +60,7 @@ pub(crate) struct RuntimeSessionResponse {
     #[serde(default)]
     pub organization_id: Option<String>,
     pub device_token: String,
+    #[allow(dead_code)] // part of the wire shape we deserialize; not read yet
     #[serde(default)]
     pub token_type: Option<String>,
     pub expires_at: String,
@@ -135,6 +136,7 @@ pub(crate) enum NodeMessage {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum CloudMessage {
+    #[allow(dead_code)] // part of the wire shape we deserialize; not read yet
     Authenticated {
         runtime_id: String,
     },

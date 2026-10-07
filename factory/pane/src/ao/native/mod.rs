@@ -33,6 +33,7 @@ pub enum ReaderKind {
     Jsonl,
     Sqlite,
     Directory,
+    #[allow(dead_code)] // a reader kind the catalog format reserves; no reader yet
     Protobuf,
     #[serde(rename = "cli-export")]
     CliExport,

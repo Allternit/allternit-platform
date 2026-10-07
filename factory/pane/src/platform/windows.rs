@@ -139,7 +139,7 @@ use windows_sys::{
     },
 };
 
-use super::{ClipboardImage, ForegroundJob, Signal};
+use super::{ForegroundJob, Signal};
 
 const STILL_ACTIVE: u32 = 259;
 const FOREGROUND_PROCESS_SNAPSHOT_CACHE_TTL: Duration = Duration::from_millis(250);
@@ -1995,37 +1995,6 @@ pub fn open_url(url: &str) -> std::io::Result<Option<std::process::Child>> {
             result as isize
         )))
     }
-}
-
-pub fn read_clipboard_image() -> Option<ClipboardImage> {
-    for attempt in 0..10 {
-        if unsafe { OpenClipboard(null_mut()) } != 0 {
-            let _clipboard = ClipboardGuard;
-            if let Some(bytes) = read_registered_png_clipboard() {
-                return Some(ClipboardImage {
-                    bytes,
-                    extension: "png",
-                });
-            }
-            for format in [CF_DIBV5 as u32, CF_DIB as u32] {
-                if let Some(bytes) =
-                    clipboard_global_bytes(format, clipboard_image::MAX_CLIPBOARD_ALLOCATION)
-                {
-                    if let Some(bytes) = clipboard_image::dib_to_png(&bytes) {
-                        return Some(ClipboardImage {
-                            bytes,
-                            extension: "png",
-                        });
-                    }
-                }
-            }
-            return None;
-        }
-        if attempt < 9 {
-            std::thread::sleep(Duration::from_millis(5));
-        }
-    }
-    None
 }
 
 fn read_registered_png_clipboard() -> Option<Vec<u8>> {
