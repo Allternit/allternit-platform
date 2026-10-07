@@ -30,7 +30,7 @@ After publishing a Desktop release on GitHub, run `scripts/mirror-desktop-releas
 
 ## Runtime packages
 
-Desktop and cloud computers update `allternit-api`, `gizzi-code`, `allternit-factory` and the app's screens from `runtime.allternit.com` without a new app build (`surfaces/allternit-desktop/src/main/runtime-package.ts`). The app checks `stable/<platform>/latest.json` (signed, Ed25519), downloads only the files whose hash changed (`objects/<sha256>.gz`, shared by every version and platform), and switches to the new version on its next start.
+Desktop and cloud computers update `allternit-api`, `gizzi-code`, `allternit-factory` and the app's screens from `runtime.allternit.com` without a new app build (`surfaces/allternit-desktop/src/main/runtime-package.ts`). The app checks `stable/<platform>/latest.json` (signed, Ed25519), downloads only the files whose hash changed (`objects/<sha256>.gz`, shared by every version and platform), and switches to the new version on its next start. It checks one minute after launch and then every six hours, one check at a time. A file download that receives no bytes for 60 seconds is aborted and retried (three tries); if it still fails, the check logs `[Runtime] update check failed` and the next check starts over.
 
 | Platform | Who runs it |
 |---|---|

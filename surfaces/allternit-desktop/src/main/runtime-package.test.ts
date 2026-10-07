@@ -200,4 +200,44 @@ describe('per-file delta updates (feed format 2)', () => {
     await expect(store().checkForUpdate('https://feed.test', fetchImpl)).rejects.toThrow(/verification/);
     expect(fs.existsSync(path.join(root, 'versions', 'r3'))).toBe(false);
   });
+
+  /** Wraps a feed so the first `stalls` object requests send nothing and never finish. */
+  function stalling(fetchImpl: typeof fetch, stalls: number) {
+    let left = stalls;
+    return (async (url: string | URL, init?: RequestInit) => {
+      if (/\/objects\//.test(String(url)) && left > 0) {
+        left -= 1;
+        const signal = init?.signal;
+        return new Response(new ReadableStream({
+          start(c) { signal?.addEventListener('abort', () => c.error(signal.reason)); },
+        }));
+      }
+      return fetchImpl(url, init);
+    }) as typeof fetch;
+  }
+
+  it('retries a download that stalls and still stages the update', async () => {
+    bundle('api v1', '<html>same</html>');
+    const { fetchImpl, fetched } = deltaFeed('r2', 200, 'api v2', '<html>same</html>');
+    const quick = new RuntimePackages({ root, resourcesPath: resources, publicKey: PUB, platform: 'test-x', shellApi: 1, stallMs: 50 });
+    expect(await quick.checkForUpdate('https://feed.test', stalling(fetchImpl, 1))).toBe('r2');
+    expect(fetched).toEqual([sha('api v2')]);
+  });
+
+  it('gives up with an error when a download keeps stalling', async () => {
+    bundle('api v1', '<html>same</html>');
+    const { fetchImpl } = deltaFeed('r2', 200, 'api v2', '<html>same</html>');
+    const quick = new RuntimePackages({ root, resourcesPath: resources, publicKey: PUB, platform: 'test-x', shellApi: 1, stallMs: 50 });
+    await expect(quick.checkForUpdate('https://feed.test', stalling(fetchImpl, 99))).rejects.toThrow(/stalled/);
+    expect(quick.readState().pending).toBeUndefined();
+  });
+
+  it('runs one check at a time', async () => {
+    bundle('api v1', '<html>same</html>');
+    const { fetchImpl, fetched } = deltaFeed('r2', 200, 'api v2', '<html>same</html>');
+    const s = store();
+    const [a, b] = await Promise.all([s.checkForUpdate('https://feed.test', fetchImpl), s.checkForUpdate('https://feed.test', fetchImpl)]);
+    expect([a, b]).toEqual(['r2', 'r2']);
+    expect(fetched).toEqual([sha('api v2')]);
+  });
 });
