@@ -21,7 +21,11 @@ jobs:
     # A newer commit supersedes an in-flight test run: cancel the older one.
     concurrency:
       group: deploy-allternit-api-test-${{ github.ref }}
-      cancel-in-progress: true
+      # Let the running test finish: it takes ~50 min and main merges more often
+      # than that, so cancelling meant no deploy ever reached the deploy job.
+      # GitHub keeps only the newest pending run, so the next one carries every
+      # merge since this one.
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
