@@ -13,6 +13,12 @@
 // reach a mesh-registered instance via the loopback URL. Mirrors StartProxy
 // in infrastructure/mesh/tsnet-ios/mesh.go (the iOS loopback proxy).
 //
+// `--also <port>` (repeatable, forward mode) listens on more tailnet ports and
+// forwards each to the same port on loopback. A paired computer uses it to
+// carry the Allternit Factory engine's peer port (3019) beside VNC; the engine
+// itself checks every peer call's ticket. Older builds reject the flag, and
+// `allternit computers serve` falls back to VNC only.
+//
 // Contract with the parent process (gizzi-code's mesh.ts, or the desktop
 // app's mesh-manager.ts): on success `MESH_READY ip=<100.x addr>` is printed
 // to stdout once the node is up and its listener is bound; in reverse mode a
@@ -32,6 +38,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -67,6 +74,8 @@ func main() {
 	forwardPort := flag.Int("forward", 4096, "local gizzi port to proxy tailnet connections to")
 	listenPort := flag.Int("listen", 0, "tailnet-side listen port (default: same as --forward)")
 	reverseTarget := flag.String("reverse", "", "reverse mode: listen on 127.0.0.1:0 and dial this tailnet target (host:port) per connection (ignores --forward/--listen)")
+	var also portList
+	flag.Var(&also, "also", "forward this tailnet port to the same local port too (repeatable; e.g. the Factory engine's peer port 3019)")
 	upTimeout := flag.Duration("up-timeout", 60*time.Second, "how long to wait for the tailnet join")
 	debug := flag.Bool("debug", false, "log tsnet and connection events to stderr")
 	flag.Parse()
@@ -85,13 +94,13 @@ func main() {
 		}
 	}
 
-	if err := run(*hostname, *controlURL, *authKey, *dataDir, *forwardPort, listen, *reverseTarget, *upTimeout, logf); err != nil {
+	if err := run(*hostname, *controlURL, *authKey, *dataDir, *forwardPort, listen, also, *reverseTarget, *upTimeout, logf); err != nil {
 		fmt.Fprintf(os.Stderr, "MESH_ERROR reason=%s\n", err)
 		os.Exit(1)
 	}
 }
 
-func run(hostname, controlURL, authKey, dataDir string, forwardPort, listenPort int, reverseTarget string, upTimeout time.Duration, logf func(string, ...any)) error {
+func run(hostname, controlURL, authKey, dataDir string, forwardPort, listenPort int, also []int, reverseTarget string, upTimeout time.Duration, logf func(string, ...any)) error {
 	if reverseTarget != "" {
 		if _, _, err := net.SplitHostPort(reverseTarget); err != nil {
 			return fmt.Errorf("invalid --reverse target %q: %w", reverseTarget, err)
@@ -138,7 +147,53 @@ func run(hostname, controlURL, authKey, dataDir string, forwardPort, listenPort 
 	if reverseTarget != "" {
 		return serveReverse(srv, ip, reverseTarget, done, logf)
 	}
+	for _, port := range also {
+		if port == listenPort {
+			continue
+		}
+		ln, err := srv.Listen("tcp", fmt.Sprintf(":%d", port))
+		if err != nil {
+			return fmt.Errorf("listening on tailnet port %d: %w", port, err)
+		}
+		go func(port int) {
+			<-done
+			ln.Close()
+		}(port)
+		go acceptLoop(ln, port, done, logf)
+	}
 	return serveForward(srv, ip, forwardPort, listenPort, done, logf)
+}
+
+// portList is a repeatable --also flag of port numbers.
+type portList []int
+
+func (p *portList) String() string { return fmt.Sprint([]int(*p)) }
+
+func (p *portList) Set(value string) error {
+	port, err := strconv.Atoi(value)
+	if err != nil || port < 1 || port > 65535 {
+		return fmt.Errorf("--also wants a port number, got %q", value)
+	}
+	*p = append(*p, port)
+	return nil
+}
+
+// acceptLoop forwards each connection on an extra tailnet listener to the
+// same port on loopback, until the listener closes.
+func acceptLoop(ln net.Listener, port int, done <-chan struct{}, logf func(string, ...any)) {
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			select {
+			case <-done:
+			default:
+				logf("accepting on tailnet port %d: %v", port, err)
+			}
+			return
+		}
+		logf("accepted tailnet connection on %d from %s", port, conn.RemoteAddr())
+		go forward(conn, port, logf)
+	}
 }
 
 // serveForward is the default mode: listen on the tailnet and proxy each

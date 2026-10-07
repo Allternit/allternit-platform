@@ -18,6 +18,7 @@ vi.mock('electron-log', () => ({
 import {
   FactoryEngineManager,
   bundledGizziBinary,
+  factoryPeerPort,
   factoryServeArgs,
   factoryWorkspaceRoot,
   installGizziLink,
@@ -77,6 +78,10 @@ describe('engine process', () => {
   it('serves its own workspace on the Desktop port, not 3011', () => {
     expect(PORTS.FACTORY).not.toBe(PORTS.EXTENSION_BRIDGE);
     expect(factoryServeArgs('/w', PORTS.FACTORY)).toEqual(['--root', '/w', 'serve', '--port', String(PORTS.FACTORY)]);
+    expect(factoryServeArgs('/w', PORTS.FACTORY, 3019)).toEqual(['--root', '/w', 'serve', '--port', String(PORTS.FACTORY), '--peer-port', '3019']);
+    // Only a paired computer takes peer calls.
+    expect(factoryPeerPort('/Users/u', (p) => p === '/Users/u/.allternit/computer/paired.json')).toBe(3019);
+    expect(factoryPeerPort('/Users/u', () => false)).toBeNull();
     expect(factoryWorkspaceRoot({}, '/Users/u')).toBe('/Users/u/.allternit/factory/workspace');
     expect(factoryWorkspaceRoot({ ALLTERNIT_FACTORY_ROOT: '/srv/w' }, '/Users/u')).toBe('/srv/w');
   });

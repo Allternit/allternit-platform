@@ -20,6 +20,12 @@ import { homedir, hostname, platform } from 'node:os';
 import path from 'node:path';
 
 export const VNC_PORT = 5900;
+/**
+ * The Allternit Factory engine's peer port: other computers' engines run bots
+ * here through it (`allternit-factory serve --peer-port 3019`). Forwarded over
+ * the mesh beside VNC; the engine only accepts calls with a valid peer ticket.
+ */
+export const FACTORY_PEER_PORT = 3019;
 const REPORT_EVERY_MS = 60_000;
 
 export interface PairedConfig {
@@ -219,40 +225,58 @@ async function pairAction(code: string, options: { name?: string; meshNode?: str
   process.stdout.write('It shows up in Computers on your other devices within a minute.\n');
 }
 
-/** mesh-node arguments: listen on the mesh at 5900, forward to the local VNC port. */
-export function meshNodeArgs(config: PairedConfig): string[] {
+/**
+ * mesh-node arguments: listen on the mesh at 5900, forward to the local VNC
+ * port, and (with `peer`) forward the Factory engine's peer port too.
+ */
+export function meshNodeArgs(config: PairedConfig, options: { peer?: boolean } = {}): string[] {
   return [
     '--hostname', meshHostname(config.name),
     '--control-url', config.controlUrl,
     '--data-dir', path.join(stateDir(), 'mesh'),
     '--forward', String(localVncPort(config)),
     '--listen', String(VNC_PORT),
+    ...((options.peer ?? true) ? ['--also', String(FACTORY_PEER_PORT)] : []),
     ...(config.authKey ? ['--auth-key', config.authKey] : []),
   ];
 }
 
+/** An older mesh-node (before `--also`) refuses the flag at startup. */
+export function meshNodeLacksAlso(stderr: string): boolean {
+  return /flag provided but not defined: -also/.test(stderr);
+}
+
+class MeshNodeTooOld extends Error {}
+
 /** Start mesh-node and resolve with the mesh IP it reports. */
-function startMeshNode(config: PairedConfig): Promise<{ ip: string; stop: () => void; exited: Promise<number> }> {
-  const args = meshNodeArgs(config);
+function startMeshNode(config: PairedConfig, peer: boolean): Promise<{ ip: string; stop: () => void; exited: Promise<number> }> {
+  const args = meshNodeArgs(config, { peer });
   const child = spawn(config.meshNode, args, { stdio: ['ignore', 'pipe', 'pipe'] });
   const exited = new Promise<number>((resolve) => child.on('exit', (code) => resolve(code ?? 1)));
   return new Promise((resolve, reject) => {
     let buffer = '';
+    let errors = '';
     child.stdout.on('data', (chunk: Buffer) => {
       buffer += chunk.toString();
       const match = /MESH_READY ip=(\S+)/.exec(buffer);
       if (match) resolve({ ip: match[1], stop: () => child.kill('SIGTERM'), exited });
     });
-    child.stderr.on('data', (chunk: Buffer) => process.stderr.write(chunk));
-    void exited.then((code) => reject(new Error(`mesh-node exited (${code}) before joining`)));
+    child.stderr.on('data', (chunk: Buffer) => {
+      errors += chunk.toString();
+      if (!(peer && meshNodeLacksAlso(errors))) process.stderr.write(chunk);
+    });
+    void exited.then((code) =>
+      reject(peer && meshNodeLacksAlso(errors) ? new MeshNodeTooOld('mesh-node is too old to forward the Factory peer port') : new Error(`mesh-node exited (${code}) before joining`)),
+    );
   });
 }
 
 async function serveAction(): Promise<void> {
   const config = await loadConfig();
+  let peer = true;
   for (;;) {
     try {
-      const node = await startMeshNode(config);
+      const node = await startMeshNode(config, peer);
       if (config.authKey) {
         // Joined: the mesh state now holds the identity; the key was single use.
         delete config.authKey;
@@ -266,6 +290,13 @@ async function serveAction(): Promise<void> {
         await new Promise((resolve) => setTimeout(resolve, REPORT_EVERY_MS));
       }
     } catch (error) {
+      if (error instanceof MeshNodeTooOld) {
+        // VNC still works; Factory peer calls wait for a newer mesh-node
+        // (it ships with Allternit Desktop).
+        process.stderr.write('mesh-node is too old to forward the Factory peer port; update Allternit Desktop to run bots here from other computers. VNC is unaffected.\n');
+        peer = false;
+        continue;
+      }
       process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     }
     await new Promise((resolve) => setTimeout(resolve, 5000));

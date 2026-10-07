@@ -87,6 +87,11 @@ pub struct ServeArgs {
     /// Serve HTTP only, no Unix socket.
     #[arg(long)]
     pub no_socket: bool,
+    /// Also take peer calls from other computers' engines on 127.0.0.1:<port>
+    /// (paired computers only; `allternit computers serve` forwards it over the
+    /// mesh). Default off, or $ALLTERNIT_FACTORY_PEER_PORT.
+    #[arg(long)]
+    pub peer_port: Option<u16>,
     #[command(subcommand)]
     pub surface: Option<ServeSurface>,
 }
@@ -610,6 +615,19 @@ fn serve(ctx: &Ctx, args: ServeArgs) -> u8 {
             },
         }
     };
+    let peer_port = args.peer_port.or_else(|| {
+        std::env::var("ALLTERNIT_FACTORY_PEER_PORT").ok().and_then(|v| v.trim().parse().ok())
+    });
+    let peer = match peer_port {
+        None => None,
+        Some(port) => {
+            let home = std::env::var_os("HOME").filter(|h| !h.is_empty()).map(PathBuf::from);
+            match allternit_factory_engine::api::peer::PeerOptions::resolve(port, home.as_deref()) {
+                Ok(opts) => Some(opts),
+                Err(e) => return fail(ctx, Code::Usage, &format!("{e:#}"), Some("Pair this computer first, or start without --peer-port.")),
+            }
+        }
+    };
     let bind = format!("{host}:{port}");
     let _ = tracing_subscriber::fmt::try_init();
     migrate_home_at_start();
@@ -625,10 +643,14 @@ fn serve(ctx: &Ctx, args: ServeArgs) -> u8 {
         Ok(rt) => rt,
         Err(err) => return fail(ctx, Code::Internal, &format!("async runtime: {err}"), None),
     };
-    match runtime.block_on(allternit_factory_engine::service::run_service_on(
+    if let Some(p) = &peer {
+        eprintln!("allternit-factory: peer calls for computer {} on 127.0.0.1:{}", p.computer_id, p.port);
+    }
+    match runtime.block_on(allternit_factory_engine::service::run_service_with_peer(
         &bind,
         socket.as_deref(),
         root,
+        peer,
     )) {
         Ok(()) => 0,
         Err(err) => {

@@ -174,7 +174,7 @@ func TestServeLoopbackDialFailure(t *testing.T) {
 // TestRunRejectsInvalidReverseTarget: an unparseable --reverse target fails
 // fast with a clear error before any tailnet join is attempted.
 func TestRunRejectsInvalidReverseTarget(t *testing.T) {
-	err := run("test-node", defaultControlURL, "", t.TempDir(), 0, 0, "not-a-host-port", time.Second, func(string, ...any) {})
+	err := run("test-node", defaultControlURL, "", t.TempDir(), 0, 0, nil, "not-a-host-port", time.Second, func(string, ...any) {})
 	if err == nil {
 		t.Fatal("expected run to reject an invalid --reverse target")
 	}
@@ -212,5 +212,24 @@ func TestKeepWarmPingsUntilDone(t *testing.T) {
 	defer mu.Unlock()
 	if pings < 3 {
 		t.Fatalf("expected repeated pings despite a failure, got %d", pings)
+	}
+}
+
+// TestAlsoFlagTakesPortNumbers: --also is repeatable and only takes ports.
+func TestAlsoFlagTakesPortNumbers(t *testing.T) {
+	var p portList
+	if err := p.Set("3019"); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Set("5901"); err != nil {
+		t.Fatal(err)
+	}
+	if len(p) != 2 || p[0] != 3019 || p[1] != 5901 {
+		t.Fatalf("got %v", p)
+	}
+	for _, bad := range []string{"0", "70000", "vnc"} {
+		if err := p.Set(bad); err == nil {
+			t.Fatalf("--also %s should be refused", bad)
+		}
 	}
 }

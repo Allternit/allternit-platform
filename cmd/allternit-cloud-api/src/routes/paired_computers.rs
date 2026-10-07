@@ -12,6 +12,13 @@
 //!    the secret).
 //! 4. Every one of the user's devices lists them
 //!    (`GET /api/v1/computers/paired`) and mirrors them as `fabric` computers.
+//!    Members of the organization that was active when the code was made see
+//!    them too (`shared: true`).
+//! 5. The Allternit Factory runs bots on a paired computer through its
+//!    engine. `POST /api/v1/computers/paired/:id/peer-ticket` gives the owner
+//!    or an organization member a short-lived data-plane JWT (`aud` = the
+//!    computer id, scope `factory:peer`) that the computer's engine verifies
+//!    against `GET /api/v1/auth/dp-jwks`.
 
 use axum::{
     extract::{Path, State},
@@ -40,7 +47,14 @@ pub fn routes() -> Router<Arc<ApiState>> {
         .route("/api/v1/computers/paired", get(list_paired))
         .route("/api/v1/computers/paired/:id", delete(remove_paired))
         .route("/api/v1/computers/paired/:id/report", post(report))
+        .route("/api/v1/computers/paired/:id/peer-ticket", post(peer_ticket))
 }
+
+/// Scope a peer ticket carries; the computer's engine accepts nothing else.
+pub const PEER_SCOPE: &str = "factory:peer";
+/// The port the computer's Factory engine takes peer calls on, forwarded over
+/// the mesh by `allternit computers serve` beside VNC.
+pub const PEER_PORT: u16 = 3019;
 
 fn sha256_hex(value: &str) -> String {
     hex::encode(Sha256::digest(value.as_bytes()))
@@ -79,21 +93,46 @@ pub fn is_mesh_ip(ip: &str) -> bool {
 /// The signed-in user, or the owner of a paired runtime (desktop device
 /// token), the same two credentials `/api/v1/mesh/enroll` accepts.
 async fn signed_in_user(state: &ApiState, headers: &HeaderMap) -> Result<String, ApiError> {
+    signed_in_caller(state, headers).await.map(|c| c.user_id)
+}
+
+/// Who is calling: the user, and the organization active for them (from the
+/// Clerk session, or the one the paired runtime was approved under).
+struct Caller {
+    user_id: String,
+    organization_id: Option<String>,
+}
+
+async fn signed_in_caller(state: &ApiState, headers: &HeaderMap) -> Result<Caller, ApiError> {
     if let Some(token) = crate::routes::runtime_pairing::device_token_from_headers(headers) {
         let device = crate::routes::runtime_pairing::runtime_device_for_token(&state.db, token, None).await?;
-        return Ok(device.user_id);
+        let organization_id: Option<String> =
+            sqlx::query_scalar("SELECT organization_id FROM runtime_devices WHERE id = $1")
+                .bind(&device.id)
+                .fetch_optional(&state.db)
+                .await?
+                .flatten();
+        return Ok(Caller { user_id: device.user_id, organization_id });
     }
-    crate::auth::resolve_user_scoped(&state.db, headers, "compute").await.map(|u| u.id)
+    let user = crate::auth::resolve_user_scoped(&state.db, headers, "compute").await?;
+    Ok(Caller { user_id: user.id, organization_id: user.organization_id })
+}
+
+/// Whether `caller` may use a computer owned by `owner` under `org`: the
+/// owner, or a member of the computer's organization.
+fn may_use(caller: &Caller, owner: &str, org: Option<&str>) -> bool {
+    caller.user_id == owner || (org.is_some() && caller.organization_id.as_deref() == org)
 }
 
 async fn create_pairing_code(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> Result<Response, ApiError> {
-    let user_id = signed_in_user(&state, &headers).await?;
+    let caller = signed_in_caller(&state, &headers).await?;
     let code = new_pairing_code();
     let expires_at = Utc::now() + Duration::minutes(CODE_TTL_MINUTES);
-    sqlx::query("INSERT INTO computer_pairing_codes (code_hash, user_id, expires_at) VALUES ($1, $2, $3)")
+    sqlx::query("INSERT INTO computer_pairing_codes (code_hash, user_id, expires_at, organization_id) VALUES ($1, $2, $3, $4)")
         .bind(sha256_hex(&code))
-        .bind(&user_id)
+        .bind(&caller.user_id)
         .bind(expires_at)
+        .bind(&caller.organization_id)
         .execute(&state.db)
         .await?;
     Ok((
@@ -118,15 +157,15 @@ struct RedeemBody {
 async fn redeem_pairing_code(State(state): State<Arc<ApiState>>, Json(body): Json<RedeemBody>) -> Result<Response, ApiError> {
     let code_hash = sha256_hex(&normalize_code(&body.code));
     // Claim the code atomically: only an unused, unexpired code works, once.
-    let claimed: Option<(String,)> = sqlx::query_as(
+    let claimed: Option<(String, Option<String>)> = sqlx::query_as(
         "UPDATE computer_pairing_codes SET used_at = now()
          WHERE code_hash = $1 AND used_at IS NULL AND expires_at > now()
-         RETURNING user_id",
+         RETURNING user_id, organization_id",
     )
     .bind(&code_hash)
     .fetch_optional(&state.db)
     .await?;
-    let Some((user_id,)) = claimed else {
+    let Some((user_id, organization_id)) = claimed else {
         return Err(ApiError::Unauthorized("That pairing code is wrong, used, or expired. Make a new one in Computers.".into()));
     };
     let Some(mesh) = &state.mesh_service else {
@@ -142,12 +181,13 @@ async fn redeem_pairing_code(State(state): State<Arc<ApiState>>, Json(body): Jso
     let os = body.os.map(|o| o.trim().chars().take(32).collect::<String>()).filter(|o| !o.is_empty());
     let id = format!("pc_{}", uuid::Uuid::new_v4().simple());
     let secret = hex::encode(rand::thread_rng().gen::<[u8; 32]>());
-    sqlx::query("INSERT INTO paired_computers (id, user_id, name, os, secret_hash) VALUES ($1, $2, $3, $4, $5)")
+    sqlx::query("INSERT INTO paired_computers (id, user_id, name, os, secret_hash, organization_id) VALUES ($1, $2, $3, $4, $5, $6)")
         .bind(&id)
         .bind(&user_id)
         .bind(&name)
         .bind(&os)
         .bind(sha256_hex(&secret))
+        .bind(&organization_id)
         .execute(&state.db)
         .await?;
     Ok((
@@ -213,18 +253,54 @@ struct PairedComputer {
     vnc_ready: bool,
     created_at: DateTime<Utc>,
     last_seen_at: Option<DateTime<Utc>>,
+    /// Paired by someone else in the caller's organization.
+    shared: bool,
 }
 
 async fn list_paired(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> Result<Response, ApiError> {
-    let user_id = signed_in_user(&state, &headers).await?;
+    let caller = signed_in_caller(&state, &headers).await?;
     let computers: Vec<PairedComputer> = sqlx::query_as(
-        "SELECT id, name, os, mesh_ip, vnc_ready, created_at, last_seen_at
-         FROM paired_computers WHERE user_id = $1 ORDER BY created_at",
+        "SELECT id, name, os, mesh_ip, vnc_ready, created_at, last_seen_at, user_id <> $1 AS shared
+         FROM paired_computers
+         WHERE user_id = $1 OR (organization_id IS NOT NULL AND organization_id = $2)
+         ORDER BY created_at",
     )
-    .bind(&user_id)
+    .bind(&caller.user_id)
+    .bind(&caller.organization_id)
     .fetch_all(&state.db)
     .await?;
     Ok(Json(serde_json::json!({ "computers": computers })).into_response())
+}
+
+/// A short-lived ticket for the computer's Factory engine (see the module
+/// doc, step 5). Only the owner or a member of the computer's organization
+/// gets one, and only once the computer has reported a mesh address.
+async fn peer_ticket(State(state): State<Arc<ApiState>>, Path(id): Path<String>, headers: HeaderMap) -> Result<Response, ApiError> {
+    let caller = signed_in_caller(&state, &headers).await?;
+    let row: Option<(String, Option<String>, Option<String>)> =
+        sqlx::query_as("SELECT user_id, organization_id, mesh_ip FROM paired_computers WHERE id = $1")
+            .bind(&id)
+            .fetch_optional(&state.db)
+            .await?;
+    // Someone else's computer answers like a missing one.
+    let Some((_, _, mesh_ip)) = row.filter(|(owner, org, _)| may_use(&caller, owner, org.as_deref())) else {
+        return Err(ApiError::NotFound("no such paired computer".into()));
+    };
+    let Some(mesh_ip) = mesh_ip else {
+        return Err(ApiError::Conflict(
+            "That computer hasn't joined the mesh yet. Check that `allternit computers serve` is running on it.".into(),
+        ));
+    };
+    let ticket = crate::auth::dataplane_jwt::mint(&caller.user_id, &id, PEER_SCOPE)?;
+    let expires_in = crate::auth::dataplane_jwt::ttl_secs_from_env();
+    Ok(Json(serde_json::json!({
+        "ticket": ticket,
+        "computerId": id,
+        "meshIp": mesh_ip,
+        "peerPort": PEER_PORT,
+        "expiresIn": expires_in,
+    }))
+    .into_response())
 }
 
 async fn remove_paired(State(state): State<Arc<ApiState>>, Path(id): Path<String>, headers: HeaderMap) -> Result<Response, ApiError> {
@@ -252,6 +328,17 @@ mod tests {
         assert!(code.chars().filter(|c| *c != '-').all(|c| CODE_ALPHABET.contains(&(c as u8))));
         assert_eq!(normalize_code(" abcd efgh "), "ABCD-EFGH");
         assert_eq!(normalize_code("abcd-efgh"), "ABCD-EFGH");
+    }
+
+    #[test]
+    fn owner_and_organization_members_may_use_a_computer() {
+        let me = |org: Option<&str>| Caller { user_id: "u1".into(), organization_id: org.map(str::to_string) };
+        assert!(may_use(&me(None), "u1", None));
+        assert!(may_use(&me(Some("o1")), "u2", Some("o1")));
+        assert!(!may_use(&me(Some("o2")), "u2", Some("o1")));
+        assert!(!may_use(&me(None), "u2", Some("o1")));
+        // A computer with no organization is the owner's alone.
+        assert!(!may_use(&me(Some("o1")), "u2", None));
     }
 
     #[test]

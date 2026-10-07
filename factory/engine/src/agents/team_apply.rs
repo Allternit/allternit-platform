@@ -212,6 +212,47 @@ pub trait FactoryApi: Send + Sync {
     fn list_bots(&self) -> std::result::Result<Vec<Value>, ApiError>;
     /// `POST /api/v1/factory/node-tickets` → `{ticket, lane, guarantee, created, …}`.
     fn create_node_ticket(&self, body: &Value) -> std::result::Result<Value, ApiError>;
+    /// The account's paired computers (`GET /api/v1/computers`, provider
+    /// `fabric`): what `machine:` and `--on` may name.
+    fn paired_computers(&self) -> std::result::Result<Vec<PairedComputer>, ApiError> {
+        Err(ApiError::new("not_found", None, "this allternit-api does not list paired computers"))
+    }
+}
+
+/// A paired computer, as allternit-api mirrors it from cloud-api.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PairedComputer {
+    /// cloud-api's id (`pc_…`).
+    pub id: String,
+    pub name: String,
+    /// Its mesh address, once it has joined the mesh.
+    pub mesh_ip: Option<String>,
+}
+
+/// Which paired computer `machine` names: its id, or its name (any case).
+/// Unknown names and computers not on the mesh yet are refused with the
+/// reason; the list of computers comes with an unknown name.
+pub fn resolve_machine<'a>(machine: &str, computers: &'a [PairedComputer]) -> std::result::Result<&'a PairedComputer, (&'static str, String)> {
+    let found = computers
+        .iter()
+        .find(|c| c.id == machine)
+        .or_else(|| computers.iter().find(|c| c.name.eq_ignore_ascii_case(machine)));
+    let Some(c) = found else {
+        let names: Vec<&str> = computers.iter().map(|c| c.name.as_str()).collect();
+        let list = if names.is_empty() {
+            "this account has no paired computers (pair one with `allternit computer pair <code>`)".to_string()
+        } else {
+            format!("paired computers: {}", names.join(", "))
+        };
+        return Err(("not_found", format!("no paired computer named {machine}; {list}")));
+    };
+    if c.mesh_ip.is_none() {
+        return Err((
+            "refused",
+            format!("{} hasn't joined the Allternit mesh yet; check that `allternit computers serve` is running on it", c.name),
+        ));
+    }
+    Ok(c)
 }
 
 #[derive(Debug, Clone)]
@@ -348,6 +389,22 @@ impl FactoryApi for ApiClient {
     }
     fn create_node_ticket(&self, body: &Value) -> std::result::Result<Value, ApiError> {
         self.call("POST", "/api/v1/factory/node-tickets", Some(body.clone()))
+    }
+    fn paired_computers(&self) -> std::result::Result<Vec<PairedComputer>, ApiError> {
+        let v = self.call("GET", "/api/v1/computers", None)?;
+        Ok(v["computers"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|c| c["provider"].as_str() == Some("fabric"))
+            .filter_map(|c| {
+                Some(PairedComputer {
+                    id: c["native_id"].as_str()?.to_string(),
+                    name: c["name"].as_str().unwrap_or_default().to_string(),
+                    mesh_ip: c["host"].as_str().filter(|h| !h.is_empty()).map(str::to_string),
+                })
+            })
+            .collect())
     }
 }
 
@@ -737,15 +794,26 @@ fn spawn_one(
     claimed: &mut BTreeMap<(PathBuf, &'static str), String>,
 ) -> StepResult {
     if let Some(machine) = &step.machine {
-        return StepResult::failed(
-            step,
-            "not_found",
-            format!(
-                "spawning on another computer ({machine}) is not built yet: the pane engine has no remote spawn. \
-                 Run `allternit-factory agents up {}` on {machine} itself, or drop --on / the bot's machine",
-                team.name
+        // The name must be one of the account's paired computers.
+        let Some(api) = opts.api.as_ref() else {
+            return StepResult::failed(step, "transport", format!("checking computer {machine} needs allternit-api: {API_NOT_SET_FACT}. {API_ENV_ACTION}"));
+        };
+        let computers = match api.paired_computers() {
+            Ok(c) => c,
+            Err(e) => return StepResult::failed(step, &e.code, format!("listing paired computers: {}", e.fact)),
+        };
+        return match resolve_machine(machine, &computers) {
+            Err((code, fact)) => StepResult::failed(step, code, fact),
+            Ok(c) => StepResult::failed(
+                step,
+                "not_found",
+                format!(
+                    "spawning on another computer ({}, {}) is not built yet: it arrives with the engine peer link. \
+                     Run `allternit-factory agents up {}` on {} itself, or drop --on / the bot's machine",
+                    c.name, c.id, team.name, c.name
+                ),
             ),
-        );
+        };
     }
     let harness = bot.harness.clone().unwrap_or_default();
     let slug = pane_slug(&bot.slug, &team.name);
@@ -985,6 +1053,12 @@ mod tests {
         fn create_node_ticket(&self, _: &Value) -> std::result::Result<Value, ApiError> {
             Err(ApiError::new("refused", Some(409), "not a vendor bot"))
         }
+        fn paired_computers(&self) -> std::result::Result<Vec<PairedComputer>, ApiError> {
+            Ok(vec![
+                PairedComputer { id: "pc_1".into(), name: "Mac mini".into(), mesh_ip: Some("100.64.0.9".into()) },
+                PairedComputer { id: "pc_2".into(), name: "Mail VPS".into(), mesh_ip: None },
+            ])
+        }
     }
 
     #[test]
@@ -1012,15 +1086,33 @@ mod tests {
     }
 
     #[test]
-    fn spawn_on_a_machine_is_refused_as_not_built() {
+    fn spawn_on_a_machine_checks_the_paired_computers() {
         let t = parse_team("product-build", GOOD).unwrap();
-        let plan = plan_up(&t, None, Some("mac-mini"), &LiveState::default()).unwrap();
-        let spawn: Vec<TeamPlanStep> = plan.iter().filter(|s| s.action == PlanAction::Spawn).cloned().collect();
-        let root = tempfile::tempdir().unwrap();
-        let res = apply(root.path(), &t, None, &spawn, &ApplyOptions::default());
-        assert_eq!(res[0].code.as_deref(), Some("not_found"));
-        assert!(res[0].fact.contains("not built yet"), "{}", res[0].fact);
-        // Nothing was delivered.
-        assert!(!root.path().join("CLAUDE.md").exists());
+        let api: Arc<dyn FactoryApi> = Arc::new(FakeApi { calls: Mutex::new(vec![]) });
+        let opts = ApplyOptions { api: Some(api), ..Default::default() };
+        let run = |on: &str, opts: &ApplyOptions| {
+            let plan = plan_up(&t, None, Some(on), &LiveState::default()).unwrap();
+            let spawn: Vec<TeamPlanStep> = plan.iter().filter(|s| s.action == PlanAction::Spawn).cloned().collect();
+            let root = tempfile::tempdir().unwrap();
+            let res = apply(root.path(), &t, None, &spawn, opts);
+            // Nothing is ever delivered for a remote bot here.
+            assert!(!root.path().join("CLAUDE.md").exists());
+            (res[0].code.clone(), res[0].fact.clone())
+        };
+        // A real, online computer (by name, any case): found, then not built yet.
+        let (code, fact) = run("mac MINI", &opts);
+        assert_eq!(code.as_deref(), Some("not_found"));
+        assert!(fact.contains("Mac mini, pc_1") && fact.contains("not built yet"), "{fact}");
+        // A typo: refused with the list.
+        let (code, fact) = run("mac-mini", &opts);
+        assert_eq!(code.as_deref(), Some("not_found"));
+        assert!(fact.contains("paired computers: Mac mini, Mail VPS"), "{fact}");
+        // Paired but not on the mesh yet.
+        let (code, fact) = run("pc_2", &opts);
+        assert_eq!(code.as_deref(), Some("refused"));
+        assert!(fact.contains("hasn't joined"), "{fact}");
+        // Without allternit-api the name can't be checked.
+        let (code, _) = run("Mac mini", &ApplyOptions::default());
+        assert_eq!(code.as_deref(), Some("transport"));
     }
 }

@@ -4,5 +4,6 @@
 pub mod cli;
 pub mod factory;
 pub mod mcp;
+pub mod peer;
 pub mod service;
 pub mod workspace;
