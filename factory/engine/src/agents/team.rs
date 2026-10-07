@@ -301,9 +301,69 @@ pub fn load_team_dir(dir: &Path, team: &str) -> Result<LoadedTeam, TeamError> {
     };
     let mut loaded = parse_team(team, &raw)?;
     loaded.dir = dir.to_path_buf();
+    apply_overrides(&mut loaded, &load_overrides(dir));
     let culture_name = loaded.file.culture.clone().unwrap_or_else(|| CULTURE_FILE.to_string());
     loaded.culture = std::fs::read_to_string(dir.join(culture_name)).ok();
     Ok(loaded)
+}
+
+/// Per-bot changes made from the CLI or the app (`agents model`), kept in
+/// `overrides.json` next to `team.yaml` so the hand-written file and its
+/// comments are never rewritten. Applied when the team loads.
+pub const OVERRIDES_FILE: &str = "overrides.json";
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct TeamOverrides {
+    #[serde(default)]
+    pub bots: BTreeMap<String, BotOverride>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct BotOverride {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+}
+
+/// The team folder's overrides (empty when there's no file or it doesn't parse).
+pub fn load_overrides(dir: &Path) -> TeamOverrides {
+    std::fs::read_to_string(dir.join(OVERRIDES_FILE))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+fn apply_overrides(loaded: &mut LoadedTeam, overrides: &TeamOverrides) {
+    for b in &mut loaded.file.bots {
+        if let Some(o) = overrides.bots.get(&b.bot) {
+            if let Some(m) = &o.model {
+                b.model = Some(m.clone());
+            }
+        }
+    }
+}
+
+/// Set (or with `None`, clear) one bot's model override. The bot must be on
+/// the team. Returns the model the bot had before (override or team.yaml).
+pub fn set_bot_model(root: &Path, team: &str, bot: &str, model: Option<&str>) -> Result<Option<String>, TeamError> {
+    let loaded = load_team(root, team)?;
+    let Some(row) = loaded.file.bots.iter().find(|b| b.bot == bot) else {
+        return Err(TeamError::Invalid(vec![ValidationError {
+            path: "bots".into(),
+            message: format!("{bot:?} is not on team {team:?}"),
+        }]));
+    };
+    let before = row.model.clone();
+    let dir = team_dir(root, team);
+    let mut overrides = load_overrides(&dir);
+    let entry = overrides.bots.entry(bot.to_string()).or_default();
+    entry.model = model.map(str::to_string);
+    if entry == &BotOverride::default() {
+        overrides.bots.remove(bot);
+    }
+    let path = dir.join(OVERRIDES_FILE);
+    let text = serde_json::to_string_pretty(&overrides).map_err(|e| TeamError::Parse(e.to_string()))?;
+    std::fs::write(&path, text + "\n").map_err(|source| TeamError::Io { path, source })?;
+    Ok(before)
 }
 
 /// Team folder names under `<root>/.allternit/teams` that hold a `team.yaml`,
@@ -636,6 +696,24 @@ impl LoadedTeam {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    #[test]
+    fn model_override_applies_on_load_and_clears() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join(".allternit/teams/smoke");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("team.yaml"), "name: smoke\nbots:\n  - { bot: noop, role: build, binding: terminal, harness: claude, model: sonnet }\n").unwrap();
+        let before = set_bot_model(tmp.path(), "smoke", "noop", Some("opus")).unwrap();
+        assert_eq!(before.as_deref(), Some("sonnet"));
+        let t = load_team(tmp.path(), "smoke").unwrap();
+        assert_eq!(t.file.bots[0].model.as_deref(), Some("opus"));
+        // team.yaml itself is untouched.
+        assert!(std::fs::read_to_string(dir.join("team.yaml")).unwrap().contains("model: sonnet"));
+        set_bot_model(tmp.path(), "smoke", "noop", None).unwrap();
+        assert_eq!(load_team(tmp.path(), "smoke").unwrap().file.bots[0].model.as_deref(), Some("sonnet"));
+        assert!(load_overrides(&dir).bots.is_empty());
+        assert!(set_bot_model(tmp.path(), "smoke", "ghost", Some("opus")).is_err());
+    }
 
     pub(crate) const GOOD: &str = r#"
 name: product-build

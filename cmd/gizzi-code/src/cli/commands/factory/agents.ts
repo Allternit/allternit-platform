@@ -58,7 +58,17 @@ export const AgentsCommand = cmd({
       )
       .command(engineVerb(P, { command: "snapshot", describe: "snapshot the whole team", mutation: true }))
       .command(engineVerb(P, { command: "restore", describe: "restore a team snapshot", mutation: true }))
-      .command(engineVerb(P, { command: "model <bot> <model>", describe: "set a bot's model", mutation: true }))
+      .command(
+        engineVerb(P, {
+          command: "model <bot> [model]",
+          describe: "set a Terminal bot's model (bot@team); applies on its next start",
+          mutation: true,
+          options: {
+            restart: { type: "boolean", describe: "relaunch a running bot now, resuming its conversation" },
+            clear: { type: "boolean", describe: "drop the override and use team.yaml's model" },
+          },
+        }),
+      )
       .command(engineVerb(P, { command: "handoff <bot>", describe: "hand a bot's seat to a fresh session", mutation: true }))
       .command(
         engineGroup(

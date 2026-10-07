@@ -83,7 +83,6 @@ fn help_lists_the_four_parts_and_hides_internal() {
 fn not_built_verbs_say_so_with_exit_2() {
     let home = tempfile::tempdir().unwrap();
     for (args, fact) in [
-        (vec!["agents", "model", "builder", "opus", "--json"], "agents model is not built yet"),
         (vec!["agents", "handoff", "builder", "--json"], "agents handoff is not built yet"),
         (vec!["agents", "templates", "--json"], "agents templates is not built yet"),
     ] {
@@ -93,10 +92,10 @@ fn not_built_verbs_say_so_with_exit_2() {
     }
 
     // Without --json: nothing on stdout, the fact on stderr, same exit code.
-    let out = factory(home.path(), &["agents", "model", "builder", "opus"]);
+    let out = factory(home.path(), &["agents", "handoff", "builder"]);
     assert_eq!(out.status.code(), Some(2));
     assert!(out.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("agents model is not built yet"));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("agents handoff is not built yet"));
 }
 
 #[test]
@@ -296,4 +295,37 @@ fn template_save_checks_copies_and_refuses_to_overwrite() {
     let out = factory(home.path(), &["--root", root, "workflows", "template", "save", bad.to_str().unwrap(), "--json"]);
     assert_ne!(out.status.code(), Some(0));
     assert!(!ws.join(".allternit/rails/templates/bad.md").exists());
+}
+
+#[test]
+fn agents_model_records_an_override_for_the_next_start() {
+    let home = tempfile::tempdir().unwrap();
+    let ws = home.path().join("ws");
+    let team = ws.join(".allternit/teams/smoke");
+    std::fs::create_dir_all(&team).unwrap();
+    std::fs::write(team.join("team.yaml"), "name: smoke\nbots:\n  - { bot: noop, role: build, binding: terminal, harness: claude }\n").unwrap();
+    let root = ws.to_str().unwrap();
+
+    let out = factory(home.path(), &["--root", root, "agents", "model", "noop@smoke", "opus", "--dry-run", "--json"]);
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(one_json(&out)["plan"]["to"], "opus");
+    assert!(!team.join("overrides.json").exists());
+
+    let out = factory(home.path(), &["--root", root, "agents", "model", "noop@smoke", "opus", "--json"]);
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    let doc = one_json(&out);
+    assert_eq!(doc["to"], "opus");
+    assert_eq!(doc["applies"], "next start");
+    assert!(std::fs::read_to_string(team.join("overrides.json")).unwrap().contains("opus"));
+
+    let out = factory(home.path(), &["--root", root, "agents", "model", "noop@smoke", "--clear", "--json"]);
+    assert_eq!(out.status.code(), Some(0));
+    assert!(one_json(&out)["to"].is_null());
+
+    // Not a team address: usage, pointing hosted/vendor bots to their account.
+    let out = factory(home.path(), &["--root", root, "agents", "model", "somebot", "opus", "--json"]);
+    assert_eq!(out.status.code(), Some(64));
+    // Unknown bot on a real team: not found.
+    let out = factory(home.path(), &["--root", root, "agents", "model", "ghost@smoke", "opus", "--json"]);
+    assert_eq!(out.status.code(), Some(2));
 }
