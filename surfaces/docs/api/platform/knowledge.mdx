@@ -1,0 +1,49 @@
+---
+title: 'Knowledge files'
+description: 'Text files a hosted agent searches during a conversation with the knowledge_search tool.'
+---
+
+Give an agent your end customer's prices, hours, policies or FAQs as files. When the agent has the `knowledge_search` [tool](/api/platform/agents#tools), it searches them while it answers and quotes what it finds. Scope `agents`.
+
+| Method | Path | |
+|---|---|---|
+| `POST` | `/v1/agents/{id}/knowledge` | Upload one file |
+| `GET` | `/v1/agents/{id}/knowledge` | List the agent's files (paged, oldest first) |
+| `DELETE` | `/v1/agents/{id}/knowledge/{file_id}` | Remove one |
+
+```bash
+curl https://api.allternit.com/v1/agents/agent_0123456789abcdef01234567/knowledge \
+  -H "Authorization: Bearer $ALLTERNIT_KEY" -H "Content-Type: application/json" \
+  -d '{ "name": "hours.md", "content": "# Hours\n\nOpen Monday to Friday 8–5, Saturday 8–noon." }'
+```
+
+```json
+{ "id": "kf_0123456789abcdef01234567", "object": "knowledge_file", "agent_id": "agent_0123456789abcdef01234567",
+  "account_id": "acct_0123456789abcdef01234567", "name": "hours.md", "content_type": "text/markdown",
+  "bytes": 64, "chunk_count": 1, "created_at": "2026-10-07T15:02:11Z" }
+```
+
+| Field | |
+|---|---|
+| `name` | 1–200 characters. Its extension sets the type when `content_type` is absent. |
+| `content` | The file as text. |
+| `content_base64` | Or the file's bytes, base64. Send one of the two. |
+| `content_type` | `text/plain`, `text/markdown`, `text/csv`, `text/html` or `application/json`. |
+
+## Limits
+
+- Text only, UTF-8. Convert PDFs and Office files to text or Markdown first (`unsupported_content_type`).
+- At most 1 MB per file (`file_too_large`), 20 files and 5 MB in total per agent (`knowledge_limit_reached`).
+- HTML is read as text: tags, scripts and styles are dropped.
+
+## How search works
+
+Each file is split into passages of about 1,200 characters and indexed for full-text search (English stemming). A search first looks for passages with all of the words, then any of them, and returns up to 10 passages ranked by how well they match, each with its file name. It matches words, not meaning: "price" finds "prices", but not "cost".
+
+The agent finds only its own files. Another agent, even in the same account, never sees them. A deleted file stops matching right away, and its stored original is removed.
+
+## Isolation
+
+A key bound to an account sees only that account's agents; another account's agent answers `404 agent_not_found`.
+
+Errors use the [standard format](/api/platform/errors): `invalid_name`, `invalid_content`, `unsupported_content_type`, `file_too_large`, `knowledge_limit_reached`, `knowledge_file_not_found`, `knowledge_storage_unavailable`, `agent_not_found`, `insufficient_scope`.

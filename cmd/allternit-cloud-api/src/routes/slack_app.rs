@@ -897,7 +897,6 @@ async fn maybe_refresh(state: &ApiState, http: &dyn SlackHttp, cfg: &SlackAppCon
 
 /// POST one message as the user's install. Shared by the route and tests.
 pub async fn send_message(state: &ApiState, http: &dyn SlackHttp, cfg: &SlackAppConfig, user_id: &str, body: &SendBody) -> Result<Value, ApiError> {
-    let files = decode_files(&body.files)?;
     let team: Option<(String,)> = sqlx::query_as(
         "SELECT team_id FROM slack_installs WHERE user_id = $1 ORDER BY installed_at DESC LIMIT 1",
     )
@@ -907,6 +906,13 @@ pub async fn send_message(state: &ApiState, http: &dyn SlackHttp, cfg: &SlackApp
     let Some((team_id,)) = team else {
         return Err(ApiError::BadRequest("slack_not_installed".to_string()));
     };
+    send_message_as_team(state, http, cfg, &team_id, body).await
+}
+
+/// POST one message as one workspace's install (the caller already checked the install is theirs).
+pub async fn send_message_as_team(state: &ApiState, http: &dyn SlackHttp, cfg: &SlackAppConfig, team_id: &str, body: &SendBody) -> Result<Value, ApiError> {
+    let files = decode_files(&body.files)?;
+    let team_id = team_id.to_string();
     let Some(mut token) = install_token(state, &team_id).await? else {
         return Err(ApiError::BadRequest("slack_not_installed".to_string()));
     };

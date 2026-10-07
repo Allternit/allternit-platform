@@ -222,7 +222,7 @@ impl DiscordApi for ReqwestDiscord {
     }
 }
 
-fn default_api(cfg: &DiscordConfig) -> Arc<dyn DiscordApi> {
+pub(crate) fn default_api(cfg: &DiscordConfig) -> Arc<dyn DiscordApi> {
     Arc::new(ReqwestDiscord::new(&cfg.bot_token))
 }
 
