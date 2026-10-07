@@ -20,6 +20,10 @@ test("a key stored with PUT /auth/{provider} is the one requests use", async () 
         const plan = await Provider.prepareAuth({ providerID: "openai", modelID: "gpt-5-mini" })
         expect(plan.source).toBe("auth")
         expect(plan.apiKey).toBe("sk-stored-1234567890")
+        // The request goes to OpenAI's own endpoint, not an empty base URL.
+        const model = await Provider.getModel("openai", "gpt-5-mini")
+        const language: any = await Provider.getLanguage(model, plan)
+        expect(String(language.config.url({ path: "/responses", modelId: "gpt-5-mini" }))).toStartWith("https://api.openai.com/")
       },
     })
   } finally {

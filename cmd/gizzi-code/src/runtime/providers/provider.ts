@@ -729,7 +729,10 @@ export namespace Provider {
       }
 
       if (plan) {
-        if (plan.baseURL !== undefined) options["baseURL"] = plan.baseURL
+        // A built-in SDK model (openai, anthropic) has no catalog URL, so the plan's is "";
+        // an empty baseURL makes every request fail ("fetch() URL is invalid"). Use the default.
+        const baseURL = plan.baseURL || loadBaseURL(model, options)
+        if (baseURL) options["baseURL"] = baseURL
         if (plan.apiKey !== undefined) options["apiKey"] = plan.apiKey
         if (plan.token !== undefined) {
           options["token"] = plan.token
