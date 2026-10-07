@@ -745,10 +745,15 @@ async fn exchange_pairing(
         );
     }
 
-    let user_email = sqlx::query_scalar::<_, String>("SELECT email FROM users WHERE id = $1")
+    // An internal owner (a Platform API project's runtime, `platform:<project_id>`)
+    // has no email. Reading it as non-null failed the exchange after the one-time
+    // pairing code was consumed, so the computer could never pair (live, 2026-10-07).
+    let user_email = sqlx::query_scalar::<_, Option<String>>("SELECT email FROM users WHERE id = $1")
         .bind(&user_id)
-        .fetch_one(&state.db)
-        .await?;
+        .fetch_optional(&state.db)
+        .await?
+        .flatten()
+        .unwrap_or_default();
     let capabilities = serde_json::from_str(&pairing.capabilities).unwrap_or_default();
     Ok(Json(RuntimeSessionResponse {
         runtime_id,
