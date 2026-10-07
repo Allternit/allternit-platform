@@ -603,8 +603,12 @@ fn speakable_chunks(reply: &str) -> Vec<String> {
 /// Sends a turner's event to the call stream. A `tool` step is also written to
 /// the thread as `agent.tool.started` / `.completed` / `.failed` (the native
 /// channel path writes none, so nothing is written twice); the internal
-/// `toolCallId` is not part of the stream's event shape.
+/// `toolCallId` is not part of the stream's event shape. `usage` events are dropped.
 fn forward_turn_event(db: &DbHandle, call: &CallRow, call_id: &str, mut ev: Value, out: &mpsc::UnboundedSender<Value>) {
+    // Token usage is for Platform API text turns; a call is billed by the minute.
+    if ev["type"] == "usage" {
+        return;
+    }
     if ev["type"] == "tool" {
         let id = ev.as_object_mut().and_then(|o| o.remove("toolCallId")).and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
         let (status, name) = (ev["status"].as_str().unwrap_or(""), ev["name"].as_str().unwrap_or("tool").to_string());

@@ -49,7 +49,7 @@ use super::{new_id, PlatformError};
 
 /// Event types a webhook can subscribe to. `*` subscribes to all of them.
 /// Defined by the one registry (`routes::allternit_events`).
-pub const EVENT_TYPES: [&str; 6] = crate::routes::allternit_events::PLATFORM_EVENTS;
+pub const EVENT_TYPES: [&str; 7] = crate::routes::allternit_events::PLATFORM_EVENTS;
 
 /// Endpoint kinds (`platform_webhooks.kind`).
 pub const KIND_PLATFORM: &str = "platform_webhook";
@@ -477,7 +477,39 @@ pub async fn record_number_months(db: &PgPool) -> Result<u64, sqlx::Error> {
     Ok(n)
 }
 
-/// Background worker: webhook deliveries every 5 s, number months every 6 h.
+/// Hosted agent fees: one `agent_month` usage row per live agent of a live
+/// project per calendar month (idempotent per agent and month). Spend and Stripe
+/// leave the first three agent-months of each project's month free.
+pub async fn record_agent_months(db: &PgPool) -> Result<u64, sqlx::Error> {
+    let month = Utc::now().format("%Y-%m").to_string();
+    let rows: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT a.id, a.project_id, a.account_id FROM platform_agents a JOIN platform_projects p ON p.id = a.project_id \
+         WHERE a.deleted_at IS NULL AND p.archived_at IS NULL AND p.env = 'live'",
+    )
+    .fetch_all(db)
+    .await?;
+    let mut n = 0;
+    for (id, project, account) in rows {
+        let event = super::UsageEvent {
+            project_id: project,
+            account_id: Some(account),
+            key_id: None,
+            meter: "agent_month".to_string(),
+            quantity: 1.0,
+            unit: Some("month".to_string()),
+            ref_id: Some(id.clone()),
+            idempotency: Some(format!("agent:{id}:{month}")),
+        };
+        if matches!(super::record_usage(db, event).await, Ok(Some(_))) {
+            n += 1;
+        }
+    }
+    Ok(n)
+}
+
+/// Background worker: webhook deliveries every 5 s; number and agent months
+/// every 6 h; usage to Stripe every 5 min, only when that is switched on
+/// (`stripe_plan::report_if_enabled`).
 /// Started when the Platform API is switched on.
 pub fn spawn_worker(db: PgPool) {
     spawn_worker_with(db, true);
@@ -498,6 +530,12 @@ fn spawn_worker_with(db: PgPool, number_months: bool) {
                 if let Err(e) = record_number_months(&db).await {
                     tracing::warn!("platform number months: {e}");
                 }
+                if let Err(e) = record_agent_months(&db).await {
+                    tracing::warn!("platform agent months: {e}");
+                }
+            }
+            if number_months && ticks % (5 * 12) == 0 {
+                super::stripe_plan::report_if_enabled(&db).await;
             }
             if let Err(e) = deliver_due(&db, &client).await {
                 tracing::warn!("platform webhook delivery: {e}");

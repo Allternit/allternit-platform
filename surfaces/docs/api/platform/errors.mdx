@@ -16,7 +16,8 @@ Every error has the same body:
 | `authentication_error` | 401 | No key, an unknown or revoked key, or a key that isn't a project key. |
 | `permission_error` | 403 | The key lacks the scope, or is bound to another account. |
 | `conflict_error` | 409 | `idempotency_conflict` (same key, different request), `idempotency_in_progress` (the first request is still running) or a duplicate `external_ref`. |
+| `billing_error` | 402 | `spend_cap_reached`: the project hit its monthly spend cap. Raise the cap in the console, or wait for the 1st (UTC). See [Billing and spend caps](/api/platform/billing). |
 | `rate_limit_error` | 429 | Over the per-key or per-project limit, or the concurrent-call cap. Retry after `retry-after` seconds. |
-| `api_error` | 500 / 503 | Something failed on our side (`code` is usually `internal_error`). Safe to retry with the same `Idempotency-Key`. |
+| `api_error` | 500 / 503 | Something failed on our side (`code` is usually `internal_error`; `spend_check_unavailable` when the spend cap couldn't be checked, so the request was refused). Safe to retry with the same `Idempotency-Key`. |
 
 `code` is stable and safe to branch on; `message` is for people and may change.

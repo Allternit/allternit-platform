@@ -35,4 +35,6 @@ curl https://api.allternit.com/v1/conversations/conv_81c…/messages \
 
 **Limits.** `content` is 1–16,000 characters. One message at a time per conversation: a second one while the agent is still answering gets `409 conversation_busy`.
 
-Errors: `model_key_missing`, `model_key_sync_failed`, `invalid_content`, `invalid_metadata`, `agent_not_found`, `conversation_not_found`, `conversation_busy`, `runtime_starting`, `runtime_unavailable`, `agent_sync_failed`, `session_failed`, `insufficient_scope`.
+**Billing.** Each reply records its model tokens as `tokens_in` and `tokens_out` [usage](/api/platform/usage), billed at the model provider's list price plus 15%. An agent on your own model key (`model: "anthropic/…"` with [`PUT /v1/model_keys/anthropic`](/api/platform/agents)) records the tokens at no charge; you pay your provider directly. Once the project reaches its monthly spend cap, sending a message answers `402 spend_cap_reached` and the agent doesn't run ([Billing and spend caps](/api/platform/billing)).
+
+Errors: `model_key_missing`, `model_key_sync_failed`, `invalid_content`, `invalid_metadata`, `agent_not_found`, `conversation_not_found`, `conversation_busy`, `runtime_starting`, `runtime_unavailable`, `agent_sync_failed`, `session_failed`, `insufficient_scope`, `spend_cap_reached`, `spend_check_unavailable`.

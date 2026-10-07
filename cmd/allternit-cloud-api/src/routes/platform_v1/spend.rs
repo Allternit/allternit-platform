@@ -3,10 +3,8 @@
 //! billable work it can't take back (a phone call, a realtime session) asks
 //! [`spend_allowed`] first and refuses with [`cap_reached`] when it says no.
 //!
-//! The check itself belongs to billing (P5): it compares the month's priced
-//! usage with the cap. Until billing prices usage, nothing has a cost to
-//! compare, so every project with a cap row is allowed. Callers depend only on
-//! this signature.
+//! The check itself is billing's ([`super::billing::spend_allowed`]): the
+//! month's priced usage against the cap. Callers depend only on this signature.
 
 use sqlx::PgPool;
 
@@ -18,9 +16,14 @@ pub async fn spend_allowed(db: &PgPool, project_id: &str) -> Result<bool, Platfo
         .bind(project_id)
         .fetch_optional(db)
         .await?;
-    // A project without a row can't start anything; one with a cap is allowed
-    // until billing (P5) prices its usage against the cap.
-    Ok(cap.is_some())
+    if cap.is_none() {
+        return Ok(false);
+    }
+    match super::billing::spend_allowed(db, project_id).await {
+        Ok(()) => Ok(true),
+        Err(e) if e.code == "spend_cap_reached" => Ok(false),
+        Err(e) => Err(e),
+    }
 }
 
 /// 402 `spend_cap_reached`.

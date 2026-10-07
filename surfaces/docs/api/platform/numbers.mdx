@@ -39,7 +39,7 @@ It behaves like a real carrier text: `STOP`, `START` and `HELP` are handled, any
 
 ## Live: real numbers
 
-Pick a number from `/v1/numbers/available` and `POST /v1/numbers` with its `e164`. Buying real numbers needs a paid plan with a card on file (`403 plan_required` otherwise). Each number is billed per month while you hold it (meters `number_local_month` / `number_tollfree_month`); see [Usage](/api/platform/usage).
+Pick a number from `/v1/numbers/available` and `POST /v1/numbers` with its `e164`. Buying real numbers needs a paid plan with a card on file (`403 plan_required` otherwise), and a project under its monthly [spend cap](/api/platform/billing) (`402 spend_cap_reached` otherwise). Each number is billed per month while you hold it (meters `number_local_month` / `number_tollfree_month`); see [Usage](/api/platform/usage).
 
 Bringing an existing number in (porting) isn't available through the API yet; buy a new number, or contact us to port one. Calls work as soon as a number is bought. **Texting in the US** starts when its carrier registration is approved; until then `sms_state` is `pending_registration` and sends are refused with `sms_not_active`.
 

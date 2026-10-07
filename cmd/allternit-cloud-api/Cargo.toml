@@ -8,6 +8,16 @@ description = "Allternit Cloud API - Backend API for cloud deployment"
 name = "allternit-cloud-api"
 path = "src/main.rs"
 
+# Operator tool, not built by default (the deploy build skips it):
+# cargo run -p allternit-cloud-api --features stripe-plan-cli --bin platform-stripe-plan
+[[bin]]
+name = "platform-stripe-plan"
+path = "src/bin/platform_stripe_plan.rs"
+required-features = ["stripe-plan-cli"]
+
+[features]
+stripe-plan-cli = []
+
 [dependencies]
 # Allternit internal
 allternit-cloud-core = { path = "../../infrastructure/cloud" }

@@ -126,6 +126,8 @@ pub async fn send_inner(
 ) -> Result<Message, PlatformError> {
     let (status, carrier_id, parts) = match carrier {
         Some(carrier) => {
+            // A real text is billable: refuse it once the project hit its spend cap.
+            super::spend_allowed(db, &caller.project_id).await?;
             let out = phone::send_sms(db, carrier, &caller.owner_user_id, &number.id, to, text).await.map_err(phone_error)?;
             let parts = out["parts"].as_i64().map(|p| p as i32).unwrap_or_else(|| segments(text));
             ("sent", out["messageId"].as_str().map(str::to_string), parts)

@@ -27,7 +27,7 @@ Scope `messaging`.
 | `recipient_opted_out` | The person replied STOP. Only their START lifts it. |
 | `no_consent` | The person never texted this number and has no [consent](/api/platform/numbers#consent) recorded. |
 
-`429 daily_limit` means the number reached its daily sending cap.
+`429 daily_limit` means the number reached its daily sending cap. `402 spend_cap_reached` means the project reached its monthly [spend cap](/api/platform/billing); simulated (sandbox) texts are free and never refused for it.
 
 ## Receiving texts
 

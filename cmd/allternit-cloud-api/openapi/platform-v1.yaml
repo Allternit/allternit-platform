@@ -444,7 +444,9 @@ paths:
         server-sent events: `message.delta` (`{"delta": "..."}`) while the agent writes, then
         `message.completed` (the stored reply) or `error`. The first message starts the
         project's hosted runtime: `503 runtime_starting` means retry in a few seconds.
-        One message at a time per conversation (`409 conversation_busy`).
+        One message at a time per conversation (`409 conversation_busy`). A project at its
+        monthly spend cap gets `402 spend_cap_reached`. Each reply records `tokens_in` and
+        `tokens_out` usage (provider list price + 15%; no token charge on the project's own key).
       tags: [Conversations]
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -531,6 +533,41 @@ paths:
                   provider: { type: string }
                   object: { type: string, const: model_key }
                   deleted: { type: boolean, const: true }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/projects/current/spend_cap:
+    get:
+      operationId: getSpendCap
+      summary: The project's monthly spend cap and spend so far
+      description: Spend is this UTC calendar month's usage at list prices (before plan credits or discounts). Requires the `usage` scope.
+      tags: [Usage]
+      responses:
+        "200":
+          description: The cap.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SpendCap" }
+        default: { $ref: "#/components/responses/Error" }
+    put:
+      operationId: putSpendCap
+      summary: Lower the monthly spend cap
+      description: An API key can only lower the cap (403 `spend_cap_raise_in_console` otherwise); raise it in the console. Requires the `usage` scope and a key not bound to an account.
+      tags: [Usage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [spend_cap_cents]
+              additionalProperties: false
+              properties:
+                spend_cap_cents: { type: integer, minimum: 0, maximum: 100000000 }
+      responses:
+        "200":
+          description: The new cap.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SpendCap" }
         default: { $ref: "#/components/responses/Error" }
   /v1/usage:
     get:
@@ -846,7 +883,7 @@ paths:
               required: [url, events]
               properties:
                 url: { type: string, format: uri }
-                events: { type: array, items: { type: string, enum: ["*", message.received, message.status, registration.updated] } }
+                events: { type: array, items: { type: string, enum: ["*", message.received, message.status, registration.updated, usage.threshold] } }
                 description: { type: string, maxLength: 200 }
       responses:
         "201":
@@ -1144,10 +1181,28 @@ components:
                 - not_found_error
                 - rate_limit_error
                 - conflict_error
+                - billing_error
                 - api_error
             code: { type: string }
             message: { type: string }
             param: { type: [string, "null"] }
+    SpendCap:
+      type: object
+      required: [object, project_id, plan, spend_cap_cents, period, spent_cents, spent_microusd, remaining_cents, reached, thresholds_sent]
+      properties:
+        object: { type: string, const: spend_cap }
+        project_id: { type: string }
+        plan: { type: string, enum: [sandbox, payg, growth, enterprise] }
+        spend_cap_cents: { type: integer }
+        period: { type: string, description: "The month, e.g. 2026-10 (UTC)." }
+        spent_cents: { type: integer, description: Spend this month, rounded up to the cent. }
+        spent_microusd: { type: integer }
+        remaining_cents: { type: integer }
+        reached: { type: boolean, description: "true once spend is at or over the cap: billable requests answer 402 spend_cap_reached." }
+        thresholds_sent:
+          type: array
+          description: "usage.threshold webhooks already sent this month (50, 80, 100)."
+          items: { type: integer }
     ListEnvelope:
       type: object
       required: [data, has_more, next_cursor]
@@ -1335,7 +1390,7 @@ components:
       properties:
         id: { type: string }
         object: { type: string, const: event }
-        type: { type: string, enum: [message.received, message.status, registration.updated, webhook.test] }
+        type: { type: string, enum: [message.received, message.status, registration.updated, usage.threshold, webhook.test] }
         created: { type: integer, description: Unix seconds. }
         project_id: { type: string }
         account_id: { type: [string, "null"] }

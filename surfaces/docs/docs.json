@@ -589,7 +589,8 @@
               "api/platform/usage",
               "api/platform/pricing",
               "api/platform/sdks/typescript",
-              "api/platform/sdks/python"
+              "api/platform/sdks/python",
+              "api/platform/billing"
             ]
           },
           {

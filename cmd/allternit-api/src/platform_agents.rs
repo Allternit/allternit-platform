@@ -25,7 +25,10 @@
 //! through the same turner as phone calls ([`crate::voice_calls::production_turner`]),
 //! so instructions, memory, the twin persona and autonomy rules all apply.
 //! SSE events: `{"type":"text.delta","text"}` while it writes, then
-//! `{"type":"done","text"}` or `{"type":"error","message"}`.
+//! `{"type":"done","text","usage"?}` or `{"type":"error","message","usage"?}`.
+//! `usage` (when the model ran) is `{model, inputTokens, outputTokens,
+//! inputCostMicrousd, outputCostMicrousd}`: tokens and the provider list price
+//! (null when unknown) that cloud-api meters (`tokens_in` / `tokens_out`).
 
 use std::{convert::Infallible, sync::Arc};
 
@@ -400,20 +403,21 @@ async fn turn_h(
     tokio::spawn(async move {
         let (tx, mut rx) = mpsc::unbounded_channel::<Value>();
         let mut written = String::new();
+        let mut usage = Value::Null;
         let result = {
             let run = deps.turner.run(&db, &session_id, &agent_id, &text, tx);
             tokio::pin!(run);
             loop {
                 tokio::select! {
                     r = &mut run => break r,
-                    Some(ev) = rx.recv() => forward(ev, &mut written, &out_tx),
+                    Some(ev) = rx.recv() => forward(ev, &mut written, &mut usage, &out_tx),
                 }
             }
         };
         while let Ok(ev) = rx.try_recv() {
-            forward(ev, &mut written, &out_tx);
+            forward(ev, &mut written, &mut usage, &out_tx);
         }
-        let end = match result {
+        let mut end = match result {
             Ok(TurnReply::Final(reply)) => {
                 let _ = out_tx.send(json!({ "type": "text.delta", "text": reply }));
                 json!({ "type": "done", "text": reply })
@@ -421,6 +425,10 @@ async fn turn_h(
             Ok(TurnReply::Streamed) => json!({ "type": "done", "text": written }),
             Err(message) => json!({ "type": "error", "message": message }),
         };
+        // Tokens the turn used (also on a failed turn: the model may have run).
+        if !usage.is_null() {
+            end["usage"] = usage;
+        }
         let _ = out_tx.send(end);
     });
     let stream = futures::stream::unfold(out_rx, |mut rx| async move {
@@ -429,8 +437,17 @@ async fn turn_h(
     Sse::new(stream).into_response()
 }
 
-/// Pass text deltas on (and keep the full text); tool steps and other events stay on the runtime.
-fn forward(ev: Value, written: &mut String, out: &mpsc::UnboundedSender<Value>) {
+/// Pass text deltas on (and keep the full text); keep the turn's token usage for
+/// the final event; tool steps and other events stay on the runtime.
+fn forward(ev: Value, written: &mut String, usage: &mut Value, out: &mpsc::UnboundedSender<Value>) {
+    if ev["type"] == "usage" {
+        let mut u = ev;
+        if let Some(o) = u.as_object_mut() {
+            o.remove("type");
+        }
+        *usage = u;
+        return;
+    }
     if ev["type"] == "text.delta" {
         if let Some(t) = ev["text"].as_str() {
             written.push_str(t);
@@ -457,6 +474,7 @@ mod tests {
             let _ = events.send(json!({ "type": "text.delta", "text": "You said: " }));
             let _ = events.send(json!({ "type": "tool.step", "name": "x" }));
             let _ = events.send(json!({ "type": "text.delta", "text": text }));
+            let _ = events.send(json!({ "type": "usage", "model": "anthropic/claude-sonnet-5-5", "inputTokens": 120, "outputTokens": 30, "inputCostMicrousd": 360, "outputCostMicrousd": 450 }));
             Ok(TurnReply::Streamed)
         }
         async fn abort(&self, _s: &str) {}
@@ -535,8 +553,9 @@ mod tests {
         assert_eq!(r.status(), StatusCode::OK);
         let body = String::from_utf8(axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap().to_vec()).unwrap();
         let events: Vec<Value> = body.lines().filter_map(|l| l.strip_prefix("data: ")).map(|d| serde_json::from_str(d).unwrap()).collect();
-        assert_eq!(events.last().unwrap(), &json!({ "type": "done", "text": "You said: hello" }));
-        assert!(events.iter().all(|e| e["type"] != "tool.step"), "tool steps stay on the runtime");
+        let usage = json!({ "model": "anthropic/claude-sonnet-5-5", "inputTokens": 120, "outputTokens": 30, "inputCostMicrousd": 360, "outputCostMicrousd": 450 });
+        assert_eq!(events.last().unwrap(), &json!({ "type": "done", "text": "You said: hello", "usage": usage }), "the done event carries the turn's token usage");
+        assert!(events.iter().all(|e| e["type"] != "tool.step" && e["type"] != "usage"), "tool steps and the raw usage event stay on the runtime");
 
         // A session of another bot, or an empty turn, is refused.
         let r = app.clone().oneshot(signed("POST", "/api/v1/platform/agents/agent_x/sessions/ses_test/turn", json!({ "text": "hi" }), OWNER)).await.unwrap();
