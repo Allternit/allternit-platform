@@ -30,7 +30,7 @@ curl https://api.allternit.com/v1/conversations/conv_81c…/messages \
 
 **Failures.** If the agent's turn fails, the reply comes back with `status: "failed"` and an `error` sentence (streamed: an `error` event with code `turn_failed`); your message and the failure both stay in the conversation.
 
-**Where the agent runs.** Each project gets its own hosted runtime in Allternit's cloud, started by the project's first message. While it starts, sending a message answers `503 runtime_starting`; retry after a few seconds. An idle runtime sleeps and wakes on the next message, which can take a few seconds longer. Agent changes reach the runtime before the next message. All of a project's agents share the project's runtime; each account's data stays separate in the API, and the runtime keeps each conversation in its own session.
+**Where the agent runs.** Each project gets its own hosted runtime in Allternit's cloud, started by the project's first message. While it starts, sending a message answers `503 runtime_starting`; retry after a few seconds. An idle runtime sleeps and wakes on the next message; while it wakes, messages also answer `503 runtime_starting` (up to about a minute). A message answered with `runtime_starting` is not stored, so retrying it does not duplicate it. Agent changes reach the runtime before the next message. All of a project's agents share the project's runtime; each account's data stays separate in the API, and the runtime keeps each conversation in its own session.
 
 **Limits.** `content` is 1–16,000 characters. One message at a time per conversation: a second one while the agent is still answering gets `409 conversation_busy`.
 

@@ -249,6 +249,19 @@ async fn restrict_session(session_id: &str, rules: &Value) -> Result<(), String>
     }
 }
 
+/// gizzi answers its health check. Right after a computer starts or wakes it
+/// can take half a minute; until then sessions and turns answer 503 (cloud-api
+/// turns that into a retryable `runtime_starting`) instead of failing.
+async fn gizzi_ready() -> bool {
+    let client = crate::agent_session_routes::gizzi_client(&axum::http::HeaderMap::new());
+    let url = format!("{}/global/health", crate::agent_session_routes::gizzi_base());
+    matches!(client.get(url).timeout(std::time::Duration::from_secs(3)).send().await, Ok(r) if r.status().is_success())
+}
+
+fn starting() -> Response {
+    fail(StatusCode::SERVICE_UNAVAILABLE, "the agent runtime is starting")
+}
+
 async fn session_h(State(state): State<Arc<AppState>>, Path(agent_id): Path<String>, auth: RelayedAuth) -> Response {
     let name = match state.db.connect().and_then(|c| {
         c.query_row("SELECT name, user_id FROM agents WHERE id = ?1", params![agent_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))).optional()
@@ -257,6 +270,9 @@ async fn session_h(State(state): State<Arc<AppState>>, Path(agent_id): Path<Stri
         Ok(_) => return fail(StatusCode::NOT_FOUND, "agent not found"),
         Err(e) => return fail(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     };
+    if !gizzi_ready().await {
+        return starting();
+    }
     let body: SessionBody = if auth.body.is_empty() { SessionBody::default() } else { auth.json().unwrap_or_default() };
     let title = if body.conversation_id.is_empty() { "API conversation".to_string() } else { format!("API {}", body.conversation_id) };
     let session_id = match crate::agent_session_routes::create_bot_thread_session(&state.db, &agent_id, &name, &title, false, None).await {
@@ -363,6 +379,9 @@ async fn turn_h(
     let text = body.text.trim().to_string();
     if text.is_empty() || text.chars().count() > MAX_TURN_CHARS {
         return fail(StatusCode::BAD_REQUEST, "text must be 1 to 16000 characters");
+    }
+    if !gizzi_ready().await {
+        return starting();
     }
     let (out_tx, out_rx) = mpsc::unbounded_channel::<Value>();
     let db = state.db.clone();

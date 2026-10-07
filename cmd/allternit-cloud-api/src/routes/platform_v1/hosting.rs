@@ -72,10 +72,14 @@ pub trait AgentHost: Send + Sync {
 
 pub struct ProdHost(pub Arc<ApiState>);
 
-/// 503 from the relay means the computer is waking or offline.
+/// 503 from the relay or the runtime means the computer (or its agent runtime)
+/// is starting. So does a 502/504 with no body: the computer's own proxy
+/// answering while its API boots after a start or wake. A 5xx carrying an
+/// error body is the runtime's own failure.
 fn map_status(status: u16, body: &Value) -> Result<(), PlatformError> {
     match status {
         503 => Err(starting()),
+        502 | 504 if body.is_null() => Err(starting()),
         s if s >= 500 => Err(unavailable(&format!("runtime answered {s}: {body}"))),
         _ => Ok(()),
     }
@@ -189,6 +193,17 @@ mod unit {
         assert!(p.push(b"data: {\"type\":\"text.de").is_empty());
         let got = p.push(b"lta\",\"text\":\"hi\"}\n\ndata: {\"type\":\"done\",\"text\":\"hi\"}\n\n");
         assert_eq!(got, vec![json!({ "type": "text.delta", "text": "hi" }), json!({ "type": "done", "text": "hi" })]);
+    }
+
+    #[test]
+    fn a_booting_runtime_is_starting_and_its_own_errors_are_not() {
+        let code = |s, b: Value| map_status(s, &b).err().map(|e| e.code);
+        assert_eq!(code(503, Value::Null).as_deref(), Some("runtime_starting"));
+        assert_eq!(code(502, Value::Null).as_deref(), Some("runtime_starting"));
+        assert_eq!(code(504, Value::Null).as_deref(), Some("runtime_starting"));
+        assert_eq!(code(502, serde_json::json!({ "error": "gizzi runtime refused session create" })).as_deref(), Some("runtime_unavailable"));
+        assert_eq!(code(500, Value::Null).as_deref(), Some("runtime_unavailable"));
+        assert_eq!(code(200, Value::Null), None);
     }
 
     #[test]
