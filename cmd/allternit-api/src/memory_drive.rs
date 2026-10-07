@@ -20,6 +20,12 @@ const ZERO_OID: &str = "0000000000000000000000000000000000000000";
 /// git's empty tree object, the diff base for a first push.
 pub const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 const OWNER_FILE: &str = "allternit-memory-owner";
+/// Ids and text digests removed by a purge; never accepted again.
+const PURGED_FILE: &str = "allternit-memory-purged";
+
+fn text_key(text: &str) -> String {
+    hex::encode(Sha256::digest(text.trim().to_lowercase().as_bytes()))
+}
 const REF_PREFIX: &str = "refs/heads/";
 
 pub type Result<T> = std::result::Result<T, DriveError>;
@@ -273,6 +279,7 @@ impl MemoryDrive {
             for content in snapshot.files.values() {
                 scan_secrets(content)?;
             }
+            self.check_not_purged(&snapshot.files)?;
         }
         Ok(())
     }
@@ -615,6 +622,7 @@ impl MemoryDrive {
         // Whole candidate scan: unchanged files, imports and snapshot edits
         // are checked too, before any blobs/commit are written.
         validate_files(&files)?;
+        self.check_not_purged(&files)?;
         if files == original {
             self.check_expected(expected)?;
             return Ok(ApplyResult {
@@ -689,6 +697,150 @@ impl MemoryDrive {
         })
     }
 
+    /// Entry ids removed by `purge` (for syncing deletes to other computers).
+    pub fn purged_ids(&self) -> Result<Vec<String>> {
+        Ok(self.purged()?.into_iter().filter_map(|l| l.strip_prefix("id:").map(str::to_string)).collect())
+    }
+
+    fn purged(&self) -> Result<BTreeSet<String>> {
+        match fs::read_to_string(self.repo.join(PURGED_FILE)) {
+            Ok(s) => Ok(s.lines().filter(|l| !l.is_empty()).map(str::to_string).collect()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(BTreeSet::new()),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Refuse content that a purge removed (by id or by the same text).
+    fn check_not_purged(&self, files: &BTreeMap<String, String>) -> Result<()> {
+        let purged = self.purged()?;
+        if purged.is_empty() {
+            return Ok(());
+        }
+        for content in files.values() {
+            for line in content.lines().filter(|l| l.starts_with("- ") && !l.starts_with("- [[")) {
+                if let Ok(e) = Entry::parse(line) {
+                    if purged.contains(&format!("id:{}", e.id)) || purged.contains(&format!("text:{}", text_key(&e.text))) {
+                        return Err(invalid("entry", "this memory was permanently deleted and can't be added back"));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Remove entries from the drive's entire history (a "delete my data"
+    /// purge). Every commit is rebuilt without lines whose stable id is in
+    /// `ids`; messages, authors and dates are kept. The branch moves with
+    /// compare-and-swap from `expected`, unreachable objects are pruned, and
+    /// the old→new revision map is returned so callers can remap stored
+    /// revisions. Clones made before the purge still hold the old history.
+    pub fn purge(&self, expected: &str, ids: &BTreeSet<String>) -> Result<(String, BTreeMap<String, String>)> {
+        self.check_repo()?;
+        validate_oid(expected)?;
+        self.check_expected(Some(expected))?;
+        if ids.is_empty() {
+            return Ok((expected.to_string(), BTreeMap::new()));
+        }
+        for id in ids {
+            validate_identifier(id, "entry id")?;
+        }
+        let listed = self.git_text(&["rev-list", "--reverse", "--topo-order", expected])?;
+        let mut map: BTreeMap<String, String> = BTreeMap::new();
+        let mut removed_text: BTreeSet<String> = BTreeSet::new();
+        for commit in listed.lines().filter(|l| !l.is_empty()) {
+            validate_oid(commit)?;
+            // Raw read: history may predate today's validation rules.
+            let tree = self.git(&["ls-tree", "-r", "-z", "--full-tree", commit], None, None, None)?;
+            let mut records = String::new();
+            for record in tree.split(|b| *b == 0).filter(|r| !r.is_empty()) {
+                let record = std::str::from_utf8(record).map_err(|_| invalid("tree", "non-UTF8 path"))?;
+                let (header, path) = record.split_once('\t').ok_or_else(|| invalid("tree", "invalid tree record"))?;
+                let fields: Vec<_> = header.split_whitespace().collect();
+                if fields.len() != 3 {
+                    return Err(invalid("tree", "invalid tree record"));
+                }
+                let mut oid = fields[2].to_string();
+                if fields[1] == "blob" {
+                    let blob = self.git(&["cat-file", "blob", fields[2]], None, None, None)?;
+                    if let Ok(text) = String::from_utf8(blob) {
+                        let mut changed = false;
+                        let kept: Vec<&str> = text
+                            .lines()
+                            .filter(|line| {
+                                let parsed = (line.starts_with("- ") && !line.starts_with("- [[")).then(|| Entry::parse(line).ok()).flatten();
+                                let drop = parsed.as_ref().map(|e| ids.contains(&e.id)).unwrap_or(false);
+                                if let (true, Some(e)) = (drop, &parsed) {
+                                    removed_text.insert(text_key(&e.text));
+                                }
+                                changed |= drop;
+                                !drop
+                            })
+                            .collect();
+                        if changed {
+                            let content = format!("{}\n", kept.join("\n"));
+                            oid = String::from_utf8_lossy(&self.git(&["hash-object", "-w", "--stdin"], Some(content.as_bytes()), None, None)?)
+                                .trim()
+                                .to_string();
+                            validate_oid(&oid)?;
+                        }
+                    }
+                }
+                records.push_str(&format!("{} {} {}\t{}\0", fields[0], fields[1], oid, path));
+            }
+            let index = Scratch::absent_file(&self.repo, "purge")?;
+            self.git(&["read-tree", "--empty"], None, Some(&index.path), None)?;
+            if !records.is_empty() {
+                self.git(&["update-index", "-z", "--index-info"], Some(records.as_bytes()), Some(&index.path), None)?;
+            }
+            let new_tree = String::from_utf8_lossy(&self.git(&["write-tree"], None, Some(&index.path), None)?).trim().to_string();
+            validate_oid(&new_tree)?;
+            let meta = self.git_text(&["log", "-1", "--format=%an%x00%ae%x00%aI%x00%cn%x00%ce%x00%cI%x00%P", commit])?;
+            let f: Vec<&str> = meta.trim_end_matches('\n').split('\0').collect();
+            if f.len() != 7 {
+                return Err(invalid("commit", "unreadable commit metadata"));
+            }
+            let message = self.git(&["cat-file", "commit", commit], None, None, None)?;
+            let message = String::from_utf8_lossy(&message);
+            let body = message.split_once("\n\n").map(|(_, b)| b.to_string()).unwrap_or_default();
+            let mut args: Vec<String> = vec!["commit-tree".into(), new_tree];
+            for parent in f[6].split_whitespace() {
+                let mapped = map.get(parent).cloned().ok_or_else(|| invalid("commit", "parent outside rewritten history"))?;
+                args.push("-p".into());
+                args.push(mapped);
+            }
+            let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+            let env = [
+                ("GIT_AUTHOR_NAME", f[0].to_string()),
+                ("GIT_AUTHOR_EMAIL", f[1].to_string()),
+                ("GIT_AUTHOR_DATE", f[2].to_string()),
+                ("GIT_COMMITTER_NAME", f[3].to_string()),
+                ("GIT_COMMITTER_EMAIL", f[4].to_string()),
+                ("GIT_COMMITTER_DATE", f[5].to_string()),
+            ];
+            let out = self.git_raw_env(&arg_refs, Some(body.as_bytes()), None, None, &env)?;
+            if !out.status.success() {
+                return Err(git_error("commit-tree", &out));
+            }
+            let new_commit = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            validate_oid(&new_commit)?;
+            map.insert(commit.to_string(), new_commit);
+        }
+        let head = map.get(expected).cloned().ok_or_else(|| invalid("commit", "head not rewritten"))?;
+        let out = self.git_raw(&["update-ref", &self.reference(), &head, expected], None, None, None)?;
+        if !out.status.success() {
+            return Err(DriveError::Conflict { expected: Some(expected.to_string()), actual: self.head()? });
+        }
+        // Remember what was purged so an old clone can't push it back.
+        let mut list: BTreeSet<String> = self.purged()?;
+        list.extend(ids.iter().map(|i| format!("id:{i}")));
+        list.extend(removed_text.into_iter().map(|t| format!("text:{t}")));
+        fs::write(self.repo.join(PURGED_FILE), list.into_iter().collect::<Vec<_>>().join("\n") + "\n")?;
+        // Drop the old objects so the purged text is gone from this repo.
+        let _ = self.git_raw(&["reflog", "expire", "--expire=now", "--all"], None, None, None);
+        let _ = self.git_raw(&["gc", "--prune=now", "--quiet"], None, None, None);
+        Ok((head, map))
+    }
+
     /// Publish a complete, already reconciled snapshot against the current
     /// expected revision. This is a CAS primitive, not a blind history reset:
     /// Dream/import/undo callers must preserve intervening edits themselves.
@@ -759,6 +911,17 @@ impl MemoryDrive {
         index: Option<&Path>,
         author: Option<&str>,
     ) -> Result<Output> {
+        self.git_raw_env(args, input, index, author, &[])
+    }
+
+    fn git_raw_env(
+        &self,
+        args: &[&str],
+        input: Option<&[u8]>,
+        index: Option<&Path>,
+        author: Option<&str>,
+        extra_env: &[(&str, String)],
+    ) -> Result<Output> {
         let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
         let mut command = Command::new("git");
         command
@@ -783,6 +946,9 @@ impl MemoryDrive {
             }
         }
         for (key, value) in &self.quarantine {
+            command.env(key, value);
+        }
+        for (key, value) in extra_env {
             command.env(key, value);
         }
         if let Some(index) = index {

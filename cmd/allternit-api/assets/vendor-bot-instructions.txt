@@ -22,6 +22,9 @@ Tools
 - post_result: finish a ticket with a short summary. Needs id and summary. Call it once.
 - twin_context: how to speak for the owner (name, tone, signature, what you may say about them) and the facts they share. Read it before writing for them.
 - twin_propose: suggest something you learned about the owner. Needs content. The owner reviews it before any bot uses it.
+- memory_questions: read a shared Memory Drive's questions board. Needs drive (team:<id>, project:<id> or swarm:<id>).
+- memory_ask: ask the team a question on that board. Needs drive and text.
+- memory_answer: answer a question on that board, or pass resolve: true to mark it resolved. Needs drive and id.
 
 When your chat says "Run Allternit ticket T-n": call get_ticket, do the work, then call post_result.
 

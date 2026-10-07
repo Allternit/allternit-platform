@@ -103,6 +103,32 @@ export namespace DrivePlatform {
     })
   }
 
+  export interface Question {
+    id: string
+    text: string
+    author: string
+    added: string
+    status: "open" | "answered" | "resolved"
+    answers: { id: string; text: string; author: string; added: string }[]
+  }
+
+  export async function questions(ref: string): Promise<Question[]> {
+    const r = await platformRequest<{ questions: Question[] }>("GET", `/api/v1/memory/drive/questions?drive=${encodeURIComponent(ref)}`, undefined, { timeoutMs: TIMEOUT_MS })
+    return r.questions ?? []
+  }
+
+  export function ask(ref: string, text: string, source?: string): Promise<{ revision: string; question: { id: string } }> {
+    return platformRequest("POST", "/api/v1/memory/drive/questions", { drive: ref, text, source }, { timeoutMs: 30_000 })
+  }
+
+  export function answer(ref: string, id: string, text: string, source?: string): Promise<unknown> {
+    return platformRequest("POST", `/api/v1/memory/drive/questions/${encodeURIComponent(id)}/answer`, { drive: ref, text, source }, { timeoutMs: 30_000 })
+  }
+
+  export function resolve(ref: string, id: string): Promise<unknown> {
+    return platformRequest("POST", `/api/v1/memory/drive/questions/${encodeURIComponent(id)}/resolve`, { drive: ref }, { timeoutMs: 30_000 })
+  }
+
   export function mintToken(ref: string, access: "read" | "write"): Promise<MintedToken> {
     const host = os.hostname().replace(/[<>\n\r]/g, "").slice(0, 60) || "this computer"
     return platformRequest<MintedToken>(

@@ -49,7 +49,15 @@ deleted you'll see "That session is no longer available."
 - **Remember something** saves a line to `notes.md` with today's date.
 
 Deleting a memory removes it from what your agents know. The old line stays in the
-drive's history.
+drive's history, so you can see and restore it.
+
+To remove a memory for good, open its file and select **Delete forever…**, choose the
+memories, and type `delete forever` to confirm. They are removed from the drive and from
+every earlier version of it, and they can't be added back. Copies someone already cloned
+with a token are not affected.
+
+The drive shows how much space it uses. A drive holds up to 2 MB and 256 files; you'll
+see a warning at 80%.
 
 ## Nightly Dream
 
@@ -61,7 +69,8 @@ Once a night your drive is tidied in a single change called **Dream** with the d
 - Memories nobody has used in 30 days or more may be removed.
 - Facts about you that belong in your twin are **only suggested**. You approve them in **Your twin**.
 
-Every change cites the conversation it is based on. Suggestions without evidence are
+The Dream runs between 2 and 6 a.m. in your time zone, which Allternit saves the first
+time you open the Dreams section. Every change cites the conversation it is based on. Suggestions without evidence are
 skipped. Open **Dreams** to read each night's report. **Undo** reverses that night's
 changes and keeps anything you or your agents wrote since. If you edited a line the
 Dream also changed, undo tells you which files to fix by hand. You can turn Dreaming
@@ -75,7 +84,9 @@ between drives. Team members can write; members with the viewer role can read.
 Removing someone from the workspace removes their access right away.
 
 Team, project and swarm drives have a **Questions** board. Agents and people can ask a
-question, answer it and mark it resolved.
+question, answer it and mark it resolved, in Settings → Memory, with
+`gizzi memory ask` / `answer`, or through the `memory_ask`, `memory_answer` and
+`memory_questions` tools available to bots.
 
 A bot's drive holds what that bot remembers, and a project's drive holds the project's
 memory, in `memory.md`. Saving, forgetting or moving a bot's memory changes its drive, and
@@ -83,11 +94,28 @@ editing the file changes what the bot knows.
 
 ## Move memories you already had
 
+When you have memories from before the Memory Drive, your **Needs you** inbox shows
+"You have N saved memories from before the Memory Drive." Select **Review** to open the
+import.
+
 If you used Allternit before the Memory Drive, open **Import existing memory**. You'll
 see what would move and anything that would be skipped (for example, text that looks
 like a password) before anything changes. **Import** saves it all as one change.
 Running it again does nothing. Your old memories stay visible for 30 days after the
 import and are then hidden. They are not deleted.
+
+## Bring memories from ChatGPT or Claude
+
+Open **Bring memories from another assistant** in Settings → Memory, pick **ChatGPT**,
+**Claude** or **Another assistant or a list**, and paste what it remembers about you, or
+upload a `.txt`, `.md` or `.json` file. One memory per line; bullets and numbering are fine.
+
+- **ChatGPT:** Settings → Personalization → Memory → Manage. Copy the list.
+- **Claude:** Settings → Memory. Copy what it remembers.
+
+Preview shows what will be added and what is skipped (duplicates, things already remembered,
+anything that looks like a password). **Import** saves it as one change in
+`imports/chatgpt.md`, `imports/claude.md` or `imports/other.md`.
 
 ## Use it from other agents
 
@@ -119,6 +147,12 @@ Gizzi keeps a copy of your drive on your computer and reads `MEMORY.md` at the s
 every session. What it remembers is saved to the drive and synced. If you're offline or
 signed out, it saves locally and syncs when you sign in. Run `/memory` to see the
 drive, recent changes and sync status. See [gizzi memory](/cli/memory) for the commands.
+
+## Where it lives
+
+Your Memory Drive is stored on your computer: Allternit Desktop, or your cloud computer.
+On ai.allternit.com and the phone app it is reached through that computer. If none is
+online, Settings → Memory says so; open Allternit Desktop or start your cloud computer.
 
 ## Keep in mind
 

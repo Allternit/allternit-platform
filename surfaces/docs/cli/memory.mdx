@@ -20,6 +20,9 @@ committed and synced at the end of the turn.
 | `gizzi memory import --apply` | Do the import as one change. Running it again does nothing. |
 | `gizzi memory dreams` | Recent nightly Dreams and their reports. |
 | `gizzi memory undo-dream <id>` | Undo one Dream. |
+| `gizzi memory questions --drive <ref>` | A shared drive's questions board. |
+| `gizzi memory ask <text> --drive <ref>` | Ask the team a question. |
+| `gizzi memory answer <id> [text] --drive <ref> [--resolve]` | Answer a question, or mark it resolved. |
 
 Add `--drive <ref>` (for example `team:ws_42`) to work with a shared drive, and `--json`
 where you need machine-readable output.
@@ -48,3 +51,5 @@ your computer.
 - If the drive refuses a change (for example, a line that looks like a password), the reason is
   shown, the edit is moved to `<drive>.rejected/` and nothing else is lost.
 - Gizzi's own local dream stays off while the nightly Dream is on for your drive.
+- If a memory was deleted forever on the server, Gizzi replays only changes made since its
+  last sync and clears the old history from its local copy, so the memory doesn't come back.

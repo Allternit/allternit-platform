@@ -228,6 +228,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes 1.12.0",
  "chrono",
+ "chrono-tz",
  "cipher 0.4.4",
  "des",
  "dirs 5.0.1",

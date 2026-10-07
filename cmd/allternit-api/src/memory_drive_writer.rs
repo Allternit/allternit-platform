@@ -184,8 +184,14 @@ pub fn commit_facts(db: &DbHandle, owner: &str, adds: &[NewFact], retire: &[Stri
     // Earlier failed intents go first so ordering is preserved.
     retry_pending(db, owner);
     match commit_once(db, owner, &drive, adds, retire, message) {
-        Ok(out) => Ok(Some(out)),
+        Ok(out) => {
+            if out.revision.is_some() {
+                crate::metrics::inc_memory_drive_event("commit");
+            }
+            Ok(Some(out))
+        }
         Err(e) => {
+            crate::metrics::inc_memory_drive_event("commit_failed");
             record_pending(db, owner, adds, retire, message, &e);
             Err(e)
         }
@@ -318,6 +324,16 @@ fn record_pending(db: &DbHandle, owner: &str, adds: &[NewFact], retire: &[String
     if matches!(error, ServiceError::IndexPending { .. }) || (adds.is_empty() && retire.is_empty()) {
         return;
     }
+    // Only temporary failures are retried; content the drive refuses (format,
+    // a possible secret, a purged memory) would fail the same way every time.
+    let transient = matches!(
+        error,
+        ServiceError::Database(_) | ServiceError::Drive(DriveError::Io(_) | DriveError::Git { .. } | DriveError::Conflict { .. })
+    );
+    if !transient {
+        tracing::warn!("memory drive refused a write: {error}");
+        return;
+    }
     let payload = PendingPayload { adds: adds.to_vec(), retire: retire.to_vec(), message: message.to_string() };
     let Ok(payload) = serde_json::to_string(&payload) else { return };
     let saved = db.connect().and_then(|c| {
@@ -359,6 +375,7 @@ pub fn retry_pending(db: &DbHandle, owner: &str) {
                 let _ = conn.execute("DELETE FROM memory_drive_pending WHERE id=?1", params![id]);
             }
             Err(e) => {
+                crate::metrics::inc_memory_drive_event("pending_retry_failed");
                 let _ = conn.execute(
                     "UPDATE memory_drive_pending SET attempts=attempts+1,error=?2 WHERE id=?1",
                     params![id, e.to_string()],

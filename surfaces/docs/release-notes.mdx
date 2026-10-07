@@ -5,6 +5,15 @@ description: 'Changelog for the Allternit platform, SDKs, and Gizzi Code CLI'
 
 # Release Notes
 
+## 2026-10-06 — Memory Drive
+
+- Everything your agents remember is now kept in your **Memory Drive**: a private folder of one-line notes with the conversation each came from and the date, and a full history of changes. Chat, bots, the phone app and Gizzi share it. See [Memory Drive](/guides/memory-drive).
+- Settings → Memory → Memory Drive shows the files, history and diffs, lets you edit, and creates read-only or write tokens so other agents (Claude Code, Codex) can clone it.
+- A nightly **Dream** merges duplicates, fixes contradictions a conversation proves wrong, adds lessons and removes long-unused memories, as one change with a report and an undo. It runs at night in your time zone.
+- Move memories you already had with **Import existing memory** (your Needs you inbox reminds you), or bring them from **ChatGPT or Claude** by pasting or uploading their memory list.
+- **Delete forever** removes chosen memories from the drive and its whole history.
+- Teams, projects, bots and swarms get their own drives, with a questions board for people and agents. Gizzi: [`gizzi memory`](/cli/memory).
+
 ## 2026-10-06 — Notifications from the event backbone
 
 - One push sink turns event backbone events into notifications: approvals, threads that need you, messages, ended calls, sign-in needed and usage alerts are on by default; finished runs and other informational events are off. Each type has its own switch. See [Notifications](/guides/notifications) and [Notification preferences](/api/notifications).

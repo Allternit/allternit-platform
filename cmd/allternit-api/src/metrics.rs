@@ -36,6 +36,7 @@ struct Metrics {
     llm_response_cache_hits_total: CounterVec,
     llm_response_cache_misses_total: CounterVec,
     completion_cache_events_total: CounterVec,
+    memory_drive_events_total: CounterVec,
 }
 
 impl Metrics {
@@ -147,6 +148,18 @@ impl Metrics {
         // TODO(C1 #1126): also write these into the usage ledger once it
         // lands, so the Usage dashboard (WP-C2) can show cache hit rate and
         // S1 savings next to cost.
+        let memory_drive_events_total = CounterVec::new(
+            Opts::new(
+                "memory_drive_events_total",
+                "Memory Drive events (commit, commit_failed, pending_retry_failed, push_refused, push_accepted, dream_applied, dream_failed, purge, near_limit)",
+            ),
+            &["event"],
+        )
+        .expect("invalid memory_drive_events_total metric");
+        registry
+            .register(Box::new(memory_drive_events_total.clone()))
+            .expect("failed to register memory_drive_events_total");
+
         let completion_cache_events_total = CounterVec::new(
             Opts::new(
                 "completion_cache_events_total",
@@ -207,6 +220,7 @@ impl Metrics {
             llm_response_cache_hits_total,
             llm_response_cache_misses_total,
             completion_cache_events_total,
+            memory_drive_events_total,
         }
     }
 }
@@ -356,6 +370,12 @@ pub fn inc_llm_response_cache_miss(model: &str) {
         .llm_response_cache_misses_total
         .with_label_values(&[model])
         .inc();
+}
+
+/// One Memory Drive event, for alerting on failed writes, refused pushes and
+/// failed Dreams.
+pub fn inc_memory_drive_event(event: &str) {
+    METRICS.memory_drive_events_total.with_label_values(&[event]).inc();
 }
 
 /// One completion-cache event (O7 exact / O9 semantic shadow).

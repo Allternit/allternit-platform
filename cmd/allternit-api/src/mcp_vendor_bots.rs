@@ -268,6 +268,30 @@ fn base_tool_descriptors() -> Vec<Value> {
             "annotations": annotations(false, false)
         }),
         json!({
+            "name": "memory_questions", "title": "Read a team's questions board",
+            "description": "List open and answered questions on a shared Memory Drive's questions board (team, project or swarm the owner belongs to).",
+            "inputSchema": { "type": "object", "properties": {
+                "drive": { "type": "string", "description": "team:<id>, project:<id> or swarm:<id>" }
+            }, "required": ["drive"], "additionalProperties": false },
+            "annotations": annotations(true, false)
+        }),
+        json!({
+            "name": "memory_ask", "title": "Ask the team a question",
+            "description": "Post a question to a shared Memory Drive's questions board so people and other agents can answer it.",
+            "inputSchema": { "type": "object", "properties": {
+                "drive": { "type": "string" }, "text": { "type": "string" }
+            }, "required": ["drive", "text"], "additionalProperties": false },
+            "annotations": annotations(false, false)
+        }),
+        json!({
+            "name": "memory_answer", "title": "Answer a question",
+            "description": "Answer a question on a shared Memory Drive's questions board. Use resolve: true to mark it resolved.",
+            "inputSchema": { "type": "object", "properties": {
+                "drive": { "type": "string" }, "id": { "type": "string" }, "text": { "type": "string" }, "resolve": { "type": "boolean" }
+            }, "required": ["drive", "id"], "additionalProperties": false },
+            "annotations": annotations(false, false)
+        }),
+        json!({
             "name": "list_open_tickets", "title": "List open tickets",
             "description": "List the Allternit tickets waiting on you.",
             "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
@@ -552,6 +576,7 @@ pub async fn call_tool(db: &DbHandle, actions: &dyn Actions, s: &Session, name: 
         "list_open_tickets" => crate::vendor_tickets::tool_list_open_tickets(db, &s.owner, &s.vendor_bot_id),
         "twin_context" => crate::twin_persona::tool_twin_context(db, &s.owner),
         "twin_propose" => crate::twin_persona::tool_twin_propose(db, &s.owner, &s.vendor_bot_id, &args),
+        "memory_questions" | "memory_ask" | "memory_answer" => crate::memory_drive_scopes::tool_questions(db, &s.owner, &s.vendor_bot_id, name, &args),
         "send_text" | "start_call" | "send_email" | "post_message" | "ask_bot" => {
             let long = ["text", "body", "purpose"].iter().any(|k| args[k].as_str().is_some_and(|v| v.chars().count() > MAX_TEXT_CHARS));
             if long {
@@ -1297,7 +1322,7 @@ mod tests {
         let names: Vec<_> = list["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
         // The one canonical order every Allternit MCP server uses
         // (`mcp_protocol::ordering`: ascending by name), applied by `finish`.
-        assert_eq!(names, ["ask_bot", "get_ticket", "list_open_tickets", "list_threads", "post_message", "post_result", "read_thread", "send_email", "send_text", "start_call", "twin_context", "twin_propose"]);
+        assert_eq!(names, ["ask_bot", "get_ticket", "list_open_tickets", "list_threads", "memory_answer", "memory_ask", "memory_questions", "post_message", "post_result", "read_thread", "send_email", "send_text", "start_call", "twin_context", "twin_propose"]);
         for t in list["result"]["tools"].as_array().unwrap() {
             assert_eq!(t["inputSchema"]["type"], "object");
             assert_eq!(t["annotations"]["destructiveHint"], false);
