@@ -230,6 +230,7 @@ pub async fn ingest(db: &PgPool, user_id: &str, runtime_id: &str, events: Vec<Va
         }
         match allternit_events::emit_user_event(db, user_id, name, &data, at, &source, Some(&ev.id)).await? {
             Some(event_id) => {
+                platform_fan_out(db, user_id, name, &data).await?;
                 accepted += 1;
                 results.push(json!({ "id": ev.id, "status": "accepted", "eventId": event_id }));
             }
@@ -240,6 +241,41 @@ pub async fn ingest(db: &PgPool, user_id: &str, runtime_id: &str, events: Vec<Va
         }
     }
     Ok(json!({ "results": results, "accepted": accepted, "duplicates": duplicates, "ignored": ignored, "rejected": rejected }))
+}
+
+/// A Platform API project's hosted runtime (owner `platform:<project>`): the
+/// project's webhooks get the event too, for the account of the agent it came
+/// from (`bot_id` = the agent id). The account comes from our own agent row,
+/// never from the runtime, and an event with no agent of this project is not
+/// sent to any webhook. Runs once per event (after the idempotent store).
+pub(crate) async fn platform_fan_out(db: &PgPool, user_id: &str, name: &str, data: &Value) -> Result<(), sqlx::Error> {
+    let Some(project) = user_id.strip_prefix("platform:") else { return Ok(()) };
+    if !crate::routes::platform_v1::events::EVENT_TYPES.contains(&name) {
+        return Ok(());
+    }
+    let Some(agent) = data["bot_id"].as_str() else { return Ok(()) };
+    let account: Option<String> = sqlx::query_scalar("SELECT account_id FROM platform_agents WHERE id = $1 AND project_id = $2")
+        .bind(agent)
+        .bind(project)
+        .fetch_optional(db)
+        .await?;
+    let Some(account) = account else { return Ok(()) };
+    let pick = |k: &str| data.get(k).cloned().unwrap_or(Value::Null);
+    let payload = match name {
+        "message.received" => json!({
+            "agent_id": agent, "channel": pick("channel").as_str().map(str::to_string).or_else(|| pick("provider").as_str().map(str::to_string)),
+            "from": pick("from"), "text": pick("text"), "thread_id": pick("thread_id"),
+        }),
+        "approval.requested" => json!({
+            "agent_id": agent, "approval_id": pick("approvalId"), "action": pick("action"), "summary": pick("summary"), "thread_id": pick("thread_id"),
+        }),
+        "inbox.item.created" => json!({
+            "agent_id": agent, "item_id": pick("itemId"), "kind": pick("kind"), "title": pick("title"), "severity": pick("severity"),
+        }),
+        _ => return Ok(()),
+    };
+    crate::routes::platform_v1::events::emit_event(db, project, Some(&account), name, payload).await?;
+    Ok(())
 }
 
 async fn ingest_route(State(state): State<Arc<ApiState>>, headers: HeaderMap, body: Bytes) -> Response {

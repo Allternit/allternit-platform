@@ -749,12 +749,32 @@ pub fn forget(db: &DbHandle, owner: &str, fact_id: &str) -> bool {
     db.connect().ok().and_then(|c| c.execute("DELETE FROM person_facts WHERE id = ?1 AND owner = ?2", params![fact_id, owner]).ok()).unwrap_or(0) > 0
 }
 
+/// What `bot` may know about a person. On a Platform API project runtime (owner
+/// `platform:…`) one runtime holds many end-customer accounts, so a bot sees only
+/// facts its own account's bots learned; elsewhere every fact of the owner.
+pub fn facts_for_bot(db: &DbHandle, owner: &str, person: &str, bot: Option<&str>, limit: usize) -> Vec<String> {
+    if !owner.starts_with("platform:") {
+        return facts(db, owner, person, limit);
+    }
+    let Some(bot) = bot else { return vec![] };
+    let Ok(conn) = db.connect() else { return vec![] };
+    let person = canonical(&conn, owner, person);
+    conn.prepare(
+        "SELECT fact FROM person_facts WHERE owner = ?1 AND person_id = ?2 AND bot_id IN (
+             SELECT id FROM agents WHERE user_id = ?1 AND json_extract(config, '$.platformAgent.accountId') =
+                 (SELECT json_extract(config, '$.platformAgent.accountId') FROM agents WHERE id = ?3 AND user_id = ?1))
+         ORDER BY created_at DESC, rowid DESC LIMIT ?4",
+    )
+    .and_then(|mut q| q.query_map(params![owner, person, bot, limit as i64], |r| r.get::<_, String>(0))?.collect())
+    .unwrap_or_default()
+}
+
 /// The line a bot turn starts with: who wrote, on which channel, and what is already
-/// known about them from every other channel.
-pub fn turn_prefix(db: &DbHandle, owner: &str, provider: &str, s: Option<&Sender>, raw_user: Option<&str>, text: &str) -> String {
+/// known about them from every other channel (the bot's account only, on a project runtime).
+pub fn turn_prefix(db: &DbHandle, owner: &str, bot: Option<&str>, provider: &str, s: Option<&Sender>, raw_user: Option<&str>, text: &str) -> String {
     let Some(s) = s else { return format!("[{provider} from {}] {text}", raw_user.unwrap_or("someone")) };
     let mut out = format!("[{provider} from {}] {text}", s.name);
-    let known = facts(db, owner, &s.person, 12);
+    let known = facts_for_bot(db, owner, &s.person, bot, 12);
     if !known.is_empty() {
         out.push_str(&format!("\n\n(Known about {}, from every channel: {})", s.name, known.join("; ")));
     }

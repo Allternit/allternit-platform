@@ -13,7 +13,8 @@
 //! * `PUT|DELETE /api/v1/platform/model-keys/{provider}`              a project's own model key
 //!
 //! **Tools.** Each session gets a gizzi permission ruleset: deny everything, then
-//! allow only the agent's tools ([`tool_rules`]) plus the twin's people tools.
+//! allow only the agent's tools ([`tool_rules`]). The twin's people tools are not
+//! offered (they would read other accounts' people; see `platform_twin.rs`).
 //! `knowledge_search` and `channel_post` are served by [`crate::platform_tools`].
 //! A session whose rules can't be applied is not handed out (fail closed).
 //!
@@ -100,6 +101,18 @@ struct AgentSpec {
     transfer_targets: Vec<String>,
     #[serde(default)]
     account_id: String,
+    /// Per channel / per person autonomy rules (`/v1/agents/{id}/autonomy`).
+    #[serde(default)]
+    autonomy_rules: Vec<Value>,
+    /// The account's memory (`/v1/accounts/{id}/memory`), the same for every agent of it.
+    #[serde(default)]
+    account_memory: Vec<Value>,
+}
+
+/// The twin owner key of one account inside a project's runtime: account memory
+/// is stored under it, so it reaches only that account's agents.
+pub fn account_owner(owner: &str, account: &str) -> String {
+    format!("{owner}/{account}")
 }
 
 /// `provider/model` → (provider, model); `allternit` or anything else → the runtime default.
@@ -154,6 +167,49 @@ pub fn upsert_bot(db: &DbHandle, owner: &str, bot_id: &str, spec: &Value) -> Res
         params![crate::agent_gateway_routes::id("pol"), owner, bot_id, level, now],
     )
     .map_err(|e| e.to_string())?;
+    // The agent's rules replace whatever it had (the cloud is the source of truth).
+    conn.execute("DELETE FROM autonomy_policies WHERE owner = ?1 AND bot_id = ?2 AND NOT (channel = '' AND person = '')", params![owner, bot_id])
+        .map_err(|e| e.to_string())?;
+    for r in &s.autonomy_rules {
+        let str_of = |k: &str| r.get(k).and_then(Value::as_str).unwrap_or("").trim().to_string();
+        let (channel, person, level) = (str_of("channel").to_lowercase(), crate::autonomy::norm(&str_of("person")), str_of("level"));
+        if (channel.is_empty() && person.is_empty()) || !crate::autonomy::LEVELS.contains(&level.as_str()) {
+            continue;
+        }
+        let l = r.get("limits").cloned().unwrap_or(Value::Null);
+        let mut limits = serde_json::Map::new();
+        for (from, to) in [("max_messages_per_day", "maxMessagesPerDay"), ("max_spend_cents_per_day", "maxSpendCentsPerDay"), ("allowed_actions", "allowedActions")] {
+            if let Some(v) = l.get(from).filter(|v| !v.is_null()) {
+                limits.insert(to.into(), v.clone());
+            }
+        }
+        conn.execute(
+            "INSERT INTO autonomy_policies (id, owner, bot_id, channel, person, level, limits_json, created_at, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?8)
+             ON CONFLICT(owner, bot_id, channel, person) DO UPDATE SET level = excluded.level, limits_json = excluded.limits_json, updated_at = excluded.updated_at",
+            params![crate::agent_gateway_routes::id("pol"), owner, bot_id, channel, person, level, Value::Object(limits).to_string(), now],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    // The account's memory, under the account's own twin key.
+    if owner.starts_with("platform:") && !s.account_id.is_empty() {
+        let key = account_owner(owner, &s.account_id);
+        conn.execute("DELETE FROM twin_memory WHERE owner = ?1", params![key]).map_err(|e| e.to_string())?;
+        for m in &s.account_memory {
+            let str_of = |k: &str| m.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+            let (id, content) = (str_of("id"), str_of("content"));
+            if id.is_empty() || content.trim().is_empty() {
+                continue;
+            }
+            let kind = Some(str_of("kind")).filter(|k| ["fact", "preference", "schedule_rule", "person", "decision"].contains(&k.as_str())).unwrap_or_else(|| "fact".into());
+            let at = Some(str_of("createdAt")).filter(|a| !a.is_empty()).unwrap_or_else(|| now.clone());
+            conn.execute(
+                "INSERT OR REPLACE INTO twin_memory (id, owner, kind, subject, content, visibility, status, source, source_channel, learned_at, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 'all', 'active', 'owner', 'platform_api', ?6, ?6, ?7)",
+                params![format!("{key}:{id}"), key, kind, str_of("subject"), content, at, now],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
     Ok(())
 }
 
@@ -220,9 +276,9 @@ pub const BYO_PROVIDERS: [&str; 3] = ["anthropic", "openai", "xai"];
 pub fn tool_rules(tools: &[String]) -> Value {
     let mut rules = vec![json!({ "permission": "*", "pattern": "*", "action": "deny" })];
     let mut allow = |p: &str| rules.push(json!({ "permission": p, "pattern": "*", "action": "allow" }));
-    // The twin: knowing who someone is and remembering it is part of every agent.
-    allow("*people_lookup*");
-    allow("*people_remember*");
+    // The people tools (`people_lookup`, `people_remember`) are not offered: they read
+    // the whole runtime's people, and a project runtime holds every account's. An
+    // agent still sees what its own account knows about a sender in each turn.
     for t in tools {
         match t.as_str() {
             "send_text" => allow("*phone_text*"),
@@ -508,7 +564,7 @@ mod tests {
         assert_eq!(perms[0], ("*", "deny"), "deny first; the last matching rule wins in gizzi");
         assert!(perms.contains(&("*phone_text*", "allow")) && perms.contains(&("websearch", "allow")));
         assert!(!perms.iter().any(|(p, _)| *p == "*phone_call*" || *p == "bash" || *p == "webfetch"));
-        assert!(perms.contains(&("*people_lookup*", "allow")));
+        assert!(!perms.iter().any(|(p, _)| p.contains("people")), "people tools would read other accounts' people");
         assert!(perms.contains(&("*agent_knowledge_search*", "allow")), "a listed tool is allowed");
         assert!(!perms.iter().any(|(p, _)| *p == "*agent_channel_post*"), "an unlisted tool stays denied");
         assert!(!perms.iter().any(|(p, _)| p.contains("calendar")), "a tool without a runtime backing allows nothing");

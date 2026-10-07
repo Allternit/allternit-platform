@@ -883,7 +883,7 @@ paths:
               required: [url, events]
               properties:
                 url: { type: string, format: uri }
-                events: { type: array, items: { type: string, enum: ["*", message.received, message.status, registration.updated, usage.threshold] } }
+                events: { type: array, items: { type: string, enum: ["*", approval.requested, message.received, message.status, registration.updated, inbox.item.created, call.started, call.ended, call.transcript.ready, usage.threshold] } }
                 description: { type: string, maxLength: 200 }
       responses:
         "201":
@@ -1114,6 +1114,353 @@ paths:
             application/json:
               schema: { type: object }
         default: { $ref: "#/components/responses/Error" }
+  /v1/accounts/{id}/channels:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: listChannels
+      summary: List an account's channels
+      description: Channel connections of the account (`?agent_id=` filter). Scope `channels`.
+      tags: [Channels]
+      responses:
+        "200":
+          description: OK.
+          content:
+            application/json:
+              schema: { type: object }
+        default:
+          description: Error (`{error:{type,code,message,param}}`).
+  /v1/accounts/{id}/channels/{kind}/connect:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: kind
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: connectChannel
+      summary: Connect a channel for an agent
+      description: "`{agent_id, return_url?, local_part?}`. `email` connects at once; `slack` answers `pending` with `connect_url`; kinds without a production app answer 400 `channel_kind_unavailable`."
+      tags: [Channels]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: OK.
+          content:
+            application/json:
+              schema: { type: object }
+        default:
+          description: Error (`{error:{type,code,message,param}}`).
+  /v1/accounts/{id}/channels/{channel_id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: channel_id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: getChannel
+      summary: Retrieve a channel
+      description: One channel connection.
+      tags: [Channels]
+      responses:
+        "200":
+          description: OK.
+          content:
+            application/json:
+              schema: { type: object }
+        default:
+          description: Error (`{error:{type,code,message,param}}`).
+    delete:
+      operationId: deleteChannel
+      summary: Disconnect a channel
+      description: The runtime releases the channel, then the record is deleted.
+      tags: [Channels]
+      responses:
+        "200":
+          description: OK.
+          content:
+            application/json:
+              schema: { type: object }
+        default:
+          description: Error (`{error:{type,code,message,param}}`).
+  /v1/accounts/{id}/people:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: listPeople
+      summary: List people
+      description: People the account's agents talk to (cursor `limit`/`after`). Scope `twin`.
+      tags: [Twin]
+      responses:
+        "200":
+          description: OK.
+          content:
+            application/json:
+              schema: { type: object }
+        default:
+          description: Error (`{error:{type,code,message,param}}`).
+  /v1/accounts/{id}/people/{person_id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: person_id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: getPerson
+      summary: Retrieve a person
+      description: With identities and the account's facts.
+      tags: [Twin]
+      responses:
+        "200":
+          description: OK.
+          content:
+            application/json:
+              schema: { type: object }
+        default:
+          description: Error (`{error:{type,code,message,param}}`).
+    patch:
+      operationId: updatePerson
+      summary: Update a person
+      description: "`{name?, notes?, org?}`. 409 `person_shared` when another account's agents also know them."
+      tags: [Twin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: OK.
+          content:
+            application/json:
+              schema: { type: object }
+        default:
+          description: Error (`{error:{type,code,message,param}}`).
+  /v1/accounts/{id}/inbox:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: listInbox
+      summary: List inbox items
+      description: "`?status=open|resolved|all`, newest first."
+      tags: [Twin]
+      responses:
+        "200":
+          description: OK.
+          content:
+            application/json:
+              schema: { type: object }
+        default:
+          description: Error (`{error:{type,code,message,param}}`).
+  /v1/accounts/{id}/inbox/{item_id}/resolve:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: item_id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: resolveInboxItem
+      summary: Resolve an inbox item
+      description: Marks it resolved.
+      tags: [Twin]
+      responses:
+        "200":
+          description: OK.
+          content:
+            application/json:
+              schema: { type: object }
+        default:
+          description: Error (`{error:{type,code,message,param}}`).
+  /v1/accounts/{id}/approvals:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: listApprovals
+      summary: List approvals
+      description: "`?status=pending|approved|denied|all`, newest first."
+      tags: [Twin]
+      responses:
+        "200":
+          description: OK.
+          content:
+            application/json:
+              schema: { type: object }
+        default:
+          description: Error (`{error:{type,code,message,param}}`).
+  /v1/accounts/{id}/approvals/{approval_id}/approve:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: approval_id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: approveApproval
+      summary: Approve a held action
+      description: The API key is recorded as the actor.
+      tags: [Twin]
+      responses:
+        "200":
+          description: OK.
+          content:
+            application/json:
+              schema: { type: object }
+        default:
+          description: Error (`{error:{type,code,message,param}}`).
+  /v1/accounts/{id}/approvals/{approval_id}/deny:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: approval_id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: denyApproval
+      summary: Deny a held action
+      description: The API key is recorded as the actor.
+      tags: [Twin]
+      responses:
+        "200":
+          description: OK.
+          content:
+            application/json:
+              schema: { type: object }
+        default:
+          description: Error (`{error:{type,code,message,param}}`).
+  /v1/accounts/{id}/memory:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: listMemory
+      summary: List account memory
+      description: Facts every agent of the account knows.
+      tags: [Twin]
+      responses:
+        "200":
+          description: OK.
+          content:
+            application/json:
+              schema: { type: object }
+        default:
+          description: Error (`{error:{type,code,message,param}}`).
+    post:
+      operationId: addMemory
+      summary: Add account memory
+      description: "`{content, subject?, kind?, source_ref?}`; at most 500 per account."
+      tags: [Twin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: OK.
+          content:
+            application/json:
+              schema: { type: object }
+        default:
+          description: Error (`{error:{type,code,message,param}}`).
+  /v1/accounts/{id}/memory/{memory_id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: memory_id
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      operationId: deleteMemory
+      summary: Delete account memory
+      description: Removes one item; agents get the change on their next sync.
+      tags: [Twin]
+      responses:
+        "200":
+          description: OK.
+          content:
+            application/json:
+              schema: { type: object }
+        default:
+          description: Error (`{error:{type,code,message,param}}`).
+  /v1/agents/{id}/autonomy:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: getAutonomy
+      summary: Retrieve an agent's autonomy
+      description: Agent-wide `level` and per channel / person `rules`.
+      tags: [Twin]
+      responses:
+        "200":
+          description: OK.
+          content:
+            application/json:
+              schema: { type: object }
+        default:
+          description: Error (`{error:{type,code,message,param}}`).
+    put:
+      operationId: putAutonomy
+      summary: Replace an agent's autonomy
+      description: "`{level?, rules:[{channel?, person?, level, limits?}]}` replaces every rule."
+      tags: [Twin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: OK.
+          content:
+            application/json:
+              schema: { type: object }
+        default:
+          description: Error (`{error:{type,code,message,param}}`).
 components:
   securitySchemes:
     bearerAuth:
@@ -1390,7 +1737,7 @@ components:
       properties:
         id: { type: string }
         object: { type: string, const: event }
-        type: { type: string, enum: [message.received, message.status, registration.updated, usage.threshold, webhook.test] }
+        type: { type: string, enum: [approval.requested, message.received, message.status, registration.updated, inbox.item.created, call.started, call.ended, call.transcript.ready, usage.threshold, webhook.test] }
         created: { type: integer, description: Unix seconds. }
         project_id: { type: string }
         account_id: { type: [string, "null"] }

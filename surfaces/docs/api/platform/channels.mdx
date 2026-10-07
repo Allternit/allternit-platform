@@ -1,0 +1,42 @@
+---
+title: "Channels"
+description: "Connect an end customer's agent to email or Slack."
+---
+
+Channels let one of an account's agents talk on a channel the end customer owns. Scope: `channels`. Every route is per account; a key bound to another account gets `403 account_mismatch`.
+
+| Method | Path | What it does |
+|---|---|---|
+| `POST` | `/v1/accounts/{id}/channels/{kind}/connect` | Start a connection: `{agent_id, return_url?, local_part?}` |
+| `GET` | `/v1/accounts/{id}/channels` | List connections (`?agent_id=` filter, cursor `limit`/`after`) |
+| `GET` | `/v1/accounts/{id}/channels/{channel_id}` | One connection |
+| `DELETE` | `/v1/accounts/{id}/channels/{channel_id}` | Disconnect |
+
+## Kinds
+
+| Kind | How it connects | Available today |
+|---|---|---|
+| `email` | The agent gets its own address on Allternit Mail at once (`status: connected`, `external_id` = the address). `local_part` picks the name before the `@`. | Yes |
+| `slack` | Answers `status: pending` with a `connect_url`. Send the end customer there; after Slack's consent page their browser returns to `return_url?channel_id=…&status=connected` (or `failed`). | When Allternit's production Slack app is set up |
+| `discord`, `teams`, `telegram`, `whatsapp` | Not offered for end-customer accounts yet. | No: `400 channel_kind_unavailable` |
+
+A kind that isn't set up on the deployment always answers `400 channel_kind_unavailable` with a plain reason, never a broken link. One agent has at most one connection per kind (`409 channel_already_connected`), and one Slack workspace or address belongs to one account in a project.
+
+## Connection object
+
+```json
+{ "id": "ch_…", "object": "channel", "account_id": "acct_…", "agent_id": "agent_…",
+  "kind": "email", "status": "connected", "external_id": "front-desk@bots.allternit.com",
+  "display_name": "front-desk@bots.allternit.com", "error": null,
+  "created_at": "…", "connected_at": "…" }
+```
+
+`status` is `pending`, `connected` or `failed` (`error` says why).
+
+## Messages that arrive
+
+Inbound messages on a connected channel go to the agent, and to your webhooks as `message.received` with `account_id`, `agent_id`, `channel`, `from` and `text`. See [Webhooks](/api/platform/webhooks).
+
+## For contributors
+
+Connection records are the `platform_channel_connections` table (migration `075_platform_channel_connections.sql`). Read live connections with `status = 'connected' AND deleted_at IS NULL`. The runtime side (binding the address or Slack team to the agent) is `cmd/allternit-api/src/platform_twin.rs`.

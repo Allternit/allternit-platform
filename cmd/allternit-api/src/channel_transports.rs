@@ -854,7 +854,8 @@ pub async fn route_inbound<R: crate::thread_routes::ThreadRuntime>(db: &DbHandle
             if bots.len() > 1 {
                 speaker = bots.iter().find(|m| m.id == bot).map(|m| m.name.clone());
             }
-            turn = Some((session, bot, crate::people::turn_prefix(db, &acct.owner, provider, who.as_ref(), e.user.as_deref(), &text)));
+            let prefix = crate::people::turn_prefix(db, &acct.owner, Some(bot.as_str()), provider, who.as_ref(), e.user.as_deref(), &text);
+            turn = Some((session, bot, prefix));
         }
     }
     Ok(Routed { binding: Some(b), recorded, turn, speaker, notice, person: who.filter(|s| s.direct).map(|s| s.person) })
