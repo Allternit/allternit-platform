@@ -105,28 +105,6 @@ pub(super) struct HandshakeResult {
     pub(super) endpoint_capabilities: Option<Vec<String>>,
 }
 
-pub(crate) fn probe_endpoint_negotiation(
-    stream: &mut LocalStream,
-) -> io::Result<super::endpoint::EndpointNegotiation> {
-    let handshake = do_handshake(
-        stream,
-        80,
-        24,
-        0,
-        0,
-        false,
-        Some(crate::protocol::ClientSurfaceSize { cols: 80, rows: 24 }),
-        false,
-        false,
-        false,
-    )
-    .map_err(io::Error::other)?;
-    Ok(super::endpoint::EndpointNegotiation::new(
-        handshake.endpoint_methods.unwrap_or_default(),
-        handshake.endpoint_capabilities.unwrap_or_default(),
-    ))
-}
-
 /// Performs the client→server handshake.
 ///
 /// Direct terminal clients retain the same-install private protocol. Client-owned

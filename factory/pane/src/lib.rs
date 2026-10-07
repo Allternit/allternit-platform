@@ -19,7 +19,6 @@ mod ao;
 mod api;
 mod app;
 mod build_info;
-mod checksum;
 mod cli;
 mod client;
 mod config;
