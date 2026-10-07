@@ -31,11 +31,13 @@ A node is one unit of work in the plan's DAG. It has a status (`new`, `ready`, `
 gizzi workspace node add
 gizzi workspace node list --mine
 gizzi workspace node claim <node>
-gizzi workspace node handoff <node> checker@product-build
+gizzi workspace node handoff <dag>/<node> --to checker@product-build --note "build passes; please review"
 gizzi workspace node close <node>
 ```
 
 A claim is a **WIH** (work identity handle) pickup through the Gate. The bot gets a context pack, works inside a lease, and closes the pickup with evidence. A bot never marks a node done by itself: the judge decides.
+
+`node handoff` passes a claimed node to another agent without closing it. The Gate records the new owner (so a rebuild from the ledger keeps it), the note is added to the node's `PROGRESS.md`, and a bot on this computer gets a message telling it to read the node folder. A node that isn't claimed can't be handed off; claim it or assign it first. `--dry-run` shows who it would move from and to.
 
 ## The node folder
 

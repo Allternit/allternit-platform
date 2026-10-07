@@ -1943,6 +1943,8 @@ impl Gate {
             }),
             r#type: "AgentHandoffRequested".to_string(),
             payload: json!({
+                // The projection matches events by payload wih_id.
+                "wih_id": wih_id,
                 "source_agent_id": source_agent_id,
                 "target_agent_id": target_agent_id,
                 "reason": reason,

@@ -348,3 +348,16 @@ fn agents_handoff_refuses_what_it_cannot_hand_off() {
     assert_ne!(out.status.code(), Some(0));
     assert!(!ws.join(".allternit/factory/handoffs").exists());
 }
+
+#[test]
+fn node_handoff_needs_a_target_and_a_claimed_node() {
+    let home = tempfile::tempdir().unwrap();
+    let ws = home.path().join("ws");
+    std::fs::create_dir_all(&ws).unwrap();
+    let root = ws.to_str().unwrap();
+    let out = factory(home.path(), &["--root", root, "workspace", "node", "handoff", "d/n", "--json"]);
+    assert_eq!(out.status.code(), Some(64), "no --to is a usage error");
+    let out = factory(home.path(), &["--root", root, "workspace", "node", "handoff", "d/n", "--to", "reviewer@team"]);
+    assert_ne!(out.status.code(), Some(0), "an unclaimed node can't be handed off");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("not claimed"), "{}", String::from_utf8_lossy(&out.stderr));
+}

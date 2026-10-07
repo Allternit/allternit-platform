@@ -424,6 +424,51 @@ fn rails_passthrough(ctx: &Ctx, prefix: &[&str], rest: Rest, native_dry_run: boo
     run(&ctx, target)
 }
 
+/// `workspace node handoff <dag>/<node> --to <agent> [--note <text>] [--dry-run]`:
+/// hand a claimed node to another agent through the Gate, note it in the
+/// node's PROGRESS.md, and tell a local team bot (`bot@team`) it owns it now.
+fn node_handoff(ctx: &Ctx, args: Vec<String>) -> u8 {
+    let mut out: Vec<String> = vec![];
+    let mut target: Option<String> = None;
+    let mut to: Option<String> = None;
+    let mut dry = false;
+    let mut it = args.into_iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--to" => {
+                let v = it.next().unwrap_or_default();
+                to = Some(v.clone());
+                out.push(a);
+                out.push(v);
+            }
+            "--dry-run" => {
+                dry = true;
+                out.push(a);
+            }
+            _ if a.starts_with("--") => out.push(a),
+            _ if target.is_none() && a.contains('/') => target = Some(a),
+            _ => out.push(a),
+        }
+    }
+    let (Some(target), Some(to)) = (target, to) else {
+        return fail(ctx, Code::Usage, "node handoff needs <dag>/<node> and --to <agent>", Some("allternit-factory workspace node handoff <dag>/<node> --to <bot@team> [--note <text>]"));
+    };
+    let (dag, node) = target.split_once('/').unwrap_or_default();
+    let mut rest = vec![node.to_string(), "--dag".to_string(), dag.to_string()];
+    rest.extend(out);
+    let code = rails_passthrough(ctx, &["wih", "handoff"], Rest { args: rest }, true);
+    if code != 0 || dry || !to.contains('@') {
+        return code;
+    }
+    // Tell the new owner, if it's a bot on this computer.
+    let folder = format!(".allternit/work/dags/{dag}/nodes/{node}/");
+    let text = format!("You now own node {dag}/{node}. Read {folder}SPEC.md and PROGRESS.md (the handoff note is at the end), then continue.");
+    if crate::part::send_quiet(ctx, &to, text, Some(node.to_string()), Some(dag.to_string())).is_none() && !ctx.json {
+        eprintln!("note: couldn't message {to} on this computer; tell it with `gizzi orchestration send {to} \"…\"`");
+    }
+    0
+}
+
 fn opt(args: &mut Vec<String>, flag: &str, value: Option<String>) {
     if let Some(value) = value {
         args.push(flag.to_string());
@@ -762,12 +807,7 @@ fn workspace(ctx: &Ctx, cmd: WorkspaceCmd) -> u8 {
         WorkspaceCmd::Node(NodeCmd::Show { dag, node }) => crate::work::node_show(ctx, &dag, &node),
         WorkspaceCmd::Node(NodeCmd::Claim(rest)) => rails_passthrough(ctx, &["wih", "pickup"], rest, false),
         WorkspaceCmd::Node(NodeCmd::Close(rest)) => rails_passthrough(ctx, &["wih", "close"], rest, false),
-        WorkspaceCmd::Node(NodeCmd::Handoff(_)) => not_built(
-            ctx,
-            "workspace",
-            "node handoff",
-            "Close the node and let the next agent claim it.",
-        ),
+        WorkspaceCmd::Node(NodeCmd::Handoff(p)) => node_handoff(ctx, p.args),
         WorkspaceCmd::Node(NodeCmd::List { dag, ready, mine }) => {
             if mine {
                 return crate::work::node_list_mine(ctx);

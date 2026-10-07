@@ -43,7 +43,15 @@ export const WorkspaceCommand = cmd({
             options: { mine: { type: "boolean", describe: "only nodes this bot owns" } },
           },
           { command: "claim <node>", describe: "claim a node", mutation: true },
-          { command: "handoff <node>", describe: "hand a node off", mutation: true },
+          {
+            command: "handoff <node>",
+            describe: "hand a claimed node (<dag>/<node>) to another agent, with a note",
+            mutation: true,
+            options: {
+              to: { type: "string", describe: "the new owner (bot@team or an agent id)" },
+              note: { type: "string", describe: "a note written into the node's PROGRESS.md" },
+            },
+          },
           { command: "close <node>", describe: "close a node", mutation: true },
         ]),
       )

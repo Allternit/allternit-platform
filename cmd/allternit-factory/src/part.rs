@@ -517,6 +517,14 @@ pub fn handoff(ctx: &Ctx, args: &[String]) -> u8 {
     0
 }
 
+/// Send without printing (a follow-up inside another verb's output).
+pub(crate) fn send_quiet(ctx: &Ctx, to: &str, text: String, node: Option<String>, dag: Option<String>) -> Option<serde_json::Value> {
+    let rt = runtime(ctx).ok()?;
+    let sctx = SendCtx { root: ctx.root_dir(), registry: Registry::open_default(), api: ApiLink::from_env(), sender: cli_sender() };
+    let req = SendRequest { to: to.to_string(), text, queue: false, thread_id: None, node_id: node, dag_id: dag, idempotency_key: None, dry_run: false };
+    rt.block_on(send_mod::send(&sctx, &req)).ok().map(|d| json!(d))
+}
+
 /// `orchestration capture <to> [lines]`: the last lines of the agent's pane.
 pub fn capture(ctx: &Ctx, to: String, lines: Option<u32>) -> u8 {
     let rt = match runtime(ctx) {
