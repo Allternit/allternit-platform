@@ -52,7 +52,7 @@ pub fn routes() -> Router<Arc<ApiState>> {
 }
 
 /// Verify the Clerk session and read the org binding and role from its claims.
-async fn principal(headers: &HeaderMap) -> Result<(Principal, Option<String>), PlatformError> {
+pub(super) async fn principal(headers: &HeaderMap) -> Result<(Principal, Option<String>), PlatformError> {
     let token = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())

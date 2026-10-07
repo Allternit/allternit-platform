@@ -396,3 +396,20 @@ async fn a_provider_model_agent_needs_the_projects_key() {
     let (s, e) = call(&c.app, "POST", "/v1/agents", &key, Some(json!({ "account_id": acct, "name": "x", "tools": ["calendar"] }))).await;
     assert_eq!((s, e["error"]["code"].as_str()), (StatusCode::BAD_REQUEST, Some("tool_not_available")));
 }
+
+#[tokio::test]
+async fn beta_owners_use_the_api_while_it_is_off_for_everyone_else() {
+    let c = ctx().await;
+    let beta = project(&c, "owner_beta", ProjectEnv::Sandbox).await;
+    let other = project(&c, "owner_other", ProjectEnv::Sandbox).await;
+    let beta_key = mint(&c, &beta, None, &["agents"]).await;
+    let other_key = mint(&c, &other, None, &["agents"]).await;
+    let app = router_gated(&c.state, Gate::BetaOnly(vec!["owner_beta".into()])).with_state(c.state.clone());
+    assert_eq!(call(&app, "GET", "/v1/agents", &beta_key, None).await.0, StatusCode::OK);
+    let (s, e) = call(&app, "GET", "/v1/agents", &other_key, None).await;
+    assert_eq!((s, e["error"]["code"].as_str()), (StatusCode::NOT_FOUND, Some("platform_api_disabled")));
+    let (s, e) = call(&app, "GET", "/v1/agents", "alt_test_not_a_real_key", None).await;
+    assert_eq!((s, e["error"]["code"].as_str()), (StatusCode::NOT_FOUND, Some("platform_api_disabled")), "a bad key learns nothing more");
+    let off = router_gated(&c.state, Gate::BetaOnly(vec![])).with_state(c.state.clone());
+    assert_eq!(call(&off, "GET", "/v1/agents", &beta_key, None).await.0, StatusCode::NOT_FOUND);
+}

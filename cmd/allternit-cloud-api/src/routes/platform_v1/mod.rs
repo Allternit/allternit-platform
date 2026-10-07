@@ -62,18 +62,42 @@ pub fn platform_api_enabled() -> bool {
         .unwrap_or(false)
 }
 
+/// Clerk user ids allowed to use the Platform API while it is switched off for
+/// everyone else (`ALLTERNIT_PLATFORM_API_BETA_OWNERS`, comma separated): their
+/// console and the projects they own work; every other caller still gets
+/// `platform_api_disabled`. Used for live tests before launch.
+pub fn beta_owners_from_env() -> Vec<String> {
+    std::env::var("ALLTERNIT_PLATFORM_API_BETA_OWNERS")
+        .unwrap_or_default()
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
 /// Where the on/off switch comes from. `FromEnv` in production; tests force it.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub enum Gate {
     FromEnv,
     Forced(bool),
+    /// Off, except for these owners (tests of the beta path).
+    BetaOnly(Vec<String>),
 }
 
 impl Gate {
-    fn enabled(self) -> bool {
+    fn enabled(&self) -> bool {
         match self {
             Gate::FromEnv => platform_api_enabled(),
-            Gate::Forced(on) => on,
+            Gate::Forced(on) => *on,
+            Gate::BetaOnly(_) => false,
+        }
+    }
+
+    fn beta_owners(&self) -> Vec<String> {
+        match self {
+            Gate::FromEnv => beta_owners_from_env(),
+            Gate::Forced(_) => Vec::new(),
+            Gate::BetaOnly(owners) => owners.clone(),
         }
     }
 }
@@ -163,7 +187,15 @@ async fn console_gate(
     next: Next,
 ) -> Response {
     if !ps.gate.enabled() {
-        return PlatformError::disabled().into_response();
+        let beta = ps.gate.beta_owners();
+        let allowed = !beta.is_empty()
+            && match console::principal(request.headers()).await {
+                Ok((p, _)) => beta.contains(&p.user_id),
+                Err(_) => false,
+            };
+        if !allowed {
+            return PlatformError::disabled().into_response();
+        }
     }
     next.run(request).await
 }
@@ -173,7 +205,8 @@ async fn v1_middleware(
     mut request: Request,
     next: Next,
 ) -> Response {
-    if !ps.gate.enabled() {
+    let beta = if ps.gate.enabled() { None } else { Some(ps.gate.beta_owners()) };
+    if beta.as_ref().is_some_and(Vec::is_empty) {
         return PlatformError::disabled().into_response();
     }
     let db = &ps.api.db;
@@ -186,8 +219,13 @@ async fn v1_middleware(
         .map(str::trim);
     let caller = match caller::authenticate(db, token).await {
         Ok(c) => c,
+        // While switched off, nobody learns more than "disabled" from a bad key.
+        Err(_) if beta.is_some() => return PlatformError::disabled().into_response(),
         Err(error) => return error.into_response(),
     };
+    if beta.as_ref().is_some_and(|owners| !owners.contains(&caller.owner_user_id)) {
+        return PlatformError::disabled().into_response();
+    }
 
     let rate = match limits::check_rate_limit(db, &caller).await {
         Ok(info) => info,
