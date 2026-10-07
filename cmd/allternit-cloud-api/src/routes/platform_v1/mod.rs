@@ -1,6 +1,7 @@
 //! Allternit Platform API (`/v1`): the developer-facing surface.
 //!
 //! One module per area (`accounts`, `agents`, `conversations`, `numbers`, `messages`, `calls` (voice and realtime), `webhooks`, `usage`).
+//! Also `billing` (spend caps) and `stripe_plan` (Stripe meters, dry run by default).
 //! Hosted agents run on a per-project runtime (`hosting`).
 //! Each area exposes `register(RouteTable) -> RouteTable`; `build_table` below
 //! is the single list. The route table records every `(method, path)` it
@@ -23,6 +24,7 @@
 pub mod accounts;
 pub mod agent_tools;
 pub mod agents;
+pub mod billing;
 pub mod caller;
 pub mod calls;
 pub mod console;
@@ -39,6 +41,7 @@ pub mod page;
 pub mod projects;
 pub mod slots;
 pub mod spend;
+pub mod stripe_plan;
 pub mod usage;
 pub mod usage_events;
 pub mod webhooks;
@@ -62,7 +65,8 @@ pub use caller::{PlatformCaller, ProjectEnv};
 pub use error::PlatformError;
 pub use page::{build_page, Page, PageParams};
 pub use slots::{acquire_slot, release_slot, SlotGuard};
-pub use usage_events::{record_usage, UsageEvent};
+pub use billing::spend_allowed;
+pub use usage_events::{record_usage, record_usage_priced, UsageEvent};
 
 /// Header the console sends with its Clerk session to act on one project.
 pub const CONSOLE_PROJECT_HEADER: &str = "x-allternit-project";
@@ -203,6 +207,7 @@ fn build_table() -> RouteTable {
     let table = messages::register(table);
     let table = calls::register(table);
     let table = webhooks::register(table);
+    let table = billing::register(table);
     usage::register(table)
 }
 
@@ -388,3 +393,5 @@ mod tests_p2_tools;
 mod tests_p5_console;
 #[cfg(test)]
 mod tests_p3;
+#[cfg(test)]
+mod tests_p5;

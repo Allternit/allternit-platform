@@ -176,6 +176,30 @@ pub fn cost_microdollars(pricing: &ModelPricing, tokens: &TokenBreakdown) -> i64
     microdollars.round() as i64
 }
 
+/// [`cost_microdollars`] split into its input side (input + cache read +
+/// cache write) and output side (output + reasoning), under the same
+/// context tier. The two parts add up to the whole, give or take rounding.
+pub fn cost_split_microdollars(pricing: &ModelPricing, tokens: &TokenBreakdown) -> (i64, i64) {
+    let over_200k = tokens.input + tokens.cache_read > 200_000;
+    let rates = match (over_200k, &pricing.context_over_200k) {
+        (true, Some(tier)) => tier.as_ref(),
+        _ => pricing,
+    };
+    let input = tokens.input.max(0) as f64 * rates.input
+        + tokens.cache_read.max(0) as f64 * rates.cache_read
+        + tokens.cache_write.max(0) as f64 * rates.cache_write;
+    let output = (tokens.output.max(0) + tokens.reasoning.max(0)) as f64 * rates.output;
+    (input.round() as i64, output.round() as i64)
+}
+
+/// [`cost_split_microdollars`] at list price from the models.dev cache; None
+/// when the cache or the model is unavailable.
+pub fn list_cost_split_microdollars(provider_id: &str, model_id: &str, tokens: &TokenBreakdown) -> Option<(i64, i64)> {
+    let map = current_pricing()?;
+    let pricing = find_pricing(&map, provider_id, model_id)?;
+    Some(cost_split_microdollars(pricing, tokens))
+}
+
 // ─── Lazy, mtime-checked process-wide cache ──────────────────────────────────
 
 /// Environment override for the cache location (tests, non-standard installs).

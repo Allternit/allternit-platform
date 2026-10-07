@@ -1,0 +1,64 @@
+---
+title: 'Billing and spend caps'
+description: 'How spend is counted, the monthly spend cap, and the usage.threshold webhook.'
+---
+
+Every project has a **monthly spend cap**: the most it can spend in one calendar month (UTC). New projects start at **$100**. When the project's spend reaches the cap, billable requests are refused until you raise the cap or the month ends.
+
+## How spend is counted
+
+Spend is this month's [usage](/api/platform/usage) at the prices on that page: each meter's quantity times its price, plus the token rows at the model's list price + 15%. It is counted at list price, before any plan credit or discount; those are applied on your invoice. Spend is updated as usage is recorded, so it is current to the last request.
+
+## What the cap stops
+
+At or over the cap, these answer `402` with `{"error": {"type": "billing_error", "code": "spend_cap_reached"}}` and do nothing:
+
+- `POST /v1/conversations/{id}/messages` (the agent doesn't run)
+- `POST /v1/messages` from a real number (sandbox texts are free and not refused)
+- `POST /v1/numbers` for a real number
+
+Reading data, managing agents, accounts and webhooks, and receiving texts keep working. One reply or text that starts under the cap can take the project a little past it; the next one is refused.
+
+If the spend check itself fails, the request is refused with `503 spend_check_unavailable` rather than run unchecked. Retry it.
+
+## Read or lower the cap
+
+```http
+GET /v1/projects/current/spend_cap
+```
+
+Scope `usage`.
+
+```json
+{ "object": "spend_cap", "project_id": "proj_…", "plan": "payg", "spend_cap_cents": 10000,
+  "period": "2026-10", "spent_cents": 8213, "spent_microusd": 82125310, "remaining_cents": 1787,
+  "reached": false, "thresholds_sent": [50, 80] }
+```
+
+```http
+PUT /v1/projects/current/spend_cap
+{ "spend_cap_cents": 5000 }
+```
+
+Scope `usage`, from a key that isn't bound to an account. An API key can only **lower** the cap. Raising it answers `403 spend_cap_raise_in_console`: raise it in the console at platform.allternit.com (project settings), so a leaked key can't lift your limit. `spend_cap_cents` is 0 to 100,000,000; 0 stops all billable work.
+
+## Threshold webhooks
+
+Subscribe a [webhook](/api/platform/webhooks) to `usage.threshold` to hear when spend reaches 50%, 80% and 100% of the cap. Each fires at most once per project per month:
+
+```json
+{ "type": "usage.threshold", "data": { "meter": "spend", "percent": 80, "used": 81.23, "limit": 100.0, "period": "2026-10" } }
+```
+
+`used` and `limit` are in US dollars. Lowering the cap below what you already spent sends the thresholds you just crossed.
+
+## Plans
+
+| Plan | Requests / min | Concurrent calls | Notes |
+|---|---|---|---|
+| Sandbox | 60 | 1 | Free. Test project, 3 agents, simulated numbers. |
+| Pay as you go | 300 | 5 | Card required. Usage at the listed prices. |
+| Growth | 1,000 | 25 | $249 / month with $300 of usage credit each month, 10% off usage. |
+| Enterprise | Contracted | Contracted | Quoted after an audit. |
+
+Request and concurrency limits are enforced per project (see [Idempotency and limits](/api/platform/idempotency-and-limits)).

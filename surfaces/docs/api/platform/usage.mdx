@@ -1,6 +1,6 @@
 ---
 title: 'Usage'
-description: 'What your project used, by meter, key or account.'
+description: 'What your project used, by meter, key or account, and what each meter costs.'
 ---
 
 ```http
@@ -15,18 +15,24 @@ Scope `usage`. `group_by` is `meter` (default), `key` or `account`; `from` and `
 
 Under `group_by=account`, a row with `group: null` is project-level usage that belongs to no account. A key bound to one account only sees that account's usage.
 
-## Meters
+## Meters and prices
 
-| Meter | Unit |
-|---|---|
-| `voice_min_allternit` | minute (our model) |
-| `voice_min_byok` | minute (your model key) |
-| `agent_month` | hosted agent per month |
-| `tokens_in`, `tokens_out` | tokens |
-| `number_local_month`, `number_tollfree_month` | number per month |
-| `sms_segment` | SMS segment, in or out |
-| `mms` | MMS message |
-| `registration_passthrough_cents` | carrier registration, at cost |
-| `recording_min_month` | stored recording minute per month |
+| Meter | Unit | Price |
+|---|---|---|
+| `voice_min_allternit` | minute (our model) | $0.09 / min, billed per second |
+| `voice_min_byok` | minute (your model key) | $0.06 / min, billed per second |
+| `agent_month` | hosted agent per month (live projects) | First 3 each month free, then $4 |
+| `tokens_in`, `tokens_out` | tokens | The model provider's list price + 15%; $0 on your own model key |
+| `number_local_month`, `number_tollfree_month` | number per month | $2 local, $3 toll-free |
+| `sms_segment` | SMS segment, in or out | $0.012 |
+| `mms` | MMS message | $0.03 |
+| `registration_passthrough_cents` | carrier registration, in cents | At cost |
+| `recording_min_month` | stored recording minute per month, after 90 days | $0.002 |
 
-Prices per meter are on the pricing page.
+Channels, webhooks, the twin layer and MCP have no meter. Simulated (sandbox) numbers and their texts record no usage.
+
+**Text tokens.** Each agent reply in a [conversation](/api/platform/conversations) records two rows: `tokens_in` (input, including cached input) and `tokens_out` (output, including reasoning), priced from the model the reply ran on. An agent that runs on your own model key records the same rows at no charge, so you can still see how many tokens it used.
+
+**Hosted agents.** A live project's agent records one `agent_month` when it is created and once in each later month it exists.
+
+Your monthly spend across all meters, and the cap that limits it, is on [Billing and spend caps](/api/platform/billing).

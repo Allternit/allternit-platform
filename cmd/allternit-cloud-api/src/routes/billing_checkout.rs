@@ -298,6 +298,19 @@ pub trait StripeCheckout: Send + Sync {
     ) -> Result<String, ApiError> {
         Err(ApiError::Internal("invoice items are not supported by this Stripe client".to_string()))
     }
+
+    /// `POST https://api.stripe.com{path}` with form fields; returns the created object.
+    /// Used only by the Platform API billing plan and meter reporter, which run
+    /// only when their off-by-default flags are on (`platform_v1::stripe_plan`).
+    async fn post_object(
+        &self,
+        _secret_key: &str,
+        _path: &str,
+        _idempotency_key: Option<&str>,
+        _form: &[(String, String)],
+    ) -> Result<Value, ApiError> {
+        Err(ApiError::Internal("this Stripe client can't create objects".to_string()))
+    }
 }
 
 /// Build the Checkout Session for a validated pack purchase and return its hosted URL.
@@ -434,6 +447,16 @@ impl StripeCheckout for ReqwestStripeCheckout {
         form: &[(String, String)],
     ) -> Result<String, ApiError> {
         self.post_form(STRIPE_PORTAL_SESSIONS_URL, secret_key, form).await
+    }
+
+    async fn post_object(
+        &self,
+        secret_key: &str,
+        path: &str,
+        idempotency_key: Option<&str>,
+        form: &[(String, String)],
+    ) -> Result<Value, ApiError> {
+        self.post_form_value(&format!("https://api.stripe.com{path}"), secret_key, idempotency_key, form).await
     }
 
     async fn create_invoice_item(

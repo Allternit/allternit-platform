@@ -6,7 +6,7 @@
 //! and who may see it:
 //!
 //! * **Platform API webhooks** (`platform`): what a project endpoint may
-//!   subscribe to. [`PLATFORM_EVENTS`] is the 051 list plus the P3 `call.*` events.
+//!   subscribe to. [`PLATFORM_EVENTS`] is the 051 list plus the P3 `call.*` events and `usage.threshold`.
 //! * **MCP agents server** (`agents`, scope `agents:read`, `/mcp`): agent,
 //!   approval, thread, inbox, message, call, subscription and usage events.
 //! * **MCP vendor-bot connector** (`bot`, scope `bots:act`, `/mcp/bots/:id`):
@@ -258,18 +258,19 @@ pub static REGISTRY: &[EventType] = &[
     EventType {
         name: "usage.threshold",
         title: "Usage alerts",
-        description: "The owner's usage crossed a plan threshold (e.g. 80% or 100% of included minutes or credits).",
-        platform: false,
+        description: "Usage crossed a threshold (e.g. 80% or 100% of included minutes or credits). Platform API: the project's spend reached 50, 80 or 100% of its monthly spend cap (`meter` = `spend`, once each per month).",
+        platform: true,
         agents: true,
         bot: false,
         filters: &[("meter", "Only this meter.")],
-        payload: &[("meter", "Meter name (`cloud_spend` = the monthly cloud budget, in USD)."), ("percent", "Threshold crossed (number)."), ("used", "Amount used (number)."), ("limit", "Plan amount (number)."), ("period", "Billing period, e.g. 2026-10.")],
+        payload: &[("meter", "Meter name (`cloud_spend` = the monthly cloud budget, `spend` = a Platform API project's spend against its cap; both in USD)."), ("percent", "Threshold crossed (number)."), ("used", "Amount used (number)."), ("limit", "Plan amount or spend cap (number)."), ("period", "Billing period, e.g. 2026-10.")],
         runtime_aliases: &["usage.threshold"],
     },
 ];
 
-/// Event types a Platform API webhook can subscribe to (unchanged from 051).
-pub const PLATFORM_EVENTS: [&str; 6] = ["message.received", "message.status", "registration.updated", "call.started", "call.ended", "call.transcript.ready"];
+/// Event types a Platform API webhook can subscribe to: the 051 list, the P3
+/// `call.*` events and `usage.threshold` (P5 spend caps).
+pub const PLATFORM_EVENTS: [&str; 7] = ["message.received", "message.status", "registration.updated", "call.started", "call.ended", "call.transcript.ready", "usage.threshold"];
 
 pub fn find(name: &str) -> Option<&'static EventType> {
     REGISTRY.iter().find(|e| e.name == name)
@@ -396,7 +397,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn names_are_unique_and_platform_list_is_the_051_list() {
+    fn names_are_unique_and_platform_list_matches_the_registry() {
         let mut names: Vec<_> = REGISTRY.iter().map(|e| e.name).collect();
         names.sort();
         names.dedup();

@@ -417,6 +417,23 @@ async fn create_agent(
     .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;
+    if caller.project_env == super::ProjectEnv::Live {
+        // This month's hosted-agent fee (the worker records later months).
+        let month = chrono::Utc::now().format("%Y-%m");
+        let event = super::UsageEvent {
+            project_id: caller.project_id.clone(),
+            account_id: Some(row.account_id.clone()),
+            key_id: Some(caller.key_id.clone()),
+            meter: "agent_month".into(),
+            quantity: 1.0,
+            unit: Some("month".into()),
+            ref_id: Some(row.id.clone()),
+            idempotency: Some(format!("agent:{}:{month}", row.id)),
+        };
+        if let Err(e) = super::record_usage(&state.db, event).await {
+            tracing::warn!(agent = %row.id, "platform: agent month not recorded: {e}");
+        }
+    }
     Ok((StatusCode::CREATED, Json(row.into())))
 }
 

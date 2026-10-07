@@ -3,7 +3,8 @@
 //! Every non-2xx response from the Platform API is
 //! `{"error":{"type","code","message","param"}}`. `type` is one of
 //! `invalid_request_error`, `authentication_error`, `permission_error`,
-//! `not_found_error`, `rate_limit_error`, `conflict_error`, `api_error`.
+//! `not_found_error`, `rate_limit_error`, `conflict_error`, `billing_error`,
+//! `api_error`.
 
 use axum::{
     http::StatusCode,
@@ -61,6 +62,16 @@ impl PlatformError {
 
     pub fn conflict(code: &str, message: impl Into<String>) -> Self {
         Self::new(StatusCode::CONFLICT, "conflict_error", code, message)
+    }
+
+    /// 402 `billing_error`: the project can't take on more billable work (spend cap).
+    pub fn payment_required(code: &str, message: impl Into<String>) -> Self {
+        Self::new(StatusCode::PAYMENT_REQUIRED, "billing_error", code, message)
+    }
+
+    /// 503 `api_error`: try again shortly.
+    pub fn service_unavailable(code: &str, message: impl Into<String>) -> Self {
+        Self::new(StatusCode::SERVICE_UNAVAILABLE, "api_error", code, message)
     }
 
     pub fn api_error(code: &str, message: impl Into<String>) -> Self {

@@ -55,12 +55,15 @@ pub(crate) struct TurnFold {
     buf: String,
     /// callID -> 1 started, 2 finished.
     tools: HashMap<String, u8>,
+    /// The turn's assistant messages (latest `message.updated` info per id):
+    /// their token counts are the turn's usage.
+    assistant: HashMap<String, Value>,
     pub(crate) spoke: bool,
 }
 
 impl TurnFold {
     pub(crate) fn new(session_id: &str) -> Self {
-        Self { session_id: session_id.into(), parts: HashMap::new(), part_message: HashMap::new(), user_messages: HashSet::new(), pending: Vec::new(), buf: String::new(), tools: HashMap::new(), spoke: false }
+        Self { session_id: session_id.into(), parts: HashMap::new(), part_message: HashMap::new(), user_messages: HashSet::new(), pending: Vec::new(), buf: String::new(), tools: HashMap::new(), assistant: HashMap::new(), spoke: false }
     }
 
     fn say(&mut self, out: &mut Vec<Value>, text: String) {
@@ -114,6 +117,10 @@ impl TurnFold {
                     if let Some(id) = props["info"]["id"].as_str() {
                         self.user_messages.insert(id.to_string());
                         self.release_pending(out);
+                    }
+                } else if props["info"]["role"] == "assistant" {
+                    if let Some(id) = props["info"]["id"].as_str() {
+                        self.assistant.insert(id.to_string(), props["info"].clone());
                     }
                 }
             }
@@ -175,6 +182,61 @@ impl TurnFold {
             out.push(json!({ "type": "tool", "name": name, "status": status, "toolCallId": call }));
         }
     }
+}
+
+/// One `{"type":"usage",…}` event for a turn's assistant messages: tokens
+/// (`inputTokens` = input + cache read + cache write, `outputTokens` = output +
+/// reasoning), the model (`provider/model`, of the last message) and the
+/// provider list price in micro-dollars, split the same way. The list price comes
+/// from the models.dev cache gizzi prices from; when the model isn't there,
+/// gizzi's own reported cost is split by token share; when neither is known,
+/// the costs are null. `None` when no tokens were used.
+pub(crate) fn turn_usage(infos: &[Value]) -> Option<Value> {
+    let n = |v: &Value| v.as_i64().unwrap_or(0).max(0);
+    let (mut input, mut output, mut model) = (0i64, 0i64, None::<String>);
+    let mut costs: Option<(i64, i64)> = Some((0, 0));
+    for info in infos {
+        let t = &info["tokens"];
+        let tb = crate::llm_gateway::llm_pricing::TokenBreakdown {
+            input: n(&t["input"]),
+            output: n(&t["output"]),
+            reasoning: n(&t["reasoning"]),
+            cache_read: n(&t["cache"]["read"]),
+            cache_write: n(&t["cache"]["write"]),
+        };
+        let (i, o) = (tb.input + tb.cache_read + tb.cache_write, tb.output + tb.reasoning);
+        if i + o == 0 {
+            continue;
+        }
+        input += i;
+        output += o;
+        let (provider, model_id) = (info["providerID"].as_str().unwrap_or(""), info["modelID"].as_str().unwrap_or(""));
+        if !provider.is_empty() || !model_id.is_empty() {
+            model = Some(format!("{provider}/{model_id}"));
+        }
+        let split = crate::llm_gateway::llm_pricing::list_cost_split_microdollars(provider, model_id, &tb).or_else(|| {
+            let reported = (info["cost"].as_f64().unwrap_or(0.0) * 1_000_000.0).round() as i64;
+            (reported > 0).then(|| {
+                let in_part = ((reported as i128 * i as i128) / (i + o) as i128) as i64;
+                (in_part, reported - in_part)
+            })
+        });
+        costs = match (costs, split) {
+            (Some((a, b)), Some((c, d))) => Some((a + c, b + d)),
+            _ => None,
+        };
+    }
+    if input + output == 0 {
+        return None;
+    }
+    Some(json!({
+        "type": "usage",
+        "model": model,
+        "inputTokens": input,
+        "outputTokens": output,
+        "inputCostMicrousd": costs.map(|c| c.0),
+        "outputCostMicrousd": costs.map(|c| c.1),
+    }))
 }
 
 fn emit(events: &UnboundedSender<Value>, out: &mut Vec<Value>) {
@@ -270,6 +332,21 @@ async fn drive(client: &Client, base: &str, session_id: &str, path: &str, payloa
     }
     fold.flush(&mut out);
     emit(events, &mut out);
+    // The turn's token usage (Platform API metering): every assistant message
+    // the bus reported, else the one the message call returned.
+    let mut infos: Vec<Value> = fold.assistant.values().cloned().collect();
+    if infos.is_empty() {
+        if let Some((_, body)) = &posted {
+            if let Ok(v) = serde_json::from_slice::<Value>(body) {
+                if v["info"]["role"] == "assistant" {
+                    infos.push(v["info"].clone());
+                }
+            }
+        }
+    }
+    if let Some(usage) = turn_usage(&infos) {
+        let _ = events.send(usage);
+    }
 
     match ended {
         Some(Flow::Approval) => {
@@ -382,6 +459,34 @@ mod tests {
                 json!({ "type": "text.delta", "text": "free" }),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn the_turns_token_usage_is_reported_once_from_the_assistant_messages() {
+        let info = |id: &str, input: i64, output: i64| json!({ "type": "message.updated", "properties": { "info": {
+            "id": id, "role": "assistant", "sessionID": "s1", "providerID": "nobody", "modelID": "unpriced-model", "cost": 0.0021,
+            "tokens": { "input": input, "output": output, "reasoning": 0, "cache": { "read": 0, "write": 0 } } } } });
+        // Two steps of one turn (a tool call in between); the first step is updated twice.
+        let events = vec![info("a1", 10, 1), info("a1", 100, 20), info("a2", 200, 30), idle()];
+        let (r, got, _) = run(events, Duration::from_millis(50)).await;
+        assert!(r.is_ok());
+        let usage: Vec<_> = got.iter().filter(|e| e["type"] == "usage").collect();
+        assert_eq!(usage.len(), 1, "{got:?}");
+        assert_eq!((usage[0]["inputTokens"].as_i64(), usage[0]["outputTokens"].as_i64()), (Some(300), Some(50)));
+        assert_eq!(usage[0]["model"], "nobody/unpriced-model");
+        // Not in the price list: gizzi's reported cost (2 × $0.0021), split by token share.
+        let (i, o) = (usage[0]["inputCostMicrousd"].as_i64().unwrap(), usage[0]["outputCostMicrousd"].as_i64().unwrap());
+        assert_eq!(i + o, 4200);
+        assert!(i > o);
+    }
+
+    #[test]
+    fn no_tokens_means_no_usage_and_unknown_prices_stay_null() {
+        assert!(turn_usage(&[]).is_none());
+        let free = json!({ "providerID": "x", "modelID": "y", "cost": 0, "tokens": { "input": 5, "output": 2, "reasoning": 1, "cache": { "read": 3, "write": 0 } } });
+        let u = turn_usage(&[free]).unwrap();
+        assert_eq!((u["inputTokens"].as_i64(), u["outputTokens"].as_i64()), (Some(8), Some(3)));
+        assert!(u["inputCostMicrousd"].is_null() && u["outputCostMicrousd"].is_null());
     }
 
     #[tokio::test]
