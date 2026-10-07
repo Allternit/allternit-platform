@@ -5,7 +5,7 @@ import worker, { verifySignature, shouldRebuild } from './index.js';
 
 const secret = 's3cret';
 const sign = (body) => 'sha256=' + createHmac('sha256', secret).update(body).digest('hex');
-const push = (ref, repo = 'Allternit/allternit-ai') => JSON.stringify({ ref, after: 'abcdef1234', repository: { full_name: repo } });
+const push = (ref, repo = 'Allternit/allternit-platform') => JSON.stringify({ ref, after: 'abcdef1234', repository: { full_name: repo } });
 
 test('signature must match the body', async () => {
   const body = push('refs/heads/main');
@@ -15,7 +15,7 @@ test('signature must match the body', async () => {
   assert.equal(await verifySignature('', body, sign(body)), false);
 });
 
-test('only pushes to allternit-ai main rebuild', () => {
+test('only pushes to allternit-platform main rebuild', () => {
   assert.equal(shouldRebuild('push', JSON.parse(push('refs/heads/main'))).rebuild, true);
   assert.equal(shouldRebuild('push', JSON.parse(push('refs/heads/feat/x'))).rebuild, false);
   assert.equal(shouldRebuild('push', JSON.parse(push('refs/heads/main', 'Someone/else'))).rebuild, false);

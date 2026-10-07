@@ -38,12 +38,13 @@ Not inferred automatically: external package versions, Rust `use` paths outside 
 
 | Piece | What it does |
 | --- | --- |
-| `scripts/build-admin-site.sh` | Clones allternit-ai `main` with a read-only token (or uses `AI_DIR`), runs the generator into `dist/admin-site/`, adds `noindex`/`no-store` headers. |
-| Cloudflare Pages project `allternit-admin` | Git-connected to this repo, production branch `main`, preview deployments off. Build command `bash scripts/build-admin-site.sh`, output `dist/admin-site`, env `PYTHON_VERSION=3.11`, secret `ALLTERNIT_AI_READ_TOKEN`. Custom domain admin.allternit.com. |
-| `infrastructure/admin-site-hook/` | Worker that receives allternit-ai's GitHub push webhook, checks the signature, and calls the Pages deploy hook only for pushes to `main`. Tests: `node --test index.test.mjs`. |
-| Cloudflare Access | Application covering `admin.allternit.com` and `*.allternit-admin.pages.dev`, allowing only Eoj's email. |
+| Cloudflare Pages project `allternit-admin` | Git-connected to the private `Allternit/allternit-ai` repo, production branch `main`, preview deployments off, so every allternit-ai merge rebuilds it. Build command: `git clone -q --depth 1 https://github.com/Allternit/allternit-platform.git /tmp/platform && OUT=$PWD/admin-dist AI_DIR=$PWD bash /tmp/platform/scripts/build-admin-site.sh`, output `admin-dist`, env `PYTHON_VERSION=3.11`, `SKIP_DEPENDENCY_INSTALL=1`. No credentials: this repo is public. Custom domain admin.allternit.com. |
+| `scripts/build-admin-site.sh` | Runs the generator into the output folder, copies the Access guard, adds `noindex`/`no-store` headers. |
+| `surfaces/admin.allternit.com/_worker.js` | Runs in front of every request. Serves nothing unless the request carries a valid Cloudflare Access token for this application (`ACCESS_TEAM_DOMAIN`, `ACCESS_AUD` env vars). Fails closed when they are unset, and guards the `*.pages.dev` address too. Tests: `node --test surfaces/admin.allternit.com/access.test.mjs`. |
+| `infrastructure/admin-site-hook/` | Worker `allternit-admin-site-hook` that receives this repo's GitHub push webhook, checks the signature, and calls the Pages deploy hook only for pushes to `main`. Tests: `node --test index.test.mjs`. |
+| Cloudflare Access | Self-hosted application for `admin.allternit.com` (and `allternit-admin.pages.dev`), allowing only Eoj's email. Its AUD tag and the team domain go in the Pages env vars above. |
 
-The built site lists every file in the private allternit-ai repo. It is never committed (see `.gitignore` here) and is only deployed behind Access. This repository is public.
+The built site lists every file in the private allternit-ai repo. It is never committed (see `.gitignore` here) and is only served through the Access guard. This repository is public.
 
 ## Files
 

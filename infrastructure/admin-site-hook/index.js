@@ -1,8 +1,8 @@
-// Rebuilds admin.allternit.com when allternit-ai merges to main.
+// Rebuilds admin.allternit.com when allternit-platform merges to main.
 //
-// Cloudflare Pages builds the admin site from allternit-platform, so its own Git integration only
-// sees platform merges. This Worker receives allternit-ai's GitHub push webhook, checks the
-// signature, ignores everything except pushes to main, and calls the Pages deploy hook.
+// The Pages project is Git-connected to allternit-ai, so its own integration only sees allternit-ai
+// merges. This Worker receives allternit-platform's GitHub push webhook, checks the signature,
+// ignores everything except pushes to main, and calls the Pages deploy hook.
 //
 // Secrets (wrangler secret put): GITHUB_WEBHOOK_SECRET, PAGES_DEPLOY_HOOK_URL.
 
@@ -23,7 +23,7 @@ export function shouldRebuild(event, payload) {
   if (event === 'ping') return { rebuild: false, status: 200, reason: 'pong' };
   if (event !== 'push') return { rebuild: false, status: 202, reason: `ignored event ${event}` };
   if (payload?.ref !== 'refs/heads/main') return { rebuild: false, status: 202, reason: `ignored ref ${payload?.ref}` };
-  if (payload?.repository?.full_name !== 'Allternit/allternit-ai') return { rebuild: false, status: 202, reason: 'ignored repository' };
+  if (payload?.repository?.full_name !== 'Allternit/allternit-platform') return { rebuild: false, status: 202, reason: 'ignored repository' };
   return { rebuild: true, status: 200, reason: `rebuild for ${String(payload.after || '').slice(0, 7)}` };
 }
 
