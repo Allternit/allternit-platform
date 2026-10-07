@@ -2,7 +2,7 @@
 //!
 //! The runtime is a cloud computer from the free-tier provisioning lane
 //! (small, sleeps when idle, wakes on relay traffic) owned by the synthetic
-//! user `platform:<project_id>`, so it is never the developer's own computer
+//! user `platform:<project_id>` (an internal `users` row, no email or login), so it is never the developer's own computer
 //! and one project's agents never share a runtime with another's. API traffic
 //! counts as owner activity, so an active project's runtime is kept; an idle
 //! one may be removed and is created again on the next request (agents and
@@ -48,8 +48,10 @@ pub fn starting() -> PlatformError {
 
 fn unavailable(detail: &str) -> PlatformError {
     tracing::warn!("platform hosting: {detail}");
+    // 503, not 502: Cloudflare replaces an origin 502 with its own page, so the
+    // developer would never see this error's code or message.
     PlatformError {
-        status: StatusCode::BAD_GATEWAY,
+        status: StatusCode::SERVICE_UNAVAILABLE,
         kind: "api_error",
         code: "runtime_unavailable".into(),
         message: "The agent's hosted runtime couldn't be reached. Retry shortly.".into(),
@@ -83,6 +85,14 @@ fn map_status(status: u16, body: &Value) -> Result<(), PlatformError> {
 impl AgentHost for ProdHost {
     async fn runtime(&self, project_id: &str) -> Result<HostRuntime, PlatformError> {
         let owner = runtime_owner(project_id);
+        // Cloud computers belong to a `users` row; the project's runtime owner is
+        // an internal account with no email or login, created on first use.
+        sqlx::query("INSERT INTO users (id, name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING")
+            .bind(&owner)
+            .bind(format!("Platform project {project_id}"))
+            .execute(&self.0.db)
+            .await
+            .map_err(|e| unavailable(&format!("runtime owner {owner}: {e}")))?;
         let view = self.0.provisioning_service.create_free(&owner).await.map_err(|e| unavailable(&format!("provision {owner}: {e}")))?;
         if matches!(view.status.as_str(), "error" | "deleted") {
             return Err(unavailable(&format!("runtime {} is {}", view.id, view.status)));
