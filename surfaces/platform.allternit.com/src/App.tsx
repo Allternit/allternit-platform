@@ -50,6 +50,11 @@ import { SpendLimitsPage } from "@/pages/console/manage/SpendLimitsPage";
 import { SecurityPage } from "@/pages/console/manage/SecurityPage";
 import { WebhooksPage } from "@/pages/console/manage/WebhooksPage";
 import { TagsPage } from "@/pages/console/manage/TagsPage";
+import { PlatformProjectsPage } from "@/pages/console/platform/ProjectsPage";
+import { PlatformAgentsPage } from "@/pages/console/platform/AgentsPage";
+import { PlatformConversationsPage } from "@/pages/console/platform/ConversationsPage";
+import { PlatformUsagePage } from "@/pages/console/platform/UsagePage";
+import { PlatformWebhooksPage } from "@/pages/console/platform/WebhooksPage";
 import { usePlatformAuth } from "@/lib/platform-auth-client";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -499,6 +504,48 @@ export default function App() {
           </ConsoleRoute>
         }
       />
+      {/* Platform API (developer /v1): projects, agents, conversations, usage, webhooks. */}
+      <Route
+        path="/platform/projects"
+        element={
+          <ConsoleRoute>
+            <PlatformProjectsPage />
+          </ConsoleRoute>
+        }
+      />
+      <Route
+        path="/platform/agents"
+        element={
+          <ConsoleRoute>
+            <PlatformAgentsPage />
+          </ConsoleRoute>
+        }
+      />
+      <Route
+        path="/platform/conversations"
+        element={
+          <ConsoleRoute>
+            <PlatformConversationsPage />
+          </ConsoleRoute>
+        }
+      />
+      <Route
+        path="/platform/usage"
+        element={
+          <ConsoleRoute>
+            <PlatformUsagePage />
+          </ConsoleRoute>
+        }
+      />
+      <Route
+        path="/platform/webhooks"
+        element={
+          <ConsoleRoute>
+            <PlatformWebhooksPage />
+          </ConsoleRoute>
+        }
+      />
+      <Route path="/platform" element={<Navigate to="/platform/projects" replace />} />
       {consoleStubRoutes.map((route) => (
         <Route
           key={route.path}

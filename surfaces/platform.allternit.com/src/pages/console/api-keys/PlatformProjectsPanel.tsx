@@ -17,6 +17,27 @@ import {
   listProjects,
   revokeProjectKey,
 } from "@/lib/platform-projects";
+import { allPages, v1, type V1Account } from "@/lib/platform-v1";
+import { SETTINGS_SELECT_CLASS } from "@/components/settings/buttonStyles";
+
+const PROJECT_STORAGE_KEY = "allternit.platform.project";
+
+/** The project the Platform pages last picked (shared with /platform/*). */
+function storedProject(): string | null {
+  try {
+    return window.localStorage.getItem(PROJECT_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function rememberProject(id: string): void {
+  try {
+    window.localStorage.setItem(PROJECT_STORAGE_KEY, id);
+  } catch {
+    // Blocked storage: selection still works for this visit.
+  }
+}
 
 const INPUT_CLASS =
   "mt-1.5 w-full p-2 px-3 rounded-lg border border-solid border-[var(--border-subtle)] bg-[var(--bg-primary)] text-[13px] text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)] placeholder:text-[var(--text-tertiary)]";
@@ -34,7 +55,14 @@ function formatDate(iso?: string | null): string {
  */
 export function PlatformProjectsPanel() {
   const [projects, setProjects] = useState<PlatformProject[]>([]);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelectedState] = useState<string | null>(() => storedProject());
+  const setSelected = useCallback((next: string | null | ((cur: string | null) => string | null)) => {
+    setSelectedState((cur) => {
+      const value = typeof next === "function" ? next(cur) : next;
+      if (value) rememberProject(value);
+      return value;
+    });
+  }, []);
   const [loading, setLoading] = useState(true);
   const [disabled, setDisabled] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -58,7 +86,7 @@ export function PlatformProjectsPanel() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [setSelected]);
 
   useEffect(() => {
     void load();
@@ -80,7 +108,7 @@ export function PlatformProjectsPanel() {
     } finally {
       setSavingProject(false);
     }
-  }, [projectName, projectEnv, load]);
+  }, [projectName, projectEnv, load, setSelected]);
 
   if (loading) {
     return (
@@ -191,6 +219,19 @@ function ProjectKeys({ project }: { project: PlatformProject }) {
   const [created, setCreated] = useState<CreatedProjectKey | null>(null);
   const [copied, setCopied] = useState(false);
   const [confirmRevoke, setConfirmRevoke] = useState<string | null>(null);
+  // The project's accounts, for binding a key to one customer. null = couldn't load (free text instead).
+  const [accounts, setAccounts] = useState<V1Account[] | null>([]);
+
+  useEffect(() => {
+    let active = true;
+    const client = v1(project.id);
+    allPages((after) => client.listAccounts(after))
+      .then((list) => active && setAccounts(list))
+      .catch(() => active && setAccounts(null));
+    return () => {
+      active = false;
+    };
+  }, [project.id]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -315,10 +356,25 @@ function ProjectKeys({ project }: { project: PlatformProject }) {
                   ))}
                 </div>
               </fieldset>
-              <label className="block text-[12px] font-medium text-[var(--text-secondary)]">
-                Account (optional)
-                <input value={accountId} onChange={(e) => setAccountId(e.target.value)} placeholder="acct_… — limits the key to one customer" className={INPUT_CLASS} />
-              </label>
+              {accounts && accounts.length > 0 ? (
+                <label className="block text-[12px] font-medium text-[var(--text-secondary)]">
+                  Account (optional)
+                  <select value={accountId} onChange={(e) => setAccountId(e.target.value)} className={cn(SETTINGS_SELECT_CLASS, "mt-1.5 w-full")}>
+                    <option value="">All accounts in the project</option>
+                    {accounts.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name} ({a.id})
+                      </option>
+                    ))}
+                  </select>
+                  <span className="mt-1 block text-[11px] font-normal text-[var(--text-tertiary)]">A key bound to one account only sees that customer's data.</span>
+                </label>
+              ) : (
+                <label className="block text-[12px] font-medium text-[var(--text-secondary)]">
+                  Account (optional)
+                  <input value={accountId} onChange={(e) => setAccountId(e.target.value)} placeholder="acct_… — limits the key to one customer" className={INPUT_CLASS} />
+                </label>
+              )}
               <button type="button" className={PRIMARY_BUTTON_CLASS} disabled={!name.trim() || scopes.length === 0 || creating} onClick={() => void handleCreate()}>
                 {creating ? <CircleNotch size={14} className="animate-spin" aria-hidden /> : <Key size={14} aria-hidden />} Create key
               </button>

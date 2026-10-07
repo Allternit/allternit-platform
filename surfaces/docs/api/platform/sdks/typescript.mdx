@@ -1,0 +1,96 @@
+---
+title: 'TypeScript SDK'
+description: 'The @allternit/platform package: typed client, idempotency keys, typed errors, pagination and streaming replies.'
+---
+
+`@allternit/platform` is a typed client for the Platform API. It has no runtime dependencies and uses the global `fetch`, so it runs on Node 18+, Deno, Bun and in browsers (keep live keys on your server).
+
+<Note>
+Not yet published to npm; publishing needs approval. Until then, install it from the repository: build `sdk/platform-ts` (`tsc -p tsconfig.json`) and `npm install /path/to/allternit/sdk/platform-ts`.
+</Note>
+
+## Create a client
+
+```ts
+import { AllternitPlatform } from "@allternit/platform";
+
+const client = new AllternitPlatform({
+  apiKey: process.env.ALLTERNIT_API_KEY, // the default; alt_test_… or alt_live_…
+  // baseUrl: "https://api.allternit.com", timeout: 60_000, defaultHeaders: {}, fetch
+});
+```
+
+Every API area is a property: `client.accounts`, `client.agents` (also model keys), `client.conversations`, `client.numbers`, `client.messaging`, `client.webhooks`, `client.usage`. Requests and responses are typed from the OpenAPI file.
+
+```ts
+const agent = await client.agents.create({ account_id: "acct_7Hq…", name: "Front desk" });
+await client.agents.update(agent.id, { autonomy: "ask" });
+await client.agents.putModelKey("anthropic", { api_key: process.env.ANTHROPIC_API_KEY! });
+const usage = await client.usage.get({ group_by: "meter", from: "2026-10-01" });
+```
+
+For a route the SDK doesn't wrap yet: `client.http.request({ method: "GET", path: "/v1/…" })`.
+
+## Request options
+
+The last argument of every method is `{ idempotencyKey?, signal?, timeout?, headers?, query? }`.
+
+## Idempotency
+
+Every `POST` carries an `Idempotency-Key` header. The SDK makes a random one per call; pass your own to make a retry safe across process restarts:
+
+```ts
+await client.messaging.sendMessage({ number_id, to, body }, { idempotencyKey: `reminder-${appointment.id}` });
+```
+
+See [Idempotency and limits](/api/platform/idempotency-and-limits).
+
+## Errors
+
+Non-2xx answers throw a subclass of `APIError` with `status`, `type`, `code`, `message`, `param` and `requestId`:
+
+| Class | When |
+|---|---|
+| `InvalidRequestError` | 400, 422 |
+| `AuthenticationError` | 401 |
+| `PermissionError` | 403 (missing scope, other account) |
+| `NotFoundError` | 404 |
+| `ConflictError` | 409 (`conversation_busy`, idempotency key reused) |
+| `RateLimitError` | 429; `retryAfter` in seconds |
+| `InternalServerError` | 5xx; `code: "runtime_starting"` means retry shortly |
+| `APIError` | anything else |
+
+Network failures throw `APIConnectionError`; a timeout throws `APITimeoutError`. Codes are listed in [Errors](/api/platform/errors).
+
+## Pagination
+
+```ts
+const page = await client.agents.list({ limit: 50 });   // { data, has_more, next_cursor }
+const next = await client.agents.list({ after: page.next_cursor ?? undefined });
+
+for await (const agent of client.agents.listAll()) {   // every item, fetched page by page
+  console.log(agent.name);
+}
+```
+
+## Streaming replies
+
+```ts
+const stream = client.conversations.stream(conversationId, { content: "Hi" });
+for await (const event of stream) {
+  if (event.type === "message.delta") process.stdout.write(event.delta);
+  if (event.type === "message.completed") console.log("\nstored as", event.message.id);
+}
+```
+
+`stream.finalMessage()` reads to the end and returns the stored reply. An `error` event throws a typed `APIError` (for example `code: "turn_failed"`). Pass `{ signal }` to stop reading; the reply is still stored on the server.
+
+## Regenerating
+
+The typed layer (`src/generated/`) is generated from `cmd/allternit-cloud-api/openapi/platform-v1.yaml`:
+
+```bash
+python3 scripts/platform-sdk/generate.py           # write
+python3 scripts/platform-sdk/generate.py --check   # fail if stale
+cd sdk/platform-ts && node --test test/*.test.ts   # tests against a mocked server (Node 22.6+)
+```

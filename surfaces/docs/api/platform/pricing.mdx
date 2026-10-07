@@ -1,0 +1,45 @@
+---
+title: 'Pricing'
+description: 'Plans and usage prices for the Platform API.'
+---
+
+<Note>
+The Platform API is in private beta and is not billed yet. These are the planned launch prices. They can change before launch; the console and this page will show the prices that apply before anything is charged.
+</Note>
+
+## Plans
+
+| Plan | Price | Includes |
+|---|---|---|
+| **Sandbox** | Free | A `sandbox` project, 3 agents, 60 voice minutes a month, 100 texts a month to verified numbers only, a shared test number, 60 requests per minute, 1 concurrent call |
+| **Pay as you go** | $0 a month plus usage | Card required, $100 default monthly spend cap (you can raise it in the console), 300 requests per minute, 5 concurrent calls, email support |
+| **Growth** | $249 a month | $300 of usage credit each month, 10% off usage above the credit, 1,000 requests per minute, 25 concurrent calls, priority support, 99.5% monthly uptime target |
+| **Enterprise** | Quoted after an audit | Contracted SLA, dedicated voice capacity, custom concurrency, invoicing, security review |
+
+The Growth uptime figure is a target, not a service level agreement. Only an Enterprise contract carries an SLA.
+
+## Usage
+
+| Meter | Price | Notes |
+|---|---|---|
+| Voice agent minute, Allternit model | $0.09 a minute | Phone or in-app realtime. Includes telephony, speech-to-text, our voice and the default model. Billed per second |
+| Voice agent minute, your own model key | $0.06 a minute | You pay your model provider directly |
+| Hosted agent | First 3 free, then $4 an agent a month | Always on, with memory, channels and inbox |
+| Text conversation (agent replies) | Model tokens at the provider's list price plus 15% | With your own model key there is no token charge |
+| Phone number | $2 a month local, $3 a month toll-free | |
+| SMS, in or out | $0.012 a segment | Includes carrier surcharges |
+| MMS | $0.03 a message | |
+| Carrier registration (10DLC brand and campaign) | Passed through at cost | About $20 to $25 once plus about $2 to $10 a month in carrier fees. Shown before filing |
+| Call recording and transcript storage | Included for 90 days, then $0.002 a minute per month | |
+| Channels, webhooks, the twin layer and MCP | Included | |
+
+Each meter matches a `meter` value in [Usage](/api/platform/usage), so `GET /v1/usage` shows the quantities a bill is built from.
+
+## Limits that protect your bill
+
+- Live projects have a monthly spend cap ($100 by default on Pay as you go). Change it per project in the console under **Platform API → Projects**.
+- A card on file is required before buying numbers or placing calls.
+- International calling is off by default.
+- Concurrent calls are capped per plan (see the table above).
+
+Prices do not include taxes. No plan promises call answer rates, text deliverability, or business results.

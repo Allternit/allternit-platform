@@ -16,6 +16,10 @@ Authorization: Bearer alt_live_3f9c…
 
 Keys are created in the console at **platform.allternit.com → API Keys → Platform API**: create a project (sandbox or live), then **Create key**, pick its scopes and, optionally, one account. The console calls `POST /api/v1/platform/projects/{id}/keys` with your signed-in session. The full key is shown once; only its hash is stored. A key can never create another key. Revoke a key with `DELETE /api/v1/platform/projects/{id}/keys/{key_id}`. Only the project owner, or an admin of the project's organization, can manage its keys.
 
+## The console
+
+The console at **platform.allternit.com → Platform API** has pages for Projects, Agents (with model keys), Conversations, Usage and Webhooks. Those pages call the same `/v1` endpoints described here, with your signed-in Clerk session instead of a key plus the header `X-Allternit-Project: proj_…`. The API then acts on that project as its owner: every scope, no account binding, and its requests are keyed as `console:<user id>` for rate limits, idempotency and usage. A project you can't manage, or an archived one, answers `404 project_not_found`. A project key in `Authorization` always wins over the header. This is for the console; servers should use project keys.
+
 Older `alt_` keys (account keys, not project keys) keep working for the routes they always reached; they don't authenticate on the Platform API.
 
 ## Scopes

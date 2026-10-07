@@ -1,0 +1,158 @@
+---
+title: 'Quickstart'
+description: 'Create a project and key, then an account, an agent and a conversation, and send your first message: curl, TypeScript and Python.'
+---
+
+This walks through the first call end to end: project → key → account → agent → conversation → message.
+
+<Note>
+The Platform API is in beta and is switched on per account. Until it is on for yours, every `/v1` route answers `404` with code `platform_api_disabled`. See [Overview](/api/platform/overview).
+</Note>
+
+## 1. Create a project and a key
+
+In the console at [platform.allternit.com](https://platform.allternit.com), create a **sandbox** project under **Platform API → Projects**, then create a key for it under **API keys** with the `agents` scope. The key looks like `alt_test_…` and is shown once; store it as an environment variable:
+
+```bash
+export ALLTERNIT_API_KEY=alt_test_…
+```
+
+Sandbox projects use simulated numbers and can have 3 agents. Keys and scopes are covered in [Authentication](/api/platform/authentication).
+
+Install an SDK if you are not using curl (both are not yet on npm or PyPI; install from the repo, see [TypeScript SDK](/api/platform/sdks/typescript) and [Python SDK](/api/platform/sdks/python)).
+
+## 2. Create an account
+
+An account is the business your agent works for. Every agent belongs to one.
+
+<CodeGroup>
+```bash curl
+curl https://api.allternit.com/v1/accounts \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY" -H "Content-Type: application/json" \
+  -d '{ "name": "Lakeside Dental" }'
+```
+
+```ts TypeScript
+import { AllternitPlatform } from "@allternit/platform";
+
+const client = new AllternitPlatform(); // reads ALLTERNIT_API_KEY
+const account = await client.accounts.create({ name: "Lakeside Dental" });
+```
+
+```python Python
+from allternit_platform import AllternitPlatform
+
+client = AllternitPlatform()  # reads ALLTERNIT_API_KEY
+account = client.accounts.create(name="Lakeside Dental")
+```
+</CodeGroup>
+
+The answer carries the account's `id` (`acct_…`).
+
+## 3. Create an agent
+
+<CodeGroup>
+```bash curl
+curl https://api.allternit.com/v1/agents \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY" -H "Content-Type: application/json" \
+  -d '{ "account_id": "acct_7Hq…", "name": "Front desk",
+        "instructions": "Answer questions about Lakeside Dental and book cleanings." }'
+```
+
+```ts TypeScript
+const agent = await client.agents.create({
+  account_id: account.id,
+  name: "Front desk",
+  instructions: "Answer questions about Lakeside Dental and book cleanings.",
+});
+```
+
+```python Python
+agent = client.agents.create(
+    account_id=account["id"],
+    name="Front desk",
+    instructions="Answer questions about Lakeside Dental and book cleanings.",
+)
+```
+</CodeGroup>
+
+The default greeting says the agent is an AI assistant; a greeting you set must say so too. Other fields (model, voice, tools, autonomy) are in [Agents](/api/platform/agents).
+
+## 4. Start a conversation
+
+<CodeGroup>
+```bash curl
+curl https://api.allternit.com/v1/agents/agent_3f9…/conversations \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY" -H "Content-Type: application/json" -d '{}'
+```
+
+```ts TypeScript
+const conversation = await client.conversations.create(agent.id);
+```
+
+```python Python
+conversation = client.conversations.create(agent["id"])
+```
+</CodeGroup>
+
+## 5. Send a message
+
+The reply comes back whole:
+
+<CodeGroup>
+```bash curl
+curl https://api.allternit.com/v1/conversations/conv_81c…/messages \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY" -H "Content-Type: application/json" \
+  -d '{ "content": "Can I book a cleaning next Tuesday?" }'
+```
+
+```ts TypeScript
+const reply = await client.conversations.sendMessage(conversation.id, {
+  content: "Can I book a cleaning next Tuesday?",
+});
+console.log(reply.content);
+```
+
+```python Python
+reply = client.conversations.send_message(
+    conversation["id"], content="Can I book a cleaning next Tuesday?"
+)
+print(reply["content"])
+```
+</CodeGroup>
+
+Or streamed as the agent writes it (`message.delta` events, then `message.completed`):
+
+<CodeGroup>
+```bash curl
+curl -N https://api.allternit.com/v1/conversations/conv_81c…/messages \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY" -H "Content-Type: application/json" \
+  -d '{ "content": "What should I bring?", "stream": true }'
+```
+
+```ts TypeScript
+const stream = client.conversations.stream(conversation.id, { content: "What should I bring?" });
+for await (const event of stream) {
+  if (event.type === "message.delta") process.stdout.write(event.delta);
+}
+const stored = await stream.finalMessage();
+```
+
+```python Python
+from allternit_platform import MessageDelta
+
+stream = client.conversations.stream(conversation["id"], content="What should I bring?")
+for event in stream:
+    if isinstance(event, MessageDelta):
+        print(event.delta, end="", flush=True)
+stored = stream.final_message
+```
+</CodeGroup>
+
+**The first message starts your project's hosted runtime.** While it starts, the call answers `503` with code `runtime_starting` and nothing is stored; retry after a few seconds. In the SDKs this is an `InternalServerError` with `code === "runtime_starting"`.
+
+## Next
+
+- [Conversations](/api/platform/conversations): history, failures, limits.
+- [Errors](/api/platform/errors) and [Idempotency and limits](/api/platform/idempotency-and-limits).
+- [Webhooks](/api/platform/webhooks) to get events on your server.

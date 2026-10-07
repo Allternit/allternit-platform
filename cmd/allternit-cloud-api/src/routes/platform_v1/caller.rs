@@ -260,6 +260,37 @@ pub async fn authenticate(db: &PgPool, token: Option<&str>) -> Result<PlatformCa
     })
 }
 
+/// Prefix of the `key_id` a console session acts under (rate limits, idempotency
+/// and usage rows are keyed by it, e.g. `console:user_123`).
+pub const CONSOLE_KEY_PREFIX: &str = "console:";
+
+/// The console acting on one project: a signed-in owner (or org admin) calls
+/// `/v1` with their Clerk session plus `X-Allternit-Project: proj_…`. They get
+/// every scope (they could mint a key with any of them) and no account binding.
+/// A project they can't manage, or an archived one, is a 404 like any other.
+pub async fn console_caller(
+    db: &PgPool,
+    who: &super::projects::Principal,
+    project_id: &str,
+) -> Result<PlatformCaller, PlatformError> {
+    let project = super::projects::get_project(db, who, project_id).await?;
+    if project.archived_at.is_some() {
+        return Err(PlatformError::not_found("project_not_found", "No such project."));
+    }
+    Ok(PlatformCaller {
+        project_env: ProjectEnv::parse(&project.env).unwrap_or(ProjectEnv::Sandbox),
+        account_id: None,
+        key_id: format!("{CONSOLE_KEY_PREFIX}{}", who.user_id),
+        scopes: PLATFORM_SCOPES.iter().map(|s| s.to_string()).collect(),
+        owner_user_id: project.owner_user_id,
+        org_id: project.org_id,
+        plan: Plan::parse(&project.plan),
+        rpm_override: project.rpm_override,
+        call_cap_override: project.call_cap_override,
+        project_id: project.id,
+    })
+}
+
 /// The environment a token's prefix claims, if it is shaped like a project key
 /// (`alt_live_`/`alt_test_` + 64 hex).
 pub fn key_env(token: &str) -> Option<ProjectEnv> {

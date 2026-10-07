@@ -1,6 +1,8 @@
 //! Conversations with hosted agents (spec §4 Conversations). Scope `agents`.
 //!
 //! * `POST /v1/agents/{id}/conversations` opens one (no runtime work yet).
+//! * `GET  /v1/agents/{id}/conversations` lists the agent's conversations, oldest
+//!   first, without messages (cursor pages).
 //! * `GET  /v1/conversations/{id}` returns it with its messages, oldest first.
 //! * `POST /v1/conversations/{id}/messages` `{content, stream?}` sends a message
 //!   and answers with the agent's reply; with `stream: true` it answers as
@@ -31,7 +33,7 @@ use sqlx::{FromRow, PgPool};
 use super::{
     agents,
     hosting::{host_for, AgentHost, HostRuntime, SseLines},
-    new_id, ApiJson, PlatformCaller, PlatformError, RouteTable,
+    build_page, new_id, ApiJson, ApiQuery, PageParams, PlatformCaller, PlatformError, RouteTable,
 };
 use crate::ApiState;
 
@@ -40,7 +42,7 @@ const MAX_MESSAGES_RETURNED: i64 = 200;
 
 pub fn register(table: RouteTable) -> RouteTable {
     table
-        .add("/v1/agents/:id/conversations", &["POST"], post(create_conversation))
+        .add("/v1/agents/:id/conversations", &["GET", "POST"], get(list_conversations).post(create_conversation))
         .add("/v1/conversations/:id", &["GET"], get(get_conversation))
         .add("/v1/conversations/:id/messages", &["POST"], post(send_message))
 }
@@ -65,7 +67,7 @@ impl Drop for TurnLock {
     }
 }
 
-#[derive(Debug, Clone, FromRow)]
+#[derive(Debug, Clone, Serialize, FromRow)]
 struct ConvRow {
     id: String,
     account_id: String,
@@ -138,6 +140,41 @@ async fn create_conversation(
     .fetch_one(&state.db)
     .await?;
     Ok((StatusCode::CREATED, Json(conversation_json(&row, Some(vec![])))))
+}
+
+async fn list_conversations(
+    State(state): State<Arc<ApiState>>,
+    caller: PlatformCaller,
+    Path(agent_id): Path<String>,
+    ApiQuery(page): ApiQuery<PageParams>,
+) -> Result<Json<Value>, PlatformError> {
+    caller.require("agents")?;
+    // Same visibility as the agent: another account's agent is a 404.
+    let agent = agents::fetch_visible(&state, &caller, &agent_id).await?;
+    let limit = page.limit()?;
+    let (after_at, after_id) = match page.cursor()? {
+        Some((at, id)) => (Some(at), Some(id)),
+        None => (None, None),
+    };
+    let rows = sqlx::query_as::<_, ConvRow>(&format!(
+        "SELECT {CONV_COLUMNS} FROM platform_conversations \
+         WHERE agent_id = $1 AND project_id = $2 \
+           AND ($3::timestamptz IS NULL OR (created_at, id) > ($3, $4)) \
+         ORDER BY created_at, id LIMIT $5"
+    ))
+    .bind(&agent.id)
+    .bind(&caller.project_id)
+    .bind(after_at)
+    .bind(after_id)
+    .bind(limit + 1)
+    .fetch_all(&state.db)
+    .await?;
+    let page = build_page(rows, limit, |c| (c.created_at, c.id.clone()));
+    Ok(Json(json!({
+        "data": page.data.iter().map(|c| conversation_json(c, None)).collect::<Vec<_>>(),
+        "has_more": page.has_more,
+        "next_cursor": page.next_cursor,
+    })))
 }
 
 /// A conversation the caller may see (its account, its project, a live agent).

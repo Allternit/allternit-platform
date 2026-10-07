@@ -367,6 +367,28 @@ paths:
         in: path
         required: true
         schema: { type: string, examples: ["agent_0123456789abcdef01234567"] }
+    get:
+      operationId: listConversations
+      summary: List an agent's conversations
+      description: The agent's conversations, oldest first, without their messages (use getConversation for those). A key bound to an account sees only that account's agent. Requires the `agents` scope.
+      tags: [Conversations]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/After"
+      responses:
+        "200":
+          description: A page of conversations.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ListEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/Conversation" }
+        default: { $ref: "#/components/responses/Error" }
     post:
       operationId: createConversation
       summary: Start a conversation

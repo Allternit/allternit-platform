@@ -606,6 +606,8 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
                 header::HeaderName::from_static("x-allternit-human-proof"),
                 // Subscriptions: the one-use human action a task send carries.
                 header::HeaderName::from_static("x-allternit-human-action"),
+                // Platform API: the console acting on one project over `/v1`.
+                header::HeaderName::from_static("x-allternit-project"),
                 // Agency API: idempotent creates and SSE resume.
                 header::HeaderName::from_static("idempotency-key"),
                 header::HeaderName::from_static("last-event-id"),
