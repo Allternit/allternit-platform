@@ -87,6 +87,18 @@ Delivery { id, to: string, via: 'session'|'pane'|'pane_queue'|'vendor_ticket'|'c
            at: string, detail: string|null }
 ```
 
+### Peer routes (another computer's engine)
+A paired computer's engine serves these on its peer port (`serve --peer-port 3019`, 127.0.0.1, forwarded over the mesh). Every call needs `Authorization: Bearer <peer ticket>` for that computer. The ticket's user is the caller, and a caller only reaches its own workspace and bots there (`~/.allternit/factory/remote-work/<user>/<team>`).
+- `GET /api/factory/peer/hello` → `{ computerId, engine, user }`
+- `POST /api/factory/peer/teams/:name/up` body `{ files: Record<path, text>, bots: string[], preset?: string, repo?: { url, commit }, dryRun?: boolean }` → `{ plan, applied, results, root }`. `files` is the team folder and must include `team.yaml`; paths are relative, with no `..` (at most 200 files and 4 MiB). Only the `bots` named start, here. `repo.url` must be `https` or `ssh`; the workspace is a clone checked out at `repo.commit`, with `.allternit/` excluded from git. A failed step answers 409 with the same body.
+- `POST /api/factory/peer/teams/:name/down` → like `POST /api/factory/teams/:name/down`, in the caller's workspace.
+- `POST /api/factory/peer/send` body `{ to: "bot@team", text, queue? }` → `{ to, state: "verified" | "queued", messageId?, depth?, reason? }`
+- `POST /api/factory/peer/stop` body `{ to }` → `{ stopped: [to] }`
+- `GET /api/factory/peer/capture?to=bot@team&lines=25` → `{ to, session, lines, text }`
+- `GET /api/factory/peer/agents?team=…` → `{ agents: [{ address, session, harness, live }] }`
+
+Your own engine reaches these through allternit-api: `GET|POST /api/v1/computers/:id/factory-peer/<path>`. `:id` is the computer's id there or cloud-api's `pc_…`. allternit-api gets the ticket, opens the mesh bridge to the computer's peer port, and passes the answer back unchanged. A bot your engine started on another computer is recorded with `runner: "remote:<computer id>"`; its `Agent.machine` is that computer, and `send`, `capture` and `down` go there.
+
 ### Workflows
 - `GET /api/factory/templates` → `{ templates: TemplateSummary[] }`, where `TemplateSummary { id, name, description, steps: number, params: number }`
 - `GET /api/factory/templates/:id` → `Template`

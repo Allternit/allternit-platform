@@ -196,6 +196,8 @@ async fn team_up(State(st): State<TeamsState>, AxPath(name): AxPath<String>, bod
 
 async fn team_down(State(st): State<TeamsState>, AxPath(name): AxPath<String>, body: Option<Json<DownBody>>) -> Response {
     let body = body.map(|Json(b)| b).unwrap_or_default();
+    // Only needed for remote bots; without it they're reported as not stopped.
+    let api = api_for(&st).ok().flatten();
     let root = st.root.clone();
     let res = tokio::task::spawn_blocking(move || -> Result<Response, Response> {
         let team = team::load_team(&root, &name).map_err(|e| team_error(&e))?;
@@ -207,8 +209,23 @@ async fn team_down(State(st): State<TeamsState>, AxPath(name): AxPath<String>, b
         }
         let opts = ApplyOptions { rm_worktree: body.rm_worktree, ..Default::default() };
         let results = team_apply::apply(&root, &team, None, &plan, &opts);
-        let stopped: Vec<&str> = results.iter().filter(|r| r.outcome == StepOutcome::Ok).map(|r| r.step.agent.as_str()).collect();
-        Ok(applied_response(&results, json!({ "stopped": stopped, "plan": plan, "applied": true, "results": results })))
+        let mut stopped: Vec<String> = results.iter().filter(|r| r.outcome == StepOutcome::Ok).map(|r| r.step.agent.clone()).collect();
+        // Bots this team runs on other computers stop there too.
+        let mut remote_failed = Vec::new();
+        for (address, res) in team_apply::down_remote(&team.name, api.as_ref()) {
+            match res {
+                Ok(()) => stopped.push(address),
+                Err(e) => remote_failed.push(json!({ "agent": address, "code": e.code, "fact": e.fact })),
+            }
+        }
+        if let Some(first) = remote_failed.first() {
+            if results.iter().all(|r| r.outcome != StepOutcome::Failed) {
+                let code = first["code"].as_str().unwrap_or("transport").to_string();
+                let fact = format!("{} remote bot(s) not stopped; first: {}", remote_failed.len(), first["fact"].as_str().unwrap_or_default());
+                return Err(error_response(&code, fact, "Check that the computer is online, then run down again.", json!({ "stopped": stopped, "remoteFailed": remote_failed })));
+            }
+        }
+        Ok(applied_response(&results, json!({ "stopped": stopped, "plan": plan, "applied": true, "results": results, "remoteFailed": remote_failed })))
     })
     .await;
     match res {

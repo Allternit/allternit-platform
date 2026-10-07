@@ -100,6 +100,9 @@ pub struct Entry {
     pub dead: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runner: Option<String>,
+    /// The paired computer's name, for a `remote:` runner.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worktree: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -141,7 +144,16 @@ pub struct Entry {
     pub updated_at: Option<String>,
 }
 
+/// `runner` prefix of a bot another computer's engine runs (phase 2):
+/// `remote:<computer id>`.
+pub const REMOTE_RUNNER_PREFIX: &str = "remote:";
+
 impl Entry {
+    /// The paired computer this bot runs on, when it isn't a local pane.
+    pub fn remote_computer(&self) -> Option<&str> {
+        self.runner.as_deref()?.strip_prefix(REMOTE_RUNNER_PREFIX)
+    }
+
     pub fn is_running(&self) -> bool {
         !self.dead && self.lifecycle.as_deref().map_or(true, |l| l == "running")
     }
@@ -290,6 +302,10 @@ pub fn reconcile_file(file: &mut RegistryFile, live: &[LivePane], now: &str) -> 
         live.iter().map(|p| (p.session.as_str(), p)).collect();
     for (session, entry) in file.sessions.iter_mut() {
         let mut changed = false;
+        // Another computer's engine owns a remote bot's liveness.
+        if entry.remote_computer().is_some() {
+            continue;
+        }
         match live_by_session.get(session.as_str()) {
             None if !entry.dead => {
                 entry.dead = true;

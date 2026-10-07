@@ -291,8 +291,23 @@ pub fn down_team(ctx: &Ctx, target: &str, rm_worktree: bool, dry_run: bool) -> O
     }
     let opts = ApplyOptions { rm_worktree, ..Default::default() };
     let results = team_apply::apply(&ctx.root_dir(), &t, None, &plan, &opts);
-    let stopped: Vec<&str> = results.iter().filter(|r| r.outcome == StepOutcome::Ok).map(|r| r.step.agent.as_str()).collect();
-    Some(finish(ctx, json!({ "plan": plan, "applied": true, "stopped": stopped, "results": results }), &results))
+    let mut stopped: Vec<String> = results.iter().filter(|r| r.outcome == StepOutcome::Ok).map(|r| r.step.agent.clone()).collect();
+    // Bots this team runs on other computers stop there too.
+    let api = team_apply::ApiClient::from_env().ok().flatten().map(|c| std::sync::Arc::new(c) as std::sync::Arc<dyn team_apply::FactoryApi>);
+    let remote = team_apply::down_remote(&t.name, api.as_ref());
+    let mut remote_failed = Vec::new();
+    for (address, res) in &remote {
+        match res {
+            Ok(()) => stopped.push(address.clone()),
+            Err(e) => remote_failed.push(json!({ "agent": address, "code": e.code, "fact": e.fact })),
+        }
+    }
+    if !remote_failed.is_empty() && results.iter().all(|r| r.outcome != StepOutcome::Failed) {
+        let first = remote_failed[0]["fact"].as_str().unwrap_or_default().to_string();
+        let code = remote_failed[0]["code"].as_str().unwrap_or("transport").to_string();
+        return Some(fail(ctx, crate::part::code_of(&code), &format!("{} remote bot(s) not stopped; first: {first}", remote_failed.len()), None));
+    }
+    Some(finish(ctx, json!({ "plan": plan, "applied": true, "stopped": stopped, "results": results, "remoteFailed": remote_failed }), &results))
 }
 
 pub fn whoami_cmd(ctx: &Ctx) -> u8 {

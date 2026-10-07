@@ -36,7 +36,7 @@ use serde_json::{json, Value};
 
 use super::backend::{self, LivePane};
 use super::delivery::{self, BotProfile, DeliveryRequest, Field, GateTarget, Label};
-use super::registry::{BotRef, Registry, RegistryFile};
+use super::registry::{self, BotRef, Registry, RegistryFile};
 use super::spawn::{caller_identity, SpawnOptions, Spawner};
 use super::team::{self, Binding, EffectiveBot, LoadedTeam};
 use super::team_plan::{LiveState, PlanAction, TeamPlanStep};
@@ -217,6 +217,12 @@ pub trait FactoryApi: Send + Sync {
     fn paired_computers(&self) -> std::result::Result<Vec<PairedComputer>, ApiError> {
         Err(ApiError::new("not_found", None, "this allternit-api does not list paired computers"))
     }
+    /// A call to a paired computer's Factory engine, carried by allternit-api
+    /// (`/api/v1/computers/:id/factory-peer/<path>`). `method` is GET or POST.
+    fn peer_call(&self, computer: &str, method: &'static str, path: &str, body: Option<Value>) -> std::result::Result<Value, ApiError> {
+        let _ = (computer, method, path, body);
+        Err(ApiError::new("not_found", None, "this allternit-api cannot reach other computers' engines"))
+    }
 }
 
 /// A paired computer, as allternit-api mirrors it from cloud-api.
@@ -389,6 +395,10 @@ impl FactoryApi for ApiClient {
     }
     fn create_node_ticket(&self, body: &Value) -> std::result::Result<Value, ApiError> {
         self.call("POST", "/api/v1/factory/node-tickets", Some(body.clone()))
+    }
+    fn peer_call(&self, computer: &str, method: &'static str, path: &str, body: Option<Value>) -> std::result::Result<Value, ApiError> {
+        let computer: String = computer.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-').collect();
+        self.call(method, &format!("/api/v1/computers/{computer}/factory-peer/{}", path.trim_start_matches('/')), body)
     }
     fn paired_computers(&self) -> std::result::Result<Vec<PairedComputer>, ApiError> {
         let v = self.call("GET", "/api/v1/computers", None)?;
@@ -780,6 +790,132 @@ pub fn apply(
     out
 }
 
+/// Stop `team`'s bots that other computers run: one peer `teams/:name/down`
+/// per computer, then their records here are marked dead. Returns each
+/// remote bot's address and the outcome (an error leaves its record as is).
+pub fn down_remote(team_name: &str, api: Option<&Arc<dyn FactoryApi>>) -> Vec<(String, std::result::Result<(), ApiError>)> {
+    let Ok(file) = Registry::open_default().load() else { return Vec::new() };
+    let mut by_computer: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
+    for (session, e) in &file.sessions {
+        let (Some(computer), Some(bot)) = (e.remote_computer(), e.bot.as_ref()) else { continue };
+        if e.dead || bot.team.as_deref() != Some(team_name) {
+            continue;
+        }
+        let address = format!("{}@{team_name}", bot.name.as_deref().unwrap_or_default());
+        by_computer.entry(computer.to_string()).or_default().push((session.clone(), address));
+    }
+    let mut out = Vec::new();
+    for (computer, bots) in by_computer {
+        let res = match api {
+            Some(api) => api.peer_call(&computer, "POST", &format!("teams/{team_name}/down"), Some(json!({}))).map(|_| ()),
+            None => Err(ApiError::new("transport", None, format!("stopping bots on computer {computer} needs allternit-api: {API_NOT_SET_FACT}"))),
+        };
+        if res.is_ok() {
+            let sessions: Vec<String> = bots.iter().map(|(s, _)| s.clone()).collect();
+            let _ = Registry::open_default().update(|f| {
+                for s in &sessions {
+                    if let Some(e) = f.sessions.get_mut(s) {
+                        e.dead = true;
+                        e.lifecycle = Some("dead".into());
+                    }
+                }
+            });
+        }
+        for (_, address) in bots {
+            out.push((address, res.clone()));
+        }
+    }
+    out
+}
+
+/// The team folder as text files (relative path → contents), for a
+/// computer that runs some of its bots. Skips anything that isn't UTF-8.
+pub fn team_files(dir: &Path) -> BTreeMap<String, String> {
+    fn walk(base: &Path, dir: &Path, out: &mut BTreeMap<String, String>) {
+        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        let mut entries: Vec<_> = rd.flatten().collect();
+        entries.sort_by_key(|e| e.file_name());
+        for e in entries {
+            let path = e.path();
+            let name = e.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') {
+                continue;
+            }
+            if path.is_dir() {
+                walk(base, &path, out);
+            } else if let (Ok(rel), Ok(text)) = (path.strip_prefix(base), std::fs::read_to_string(&path)) {
+                out.insert(rel.to_string_lossy().replace('\\', "/"), text);
+            }
+        }
+    }
+    let mut out = BTreeMap::new();
+    walk(dir, dir, &mut out);
+    out
+}
+
+/// The repo the other computer clones: `origin`'s URL and the commit checked
+/// out here, when the workspace is a git repo with a reachable origin.
+pub fn workspace_repo(root: &Path) -> Option<Value> {
+    let git = |args: &[&str]| -> Option<String> {
+        let out = std::process::Command::new("git").args(args).current_dir(root).output().ok()?;
+        out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_string()).filter(|s| !s.is_empty())
+    };
+    let url = git(&["remote", "get-url", "origin"])?;
+    let commit = git(&["rev-parse", "HEAD"])?;
+    (url.starts_with("https://") || url.starts_with("git@") || url.starts_with("ssh://")).then(|| json!({ "url": url, "commit": commit }))
+}
+
+/// Start `bot` on paired computer `c` through its engine (peer `teams/:name/up`),
+/// and record it here as `remote:<computer>` so `ps`, send, capture and down
+/// reach it.
+fn spawn_remote(root: &Path, team: &LoadedTeam, bot: &EffectiveBot, step: &TeamPlanStep, c: &PairedComputer, api: &Arc<dyn FactoryApi>) -> StepResult {
+    let mut files = team_files(&team.dir);
+    // The team.yaml this plan came from, exactly, and its culture.
+    files.insert(team::TEAM_FILE.to_string(), team.raw.clone());
+    if let Some(culture) = &team.culture {
+        files.entry("CULTURE.md".to_string()).or_insert_with(|| culture.clone());
+    }
+    let mut body = json!({ "files": files, "bots": [bot.slug] });
+    if let Some(repo) = workspace_repo(root) {
+        body["repo"] = repo;
+    }
+    let reply = match api.peer_call(&c.id, "POST", &format!("teams/{}/up", team.name), Some(body)) {
+        Ok(v) => v,
+        Err(e) => return StepResult::failed(step, &e.code, format!("starting {} on {}: {}", bot.address, c.name, e.fact)),
+    };
+    let result = reply["results"].as_array().and_then(|r| r.iter().find(|x| x["step"]["agent"].as_str() == Some(bot.address.as_str())));
+    let outcome = result.and_then(|r| r["outcome"].as_str()).unwrap_or("ok");
+    if outcome == "failed" {
+        let code = result.and_then(|r| r["code"].as_str()).unwrap_or("refused");
+        let fact = result.and_then(|r| r["fact"].as_str()).unwrap_or("failed");
+        return StepResult::failed(step, code, format!("on {}: {fact}", c.name));
+    }
+    let session = crate::agents::spawn::session_name(&pane_slug(&bot.slug, &team.name));
+    let entry = registry::Entry {
+        cwd: reply["root"].as_str().unwrap_or_default().to_string(),
+        runner: Some(format!("{}{}", registry::REMOTE_RUNNER_PREFIX, c.id)),
+        remote_name: Some(c.name.clone()),
+        lifecycle: Some("running".into()),
+        world: Some("engine".into()),
+        harness: bot.harness.clone(),
+        bot: Some(registry::BotRef {
+            id: format!("local:{}", pane_slug(&bot.slug, &team.name)),
+            placeholder: true,
+            name: Some(bot.slug.clone()),
+            team: Some(team.name.clone()),
+            role: Some(bot.role.clone()),
+        }),
+        created_at: Some(chrono::Utc::now().to_rfc3339()),
+        ..Default::default()
+    };
+    if let Err(e) = registry::Registry::open_default().upsert(&session, entry) {
+        return StepResult::failed(step, "internal", format!("started on {} but not recorded here: {e:#}", c.name));
+    }
+    let mut r = StepResult::new(step, StepOutcome::Ok, format!("started on {} ({})", c.name, c.id));
+    r.pane = Some(session);
+    r
+}
+
 #[allow(clippy::too_many_arguments)]
 fn spawn_one(
     root: &Path,
@@ -804,15 +940,7 @@ fn spawn_one(
         };
         return match resolve_machine(machine, &computers) {
             Err((code, fact)) => StepResult::failed(step, code, fact),
-            Ok(c) => StepResult::failed(
-                step,
-                "not_found",
-                format!(
-                    "spawning on another computer ({}, {}) is not built yet: it arrives with the engine peer link. \
-                     Run `allternit-factory agents up {}` on {} itself, or drop --on / the bot's machine",
-                    c.name, c.id, team.name, c.name
-                ),
-            ),
+            Ok(c) => spawn_remote(root, team, bot, step, c, api),
         };
     }
     let harness = bot.harness.clone().unwrap_or_default();
@@ -1059,6 +1187,11 @@ mod tests {
                 PairedComputer { id: "pc_2".into(), name: "Mail VPS".into(), mesh_ip: None },
             ])
         }
+        fn peer_call(&self, computer: &str, method: &'static str, path: &str, body: Option<Value>) -> std::result::Result<Value, ApiError> {
+            self.calls.lock().unwrap().push(json!({ "computer": computer, "method": method, "path": path, "body": body }));
+            let agent = body.as_ref().and_then(|b| b["bots"][0].as_str()).map(|b| format!("{b}@product-build")).unwrap_or_default();
+            Ok(json!({ "applied": true, "root": "/remote/root", "results": [{ "step": { "agent": agent }, "outcome": "ok" }] }))
+        }
     }
 
     #[test]
@@ -1087,22 +1220,37 @@ mod tests {
 
     #[test]
     fn spawn_on_a_machine_checks_the_paired_computers() {
+        let home = tempfile::tempdir().unwrap();
+        std::env::set_var("ALLTERNIT_FACTORY_HOME", home.path());
         let t = parse_team("product-build", GOOD).unwrap();
-        let api: Arc<dyn FactoryApi> = Arc::new(FakeApi { calls: Mutex::new(vec![]) });
+        let fake = Arc::new(FakeApi { calls: Mutex::new(vec![]) });
+        let api: Arc<dyn FactoryApi> = fake.clone();
         let opts = ApplyOptions { api: Some(api), ..Default::default() };
         let run = |on: &str, opts: &ApplyOptions| {
             let plan = plan_up(&t, None, Some(on), &LiveState::default()).unwrap();
             let spawn: Vec<TeamPlanStep> = plan.iter().filter(|s| s.action == PlanAction::Spawn).cloned().collect();
             let root = tempfile::tempdir().unwrap();
             let res = apply(root.path(), &t, None, &spawn, opts);
-            // Nothing is ever delivered for a remote bot here.
+            // Nothing is delivered here for a remote bot.
             assert!(!root.path().join("CLAUDE.md").exists());
             (res[0].code.clone(), res[0].fact.clone())
         };
-        // A real, online computer (by name, any case): found, then not built yet.
+        // A real, online computer (by name, any case): started there through
+        // its engine, and recorded here as remote.
         let (code, fact) = run("mac MINI", &opts);
-        assert_eq!(code.as_deref(), Some("not_found"));
-        assert!(fact.contains("Mac mini, pc_1") && fact.contains("not built yet"), "{fact}");
+        assert_eq!(code, None, "{fact}");
+        assert!(fact.contains("started on Mac mini (pc_1)"), "{fact}");
+        let call = fake.calls.lock().unwrap().iter().find(|c| c["computer"] == "pc_1").cloned().unwrap();
+        assert_eq!(call["path"], "teams/product-build/up");
+        assert!(call["body"]["files"]["team.yaml"].is_string(), "{call}");
+        let file = Registry::open_default().load().unwrap();
+        let remote: Vec<_> = file.sessions.values().filter(|e| e.remote_computer() == Some("pc_1")).collect();
+        assert!(!remote.is_empty());
+        assert_eq!(remote[0].cwd, "/remote/root");
+        // Reconcile with no local panes leaves a remote bot alone.
+        let mut file = file;
+        crate::agents::registry::reconcile_file(&mut file, &[], "now");
+        assert!(file.sessions.values().filter(|e| e.remote_computer().is_some()).all(|e| !e.dead));
         // A typo: refused with the list.
         let (code, fact) = run("mac-mini", &opts);
         assert_eq!(code.as_deref(), Some("not_found"));
@@ -1111,6 +1259,13 @@ mod tests {
         let (code, fact) = run("pc_2", &opts);
         assert_eq!(code.as_deref(), Some("refused"));
         assert!(fact.contains("hasn't joined"), "{fact}");
+        // Team down stops the remote bots on their computer and marks them dead here.
+        let fake_api: Arc<dyn FactoryApi> = fake.clone();
+        let stopped = down_remote("product-build", Some(&fake_api));
+        assert!(!stopped.is_empty() && stopped.iter().all(|(_, r)| r.is_ok()));
+        assert!(fake.calls.lock().unwrap().iter().any(|c| c["path"] == "teams/product-build/down"));
+        let file = Registry::open_default().load().unwrap();
+        assert!(file.sessions.values().filter(|e| e.remote_computer().is_some()).all(|e| e.dead));
         // Without allternit-api the name can't be checked.
         let (code, _) = run("Mac mini", &ApplyOptions::default());
         assert_eq!(code.as_deref(), Some("transport"));

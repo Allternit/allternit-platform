@@ -165,9 +165,17 @@ pub fn entry_agent(session: &str, entry: &Entry, pane: Option<&LivePane>, machin
         avatar: None,
         role: bot.role.clone(),
         binding: Binding { kind: "terminal".into(), harness: entry.harness.clone(), ..Default::default() },
-        state: entry_state(entry, pane).to_string(),
-        machine: Some(machine.clone()),
-        pane: pane.map(|p| PaneRef { id: p.pane_id.clone(), attachable: true }),
+        state: match entry.remote_computer() {
+            // Up as far as this computer knows; `refresh_remote` asks its engine.
+            Some(_) if entry.dead => "offline".to_string(),
+            Some(_) => "idle".to_string(),
+            None => entry_state(entry, pane).to_string(),
+        },
+        machine: Some(match entry.remote_computer() {
+            Some(id) => Machine { id: id.to_string(), name: entry.remote_name.clone().unwrap_or_else(|| id.to_string()) },
+            None => machine.clone(),
+        }),
+        pane: if entry.remote_computer().is_some() { None } else { pane.map(|p| PaneRef { id: p.pane_id.clone(), attachable: true }) },
         current_node: None,
         proof: None,
         context: ContextUse::default(),
@@ -248,6 +256,36 @@ pub async fn snapshot(root: &std::path::Path, registry: &Registry, cwd: Option<&
     Ok(Snapshot { agents: agents(&file, &live, &peers), reconciled, panes_checked, engine })
 }
 
+/// Ask each paired computer's engine which of our remote bots are live, and
+/// mark the rest offline. Computers that can't be reached leave their bots
+/// as they were (a misread must not mark them gone).
+pub fn refresh_remote(agents: &mut [Agent], api: &dyn super::team_apply::FactoryApi) {
+    let mut asked: BTreeMap<(String, String), Option<Vec<String>>> = BTreeMap::new();
+    for a in agents.iter_mut() {
+        let (Some(m), Some(team)) = (&a.machine, &a.team) else { continue };
+        if m.id == "local" || a.state == "offline" {
+            continue;
+        }
+        let key = (m.id.clone(), team.clone());
+        let live = asked.entry(key.clone()).or_insert_with(|| {
+            api.peer_call(&key.0, "GET", &format!("agents?team={}", key.1), None).ok().map(|v| {
+                v["agents"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|x| x["live"] == true)
+                    .filter_map(|x| x["address"].as_str().map(str::to_string))
+                    .collect()
+            })
+        });
+        if let Some(live) = live {
+            if !live.contains(&a.address) {
+                a.state = "offline".into();
+            }
+        }
+    }
+}
+
 /// Find an agent by id, address, slug or session label.
 pub fn find<'a>(agents: &'a [Agent], key: &str) -> Option<&'a Agent> {
     let key_slug = slug_of(key);
@@ -323,4 +361,34 @@ mod tests {
         assert_eq!(v["binding"]["type"], "terminal");
         assert!(v.get("currentNode").is_some() && v["context"].get("usedPct").is_some());
     }
+
+    #[test]
+    fn remote_bots_show_their_computer_and_follow_its_engine() {
+        use crate::agents::team_apply::{ApiError, FactoryApi};
+        let mut reg = RegistryFile::default();
+        let remote = |name: &str| Entry {
+            runner: Some("remote:pc_1".into()),
+            remote_name: Some("Mac mini".into()),
+            bot: Some(BotRef { id: format!("local:{name}-t"), placeholder: true, name: Some(name.into()), team: Some("t".into()), role: None }),
+            ..Default::default()
+        };
+        reg.sessions.insert("ao-up-t".into(), remote("up"));
+        reg.sessions.insert("ao-gone-t".into(), remote("gone"));
+        let mut list = agents(&reg, &[], &[]);
+        assert!(list.iter().all(|a| a.state == "idle" && a.machine.as_ref().unwrap().name == "Mac mini"));
+        struct Peer;
+        impl FactoryApi for Peer {
+            fn upsert_bot(&self, _: &Value) -> Result<Value, ApiError> { unreachable!() }
+            fn list_bots(&self) -> Result<Vec<Value>, ApiError> { Ok(vec![]) }
+            fn create_node_ticket(&self, _: &Value) -> Result<Value, ApiError> { unreachable!() }
+            fn peer_call(&self, computer: &str, _: &'static str, path: &str, _: Option<Value>) -> Result<Value, ApiError> {
+                assert_eq!((computer, path), ("pc_1", "agents?team=t"));
+                Ok(serde_json::json!({ "agents": [{ "address": "up@t", "live": true }, { "address": "gone@t", "live": false }] }))
+            }
+        }
+        refresh_remote(&mut list, &Peer);
+        let state = |addr: &str| list.iter().find(|a| a.address == addr).unwrap().state.clone();
+        assert_eq!((state("up@t"), state("gone@t")), ("idle".to_string(), "offline".to_string()));
+    }
+
 }
