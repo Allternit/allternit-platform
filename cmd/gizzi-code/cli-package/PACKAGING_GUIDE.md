@@ -43,12 +43,12 @@ list — https://github.com/Allternit/allternit-platform/releases):
 
 ```bash
 # macOS (Apple Silicon)
-curl -LO https://github.com/Allternit/allternit-platform/releases/download/gizzi-code/v2.2.1/gizzi-code-v2.2.1-darwin-arm64.tar.gz
+curl -LO https://github.com/Allternit/allternit-platform/releases/download/gizzi-code/v2.2.2/gizzi-code-v2.2.2-darwin-arm64.tar.gz
 tar -xzf gizzi-code-v1.0.2-darwin-arm64.tar.gz
 mv gizzi-code /usr/local/bin/gizzi-code
 
 # Linux (x64)
-curl -LO https://github.com/Allternit/allternit-platform/releases/download/gizzi-code/v2.2.1/gizzi-code-v2.2.1-linux-x64.tar.gz
+curl -LO https://github.com/Allternit/allternit-platform/releases/download/gizzi-code/v2.2.2/gizzi-code-v2.2.2-linux-x64.tar.gz
 tar -xzf gizzi-code-v1.0.2-linux-x64.tar.gz
 mv gizzi-code /usr/local/bin/gizzi-code
 ```

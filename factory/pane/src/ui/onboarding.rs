@@ -1,6 +1,6 @@
 use ratatui::layout::Rect;
 
-pub(crate) const ONBOARDING_TITLE: &str = "  ao";
+pub(crate) const ONBOARDING_TITLE: &str = "  Allternit Factory";
 pub(crate) const ONBOARDING_SUBTITLE: &str = "  terminal workspace manager for coding agents";
 pub(crate) const ONBOARDING_DESCRIPTION: [&str; 3] = [
     "  this is a mouse-first terminal.",

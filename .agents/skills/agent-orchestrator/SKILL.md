@@ -16,7 +16,23 @@ The Factory is what Gizzi and Allternit Desktop both run. People and agents type
 
 ## Old names
 
-The pre-Factory orchestration scripts and CLIs are retired and their names are removed, not aliased. The old → new command table is on the docs migration page (`surfaces/docs/factory/migration.mdx`). If a `gizzi` verb answers exit `2` "not built yet", say so in your report; don't reach for a removed tool.
+The `ao-*` scripts and `allternit-rails` are gone (removed 2026-10-06, after the `gizzi` commands passed the end-to-end check on gizzi-code 2.2.1). If a note or task file still names one, use the Factory command:
+
+| Old | Factory |
+|---|---|
+| `ao-doctor` | `gizzi doctor`, `gizzi agents doctor`, `gizzi agents harness list` |
+| `ao-spawn [--worktree] <slug> <repo> "<cmd>"` | `git worktree add` + team file + `gizzi agents up <team> --workdir <wt>` |
+| `ao-send <slug> "…"` | `gizzi orchestration send <bot@team> "…" [--queue]` |
+| `ao-watch <slug> <sentinel>` | sentinel loop over `gizzi orchestration capture` + `gizzi agents ps --json` (Phase 4) |
+| `ao-status [slug] [lines]` | `gizzi agents ps`, `gizzi orchestration capture <bot@team> [lines]` |
+| `ao-kill <slug> [--rm-worktree]` | `gizzi agents down <team> [--rm-worktree]` |
+| `ao recover` | `gizzi agents recover [--apply]` |
+| `ao drain` | `gizzi orchestration drain <bot@team> [--all]` |
+| `allternit-rails plan new` / `wih pickup` | `gizzi workspace plan new` / `gizzi workspace node claim` |
+| `allternit-rails peer list` / `peer send` | `gizzi agents ps` / `gizzi orchestration send` |
+| `~/.agent-orchestrator/state.json` | `~/.allternit/factory/registry.json` (migrated once by the engine) |
+
+If a `gizzi` Factory verb exits `3` (engine missing), install it: it ships with Allternit Desktop and `brew install allternit/tap/gizzi-code`, or set `$ALLTERNIT_FACTORY_BIN` to a dev build. There is no script fallback.
 
 ## Gate 0 — Enter the DAG first
 

@@ -836,7 +836,7 @@ mod tests {
         let _guard = env_lock().lock().unwrap();
         std::env::remove_var(SESSION_ENV_VAR);
 
-        assert_eq!(local_attach_command(), "ao");
+        assert_eq!(local_attach_command(), "allternit-factory pane");
     }
 
     #[test]

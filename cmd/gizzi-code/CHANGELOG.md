@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.2.2 (2026-10-06)
+
+### Fixed
+- `gizzi agents harness list` showed the Allternit MCP server as broken for
+  every harness, and `harness sync` would have written a `~` path that
+  `node` can't open. The server's path is now expanded.
+- The Factory's terminal window title and first-run screen use the Factory
+  name instead of `ao`.
+
 ## 2.2.1 (2026-10-06)
 
 ### Fixed

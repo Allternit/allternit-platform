@@ -169,8 +169,22 @@ fn load_manifest() -> std::io::Result<Manifest> {
     } else {
         EMBEDDED_MANIFEST.to_string()
     };
-    serde_json::from_str(&text)
-        .map_err(|err| std::io::Error::new(ErrorKind::InvalidData, format!("invalid harness manifest: {err}")))
+    let mut manifest: Manifest = serde_json::from_str(&text)
+        .map_err(|err| std::io::Error::new(ErrorKind::InvalidData, format!("invalid harness manifest: {err}")))?;
+    expand_mcp_server(&mut manifest.source.mcp_server);
+    Ok(manifest)
+}
+
+/// The MCP server's command and args are written into each harness's config
+/// and run by that harness, which doesn't expand `~`. Expand them once here so
+/// status compares against the real path the configs hold, and sync writes a
+/// path `node` can open.
+fn expand_mcp_server(server: &mut McpServer) {
+    let expand_str = |s: &str| if s.starts_with('~') { expand(s).to_string_lossy().into_owned() } else { s.to_string() };
+    server.command = expand_str(&server.command);
+    for arg in &mut server.args {
+        *arg = expand_str(arg);
+    }
 }
 
 /// Doctor entry point (cli/ao.rs): load the manifest for the harness section.
@@ -892,5 +906,25 @@ mod tests {
             && fixed(19, '.')
             && (20..23).all(digits)
             && fixed(23, 'Z')
+    }
+}
+
+#[cfg(test)]
+mod mcp_home_tests {
+    use super::*;
+
+    #[test]
+    fn mcp_server_paths_are_expanded() {
+        let home = std::env::var("HOME").unwrap();
+        let mut server = McpServer { name: "x".into(), command: "node".into(), args: vec!["~/a b/index.js".into(), "--flag".into()] };
+        expand_mcp_server(&mut server);
+        assert_eq!(server.command, "node");
+        assert_eq!(server.args, vec![format!("{home}/a b/index.js"), "--flag".to_string()]);
+    }
+
+    #[test]
+    fn embedded_manifest_has_no_tilde_in_mcp_args() {
+        let m = load_manifest().unwrap();
+        assert!(m.source.mcp_server.args.iter().all(|a| !a.starts_with('~')), "{:?}", m.source.mcp_server.args);
     }
 }

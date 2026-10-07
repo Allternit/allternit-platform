@@ -47,3 +47,5 @@ cmd/allternit-api/src/bot_desktop_mux.rs @herdr-env              # sets the pane
 cmd/allternit-computer-cloud/guest/build-image.sh @herdr-env      # cloud guest unit sets the pane engine's session env
 cmd/allternit-computer-cloud/guest/cloud-init.yaml @herdr-env     # same, for cloud-init guests
 services/workspace-service/tests/** @herdr-env                    # tests isolate a pane server via HERDR_SESSION / HERDR_SOCKET_PATH
+tools/agent-orchestrator/SKILL.md             # its "Old names" section: old → new command table (migration reference)
+.agents/skills/agent-orchestrator/SKILL.md    # same skill, in-repo copy
