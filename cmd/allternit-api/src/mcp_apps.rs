@@ -101,8 +101,26 @@ fn unauthorized() -> AppsError {
     )
 }
 
+/// The owner-approval link an Allternit MCP edge sends with `403 approval_required` (the app signed in, but the
+/// owner hasn't approved it yet). Only an https `allternit.com` link is trusted: it is shown to the user.
+pub(crate) fn approval_url_in(body: &str) -> Option<String> {
+    let v: Value = serde_json::from_str(body).ok()?;
+    if v.get("error").and_then(Value::as_str) != Some("approval_required") {
+        return None;
+    }
+    let url = v.get("approve_url").and_then(Value::as_str)?;
+    let parsed = url::Url::parse(url).ok()?;
+    let host = parsed.host_str()?.to_ascii_lowercase();
+    (parsed.scheme() == "https" && (host == "allternit.com" || host.ends_with(".allternit.com"))).then(|| url.to_string())
+}
+
 pub(crate) fn upstream_error(err: McpError) -> AppsError {
     match err {
+        McpError::Transport(TransportError::Http { status: 403, ref message }) if approval_url_in(message).is_some() => AppsError::new(
+            StatusCode::BAD_GATEWAY,
+            "connector_approval_required",
+            approval_url_in(message).unwrap_or_default(),
+        ),
         McpError::Transport(TransportError::Http { status, .. }) if status == 401 || status == 403 => unauthorized(),
         // The SSE transport reports a 401 as an expired OAuth token.
         McpError::OAuth(_) => unauthorized(),
@@ -1424,6 +1442,25 @@ async fn emit_for_connector(
 
 #[cfg(test)]
 pub(crate) mod tests {
+    #[test]
+    fn approval_required_carries_only_an_allternit_approve_link() {
+        let ok = r#"{"error":"approval_required","client":"c","approve_url":"https://ai.allternit.com/mcp/approve?client=c&target=agents"}"#;
+        assert_eq!(super::approval_url_in(ok).as_deref(), Some("https://ai.allternit.com/mcp/approve?client=c&target=agents"));
+        for bad in [
+            r#"{"error":"approval_required","approve_url":"https://evil.example.com/approve"}"#,
+            r#"{"error":"approval_required","approve_url":"http://ai.allternit.com/x"}"#,
+            r#"{"error":"approval_required","approve_url":"https://allternit.com.evil.io/x"}"#,
+            r#"{"error":"forbidden","approve_url":"https://ai.allternit.com/x"}"#,
+            "not json",
+        ] {
+            assert_eq!(super::approval_url_in(bad), None, "{bad}");
+        }
+        let e = super::upstream_error(McpError::Transport(TransportError::Http { status: 403, message: ok.into() }));
+        assert_eq!(e.code, "connector_approval_required");
+        let e = super::upstream_error(McpError::Transport(TransportError::Http { status: 403, message: "{}".into() }));
+        assert_eq!(e.code, "connector_unauthorized");
+    }
+
     use super::*;
 
     #[test]

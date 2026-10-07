@@ -524,6 +524,13 @@ fn classify_maps_every_events_error_code() {
     assert_eq!(classify_error(&rpc(-32602, None)).reason, "invalid_arguments");
     assert_eq!(classify_error(&McpError::Transport(TransportError::Http { status: 401, message: String::new() })).status, "needs_reauth");
     assert!(is_transient("timeout") && is_transient("cloud_unreachable") && !is_transient("event_not_found"));
+    // Allternit's edge: signed in, but the owner hasn't approved the app yet → the link, retried until approved.
+    let body = r#"{"error":"approval_required","approve_url":"https://ai.allternit.com/mcp/approve?client=c&target=agents"}"#;
+    let f = classify_error(&mcp_client::McpError::Transport(mcp_client::TransportError::Http { status: 403, message: body.into() }));
+    assert_eq!((f.status, f.reason.as_str(), f.message.as_str()), ("error", "approval_required", "https://ai.allternit.com/mcp/approve?client=c&target=agents"));
+    assert!(is_transient("approval_required"));
+    let plain = classify_error(&mcp_client::McpError::Transport(mcp_client::TransportError::Http { status: 403, message: "{}".into() }));
+    assert_eq!(plain.status, "needs_reauth");
 }
 
 #[test]
