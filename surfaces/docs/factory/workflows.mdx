@@ -89,6 +89,27 @@ gizzi workflows template save release-check.md --dry-run   # what would be saved
 gizzi workflows template save release-check.md --id release
 ```
 
+### Save a run as a Template
+
+When a run worked and you want it again, `gizzi workflows template save --from-run <dag>` turns that run's DAG back into a Template and saves it as `<id>.json`. The plan root's title becomes the Template's name, and the id defaults to that title in lowercase with hyphens (pass `--id` to choose). Every other node becomes a step, in dependency order:
+
+- The `blocked_by` edges between nodes become the steps' `blocked_by`.
+- Node ids a Template made (`draft-a1f3`) get their step ids back (`draft`), and `{{ <node>.output }}` references are rewritten to match.
+- `retry:safe`, `on_fail` and `max_rounds` labels, wait-gates (with their evidence), and the root's closure texts come back as the Template declared them.
+- Executors stay as the nodes carry them (`bot:<slug>` or `ao:<harness>`). Swap in `role:` executors by hand if the Template should work for other teams.
+- Param values were already filled in, so they stay as plain text. Add `params` by hand if you want them back.
+
+The result goes through the same check as any Template, and the same `--force` and `--dry-run` rules apply. If some steps of the run hadn't finished, the save still works but prints a note (with `--json`: `fromRun.finished: false`), so look the Template over with `template show` before you use it.
+
+Starting a Template from the app's composer (**Run as**) fills its `role:` steps from your team. With one team in the workspace it's used automatically. With more than one, a **with** picker next to the project picker chooses the team.
+
+In the app, a project's Flow tab has **Save as template** under the run's graph, on Desktop, ai.allternit.com and the phone. It asks for the template name (the run's title by default), saves it, and offers **Replace it** if that name is taken. The saved template shows up in Workflows.
+
+```bash
+gizzi workflows template save --from-run dag_7f2c --dry-run
+gizzi workflows template save --from-run dag_7f2c --id weekly-release
+```
+
 ## Build, check, prove
 
 ```mermaid

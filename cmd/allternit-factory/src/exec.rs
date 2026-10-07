@@ -118,16 +118,6 @@ pub fn fail(ctx: &Ctx, code: Code, fact: &str, action: Option<&str>) -> u8 {
     code.exit()
 }
 
-/// A specified verb with no implementation yet (API.md §2).
-pub fn not_built(ctx: &Ctx, part: &str, verb: &str, action: &str) -> u8 {
-    fail(
-        ctx,
-        Code::NotFound,
-        &format!("{part} {verb} is not built yet"),
-        Some(action),
-    )
-}
-
 /// Print a successful JSON result.
 pub fn ok_json(value: Value) -> u8 {
     println!("{value}");

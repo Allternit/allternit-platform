@@ -80,21 +80,22 @@ fn help_lists_the_four_parts_and_hides_internal() {
 }
 
 #[test]
-fn not_built_verbs_say_so_with_exit_2() {
+fn verbs_served_elsewhere_point_there_with_exit_64() {
     let home = tempfile::tempdir().unwrap();
     for (args, fact) in [
-        (vec!["agents", "templates", "--json"], "agents templates is not built yet"),
+        (vec!["agents", "templates", "--json"], "agents templates is served by Gizzi, not the engine"),
+        (vec!["agents", "wall", "build", "--json"], "agents wall is interactive and has no JSON form"),
     ] {
         let out = factory(home.path(), &args);
-        assert_eq!(out.status.code(), Some(2), "{args:?}");
-        assert_eq!(error_of(&out), ("not_found".to_string(), fact.to_string()), "{args:?}");
+        assert_eq!(out.status.code(), Some(64), "{args:?}");
+        assert_eq!(error_of(&out), ("usage".to_string(), fact.to_string()), "{args:?}");
     }
 
-    // Without --json: nothing on stdout, the fact on stderr, same exit code.
+    // Without --json: nothing on stdout, the fact and the pointer on stderr.
     let out = factory(home.path(), &["agents", "templates"]);
-    assert_eq!(out.status.code(), Some(2));
+    assert_eq!(out.status.code(), Some(64));
     assert!(out.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("agents templates is not built yet"));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("gizzi agents templates"));
 }
 
 #[test]

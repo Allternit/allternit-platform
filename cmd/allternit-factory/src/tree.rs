@@ -6,7 +6,7 @@ use clap::{Args, Parser, Subcommand};
 use serde_json::json;
 
 use crate::exec::{
-    dry_run, fail, not_built, run, run_pane_interactive, run_rails_in_process,
+    dry_run, fail, run, run_pane_interactive, run_rails_in_process,
     run_shaped, Code, Ctx, Target,
 };
 
@@ -154,9 +154,9 @@ pub enum AgentsCmd {
     /// Bots in allternit-api: add.
     #[command(subcommand)]
     Bot(crate::bots::BotCmd),
-    /// Agent templates.
+    /// Bot templates (served by Gizzi: `gizzi agents templates`).
     Templates(Planned),
-    /// Open the live terminal wall of running agents.
+    /// Open the live terminal wall of running agents (one team's with `<team>`).
     Wall { team: Option<String> },
     /// Attach to one agent terminal (by terminal id).
     Attach { terminal: String },
@@ -164,7 +164,7 @@ pub enum AgentsCmd {
     Doctor,
 }
 
-/// Arguments of a verb that is not built yet (accepted, then refused honestly).
+/// Free-form arguments a verb parses itself.
 #[derive(Args)]
 pub struct Planned {
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -285,7 +285,7 @@ pub enum TemplateCmd {
     Show { template: String },
     /// Parse a template (id or file) and report its parameters.
     Check { template: String },
-    /// Check a template file and save it to this workspace (--id, --force, --dry-run).
+    /// Save a template file, or a finished run (--from-run <dag>), to this workspace (--id, --force, --dry-run).
     Save(Planned),
 }
 
@@ -644,7 +644,6 @@ fn serve(ctx: &Ctx, args: ServeArgs) -> u8 {
 }
 
 fn agents(ctx: &Ctx, cmd: AgentsCmd) -> u8 {
-    const TEAM: &str = "Not in the engine yet; edit team.yaml and run `agents up <team>` again.";
     match cmd {
         AgentsCmd::Up(args) => crate::bots::up(ctx, args),
         AgentsCmd::Whoami => crate::bots::whoami_cmd(ctx),
@@ -655,7 +654,14 @@ fn agents(ctx: &Ctx, cmd: AgentsCmd) -> u8 {
         AgentsCmd::Bot(cmd) => crate::bots::bot(ctx, cmd),
         AgentsCmd::Model(p) => crate::part::model(ctx, &p.args),
         AgentsCmd::Handoff(p) => crate::part::handoff(ctx, &p.args),
-        AgentsCmd::Templates(_) => not_built(ctx, "agents", "templates", TEAM),
+        // Bot templates live in Gizzi (its specialist templates and their
+        // create/export/import), not in the engine.
+        AgentsCmd::Templates(_) => fail(
+            ctx,
+            Code::Usage,
+            "agents templates is served by Gizzi, not the engine",
+            Some("Use `gizzi agents templates` (list, create, export, import)."),
+        ),
         AgentsCmd::Ps { cwd } => crate::part::ps(ctx, cwd),
         AgentsCmd::Down { slug, rm_worktree, dry_run: dry } => {
             if let Some(code) = crate::bots::down_team(ctx, &slug, rm_worktree, dry) {
@@ -677,12 +683,7 @@ fn agents(ctx: &Ctx, cmd: AgentsCmd) -> u8 {
             run(&ctx, Target::Pane(args))
         }
         AgentsCmd::Doctor => run(ctx, Target::Pane(vec!["doctor".into()])),
-        AgentsCmd::Wall { team: Some(_) } => not_built(
-            ctx,
-            "agents",
-            "wall",
-            "A team-scoped wall needs teams (team.yaml); run `agents wall` with no team for every running agent.",
-        ),
+        AgentsCmd::Wall { team: Some(team) } => crate::part::wall(ctx, &team),
         AgentsCmd::Wall { team: None } => {
             if ctx.json {
                 return fail(ctx, Code::Usage, "agents wall is interactive and has no JSON form", None);

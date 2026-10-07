@@ -107,6 +107,10 @@ gizzi agents up product-build --on build-box
 
 `--on` boots the team's panes on another machine you've connected (a Mac, a Linux box or a cloud computer). This is also how Gizzi on Windows runs a team, because the pane engine is Unix-only.
 
+## Bot templates
+
+`gizzi agents templates` browses Gizzi's specialist bot templates (engineer, reviewer, DevOps, QA, product and others). `list [category] [--json]` prints them, `create <template>` makes an agent from one, and `export` / `import` move an agent between machines as a file. The templates live in Gizzi, so the engine's own `allternit-factory agents templates` points you to Gizzi (exit `64`). This replaces `gizzi agent-hub`.
+
 ## Harnesses
 
 `gizzi agents harness list` shows the agent CLIs on a machine (Claude Code, Codex, Kimi, Grok, Antigravity, Gizzi and others): whether each is installed, and whether Allternit's skills, MCP server and rules are synced into it. `gizzi agents harness sync` brings them up to date. Discovery is local; no network calls are made. This replaces `gizzi runtime`.
@@ -114,7 +118,8 @@ gizzi agents up product-build --on build-box
 ## Watching and attaching
 
 - `gizzi agents ps` lists every bot with its binding, state, current node and proof count. Running sessions are checked against the live panes on every `ps`, so a dead process shows as dead, never as running.
-- `gizzi agents wall [<team>]` opens the live wall of terminals in the engine's pane view. `ctrl+b q` returns you to Gizzi.
+- `gizzi agents wall` opens the live wall of terminals in the engine's pane view. `ctrl+b q` returns you to Gizzi.
+- `gizzi agents wall <team>` opens the same wall with its Agents panel narrowed to that team's running bots (the panel is titled `team <name>`) and focused on the first one. The narrowed view goes away when you close the wall. With none of the team's bots running it says so (exit `2`) and suggests `gizzi agents up <team>`. The view belongs to the shared wall session, so anyone attached to the wall at the same time sees it too.
 - `gizzi agents attach <bot@team>` depends on the binding. A Terminal bot opens its pane. A Hosted bot opens its session right in Gizzi's TUI. A Vendor bot shows its thread and ticket status, because it has no terminal.
 - `gizzi agents recover` shows what it would restart after a crash. `--apply` does it. A session qualifies when its pane is gone, it isn't finished, and its notes sentinel (if it has one) doesn't say `status: done`. Only the lead that started it can restart it (`--lead <id>`, else `$ALLTERNIT_FACTORY_LEAD` or your user name), unless you pass `--as-human`. The restart goes through the same spawn gate as any spawn, with the bot's identity and WIH kept, and uses the harness's own resume when the original launch named a session (`claude --resume`, `codex resume`, `kimi --session`, `agy --conversation`, `grok --resume`).
 - `gizzi agents down <bot@team>` stops one bot's pane; `gizzi agents down <team>` stops the team's.

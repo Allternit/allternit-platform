@@ -865,12 +865,6 @@ fn live_handoff_preserves_installed_plugins() {
 }
 
 #[test]
-// On macOS the connected client shell never receives the live-handoff
-// shutdown notice (it passes on Linux upstream). Nothing in the product
-// triggers live handoff yet: Desktop restarts the engine on update, and the
-// self-updater that used --handoff was removed. Fix before Desktop adopts
-// live handoff for engine updates (tracked in the Factory handoff doc).
-#[cfg_attr(target_os = "macos", ignore = "live handoff client shutdown notice not delivered on macOS; unused by the product today")]
 fn live_handoff_preserves_pane_process_io() {
     let _lock = test_lock();
     let base = unique_test_dir();

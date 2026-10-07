@@ -19,8 +19,10 @@ use serde_json::Value;
 
 use crate::api::client::ApiClient;
 use crate::api::schema::{
-    LayoutApplyParams, LayoutNode, LayoutPane, Method, PaneListParams, PaneReadParams,
+    AgentViewBuiltinField, AgentViewClearParams, AgentViewField, AgentViewFilter,
+    AgentViewSetParams, AgentViewValue, LayoutApplyParams, LayoutNode, LayoutPane, Method, PaneListParams, PaneReadParams,
     PaneSendInputParams, ReadFormat, ReadSource, WorkspaceCloseParams, WorkspaceCreateParams,
+    WorkspaceTarget,
 };
 use crate::cli::ao::{self as ao, CallError};
 
@@ -330,5 +332,100 @@ impl PaneBackend for PaneEngine {
             std::thread::sleep(Duration::from_millis(100));
         }
         Ok(())
+    }
+}
+
+/// Agent-view source of a team's wall (`agents wall <team>`). Clearing by
+/// source leaves any other view (another team's wall, a plugin's) alone.
+pub fn wall_view_source(team: &str) -> String {
+    let team: String = team
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') { c } else { '-' })
+        .take(100)
+        .collect();
+    format!("factory:wall:{team}")
+}
+
+/// The Agents-panel view that shows only `workspace_ids`, titled with the
+/// team name. The engine caps an `in` list at 32 values, so longer teams are
+/// split into several lists joined by `any`.
+fn wall_view_params(team: &str, workspace_ids: &[String]) -> AgentViewSetParams {
+    let lists: Vec<AgentViewFilter> = workspace_ids
+        .chunks(32)
+        .map(|ids| AgentViewFilter::In {
+            field: AgentViewField::Builtin(AgentViewBuiltinField::WorkspaceId),
+            values: ids.iter().cloned().map(AgentViewValue::String).collect(),
+        })
+        .collect();
+    let filter = match lists.len() {
+        1 => lists.into_iter().next(),
+        _ => Some(AgentViewFilter::Any { filters: lists }),
+    };
+    let label: String = format!("team {team}").chars().take(32).collect();
+    AgentViewSetParams { source: wall_view_source(team), label: Some(label), filter, sort: Vec::new() }
+}
+
+/// Narrow the wall's Agents panel to a team's live agent workspaces (labels
+/// `ao-<slug>`) and focus the first. Returns how many of them are live; with
+/// none live it changes nothing.
+pub fn set_wall_view(team: &str, sessions: &[String]) -> Result<usize> {
+    let client = client();
+    let ids: Vec<String> = agent_workspaces(&client)
+        .map_err(err)?
+        .into_iter()
+        .filter(|(label, _)| sessions.iter().any(|s| s == label))
+        .map(|(_, id)| id)
+        .collect();
+    let Some(first) = ids.first().cloned() else { return Ok(0) };
+    ao::call(&client, Method::AgentViewSet(wall_view_params(team, &ids))).map_err(err)?;
+    ao::call(&client, Method::WorkspaceFocus(WorkspaceTarget { workspace_id: first })).map_err(err)?;
+    Ok(ids.len())
+}
+
+/// Remove a team's wall view (only that team's; see [`wall_view_source`]).
+pub fn clear_wall_view(team: &str) -> Result<()> {
+    let client = client();
+    ao::call(
+        &client,
+        Method::AgentViewClear(AgentViewClearParams { source: Some(wall_view_source(team)) }),
+    )
+    .map_err(err)?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wall_source_is_a_valid_agent_view_source() {
+        assert_eq!(wall_view_source("build"), "factory:wall:build");
+        assert_eq!(wall_view_source("my team/1"), "factory:wall:my-team-1");
+        let source = wall_view_source(&"x".repeat(300));
+        assert!(crate::app::agent_view::validate_agent_view_source(&source).is_ok());
+    }
+
+    #[test]
+    fn wall_view_filters_to_the_team_workspaces() {
+        let ids = vec!["w1".to_string(), "w2".to_string()];
+        let mut view = wall_view_params("build", &ids);
+        assert!(crate::app::agent_view::validate_agent_view(&mut view).is_ok());
+        assert_eq!(view.label.as_deref(), Some("team build"));
+        match view.filter {
+            Some(AgentViewFilter::In { values, .. }) => assert_eq!(values.len(), 2),
+            other => panic!("expected one in-list, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_large_team_splits_into_lists_the_engine_accepts() {
+        let ids: Vec<String> = (0..70).map(|i| format!("w{i}")).collect();
+        let mut view = wall_view_params(&"t".repeat(40), &ids);
+        assert!(crate::app::agent_view::validate_agent_view(&mut view).is_ok());
+        assert_eq!(view.label.as_ref().map(|l| l.chars().count()), Some(32));
+        match view.filter {
+            Some(AgentViewFilter::Any { filters }) => assert_eq!(filters.len(), 3),
+            other => panic!("expected any-of-lists, got {other:?}"),
+        }
     }
 }

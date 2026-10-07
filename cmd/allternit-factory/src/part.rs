@@ -1,6 +1,6 @@
 //! Part verbs implemented by the engine itself (not passed through to the
 //! maintenance CLI or the pane CLI): `orchestration send|capture|transcript|drain`
-//! and `agents ps|down|recover`.
+//! and `agents ps|down|recover|wall`.
 
 use std::path::PathBuf;
 
@@ -549,6 +549,59 @@ pub fn capture(ctx: &Ctx, to: String, lines: Option<u32>) -> u8 {
     }
     print!("{text}");
     0
+}
+
+/// The `ao-<slug>` sessions of a team's bots: registry entries that record
+/// the team, plus the team.yaml bots' pane slugs (a pane started before the
+/// registry recorded teams).
+fn team_sessions(ctx: &Ctx, team: &str) -> Vec<String> {
+    let mut sessions: Vec<String> = Registry::open_default()
+        .load()
+        .map(|file| {
+            file.sessions
+                .into_iter()
+                .filter(|(_, e)| !e.dead && e.bot.as_ref().and_then(|b| b.team.as_deref()) == Some(team))
+                .map(|(session, _)| session)
+                .collect()
+        })
+        .unwrap_or_default();
+    if let Ok(loaded) = team_mod::load_team(&ctx.root_dir(), team) {
+        for b in &loaded.file.bots {
+            let session = allternit_factory_engine::spawn::session_name(&allternit_factory_engine::agents::team_apply::pane_slug(&b.bot, team));
+            if !sessions.contains(&session) {
+                sessions.push(session);
+            }
+        }
+    }
+    sessions
+}
+
+/// `agents wall <team>`: the live wall with its Agents panel narrowed to the
+/// team's bots (titled with the team), focused on the first. The view is
+/// removed when the wall is closed.
+pub fn wall(ctx: &Ctx, team: &str) -> u8 {
+    if ctx.json {
+        return fail(ctx, Code::Usage, "agents wall is interactive and has no JSON form", None);
+    }
+    let sessions = team_sessions(ctx, team);
+    let live = match allternit_factory_pane::factory_backend::set_wall_view(team, &sessions) {
+        Ok(n) => n,
+        Err(e) => {
+            let code = if backend::is_transport(&e) { Code::Transport } else { Code::Internal };
+            return fail(ctx, code, &format!("{e:#}"), None);
+        }
+    };
+    if live == 0 {
+        return fail(
+            ctx,
+            Code::NotFound,
+            &format!("team {team} has no running bots"),
+            Some(&format!("Start them with `agents up {team}`, or run `agents wall` for every running agent.")),
+        );
+    }
+    let code = crate::exec::run_pane_interactive(vec!["--session".into(), "ao".into()]);
+    let _ = allternit_factory_pane::factory_backend::clear_wall_view(team);
+    code
 }
 
 /// `orchestration transcript <to> [--tail N]`: the session's recorded
