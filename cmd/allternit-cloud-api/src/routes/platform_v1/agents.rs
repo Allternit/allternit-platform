@@ -329,6 +329,12 @@ fn validate_transfer_targets(targets: &[String]) -> Result<Vec<String>, Platform
     Ok(out)
 }
 
+/// `business_hours`: see [`super::calls::validate_business_hours`].
+fn validate_business_hours(value: &Value) -> Result<(), PlatformError> {
+    validate_object(value, "business_hours")?;
+    super::calls::validate_business_hours(value).map_err(|m| invalid("invalid_business_hours", m, "business_hours"))
+}
+
 fn validate_object(value: &Value, param: &str) -> Result<(), PlatformError> {
     if value.is_object() && value.to_string().len() <= MAX_JSON_BYTES {
         Ok(())
@@ -371,7 +377,7 @@ async fn create_agent(
     let autonomy = body.autonomy.as_deref().map(validate_autonomy).transpose()?.unwrap_or_else(|| "ask".to_string());
     let transfer_targets = validate_transfer_targets(body.transfer_targets.as_deref().unwrap_or(&[]))?;
     if let Some(bh) = &body.business_hours {
-        validate_object(bh, "business_hours")?;
+        validate_business_hours(bh)?;
     }
     let metadata = body.metadata.unwrap_or_else(|| json!({}));
     validate_object(&metadata, "metadata")?;
@@ -489,7 +495,7 @@ async fn update_agent(
         None => current.business_hours,
         Some(None) => None,
         Some(Some(v)) => {
-            validate_object(&v, "business_hours")?;
+            validate_business_hours(&v)?;
             Some(v)
         }
     };

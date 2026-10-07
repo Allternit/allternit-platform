@@ -1,0 +1,68 @@
+---
+title: 'Voice and realtime'
+description: 'Phone calls and in-app voice sessions with your hosted agents.'
+---
+
+Scope `voice`. A call joins one [agent](/api/platform/agents) and, for phone calls, one [number](/api/platform/numbers) in the same account. Every call opens with the agent's greeting, which must say it is an AI.
+
+## Place a call
+
+```http
+POST /v1/calls
+{ "agent_id": "agent_…", "from_number_id": "…", "to": "+14155550123", "purpose": "Confirm tomorrow's cleaning", "record": false }
+```
+
+Answers `201` with a call (`status: ringing` for a live project, `in_progress` for a sandbox one). The call is refused when:
+
+| Status | Code | Why |
+|---|---|---|
+| 403 | `no_consent` | The person never texted or called this number and has no consent recorded (`POST /v1/numbers/{id}/consent`). |
+| 403 | `recipient_opted_out` | The person replied STOP to this number. Recorded consent never lifts a STOP. |
+| 403 | `international_calling_disabled` | Only US and Canadian (+1) numbers can be called. |
+| 409 | `outside_business_hours` | The agent has `business_hours` and they are closed now. |
+| 402 | `spend_cap_reached` | The project reached its monthly spend cap. |
+| 429 | `concurrency_limit` | The project is at its plan's limit of concurrent calls (sandbox: 1). |
+| 400 | `account_mismatch` | The number and the agent are in different accounts. |
+| 503 | `voice_unavailable`, `dial_failed` | Live calling isn't available right now. Retry later. |
+
+Recording is off unless you send `record: true`.
+
+## Read and control calls
+
+- `GET /v1/calls` (filters `account_id`, `agent_id`, `status`; cursor pagination) and `GET /v1/calls/{id}`.
+- `POST /v1/calls/{id}/end`: a call not answered yet is `canceled` at once. A live call in progress answers `202`; the call closes when the phone line hangs up, and `call.ended` follows.
+- `POST /v1/calls/{id}/transfer` with `{ "to"?, "mode"?: "warm" | "cold" }`: only to one of the agent's `transfer_targets` (the first when `to` is left out), never to a number that sent STOP. Warm is the default. Only phone calls in progress can be transferred.
+- `GET /v1/calls/{id}/transcript`: `{ lines: [{ speaker: caller | agent | human, text, created_at }], complete }`.
+- `GET /v1/calls/{id}/recording`: a 10-minute link to the audio, only when the call was recorded (`404 recording_not_found` otherwise).
+
+Statuses: `queued`, `ringing`, `in_progress`, `completed`, `failed`, `no_answer` (also a dialed call nobody picked up within 2 minutes), `canceled`.
+
+## Inbound calls
+
+Bind an agent to a number and it answers that number's calls: `POST /v1/numbers` with `agent_id`, or `PATCH /v1/numbers/{id}` with `{ "agent_id": "agent_…" }` (`null` unbinds). The number's `voice_state` turns `active` once voice is set up for it; if setup fails, the same `PATCH` retries it. Someone who called the number may be called back from it.
+
+## Realtime sessions (browser and mobile)
+
+```http
+POST /v1/realtime/sessions
+{ "agent_id": "agent_…" }
+```
+
+Call this from your server, then hand the response to your app. It returns `client_secret.value` (a LiveKit token), `url` and `room`. The token is bound to that one room and participant and must be used within 60 seconds. Your API key never goes to the client. The session is a call with `direction: realtime` and shows up in `/v1/calls`.
+
+## Sandbox
+
+Sandbox projects never reach a carrier or LiveKit, and simulated calls aren't metered. The same consent, STOP, hours and concurrency rules apply.
+
+- A call placed from a simulated number is `in_progress` at once.
+- `POST /v1/calls/{id}/simulate_turn` with `{ "text": "…" }` plays what the caller says. The agent answers through its hosted runtime, and both lines are added to the transcript.
+- `POST /v1/numbers/{id}/simulate_call` with `{ "from": "+1…" }` plays an inbound call to the number's agent.
+- A realtime session comes back with `simulated: true` and no token. Drive it with `simulate_turn`.
+
+## Webhooks and usage
+
+`call.started`, `call.ended` (`data.call`) and `call.transcript.ready` (`data.transcript`) are sent through [webhooks](/api/platform/webhooks). A finished live call records `voice_min_allternit`, or `voice_min_byok` for an agent on your own model key, billed per second ([usage](/api/platform/usage)).
+
+## Not available yet
+
+The agent can't start a transfer by itself during a call. The `transfer` tool still answers `tool_not_available`. Transfer through `POST /v1/calls/{id}/transfer` instead.

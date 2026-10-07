@@ -647,6 +647,22 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/PhoneNumber" }
         default: { $ref: "#/components/responses/Error" }
+    patch:
+      operationId: updateNumber
+      summary: Bind the agent that answers calls (agent_id, null unbinds)
+      tags: [Numbers]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, properties: { agent_id: { type: [string, "null"] } } }
+      responses:
+        "200":
+          description: The number.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PhoneNumber" }
+        default: { $ref: "#/components/responses/Error" }
     delete:
       operationId: releaseNumber
       summary: Release a number
@@ -910,6 +926,157 @@ paths:
             application/json:
               schema: { type: object, properties: { id: { type: string }, queued: { type: boolean } } }
         default: { $ref: "#/components/responses/Error" }
+  /v1/calls:
+    get:
+      operationId: listCalls
+      summary: List calls (filters account_id, agent_id, status; cursor pagination)
+      tags: [Voice]
+      responses:
+        "200":
+          description: OK.
+          content:
+            application/json:
+              schema: { type: object, properties: { data: { type: array, items: { $ref: "#/components/schemas/Call" } }, has_more: { type: boolean }, next_cursor: { type: [string, "null"] } } }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createCall
+      summary: Place an outbound call (consent, STOP, business hours, spend cap checked)
+      tags: [Voice]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [agent_id, from_number_id, to, purpose], properties: { agent_id: { type: string }, from_number_id: { type: string }, to: { type: string }, purpose: { type: string }, record: { type: boolean } } }
+      responses:
+        "201":
+          description: OK.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Call" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/calls/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    get:
+      operationId: getCall
+      summary: Retrieve a call
+      tags: [Voice]
+      responses:
+        "200":
+          description: OK.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Call" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/calls/{id}/end:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    post:
+      operationId: endCall
+      summary: End a call
+      tags: [Voice]
+      responses:
+        "200":
+          description: OK.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Call" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/calls/{id}/transfer:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    post:
+      operationId: transferCall
+      summary: Transfer to one of the agent's transfer_targets
+      tags: [Voice]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, properties: { to: { type: string }, mode: { type: string, enum: [warm, cold] } } }
+      responses:
+        "200":
+          description: OK.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Call" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/calls/{id}/transcript:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    get:
+      operationId: getCallTranscript
+      summary: Call transcript
+      tags: [Voice]
+      responses:
+        "200":
+          description: OK.
+          content:
+            application/json:
+              schema: { type: object }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/calls/{id}/recording:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    get:
+      operationId: getCallRecording
+      summary: Recording URL (only when the call was recorded)
+      tags: [Voice]
+      responses:
+        "200":
+          description: OK.
+          content:
+            application/json:
+              schema: { type: object }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/calls/{id}/simulate_turn:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    post:
+      operationId: simulateCallTurn
+      summary: "Sandbox: play what the caller says"
+      tags: [Voice]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [text], properties: { text: { type: string } } }
+      responses:
+        "200":
+          description: OK.
+          content:
+            application/json:
+              schema: { type: object }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/numbers/{id}/simulate_call:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    post:
+      operationId: simulateInboundCall
+      summary: "Sandbox: play an inbound call"
+      tags: [Voice]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [from], properties: { from: { type: string } } }
+      responses:
+        "201":
+          description: OK.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Call" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/realtime/sessions:
+    post:
+      operationId: createRealtimeSession
+      summary: Ephemeral client token for talking to an agent (60 s to start)
+      tags: [Realtime]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [agent_id], properties: { agent_id: { type: string } } }
+      responses:
+        "201":
+          description: OK.
+          content:
+            application/json:
+              schema: { type: object }
+        default: { $ref: "#/components/responses/Error" }
 components:
   securitySchemes:
     bearerAuth:
@@ -939,6 +1106,27 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
   schemas:
+    Call:
+      type: object
+      properties:
+        id: { type: string }
+        object: { type: string, const: call }
+        account_id: { type: string }
+        agent_id: { type: string }
+        number_id: { type: [string, "null"] }
+        direction: { type: string, enum: [inbound, outbound, realtime] }
+        from: { type: [string, "null"] }
+        to: { type: [string, "null"] }
+        purpose: { type: [string, "null"] }
+        status: { type: string, enum: [queued, ringing, in_progress, completed, failed, no_answer, canceled] }
+        end_reason: { type: [string, "null"] }
+        simulated: { type: boolean }
+        recording: { type: boolean }
+        transferred_to: { type: [string, "null"] }
+        duration_seconds: { type: [integer, "null"] }
+        created_at: { type: string, format: date-time }
+        answered_at: { type: [string, "null"], format: date-time }
+        ended_at: { type: [string, "null"], format: date-time }
     Error:
       type: object
       required: [error]

@@ -15,7 +15,9 @@ Every number belongs to one [account](/api/platform/accounts). Scope `numbers` (
 | `POST` / `GET` | `/v1/numbers/{id}/registration` | US texting registration (live numbers) |
 | `POST` | `/v1/numbers/{id}/registration/otp` | Sole proprietors: verify the texted code, or resend it |
 | `POST` | `/v1/numbers/{id}/consent` | Record that a person agreed to be contacted |
+| `PATCH` | `/v1/numbers/{id}` | `{ "agent_id" }`: the agent that answers calls to the number (`null` unbinds); see [Voice](/api/platform/voice) |
 | `POST` | `/v1/numbers/{id}/simulate_inbound` | Sandbox only: play a text arriving |
+| `POST` | `/v1/numbers/{id}/simulate_call` | Sandbox only: play an inbound call (scope `voice`) |
 
 ```json
 { "id": "6f1c…", "object": "phone_number", "account_id": "acct_7Hq…", "e164": "+16125550142", "type": "local", "sms_state": "pending_registration", "simulated": false, "created_at": "2026-10-04T18:12:03Z" }

@@ -41,7 +41,7 @@ curl https://api.allternit.com/v1/agents \
 | `tools` | Which [tools](#tools) the agent may use. Everything else is blocked in its conversations. |
 | `autonomy` | How far it goes on its own: `draft` (writes, never sends), `ask` (default: a person approves each send), `tell` (sends, then reports), `limits` (sends within daily limits, then asks). Payments always wait for a person. |
 | `transfer_targets` | Up to 20 E.164 numbers a call may be transferred to. |
-| `business_hours` | A JSON object (up to 8 KB), for example `{ "tz": "America/Chicago", "mon": ["09:00", "17:00"] }`. `null` clears it. |
+| `business_hours` | `{ "tz": "America/Chicago", "mon": ["09:00", "17:00"] }`: `tz` is required, days are `mon` to `sun` with `[open, close]`. With no day listed the agent is always open; once a day is listed, the days left out are closed. Outbound [calls](/api/platform/voice) are placed only inside these hours. `null` clears it. |
 | `metadata` | Your own JSON object, up to 8 KB. |
 | `status` | `pending` until the project's hosted runtime holds the agent (it gets it with the first [conversation](/api/platform/conversations) message), then `ready`. |
 
