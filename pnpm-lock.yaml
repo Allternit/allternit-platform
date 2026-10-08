@@ -2341,6 +2341,15 @@ importers:
         specifier: ^5.4.5
         version: 5.9.3
 
+  sdk/computer-driver:
+    devDependencies:
+      '@anthropic-ai/sdk':
+        specifier: 0.132.0
+        version: 0.132.0(zod@4.3.6)
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+
   sdk/computer-toolset: {}
 
   sdk/computer-use:
@@ -3972,6 +3981,15 @@ packages:
 
   '@antfu/install-pkg@1.1.0':
     resolution: {integrity: sha512-MGQsmw10ZyI+EJo45CdSER4zEb+p31LpDAFp2Z3gkSd1yqVZGi0Ebx++YTEMonJy4oChEMLsxZ64j8FH6sSqtQ==}
+
+  '@anthropic-ai/sdk@0.132.0':
+    resolution: {integrity: sha512-hsKXmb+GjIgGpaJRF7rf2yKFa1SPyVJPQhZLNPDYA4J5YRrcVh4jn/aozLRKHWXGCGM9MPw16S+ry+zKIKCr7Q==}
+    hasBin: true
+    peerDependencies:
+      zod: ^3.25.0 || ^4.0.0
+    peerDependenciesMeta:
+      zod:
+        optional: true
 
   '@anthropic-ai/sdk@0.95.2':
     resolution: {integrity: sha512-Egddwo3sheo1PzUrMkZnH6VkQYwS0h/b/i8vSK8Ta9M45UQipAMeDFH57dYuDAfXMEUUGeKw6CMlremgMZgrSQ==}
@@ -23055,6 +23073,13 @@ snapshots:
     dependencies:
       package-manager-detector: 1.6.0
       tinyexec: 1.1.2
+
+  '@anthropic-ai/sdk@0.132.0(zod@4.3.6)':
+    dependencies:
+      json-schema-to-ts: 3.1.1
+      standardwebhooks: 1.1.1
+    optionalDependencies:
+      zod: 4.3.6
 
   '@anthropic-ai/sdk@0.95.2(zod@3.25.76)':
     dependencies:
