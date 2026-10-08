@@ -42,7 +42,7 @@ def layer(n):
     if i.startswith(('allternit/domains/', 'allternit/infrastructure/', 'allternit/drivers/', 'allternit/factory/')): return 'domain'
     return 'other'
 
-def generate(ai):
+def generate(ai, strict=True):
     nodes, edges, files, texts, warnings = {}, {}, {}, {}, []
     roots = {'allternit': ROOT, 'allternit-ai': ai}
     def node(id, label, kind, path, **meta):
@@ -201,6 +201,11 @@ def generate(ai):
 
     # Curated: features (what a product does and the components it touches) and journeys (ordered steps a user
     # takes across components). Edges point from the feature or journey to the component, like every other edge.
+    # Strict only under --validate: an agent's allternit-ai checkout may be behind main, and a component a feature
+    # names may not exist there yet. --impact and the site build then warn and skip that reference.
+    def stale(msg):
+        if strict: raise SystemExit(msg)
+        warnings.append(msg + ' (skipped; run --validate against current main)')
     work = json.loads((MAP/'features.json').read_text())
     for f in work['features']:
         where = 'features.json ' + f['id']
@@ -222,11 +227,13 @@ def generate(ai):
     for item in work['features'] + work['journeys']:
         where = 'features.json ' + item['id']
         if not item['evidence']: raise SystemExit(f'{where}: add at least one evidence path')
-        for ev in item['evidence']: check_evidence(ev, where)
+        for ev in item['evidence']:
+            try: check_evidence(ev, where)
+            except SystemExit as ex: stale(str(ex))
         refs = [('touches', r) for r in item.get('touches', [])] + [('step', s['at']) for s in item.get('steps', [])]
         for kind, ref in refs:
             if ref not in nodes or nodes[ref]['kind'] in ('feature', 'journey', 'line'):
-                raise SystemExit(f'{where}: unknown {kind} component {ref!r}')
+                stale(f'{where}: unknown {kind} component {ref!r}'); continue
             edge(item['id'], ref, kind, item['evidence'][0])
         if item['id'].startswith('feature:'): edge(item['product'], item['id'], 'has feature', item['evidence'][0])
 
@@ -243,7 +250,7 @@ def viewer_data(g, built):
     keys = ('type','description','url','line','repo','product','status','decisions')
     meta = {str(index[n['id']]): {k: n[k] for k in keys if n.get(k)} for n in g['nodes'] if n['kind'] in ('product','line','feature','journey')}
     for n in g['nodes']:
-        if n['kind'] == 'journey': meta[str(index[n['id']])]['steps'] = [[index[at], says] for at, says in n['steps']]
+        if n['kind'] == 'journey': meta[str(index[n['id']])]['steps'] = [[index[at], says] for at, says in n['steps'] if at in index]
     return dict(revisions=g['revisions'], built=built, layers=LAYERS,
         nodes=[[n['id'], n['label'], n['kind'], n['layer']] for n in g['nodes']], meta=meta,
         edges=[[index[e['source']], index[e['target']], e['kind'], e['evidence'][:4], len(e['evidence'])] for e in g['edges']],
@@ -287,7 +294,7 @@ if __name__ == '__main__':
     p.add_argument('--validate',action='store_true',help='Check the curated files resolve, then exit')
     p.add_argument('--out',type=pathlib.Path,help='Write index.html and graph.json into this folder')
     p.add_argument('--built',default='',help='Build timestamp shown in the viewer')
-    a=p.parse_args(); g=generate(a.ai.resolve())
+    a=p.parse_args(); g=generate(a.ai.resolve(), strict=not (a.impact or a.out))
     if a.impact: print(json.dumps(impact(g,a.impact),indent=2))
     elif a.out:
         a.out.mkdir(parents=True, exist_ok=True)
