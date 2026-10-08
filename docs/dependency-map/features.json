@@ -186,9 +186,29 @@
         "allternit/cmd/allternit-api/src/computer_*"
       ],
       "decisions": [
+        {"on": "2026-10-08", "note": "Customer computers get nightly encrypted off-site backups plus owner restore points and downloads (platform #1405, ai #454)."},
         {"on": "2026-10-01", "note": "First real Plus customer was provisioned automatically."}
       ],
       "evidence": ["allternit/cmd/allternit-cloud-api/src/services/provisioning.rs", "allternit/cmd/allternit-cloud-api/src/routes/billing_webhooks.rs"]
+    },
+    {
+      "id": "feature:computer-backups",
+      "label": "Cloud computer backups and restore points",
+      "product": "product:cloud-computers",
+      "status": "live",
+      "description": "Every customer cloud computer is backed up off-site each night, encrypted. Owners can take up to 5 restore points, roll back to one, and download a full copy of the computer from Settings → Computers on every surface.",
+      "touches": [
+        "allternit-ai/src/components/computers",
+        "allternit-ai/src/lib",
+        "allternit-ai/src/fabric-session",
+        "allternit/cmd/allternit-cloud-api/src/routes/provisioned_*",
+        "allternit/cmd/allternit-cloud-api/src/services"
+      ],
+      "decisions": [
+        {"on": "2026-10-08", "note": "Nightly incus-export backups to R2 on allternit-standby (8-day daily, 35-day weekly), same key scheme as the host backup; first run verified by decrypting it."},
+        {"on": "2026-10-08", "note": "Restore points and downloads are cloud-api control-plane routes, not the computer's own runtime (which has no Incus access). Cap of 5; download links are 1-hour tokens."}
+      ],
+      "evidence": ["allternit/infrastructure/computer-backup/README.md", "allternit/surfaces/docs/guides/computers-and-apps.mdx", "allternit/cmd/allternit-cloud-api/src/routes/provisioned_instances.rs"]
     },
     {
       "id": "feature:office",
