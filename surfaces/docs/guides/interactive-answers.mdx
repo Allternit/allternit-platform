@@ -1,0 +1,59 @@
+---
+title: 'Interactive answers (developers)'
+description: 'How an assistant reply renders an interactive card from OpenUI Lang, which components exist, and what runs locally.'
+---
+
+An assistant reply can include an interactive card: metrics, tables, bar charts, steps, comparisons, and inputs that recompute on the page. The model doesn't write HTML. It picks from a fixed set of Allternit components, and the app renders them while the reply streams.
+
+Source: `allternit-ai/src/lib/openui/` (`answers-library.tsx`, `InteractiveAnswer.tsx`, `openui-fences.ts`).
+
+## Format
+
+The model writes [OpenUI Lang](https://www.openui.com/docs) in a fenced block tagged `openui`, anywhere in its markdown:
+
+````markdown
+Here's the split:
+
+```openui
+root = Answer("Split the bill", [r, m, ask])
+$people = 4
+$tip = 18
+r = Row([s1, s2])
+s1 = Slider("People", $people, 1, 12)
+s2 = Slider("Tip", $tip, 0, 30, 1, "percent")
+m = Metric("Each pays", 184.6 * (1 + $tip / 100) / $people, "currency", "USD", "from your input")
+ask = Button("Round up each share")
+```
+````
+
+Text before and after the fence renders as normal markdown. An unclosed fence at the end of a streaming reply renders as far as it has arrived. Unknown components and broken lines are skipped; the rest of the card still renders.
+
+## What runs where
+
+- **On the page (deterministic):** `$name` state and expressions (`+ - * /`, comparisons, `?:`) are evaluated by the OpenUI runtime. No `eval`, no network, no model call. `Slider`, `NumberField`, `Select` and `Toggle` write state; everything that reads it updates at once.
+- **Back to the model:** `Button` and `Choice` send their label as the next user message.
+- Links open only when they are `http(s)`. No other code runs. Anything that needs real code stays an artifact.
+
+## Components
+
+| Component | Signature | Use |
+| --- | --- | --- |
+| `Answer` | `(title?, children?)` | The root card. Exactly one, as `root`. |
+| `Row` | `(children)` | Side by side; one column on phones. |
+| `Text` | `(content, tone?)` | `body`, `muted`, `heading`. |
+| `Metric` | `(label, value, format?, unit?, note?)` | `format`: `number`, `currency`, `percent`. `note` says where the number comes from. |
+| `Table` | `(headers, rows)` | `rows` is an array of arrays. |
+| `BarChart` | `(labels, values, format?, unit?)` | 2–12 values. |
+| `Steps` | `(items)` | A real sequence. |
+| `Compare` | `(columns)` | `[{ "title", "points": [] }]`, 2–4 columns. |
+| `Callout` | `(content, tone?)` | `info`, `success`, `warning`, `danger`. |
+| `Slider` | `(label, $value, min, max, step?, format?, unit?)` | Writes a number. |
+| `NumberField` | `(label, $value, step?)` | Writes a number. |
+| `Select` | `(label, $value, options)` | Writes a string. |
+| `Toggle` | `(label, $value)` | Writes `true`/`false`. |
+| `Button` | `(label)` | Sends the label to the model. |
+| `Choice` | `(question, options)` | Numbered options; the pick is sent to the model. |
+
+## Model instructions
+
+`interactiveAnswersPrompt()` in `answers-library.tsx` returns the model-facing manual, generated from the same schemas as the renderer, so the two can't drift. Adding it to the runtime's system prompt (gizzi-code) is a separate change. Until then, a card appears only when a model writes the fence on its own or a message contains one.

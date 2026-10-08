@@ -59,6 +59,7 @@ curl -N -X POST http://127.0.0.1:8013/api/agent-chat \
 | `harness` | object | no | Harness configuration for the turn. |
 | `runtimeEnv` | object | no | Map of string environment variables for the runtime. |
 | `systemPrompt` | string | no | System prompt override, read from the flattened request context. |
+| `attachments` | array | no | Images and files for this turn: `[{ "url"?: string, "dataBase64"?: string, "mediaType": string, "name"?: string }]`. `url` is a `data:` URL, an `https://` link (for example an Allternit Cloud file link) or an upload from [`POST /api/v1/uploads`](/api/uploads); a bare `dataBase64` is sent as a data URL. Each becomes a gizzi file part after the text, so image types reach the model as image input. At most 10 per message and 24 MB of inline data; other URL schemes are dropped. The request body may be up to 32 MB. The Desktop bridge `POST /api/v1/ai/chat` takes the same field. |
 | `resume` | object | no | `{ "cursor": <number>, "messageId"?: string }` — re-attach to the turn already running on `chatId` after a dropped stream. `cursor` is the last SSE `id` received. Nothing new is sent; the bridge replays what happened after the cursor, then continues live. Returns `409 {"error":"resume_unavailable"}` when the session is no longer known. |
 
 ### Response

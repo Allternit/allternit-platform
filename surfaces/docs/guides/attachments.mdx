@@ -8,6 +8,17 @@ Attach files in the composer the same way on the desktop app, on ai.allternit.co
 - **Small files** (under 1 MB) travel inside the message.
 - **Larger files** are uploaded to your private Allternit Cloud storage when you are signed in, and the agent receives a permanent link that keeps working in old conversations until you delete the file (on servers without permanent links, a link that works for 7 days). Signed-out or local-only sessions keep sending the file inside the message.
 
+## What you see before you send
+
+- **Desktop:** each file shows as a card under the text box with its name and what's in it, read on your device: page and line counts for PDFs, lines for text and code, rows and columns for CSV, the number of files in a .zip, and a thumbnail for images. If a fact can't be read, the card shows only the file type. Hover a card to remove it.
+- **Phone layout and the m.allternit.com app:** the same files show as small previews above the text box: the image itself, or the first lines of a document, with a remove button.
+- The **Add files** button opens the same menu as before (files, screenshot, GitHub and the rest). Images, PDF, DOCX, text, Markdown, JSON, CSV, ZIP and code files can be picked from it on every surface.
+
+## How the agent gets them
+
+- **Documents** (PDF, DOCX, text, CSV, JSON, ZIP, code) are read on your device, and their text is added to your message.
+- **Images** go to the model as images, so it can see them. Photos larger than 2048 px on the long side are scaled down first, and an animated GIF is sent as it is. Up to 10 images go with one message. The sent message lists the attached files by name.
+
 ## Storage by plan
 
 | Plan | Total storage | Largest file |

@@ -474,6 +474,8 @@
               "guides/voice-call-runtime-routes",
               "guides/custom-voices",
               "guides/attachments",
+              "guides/chat-composer",
+              "guides/interactive-answers",
               "guides/pdf-citations"
             ],
             "icon": "/icons/book.svg"

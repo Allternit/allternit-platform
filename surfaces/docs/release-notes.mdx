@@ -5,6 +5,16 @@ description: 'Changelog for the Allternit platform, SDKs, and Gizzi Code CLI'
 
 # Release Notes
 
+## 2026-10-07 — Composer polish, replies, images and interactive answers
+
+- The chat text box, question cards, working pill and card grids have a new, quieter look across Desktop, ai.allternit.com and the m.allternit.com app. See [Composer, replies and questions](/guides/chat-composer).
+- **Reply** to a whole reply, or to text you select in one. The quote travels with your message.
+- Agent questions use numbered choices: press **1**–**9** on Desktop. **Skip question** skips only that question. The agent now receives the text of your choice; before, it got an internal id like `0-Framer`.
+- Images you attach now reach the model as images. Before, they showed in the text box but weren't sent. Desktop shows attachments as cards with real details (pages, lines, rows and columns); phones show previews. See [Attachments](/guides/attachments).
+- While a file is being written, a placeholder shaped like it holds its place.
+- Replies can include [interactive answers](/guides/interactive-answers): cards with sliders, metrics and tables that update on your device.
+- API: `POST /api/agent-chat` accepts `attachments` like the Desktop `/api/v1/ai/chat` bridge. See [Agent Chat API](/api/agent-chat).
+
 ## 2026-10-07 — Bots on your cloud computer
 
 - `gizzi agents up <team> --on "Cloud computer"` runs a team's bots on your Allternit cloud computer, the same way as on a paired Mac or VPS. The cloud computer pairs itself; there is nothing to set up. See [Factory agents](/factory/agents).

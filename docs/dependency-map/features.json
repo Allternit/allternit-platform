@@ -15,12 +15,30 @@
         "allternit/cmd/allternit-api/src/conversation_*",
         "allternit/cmd/gizzi-code/src/runtime/server",
         "allternit/cmd/gizzi-code/src/runtime/session",
-        "allternit/cmd/gizzi-code/src/runtime/providers"
+        "allternit/cmd/gizzi-code/src/runtime/providers",
+        "allternit-ai/src/components/ui",
+        "allternit-ai/src/lib/attachments"
       ],
       "decisions": [
-        {"on": "2026-10-01", "note": "Resting orb sits under the last message on every surface (ai #357)."}
+        {"on": "2026-10-01", "note": "Resting orb sits under the last message on every surface (ai #357)."},
+        {"on": "2026-10-07", "note": "Polish pass from three reference shots: card-in-tray composer, numbered question card, working pill and shaped placeholders, one PreviewCard for every grid, Reply tray (the quote travels in the message text). Composer images now reach the model as file parts via `attachments` on /agent-chat and /ai/chat; before, they were never sent. Eoj: cards below the box on Desktop, previews above it on phone; neutral beam, never tan; full-colour logos."}
       ],
-      "evidence": ["allternit/surfaces/docs/api/agent-chat.mdx", "allternit/cmd/allternit-api/src/chat_routes.rs"]
+      "evidence": ["allternit/surfaces/docs/api/agent-chat.mdx", "allternit/cmd/allternit-api/src/chat_routes.rs", "allternit/surfaces/docs/guides/chat-composer.mdx"]
+    },
+    {
+      "id": "feature:interactive-answers",
+      "label": "Interactive answers",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Assistant replies can include an interactive card written in OpenUI Lang inside an openui code fence: metrics, tables, charts, steps and inputs that recompute on the page; buttons and choices send a follow-up message.",
+      "touches": [
+        "allternit-ai/src/lib/openui",
+        "allternit-ai/src/components/ai-elements"
+      ],
+      "decisions": [
+        {"on": "2026-10-07", "note": "Renderer shipped on the polish primitives, with deterministic local state via OpenUI $state and no eval. The model-side prompt (interactiveAnswersPrompt in gizzi-code) is a separate session by Eoj's call: no per-model testing, no training."}
+      ],
+      "evidence": ["allternit/surfaces/docs/guides/interactive-answers.mdx"]
     },
     {
       "id": "feature:bot-threads",
