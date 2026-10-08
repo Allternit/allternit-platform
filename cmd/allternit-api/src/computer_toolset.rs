@@ -633,7 +633,6 @@ pub fn unsupported_reason(target_label: &str, toolset: Toolset, member: &str) ->
     match (toolset, target_label) {
         (Toolset::Computer, "guest_linux" | "guest_windows") => None,
         (Toolset::Computer, "this_device") => match member {
-            "hold_key" => Some("Cua Driver 0.34 has no press-and-hold key call on macOS (press_key and hotkey release the key at once), so hold_key can't run on this Mac."),
             _ => None,
         },
         (Toolset::Computer, _) => Some("The computer toolset doesn't run on this target."),
@@ -1269,6 +1268,12 @@ async fn dispatch(
                     let (x, y) = this_device_cursor_px(map).await?;
                     let (mx, my) = map.to_model(x as f64, y as f64);
                     return Ok((vec![text(format!("X={mx},Y={my}"))], None));
+                }
+                "hold_key" => {
+                    let k = scaled.get("text").and_then(Value::as_str).ok_or("text is required")?;
+                    let secs = scaled.get("duration").and_then(Value::as_f64).unwrap_or(1.0);
+                    td::hold_key(k, secs).await?;
+                    return Ok((vec![text(ack(spec, scaled))], None));
                 }
                 "left_mouse_down" => {
                     let here = this_device_cursor_px(map).await?;

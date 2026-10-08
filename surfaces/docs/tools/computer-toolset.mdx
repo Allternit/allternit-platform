@@ -54,7 +54,7 @@ The executor reports what a target can run (see [Schema](#schema)). A member tha
 |---|---|
 | Cloud and bot computers (Linux) | All 17 computer members, through xdotool and scrot in the guest |
 | Cloud computers (Windows) | All 17 computer members, through PowerShell and user32 (`SetCursorPos`, `mouse_event`, `keybd_event`, SendKeys for `type`) run by the VM driver's guest exec |
-| This device (macOS, Cua Driver 0.34) | Everything except `hold_key`. Cua Driver has no press-and-hold key call on macOS. Held modifiers (`text`) work on clicks and drags, not on `scroll`. `cursor_position` uses `get_cursor_position`. Cua Driver has no separate press and release on macOS, so `left_mouse_down` is held by the executor and sent with `left_mouse_up` as one click (same spot) or one press-drag-release gesture. |
+| This device (macOS, Cua Driver 0.34) | All 17 members. Cua Driver has no press-and-hold key call on macOS, so `hold_key` posts the key-down and key-up events through CoreGraphics itself (keys go to the frontmost app; it uses the Accessibility permission Allternit Desktop already has). Held modifiers (`text`) work on clicks and drags, not on `scroll`. `cursor_position` uses `get_cursor_position`. Cua Driver has no separate press and release on macOS, so `left_mouse_down` is held by the executor and sent with `left_mouse_up` as one click (same spot) or one press-drag-release gesture. |
 | Browser (ACU gateway, Playwright) | All 31 browser members, including element refs, tabs, console, network, JavaScript and uploads. The four optional members stay off until the caller turns them on (see [Optional members](#optional-members)). |
 | Paired computers (mesh) | Nothing. They take no agent input. View them live instead. |
 

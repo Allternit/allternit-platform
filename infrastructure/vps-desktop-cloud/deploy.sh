@@ -54,6 +54,9 @@ install_binary() {
   ssh_cmd "mkdir -p ${API_DIR}/bin/backups ${DATA_DIR} ${ETC_DIR} ${LOG_DIR}"
   # Keep a timestamped binary backup so rollback.sh can restore it.
   ssh_cmd "cp ${API_DIR}/bin/allternit-api ${API_DIR}/bin/backups/allternit-api.$(date +%Y%m%d-%H%M%S) || true"
+  # Keep only the newest 5 backups: every deploy adds an ~80 MB copy, and 251
+  # of them filled the prod disk (2026-10-08). rollback.sh uses the newest.
+  ssh_cmd "ls -1t ${API_DIR}/bin/backups/allternit-api.* 2>/dev/null | tail -n +6 | xargs -r rm -f"
   if [ -f "${SRC_DIR}/target/release/allternit-api" ]; then
     scp_cmd "${SRC_DIR}/target/release/allternit-api" "${API_DIR}/bin/allternit-api"
   else

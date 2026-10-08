@@ -120,6 +120,90 @@ pub fn keyboard_call(input: &KeyboardInput) -> Result<DriverCall, String> {
     }
 }
 
+/// macOS virtual key code for a contract key name (xdotool-style names, as
+/// the toolset uses them: `Return`, `Page_Up`, `shift`, `a`, `F5`).
+pub fn mac_keycode(name: &str) -> Option<u16> {
+    let n = name.trim().to_lowercase().replace('-', "_");
+    let code = match n.as_str() {
+        "a" => 0, "s" => 1, "d" => 2, "f" => 3, "h" => 4, "g" => 5, "z" => 6, "x" => 7, "c" => 8, "v" => 9,
+        "b" => 11, "q" => 12, "w" => 13, "e" => 14, "r" => 15, "y" => 16, "t" => 17, "1" => 18, "2" => 19,
+        "3" => 20, "4" => 21, "6" => 22, "5" => 23, "=" | "equal" => 24, "9" => 25, "7" => 26,
+        "-" | "minus" => 27, "8" => 28, "0" => 29, "]" | "bracketright" => 30, "o" => 31, "u" => 32,
+        "[" | "bracketleft" => 33, "i" => 34, "p" => 35, "return" | "enter" | "kp_enter" => 36, "l" => 37,
+        "j" => 38, "'" | "apostrophe" => 39, "k" => 40, ";" | "semicolon" => 41, "\\" | "backslash" => 42,
+        "," | "comma" => 43, "/" | "slash" => 44, "n" => 45, "m" => 46, "." | "period" => 47, "tab" => 48,
+        "space" | " " => 49, "`" | "grave" => 50, "backspace" => 51, "escape" | "esc" => 53,
+        "cmd" | "command" | "super" | "super_l" | "meta" | "meta_l" | "win" => 55,
+        "shift" | "shift_l" => 56, "caps_lock" | "capslock" => 57, "alt" | "alt_l" | "option" | "opt" => 58,
+        "ctrl" | "control" | "control_l" | "ctrl_l" => 59, "shift_r" => 60, "alt_r" => 61,
+        "control_r" | "ctrl_r" => 62, "super_r" | "cmd_r" => 54, "fn" => 63,
+        "f1" => 122, "f2" => 120, "f3" => 99, "f4" => 118, "f5" => 96, "f6" => 97, "f7" => 98, "f8" => 100,
+        "f9" => 101, "f10" => 109, "f11" => 103, "f12" => 111, "home" => 115,
+        "page_up" | "pageup" | "prior" => 116, "delete" => 117, "end" => 119,
+        "page_down" | "pagedown" | "next" => 121, "left" => 123, "right" => 124, "down" => 125, "up" => 126,
+        _ => return None,
+    };
+    Some(code)
+}
+
+/// CGEvent modifier flag a key sets while held (0 for ordinary keys).
+fn mac_flag(code: u16) -> u64 {
+    match code {
+        56 | 60 => 0x20000,  // shift
+        59 | 62 => 0x40000,  // control
+        58 | 61 => 0x80000,  // option
+        55 | 54 => 0x100000, // command
+        _ => 0,
+    }
+}
+
+/// The JXA script that holds a chord (`shift`, `cmd+a`) for `secs` seconds:
+/// keys go down in order, stay down, then come up in reverse, each event
+/// carrying the modifier flags held at that moment.
+pub fn hold_key_script(spec: &str, secs: f64) -> Result<String, String> {
+    let codes: Vec<u16> = spec
+        .split('+')
+        .filter(|p| !p.trim().is_empty())
+        .map(|p| mac_keycode(p).ok_or_else(|| format!("not a key name this Mac understands: {p}")))
+        .collect::<Result<_, _>>()?;
+    if codes.is_empty() {
+        return Err("text is required".into());
+    }
+    let mut lines = vec!["ObjC.import('CoreGraphics');".to_string(), "function k(c, d, f) { const e = $.CGEventCreateKeyboardEvent(null, c, d); $.CGEventSetFlags(e, f); $.CGEventPost(0, e); }".to_string()];
+    let mut flags = 0u64;
+    for c in &codes {
+        flags |= mac_flag(*c);
+        lines.push(format!("k({c}, true, {flags});"));
+    }
+    lines.push(format!("delay({:.3});", secs.clamp(0.0, 30.0)));
+    for c in codes.iter().rev() {
+        flags &= !mac_flag(*c);
+        lines.push(format!("k({c}, false, {flags});"));
+    }
+    Ok(lines.join("\n"))
+}
+
+/// Hold a key or chord on this Mac. Cua Driver 0.34 has no press-and-hold
+/// call on macOS, so this posts the key-down/key-up events itself through
+/// CoreGraphics (keys go to the frontmost app, like the driver's desktop
+/// scope). Needs the Accessibility permission Allternit Desktop already has.
+pub async fn hold_key(spec: &str, secs: f64) -> Result<(), String> {
+    let script = hold_key_script(spec, secs)?;
+    let wait = std::time::Duration::from_secs_f64(secs.clamp(0.0, 30.0) + 10.0);
+    let out = tokio::time::timeout(
+        wait,
+        tokio::process::Command::new("/usr/bin/osascript").args(["-l", "JavaScript", "-e", &script]).output(),
+    )
+    .await
+    .map_err(|_| "holding the key didn't finish in time".to_string())?
+    .map_err(|e| format!("couldn't post key events: {e}"))?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        return Err(format!("couldn't hold the key: {}", err.trim().chars().take(300).collect::<String>()));
+    }
+    Ok(())
+}
+
 fn driver_command() -> Option<(String, Vec<String>)> {
     let path = std::env::var("ALLTERNIT_CUA_DRIVER_PATH")
         .ok()
@@ -303,6 +387,16 @@ mod tests {
             args,
             json!({ "scope": "desktop", "direction": "up", "amount": 50, "x": 5, "y": 6 })
         );
+    }
+
+    #[test]
+    fn hold_key_presses_then_releases_in_reverse() {
+        let s = hold_key_script("cmd+shift+a", 0.5).unwrap();
+        let downs: Vec<&str> = s.lines().filter(|l| l.contains("true")).collect();
+        assert_eq!(downs, ["k(55, true, 1048576);", "k(56, true, 1179648);", "k(0, true, 1179648);"]);
+        assert!(s.contains("delay(0.500);"));
+        assert!(s.trim_end().ends_with("k(55, false, 0);"));
+        assert!(hold_key_script("hyper", 1.0).is_err());
     }
 
     #[test]
