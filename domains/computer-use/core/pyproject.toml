@@ -40,6 +40,11 @@ allternit-computer = "gateway.daemon:main"
 allternit-computer-mcp = "canonical_mcp.server:main"
 
 [project.optional-dependencies]
+# The engine's Claude path: computer_toolset_20260801 / browser_toolset_20260801
+# driver classes (anthropic.tools.computer / anthropic.tools.browser).
+claude = [
+    "anthropic>=1.12.0; python_version >= '3.10'",
+]
 # Browser automation dependencies
 browser = [
     "playwright>=1.40.0",

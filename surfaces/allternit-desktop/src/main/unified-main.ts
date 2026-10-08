@@ -1274,6 +1274,7 @@ async function initializeBundledMode(): Promise<void> {
     })();
     const acuTask = (async (): Promise<string | null> => {
       try {
+        acuGatewayManager.setDesktopTokenProvider(() => backendManager.ensureDesktopAccessToken());
         const acuUrl = await acuGatewayManager.start();
         if (acuUrl) {
           log.info(`[Main] ACU computer-use gateway ready at ${acuUrl}`);

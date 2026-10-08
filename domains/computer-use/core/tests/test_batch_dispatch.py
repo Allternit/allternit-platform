@@ -358,7 +358,7 @@ class TestPlanningLoopBatch:
 
         # No retry, and the immediate action ran through the normal path.
         assert len(client.calls) == 1
-        assert adapter.calls == ["click"]
+        assert adapter.calls == ["left_click"]
         closed = [e for e in events if e[0] == "batch.context.closed"][0][1]
         assert closed["status"] == "denied"
         assert result.stop_reason == StopReason.DONE
@@ -387,8 +387,8 @@ class TestPlanningLoopBatch:
         result = await loop.run("click around", session_id="s-1", run_id="r-1")
 
         assert client.calls == []
-        assert adapter.calls == ["click"]
-        assert result.steps[0].action_type == "click"
+        assert adapter.calls == ["left_click"]
+        assert result.steps[0].action_type == "left_click"
         assert [e[0] for e in events] == []  # no batch context without a batch
         assert result.stop_reason == StopReason.DONE
 
@@ -407,7 +407,7 @@ class TestPlanningLoopBatch:
         result = await loop.run("fill the form", session_id="s-1", run_id="r-1")
 
         assert client.calls == []
-        assert adapter.calls == ["click"]
+        assert adapter.calls == ["left_click"]
         assert result.stop_reason == StopReason.DONE
 
 
@@ -686,7 +686,7 @@ class TestBatchPlanParsing:
         assert len(plan.batch) == 1
         assert plan.batch[0].type == "fill"
         assert plan.batch[0].text == "hi"
-        assert plan.immediate_action.type == "click"
+        assert plan.immediate_action.type == "left_click"
 
     def test_parse_action_plan_without_batch_is_none(self):
         plan = _parse_action_plan(

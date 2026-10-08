@@ -44,6 +44,9 @@ WHITELIST_METHODS = frozenset({
 # Planning-loop action types → whitelist methods. Anything not listed is not
 # batchable (coordinate-only actions, navigate, wait, ...).
 _ACTION_METHOD_MAP = {
+    # Contract members (allternit.computer.v1 / allternit.browser.v1) the
+    # planner's immediate_action carries, then the batch's own verbs.
+    "left_click": "click",
     "click": "click",
     "double_click": "doubleClick",
     "fill": "fill",

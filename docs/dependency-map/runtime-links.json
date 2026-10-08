@@ -35,6 +35,12 @@
       "label": "Developer docs site",
       "kind": "surface",
       "path": "allternit/surfaces/docs"
+    },
+    {
+      "id": "allternit/domains/computer-use/core",
+      "label": "Computer-use engine (ACU gateway :8760, Python)",
+      "kind": "module",
+      "path": "allternit/domains/computer-use/core"
     }
   ],
   "edges": [
@@ -197,6 +203,23 @@
       "kind": "HTTP /api/v1/computers/:id/toolset",
       "evidence": [
         "allternit/cmd/gizzi-code/src/runtime/tools/computer-toolset/executor-client.ts"
+        ]
+      },
+      {
+      "source": "allternit/surfaces/allternit-desktop",
+      "target": "allternit/domains/computer-use/core",
+      "kind": "sidecar",
+      "evidence": [
+        "allternit/surfaces/allternit-desktop/src/main/acu-gateway-manager.ts",
+        "allternit/surfaces/allternit-desktop/scripts/prepare-acu-gateway.cjs"
+      ]
+    },
+    {
+      "source": "allternit/domains/computer-use/core",
+      "target": "allternit/cmd/allternit-api/src/computer_*",
+      "kind": "HTTP /api/v1/computers/:id/toolset",
+      "evidence": [
+        "allternit/domains/computer-use/core/core/toolset_executor.py"
       ]
     }
   ]

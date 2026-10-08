@@ -40,6 +40,11 @@ allternit-computer = "gateway.daemon:main"
 allternit-computer-mcp = "canonical_mcp.server:main"
 
 [project.optional-dependencies]
+# The engine's Claude path: computer_toolset_20260801 / browser_toolset_20260801
+# driver classes (anthropic.tools.computer / anthropic.tools.browser).
+claude = [
+    "anthropic>=1.12.0; python_version >= '3.10'",
+]
 # Browser automation dependencies
 browser = [
     "playwright>=1.40.0",
@@ -54,7 +59,13 @@ gateway = [
 ]
 
 mcp = [
-    "mcp>=1.0.0",
+    # Pinned with the TS SDK (MCP 2026-07-28, dual-era). mcp 2.x needs Python >= 3.10.
+    "mcp==2.3.0; python_version >= '3.10'",
+]
+
+# DroidRun mobile harness integration (Android via mobilerun_core)
+droidrun = [
+    "mobilerun-core[local]>=0.1.0",
 ]
 
 # Desktop automation dependencies
@@ -66,6 +77,16 @@ desktop = [
     # RFB/VNC client for VmGuiBackend (Firecracker guest display, tunneled
     # over vsock) -- see research/FIRECRACKER-GUEST-AGENT-VNC-SPEC.md
     "asyncvnc>=1.1.0",
+]
+
+# iOS mobile automation dependencies (phone-harness primary, pymobiledevice3 / idb fallback)
+mobile = [
+    "pymobiledevice3>=4.0",
+    "pyobjc>=10.0; platform_system=='Darwin'",
+    "pyobjc-framework-Quartz>=10.0; platform_system=='Darwin'",
+    "pyobjc-framework-Vision>=10.0; platform_system=='Darwin'",
+    "pyobjc-framework-AppKit>=10.0; platform_system=='Darwin'",
+    "pyobjc-framework-ApplicationServices>=10.0; platform_system=='Darwin'",
 ]
 
 desktop-macos = [
@@ -114,6 +135,26 @@ byoc = [
     "azure-mgmt-compute>=30.0.0",
     "azure-mgmt-network>=25.0.0",
     "azure-mgmt-resource>=23.0.0",
+]
+
+# Shadow-mode local policy head (core/decision_head.py): mlx-lm direct-logit
+# head (Qwen3.5-4B class). Optional and lazily imported — the package imports
+# and the full test suite pass without it (MockHead covers tests/evals).
+# mlx is Apple-silicon only, matching the shadow head's fully-local target.
+shadow-head = [
+    "mlx-lm>=0.24.0; platform_machine=='arm64' and platform_system=='Darwin'",
+]
+
+# SemIf shadow head (core/semif_head.py): the community open-weights System
+# One reproduction (github.com/TheoLeeCJ/SemIf, MIT) measured as a local-tier
+# DecisionHead candidate. Installed from the SemIf git repo because it is not
+# published to PyPI; its [mlx] extra pins mlx/mlx-lm (the mlx-lm pin carries
+# SemIf's required upstream Qwen3.5 normalization fix, and supersedes the
+# >=0.24.0 floor of [shadow-head] when both extras are installed). Optional
+# and lazily imported, same contract as [shadow-head].
+semif = [
+    "allternit-computer-use[shadow-head]",
+    "semif-phase1[mlx] @ git+https://github.com/TheoLeeCJ/SemIf",
 ]
 
 # All dependencies (browser + desktop + operator)

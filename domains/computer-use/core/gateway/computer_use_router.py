@@ -142,6 +142,27 @@ def _get_adapter_for_planning(target_scope: str, adapter_preference: Optional[st
 # Run store
 # ---------------------------------------------------------------------------
 
+def _toolset_client_for(body: Any) -> Any:
+    """The shared toolset executor for this run (spec 1.2), when the engine
+    runs next to allternit-api (Desktop / cloud runtime set ALLTERNIT_API_URL).
+    Standalone (tests, demo) keeps the in-process adapter waterfall."""
+    try:
+        from core.toolset_executor import ToolsetExecutorClient, executor_configured
+    except ImportError:
+        return None
+    opts = dict(getattr(body, "options", {}) or {})
+    ctx = dict(getattr(body, "context", {}) or {})
+    computer_id = opts.get("computerId") or ctx.get("computerId")
+    if not executor_configured() and not computer_id:
+        return None
+    return ToolsetExecutorClient(
+        computer_id or "this-device",
+        user_id=opts.get("userId") or ctx.get("userId"),
+        browser_session_id=getattr(body, "session_id", None),
+        observe_toolset="browser" if getattr(body, "target_scope", "browser") == "browser" else "computer",
+    )
+
+
 class RunState:
     def __init__(
         self,
@@ -613,6 +634,7 @@ async def _execute_non_claude_path(
         approval_callback=approval_callback if loop_config.approval_policy != "never" else None,
         history_preflight=history_preflight_for_task,
         ledger=ledger,
+        toolset_client=_toolset_client_for(body),
     )
 
     run_state.planning_loop = planning_loop

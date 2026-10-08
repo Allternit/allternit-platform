@@ -243,7 +243,9 @@ export class BackendManager {
     // worker auto-provision). Per-boot random; consumed by the API's
     // desktop-bootstrap auth path via the environment. When absent there
     // (non-desktop deployments) the endpoints are disabled, not open.
-    this.desktopAccessToken = crypto.randomBytes(32).toString('hex');
+    // Once per app run (not per backend restart): the ACU gateway sidecar holds
+    // the same token to call the computer toolset executor for the user.
+    this.ensureDesktopAccessToken();
     this.humanProofSecret = crypto.randomBytes(32).toString('hex');
 
     const dataDir = resolveApiDataDir({
@@ -414,6 +416,12 @@ export class BackendManager {
 
   /** Spawn-time secret for managed-runtime local API endpoints (never logged). */
   getDesktopAccessToken(): string | null {
+    return this.desktopAccessToken;
+  }
+
+  /** The per-run desktop access token, created on first use. */
+  ensureDesktopAccessToken(): string {
+    if (!this.desktopAccessToken) this.desktopAccessToken = crypto.randomBytes(32).toString('hex');
     return this.desktopAccessToken;
   }
 

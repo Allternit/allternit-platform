@@ -2633,12 +2633,16 @@ if os.environ.get("ALLTERNIT_ACU_DEMO") == "1":
     app.include_router(demo_ui_router)
 
 # ---------------------------------------------------------------------------
-# /v1/computer — Claude native computer tool endpoint
+# /v1/computer — compatibility alias for the old Claude-native payload
 #
-# Accepts Claude's native computer_use tool payload and routes through the
-# ComputerUseExecutor waterfall (extension → CDP → Playwright → desktop).
-# This is the primary path for Claude; the /v1/execute endpoint remains for
-# direct Playwright access and non-Claude model paths.
+# Old callers (acu_mcp, the JS SDK's executeCompatibilityAction, agent-swarm)
+# send {action, coordinate, text, key, delta, url, ...}. That payload is turned
+# into one allternit.computer.v1 / allternit.browser.v1 contract call
+# (core/toolset_executor.alias_v1_computer) and run on the shared executor,
+# allternit-api POST /api/v1/computers/:id/toolset, when the engine runs next
+# to it. Standalone (no ALLTERNIT_API_URL) it runs on the in-process adapter
+# waterfall. The executor reaches browser sessions through /v1/execute, never
+# through this route, so there is no executor -> gateway -> executor loop.
 # ---------------------------------------------------------------------------
 
 import sys as _sys, os as _os
@@ -2651,9 +2655,16 @@ try:
 except ImportError:
     _executor_available = False
 
+from core.toolset_executor import (
+    ToolsetExecutorClient as _ToolsetExecutorClient,
+    alias_v1_computer as _alias_v1_computer,
+    executor_configured as _toolset_executor_configured,
+    legacy_request as _legacy_request,
+)
+
 
 class ComputerToolRequest(BaseModel):
-    """Claude's native computer_use tool payload format."""
+    """The old Claude native computer_use payload (kept for old callers)."""
     action: str
     session_id: str = Field(default_factory=lambda: f"sess-{uuid4().hex[:8]}")
     run_id: str = Field(default_factory=lambda: f"cu-{uuid4().hex[:12]}")
@@ -2665,52 +2676,65 @@ class ComputerToolRequest(BaseModel):
     selector: str | None = None
     adapter_preference: str | None = None
     parameters: dict[str, Any] = Field(default_factory=dict)
+    # Optional: which computer the executor runs on (default this-device) and
+    # whose it is (the executor checks ownership, lease and approval).
+    computer_id: str | None = None
+    user_id: str | None = None
+
+
+def _toolset_reply_to_legacy(toolset: str, member: str, call_input: dict[str, Any], reply: Any) -> dict[str, Any]:
+    body = reply.body
+    out: dict[str, Any] = {
+        "status": "completed" if reply.ok else "failed",
+        "action_type": member,
+        "toolset": toolset,
+        "member": member,
+        "input": call_input,
+        "is_error": not reply.ok,
+        "content": body.get("content") or [],
+        "screen": body.get("screen"),
+        "browser_state": body.get("browser_state"),
+        "extracted_content": {"text": reply.text()},
+    }
+    image = reply.image_b64()
+    if image:
+        out["extracted_content"]["data_url"] = f"data:image/png;base64,{image}"
+    if not reply.ok:
+        out["error"] = body.get("error") or reply.text()
+        if reply.approval_id:
+            out["approval_id"] = reply.approval_id
+    return out
 
 
 @app.post("/v1/computer")
 async def computer_tool(req: ComputerToolRequest) -> dict[str, Any]:
-    """
-    Claude native computer_use tool endpoint.
+    """Old Claude-native computer tool payload -> one contract call."""
+    toolset, member, call_input = _alias_v1_computer(req.model_dump())
+    if _toolset_executor_configured() or req.computer_id:
+        client = _ToolsetExecutorClient(
+            req.computer_id or "this-device",
+            user_id=req.user_id,
+            browser_session_id=req.session_id,
+        )
+        reply = await client.run(toolset, member, call_input, run_id=req.run_id)
+        return _toolset_reply_to_legacy(toolset, member, call_input, reply)
 
-    Accepts Claude's coordinate/keyboard action format and routes through
-    ComputerUseExecutor waterfall: browser.extension → browser.cdp → browser.playwright → desktop.
-
-    Equivalent tool_use input_schema matches the gateway_registry.json computer tool definition.
-    """
     if not _executor_available:
         raise HTTPException(status_code=503, detail="ComputerUseExecutor not available")
-
-    # Build parameters from Claude's native field names
-    params: dict[str, Any] = dict(req.parameters)
-    if req.coordinate:
-        params["x"] = req.coordinate[0]
-        params["y"] = req.coordinate[1]
-    if req.text is not None:
-        params["text"] = req.text
-    if req.key is not None:
-        params["key"] = req.key
-    if req.delta:
-        params["deltaX"] = req.delta[0]
-        params["deltaY"] = req.delta[1]
-    if req.url:
-        params["url"] = req.url
+    action_type, target, params = _legacy_request(toolset, member, call_input)
     if req.selector:
         params["selector"] = req.selector
-
-    action = _ActionRequest(
-        action_type=req.action,
-        target=req.url or req.selector or "",
-        parameters=params,
-    )
-
-    executor = get_executor()
-    result = await executor.execute(
+        target = target or req.selector
+    action = _ActionRequest(action_type=action_type, target=target, parameters=params)
+    result = await get_executor().execute(
         action,
         session_id=req.session_id,
         run_id=req.run_id,
         adapter_preference=req.adapter_preference,
     )
-    return result.to_dict()
+    out = result.to_dict()
+    out.update({"toolset": toolset, "member": member, "input": call_input})
+    return out
 
 
 # ── /v1/run/parallel ─────────────────────────────────────────────────────────
