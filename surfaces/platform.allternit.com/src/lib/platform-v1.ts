@@ -142,6 +142,31 @@ export interface V1WebhookDelivery {
   created_at: string;
 }
 
+export type ComputerStatus = "provisioning" | "running" | "stopped" | "starting" | "stopping" | "error" | "deleted";
+
+/** A hosted computer (hosted computer driver, `/v1/computers`). */
+export interface V1Computer {
+  id: string;
+  object: "computer";
+  name: string;
+  status: ComputerStatus;
+  account_id: string | null;
+  key_id: string;
+  created_at: string;
+  started_at: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export type ApprovalMode = "owner" | "api_key";
+
+/** `GET/PATCH /v1/computer_settings`. `hosted_driver_enabled` is set by Allternit only. */
+export interface V1ComputerSettings {
+  hosted_driver_enabled: boolean;
+  approval_mode: ApprovalMode;
+  per_key_concurrency: number;
+  browser_toolset: boolean;
+}
+
 /** Stock voices (spec §6: no custom or cloned voices). Mirrors `StockVoice` in platform-v1.yaml. */
 export const STOCK_VOICES = [
   "af_alloy", "af_aoede", "af_bella", "af_heart", "af_jessica", "af_kore", "af_nicole", "af_nova",
@@ -191,6 +216,8 @@ export const USAGE_METER_LABELS: Record<string, string> = {
   mms: "MMS messages",
   registration_passthrough_cents: "Carrier registration (cents)",
   recording_min_month: "Recording storage (minute-months)",
+  computer_minute: "Hosted computer minutes",
+  computer_action: "Hosted computer actions",
 };
 
 /** A `/v1` client bound to one project. */
@@ -226,6 +253,14 @@ export function v1(projectId: string) {
 
     usage: (params: { group_by: "meter" | "key" | "account"; from?: string; to?: string }) =>
       api.get<V1Usage>(`/v1/usage${qs(params)}`, opts),
+
+    listComputers: (after?: string | null) => api.get<V1Page<V1Computer>>(`/v1/computers${qs({ limit: 100, after })}`, opts),
+    startComputer: (id: string) => api.post<V1Computer>(`/v1/computers/${enc(id)}/start`, undefined, opts),
+    stopComputer: (id: string) => api.post<V1Computer>(`/v1/computers/${enc(id)}/stop`, undefined, opts),
+    deleteComputer: (id: string) => api.delete<V1Computer>(`/v1/computers/${enc(id)}`, opts),
+    getComputerSettings: () => api.get<V1ComputerSettings>("/v1/computer_settings", opts),
+    updateComputerSettings: (input: Partial<Omit<V1ComputerSettings, "hosted_driver_enabled">>) =>
+      api.patch<V1ComputerSettings>("/v1/computer_settings", input, opts),
 
     listWebhooks: () => api.get<V1Page<V1Webhook>>(`/v1/webhooks${qs({ limit: 100 })}`, opts),
     createWebhook: (input: { url: string; events: string[]; description?: string }) =>

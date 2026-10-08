@@ -67,6 +67,21 @@ pub struct MeterPlan {
     pub free_units: u32,
 }
 
+/// Meters whose prices Eoj hasn't set. Listed in the dry-run text with the
+/// amount as TBD; `--apply` never creates them (no steps), and usage on them
+/// is never reported to Stripe until they move into [`METER_PLANS`].
+pub struct PendingMeter {
+    pub meter: &'static str,
+    pub event_name: &'static str,
+    pub display_name: &'static str,
+    pub unit: &'static str,
+}
+
+pub const PENDING_METERS: &[PendingMeter] = &[
+    PendingMeter { meter: "computer_minute", event_name: "allternit_computer_minutes", display_name: "Hosted computer minutes", unit: "minute" },
+    PendingMeter { meter: "computer_action", event_name: "allternit_computer_actions", display_name: "Hosted computer toolset actions", unit: "action" },
+];
+
 pub const METER_PLANS: &[MeterPlan] = &[
     MeterPlan { meters: &["voice_min_allternit"], event_name: "allternit_voice_seconds_allternit", display_name: "Voice agent seconds (Allternit model)", unit: "second", value: MeterValue::Seconds, payg_cents: "0.15", growth_cents: "0.135", free_units: 0 },
     MeterPlan { meters: &["voice_min_byok"], event_name: "allternit_voice_seconds_byok", display_name: "Voice agent seconds (own model key)", unit: "second", value: MeterValue::Seconds, payg_cents: "0.1", growth_cents: "0.09", free_units: 0 },
@@ -204,6 +219,10 @@ pub fn render(steps: &[PlanStep]) -> String {
         for (k, v) in &s.form {
             out.push_str(&format!("      {k} = {v}\n"));
         }
+    }
+    out.push_str("\nPending meters (price TBD by Eoj; not created by --apply, not reported to Stripe):\n");
+    for m in PENDING_METERS {
+        out.push_str(&format!("   - {} ({}): event {}, per {}, payg TBD, growth TBD\n", m.display_name, m.meter, m.event_name, m.unit));
     }
     out.push_str(
         "\nNot in this plan (made per customer, later): the Growth $300 monthly credit grant \

@@ -1,0 +1,136 @@
+---
+title: 'Hosted computer driver'
+description: 'Give your model a hosted computer: the Anthropic SDK toolset drivers, the OpenAI and Gemini adapters, MCP, approvals and limits.'
+---
+
+The hosted computer driver runs a computer for your app and executes the model's computer and browser tool calls on it. Your code keeps the model loop; each tool call goes to `POST /v1/computers/{id}/toolset` and comes back as text and screenshots. The full endpoint list is in [Computers API](/api/platform/computers).
+
+<Note>
+The hosted driver is switched on per project by Allternit. Until it is on for your project, every `/v1/computers` route answers `404` with code `hosted_driver_disabled`. You can see the flag under **Platform API → Computers** in the console; you can't switch it on yourself.
+</Note>
+
+## 1. Get a key with the `computers` scope
+
+In [platform.allternit.com](https://platform.allternit.com), open **API keys → Platform API**, pick the project, and create a key with the `computers` scope. Store it:
+
+```bash
+export ALLTERNIT_API_KEY=alt_test_…
+```
+
+The driver packages are `@allternit/computer-driver` (TypeScript, in `sdk/computer-driver/`) and `allternit-computer-driver` (Python, `import allternit_computer_driver`). They are not yet on npm or PyPI; install them from the repo. Each has:
+
+- `AllternitComputers`, a plain client for the `/v1/computers` routes.
+- Anthropic SDK toolset subclasses for the computer and browser toolsets (`BetaAbstractComputerToolset20260801`, `BetaAbstractBrowserToolset20260801`).
+- An OpenAI computer-use adapter and a Gemini `computer_use` adapter.
+
+## 2. Create a computer
+
+```bash
+curl https://api.allternit.com/v1/computers \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: $(uuidgen)" \
+  -d '{"name": "checkout-test"}'
+```
+
+The response is a computer object with `id: "cmp_…"`. It starts in `provisioning`; a toolset call that arrives while it is still starting answers `503 computer_starting`, so retry after a short wait.
+
+## 3. Drive it from the Anthropic SDK
+
+The toolset classes subclass the Anthropic SDK's abstract computer and browser toolsets, so the SDK's tool runner calls them like any other toolset. Each member call is sent to the hosted computer.
+
+<CodeGroup>
+```ts TypeScript
+import Anthropic from "@anthropic-ai/sdk";
+import { AllternitComputers, AllternitComputerToolset } from "@allternit/computer-driver";
+
+const computers = new AllternitComputers(); // reads ALLTERNIT_API_KEY
+const computer = await computers.create({ name: "checkout-test" });
+
+const toolset = new AllternitComputerToolset({ client: computers, computerId: computer.id });
+// Pass `toolset` in the tools list of the Anthropic SDK tool runner, then run your loop.
+```
+
+```python Python
+from allternit_computer_driver import AllternitComputers, AllternitComputerToolset
+
+computers = AllternitComputers()  # reads ALLTERNIT_API_KEY
+computer = computers.create(name="checkout-test")
+
+toolset = AllternitComputerToolset(client=computers, computer_id=computer.id)
+# Pass `toolset` in the tools list of the Anthropic SDK tool runner, then run your loop.
+```
+</CodeGroup>
+
+The browser toolset works the same way with the browser toolset class. It is available only when the project setting `browser_toolset` is on.
+
+## 4. Or use the OpenAI or Gemini adapter
+
+The adapters turn one model action into toolset calls and return what the model expects next (a screenshot for OpenAI's `computer_call_output`, a function response for Gemini).
+
+- **OpenAI computer use:** for each `computer_call` in the response, pass the call id and action to the adapter, then send its output back as `computer_call_output`. Set `display` to the `display_width` / `display_height` you declared on the tool.
+- **Gemini `computer_use`:** for each function call, pass it to the adapter and send back the function response it returns.
+
+```ts
+import { AllternitComputers, runOpenAIAction } from "@allternit/computer-driver";
+
+const computers = new AllternitComputers();
+const step = await runOpenAIAction(
+  { client: computers, computerId: "cmp_123", display: { width: 1280, height: 800 } },
+  call.call_id,
+  call.action,
+);
+```
+
+## 5. Or connect over MCP
+
+The `@allternit/computers-server` stdio MCP server accepts a project key. With `ALLTERNIT_API_KEY=alt_live_…` (or `alt_test_…`) it talks to `https://api.allternit.com/v1` and adds four tools: `computer_toolset`, `computer_toolset_schema`, `computer_events` and `computer_approve`. Screenshots come back as MCP image content.
+
+```json
+{
+  "mcpServers": {
+    "allternit-computers": {
+      "command": "computers-mcp",
+      "env": { "ALLTERNIT_API_KEY": "alt_test_…" }
+    }
+  }
+}
+```
+
+Set `ALLTERNIT_PLATFORM_URL` to point it at another base URL.
+
+## Approvals
+
+Some actions need approval before they run. The toolset call then answers `409` with code `approval_required` and an `approval` object:
+
+```json
+{
+  "error": { "type": "conflict_error", "code": "approval_required", "message": "…", "param": null },
+  "approval": {
+    "id": "apr_…",
+    "member": "left_click",
+    "toolset": "computer",
+    "risk": "medium",
+    "approve_url": "/v1/computers/cmp_123/approvals/apr_…"
+  }
+}
+```
+
+1. Get it approved. The project owner can approve in the console. If the project's `approval_mode` is `api_key`, your key can call `POST /v1/computers/{id}/approvals/{approval_id}`; otherwise that call answers `403 approval_requires_owner`.
+2. Resend the **same** toolset call with `approval_grant` set to `approval.id`.
+
+The driver packages raise an approval error carrying the approval, and the MCP server returns a text result naming the approval id and the next step. A denied approval answers `403 approval_denied`.
+
+## Limits
+
+- **Project flag.** `hosted_driver_enabled` is set by Allternit. Off means `404 hosted_driver_disabled` on every `/v1/computers` route.
+- **Per-key concurrency.** Each key can have a set number of running computers (`per_key_concurrency` in [computer settings](/api/platform/computers#settings)). Past it, creating or starting a computer answers `429 concurrency_limit`.
+- **Spend cap.** When the project reaches its spend cap, calls answer `402 spend_cap_reached`. See [Billing and spend caps](/api/platform/billing).
+- **Control.** A computer that someone else is controlling answers `423 computer_controlled_elsewhere`.
+- **Network egress.** Computers created by outside developers can't reach private address ranges or the cloud metadata address `169.254.169.254`.
+
+## Usage and pricing
+
+Two meters record usage: `computer_minute` (running minutes, recorded on toolset calls, stop and delete) and `computer_action` (one per executed toolset call). Both show in [Usage](/api/platform/usage) and on the console's Computers page.
+
+Pricing for the hosted driver is to be announced.

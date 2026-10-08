@@ -58,6 +58,8 @@ pub fn unit_price_microusd(meter: &str) -> Option<i64> {
         // Quantity is already in cents (passed through at cost).
         "registration_passthrough_cents" => 10_000,
         "recording_min_month" => 2_000,
+        // Hosted computer driver: price TBD (Eoj decides). Counted, billed $0 until set.
+        "computer_minute" | "computer_action" => 0,
         _ => return None,
     })
 }

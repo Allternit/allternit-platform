@@ -28,6 +28,7 @@ pub mod billing;
 pub mod caller;
 pub mod calls;
 pub mod channels;
+pub mod computers;
 pub mod console;
 pub mod conversations;
 pub mod error;
@@ -212,6 +213,7 @@ fn build_table() -> RouteTable {
     let table = billing::register(table);
     let table = channels::register(table);
     let table = twin::register(table);
+    let table = computers::register(table);
     usage::register(table)
 }
 
@@ -401,3 +403,5 @@ mod tests_p3;
 mod tests_p5;
 #[cfg(test)]
 mod tests_p4;
+#[cfg(test)]
+mod tests_p6_computers;

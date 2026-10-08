@@ -20,7 +20,9 @@ class _Unset:
 NOT_GIVEN: Any = _Unset()
 
 
+Call = TypedDict('Call', {'id': str, 'object': Literal['call'], 'account_id': str, 'agent_id': str, 'number_id': Optional[str], 'direction': Literal['inbound', 'outbound', 'realtime'], 'from': Optional[str], 'to': Optional[str], 'purpose': Optional[str], 'status': Literal['queued', 'ringing', 'in_progress', 'completed', 'failed', 'no_answer', 'canceled'], 'end_reason': Optional[str], 'simulated': bool, 'recording': bool, 'transferred_to': Optional[str], 'duration_seconds': Optional[int], 'created_at': str, 'answered_at': Optional[str], 'ended_at': Optional[str]}, total=False)
 Error = TypedDict('Error', {'error': Dict[str, Any]}, total=False)
+SpendCap = TypedDict('SpendCap', {'object': Literal['spend_cap'], 'project_id': str, 'plan': Literal['sandbox', 'payg', 'growth', 'enterprise'], 'spend_cap_cents': int, 'period': str, 'spent_cents': int, 'spent_microusd': int, 'remaining_cents': int, 'reached': bool, 'thresholds_sent': List[int]}, total=False)
 ListEnvelope = TypedDict('ListEnvelope', {'data': List[Any], 'has_more': bool, 'next_cursor': Optional[str]}, total=False)
 Account = TypedDict('Account', {'id': str, 'object': Literal['account'], 'name': str, 'external_ref': Optional[str], 'metadata': Dict[str, Any], 'created_at': str}, total=False)
 Agent = TypedDict('Agent', {'id': str, 'object': Literal['agent'], 'account_id': str, 'name': str, 'instructions': str, 'greeting': str, 'model': str, 'voice': "StockVoice", 'tools': List["AgentTool"], 'autonomy': "Autonomy", 'transfer_targets': List[str], 'business_hours': Optional[Dict[str, Any]], 'metadata': Dict[str, Any], 'status': Literal['pending', 'ready'], 'created_at': str, 'updated_at': str}, total=False)
@@ -37,7 +39,15 @@ PhoneNumberList = TypedDict('PhoneNumberList', {'data': List["PhoneNumber"], 'ha
 Message = TypedDict('Message', {'id': str, 'object': Literal['message'], 'account_id': Optional[str], 'number_id': str, 'direction': Literal['inbound', 'outbound'], 'from': str, 'to': str, 'body': str, 'segments': int, 'status': Literal['sent', 'simulated', 'received', 'failed'], 'error_code': Optional[str], 'media': List[Dict[str, Any]], 'created_at': str}, total=False)
 MessageList = TypedDict('MessageList', {'data': List["Message"], 'has_more': bool, 'next_cursor': Optional[str]}, total=False)
 WebhookEndpoint = TypedDict('WebhookEndpoint', {'id': str, 'object': Literal['webhook_endpoint'], 'url': str, 'events': List[str], 'description': Optional[str], 'created_at': str}, total=False)
-Event = TypedDict('Event', {'id': str, 'object': Literal['event'], 'type': Literal['message.received', 'message.status', 'registration.updated', 'webhook.test'], 'created': int, 'project_id': str, 'account_id': Optional[str], 'data': Dict[str, Any]}, total=False)
+Event = TypedDict('Event', {'id': str, 'object': Literal['event'], 'type': Literal['approval.requested', 'message.received', 'message.status', 'registration.updated', 'inbox.item.created', 'call.started', 'call.ended', 'call.transcript.ready', 'usage.threshold', 'webhook.test'], 'created': int, 'project_id': str, 'account_id': Optional[str], 'data': Dict[str, Any]}, total=False)
+Computer = TypedDict('Computer', {'id': str, 'object': Literal['computer'], 'name': str, 'status': Literal['provisioning', 'starting', 'running', 'stopping', 'stopped', 'error', 'deleted'], 'account_id': Optional[str], 'key_id': str, 'created_at': str, 'started_at': Optional[str], 'metadata': Dict[str, Any]}, total=False)
+ComputerList = TypedDict('ComputerList', {'data': List["Computer"], 'has_more': bool, 'next_cursor': Optional[str]}, total=False)
+ComputerEvent = TypedDict('ComputerEvent', {'id': str, 'type': Literal['computer.action'], 'ts': str, 'data': Dict[str, Any]}, total=False)
+ComputerEventList = TypedDict('ComputerEventList', {'data': List["ComputerEvent"], 'has_more': bool, 'next_cursor': Optional[str]}, total=False)
+ComputerSettings = TypedDict('ComputerSettings', {'hosted_driver_enabled': bool, 'approval_mode': Literal['owner', 'api_key'], 'per_key_concurrency': int, 'browser_toolset': bool}, total=False)
+ToolsetCall = TypedDict('ToolsetCall', {'toolset': Literal['computer', 'browser'], 'member': str, 'input': Dict[str, Any], 'run_id': str, 'turn_id': str, 'call_index': int, 'model_frame': Dict[str, Any], 'coordinate_space': Literal['pixels', 'normalized_1000'], 'approval_grant': str, 'browser_session_id': str}, total=False)
+ToolsetResult = TypedDict('ToolsetResult', {'is_error': bool, 'content': List[Dict[str, Any]], 'browser_state': Dict[str, Any], 'screen': Dict[str, Any], 'error': str}, total=False)
+ToolsetApprovalRequired = TypedDict('ToolsetApprovalRequired', {'error': Dict[str, Any], 'approval': Dict[str, Any], 'result': "ToolsetResult"}, total=False)
 
 
 class AccountsResource:
@@ -383,7 +393,9 @@ class ConversationsResource:
         server-sent events: `message.delta` (`{"delta": "..."}`) while the agent writes, then
         `message.completed` (the stored reply) or `error`. The first message starts the
         project's hosted runtime: `503 runtime_starting` means retry in a few seconds.
-        One message at a time per conversation (`409 conversation_busy`).
+        One message at a time per conversation (`409 conversation_busy`). A project at its
+        monthly spend cap gets `402 spend_cap_reached`. Each reply records `tokens_in` and
+        `tokens_out` usage (provider list price + 15%; no token charge on the project's own key).
 
         ``POST /v1/conversations/{id}/messages``
         """
@@ -404,6 +416,27 @@ class ConversationsResource:
 class UsageResource:
     def __init__(self, client: Transport) -> None:
         self._client = client
+
+    def get_spend_cap(self, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "SpendCap":
+        """The project's monthly spend cap and spend so far
+
+        Spend is this UTC calendar month's usage at list prices (before plan credits or discounts). Requires the `usage` scope.
+
+        ``GET /v1/projects/current/spend_cap``
+        """
+        return self._client.request("GET", f"/v1/projects/current/spend_cap", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def put_spend_cap(self, *, spend_cap_cents: int, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "SpendCap":
+        """Lower the monthly spend cap
+
+        An API key can only lower the cap (403 `spend_cap_raise_in_console` otherwise); raise it in the console. Requires the `usage` scope and a key not bound to an account.
+
+        ``PUT /v1/projects/current/spend_cap``
+        """
+        _body: Dict[str, Any] = {}
+        if spend_cap_cents is not NOT_GIVEN:
+            _body['spend_cap_cents'] = spend_cap_cents
+        return self._client.request("PUT", f"/v1/projects/current/spend_cap", body=_body, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
     def get(self, *, group_by: Literal['meter', 'key', 'account'] = NOT_GIVEN, from_: str = NOT_GIVEN, to: str = NOT_GIVEN, account_id: str = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """Usage by meter, key or account
@@ -498,6 +531,16 @@ class NumbersResource:
         ``GET /v1/numbers/{id}``
         """
         return self._client.request("GET", f"/v1/numbers/{_q(id)}", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def update(self, id: str, *, agent_id: Optional[str] = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "PhoneNumber":
+        """Bind the agent that answers calls (agent_id, null unbinds)
+
+        ``PATCH /v1/numbers/{id}``
+        """
+        _body: Dict[str, Any] = {}
+        if agent_id is not NOT_GIVEN:
+            _body['agent_id'] = agent_id
+        return self._client.request("PATCH", f"/v1/numbers/{_q(id)}", body=_body, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
     def release(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """Release a number
@@ -658,7 +701,7 @@ class WebhooksResource:
             return self._client.request("GET", f"/v1/webhooks", query=q, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
         return self._client.paginate(_fetch, after if after is not NOT_GIVEN else None)
 
-    def create(self, *, url: str, events: List[Literal['*', 'message.received', 'message.status', 'registration.updated']], description: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    def create(self, *, url: str, events: List[Literal['*', 'approval.requested', 'message.received', 'message.status', 'registration.updated', 'inbox.item.created', 'call.started', 'call.ended', 'call.transcript.ready', 'usage.threshold']], description: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """Create a webhook endpoint
 
         `url` must be public https. The response carries `secret` once.
@@ -729,6 +772,460 @@ class WebhooksResource:
         return self._client.request("POST", f"/v1/webhooks/{_q(id)}/deliveries/{_q(delivery_id)}/redeliver", idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
 
+class VoiceResource:
+    def __init__(self, client: Transport) -> None:
+        self._client = client
+
+    def list_calls(self, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """List calls (filters account_id, agent_id, status; cursor pagination)
+
+        ``GET /v1/calls``
+        """
+        return self._client.request("GET", f"/v1/calls", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def create_call(self, *, agent_id: str, from_number_id: str, to: str, purpose: str, record: bool = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Call":
+        """Place an outbound call (consent, STOP, business hours, spend cap checked)
+
+        ``POST /v1/calls``
+        """
+        _body: Dict[str, Any] = {}
+        if agent_id is not NOT_GIVEN:
+            _body['agent_id'] = agent_id
+        if from_number_id is not NOT_GIVEN:
+            _body['from_number_id'] = from_number_id
+        if to is not NOT_GIVEN:
+            _body['to'] = to
+        if purpose is not NOT_GIVEN:
+            _body['purpose'] = purpose
+        if record is not NOT_GIVEN:
+            _body['record'] = record
+        return self._client.request("POST", f"/v1/calls", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def get_call(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Call":
+        """Retrieve a call
+
+        ``GET /v1/calls/{id}``
+        """
+        return self._client.request("GET", f"/v1/calls/{_q(id)}", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def end_call(self, id: str, *, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Call":
+        """End a call
+
+        ``POST /v1/calls/{id}/end``
+        """
+        return self._client.request("POST", f"/v1/calls/{_q(id)}/end", idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def transfer_call(self, id: str, *, to: str = NOT_GIVEN, mode: Literal['warm', 'cold'] = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Call":
+        """Transfer to one of the agent's transfer_targets
+
+        ``POST /v1/calls/{id}/transfer``
+        """
+        _body: Dict[str, Any] = {}
+        if to is not NOT_GIVEN:
+            _body['to'] = to
+        if mode is not NOT_GIVEN:
+            _body['mode'] = mode
+        return self._client.request("POST", f"/v1/calls/{_q(id)}/transfer", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def get_call_transcript(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Call transcript
+
+        ``GET /v1/calls/{id}/transcript``
+        """
+        return self._client.request("GET", f"/v1/calls/{_q(id)}/transcript", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def get_call_recording(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Recording URL (only when the call was recorded)
+
+        ``GET /v1/calls/{id}/recording``
+        """
+        return self._client.request("GET", f"/v1/calls/{_q(id)}/recording", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def simulate_call_turn(self, id: str, *, text: str, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Sandbox: play what the caller says
+
+        ``POST /v1/calls/{id}/simulate_turn``
+        """
+        _body: Dict[str, Any] = {}
+        if text is not NOT_GIVEN:
+            _body['text'] = text
+        return self._client.request("POST", f"/v1/calls/{_q(id)}/simulate_turn", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def simulate_inbound_call(self, id: str, *, from_: str, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Call":
+        """Sandbox: play an inbound call
+
+        ``POST /v1/numbers/{id}/simulate_call``
+        """
+        _body: Dict[str, Any] = {}
+        if from_ is not NOT_GIVEN:
+            _body['from'] = from_
+        return self._client.request("POST", f"/v1/numbers/{_q(id)}/simulate_call", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+
+class RealtimeResource:
+    def __init__(self, client: Transport) -> None:
+        self._client = client
+
+    def create_session(self, *, agent_id: str, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Ephemeral client token for talking to an agent (60 s to start)
+
+        ``POST /v1/realtime/sessions``
+        """
+        _body: Dict[str, Any] = {}
+        if agent_id is not NOT_GIVEN:
+            _body['agent_id'] = agent_id
+        return self._client.request("POST", f"/v1/realtime/sessions", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+
+class ChannelsResource:
+    def __init__(self, client: Transport) -> None:
+        self._client = client
+
+    def list(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """List an account's channels
+
+        Channel connections of the account (`?agent_id=` filter). Scope `channels`.
+
+        ``GET /v1/accounts/{id}/channels``
+        """
+        return self._client.request("GET", f"/v1/accounts/{_q(id)}/channels", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def connect(self, id: str, kind: str, *, body: Optional[Dict[str, Any]] = None, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Connect a channel for an agent
+
+        `{agent_id, return_url?, local_part?}`. `email` connects at once; `slack` answers `pending` with `connect_url`; kinds without a production app answer 400 `channel_kind_unavailable`.
+
+        ``POST /v1/accounts/{id}/channels/{kind}/connect``
+        """
+        _body: Dict[str, Any] = dict(body or {})
+        return self._client.request("POST", f"/v1/accounts/{_q(id)}/channels/{_q(kind)}/connect", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def get(self, id: str, channel_id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Retrieve a channel
+
+        One channel connection.
+
+        ``GET /v1/accounts/{id}/channels/{channel_id}``
+        """
+        return self._client.request("GET", f"/v1/accounts/{_q(id)}/channels/{_q(channel_id)}", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def delete(self, id: str, channel_id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Disconnect a channel
+
+        The runtime releases the channel, then the record is deleted.
+
+        ``DELETE /v1/accounts/{id}/channels/{channel_id}``
+        """
+        return self._client.request("DELETE", f"/v1/accounts/{_q(id)}/channels/{_q(channel_id)}", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+
+class TwinResource:
+    def __init__(self, client: Transport) -> None:
+        self._client = client
+
+    def list_people(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """List people
+
+        People the account's agents talk to (cursor `limit`/`after`). Scope `twin`.
+
+        ``GET /v1/accounts/{id}/people``
+        """
+        return self._client.request("GET", f"/v1/accounts/{_q(id)}/people", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def get_person(self, id: str, person_id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Retrieve a person
+
+        With identities and the account's facts.
+
+        ``GET /v1/accounts/{id}/people/{person_id}``
+        """
+        return self._client.request("GET", f"/v1/accounts/{_q(id)}/people/{_q(person_id)}", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def update_person(self, id: str, person_id: str, *, body: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Update a person
+
+        `{name?, notes?, org?}`. 409 `person_shared` when another account's agents also know them.
+
+        ``PATCH /v1/accounts/{id}/people/{person_id}``
+        """
+        _body: Dict[str, Any] = dict(body or {})
+        return self._client.request("PATCH", f"/v1/accounts/{_q(id)}/people/{_q(person_id)}", body=_body, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def list_inbox(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """List inbox items
+
+        `?status=open|resolved|all`, newest first.
+
+        ``GET /v1/accounts/{id}/inbox``
+        """
+        return self._client.request("GET", f"/v1/accounts/{_q(id)}/inbox", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def resolve_inbox_item(self, id: str, item_id: str, *, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Resolve an inbox item
+
+        Marks it resolved.
+
+        ``POST /v1/accounts/{id}/inbox/{item_id}/resolve``
+        """
+        return self._client.request("POST", f"/v1/accounts/{_q(id)}/inbox/{_q(item_id)}/resolve", idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def list_approvals(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """List approvals
+
+        `?status=pending|approved|denied|all`, newest first.
+
+        ``GET /v1/accounts/{id}/approvals``
+        """
+        return self._client.request("GET", f"/v1/accounts/{_q(id)}/approvals", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def approve_approval(self, id: str, approval_id: str, *, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Approve a held action
+
+        The API key is recorded as the actor.
+
+        ``POST /v1/accounts/{id}/approvals/{approval_id}/approve``
+        """
+        return self._client.request("POST", f"/v1/accounts/{_q(id)}/approvals/{_q(approval_id)}/approve", idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def deny_approval(self, id: str, approval_id: str, *, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Deny a held action
+
+        The API key is recorded as the actor.
+
+        ``POST /v1/accounts/{id}/approvals/{approval_id}/deny``
+        """
+        return self._client.request("POST", f"/v1/accounts/{_q(id)}/approvals/{_q(approval_id)}/deny", idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def list_memory(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """List account memory
+
+        Facts every agent of the account knows.
+
+        ``GET /v1/accounts/{id}/memory``
+        """
+        return self._client.request("GET", f"/v1/accounts/{_q(id)}/memory", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def add_memory(self, id: str, *, body: Optional[Dict[str, Any]] = None, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Add account memory
+
+        `{content, subject?, kind?, source_ref?}`; at most 500 per account.
+
+        ``POST /v1/accounts/{id}/memory``
+        """
+        _body: Dict[str, Any] = dict(body or {})
+        return self._client.request("POST", f"/v1/accounts/{_q(id)}/memory", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def delete_memory(self, id: str, memory_id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Delete account memory
+
+        Removes one item; agents get the change on their next sync.
+
+        ``DELETE /v1/accounts/{id}/memory/{memory_id}``
+        """
+        return self._client.request("DELETE", f"/v1/accounts/{_q(id)}/memory/{_q(memory_id)}", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def get_autonomy(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Retrieve an agent's autonomy
+
+        Agent-wide `level` and per channel / person `rules`.
+
+        ``GET /v1/agents/{id}/autonomy``
+        """
+        return self._client.request("GET", f"/v1/agents/{_q(id)}/autonomy", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def put_autonomy(self, id: str, *, body: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Replace an agent's autonomy
+
+        `{level?, rules:[{channel?, person?, level, limits?}]}` replaces every rule.
+
+        ``PUT /v1/agents/{id}/autonomy``
+        """
+        _body: Dict[str, Any] = dict(body or {})
+        return self._client.request("PUT", f"/v1/agents/{_q(id)}/autonomy", body=_body, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+
+class ComputersResource:
+    def __init__(self, client: Transport) -> None:
+        self._client = client
+
+    def list(self, *, limit: int = NOT_GIVEN, after: str = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "ComputerList":
+        """List computers
+
+        Hosted-driver computers in this project (an account-bound key sees its account's only). Requires the `computers` scope and the project's hosted driver flag (404 `hosted_driver_disabled` until Allternit turns it on).
+
+        ``GET /v1/computers``
+        """
+        _query: Dict[str, Any] = {}
+        if limit is not NOT_GIVEN:
+            _query['limit'] = limit
+        if after is not NOT_GIVEN:
+            _query['after'] = after
+        return self._client.request("GET", f"/v1/computers", query=_query, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def list_all(self, *, limit: int = NOT_GIVEN, after: str = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Iterator["Computer"]:
+        """Every item of ``list``, fetching pages as you iterate."""
+        _query: Dict[str, Any] = {}
+        if limit is not NOT_GIVEN:
+            _query['limit'] = limit
+        if after is not NOT_GIVEN:
+            _query['after'] = after
+        def _fetch(cursor: Optional[str]) -> Page:
+            q = dict(_query)
+            if cursor is not None:
+                q['after'] = cursor
+            return self._client.request("GET", f"/v1/computers", query=q, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+        return self._client.paginate(_fetch, after if after is not NOT_GIVEN else None)
+
+    def create(self, *, name: str = NOT_GIVEN, account_id: str = NOT_GIVEN, metadata: Dict[str, Any] = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Computer":
+        """Create a computer
+
+        Provisions a cloud computer your agents drive with the computer and browser toolsets. 402 `spend_cap_reached` at the spend cap; 429 `concurrency_limit` when this key already has `per_key_concurrency` live computers.
+
+        ``POST /v1/computers``
+        """
+        _body: Dict[str, Any] = {}
+        if name is not NOT_GIVEN:
+            _body['name'] = name
+        if account_id is not NOT_GIVEN:
+            _body['account_id'] = account_id
+        if metadata is not NOT_GIVEN:
+            _body['metadata'] = metadata
+        return self._client.request("POST", f"/v1/computers", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def get(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Computer":
+        """Get a computer
+
+        ``GET /v1/computers/{id}``
+        """
+        return self._client.request("GET", f"/v1/computers/{_q(id)}", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def delete(self, id: str, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Computer":
+        """Delete a computer
+
+        Deletes the computer and its disk. Running minutes up to now are billed.
+
+        ``DELETE /v1/computers/{id}``
+        """
+        return self._client.request("DELETE", f"/v1/computers/{_q(id)}", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def start(self, id: str, *, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Computer":
+        """Start a computer
+
+        ``POST /v1/computers/{id}/start``
+        """
+        return self._client.request("POST", f"/v1/computers/{_q(id)}/start", idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def stop(self, id: str, *, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Computer":
+        """Stop a computer
+
+        ``POST /v1/computers/{id}/stop``
+        """
+        return self._client.request("POST", f"/v1/computers/{_q(id)}/stop", idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def call_toolset(self, id: str, *, toolset: Literal['computer', 'browser'], member: str, input: Dict[str, Any] = NOT_GIVEN, run_id: str = NOT_GIVEN, turn_id: str = NOT_GIVEN, call_index: int = NOT_GIVEN, model_frame: Dict[str, Any] = NOT_GIVEN, coordinate_space: Literal['pixels', 'normalized_1000'] = NOT_GIVEN, approval_grant: str = NOT_GIVEN, browser_session_id: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "ToolsetResult":
+        """Run one toolset call
+
+        One `allternit.computer.v1` / `allternit.browser.v1` call (member names and inputs match Anthropic's `computer_toolset_20260801` / `browser_toolset_20260801`). Runs through the computer's executor: contract validation, control lease, policy, approval, audit, then the action. Action failures are 200 with `is_error: true`.
+        409 `approval_required` carries `approval`: approve it (`POST /v1/computers/{id}/approvals/{approval_id}`, or the project owner in the console), then resend the same call with `approval_grant`.
+
+        ``POST /v1/computers/{id}/toolset``
+        """
+        _body: Dict[str, Any] = {}
+        if toolset is not NOT_GIVEN:
+            _body['toolset'] = toolset
+        if member is not NOT_GIVEN:
+            _body['member'] = member
+        if input is not NOT_GIVEN:
+            _body['input'] = input
+        if run_id is not NOT_GIVEN:
+            _body['run_id'] = run_id
+        if turn_id is not NOT_GIVEN:
+            _body['turn_id'] = turn_id
+        if call_index is not NOT_GIVEN:
+            _body['call_index'] = call_index
+        if model_frame is not NOT_GIVEN:
+            _body['model_frame'] = model_frame
+        if coordinate_space is not NOT_GIVEN:
+            _body['coordinate_space'] = coordinate_space
+        if approval_grant is not NOT_GIVEN:
+            _body['approval_grant'] = approval_grant
+        if browser_session_id is not NOT_GIVEN:
+            _body['browser_session_id'] = browser_session_id
+        return self._client.request("POST", f"/v1/computers/{_q(id)}/toolset", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def get_toolset_schema(self, id: str, *, toolset: Literal['computer', 'browser'] = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Members available on this computer
+
+        ``GET /v1/computers/{id}/toolset/schema``
+        """
+        _query: Dict[str, Any] = {}
+        if toolset is not NOT_GIVEN:
+            _query['toolset'] = toolset
+        return self._client.request("GET", f"/v1/computers/{_q(id)}/toolset/schema", query=_query, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def list_events(self, id: str, *, limit: int = NOT_GIVEN, after: str = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "ComputerEventList":
+        """Poll the computer's action events
+
+        `computer.action` events, oldest first. Pass the last page's `next_cursor` as `after` to poll.
+
+        ``GET /v1/computers/{id}/events``
+        """
+        _query: Dict[str, Any] = {}
+        if limit is not NOT_GIVEN:
+            _query['limit'] = limit
+        if after is not NOT_GIVEN:
+            _query['after'] = after
+        return self._client.request("GET", f"/v1/computers/{_q(id)}/events", query=_query, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def list_events_all(self, id: str, *, limit: int = NOT_GIVEN, after: str = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Iterator["ComputerEvent"]:
+        """Every item of ``list_events``, fetching pages as you iterate."""
+        _query: Dict[str, Any] = {}
+        if limit is not NOT_GIVEN:
+            _query['limit'] = limit
+        if after is not NOT_GIVEN:
+            _query['after'] = after
+        def _fetch(cursor: Optional[str]) -> Page:
+            q = dict(_query)
+            if cursor is not None:
+                q['after'] = cursor
+            return self._client.request("GET", f"/v1/computers/{_q(id)}/events", query=q, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+        return self._client.paginate(_fetch, after if after is not NOT_GIVEN else None)
+
+    def approve_action(self, id: str, approval_id: str, *, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Approve a held action
+
+        The project owner (console) can always approve. An API key can only when the project's `approval_mode` is `api_key` (403 `approval_requires_owner` otherwise).
+
+        ``POST /v1/computers/{id}/approvals/{approval_id}``
+        """
+        return self._client.request("POST", f"/v1/computers/{_q(id)}/approvals/{_q(approval_id)}", idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def get_settings(self, *, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "ComputerSettings":
+        """The project's hosted driver settings
+
+        Readable while the flag is off (so you can see it). Requires the `computers` scope.
+
+        ``GET /v1/computer_settings``
+        """
+        return self._client.request("GET", f"/v1/computer_settings", timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+    def update_settings(self, *, approval_mode: Literal['owner', 'api_key'] = NOT_GIVEN, per_key_concurrency: int = NOT_GIVEN, browser_toolset: bool = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "ComputerSettings":
+        """Change the hosted driver settings
+
+        Console only (403 `settings_require_console` for API keys), so a key can't widen its own approvals. `hosted_driver_enabled` is set by Allternit.
+
+        ``PATCH /v1/computer_settings``
+        """
+        _body: Dict[str, Any] = {}
+        if approval_mode is not NOT_GIVEN:
+            _body['approval_mode'] = approval_mode
+        if per_key_concurrency is not NOT_GIVEN:
+            _body['per_key_concurrency'] = per_key_concurrency
+        if browser_toolset is not NOT_GIVEN:
+            _body['browser_toolset'] = browser_toolset
+        return self._client.request("PATCH", f"/v1/computer_settings", body=_body, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
+
+
 def _q(v: str) -> str:
     from urllib.parse import quote
     return quote(str(v), safe='')
@@ -745,3 +1242,8 @@ class GeneratedResources:
         self.numbers = NumbersResource(client)
         self.messaging = MessagingResource(client)
         self.webhooks = WebhooksResource(client)
+        self.voice = VoiceResource(client)
+        self.realtime = RealtimeResource(client)
+        self.channels = ChannelsResource(client)
+        self.twin = TwinResource(client)
+        self.computers = ComputersResource(client)

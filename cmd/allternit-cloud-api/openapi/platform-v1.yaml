@@ -1461,6 +1461,226 @@ paths:
               schema: { type: object }
         default:
           description: Error (`{error:{type,code,message,param}}`).
+  /v1/computers:
+    get:
+      operationId: listComputers
+      summary: List computers
+      description: Hosted-driver computers in this project (an account-bound key sees its account's only). Requires the `computers` scope and the project's hosted driver flag (404 `hosted_driver_disabled` until Allternit turns it on).
+      tags: [Computers]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/After"
+      responses:
+        "200":
+          description: A page of computers.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ComputerList" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createComputer
+      summary: Create a computer
+      description: Provisions a cloud computer your agents drive with the computer and browser toolsets. 402 `spend_cap_reached` at the spend cap; 429 `concurrency_limit` when this key already has `per_key_concurrency` live computers.
+      tags: [Computers]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                name: { type: string, maxLength: 120 }
+                account_id: { type: string }
+                metadata: { type: object, additionalProperties: true }
+      responses:
+        "201":
+          description: The computer.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Computer" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/computers/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getComputer
+      summary: Get a computer
+      tags: [Computers]
+      responses:
+        "200":
+          description: The computer.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Computer" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deleteComputer
+      summary: Delete a computer
+      description: Deletes the computer and its disk. Running minutes up to now are billed.
+      tags: [Computers]
+      responses:
+        "200":
+          description: The deleted computer.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Computer" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/computers/{id}/start:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: startComputer
+      summary: Start a computer
+      tags: [Computers]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: The computer.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Computer" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/computers/{id}/stop:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: stopComputer
+      summary: Stop a computer
+      tags: [Computers]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: The computer.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Computer" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/computers/{id}/toolset:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: callComputerToolset
+      summary: Run one toolset call
+      description: |
+        One `allternit.computer.v1` / `allternit.browser.v1` call (member names and inputs match Anthropic's `computer_toolset_20260801` / `browser_toolset_20260801`). Runs through the computer's executor: contract validation, control lease, policy, approval, audit, then the action. Action failures are 200 with `is_error: true`.
+        409 `approval_required` carries `approval`: approve it (`POST /v1/computers/{id}/approvals/{approval_id}`, or the project owner in the console), then resend the same call with `approval_grant`.
+      tags: [Computers]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ToolsetCall" }
+      responses:
+        "200":
+          description: The result.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ToolsetResult" }
+        "409":
+          description: Approval required (or another conflict; then the body is the Error object).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ToolsetApprovalRequired" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/computers/{id}/toolset/schema:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getComputerToolsetSchema
+      summary: Members available on this computer
+      tags: [Computers]
+      parameters:
+        - { name: toolset, in: query, schema: { type: string, enum: [computer, browser], default: computer } }
+      responses:
+        "200":
+          description: The toolset schema (contract, model frame, screen, and each member with `enabled`, `risk`, `needs_approval` and `input_schema`).
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/computers/{id}/events:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: listComputerEvents
+      summary: Poll the computer's action events
+      description: "`computer.action` events, oldest first. Pass the last page's `next_cursor` as `after` to poll."
+      tags: [Computers]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/After"
+      responses:
+        "200":
+          description: A page of events.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ComputerEventList" }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/computers/{id}/approvals/{approval_id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+      - { name: approval_id, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: approveComputerAction
+      summary: Approve a held action
+      description: The project owner (console) can always approve. An API key can only when the project's `approval_mode` is `api_key` (403 `approval_requires_owner` otherwise).
+      tags: [Computers]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: Approved; resend the call with `approval_grant`.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  approval_id: { type: string }
+                  approved: { type: boolean }
+                  approval_grant: { type: string }
+        default: { $ref: "#/components/responses/Error" }
+  /v1/computer_settings:
+    get:
+      operationId: getComputerSettings
+      summary: The project's hosted driver settings
+      description: Readable while the flag is off (so you can see it). Requires the `computers` scope.
+      tags: [Computers]
+      responses:
+        "200":
+          description: The settings.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ComputerSettings" }
+        default: { $ref: "#/components/responses/Error" }
+    patch:
+      operationId: updateComputerSettings
+      summary: Change the hosted driver settings
+      description: Console only (403 `settings_require_console` for API keys), so a key can't widen its own approvals. `hosted_driver_enabled` is set by Allternit.
+      tags: [Computers]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                approval_mode: { type: string, enum: [owner, api_key] }
+                per_key_concurrency: { type: integer, minimum: 1 }
+                browser_toolset: { type: boolean }
+      responses:
+        "200":
+          description: The settings.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ComputerSettings" }
+        default: { $ref: "#/components/responses/Error" }
 components:
   securitySchemes:
     bearerAuth:
@@ -1742,3 +1962,110 @@ components:
         project_id: { type: string }
         account_id: { type: [string, "null"] }
         data: { type: object, additionalProperties: true }
+    Computer:
+      type: object
+      required: [id, object, name, status, key_id, created_at, metadata]
+      properties:
+        id: { type: string }
+        object: { type: string, const: computer }
+        name: { type: string }
+        status: { type: string, enum: [provisioning, starting, running, stopping, stopped, error, deleted] }
+        account_id: { type: [string, "null"] }
+        key_id: { type: string, description: The key that created it (`console` for the console). }
+        created_at: { type: string, format: date-time }
+        started_at: { type: [string, "null"], format: date-time }
+        metadata: { type: object, additionalProperties: true }
+    ComputerList:
+      type: object
+      properties:
+        data: { type: array, items: { $ref: "#/components/schemas/Computer" } }
+        has_more: { type: boolean }
+        next_cursor: { type: [string, "null"] }
+    ComputerEvent:
+      type: object
+      properties:
+        id: { type: string }
+        type: { type: string, const: computer.action }
+        ts: { type: string, format: date-time }
+        data:
+          type: object
+          properties:
+            toolset: { type: string }
+            member: { type: string }
+            x: { type: [integer, "null"] }
+            y: { type: [integer, "null"] }
+            screen_w: { type: [integer, "null"] }
+            screen_h: { type: [integer, "null"] }
+            run_id: { type: [string, "null"] }
+            ok: { type: boolean }
+    ComputerEventList:
+      type: object
+      properties:
+        data: { type: array, items: { $ref: "#/components/schemas/ComputerEvent" } }
+        has_more: { type: boolean }
+        next_cursor: { type: [string, "null"] }
+    ComputerSettings:
+      type: object
+      properties:
+        hosted_driver_enabled: { type: boolean }
+        approval_mode: { type: string, enum: [owner, api_key] }
+        per_key_concurrency: { type: integer }
+        browser_toolset: { type: boolean }
+    ToolsetCall:
+      type: object
+      required: [toolset, member]
+      properties:
+        toolset: { type: string, enum: [computer, browser] }
+        member: { type: string, description: "A contract member, e.g. screenshot, left_click, type, navigate." }
+        input: { type: object, additionalProperties: true }
+        run_id: { type: string }
+        turn_id: { type: string }
+        call_index: { type: integer, minimum: 0 }
+        model_frame:
+          type: object
+          properties:
+            width: { type: integer }
+            height: { type: integer }
+        coordinate_space: { type: string, enum: [pixels, normalized_1000], default: pixels }
+        approval_grant: { type: string }
+        browser_session_id: { type: string }
+    ToolsetResult:
+      type: object
+      required: [is_error, content]
+      properties:
+        is_error: { type: boolean }
+        content:
+          type: array
+          items:
+            type: object
+            properties:
+              type: { type: string, enum: [text, image] }
+              text: { type: string }
+              media_type: { type: string }
+              data: { type: string, description: Base64 image. }
+        browser_state: { type: object, additionalProperties: true }
+        screen:
+          type: object
+          properties:
+            width: { type: integer }
+            height: { type: integer }
+            scale: { type: number }
+            frame_width: { type: integer }
+            frame_height: { type: integer }
+        error: { type: string, description: "Machine-readable code on failures: action_failed, unimplemented, not_executed, driver_failed." }
+    ToolsetApprovalRequired:
+      type: object
+      properties:
+        error: { type: object, additionalProperties: true, description: "The usual error object, code approval_required." }
+        approval:
+          type: object
+          properties:
+            id: { type: string }
+            action_hash: { type: string }
+            member: { type: string }
+            toolset: { type: string }
+            risk: { type: string }
+            confirmation_class: { type: string }
+            approve_url: { type: string }
+            approver: { type: string, enum: [owner, api_key] }
+        result: { $ref: "#/components/schemas/ToolsetResult" }

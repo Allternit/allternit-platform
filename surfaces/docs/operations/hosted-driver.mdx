@@ -1,0 +1,53 @@
+---
+title: "Hosted computer driver (operations)"
+description: "Launch flag, host pool, egress rules and limits for /v1/computers"
+---
+
+`/v1/computers` lets outside developers create Allternit computers and drive them with the computer and browser toolsets. The developer guide is [Hosted computers](/api/platform/hosted-computers). This page covers what Allternit runs.
+
+## How a call travels
+
+1. The developer's key hits cloud-api `POST /v1/computers/{id}/toolset` (`cmd/allternit-cloud-api/src/routes/platform_v1/computers.rs`).
+2. cloud-api checks the project flag, the `computers` scope, the spend cap and the per-key cap.
+3. It relays the call, signed as the computer's owner, to the computer's own allternit-api executor at `/api/v1/computers/this-device/toolset`. That is the same relay hosted agents use.
+4. The executor runs contract validation, the control lease, policy, approval, the audit row and then the action. cloud-api never runs an action itself.
+5. A 409 `approval_required` goes back to the developer. The project owner approves it in the console, or a key does when the project's `approval_mode` is `api_key`.
+
+Each computer is a free-lane cloud computer owned by a synthetic user `platform-drv:<computer id>`, never a person's account. It sleeps when idle and wakes on the next call.
+
+## Launch flag
+
+Nothing works until `platform_projects.hosted_driver_enabled` is true for the project. Every route answers 404 `hosted_driver_disabled` until then, except `GET /v1/computer_settings`. Developers can't set the flag. Turn it on by hand:
+
+```sql
+UPDATE platform_projects SET hosted_driver_enabled = true WHERE id = 'proj_…';
+```
+
+The public launch and the prices are Eoj's call.
+
+## Configuration (cloud-api env)
+
+| Variable | Default | What it does |
+|---|---|---|
+| `ALLTERNIT_HOSTED_DRIVER_PROFILES` | `default,allternit-hosted-driver` | Incus profiles for hosted-driver computers. |
+| `ALLTERNIT_HOSTED_DRIVER_HOSTS` | unset (shared pool) | Comma-separated fleet host ids. When set, only these hosts take hosted-driver computers, and they take nothing else. |
+| `ALLTERNIT_HOSTED_DRIVER_PER_KEY` | `2` | Default cap on live computers per API key. Projects can lower or raise it in settings, up to the max. |
+| `ALLTERNIT_HOSTED_DRIVER_MAX_PER_KEY` | `10` | Upper bound for that setting. |
+
+## Egress rules
+
+Hosted-driver computers must not reach private networks: RFC1918, `100.64.0.0/10` (our mesh), link-local `169.254.0.0/16` (this includes the metadata address `169.254.169.254`), loopback, and IPv6 ULA and link-local ranges.
+
+Incus enforces this with a network ACL on a dedicated managed bridge. Run the setup once per fleet host that takes hosted-driver computers:
+
+```bash
+sudo bash cmd/allternit-cloud-api/deploy/incus/hosted-driver-egress.sh
+```
+
+It creates the ACL `allternit-hosted-driver-egress`, the bridge `allternit-drv0` (default `10.231.0.1/24`; override with `HOSTED_DRIVER_SUBNET`) and the profile `allternit-hosted-driver`. DNS to the bridge gateway stays allowed.
+
+If a host doesn't have the profile, Incus refuses to create the computer, so a hosted-driver computer can't start without the filter.
+
+## Metering
+
+There are two meters: `computer_minute` (running minutes, recorded on each call, stop and delete) and `computer_action` (one per executed toolset call). Both count toward usage at $0 until prices are set. They're in the Stripe dry-run plan as pending meters, and `--apply` doesn't create them.

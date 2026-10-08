@@ -16,15 +16,15 @@ pub const TEST_PREFIX: &str = "alt_test_";
 
 /// Scopes a project key may carry. `compute` is the pre-existing scope; the
 /// rest are the Platform API areas (spec §3).
-pub const PLATFORM_SCOPES: [&str; 10] = [
+pub const PLATFORM_SCOPES: [&str; 11] = [
     "agents", "voice", "messaging", "numbers", "channels", "twin", "webhooks", "usage",
-    "inference", "compute",
+    "inference", "compute", "computers",
 ];
 
 /// Scopes that grant access to a resource area (everything except usage
 /// reporting, model inference and the legacy compute scope).
-pub const RESOURCE_SCOPES: [&str; 7] = [
-    "agents", "voice", "messaging", "numbers", "channels", "twin", "webhooks",
+pub const RESOURCE_SCOPES: [&str; 8] = [
+    "agents", "voice", "messaging", "numbers", "channels", "twin", "webhooks", "computers",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
