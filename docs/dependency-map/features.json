@@ -30,16 +30,30 @@
       "id": "feature:interactive-answers",
       "label": "Interactive answers",
       "product": "product:ai-allternit",
-      "status": "building",
-      "description": "Assistant replies can include an interactive card written in OpenUI Lang inside an openui code fence: metrics, tables, charts, steps and inputs that recompute on the page; buttons and choices send a follow-up message.",
+      "status": "live",
+      "description": "Assistant replies can include an interactive card written in OpenUI Lang inside an openui code fence: metrics, tables, charts, steps and inputs that recompute on the page; buttons and choices send a follow-up message; Query()/Mutation() read and (with an Allow each time) change data through the user's MCP connectors. The app sends the model manual with every chat turn unless Settings says Text only; channels get the card as readable text.",
       "touches": [
         "allternit-ai/src/lib/openui",
-        "allternit-ai/src/components/ai-elements"
+        "allternit-ai/src/components/ai-elements",
+        "allternit-ai/src/lib/agents",
+        "allternit-ai/src/lib/ai",
+        "allternit-ai/src/components/bot-chat",
+        "allternit-ai/src/shell",
+        "allternit-ai/src/views/settings",
+        "allternit-ai/src/components/design",
+        "allternit-ai/src/views/design",
+        "allternit-ai/src/views/UIForge",
+        "allternit/cmd/allternit-api/src/openui_*",
+        "allternit/cmd/allternit-api/src/channel_*",
+        "allternit/cmd/allternit-api/src/mcp_*"
       ],
       "decisions": [
-        {"on": "2026-10-07", "note": "Renderer shipped on the polish primitives, with deterministic local state via OpenUI $state and no eval. The model-side prompt (interactiveAnswersPrompt in gizzi-code) is a separate session by Eoj's call: no per-model testing, no training."}
+        {"on": "2026-10-07", "note": "Renderer shipped on the polish primitives, with deterministic local state via OpenUI $state and no eval. The model-side prompt is a separate session by Eoj's call: no per-model testing, no training."},
+        {"on": "2026-10-08", "note": "The app (not gizzi-code) sends the manual as systemPrompt / '+' system, so each build only asks for components it renders and the TUI and channels never get it. Settings → Response style → Layout and visuals (Auto / Text only) is per device, like the Memory switches, to avoid a manual prod migration."},
+        {"on": "2026-10-08", "note": "Live data through the MCP Apps bridge: Query() only on read-only tools, writes only as a Mutation() from a button with an Allow bar every time. OpenUI Gateway and observability-cloud are not used (owned infra; no data to Thesys). react-lang pinned to 0.3.1 to respect pnpm's minimum release age."},
+        {"on": "2026-10-08", "note": "Removed the [v:...] pseudo-syntax, AllternitOpenUIRenderer/registry, BlueprintCanvas, the test-only code-compiler and the fake render_walkthrough tool. Design mode previews the reply's card with DESIGN.md tokens; UI Forge is the card playground."}
       ],
-      "evidence": ["allternit/surfaces/docs/guides/interactive-answers.mdx"]
+      "evidence": ["allternit/surfaces/docs/guides/interactive-answers.mdx", "allternit/surfaces/docs/release-notes.mdx"]
     },
     {
       "id": "feature:bot-threads",
@@ -452,6 +466,19 @@
     }
   ],
   "journeys": [
+    {
+      "id": "journey:live-data-card",
+      "label": "Answer with a live data card",
+      "description": "From a question to a card that reads your connected app and, with your approval, changes it.",
+      "steps": [
+        {"at": "allternit-ai/src/lib/agents", "says": "On send, the app adds the interactive-answers manual (with your connector tools) to the turn's system prompt, unless Settings says Text only."},
+        {"at": "allternit/cmd/gizzi-code/src/runtime/server", "says": "gizzi-code appends it to its own system prompt and the model replies with an openui fence."},
+        {"at": "allternit-ai/src/components/ai-elements", "says": "The transcript splits the fence out and renders the card as it streams."},
+        {"at": "allternit-ai/src/lib/openui", "says": "Query() runs a read-only tool through the MCP Apps bridge; a Mutation() waits for the Allow bar."},
+        {"at": "allternit/cmd/allternit-api/src/mcp_*", "says": "The bridge calls the connector with your own credentials and returns the result straight to the card, not the model."}
+      ],
+      "evidence": ["allternit/surfaces/docs/guides/interactive-answers.mdx", "allternit/cmd/allternit-api/src/mcp_apps.rs"]
+    },
     {
       "id": "journey:chat-reply",
       "label": "Send a message, get a streamed reply",
