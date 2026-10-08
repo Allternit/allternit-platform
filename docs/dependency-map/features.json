@@ -411,7 +411,8 @@
         "allternit/cmd/gizzi-code/src/runtime/tools"
       ],
       "decisions": [
-        {"on": "2026-10-07", "note": "Eoj: computer use works for every model. Anthropic's toolsets are absorbed as one adapter into our contract, gizzi stays the only loop, and there are no hosted third-party drivers. The old gizzi browser tool (goal-driven, a second loop) was removed in favour of the toolset browser tool."}
+        {"on": "2026-10-07", "note": "Eoj: computer use works for every model. Anthropic's toolsets are absorbed as one adapter into our contract, gizzi stays the only loop, and there are no hosted third-party drivers. The old gizzi browser tool (goal-driven, a second loop) was removed in favour of the toolset browser tool."},
+        {"on": "2026-10-08", "note": "Member gaps closed: the browser gateway runs all 31 members (refs, tabs with browser_state, console, network, JS, upload) through /v1/toolset/browser with an http(s)-only URL policy and public-only hosts for cloud targets; Windows guests run all 17 computer members through PowerShell/user32; this Mac gets cursor_position, modifier clicks and emulated mouse down/up. hold_key on macOS stays off: Cua Driver 0.34 has no hold call there. Optional browser members need an explicit enable."}
       ],
       "evidence": ["allternit/surfaces/docs/tools/computer-toolset.mdx", "allternit/contracts/computer-toolset/README.md", "allternit/cmd/allternit-api/src/computer_toolset.rs"]
     },

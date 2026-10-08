@@ -53,9 +53,9 @@ The executor reports what a target can run (see [Schema](#schema)). A member tha
 | Target | What runs |
 |---|---|
 | Cloud and bot computers (Linux) | All 17 computer members, through xdotool and scrot in the guest |
-| Cloud computers (Windows) | `screenshot`, `zoom`, `wait` |
-| This device (macOS, Cua Driver) | Everything except `left_mouse_down`, `left_mouse_up`, `hold_key` and `cursor_position`. Clicks with held modifier keys aren't supported yet. |
-| Browser (ACU gateway, Playwright) | `navigate`, `screenshot`, `zoom`, clicks, `hover`, drags, mouse down/up/move, `scroll`, `type`, `key`, `hold_key`, `wait`, `find`, `get_page_text`. Coordinate targets only; element refs, tabs, console, network, JavaScript and uploads aren't wired yet. |
+| Cloud computers (Windows) | All 17 computer members, through PowerShell and user32 (`SetCursorPos`, `mouse_event`, `keybd_event`, SendKeys for `type`) run by the VM driver's guest exec |
+| This device (macOS, Cua Driver 0.34) | Everything except `hold_key`. Cua Driver has no press-and-hold key call on macOS. Held modifiers (`text`) work on clicks and drags, not on `scroll`. `cursor_position` uses `get_cursor_position`. Cua Driver has no separate press and release on macOS, so `left_mouse_down` is held by the executor and sent with `left_mouse_up` as one click (same spot) or one press-drag-release gesture. |
+| Browser (ACU gateway, Playwright) | All 31 browser members, including element refs, tabs, console, network, JavaScript and uploads. The four optional members stay off until the caller turns them on (see [Optional members](#optional-members)). |
 | Paired computers (mesh) | Nothing. They take no agent input. View them live instead. |
 
 ## Executor
@@ -99,7 +99,51 @@ Every call returns this result shape:
 }
 ```
 
-Browser results can also carry `browser_state` (`{ tabs, state_changes? }`). Refusals add an `error` code.
+Refusals add an `error` code.
+
+### Browser results
+
+Every dispatched browser result, success or failure, carries `browser_state`:
+
+```json
+{
+  "tabs": [
+    { "tab_id": "tab_1", "title": "Shop", "url": "https://example.com/", "active": false },
+    { "tab_id": "tab_2", "title": "", "url": "about:blank", "active": true }
+  ],
+  "state_changes": [
+    { "type": "tab_opened", "tab_id": "tab_2", "url": "about:blank" },
+    { "type": "active_tab_changed", "tab_id": "tab_2" }
+  ]
+}
+```
+
+- **Tabs.** Every page in the session is a tab with a stable `tab_N` id. Exactly one tab is active, and a session always has at least one. Closing the active tab makes the most recent remaining tab active. Closing the last tab opens a blank one.
+- **`state_changes`** lists what this call changed, in order: `tab_opened`, `tab_closed`, `active_tab_changed` and `navigated` (a tab's URL changed). Popups and `target=_blank` links show up as `tab_opened`.
+- **`tab_id` input.** Members that take `tab_id` act on that tab without switching to it. Leave it out to act on the active tab.
+- **Element refs.** `read_page` and `find` return elements with refs such as `ref_7`. Every member that takes a `target` accepts `{ "type": "ref", "ref": "ref_7" }` as well as a coordinate. A ref belongs to its tab. It goes stale after a navigation or a re-render that removes the element. A stale ref returns `is_error` and asks for a fresh `read_page` or `find`.
+- **`find`** matches the query's words against each visible element's role, accessible name, placeholder, name and id, and returns the 20 best matches with their refs and centre points. It doesn't call a model.
+
+### URL policy
+
+- Only `http`, `https` and `about:blank` can be opened. `file:`, `data:`, `javascript:`, `chrome:` and every other scheme are refused on every target.
+- A browser that runs for a cloud computer refuses hosts that are loopback, private, CGNAT or mesh (`100.64.0.0/10`), link-local (including the `169.254.169.254` metadata address), `metadata.google.internal`, `*.internal`, `*.local` or `localhost`, or a host that resolves to any of those. The executor checks `navigate` first. The gateway then checks every request the page makes, including redirects and subresources.
+- A browser that runs on your own machine (this device, not a cloud computer) can open local and private addresses.
+- The workspace host policy (`aci_safety`) still applies on top.
+
+### Optional members
+
+`file_upload`, `read_console`, `read_network` and `javascript_exec` are off by default. A call to one of them returns `403 member_disabled` unless the request lists it in `enable`:
+
+```json
+{ "toolset": "browser", "member": "read_console", "input": {}, "enable": ["read_console"] }
+```
+
+`GET …/toolset/schema?toolset=browser&enable=read_console,read_network` reports those members as enabled. `@allternit/computer-driver` and `allternit-computer-driver` send `enable` for the member being called, because the Anthropic SDK only calls the members its toolset config turned on. `javascript_exec` and `file_upload` still need an approval grant on every call.
+
+- `read_console` and `read_network` return the last 150 console messages or responses recorded on the tab. Recording starts the first time the tab is used through the toolset.
+- `javascript_exec` evaluates the text in the page and returns the result as JSON.
+- `file_upload` sets files on an `<input type=file>` ref. `paths` are on the browser's computer. A cloud browser only uploads files under its upload folder (`ALLTERNIT_BROWSER_UPLOAD_ROOT`, default `<tmp>/allternit-browser-uploads`). `document_ids` aren't supported.
 
 ### Batch rule
 
@@ -114,7 +158,7 @@ A retry of the failed call itself, for example with an approval grant, is allowe
 
 Screenshots are downscaled so the long edge is at most 1568 px and the area is at most 1.15 MP. They are never upscaled, and the aspect ratio is kept. The model sees the screen in that frame and answers in it. The executor maps coordinates back to screen pixels, and the executor is the only place this happens.
 
-On a Retina Mac, input coordinates are in points and screenshots are in pixels. The executor handles both. `zoom` crops the region at full resolution and fits it to the frame.
+On this device the screen size is the native screenshot size in pixels, because Cua Driver 0.34's desktop scope takes native screenshot pixels on a Retina Mac too. `cursor_position` converts Cua Driver's points to pixels. `zoom` crops the region at full resolution and fits it to the frame.
 
 Grid-trained GUI models such as UI-TARS and Qwen-VL send `coordinate_space: "normalized_1000"`, a 0–1000 grid over the whole screen.
 

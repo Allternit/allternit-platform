@@ -230,6 +230,15 @@
         "allternit-ai/src/lib/appearance/useAppearance.ts",
         "allternit/cmd/allternit-api/src/runtime_settings_routes.rs"
       ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api/src/computer_*",
+      "target": "allternit/domains/computer-use/core",
+      "kind": "HTTP POST /v1/toolset/browser (browser toolset members)",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/computer_toolset.rs",
+        "allternit/domains/computer-use/core/gateway/toolset_browser.py"
+      ]
     }
   ]
 }

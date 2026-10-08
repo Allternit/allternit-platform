@@ -2625,6 +2625,8 @@ from canonical_router import router as canonical_computer_router
 app.include_router(canonical_computer_router)
 from cloud_credentials_router import router as cloud_credentials_router
 app.include_router(cloud_credentials_router)
+from toolset_browser import router as toolset_browser_router
+app.include_router(toolset_browser_router)
 
 # Demo UI — mounted only when started via the demo launcher (demo.py sets
 # ALLTERNIT_ACU_DEMO=1). Serves the self-contained page at GET /demo.

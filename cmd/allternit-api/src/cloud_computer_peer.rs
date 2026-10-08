@@ -66,6 +66,12 @@ pub fn is_cloud_computer(env_flag: Option<&str>, marker: Option<&str>) -> bool {
         })
 }
 
+/// Whether this API runs on an Allternit cloud computer (provisioned env or
+/// marker file), whatever the peer setting.
+pub fn running_on_cloud_computer() -> bool {
+    is_cloud_computer(std::env::var("ALLTERNIT_PROVISIONED").ok().as_deref(), std::fs::read_to_string(MARKER_FILE).ok().as_deref())
+}
+
 fn enabled() -> bool {
     if !cfg!(target_os = "linux") {
         return false;

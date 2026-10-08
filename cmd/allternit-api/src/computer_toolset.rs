@@ -421,6 +421,10 @@ pub struct ToolsetRequest {
     pub approval_grant: Option<String>,
     #[serde(default)]
     pub browser_session_id: Option<String>,
+    /// Off-by-default members (`file_upload`, `read_console`, `read_network`,
+    /// `javascript_exec`) the caller turns on for this call. Others are ignored.
+    #[serde(default)]
+    pub enable: Vec<String>,
 }
 
 fn empty_object() -> Value {
@@ -604,8 +608,9 @@ pub enum Target {
         os: String,
         display: &'static str,
     },
-    /// A Playwright session in the ACU gateway.
-    Browser { base: String, session_id: String },
+    /// A Playwright session in the ACU gateway. `public_only`: the browser
+    /// runs for a cloud target, so loopback/private/metadata hosts are refused.
+    Browser { base: String, session_id: String, public_only: bool },
 }
 
 impl Target {
@@ -626,24 +631,13 @@ impl Target {
 /// Members a target can run, or why not. `None` = supported.
 pub fn unsupported_reason(target_label: &str, toolset: Toolset, member: &str) -> Option<&'static str> {
     match (toolset, target_label) {
-        (Toolset::Computer, "guest_linux") => None,
-        (Toolset::Computer, "guest_windows") => match member {
-            "screenshot" | "zoom" | "wait" => None,
-            _ => Some("Windows computers only take screenshots through the toolset so far; input on Windows guests isn't wired yet."),
-        },
+        (Toolset::Computer, "guest_linux" | "guest_windows") => None,
         (Toolset::Computer, "this_device") => match member {
-            "left_mouse_down" | "left_mouse_up" | "hold_key" | "cursor_position" => {
-                Some("This device's driver (Cua Driver) has no press/hold/cursor-position call wired yet.")
-            }
+            "hold_key" => Some("Cua Driver 0.34 has no press-and-hold key call on macOS (press_key and hotkey release the key at once), so hold_key can't run on this Mac."),
             _ => None,
         },
         (Toolset::Computer, _) => Some("The computer toolset doesn't run on this target."),
-        (Toolset::Browser, "browser_gateway") => match member {
-            "navigate" | "screenshot" | "zoom" | "left_click" | "right_click" | "middle_click" | "double_click"
-            | "triple_click" | "hover" | "left_click_drag" | "left_mouse_down" | "left_mouse_up" | "mouse_move"
-            | "scroll" | "type" | "key" | "hold_key" | "wait" | "find" | "get_page_text" => None,
-            _ => Some("The browser gateway doesn't implement this member yet (element refs, tabs, console, network, JavaScript and uploads)."),
-        },
+        (Toolset::Browser, "browser_gateway") => None,
         (Toolset::Browser, _) => Some("The browser toolset doesn't run on this target."),
     }
 }
@@ -742,37 +736,6 @@ pub fn xdotool_script(member: &str, input: &Value) -> Result<Option<String>, Str
     }))
 }
 
-/// Playwright key name for an xdotool-style key spec (`ctrl+a` -> `Control+a`).
-pub fn playwright_key(spec: &str) -> String {
-    spec.split('+')
-        .map(|part| {
-            let p = part.trim();
-            match p.to_lowercase().as_str() {
-                "ctrl" | "control" => "Control".to_string(),
-                "shift" => "Shift".to_string(),
-                "alt" | "option" => "Alt".to_string(),
-                "cmd" | "command" | "super" | "meta" | "win" => "Meta".to_string(),
-                "return" | "enter" | "kp_enter" => "Enter".to_string(),
-                "esc" | "escape" => "Escape".to_string(),
-                "backspace" => "Backspace".to_string(),
-                "tab" => "Tab".to_string(),
-                "delete" => "Delete".to_string(),
-                "space" => " ".to_string(),
-                "page_down" | "pagedown" | "next" => "PageDown".to_string(),
-                "page_up" | "pageup" | "prior" => "PageUp".to_string(),
-                "home" => "Home".to_string(),
-                "end" => "End".to_string(),
-                "up" => "ArrowUp".to_string(),
-                "down" => "ArrowDown".to_string(),
-                "left" => "ArrowLeft".to_string(),
-                "right" => "ArrowRight".to_string(),
-                _ => p.to_string(),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("+")
-}
-
 async fn guest_exec(target: &Target, script: &str) -> Result<String, String> {
     let Target::Guest { driver, handle, display, .. } = target else {
         return Err("not a guest target".into());
@@ -799,46 +762,353 @@ async fn guest_exec(target: &Target, script: &str) -> Result<String, String> {
     Ok(stdout)
 }
 
-async fn gateway_call(target: &Target, action: &str, target_arg: Option<&str>, text_arg: Option<&str>, parameters: Value, run_id: &str) -> Result<Value, String> {
-    let Target::Browser { base, session_id } = target else {
+/// One contract member on the ACU gateway's browser toolset endpoint
+/// (`domains/computer-use/core/gateway/toolset_browser.py`). The reply carries
+/// `is_error`, optional `text` / `image` (base64 PNG) and `browser_state`.
+async fn browser_call(target: &Target, member: &str, input: &Value, run_id: &str) -> Result<Value, String> {
+    let Target::Browser { base, session_id, public_only } = target else {
         return Err("not a browser target".into());
     };
-    let body = json!({
-        "action": action,
-        "session_id": session_id,
-        "run_id": run_id,
-        "target": target_arg,
-        "text": text_arg,
-        "parameters": parameters,
-        "adapter_preference": "playwright",
-    });
+    let body = json!({ "session_id": session_id, "member": member, "input": input, "run_id": run_id, "public_only": public_only });
     let resp = reqwest::Client::new()
-        .post(format!("{base}/v1/execute"))
-        .timeout(Duration::from_secs(60))
+        .post(format!("{base}/v1/toolset/browser"))
+        .timeout(Duration::from_secs(90))
         .json(&body)
         .send()
         .await
         .map_err(|e| format!("the browser driver isn't reachable: {e}"))?;
     let status = resp.status();
+    if status == reqwest::StatusCode::NOT_FOUND {
+        return Err("the browser driver is too old for the browser toolset; update Allternit Desktop".into());
+    }
     let value: Value = resp.json().await.map_err(|e| format!("the browser driver sent a bad reply: {e}"))?;
     if !status.is_success() {
         return Err(value.get("detail").map(|d| d.to_string()).unwrap_or_else(|| format!("browser driver HTTP {status}")));
     }
-    if value.get("status").and_then(Value::as_str) == Some("failed") {
-        let message = value
-            .pointer("/error/message")
-            .and_then(Value::as_str)
-            .or_else(|| value.get("summary").and_then(Value::as_str))
-            .unwrap_or("the browser action failed");
-        return Err(message.to_string());
-    }
     Ok(value)
 }
 
-fn decode_data_url(url: &str) -> Option<Vec<u8>> {
-    let (_, data) = url.split_once("base64,")?;
-    B64.decode(data.trim()).ok()
+/// Public internet address (not loopback, private, CGNAT/mesh, link-local
+/// incl. cloud metadata, documentation, benchmark, reserved or multicast).
+pub fn ip_is_public(ip: &std::net::IpAddr) -> bool {
+    use std::net::IpAddr;
+    match ip {
+        IpAddr::V4(a) => {
+            let o = a.octets();
+            !(a.is_loopback()
+                || a.is_private()
+                || a.is_link_local()
+                || a.is_unspecified()
+                || a.is_broadcast()
+                || a.is_documentation()
+                || a.is_multicast()
+                || o[0] == 0
+                || (o[0] == 100 && (64..128).contains(&o[1]))
+                || (o[0] == 192 && o[1] == 0 && o[2] == 0)
+                || (o[0] == 198 && (o[1] == 18 || o[1] == 19))
+                || o[0] >= 240)
+        }
+        IpAddr::V6(a) => {
+            if let Some(v4) = a.to_ipv4_mapped() {
+                return ip_is_public(&IpAddr::V4(v4));
+            }
+            let s = a.segments();
+            !(a.is_loopback()
+                || a.is_unspecified()
+                || a.is_multicast()
+                || (s[0] & 0xfe00) == 0xfc00
+                || (s[0] & 0xffc0) == 0xfe80
+                || (s[0] == 0x2001 && s[1] == 0x0db8))
+        }
+    }
 }
+
+/// Why a browser may not open `url`, if it may not. Only http(s) and
+/// about:blank are navigable; cloud targets (`public_only`) also refuse
+/// hosts that resolve to non-public addresses. The gateway re-checks every
+/// request (redirects, subresources) for cloud sessions.
+pub async fn browser_url_refusal(url: &str, public_only: bool) -> Option<String> {
+    let u = url.trim();
+    if u.eq_ignore_ascii_case("about:blank") {
+        return None;
+    }
+    let Ok(parsed) = reqwest::Url::parse(u) else {
+        return Some(format!("{u} isn't a valid URL."));
+    };
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Some(format!("{u} isn't allowed: only http(s) pages and about:blank can be opened."));
+    }
+    if !public_only {
+        return None;
+    }
+    let refuse = || Some(format!("{u} isn't allowed: cloud browsers can't open loopback, private-network or metadata addresses."));
+    let host = parsed.host_str().unwrap_or_default().trim_matches(|c| c == '[' || c == ']').trim_end_matches('.').to_ascii_lowercase();
+    if host.is_empty()
+        || host == "localhost"
+        || [".localhost", ".local", ".internal"].iter().any(|s| host.ends_with(s))
+        || ["metadata", "instance-data"].contains(&host.as_str())
+    {
+        return refuse();
+    }
+    let addrs: Vec<std::net::IpAddr> = match host.parse::<std::net::IpAddr>() {
+        Ok(ip) => vec![ip],
+        Err(_) => match tokio::net::lookup_host((host.as_str(), parsed.port_or_known_default().unwrap_or(443))).await {
+            Ok(it) => it.map(|sa| sa.ip()).collect(),
+            Err(_) => return Some(format!("{u} isn't reachable: {host} doesn't resolve.")),
+        },
+    };
+    if addrs.is_empty() || addrs.iter().any(|a| !ip_is_public(a)) {
+        return refuse();
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
+// Windows guests: PowerShell + user32 through the VM driver's exec.
+// ---------------------------------------------------------------------------
+
+const WIN_INPUT_PREAMBLE: &str = r#"$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class AltInput {
+  [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll")] static extern bool GetCursorPos(out POINT p);
+  [DllImport("user32.dll")] static extern void mouse_event(uint f, uint dx, uint dy, int data, UIntPtr extra);
+  [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint f, UIntPtr extra);
+  public static void M(uint f, int d) { mouse_event(f, 0, 0, d, UIntPtr.Zero); }
+  public static void K(byte vk, bool up) { uint ext = ((vk >= 0x21 && vk <= 0x2E) || vk == 0x5B) ? 1u : 0u; keybd_event(vk, 0, (up ? 2u : 0u) | ext, UIntPtr.Zero); }
+  public static string Pos() { POINT p; GetCursorPos(out p); return "X=" + p.X + "\nY=" + p.Y; }
+}
+'@
+"#;
+
+/// Windows virtual-key code for an xdotool-style key name.
+fn win_vk(name: &str) -> Option<u8> {
+    let n = name.trim().to_lowercase();
+    Some(match n.as_str() {
+        "ctrl" | "control" | "control_l" | "control_r" => 0x11,
+        "shift" | "shift_l" | "shift_r" => 0x10,
+        "alt" | "option" | "opt" | "alt_l" | "alt_r" => 0x12,
+        "cmd" | "command" | "super" | "super_l" | "win" | "meta" => 0x5B,
+        "return" | "enter" | "kp_enter" => 0x0D,
+        "tab" => 0x09,
+        "escape" | "esc" => 0x1B,
+        "backspace" => 0x08,
+        "delete" | "del" => 0x2E,
+        "insert" => 0x2D,
+        "space" => 0x20,
+        "home" => 0x24,
+        "end" => 0x23,
+        "page_up" | "pageup" | "prior" => 0x21,
+        "page_down" | "pagedown" | "next" => 0x22,
+        "up" => 0x26,
+        "down" => 0x28,
+        "left" => 0x25,
+        "right" => 0x27,
+        "minus" | "-" => 0xBD,
+        "equal" | "=" => 0xBB,
+        "comma" | "," => 0xBC,
+        "period" | "." => 0xBE,
+        "slash" | "/" => 0xBF,
+        "semicolon" | ";" => 0xBA,
+        "apostrophe" | "'" => 0xDE,
+        "grave" | "`" => 0xC0,
+        "bracketleft" | "[" => 0xDB,
+        "bracketright" | "]" => 0xDD,
+        "backslash" | "\\" => 0xDC,
+        _ => {
+            if let Some(f) = n.strip_prefix('f').and_then(|d| d.parse::<u8>().ok()).filter(|f| (1..=24).contains(f)) {
+                return Some(0x6F + f);
+            }
+            let mut chars = n.chars();
+            match (chars.next(), chars.next()) {
+                (Some(c), None) if c.is_ascii_alphanumeric() => c.to_ascii_uppercase() as u8,
+                _ => return None,
+            }
+        }
+    })
+}
+
+fn win_chord(spec: &str) -> Result<Vec<u8>, String> {
+    spec.split('+').filter(|p| !p.trim().is_empty()).map(|p| win_vk(p).ok_or_else(|| format!("not a key name this Windows computer understands: {p}"))).collect()
+}
+
+/// The PowerShell script for one computer member on a Windows guest.
+/// Coordinates are already screen pixels. `None` = handled by the executor.
+pub fn windows_script(member: &str, input: &Value) -> Result<Option<String>, String> {
+    let mods: Vec<u8> = match input.get("text").and_then(Value::as_str) {
+        Some(t) if member.ends_with("click") || member == "scroll" || member == "left_click_drag" => win_chord(t)?,
+        _ => vec![],
+    };
+    let keys_down = |vks: &[u8]| vks.iter().map(|v| format!("[AltInput]::K({v},$false)")).collect::<Vec<_>>();
+    let keys_up = |vks: &[u8]| vks.iter().rev().map(|v| format!("[AltInput]::K({v},$true)")).collect::<Vec<_>>();
+    let move_to = |key: &str| point_of(input, key).map(|(x, y)| format!("[AltInput]::SetCursorPos({x},{y}) | Out-Null; Start-Sleep -Milliseconds 40"));
+    let with_mods = |body: Vec<String>| {
+        let mut lines = keys_down(&mods);
+        lines.extend(body);
+        lines.extend(keys_up(&mods));
+        lines
+    };
+    let click = |down: u32, up: u32, repeat: u32| {
+        let mut body: Vec<String> = move_to("coordinate").into_iter().collect();
+        for _ in 0..repeat {
+            body.push(format!("[AltInput]::M({down},0); [AltInput]::M({up},0); Start-Sleep -Milliseconds 70"));
+        }
+        with_mods(body)
+    };
+    let lines: Vec<String> = match member {
+        "left_click" => click(0x2, 0x4, 1),
+        "right_click" => click(0x8, 0x10, 1),
+        "middle_click" => click(0x20, 0x40, 1),
+        "double_click" => click(0x2, 0x4, 2),
+        "triple_click" => click(0x2, 0x4, 3),
+        "mouse_move" => vec![move_to("coordinate").ok_or("coordinate is required")?],
+        "left_click_drag" => {
+            let (sx, sy) = point_of(input, "start_coordinate").ok_or("start_coordinate is required")?;
+            let (ex, ey) = point_of(input, "coordinate").ok_or("coordinate is required")?;
+            let mut body = vec![format!("[AltInput]::SetCursorPos({sx},{sy}) | Out-Null; Start-Sleep -Milliseconds 40"), "[AltInput]::M(2,0)".to_string()];
+            for i in 1..=10 {
+                let (x, y) = (sx + (ex - sx) * i / 10, sy + (ey - sy) * i / 10);
+                body.push(format!("[AltInput]::SetCursorPos({x},{y}) | Out-Null; Start-Sleep -Milliseconds 25"));
+            }
+            body.push("[AltInput]::M(4,0)".to_string());
+            with_mods(body)
+        }
+        "left_mouse_down" => vec!["[AltInput]::M(2,0)".to_string()],
+        "left_mouse_up" => vec!["[AltInput]::M(4,0)".to_string()],
+        "scroll" => {
+            let (flag, delta) = match input.get("scroll_direction").and_then(Value::as_str) {
+                Some("up") => (0x800, 120),
+                Some("down") => (0x800, -120),
+                Some("left") => (0x1000, -120),
+                Some("right") => (0x1000, 120),
+                _ => return Err("scroll_direction must be up, down, left or right".into()),
+            };
+            let amount = input.get("scroll_amount").and_then(Value::as_f64).unwrap_or(3.0).round().clamp(1.0, 50.0) as u32;
+            let mut body: Vec<String> = move_to("coordinate").into_iter().collect();
+            body.push(format!("1..{amount} | ForEach-Object {{ [AltInput]::M({flag},{delta}); Start-Sleep -Milliseconds 30 }}"));
+            with_mods(body)
+        }
+        "type" => {
+            let t = input.get("text").and_then(Value::as_str).ok_or("text is required")?;
+            vec![
+                format!("$t = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{}'))", B64.encode(t.as_bytes())),
+                "$t = [regex]::Replace($t, '[+^%~(){}\\[\\]]', '{$0}')".to_string(),
+                "$t = $t -replace \"`r?`n\", '{ENTER}'".to_string(),
+                "Add-Type -AssemblyName System.Windows.Forms".to_string(),
+                "[System.Windows.Forms.SendKeys]::SendWait($t)".to_string(),
+            ]
+        }
+        "key" => {
+            let k = input.get("text").and_then(Value::as_str).ok_or("text is required")?;
+            let repeat = input.get("repeat").and_then(Value::as_f64).unwrap_or(1.0).round().clamp(1.0, 100.0) as u32;
+            let mut body = vec![];
+            for _ in 0..repeat {
+                for combo in k.split_whitespace() {
+                    let vks = win_chord(combo)?;
+                    body.extend(keys_down(&vks));
+                    body.extend(keys_up(&vks));
+                    body.push("Start-Sleep -Milliseconds 30".to_string());
+                }
+            }
+            body
+        }
+        "hold_key" => {
+            let vks = win_chord(input.get("text").and_then(Value::as_str).ok_or("text is required")?)?;
+            let ms = (input.get("duration").and_then(Value::as_f64).unwrap_or(1.0).clamp(0.0, 30.0) * 1000.0).round() as u64;
+            let mut body = keys_down(&vks);
+            body.push(format!("Start-Sleep -Milliseconds {ms}"));
+            body.extend(keys_up(&vks));
+            body
+        }
+        "cursor_position" => vec!["[AltInput]::Pos()".to_string()],
+        "screenshot" | "zoom" | "wait" => return Ok(None),
+        other => return Err(format!("unknown computer member: {other}")),
+    };
+    Ok(Some(format!("{WIN_INPUT_PREAMBLE}{}\n", lines.join("\n"))))
+}
+
+async fn windows_exec(target: &Target, script: &str) -> Result<String, String> {
+    let Target::Guest { driver, handle, .. } = target else {
+        return Err("not a guest target".into());
+    };
+    let out = tokio::time::timeout(Duration::from_secs(60), driver.exec(handle, crate::bot_desktop_windows::shell_command(script)))
+        .await
+        .map_err(|_| "the computer didn't answer in time".to_string())?
+        .map_err(|e| format!("couldn't reach the computer: {e}"))?;
+    if out.exit_code != 0 {
+        let stderr = String::from_utf8_lossy(out.stderr.as_deref().unwrap_or(&[]));
+        return Err(format!("the action failed on the computer (exit {}): {}", out.exit_code, stderr.trim().chars().take(300).collect::<String>()));
+    }
+    Ok(String::from_utf8_lossy(out.stdout.as_deref().unwrap_or(&[])).to_string())
+}
+
+/// `X=..` / `Y=..` lines (xdotool --shell, and the Windows helper).
+fn parse_xy_lines(out: &str) -> Option<(f64, f64)> {
+    let mut x = None;
+    let mut y = None;
+    for line in out.lines() {
+        if let Some(v) = line.trim().strip_prefix("X=") {
+            x = v.trim().parse::<f64>().ok();
+        }
+        if let Some(v) = line.trim().strip_prefix("Y=") {
+            y = v.trim().parse::<f64>().ok();
+        }
+    }
+    Some((x?, y?))
+}
+
+// ---------------------------------------------------------------------------
+// This device (macOS, Cua Driver 0.34).
+// ---------------------------------------------------------------------------
+
+/// Cua Driver modifier names for a contract chord (`ctrl+shift`).
+pub fn cua_modifiers(spec: &str) -> Result<Vec<&'static str>, String> {
+    spec.split('+')
+        .filter(|p| !p.trim().is_empty())
+        .map(|p| match p.trim().to_lowercase().as_str() {
+            "ctrl" | "control" => Ok("ctrl"),
+            "shift" => Ok("shift"),
+            "alt" | "option" | "opt" => Ok("option"),
+            "cmd" | "command" | "super" | "meta" | "win" => Ok("cmd"),
+            other => Err(format!("unknown modifier key: {other}")),
+        })
+        .collect()
+}
+
+/// First `{x, y}` number pair anywhere in a driver reply.
+fn find_xy(v: &Value) -> Option<(f64, f64)> {
+    match v {
+        Value::Object(m) => {
+            if let (Some(x), Some(y)) = (m.get("x").and_then(Value::as_f64), m.get("y").and_then(Value::as_f64)) {
+                return Some((x, y));
+            }
+            m.values().find_map(find_xy)
+        }
+        Value::Array(a) => a.iter().find_map(find_xy),
+        Value::String(s) => serde_json::from_str::<Value>(s).ok().as_ref().and_then(find_xy),
+        _ => None,
+    }
+}
+
+/// The real cursor in screen pixels (Cua Driver reports points; its desktop
+/// scope takes native screenshot pixels, which differ on Retina).
+async fn this_device_cursor_px(map: &Mapping) -> Result<(i64, i64), String> {
+    let reply = crate::this_device_input::call_driver("get_cursor_position", json!({})).await?;
+    let (px, py) = find_xy(&reply).ok_or("the driver didn't report a cursor position")?;
+    let ratio = match crate::computer_routes::this_device_screen_points().await {
+        Some(points) if points.width > 0 => map.screen.width as f64 / points.width as f64,
+        _ => 1.0,
+    };
+    Ok(((px * ratio).round() as i64, (py * ratio).round() as i64))
+}
+
+/// Pending `left_mouse_down` per computer: Cua Driver 0.34 has no separate
+/// press/release on macOS, so the press is held here and sent with the
+/// release as one click (same spot) or press-drag-release gesture.
+static PRESSES: Lazy<Mutex<HashMap<String, (i64, i64)>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 
 /// Capture the target's screen at full resolution.
 async fn capture(target: &Target, run_id: &str) -> Result<Vec<u8>, String> {
@@ -857,32 +1127,39 @@ async fn capture(target: &Target, run_id: &str) -> Result<Vec<u8>, String> {
             let out = guest_exec(target, "scrot -z -o /tmp/allternit-toolset.png && base64 -w0 /tmp/allternit-toolset.png").await?;
             B64.decode(out.trim()).map_err(|e| format!("invalid screenshot output: {e}"))
         }
-        Target::Browser { .. } => {
-            let v = gateway_call(target, "screenshot", None, None, json!({}), run_id).await?;
-            v.pointer("/artifacts/0/url")
-                .and_then(Value::as_str)
-                .and_then(decode_data_url)
-                .ok_or_else(|| "the browser driver returned no screenshot".to_string())
-        }
+        Target::Browser { .. } => browser_shot(target, &json!({}), run_id).await.map(|(png, _)| png).map_err(|f| f.message),
     }
 }
 
+/// A browser screenshot plus the tab inventory it was taken in.
+async fn browser_shot(target: &Target, input: &Value, run_id: &str) -> Result<(Vec<u8>, Option<Value>), Fail> {
+    let mut args = json!({});
+    if let Some(tab) = input.get("tab_id") {
+        args["tab_id"] = tab.clone();
+    }
+    let reply = browser_call(target, "screenshot", &args, run_id).await?;
+    let state = reply.get("browser_state").cloned();
+    if reply.get("is_error").and_then(Value::as_bool).unwrap_or(false) {
+        let message = reply.get("text").and_then(Value::as_str).unwrap_or("the browser couldn't take a screenshot").to_string();
+        return Err(Fail { message, browser_state: state });
+    }
+    let png = reply
+        .get("image")
+        .and_then(Value::as_str)
+        .and_then(|d| B64.decode(d.trim()).ok())
+        .ok_or_else(|| Fail { message: "the browser driver returned no screenshot".into(), browser_state: state.clone() })?;
+    Ok((png, state))
+}
+
 /// The input-space size of a target: the coordinate space its input calls
-/// use. For this Mac that is points (Cua Driver / CGEvent), which differs from
-/// the Retina screenshot's pixels; everywhere else it is the screenshot size.
+/// use, which is the native screenshot size everywhere (Cua Driver 0.34's
+/// desktop scope takes native screenshot pixels, not points, on a Retina Mac).
 async fn input_space(target: &Target, key: &str, run_id: &str) -> Result<Frame, String> {
     if let Some(f) = cached_screen(key) {
         return Ok(f);
     }
-    let frame = match target {
-        Target::ThisDevice => crate::computer_routes::this_device_screen_points()
-            .await
-            .ok_or_else(|| "couldn't read this computer's screen size".to_string())?,
-        _ => {
-            let png = capture(target, run_id).await?;
-            png_size(&png).ok_or_else(|| "couldn't read the screenshot size".to_string())?
-        }
-    };
+    let png = capture(target, run_id).await?;
+    let frame = png_size(&png).ok_or_else(|| "couldn't read the screenshot size".to_string())?;
     remember_screen(key, frame);
     Ok(frame)
 }
@@ -899,6 +1176,26 @@ fn this_device_mouse(action: &str, xy: Option<(i64, i64)>, end: Option<(i64, i64
     }
 }
 
+/// A failed dispatch: the model-facing message, plus the browser's tab
+/// inventory when the failure happened in a browser.
+#[derive(Debug)]
+pub struct Fail {
+    pub message: String,
+    pub browser_state: Option<Value>,
+}
+
+impl From<String> for Fail {
+    fn from(message: String) -> Self {
+        Fail { message, browser_state: None }
+    }
+}
+
+impl From<&str> for Fail {
+    fn from(message: &str) -> Self {
+        Fail { message: message.to_string(), browser_state: None }
+    }
+}
+
 /// Dispatch one action (coordinates already in screen px). Returns the
 /// content blocks for a successful call.
 async fn dispatch(
@@ -909,7 +1206,7 @@ async fn dispatch(
     map: &Mapping,
     screen_key: &str,
     run_id: &str,
-) -> Result<(Vec<Value>, Option<Value>), String> {
+) -> Result<(Vec<Value>, Option<Value>), Fail> {
     let member = spec.name.as_str();
     // Members the executor runs the same way on every target.
     match member {
@@ -919,10 +1216,12 @@ async fn dispatch(
             return Ok((vec![text(ack(spec, scaled))], None));
         }
         "screenshot" | "zoom" => {
-            let png = capture(target, run_id).await?;
+            let (png, state) = match target {
+                Target::Browser { .. } => browser_shot(target, scaled, run_id).await?,
+                _ => (capture(target, run_id).await?, None),
+            };
             let full = png_size(&png).ok_or("couldn't read the screenshot size")?;
-            // Crop region arrives in input-space px; map it to image px
-            // (they differ on a Retina Mac).
+            // Crop region arrives in input-space px; map it to image px.
             let crop = if member == "zoom" {
                 let r = scaled.get("region").and_then(Value::as_array).ok_or("region is required")?;
                 let sx = full.width as f64 / map.screen.width.max(1) as f64;
@@ -933,27 +1232,22 @@ async fn dispatch(
                 None
             };
             let (out, _) = render_for_model(&png, map.frame, crop)?;
-            return Ok((vec![image_block(&out)], None));
+            return Ok((vec![image_block(&out)], state));
         }
         _ => {}
     }
 
     match (toolset, target) {
-        (Toolset::Computer, Target::Guest { .. }) => {
-            let script = xdotool_script(member, scaled)?.ok_or("nothing to run")?;
-            let out = guest_exec(target, &script).await?;
+        (Toolset::Computer, Target::Guest { os, .. }) => {
+            let out = if os == "windows" {
+                let script = windows_script(member, scaled)?.ok_or("nothing to run")?;
+                windows_exec(target, &script).await?
+            } else {
+                let script = xdotool_script(member, scaled)?.ok_or("nothing to run")?;
+                guest_exec(target, &script).await?
+            };
             if member == "cursor_position" {
-                let mut x = None;
-                let mut y = None;
-                for line in out.lines() {
-                    if let Some(v) = line.strip_prefix("X=") {
-                        x = v.trim().parse::<f64>().ok();
-                    }
-                    if let Some(v) = line.strip_prefix("Y=") {
-                        y = v.trim().parse::<f64>().ok();
-                    }
-                }
-                let (x, y) = (x.ok_or("no cursor position")?, y.ok_or("no cursor position")?);
+                let (x, y) = parse_xy_lines(&out).ok_or("no cursor position")?;
                 let (mx, my) = map.to_model(x, y);
                 return Ok((vec![text(format!("X={mx},Y={my}"))], None));
             }
@@ -961,14 +1255,43 @@ async fn dispatch(
         }
         (Toolset::Computer, Target::ThisDevice) => {
             use crate::this_device_input as td;
-            if scaled.get("text").and_then(Value::as_str).is_some_and(|t| !t.is_empty())
-                && (member.ends_with("click") || member == "scroll" || member == "left_click_drag")
-            {
-                return Err("Holding modifier keys during a click isn't supported on this device yet; use key with a chord instead.".into());
+            let mods = match scaled.get("text").and_then(Value::as_str) {
+                Some(t) if member.ends_with("click") || member == "scroll" || member == "left_click_drag" => cua_modifiers(t)?,
+                _ => vec![],
+            };
+            if member == "scroll" && !mods.is_empty() {
+                return Err("Cua Driver 0.34 can't hold modifier keys while scrolling on macOS; scroll without text, or use key for a shortcut.".into());
             }
             let at = point_of(scaled, "coordinate");
             let need_at = || at.ok_or_else(|| format!("{member} on this device needs a coordinate"));
-            let call = match member {
+            match member {
+                "cursor_position" => {
+                    let (x, y) = this_device_cursor_px(map).await?;
+                    let (mx, my) = map.to_model(x as f64, y as f64);
+                    return Ok((vec![text(format!("X={mx},Y={my}"))], None));
+                }
+                "left_mouse_down" => {
+                    let here = this_device_cursor_px(map).await?;
+                    PRESSES.lock().unwrap_or_else(|p| p.into_inner()).insert(screen_key.to_string(), here);
+                    return Ok((vec![text("Left mouse button pressed. On this Mac the press is sent together with left_mouse_up, as one click or drag.")], None));
+                }
+                "left_mouse_up" => {
+                    let pressed = PRESSES.lock().unwrap_or_else(|p| p.into_inner()).remove(screen_key);
+                    let Some(from) = pressed else {
+                        return Err("The left mouse button isn't down; call left_mouse_down first.".into());
+                    };
+                    let to = this_device_cursor_px(map).await?;
+                    let call = if (from.0 - to.0).abs() <= 2 && (from.1 - to.1).abs() <= 2 {
+                        td::mouse_call(&this_device_mouse("click", Some(from), None, Some("left"), None))?
+                    } else {
+                        td::mouse_call(&this_device_mouse("drag", Some(from), Some(to), None, None))?
+                    };
+                    td::call_driver(call.0, call.1).await?;
+                    return Ok((vec![text(ack(spec, scaled))], None));
+                }
+                _ => {}
+            }
+            let mut call = match member {
                 "left_click" => td::mouse_call(&this_device_mouse("click", Some(need_at()?), None, Some("left"), None)),
                 "middle_click" => td::mouse_call(&this_device_mouse("click", Some(need_at()?), None, Some("middle"), None)),
                 "right_click" => td::mouse_call(&this_device_mouse("rightclick", Some(need_at()?), None, None, None)),
@@ -999,6 +1322,10 @@ async fn dispatch(
                 }),
                 other => Err(format!("{other} isn't supported on this device")),
             }?;
+            if !mods.is_empty() {
+                // click / double_click / right_click / drag take `modifier`.
+                call.1["modifier"] = json!(mods);
+            }
             let repeat = if member == "key" {
                 scaled.get("repeat").and_then(Value::as_f64).unwrap_or(1.0).round().clamp(1.0, 100.0) as u32
             } else {
@@ -1009,87 +1336,29 @@ async fn dispatch(
             }
             Ok((vec![text(ack(spec, scaled))], None))
         }
-        (Toolset::Browser, Target::Browser { .. }) => {
-            let point = |key: &str| -> Result<(i64, i64), String> {
-                let t = scaled.get(key).ok_or_else(|| format!("{key} is required"))?;
-                if t.get("type").and_then(Value::as_str) == Some("ref") {
-                    return Err("Element refs aren't supported by this browser target yet; target a coordinate from the screenshot instead.".into());
-                }
-                Ok((t.get("x").and_then(Value::as_i64).unwrap_or(0), t.get("y").and_then(Value::as_i64).unwrap_or(0)))
-            };
-            let xy = |p: (i64, i64)| json!({ "x": p.0, "y": p.1, "coordinate": [p.0, p.1] });
-            let s = |k: &str| scaled.get(k).and_then(Value::as_str);
-            if s("modifiers").is_some_and(|m| !m.is_empty()) {
-                return Err("Modifier clicks aren't supported by this browser target yet.".into());
-            }
-            let result = match member {
-                "navigate" => {
-                    let url = s("url").ok_or("url is required")?;
+        (Toolset::Browser, Target::Browser { public_only, .. }) => {
+            if member == "navigate" {
+                let url = scaled.get("url").and_then(Value::as_str).unwrap_or_default();
+                if !matches!(url, "back" | "forward" | "reload") {
+                    if let Some(why) = browser_url_refusal(url, *public_only).await {
+                        return Err(why.into());
+                    }
                     if !crate::aci_safety::HOST_POLICY.allows(url) {
-                        return Err(format!("Navigation to {url} is blocked by this workspace's host policy."));
+                        return Err(format!("Navigation to {url} is blocked by this workspace's host policy.").into());
                     }
-                    let v = gateway_call(target, "goto", Some(url), None, json!({}), run_id).await?;
-                    // A navigation can change the viewport; re-learn it.
-                    SCREENS.lock().unwrap_or_else(|p| p.into_inner()).remove(screen_key);
-                    let summary = v.get("summary").and_then(Value::as_str).unwrap_or("Navigated.").to_string();
-                    return Ok((vec![text(summary)], None));
                 }
-                "left_click" => gateway_call(target, "click", None, None, xy(point("target")?), run_id).await,
-                "right_click" => gateway_call(target, "right_click", None, None, xy(point("target")?), run_id).await,
-                "middle_click" => gateway_call(target, "middle_click", None, None, xy(point("target")?), run_id).await,
-                "double_click" => gateway_call(target, "double_click", None, None, xy(point("target")?), run_id).await,
-                "triple_click" => gateway_call(target, "triple_click", None, None, xy(point("target")?), run_id).await,
-                "hover" => gateway_call(target, "hover", None, None, xy(point("target")?), run_id).await,
-                "mouse_move" => gateway_call(target, "mouse_move", None, None, xy(point("target")?), run_id).await,
-                "left_mouse_down" => gateway_call(target, "left_mouse_down", None, None, xy(point("target")?), run_id).await,
-                "left_mouse_up" => gateway_call(target, "left_mouse_up", None, None, xy(point("target")?), run_id).await,
-                "left_click_drag" => {
-                    let (fx, fy) = point("from")?;
-                    let (tx, ty) = point("target")?;
-                    gateway_call(target, "drag", None, None, json!({ "from_x": fx, "from_y": fy, "to_x": tx, "to_y": ty }), run_id).await
-                }
-                "scroll" => {
-                    let p = point("target")?;
-                    gateway_call(target, "mouse_move", None, None, xy(p), run_id).await?;
-                    let amount = scaled.get("scroll_amount").and_then(Value::as_f64).unwrap_or(3.0).round().clamp(1.0, 50.0);
-                    gateway_call(target, "scroll", None, None, json!({ "direction": s("scroll_direction").unwrap_or("down"), "amount": amount }), run_id).await
-                }
-                "type" => gateway_call(target, "type", None, s("text"), json!({ "text": s("text") }), run_id).await,
-                "key" => {
-                    let keys = playwright_key(s("text").ok_or("text is required")?);
-                    let repeat = scaled.get("repeat").and_then(Value::as_f64).unwrap_or(1.0).round().clamp(1.0, 100.0) as u32;
-                    let mut last = Ok(Value::Null);
-                    for _ in 0..repeat {
-                        last = gateway_call(target, "key", Some(&keys), None, json!({ "keys": keys }), run_id).await;
-                        if last.is_err() {
-                            break;
-                        }
-                    }
-                    last
-                }
-                "hold_key" => {
-                    let key = playwright_key(s("text").ok_or("text is required")?);
-                    let duration = scaled.get("duration").and_then(Value::as_f64).unwrap_or(1.0).clamp(0.0, 30.0);
-                    gateway_call(target, "hold_key", None, None, json!({ "key": key, "duration": duration }), run_id).await
-                }
-                "find" => {
-                    let v = gateway_call(target, "find_elements", s("query"), None, json!({ "query": s("query") }), run_id).await?;
-                    let found = v.get("extracted_content").cloned().unwrap_or(Value::Null);
-                    return Ok((vec![text(serde_json::to_string_pretty(&found).unwrap_or_default())], None));
-                }
-                "get_page_text" => {
-                    let v = gateway_call(target, "extract", None, None, json!({ "format": "text" }), run_id).await?;
-                    let body = match v.get("extracted_content") {
-                        Some(Value::String(t)) => t.clone(),
-                        Some(other) => other.to_string(),
-                        None => String::new(),
-                    };
-                    return Ok((vec![text(body.chars().take(50_000).collect::<String>())], None));
-                }
-                other => return Err(format!("{other} isn't supported by this browser target")),
-            };
-            result?;
-            Ok((vec![text(ack(spec, scaled))], None))
+            }
+            let reply = browser_call(target, member, scaled, run_id).await?;
+            let state = reply.get("browser_state").cloned();
+            let said = reply.get("text").and_then(Value::as_str).filter(|t| !t.is_empty()).map(str::to_string);
+            if reply.get("is_error").and_then(Value::as_bool).unwrap_or(false) {
+                return Err(Fail { message: said.unwrap_or_else(|| format!("{member} failed in the browser")), browser_state: state });
+            }
+            if matches!(member, "navigate" | "new_tab" | "switch_tab" | "close_tab") {
+                // A different page or tab can change the viewport; re-learn it.
+                SCREENS.lock().unwrap_or_else(|p| p.into_inner()).remove(screen_key);
+            }
+            Ok((vec![text(said.unwrap_or_else(|| ack(spec, scaled)))], state))
         }
         _ => Err("this toolset doesn't run on this target".into()),
     }
@@ -1140,7 +1409,10 @@ async fn build_target(state: &Arc<AppState>, user: &AuthUser, computer: &Compute
         let session_id = browser_session_id
             .map(str::to_string)
             .unwrap_or_else(|| format!("toolset-{}-{}", user.user_id, computer.id));
-        return Ok(Target::Browser { base: state.config.acu_url().trim_end_matches('/').to_string(), session_id });
+        // The browser may reach this computer's own network only when it runs
+        // on the person's own machine; cloud computers are public-only.
+        let public_only = !(crate::computer_routes::is_this_device(computer) && !crate::cloud_computer_peer::running_on_cloud_computer());
+        return Ok(Target::Browser { base: state.config.acu_url().trim_end_matches('/').to_string(), session_id, public_only });
     }
     if crate::computer_routes::is_this_device(computer) {
         return Ok(Target::ThisDevice);
@@ -1234,6 +1506,12 @@ pub async fn execute(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: 
     };
     if let Err(reason) = validate(&spec.input_schema, &req.input, "") {
         return respond(StatusCode::BAD_REQUEST, error_result("invalid_input", reason, None));
+    }
+    if !spec.default_enabled && !req.enable.iter().any(|m| m == &spec.name) {
+        return respond(
+            StatusCode::FORBIDDEN,
+            error_result("member_disabled", format!("{} is off by default; turn it on for this call with \"enable\": [\"{}\"].", spec.name, spec.name), None),
+        );
     }
     let computer = match resolve_computer(state, user, id, headers).await {
         Ok(c) => c,
@@ -1386,9 +1664,11 @@ pub async fn execute(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: 
             settle(true);
             respond(StatusCode::OK, ToolsetResult { is_error: false, content, browser_state, screen: screen_info(Some(&map)), error: None })
         }
-        Err(message) => {
+        Err(fail) => {
             settle(false);
-            respond(StatusCode::OK, error_result("action_failed", message, Some(&map)))
+            let mut r = error_result("action_failed", fail.message, Some(&map));
+            r.browser_state = fail.browser_state;
+            respond(StatusCode::OK, r)
         }
     }
 }
@@ -1419,6 +1699,10 @@ async fn post_toolset(
 pub struct SchemaQuery {
     #[serde(default)]
     toolset: Option<Toolset>,
+    /// Comma-separated off-by-default members to report as on (the caller
+    /// will send them with `enable`).
+    #[serde(default)]
+    enable: Option<String>,
 }
 
 async fn gateway_healthy(base: &str) -> bool {
@@ -1466,8 +1750,9 @@ async fn get_toolset_schema(
         .members
         .iter()
         .map(|m| {
-            let reason = if !m.default_enabled {
-                Some("Off by default in the contract.")
+            let opted_in = q.enable.as_deref().is_some_and(|e| e.split(',').any(|n| n.trim() == m.name));
+            let reason = if !m.default_enabled && !opted_in {
+                Some("Off by default in the contract; request it with ?enable= and send it with \"enable\".")
             } else {
                 unavailable.or_else(|| unsupported_reason(target_label, toolset, &m.name))
             };
@@ -1650,6 +1935,7 @@ mod tests {
             coordinate_space: None,
             approval_grant: None,
             browser_session_id: None,
+            enable: vec![],
         };
         let spec = contract(Toolset::Computer).member("type").unwrap();
         assert!(needs_approval(spec, false), "type needs approval on this device");
@@ -1675,6 +1961,35 @@ mod tests {
         assert_eq!(xdotool_script("triple_click", &json!({ "coordinate": [1, 2], "text": "shift" })).unwrap().unwrap(), "xdotool mousemove --sync 1 2 keydown shift click --repeat 3 --delay 80 1 keyup shift");
         assert_eq!(xdotool_script("type", &json!({ "text": "it's" })).unwrap().unwrap(), "xdotool type --delay 12 -- 'it'\\''s'");
         assert!(xdotool_script("key", &json!({ "text": "ctrl+a; rm -rf /" })).is_err());
-        assert_eq!(playwright_key("ctrl+Return"), "Control+Enter");
+    }
+
+    #[tokio::test]
+    async fn browser_url_policy_and_windows_input() {
+        // Schemes: only http(s) and about:blank, on every target.
+        for bad in ["file:///etc/passwd", "javascript:alert(1)", "chrome://settings", "data:text/html,x"] {
+            assert!(browser_url_refusal(bad, false).await.is_some(), "{bad}");
+        }
+        assert!(browser_url_refusal("about:blank", true).await.is_none());
+        assert!(browser_url_refusal("http://localhost:3000", false).await.is_none());
+        // Cloud targets: no loopback, private, mesh (CGNAT), metadata or v6 local hosts.
+        for bad in [
+            "http://127.0.0.1/", "http://localhost/", "http://10.1.2.3/", "http://192.168.1.1/", "http://100.64.0.3/",
+            "http://169.254.169.254/latest/meta-data", "http://metadata.google.internal/", "http://[::1]/", "http://[fd00::1]/",
+            "http://[::ffff:127.0.0.1]/", "http://0.0.0.0/",
+        ] {
+            assert!(browser_url_refusal(bad, true).await.is_some(), "{bad}");
+        }
+        assert!(browser_url_refusal("https://1.1.1.1/", true).await.is_none());
+        // Windows: modifier-held click and chord mapping; bad keys refused.
+        let click = windows_script("left_click", &json!({ "coordinate": [5, 6], "text": "ctrl+shift" })).unwrap().unwrap();
+        let tail = click.split("'@").nth(1).unwrap();
+        assert_eq!(
+            tail.trim(),
+            "[AltInput]::K(17,$false)\n[AltInput]::K(16,$false)\n[AltInput]::SetCursorPos(5,6) | Out-Null; Start-Sleep -Milliseconds 40\n[AltInput]::M(2,0); [AltInput]::M(4,0); Start-Sleep -Milliseconds 70\n[AltInput]::K(16,$true)\n[AltInput]::K(17,$true)"
+        );
+        assert!(windows_script("key", &json!({ "text": "ctrl+a; rm" })).is_err());
+        assert_eq!(win_chord("cmd+F5").unwrap(), vec![0x5B, 0x74]);
+        assert!(windows_script("type", &json!({ "text": "a'b" })).unwrap().unwrap().contains(&B64.encode("a'b")));
+        assert_eq!(cua_modifiers("ctrl+Option+cmd").unwrap(), vec!["ctrl", "option", "cmd"]);
     }
 }
