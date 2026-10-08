@@ -72,6 +72,8 @@ jobs:
             name=$(node -p "require('./package.json').name")
             # Standalone install (no lockfile): these packages have no runtime deps.
             npm install --no-package-lock --no-audit --no-fund
+            # TypeScript for the build (not a declared devDependency of every package).
+            npm install --no-save --no-package-lock --no-audit --no-fund typescript@5.9.3
             npm version "$VERSION" --no-git-tag-version --allow-same-version
             npm run build
             if [ -d test ]; then node --test test/*.test.ts; fi

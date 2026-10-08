@@ -34,8 +34,5 @@
   "homepage": "https://docs.allternit.com/api/platform/sdks/typescript",
   "publishConfig": {
     "access": "public"
-  },
-  "devDependencies": {
-    "typescript": "^5.9.0"
   }
 }
