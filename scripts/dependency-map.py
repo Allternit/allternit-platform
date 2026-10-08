@@ -2,13 +2,13 @@
 """Allternit dependency map: products, surfaces and code, with evidence. Python 3.11+, no installs.
 
   python3.11 scripts/dependency-map.py --impact <path or id>   what a change can reach (always live)
-  python3.11 scripts/dependency-map.py --validate              check runtime-links.json and products.json
+  python3.11 scripts/dependency-map.py --validate              check runtime-links.json, products.json and features.json
   python3.11 scripts/dependency-map.py --out <dir>             build the viewer (index.html + graph.json)
 
 The built output lists every file in the private allternit-ai repo, so it is never committed to this
 public repo. It is published to the access-controlled admin site by scripts/build-admin-site.sh.
 """
-import argparse, collections, json, os, pathlib, re, subprocess, sys, tomllib
+import argparse, collections, datetime, json, os, pathlib, re, subprocess, sys, tomllib
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 MAP = ROOT / 'docs/dependency-map'
 SKIP = {'.agents', 'node_modules', 'target', 'dist', 'release', 'vendor', 'archive', '.git', 'resources', '.gw-target', '.shared-target'}
@@ -24,6 +24,8 @@ SPLIT = {'allternit/cmd/gizzi-code': ('src', 'gizzi-code', 250),
 EXTERNAL = {'brain': pathlib.Path.home() / 'Desktop/Allternit/Allternit Brain',
             'websites': pathlib.Path.home() / 'Desktop/Allternit/Allternit Websites'}
 
+STATUSES = ('live', 'building', 'planned')
+
 LAYERS = ['product', 'surface', 'workspace-ui', 'runtime', 'platform', 'domain', 'other']
 
 def git(root, *args):
@@ -32,7 +34,7 @@ def git(root, *args):
 def layer(n):
     """Coarse architecture layer used by the viewer's colours and columns."""
     i = n['id']
-    if n['kind'] in ('product', 'line'): return 'product'
+    if n['kind'] in ('product', 'line', 'feature', 'journey'): return 'product'
     if n['kind'] == 'surface' or i.startswith('allternit/surfaces/'): return 'surface'
     if i.startswith('allternit-ai'): return 'workspace-ui'
     if i.startswith(('allternit/cmd/', 'allternit/services/')): return 'runtime'
@@ -197,6 +199,37 @@ def generate(ai):
                 if ref not in nodes: raise SystemExit(f'{where}: unknown {kind} reference {ref!r}')
                 edge(pr['id'], ref, kind, ev)
 
+    # Curated: features (what a product does and the components it touches) and journeys (ordered steps a user
+    # takes across components). Edges point from the feature or journey to the component, like every other edge.
+    work = json.loads((MAP/'features.json').read_text())
+    for f in work['features']:
+        where = 'features.json ' + f['id']
+        if not f['id'].startswith('feature:'): raise SystemExit(f'{where}: feature ids start with feature:')
+        if nodes.get(f['product'], {}).get('kind') != 'product': raise SystemExit(f'{where}: unknown product {f["product"]!r}')
+        if f['status'] not in STATUSES: raise SystemExit(f'{where}: status must be one of {", ".join(STATUSES)}')
+        if not f['touches']: raise SystemExit(f'{where}: list at least one component in touches')
+        for d in f.get('decisions', []):
+            try: datetime.date.fromisoformat(d['on'])
+            except (KeyError, ValueError): raise SystemExit(f'{where}: decision dates are YYYY-MM-DD: {d!r}')
+            if not d.get('note', '').strip(): raise SystemExit(f'{where}: decision on {d["on"]} has no note')
+        node(f['id'], f['label'], 'feature', '', description=f['description'], product=f['product'], status=f['status'],
+             decisions=sorted(f.get('decisions', []), key=lambda d: d['on'], reverse=True))
+    for j in work['journeys']:
+        where = 'features.json ' + j['id']
+        if not j['id'].startswith('journey:'): raise SystemExit(f'{where}: journey ids start with journey:')
+        if len(j['steps']) < 2: raise SystemExit(f'{where}: a journey needs at least two steps')
+        node(j['id'], j['label'], 'journey', '', description=j['description'], steps=[[s['at'], s['says']] for s in j['steps']])
+    for item in work['features'] + work['journeys']:
+        where = 'features.json ' + item['id']
+        if not item['evidence']: raise SystemExit(f'{where}: add at least one evidence path')
+        for ev in item['evidence']: check_evidence(ev, where)
+        refs = [('touches', r) for r in item.get('touches', [])] + [('step', s['at']) for s in item.get('steps', [])]
+        for kind, ref in refs:
+            if ref not in nodes or nodes[ref]['kind'] in ('feature', 'journey', 'line'):
+                raise SystemExit(f'{where}: unknown {kind} component {ref!r}')
+            edge(item['id'], ref, kind, item['evidence'][0])
+        if item['id'].startswith('feature:'): edge(item['product'], item['id'], 'has feature', item['evidence'][0])
+
     for n in nodes.values(): n['layer'] = layer(n)
     return dict(schema=2, revisions={r:git(p,'rev-parse','HEAD') for r,p in roots.items()},
         nodes=sorted(nodes.values(),key=lambda n:n['id']), edges=sorted(edges.values(),key=lambda e:(e['source'],e['target'],e['kind'])),
@@ -207,7 +240,10 @@ def viewer_data(g, built):
     index = {n['id']: i for i, n in enumerate(g['nodes'])}
     owners = collections.defaultdict(list)
     for path, owner in g['files'].items(): owners[index[owner]].append(path)
-    meta = {str(index[n['id']]): {k: n[k] for k in ('type','description','url','line','repo') if n.get(k)} for n in g['nodes'] if n['kind'] in ('product','line')}
+    keys = ('type','description','url','line','repo','product','status','decisions')
+    meta = {str(index[n['id']]): {k: n[k] for k in keys if n.get(k)} for n in g['nodes'] if n['kind'] in ('product','line','feature','journey')}
+    for n in g['nodes']:
+        if n['kind'] == 'journey': meta[str(index[n['id']])]['steps'] = [[index[at], says] for at, says in n['steps']]
     return dict(revisions=g['revisions'], built=built, layers=LAYERS,
         nodes=[[n['id'], n['label'], n['kind'], n['layer']] for n in g['nodes']], meta=meta,
         edges=[[index[e['source']], index[e['target']], e['kind'], e['evidence'][:4], len(e['evidence'])] for e in g['edges']],
@@ -235,9 +271,13 @@ def impact(g, query):
         for e in g['edges']:
             if e['kind'] == 'contains' and e['target'] == x and e['source'] not in up: up.add(e['source']); todo.append(e['source'])
     part_of = sorted({e['source'] for e in g['edges'] if e['kind'] == 'built from' and e['target'] in up})
+    # Features and journeys that name the changed component, or a folder/crate containing it, directly.
+    named = {e['source'] for e in g['edges'] if e['kind'] in ('touches', 'step') and e['target'] in up}
     return {'changed':sorted(seed), 'partOf':part_of,
             'products':sorted(x for x in seen if kinds[x]=='product'),
             'surfaces':sorted(x for x in seen if kinds[x]=='surface'),
+            'features':sorted({x for x in named if kinds[x]=='feature'}),
+            'journeys':sorted({x for x in named if kinds[x]=='journey'}),
             'potentiallyAffected':sorted(seen-seed)}
 
 if __name__ == '__main__':
@@ -255,6 +295,7 @@ if __name__ == '__main__':
         (a.out/'index.html').write_text(render(g, a.built))
         print(f"{len(g['nodes'])} components, {len(g['edges'])} relationships, {len(g['files'])} files -> {a.out}")
     else:
-        products = sum(1 for n in g['nodes'] if n['kind']=='product')
-        print(f"Valid: {products} products, {len(g['nodes'])} components, {len(g['edges'])} relationships, {len(g['files'])} files.")
+        count = collections.Counter(n['kind'] for n in g['nodes'])
+        print(f"Valid: {count['product']} products, {count['feature']} features, {count['journey']} journeys, "
+              f"{len(g['nodes'])} components, {len(g['edges'])} relationships, {len(g['files'])} files.")
     if g['warnings']: print('\n'.join(g['warnings']), file=sys.stderr)

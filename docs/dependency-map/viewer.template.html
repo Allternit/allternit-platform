@@ -28,6 +28,7 @@
   --l-product:#f27aa0; --l-surface:#f08356; --l-workspace-ui:#7ea6ff; --l-runtime:#4cc9a4; --l-platform:#b38cf5; --l-domain:#e0b34a; --l-other:#93a3b5;
   color-scheme:dark}
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 html,body{height:100%}
 body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 var(--body);-webkit-font-smoothing:antialiased}
 button,input{font:inherit;color:inherit}
@@ -140,7 +141,42 @@ code,.mono{font-family:var(--mono);font-size:12px}
 .partof{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:0 20px 10px}
 .partof .lbl{font-size:12px;color:var(--muted);margin-right:4px}
 .desc{margin:6px 0 0;color:var(--muted);max-width:70ch}
+/* Features and journeys: index on the left, then the atlas of places a feature touches (lit) or a journey walks
+   (numbered, dashed in step order), the item's details, and a dated decisions column on wide screens. */
+.fstage{min-width:0;padding:20px;display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:20px;align-items:start}
+.fmain{display:grid;gap:20px;min-width:0}
+.st{font:11px var(--mono);border-radius:4px;padding:0 6px;border:1px solid var(--c);background:color-mix(in srgb,var(--c) 12%,transparent);color:var(--ink);white-space:nowrap}
+.st-live{--c:var(--l-runtime)} .st-building{--c:var(--l-domain)} .st-planned{--c:var(--l-other)}
+#atlas .colhead{font:600 11px var(--body);letter-spacing:.06em;text-transform:uppercase;fill:var(--faint)}
+#atlas .pl rect.box{stroke:var(--line)}
+#atlas .pl.on rect.box{stroke:var(--ink);stroke-width:1.5}
+#atlas .pl text{font:500 12px var(--body);fill:var(--ink)}
+#atlas .pl .sub{font:10.5px var(--mono);fill:var(--muted)}
+#atlas .pl{cursor:pointer}
+#atlas .pl:hover rect.box,#atlas .pl:focus rect.box{stroke:var(--edge-hot);stroke-width:1.5}
+#atlas path.e{fill:none;stroke:var(--edge);stroke-width:1;opacity:.6}
+#atlas path.e.hot{stroke:var(--edge-hot);stroke-width:1.8;opacity:1}
+#atlas path.walk{fill:none;stroke:var(--accent);stroke-width:1.6;stroke-dasharray:5 4}
+#atlas .num rect{fill:var(--accent)}
+#atlas .num text{font:600 10.5px var(--mono);fill:var(--accent-ink);text-anchor:middle}
+#atlas.dim path.e:not(.hot){opacity:.12}
+.steps{list-style:none;margin:0;padding:0 8px 10px;counter-reset:step}
+.steps li{display:grid;grid-template-columns:28px minmax(0,1fr);gap:2px 10px;padding:8px 10px;border-top:1px solid var(--line);min-width:0}
+.steps li:first-child{border-top:0}
+.steps .k{grid-row:span 2;width:22px;height:22px;border-radius:50%;background:var(--accent);color:var(--accent-ink);font:600 11px/22px var(--mono);text-align:center}
+.steps button{border:0;background:none;padding:0;font-weight:500;cursor:pointer;text-align:left;overflow-wrap:anywhere}
+.steps button:hover{color:var(--accent);text-decoration:underline}
+.steps p{margin:0;color:var(--muted);font-size:13px}
+.dec{list-style:none;margin:0;padding:0 8px 10px}
+.dec li{padding:8px 10px;border-top:1px solid var(--line);display:grid;gap:3px}
+.dec li:first-child{border-top:0}
+.dec time{font:11px var(--mono);color:var(--faint)}
+.dec p{margin:0;font-size:13px}
+.dec button{border:0;background:none;padding:0;cursor:pointer;color:var(--accent);font-size:12px;text-align:left}
+.dec button:hover{text-decoration:underline}
+@media (max-width:1100px){.fstage{grid-template-columns:minmax(0,1fr)}}
 @media (max-width:860px){
+  .fstage{padding:16px}
   .app{grid-template-columns:1fr}
   .side{position:static;max-height:none;border-right:0;border-bottom:1px solid var(--line)}
   .list{max-height:260px}
@@ -160,7 +196,7 @@ code,.mono{font-family:var(--mono);font-size:12px}
   </div>
   <dl class="stats" id="stats"></dl>
 </header>
-<nav class="tabs" aria-label="Views"><a href="#topology" id="tab-topology">Product topology</a><a href="#graph" id="tab-graph">Code graph</a></nav>
+<nav class="tabs" aria-label="Views"><a href="#topology" id="tab-topology">Product topology</a><a href="#features" id="tab-features">Features &amp; journeys</a><a href="#graph" id="tab-graph">Code graph</a></nav>
 <section class="topo" id="view-topology" aria-label="Product topology">
   <section class="card">
     <h3>How the products stack <small id="n-prod"></small></h3>
@@ -170,6 +206,35 @@ code,.mono{font-family:var(--mono);font-size:12px}
   </section>
   <div class="lines" id="lines"></div>
 </section>
+<div class="app" id="view-features" hidden>
+  <aside class="side" aria-label="Features and journeys">
+    <div class="search">
+      <label for="fq">Find a feature or journey</label>
+      <input id="fq" type="search" placeholder="voice, text your bot, cloud computer" autocomplete="off">
+    </div>
+    <div class="list" id="flist"></div>
+  </aside>
+  <div class="fstage">
+    <main class="fmain">
+      <section class="focus" aria-labelledby="ftitle">
+        <div class="fhead">
+          <div style="min-width:0">
+            <div class="eyebrow" id="feyebrow"></div>
+            <h2 id="ftitle"></h2>
+            <p class="desc" id="fdesc"></p>
+          </div>
+          <div class="tools"><button type="button" class="btn" id="fcopy">Copy link</button></div>
+        </div>
+        <div class="reach" id="freach"></div>
+        <div class="counts" id="fcounts"></div>
+        <div class="canvas"><svg id="atlas" role="img" aria-label="Components this feature or journey touches"></svg></div>
+        <div class="legend" id="flegend"></div>
+      </section>
+      <div class="grid2" id="fdetail"></div>
+    </main>
+    <aside class="card" aria-labelledby="dec-h"><h3 id="dec-h">Recent decisions <small id="n-dec"></small></h3><ul class="dec" id="decisions"></ul></aside>
+  </div>
+</div>
 <div class="app" id="view-graph">
   <aside class="side" aria-label="Components">
     <div class="search">
@@ -241,7 +306,8 @@ const PRODUCTS_COUNT=()=>String(D.nodes.filter(n=>n[2]==='product').length);
 (function(){const st=$('stats');const add=(t,v)=>st.append(h('div',{},h('dt',{},t),h('dd',{},v)));
 add('Components',N.length.toLocaleString());add('Relationships',D.edges.length.toLocaleString());add('Files',D.fileCount.toLocaleString());
 if(D.built)add('Built',D.built);
-add('Products',PRODUCTS_COUNT());add('Snapshot',Object.entries(D.revisions).map(([r,s])=>r.replace('allternit-','')+' '+s.slice(0,7)).join(' · '))})();
+add('Products',PRODUCTS_COUNT());
+add('Features',`${D.nodes.filter(n=>n[2]==='feature').length} · ${D.nodes.filter(n=>n[2]==='journey').length} journeys`);add('Snapshot',Object.entries(D.revisions).map(([r,s])=>r.replace('allternit-','')+' '+s.slice(0,7)).join(' · '))})();
 
 // Layer filter chips + legend
 for(const l of D.layers){
@@ -348,7 +414,7 @@ function partOf(i){
   const res=new Set();for(const x of up)for(const k of inn[x]){const e=D.edges[k];if(e[2]==='built from')res.add(e[0])}
   return [...res].sort((a,b)=>N[a].label.localeCompare(N[b].label));
 }
-function select(i){sel=i;showView('graph');store.set('depmap.sel',N[i].id);draw();listing();window.scrollTo({top:0,behavior:'smooth'})}
+function select(i){if(N[i].kind==='feature'||N[i].kind==='journey'){openWork(i);return}sel=i;showView('graph');store.set('depmap.sel',N[i].id);draw();listing();window.scrollTo({top:0,behavior:'smooth'})}
 function draw(){
   const n=N[sel],hops=reverseHops(sel);
   $('eyebrow').replaceChildren(h('span',{class:'dot',style:`--c:${color(n.layer)}`}),`${LAYER_NAME[n.layer]} · ${n.kind}`);
@@ -361,6 +427,9 @@ function draw(){
     P.append(h('span',{class:'lbl'},'Part of:'));
     if(!owners.length)P.append(h('span',{class:'ev'},'No product lists this directly. See what it can reach below.'));
     for(const o of owners){const b=h('button',{type:'button',class:'surf on',style:'--l-surface:var(--l-product)'},N[o].label);b.onclick=()=>select(o);P.append(b)}
+    const work=workAt(sel);
+    if(work.length){P.append(h('span',{class:'lbl',style:'margin-left:12px'},'In features and journeys:'));
+      for(const o of work){const b=h('button',{type:'button',class:'surf on',style:`--l-surface:${N[o].kind==='journey'?'var(--accent)':'var(--l-product)'}`},N[o].label);b.onclick=()=>openWork(o);P.append(b)}}
   }
   $('mode-impact').setAttribute('aria-pressed',mode==='impact');$('mode-direct').setAttribute('aria-pressed',mode==='direct');
   const R=$('reach');R.replaceChildren(h('span',{class:'lbl'},'Reaches shipped surfaces:'));
@@ -441,21 +510,145 @@ function lines(){
         h('div',{class:'prod-top'},h('button',{type:'button',onclick:()=>select(pr.i)},pr.label),h('span',{class:'badge',style:`--c:var(--l-${TYPE_COLOR[pr.type]||'other'})`},TYPE_NAME[pr.type]||pr.type),
           pr.url?h('a',{href:pr.url,target:'_blank',rel:'noopener'},pr.url.replace(/^https?:\/\//,'')):null),
         h('p',{},pr.description||''),
-        chips('Ships on',rel('ships on')),chips('Uses',rel('uses product')),
+        chips('Ships on',rel('ships on')),chips('Uses',rel('uses product')),chips('Features',rel('has feature')),
         rel('built from').length?h('div',{class:'kv'},`Built from ${rel('built from').length} components`,h('button',{type:'button',class:'tag',onclick:()=>select(pr.i)},'Open in code graph')):
           h('div',{class:'kv'},pr.repo?`Lives in ${pr.repo}, outside the mapped code`:'No code mapped yet')));
     }
     L.append(card);
   }
 }
+
+// ---- Features and journeys ----
+const FEATS=N.filter(n=>n.kind==='feature'),JOURNEYS=N.filter(n=>n.kind==='journey');
+const ACOLS=['surface','workspace-ui','runtime','platform','domain','other'];
+let fsel=byId.get(store.get('depmap.work'))?.i??JOURNEYS[0]?.i??FEATS[0]?.i;
+function placesOf(i){const n=N[i];return n.kind==='journey'?[...new Set(n.steps.map(st=>st[0]))]:out[i].map(k=>D.edges[k]).filter(e=>e[2]==='touches').map(e=>e[1])}
+// Features and journeys that name this component or a folder/crate containing it (the same rule as partOf).
+function workAt(i){
+  const up=new Set([i]),q=[i];
+  while(q.length){const x=q.shift();for(const k of inn[x]){const e=D.edges[k];if(e[2]==='contains'&&!up.has(e[0])){up.add(e[0]);q.push(e[0])}}}
+  const res=new Set();for(const x of up)for(const k of inn[x]){const e=D.edges[k];if(e[2]==='touches'||e[2]==='step')res.add(e[0])}
+  return [...res].sort((a,b)=>N[a].kind.localeCompare(N[b].kind)||N[a].label.localeCompare(N[b].label));
+}
+const badge=st=>h('span',{class:'st st-'+st},st);
+const workColor=n=>n.kind==='journey'?'var(--accent)':color('product');
+function frow(n){
+  const b=h('button',{type:'button',class:'row',title:n.description||n.label,'aria-current':String(n.i===fsel)},
+    h('span',{class:'dot',style:`--c:${workColor(n)}`}),h('span',{class:'name'},n.label),
+    n.kind==='feature'?badge(n.status):h('span',{class:'n'},`${n.steps.length} steps`),
+    h('span',{class:'path'},n.kind==='journey'?'journey':(byId.get(n.product)?.label||'')));
+  b.onclick=()=>openWork(n.i);return b;
+}
+function flisting(){
+  const q=norm($('fq').value.trim()),L=$('flist');L.replaceChildren();
+  const hit=n=>!q||norm(n.label+' '+(n.description||'')+' '+(byId.get(n.product)?.label||'')).includes(q);
+  const js=JOURNEYS.filter(hit).sort((a,b)=>a.label.localeCompare(b.label));
+  if(js.length){L.append(h('div',{class:'group'},h('span',{},'Journeys'),h('span',{},String(js.length))));for(const n of js)L.append(frow(n))}
+  for(const ln of LINES){
+    const fs=FEATS.filter(f=>hit(f)&&byId.get(f.product)?.line===ln.id).sort((a,b)=>a.label.localeCompare(b.label));
+    if(!fs.length)continue;
+    L.append(h('div',{class:'group'},h('span',{},ln.label),h('span',{},String(fs.length))));for(const n of fs)L.append(frow(n));
+  }
+  if(!L.childElementCount)L.append(h('p',{class:'empty'},'Nothing matches. Try a product name or a word from the description.'));
+}
+function drawAtlas(i){
+  const svg=$('atlas');svg.replaceChildren();svg.classList.remove('dim');
+  const n=N[i],places=placesOf(i);
+  const first=new Map();if(n.kind==='journey')n.steps.forEach(([at],k)=>{if(!first.has(at))first.set(at,k)});
+  const cols=ACOLS.map(l=>({l,ids:places.filter(p=>N[p].layer===l)})).filter(c=>c.ids.length);
+  // Journeys keep each column in step order so the walk reads top to bottom.
+  cols.forEach(c=>c.ids.sort((a,b)=>(first.get(a)??0)-(first.get(b)??0)||displayName(N[a]).localeCompare(displayName(N[b]))));
+  const W3=196,H3=40,G3=14,CW=W3+52,T3=34,rows=Math.max(1,...cols.map(c=>c.ids.length));
+  const width=Math.max(cols.length*CW-52+40,320),height=T3+rows*(H3+G3)+14;
+  svg.setAttribute('viewBox',`0 0 ${width} ${height}`);svg.setAttribute('width',width);svg.setAttribute('height',height);
+  const pos=new Map();
+  cols.forEach((c,ci)=>{const x=20+ci*CW,y0=T3+(rows-c.ids.length)*(H3+G3)/2;
+    s('text',{x,y:16,class:'colhead'},svg).textContent=LAYER_NAME[c.l].replace(/ \(.*\)/,'');
+    c.ids.forEach((p,r)=>pos.set(p,{x,y:y0+r*(H3+G3)}))});
+  const eg=s('g',{},svg),wg=s('g',{},svg),ng=s('g',{},svg),paths=[],drawn=new Set();
+  // The real links between these places (imports, packages, runtime calls), so the feature's own wiring shows.
+  for(const[a,pa]of pos)for(const k of out[a]){const b=D.edges[k][1],pb=pos.get(b);if(!pb||drawn.has(a+'>'+b))continue;drawn.add(a+'>'+b);
+    const y1=pa.y+H3/2,y2=pb.y+H3/2;let d;
+    if(pb.x!==pa.x){const r=pb.x>pa.x,x1=r?pa.x+W3:pa.x,x2=r?pb.x:pb.x+W3,m=(x1+x2)/2;d=`M${x1} ${y1} C${m} ${y1} ${m} ${y2} ${x2} ${y2}`}
+    else{const x1=pa.x+W3;d=`M${x1} ${y1} C${x1+34} ${y1} ${x1+34} ${y2} ${x1} ${y2}`}
+    paths.push([s('path',{class:'e',d},eg),a,b])}
+  const nums=new Map();
+  if(n.kind==='journey'){
+    n.steps.forEach(([at],k)=>{if(!nums.has(at))nums.set(at,[]);nums.get(at).push(k+1)});
+    const pts=n.steps.map(([at])=>pos.get(at)).map(p=>[p.x+W3/2,p.y+H3/2]);
+    s('path',{class:'walk',d:'M'+pts.map(p=>p.join(' ')).join(' L')},wg);
+  }
+  for(const[p,ps]of pos){const m=N[p];
+    const g=s('g',{class:'pl on',tabindex:0,role:'button','aria-label':`${displayName(m)}${nums.has(p)?', step '+nums.get(p).join(' and '):''}. Open in the code graph`},ng);
+    s('rect',{class:'box',x:ps.x,y:ps.y,width:W3,height:H3,rx:7,fill:`color-mix(in srgb, ${color(m.layer)} 14%, var(--panel))`},g);
+    s('rect',{x:ps.x+8,y:ps.y+H3/2-4,width:8,height:8,rx:4,fill:color(m.layer),stroke:'none'},g);
+    s('text',{x:ps.x+24,y:ps.y+17},g).textContent=short(displayName(m),25);
+    s('text',{x:ps.x+24,y:ps.y+31,class:'sub'},g).textContent=short(m.kind==='surface'?'shipped surface':m.id,28);
+    s('title',{},g).textContent=m.id;
+    if(nums.has(p)){const t=nums.get(p).join(' · '),w=Math.max(20,t.length*6.6+10),bg=s('g',{class:'num'},g);
+      s('rect',{x:ps.x+W3-w+8,y:ps.y-9,width:w,height:18,rx:9},bg);s('text',{x:ps.x+W3-w/2+8,y:ps.y+4},bg).textContent=t}
+    g.onclick=()=>select(p);g.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();select(p)}};
+    const hot=on=>{svg.classList.toggle('dim',on);for(const[el,a,b]of paths)if(a===p||b===p)el.classList.toggle('hot',on)};
+    g.onmouseenter=()=>hot(true);g.onmouseleave=()=>hot(false);g.onfocus=()=>hot(true);g.onblur=()=>hot(false)}
+}
+function placeItem(p,note){
+  const m=N[p];return h('li',{},h('div',{class:'who'},h('span',{class:'dot',style:`--c:${color(m.layer)}`}),h('button',{type:'button',title:m.id,onclick:()=>select(p)},displayName(m)),h('span',{class:'kind'},m.kind==='surface'?'surface':LAYER_NAME[m.layer].replace(/ \(.*\)/,''))),h('div',{class:'ev'},note||m.id));
+}
+function workList(title,ids,empty){
+  const ul=h('ul',{class:'rel'});
+  if(!ids.length)ul.append(h('li',{class:'ev'},empty));
+  for(const o of ids)ul.append(h('li',{},h('div',{class:'who'},h('span',{class:'dot',style:`--c:${workColor(N[o])}`}),h('button',{type:'button',onclick:()=>openWork(o)},N[o].label),N[o].kind==='feature'?badge(N[o].status):h('span',{class:'kind'},'journey')),h('div',{class:'ev'},N[o].description||'')));
+  return h('section',{class:'card'},h('h3',{},title,h('small',{},String(ids.length))),ul);
+}
+function renderWork(){
+  if(fsel==null)return;
+  const n=N[fsel],places=placesOf(fsel),prod=byId.get(n.product);
+  $('feyebrow').replaceChildren(h('span',{class:'dot',style:`--c:${workColor(n)}`}),n.kind==='journey'?'Journey':'Feature',prod?` · ${prod.label}`:'',n.kind==='feature'?' · ':'',n.kind==='feature'?badge(n.status):'');
+  $('ftitle').textContent=n.label;$('fdesc').textContent=n.description||'';
+  // Shipped surfaces any of these places can reach.
+  const reach=new Set();for(const p of places){if(N[p].kind==='surface')reach.add(p);for(const x of reverseHops(p).keys())if(N[x].kind==='surface')reach.add(x)}
+  const R=$('freach');R.replaceChildren(h('span',{class:'lbl'},'Reaches shipped surfaces:'));
+  for(const sf of SURF){const on=reach.has(sf.i);const b=h('button',{type:'button',class:'surf'+(on?' on':''),title:on?'A change in these places can show up here':'Not reached'},sf.label);b.onclick=()=>select(sf.i);R.append(b)}
+  const placeSet=new Set(places);
+  const related=(n.kind==='journey'?FEATS:JOURNEYS).filter(o=>placesOf(o.i).some(p=>placeSet.has(p))).map(o=>o.i).sort((a,b)=>N[a].label.localeCompare(N[b].label));
+  $('fcounts').replaceChildren(...[[places.length,'components'],...(n.kind==='journey'?[[n.steps.length,'steps']]:[]),[reach.size,'surfaces reached'],[related.length,n.kind==='journey'?'features along the way':'journeys through it']].map(([v,t])=>h('span',{},h('b',{},String(v)),' '+t)));
+  drawAtlas(fsel);
+  const F=$('fdetail');F.replaceChildren();
+  if(n.kind==='journey'){
+    const ol=h('ol',{class:'steps'});
+    n.steps.forEach(([at,says],k)=>ol.append(h('li',{},h('span',{class:'k'},String(k+1)),h('button',{type:'button',title:N[at].id,onclick:()=>select(at)},displayName(N[at])),h('p',{},says))));
+    F.append(h('section',{class:'card'},h('h3',{},'Steps',h('small',{},String(n.steps.length))),ol),workList('Features along the way',related,'No feature names these places yet.'));
+  }else{
+    const ul=h('ul',{class:'rel'});for(const p of [...places].sort(byLayerThenName))ul.append(placeItem(p));
+    const dec=h('ul',{class:'dec'});for(const d of n.decisions||[])dec.append(h('li',{},h('time',{datetime:d.on},d.on),h('p',{},d.note)));
+    if(!(n.decisions||[]).length)dec.append(h('li',{class:'ev'},'No dated decisions recorded.'));
+    F.append(h('section',{class:'card'},h('h3',{},'Touches',h('small',{},String(places.length))),ul),
+      h('div',{style:'display:grid;gap:20px;align-content:start'},workList('Journeys through it',related,'No journey walks through these places yet.'),
+        h('section',{class:'card'},h('h3',{},'Decisions',h('small',{},String((n.decisions||[]).length))),dec)));
+  }
+  flisting();
+}
+function decisions(){
+  const all=[];for(const f of FEATS)for(const d of f.decisions||[])all.push([d,f]);
+  all.sort((a,b)=>b[0].on.localeCompare(a[0].on)||a[1].label.localeCompare(b[1].label));
+  const U=$('decisions');U.replaceChildren();$('n-dec').textContent=all.length;
+  if(!all.length)U.append(h('li',{class:'ev'},'No dated decisions recorded yet.'));
+  for(const[d,f]of all.slice(0,20))U.append(h('li',{},h('time',{datetime:d.on},d.on),h('p',{},d.note),h('button',{type:'button',onclick:()=>openWork(f.i)},f.label)));
+}
+function openWork(i){fsel=i;store.set('depmap.work',N[i].id);showView('features/'+N[i].id);renderWork();window.scrollTo({top:0,behavior:'smooth'})}
+$('fq').oninput=flisting;
+$('fcopy').onclick=async()=>{try{await navigator.clipboard.writeText(location.href);toast('Link copied')}catch{toast(location.href)}};
 function showView(v){
-  const t=v==='graph'?'graph':'topology';
-  $('view-topology').hidden=t!=='topology';$('view-graph').hidden=t!=='graph';
-  $('tab-topology').setAttribute('aria-current',t==='topology'?'page':'false');$('tab-graph').setAttribute('aria-current',t==='graph'?'page':'false');
-  if(location.hash!=='#'+t)history.replaceState(null,'','#'+t);
+  // #features/<id> opens one feature or journey, so a link can be shared.
+  const slash=v.indexOf('/'),t0=slash<0?v:v.slice(0,slash),arg=slash<0?'':decodeURIComponent(v.slice(slash+1));
+  const t=['graph','features'].includes(t0)?t0:'topology';
+  if(t==='features'){const w=byId.get(arg);if(w&&(w.kind==='feature'||w.kind==='journey')&&w.i!==fsel){fsel=w.i;store.set('depmap.work',w.id);renderWork()}}
+  for(const x of ['topology','features','graph']){$('view-'+x).hidden=t!==x;$('tab-'+x).setAttribute('aria-current',t===x?'page':'false')}
+  const want='#'+(t==='features'&&fsel!=null?'features/'+N[fsel].id:t);
+  if(location.hash!==want)history.replaceState(null,'','#'+want.slice(1));
 }
 window.addEventListener('hashchange',()=>showView(location.hash.slice(1)));
-topo();lines();listing();draw();showView(location.hash.slice(1)||'topology');
+topo();lines();listing();draw();decisions();renderWork();showView(location.hash.slice(1)||'topology');
 </script>
 </body>
 </html>

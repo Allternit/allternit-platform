@@ -1,0 +1,441 @@
+{
+  "features": [
+    {
+      "id": "feature:chat",
+      "label": "Chat with streamed replies",
+      "product": "product:ai-allternit",
+      "status": "live",
+      "description": "The main conversation view: send a message, watch the reply stream in, with attachments and artifacts beside it.",
+      "touches": [
+        "allternit-ai/src/views/chat",
+        "allternit-ai/src/components/chat",
+        "allternit-ai/src/lib/chat",
+        "allternit-ai/src/lib/sse",
+        "allternit/cmd/allternit-api/src/chat_*",
+        "allternit/cmd/allternit-api/src/conversation_*",
+        "allternit/cmd/gizzi-code/src/runtime/server",
+        "allternit/cmd/gizzi-code/src/runtime/session",
+        "allternit/cmd/gizzi-code/src/runtime/providers"
+      ],
+      "decisions": [
+        {"on": "2026-10-01", "note": "Resting orb sits under the last message on every surface (ai #357)."}
+      ],
+      "evidence": ["allternit/surfaces/docs/api/agent-chat.mdx", "allternit/cmd/allternit-api/src/chat_routes.rs"]
+    },
+    {
+      "id": "feature:bot-threads",
+      "label": "Bot Mode threads and templates",
+      "product": "product:digital-twin",
+      "status": "live",
+      "description": "Each bot keeps its own threads, starts from a template, and shows where a message came from.",
+      "touches": [
+        "allternit-ai/src/views/bots",
+        "allternit-ai/src/components/bots",
+        "allternit-ai/src/components/threads",
+        "allternit-ai/src/components/bot-chat",
+        "allternit-ai/src/lib/bots",
+        "allternit-ai/src/components/templates",
+        "allternit/cmd/allternit-api/src/bot_*",
+        "allternit/cmd/allternit-api/src/thread_*",
+        "allternit/cmd/gizzi-code/src/runtime/bots"
+      ],
+      "decisions": [
+        {"on": "2026-09-28", "note": "Bot templates shipped and the old Bot Hub was removed (ai #209, #210)."}
+      ],
+      "evidence": ["allternit/surfaces/docs/guides/bot-threads.mdx", "allternit/surfaces/docs/guides/bot-templates.mdx"]
+    },
+    {
+      "id": "feature:channels",
+      "label": "Bots on every channel",
+      "product": "product:digital-twin",
+      "status": "live",
+      "description": "One bot reachable by email, SMS, phone, WhatsApp, Teams, Slack, Discord and Telegram, with the same identity everywhere.",
+      "touches": [
+        "allternit-ai/src/components/gateway",
+        "allternit-ai/src/lib/gateway",
+        "allternit/cmd/allternit-api/src/channel_*",
+        "allternit/cmd/allternit-api/src/slack_*",
+        "allternit/cmd/allternit-api/src/teams_*",
+        "allternit/cmd/allternit-api/src/discord_*",
+        "allternit/cmd/allternit-cloud-api/src/routes/channel_*",
+        "allternit/cmd/allternit-cloud-api/src/routes/phone_*",
+        "allternit/cmd/allternit-cloud-api/src/routes/whatsapp_*",
+        "allternit/cmd/allternit-cloud-api/src/carriers",
+        "allternit/cmd/allternit-cloud-api/src/channels",
+        "allternit/services/mail-relay"
+      ],
+      "decisions": [
+        {"on": "2026-10-06", "note": "Teams and WhatsApp Business connect merged (platform #1340, ai #441)."},
+        {"on": "2026-10-06", "note": "Texts only go to people who texted first; contacts and invites get calls only (platform #1343)."},
+        {"on": "2026-10-06", "note": "Bot email on customer domains runs through mx.allternit.com on the standby server, not the prod VPS."}
+      ],
+      "evidence": ["allternit/surfaces/docs/guides/messaging-channels.mdx", "allternit/surfaces/docs/guides/whatsapp-business.mdx", "allternit/cmd/allternit-cloud-api/src/routes/phone.rs"]
+    },
+    {
+      "id": "feature:twin",
+      "label": "Your digital twin",
+      "product": "product:digital-twin",
+      "status": "building",
+      "description": "A bot that acts as you across channels, with its own view of what it handled and what needs you.",
+      "touches": [
+        "allternit-ai/src/components/twin",
+        "allternit-ai/src/components/inbox",
+        "allternit-ai/src/lib/inbox",
+        "allternit/cmd/allternit-api/src/twin_*",
+        "allternit/cmd/allternit-api/src/inbox_*"
+      ],
+      "decisions": [],
+      "evidence": ["allternit/surfaces/docs/guides/your-twin.mdx", "allternit/surfaces/docs/guides/needs-you-inbox.mdx"]
+    },
+    {
+      "id": "feature:factory-teams",
+      "label": "Factory teams and panes",
+      "product": "product:factory",
+      "status": "live",
+      "description": "Start agents and teams, watch their panes live, and approve their work, locally or on another computer.",
+      "touches": [
+        "allternit-ai/src/components/factory",
+        "allternit-ai/src/lib/factory",
+        "allternit/cmd/allternit-api/src/factory_*",
+        "allternit/cmd/allternit-factory",
+        "allternit/factory/engine",
+        "allternit/factory/pane",
+        "allternit/cmd/gizzi-code/src/cli/factory"
+      ],
+      "decisions": [
+        {"on": "2026-10-07", "note": "Remote panes (platform #1396) and Factory on cloud computers (#1397) merged and deployed."},
+        {"on": "2026-10-07", "note": "Save as template and a team picker added; m.allternit.com redeployed with them."},
+        {"on": "2026-10-07", "note": "Remote bots are mirrored over the peer port instead of a Mesh pane endpoint, so the other computer's pane shell is not exposed."}
+      ],
+      "evidence": ["allternit/surfaces/docs/factory/agents.mdx", "allternit/surfaces/docs/factory/how-work-moves.mdx"]
+    },
+    {
+      "id": "feature:memory-drive",
+      "label": "Memory Drive",
+      "product": "product:memory-drive",
+      "status": "live",
+      "description": "Agent memory as a drive: notes, retrieval and nightly consolidation shared by bots, the workspace and gizzi.",
+      "touches": [
+        "allternit-ai/src/components/memory",
+        "allternit/cmd/allternit-api/src/memory_*",
+        "allternit/cmd/allternit-api/src/memory_retrieve",
+        "allternit/cmd/allternit-api/src/memory_consolidation",
+        "allternit/cmd/allternit-api/src/memory_relations",
+        "allternit/services/memory"
+      ],
+      "decisions": [
+        {"on": "2026-10-06", "note": "All phases merged (platform #1348, #1362; ai #445, #448)."},
+        {"on": "2026-10-06", "note": "Computer sync runs inside the Desktop app, two-way, with no main copy."}
+      ],
+      "evidence": ["allternit/surfaces/docs/guides/memory-drive.mdx", "allternit/surfaces/docs/api/memory-drive.mdx"]
+    },
+    {
+      "id": "feature:voice",
+      "label": "Voice in and out",
+      "product": "product:voice",
+      "status": "building",
+      "description": "Talk to agents by voice on any device, with a full-screen orb mode and an in-session call bar.",
+      "touches": [
+        "allternit-ai/src/components/voice",
+        "allternit-ai/src/lib/voice",
+        "allternit/cmd/allternit-api/src/voice_*",
+        "allternit/cmd/allternit-cloud-api/src/routes/voice_*",
+        "allternit/services/voice",
+        "allternit/services/voice-tts"
+      ],
+      "decisions": [
+        {"on": "2026-10-02", "note": "Light-standard plan approved: speech runs in the Rust voice service on any device; cloud voice runs on the standby server."},
+        {"on": "2026-10-02", "note": "Cloud Voice priced at $0.08 per minute, with 100 minutes in Plus."}
+      ],
+      "evidence": ["allternit/surfaces/docs/guides/voice.mdx", "allternit/surfaces/docs/api/voice-tickets.mdx"]
+    },
+    {
+      "id": "feature:computer-use",
+      "label": "Agents drive a computer",
+      "product": "product:computer-use",
+      "status": "live",
+      "description": "Agents see and drive a browser or a whole desktop, with leases and an audit trail.",
+      "touches": [
+        "allternit-ai/src/views/aci",
+        "allternit-ai/src/components/computers",
+        "allternit-ai/src/components/browser-pane",
+        "allternit/cmd/allternit-api/src/aci_*",
+        "allternit/cmd/allternit-api/src/computer_*",
+        "allternit/cmd/allternit-api/src/vnc_*",
+        "allternit/sdk/computer-use",
+        "allternit/mcp/computers-server",
+        "allternit/platform/packages/computer-use-protocol"
+      ],
+      "decisions": [],
+      "evidence": ["allternit/surfaces/docs/api/aci.mdx", "allternit/surfaces/docs/guides/computers-and-apps.mdx"]
+    },
+    {
+      "id": "feature:cloud-computers",
+      "label": "Cloud computers on paid plans",
+      "product": "product:cloud-computers",
+      "status": "live",
+      "description": "A paid plan provisions a hosted Linux desktop that you and your bots can view and drive from any surface.",
+      "touches": [
+        "allternit-ai/src/components/cloud",
+        "allternit-ai/src/components/computers",
+        "allternit/cmd/allternit-cloud-api/src/routes/billing_*",
+        "allternit/cmd/allternit-cloud-api/src/services",
+        "allternit/cmd/allternit-cloud-api/src/routes/provisioned_*",
+        "allternit/cmd/allternit-cloud-api/src/routes/instances_*",
+        "allternit/cmd/allternit-computer-cloud",
+        "allternit/cmd/allternit-api/src/computer_*"
+      ],
+      "decisions": [
+        {"on": "2026-10-01", "note": "First real Plus customer was provisioned automatically."}
+      ],
+      "evidence": ["allternit/cmd/allternit-cloud-api/src/services/provisioning.rs", "allternit/cmd/allternit-cloud-api/src/routes/billing_webhooks.rs"]
+    },
+    {
+      "id": "feature:office",
+      "label": "Docs, Slides and Sheets",
+      "product": "product:office",
+      "status": "live",
+      "description": "Document, slide and spreadsheet editors that agents can read and write.",
+      "touches": [
+        "allternit-ai/src/views/office",
+        "allternit-ai/src/views/documents",
+        "allternit-ai/src/views/slides",
+        "allternit-ai/src/views/sheets",
+        "allternit/cmd/allternit-api/src/office_*",
+        "allternit/platform/packages/allternit-office-suite",
+        "allternit/platform/packages/office-docx-engine",
+        "allternit/platform/packages/office-pptx-engine",
+        "allternit/platform/packages/office-xlsx-engine"
+      ],
+      "decisions": [],
+      "evidence": ["allternit/surfaces/docs/api/office.mdx", "allternit/surfaces/docs/surfaces/office-suite.mdx"]
+    },
+    {
+      "id": "feature:mcp-apps",
+      "label": "MCP Apps and events",
+      "product": "product:mcp-apps",
+      "status": "live",
+      "description": "Interactive MCP apps run inside the workspace, and their events can wake a bot or ask you to approve.",
+      "touches": [
+        "allternit-ai/src/views/mini-apps",
+        "allternit-ai/src/components/mcp",
+        "allternit/cmd/allternit-api/src/mcp_*",
+        "allternit/cmd/allternit-api/src/events_*",
+        "allternit/sdk/apps-server",
+        "allternit/sdk/apps-ui",
+        "allternit/sdk/apps-bridge",
+        "allternit/sdk/mcp-events"
+      ],
+      "decisions": [
+        {"on": "2026-09-30", "note": "The program ships under the name MCP Apps."},
+        {"on": "2026-10-06", "note": "Events program live: approval_required events carry an approve link (platform #1361, ai #447)."}
+      ],
+      "evidence": ["allternit/surfaces/docs/guides/mcp-events.mdx", "allternit/surfaces/docs/guides/mcp-apps-status.mdx"]
+    },
+    {
+      "id": "feature:usage-limits",
+      "label": "Usage, credits and spend limits",
+      "product": "product:ai-allternit",
+      "status": "live",
+      "description": "What each account has used, what it has left, and the limits that stop runaway spend.",
+      "touches": [
+        "allternit-ai/src/components/usage",
+        "allternit-ai/src/lib/usage",
+        "allternit-ai/src/lib/credits",
+        "allternit/cmd/allternit-api/src/usage_*",
+        "allternit/cmd/allternit-api/src/spend_*",
+        "allternit/cmd/allternit-api/src/credits_*"
+      ],
+      "decisions": [
+        {"on": "2026-10-01", "note": "Usage dashboard added to the phone layout (ai #355)."}
+      ],
+      "evidence": ["allternit/surfaces/docs/api/usage.mdx", "allternit/surfaces/docs/admin/spend-limits.mdx"]
+    },
+    {
+      "id": "feature:projects",
+      "label": "Projects and project threads",
+      "product": "product:ai-allternit",
+      "status": "live",
+      "description": "Group chats, files and bots under a project, with its own threads and coordination.",
+      "touches": [
+        "allternit-ai/src/views/project",
+        "allternit-ai/src/components/projects",
+        "allternit-ai/src/lib/projects",
+        "allternit/cmd/allternit-api/src/workspace_*",
+        "allternit/cmd/allternit-api/src/thread_*"
+      ],
+      "decisions": [
+        {"on": "2026-10-01", "note": "Project threads match bot threads, extending the existing page instead of redesigning it (ai #358)."}
+      ],
+      "evidence": ["allternit/surfaces/docs/guides/project-coordination.mdx"]
+    },
+    {
+      "id": "feature:cowork",
+      "label": "Cowork",
+      "product": "product:ai-allternit",
+      "status": "live",
+      "description": "Long-running work an agent carries out alongside you, with teams and preferences.",
+      "touches": [
+        "allternit-ai/src/views/cowork",
+        "allternit-ai/src/lib/cowork",
+        "allternit-ai/src/lib/cowork-team",
+        "allternit/cmd/allternit-api/src/cowork",
+        "allternit/cmd/allternit-api/src/cowork_*",
+        "allternit/platform/packages/cowork-engine"
+      ],
+      "decisions": [],
+      "evidence": ["allternit/surfaces/docs/api/cowork.mdx", "allternit/surfaces/docs/api/cowork-teams.mdx"]
+    },
+    {
+      "id": "feature:phone-layout",
+      "label": "Phone layout and PWA",
+      "product": "product:allternit-mobile-pwa",
+      "status": "live",
+      "description": "The same workspace sized for phones: PhoneShell on ai.allternit.com and the installable m.allternit.com app.",
+      "touches": [
+        "allternit-ai/src/fabric-session",
+        "allternit-ai/src/shell",
+        "allternit-ai/src/remote-control",
+        "surface:pwa",
+        "surface:ai"
+      ],
+      "decisions": [
+        {"on": "2026-09-30", "note": "Phones get PhoneShell on ai.allternit.com (ai #341)."},
+        {"on": "2026-10-02", "note": "Every feature lands on Desktop, the ai.allternit.com phone layout and the PWA in the same change."}
+      ],
+      "evidence": ["allternit/surfaces/docs/surfaces/mobile.mdx", "allternit-ai/src/fabric-session/phone/PhoneShell.tsx"]
+    },
+    {
+      "id": "feature:platform-api",
+      "label": "Platform API v1",
+      "product": "product:platform-api",
+      "status": "building",
+      "description": "Public developer API for accounts, messaging, numbers, channels, usage and webhooks.",
+      "touches": [
+        "allternit/cmd/allternit-cloud-api/src/routes/platform_v1",
+        "allternit/sdk/platform-ts",
+        "allternit/surfaces/platform.allternit.com"
+      ],
+      "decisions": [
+        {"on": "2026-10-07", "note": "Phases 3 to 5 deployed; P4 channels and twin merged (#1394)."},
+        {"on": "2026-10-07", "note": "Creating Stripe meters, products and prices stays a dry run until the amounts are signed off."}
+      ],
+      "evidence": ["allternit/surfaces/docs/api/platform-v1.mdx"]
+    },
+    {
+      "id": "feature:bot-avatars",
+      "label": "Bot avatars and photo sprites",
+      "product": "product:digital-twin",
+      "status": "live",
+      "description": "Pick a look pack, build a character, or turn a photo into an animated bot avatar.",
+      "touches": [
+        "allternit-ai/src/components/Avatar",
+        "allternit-ai/src/views/agent-character",
+        "allternit/cmd/allternit-cloud-api/src/routes/photo_*",
+        "allternit/sdk/look-packs",
+        "allternit/platform/packages/avatar-adapters"
+      ],
+      "decisions": [
+        {"on": "2026-10-04", "note": "Photo avatars included with plans (Plus 5, Super 25, Ultra 50) with a $4 cost cap."}
+      ],
+      "evidence": ["allternit/surfaces/docs/guides/bot-avatars.mdx"]
+    }
+  ],
+  "journeys": [
+    {
+      "id": "journey:chat-reply",
+      "label": "Send a message, get a streamed reply",
+      "description": "What happens between pressing send in chat and the first token appearing.",
+      "steps": [
+        {"at": "surface:ai", "says": "You type in ai.allternit.com (or Desktop, or the phone layout)."},
+        {"at": "allternit-ai/src/views/chat", "says": "The chat view sends the message."},
+        {"at": "allternit-ai/src/lib/chat", "says": "The chat client opens the request and an event stream."},
+        {"at": "allternit/cmd/allternit-api/src/chat_*", "says": "allternit-api records the turn."},
+        {"at": "allternit/cmd/gizzi-code/src/runtime/server", "says": "allternit-api calls gizzi-code over HTTP for the model work; it never calls a provider directly."},
+        {"at": "allternit/cmd/gizzi-code/src/runtime/providers", "says": "gizzi-code routes to the chosen model provider."},
+        {"at": "allternit-ai/src/lib/sse", "says": "Tokens stream back and render as they arrive."}
+      ],
+      "evidence": ["allternit/cmd/allternit-api/src/chat_routes.rs", "allternit/surfaces/docs/api/agent-chat.mdx"]
+    },
+    {
+      "id": "journey:sms-to-bot",
+      "label": "Text your bot",
+      "description": "A text to a bot's number reaches the bot on your computer and the reply goes back by SMS.",
+      "steps": [
+        {"at": "allternit/cmd/allternit-cloud-api/src/carriers", "says": "The carrier posts the inbound text to the number's relay address."},
+        {"at": "allternit/cmd/allternit-cloud-api/src/routes/channel_*", "says": "The cloud API checks opt-in and queues the text for your runtime."},
+        {"at": "allternit/cmd/allternit-api/src/channel_*", "says": "Your allternit-api picks it up from the relay."},
+        {"at": "allternit/cmd/allternit-api/src/bot_*", "says": "The bot that owns the number handles it in its thread."},
+        {"at": "allternit/cmd/gizzi-code/src/runtime/bots", "says": "gizzi-code runs the bot's turn."},
+        {"at": "allternit/cmd/allternit-cloud-api/src/routes/phone_*", "says": "The reply leaves through the cloud API and the carrier."}
+      ],
+      "evidence": ["allternit/cmd/allternit-cloud-api/src/routes/phone.rs", "allternit/surfaces/docs/guides/phone-sms-runtime.mdx"]
+    },
+    {
+      "id": "journey:factory-from-phone",
+      "label": "Start a Factory team from your phone",
+      "description": "From m.allternit.com to agents running in panes on your computer.",
+      "steps": [
+        {"at": "surface:pwa", "says": "You open Factory on m.allternit.com."},
+        {"at": "allternit-ai/src/fabric-session", "says": "The phone shell shows the Factory screen."},
+        {"at": "allternit-ai/src/components/factory", "says": "You pick a team or template and start it."},
+        {"at": "allternit/cmd/allternit-api/src/factory_*", "says": "allternit-api proxies the request to the Factory engine on that computer."},
+        {"at": "allternit/factory/engine", "says": "The engine starts the agents and tracks approvals."},
+        {"at": "allternit/factory/pane", "says": "Each agent runs in a pane you can watch live from the phone."}
+      ],
+      "evidence": ["allternit/surfaces/docs/factory/how-work-moves.mdx", "allternit/surfaces/docs/surfaces/mobile.mdx"]
+    },
+    {
+      "id": "journey:cloud-computer",
+      "label": "Get a cloud computer with a paid plan",
+      "description": "From Stripe checkout to a desktop you can open in the workspace.",
+      "steps": [
+        {"at": "allternit/cmd/allternit-cloud-api/src/routes/billing_*", "says": "Stripe's webhook tells the cloud API the plan is paid."},
+        {"at": "allternit/cmd/allternit-cloud-api/src/services", "says": "Provisioning creates the machine."},
+        {"at": "allternit/cmd/allternit-cloud-api/src/routes/provisioned_*", "says": "The new computer is recorded and paired to your account."},
+        {"at": "allternit/cmd/allternit-computer-cloud", "says": "The computer boots with the Allternit runtime."},
+        {"at": "allternit-ai/src/components/computers", "says": "It appears in Computers, where you and your bots can open it."}
+      ],
+      "evidence": ["allternit/cmd/allternit-cloud-api/src/services/provisioning.rs", "allternit/cmd/allternit-cloud-api/src/routes/billing_webhooks.rs"]
+    },
+    {
+      "id": "journey:voice-call",
+      "label": "Talk to a bot by voice",
+      "description": "From pressing the mic to hearing the bot answer.",
+      "steps": [
+        {"at": "allternit-ai/src/components/voice", "says": "You start voice mode."},
+        {"at": "allternit-ai/src/lib/voice", "says": "The client picks a voice endpoint: local, or cloud with a ticket."},
+        {"at": "allternit/cmd/allternit-cloud-api/src/routes/voice_*", "says": "For cloud voice, the cloud API issues the ticket and records consent."},
+        {"at": "allternit/services/voice", "says": "The voice service turns speech into text and back."},
+        {"at": "allternit/cmd/allternit-api/src/voice_*", "says": "allternit-api runs the bot's turn and returns the reply to speak."}
+      ],
+      "evidence": ["allternit-ai/src/lib/voice/endpoint.ts", "allternit/surfaces/docs/api/voice-tickets.mdx"]
+    },
+    {
+      "id": "journey:memory",
+      "label": "A bot remembers across surfaces",
+      "description": "A note saved in one place is recalled by a bot somewhere else.",
+      "steps": [
+        {"at": "allternit-ai/src/components/memory", "says": "You or a bot save a note to Memory Drive."},
+        {"at": "allternit/cmd/allternit-api/src/memory_*", "says": "allternit-api stores it."},
+        {"at": "allternit/cmd/allternit-api/src/memory_consolidation", "says": "Nightly consolidation merges and links notes."},
+        {"at": "allternit/cmd/allternit-api/src/memory_retrieve", "says": "On a later turn, retrieval finds the relevant notes."},
+        {"at": "allternit/cmd/gizzi-code/src/runtime/memory", "says": "gizzi-code puts them in the bot's context."}
+      ],
+      "evidence": ["allternit/surfaces/docs/guides/memory-drive.mdx"]
+    },
+    {
+      "id": "journey:mcp-approval",
+      "label": "Approve an MCP app's action",
+      "description": "An app event that needs you, from the app to your approval.",
+      "steps": [
+        {"at": "allternit/cmd/allternit-api/src/mcp_*", "says": "A connected MCP app sends an event."},
+        {"at": "allternit/cmd/allternit-api/src/events_*", "says": "The event feed marks it approval_required."},
+        {"at": "allternit/cmd/allternit-api/src/inbox_*", "says": "It lands in your Needs you inbox with an approve link."},
+        {"at": "allternit-ai/src/components/mcp", "says": "You approve it in the workspace."},
+        {"at": "allternit/cmd/allternit-api/src/bot_*", "says": "The bot it was waiting on carries on."}
+      ],
+      "evidence": ["allternit/surfaces/docs/guides/mcp-events.mdx", "allternit/surfaces/docs/guides/needs-you-inbox.mdx"]
+    }
+  ]
+}
