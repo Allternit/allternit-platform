@@ -37,6 +37,8 @@ use crate::ApiState;
 pub const TOKEN_MARKUP_PERCENT: i64 = 15;
 /// Hosted agents free each month (spec §7: first 3 free, then $4 / agent / month).
 pub const FREE_AGENTS: f64 = 3.0;
+/// Hosted computer toolset actions free each month (Eoj 2026-10-08).
+pub const FREE_COMPUTER_ACTIONS: f64 = 10_000.0;
 /// Spend-cap thresholds that send `usage.threshold`, in percent.
 pub const THRESHOLDS: [i64; 3] = [50, 80, 100];
 
@@ -58,8 +60,10 @@ pub fn unit_price_microusd(meter: &str) -> Option<i64> {
         // Quantity is already in cents (passed through at cost).
         "registration_passthrough_cents" => 10_000,
         "recording_min_month" => 2_000,
-        // Hosted computer driver: price TBD (Eoj decides). Counted, billed $0 until set.
-        "computer_minute" | "computer_action" => 0,
+        // Hosted computer driver (Eoj 2026-10-08): 0.8¢ per computer-minute;
+        // toolset actions 0.05¢ each after the first 10,000 a month.
+        "computer_minute" => 8_000,
+        "computer_action" => 500,
         _ => return None,
     })
 }
@@ -87,7 +91,11 @@ pub fn spend_from_totals(totals: &[MeterTotal]) -> i64 {
         .iter()
         .map(|t| match unit_price_microusd(&t.meter) {
             Some(price) => {
-                let units = if t.meter == "agent_month" { (t.quantity - FREE_AGENTS).max(0.0) } else { t.quantity.max(0.0) };
+                let units = match t.meter.as_str() {
+                    "agent_month" => (t.quantity - FREE_AGENTS).max(0.0),
+                    "computer_action" => (t.quantity - FREE_COMPUTER_ACTIONS).max(0.0),
+                    _ => t.quantity.max(0.0),
+                };
                 (units * price as f64).round() as i64
             }
             None => t.amount_microusd.max(0),

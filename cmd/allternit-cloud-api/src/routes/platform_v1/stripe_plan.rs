@@ -77,10 +77,7 @@ pub struct PendingMeter {
     pub unit: &'static str,
 }
 
-pub const PENDING_METERS: &[PendingMeter] = &[
-    PendingMeter { meter: "computer_minute", event_name: "allternit_computer_minutes", display_name: "Hosted computer minutes", unit: "minute" },
-    PendingMeter { meter: "computer_action", event_name: "allternit_computer_actions", display_name: "Hosted computer toolset actions", unit: "action" },
-];
+pub const PENDING_METERS: &[PendingMeter] = &[];
 
 pub const METER_PLANS: &[MeterPlan] = &[
     MeterPlan { meters: &["voice_min_allternit"], event_name: "allternit_voice_seconds_allternit", display_name: "Voice agent seconds (Allternit model)", unit: "second", value: MeterValue::Seconds, payg_cents: "0.15", growth_cents: "0.135", free_units: 0 },
@@ -92,6 +89,8 @@ pub const METER_PLANS: &[MeterPlan] = &[
     MeterPlan { meters: &["sms_segment"], event_name: "allternit_sms_segments", display_name: "SMS segments", unit: "segment", value: MeterValue::Quantity, payg_cents: "1.2", growth_cents: "1.08", free_units: 0 },
     MeterPlan { meters: &["mms"], event_name: "allternit_mms", display_name: "MMS messages", unit: "message", value: MeterValue::Quantity, payg_cents: "3", growth_cents: "2.7", free_units: 0 },
     MeterPlan { meters: &["registration_passthrough_cents"], event_name: "allternit_registration_passthrough_cents", display_name: "Carrier registration (at cost)", unit: "cent", value: MeterValue::Quantity, payg_cents: "1", growth_cents: "1", free_units: 0 },
+    MeterPlan { meters: &["computer_minute"], event_name: "allternit_computer_minutes", display_name: "Hosted computer minutes", unit: "minute", value: MeterValue::CeilQuantity, payg_cents: "0.8", growth_cents: "0.72", free_units: 0 },
+    MeterPlan { meters: &["computer_action"], event_name: "allternit_computer_actions", display_name: "Hosted computer toolset actions", unit: "action", value: MeterValue::Quantity, payg_cents: "0.05", growth_cents: "0.045", free_units: 10_000 },
     MeterPlan { meters: &["recording_min_month"], event_name: "allternit_recording_minute_months", display_name: "Recording storage after 90 days", unit: "minute-month", value: MeterValue::CeilQuantity, payg_cents: "0.2", growth_cents: "0.18", free_units: 0 },
 ];
 
