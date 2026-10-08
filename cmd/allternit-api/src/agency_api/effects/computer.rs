@@ -96,6 +96,53 @@ pub fn action_hash(target: &str, actions: &[Value]) -> String {
     crate::aci_approvals::hash_action_payload(&json!({ "route": "agency.computer", "target": target, "actions": actions }))
 }
 
+/// Prefix of the refusal when a person (or another agent) holds control of
+/// this Mac. Callers that answer over HTTP map it to 423 Locked, the same
+/// status cloud computers give.
+pub const LOCKED_PREFIX: &str = "423 computer_controlled_elsewhere";
+
+/// The agent's control-lease holder on the owner's own Mac. One holder per
+/// owner, so consecutive steps of a run renew the same lease.
+fn agent_holder(owner: &str) -> crate::computer_control_lease::Holder {
+    crate::computer_control_lease::Holder {
+        kind: crate::computer_control_lease::HolderKind::Agent,
+        id: format!("agency:{owner}"),
+        label: Some("Agent".into()),
+        device_id: None,
+    }
+}
+
+/// Agent input on this Mac takes the control lease first, the same rule as
+/// a person's input (`computer_routes::this_device_input_gate`) and cloud
+/// computers. A person who took over keeps control: the agent gets 423.
+async fn this_mac_agent_lease(st: &crate::AppState, owner: &str) -> Result<()> {
+    let (db, owner) = (st.db.clone(), owner.to_string());
+    let verdict = tokio::task::spawn_blocking(move || -> Result<std::result::Result<(), crate::computer_control_lease::Lease>> {
+        let conn = db.connect()?;
+        let mut stmt = conn.prepare(
+            "SELECT id FROM computers WHERE kind = 'local' AND provider = ?1 AND owner_type = 'user'
+             AND owner_id = ?2 AND status != 'deleted'",
+        )?;
+        let ids = stmt
+            .query_map(rusqlite::params![crate::computer_routes::THIS_DEVICE_PROVIDER, owner], |r| r.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<String>>>()?;
+        let now = chrono::Utc::now().timestamp();
+        match crate::computer_control_lease::take_all_for_agent(&conn, &ids, &agent_holder(&owner), now) {
+            Ok(_) => Ok(Ok(())),
+            Err(crate::computer_control_lease::TakeError::Held(lease)) => Ok(Err(lease)),
+            Err(crate::computer_control_lease::TakeError::Db(e)) => Err(anyhow!(e)),
+        }
+    })
+    .await
+    .map_err(|e| anyhow!("control lease check failed: {e}"))??;
+    verdict.map_err(|lease| {
+        anyhow!(
+            "{LOCKED_PREFIX}: {} is controlling this computer. The agent can act again when they hand control back.",
+            lease.holder.label.unwrap_or_else(|| "Someone else".into())
+        )
+    })
+}
+
 /// Run the actions on `target`, on behalf of `owner`. `key` is the effect's
 /// idempotency key (sent as the gateway run id, so the gateway can dedupe too).
 pub async fn dispatch(st: &crate::AppState, owner: &str, target: &str, actions: &[Value], approved: bool, key: &str) -> Result<String> {
@@ -104,6 +151,9 @@ pub async fn dispatch(st: &crate::AppState, owner: &str, target: &str, actions: 
     }
     let digest = allternit_factory_engine::receipts::jcs::sha256_tagged(serde_json::to_string(actions)?.as_bytes());
     if target == "local" {
+        if actions.iter().any(consequential) {
+            this_mac_agent_lease(st, owner).await?;
+        }
         let run_id = format!("agency-{}", &allternit_factory_engine::receipts::jcs::sha256_tagged(key.as_bytes()).replace("sha256:", "")[..24]);
         let body = json!({ "mode": "direct", "actions": actions, "run_id": run_id, "session_id": run_id, "target_scope": "desktop" });
         let resp = reqwest::Client::new().post(format!("{}/v1/computer-use/execute", acu_base(st)))

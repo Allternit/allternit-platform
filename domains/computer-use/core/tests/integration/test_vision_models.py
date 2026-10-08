@@ -259,7 +259,7 @@ class TestAnthropicVision:
         """Test basic image analysis with Claude Vision."""
         try:
             response = anthropic_client.messages.create(
-                model="claude-3-haiku-20240307",
+                model="claude-haiku-4-5",
                 max_tokens=100,
                 messages=[
                     {
@@ -301,7 +301,7 @@ class TestAnthropicVision:
         
         try:
             response = anthropic_client.messages.create(
-                model="claude-3-haiku-20240307",
+                model="claude-haiku-4-5",
                 max_tokens=150,
                 messages=[
                     {
@@ -338,7 +338,7 @@ class TestAnthropicVision:
         
         try:
             response = anthropic_client.messages.create(
-                model="claude-3-haiku-20240307",
+                model="claude-haiku-4-5",
                 max_tokens=200,
                 messages=[
                     {
@@ -368,7 +368,7 @@ class TestAnthropicVision:
     def test_vision_response_structure(self, anthropic_client, sample_image_base64):
         """Test that Claude vision responses have expected structure."""
         response = anthropic_client.messages.create(
-            model="claude-3-haiku-20240307",
+            model="claude-haiku-4-5",
             max_tokens=50,
             messages=[
                 {

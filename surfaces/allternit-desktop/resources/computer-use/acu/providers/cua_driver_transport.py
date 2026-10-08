@@ -40,6 +40,43 @@ _INSTALLED_CUA_DRIVER_APP = Path("/Applications/CuaDriver.app/Contents/MacOS/cua
 _DEFAULT_INSTALLED_CUA_SOCKET = Path.home() / "Library" / "Caches" / "cua-driver" / "cua-driver.sock"
 
 
+#: The six agent cursor motion styles Cua Driver 0.34+ plans moves with.
+CURSOR_MOTION_STYLES = (
+    "signature_arc",
+    "spring_settle",
+    "magnetic",
+    "comet_swoop",
+    "adaptive",
+    "classic",
+)
+#: Our default style; also the driver's built-in default.
+DEFAULT_CURSOR_MOTION_STYLE = "signature_arc"
+#: Setting key (environment) that lets a user or agent pick the style.
+CURSOR_MOTION_ENV = "ALLTERNIT_CUA_CURSOR_MOTION"
+#: "on" forces short straight glides, "off" ignores the OS setting, "auto"
+#: (default) follows the operating system's reduce-motion preference.
+REDUCED_MOTION_ENV = "ALLTERNIT_CUA_REDUCED_MOTION"
+
+
+def cursor_motion_style(value: Optional[str] = None) -> str:
+    """The cursor motion style for a new session: `value`, else the setting,
+    else ``signature_arc``. Unknown names fall back to the default."""
+    candidate = (value or os.environ.get(CURSOR_MOTION_ENV) or "").strip().lower()
+    return candidate if candidate in CURSOR_MOTION_STYLES else DEFAULT_CURSOR_MOTION_STYLE
+
+
+def start_session_arguments(session: str, style: Optional[str] = None) -> Dict[str, Any]:
+    """`start_session` arguments that set the cursor motion before the agent
+    cursor is first shown. Reduced motion stays with the driver (``auto``
+    follows the OS and always wins over the style)."""
+    reduced = os.environ.get(REDUCED_MOTION_ENV, "auto").strip().lower()
+    return {
+        "session": session,
+        "cursor_motion": {"style": cursor_motion_style(style)},
+        "cursor_theme": {"reduced_motion": reduced if reduced in ("auto", "on", "off") else "auto"},
+    }
+
+
 def _is_installed_cua_driver(executable: str) -> bool:
     return Path(executable).resolve() == _INSTALLED_CUA_DRIVER_APP.resolve()
 
@@ -201,6 +238,10 @@ class CuaDriverTransport:
             command.extend(("--until", str(until_sequence)))
         return await self._run(*command)
 
+    async def start_session(self, session: str, *, style: Optional[str] = None) -> Dict[str, Any]:
+        """Create (or return) a named lifecycle session with our cursor motion."""
+        return await self.call("start_session", start_session_arguments(session, style))
+
     async def call(
         self,
         tool: str,
@@ -213,3 +254,45 @@ class CuaDriverTransport:
         if screenshot_out_file:
             command.extend(("--screenshot-out-file", screenshot_out_file))
         return await self._run(*command, timeout_seconds=timeout_seconds)
+
+    async def history_status(self) -> Dict[str, Any]:
+        """Return CUA Driver Computer History operational status."""
+        return await self.call("history_status", {})
+
+    async def history_query(
+        self,
+        *,
+        limit: Optional[int] = None,
+        session_id: Optional[str] = None,
+        since_sequence: Optional[int] = None,
+        until_sequence: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Query a bounded, metadata-only slice of CUA Driver Computer History.
+
+        Args match the CUA Driver agent integration RFC. Unknown fields are
+        rejected by the driver; this helper only forwards bounded, typed args.
+        """
+        arguments: Dict[str, Any] = {}
+        if limit is not None:
+            if not 1 <= limit <= 200:
+                raise ValueError("limit must be between 1 and 200")
+            arguments["limit"] = limit
+        if session_id is not None:
+            if not isinstance(session_id, str) or not (1 <= len(session_id) <= 128):
+                raise ValueError("session_id must be a string between 1 and 128 characters")
+            arguments["session_id"] = session_id
+        if since_sequence is not None:
+            if not isinstance(since_sequence, int) or since_sequence < 1:
+                raise ValueError("since_sequence must be an integer >= 1")
+            arguments["since_sequence"] = since_sequence
+        if until_sequence is not None:
+            if not isinstance(until_sequence, int) or until_sequence < 1:
+                raise ValueError("until_sequence must be an integer >= 1")
+            arguments["until_sequence"] = until_sequence
+        if (
+            since_sequence is not None
+            and until_sequence is not None
+            and since_sequence > until_sequence
+        ):
+            raise ValueError("since_sequence must not exceed until_sequence")
+        return await self.call("history_query", arguments)

@@ -26,6 +26,53 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+#: Used only when a screenshot's size can't be read. Cloud computers run 1920x1080.
+FALLBACK_SCREEN_SIZE: Tuple[int, int] = (1920, 1080)
+
+
+def image_size(data: Union[bytes, str, None]) -> Optional[Tuple[int, int]]:
+    """(width, height) of a PNG or JPEG screenshot, from raw bytes or base64."""
+    if not data:
+        return None
+    if isinstance(data, str):
+        try:
+            data = base64.b64decode(data.split(",", 1)[-1] if data.startswith("data:") else data)
+        except Exception:
+            return None
+    if data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) >= 24:
+        return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+    if data[:2] == b"\xff\xd8":
+        i = 2
+        while i + 9 < len(data):
+            if data[i] != 0xFF:
+                i += 1
+                continue
+            marker = data[i + 1]
+            if marker in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
+                return int.from_bytes(data[i + 7:i + 9], "big"), int.from_bytes(data[i + 5:i + 7], "big")
+            i += 2 + int.from_bytes(data[i + 2:i + 4], "big")
+    return None
+
+
+def resolve_screen_size(
+    screenshot: Union[bytes, str, None],
+    screen_size: Optional[Tuple[int, int]] = None,
+) -> Tuple[int, int]:
+    """The coordinate space the model plans in: an explicit size from the
+    session wins, else the screenshot's own pixels, else 1920x1080."""
+    if screen_size and screen_size[0] > 0 and screen_size[1] > 0:
+        return int(screen_size[0]), int(screen_size[1])
+    return image_size(screenshot) or FALLBACK_SCREEN_SIZE
+
+
+def _screenshot_bytes(screenshot: Union[bytes, str, None]) -> bytes:
+    if not screenshot:
+        return b""
+    if isinstance(screenshot, bytes):
+        return screenshot
+    return base64.b64decode(screenshot)
+
+
 class VisionProviderError(Exception):
     """Base exception for vision provider errors."""
     pass
@@ -157,7 +204,7 @@ class VisionProvider(ABC):
         screenshot_b64: str,
         task: str,
         history: Optional[List] = None,
-        screen_size: Tuple[int, int] = (1280, 720),
+        screen_size: Optional[Tuple[int, int]] = None,
         **kwargs,
     ) -> "ActionPlan":
         """
@@ -354,7 +401,7 @@ class OpenAIVisionClient(VisionProvider):
 class AnthropicVisionClient(VisionProvider):
     """Anthropic Claude 3 vision provider."""
     
-    DEFAULT_MODEL = "claude-3-opus-20240229"
+    DEFAULT_MODEL = "claude-sonnet-5-5"
     DEFAULT_MAX_TOKENS = 4096
     
     def __init__(
@@ -525,16 +572,19 @@ class GeminiVisionProvider(VisionProvider):
         except Exception as e:
             raise VisionAPIError(f"Gemini API error: {e}", provider="gemini")
 
-    async def ground_and_reason(self, screenshot_bytes: bytes, task: str, history: List[Dict], screen_size: Tuple[int, int] = (1280, 720)) -> ActionPlan:
+    async def ground_and_reason(self, screenshot_b64: Union[str, bytes], task: str, history: Optional[List] = None, screen_size: Optional[Tuple[int, int]] = None, **kwargs) -> ActionPlan:
         if not self.is_available():
             raise VisionConfigError("GOOGLE_API_KEY not set")
+        screenshot_bytes = _screenshot_bytes(screenshot_b64)
+        screen_size = resolve_screen_size(screenshot_bytes, screen_size)
+        history = history or []
         try:
             import google.generativeai as genai
             import PIL.Image, io
             genai.configure(api_key=self.api_key)
             model = genai.GenerativeModel(self.model)
             img = PIL.Image.open(io.BytesIO(screenshot_bytes))
-            history_text = "\n".join([f"Step {i+1}: {h.get('action','?')} → {h.get('observation','?')}" for i, h in enumerate(history[-5:])])
+            history_text = "\n".join([f"Step {i+1}: {h.get('action','?')} → {h.get('observation','?')}" if isinstance(h, dict) else f"Step {i+1}: {h}" for i, h in enumerate(history[-5:])])
             prompt = _build_planning_prompt(task, history_text, screen_size)
             response = model.generate_content([prompt, img])
             return _parse_action_plan(response.text)
@@ -585,14 +635,17 @@ class QwenVisionProvider(VisionProvider):
         except Exception as e:
             raise VisionAPIError(f"Qwen API error: {e}", provider="qwen")
 
-    async def ground_and_reason(self, screenshot_bytes: bytes, task: str, history: List[Dict], screen_size: Tuple[int, int] = (1280, 720)) -> ActionPlan:
+    async def ground_and_reason(self, screenshot_b64: Union[str, bytes], task: str, history: Optional[List] = None, screen_size: Optional[Tuple[int, int]] = None, **kwargs) -> ActionPlan:
         if not self.is_available():
             raise VisionConfigError("QWEN_BASE_URL not set")
+        screenshot_bytes = _screenshot_bytes(screenshot_b64)
+        screen_size = resolve_screen_size(screenshot_bytes, screen_size)
+        history = history or []
         try:
             from openai import OpenAI
             client = OpenAI(base_url=self.base_url, api_key=self.api_key)
             b64 = self.encode_image(screenshot_bytes)
-            history_text = "\n".join([f"Step {i+1}: {h.get('action','?')} → {h.get('observation','?')}" for i, h in enumerate(history[-5:])])
+            history_text = "\n".join([f"Step {i+1}: {h.get('action','?')} → {h.get('observation','?')}" if isinstance(h, dict) else f"Step {i+1}: {h}" for i, h in enumerate(history[-5:])])
             prompt = _build_planning_prompt(task, history_text, screen_size)
             response = client.chat.completions.create(
                 model=self.model,
@@ -1229,7 +1282,7 @@ class AllternitGatewayProvider(VisionProvider):
             provider_id, model_id = self._brain_ref()
             brain = {"providerID": provider_id, "modelID": model_id}
             history_text = "\n".join(str(h) for h in (history or []))
-            prompt = _build_planning_prompt(task, history_text, (1280, 720))
+            prompt = _build_planning_prompt(task, history_text, resolve_screen_size(screenshot_b64, kwargs.get("screen_size")))
             headers = {"Content-Type": "application/json"}
             async with httpx.AsyncClient(timeout=120) as client:
                 session_resp = await client.post(
@@ -1369,7 +1422,7 @@ class SubprocessVisionProvider(VisionProvider):
     async def ground_and_reason(self, screenshot_b64: str, task: str, history: Optional[List] = None, **kwargs) -> ActionPlan:
         import asyncio
         history_text = "\n".join(str(h) for h in (history or []))
-        prompt = _build_planning_prompt(task, history_text, (1280, 720))
+        prompt = _build_planning_prompt(task, history_text, resolve_screen_size(screenshot_b64, kwargs.get("screen_size")))
         stdin_payload = json.dumps({"prompt": prompt, "screenshot_b64": screenshot_b64})
         try:
             # F4: start_new_session puts the CLI in its own process group so a

@@ -5,7 +5,7 @@ import { AgentRun } from '../agents/run.js';
 import { NativeToolBelt } from '../tools/search.js';
 import { ToolRegistry } from '../tools/registry.js';
 import { toStrictJsonSchema } from '../tools/schema.js';
-import { ComputerUseCapability } from '../capabilities/computer-use.js';
+import { COMPUTER_USE_TOOL, ComputerUseCapability, classifyComputerAction } from '../capabilities/computer-use.js';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -304,6 +304,34 @@ describe('Native Agent Tool Belt', () => {
     expect(legacy.metadata).toMatchObject({ computerToolVersion: '20250124', anthropicType: 'computer_20250124' });
     expect(legacy.metadata?.enable_zoom).toBeUndefined();
     expect((legacy.input_schema.properties as Record<string, { enum?: string[] }>).action.enum).not.toContain('zoom');
+  });
+
+  it('gates risky computer actions on an approver and denies without one', async () => {
+    expect(classifyComputerAction({ action: 'screenshot' })).toBe('reversible');
+    expect(classifyComputerAction({ action: 'type', text: 'hello' })).toBe('reversible');
+    expect(classifyComputerAction({ action: 'type', text: 'hello\n' })).toBe('risky');
+    expect(classifyComputerAction({ action: 'key', text: 'Return' })).toBe('risky');
+    expect(classifyComputerAction({ action: 'left_click' })).toBe('risky');
+
+    // Shared definition and a capability with no approver: deny risky, allow reversible.
+    expect(await COMPUTER_USE_TOOL.preExecute!({ action: 'left_click', coordinate: [1, 2] }, {})).toMatchObject({ proceed: false });
+    const bare = new ComputerUseCapability().getTool();
+    expect(await bare.preExecute!({ action: 'screenshot' }, {})).toEqual({ proceed: true });
+    const denied = await bare.preExecute!({ action: 'double_click', coordinate: [1, 2] }, {});
+    expect(denied.proceed).toBe(false);
+    expect(denied.reason).toContain('no approver');
+
+    const asked: string[] = [];
+    const gated = new ComputerUseCapability({
+      approve: async ({ action, actionClass }) => {
+        asked.push(`${action}:${actionClass}`);
+        return action === 'left_click' ? true : { approved: false, reason: 'not now' };
+      },
+    }).getTool();
+    expect(await gated.preExecute!({ action: 'left_click', coordinate: [1, 2] }, {})).toEqual({ proceed: true });
+    expect(await gated.preExecute!({ action: 'key', text: 'enter' }, {})).toMatchObject({ proceed: false, reason: expect.stringContaining('not now') });
+    expect(await gated.preExecute!({ action: 'mouse_move', coordinate: [1, 2] }, {})).toEqual({ proceed: true });
+    expect(asked).toEqual(['left_click:risky', 'key:risky']);
   });
 
   it('namespaces tools and validates strict schemas', () => {

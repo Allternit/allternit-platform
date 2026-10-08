@@ -58,6 +58,30 @@ export function defaultCuaSocketPath(
   return path.join(runtimeDir, 'cua-driver.sock');
 }
 
+/** The six agent cursor motion styles Cua Driver 0.34+ supports. */
+export const CUA_CURSOR_MOTION_STYLES = [
+  'signature_arc',
+  'spring_settle',
+  'magnetic',
+  'comet_swoop',
+  'adaptive',
+  'classic',
+] as const;
+export type CuaCursorMotionStyle = (typeof CUA_CURSOR_MOTION_STYLES)[number];
+
+/**
+ * Cursor motion for new computer-use sessions. Setting key
+ * `ALLTERNIT_CUA_CURSOR_MOTION`; unknown or empty values give the default,
+ * `signature_arc`. The engine passes it to the driver's `start_session`, and
+ * the driver's reduced-motion "auto" theme follows the OS setting.
+ */
+export function cuaCursorMotionStyle(value: string | undefined = process.env.ALLTERNIT_CUA_CURSOR_MOTION): CuaCursorMotionStyle {
+  const candidate = (value ?? '').trim().toLowerCase();
+  return (CUA_CURSOR_MOTION_STYLES as readonly string[]).includes(candidate)
+    ? (candidate as CuaCursorMotionStyle)
+    : 'signature_arc';
+}
+
 function isInstalledCuaDriver(executable: string): boolean {
   return process.platform === 'darwin' && path.resolve(executable) === path.resolve(INSTALLED_CUA_DRIVER);
 }
@@ -208,6 +232,7 @@ class ComputerUseDriverManager {
       ALLTERNIT_CUA_DRIVER_SOCKET: this.socketPath,
       CUA_DRIVER_RS_TELEMETRY_ENABLED: 'false',
       CUA_TELEMETRY_ENABLED: 'false',
+      ALLTERNIT_CUA_CURSOR_MOTION: cuaCursorMotionStyle(),
     };
     if (!isInstalledCuaDriver(executable)) {
       env.ALLTERNIT_CUA_DRIVER_EMBEDDED = 'true';

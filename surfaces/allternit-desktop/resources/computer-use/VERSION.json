@@ -1,26 +1,26 @@
 {
-  "version": "0.20.1-nightly.20260818.32173745999",
-  "asset": "cua-driver-rs-0.20.1-nightly.20260818.32173745999-darwin-universal-binary.tar.gz",
-  "sha256": "f57e7192da3c818b2cf9e30bacc2c32a9a254387e43612e9dc021debbc17ef93",
-  "source": "https://github.com/trycua/cua/releases/download/nightly-cua-driver-rs-v0.20.1-nightly.20260818.32173745999/cua-driver-rs-0.20.1-nightly.20260818.32173745999-darwin-universal-binary.tar.gz",
+  "version": "0.34.0",
+  "asset": "cua-driver-rs-0.34.0-darwin-universal-binary.tar.gz",
+  "sha256": "940dc008e0f7c5d217d14c0f247d1ebab91b1bac965f4a649d19e8c789bdfd81",
+  "source": "https://github.com/trycua/cua/releases/download/cua-driver-rs-v0.34.0/cua-driver-rs-0.34.0-darwin-universal-binary.tar.gz",
   "platforms": {
     "darwin": {
-      "asset": "cua-driver-rs-0.20.1-nightly.20260818.32173745999-darwin-universal-binary.tar.gz",
-      "sha256": "f57e7192da3c818b2cf9e30bacc2c32a9a254387e43612e9dc021debbc17ef93",
+      "asset": "cua-driver-rs-0.34.0-darwin-universal-binary.tar.gz",
+      "sha256": "940dc008e0f7c5d217d14c0f247d1ebab91b1bac965f4a649d19e8c789bdfd81",
       "binary": "cua-driver",
-      "source": "https://github.com/trycua/cua/releases/download/nightly-cua-driver-rs-v0.20.1-nightly.20260818.32173745999/cua-driver-rs-0.20.1-nightly.20260818.32173745999-darwin-universal-binary.tar.gz"
+      "source": "https://github.com/trycua/cua/releases/download/cua-driver-rs-v0.34.0/cua-driver-rs-0.34.0-darwin-universal-binary.tar.gz"
     },
     "linux": {
-      "asset": "cua-driver-rs-0.20.1-nightly.20260818.32173745999-linux-x86_64-binary.tar.gz",
-      "sha256": "a1b178a53fc407215583384ffa28de9132794e1f96d7eb3f7f20048f53ab5c53",
+      "asset": "cua-driver-rs-0.34.0-linux-x86_64-binary.tar.gz",
+      "sha256": "629ac96eff829d4dfd5cf221f3f2165c2d813aed91e5efb7b20777a741cd70a7",
       "binary": "cua-driver",
-      "source": "https://github.com/trycua/cua/releases/download/nightly-cua-driver-rs-v0.20.1-nightly.20260818.32173745999/cua-driver-rs-0.20.1-nightly.20260818.32173745999-linux-x86_64-binary.tar.gz"
+      "source": "https://github.com/trycua/cua/releases/download/cua-driver-rs-v0.34.0/cua-driver-rs-0.34.0-linux-x86_64-binary.tar.gz"
     },
     "win32": {
-      "asset": "cua-driver-rs-0.20.1-nightly.20260818.32173745999-windows-x86_64-binary.zip",
-      "sha256": "4770c35556335f9a930b624a9dd3ba31486867d570e08b01ffbea6ba79260d65",
+      "asset": "cua-driver-rs-0.34.0-windows-x86_64-binary.zip",
+      "sha256": "bcc520e50861c7092cf775846fec76ae386d7dcd6b5b408608b0ea4423a8b888",
       "binary": "cua-driver.exe",
-      "source": "https://github.com/trycua/cua/releases/download/nightly-cua-driver-rs-v0.20.1-nightly.20260818.32173745999/cua-driver-rs-0.20.1-nightly.20260818.32173745999-windows-x86_64-binary.zip"
+      "source": "https://github.com/trycua/cua/releases/download/cua-driver-rs-v0.34.0/cua-driver-rs-0.34.0-windows-x86_64-binary.zip"
     }
   }
 }
