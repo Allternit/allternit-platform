@@ -13,7 +13,40 @@ description: "Launch flag, host pool, egress rules and limits for /v1/computers"
 4. The executor runs contract validation, the control lease, policy, approval, the audit row and then the action. cloud-api never runs an action itself.
 5. A 409 `approval_required` goes back to the developer. The project owner approves it in the console, or a key does when the project's `approval_mode` is `api_key`.
 
-Each computer is a free-lane cloud computer owned by a synthetic user `platform-drv:<computer id>`, never a person's account. It sleeps when idle and wakes on the next call.
+Each computer is a free-lane cloud computer owned by a synthetic user `platform-drv:<computer id>`, never a person's account. It sleeps when idle and wakes on the next call (`POST /v1/computers/{id}/start` wakes it too).
+
+## Where they run (Eoj, 2026-10-08)
+
+Developer computers run on the **Mail VPS** (`host_mail`, Incus at `https://127.0.0.1:8443` from cloud-api on the same host), not on allternit-standby. Customer cloud computers stay on standby. The split is `ALLTERNIT_HOSTED_DRIVER_HOSTS=host_mail`: that host takes only developer computers, and developer computers go only there.
+
+The Mail VPS also runs the prod Postgres, prod allternit-api, MinIO, the trading services and three qemu VMs, so the developer pool is hard-capped:
+
+| Limit | Value | Where it's set |
+|---|---|---|
+| CPU | `limits.cpu=1`, `limits.cpu.priority=1` (Incus default is 10) | cloud-api `ALLTERNIT_HOSTED_DRIVER_CPU`, `_CPU_PRIORITY` |
+| Memory | `limits.memory=2048MiB`, no swap | `ALLTERNIT_HOSTED_DRIVER_MEMORY_MB`; profile `limits.memory.swap=false` |
+| Disk | 10 GiB root quota on the btrfs pool `cow` (loop file `/var/lib/incus/disks/cow.img`); the `dir` pool can't enforce a quota | `ALLTERNIT_HOSTED_DRIVER_DISK_GB` |
+| Processes, disk I/O | `limits.processes=2000`, `limits.disk.priority=1` | profile `allternit-hosted-driver` |
+| Pool | at most 4 awake at once, across all projects; the 5th create or start answers `503 computer_capacity` and leaves no row behind | `ALLTERNIT_HOSTED_DRIVER_MAX_RUNNING` |
+| Host ledger | `provisioned_hosts.host_mail`: 4 cores, 8192 MB, 48 GB | DB row |
+
+## Headless image
+
+Developer computers boot `allternit-computer-headless` (`ALLTERNIT_HOSTED_DRIVER_IMAGE`), not the full `allternit-cloud-computer` desktop. It's built from the cloud computer image by `cmd/allternit-computer-cloud/guest/build-headless-computer-image.sh`: the desktop session (XFCE, LightDM, VNC, the screen mux) and the services a developer computer doesn't use (printing, Avahi, Tailscale, the subscription gateway) are masked. The Allternit app runs as `allternit-headless.service` in provisioned mode on a bare `Xvfb :0` (`allternit-xvfb.service`, 1280×800, no window manager). It still redeems the bootstrap token, holds the relay and runs allternit-api, gizzi-code, the computer-use sidecars and Chrome.
+
+The `computer` toolset drives that screen with xdotool and scrot (allternit-api's Linux this-device path; it starts `Xvfb` itself on the first call if no screen is running, size `ALLTERNIT_HEADLESS_SCREEN`, default `1280x800`). The `browser` toolset uses headless Chrome.
+
+The Xvfb still starts at boot because the current Linux app (1.1.x) segfaults on Chromium's headless Ozone platform when it opens its window. When the app can run without a window, drop `allternit-xvfb.service` from the image; allternit-api already starts the screen on demand.
+
+Rebuild it on the Mail VPS after a new cloud computer image or allternit-api:
+
+```bash
+API_BINARY=/opt/allternit-api/bin/allternit-api bash cmd/allternit-computer-cloud/guest/build-headless-computer-image.sh
+```
+
+## Host setup (Mail VPS)
+
+`cmd/allternit-cloud-api/deploy/incus/dev-pool-mailvps.sh` does the one-time setup, after backing up the Incus config, iptables rules and the cloud-api `.env` to `/root/backups/dev-pool-<time>/`: the btrfs pool `cow`, the egress script below, the `host_mail` ledger row, and the cloud-api env. It restarts nothing; the next cloud-api deploy (or `systemctl restart allternit-cloud-api`) picks up the env.
 
 ## Launch flag
 
@@ -30,13 +63,17 @@ The public launch and the prices are Eoj's call.
 | Variable | Default | What it does |
 |---|---|---|
 | `ALLTERNIT_HOSTED_DRIVER_PROFILES` | `default,allternit-hosted-driver` | Incus profiles for hosted-driver computers. |
-| `ALLTERNIT_HOSTED_DRIVER_HOSTS` | unset (shared pool) | Comma-separated fleet host ids. When set, only these hosts take hosted-driver computers, and they take nothing else. |
+| `ALLTERNIT_HOSTED_DRIVER_HOSTS` | unset (shared pool) | Comma-separated fleet host ids. When set, only these hosts take hosted-driver computers, and they take nothing else. Prod: `host_mail`. |
+| `ALLTERNIT_HOSTED_DRIVER_IMAGE` | `allternit-computer-headless` | Image alias for developer computers. |
+| `ALLTERNIT_HOSTED_DRIVER_CPU` / `_CPU_PRIORITY` | `1` / `1` | `limits.cpu` and `limits.cpu.priority`. |
+| `ALLTERNIT_HOSTED_DRIVER_MEMORY_MB` / `_DISK_GB` | `2048` / `10` | `limits.memory` and the root disk quota. |
+| `ALLTERNIT_HOSTED_DRIVER_MAX_RUNNING` | `4` | Awake developer computers across the pool. Past it: `503 computer_capacity`. |
 | `ALLTERNIT_HOSTED_DRIVER_PER_KEY` | `2` | Default cap on live computers per API key. Projects can lower or raise it in settings, up to the max. |
 | `ALLTERNIT_HOSTED_DRIVER_MAX_PER_KEY` | `10` | Upper bound for that setting. |
 
 ## Egress rules
 
-Hosted-driver computers must not reach private networks: RFC1918, `100.64.0.0/10` (our mesh), link-local `169.254.0.0/16` (this includes the metadata address `169.254.169.254`), loopback, and IPv6 ULA and link-local ranges.
+Hosted-driver computers must not reach private networks: RFC1918, `100.64.0.0/10` (our mesh), link-local `169.254.0.0/16` (this includes the metadata address `169.254.169.254`), loopback, IPv6 ULA and link-local ranges, and the host's own addresses.
 
 Incus enforces this with a network ACL on a dedicated managed bridge. Run the setup once per fleet host that takes hosted-driver computers:
 
@@ -44,7 +81,7 @@ Incus enforces this with a network ACL on a dedicated managed bridge. Run the se
 sudo bash cmd/allternit-cloud-api/deploy/incus/hosted-driver-egress.sh
 ```
 
-It creates the ACL `allternit-hosted-driver-egress`, the bridge `allternit-drv0` (default `10.231.0.1/24`; override with `HOSTED_DRIVER_SUBNET`) and the profile `allternit-hosted-driver`. DNS to the bridge gateway stays allowed.
+It creates the ACL `allternit-hosted-driver-egress` (which also rejects the host's own global IPv4 addresses), an nft table `inet allternit_drv_guard` that lets the bridge send the host only DHCP and DNS (so Postgres 5432, MinIO 9000/9001, allternit-api, SMTP 25, the Incus API and the qemu VNC ports are closed to these computers on every host address), the unit `allternit-drv-guard.service` that restores it and the Docker `DOCKER-USER` accepts at boot, the bridge `allternit-drv0` (default `10.231.0.1/24`; override with `HOSTED_DRIVER_SUBNET`) and the profile `allternit-hosted-driver`. DNS to the bridge gateway stays allowed.
 
 If a host doesn't have the profile, Incus refuses to create the computer, so a hosted-driver computer can't start without the filter.
 

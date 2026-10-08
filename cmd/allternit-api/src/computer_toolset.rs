@@ -1104,6 +1104,62 @@ async fn this_device_cursor_px(map: &Mapping) -> Result<(i64, i64), String> {
     Ok(((px * ratio).round() as i64, (py * ratio).round() as i64))
 }
 
+/// The X display a Linux computer's own screen is on: `DISPLAY`, else `:0`.
+fn local_display() -> String {
+    std::env::var("DISPLAY").ok().map(|d| d.trim().to_string()).filter(|d| d.starts_with(':')).unwrap_or_else(|| ":0".to_string())
+}
+
+/// Make sure the Linux computer has an X screen. A headless computer (the
+/// hosted-driver image) boots without one; the first computer member starts
+/// `Xvfb` on `DISPLAY` (size `ALLTERNIT_HEADLESS_SCREEN`, default 1280x800)
+/// and it stays up for the computer's life. A computer with a desktop
+/// session already has the socket, so this is a no-op there.
+async fn ensure_local_display() -> Result<String, String> {
+    static START: Lazy<tokio::sync::Mutex<()>> = Lazy::new(|| tokio::sync::Mutex::new(()));
+    let display = local_display();
+    let number = display.trim_start_matches(':').split('.').next().unwrap_or("0").to_string();
+    let socket = std::path::PathBuf::from(format!("/tmp/.X11-unix/X{number}"));
+    if socket.exists() {
+        return Ok(display);
+    }
+    let _guard = START.lock().await;
+    if socket.exists() {
+        return Ok(display);
+    }
+    let size = std::env::var("ALLTERNIT_HEADLESS_SCREEN").ok().filter(|s| s.split_once('x').is_some_and(|(w, h)| w.parse::<u32>().is_ok() && h.parse::<u32>().is_ok())).unwrap_or_else(|| "1280x800".to_string());
+    std::process::Command::new("setsid")
+        .args(["-f", "Xvfb", &display, "-screen", "0", &format!("{size}x24"), "-nolisten", "tcp"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| format!("couldn't start the virtual screen (Xvfb): {e}"))?;
+    for _ in 0..50 {
+        if socket.exists() {
+            return Ok(display);
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    Err("the virtual screen (Xvfb) didn't start".into())
+}
+
+/// Run an X shell command (xdotool / scrot) on this Linux computer.
+async fn local_x_exec(script: &str) -> Result<String, String> {
+    let display = ensure_local_display().await?;
+    let out = tokio::time::timeout(
+        Duration::from_secs(45),
+        tokio::process::Command::new("sh").arg("-c").arg(script).env("DISPLAY", &display).kill_on_drop(true).output(),
+    )
+    .await
+    .map_err(|_| "the action didn't finish in time".to_string())?
+    .map_err(|e| format!("couldn't run the action: {e}"))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        return Err(format!("the action failed (exit {}): {}", out.status.code().unwrap_or(-1), stderr.trim().chars().take(300).collect::<String>()));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).to_string())
+}
+
 /// Pending `left_mouse_down` per computer: Cua Driver 0.34 has no separate
 /// press/release on macOS, so the press is held here and sent with the
 /// release as one click (same spot) or press-drag-release gesture.
@@ -1112,6 +1168,10 @@ static PRESSES: Lazy<Mutex<HashMap<String, (i64, i64)>>> = Lazy::new(|| Mutex::n
 /// Capture the target's screen at full resolution.
 async fn capture(target: &Target, run_id: &str) -> Result<Vec<u8>, String> {
     match target {
+        Target::ThisDevice if cfg!(target_os = "linux") => {
+            let out = local_x_exec("scrot -z -o /tmp/allternit-toolset.png && base64 -w0 /tmp/allternit-toolset.png").await?;
+            B64.decode(out.trim()).map_err(|e| format!("invalid screenshot output: {e}"))
+        }
         Target::ThisDevice => crate::computer_routes::capture_this_device_png().await,
         Target::Guest { os, .. } if os == "windows" => {
             let Target::Guest { driver, handle, .. } = target else { unreachable!() };
@@ -1245,6 +1305,16 @@ async fn dispatch(
                 let script = xdotool_script(member, scaled)?.ok_or("nothing to run")?;
                 guest_exec(target, &script).await?
             };
+            if member == "cursor_position" {
+                let (x, y) = parse_xy_lines(&out).ok_or("no cursor position")?;
+                let (mx, my) = map.to_model(x, y);
+                return Ok((vec![text(format!("X={mx},Y={my}"))], None));
+            }
+            Ok((vec![text(ack(spec, scaled))], None))
+        }
+        (Toolset::Computer, Target::ThisDevice) if cfg!(target_os = "linux") => {
+            let script = xdotool_script(member, scaled)?.ok_or("nothing to run")?;
+            let out = local_x_exec(&script).await?;
             if member == "cursor_position" {
                 let (x, y) = parse_xy_lines(&out).ok_or("no cursor position")?;
                 let (mx, my) = map.to_model(x, y);

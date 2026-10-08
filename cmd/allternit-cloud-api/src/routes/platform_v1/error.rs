@@ -144,6 +144,13 @@ impl From<ApiError> for PlatformError {
             | ApiError::InvalidToken(m)
             | ApiError::TokenExpired(m) => Self::authentication("unauthorized", m),
             ApiError::TooManyRequests(m) => Self::rate_limit("rate_limited", m),
+            ApiError::ServiceUnavailable(m) if m.starts_with(crate::services::provisioning::HOSTED_POOL_FULL) => {
+                Self::service_unavailable("computer_capacity", m)
+            }
+            ApiError::ServiceUnavailable(m) => {
+                tracing::warn!(error = %m, "platform api: service unavailable");
+                Self::service_unavailable("service_unavailable", "No capacity right now. Retry in a few minutes.")
+            }
             other => {
                 tracing::error!(error = %other, "platform api internal error");
                 Self::api_error("internal_error", "An internal error occurred. Please retry.")
