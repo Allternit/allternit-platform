@@ -61,7 +61,9 @@ async fn ctx() -> Ctx {
 }
 
 async fn project(c: &Ctx, owner: &str, env: ProjectEnv) -> projects::Project {
-    projects::create_project(&c.state.db, &Principal { user_id: owner.into(), org_id: None, org_admin: false }, "P5 test", env).await.unwrap()
+    let p = projects::create_project(&c.state.db, &Principal { user_id: owner.into(), org_id: None, org_admin: false }, "P5 test", env).await.unwrap();
+    super::project_billing::put_test_card(&c.state.db, &p.id).await;
+    p
 }
 
 async fn mint(c: &Ctx, p: &projects::Project, account: Option<&str>, scopes: &[&str]) -> String {
@@ -309,4 +311,58 @@ async fn the_stripe_reporter_sends_billable_rows_of_live_paid_projects_once() {
     let price = posts.iter().find(|(p, f)| p == "/v1/prices" && f.iter().any(|(k, v)| k == "lookup_key" && v == "platform_payg_sms_segments")).unwrap();
     let meter_ref = price.1.iter().find(|(k, _)| k == "recurring[meter]").unwrap().1.clone();
     assert_eq!(Some(&meter_ref), ids.get("meter:allternit_sms_segments"));
+}
+
+/// Card required (Eoj 2026-10-08): no card → 402 payment_method_required with the
+/// console billing link, on the API too; the Stripe webhook's checkout puts the
+/// card on file; cancellation and an unpaid subscription take it away again.
+#[tokio::test]
+async fn no_card_is_402_until_checkout_completes_and_again_after_cancel() {
+    let c = ctx().await;
+    let p = projects::create_project(&c.state.db, &Principal { user_id: "dev_card".into(), org_id: None, org_admin: false }, "No card", ProjectEnv::Live).await.unwrap();
+    let e = billing::spend_allowed(&c.state.db, &p.id).await.unwrap_err();
+    assert_eq!((e.status, e.code.as_str()), (StatusCode::PAYMENT_REQUIRED, "payment_method_required"));
+    assert!(e.url.as_deref().unwrap().ends_with(&format!("/platform/billing?project={}", p.id)));
+    let key = mint(&c, &p, None, &["agents"]).await;
+    let (_, acct) = call(&c.app, "POST", "/v1/accounts", &key, Some(json!({ "name": "A" }))).await;
+    let (s, body) = call(&c.app, "POST", "/v1/agents", &key, Some(json!({ "account_id": acct["id"], "name": "A" }))).await;
+    assert_eq!(s, StatusCode::PAYMENT_REQUIRED);
+    assert_eq!(body["error"]["code"], "payment_method_required");
+    assert!(body["error"]["url"].as_str().unwrap().contains(&p.id));
+
+    let event = |kind: &str, object: Value| json!({ "id": "evt_x", "type": kind, "data": { "object": object } });
+    let meta = json!({ "allternit_platform_project_id": p.id, "allternit_platform_plan": "growth" });
+    // Not settled yet: still no card.
+    let pending = event("checkout.session.completed", json!({ "mode": "subscription", "payment_status": "unpaid", "customer": "cus_1", "subscription": "sub_1", "metadata": meta }));
+    assert!(super::project_billing::handle_stripe_event(&c.state, &pending).await.is_some());
+    assert!(billing::spend_allowed(&c.state.db, &p.id).await.is_err());
+    let paid = event("checkout.session.completed", json!({ "mode": "subscription", "payment_status": "paid", "customer": "cus_1", "subscription": "sub_1", "metadata": meta }));
+    assert_eq!(super::project_billing::handle_stripe_event(&c.state, &paid).await.unwrap().status(), StatusCode::OK);
+    billing::spend_allowed(&c.state.db, &p.id).await.unwrap();
+    let plan: (String, Option<String>) = sqlx::query_as("SELECT plan, stripe_customer_id FROM platform_projects WHERE id = $1").bind(&p.id).fetch_one(&c.state.db).await.unwrap();
+    assert_eq!(plan, ("growth".into(), Some("cus_1".into())));
+
+    // A failed renewal is a grace period; Stripe giving up (unpaid) stops work.
+    let failed = event("invoice.payment_failed", json!({ "id": "in_1", "subscription": "sub_1" }));
+    super::project_billing::handle_stripe_event(&c.state, &failed).await.unwrap();
+    billing::spend_allowed(&c.state.db, &p.id).await.unwrap();
+    let unpaid = event("customer.subscription.updated", json!({ "id": "sub_1", "status": "unpaid", "customer": "cus_1", "metadata": meta }));
+    super::project_billing::handle_stripe_event(&c.state, &unpaid).await.unwrap();
+    assert_eq!(billing::spend_allowed(&c.state.db, &p.id).await.unwrap_err().code, "payment_method_required");
+
+    // An event for some other, older subscription doesn't cancel the current one.
+    let active = event("customer.subscription.updated", json!({ "id": "sub_1", "status": "active", "customer": "cus_1", "metadata": meta }));
+    super::project_billing::handle_stripe_event(&c.state, &active).await.unwrap();
+    let stale = event("customer.subscription.deleted", json!({ "id": "sub_old", "status": "canceled", "customer": "cus_1", "metadata": meta }));
+    super::project_billing::handle_stripe_event(&c.state, &stale).await.unwrap();
+    billing::spend_allowed(&c.state.db, &p.id).await.unwrap();
+    let deleted = event("customer.subscription.deleted", json!({ "id": "sub_1", "status": "canceled", "customer": "cus_1", "metadata": meta }));
+    super::project_billing::handle_stripe_event(&c.state, &deleted).await.unwrap();
+    assert_eq!(billing::spend_allowed(&c.state.db, &p.id).await.unwrap_err().code, "payment_method_required");
+    let plan: String = sqlx::query_scalar("SELECT plan FROM platform_projects WHERE id = $1").bind(&p.id).fetch_one(&c.state.db).await.unwrap();
+    assert_eq!(plan, "sandbox");
+
+    // Events that aren't a project's fall through to the hosted-compute handler.
+    let other = event("invoice.paid", json!({ "id": "in_9", "subscription": "sub_unknown" }));
+    assert!(super::project_billing::handle_stripe_event(&c.state, &other).await.is_none());
 }

@@ -38,3 +38,5 @@ Channels, webhooks, the twin layer and MCP have no meter. Simulated (sandbox) nu
 **Hosted agents.** A live project's agent records one `agent_month` when it is created and once in each later month it exists.
 
 Your monthly spend across all meters, and the cap that limits it, is on [Billing and spend caps](/api/platform/billing).
+
+**No free tier.** Usage needs a card on file. A project without one, sandbox included, records no usage because billable requests are refused first with `402 payment_method_required` (see [Billing](/api/platform/billing#payment-method)). Live Pay as you go and Growth usage is sent to Stripe and billed monthly; sandbox usage is recorded here but not charged.

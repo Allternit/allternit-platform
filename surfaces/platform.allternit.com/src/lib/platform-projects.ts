@@ -78,7 +78,7 @@ export async function listProjectKeys(projectId: string): Promise<ProjectKey[]> 
 
 export async function createProjectKey(
   projectId: string,
-  input: { name: string; scopes: string[]; account_id?: string },
+  input: { name: string; scopes: string[]; account_id?: string; accept_terms: boolean },
 ): Promise<CreatedProjectKey> {
   return api.post<CreatedProjectKey>(`/api/v1/platform/projects/${encodeURIComponent(projectId)}/keys`, input);
 }

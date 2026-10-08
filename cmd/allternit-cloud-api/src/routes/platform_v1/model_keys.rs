@@ -74,7 +74,7 @@ fn cipher(state: &ApiState) -> Result<&CredentialCipher, PlatformError> {
         kind: "api_error",
         code: "model_keys_unavailable".into(),
         message: "Model keys aren't available on this deployment.".into(),
-        param: None,
+        param: None, url: None,
     })
 }
 

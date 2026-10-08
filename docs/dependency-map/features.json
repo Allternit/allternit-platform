@@ -374,9 +374,10 @@
       ],
       "decisions": [
         {"on": "2026-10-07", "note": "Phases 3 to 5 deployed; P4 channels and twin merged (#1394)."},
-        {"on": "2026-10-07", "note": "Creating Stripe meters, products and prices stays a dry run until the amounts are signed off."}
+        {"on": "2026-10-07", "note": "Creating Stripe meters, products and prices stays a dry run until the amounts are signed off."},
+        {"on": "2026-10-08", "note": "Launch: card required for every project (402 payment_method_required), console Billing page with Stripe Checkout (Pay as you go / Growth), webhook sets the project's customer and plan, Growth $300 credit grant per invoice, developer terms and AUP published and accepted at key creation, SDK publish workflow."}
       ],
-      "evidence": ["allternit/surfaces/docs/api/platform-v1.mdx"]
+      "evidence": ["allternit/surfaces/docs/api/platform/billing.mdx"]
     },
     {
       "id": "feature:hosted-computer-driver",

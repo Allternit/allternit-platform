@@ -9,14 +9,16 @@ Every error has the same body:
 { "error": { "type": "invalid_request_error", "code": "missing_field", "message": "name is required.", "param": "name" } }
 ```
 
+Some errors also carry `url`, a page where you can fix the problem (a `402 payment_method_required` links the project's console billing page).
+
 | `type` | HTTP | When |
 |---|---|---|
-| `invalid_request_error` | 400 / 422 | The request is malformed, or a field is missing or invalid. |
+| `invalid_request_error` | 400 / 422 | The request is malformed, or a field is missing or invalid. In the console, `terms_not_accepted` means a live key was requested without accepting the Developer Terms. |
 | `not_found_error` | 404 | The thing doesn't exist, or isn't visible to this key. `platform_api_disabled` means the API isn't switched on for this deployment. |
 | `authentication_error` | 401 | No key, an unknown or revoked key, or a key that isn't a project key. |
 | `permission_error` | 403 | The key lacks the scope, or is bound to another account. |
 | `conflict_error` | 409 | `idempotency_conflict` (same key, different request), `idempotency_in_progress` (the first request is still running) or a duplicate `external_ref`. |
-| `billing_error` | 402 | `spend_cap_reached`: the project hit its monthly spend cap. Raise the cap in the console, or wait for the 1st (UTC). See [Billing and spend caps](/api/platform/billing). |
+| `billing_error` | 402 | `payment_method_required`: the project has no card on file, or its subscription was cancelled or left unpaid. Every project, sandbox included, needs one before billable work; open `url` (the console billing page). `spend_cap_reached`: the project hit its monthly spend cap. Raise the cap in the console, or wait for the 1st (UTC). See [Billing and spend caps](/api/platform/billing). |
 | `rate_limit_error` | 429 | Over the per-key or per-project limit, or the concurrent-call cap. Retry after `retry-after` seconds. |
 | `api_error` | 500 / 503 | Something failed on our side (`code` is usually `internal_error`; `spend_check_unavailable` when the spend cap couldn't be checked, so the request was refused). Safe to retry with the same `Idempotency-Key`. |
 

@@ -7,6 +7,10 @@
 //! - `POST/GET /api/v1/platform/projects/:id/keys`
 //! - `DELETE /api/v1/platform/projects/:id/keys/:key_id`
 //!
+//! Creating a key records the user's acceptance of the Developer Terms and AUP
+//! (`accept_terms`, required for live keys) on the key row. Billing routes
+//! (payment method, plan) are in `project_billing`.
+//!
 //! Owner-only: the project's owner, or an admin of the project's Clerk org.
 
 use std::sync::Arc;
@@ -105,6 +109,10 @@ struct CreateKey {
     #[serde(default)]
     scopes: Vec<String>,
     account_id: Option<String>,
+    /// The user ticked "I accept the Developer Terms and Acceptable Use Policy".
+    /// Required for live keys; recorded on the key either way.
+    #[serde(default)]
+    accept_terms: bool,
 }
 
 async fn audit(state: &ApiState, who: &Principal, email: Option<String>, action: &str, resource: &str, id: &str, details: Value) {
@@ -196,6 +204,17 @@ async fn create_key(
         projects::account_in_project(&state.db, &project.id, account_id).await?;
     }
     let env = ProjectEnv::parse(&project.env).unwrap_or(ProjectEnv::Sandbox);
+    if env == ProjectEnv::Live && !body.accept_terms {
+        return Err(PlatformError::invalid_request(
+            "terms_not_accepted",
+            format!(
+                "Accept the Developer Terms ({}) and Acceptable Use Policy ({}) to create a live key: send \"accept_terms\": true.",
+                super::project_billing::TERMS_URL,
+                super::project_billing::AUP_URL
+            ),
+        )
+        .with_param("accept_terms"));
+    }
     let created = services::api_keys::create_project_key(
         &state.db,
         CreateProjectKeyInput {
@@ -209,8 +228,16 @@ async fn create_key(
         },
     )
     .await?;
+    if body.accept_terms {
+        sqlx::query("UPDATE api_keys SET terms_accepted_at = NOW(), terms_version = $2 WHERE id = $1")
+            .bind(&created.key.id)
+            .bind(super::project_billing::TERMS_VERSION)
+            .execute(&state.db)
+            .await?;
+    }
     audit(&state, &who, email, "platform_key.create", "api_key", &created.key.id,
-        json!({ "project_id": project.id, "prefix": created.key.prefix, "scopes": created.key.scopes, "account_id": created.key.account_id })).await;
+        json!({ "project_id": project.id, "prefix": created.key.prefix, "scopes": created.key.scopes, "account_id": created.key.account_id,
+                "terms_accepted": body.accept_terms, "terms_version": body.accept_terms.then_some(super::project_billing::TERMS_VERSION) })).await;
     Ok((StatusCode::CREATED, Json(created)))
 }
 

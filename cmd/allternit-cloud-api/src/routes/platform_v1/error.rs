@@ -22,6 +22,9 @@ pub struct PlatformError {
     pub code: String,
     pub message: String,
     pub param: Option<String>,
+    /// Where to fix it (`payment_method_required`: the console billing page).
+    /// Sent as `error.url` only when set.
+    pub url: Option<String>,
 }
 
 impl PlatformError {
@@ -32,7 +35,13 @@ impl PlatformError {
             code: code.to_string(),
             message: message.into(),
             param: None,
+            url: None,
         }
+    }
+
+    pub fn with_url(mut self, url: impl Into<String>) -> Self {
+        self.url = Some(url.into());
+        self
     }
 
     pub fn with_param(mut self, param: &str) -> Self {
@@ -98,7 +107,7 @@ impl std::fmt::Display for PlatformError {
 
 impl IntoResponse for PlatformError {
     fn into_response(self) -> Response {
-        let body = json!({
+        let mut body = json!({
             "error": {
                 "type": self.kind,
                 "code": self.code,
@@ -106,6 +115,9 @@ impl IntoResponse for PlatformError {
                 "param": self.param,
             }
         });
+        if let Some(url) = self.url {
+            body["error"]["url"] = json!(url);
+        }
         (self.status, Json(body)).into_response()
     }
 }

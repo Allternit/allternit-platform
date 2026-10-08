@@ -19,6 +19,8 @@ import {
 } from "@/lib/platform-projects";
 import { allPages, v1, type V1Account } from "@/lib/platform-v1";
 import { SETTINGS_SELECT_CLASS } from "@/components/settings/buttonStyles";
+import { ACCEPTABLE_USE_URL, DEVELOPER_TERMS_URL } from "@/lib/platform-billing";
+import { Link } from "react-router-dom";
 
 const PROJECT_STORAGE_KEY = "allternit.platform.project";
 
@@ -215,6 +217,7 @@ function ProjectKeys({ project }: { project: PlatformProject }) {
   const [name, setName] = useState("");
   const [scopes, setScopes] = useState<string[]>(["agents"]);
   const [accountId, setAccountId] = useState("");
+  const [acceptTerms, setAcceptTerms] = useState(false);
   const [creating, setCreating] = useState(false);
   const [created, setCreated] = useState<CreatedProjectKey | null>(null);
   const [copied, setCopied] = useState(false);
@@ -250,11 +253,11 @@ function ProjectKeys({ project }: { project: PlatformProject }) {
   }, [load]);
 
   const handleCreate = useCallback(async () => {
-    if (!name.trim() || scopes.length === 0) return;
+    if (!name.trim() || scopes.length === 0 || !acceptTerms) return;
     setCreating(true);
     setError(null);
     try {
-      const key = await createProjectKey(project.id, { name: name.trim(), scopes, ...(accountId.trim() ? { account_id: accountId.trim() } : {}) });
+      const key = await createProjectKey(project.id, { name: name.trim(), scopes, accept_terms: acceptTerms, ...(accountId.trim() ? { account_id: accountId.trim() } : {}) });
       setCreated(key);
       setName("");
       setScopes(["agents"]);
@@ -265,7 +268,7 @@ function ProjectKeys({ project }: { project: PlatformProject }) {
     } finally {
       setCreating(false);
     }
-  }, [project.id, name, scopes, accountId, load]);
+  }, [project.id, name, scopes, accountId, acceptTerms, load]);
 
   const handleRevoke = useCallback(
     async (keyId: string) => {
@@ -375,7 +378,20 @@ function ProjectKeys({ project }: { project: PlatformProject }) {
                   <input value={accountId} onChange={(e) => setAccountId(e.target.value)} placeholder="acct_… — limits the key to one customer" className={INPUT_CLASS} />
                 </label>
               )}
-              <button type="button" className={PRIMARY_BUTTON_CLASS} disabled={!name.trim() || scopes.length === 0 || creating} onClick={() => void handleCreate()}>
+              <label className="flex items-start gap-2 text-[13px] text-[var(--text-primary)]">
+                <input type="checkbox" className="mt-0.5" checked={acceptTerms} onChange={(e) => setAcceptTerms(e.target.checked)} />
+                <span>
+                  I accept the{" "}
+                  <a href={DEVELOPER_TERMS_URL} target="_blank" rel="noreferrer" className="font-semibold text-[var(--accent-primary)] hover:underline">Developer Terms</a>{" "}
+                  and the{" "}
+                  <a href={ACCEPTABLE_USE_URL} target="_blank" rel="noreferrer" className="font-semibold text-[var(--accent-primary)] hover:underline">Acceptable Use Policy</a>.
+                </span>
+              </label>
+              <p className="m-0 text-[12px] text-[var(--text-tertiary)]">
+                Keys work for reading and setup right away. Billable requests need a card on file first:{" "}
+                <Link to={`/platform/billing?project=${encodeURIComponent(project.id)}`} className="font-semibold text-[var(--accent-primary)] hover:underline">add a payment method</Link>.
+              </p>
+              <button type="button" className={PRIMARY_BUTTON_CLASS} disabled={!name.trim() || scopes.length === 0 || !acceptTerms || creating} onClick={() => void handleCreate()}>
                 {creating ? <CircleNotch size={14} className="animate-spin" aria-hidden /> : <Key size={14} aria-hidden />} Create key
               </button>
             </>

@@ -12,6 +12,7 @@ from ._errors import (
     InternalServerError,
     InvalidRequestError,
     NotFoundError,
+    PaymentRequiredError,
     PermissionDeniedError,
     RateLimitError,
 )
@@ -23,5 +24,5 @@ __all__ = [
     "AllternitPlatform", "Conversations", "ConversationStream", "MessageCompleted", "MessageDelta", "StreamEvent",
     "DEFAULT_BASE_URL", "SSEEvent", "Transport", "parse_sse", "NOT_GIVEN",
     "AllternitError", "APIConnectionError", "APIError", "APITimeoutError", "AuthenticationError", "ConflictError",
-    "InternalServerError", "InvalidRequestError", "NotFoundError", "PermissionDeniedError", "RateLimitError",
+    "InternalServerError", "InvalidRequestError", "NotFoundError", "PaymentRequiredError", "PermissionDeniedError", "RateLimitError",
 ]

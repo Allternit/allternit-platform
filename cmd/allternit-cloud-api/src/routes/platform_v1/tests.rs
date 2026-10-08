@@ -32,6 +32,8 @@ async fn ctx_with_gate(gate: Gate) -> Ctx {
     for sql in [
         include_str!("../../../migrations_pg/003_api_keys.sql"),
         include_str!("../../../migrations_pg/050_platform_api_foundation.sql"),
+        include_str!("../../../migrations_pg/080_platform_billing.sql"),
+        include_str!("../../../migrations_pg/084_platform_payment_methods.sql"),
     ] {
         sqlx::raw_sql(&sql.replace("public.", ""))
             .execute(&state.db)
@@ -51,9 +53,11 @@ fn principal(user: &str) -> Principal {
 }
 
 async fn project(ctx: &Ctx, owner: &str, env: ProjectEnv) -> projects::Project {
-    projects::create_project(&ctx.state.db, &principal(owner), "Test project", env)
+    let p = projects::create_project(&ctx.state.db, &principal(owner), "Test project", env)
         .await
-        .unwrap()
+        .unwrap();
+    super::project_billing::put_test_card(&ctx.state.db, &p.id).await;
+    p
 }
 
 async fn mint(ctx: &Ctx, project: &projects::Project, account: Option<&str>, scopes: &[&str]) -> (String, String) {

@@ -5,9 +5,15 @@ description: 'The allternit-platform package: typed client, idempotency keys, ty
 
 `allternit-platform` is a client for the Platform API for Python 3.9+, using only the standard library.
 
+```bash
+pip install allternit-platform
+```
+
 <Note>
-Not yet published to PyPI; publishing needs approval. Until then, install it from the repository: `pip install /path/to/allternit/sdk/platform-python`.
+The first PyPI release is waiting on PyPI publisher setup. Until `pip install` finds it, install from the repository: `pip install /path/to/allternit/sdk/platform-python`.
 </Note>
+
+A project needs a card on file before it can do billable work; until then those calls raise `PaymentRequiredError` (402, `code == "payment_method_required"`) with `err.url`, the console billing page. See [Billing](/api/platform/billing).
 
 ## Create a client
 

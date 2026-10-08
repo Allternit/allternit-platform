@@ -606,6 +606,13 @@
             ]
           },
           {
+            "group": "Legal",
+            "pages": [
+              "legal/developer-terms",
+              "legal/acceptable-use-policy"
+            ]
+          },
+          {
             "group": "Overview",
             "pages": [
               "api/overview",

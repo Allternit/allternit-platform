@@ -183,12 +183,15 @@ async fn buy(
         }
     }
     let sandbox = caller.project_env == ProjectEnv::Sandbox;
+    // Card on file first (sandbox too: no free usage); a real number is billed
+    // monthly, so it also has to be under the spend cap.
+    if sandbox {
+        super::billing::require_payment_method(&state.db, &caller.project_id).await?;
+    } else {
+        super::spend_allowed(&state.db, &caller.project_id).await?;
+    }
     if !sandbox && !live_allowed(&caller) {
         return Err(PlatformError::permission("plan_required", "Buying real numbers needs a paid plan with a card on file."));
-    }
-    if !sandbox {
-        // A real number is billed monthly: not past the spend cap.
-        super::spend_allowed(&state.db, &caller.project_id).await?;
     }
     let kind = parse_kind(body.kind.as_deref())?.unwrap_or_else(|| body.e164.as_deref().map(phone::infer_type).unwrap_or(NumberType::Local));
     let carrier = if sandbox { None } else { Some(phone::carrier().map_err(phone_error)?) };

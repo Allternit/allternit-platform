@@ -28,6 +28,10 @@ export type Error = {
     code: string;
     message: string;
     param: (string | null);
+    /**
+     * Where to fix it. Set on 402 payment_method_required: the console billing page for the project.
+     */
+    url?: string;
   };
 };
 
@@ -50,6 +54,10 @@ export type SpendCap = {
    * true once spend is at or over the cap: billable requests answer 402 spend_cap_reached.
    */
   reached: boolean;
+  /**
+   * true once the project has a card on file and a plan in good standing. Without one, billable requests answer 402 payment_method_required.
+   */
+  payment_method?: boolean;
   /**
    * usage.threshold webhooks already sent this month (50, 80, 100).
    */
@@ -297,6 +305,10 @@ export type ToolsetCall = {
   coordinate_space?: "pixels" | "normalized_1000";
   approval_grant?: string;
   browser_session_id?: string;
+  /**
+   * Off-by-default members (file_upload, read_console, read_network, javascript_exec) to allow for this call.
+   */
+  enable?: Array<string>;
 };
 
 export type ToolsetResult = {

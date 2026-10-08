@@ -348,6 +348,7 @@ pub async fn platform_schema(db: &sqlx::PgPool) {
         include_str!("../../migrations_pg/076_platform_twin.sql"),
         include_str!("../../migrations_pg/080_platform_billing.sql"),
         include_str!("../../migrations_pg/082_platform_computers.sql"),
+        include_str!("../../migrations_pg/084_platform_payment_methods.sql"),
     ] {
         sqlx::raw_sql(&sql.replace("public.", "")).execute(db).await.expect("migration applies");
     }

@@ -262,7 +262,8 @@ export class ConversationsResource {
    * `message.completed` (the stored reply) or `error`. The first message starts the
    * project's hosted runtime: `503 runtime_starting` means retry in a few seconds.
    * One message at a time per conversation (`409 conversation_busy`). A project at its
-   * monthly spend cap gets `402 spend_cap_reached`. Each reply records `tokens_in` and
+   * monthly spend cap gets `402 spend_cap_reached`; one with no card on file gets
+   * `402 payment_method_required`. Each reply records `tokens_in` and
    * `tokens_out` usage (provider list price + 15%; no token charge on the project's own key).
    *
    * `POST /v1/conversations/{id}/messages`
@@ -899,7 +900,7 @@ export class ComputersResource {
   /**
    * Create a computer
    *
-   * Provisions a cloud computer your agents drive with the computer and browser toolsets. 402 `spend_cap_reached` at the spend cap; 429 `concurrency_limit` when this key already has `per_key_concurrency` live computers.
+   * Provisions a cloud computer your agents drive with the computer and browser toolsets. 402 `payment_method_required` without a card on file, 402 `spend_cap_reached` at the spend cap; 429 `concurrency_limit` when this key already has `per_key_concurrency` live computers.
    *
    * `POST /v1/computers`
    */
