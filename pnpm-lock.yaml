@@ -1059,6 +1059,8 @@ importers:
         specifier: ^5.3.3
         version: 5.9.3
 
+  infrastructure/admin-site-hook: {}
+
   infrastructure/chrome-stream/agent-systems/allternit-browser:
     dependencies:
       '@allternit/computer-use-protocol':
@@ -2339,6 +2341,8 @@ importers:
         specifier: ^5.4.5
         version: 5.9.3
 
+  sdk/computer-toolset: {}
+
   sdk/computer-use:
     dependencies:
       '@allternit/computer-use-protocol':
@@ -2939,6 +2943,8 @@ importers:
       '@whiskeysockets/baileys':
         specifier: 6.7.24
         version: 6.7.24(sharp@0.35.4(@types/node@20.19.30))
+
+  surfaces/admin.allternit.com: {}
 
   surfaces/allternit-desktop:
     dependencies:

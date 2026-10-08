@@ -208,6 +208,33 @@ pub async fn run(call: Result<DriverCall, String>) -> Response {
     }
 }
 
+/// One driver call for the toolset executor: the driver's JSON reply on
+/// success, a readable reason on failure (same timeout and acceptance rule
+/// as [`run`]).
+pub async fn call_driver(tool: &str, args: Value) -> Result<Value, String> {
+    let (path, flags) = driver_command().ok_or("The computer-use driver isn't running on this computer.")?;
+    let output = tokio::process::Command::new(&path)
+        .arg("call")
+        .arg(tool)
+        .arg(args.to_string())
+        .args(&flags)
+        .kill_on_drop(true)
+        .output();
+    match tokio::time::timeout(std::time::Duration::from_secs(10), output).await {
+        Ok(Ok(out)) if out.status.success() && driver_accepted(&out.stdout) => {
+            Ok(serde_json::from_slice(&out.stdout).unwrap_or(Value::Null))
+        }
+        Ok(Ok(out)) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            let detail = if stderr.trim().is_empty() { String::from_utf8_lossy(&out.stdout).trim().to_string() } else { stderr.trim().to_string() };
+            warn!(tool, %detail, "computer-use driver call failed");
+            Err(format!("the driver refused {tool}: {}", detail.chars().take(300).collect::<String>()))
+        }
+        Ok(Err(e)) => Err(format!("couldn't run the driver: {e}")),
+        Err(_) => Err("the driver didn't answer in time".into()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

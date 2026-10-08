@@ -1222,10 +1222,24 @@ async fn handle_events_socket(socket: WebSocket, state: Arc<AppState>, computer:
 
     let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(15));
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // Agent actions from the toolset executor (computer.action), for the
+    // agent-cursor overlay in every viewer.
+    let mut actions = crate::computer_toolset::ACTION_EVENTS.subscribe();
     info!(computer_id = %computer.id, "guest event stream opened");
 
     loop {
         tokio::select! {
+            action = actions.recv() => {
+                match action {
+                    Ok((id, event)) if id == computer.id => {
+                        if ws_sender.send(Message::Text(event.to_string().into())).await.is_err() {
+                            break;
+                        }
+                    }
+                    Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {}
+                }
+            }
             _ = heartbeat.tick() => {
                 if ws_sender.send(Message::Text(json!({"type": "ping"}).to_string().into())).await.is_err() {
                     break;

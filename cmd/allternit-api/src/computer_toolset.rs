@@ -1,0 +1,1680 @@
+//! The computer / browser toolset executor (`allternit.computer.v1`,
+//! `allternit.browser.v1`). One executor behind every model adapter: gizzi's
+//! Claude-native, OpenAI, Gemini and JSON-function adapters, the Python engine
+//! and the hosted driver all send contract calls here.
+//!
+//! `POST /computers/:id/toolset` runs one call. `:id` is a computer id or
+//! `this-device`. Checks run in this order:
+//!
+//! 1. contract validation (member exists, enabled on this target, input matches
+//!    the member schema; the batch rule: a call after a failed or unresolved
+//!    call of the same turn answers with the contract's halt text),
+//! 2. control lease (`423` when someone else holds control; this-device needs
+//!    its owner to have taken control),
+//! 3. declarative policy (deny = `403`), then risk and approval (`409
+//!    approval_required` with a single-use action-hash grant id),
+//! 4. the audit row (written and fsynced BEFORE dispatch),
+//! 5. dispatch: Cua Driver (this-device), xdotool/scrot in the guest
+//!    (cloud/bot computers), or the ACU gateway's Playwright session (browser).
+//!
+//! Coordinate scaling between the model frame and the screen, and screenshot
+//! downscaling (long edge <= 1568, <= 1.15 MP), happen ONLY here.
+//!
+//! Every executed action emits `{type:"computer.action", data:{...}}` on the
+//! computer's events channel (the `/computers/:id/events` websocket and the
+//! `/computers/:id/toolset/events` SSE stream).
+
+use std::collections::{BTreeMap, HashMap};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use axum::{
+    extract::{Path, Query, State},
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
+    routing::{get, post},
+    Extension, Json, Router,
+};
+use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
+use once_cell::sync::Lazy;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use tracing::warn;
+
+use crate::aci_safety::ConfirmationClass;
+use crate::auth::AuthUser;
+use crate::computer_control_lease::{self as lease, Holder, HolderKind};
+use crate::computer_routes::{ComputerKind, ComputerResponse};
+use crate::AppState;
+
+// ---------------------------------------------------------------------------
+// Contract (read straight from the JSON source of truth; nothing to drift).
+// ---------------------------------------------------------------------------
+
+const COMPUTER_CONTRACT_JSON: &str =
+    include_str!("../../../contracts/computer-toolset/allternit-computer-v1.json");
+const BROWSER_CONTRACT_JSON: &str =
+    include_str!("../../../contracts/computer-toolset/allternit-browser-v1.json");
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Toolset {
+    Computer,
+    Browser,
+}
+
+impl Toolset {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Toolset::Computer => "computer",
+            Toolset::Browser => "browser",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MemberSpec {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    pub risk: String,
+    pub default_enabled: bool,
+    pub needs_confirm: bool,
+    pub confirm: String,
+    pub result_kind: String,
+    #[serde(default)]
+    pub ack_text: Option<String>,
+    #[serde(default)]
+    pub scale_fields: BTreeMap<String, String>,
+    pub input_schema: Value,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ModelFrameRule {
+    pub max_long_edge: u32,
+    pub max_pixels: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Upstream {
+    pub anthropic_type: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Contract {
+    pub id: String,
+    pub upstream: Upstream,
+    pub batch_halt_text: String,
+    pub model_frame: ModelFrameRule,
+    pub members: Vec<MemberSpec>,
+}
+
+impl Contract {
+    pub fn member(&self, name: &str) -> Option<&MemberSpec> {
+        self.members.iter().find(|m| m.name == name)
+    }
+}
+
+static CONTRACTS: Lazy<(Contract, Contract)> = Lazy::new(|| {
+    (
+        serde_json::from_str(COMPUTER_CONTRACT_JSON).expect("allternit-computer-v1.json is valid"),
+        serde_json::from_str(BROWSER_CONTRACT_JSON).expect("allternit-browser-v1.json is valid"),
+    )
+});
+
+pub fn contract(toolset: Toolset) -> &'static Contract {
+    match toolset {
+        Toolset::Computer => &CONTRACTS.0,
+        Toolset::Browser => &CONTRACTS.1,
+    }
+}
+
+fn risk_class(spec: &MemberSpec) -> ConfirmationClass {
+    match spec.risk.as_str() {
+        "reversible" => ConfirmationClass::Reversible,
+        "irreversible" => ConfirmationClass::Irreversible,
+        _ => ConfirmationClass::Risky,
+    }
+}
+
+/// Whether a call needs a human approval grant on this target.
+pub fn needs_approval(spec: &MemberSpec, sandboxed: bool) -> bool {
+    spec.risk == "irreversible"
+        || spec.confirm == "always"
+        || (spec.confirm == "non_sandbox" && !sandboxed)
+}
+
+/// Minimal JSON-schema check for the subset the contract uses (object,
+/// required, additionalProperties:false, string/number/boolean/array, const,
+/// enum, anyOf, min/maxItems). Returns a model-readable reason.
+pub fn validate(schema: &Value, value: &Value, path: &str) -> Result<(), String> {
+    let here = if path.is_empty() { "input".to_string() } else { path.to_string() };
+    if let Some(any) = schema.get("anyOf").and_then(Value::as_array) {
+        if any.iter().any(|s| validate(s, value, path).is_ok()) {
+            return Ok(());
+        }
+        return Err(format!("{here} does not match any allowed shape"));
+    }
+    if let Some(c) = schema.get("const") {
+        if value != c {
+            return Err(format!("{here} must be {c}"));
+        }
+    }
+    if let Some(options) = schema.get("enum").and_then(Value::as_array) {
+        if !options.contains(value) {
+            return Err(format!("{here} must be one of {}", Value::Array(options.clone())));
+        }
+    }
+    match schema.get("type").and_then(Value::as_str) {
+        Some("object") => {
+            let Some(obj) = value.as_object() else {
+                return Err(format!("{here} must be an object"));
+            };
+            let props = schema.get("properties").and_then(Value::as_object);
+            for req in schema.get("required").and_then(Value::as_array).into_iter().flatten() {
+                let key = req.as_str().unwrap_or_default();
+                if obj.get(key).map_or(true, Value::is_null) {
+                    return Err(format!("{here}.{key} is required"));
+                }
+            }
+            for (k, v) in obj {
+                match props.and_then(|p| p.get(k)) {
+                    // null is accepted for any optional field (the SDK types allow it).
+                    Some(_) if v.is_null() => {}
+                    Some(s) => validate(s, v, &format!("{here}.{k}"))?,
+                    None if schema.get("additionalProperties") == Some(&Value::Bool(false)) => {
+                        return Err(format!("{here}.{k} is not a field of this member"));
+                    }
+                    None => {}
+                }
+            }
+        }
+        Some("string") if !value.is_string() => return Err(format!("{here} must be a string")),
+        Some("number") if !value.is_number() => return Err(format!("{here} must be a number")),
+        Some("integer") if !(value.is_i64() || value.is_u64()) => {
+            return Err(format!("{here} must be an integer"))
+        }
+        Some("boolean") if !value.is_boolean() => return Err(format!("{here} must be a boolean")),
+        Some("array") => {
+            let Some(items) = value.as_array() else {
+                return Err(format!("{here} must be an array"));
+            };
+            let len = items.len() as u64;
+            if let Some(min) = schema.get("minItems").and_then(Value::as_u64) {
+                if len < min {
+                    return Err(format!("{here} needs at least {min} items"));
+                }
+            }
+            if let Some(max) = schema.get("maxItems").and_then(Value::as_u64) {
+                if len > max {
+                    return Err(format!("{here} takes at most {max} items"));
+                }
+            }
+            if let Some(item_schema) = schema.get("items") {
+                for (i, item) in items.iter().enumerate() {
+                    validate(item_schema, item, &format!("{here}[{i}]"))?;
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Model frame and coordinate scaling (the only place scaling happens).
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Frame {
+    pub width: u32,
+    pub height: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CoordinateSpace {
+    #[default]
+    Pixels,
+    /// 0..1000 on both axes over the whole screen (UI-TARS / Qwen-VL style).
+    Normalized1000,
+}
+
+/// The frame a screen of `screen` size is shown to the model in: downscaled
+/// (never upscaled), aspect kept, long edge <= max_long_edge and area <=
+/// max_pixels.
+pub fn default_frame(screen: Frame, rule: &ModelFrameRule) -> Frame {
+    let (w, h) = (screen.width.max(1) as f64, screen.height.max(1) as f64);
+    let by_edge = rule.max_long_edge as f64 / w.max(h);
+    let by_area = (rule.max_pixels as f64 / (w * h)).sqrt();
+    let s = by_edge.min(by_area).min(1.0);
+    Frame {
+        width: ((w * s).floor() as u32).max(1),
+        height: ((h * s).floor() as u32).max(1),
+    }
+}
+
+/// Maps model-frame coordinates to screen pixels and back.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Mapping {
+    pub screen: Frame,
+    pub frame: Frame,
+    pub space: CoordinateSpace,
+}
+
+impl Mapping {
+    pub fn new(screen: Frame, requested: Option<Frame>, space: CoordinateSpace, rule: &ModelFrameRule) -> Self {
+        let frame = requested
+            .filter(|f| f.width > 0 && f.height > 0)
+            .unwrap_or_else(|| default_frame(screen, rule));
+        Mapping { screen, frame, space }
+    }
+
+    fn denominators(&self) -> (f64, f64) {
+        match self.space {
+            CoordinateSpace::Pixels => (self.frame.width as f64, self.frame.height as f64),
+            CoordinateSpace::Normalized1000 => (1000.0, 1000.0),
+        }
+    }
+
+    /// Model coordinate -> screen pixel, clamped onto the screen.
+    pub fn to_screen(&self, x: f64, y: f64) -> (i32, i32) {
+        let (dx, dy) = self.denominators();
+        let sx = (x * self.screen.width as f64 / dx).round();
+        let sy = (y * self.screen.height as f64 / dy).round();
+        (
+            sx.clamp(0.0, (self.screen.width.max(1) - 1) as f64) as i32,
+            sy.clamp(0.0, (self.screen.height.max(1) - 1) as f64) as i32,
+        )
+    }
+
+    /// Screen pixel -> model coordinate (cursor_position).
+    pub fn to_model(&self, sx: f64, sy: f64) -> (i64, i64) {
+        let (dx, dy) = self.denominators();
+        (
+            (sx * dx / self.screen.width.max(1) as f64).round() as i64,
+            (sy * dy / self.screen.height.max(1) as f64).round() as i64,
+        )
+    }
+
+    /// Screen px per model-frame px.
+    pub fn scale(&self) -> f64 {
+        self.screen.width as f64 / self.frame.width.max(1) as f64
+    }
+}
+
+/// Rewrite a member input's coordinate fields (per the contract's
+/// `scale_fields`) from the model frame into screen pixels.
+pub fn scale_input(spec: &MemberSpec, input: &Value, map: &Mapping) -> Value {
+    let mut out = input.clone();
+    for (field, kind) in &spec.scale_fields {
+        let Some(v) = out.get_mut(field) else { continue };
+        match kind.as_str() {
+            "point" => {
+                if let Some([x, y]) = v.as_array().and_then(|a| <&[Value; 2]>::try_from(a.as_slice()).ok()) {
+                    let (sx, sy) = map.to_screen(x.as_f64().unwrap_or(0.0), y.as_f64().unwrap_or(0.0));
+                    *v = json!([sx, sy]);
+                }
+            }
+            "rect" => {
+                if let Some([x0, y0, x1, y1]) = v.as_array().and_then(|a| <&[Value; 4]>::try_from(a.as_slice()).ok()) {
+                    let (a, b) = map.to_screen(x0.as_f64().unwrap_or(0.0), y0.as_f64().unwrap_or(0.0));
+                    let (c, d) = map.to_screen(x1.as_f64().unwrap_or(0.0), y1.as_f64().unwrap_or(0.0));
+                    *v = json!([a, b, c, d]);
+                }
+            }
+            "target" => {
+                if v.get("type").and_then(Value::as_str) == Some("coordinate") {
+                    let x = v.get("x").and_then(Value::as_f64).unwrap_or(0.0);
+                    let y = v.get("y").and_then(Value::as_f64).unwrap_or(0.0);
+                    let (sx, sy) = map.to_screen(x, y);
+                    v["x"] = json!(sx);
+                    v["y"] = json!(sy);
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// First screen point an input acts on (for the cursor overlay event).
+fn primary_point(spec: &MemberSpec, scaled: &Value) -> Option<(i64, i64)> {
+    for key in ["coordinate", "target", "start_coordinate", "region"] {
+        if !spec.scale_fields.contains_key(key) {
+            continue;
+        }
+        let v = scaled.get(key)?;
+        if let Some(a) = v.as_array() {
+            if a.len() >= 2 {
+                return Some((a[0].as_i64()?, a[1].as_i64()?));
+            }
+        }
+        if v.get("type").and_then(Value::as_str) == Some("coordinate") {
+            return Some((v.get("x")?.as_i64()?, v.get("y")?.as_i64()?));
+        }
+    }
+    None
+}
+
+fn png_size(png: &[u8]) -> Option<Frame> {
+    image::io::Reader::new(std::io::Cursor::new(png))
+        .with_guessed_format()
+        .ok()?
+        .into_dimensions()
+        .ok()
+        .map(|(width, height)| Frame { width, height })
+}
+
+/// Resize an image (PNG/JPEG bytes) to exactly `to`, re-encoded as PNG.
+/// When `crop` is set (screen px of the full image), crop first and fit the
+/// crop inside `to` keeping its aspect (zoom).
+pub fn render_for_model(image_bytes: &[u8], to: Frame, crop: Option<(u32, u32, u32, u32)>) -> Result<(Vec<u8>, Frame), String> {
+    let img = image::load_from_memory(image_bytes).map_err(|e| format!("couldn't decode screenshot: {e}"))?;
+    let (img, target) = match crop {
+        Some((x0, y0, x1, y1)) => {
+            let (iw, ih) = (img.width(), img.height());
+            let (x0, x1) = (x0.min(x1).min(iw.saturating_sub(1)), x0.max(x1).min(iw));
+            let (y0, y1) = (y0.min(y1).min(ih.saturating_sub(1)), y0.max(y1).min(ih));
+            let (cw, ch) = ((x1 - x0).max(1), (y1 - y0).max(1));
+            let s = (to.width as f64 / cw as f64).min(to.height as f64 / ch as f64);
+            let fit = Frame {
+                width: ((cw as f64 * s).round() as u32).max(1),
+                height: ((ch as f64 * s).round() as u32).max(1),
+            };
+            (img.crop_imm(x0, y0, cw, ch), fit)
+        }
+        None => (img, to),
+    };
+    let out = if img.width() == target.width && img.height() == target.height {
+        img
+    } else {
+        img.resize_exact(target.width, target.height, image::imageops::FilterType::Triangle)
+    };
+    let mut buf = Vec::new();
+    out.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageOutputFormat::Png)
+        .map_err(|e| format!("couldn't encode screenshot: {e}"))?;
+    Ok((buf, target))
+}
+
+// ---------------------------------------------------------------------------
+// Request / result shapes.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ToolsetRequest {
+    pub toolset: Toolset,
+    pub member: String,
+    #[serde(default = "empty_object")]
+    pub input: Value,
+    #[serde(default)]
+    pub run_id: Option<String>,
+    #[serde(default)]
+    pub turn_id: Option<String>,
+    #[serde(default)]
+    pub call_index: Option<u32>,
+    #[serde(default)]
+    pub model_frame: Option<Frame>,
+    #[serde(default)]
+    pub coordinate_space: Option<CoordinateSpace>,
+    #[serde(default)]
+    pub approval_grant: Option<String>,
+    #[serde(default)]
+    pub browser_session_id: Option<String>,
+}
+
+fn empty_object() -> Value {
+    json!({})
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ScreenInfo {
+    pub width: u32,
+    pub height: u32,
+    pub scale: f64,
+    pub frame_width: u32,
+    pub frame_height: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ToolsetResult {
+    pub is_error: bool,
+    pub content: Vec<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub browser_state: Option<Value>,
+    pub screen: ScreenInfo,
+    /// Machine-readable error code on refusals (not part of the model result).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+fn text(t: impl Into<String>) -> Value {
+    json!({ "type": "text", "text": t.into() })
+}
+
+fn image_block(png: &[u8]) -> Value {
+    json!({ "type": "image", "media_type": "image/png", "data": B64.encode(png) })
+}
+
+fn screen_info(map: Option<&Mapping>) -> ScreenInfo {
+    match map {
+        Some(m) => ScreenInfo {
+            width: m.screen.width,
+            height: m.screen.height,
+            scale: (m.scale() * 1000.0).round() / 1000.0,
+            frame_width: m.frame.width,
+            frame_height: m.frame.height,
+        },
+        None => ScreenInfo { width: 0, height: 0, scale: 1.0, frame_width: 0, frame_height: 0 },
+    }
+}
+
+fn error_result(code: &str, message: impl Into<String>, map: Option<&Mapping>) -> ToolsetResult {
+    ToolsetResult {
+        is_error: true,
+        content: vec![text(message)],
+        browser_state: None,
+        screen: screen_info(map),
+        error: Some(code.to_string()),
+    }
+}
+
+/// Fill an ack template like "Scrolled {scroll_direction}." from the input.
+fn ack(spec: &MemberSpec, input: &Value) -> String {
+    let Some(template) = spec.ack_text.as_deref() else {
+        return "OK".to_string();
+    };
+    let mut out = template.to_string();
+    for key in ["text", "duration", "scroll_direction", "ref"] {
+        let needle = format!("{{{key}}}");
+        if !out.contains(&needle) {
+            continue;
+        }
+        let value = input
+            .get(key)
+            .or_else(|| input.get("target").and_then(|t| t.get(key)))
+            .map(|v| match v {
+                Value::String(s) => s.clone(),
+                other => other.to_string(),
+            })
+            .unwrap_or_default();
+        out = out.replace(&needle, &value);
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
+// Batch rule: per (user, computer, turn), stop after the first failure.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Default)]
+struct BatchState {
+    /// call_index -> settled ok (true) / failed or awaiting approval (false).
+    calls: BTreeMap<u32, bool>,
+    touched: Option<Instant>,
+}
+
+const BATCH_TTL: Duration = Duration::from_secs(15 * 60);
+
+pub struct Batches {
+    inner: Mutex<HashMap<String, BatchState>>,
+}
+
+impl Batches {
+    pub fn new() -> Self {
+        Batches { inner: Mutex::new(HashMap::new()) }
+    }
+
+    /// True when an earlier call of this turn failed or never completed.
+    pub fn halted(&self, key: &str, index: u32) -> bool {
+        let mut map = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        map.retain(|_, s| s.touched.map_or(true, |t| t.elapsed() < BATCH_TTL));
+        map.get(key).is_some_and(|s| s.calls.range(..index).any(|(_, ok)| !ok))
+    }
+
+    pub fn record(&self, key: &str, index: u32, ok: bool) {
+        let mut map = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        let state = map.entry(key.to_string()).or_default();
+        state.calls.insert(index, ok);
+        state.touched = Some(Instant::now());
+    }
+}
+
+impl Default for Batches {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+static BATCHES: Lazy<Batches> = Lazy::new(Batches::new);
+
+// ---------------------------------------------------------------------------
+// Screen sizes and action events.
+// ---------------------------------------------------------------------------
+
+/// Last known input-space size per target (computer id, or browser session).
+static SCREENS: Lazy<Mutex<HashMap<String, (Frame, Instant)>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+const SCREEN_TTL: Duration = Duration::from_secs(60);
+
+fn cached_screen(key: &str) -> Option<Frame> {
+    let map = SCREENS.lock().unwrap_or_else(|p| p.into_inner());
+    map.get(key).filter(|(_, at)| at.elapsed() < SCREEN_TTL).map(|(f, _)| *f)
+}
+
+fn remember_screen(key: &str, frame: Frame) {
+    SCREENS.lock().unwrap_or_else(|p| p.into_inner()).insert(key.to_string(), (frame, Instant::now()));
+}
+
+/// `computer.action` events: (computer id, event). Consumed by the events
+/// websocket (computer_ws) and the toolset SSE stream (P5 cursor overlay).
+pub static ACTION_EVENTS: Lazy<tokio::sync::broadcast::Sender<(String, Value)>> =
+    Lazy::new(|| tokio::sync::broadcast::channel(256).0);
+
+fn emit_action(computer_id: &str, toolset: Toolset, member: &str, point: Option<(i64, i64)>, map: Option<&Mapping>, run_id: Option<&str>, ok: bool) {
+    let screen = map.map(|m| m.screen);
+    let event = json!({
+        "type": "computer.action",
+        "ts": chrono::Utc::now().to_rfc3339(),
+        "data": {
+            "toolset": toolset.as_str(),
+            "member": member,
+            "x": point.map(|p| p.0),
+            "y": point.map(|p| p.1),
+            "screen_w": screen.map(|s| s.width),
+            "screen_h": screen.map(|s| s.height),
+            "run_id": run_id,
+            "ok": ok,
+        }
+    });
+    let _ = ACTION_EVENTS.send((computer_id.to_string(), event));
+}
+
+// ---------------------------------------------------------------------------
+// Targets.
+// ---------------------------------------------------------------------------
+
+/// Where a call runs.
+pub enum Target {
+    /// The Mac running this API, through Cua Driver.
+    ThisDevice,
+    /// A cloud/bot computer: shell commands in the guest via the VM driver.
+    Guest {
+        driver: Arc<dyn allternit_driver_interface::ExecutionDriver>,
+        handle: allternit_driver_interface::ExecutionHandle,
+        os: String,
+        display: &'static str,
+    },
+    /// A Playwright session in the ACU gateway.
+    Browser { base: String, session_id: String },
+}
+
+impl Target {
+    pub fn sandboxed(&self) -> bool {
+        !matches!(self, Target::ThisDevice)
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Target::ThisDevice => "this_device",
+            Target::Guest { os, .. } if os == "windows" => "guest_windows",
+            Target::Guest { .. } => "guest_linux",
+            Target::Browser { .. } => "browser_gateway",
+        }
+    }
+}
+
+/// Members a target can run, or why not. `None` = supported.
+pub fn unsupported_reason(target_label: &str, toolset: Toolset, member: &str) -> Option<&'static str> {
+    match (toolset, target_label) {
+        (Toolset::Computer, "guest_linux") => None,
+        (Toolset::Computer, "guest_windows") => match member {
+            "screenshot" | "zoom" | "wait" => None,
+            _ => Some("Windows computers only take screenshots through the toolset so far; input on Windows guests isn't wired yet."),
+        },
+        (Toolset::Computer, "this_device") => match member {
+            "left_mouse_down" | "left_mouse_up" | "hold_key" | "cursor_position" => {
+                Some("This device's driver (Cua Driver) has no press/hold/cursor-position call wired yet.")
+            }
+            _ => None,
+        },
+        (Toolset::Computer, _) => Some("The computer toolset doesn't run on this target."),
+        (Toolset::Browser, "browser_gateway") => match member {
+            "navigate" | "screenshot" | "zoom" | "left_click" | "right_click" | "middle_click" | "double_click"
+            | "triple_click" | "hover" | "left_click_drag" | "left_mouse_down" | "left_mouse_up" | "mouse_move"
+            | "scroll" | "type" | "key" | "hold_key" | "wait" | "find" | "get_page_text" => None,
+            _ => Some("The browser gateway doesn't implement this member yet (element refs, tabs, console, network, JavaScript and uploads)."),
+        },
+        (Toolset::Browser, _) => Some("The browser toolset doesn't run on this target."),
+    }
+}
+
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+fn xdotool_modifier(m: &str) -> Option<&'static str> {
+    match m.trim().to_lowercase().as_str() {
+        "ctrl" | "control" => Some("ctrl"),
+        "shift" => Some("shift"),
+        "alt" | "option" | "opt" => Some("alt"),
+        "cmd" | "command" | "super" | "meta" | "win" => Some("super"),
+        _ => None,
+    }
+}
+
+/// Valid xdotool key spec (e.g. `ctrl+a`, `Return`, `ctrl+shift+t Page_Down`).
+fn key_spec_ok(k: &str) -> bool {
+    !k.trim().is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric() || "+_-. ".contains(c))
+}
+
+fn point_of(input: &Value, key: &str) -> Option<(i64, i64)> {
+    let a = input.get(key)?.as_array()?;
+    Some((a.first()?.as_i64()?, a.get(1)?.as_i64()?))
+}
+
+/// The guest shell script (xdotool) for one computer member. Coordinates are
+/// already screen pixels. `None` = handled by the executor itself.
+pub fn xdotool_script(member: &str, input: &Value) -> Result<Option<String>, String> {
+    let mods: Vec<&str> = match input.get("text").and_then(Value::as_str) {
+        Some(t) if member.ends_with("click") || member == "scroll" || member == "left_click_drag" => t
+            .split('+')
+            .filter(|p| !p.trim().is_empty())
+            .map(|p| xdotool_modifier(p).ok_or_else(|| format!("unknown modifier key: {p}")))
+            .collect::<Result<_, _>>()?,
+        _ => vec![],
+    };
+    let down = if mods.is_empty() { String::new() } else { format!("keydown {} ", mods.join(" keydown ")) };
+    let up = if mods.is_empty() { String::new() } else { format!(" keyup {}", mods.join(" keyup ")) };
+    let move_to = |key: &str| point_of(input, key).map(|(x, y)| format!("mousemove --sync {x} {y} "));
+    let click = |button: u8, repeat: u8| {
+        let r = if repeat > 1 { format!("--repeat {repeat} --delay 80 ") } else { String::new() };
+        format!("xdotool {}{down}click {r}{button}{up}", move_to("coordinate").unwrap_or_default())
+    };
+    Ok(Some(match member {
+        "left_click" => click(1, 1),
+        "right_click" => click(3, 1),
+        "middle_click" => click(2, 1),
+        "double_click" => click(1, 2),
+        "triple_click" => click(1, 3),
+        "mouse_move" => format!("xdotool {}", move_to("coordinate").ok_or("coordinate is required")?),
+        "left_click_drag" => {
+            let (sx, sy) = point_of(input, "start_coordinate").ok_or("start_coordinate is required")?;
+            let (ex, ey) = point_of(input, "coordinate").ok_or("coordinate is required")?;
+            format!("xdotool {down}mousemove --sync {sx} {sy} mousedown 1 mousemove --sync {ex} {ey} mouseup 1{up}")
+        }
+        "left_mouse_down" => "xdotool mousedown 1".to_string(),
+        "left_mouse_up" => "xdotool mouseup 1".to_string(),
+        "scroll" => {
+            let button = match input.get("scroll_direction").and_then(Value::as_str) {
+                Some("up") => 4,
+                Some("down") => 5,
+                Some("left") => 6,
+                Some("right") => 7,
+                _ => return Err("scroll_direction must be up, down, left or right".into()),
+            };
+            let amount = input.get("scroll_amount").and_then(Value::as_f64).unwrap_or(3.0).round().clamp(1.0, 50.0) as u32;
+            format!("xdotool {}{down}click --repeat {amount} --delay 30 {button}{up}", move_to("coordinate").unwrap_or_default())
+        }
+        "type" => {
+            let t = input.get("text").and_then(Value::as_str).ok_or("text is required")?;
+            format!("xdotool type --delay 12 -- {}", shell_quote(t))
+        }
+        "key" => {
+            let k = input.get("text").and_then(Value::as_str).ok_or("text is required")?;
+            if !key_spec_ok(k) {
+                return Err(format!("not a key name xdotool understands: {k}"));
+            }
+            let repeat = input.get("repeat").and_then(Value::as_f64).unwrap_or(1.0).round().clamp(1.0, 100.0) as u32;
+            let keys: Vec<String> = k.split_whitespace().map(shell_quote).collect();
+            format!("xdotool key --repeat {repeat} --delay 40 -- {}", keys.join(" "))
+        }
+        "hold_key" => {
+            let k = input.get("text").and_then(Value::as_str).ok_or("text is required")?;
+            if !key_spec_ok(k) || k.contains(' ') {
+                return Err(format!("not a single key xdotool understands: {k}"));
+            }
+            let secs = input.get("duration").and_then(Value::as_f64).unwrap_or(1.0).clamp(0.0, 30.0);
+            format!("xdotool keydown -- {q} && sleep {secs} && xdotool keyup -- {q}", q = shell_quote(k))
+        }
+        "cursor_position" => "xdotool getmouselocation --shell".to_string(),
+        "screenshot" | "zoom" | "wait" => return Ok(None),
+        other => return Err(format!("unknown computer member: {other}")),
+    }))
+}
+
+/// Playwright key name for an xdotool-style key spec (`ctrl+a` -> `Control+a`).
+pub fn playwright_key(spec: &str) -> String {
+    spec.split('+')
+        .map(|part| {
+            let p = part.trim();
+            match p.to_lowercase().as_str() {
+                "ctrl" | "control" => "Control".to_string(),
+                "shift" => "Shift".to_string(),
+                "alt" | "option" => "Alt".to_string(),
+                "cmd" | "command" | "super" | "meta" | "win" => "Meta".to_string(),
+                "return" | "enter" | "kp_enter" => "Enter".to_string(),
+                "esc" | "escape" => "Escape".to_string(),
+                "backspace" => "Backspace".to_string(),
+                "tab" => "Tab".to_string(),
+                "delete" => "Delete".to_string(),
+                "space" => " ".to_string(),
+                "page_down" | "pagedown" | "next" => "PageDown".to_string(),
+                "page_up" | "pageup" | "prior" => "PageUp".to_string(),
+                "home" => "Home".to_string(),
+                "end" => "End".to_string(),
+                "up" => "ArrowUp".to_string(),
+                "down" => "ArrowDown".to_string(),
+                "left" => "ArrowLeft".to_string(),
+                "right" => "ArrowRight".to_string(),
+                _ => p.to_string(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("+")
+}
+
+async fn guest_exec(target: &Target, script: &str) -> Result<String, String> {
+    let Target::Guest { driver, handle, display, .. } = target else {
+        return Err("not a guest target".into());
+    };
+    let mut env_vars = HashMap::new();
+    env_vars.insert("DISPLAY".to_string(), display.to_string());
+    let spec = allternit_driver_interface::CommandSpec {
+        command: vec!["sh".into(), "-c".into(), format!("export DISPLAY={display}; {script}")],
+        env_vars,
+        working_dir: None,
+        stdin_data: None,
+        capture_stdout: true,
+        capture_stderr: true,
+    };
+    let out = tokio::time::timeout(Duration::from_secs(45), driver.exec(handle, spec))
+        .await
+        .map_err(|_| "the computer didn't answer in time".to_string())?
+        .map_err(|e| format!("couldn't reach the computer: {e}"))?;
+    let stdout = String::from_utf8_lossy(out.stdout.as_deref().unwrap_or(&[])).to_string();
+    if out.exit_code != 0 {
+        let stderr = String::from_utf8_lossy(out.stderr.as_deref().unwrap_or(&[]));
+        return Err(format!("the action failed on the computer (exit {}): {}", out.exit_code, stderr.trim().chars().take(300).collect::<String>()));
+    }
+    Ok(stdout)
+}
+
+async fn gateway_call(target: &Target, action: &str, target_arg: Option<&str>, text_arg: Option<&str>, parameters: Value, run_id: &str) -> Result<Value, String> {
+    let Target::Browser { base, session_id } = target else {
+        return Err("not a browser target".into());
+    };
+    let body = json!({
+        "action": action,
+        "session_id": session_id,
+        "run_id": run_id,
+        "target": target_arg,
+        "text": text_arg,
+        "parameters": parameters,
+        "adapter_preference": "playwright",
+    });
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/v1/execute"))
+        .timeout(Duration::from_secs(60))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("the browser driver isn't reachable: {e}"))?;
+    let status = resp.status();
+    let value: Value = resp.json().await.map_err(|e| format!("the browser driver sent a bad reply: {e}"))?;
+    if !status.is_success() {
+        return Err(value.get("detail").map(|d| d.to_string()).unwrap_or_else(|| format!("browser driver HTTP {status}")));
+    }
+    if value.get("status").and_then(Value::as_str) == Some("failed") {
+        let message = value
+            .pointer("/error/message")
+            .and_then(Value::as_str)
+            .or_else(|| value.get("summary").and_then(Value::as_str))
+            .unwrap_or("the browser action failed");
+        return Err(message.to_string());
+    }
+    Ok(value)
+}
+
+fn decode_data_url(url: &str) -> Option<Vec<u8>> {
+    let (_, data) = url.split_once("base64,")?;
+    B64.decode(data.trim()).ok()
+}
+
+/// Capture the target's screen at full resolution.
+async fn capture(target: &Target, run_id: &str) -> Result<Vec<u8>, String> {
+    match target {
+        Target::ThisDevice => crate::computer_routes::capture_this_device_png().await,
+        Target::Guest { os, .. } if os == "windows" => {
+            let Target::Guest { driver, handle, .. } = target else { unreachable!() };
+            let out = driver
+                .exec(handle, crate::bot_desktop_windows::screenshot_command())
+                .await
+                .map_err(|e| format!("couldn't capture the screen: {e}"))?;
+            let s = String::from_utf8_lossy(out.stdout.as_deref().unwrap_or(&[])).trim().to_string();
+            B64.decode(s).map_err(|e| format!("invalid screenshot output: {e}"))
+        }
+        Target::Guest { .. } => {
+            let out = guest_exec(target, "scrot -z -o /tmp/allternit-toolset.png && base64 -w0 /tmp/allternit-toolset.png").await?;
+            B64.decode(out.trim()).map_err(|e| format!("invalid screenshot output: {e}"))
+        }
+        Target::Browser { .. } => {
+            let v = gateway_call(target, "screenshot", None, None, json!({}), run_id).await?;
+            v.pointer("/artifacts/0/url")
+                .and_then(Value::as_str)
+                .and_then(decode_data_url)
+                .ok_or_else(|| "the browser driver returned no screenshot".to_string())
+        }
+    }
+}
+
+/// The input-space size of a target: the coordinate space its input calls
+/// use. For this Mac that is points (Cua Driver / CGEvent), which differs from
+/// the Retina screenshot's pixels; everywhere else it is the screenshot size.
+async fn input_space(target: &Target, key: &str, run_id: &str) -> Result<Frame, String> {
+    if let Some(f) = cached_screen(key) {
+        return Ok(f);
+    }
+    let frame = match target {
+        Target::ThisDevice => crate::computer_routes::this_device_screen_points()
+            .await
+            .ok_or_else(|| "couldn't read this computer's screen size".to_string())?,
+        _ => {
+            let png = capture(target, run_id).await?;
+            png_size(&png).ok_or_else(|| "couldn't read the screenshot size".to_string())?
+        }
+    };
+    remember_screen(key, frame);
+    Ok(frame)
+}
+
+fn this_device_mouse(action: &str, xy: Option<(i64, i64)>, end: Option<(i64, i64)>, button: Option<&str>, amount: Option<i32>) -> crate::bot_desktop_input::MouseInput {
+    crate::bot_desktop_input::MouseInput {
+        action: action.to_string(),
+        x: xy.map(|p| p.0 as i32),
+        y: xy.map(|p| p.1 as i32),
+        button: button.map(str::to_string),
+        end_x: end.map(|p| p.0 as i32),
+        end_y: end.map(|p| p.1 as i32),
+        amount,
+    }
+}
+
+/// Dispatch one action (coordinates already in screen px). Returns the
+/// content blocks for a successful call.
+async fn dispatch(
+    target: &Target,
+    toolset: Toolset,
+    spec: &MemberSpec,
+    scaled: &Value,
+    map: &Mapping,
+    screen_key: &str,
+    run_id: &str,
+) -> Result<(Vec<Value>, Option<Value>), String> {
+    let member = spec.name.as_str();
+    // Members the executor runs the same way on every target.
+    match member {
+        "wait" => {
+            let secs = scaled.get("duration").and_then(Value::as_f64).unwrap_or(1.0).clamp(0.0, 60.0);
+            tokio::time::sleep(Duration::from_secs_f64(secs)).await;
+            return Ok((vec![text(ack(spec, scaled))], None));
+        }
+        "screenshot" | "zoom" => {
+            let png = capture(target, run_id).await?;
+            let full = png_size(&png).ok_or("couldn't read the screenshot size")?;
+            // Crop region arrives in input-space px; map it to image px
+            // (they differ on a Retina Mac).
+            let crop = if member == "zoom" {
+                let r = scaled.get("region").and_then(Value::as_array).ok_or("region is required")?;
+                let sx = full.width as f64 / map.screen.width.max(1) as f64;
+                let sy = full.height as f64 / map.screen.height.max(1) as f64;
+                let v = |i: usize, s: f64| (r.get(i).and_then(Value::as_f64).unwrap_or(0.0) * s).round().max(0.0) as u32;
+                Some((v(0, sx), v(1, sy), v(2, sx), v(3, sy)))
+            } else {
+                None
+            };
+            let (out, _) = render_for_model(&png, map.frame, crop)?;
+            return Ok((vec![image_block(&out)], None));
+        }
+        _ => {}
+    }
+
+    match (toolset, target) {
+        (Toolset::Computer, Target::Guest { .. }) => {
+            let script = xdotool_script(member, scaled)?.ok_or("nothing to run")?;
+            let out = guest_exec(target, &script).await?;
+            if member == "cursor_position" {
+                let mut x = None;
+                let mut y = None;
+                for line in out.lines() {
+                    if let Some(v) = line.strip_prefix("X=") {
+                        x = v.trim().parse::<f64>().ok();
+                    }
+                    if let Some(v) = line.strip_prefix("Y=") {
+                        y = v.trim().parse::<f64>().ok();
+                    }
+                }
+                let (x, y) = (x.ok_or("no cursor position")?, y.ok_or("no cursor position")?);
+                let (mx, my) = map.to_model(x, y);
+                return Ok((vec![text(format!("X={mx},Y={my}"))], None));
+            }
+            Ok((vec![text(ack(spec, scaled))], None))
+        }
+        (Toolset::Computer, Target::ThisDevice) => {
+            use crate::this_device_input as td;
+            if scaled.get("text").and_then(Value::as_str).is_some_and(|t| !t.is_empty())
+                && (member.ends_with("click") || member == "scroll" || member == "left_click_drag")
+            {
+                return Err("Holding modifier keys during a click isn't supported on this device yet; use key with a chord instead.".into());
+            }
+            let at = point_of(scaled, "coordinate");
+            let need_at = || at.ok_or_else(|| format!("{member} on this device needs a coordinate"));
+            let call = match member {
+                "left_click" => td::mouse_call(&this_device_mouse("click", Some(need_at()?), None, Some("left"), None)),
+                "middle_click" => td::mouse_call(&this_device_mouse("click", Some(need_at()?), None, Some("middle"), None)),
+                "right_click" => td::mouse_call(&this_device_mouse("rightclick", Some(need_at()?), None, None, None)),
+                "double_click" => td::mouse_call(&this_device_mouse("doubleclick", Some(need_at()?), None, None, None)),
+                "triple_click" => td::mouse_call(&this_device_mouse("doubleclick", Some(need_at()?), None, None, None)).map(|(tool, mut args)| {
+                    args["count"] = json!(3);
+                    (tool, args)
+                }),
+                "mouse_move" => td::mouse_call(&this_device_mouse("move", Some(need_at()?), None, None, None)),
+                "left_click_drag" => {
+                    let start = point_of(scaled, "start_coordinate").ok_or("start_coordinate is required")?;
+                    td::mouse_call(&this_device_mouse("drag", Some(start), Some(need_at()?), None, None))
+                }
+                "scroll" => {
+                    let dir = scaled.get("scroll_direction").and_then(Value::as_str);
+                    let amount = scaled.get("scroll_amount").and_then(Value::as_f64).map(|a| a.round() as i32);
+                    td::mouse_call(&this_device_mouse("scroll", at, None, dir, amount))
+                }
+                "type" => td::keyboard_call(&crate::bot_desktop_input::KeyboardInput {
+                    action: "type".into(),
+                    text: scaled.get("text").and_then(Value::as_str).map(str::to_string),
+                    key: None,
+                }),
+                "key" => td::keyboard_call(&crate::bot_desktop_input::KeyboardInput {
+                    action: "key".into(),
+                    text: None,
+                    key: scaled.get("text").and_then(Value::as_str).map(str::to_string),
+                }),
+                other => Err(format!("{other} isn't supported on this device")),
+            }?;
+            let repeat = if member == "key" {
+                scaled.get("repeat").and_then(Value::as_f64).unwrap_or(1.0).round().clamp(1.0, 100.0) as u32
+            } else {
+                1
+            };
+            for _ in 0..repeat {
+                td::call_driver(call.0, call.1.clone()).await?;
+            }
+            Ok((vec![text(ack(spec, scaled))], None))
+        }
+        (Toolset::Browser, Target::Browser { .. }) => {
+            let point = |key: &str| -> Result<(i64, i64), String> {
+                let t = scaled.get(key).ok_or_else(|| format!("{key} is required"))?;
+                if t.get("type").and_then(Value::as_str) == Some("ref") {
+                    return Err("Element refs aren't supported by this browser target yet; target a coordinate from the screenshot instead.".into());
+                }
+                Ok((t.get("x").and_then(Value::as_i64).unwrap_or(0), t.get("y").and_then(Value::as_i64).unwrap_or(0)))
+            };
+            let xy = |p: (i64, i64)| json!({ "x": p.0, "y": p.1, "coordinate": [p.0, p.1] });
+            let s = |k: &str| scaled.get(k).and_then(Value::as_str);
+            if s("modifiers").is_some_and(|m| !m.is_empty()) {
+                return Err("Modifier clicks aren't supported by this browser target yet.".into());
+            }
+            let result = match member {
+                "navigate" => {
+                    let url = s("url").ok_or("url is required")?;
+                    if !crate::aci_safety::HOST_POLICY.allows(url) {
+                        return Err(format!("Navigation to {url} is blocked by this workspace's host policy."));
+                    }
+                    let v = gateway_call(target, "goto", Some(url), None, json!({}), run_id).await?;
+                    // A navigation can change the viewport; re-learn it.
+                    SCREENS.lock().unwrap_or_else(|p| p.into_inner()).remove(screen_key);
+                    let summary = v.get("summary").and_then(Value::as_str).unwrap_or("Navigated.").to_string();
+                    return Ok((vec![text(summary)], None));
+                }
+                "left_click" => gateway_call(target, "click", None, None, xy(point("target")?), run_id).await,
+                "right_click" => gateway_call(target, "right_click", None, None, xy(point("target")?), run_id).await,
+                "middle_click" => gateway_call(target, "middle_click", None, None, xy(point("target")?), run_id).await,
+                "double_click" => gateway_call(target, "double_click", None, None, xy(point("target")?), run_id).await,
+                "triple_click" => gateway_call(target, "triple_click", None, None, xy(point("target")?), run_id).await,
+                "hover" => gateway_call(target, "hover", None, None, xy(point("target")?), run_id).await,
+                "mouse_move" => gateway_call(target, "mouse_move", None, None, xy(point("target")?), run_id).await,
+                "left_mouse_down" => gateway_call(target, "left_mouse_down", None, None, xy(point("target")?), run_id).await,
+                "left_mouse_up" => gateway_call(target, "left_mouse_up", None, None, xy(point("target")?), run_id).await,
+                "left_click_drag" => {
+                    let (fx, fy) = point("from")?;
+                    let (tx, ty) = point("target")?;
+                    gateway_call(target, "drag", None, None, json!({ "from_x": fx, "from_y": fy, "to_x": tx, "to_y": ty }), run_id).await
+                }
+                "scroll" => {
+                    let p = point("target")?;
+                    gateway_call(target, "mouse_move", None, None, xy(p), run_id).await?;
+                    let amount = scaled.get("scroll_amount").and_then(Value::as_f64).unwrap_or(3.0).round().clamp(1.0, 50.0);
+                    gateway_call(target, "scroll", None, None, json!({ "direction": s("scroll_direction").unwrap_or("down"), "amount": amount }), run_id).await
+                }
+                "type" => gateway_call(target, "type", None, s("text"), json!({ "text": s("text") }), run_id).await,
+                "key" => {
+                    let keys = playwright_key(s("text").ok_or("text is required")?);
+                    let repeat = scaled.get("repeat").and_then(Value::as_f64).unwrap_or(1.0).round().clamp(1.0, 100.0) as u32;
+                    let mut last = Ok(Value::Null);
+                    for _ in 0..repeat {
+                        last = gateway_call(target, "key", Some(&keys), None, json!({ "keys": keys }), run_id).await;
+                        if last.is_err() {
+                            break;
+                        }
+                    }
+                    last
+                }
+                "hold_key" => {
+                    let key = playwright_key(s("text").ok_or("text is required")?);
+                    let duration = scaled.get("duration").and_then(Value::as_f64).unwrap_or(1.0).clamp(0.0, 30.0);
+                    gateway_call(target, "hold_key", None, None, json!({ "key": key, "duration": duration }), run_id).await
+                }
+                "find" => {
+                    let v = gateway_call(target, "find_elements", s("query"), None, json!({ "query": s("query") }), run_id).await?;
+                    let found = v.get("extracted_content").cloned().unwrap_or(Value::Null);
+                    return Ok((vec![text(serde_json::to_string_pretty(&found).unwrap_or_default())], None));
+                }
+                "get_page_text" => {
+                    let v = gateway_call(target, "extract", None, None, json!({ "format": "text" }), run_id).await?;
+                    let body = match v.get("extracted_content") {
+                        Some(Value::String(t)) => t.clone(),
+                        Some(other) => other.to_string(),
+                        None => String::new(),
+                    };
+                    return Ok((vec![text(body.chars().take(50_000).collect::<String>())], None));
+                }
+                other => return Err(format!("{other} isn't supported by this browser target")),
+            };
+            result?;
+            Ok((vec![text(ack(spec, scaled))], None))
+        }
+        _ => Err("this toolset doesn't run on this target".into()),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Target resolution, lease and approval.
+// ---------------------------------------------------------------------------
+
+pub const THIS_DEVICE_ID: &str = "this-device";
+
+/// Resolve `:id` (`this-device` or a computer id) to the caller's computer.
+async fn resolve_computer(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: &HeaderMap) -> Result<ComputerResponse, (StatusCode, String)> {
+    let id = if id == THIS_DEVICE_ID {
+        let db = state.db.clone();
+        let owner = user.user_id.clone();
+        let device = headers
+            .get(crate::cowork_devices_routes::DEVICE_ID_HEADER)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
+        let found = tokio::task::spawn_blocking(move || -> rusqlite::Result<Option<String>> {
+            let conn = db.connect()?;
+            use rusqlite::OptionalExtension;
+            conn.query_row(
+                "SELECT id FROM computers WHERE kind = 'local' AND provider = ?1 AND owner_id = ?2
+                   AND status != 'deleted' ORDER BY (native_id = ?3) DESC, last_activity_at DESC LIMIT 1",
+                rusqlite::params![crate::computer_routes::THIS_DEVICE_PROVIDER, owner, device.unwrap_or_default()],
+                |r| r.get(0),
+            )
+            .optional()
+        })
+        .await
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "internal error".to_string()))?
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("database error: {e}")))?;
+        found.ok_or((StatusCode::NOT_FOUND, "This device isn't registered as a computer here. Open Computers in Allternit Desktop to add it.".to_string()))?
+    } else {
+        id.to_string()
+    };
+    match crate::computer_routes::fetch_computer(state, user, &id).await {
+        Ok(Some(c)) => Ok(c),
+        Ok(None) => Err((StatusCode::NOT_FOUND, "computer not found".into())),
+        Err(resp) => Err((resp.status(), "failed to load computer".into())),
+    }
+}
+
+async fn build_target(state: &Arc<AppState>, user: &AuthUser, computer: &ComputerResponse, toolset: Toolset, browser_session_id: Option<&str>) -> Result<Target, (StatusCode, String)> {
+    if toolset == Toolset::Browser {
+        let session_id = browser_session_id
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("toolset-{}-{}", user.user_id, computer.id));
+        return Ok(Target::Browser { base: state.config.acu_url().trim_end_matches('/').to_string(), session_id });
+    }
+    if crate::computer_routes::is_this_device(computer) {
+        return Ok(Target::ThisDevice);
+    }
+    if computer.provider == crate::mesh_bridge::FABRIC_PROVIDER {
+        return Err((StatusCode::CONFLICT, "This is a paired computer. Agents don't send it input; view it live over the mesh instead.".into()));
+    }
+    if computer.kind == ComputerKind::Local {
+        return Err((StatusCode::CONFLICT, "This computer doesn't accept agent input.".into()));
+    }
+    let record = crate::computer_routes::computer_sandbox(state, computer)
+        .map_err(|r| (r.status(), "couldn't find this computer's desktop".to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "This computer has no desktop to drive.".to_string()))?;
+    let driver = state
+        .vm_driver
+        .clone()
+        .ok_or((StatusCode::SERVICE_UNAVAILABLE, "No VM driver is configured on this host".to_string()))?;
+    let handle = crate::bot_desktop_routes::build_handle(&record.sandbox_id, Some(&record.os), Some(&record.provider));
+    Ok(Target::Guest {
+        driver,
+        handle,
+        os: record.os.clone(),
+        display: crate::bot_desktop_input::desktop_display(&record.provider),
+    })
+}
+
+/// The agent asking for control: one holder per run.
+fn agent_holder(user: &AuthUser, run_id: Option<&str>) -> Holder {
+    Holder {
+        kind: HolderKind::Agent,
+        id: run_id.map(str::to_string).unwrap_or_else(|| format!("toolset:{}", user.user_id)),
+        label: Some("Agent".to_string()),
+        device_id: None,
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum LeaseRefusal {
+    /// Someone else holds control.
+    Held(String),
+    /// This device needs its owner to take control first.
+    TakeControlFirst,
+    Db(String),
+}
+
+/// Lease gate. This device: only while its owner (or this agent) holds
+/// control, since holding control is how a person lets agents drive their
+/// real screen. Other computers: the agent takes (or renews) the lease, so
+/// viewers see who is driving and a person can Take over; a lease held by
+/// anyone it may not preempt refuses.
+pub fn lease_gate(conn: &rusqlite::Connection, computer_id: &str, this_device: bool, owner_id: &str, caller: &Holder, now: i64) -> Result<(), LeaseRefusal> {
+    let label = |l: &lease::Lease| l.holder.label.clone().unwrap_or_else(|| "Someone else".to_string());
+    if this_device {
+        return match lease::current(conn, computer_id, now).map_err(|e| LeaseRefusal::Db(e.to_string()))? {
+            Some(l) if l.holder == *caller => Ok(()),
+            Some(l) if l.holder.kind == HolderKind::User && l.holder.id == owner_id => Ok(()),
+            Some(l) => Err(LeaseRefusal::Held(label(&l))),
+            None => Err(LeaseRefusal::TakeControlFirst),
+        };
+    }
+    match lease::take(conn, computer_id, caller, now) {
+        Ok(_) => Ok(()),
+        Err(lease::TakeError::Held(l)) => Err(LeaseRefusal::Held(label(&l))),
+        Err(lease::TakeError::Db(e)) => Err(LeaseRefusal::Db(e)),
+    }
+}
+
+/// The canonical action payload a grant is bound to.
+pub fn action_descriptor(computer_id: &str, req: &ToolsetRequest) -> Value {
+    json!({
+        "route": "computer.toolset",
+        "computer_id": computer_id,
+        "toolset": req.toolset.as_str(),
+        "member": req.member,
+        "input": req.input,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// The executor.
+// ---------------------------------------------------------------------------
+
+/// Run one toolset call. Returns the HTTP status and the result body.
+pub async fn execute(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: &HeaderMap, req: ToolsetRequest) -> (StatusCode, Value) {
+    let c = contract(req.toolset);
+    let respond = |status: StatusCode, r: ToolsetResult| (status, serde_json::to_value(r).unwrap_or_default());
+
+    // 1. Contract validation.
+    let Some(spec) = c.member(&req.member) else {
+        return respond(StatusCode::BAD_REQUEST, error_result("unknown_member", format!("{} is not a member of {}", req.member, c.id), None));
+    };
+    if let Err(reason) = validate(&spec.input_schema, &req.input, "") {
+        return respond(StatusCode::BAD_REQUEST, error_result("invalid_input", reason, None));
+    }
+    let computer = match resolve_computer(state, user, id, headers).await {
+        Ok(c) => c,
+        Err((status, message)) => return respond(status, error_result("computer_unavailable", message, None)),
+    };
+    let batch_key = req.turn_id.as_deref().map(|t| format!("{}:{}:{}", user.user_id, computer.id, t));
+    let index = req.call_index.unwrap_or(0);
+    if let Some(key) = &batch_key {
+        if BATCHES.halted(key, index) {
+            return respond(StatusCode::OK, error_result("not_executed", c.batch_halt_text.clone(), None));
+        }
+    }
+    let settle = |ok: bool| {
+        if let Some(key) = &batch_key {
+            BATCHES.record(key, index, ok);
+        }
+    };
+
+    let target = match build_target(state, user, &computer, req.toolset, req.browser_session_id.as_deref()).await {
+        Ok(t) => t,
+        Err((status, message)) => {
+            settle(false);
+            return respond(status, error_result("target_unavailable", message, None));
+        }
+    };
+    if let Some(reason) = unsupported_reason(target.label(), req.toolset, &req.member) {
+        settle(false);
+        return respond(StatusCode::OK, error_result("unimplemented", format!("{} is not available on this computer: {reason}", req.member), None));
+    }
+
+    // 2. Control lease (computers only; a gateway browser session is not a
+    // shared screen).
+    if req.toolset == Toolset::Computer {
+        let caller = agent_holder(user, req.run_id.as_deref());
+        let (db, cid, owner, this_device) = (state.db.clone(), computer.id.clone(), user.user_id.clone(), matches!(target, Target::ThisDevice));
+        let verdict = tokio::task::spawn_blocking(move || {
+            let conn = db.connect().map_err(|e| LeaseRefusal::Db(e.to_string()))?;
+            lease_gate(&conn, &cid, this_device, &owner, &caller, chrono::Utc::now().timestamp())
+        })
+        .await
+        .unwrap_or_else(|_| Err(LeaseRefusal::Db("internal error".into())));
+        match verdict {
+            Ok(()) => {}
+            Err(LeaseRefusal::Held(who)) => {
+                settle(false);
+                return respond(StatusCode::LOCKED, error_result("computer_controlled_elsewhere", format!("{who} is controlling this computer. Ask them to hand over control."), None));
+            }
+            Err(LeaseRefusal::TakeControlFirst) => {
+                settle(false);
+                return respond(StatusCode::LOCKED, error_result("take_control_first", "Take control of this computer first (Computers > This computer > Take control) so the agent can use its mouse and keyboard.", None));
+            }
+            Err(LeaseRefusal::Db(e)) => {
+                settle(false);
+                return respond(StatusCode::INTERNAL_SERVER_ERROR, error_result("lease_unavailable", e, None));
+            }
+        }
+    }
+
+    // 3. Declarative policy, then risk and approval.
+    let policy_desc = crate::policy_config::PolicyDescriptor {
+        tool: format!("computer.toolset.{}.{}", req.toolset.as_str(), req.member),
+        intent: Some(req.member.clone()),
+        bot_id: computer.bot_id.clone(),
+        session_id: computer.session_id.clone(),
+        network_host: req.input.get("url").and_then(Value::as_str).and_then(|u| reqwest::Url::parse(u).ok()).and_then(|u| u.host_str().map(str::to_string)),
+        ..Default::default()
+    };
+    let verdict = crate::policy_config::evaluate_descriptor(&policy_desc);
+    if let Some(v) = &verdict {
+        if v.action == crate::permission_policy::PermissionAction::Deny {
+            let _ = crate::policy_config::record_decision(&policy_desc, v, Some(&user.user_id), req.run_id.as_deref());
+            settle(false);
+            let reason = crate::policy_config::refusal_json(v)["reason"].as_str().unwrap_or("denied by policy").to_string();
+            return respond(StatusCode::FORBIDDEN, error_result("policy_denied", reason, None));
+        }
+    }
+    if needs_approval(spec, target.sandboxed()) {
+        if let Err(denial) = crate::aci_safety::enforce_confirmation(
+            &state.approval_store,
+            &user.user_id,
+            "computer.toolset",
+            match risk_class(spec) {
+                ConfirmationClass::Reversible => ConfirmationClass::Risky,
+                other => other,
+            },
+            &action_descriptor(&computer.id, &req),
+            req.approval_grant.as_deref(),
+        ) {
+            // Unresolved until the retry with a grant settles it.
+            settle(false);
+            let mut body = denial.body;
+            let code = body.get("error").and_then(Value::as_str).unwrap_or("approval_required").to_string();
+            let (status, code) = if code == "confirmation_required" {
+                (StatusCode::CONFLICT, "approval_required".to_string())
+            } else {
+                (denial.status, code)
+            };
+            body["error"] = json!(code);
+            body["is_error"] = json!(true);
+            body["member"] = json!(req.member);
+            body["toolset"] = json!(req.toolset.as_str());
+            body["risk"] = json!(spec.risk);
+            body["content"] = json!([text(format!("{} needs a person's approval before it runs.", req.member))]);
+            body["screen"] = serde_json::to_value(screen_info(None)).unwrap_or_default();
+            return (status, body);
+        }
+    }
+
+    // 4. Audit row, durable before the action.
+    let audited = match &verdict {
+        Some(v) => crate::policy_config::record_decision(&policy_desc, v, Some(&user.user_id), req.run_id.as_deref()),
+        None => {
+            let mut row = crate::policy_audit::PolicyAuditRow::new(crate::policy_audit::PolicyDecision::Allowed, policy_desc.tool.clone());
+            row.actor = Some(user.user_id.clone());
+            row.bot_id = computer.bot_id.clone();
+            row.session_id = computer.session_id.clone();
+            row.intent = Some(format!("risk={} target={} computer={}", spec.risk, target.label(), computer.id));
+            row.host = policy_desc.network_host.clone();
+            row.run_id = req.run_id.clone();
+            crate::policy_audit::record(&row)
+        }
+    };
+    if let Err(e) = audited {
+        warn!(error = %e, "toolset audit write failed; refusing to dispatch");
+        settle(false);
+        return respond(StatusCode::INTERNAL_SERVER_ERROR, error_result("audit_unavailable", "The action log couldn't be written, so the action did not run.", None));
+    }
+
+    // 5. Dispatch.
+    let run_id = req.run_id.clone().unwrap_or_else(|| format!("toolset-{}", uuid::Uuid::new_v4().simple()));
+    let screen_key = match &target {
+        Target::Browser { session_id, .. } => format!("browser:{session_id}"),
+        _ => computer.id.clone(),
+    };
+    let screen = match input_space(&target, &screen_key, &run_id).await {
+        Ok(s) => s,
+        Err(e) => {
+            settle(false);
+            return respond(StatusCode::OK, error_result("driver_failed", e, None));
+        }
+    };
+    let map = Mapping::new(screen, req.model_frame, req.coordinate_space.unwrap_or_default(), &c.model_frame);
+    let scaled = scale_input(spec, &req.input, &map);
+    let point = primary_point(spec, &scaled);
+    crate::computer_routes::touch_computer_activity(&state.db, &computer.id);
+    let outcome = dispatch(&target, req.toolset, spec, &scaled, &map, &screen_key, &run_id).await;
+    emit_action(&computer.id, req.toolset, &req.member, point, Some(&map), req.run_id.as_deref(), outcome.is_ok());
+    match outcome {
+        Ok((content, browser_state)) => {
+            settle(true);
+            respond(StatusCode::OK, ToolsetResult { is_error: false, content, browser_state, screen: screen_info(Some(&map)), error: None })
+        }
+        Err(message) => {
+            settle(false);
+            respond(StatusCode::OK, error_result("action_failed", message, Some(&map)))
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Routes.
+// ---------------------------------------------------------------------------
+
+pub fn router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/computers/:id/toolset", post(post_toolset))
+        .route("/computers/:id/toolset/schema", get(get_toolset_schema))
+        .route("/computers/:id/toolset/events", get(get_toolset_events))
+}
+
+async fn post_toolset(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(req): Json<ToolsetRequest>,
+) -> Response {
+    let (status, body) = execute(&state, &user, &id, &headers, req).await;
+    (status, Json(body)).into_response()
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SchemaQuery {
+    #[serde(default)]
+    toolset: Option<Toolset>,
+}
+
+async fn gateway_healthy(base: &str) -> bool {
+    reqwest::Client::new()
+        .get(format!("{base}/health"))
+        .timeout(Duration::from_secs(2))
+        .send()
+        .await
+        .is_ok_and(|r| r.status().is_success())
+}
+
+/// The members a target offers: contract metadata plus `enabled` (default on
+/// AND implemented here AND the driver is reachable) and, when not, `reason`.
+async fn get_toolset_schema(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<String>,
+    Query(q): Query<SchemaQuery>,
+    headers: HeaderMap,
+) -> Response {
+    let toolset = q.toolset.unwrap_or(Toolset::Computer);
+    let c = contract(toolset);
+    let computer = match resolve_computer(&state, &user, &id, &headers).await {
+        Ok(c) => c,
+        Err((status, message)) => return (status, Json(json!({ "error": "computer_unavailable", "message": message }))).into_response(),
+    };
+    let (target_label, sandboxed, unavailable) = match build_target(&state, &user, &computer, toolset, None).await {
+        Ok(t) => {
+            let down = match &t {
+                Target::Browser { base, .. } if !gateway_healthy(base).await => Some("The browser driver (ACU gateway) isn't running for this computer."),
+                _ => None,
+            };
+            (t.label(), t.sandboxed(), down)
+        }
+        Err((_, message)) => {
+            return Json(json!({
+                "toolset": toolset.as_str(), "contract": c.id, "anthropic_type": c.upstream.anthropic_type,
+                "computer_id": computer.id, "target": null, "available": false, "message": message,
+                "members": c.members.iter().map(|m| json!({ "name": m.name, "enabled": false, "reason": message })).collect::<Vec<_>>(),
+            }))
+            .into_response();
+        }
+    };
+    let members: Vec<Value> = c
+        .members
+        .iter()
+        .map(|m| {
+            let reason = if !m.default_enabled {
+                Some("Off by default in the contract.")
+            } else {
+                unavailable.or_else(|| unsupported_reason(target_label, toolset, &m.name))
+            };
+            json!({
+                "name": m.name,
+                "enabled": reason.is_none(),
+                "reason": reason,
+                "default_enabled": m.default_enabled,
+                "risk": m.risk,
+                "needs_approval": needs_approval(m, sandboxed),
+                "description": m.description,
+                "input_schema": m.input_schema,
+            })
+        })
+        .collect();
+    let screen = cached_screen(&computer.id).map(|s| {
+        let f = default_frame(s, &c.model_frame);
+        json!({ "width": s.width, "height": s.height, "frame_width": f.width, "frame_height": f.height })
+    });
+    Json(json!({
+        "toolset": toolset.as_str(),
+        "contract": c.id,
+        "anthropic_type": c.upstream.anthropic_type,
+        "computer_id": computer.id,
+        "target": target_label,
+        "sandboxed": sandboxed,
+        "available": unavailable.is_none(),
+        "batch_halt_text": c.batch_halt_text,
+        "model_frame": { "max_long_edge": c.model_frame.max_long_edge, "max_pixels": c.model_frame.max_pixels },
+        "screen": screen,
+        "members": members,
+    }))
+    .into_response()
+}
+
+/// Server-sent `computer.action` events for one computer (any target,
+/// including this device, whose events websocket has no guest collector).
+async fn get_toolset_events(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    use axum::response::sse::{Event, KeepAlive, Sse};
+    let computer = match resolve_computer(&state, &user, &id, &headers).await {
+        Ok(c) => c,
+        Err((status, message)) => return (status, Json(json!({ "error": "computer_unavailable", "message": message }))).into_response(),
+    };
+    let rx = ACTION_EVENTS.subscribe();
+    let stream = futures::stream::unfold((rx, computer.id), |(mut rx, cid)| async move {
+        loop {
+            match rx.recv().await {
+                Ok((id, event)) if id == cid => {
+                    let ev = Event::default().event("computer.action").data(event.to_string());
+                    return Some((Ok::<_, std::convert::Infallible>(ev), (rx, cid)));
+                }
+                Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+            }
+        }
+    });
+    Sse::new(stream).keep_alive(KeepAlive::default()).into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rule() -> ModelFrameRule {
+        contract(Toolset::Computer).model_frame.clone()
+    }
+
+    #[test]
+    fn contracts_load_with_anthropic_member_sets() {
+        assert_eq!(contract(Toolset::Computer).members.len(), 17);
+        assert_eq!(contract(Toolset::Browser).members.len(), 31);
+        assert_eq!(contract(Toolset::Computer).batch_halt_text, "Not executed: an earlier computer action in this turn failed.");
+        assert_eq!(contract(Toolset::Browser).batch_halt_text, "Not executed: an earlier action in this turn failed.");
+    }
+
+    #[test]
+    fn frame_fits_limits_and_scaling_round_trips() {
+        let screen = Frame { width: 2560, height: 1440 };
+        let f = default_frame(screen, &rule());
+        assert!(f.width <= 1568 && (f.width as u64 * f.height as u64) <= 1_150_000, "{f:?}");
+        let small = Frame { width: 1024, height: 768 };
+        assert_eq!(default_frame(small, &rule()), small, "never upscales");
+
+        let map = Mapping::new(screen, None, CoordinateSpace::Pixels, &rule());
+        for (x, y) in [(0.0, 0.0), (100.0, 200.0), (f.width as f64 - 1.0, f.height as f64 - 1.0)] {
+            let (sx, sy) = map.to_screen(x, y);
+            let (mx, my) = map.to_model(sx as f64, sy as f64);
+            assert!((mx - x as i64).abs() <= 1 && (my - y as i64).abs() <= 1, "({x},{y}) -> ({sx},{sy}) -> ({mx},{my})");
+        }
+        // Out-of-frame clicks clamp onto the screen.
+        assert_eq!(map.to_screen(99_999.0, -5.0), (2559, 0));
+
+        let grid = Mapping::new(screen, None, CoordinateSpace::Normalized1000, &rule());
+        assert_eq!(grid.to_screen(500.0, 500.0), (1280, 720));
+
+        let spec = contract(Toolset::Computer).member("left_click_drag").unwrap();
+        let scaled = scale_input(spec, &json!({ "start_coordinate": [10, 10], "coordinate": [f.width / 2, f.height / 2] }), &map);
+        // Half the frame lands on half the screen (within a pixel of rounding).
+        let c = scaled["coordinate"].as_array().unwrap();
+        assert!((c[0].as_i64().unwrap() - 1280).abs() <= 2 && (c[1].as_i64().unwrap() - 720).abs() <= 2, "{c:?}");
+        let b = contract(Toolset::Browser).member("left_click").unwrap();
+        let scaled = scale_input(b, &json!({ "target": { "type": "coordinate", "x": f.width / 2, "y": 0 } }), &map);
+        assert!((scaled["target"]["x"].as_i64().unwrap() - 1280).abs() <= 2);
+        let r = scale_input(b, &json!({ "target": { "type": "ref", "ref": "ref_1" } }), &map);
+        assert_eq!(r["target"]["ref"], json!("ref_1"));
+    }
+
+    #[test]
+    fn validation_follows_the_member_schema() {
+        let c = contract(Toolset::Computer);
+        let click = &c.member("left_click").unwrap().input_schema;
+        assert!(validate(click, &json!({}), "").is_ok());
+        assert!(validate(click, &json!({ "coordinate": [1, 2], "text": null }), "").is_ok());
+        assert!(validate(click, &json!({ "coordinate": [1] }), "").is_err());
+        assert!(validate(click, &json!({ "bogus": 1 }), "").is_err());
+        let scroll = &c.member("scroll").unwrap().input_schema;
+        assert!(validate(scroll, &json!({ "scroll_amount": 3, "scroll_direction": "sideways" }), "").is_err());
+        let b = &contract(Toolset::Browser).member("left_click").unwrap().input_schema;
+        assert!(validate(b, &json!({ "target": { "type": "ref", "ref": "ref_2" } }), "").is_ok());
+        assert!(validate(b, &json!({ "target": { "type": "coordinate", "x": 1 } }), "").is_err());
+    }
+
+    #[test]
+    fn batch_halts_after_failure_or_unresolved_approval() {
+        let b = Batches::new();
+        b.record("t", 0, true);
+        assert!(!b.halted("t", 1));
+        b.record("t", 1, false); // failed, or 409 waiting for approval
+        assert!(b.halted("t", 2));
+        assert!(!b.halted("t", 1), "the call itself may retry with a grant");
+        b.record("t", 1, true); // the retry with a grant succeeded
+        assert!(!b.halted("t", 2));
+        assert!(!b.halted("other-turn", 5));
+    }
+
+    fn lease_db() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE computer_control_leases (computer_id TEXT PRIMARY KEY, holder_kind TEXT NOT NULL, holder_id TEXT NOT NULL,
+               holder_label TEXT, device_id TEXT, acquired_at TEXT NOT NULL, expires_at TEXT NOT NULL);",
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn lease_gate_refuses_when_someone_else_controls() {
+        let conn = lease_db();
+        let now = chrono::Utc::now().timestamp();
+        let agent = Holder { kind: HolderKind::Agent, id: "run-1".into(), label: None, device_id: None };
+        let person = Holder { kind: HolderKind::User, id: "u1".into(), label: Some("Eoj".into()), device_id: None };
+        // Cloud computer: free -> the agent takes it; a person takes over -> 423.
+        assert_eq!(lease_gate(&conn, "c1", false, "u1", &agent, now), Ok(()));
+        lease::take(&conn, "c1", &person, now).unwrap();
+        assert_eq!(lease_gate(&conn, "c1", false, "u1", &agent, now), Err(LeaseRefusal::Held("Eoj".into())));
+        // This device: nobody in control -> take control first; owner in control -> ok.
+        assert_eq!(lease_gate(&conn, "me", true, "u1", &agent, now), Err(LeaseRefusal::TakeControlFirst));
+        lease::take(&conn, "me", &person, now).unwrap();
+        assert_eq!(lease_gate(&conn, "me", true, "u1", &agent, now), Ok(()));
+        assert!(matches!(lease_gate(&conn, "me", true, "someone-else", &agent, now), Err(LeaseRefusal::Held(_))));
+    }
+
+    #[test]
+    fn approval_409_then_grant_then_single_use() {
+        use crate::aci_safety::{enforce_confirmation_with_mode, SafetyMode};
+        let store = crate::permission_policy::ApprovalStore::default();
+        let req = ToolsetRequest {
+            toolset: Toolset::Computer,
+            member: "type".into(),
+            input: json!({ "text": "hello" }),
+            run_id: None,
+            turn_id: None,
+            call_index: None,
+            model_frame: None,
+            coordinate_space: None,
+            approval_grant: None,
+            browser_session_id: None,
+        };
+        let spec = contract(Toolset::Computer).member("type").unwrap();
+        assert!(needs_approval(spec, false), "type needs approval on this device");
+        assert!(!needs_approval(spec, true), "but not in a sandboxed cloud computer");
+        let desc = action_descriptor("me", &req);
+        let denial = enforce_confirmation_with_mode(SafetyMode::Enforce, &store, "u1", "computer.toolset", ConfirmationClass::Risky, &desc, None).unwrap_err();
+        let id = denial.body["approval_id"].as_str().unwrap().to_string();
+        // Not approved yet -> denied.
+        assert!(enforce_confirmation_with_mode(SafetyMode::Enforce, &store, "u1", "computer.toolset", ConfirmationClass::Risky, &desc, Some(&id)).is_err());
+        let fresh = enforce_confirmation_with_mode(SafetyMode::Enforce, &store, "u1", "computer.toolset", ConfirmationClass::Risky, &desc, None).unwrap_err();
+        let id = fresh.body["approval_id"].as_str().unwrap().to_string();
+        assert!(crate::aci_approvals::GRANTS.approve(&id));
+        // A grant for another action is refused; the right one redeems once.
+        let other = action_descriptor("me", &ToolsetRequest { input: json!({ "text": "rm -rf" }), ..req.clone() });
+        assert!(enforce_confirmation_with_mode(SafetyMode::Enforce, &store, "u1", "computer.toolset", ConfirmationClass::Risky, &other, Some(&id)).is_err());
+        assert!(enforce_confirmation_with_mode(SafetyMode::Enforce, &store, "u1", "computer.toolset", ConfirmationClass::Risky, &desc, Some(&id)).is_ok());
+        assert!(enforce_confirmation_with_mode(SafetyMode::Enforce, &store, "u1", "computer.toolset", ConfirmationClass::Risky, &desc, Some(&id)).is_err(), "single use");
+    }
+
+    #[test]
+    fn xdotool_scripts_quote_and_map_buttons() {
+        assert_eq!(xdotool_script("left_click", &json!({ "coordinate": [5, 6] })).unwrap().unwrap(), "xdotool mousemove --sync 5 6 click 1");
+        assert_eq!(xdotool_script("triple_click", &json!({ "coordinate": [1, 2], "text": "shift" })).unwrap().unwrap(), "xdotool mousemove --sync 1 2 keydown shift click --repeat 3 --delay 80 1 keyup shift");
+        assert_eq!(xdotool_script("type", &json!({ "text": "it's" })).unwrap().unwrap(), "xdotool type --delay 12 -- 'it'\\''s'");
+        assert!(xdotool_script("key", &json!({ "text": "ctrl+a; rm -rf /" })).is_err());
+        assert_eq!(playwright_key("ctrl+Return"), "Control+Enter");
+    }
+}

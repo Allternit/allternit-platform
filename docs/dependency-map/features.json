@@ -380,6 +380,22 @@
         {"on": "2026-10-04", "note": "Photo avatars included with plans (Plus 5, Super 25, Ultra 50) with a $4 cost cap."}
       ],
       "evidence": ["allternit/surfaces/docs/guides/bot-avatars.mdx"]
+    },
+    {
+      "id": "feature:computer-toolset",
+      "label": "Computer toolset for every model",
+      "product": "product:computer-use",
+      "status": "building",
+      "description": "One contract (allternit.computer.v1 / allternit.browser.v1, Anthropic's 20260801 member sets) and one executor (POST /computers/:id/toolset) that every gizzi model adapter calls: Claude-native toolsets, OpenAI, Gemini and JSON function tools. Lease, approval, audit and coordinate scaling happen in one place.",
+      "touches": [
+        "allternit/sdk/computer-toolset",
+        "allternit/cmd/allternit-api/src/computer_*",
+        "allternit/cmd/gizzi-code/src/runtime/tools"
+      ],
+      "decisions": [
+        {"on": "2026-10-07", "note": "Eoj: computer use works for every model. Anthropic's toolsets are absorbed as one adapter into our contract, gizzi stays the only loop, and there are no hosted third-party drivers. The old gizzi browser tool (goal-driven, a second loop) was removed in favour of the toolset browser tool."}
+      ],
+      "evidence": ["allternit/surfaces/docs/tools/computer-toolset.mdx", "allternit/contracts/computer-toolset/README.md", "allternit/cmd/allternit-api/src/computer_toolset.rs"]
     }
   ],
   "journeys": [

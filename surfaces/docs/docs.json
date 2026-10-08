@@ -332,6 +332,7 @@
               "tools/tool-belt",
               "tools/mcp",
               "tools/computer-use",
+              "tools/computer-toolset",
               "tools/computer-use-mcp",
               "tools/strict-tool-use",
               "tools/build-a-tool",

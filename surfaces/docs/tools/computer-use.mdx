@@ -156,7 +156,18 @@ Response:
 
 ## The `computer` tool
 
-The SDK's `ComputerUseCapability` exposes a `computer` tool that follows the standard computer-use schema. It forwards actions to the Allternit Computer Use gateway.
+Agents use a computer through the [computer toolset](/tools/computer-toolset). It has one contract (`allternit.computer.v1` and `allternit.browser.v1`, the same members as Anthropic's `computer_toolset_20260801` and `browser_toolset_20260801`) and one executor, `POST /api/v1/computers/:id/toolset`. Every model family has an adapter: Claude-native, OpenAI, Gemini, and JSON function tools for everything else.
+
+The executor is the only place that:
+
+- scales coordinates between the model's screenshot frame and the screen. Screenshots are downscaled to a long edge of 1568 px or less and 1.15 MP or less.
+- checks the control lease (`423`) and asks for approval (`409 approval_required`, with a single-use grant tied to the action's hash).
+- writes the audit row before the action runs.
+- emits `computer.action` events, which the agent-cursor overlay draws.
+
+### The SDK `computer` tool
+
+The SDK's `ComputerUseCapability` (`@allternit/sdk/ai-runtime/capabilities/computer-use`) still exposes the older single `computer` tool. It forwards actions to the ACU gateway. New integrations should call the toolset executor instead.
 
 ```typescript
 import { ComputerUseCapability } from '@allternit/sdk/ai-runtime/capabilities/computer-use';
@@ -195,15 +206,11 @@ ACI uses absolute pixel coordinates for mouse actions. The capability advertises
 | `type`, `key`, `hold_key` | no | yes |
 | `screenshot`, `cursor_position`, `wait` | no | no |
 
+
+
 ## Desktop tool
 
-In addition to browser automation, ACI provides a desktop-level tool that can control any window on the host machine. This is used by Gizzi Code for tasks like:
-
-- Filling forms in native applications
-- Reading data from GUI applications
-- Automating repetitive desktop workflows
-
-The desktop tool uses the same coordinate system and event streaming as browser automation.
+gizzi's `desktop` tool provisions and releases cloud desktops. For screen input, gizzi uses the toolset `computer` tool, which `GIZZI_ENABLE_DESKTOP_TOOL` or `GIZZI_ENABLE_COMPUTER_TOOL` turns on. Its target is `GIZZI_COMPUTER_ID`, and the default is this device. On this device, take control in the Computer view first, so the agent can use the mouse and keyboard.
 
 ### Control lease on this Mac
 
@@ -231,5 +238,6 @@ When the engine starts a Cua session it calls the driver's `start_session` with 
 
 ## Related pages
 
+- [Computer toolset](/tools/computer-toolset)
 - [Native Tool Belt](/tools/tool-belt)
 - [Cloud Sandboxes](/tools/sandbox)

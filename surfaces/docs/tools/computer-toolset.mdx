@@ -1,0 +1,175 @@
+---
+title: 'Computer toolset'
+description: 'One contract and one executor for computer and browser use, with an adapter for every model family'
+---
+
+<Note>
+**Status:** Implementation IMPLEMENTED × Exposure PUBLIC PREVIEW. Contract: `contracts/computer-toolset/`. Executor: `cmd/allternit-api/src/computer_toolset.rs`. gizzi adapters: `cmd/gizzi-code/src/runtime/tools/computer-toolset/`.
+</Note>
+
+## Overview
+
+The computer toolset is how every agent in Allternit uses a screen. There is one contract, one executor and one adapter per model family:
+
+1. **Contract.** `allternit.computer.v1` (17 members) and `allternit.browser.v1` (31 members). Member names and input fields are identical to Anthropic's `computer_toolset_20260801` and `browser_toolset_20260801`.
+2. **Executor.** `POST /api/v1/computers/:id/toolset` in allternit-api. It validates the call, checks the control lease and approvals, writes the audit row, scales coordinates and dispatches the action.
+3. **Adapters.** gizzi turns each model's tool calls into contract calls. gizzi is the only agent loop. No adapter runs a loop of its own.
+
+`:id` is a computer id or `this-device`. In gizzi, set the target with `GIZZI_COMPUTER_ID`. The default is `this-device`.
+
+## Members
+
+### Computer (`allternit.computer.v1`)
+
+| Member | Risk | Approval | Fields |
+|---|---|---|---|
+| `screenshot` | reversible | no | none |
+| `zoom` | reversible | no | `region: [x0, y0, x1, y1]` |
+| `left_click`, `right_click`, `middle_click`, `double_click`, `triple_click` | risky | no | `coordinate?: [x, y]`, `text?` (modifier keys to hold, such as `ctrl+shift`) |
+| `mouse_move` | reversible | no | `coordinate` |
+| `left_click_drag` | risky | no | `start_coordinate`, `coordinate`, `text?` |
+| `left_mouse_down`, `left_mouse_up` | risky | no | none |
+| `scroll` | reversible | no | `scroll_direction`, `scroll_amount`, `coordinate?`, `text?` |
+| `type` | risky | on non-sandbox targets | `text` |
+| `key` | risky | on non-sandbox targets | `text` (xdotool syntax, such as `ctrl+a` or `Return`), `repeat?` |
+| `hold_key` | risky | on non-sandbox targets | `text`, `duration` |
+| `wait` | reversible | no | `duration` (seconds) |
+| `cursor_position` | reversible | no | none |
+
+### Browser (`allternit.browser.v1`)
+
+Targets are either `{ "type": "coordinate", "x": 640, "y": 380 }` or `{ "type": "ref", "ref": "ref_2" }`.
+
+| Member | Risk | Default | Approval |
+|---|---|---|---|
+| `navigate`, `left_click`, `right_click`, `middle_click`, `double_click`, `triple_click`, `left_click_drag`, `left_mouse_down`, `left_mouse_up`, `close_tab` | risky | on | no |
+| `screenshot`, `zoom`, `hover`, `mouse_move`, `scroll`, `scroll_to`, `wait`, `read_page`, `find`, `get_page_text`, `new_tab`, `list_tabs`, `switch_tab` | reversible | on | no |
+| `type`, `key`, `hold_key`, `form_input` | risky | on | on non-sandbox targets |
+| `read_console`, `read_network` | reversible | **off** | no |
+| `javascript_exec`, `file_upload` | irreversible | **off** | always |
+
+The executor reports what a target can run (see [Schema](#schema)). A member that a target can't run returns `is_error` with a plain reason. It is never silently skipped.
+
+| Target | What runs |
+|---|---|
+| Cloud and bot computers (Linux) | All 17 computer members, through xdotool and scrot in the guest |
+| Cloud computers (Windows) | `screenshot`, `zoom`, `wait` |
+| This device (macOS, Cua Driver) | Everything except `left_mouse_down`, `left_mouse_up`, `hold_key` and `cursor_position`. Clicks with held modifier keys aren't supported yet. |
+| Browser (ACU gateway, Playwright) | `navigate`, `screenshot`, `zoom`, clicks, `hover`, drags, mouse down/up/move, `scroll`, `type`, `key`, `hold_key`, `wait`, `find`, `get_page_text`. Coordinate targets only; element refs, tabs, console, network, JavaScript and uploads aren't wired yet. |
+| Paired computers (mesh) | Nothing. They take no agent input. View them live instead. |
+
+## Executor
+
+```http
+POST /api/v1/computers/:id/toolset
+```
+
+```json
+{
+  "toolset": "computer",
+  "member": "left_click",
+  "input": { "coordinate": [640, 400] },
+  "run_id": "ses_123",
+  "turn_id": "msg_456",
+  "call_index": 0,
+  "model_frame": { "width": 1280, "height": 800 },
+  "coordinate_space": "pixels",
+  "approval_grant": null,
+  "browser_session_id": null
+}
+```
+
+`model_frame` is the size of the last screenshot the model saw. Leave it out and the executor uses the default frame for the screen. `coordinate_space` is `pixels` (the default) or `normalized_1000`.
+
+The checks run in this order:
+
+1. **Contract validation.** The member must exist and its input must match the member schema. The batch rule applies (see below). A bad request returns `400`.
+2. **Control lease.** On a cloud computer the agent takes or renews the lease, so viewers can see who is driving and a person can take over. If someone else holds control, the call returns `423 computer_controlled_elsewhere`. On this device the owner must have taken control first, otherwise the call returns `423 take_control_first`.
+3. **Policy and approval.** A declarative policy denial returns `403 policy_denied`. A member that needs approval returns `409 approval_required` with an `approval_id`. Approve it with `POST /api/aci/handoff/:approval_id/approve`, then resend the same call with `approval_grant` set to that id. A grant works once, and only for the exact action it was issued for.
+4. **Audit row.** A row is written to the policy audit log and fsynced before the action runs. If the row can't be written, the action doesn't run.
+5. **Dispatch.** The action is sent to Cua Driver, the guest or the browser gateway.
+
+Every call returns this result shape:
+
+```json
+{
+  "is_error": false,
+  "content": [{ "type": "image", "media_type": "image/png", "data": "iVBOR..." }],
+  "screen": { "width": 2560, "height": 1440, "scale": 1.633, "frame_width": 1568, "frame_height": 882 }
+}
+```
+
+Browser results can also carry `browser_state` (`{ tabs, state_changes? }`). Refusals add an `error` code.
+
+### Batch rule
+
+The calls in one turn (`turn_id`) run in `call_index` order. After a call fails, or while it waits on an approval nobody has given, each later call in the turn returns `is_error` with exactly:
+
+- computer: `Not executed: an earlier computer action in this turn failed.`
+- browser: `Not executed: an earlier action in this turn failed.`
+
+A retry of the failed call itself, for example with an approval grant, is allowed.
+
+### Model frame and scaling
+
+Screenshots are downscaled so the long edge is at most 1568 px and the area is at most 1.15 MP. They are never upscaled, and the aspect ratio is kept. The model sees the screen in that frame and answers in it. The executor maps coordinates back to screen pixels, and the executor is the only place this happens.
+
+On a Retina Mac, input coordinates are in points and screenshots are in pixels. The executor handles both. `zoom` crops the region at full resolution and fits it to the frame.
+
+Grid-trained GUI models such as UI-TARS and Qwen-VL send `coordinate_space: "normalized_1000"`, a 0–1000 grid over the whole screen.
+
+### Schema
+
+```http
+GET /api/v1/computers/:id/toolset/schema?toolset=computer
+```
+
+This returns the target (`this_device`, `guest_linux`, `guest_windows` or `browser_gateway`), whether it is sandboxed, and every member with `enabled`, a `reason` when it is disabled, `risk`, `needs_approval`, a description and its input schema.
+
+### Events
+
+Every action that runs emits this event:
+
+```json
+{ "type": "computer.action", "ts": "2026-10-07T21:00:00Z",
+  "data": { "toolset": "computer", "member": "left_click", "x": 1280, "y": 720,
+            "screen_w": 2560, "screen_h": 1440, "run_id": "ses_123", "ok": true } }
+```
+
+`x` and `y` are screen pixels. The event goes out on the computer's events websocket (`/computers/:id/events`) and on `GET /api/v1/computers/:id/toolset/events`, a server-sent event stream that works for every target, including this device. The agent-cursor overlay uses these events.
+
+## Adapters
+
+| Model family | How it calls the toolset | Why |
+|---|---|---|
+| Claude (Anthropic API) | Native `computer_toolset_20260801` / `browser_toolset_20260801` | The AI SDK has no toolset type, so the provider fetch hook replaces gizzi's function tool with the native entry on the wire. It maps Claude's toolset `tool_use` blocks back, and returns `tool_result` with `toolset_name` and `browser_state`. If a model rejects the native entry, the same request is resent with the function tool. |
+| Claude via other providers | Function tool | No wire hook outside `@ai-sdk/anthropic` |
+| OpenAI | Function tool | `@ai-sdk/openai` 2.0.89 can't turn Responses `computer_call` items into loop tool calls |
+| Gemini | Function tool | `@ai-sdk/google` 2.0.54 has no `computer_use` tool |
+| Kimi, Qwen, GLM, local and open models | Function tool, with optional 0–1000 grid | Generated from the contract. Grid mode switches on for UI-TARS, Qwen-VL and similar models, or when `GIZZI_COMPUTER_TOOLSET_GRID=1`. |
+
+The function tool is one tool per toolset, named `computer` or `browser`. It takes an `action` (the member name) plus that member's fields. The fields have the same names and types as the contract. The tool only lists members the target reports as enabled.
+
+When the executor answers `approval_required`, gizzi asks the person through its normal permission prompt, records the approval and retries once with the grant.
+
+## What it replaced
+
+- **gizzi `browser` tool** (ACU gateway, goal-driven `execute`). It is replaced by the toolset `browser` tool under the same `GIZZI_DISABLE_BROWSER_TOOL` switch. Goal-driven browsing was a second agent loop, so it is gone.
+- **gizzi `desktop` tool.** It still provisions and releases cloud desktops (`GIZZI_ENABLE_DESKTOP_TOOL`). Its mouse, keyboard and screenshot actions are superseded by `computer`, which the same flag (or `GIZZI_ENABLE_COMPUTER_TOOL`) turns on.
+- **`pane_browser`** is unchanged. It drives the page the person can see in the app's browser pane. That pane is a different target from the headless gateway session, so the two stay separate.
+- **allternit-api `computer_screenshot` / `computer_mouse` / `computer_keyboard` tools** (`/tools/execute`). These stay as compatibility aliases on the shared control plane. New work uses the toolset.
+
+## Contract files and generated types
+
+```bash
+node contracts/computer-toolset/generate.mjs          # regenerate TS + Python bindings
+node contracts/computer-toolset/generate.mjs --check  # fail on drift
+```
+
+Outputs: `sdk/computer-toolset` (`@allternit/computer-toolset`), gizzi `contract.gen.ts`, and `domains/computer-use/core/contracts/toolset_v1.py`. allternit-api reads the JSON directly.
+
+## Related pages
+
+- [Allternit Computer Interface (ACI)](/tools/computer-use)
+- [Computer use over MCP](/tools/computer-use-mcp)
+- [Computers and apps](/guides/computers-and-apps)

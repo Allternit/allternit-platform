@@ -1,3 +1,4 @@
+import { nativeToolsetFetch } from "@/runtime/tools/computer-toolset/anthropic-native"
 import z from "zod/v4"
 import fuzzysort from "fuzzysort"
 import { Config } from "@/runtime/context/config/config"
@@ -819,19 +820,31 @@ export namespace Provider {
           })
         }
 
+        // Computer toolset, Claude-native: swap our `computer`/`browser`
+        // function tools for computer_toolset_20260801 /
+        // browser_toolset_20260801 on the wire (falls back to the function
+        // tools when the model rejects them). See computer-toolset/anthropic-native.ts.
+        const sendRequest = () =>
+          model.api.npm === "@ai-sdk/anthropic" &&
+          opts.method === "POST" &&
+          typeof opts.body === "string" &&
+          opts.body.includes("[allternit.")
+            ? nativeToolsetFetch(opts.body, (body) => fetchFn(input, { ...reqInit, body }))
+            : fetchFn(input, reqInit)
+
         // Optional per-provider concurrency cap (provider.options.concurrency).
         const cap = Number(options["concurrency"])
         if (Number.isFinite(cap) && cap > 0) {
           const sem = providerSemaphore(model.providerID, Math.floor(cap))
           await sem.acquire()
           try {
-            return wrapRetryHint(await fetchFn(input, reqInit))
+            return wrapRetryHint(await sendRequest())
           } finally {
             sem.release()
           }
         }
 
-        return wrapRetryHint(await fetchFn(input, reqInit))
+        return wrapRetryHint(await sendRequest())
       }
 
       const bundledFn = BUNDLED_PROVIDERS[model.api.npm]

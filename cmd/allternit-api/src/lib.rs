@@ -133,6 +133,7 @@ pub mod compliance_routes;
 pub mod computer_control;
 pub mod this_device_input;
 pub mod computer_control_lease;
+pub mod computer_toolset;
 pub mod mesh_bridge;
 pub mod computer_routes;
 pub mod factory_peer_proxy;
