@@ -288,8 +288,35 @@ Paid subscriptions can get an Allternit-provisioned data-plane instance (isolate
 | POST | `/api/v1/provisioned-instances/:id/stop` | Clerk | Stop an instance. |
 | GET | `/api/v1/provisioned-instances/:id/usage` | Clerk | Metering sessions. |
 | DELETE | `/api/v1/provisioned-instances/:id` | Clerk | Destroy an instance. |
+| GET | `/api/v1/provisioned-instances/:id/snapshots` | Clerk | Your restore points, oldest first, and the cap (`max`). |
+| POST | `/api/v1/provisioned-instances/:id/snapshots` | Clerk | Take a restore point now (201). 409 at the cap. |
+| POST | `/api/v1/provisioned-instances/:id/snapshots/:name/restore` | Clerk | Roll the computer back. A running computer is stopped, restored and started. |
+| DELETE | `/api/v1/provisioned-instances/:id/snapshots/:name` | Clerk | Delete a restore point (204). |
+| POST | `/api/v1/provisioned-instances/:id/exports` | Clerk | Start packing a downloadable copy (202), or return the one in progress. |
+| GET | `/api/v1/provisioned-instances/:id/exports/:exportId` | Clerk | Copy status; `downloadPath` once `ready`. |
+| GET | `/api/v1/computer-exports/:token` | Token in path | Stream the copy (`.tar.zst`). |
 
 Host registration (`/api/v1/provisioned-hosts`) is operator-only.
+
+### Restore points and downloadable copies
+
+Restore points are disk-only Incus snapshots of the computer, named `user-<UTC timestamp>`. They are copy-on-write on the host's btrfs pool, and an owner can keep **5** per computer. Internal snapshots (for example the cancel snapshot kept after a subscription ends) are never listed, restored or deleted through these routes. All of them need the computer to be `running`, `stopped` or `sleeping` (409 otherwise).
+
+A downloadable copy is an `incus export` of the whole computer (instance only, zstd) that the host prepares in the background and deletes 24 hours later. Poll the export until `status` is `ready` (or `failed`). The response then carries `downloadPath`, which works without a session header for one hour (`downloadExpiresAt`), so a plain link or `<a download>` streams it to disk:
+
+```bash
+curl -X POST https://api.allternit.com/api/v1/provisioned-instances/$ID/exports \
+  -H "Authorization: Bearer <clerk-session-token>"
+# → 202 {"export":{"id":"exp_…","status":"preparing",…}}
+curl https://api.allternit.com/api/v1/provisioned-instances/$ID/exports/exp_… \
+  -H "Authorization: Bearer <clerk-session-token>"
+# → {"export":{"status":"ready","downloadPath":"/api/v1/computer-exports/<token>",…}}
+curl -o computer.tar.zst https://api.allternit.com/api/v1/computer-exports/<token>
+```
+
+Restore a copy on any Incus host with `incus import computer.tar.zst`. Export jobs live in cloud-api's memory: after a cloud-api restart, ask for a new copy.
+
+Separately from these owner controls, every customer computer is backed up off-site every night: encrypted `incus export` archives in R2, kept 8 days (plus Sunday copies for 35 days). Operator details and restore steps: `infrastructure/computer-backup/README.md` in the platform repo.
 
 ```bash
 curl https://api.allternit.com/api/v1/provisioned-instances \

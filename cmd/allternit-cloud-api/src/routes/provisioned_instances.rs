@@ -95,6 +95,26 @@ pub fn routes() -> Router<Arc<ApiState>> {
             get(instance_usage),
         )
         .route("/api/v1/provisioned-instances/:id", axum::routing::delete(delete_instance))
+        .route(
+            "/api/v1/provisioned-instances/:id/snapshots",
+            get(list_snapshots).post(create_snapshot),
+        )
+        .route(
+            "/api/v1/provisioned-instances/:id/snapshots/:snapshot",
+            axum::routing::delete(delete_snapshot),
+        )
+        .route(
+            "/api/v1/provisioned-instances/:id/snapshots/:snapshot/restore",
+            post(restore_snapshot),
+        )
+        .route("/api/v1/provisioned-instances/:id/exports", post(start_export))
+        .route(
+            "/api/v1/provisioned-instances/:id/exports/:export_id",
+            get(export_status),
+        )
+        // The token is the credential: a plain link / <a download> can't send
+        // the session header, and the browser streams the file to disk.
+        .route("/api/v1/computer-exports/:token", get(download_export))
         .route("/api/v1/provisioned-hosts", post(register_host))
         .route("/api/v1/provisioned-hosts", get(list_hosts))
 }
@@ -370,6 +390,119 @@ async fn delete_instance(
     let user = crate::auth::resolve_user_scoped(&state.db, &headers, "compute").await?;
     let instance = state.provisioning_service.delete(&id, &user.id).await?;
     Ok(Json(serde_json::json!({ "instance": instance })))
+}
+
+// -- Restore points + downloadable copies (owner) ----------------------------
+//
+// GET    /api/v1/provisioned-instances/:id/snapshots            → {"snapshots":[{name,createdAt}],"max":5}
+// POST   /api/v1/provisioned-instances/:id/snapshots            → 201 {"snapshot":{…}}; 409 at the cap
+// POST   /api/v1/provisioned-instances/:id/snapshots/:s/restore → {"instance":{…}} (running → stop, restore, start)
+// DELETE /api/v1/provisioned-instances/:id/snapshots/:s         → 204
+// POST   /api/v1/provisioned-instances/:id/exports              → 202 {"export":{id,status:"preparing",…}}
+// GET    /api/v1/provisioned-instances/:id/exports/:eid         → {"export":{status,downloadPath?,…}}
+// GET    /api/v1/computer-exports/:token                        → the .tar.zst stream (no session; 1 h token)
+
+async fn list_snapshots(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let user = crate::auth::resolve_user_scoped(&state.db, &headers, "compute").await?;
+    let snapshots = state.provisioning_service.list_snapshots(&id, &user.id).await?;
+    Ok(Json(serde_json::json!({
+        "snapshots": snapshots,
+        "max": crate::services::provisioning::MAX_USER_SNAPSHOTS,
+    })))
+}
+
+async fn create_snapshot(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Response, ApiError> {
+    let user = crate::auth::resolve_user_scoped(&state.db, &headers, "compute").await?;
+    let snapshot = state.provisioning_service.create_snapshot(&id, &user.id).await?;
+    Ok((StatusCode::CREATED, Json(serde_json::json!({ "snapshot": snapshot }))).into_response())
+}
+
+async fn restore_snapshot(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Path((id, snapshot)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let user = crate::auth::resolve_user_scoped(&state.db, &headers, "compute").await?;
+    let instance = state
+        .provisioning_service
+        .restore_snapshot(&id, &user.id, &snapshot)
+        .await?;
+    Ok(Json(serde_json::json!({ "instance": instance })))
+}
+
+async fn delete_snapshot(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Path((id, snapshot)): Path<(String, String)>,
+) -> Result<StatusCode, ApiError> {
+    let user = crate::auth::resolve_user_scoped(&state.db, &headers, "compute").await?;
+    state
+        .provisioning_service
+        .delete_snapshot(&id, &user.id, &snapshot)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn start_export(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Response, ApiError> {
+    let user = crate::auth::resolve_user_scoped(&state.db, &headers, "compute").await?;
+    let export = state.provisioning_service.start_export(&id, &user.id).await?;
+    Ok((StatusCode::ACCEPTED, Json(serde_json::json!({ "export": export }))).into_response())
+}
+
+async fn export_status(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Path((id, export_id)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let user = crate::auth::resolve_user_scoped(&state.db, &headers, "compute").await?;
+    let export = state
+        .provisioning_service
+        .export_status(&id, &user.id, &export_id)
+        .await?;
+    Ok(Json(serde_json::json!({ "export": export })))
+}
+
+async fn download_export(
+    State(state): State<Arc<ApiState>>,
+    Path(token): Path<String>,
+) -> Result<Response, ApiError> {
+    let download = state.provisioning_service.open_export_download(&token).await?;
+    let length = download.response.content_length();
+    let body = axum::body::Body::from_stream(futures::stream::unfold(
+        download.response,
+        |mut response| async move {
+            match response.chunk().await {
+                Ok(Some(chunk)) => Some((Ok::<_, std::io::Error>(chunk), response)),
+                Ok(None) => None,
+                Err(error) => Some((Err(std::io::Error::other(error)), response)),
+            }
+        },
+    ));
+    let mut builder = Response::builder()
+        .header("Content-Type", "application/zstd")
+        .header(
+            "Content-Disposition",
+            format!("attachment; filename=\"{}\"", download.file_name),
+        )
+        .header("Cache-Control", "no-store");
+    if let Some(length) = length {
+        builder = builder.header("Content-Length", length);
+    }
+    builder
+        .body(body)
+        .map_err(|error| ApiError::Internal(error.to_string()))
 }
 
 async fn instance_usage(
