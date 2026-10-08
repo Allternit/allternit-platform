@@ -21,7 +21,8 @@
       ],
       "decisions": [
         {"on": "2026-10-01", "note": "Resting orb sits under the last message on every surface (ai #357)."},
-        {"on": "2026-10-07", "note": "Polish pass from three reference shots: card-in-tray composer, numbered question card, working pill and shaped placeholders, one PreviewCard for every grid, Reply tray (the quote travels in the message text). Composer images now reach the model as file parts via `attachments` on /agent-chat and /ai/chat; before, they were never sent. Eoj: cards below the box on Desktop, previews above it on phone; neutral beam, never tan; full-colour logos."}
+        {"on": "2026-10-07", "note": "Polish pass from three reference shots: card-in-tray composer, numbered question card, working pill and shaped placeholders, one PreviewCard for every grid, Reply tray (the quote travels in the message text). Composer images now reach the model as file parts via `attachments` on /agent-chat and /ai/chat; before, they were never sent. Eoj: cards below the box on Desktop, previews above it on phone; neutral beam, never tan; full-colour logos."},
+        {"on": "2026-10-08", "note": "Any file or folder can be attached (no allow-list; text sniffed by content). Cards appear at once with Reading…; video/audio/other files go as Allternit Cloud links; sent messages show chips, not extracted text. Eoj: no grey ring on the composer; the tray only shows behind a reply strip or attachment cards."}
       ],
       "evidence": ["allternit/surfaces/docs/api/agent-chat.mdx", "allternit/cmd/allternit-api/src/chat_routes.rs", "allternit/surfaces/docs/guides/chat-composer.mdx"]
     },
