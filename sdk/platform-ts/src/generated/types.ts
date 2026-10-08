@@ -1,13 +1,59 @@
 // Generated from cmd/allternit-cloud-api/openapi/platform-v1.yaml by scripts/platform-sdk/generate.py. Do not edit.
 /* eslint-disable */
 
+export type Call = {
+  id?: string;
+  object?: "call";
+  account_id?: string;
+  agent_id?: string;
+  number_id?: (string | null);
+  direction?: "inbound" | "outbound" | "realtime";
+  from?: (string | null);
+  to?: (string | null);
+  purpose?: (string | null);
+  status?: "queued" | "ringing" | "in_progress" | "completed" | "failed" | "no_answer" | "canceled";
+  end_reason?: (string | null);
+  simulated?: boolean;
+  recording?: boolean;
+  transferred_to?: (string | null);
+  duration_seconds?: (number | null);
+  created_at?: string;
+  answered_at?: (string | null);
+  ended_at?: (string | null);
+};
+
 export type Error = {
   error: {
-    type: "invalid_request_error" | "authentication_error" | "permission_error" | "not_found_error" | "rate_limit_error" | "conflict_error" | "api_error";
+    type: "invalid_request_error" | "authentication_error" | "permission_error" | "not_found_error" | "rate_limit_error" | "conflict_error" | "billing_error" | "api_error";
     code: string;
     message: string;
     param: (string | null);
   };
+};
+
+export type SpendCap = {
+  object: "spend_cap";
+  project_id: string;
+  plan: "sandbox" | "payg" | "growth" | "enterprise";
+  spend_cap_cents: number;
+  /**
+   * The month, e.g. 2026-10 (UTC).
+   */
+  period: string;
+  /**
+   * Spend this month
+   */
+  spent_cents: number;
+  spent_microusd: number;
+  remaining_cents: number;
+  /**
+   * true once spend is at or over the cap: billable requests answer 402 spend_cap_reached.
+   */
+  reached: boolean;
+  /**
+   * usage.threshold webhooks already sent this month (50, 80, 100).
+   */
+  thresholds_sent: Array<number>;
 };
 
 export type ListEnvelope = {
@@ -174,7 +220,7 @@ export type WebhookEndpoint = {
 export type Event = {
   id: string;
   object: "event";
-  type: "message.received" | "message.status" | "registration.updated" | "webhook.test";
+  type: "approval.requested" | "message.received" | "message.status" | "registration.updated" | "inbox.item.created" | "call.started" | "call.ended" | "call.transcript.ready" | "usage.threshold" | "webhook.test";
   /**
    * Unix seconds.
    */
@@ -182,6 +228,118 @@ export type Event = {
   project_id: string;
   account_id?: (string | null);
   data: Record<string, unknown>;
+};
+
+export type Computer = {
+  id: string;
+  object: "computer";
+  name: string;
+  status: "provisioning" | "starting" | "running" | "stopping" | "stopped" | "error" | "deleted";
+  account_id?: (string | null);
+  /**
+   * The key that created it (`console` for the console).
+   */
+  key_id: string;
+  created_at: string;
+  started_at?: (string | null);
+  metadata: Record<string, unknown>;
+};
+
+export type ComputerList = {
+  data?: Array<Computer>;
+  has_more?: boolean;
+  next_cursor?: (string | null);
+};
+
+export type ComputerEvent = {
+  id?: string;
+  type?: "computer.action";
+  ts?: string;
+  data?: {
+    toolset?: string;
+    member?: string;
+    x?: (number | null);
+    y?: (number | null);
+    screen_w?: (number | null);
+    screen_h?: (number | null);
+    run_id?: (string | null);
+    ok?: boolean;
+  };
+};
+
+export type ComputerEventList = {
+  data?: Array<ComputerEvent>;
+  has_more?: boolean;
+  next_cursor?: (string | null);
+};
+
+export type ComputerSettings = {
+  hosted_driver_enabled?: boolean;
+  approval_mode?: "owner" | "api_key";
+  per_key_concurrency?: number;
+  browser_toolset?: boolean;
+};
+
+export type ToolsetCall = {
+  toolset: "computer" | "browser";
+  /**
+   * A contract member, e.g. screenshot, left_click, type, navigate.
+   */
+  member: string;
+  input?: Record<string, unknown>;
+  run_id?: string;
+  turn_id?: string;
+  call_index?: number;
+  model_frame?: {
+    width?: number;
+    height?: number;
+  };
+  coordinate_space?: "pixels" | "normalized_1000";
+  approval_grant?: string;
+  browser_session_id?: string;
+};
+
+export type ToolsetResult = {
+  is_error: boolean;
+  content: Array<{
+    type?: "text" | "image";
+    text?: string;
+    media_type?: string;
+    /**
+     * Base64 image.
+     */
+    data?: string;
+  }>;
+  browser_state?: Record<string, unknown>;
+  screen?: {
+    width?: number;
+    height?: number;
+    scale?: number;
+    frame_width?: number;
+    frame_height?: number;
+  };
+  /**
+   * Machine-readable code on failures: action_failed, unimplemented, not_executed, driver_failed.
+   */
+  error?: string;
+};
+
+export type ToolsetApprovalRequired = {
+  /**
+   * The usual error object, code approval_required.
+   */
+  error?: Record<string, unknown>;
+  approval?: {
+    id?: string;
+    action_hash?: string;
+    member?: string;
+    toolset?: string;
+    risk?: string;
+    confirmation_class?: string;
+    approve_url?: string;
+    approver?: "owner" | "api_key";
+  };
+  result?: ToolsetResult;
 };
 
 export type ListAccountsQuery = {
@@ -378,6 +536,14 @@ export type DeleteModelKeyResponse = {
   deleted?: true;
 };
 
+export type GetSpendCapResponse = SpendCap;
+
+export type PutSpendCapRequest = {
+  spend_cap_cents: number;
+};
+
+export type PutSpendCapResponse = SpendCap;
+
 export type GetUsageQuery = {
   group_by?: "meter" | "key" | "account";
   /**
@@ -444,6 +610,12 @@ export type CreateNumberRequest = {
 export type CreateNumberResponse = PhoneNumber;
 
 export type GetNumberResponse = PhoneNumber;
+
+export type UpdateNumberRequest = {
+  agent_id?: (string | null);
+};
+
+export type UpdateNumberResponse = PhoneNumber;
 
 export type ReleaseNumberResponse = {
   id?: string;
@@ -534,7 +706,7 @@ export type ListWebhooksResponse = {
 
 export type CreateWebhookRequest = {
   url: string;
-  events: Array<"*" | "message.received" | "message.status" | "registration.updated">;
+  events: Array<"*" | "approval.requested" | "message.received" | "message.status" | "registration.updated" | "inbox.item.created" | "call.started" | "call.ended" | "call.transcript.ready" | "usage.threshold">;
   description?: string;
 };
 
@@ -573,3 +745,162 @@ export type RedeliverWebhookResponse = {
   id?: string;
   queued?: boolean;
 };
+
+export type ListCallsResponse = {
+  data?: Array<Call>;
+  has_more?: boolean;
+  next_cursor?: (string | null);
+};
+
+export type CreateCallRequest = {
+  agent_id: string;
+  from_number_id: string;
+  to: string;
+  purpose: string;
+  record?: boolean;
+};
+
+export type CreateCallResponse = Call;
+
+export type GetCallResponse = Call;
+
+export type EndCallResponse = Call;
+
+export type TransferCallRequest = {
+  to?: string;
+  mode?: "warm" | "cold";
+};
+
+export type TransferCallResponse = Call;
+
+export type GetCallTranscriptResponse = Record<string, unknown>;
+
+export type GetCallRecordingResponse = Record<string, unknown>;
+
+export type SimulateCallTurnRequest = {
+  text: string;
+};
+
+export type SimulateCallTurnResponse = Record<string, unknown>;
+
+export type SimulateInboundCallRequest = {
+  from: string;
+};
+
+export type SimulateInboundCallResponse = Call;
+
+export type CreateRealtimeSessionRequest = {
+  agent_id: string;
+};
+
+export type CreateRealtimeSessionResponse = Record<string, unknown>;
+
+export type ListChannelsResponse = Record<string, unknown>;
+
+export type ConnectChannelRequest = Record<string, unknown>;
+
+export type ConnectChannelResponse = Record<string, unknown>;
+
+export type GetChannelResponse = Record<string, unknown>;
+
+export type DeleteChannelResponse = Record<string, unknown>;
+
+export type ListPeopleResponse = Record<string, unknown>;
+
+export type GetPersonResponse = Record<string, unknown>;
+
+export type UpdatePersonRequest = Record<string, unknown>;
+
+export type UpdatePersonResponse = Record<string, unknown>;
+
+export type ListInboxResponse = Record<string, unknown>;
+
+export type ResolveInboxItemResponse = Record<string, unknown>;
+
+export type ListApprovalsResponse = Record<string, unknown>;
+
+export type ApproveApprovalResponse = Record<string, unknown>;
+
+export type DenyApprovalResponse = Record<string, unknown>;
+
+export type ListMemoryResponse = Record<string, unknown>;
+
+export type AddMemoryRequest = Record<string, unknown>;
+
+export type AddMemoryResponse = Record<string, unknown>;
+
+export type DeleteMemoryResponse = Record<string, unknown>;
+
+export type GetAutonomyResponse = Record<string, unknown>;
+
+export type PutAutonomyRequest = Record<string, unknown>;
+
+export type PutAutonomyResponse = Record<string, unknown>;
+
+export type ListComputersQuery = {
+  /**
+   * Page size, 1 to 100 (default 20).
+   */
+  limit?: number;
+  /**
+   * Opaque cursor from `next_cursor` of the previous page.
+   */
+  after?: string;
+};
+
+export type ListComputersResponse = ComputerList;
+
+export type CreateComputerRequest = {
+  name?: string;
+  account_id?: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type CreateComputerResponse = Computer;
+
+export type GetComputerResponse = Computer;
+
+export type DeleteComputerResponse = Computer;
+
+export type StartComputerResponse = Computer;
+
+export type StopComputerResponse = Computer;
+
+export type CallComputerToolsetRequest = ToolsetCall;
+
+export type CallComputerToolsetResponse = ToolsetResult;
+
+export type GetComputerToolsetSchemaQuery = {
+  toolset?: "computer" | "browser";
+};
+
+export type GetComputerToolsetSchemaResponse = Record<string, unknown>;
+
+export type ListComputerEventsQuery = {
+  /**
+   * Page size, 1 to 100 (default 20).
+   */
+  limit?: number;
+  /**
+   * Opaque cursor from `next_cursor` of the previous page.
+   */
+  after?: string;
+};
+
+export type ListComputerEventsResponse = ComputerEventList;
+
+export type ApproveComputerActionResponse = {
+  approval_id?: string;
+  approved?: boolean;
+  approval_grant?: string;
+};
+
+export type GetComputerSettingsResponse = ComputerSettings;
+
+export type UpdateComputerSettingsRequest = {
+  approval_mode?: "owner" | "api_key";
+  per_key_concurrency?: number;
+  browser_toolset?: boolean;
+};
+
+export type UpdateComputerSettingsResponse = ComputerSettings;

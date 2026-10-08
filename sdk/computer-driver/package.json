@@ -1,0 +1,25 @@
+{
+  "name": "@allternit/computer-driver",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Drop-in drivers for Allternit hosted computers: a plain client plus Anthropic (computer/browser toolset), OpenAI computer-use and Gemini computer_use adapters.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
+    "./anthropic": { "types": "./dist/anthropic.d.ts", "import": "./dist/anthropic.js" },
+    "./openai": { "types": "./dist/openai.d.ts", "import": "./dist/openai.js" },
+    "./gemini": { "types": "./dist/gemini.d.ts", "import": "./dist/gemini.js" }
+  },
+  "files": ["dist", "README.md"],
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "peerDependencies": { "@anthropic-ai/sdk": ">=0.132.0" },
+  "peerDependenciesMeta": { "@anthropic-ai/sdk": { "optional": true } },
+  "devDependencies": { "@anthropic-ai/sdk": "0.132.0", "typescript": "^5.9.0" }
+}

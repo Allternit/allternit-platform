@@ -27,7 +27,9 @@ export interface ComputersClientConfig {
 export function configFromEnv(env: NodeJS.ProcessEnv = process.env): ComputersClientConfig {
   return {
     baseUrl: (env.ALLTERNIT_API_URL ?? 'http://127.0.0.1:8013').replace(/\/+$/, ''),
-    token: env.ALLTERNIT_TOKEN || undefined,
+    // A Platform API project key may be given as ALLTERNIT_API_KEY or
+    // ALLTERNIT_TOKEN; server.ts picks the /v1 client when it sees one.
+    token: env.ALLTERNIT_API_KEY || env.ALLTERNIT_TOKEN || undefined,
   };
 }
 

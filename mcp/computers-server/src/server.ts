@@ -19,6 +19,12 @@ import { Server, type CallToolResult, type Tool, type Transport } from '@modelco
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
 
 import { ApiError, ComputersApiClient, configFromEnv } from './client.js';
+import {
+  executePlatformToolCall,
+  isProjectKey,
+  PLATFORM_TOOL_SPECS,
+  PlatformClient,
+} from './platform.js';
 import { COMPUTER_TOOL_SPECS, type McpToolName } from './tool-spec.js';
 
 const API = '/api/v1';
@@ -275,27 +281,46 @@ export async function executeToolCall(
   }
 }
 
-export function createComputersMcpServer(client: ComputersApiClient = new ComputersApiClient(configFromEnv())): Server {
+/**
+ * Build the client for the configured credential: a Platform API project key
+ * (`alt_live_…` / `alt_test_…`) selects {@link PlatformClient}; anything else
+ * keeps the first-party lifecycle client.
+ */
+export function clientFromEnv(env: NodeJS.ProcessEnv = process.env): ComputersApiClient | PlatformClient {
+  const config = configFromEnv(env);
+  if (isProjectKey(config.token)) {
+    return new PlatformClient({
+      baseUrl: (env.ALLTERNIT_PLATFORM_URL ?? 'https://api.allternit.com').replace(/\/+$/, ''),
+      apiKey: config.token,
+    });
+  }
+  return new ComputersApiClient(config);
+}
+
+export function createComputersMcpServer(
+  client: ComputersApiClient | PlatformClient = clientFromEnv(),
+): Server {
   const server = new Server(
     { name: 'allternit-computers', version: '0.1.0' },
     { capabilities: { tools: {} } },
   );
+  const platform = client instanceof PlatformClient;
+  const specs = platform ? [...COMPUTER_TOOL_SPECS, ...PLATFORM_TOOL_SPECS] : COMPUTER_TOOL_SPECS;
 
   server.setRequestHandler('tools/list', async () => ({
-    tools: COMPUTER_TOOL_SPECS.map(({ name, description, inputSchema }) => ({
+    tools: specs.map(({ name, description, inputSchema }) => ({
       name,
       description,
       inputSchema: inputSchema as Tool['inputSchema'],
     })),
   }));
 
-  server.setRequestHandler('tools/call', async (request) =>
-    executeToolCall(
-      client,
-      request.params.name,
-      (request.params.arguments as ToolArgs) ?? {},
-    ),
-  );
+  server.setRequestHandler('tools/call', async (request) => {
+    const args = (request.params.arguments as ToolArgs) ?? {};
+    return client instanceof PlatformClient
+      ? executePlatformToolCall(client, request.params.name, args)
+      : executeToolCall(client, request.params.name, args);
+  });
 
   return server;
 }
@@ -306,10 +331,10 @@ export function createComputersMcpServer(client: ComputersApiClient = new Comput
  * `transport` is for tests; the default is this process's stdio.
  */
 export async function runComputersMcpServer(
-  client?: ComputersApiClient,
+  client?: ComputersApiClient | PlatformClient,
   transport?: Transport,
 ): Promise<{ close(): Promise<void> }> {
-  const make = () => createComputersMcpServer(client ?? new ComputersApiClient(configFromEnv()));
+  const make = () => createComputersMcpServer(client ?? clientFromEnv());
   const handle = serveStdio(make, transport ? { transport } : {});
   if (!transport) {
     let exiting = false;

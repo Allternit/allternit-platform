@@ -5,7 +5,7 @@ use sqlx::PgPool;
 use super::PlatformError;
 
 /// Exact meter strings (spec §7 / CONTRACTS).
-pub const METERS: [&str; 11] = [
+pub const METERS: [&str; 13] = [
     "voice_min_allternit",
     "voice_min_byok",
     "agent_month",
@@ -17,6 +17,9 @@ pub const METERS: [&str; 11] = [
     "mms",
     "registration_passthrough_cents",
     "recording_min_month",
+    // Hosted computer driver (computer toolset P6). Prices TBD (Eoj).
+    "computer_minute",
+    "computer_action",
 ];
 
 #[derive(Debug, Clone)]

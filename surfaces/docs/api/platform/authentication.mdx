@@ -18,7 +18,7 @@ Keys are created in the console at **platform.allternit.com → API Keys → Pla
 
 ## The console
 
-The console at **platform.allternit.com → Platform API** has pages for Projects, Agents (with model keys), Conversations, Usage and Webhooks. Those pages call the same `/v1` endpoints described here, with your signed-in Clerk session instead of a key plus the header `X-Allternit-Project: proj_…`. The API then acts on that project as its owner: every scope, no account binding, and its requests are keyed as `console:<user id>` for rate limits, idempotency and usage. A project you can't manage, or an archived one, answers `404 project_not_found`. A project key in `Authorization` always wins over the header. This is for the console; servers should use project keys.
+The console at **platform.allternit.com → Platform API** has pages for Projects, Agents (with model keys), Conversations, Computers, Usage and Webhooks. Those pages call the same `/v1` endpoints described here, with your signed-in Clerk session instead of a key plus the header `X-Allternit-Project: proj_…`. The API then acts on that project as its owner: every scope, no account binding, and its requests are keyed as `console:<user id>` for rate limits, idempotency and usage. A project you can't manage, or an archived one, answers `404 project_not_found`. A project key in `Authorization` always wins over the header. This is for the console; servers should use project keys.
 
 Older `alt_` keys (account keys, not project keys) keep working for the routes they always reached; they don't authenticate on the Platform API.
 
@@ -37,6 +37,7 @@ A key carries one or more scopes. A route that needs a scope the key lacks answe
 | `webhooks` | Webhook endpoints |
 | `usage` | Usage reports |
 | `inference` | `/v1/chat/completions` |
+| `computers` | [Hosted computers](/api/platform/computers) and their toolsets |
 | `compute` | Existing compute routes |
 
 Accounts can be managed with any resource scope (`agents`, `voice`, `messaging`, `numbers`, `channels`, `twin` or `webhooks`).

@@ -725,6 +725,55 @@ fn incus_name_with_prefix(prefix: &str, user_id: &str, discriminator: &str) -> S
     }
 }
 
+/// Synthetic owners of hosted-driver computers (`/v1/computers`): computers
+/// outside developers drive, never a person's own account.
+pub const HOSTED_DRIVER_OWNER_PREFIX: &str = "platform-drv:";
+
+pub fn is_hosted_driver_owner(user_id: &str) -> bool {
+    user_id.starts_with(HOSTED_DRIVER_OWNER_PREFIX)
+}
+
+fn env_list(name: &str) -> Vec<String> {
+    std::env::var(name)
+        .unwrap_or_default()
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// Host pool rule. `ALLTERNIT_HOSTED_DRIVER_HOSTS` (comma-separated host ids)
+/// names the hosts outside-developer computers run on. When set, those hosts
+/// take only hosted-driver computers and hosted-driver computers go only
+/// there. Unset: one shared pool (the separation is then the profile below).
+pub fn host_in_pool(host_id: &str, hosted_driver: bool) -> bool {
+    host_in_pool_with(&env_list("ALLTERNIT_HOSTED_DRIVER_HOSTS"), host_id, hosted_driver)
+}
+
+pub fn host_in_pool_with(pool: &[String], host_id: &str, hosted_driver: bool) -> bool {
+    if pool.is_empty() {
+        return true;
+    }
+    pool.iter().any(|h| h == host_id) == hosted_driver
+}
+
+/// Incus profiles for a new instance. Hosted-driver computers (their Incus
+/// name starts `allternit-free-platform-drv-`) use
+/// `ALLTERNIT_HOSTED_DRIVER_PROFILES` (default `default,allternit-hosted-driver`):
+/// the second profile puts eth0 on the egress-filtered network (no RFC1918,
+/// CGNAT/mesh or link-local/metadata; see deploy/incus/hosted-driver-egress.sh).
+pub fn profiles_for_instance(defaults: &[String], incus_name: &str) -> Vec<String> {
+    if !incus_name.starts_with("allternit-free-platform-drv-") {
+        return defaults.to_vec();
+    }
+    let configured = env_list("ALLTERNIT_HOSTED_DRIVER_PROFILES");
+    if configured.is_empty() {
+        vec!["default".to_string(), "allternit-hosted-driver".to_string()]
+    } else {
+        configured
+    }
+}
+
 /// Alias of the cancel-snapshot image for an instance name.
 pub fn snapshot_alias_for(incus_name: &str) -> String {
     format!("allternit-snap-{incus_name}")
@@ -2087,6 +2136,8 @@ impl ProvisioningService {
                 None => true,
             })
             .filter(|host| !full_hosts.contains(&host.id))
+            // Outside-developer computers (the hosted driver) get their own pool.
+            .filter(|host| host_in_pool(&host.id, is_hosted_driver_owner(user_id)))
             .collect();
         let Some(host_id) =
             select_host(&hosts, allocation.cpu_cores, allocation.memory_mb, allocation.disk_gb)
@@ -2495,7 +2546,7 @@ impl ProvisioningService {
             cpu_priority: cpu.priority,
             memory_mb: size.memory_mb,
             disk_gb: size.disk_gb,
-            profiles: self.defaults.profiles.clone(),
+            profiles: profiles_for_instance(&self.defaults.profiles, incus_name),
             storage_pool: self.defaults.storage_pool.clone(),
             user_data: build_user_data(
                 bootstrap,

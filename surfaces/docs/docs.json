@@ -255,6 +255,7 @@
               "operations/recovery",
               "operations/owned-downloads",
               "operations/screen-capture",
+              "operations/hosted-driver",
               "internal/channel-apps-owner-setup"
             ],
             "icon": "/icons/screen.svg"
@@ -592,6 +593,8 @@
               "api/platform/voice",
               "api/platform/channels",
               "api/platform/twin",
+              "api/platform/hosted-computers",
+              "api/platform/computers",
               "api/platform/webhooks",
               "api/platform/usage",
               "api/platform/pricing",

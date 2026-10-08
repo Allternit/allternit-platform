@@ -54,6 +54,7 @@ export const PROJECT_KEY_SCOPES: { value: string; label: string; hint: string }[
   { value: "webhooks", label: "Webhooks", hint: "Webhook endpoints" },
   { value: "usage", label: "Usage", hint: "Usage reports" },
   { value: "inference", label: "Inference", hint: "/v1/chat/completions" },
+  { value: "computers", label: "Computers", hint: "Hosted computers and the computer/browser toolsets" },
 ];
 
 /** True when the deployment has the Platform API switched off. */

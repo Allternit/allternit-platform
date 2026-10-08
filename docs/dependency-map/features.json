@@ -364,6 +364,25 @@
       "evidence": ["allternit/surfaces/docs/api/platform-v1.mdx"]
     },
     {
+      "id": "feature:hosted-computer-driver",
+      "label": "Hosted computer driver",
+      "product": "product:platform-api",
+      "status": "building",
+      "description": "Platform API /v1/computers: hosted computers that run a model's computer and browser tool calls, with drop-in drivers for the Anthropic SDK, OpenAI and Gemini, an MCP server, approvals and per-key limits.",
+      "touches": [
+        "allternit/cmd/allternit-cloud-api/src/routes/platform_v1/computers.rs",
+        "allternit/sdk/computer-driver",
+        "allternit/mcp/computers-server",
+        "allternit/surfaces/platform.allternit.com/src/pages/console/platform/ComputersPage.tsx",
+        "allternit/surfaces/docs/api/platform/hosted-computers.mdx",
+        "allternit/surfaces/docs/api/platform/computers.mdx"
+      ],
+      "decisions": [
+        {"on": "2026-10-07", "note": "Gated per project by hosted_driver_enabled, set by Allternit only; outside-developer computers can't reach private ranges or 169.254.169.254; pricing to be announced."}
+      ],
+      "evidence": ["allternit/surfaces/docs/api/platform/hosted-computers.mdx", "allternit/surfaces/docs/api/platform/computers.mdx"]
+    },
+    {
       "id": "feature:bot-avatars",
       "label": "Bot avatars and photo sprites",
       "product": "product:digital-twin",

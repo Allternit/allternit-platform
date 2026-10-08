@@ -97,6 +97,7 @@ export const consoleNav: ConsoleNavConfig = {
         { to: "/platform/projects", label: "Projects", icon: CubeIcon },
         { to: "/platform/agents", label: "Agents", icon: BotIcon },
         { to: "/platform/conversations", label: "Conversations", icon: BubbleChatIcon },
+        { to: "/platform/computers", label: "Computers", icon: ComputerIcon },
         { to: "/platform/usage", label: "Usage", icon: Analytics01Icon },
         { to: "/platform/webhooks", label: "Webhooks", icon: WebhookIcon },
       ],

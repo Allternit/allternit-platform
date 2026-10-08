@@ -1,0 +1,143 @@
+---
+title: 'Computers'
+description: 'The /v1/computers routes: create and manage hosted computers, call their toolsets, read events, approve actions, and set computer settings.'
+---
+
+Scope `computers`. Every route answers `404 hosted_driver_disabled` until Allternit turns the hosted driver on for the project. For a walkthrough, see [Hosted computer driver](/api/platform/hosted-computers). Errors use the usual `{ "error": { "type", "code", "message", "param" } }` shape ([Errors](/api/platform/errors)); every `POST` honors `Idempotency-Key`.
+
+## The computer object
+
+```json
+{
+  "id": "cmp_123",
+  "object": "computer",
+  "name": "checkout-test",
+  "status": "running",
+  "account_id": null,
+  "key_id": "key_…",
+  "created_at": "2026-10-07T15:00:00Z",
+  "started_at": "2026-10-07T15:00:20Z",
+  "metadata": {}
+}
+```
+
+`status` is one of `provisioning`, `starting`, `running`, `stopping`, `stopped`, `error` or `deleted`.
+
+## Lifecycle
+
+| Method and path | Body | Returns |
+|---|---|---|
+| `POST /v1/computers` | `{ name?, account_id?, metadata? }` | `201` computer |
+| `GET /v1/computers` | `?limit=&after=` | `{ data, has_more, next_cursor }` |
+| `GET /v1/computers/{id}` | | computer |
+| `POST /v1/computers/{id}/start` | | computer |
+| `POST /v1/computers/{id}/stop` | | computer |
+| `DELETE /v1/computers/{id}` | | computer with `status: "deleted"` |
+
+Creating or starting a computer can answer `402 spend_cap_reached` or `429 concurrency_limit` (the key already has `per_key_concurrency` computers running).
+
+## Toolset calls
+
+```http
+POST /v1/computers/{id}/toolset
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `toolset` | `"computer"` or `"browser"` | Required. |
+| `member` | string | Required. A member name from the schema, such as `screenshot` or `left_click`. |
+| `input` | object | The member's input. |
+| `run_id`, `turn_id`, `call_index` | string, string, integer | Optional ids that tie the call to your model loop; they appear in events. |
+| `model_frame` | `{ width, height }` | The screen size the model sees, if it differs from the computer's. |
+| `coordinate_space` | `"pixels"` or `"normalized_1000"` | How `input` coordinates are given. Default `pixels`. |
+| `approval_grant` | string | The approval id, when resending an approved call. |
+| `browser_session_id` | string | Browser toolset only. |
+
+A `200` is the result, even when the action failed (`is_error: true`):
+
+```json
+{
+  "is_error": false,
+  "content": [
+    { "type": "text", "text": "clicked" },
+    { "type": "image", "media_type": "image/png", "data": "iVBOR…" }
+  ],
+  "screen": { "width": 1280, "height": 800, "scale": 1, "frame_width": 1280, "frame_height": 800 }
+}
+```
+
+Browser calls also return `browser_state`. Other answers:
+
+| Status | Code | Meaning |
+|---|---|---|
+| `400` | | Unknown member or invalid input. |
+| `402` | `spend_cap_reached` | The project hit its spend cap. |
+| `403` | `policy_denied`, `approval_denied` | The action is not allowed, or its approval was denied. |
+| `409` | `approval_required` | Needs approval; see below. |
+| `423` | `computer_controlled_elsewhere` | Someone else is controlling the computer. |
+| `503` | `computer_starting` | Still starting; retry. |
+
+### Approvals
+
+A `409 approval_required` body carries `approval: { id, action_hash, member, toolset, risk, confirmation_class, approve_url }` and a `result` with a text explanation and the current `screen`. Approve it, then resend the same call with `approval_grant: approval.id`.
+
+```http
+POST /v1/computers/{id}/approvals/{approval_id}
+```
+
+Returns `{ "approval_id": "apr_…", "approved": true, "approval_grant": "…" }`. The project owner can always approve from the console. A key can approve only when the project's `approval_mode` is `api_key`; otherwise this answers `403 approval_requires_owner`.
+
+## Toolset schema
+
+```http
+GET /v1/computers/{id}/toolset/schema?toolset=computer
+```
+
+Returns `{ toolset, contract, anthropic_type, sandboxed, available, model_frame, screen, members }`. Each member has `name`, `enabled`, `reason`, `default_enabled`, `risk`, `needs_approval`, `description` and `input_schema`.
+
+## Events
+
+```http
+GET /v1/computers/{id}/events?after=&limit=
+```
+
+A log of executed actions, for polling. Pass `next_cursor` back as `after`.
+
+```json
+{
+  "data": [
+    {
+      "id": "evt_…",
+      "type": "computer.action",
+      "ts": "2026-10-07T15:01:02Z",
+      "data": { "toolset": "computer", "member": "left_click", "x": 640, "y": 400, "screen_w": 1280, "screen_h": 800, "run_id": "run_1", "ok": true }
+    }
+  ],
+  "has_more": false,
+  "next_cursor": null
+}
+```
+
+## Settings
+
+```http
+GET /v1/computer_settings
+PATCH /v1/computer_settings
+```
+
+```json
+{ "hosted_driver_enabled": true, "approval_mode": "owner", "per_key_concurrency": 2, "browser_toolset": true }
+```
+
+| Field | Notes |
+|---|---|
+| `hosted_driver_enabled` | Read-only. Set by Allternit. |
+| `approval_mode` | `owner` (approve in the console) or `api_key` (keys may call the approvals route). |
+| `per_key_concurrency` | Running computers allowed per key. |
+| `browser_toolset` | Whether keys can call the browser toolset. |
+
+The same settings are on the console's **Platform API → Computers** page.
+
+## Usage
+
+Meters `computer_minute` and `computer_action`; see [Usage](/api/platform/usage). Pricing is to be announced.
