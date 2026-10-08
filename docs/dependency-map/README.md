@@ -13,13 +13,21 @@ One map of every Allternit product, the APIs and SDKs underneath, the surfaces a
 ## Before changing a feature (agents)
 
 1. Query impact live. It reads your working tree, so it is always current:
-   `python3.11 scripts/dependency-map.py --impact allternit-ai/src/views/cowork`
-   (any repo-prefixed file or folder, or a component id such as `product:factory`). Use `--ai <worktree>` when your allternit-ai checkout is not the sibling folder.
-2. The output lists `changed` (the components your path belongs to), `partOf` (the products built from it), `features` and `journeys` (the ones that name it or a folder containing it), `products` and `surfaces` it can reach, and every `potentiallyAffected` component. Record the affected products, surfaces, contracts, docs and verification in your plan. Reach means review scope, not proof that every consumer needs an edit.
+   `python3.11 scripts/dependency-map.py --impact allternit-ai/src/views/cowork --summary`
+   (one or more repo-prefixed files or folders, or component ids such as `product:factory`). Use `--ai <worktree>` when your allternit-ai checkout is not the sibling folder. `--summary` prints a short text block per path (part of, features with status, journeys with the step numbers your path is, surfaces reached, how many components could be affected) for a plan or a delegation brief. Without it you get the full JSON.
+   The graph is cached in `~/.cache/allternit-depmap/`, keyed on both HEADs, tracked changes and the curated files, so repeat queries take about a second. A path the cached graph does not know (a new untracked file) rebuilds it; `--fresh` forces a rebuild. If your allternit-ai checkout is behind main, references to components it lacks are skipped with a warning.
+2. The JSON lists `changed` (the components your path belongs to), `partOf` (the products built from it), `features` and `journeys` (the ones that name it or a folder containing it), `products` and `surfaces` it can reach, and every `potentiallyAffected` component. Record the affected products, surfaces, contracts, docs and verification in your plan. Reach means review scope, not proof that every consumer needs an edit.
 3. If your change adds, removes or moves a product, a runtime call (HTTP, WebSocket, spawned process), a sidecar, or a shipping path, update `products.json` or `runtime-links.json` in the same PR, with evidence paths. If it adds a feature, changes which components a feature or journey runs through, changes a feature's status, or records a product decision, update `features.json` in the same PR.
 4. Before finishing, run `python3.11 scripts/dependency-map.py --validate`. It fails if any curated id or evidence path no longer resolves (for example after a rename). Fix the entry in the same PR.
 
 There is nothing generated to commit. The admin site rebuilds itself after merge.
+
+### How agents see the map without being told
+
+- **Session start (Claude Code on Eoj's Mac):** a `SessionStart` hook (`~/.claude/hooks/allternit-depmap-brief.sh`) runs `--brief` from `origin/main` whenever a session starts inside an Allternit checkout or worktree. The agent starts with every feature and its status, the user journeys, the recent decisions and the query command.
+- **Delegated work:** the agent-orchestrator skill runs `--impact <task paths> --summary` and pastes the result into the executor's task file, so a delegated Kimi, Codex, gizzi or Claude run starts out knowing which features, journeys and surfaces it can break.
+- **Instruction files:** `AGENTS.md` and `GIZZI.md` here, and `AGENTS.md`/`CLAUDE.md` in allternit-ai, carry the same rule for any harness that reads them.
+- `--brief` reads only the curated files, so it is instant and works without an allternit-ai checkout.
 
 ## How the map is made
 

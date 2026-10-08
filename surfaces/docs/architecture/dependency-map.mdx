@@ -8,11 +8,12 @@ Allternit keeps one map of its products, the APIs and SDKs underneath, the surfa
 ## Query impact before a change
 
 ```bash
-python3.11 scripts/dependency-map.py --impact allternit-ai/src/views/cowork
+python3.11 scripts/dependency-map.py --impact allternit-ai/src/views/cowork --summary
 python3.11 scripts/dependency-map.py --impact product:factory
+python3.11 scripts/dependency-map.py --brief
 ```
 
-The command reads your working tree, so the answer is always current. It returns the components your path belongs to, the features and user journeys that name them, the products and shipped surfaces (Desktop, ai.allternit.com, the m.allternit.com PWA, platform.allternit.com, the docs site, the gizzi CLI) it can reach, and every other component that could be affected. Treat that list as review scope; inspect callers and contracts to decide what actually changes.
+The command reads your working tree, so the answer is always current. It returns the components your path belongs to, the features and user journeys that name them, the products and shipped surfaces (Desktop, ai.allternit.com, the m.allternit.com PWA, platform.allternit.com, the docs site, the gizzi CLI) it can reach, and every other component that could be affected. Treat that list as review scope; inspect callers and contracts to decide what actually changes. `--summary` prints the same answer as a short text block for a plan or a delegation brief, and accepts several paths at once. Results are cached against both repositories' state, so repeat queries take about a second. `--brief` lists every feature with its status, the user journeys and the recent product decisions; agents get it automatically at session start and in delegated task files.
 
 ## Keep the curated links true
 

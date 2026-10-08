@@ -129,3 +129,7 @@ what you actually intend to touch, not just what you remember touching —
 `main` moving out from under a long-running session mid-work is a known,
 recurring, benign event here (resolve with a fast-forward merge, not by
 treating it as your own scope creep).
+
+## Living dependency map — feature impact
+
+Before touching a feature, read [docs/dependency-map/README.md](docs/dependency-map/README.md). Run `python3.11 scripts/dependency-map.py --impact <changed paths> --summary` to see the products, features, user journeys and shipped surfaces a change can reach, and put them in your plan (drop `--summary` for the full JSON list). The query is cached against both repos' state, so it is fast after the first run. `python3.11 scripts/dependency-map.py --brief` prints every feature with its status, the user journeys, and the recent product decisions. If you add, remove or move a product, a runtime call, a sidecar or a shipping path, update `docs/dependency-map/products.json` or `runtime-links.json` in the same PR. If you add a feature, change its status or the components it touches, change a user journey, or make a product decision, update `docs/dependency-map/features.json` in the same PR (decisions are dated). Run `--validate` before finishing. Never commit generated map output (graph.json, index.html, dist/admin-site): it lists the private allternit-ai repo and this repo is public. admin.allternit.com rebuilds itself after merge.
