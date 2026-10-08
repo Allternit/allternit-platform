@@ -1,0 +1,1502 @@
+{
+  "id": "allternit.browser.v1",
+  "toolset": "browser",
+  "version": 1,
+  "upstream": {
+    "anthropic_type": "browser_toolset_20260801",
+    "toolset_name": "browser",
+    "sdk": "@anthropic-ai/sdk",
+    "sdk_version": "0.132.0"
+  },
+  "batch_halt_text": "Not executed: an earlier action in this turn failed.",
+  "model_frame": {
+    "max_long_edge": 1568,
+    "max_pixels": 1150000,
+    "rule": "Screenshots are downscaled (never upscaled) to fit long edge <= max_long_edge and width*height <= max_pixels, keeping aspect. Coordinates the model sends are in that frame; the executor scales them to screen pixels. The executor is the only place scaling happens."
+  },
+  "coordinate_spaces": {
+    "pixels": "Model-frame pixels (default).",
+    "normalized_1000": "A 0..1000 grid over the screen on both axes (UI-TARS / Qwen-VL style); x_screen = round(x / 1000 * screen_width)."
+  },
+  "risk_classes": {
+    "reversible": "aci_safety::ConfirmationClass::Reversible",
+    "risky": "aci_safety::ConfirmationClass::Risky",
+    "irreversible": "aci_safety::ConfirmationClass::Irreversible"
+  },
+  "confirm_rules": {
+    "never": "No human approval.",
+    "non_sandbox": "Needs a single-use action-hash approval grant on non-sandbox targets (this-device, paired computers). Sandboxed targets (cloud/bot computers, gateway browser sessions) run it without approval.",
+    "always": "Always needs a single-use action-hash approval grant.",
+    "irreversible": "Any member whose risk is irreversible needs a grant, whatever its confirm rule."
+  },
+  "result_shape": {
+    "type": "object",
+    "required": [
+      "is_error",
+      "content",
+      "screen"
+    ],
+    "properties": {
+      "is_error": {
+        "type": "boolean"
+      },
+      "content": {
+        "type": "array",
+        "items": {
+          "anyOf": [
+            {
+              "type": "object",
+              "required": [
+                "type",
+                "text"
+              ],
+              "properties": {
+                "type": {
+                  "const": "text"
+                },
+                "text": {
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "required": [
+                "type",
+                "media_type",
+                "data"
+              ],
+              "properties": {
+                "type": {
+                  "const": "image"
+                },
+                "media_type": {
+                  "type": "string"
+                },
+                "data": {
+                  "type": "string",
+                  "description": "base64, no data: prefix"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "browser_state": {
+        "type": "object",
+        "required": [
+          "tabs"
+        ],
+        "properties": {
+          "tabs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "tab_id",
+                "title",
+                "url"
+              ],
+              "properties": {
+                "tab_id": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                },
+                "active": {
+                  "type": "boolean"
+                }
+              }
+            }
+          },
+          "state_changes": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "screen": {
+        "type": "object",
+        "required": [
+          "width",
+          "height",
+          "scale"
+        ],
+        "properties": {
+          "width": {
+            "type": "integer",
+            "description": "screen (or viewport) width in px"
+          },
+          "height": {
+            "type": "integer"
+          },
+          "scale": {
+            "type": "number",
+            "description": "screen px per model-frame px (>= 1)"
+          },
+          "frame_width": {
+            "type": "integer"
+          },
+          "frame_height": {
+            "type": "integer"
+          }
+        }
+      }
+    }
+  },
+  "members": [
+    {
+      "name": "navigate",
+      "description": "Navigate to a URL, or go back/forward/reload in history. The protocol may be omitted (defaults to https://).",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "navigate",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "The URL to navigate to, or \"back\" / \"forward\" / \"reload\" for history navigation."
+          },
+          "tab_id": {
+            "type": "string",
+            "description": "Tab to act on. Defaults to the active tab when omitted."
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "screenshot",
+      "description": "Capture the current browser viewport.",
+      "risk": "reversible",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "screenshot",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "tab_id": {
+            "type": "string",
+            "description": "Tab to act on. Defaults to the active tab when omitted."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "zoom",
+      "description": "Return a cropped screenshot of the given viewport region, scaled up for closer inspection — useful for small icons, buttons, or text. Coordinates are in the same viewport-pixel space as a full screenshot.",
+      "risk": "reversible",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "screenshot",
+      "scale_fields": {
+        "region": "rect"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "region": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 4,
+            "maxItems": 4,
+            "description": "[x0, y0, x1, y1] in viewport pixels."
+          },
+          "tab_id": {
+            "type": "string",
+            "description": "Tab to act on. Defaults to the active tab when omitted."
+          }
+        },
+        "required": [
+          "region"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "left_click",
+      "description": "Left-click at a viewport coordinate or on an element by reference.",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "ack_text": "Clicked.",
+      "scale_fields": {
+        "target": "target"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "coordinate"
+                  },
+                  "x": {
+                    "type": "number",
+                    "description": "Pixels from the left edge of the viewport."
+                  },
+                  "y": {
+                    "type": "number",
+                    "description": "Pixels from the top edge of the viewport."
+                  }
+                },
+                "required": [
+                  "type",
+                  "x",
+                  "y"
+                ],
+                "additionalProperties": false,
+                "description": "A point in the browser viewport, in viewport pixels (the same frame as a full-viewport screenshot)."
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "ref": {
+                    "type": "string",
+                    "description": "An element reference (e.g. \"ref_7\") returned by a prior `read_page` or `find` result."
+                  },
+                  "type": {
+                    "type": "string",
+                    "const": "ref"
+                  }
+                },
+                "required": [
+                  "ref",
+                  "type"
+                ],
+                "additionalProperties": false,
+                "description": "An element on the page, identified by a reference from a prior `read_page` or `find` result. References are scoped to the tab that produced them and become stale after navigation or a major re-render."
+              }
+            ],
+            "description": "Where to act: either a viewport coordinate or an element reference."
+          },
+          "modifiers": {
+            "type": "string",
+            "description": "Optional modifier key chord to hold for the duration of this action (e.g. \"shift\", \"ctrl+shift\", \"cmd+alt\")."
+          },
+          "tab_id": {
+            "type": "string",
+            "description": "Tab to act on. Defaults to the active tab when omitted."
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "right_click",
+      "description": "Right-click at a viewport coordinate or on an element by reference.",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "ack_text": "Right-clicked.",
+      "scale_fields": {
+        "target": "target"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "coordinate"
+                  },
+                  "x": {
+                    "type": "number",
+                    "description": "Pixels from the left edge of the viewport."
+                  },
+                  "y": {
+                    "type": "number",
+                    "description": "Pixels from the top edge of the viewport."
+                  }
+                },
+                "required": [
+                  "type",
+                  "x",
+                  "y"
+                ],
+                "additionalProperties": false,
+                "description": "A point in the browser viewport, in viewport pixels (the same frame as a full-viewport screenshot)."
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "ref": {
+                    "type": "string",
+                    "description": "An element reference (e.g. \"ref_7\") returned by a prior `read_page` or `find` result."
+                  },
+                  "type": {
+                    "type": "string",
+                    "const": "ref"
+                  }
+                },
+                "required": [
+                  "ref",
+                  "type"
+                ],
+                "additionalProperties": false,
+                "description": "An element on the page, identified by a reference from a prior `read_page` or `find` result. References are scoped to the tab that produced them and become stale after navigation or a major re-render."
+              }
+            ],
+            "description": "Where to act: either a viewport coordinate or an element reference."
+          },
+          "modifiers": {
+            "type": "string",
+            "description": "Optional modifier key chord to hold for the duration of this action (e.g. \"shift\", \"ctrl+shift\", \"cmd+alt\")."
+          },
+          "tab_id": {
+            "type": "string",
+            "description": "Tab to act on. Defaults to the active tab when omitted."
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "middle_click",
+      "description": "Middle-click at a viewport coordinate or on an element by reference.",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "ack_text": "Middle-clicked.",
+      "scale_fields": {
+        "target": "target"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "coordinate"
+                  },
+                  "x": {
+                    "type": "number",
+                    "description": "Pixels from the left edge of the viewport."
+                  },
+                  "y": {
+                    "type": "number",
+                    "description": "Pixels from the top edge of the viewport."
+                  }
+                },
+                "required": [
+                  "type",
+                  "x",
+                  "y"
+                ],
+                "additionalProperties": false,
+                "description": "A point in the browser viewport, in viewport pixels (the same frame as a full-viewport screenshot)."
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "ref": {
+                    "type": "string",
+                    "description": "An element reference (e.g. \"ref_7\") returned by a prior `read_page` or `find` result."
+                  },
+                  "type": {
+                    "type": "string",
+                    "const": "ref"
+                  }
+                },
+                "required": [
+                  "ref",
+                  "type"
+                ],
+                "additionalProperties": false,
+                "description": "An element on the page, identified by a reference from a prior `read_page` or `find` result. References are scoped to the tab that produced them and become stale after navigation or a major re-render."
+              }
+            ],
+            "description": "Where to act: either a viewport coordinate or an element reference."
+          },
+          "modifiers": {
+            "type": "string",
+            "description": "Optional modifier key chord to hold for the duration of this action (e.g. \"shift\", \"ctrl+shift\", \"cmd+alt\")."
+          },
+          "tab_id": {
+            "type": "string",
+            "description": "Tab to act on. Defaults to the active tab when omitted."
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "double_click",
+      "description": "Double left-click at a viewport coordinate or on an element by reference.",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "ack_text": "Double-clicked.",
+      "scale_fields": {
+        "target": "target"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "coordinate"
+                  },
+                  "x": {
+                    "type": "number",
+                    "description": "Pixels from the left edge of the viewport."
+                  },
+                  "y": {
+                    "type": "number",
+                    "description": "Pixels from the top edge of the viewport."
+                  }
+                },
+                "required": [
+                  "type",
+                  "x",
+                  "y"
+                ],
+                "additionalProperties": false,
+                "description": "A point in the browser viewport, in viewport pixels (the same frame as a full-viewport screenshot)."
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "ref": {
+                    "type": "string",
+                    "description": "An element reference (e.g. \"ref_7\") returned by a prior `read_page` or `find` result."
+                  },
+                  "type": {
+                    "type": "string",
+                    "const": "ref"
+                  }
+                },
+                "required": [
+                  "ref",
+                  "type"
+                ],
+                "additionalProperties": false,
+                "description": "An element on the page, identified by a reference from a prior `read_page` or `find` result. References are scoped to the tab that produced them and become stale after navigation or a major re-render."
+              }
+            ],
+            "description": "Where to act: either a viewport coordinate or an element reference."
+          },
+          "modifiers": {
+            "type": "string",
+            "description": "Optional modifier key chord to hold for the duration of this action (e.g. \"shift\", \"ctrl+shift\", \"cmd+alt\")."
+          },
+          "tab_id": {
+            "type": "string",
+            "description": "Tab to act on. Defaults to the active tab when omitted."
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "triple_click",
+      "description": "Triple left-click at a viewport coordinate or on an element by reference (typically selects a line or paragraph).",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "ack_text": "Triple-clicked.",
+      "scale_fields": {
+        "target": "target"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "coordinate"
+                  },
+                  "x": {
+                    "type": "number",
+                    "description": "Pixels from the left edge of the viewport."
+                  },
+                  "y": {
+                    "type": "number",
+                    "description": "Pixels from the top edge of the viewport."
+                  }
+                },
+                "required": [
+                  "type",
+                  "x",
+                  "y"
+                ],
+                "additionalProperties": false,
+                "description": "A point in the browser viewport, in viewport pixels (the same frame as a full-viewport screenshot)."
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "ref": {
+                    "type": "string",
+                    "description": "An element reference (e.g. \"ref_7\") returned by a prior `read_page` or `find` result."
+                  },
+                  "type": {
+                    "type": "string",
+                    "const": "ref"
+                  }
+                },
+                "required": [
+                  "ref",
+                  "type"
+                ],
+                "additionalProperties": false,
+                "description": "An element on the page, identified by a reference from a prior `read_page` or `find` result. References are scoped to the tab that produced them and become stale after navigation or a major re-render."
+              }
+            ],
+            "description": "Where to act: either a viewport coordinate or an element reference."
+          },
+          "modifiers": {
+            "type": "string",
+            "description": "Optional modifier key chord to hold for the duration of this action (e.g. \"shift\", \"ctrl+shift\", \"cmd+alt\")."
+          },
+          "tab_id": {
+            "type": "string",
+            "description": "Tab to act on. Defaults to the active tab when omitted."
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "hover",
+      "description": "Move the cursor to a coordinate or element without clicking.",
+      "risk": "reversible",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "ack_text": "Hovered.",
+      "scale_fields": {
+        "target": "target"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "coordinate"
+                  },
+                  "x": {
+                    "type": "number",
+                    "description": "Pixels from the left edge of the viewport."
+                  },
+                  "y": {
+                    "type": "number",
+                    "description": "Pixels from the top edge of the viewport."
+                  }
+                },
+                "required": [
+                  "type",
+                  "x",
+                  "y"
+                ],
+                "additionalProperties": false,
+                "description": "A point in the browser viewport, in viewport pixels (the same frame as a full-viewport screenshot)."
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "ref": {
+                    "type": "string",
+                    "description": "An element reference (e.g. \"ref_7\") returned by a prior `read_page` or `find` result."
+                  },
+                  "type": {
+                    "type": "string",
+                    "const": "ref"
+                  }
+                },
+                "required": [
+                  "ref",
+                  "type"
+                ],
+                "additionalProperties": false,
+                "description": "An element on the page, identified by a reference from a prior `read_page` or `find` result. References are scoped to the tab that produced them and become stale after navigation or a major re-render."
+              }
+            ],
+            "description": "Where to act: either a viewport coordinate or an element reference."
+          },
+          "tab_id": {
+            "type": "string",
+            "description": "Tab to act on. Defaults to the active tab when omitted."
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "left_click_drag",
+      "description": "Press at `from`, drag to `target`, release. Both must be coordinate targets.",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "ack_text": "Dragged.",
+      "scale_fields": {
+        "from": "target",
+        "target": "target"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "coordinate"
+              },
+              "x": {
+                "type": "number",
+                "description": "Pixels from the left edge of the viewport."
+              },
+              "y": {
+                "type": "number",
+                "description": "Pixels from the top edge of the viewport."
+              }
+            },
+            "required": [
+              "type",
+              "x",
+              "y"
+            ],
+            "additionalProperties": false,
+            "description": "A point in the browser viewport, in viewport pixels (the same frame as a full-viewport screenshot)."
+          },
+          "target": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "coordinate"
+              },
+              "x": {
+                "type": "number",
+                "description": "Pixels from the left edge of the viewport."
+              },
+              "y": {
+                "type": "number",
+                "description": "Pixels from the top edge of the viewport."
+              }
+            },
+            "required": [
+              "type",
+              "x",
+              "y"
+            ],
+            "additionalProperties": false,
+            "description": "A point in the browser viewport, in viewport pixels (the same frame as a full-viewport screenshot)."
+          },
+          "tab_id": {
+            "type": "string",
+            "description": "Tab to act on. Defaults to the active tab when omitted."
+          }
+        },
+        "required": [
+          "from",
+          "target"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "left_mouse_down",
+      "description": "Press and hold the left mouse button at a viewport coordinate. Pair with left_mouse_up to perform a custom drag.",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "ack_text": "Mouse button pressed.",
+      "scale_fields": {
+        "target": "target"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "coordinate"
+              },
+              "x": {
+                "type": "number",
+                "description": "Pixels from the left edge of the viewport."
+              },
+              "y": {
+                "type": "number",
+                "description": "Pixels from the top edge of the viewport."
+              }
+            },
+            "required": [
+              "type",
+              "x",
+              "y"
+            ],
+            "additionalProperties": false,
+            "description": "A point in the browser viewport, in viewport pixels (the same frame as a full-viewport screenshot)."
+          },
+          "tab_id": {
+            "type": "string",
+            "description": "Tab to act on. Defaults to the active tab when omitted."
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "left_mouse_up",
+      "description": "Release the left mouse button at a viewport coordinate.",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "ack_text": "Mouse button released.",
+      "scale_fields": {
+        "target": "target"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "coordinate"
+              },
+              "x": {
+                "type": "number",
+                "description": "Pixels from the left edge of the viewport."
+              },
+              "y": {
+                "type": "number",
+                "description": "Pixels from the top edge of the viewport."
+              }
+            },
+            "required": [
+              "type",
+              "x",
+              "y"
+            ],
+            "additionalProperties": false,
+            "description": "A point in the browser viewport, in viewport pixels (the same frame as a full-viewport screenshot)."
+          },
+          "tab_id": {
+            "type": "string",
+            "description": "Tab to act on. Defaults to the active tab when omitted."
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "mouse_move",
+      "description": "Move the pointer to a viewport coordinate without clicking.",
+      "risk": "reversible",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "ack_text": "Moved the mouse.",
+      "scale_fields": {
+        "target": "target"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "coordinate"
+              },
+              "x": {
+                "type": "number",
+                "description": "Pixels from the left edge of the viewport."
+              },
+              "y": {
+                "type": "number",
+                "description": "Pixels from the top edge of the viewport."
+              }
+            },
+            "required": [
+              "type",
+              "x",
+              "y"
+            ],
+            "additionalProperties": false,
+            "description": "A point in the browser viewport, in viewport pixels (the same frame as a full-viewport screenshot)."
+          },
+          "tab_id": {
+            "type": "string",
+            "description": "Tab to act on. Defaults to the active tab when omitted."
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "scroll",
+      "description": "Scroll at a viewport position. `target` must be a coordinate target.",
+      "risk": "reversible",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "ack_text": "Scrolled {scroll_direction}.",
+      "scale_fields": {
+        "target": "target"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "scroll_direction": {
+            "type": "string",
+            "enum": [
+              "up",
+              "down",
+              "left",
+              "right"
+            ]
+          },
+          "target": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "coordinate"
+              },
+              "x": {
+                "type": "number",
+                "description": "Pixels from the left edge of the viewport."
+              },
+              "y": {
+                "type": "number",
+                "description": "Pixels from the top edge of the viewport."
+              }
+            },
+            "required": [
+              "type",
+              "x",
+              "y"
+            ],
+            "additionalProperties": false,
+            "description": "A point in the browser viewport, in viewport pixels (the same frame as a full-viewport screenshot)."
+          },
+          "scroll_amount": {
+            "type": "number",
+            "description": "Scroll-wheel notches (1–10). Default 3."
+          },
+          "tab_id": {
+            "type": "string",
+            "description": "Tab to act on. Defaults to the active tab when omitted."
+          }
+        },
+        "required": [
+          "scroll_direction",
+          "target"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "scroll_to",
+      "description": "Scroll an element into view.",
+      "risk": "reversible",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "ack_text": "Scrolled to {ref}.",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "object",
+            "properties": {
+              "ref": {
+                "type": "string",
+                "description": "An element reference (e.g. \"ref_7\") returned by a prior `read_page` or `find` result."
+              },
+              "type": {
+                "type": "string",
+                "const": "ref"
+              }
+            },
+            "required": [
+              "ref",
+              "type"
+            ],
+            "additionalProperties": false,
+            "description": "An element on the page, identified by a reference from a prior `read_page` or `find` result. References are scoped to the tab that produced them and become stale after navigation or a major re-render."
+          },
+          "tab_id": {
+            "type": "string",
+            "description": "Tab to act on. Defaults to the active tab when omitted."
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "type",
+      "description": "Type a literal string at the current focus.",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": true,
+      "confirm": "non_sandbox",
+      "result_kind": "none",
+      "ack_text": "Typed.",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "The text to type."
+          },
+          "tab_id": {
+            "type": "string",
+            "description": "Tab to act on. Defaults to the active tab when omitted."
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "key",
+      "description": "Press a key or key chord. Use \"+\" to combine modifiers with a key (e.g. \"ctrl+a\", \"cmd+shift+p\") and space to sequence presses (e.g. \"Backspace Backspace Delete\"). Common names like \"Return\", \"Tab\", \"Escape\", \"BackSpace\" are supported.",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": true,
+      "confirm": "non_sandbox",
+      "result_kind": "none",
+      "ack_text": "Pressed {text}.",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "The key, chord, or space-separated sequence to press."
+          },
+          "repeat": {
+            "type": "number",
+            "description": "Number of times to repeat. Default 1."
+          },
+          "tab_id": {
+            "type": "string",
+            "description": "Tab to act on. Defaults to the active tab when omitted."
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "hold_key",
+      "description": "Hold a key or key chord down for a duration, then release it. Uses the same key names and \"+\" chord syntax as the key action.",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": true,
+      "confirm": "non_sandbox",
+      "result_kind": "none",
+      "ack_text": "Held {text} for {duration}s.",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "duration": {
+            "type": "number",
+            "description": "Seconds to hold the key down (maximum 30)."
+          },
+          "text": {
+            "type": "string",
+            "description": "The key or chord to hold."
+          },
+          "tab_id": {
+            "type": "string",
+            "description": "Tab to act on. Defaults to the active tab when omitted."
+          }
+        },
+        "required": [
+          "duration",
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "wait",
+      "description": "Pause for the given duration.",
+      "risk": "reversible",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "ack_text": "Waited {duration}s.",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "duration": {
+            "type": "number",
+            "description": "Seconds to wait (maximum 30)."
+          },
+          "tab_id": {
+            "type": "string",
+            "description": "Tab to act on. Defaults to the active tab when omitted."
+          }
+        },
+        "required": [
+          "duration"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "read_page",
+      "description": "Return a structured accessibility tree of the page (or the subtree rooted at `ref`), with element references like [ref_7] that can be used as targets on later actions. Output is capped at 50,000 characters — narrow with `ref` or a smaller `depth` when exceeded.",
+      "risk": "reversible",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "text",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "depth": {
+            "type": "number",
+            "description": "Maximum tree depth. Default 15."
+          },
+          "filter": {
+            "type": "string",
+            "enum": [
+              "all",
+              "interactive"
+            ],
+            "description": "Which elements to include. Omitted: every visible element. \"interactive\": interactive elements only. \"all\": additionally includes off-viewport elements."
+          },
+          "ref": {
+            "type": "string",
+            "description": "Element reference to read a subtree from. Omit to read from the page root."
+          },
+          "tab_id": {
+            "type": "string",
+            "description": "Tab to act on. Defaults to the active tab when omitted."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "find",
+      "description": "Find elements matching a natural-language description (e.g. \"search bar\", \"add to cart button\") and return up to 20 matches with element references.",
+      "risk": "reversible",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "text",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Natural-language description of the element(s) to find."
+          },
+          "tab_id": {
+            "type": "string",
+            "description": "Tab to act on. Defaults to the active tab when omitted."
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_page_text",
+      "description": "Return the page's visible text content as plain text, prioritizing article content. Suited to articles, documentation, and other text-heavy pages.",
+      "risk": "reversible",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "text",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "tab_id": {
+            "type": "string",
+            "description": "Tab to act on. Defaults to the active tab when omitted."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "form_input",
+      "description": "Set the value of a form element (input, textarea, select, checkbox). Use a boolean for checkboxes, an option value or text for selects.",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": true,
+      "confirm": "non_sandbox",
+      "result_kind": "none",
+      "ack_text": "Set the value of {ref}.",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "object",
+            "properties": {
+              "ref": {
+                "type": "string",
+                "description": "An element reference (e.g. \"ref_7\") returned by a prior `read_page` or `find` result."
+              },
+              "type": {
+                "type": "string",
+                "const": "ref"
+              }
+            },
+            "required": [
+              "ref",
+              "type"
+            ],
+            "additionalProperties": false,
+            "description": "An element on the page, identified by a reference from a prior `read_page` or `find` result. References are scoped to the tab that produced them and become stale after navigation or a major re-render."
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              }
+            ],
+            "description": "The value to set."
+          },
+          "tab_id": {
+            "type": "string",
+            "description": "Tab to act on. Defaults to the active tab when omitted."
+          }
+        },
+        "required": [
+          "target",
+          "value"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "file_upload",
+      "description": "Set the value of a file-input element to one or more files. The target must be an element reference; at least one of paths or document_ids is required.",
+      "risk": "irreversible",
+      "default_enabled": false,
+      "needs_confirm": true,
+      "confirm": "always",
+      "result_kind": "none",
+      "ack_text": "Uploaded.",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "object",
+            "properties": {
+              "ref": {
+                "type": "string",
+                "description": "An element reference (e.g. \"ref_7\") returned by a prior `read_page` or `find` result."
+              },
+              "type": {
+                "type": "string",
+                "const": "ref"
+              }
+            },
+            "required": [
+              "ref",
+              "type"
+            ],
+            "additionalProperties": false,
+            "description": "An element on the page, identified by a reference from a prior `read_page` or `find` result. References are scoped to the tab that produced them and become stale after navigation or a major re-render."
+          },
+          "document_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "References to files the harness has staged, for deployments where the browser executor cannot read the caller's filesystem."
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "File paths on the browser executor's filesystem."
+          },
+          "tab_id": {
+            "type": "string",
+            "description": "Tab to act on. Defaults to the active tab when omitted."
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "read_console",
+      "description": "Return console output (log entries, errors, warnings) accumulated since the driver attached to the tab and since the last read, one line per entry. An empty result does not mean no traffic for a tab that predates attach.",
+      "risk": "reversible",
+      "default_enabled": false,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "text",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "tab_id": {
+            "type": "string",
+            "description": "Tab to act on. Defaults to the active tab when omitted."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "read_network",
+      "description": "Return the network requests (method, URL, status, MIME type, timing) recorded since the driver attached to the tab and since the last read, one line per entry. An empty result does not mean no traffic for a tab that predates attach.",
+      "risk": "reversible",
+      "default_enabled": false,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "text",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "tab_id": {
+            "type": "string",
+            "description": "Tab to act on. Defaults to the active tab when omitted."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "javascript_exec",
+      "description": "Execute JavaScript in the page context and return the value of the last expression. The code runs with access to the DOM, `window`, and page variables. Write the expression you want evaluated — do NOT use `return`.",
+      "risk": "irreversible",
+      "default_enabled": false,
+      "needs_confirm": true,
+      "confirm": "always",
+      "result_kind": "text",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "JavaScript to execute in the page context."
+          },
+          "tab_id": {
+            "type": "string",
+            "description": "Tab to act on. Defaults to the active tab when omitted."
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "new_tab",
+      "description": "Open a new empty tab and return its tab_id.",
+      "risk": "reversible",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "tab",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_tabs",
+      "description": "List all open tabs with each tab's tab_id, title, and URL.",
+      "risk": "reversible",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "tabs",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "switch_tab",
+      "description": "Make the tab with the given tab_id the active tab — the tab that actions without a tab_id apply to.",
+      "risk": "reversible",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "tab",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "tab_id": {
+            "type": "string",
+            "description": "The tab to switch to."
+          }
+        },
+        "required": [
+          "tab_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "close_tab",
+      "description": "Close the tab with the given tab_id.",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "tab_id": {
+            "type": "string",
+            "description": "The tab to close."
+          }
+        },
+        "required": [
+          "tab_id"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

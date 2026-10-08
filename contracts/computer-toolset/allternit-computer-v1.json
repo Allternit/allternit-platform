@@ -1,0 +1,608 @@
+{
+  "id": "allternit.computer.v1",
+  "toolset": "computer",
+  "version": 1,
+  "upstream": {
+    "anthropic_type": "computer_toolset_20260801",
+    "toolset_name": "computer",
+    "sdk": "@anthropic-ai/sdk",
+    "sdk_version": "0.132.0"
+  },
+  "batch_halt_text": "Not executed: an earlier computer action in this turn failed.",
+  "model_frame": {
+    "max_long_edge": 1568,
+    "max_pixels": 1150000,
+    "rule": "Screenshots are downscaled (never upscaled) to fit long edge <= max_long_edge and width*height <= max_pixels, keeping aspect. Coordinates the model sends are in that frame; the executor scales them to screen pixels. The executor is the only place scaling happens."
+  },
+  "coordinate_spaces": {
+    "pixels": "Model-frame pixels (default).",
+    "normalized_1000": "A 0..1000 grid over the screen on both axes (UI-TARS / Qwen-VL style); x_screen = round(x / 1000 * screen_width)."
+  },
+  "risk_classes": {
+    "reversible": "aci_safety::ConfirmationClass::Reversible",
+    "risky": "aci_safety::ConfirmationClass::Risky",
+    "irreversible": "aci_safety::ConfirmationClass::Irreversible"
+  },
+  "confirm_rules": {
+    "never": "No human approval.",
+    "non_sandbox": "Needs a single-use action-hash approval grant on non-sandbox targets (this-device, paired computers). Sandboxed targets (cloud/bot computers, gateway browser sessions) run it without approval.",
+    "always": "Always needs a single-use action-hash approval grant.",
+    "irreversible": "Any member whose risk is irreversible needs a grant, whatever its confirm rule."
+  },
+  "result_shape": {
+    "type": "object",
+    "required": [
+      "is_error",
+      "content",
+      "screen"
+    ],
+    "properties": {
+      "is_error": {
+        "type": "boolean"
+      },
+      "content": {
+        "type": "array",
+        "items": {
+          "anyOf": [
+            {
+              "type": "object",
+              "required": [
+                "type",
+                "text"
+              ],
+              "properties": {
+                "type": {
+                  "const": "text"
+                },
+                "text": {
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "required": [
+                "type",
+                "media_type",
+                "data"
+              ],
+              "properties": {
+                "type": {
+                  "const": "image"
+                },
+                "media_type": {
+                  "type": "string"
+                },
+                "data": {
+                  "type": "string",
+                  "description": "base64, no data: prefix"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "screen": {
+        "type": "object",
+        "required": [
+          "width",
+          "height",
+          "scale"
+        ],
+        "properties": {
+          "width": {
+            "type": "integer",
+            "description": "screen (or viewport) width in px"
+          },
+          "height": {
+            "type": "integer"
+          },
+          "scale": {
+            "type": "number",
+            "description": "screen px per model-frame px (>= 1)"
+          },
+          "frame_width": {
+            "type": "integer"
+          },
+          "frame_height": {
+            "type": "integer"
+          }
+        }
+      }
+    }
+  },
+  "members": [
+    {
+      "name": "screenshot",
+      "description": "Take a screenshot of the screen.",
+      "risk": "reversible",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "screenshot",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "zoom",
+      "description": "Take a screenshot of a rectangular region. Region coordinates are in the full-screenshot space (not physical display pixels). The crop is scaled up to fill the image budget so fine details become legible.",
+      "risk": "reversible",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "screenshot",
+      "scale_fields": {
+        "region": "rect"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "region": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 4,
+            "maxItems": 4,
+            "description": "(x0, y0, x1, y1): The region to capture."
+          }
+        },
+        "required": [
+          "region"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "left_click",
+      "description": "Click the left mouse button at the specified (x, y) pixel coordinate, or the current cursor position if `coordinate` is omitted.",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "ack_text": "Clicked.",
+      "scale_fields": {
+        "coordinate": "point"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "coordinate": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "(x, y): x pixels from the left edge, y pixels from the top edge."
+          },
+          "text": {
+            "type": "string",
+            "description": "Optional key combination to hold down during this action (e.g. \"ctrl\", \"shift\", \"ctrl+shift\")."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "right_click",
+      "description": "Click the right mouse button at the specified (x, y) pixel coordinate, or the current cursor position if `coordinate` is omitted.",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "ack_text": "Right-clicked.",
+      "scale_fields": {
+        "coordinate": "point"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "coordinate": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "(x, y): x pixels from the left edge, y pixels from the top edge."
+          },
+          "text": {
+            "type": "string",
+            "description": "Optional key combination to hold down during this action (e.g. \"ctrl\", \"shift\", \"ctrl+shift\")."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "middle_click",
+      "description": "Click the middle mouse button at the specified (x, y) pixel coordinate, or the current cursor position if `coordinate` is omitted.",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "ack_text": "Middle-clicked.",
+      "scale_fields": {
+        "coordinate": "point"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "coordinate": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "(x, y): x pixels from the left edge, y pixels from the top edge."
+          },
+          "text": {
+            "type": "string",
+            "description": "Optional key combination to hold down during this action (e.g. \"ctrl\", \"shift\", \"ctrl+shift\")."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "double_click",
+      "description": "Double-click the left mouse button at the specified (x, y) pixel coordinate, or the current cursor position if `coordinate` is omitted.",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "ack_text": "Double-clicked.",
+      "scale_fields": {
+        "coordinate": "point"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "coordinate": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "(x, y): x pixels from the left edge, y pixels from the top edge."
+          },
+          "text": {
+            "type": "string",
+            "description": "Optional key combination to hold down during this action (e.g. \"ctrl\", \"shift\", \"ctrl+shift\")."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "triple_click",
+      "description": "Triple-click the left mouse button at the specified (x, y) pixel coordinate, or the current cursor position if `coordinate` is omitted.",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "ack_text": "Triple-clicked.",
+      "scale_fields": {
+        "coordinate": "point"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "coordinate": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "(x, y): x pixels from the left edge, y pixels from the top edge."
+          },
+          "text": {
+            "type": "string",
+            "description": "Optional key combination to hold down during this action (e.g. \"ctrl\", \"shift\", \"ctrl+shift\")."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "mouse_move",
+      "description": "Move the cursor to a specified (x, y) pixel coordinate. Use this ONLY to hover without clicking; otherwise use a click action directly.",
+      "risk": "reversible",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "ack_text": "Moved the mouse.",
+      "scale_fields": {
+        "coordinate": "point"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "coordinate": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "(x, y): x pixels from the left edge, y pixels from the top edge."
+          }
+        },
+        "required": [
+          "coordinate"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "left_click_drag",
+      "description": "Click and drag the cursor from `start_coordinate` to `coordinate`.",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "ack_text": "Dragged.",
+      "scale_fields": {
+        "start_coordinate": "point",
+        "coordinate": "point"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "coordinate": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "(x, y): x pixels from the left edge, y pixels from the top edge."
+          },
+          "start_coordinate": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "(x, y): x pixels from the left edge, y pixels from the top edge."
+          },
+          "text": {
+            "type": "string",
+            "description": "Optional key combination to hold down during this action (e.g. \"ctrl\", \"shift\", \"ctrl+shift\")."
+          }
+        },
+        "required": [
+          "coordinate",
+          "start_coordinate"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "left_mouse_down",
+      "description": "Press and hold the left mouse button at the current cursor position.",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "ack_text": "Left mouse button pressed.",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "left_mouse_up",
+      "description": "Release the left mouse button.",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "ack_text": "Left mouse button released.",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "scroll",
+      "description": "Scroll the screen at the specified (x, y) pixel coordinate, or the current cursor position if `coordinate` is omitted. Do NOT use PageUp/PageDown to scroll.",
+      "risk": "reversible",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "ack_text": "Scrolled {scroll_direction}.",
+      "scale_fields": {
+        "coordinate": "point"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "scroll_amount": {
+            "type": "number",
+            "description": "Number of 'clicks' of the scroll wheel."
+          },
+          "scroll_direction": {
+            "type": "string",
+            "enum": [
+              "up",
+              "down",
+              "left",
+              "right"
+            ]
+          },
+          "coordinate": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "(x, y): x pixels from the left edge, y pixels from the top edge."
+          },
+          "text": {
+            "type": "string",
+            "description": "Optional key combination to hold down during this action (e.g. \"ctrl\", \"shift\", \"ctrl+shift\")."
+          }
+        },
+        "required": [
+          "scroll_amount",
+          "scroll_direction"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "type",
+      "description": "Type a string of text on the keyboard.",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": true,
+      "confirm": "non_sandbox",
+      "result_kind": "none",
+      "ack_text": "Typed.",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "The text to type."
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "key",
+      "description": "Press a key or key-combination on the keyboard. Use \"+\" to combine modifiers with a key (e.g. \"ctrl+s\", \"alt+Tab\", \"ctrl+shift+Escape\"). Key names are case-insensitive; common names like \"Return\", \"Tab\", \"Escape\", \"Up\", \"Down\", \"Left\", \"Right\", \"Home\", \"End\", \"Page_Up\", \"Page_Down\", \"Delete\", \"BackSpace\" are supported.",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": true,
+      "confirm": "non_sandbox",
+      "result_kind": "none",
+      "ack_text": "Pressed {text}.",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "The key or key-combination to press."
+          },
+          "repeat": {
+            "type": "number",
+            "description": "Number of times to repeat the key press. Default is 1."
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "hold_key",
+      "description": "Hold down a key or key-combination for a specified duration. Uses the same key syntax as `key`.",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": true,
+      "confirm": "non_sandbox",
+      "result_kind": "none",
+      "ack_text": "Held {text} for {duration}s.",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "duration": {
+            "type": "number",
+            "description": "Duration to hold the key, in seconds."
+          },
+          "text": {
+            "type": "string",
+            "description": "The key or key-combination to hold."
+          }
+        },
+        "required": [
+          "duration",
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "wait",
+      "description": "Wait for a specified duration.",
+      "risk": "reversible",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "ack_text": "Waited {duration}s.",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "duration": {
+            "type": "number",
+            "description": "Duration to wait, in seconds."
+          }
+        },
+        "required": [
+          "duration"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "cursor_position",
+      "description": "Get the current (x, y) pixel coordinate of the cursor.",
+      "risk": "reversible",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "point",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    }
+  ]
+}
