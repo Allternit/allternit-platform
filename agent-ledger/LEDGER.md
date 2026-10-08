@@ -1219,3 +1219,5 @@ Cross-compiled gizzi-code-win32-x64 from macOS (`bun build --target=win32-x64` �
 
 - 2026-10-06 Codex: [Prompt-cache countdown and builder handoff](summaries/2026-10-06-0724-cache-countdown-codex.md) — platform #1336 and UI #438 merged; 13 focused tests pass and docs links clean; build/install explicitly deferred to another agent.
 - 2026-10-06 Claude Code: [Memory Drive — git-backed agent memory, Dreaming, sync between computers](summaries/2026-10-06-1900-memory-drive-claude-code.md) — platform #1348 #1362, ai #445 #448 merged; PWA deployed; 152 Rust + 23 Gizzi + 71 UI tests, live boot 14/14. **Outstanding:** live look + Eoj's import after the next Desktop build. **Optional (needs Eoj OK):** publish the Claude Code plugin to a marketplace; release video/post.
+
+- 2026-10-08 Codex: [Project and folder appearance](summaries/2026-10-08-0610-project-appearance-codex.md) — UI #453 and platform #1418 merged; shared main synced; docs/map validated; manual releases deferred, existing stale branches preserved.
