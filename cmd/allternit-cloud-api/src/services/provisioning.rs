@@ -331,6 +331,78 @@ pub trait ProvisionBackend: Send + Sync + std::fmt::Debug {
     /// Used for the bootstrap contract: it does not depend on cloud-init
     /// running inside the image.
     async fn push_file(&self, name: &str, file: &InstanceFile) -> Result<(), ProvisionError>;
+
+    // -- Customer restore points and downloadable copies -------------------
+    // Defaults report "unsupported" so backends without them still compile.
+
+    /// Instance snapshots, oldest first.
+    async fn list_snapshots(&self, _name: &str) -> Result<Vec<InstanceSnapshot>, ProvisionError> {
+        Err(unsupported("snapshots"))
+    }
+    /// Disk-only (stateless) snapshot. Cheap on the btrfs pool.
+    async fn create_snapshot(&self, _name: &str, _snapshot: &str) -> Result<(), ProvisionError> {
+        Err(unsupported("snapshots"))
+    }
+    /// Roll the instance's disk back to `snapshot`. The caller stops a
+    /// running instance first and starts it again afterwards.
+    async fn restore_snapshot(&self, _name: &str, _snapshot: &str) -> Result<(), ProvisionError> {
+        Err(unsupported("snapshots"))
+    }
+    /// Delete one snapshot. A missing snapshot is success.
+    async fn delete_snapshot(&self, _name: &str, _snapshot: &str) -> Result<(), ProvisionError> {
+        Err(unsupported("snapshots"))
+    }
+    /// Start an `incus export`-style backup (instance only, zstd) that the
+    /// daemon deletes on its own after `expires_at`. Returns the Incus
+    /// operation path to poll; the export itself runs in the background.
+    async fn start_backup(
+        &self,
+        _name: &str,
+        _backup: &str,
+        _expires_at: DateTime<Utc>,
+    ) -> Result<String, ProvisionError> {
+        Err(unsupported("exports"))
+    }
+    /// Where a backup started by [`ProvisionBackend::start_backup`] is.
+    async fn backup_state(
+        &self,
+        _name: &str,
+        _backup: &str,
+        _operation: &str,
+    ) -> Result<BackupState, ProvisionError> {
+        Err(unsupported("exports"))
+    }
+    /// Stream a finished backup's tarball.
+    async fn download_backup(
+        &self,
+        _name: &str,
+        _backup: &str,
+    ) -> Result<reqwest::Response, ProvisionError> {
+        Err(unsupported("exports"))
+    }
+}
+
+fn unsupported(what: &str) -> ProvisionError {
+    ProvisionError::Api {
+        status: 501,
+        message: format!("{what} are not supported on this host"),
+    }
+}
+
+/// One instance snapshot as the owner sees it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstanceSnapshot {
+    pub name: String,
+    pub created_at: String,
+}
+
+/// Progress of a downloadable copy.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BackupState {
+    Preparing,
+    Ready,
+    Failed(String),
 }
 
 /// One file pushed into an instance by [`ProvisionBackend::push_file`].
@@ -392,10 +464,18 @@ pub(crate) trait IncusTransport: Send + Sync {
         headers: Vec<(&'static str, String)>,
         body: Vec<u8>,
     ) -> Result<(u16, serde_json::Value), ProvisionError>;
+
+    /// GET whose body is streamed to the caller (backup downloads, several GB).
+    async fn stream(&self, _path: &str) -> Result<reqwest::Response, ProvisionError> {
+        Err(unsupported("streams"))
+    }
 }
 
 pub(crate) struct ReqwestIncusTransport {
     client: reqwest::Client,
+    /// Same TLS identity, no whole-request timeout: a download can run for
+    /// many minutes. Only a connect timeout applies.
+    stream_client: reqwest::Client,
     base: String,
 }
 
@@ -451,6 +531,22 @@ impl IncusTransport for ReqwestIncusTransport {
             .unwrap_or(serde_json::Value::Null);
         Ok((status, json))
     }
+
+    async fn stream(&self, path: &str) -> Result<reqwest::Response, ProvisionError> {
+        let url = format!("{}{}", self.base.trim_end_matches('/'), path);
+        let response = self
+            .stream_client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|error| ProvisionError::Request(error.to_string()))?;
+        let status = response.status().as_u16();
+        if !is_success(status) {
+            let json = response.json().await.unwrap_or(serde_json::Value::Null);
+            return Err(error_from_status(status, &json));
+        }
+        Ok(response)
+    }
 }
 
 /// Incus daemon adapter over the `/1.0` HTTP API. Talks to per-host endpoints
@@ -471,7 +567,22 @@ impl IncusHttpBackend {
     pub fn new(endpoint: &str) -> Result<Self, ProvisionError> {
         // Generous timeout: create/wait operations can block for tens of
         // seconds while the image unpacks (same rationale as the substrate).
-        let mut builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(180));
+        let client = Self::client_builder(
+            reqwest::Client::builder().timeout(std::time::Duration::from_secs(180)),
+        )?;
+        let stream_client = Self::client_builder(
+            reqwest::Client::builder().connect_timeout(std::time::Duration::from_secs(20)),
+        )?;
+        Ok(Self {
+            transport: Box::new(ReqwestIncusTransport {
+                client,
+                stream_client,
+                base: endpoint.to_string(),
+            }),
+        })
+    }
+
+    fn client_builder(mut builder: reqwest::ClientBuilder) -> Result<reqwest::Client, ProvisionError> {
         if let (Ok(cert_path), Ok(key_path)) = (
             std::env::var("INCUS_CLIENT_CERT"),
             std::env::var("INCUS_CLIENT_KEY"),
@@ -495,15 +606,9 @@ impl IncusHttpBackend {
         } else if std::env::var("INCUS_INSECURE_SKIP_VERIFY").as_deref() == Ok("true") {
             builder = builder.danger_accept_invalid_certs(true);
         }
-        let client = builder
+        builder
             .build()
-            .map_err(|error| ProvisionError::Request(format!("reqwest client build: {error}")))?;
-        Ok(Self {
-            transport: Box::new(ReqwestIncusTransport {
-                client,
-                base: endpoint.to_string(),
-            }),
-        })
+            .map_err(|error| ProvisionError::Request(format!("reqwest client build: {error}")))
     }
 
     #[cfg(test)]
@@ -873,6 +978,176 @@ impl ProvisionBackend for IncusHttpBackend {
             return Err(error_from_status(status, &json));
         }
         self.wait_operation(&json).await
+    }
+
+    async fn list_snapshots(&self, name: &str) -> Result<Vec<InstanceSnapshot>, ProvisionError> {
+        let (status, json) = self
+            .transport
+            .request(
+                reqwest::Method::GET,
+                &format!("/1.0/instances/{name}/snapshots?recursion=1"),
+                None,
+            )
+            .await?;
+        if !is_success(status) {
+            return Err(error_from_status(status, &json));
+        }
+        let mut snapshots: Vec<InstanceSnapshot> = json
+            .get("metadata")
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| {
+                        Some(InstanceSnapshot {
+                            name: item.get("name")?.as_str()?.to_string(),
+                            created_at: item
+                                .get("created_at")
+                                .and_then(|value| value.as_str())
+                                .unwrap_or_default()
+                                .to_string(),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        snapshots.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+        Ok(snapshots)
+    }
+
+    async fn create_snapshot(&self, name: &str, snapshot: &str) -> Result<(), ProvisionError> {
+        let (status, json) = self
+            .transport
+            .request(
+                reqwest::Method::POST,
+                &format!("/1.0/instances/{name}/snapshots"),
+                Some(serde_json::json!({ "name": snapshot, "stateful": false })),
+            )
+            .await?;
+        if !is_success(status) {
+            return Err(error_from_status(status, &json));
+        }
+        self.wait_operation(&json).await
+    }
+
+    async fn restore_snapshot(&self, name: &str, snapshot: &str) -> Result<(), ProvisionError> {
+        let (status, json) = self
+            .transport
+            .request(
+                reqwest::Method::PUT,
+                &format!("/1.0/instances/{name}"),
+                Some(serde_json::json!({ "restore": snapshot })),
+            )
+            .await?;
+        if !is_success(status) {
+            return Err(error_from_status(status, &json));
+        }
+        self.wait_operation(&json).await
+    }
+
+    async fn delete_snapshot(&self, name: &str, snapshot: &str) -> Result<(), ProvisionError> {
+        let (status, json) = self
+            .transport
+            .request(
+                reqwest::Method::DELETE,
+                &format!("/1.0/instances/{name}/snapshots/{snapshot}"),
+                None,
+            )
+            .await?;
+        if status == 404 {
+            return Ok(());
+        }
+        if !is_success(status) {
+            return Err(error_from_status(status, &json));
+        }
+        self.wait_operation(&json).await
+    }
+
+    async fn start_backup(
+        &self,
+        name: &str,
+        backup: &str,
+        expires_at: DateTime<Utc>,
+    ) -> Result<String, ProvisionError> {
+        let (status, json) = self
+            .transport
+            .request(
+                reqwest::Method::POST,
+                &format!("/1.0/instances/{name}/backups"),
+                Some(serde_json::json!({
+                    "name": backup,
+                    "expires_at": expires_at.to_rfc3339(),
+                    "instance_only": true,
+                    "optimized_storage": false,
+                    "compression_algorithm": "zstd",
+                })),
+            )
+            .await?;
+        if !is_success(status) {
+            return Err(error_from_status(status, &json));
+        }
+        json.get("operation")
+            .and_then(|value| value.as_str())
+            .map(str::to_string)
+            .ok_or_else(|| ProvisionError::Api {
+                status,
+                message: "backup started without an operation".to_string(),
+            })
+    }
+
+    async fn backup_state(
+        &self,
+        name: &str,
+        backup: &str,
+        operation: &str,
+    ) -> Result<BackupState, ProvisionError> {
+        let (status, json) = self
+            .transport
+            .request(reqwest::Method::GET, operation, None)
+            .await
+            .or_else(|error| match error {
+                ProvisionError::NotFound(_) => Ok((404, serde_json::Value::Null)),
+                other => Err(other),
+            })?;
+        if is_success(status) {
+            let payload = json.get("metadata").unwrap_or(&json);
+            match payload.get("status").and_then(|value| value.as_str()) {
+                Some("Success") => return Ok(BackupState::Ready),
+                Some("Failure") | Some("Cancelled") => {
+                    let message = payload
+                        .get("err")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("export failed");
+                    return Ok(BackupState::Failed(message.to_string()));
+                }
+                _ => return Ok(BackupState::Preparing),
+            }
+        }
+        // Incus forgets finished operations after a while; the backup
+        // record existing then means it completed.
+        let (status, _) = self
+            .transport
+            .request(
+                reqwest::Method::GET,
+                &format!("/1.0/instances/{name}/backups/{backup}"),
+                None,
+            )
+            .await?;
+        if is_success(status) {
+            Ok(BackupState::Ready)
+        } else {
+            Ok(BackupState::Failed("the export is no longer on the host".to_string()))
+        }
+    }
+
+    async fn download_backup(
+        &self,
+        name: &str,
+        backup: &str,
+    ) -> Result<reqwest::Response, ProvisionError> {
+        self.transport
+            .stream(&format!("/1.0/instances/{name}/backups/{backup}/export"))
+            .await
     }
 
     async fn push_file(&self, name: &str, file: &InstanceFile) -> Result<(), ProvisionError> {
@@ -1523,6 +1798,73 @@ pub struct ProvisioningService {
     defaults: ProvisionDefaults,
     free: FreeDefaults,
     registry: Arc<dyn BackendRegistry>,
+    /// Downloadable copies being prepared or ready, by export id. In memory:
+    /// Incus deletes the file itself after a day, and a restart only means
+    /// the owner asks for a new copy.
+    exports: Mutex<HashMap<String, ExportJob>>,
+}
+
+/// Restore points an owner can keep per computer. Snapshots are copy-on-write
+/// on the btrfs pool, but each one pins the blocks changed since, so the
+/// count is capped.
+pub const MAX_USER_SNAPSHOTS: usize = 5;
+/// Owner-made snapshots carry this prefix; internal ones (the cancel
+/// snapshot) are never listed, restored or deleted through the owner routes.
+const USER_SNAPSHOT_PREFIX: &str = "user-";
+/// Incus deletes a downloadable copy this long after it was requested.
+const EXPORT_TTL_HOURS: i64 = 24;
+/// A download link works this long after it is handed out.
+const DOWNLOAD_LINK_MINUTES: i64 = 60;
+
+#[derive(Debug, Clone)]
+struct ExportJob {
+    id: String,
+    instance_id: String,
+    user_id: String,
+    incus_name: String,
+    backup: String,
+    operation: String,
+    created_at: DateTime<Utc>,
+    expires_at: DateTime<Utc>,
+    failed: Option<String>,
+    download_token: Option<(String, DateTime<Utc>)>,
+}
+
+/// What the owner sees about a downloadable copy.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportView {
+    pub id: String,
+    /// `preparing`, `ready` or `failed`.
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// Path (relative to the API origin) that streams the file without a
+    /// session header, so a plain link or `<a download>` works. Present only
+    /// when ready.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub download_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub download_expires_at: Option<DateTime<Utc>>,
+}
+
+/// A finished copy, resolved from a download token.
+pub struct ExportDownload {
+    pub response: reqwest::Response,
+    pub file_name: String,
+}
+
+fn snapshot_capable(status: &str) -> bool {
+    matches!(status, "running" | "stopped" | "sleeping")
+}
+
+fn random_token() -> String {
+    use rand::RngCore;
+    let mut bytes = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    hex::encode(bytes)
 }
 
 impl ProvisioningService {
@@ -1536,6 +1878,7 @@ impl ProvisioningService {
             defaults: ProvisionDefaults::from_env(),
             free: FreeDefaults::from_env(),
             registry,
+            exports: Mutex::new(HashMap::new()),
         }
     }
 
@@ -2563,6 +2906,260 @@ impl ProvisioningService {
     ) -> Result<i64, ApiError> {
         self.fetch_row(instance_id, Some(user_id)).await?;
         usage_summary(&self.db, instance_id, since).await
+    }
+
+    // -- Restore points ------------------------------------------------------
+
+    async fn snapshot_row(
+        &self,
+        instance_id: &str,
+        user_id: &str,
+    ) -> Result<(InstanceRow, Arc<dyn ProvisionBackend>), ApiError> {
+        let row = self.fetch_row(instance_id, Some(user_id)).await?;
+        if !snapshot_capable(&row.status) {
+            return Err(ApiError::Conflict(format!(
+                "Restore points aren't available while the computer is {}",
+                row.status
+            )));
+        }
+        let backend = self.backend_for_row(&row).await?;
+        Ok((row, backend))
+    }
+
+    /// The owner's restore points, oldest first.
+    pub async fn list_snapshots(
+        &self,
+        instance_id: &str,
+        user_id: &str,
+    ) -> Result<Vec<InstanceSnapshot>, ApiError> {
+        let (row, backend) = self.snapshot_row(instance_id, user_id).await?;
+        let snapshots = backend
+            .list_snapshots(&row.incus_name)
+            .await
+            .map_err(|error| error.to_api_error())?;
+        Ok(snapshots
+            .into_iter()
+            .filter(|snapshot| snapshot.name.starts_with(USER_SNAPSHOT_PREFIX))
+            .collect())
+    }
+
+    /// Take a restore point now. 409 at [`MAX_USER_SNAPSHOTS`].
+    pub async fn create_snapshot(
+        &self,
+        instance_id: &str,
+        user_id: &str,
+    ) -> Result<InstanceSnapshot, ApiError> {
+        let existing = self.list_snapshots(instance_id, user_id).await?;
+        if existing.len() >= MAX_USER_SNAPSHOTS {
+            return Err(ApiError::Conflict(format!(
+                "You can keep {MAX_USER_SNAPSHOTS} restore points. Delete one to take another."
+            )));
+        }
+        let (row, backend) = self.snapshot_row(instance_id, user_id).await?;
+        let name = format!("{USER_SNAPSHOT_PREFIX}{}", Utc::now().format("%Y%m%d-%H%M%S"));
+        backend
+            .create_snapshot(&row.incus_name, &name)
+            .await
+            .map_err(|error| error.to_api_error())?;
+        let created = backend
+            .list_snapshots(&row.incus_name)
+            .await
+            .map_err(|error| error.to_api_error())?
+            .into_iter()
+            .find(|snapshot| snapshot.name == name)
+            .unwrap_or(InstanceSnapshot { name, created_at: Utc::now().to_rfc3339() });
+        Ok(created)
+    }
+
+    async fn require_user_snapshot(
+        &self,
+        instance_id: &str,
+        user_id: &str,
+        snapshot: &str,
+    ) -> Result<(), ApiError> {
+        if !snapshot.starts_with(USER_SNAPSHOT_PREFIX)
+            || !self
+                .list_snapshots(instance_id, user_id)
+                .await?
+                .iter()
+                .any(|existing| existing.name == snapshot)
+        {
+            return Err(ApiError::NotFound("Restore point not found".to_string()));
+        }
+        Ok(())
+    }
+
+    /// Roll the computer back to a restore point. A running computer is
+    /// stopped for the restore and started again, so its status and
+    /// metering end where they began.
+    pub async fn restore_snapshot(
+        &self,
+        instance_id: &str,
+        user_id: &str,
+        snapshot: &str,
+    ) -> Result<InstanceView, ApiError> {
+        self.require_user_snapshot(instance_id, user_id, snapshot).await?;
+        let (row, backend) = self.snapshot_row(instance_id, user_id).await?;
+        let was_running = row.status == "running";
+        if was_running {
+            backend.stop(&row.incus_name).await.map_err(|error| error.to_api_error())?;
+        }
+        let restored = backend.restore_snapshot(&row.incus_name, snapshot).await;
+        if was_running {
+            // Start again even when the restore failed: never leave a paid
+            // computer down because of a failed rollback.
+            backend.start(&row.incus_name).await.map_err(|error| error.to_api_error())?;
+        }
+        restored.map_err(|error| error.to_api_error())?;
+        self.get_for_user(instance_id, user_id).await
+    }
+
+    pub async fn delete_snapshot(
+        &self,
+        instance_id: &str,
+        user_id: &str,
+        snapshot: &str,
+    ) -> Result<(), ApiError> {
+        self.require_user_snapshot(instance_id, user_id, snapshot).await?;
+        let (row, backend) = self.snapshot_row(instance_id, user_id).await?;
+        backend
+            .delete_snapshot(&row.incus_name, snapshot)
+            .await
+            .map_err(|error| error.to_api_error())
+    }
+
+    // -- Downloadable copies ---------------------------------------------------
+
+    /// Start preparing a downloadable copy of the computer, or return the
+    /// one already preparing / ready for it.
+    pub async fn start_export(&self, instance_id: &str, user_id: &str) -> Result<ExportView, ApiError> {
+        let (row, backend) = self.snapshot_row(instance_id, user_id).await?;
+        let now = Utc::now();
+        let current = {
+            let mut exports = self.exports.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            exports.retain(|_, job| job.expires_at > now);
+            exports
+                .values()
+                .find(|job| job.instance_id == instance_id && job.failed.is_none())
+                .map(|job| job.id.clone())
+        };
+        if let Some(export_id) = current {
+            return self.export_status(instance_id, user_id, &export_id).await;
+        }
+        let backup = format!("user-export-{}", now.format("%Y%m%d-%H%M%S"));
+        let expires_at = now + Duration::hours(EXPORT_TTL_HOURS);
+        let operation = backend
+            .start_backup(&row.incus_name, &backup, expires_at)
+            .await
+            .map_err(|error| error.to_api_error())?;
+        let job = ExportJob {
+            id: format!("exp_{}", Uuid::new_v4().simple()),
+            instance_id: instance_id.to_string(),
+            user_id: user_id.to_string(),
+            incus_name: row.incus_name.clone(),
+            backup,
+            operation,
+            created_at: now,
+            expires_at,
+            failed: None,
+            download_token: None,
+        };
+        let export_id = job.id.clone();
+        self.exports
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(export_id.clone(), job);
+        self.export_status(instance_id, user_id, &export_id).await
+    }
+
+    /// Progress of a copy; once ready it carries a download link.
+    pub async fn export_status(
+        &self,
+        instance_id: &str,
+        user_id: &str,
+        export_id: &str,
+    ) -> Result<ExportView, ApiError> {
+        let row = self.fetch_row(instance_id, Some(user_id)).await?;
+        let job = self
+            .exports
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(export_id)
+            .filter(|job| job.instance_id == instance_id && job.user_id == user_id)
+            .cloned()
+            .ok_or_else(|| ApiError::NotFound("Download not found. Ask for a new one.".to_string()))?;
+        let state = match &job.failed {
+            Some(message) => BackupState::Failed(message.clone()),
+            None => {
+                let backend = self.backend_for_row(&row).await?;
+                backend
+                    .backup_state(&job.incus_name, &job.backup, &job.operation)
+                    .await
+                    .map_err(|error| error.to_api_error())?
+            }
+        };
+        let now = Utc::now();
+        let mut exports = self.exports.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let Some(stored) = exports.get_mut(export_id) else {
+            return Err(ApiError::NotFound("Download not found. Ask for a new one.".to_string()));
+        };
+        let mut view = ExportView {
+            id: stored.id.clone(),
+            status: "preparing".to_string(),
+            created_at: stored.created_at,
+            expires_at: stored.expires_at,
+            error: None,
+            download_path: None,
+            download_expires_at: None,
+        };
+        match state {
+            BackupState::Preparing => {}
+            BackupState::Failed(message) => {
+                stored.failed = Some(message.clone());
+                view.status = "failed".to_string();
+                view.error = Some(message);
+            }
+            BackupState::Ready => {
+                let (token, until) = match &stored.download_token {
+                    Some((token, until)) if *until > now + Duration::minutes(5) => (token.clone(), *until),
+                    _ => {
+                        let until = (now + Duration::minutes(DOWNLOAD_LINK_MINUTES)).min(stored.expires_at);
+                        (random_token(), until)
+                    }
+                };
+                stored.download_token = Some((token.clone(), until));
+                view.status = "ready".to_string();
+                view.download_path = Some(format!("/api/v1/computer-exports/{token}"));
+                view.download_expires_at = Some(until);
+            }
+        }
+        Ok(view)
+    }
+
+    /// Resolve a download link to the file stream. The token is the only
+    /// credential, so it is long, random and short-lived.
+    pub async fn open_export_download(&self, token: &str) -> Result<ExportDownload, ApiError> {
+        let now = Utc::now();
+        let job = self
+            .exports
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .values()
+            .find(|job| {
+                matches!(&job.download_token, Some((known, until)) if known == token && *until > now)
+            })
+            .cloned()
+            .ok_or_else(|| ApiError::NotFound("This download link has expired. Ask for a new one.".to_string()))?;
+        let row = self.fetch_row(&job.instance_id, Some(&job.user_id)).await?;
+        let backend = self.backend_for_row(&row).await?;
+        let response = backend
+            .download_backup(&job.incus_name, &job.backup)
+            .await
+            .map_err(|error| error.to_api_error())?;
+        Ok(ExportDownload {
+            response,
+            file_name: format!("allternit-computer-{}.tar.zst", job.created_at.format("%Y-%m-%d")),
+        })
     }
 
     async fn fetch_row(

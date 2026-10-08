@@ -1,0 +1,10 @@
+[Unit]
+Description=Allternit nightly cloud-computer backup to R2
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/allternit-computer-backup.sh
+Nice=10
+IOSchedulingClass=idle

@@ -1,5 +1,7 @@
 #!/bin/bash
-# Back up every running Allternit bot desktop to S3.
+# Back up every running Allternit bot desktop (allternit-bot-*) to S3. Hourly.
+# Customer computers (allternit-user-*/free-*) are backed up nightly, encrypted,
+# to R2 by infra/computer-backup/allternit-computer-backup.sh instead.
 # Intended to run from a systemd timer on the Incus host.
 set -euo pipefail
 

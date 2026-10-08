@@ -20,6 +20,16 @@ Computer control is separate from the thread's execution state. Use the thread's
 
 Provisioning and available actions depend on the selected computer backend and your access. An attached computer does not automatically grant every tool or service permission.
 
+## Restore points and backups for your cloud computer
+
+Settings → Computers (and the Computers tab on your phone) has a **Restore points and backups** section for each Allternit cloud computer on your account.
+
+- **Take restore point** saves the computer's disk as it is now. Take one before a big change, such as letting an agent install software or reorganize files. You can keep 5; delete an old one to take another.
+- **Restore** rolls the computer back to that point. Anything changed since is lost. A running computer restarts, which takes under a minute.
+- **Download a copy** packs the whole computer into one `.tar.zst` file. It takes a few minutes. When it's ready the button becomes **Download copy**, and the link works for an hour. The file can be imported on any Incus host with `incus import`.
+
+Your cloud computer is also backed up off-site every night, encrypted, and kept for 8 days. Restore points don't replace that backup: they live on the same host as the computer.
+
 ## Connected tools
 
 MCP tools belong to the session's tool belt. Connect the server, complete its authentication, and check the available tools before assigning work that relies on it. CLI harness sessions can receive the session's tools and instructions through the CLI tool bridge; supported computer operations still require a reachable host.
