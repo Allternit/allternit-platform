@@ -1455,11 +1455,13 @@ async fn sync_remote_computers(
 /// it's a child of Allternit Desktop, so macOS attributes the capture to the
 /// app and its Screen Recording permission. (The computer-use driver only
 /// captures single windows.)
-async fn this_device_screenshot(_state: &Arc<AppState>, computer_id: &str) -> Response {
+/// Capture this Mac's main screen as PNG (Retina pixels). Shared by the
+/// screenshot route and the toolset executor.
+pub(crate) async fn capture_this_device_png() -> Result<Vec<u8>, String> {
     if !cfg!(target_os = "macos") {
-        return error_response(StatusCode::NOT_IMPLEMENTED, "screenshots of this computer are only supported on macOS so far");
+        return Err("screenshots of this computer are only supported on macOS so far".into());
     }
-    let file = std::env::temp_dir().join(format!("allternit-screen-{computer_id}-{}.png", uuid::Uuid::new_v4().simple()));
+    let file = std::env::temp_dir().join(format!("allternit-screen-{}.png", uuid::Uuid::new_v4().simple()));
     let output = tokio::process::Command::new("/usr/sbin/screencapture")
         .args(["-x", "-t", "png"])
         .arg(&file)
@@ -1477,12 +1479,33 @@ async fn this_device_screenshot(_state: &Arc<AppState>, computer_id: &str) -> Re
         }
     };
     let _ = tokio::fs::remove_file(&file).await;
-    match png.filter(|bytes| !bytes.is_empty()) {
-        Some(png) => (StatusCode::OK, [(header::CONTENT_TYPE, "image/png")], Bytes::from(png)).into_response(),
-        None => error_response(
-            StatusCode::BAD_GATEWAY,
-            "couldn't capture this computer's screen — allow Screen Recording for Allternit in System Settings → Privacy & Security",
-        ),
+    png.filter(|bytes| !bytes.is_empty()).ok_or_else(|| {
+        "couldn't capture this computer's screen — allow Screen Recording for Allternit in System Settings → Privacy & Security".to_string()
+    })
+}
+
+/// This Mac's main display size in points: the space Cua Driver's desktop
+/// scope (CGEvent) takes coordinates in. Differs from screenshot pixels on
+/// Retina displays.
+pub(crate) async fn this_device_screen_points() -> Option<crate::computer_toolset::Frame> {
+    if !cfg!(target_os = "macos") {
+        return None;
+    }
+    let out = tokio::process::Command::new("/usr/bin/osascript")
+        .args(["-l", "JavaScript", "-e", "ObjC.import('AppKit'); var f = $.NSScreen.mainScreen.frame; Math.round(f.size.width) + 'x' + Math.round(f.size.height)"])
+        .output()
+        .await
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let (w, h) = text.trim().split_once('x')?;
+    Some(crate::computer_toolset::Frame { width: w.parse().ok()?, height: h.parse().ok()? })
+}
+
+async fn this_device_screenshot(_state: &Arc<AppState>, _computer_id: &str) -> Response {
+    match capture_this_device_png().await {
+        Ok(png) => (StatusCode::OK, [(header::CONTENT_TYPE, "image/png")], Bytes::from(png)).into_response(),
+        Err(message) if message.contains("only supported on macOS") => error_response(StatusCode::NOT_IMPLEMENTED, message),
+        Err(message) => error_response(StatusCode::BAD_GATEWAY, message),
     }
 }
 
@@ -2125,7 +2148,7 @@ async fn computer_download_file(
     .await
 }
 
-fn computer_sandbox(
+pub(crate) fn computer_sandbox(
     state: &AppState,
     computer: &ComputerResponse,
 ) -> Result<Option<crate::bot_desktop_routes::BotDesktopSandboxRecord>, Response> {

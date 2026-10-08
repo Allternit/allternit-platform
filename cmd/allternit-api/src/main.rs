@@ -1090,6 +1090,7 @@ async fn main() {
         .merge(allternit_api::fabric_usage_routes::router())
         .merge(agent_cloud_router())
         .merge(allternit_api::computer_routes::router())
+        .merge(allternit_api::computer_toolset::router())
         .merge(allternit_api::factory_peer_proxy::router())
         .merge(allternit_api::computer_groups::router())
         .merge(allternit_api::computer_ws::computer_api_router())
