@@ -203,9 +203,9 @@
       "kind": "HTTP /api/v1/computers/:id/toolset",
       "evidence": [
         "allternit/cmd/gizzi-code/src/runtime/tools/computer-toolset/executor-client.ts"
-        ]
-      },
-      {
+      ]
+    },
+    {
       "source": "allternit/surfaces/allternit-desktop",
       "target": "allternit/domains/computer-use/core",
       "kind": "sidecar",
@@ -220,6 +220,15 @@
       "kind": "HTTP /api/v1/computers/:id/toolset",
       "evidence": [
         "allternit/domains/computer-use/core/core/toolset_executor.py"
+      ]
+    },
+    {
+      "source": "allternit-ai/src/lib/appearance",
+      "target": "allternit/cmd/allternit-api",
+      "kind": "authenticated runtime HTTP (GET/PUT /api/v1/appearance/:key)",
+      "evidence": [
+        "allternit-ai/src/lib/appearance/useAppearance.ts",
+        "allternit/cmd/allternit-api/src/runtime_settings_routes.rs"
       ]
     }
   ]

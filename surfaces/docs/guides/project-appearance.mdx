@@ -1,0 +1,32 @@
+---
+title: Customize project and folder icons
+description: Give projects and folders a color, symbol, initials, emoji, or uploaded logo.
+---
+
+Choose **Customize appearance** from a project card's options menu or palette button, or from the project's settings. Library folders, Code Explorer folders, Design file folders, and node file-browser directories also have a palette button. The controls are shared by Desktop, the web workspace, and the phone/PWA.
+
+## Design an icon
+
+1. Pick a folder color. Enable **Show documents inside** to add the paper layer and choose its color.
+2. Choose an overlay: **None**, **Symbol**, **Text / emoji**, or an uploaded image. The symbol picker has searchable **Symbols** and **Brands** tabs. You can upload another brand's logo yourself.
+3. Choose the overlay color for symbols or text. Uploaded images retain their colors.
+4. Drag the overlay in the preview, or use the horizontal position, vertical position, size, and rotation sliders. **Center overlay** restores its position, size, and rotation.
+5. Choose **Save appearance**. **Cancel** discards your draft. **Reset to default** removes the saved customization and restores the surface's default icon.
+
+The preview updates while editing. Your project or folder changes only after a successful save. A failed save keeps the editor open so you can retry.
+
+## Images and export
+
+Upload or paste a PNG, JPEG, or WebP image under 5 MB and 40 megapixels. Allternit fits it into a transparent 256 × 256 PNG, strips its metadata, and limits the saved image size. SVG uploads and remote image URLs are not accepted.
+
+**Download PNG** exports a transparent 512 × 512 icon. **Copy image** puts it on the clipboard where supported; use the download if your browser does not support image clipboard writes. Exporting a draft does not save it to the project.
+
+## Persistence and scope
+
+Custom appearance is a personal preference stored under your authenticated account on the connected runtime. Devices connected to the **same runtime and account** load the same recipe; switching runtimes selects that runtime's preferences. Views refresh when reopened or when the app regains focus. A project icon is separate from each folder's icon. Folder recipes are keyed by their directory path or Library thread id; renaming or moving a directory gives it a different key.
+
+Existing default icon and color choices remain the fallback. Resetting execution settings does not clear custom appearances. If the runtime lacks the appearance API, the editor reports that it needs an update.
+
+These changes customize Allternit's interface. They do not change Finder or other operating-system folder icons, project files, instructions, models, or permissions.
+
+See [project coordination](/guides/project-coordination) for the rest of the project workflow.

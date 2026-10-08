@@ -68,6 +68,8 @@
               "guides/bot-threads",
               "guides/phone-sms-runtime",
               "guides/project-coordination",
+              "guides/project-appearance",
+              "architecture/project-appearance",
               "guides/bot-templates",
               "guides/vendor-bots",
               "guides/how-vendor-bots-connect",
