@@ -34,7 +34,7 @@ Scope `computers`. Every route answers `404 hosted_driver_disabled` until Allter
 | `POST /v1/computers/{id}/stop` | | computer |
 | `DELETE /v1/computers/{id}` | | computer with `status: "deleted"` |
 
-Creating or starting a computer can answer `402 spend_cap_reached` or `429 concurrency_limit` (the key already has `per_key_concurrency` computers running).
+Creating or starting a computer can answer `402 spend_cap_reached`, `429 concurrency_limit` (the key already has `per_key_concurrency` computers running) or `503 computer_capacity` (the developer pool is full; nothing was created). Starting a stopped computer wakes it.
 
 ## Toolset calls
 
@@ -76,6 +76,7 @@ Browser calls also return `browser_state`. Other answers:
 | `409` | `approval_required` | Needs approval; see below. |
 | `423` | `computer_controlled_elsewhere` | Someone else is controlling the computer. |
 | `503` | `computer_starting` | Still starting; retry. |
+| `503` | `computer_capacity` | Every developer computer is in use. Nothing was created; retry in a few minutes. |
 
 ### Approvals
 

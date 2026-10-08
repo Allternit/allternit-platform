@@ -144,6 +144,66 @@ impl FreeDefaults {
     }
 }
 
+/// Hosted-driver (developer) computers: `/v1/computers`, outside developers.
+/// They ride the free lane (sleep, wake, retention) but get their own image,
+/// size and a pool-wide cap, so they can never crowd the host they share
+/// (Eoj 2026-10-08: the Mail VPS, which also runs the prod database).
+///
+/// | Env | Default |
+/// |---|---|
+/// | `ALLTERNIT_HOSTED_DRIVER_IMAGE` | `allternit-computer-headless` |
+/// | `ALLTERNIT_HOSTED_DRIVER_CPU` | `1` (`limits.cpu`) |
+/// | `ALLTERNIT_HOSTED_DRIVER_CPU_PRIORITY` | `1` (`limits.cpu.priority`, 0–10) |
+/// | `ALLTERNIT_HOSTED_DRIVER_MEMORY_MB` | `2048` (`limits.memory`) |
+/// | `ALLTERNIT_HOSTED_DRIVER_DISK_GB` | `10` (root disk quota) |
+/// | `ALLTERNIT_HOSTED_DRIVER_MAX_RUNNING` | `4` awake at once, across the pool |
+#[derive(Debug, Clone)]
+pub struct HostedDriverDefaults {
+    pub image: String,
+    pub cpu_cores: i64,
+    pub cpu_priority: Option<u8>,
+    pub memory_mb: i64,
+    pub disk_gb: i64,
+    pub max_running: i64,
+}
+
+/// Start of the error message when the developer pool is full; the Platform
+/// API turns it into a 503 `computer_capacity`.
+pub const HOSTED_POOL_FULL: &str = "Developer computers are at capacity";
+
+impl HostedDriverDefaults {
+    pub fn from_env() -> Self {
+        Self {
+            image: env_string("ALLTERNIT_HOSTED_DRIVER_IMAGE", "allternit-computer-headless"),
+            cpu_cores: env_i64("ALLTERNIT_HOSTED_DRIVER_CPU", 1).max(1),
+            cpu_priority: Some(env_i64("ALLTERNIT_HOSTED_DRIVER_CPU_PRIORITY", 1).clamp(0, 10) as u8),
+            memory_mb: env_i64("ALLTERNIT_HOSTED_DRIVER_MEMORY_MB", 2048).max(512),
+            disk_gb: env_i64("ALLTERNIT_HOSTED_DRIVER_DISK_GB", 10).max(4),
+            max_running: env_i64("ALLTERNIT_HOSTED_DRIVER_MAX_RUNNING", 4).max(0),
+        }
+    }
+
+    pub fn size(&self) -> ComputerSize {
+        ComputerSize { cpu_cores: self.cpu_cores, memory_mb: self.memory_mb, disk_gb: self.disk_gb }
+    }
+
+    pub(crate) fn full_error(&self) -> ApiError {
+        ApiError::ServiceUnavailable(format!(
+            "{HOSTED_POOL_FULL} ({} running). Stop or delete a computer, or retry in a few minutes.",
+            self.max_running
+        ))
+    }
+}
+
+/// Awake hosted-driver computers across the whole pool.
+pub(crate) async fn hosted_awake<'e, E: sqlx::PgExecutor<'e>>(executor: E) -> Result<i64, ApiError> {
+    Ok(sqlx::query_scalar(
+        "SELECT COUNT(*) FROM provisioned_instances WHERE user_id LIKE 'platform-drv:%'            AND status IN ('provisioning', 'running', 'waking')",
+    )
+    .fetch_one(executor)
+    .await?)
+}
+
 /// Why a free computer is being woken (`provisioned_instance_wakes.reason`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WakeReason {
@@ -334,6 +394,10 @@ impl ProvisioningService {
         .bind(&host_id)
         .fetch_one(&mut *transaction)
         .await?;
+        if is_hosted_driver_owner(&row.user_id) && hosted_awake(&mut *transaction).await? >= self.hosted.max_running {
+            transaction.rollback().await?;
+            return Err(self.hosted.full_error());
+        }
         if awake >= self.free.max_awake_per_host {
             transaction.rollback().await?;
             return Err(ApiError::ServiceUnavailable(

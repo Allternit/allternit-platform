@@ -22,7 +22,11 @@
 //!   `api_key`), then the caller resends with `approval_grant`.
 //! * **Limits.** The project flag `hosted_driver_enabled` (set by Allternit;
 //!   404 `hosted_driver_disabled` until then), the `computers` key scope, the
-//!   project spend cap (402), and a per-key cap on live computers (429).
+//!   project spend cap (402), a per-key cap on live computers (429), and a
+//!   pool-wide cap on awake developer computers
+//!   (`ALLTERNIT_HOSTED_DRIVER_MAX_RUNNING`, 503 `computer_capacity`). Each
+//!   one runs the headless image at 1 vCPU / 2 GiB / 10 GB, low CPU priority
+//!   (`services::provisioning::HostedDriverDefaults`).
 //! * **Metering.** `computer_minute` (running minutes, accrued on every call,
 //!   stop and delete) and `computer_action` (one per executed toolset call).
 //!   Prices are TBD (Eoj); until set they bill $0 but count toward usage.
@@ -126,7 +130,13 @@ impl ComputerHost for ProdComputerHost {
         Ok(view_of(self.0.provisioning_service.get_for_user(instance_id, owner).await?))
     }
     async fn start(&self, owner: &str, instance_id: &str) -> Result<HostView, PlatformError> {
-        Ok(view_of(self.0.provisioning_service.start(instance_id, owner).await?))
+        // Hosted-driver computers are free-lane computers: they start by waking.
+        let service = &self.0.provisioning_service;
+        if service.get_for_user(instance_id, owner).await?.tier == crate::services::provisioning::TIER_FREE {
+            let woke = service.wake(instance_id, Some(owner), crate::services::WakeReason::Owner).await?;
+            return Ok(view_of(woke.view));
+        }
+        Ok(view_of(service.start(instance_id, owner).await?))
     }
     async fn stop(&self, owner: &str, instance_id: &str) -> Result<HostView, PlatformError> {
         Ok(view_of(self.0.provisioning_service.stop(instance_id, owner).await?))
@@ -435,6 +445,11 @@ async fn create_computer(
             sqlx::query("UPDATE platform_computers SET instance_id = $2 WHERE id = $1").bind(&id).bind(&view.instance_id).execute(&state.db).await?;
             row.instance_id = Some(view.instance_id);
             set_status(&state.db, &mut row, public_status(&view.status)).await?;
+        }
+        Err(error) if error.code == "computer_capacity" => {
+            // Nothing was created; don't leave an error row in the list.
+            sqlx::query("UPDATE platform_computers SET status = 'deleted', deleted_at = NOW() WHERE id = $1").bind(&id).execute(&state.db).await?;
+            return Err(error);
         }
         Err(error) => {
             set_status(&state.db, &mut row, "error").await?;

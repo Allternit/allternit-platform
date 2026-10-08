@@ -125,9 +125,11 @@ The driver packages raise an approval error carrying the approval, and the MCP s
 
 - **Project flag.** `hosted_driver_enabled` is set by Allternit. Off means `404 hosted_driver_disabled` on every `/v1/computers` route.
 - **Per-key concurrency.** Each key can have a set number of running computers (`per_key_concurrency` in [computer settings](/api/platform/computers#settings)). Past it, creating or starting a computer answers `429 concurrency_limit`.
+- **Computer size.** Each computer is a Linux computer with 1 vCPU, 2 GB of memory and a 10 GB disk. It has no desktop session; the screen (1280×800) starts with the first `computer` toolset call. The `browser` toolset runs headless Chrome.
+- **Pool capacity.** A fixed number of developer computers can be running at once across all projects. When they're all in use, creating or starting a computer answers `503 computer_capacity`. Nothing is created and nothing is billed; retry in a few minutes, or stop a computer you aren't using.
 - **Spend cap.** When the project reaches its spend cap, calls answer `402 spend_cap_reached`. See [Billing and spend caps](/api/platform/billing).
 - **Control.** A computer that someone else is controlling answers `423 computer_controlled_elsewhere`.
-- **Network egress.** Computers created by outside developers can't reach private address ranges or the cloud metadata address `169.254.169.254`.
+- **Network egress.** Computers created by outside developers reach the public internet only. Private address ranges, the cloud metadata address `169.254.169.254` and the host they run on are blocked.
 
 ## Usage and pricing
 
