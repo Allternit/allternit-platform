@@ -1,7 +1,11 @@
 #!/usr/bin/env python3.11
 """Allternit dependency map: products, surfaces and code, with evidence. Python 3.11+, no installs.
 
-  python3.11 scripts/dependency-map.py --impact <path or id>   what a change can reach (always live)
+  python3.11 scripts/dependency-map.py --impact <path or id> [...] [--summary]
+                                                               what a change can reach (always live; --summary is
+                                                               short text for a plan or a delegation brief)
+  python3.11 scripts/dependency-map.py --brief                 features, journeys and recent decisions, for agents
+                                                               at session start (reads features.json only, instant)
   python3.11 scripts/dependency-map.py --validate              check runtime-links.json, products.json and features.json
   python3.11 scripts/dependency-map.py --out <dir>             build the viewer (index.html + graph.json)
 
@@ -260,10 +264,12 @@ def render(g, built):
     data = json.dumps(viewer_data(g, built), separators=(',', ':')).replace('<', '\\u003c')
     return (MAP/'viewer.template.html').read_text().replace('__GRAPH_DATA__', data)
 
+class Unmapped(Exception): pass
+
 def impact(g, query):
     ids = {n['id'] for n in g['nodes']}
     seed = {query} if query in ids else {v for k,v in g['files'].items() if k == query or k.startswith(query.rstrip('/')+'/')}
-    if not seed: raise SystemExit('No mapped path: '+query)
+    if not seed: raise Unmapped('No mapped path: '+query)
     consumers = collections.defaultdict(list)
     for e in g['edges']: consumers[e['target']].append(e['source'])
     seen=set(seed); todo=list(seed)
@@ -287,16 +293,100 @@ def impact(g, query):
             'journeys':sorted({x for x in named if kinds[x]=='journey'}),
             'potentiallyAffected':sorted(seen-seed)}
 
+CACHE = pathlib.Path(os.environ.get('XDG_CACHE_HOME', pathlib.Path.home() / '.cache')) / 'allternit-depmap'
+
+def cache_key(ai):
+    """Both HEADs, tracked changes (with mtimes, so a second edit to a dirty file counts), the curated files and
+    this script. Untracked files are left out because scanning them is slow in a big checkout; a query for a path
+    the cached graph does not know rebuilds instead (see cached_graph)."""
+    import hashlib
+    h = hashlib.sha256()
+    for root in (ROOT, ai):
+        h.update(str(root).encode() + git(root, 'rev-parse', 'HEAD').encode())
+        for line in git(root, 'status', '--porcelain', '--untracked-files=no').splitlines():
+            h.update(line.encode())
+            f = root / line[3:].split(' -> ')[-1]
+            if f.exists(): h.update(str(f.stat().st_mtime_ns).encode())
+    for f in sorted(MAP.glob('*.json')) + [pathlib.Path(__file__)]: h.update(f.read_bytes())
+    return h.hexdigest()[:24]
+
+def cached_graph(ai, rebuild=False):
+    """The graph for --impact, reused while the key above is unchanged (about 2 s instead of a full build)."""
+    path = CACHE / (cache_key(ai) + '.json')
+    if path.exists() and not rebuild:
+        try: return json.loads(path.read_text()), True
+        except ValueError: pass
+    g = generate(ai, strict=False)
+    try:
+        CACHE.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix('.tmp'); tmp.write_text(json.dumps(g)); tmp.replace(path)
+        for old in sorted(CACHE.glob('*.json'), key=lambda f: f.stat().st_mtime)[:-8]: old.unlink(missing_ok=True)
+    except OSError: pass
+    return g, False
+
+def summary(g, path, r):
+    """Short text of one impact result, for a plan or a delegation brief."""
+    label = {n['id']: n['label'] for n in g['nodes']}
+    by = {n['id']: n for n in g['nodes']}
+    names = lambda ids: ', '.join(label.get(i, i) for i in ids) or 'none'
+    lines = [f'Impact of {path}']
+    lines.append('  Part of: ' + names(r['partOf']))
+    lines.append('  Features: ' + (', '.join(f"{label[i]} [{by[i].get('status','')}]" for i in r['features']) or 'none named; if this is a feature, add it to docs/dependency-map/features.json'))
+    if r['journeys']:
+        steps = lambda j: [k + 1 for k, (at, _) in enumerate(by[j].get('steps', [])) if at in r['changed'] or any(at.startswith(c + '/') or c.startswith(at + '/') for c in r['changed'])]
+        lines.append('  Journeys: ' + ', '.join(label[j] + (f" (step {', '.join(map(str, steps(j)))})" if steps(j) else '') for j in r['journeys']))
+    lines.append('  Shipped surfaces reached: ' + names(r['surfaces']))
+    lines.append('  Products reached: ' + (names(r['products']) if len(r['products']) <= 6 else f"{len(r['products'])} (through shared code; Part of is the direct list)"))
+    lines.append(f"  Could be affected: {len(r['potentiallyAffected'])} components (run without --summary for the list)")
+    return '\n'.join(lines)
+
+def brief():
+    """Session-start briefing from the curated files only, so it costs nothing to run."""
+    work = json.loads((MAP/'features.json').read_text())
+    catalog = json.loads((MAP/'products.json').read_text())
+    product = {p['id']: p for p in catalog['products']}
+    out = ['Allternit dependency map: products, features, user journeys and the code under them (admin.allternit.com for Eoj).',
+           'Before you change code, see what it can break and which features and journeys it is part of:',
+           '  python3.11 scripts/dependency-map.py --impact <path or id> [more paths] --summary   (in the allternit platform repo)',
+           'If your change adds a feature, changes its status or components, or changes a user journey, update',
+           'docs/dependency-map/features.json in the same PR (with a dated decision when one was made) and run --validate.', '']
+    for line in catalog['lines']:
+        fs = [f for f in work['features'] if product.get(f['product'], {}).get('line') == line['id']]
+        if fs: out.append(f"{line['label']}: " + '; '.join(f"{f['label']} [{f['status']}]" for f in sorted(fs, key=lambda f: f['label'])))
+    out.append('Journeys: ' + '; '.join(j['label'] for j in work['journeys']))
+    decisions = sorted(((d['on'], d['note'], f['label']) for f in work['features'] for d in f.get('decisions', [])), reverse=True)
+    if decisions:
+        out.append('Recent decisions:')
+        out += [f'  {on} {label}: {note}' for on, note, label in decisions[:6]]
+    return '\n'.join(out)
+
 if __name__ == '__main__':
     p=argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--ai',type=pathlib.Path,default=ROOT.parent/'allternit-ai',help='allternit-ai checkout (default: sibling folder)')
-    p.add_argument('--impact',help='Repo-prefixed file, directory, or component id')
+    p.add_argument('--impact',nargs='+',help='Repo-prefixed files, directories, or component ids')
+    p.add_argument('--summary',action='store_true',help='With --impact: short text instead of JSON')
+    p.add_argument('--fresh',action='store_true',help='With --impact: rebuild instead of using the cache')
+    p.add_argument('--brief',action='store_true',help='Print the session-start briefing (features, journeys, decisions)')
     p.add_argument('--validate',action='store_true',help='Check the curated files resolve, then exit')
     p.add_argument('--out',type=pathlib.Path,help='Write index.html and graph.json into this folder')
     p.add_argument('--built',default='',help='Build timestamp shown in the viewer')
-    a=p.parse_args(); g=generate(a.ai.resolve(), strict=not (a.impact or a.out))
-    if a.impact: print(json.dumps(impact(g,a.impact),indent=2))
-    elif a.out:
+    a=p.parse_args()
+    if a.brief: print(brief()); sys.exit()
+    if a.impact:
+        ai = a.ai.resolve()
+        g, hit = cached_graph(ai, rebuild=a.fresh)
+        try: results = [(q, impact(g, q)) for q in a.impact]
+        except Unmapped:
+            if not hit: raise SystemExit(str(sys.exc_info()[1]))
+            g, _ = cached_graph(ai, rebuild=True)  # a new untracked file: the cached graph predates it
+            try: results = [(q, impact(g, q)) for q in a.impact]
+            except Unmapped as ex: raise SystemExit(str(ex))
+        if a.summary: print('\n\n'.join(summary(g, q, r) for q, r in results))
+        else: print(json.dumps(results[0][1] if len(results) == 1 else dict(results), indent=2))
+        if g['warnings']: print('\n'.join(g['warnings']), file=sys.stderr)
+        sys.exit()
+    g=generate(a.ai.resolve(), strict=not a.out)
+    if a.out:
         a.out.mkdir(parents=True, exist_ok=True)
         (a.out/'graph.json').write_text(json.dumps(g,indent=1)+'\n')
         (a.out/'index.html').write_text(render(g, a.built))
