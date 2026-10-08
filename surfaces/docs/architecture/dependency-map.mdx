@@ -12,12 +12,12 @@ python3.11 scripts/dependency-map.py --impact allternit-ai/src/views/cowork
 python3.11 scripts/dependency-map.py --impact product:factory
 ```
 
-The command reads your working tree, so the answer is always current. It returns the components your path belongs to, the products and shipped surfaces (Desktop, ai.allternit.com, the m.allternit.com PWA, platform.allternit.com, the docs site, the gizzi CLI) it can reach, and every other component that could be affected. Treat that list as review scope; inspect callers and contracts to decide what actually changes.
+The command reads your working tree, so the answer is always current. It returns the components your path belongs to, the features and user journeys that name them, the products and shipped surfaces (Desktop, ai.allternit.com, the m.allternit.com PWA, platform.allternit.com, the docs site, the gizzi CLI) it can reach, and every other component that could be affected. Treat that list as review scope; inspect callers and contracts to decide what actually changes.
 
 ## Keep the curated links true
 
-Imports and package manifests are read automatically. Products, runtime calls (HTTP, WebSocket, spawned processes), sidecars and shipping paths are recorded by hand with evidence in `products.json` and `runtime-links.json`. Update them in the same pull request as the change, then run `python3.11 scripts/dependency-map.py --validate`.
+Imports and package manifests are read automatically. Products, runtime calls (HTTP, WebSocket, spawned processes), sidecars and shipping paths are recorded by hand with evidence in `products.json` and `runtime-links.json`. Features and journeys are recorded in `features.json`: each feature names its product, status (`live`, `building` or `planned`), the components it touches and its dated decisions; each journey lists the components a user passes through, in order, with one line on what happens at each step. Update them in the same pull request as the change, then run `python3.11 scripts/dependency-map.py --validate`.
 
 ## The viewer
 
-The map is published to an internal, access-controlled site that rebuilds from `main` after every merge. It has a product topology view (products from what people use down to the APIs underneath) and a code graph for any product, component or file. Generated output lists private repository paths, so it is never committed.
+The map is published to an internal, access-controlled site that rebuilds from `main` after every merge. It has three views: product topology (products from what people use down to the APIs underneath), features and journeys (the components a feature touches or a journey walks through, numbered in step order, with the shipped surfaces they reach and a column of recent dated decisions), and a code graph for any product, component or file. Links to a feature or journey (`#features/<id>`) open it directly. Generated output lists private repository paths, so it is never committed.
