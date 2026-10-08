@@ -370,17 +370,16 @@
       "status": "building",
       "description": "Platform API /v1/computers: hosted computers that run a model's computer and browser tool calls, with drop-in drivers for the Anthropic SDK, OpenAI and Gemini, an MCP server, approvals and per-key limits.",
       "touches": [
-        "allternit/cmd/allternit-cloud-api/src/routes/platform_v1/computers.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/platform_v1",
         "allternit/sdk/computer-driver",
         "allternit/mcp/computers-server",
-        "allternit/surfaces/platform.allternit.com/src/pages/console/platform/ComputersPage.tsx",
-        "allternit/surfaces/docs/api/platform/hosted-computers.mdx",
-        "allternit/surfaces/docs/api/platform/computers.mdx"
+        "allternit/surfaces/platform.allternit.com",
+        "allternit/surfaces/docs"
       ],
       "decisions": [
         {"on": "2026-10-07", "note": "Gated per project by hosted_driver_enabled, set by Allternit only; outside-developer computers can't reach private ranges or 169.254.169.254; pricing to be announced."}
       ],
-      "evidence": ["allternit/surfaces/docs/api/platform/hosted-computers.mdx", "allternit/surfaces/docs/api/platform/computers.mdx"]
+      "evidence": ["allternit/surfaces/docs", "allternit/surfaces/docs"]
     },
     {
       "id": "feature:bot-avatars",
@@ -415,6 +414,39 @@
         {"on": "2026-10-07", "note": "Eoj: computer use works for every model. Anthropic's toolsets are absorbed as one adapter into our contract, gizzi stays the only loop, and there are no hosted third-party drivers. The old gizzi browser tool (goal-driven, a second loop) was removed in favour of the toolset browser tool."}
       ],
       "evidence": ["allternit/surfaces/docs/tools/computer-toolset.mdx", "allternit/contracts/computer-toolset/README.md", "allternit/cmd/allternit-api/src/computer_toolset.rs"]
+    },
+    {
+      "id": "feature:project-appearance",
+      "label": "Custom project and folder icons",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Personal folder recipes with color, paper layers, symbols/brands, text/emoji and raster logos, shared by project and folder views. Source is implemented; installed Desktop and separate PWA releases remain pending.",
+      "touches": [
+        "allternit-ai/src/components/appearance",
+        "allternit-ai/src/lib/appearance",
+        "allternit-ai/src/components/projects",
+        "allternit-ai/src/components/threads",
+        "allternit-ai/src/views/project",
+        "allternit-ai/src/views/bots",
+        "allternit-ai/src/views/code",
+        "allternit-ai/src/views/design",
+        "allternit-ai/src/views/nodes",
+        "allternit/cmd/allternit-api/src/runtime_*"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-07",
+          "note": "Eoj approved the iFolder-inspired customization and requested merge/push. Recipes are personal preferences on the connected runtime; no OS icon or execution-setting changes."
+        },
+        {
+          "on": "2026-10-08",
+          "note": "Integrated with the current PreviewCard polish layout; customization stays in the card options menu. Runtime API tests are added, not locally compiled under the no-build instruction."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/project-appearance.mdx",
+        "allternit/surfaces/docs/architecture/project-appearance.mdx"
+      ]
     }
   ],
   "journeys": [
@@ -512,6 +544,36 @@
         {"at": "allternit/cmd/allternit-api/src/bot_*", "says": "The bot it was waiting on carries on."}
       ],
       "evidence": ["allternit/surfaces/docs/guides/mcp-events.mdx", "allternit/surfaces/docs/guides/needs-you-inbox.mdx"]
+    },
+    {
+      "id": "journey:project-appearance",
+      "label": "Customize a project or folder icon",
+      "description": "From opening appearance controls to seeing the saved personal icon.",
+      "steps": [
+        {
+          "at": "allternit-ai/src/components/projects",
+          "says": "Open Customize appearance from the project card options menu."
+        },
+        {
+          "at": "allternit-ai/src/components/appearance",
+          "says": "Edit folder/paper colors and the overlay; preview, save, cancel, reset or export."
+        },
+        {
+          "at": "allternit-ai/src/lib/appearance",
+          "says": "Validate the recipe and send an authenticated request to the connected runtime."
+        },
+        {
+          "at": "allternit/cmd/allternit-api/src/runtime_*",
+          "says": "Validate and persist the preference for this user; null resets it."
+        },
+        {
+          "at": "allternit-ai/src/components/appearance",
+          "says": "Refresh subscribers across the shared Desktop, web and phone UI."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/project-appearance.mdx"
+      ]
     }
   ]
 }

@@ -1,0 +1,53 @@
+---
+title: Project appearance contracts
+description: Personal appearance recipes, runtime persistence, validation, and surface consumers.
+---
+
+## Data-plane API
+
+`GET /api/v1/appearance/:key` returns `{ "appearance": null }` when no recipe exists, or a version 1 recipe. `PUT` takes `{ "appearance": recipe }`; an explicit `null` deletes the saved preference. Missing `appearance` and invalid recipes return 400. The existing runtime authentication middleware supplies the user identity; callers cannot select another user in the request.
+
+The URL-encoded key is a JSON array: `["project", mode, nativeId]` or `["folder", scope, ownerId, path]`. Project modes include chat, cowork, code, design, and bot. Node directories use scope `node` and the node id. Library folders use `thread/<threadId>` as their path and the containing project's identity. Folder separators normalize to `/` and trailing separators are removed. Key length is capped at 2,048 bytes.
+
+Recipes are stored in the existing `runtime_settings` table under `appearance:<key>`, whose primary key includes `user_id`. No schema migration or project-worker registration is required. Runtime settings GET/PUT ignore this namespace; reset deletes only execution-setting sections. Recipe writes replace a single preference atomically, and never touch coordinator metadata.
+
+## Recipe version 1
+
+| Field | Contract |
+| --- | --- |
+| `version` | `1` |
+| `color`, `paperColor`, `overlayColor` | Six-digit hex colors |
+| `documents` | Boolean |
+| `overlay` | `none`, `symbol`, `text`, or `image` |
+| `symbol` | Allowlisted symbol or brand name |
+| `text` | At most 12 Unicode code points |
+| `image` | Optional embedded PNG data URL, at most 128,000 characters; required for an image overlay |
+| `x`, `y` | Finite offsets bounded to ±60 and ±50 |
+| `scale` | Finite value from 0.3 through 1.6 |
+| `rotation` | Finite degrees from -180 through 180 |
+
+The frontend validates loaded and outgoing recipes. The runtime validates writes and caps recipe JSON size. Image import accepts PNG/JPEG/WebP, decodes to a bounded canvas, and re-encodes to PNG; no arbitrary SVG markup or remote URLs enter the recipe. Brand paths are vendored from installed Simple Icons v11.15.0 (CC0); other symbols use the existing Phosphor dependency.
+
+## UI and dependency relationships
+
+The workspace source is `allternit-ai`. `src/lib/appearance/model.ts` owns keys, recipe validation, and image normalization. `useAppearance.ts` uses the authenticated `runtimeApiUrl` seam, including the paired-runtime relay. Reads in flight are deduplicated; no appearance data is persisted in a browser-wide cache. Account, session, organization, runtime, and entity identity changes clear the displayed recipe. Save failures do not optimistically update the icon.
+
+`AppearanceIcon` renders the layered SVG. `AppearanceEditor` owns a cancellable draft, pointer dragging and keyboard-accessible sliders, image upload/paste, PNG export and clipboard errors. `EntityIcon` and `CustomizeAppearance` connect these to consumers:
+
+- Shared `ProjectCard`, including the phone `ProjectsScreen` reuse of `ProjectView`.
+- `ProjectCoordinatorWorkspace` header, coordinator identity, settings, and Library.
+- Bot `ProjectHomeView` header/settings and `BotProjectsRail`.
+- `ProjectLibrary` list and grid thread folders.
+- Code `ExplorerView`, Design `ProjectFileWorkspace`, and node `TerminalFileBrowser` directories.
+
+The authenticated runtime route is implemented in `cmd/allternit-api/src/runtime_settings_routes.rs`. Desktop packaging must include that runtime change as well as the UI. Web and PWA clients need a supporting connected runtime. The phone uses the same editor with a single-column layout; customizations do not invoke OS icon APIs.
+
+The appearance HTTP relationship is recorded in `docs/dependency-map/runtime-links.json`. Impact was queried against both current source worktrees and the curated map was validated before landing. The editor reaches Desktop, ai.allternit.com, and the phone/PWA through the shared workspace UI.
+
+## Verification and release
+
+Frontend tests cover recipe bounds, upload rejection, authenticated save/load/reset, account changes, failed saves, draft cancellation, text/transform editing, and symbol search. Runtime tests cover roundtrip persistence, user isolation, invalid input, and preserving appearances through execution-settings reset.
+
+Release the supporting runtime alongside the workspace UI. Desktop needs a new package; ai.allternit.com uses the workspace release path; m.allternit.com needs its separate approved deploy. Source changes alone do not update installed applications or deployed sites.
+
+See [customization instructions](/guides/project-appearance).

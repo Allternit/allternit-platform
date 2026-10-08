@@ -14,7 +14,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 use serde_json::{json, Map, Value};
 use std::sync::Arc;
 use tracing::warn;
@@ -33,10 +33,71 @@ pub fn runtime_settings_router() -> Router<Arc<AppState>> {
             "/runtime/settings",
             get(get_settings).put(update_settings),
         )
+        .route("/appearance/:key", get(get_appearance).put(put_appearance))
         .route("/runtime/settings/reset", post(reset_settings))
         .route("/runtime/drivers", get(list_drivers))
         .route("/runtime/drivers/:type/status", get(driver_status))
         .route("/runtime/drivers/:type/activate", post(activate_driver))
+}
+
+// Appearance recipes are user preferences, isolated from execution settings.
+// Reuse the runtime_settings key/value store; runtime reset only touches SETTING_KEYS.
+fn valid_appearance_key(key: &str) -> bool {
+    if key.len() > 2048 { return false; }
+    let Ok(Value::Array(parts)) = serde_json::from_str::<Value>(key) else { return false; };
+    parts.iter().all(|v| v.as_str().is_some_and(|s| !s.is_empty()))
+        && ((parts.len() == 3 && parts[0] == "project") || (parts.len() == 4 && parts[0] == "folder"))
+}
+
+fn validate_appearance(a: &Value) -> bool {
+    if a.is_null() { return true; }
+    let Some(obj) = a.as_object() else { return false; };
+    if a.to_string().len() > 130000 || a["version"] != 1 || !a["documents"].is_boolean() { return false; }
+    for key in ["color", "paperColor", "overlayColor"] {
+        if !a[key].as_str().is_some_and(|s| s.len() == 7 && s.starts_with('#') && s[1..].bytes().all(|b| b.is_ascii_hexdigit())) { return false; }
+    }
+    if !a["overlay"].as_str().is_some_and(|s| ["none", "symbol", "text", "image"].contains(&s)) { return false; }
+    if !a["symbol"].as_str().is_some_and(|s| ["sparkle", "code", "briefcase", "robot", "star", "heart", "lightning", "leaf", "globe", "music", "camera", "book", "game", "palette", "terminal", "diamond", "github", "figma", "react", "typescript", "python", "slack", "notion", "openai"].contains(&s)) { return false; }
+    if !a["text"].as_str().is_some_and(|s| s.chars().count() <= 12) { return false; }
+    for (key, min, max) in [("x", -60.0, 60.0), ("y", -50.0, 50.0), ("scale", 0.3, 1.6), ("rotation", -180.0, 180.0)] {
+        if !a[key].as_f64().is_some_and(|n| n.is_finite() && n >= min && n <= max) { return false; }
+    }
+    if let Some(image) = obj.get("image") {
+        if !image.as_str().is_some_and(|s| s.len() <= 128000 && s.starts_with("data:image/png;base64,iVBORw0KGgo") && s[22..].bytes().all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'=')) { return false; }
+    }
+    a["overlay"] != "image" || obj.contains_key("image")
+}
+
+async fn get_appearance(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(key): Path<String>) -> impl IntoResponse {
+    if !valid_appearance_key(&key) { return (StatusCode::BAD_REQUEST, Json(json!({ "error": "invalid appearance key" }))); }
+    let db = state.db.clone();
+    match tokio::task::spawn_blocking(move || -> rusqlite::Result<Option<String>> {
+        db.connect()?.query_row("SELECT value FROM runtime_settings WHERE user_id = ?1 AND key = ?2", params![user.user_id, format!("appearance:{key}")], |r| r.get(0)).optional()
+    }).await {
+        Ok(Ok(value)) => (StatusCode::OK, Json(json!({ "appearance": value.and_then(|s| serde_json::from_str::<Value>(&s).ok()).unwrap_or(Value::Null) }))),
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "could not load appearance" }))),
+    }
+}
+
+async fn put_appearance(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(key): Path<String>, Json(body): Json<Value>) -> impl IntoResponse {
+    let Some(appearance) = body.get("appearance") else { return (StatusCode::BAD_REQUEST, Json(json!({ "error": "appearance is required" }))); };
+    if !valid_appearance_key(&key) || !validate_appearance(appearance) { return (StatusCode::BAD_REQUEST, Json(json!({ "error": "invalid appearance recipe" }))); }
+    let appearance = appearance.clone();
+    let result = appearance.clone();
+    let db = state.db.clone();
+    match tokio::task::spawn_blocking(move || -> rusqlite::Result<()> {
+        let conn = db.connect()?;
+        let storage_key = format!("appearance:{key}");
+        if appearance.is_null() {
+            conn.execute("DELETE FROM runtime_settings WHERE user_id = ?1 AND key = ?2", params![user.user_id, storage_key])?;
+        } else {
+            conn.execute("INSERT INTO runtime_settings (user_id, key, value, updated_at) VALUES (?1, ?2, ?3, CURRENT_TIMESTAMP) ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP", params![user.user_id, storage_key, appearance.to_string()])?;
+        }
+        Ok(())
+    }).await {
+        Ok(Ok(())) => (StatusCode::OK, Json(json!({ "appearance": result }))),
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "could not save appearance" }))),
+    }
 }
 
 // ─── Settings document ────────────────────────────────────────────────────────
@@ -304,7 +365,7 @@ async fn reset_settings(
     match tokio::task::spawn_blocking(move || {
         let conn = db.connect()?;
         conn.execute(
-            "DELETE FROM runtime_settings WHERE user_id = ?1",
+            "DELETE FROM runtime_settings WHERE user_id = ?1 AND key IN ('driver', 'resources', 'replay', 'prewarm', 'versioning')",
             params![user_id],
         )?;
         Ok::<_, rusqlite::Error>(default_settings())
@@ -627,6 +688,53 @@ mod tests {
         )
         .unwrap_or_else(|_| json!({}));
         (status, payload)
+    }
+
+    fn appearance_recipe() -> Value {
+        json!({ "version": 1, "color": "#397ad5", "paperColor": "#ffffff", "documents": true,
+            "overlay": "text", "symbol": "sparkle", "text": "AI", "overlayColor": "#ffffff",
+            "x": 0, "y": 0, "scale": 1, "rotation": 0 })
+    }
+
+    #[test]
+    fn appearance_rejects_invalid_recipes_and_keys() {
+        assert!(validate_appearance(&appearance_recipe()));
+        assert!(validate_appearance(&Value::Null));
+        for patch in [json!({"x": 61}), json!({"scale": 0}), json!({"symbol": "unknown"}), json!({"color": "red"}), json!({"text": "1234567890123"}), json!({"overlay": "image"}), json!({"image": "data:image/svg+xml,<svg/>"})] {
+            let mut a = appearance_recipe();
+            for (key, value) in patch.as_object().unwrap() { a[key] = value.clone(); }
+            assert!(!validate_appearance(&a), "accepted {patch}");
+        }
+        assert!(valid_appearance_key(r#"["project","chat","p1"]"#));
+        assert!(valid_appearance_key(r#"["folder","code","p1","/src"]"#));
+        assert!(!valid_appearance_key("not-json"));
+        assert!(!valid_appearance_key(r#"["project","chat",""]"#));
+    }
+
+    #[tokio::test]
+    async fn appearance_roundtrip_is_user_scoped_and_survives_runtime_reset() {
+        let temp = beta_test::temp_dir("appearance");
+        let state = beta_test::test_app_state(&temp).await;
+        let router = runtime_settings_router().with_state(state);
+        let path = "/appearance/%5B%22project%22%2C%22chat%22%2C%22p1%22%5D";
+        let body = json!({ "appearance": appearance_recipe() });
+        let (status, _) = call(&router, path, "PUT", Some(&body), "user-a").await;
+        assert_eq!(status, StatusCode::OK);
+        let (_, stored) = call(&router, path, "GET", None, "user-a").await;
+        assert_eq!(stored["appearance"], body["appearance"]);
+        let (_, other) = call(&router, path, "GET", None, "user-b").await;
+        assert!(other["appearance"].is_null());
+        let (status, _) = call(&router, "/runtime/settings/reset", "POST", None, "user-a").await;
+        assert_eq!(status, StatusCode::OK);
+        let (_, stored) = call(&router, path, "GET", None, "user-a").await;
+        assert_eq!(stored["appearance"], body["appearance"]);
+        let bad = json!({"appearance": {"version": 999}});
+        let (status, _) = call(&router, path, "PUT", Some(&bad), "user-a").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let (status, _) = call(&router, path, "PUT", Some(&json!({"appearance": null})), "user-a").await;
+        assert_eq!(status, StatusCode::OK);
+        let (_, stored) = call(&router, path, "GET", None, "user-a").await;
+        assert!(stored["appearance"].is_null());
     }
 
     #[tokio::test]
