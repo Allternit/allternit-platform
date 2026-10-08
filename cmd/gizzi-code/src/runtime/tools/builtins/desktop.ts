@@ -9,17 +9,32 @@ import z from "zod/v4"
 import { Tool } from "@/runtime/tools/builtins/tool"
 import DESCRIPTION from "@/runtime/tools/builtins/desktop.txt"
 import { Log } from "@/shared/util/log"
+import { platformApiBase, platformToken } from "@/runtime/bots/platform-api"
 
 const log = Log.create({ service: "desktop-tool" })
 
-const API_BASE_URL =
-  process.env.ALLTERNIT_GATEWAY_URL ??
-  process.env.VITE_ALLTERNIT_GATEWAY_URL ??
-  "https://mail.news.allternit.com"
+/**
+ * The bot desktop routes live on the same Allternit API as the rest of the
+ * bot platform calls (`runtime/bots/platform-api.ts`), so resolve the base the
+ * same way: an explicit override, else the shared gateway base.
+ */
+export function desktopApiBase(env: NodeJS.ProcessEnv = process.env): string {
+  const override = env.ALLTERNIT_GATEWAY_URL ?? env.VITE_ALLTERNIT_GATEWAY_URL
+  return (override?.trim() || platformApiBase()).replace(/\/+$/, "")
+}
+
+const API_BASE_URL = desktopApiBase()
 
 const API_TOKEN =
   process.env.ALLTERNIT_SELF_HOSTED_TOKEN ??
   process.env.VITE_ALLTERNIT_SELF_HOSTED_TOKEN
+
+/** Self-hosted token when set, else the signed-in `gizzi login` credential. */
+async function authHeaders(): Promise<Record<string, string>> {
+  if (API_TOKEN) return { "X-Allternit-Self-Hosted-Token": API_TOKEN }
+  const token = await platformToken()
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
 
 type DesktopResult = {
   title: string
@@ -56,9 +71,7 @@ async function apiCall(
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Accept: "application/json",
-  }
-  if (API_TOKEN) {
-    headers["X-Allternit-Self-Hosted-Token"] = API_TOKEN
+    ...(await authHeaders()),
   }
 
   log.info("Desktop Cloud API call", { method, path: url.toString() })
@@ -195,8 +208,7 @@ export const DesktopTool = Tool.define("desktop", async () => {
       if (action === "screenshot") {
         const url = new URL(`/api/v1/bots/${bot_id}/desktop/screenshot`, API_BASE_URL)
         url.searchParams.set("sandbox_id", sandbox_id)
-        const headers: Record<string, string> = {}
-        if (API_TOKEN) headers["X-Allternit-Self-Hosted-Token"] = API_TOKEN
+        const headers = await authHeaders()
         const response = await fetch(url.toString(), { headers })
         if (!response.ok) {
           const text = await response.text()
@@ -223,8 +235,7 @@ export const DesktopTool = Tool.define("desktop", async () => {
         const url = new URL(`/api/v1/bots/${bot_id}/desktop/files/download`, API_BASE_URL)
         url.searchParams.set("sandbox_id", sandbox_id)
         url.searchParams.set("path", params.path)
-        const headers: Record<string, string> = {}
-        if (API_TOKEN) headers["X-Allternit-Self-Hosted-Token"] = API_TOKEN
+        const headers = await authHeaders()
         const response = await fetch(url.toString(), { headers })
         if (!response.ok) {
           const text = await response.text()

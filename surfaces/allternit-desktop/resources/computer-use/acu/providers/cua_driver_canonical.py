@@ -9,6 +9,10 @@ import platform
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, Tuple
+
+
+class CuaDriverHistoryError(RuntimeError):
+    """History-specific error from the CUA Driver provider."""
 from uuid import uuid4
 
 from contracts.canonical import (
@@ -97,21 +101,39 @@ class CuaDriverCanonicalProvider:
         self._version = version
         self._state_tokens: Dict[str, Dict[str, Dict[str, Any]]] = {}
         self._state_order: list[str] = []
-        self._history_tools: Optional[tuple[str, ...]] = None
+        self._history_tools: Optional[Tuple[str, ...]] = None
+        self._started_sessions: set[str] = set()
 
-    async def _discover_history_tools(self) -> tuple[str, ...]:
-        if self._history_tools is not None:
-            return self._history_tools
+    async def _ensure_session(self, session_id: str) -> None:
+        """Start the named Cua session once, with the agent cursor motion
+        (Cua Driver 0.34+). Older drivers reject the call; acting still works
+        on the implicit session, so a failure is remembered, not raised."""
+        if not session_id or session_id in self._started_sessions:
+            return
+        self._started_sessions.add(session_id)
+        try:
+            await self._transport.start_session(session_id)
+        except Exception:
+            pass
+
+    async def _detect_history_tools(self) -> Tuple[str, ...]:
+        """Probe CUA Driver for Computer History support; cache the result.
+
+        History tools are advertised only when the driver reports the preview is
+        supported and admitted. Errors or unsupported platforms degrade to an
+        empty tool set so the provider remains usable without history.
+        """
         try:
             status = await self._transport.history_status()
         except CuaDriverCallError:
-            self._history_tools = ()
-            return self._history_tools
-        if isinstance(status, dict) and status.get("supported") and status.get("admitted"):
-            self._history_tools = ("history_status", "history_query")
-        else:
-            self._history_tools = ()
-        return self._history_tools
+            return ()
+        except Exception:
+            return ()
+        if not isinstance(status, dict):
+            return ()
+        if status.get("supported") is True and status.get("admitted") is True:
+            return ("history_status", "history_query")
+        return ()
 
     async def capabilities(self) -> CapabilityManifest:
         system = platform.system().lower()
@@ -121,7 +143,8 @@ class CuaDriverCanonicalProvider:
         # action-granular, advertise only the guarantee common to every action.
         strict = False
         modes = [ExecutionMode.FOREGROUND_ALLOWED.value]
-        history_tools = await self._discover_history_tools()
+        if self._history_tools is None:
+            self._history_tools = await self._detect_history_tools()
         return CapabilityManifest(
             provider_id=self.provider_id,
             provider_version=self._version,
@@ -133,7 +156,6 @@ class CuaDriverCanonicalProvider:
             ),
             observation_channels=("accessibility", "screenshot"),
             execution_modes=tuple(modes),
-            tools=history_tools,
             strict_background=strict,
             semantic_input=True,
             raw_input=True,
@@ -146,6 +168,7 @@ class CuaDriverCanonicalProvider:
                 "linux_background_raw_input_depends_on_display_route",
                 "tool_results_require_successor_verification",
             ),
+            tools=self._history_tools,
         )
 
     async def list_roots(self, pid: Optional[int] = None) -> Tuple[Root, ...]:
@@ -195,6 +218,7 @@ class CuaDriverCanonicalProvider:
         epoch: int,
     ) -> Observation:
         pid, window_id = parse_cua_resource_id(resource_id)
+        await self._ensure_session(session_id)
         self._artifact_dir.mkdir(parents=True, exist_ok=True)
         artifact_id = f"artifact_{uuid4().hex}"
         artifact_path = self._artifact_dir / f"{artifact_id}.png"
@@ -336,6 +360,7 @@ class CuaDriverCanonicalProvider:
             "moveMouse": "move_cursor", "launchApp": "launch_app", "closeApp": "kill_app",
         }
         tool = tool_map[step.action]
+        await self._ensure_session(transaction.session_id)
         try:
             response = await self._transport.call(tool, self._arguments(transaction, step))
             structured = _structured(response)
@@ -376,10 +401,24 @@ class CuaDriverCanonicalProvider:
             )
 
     async def history_status(self) -> Dict[str, Any]:
+        """Return CUA Driver Computer History operational status."""
         return await self._transport.history_status()
 
-    async def history_query(self, **kwargs: Any) -> Dict[str, Any]:
-        return await self._transport.history_query(**kwargs)
+    async def history_query(
+        self,
+        *,
+        limit: Optional[int] = None,
+        session_id: Optional[str] = None,
+        since_sequence: Optional[int] = None,
+        until_sequence: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Query a bounded, metadata-only slice of CUA Driver Computer History."""
+        return await self._transport.history_query(
+            limit=limit,
+            session_id=session_id,
+            since_sequence=since_sequence,
+            until_sequence=until_sequence,
+        )
 
     async def close(self) -> None:
         return None

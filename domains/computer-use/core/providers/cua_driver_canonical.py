@@ -102,6 +102,19 @@ class CuaDriverCanonicalProvider:
         self._state_tokens: Dict[str, Dict[str, Dict[str, Any]]] = {}
         self._state_order: list[str] = []
         self._history_tools: Optional[Tuple[str, ...]] = None
+        self._started_sessions: set[str] = set()
+
+    async def _ensure_session(self, session_id: str) -> None:
+        """Start the named Cua session once, with the agent cursor motion
+        (Cua Driver 0.34+). Older drivers reject the call; acting still works
+        on the implicit session, so a failure is remembered, not raised."""
+        if not session_id or session_id in self._started_sessions:
+            return
+        self._started_sessions.add(session_id)
+        try:
+            await self._transport.start_session(session_id)
+        except Exception:
+            pass
 
     async def _detect_history_tools(self) -> Tuple[str, ...]:
         """Probe CUA Driver for Computer History support; cache the result.
@@ -205,6 +218,7 @@ class CuaDriverCanonicalProvider:
         epoch: int,
     ) -> Observation:
         pid, window_id = parse_cua_resource_id(resource_id)
+        await self._ensure_session(session_id)
         self._artifact_dir.mkdir(parents=True, exist_ok=True)
         artifact_id = f"artifact_{uuid4().hex}"
         artifact_path = self._artifact_dir / f"{artifact_id}.png"
@@ -346,6 +360,7 @@ class CuaDriverCanonicalProvider:
             "moveMouse": "move_cursor", "launchApp": "launch_app", "closeApp": "kill_app",
         }
         tool = tool_map[step.action]
+        await self._ensure_session(transaction.session_id)
         try:
             response = await self._transport.call(tool, self._arguments(transaction, step))
             structured = _structured(response)

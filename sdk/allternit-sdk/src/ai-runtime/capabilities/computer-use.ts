@@ -40,6 +40,83 @@ export interface ComputerUseOptions {
   toolVersion?: ComputerToolVersion;
   /** 20251124 only: advertise the "zoom" action and emit `enable_zoom` metadata. */
   enableZoom?: boolean;
+  /**
+   * Asked before every risky or irreversible action (clicks, drags, typing
+   * that submits, Enter). Without one, those actions are refused: the tool
+   * never acts on a person's computer without a human decision.
+   */
+  approve?: ComputerUseApprover;
+}
+
+/**
+ * How much human confirmation an action needs. The same three classes as
+ * allternit-api's `aci_safety::ConfirmationClass`, so the SDK and the server
+ * agree on what counts as risky.
+ */
+export type ComputerActionClass = 'reversible' | 'risky' | 'irreversible';
+
+export interface ComputerUseApprovalRequest {
+  action: ComputerUseAction;
+  actionClass: Exclude<ComputerActionClass, 'reversible'>;
+  input: ComputerUseInput;
+  context: unknown;
+}
+
+/** Return true (or `{ approved: true }`) to let the action run. */
+export type ComputerUseApprover = (
+  request: ComputerUseApprovalRequest,
+) => Promise<boolean | { approved: boolean; reason?: string }>;
+
+const REVERSIBLE_ACTIONS = new Set<string>([
+  'screenshot', 'cursor_position', 'mouse_move', 'scroll', 'wait', 'zoom',
+]);
+
+/** Classify one computer action (mirrors `aci_safety` mouse/keyboard rules). */
+export function classifyComputerAction(input: Pick<ComputerUseInput, 'action' | 'text'>): ComputerActionClass {
+  const action = String(input.action ?? '');
+  if (REVERSIBLE_ACTIONS.has(action)) return 'reversible';
+  if (action === 'type') {
+    // A newline usually submits the focused form.
+    return typeof input.text === 'string' && !/[\r\n]/.test(input.text) ? 'reversible' : 'risky';
+  }
+  if (action === 'key' || action === 'hold_key') {
+    const key = typeof input.text === 'string' ? input.text.toLowerCase() : '';
+    if (!key) return 'risky';
+    return key.includes('return') || key.includes('enter') ? 'risky' : 'reversible';
+  }
+  // Clicks, drags, button down/up and anything unknown activate whatever is
+  // under the cursor: risky, fail-safe.
+  return 'risky';
+}
+
+/**
+ * The `preExecute` gate for the computer tool: reversible actions run,
+ * risky and irreversible ones need `approve` to say yes. No approver means
+ * deny.
+ */
+export function createComputerPreExecute(approve?: ComputerUseApprover): NonNullable<ToolDefinition['preExecute']> {
+  return async (args: ComputerUseInput, context: unknown) => {
+    const actionClass = classifyComputerAction(args ?? ({} as ComputerUseInput));
+    if (actionClass === 'reversible') return { proceed: true };
+    if (!approve) {
+      return {
+        proceed: false,
+        reason: `Computer action "${String(args?.action)}" is ${actionClass} and needs a person's approval, but no approver is configured.`,
+      };
+    }
+    try {
+      const verdict = await approve({ action: args.action, actionClass, input: args, context });
+      const approved = typeof verdict === 'boolean' ? verdict : verdict?.approved === true;
+      if (approved) return { proceed: true };
+      const reason = typeof verdict === 'object' && verdict?.reason ? `: ${verdict.reason}` : '';
+      return { proceed: false, reason: `Computer action "${String(args.action)}" was not approved${reason}.` };
+    } catch (error) {
+      return {
+        proceed: false,
+        reason: `Computer action "${String(args.action)}" approval failed: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  };
 }
 
 function buildComputerInputSchema(version: ComputerToolVersion): ToolDefinition['input_schema'] {
@@ -120,14 +197,8 @@ export const COMPUTER_USE_TOOL: ToolDefinition = {
     display_width_px: 1024,
     display_height_px: 768,
   },
-  preExecute: async (args) => {
-    // Standard safety check - mouse/keyboard actions might need approval if destructive
-    const restricted = ['left_click', 'key', 'type'];
-    if (restricted.includes(args.action)) {
-      return { proceed: true }; // In a real app, this would check policy
-    }
-    return { proceed: true };
-  }
+  // No approver on the shared definition: risky actions are refused.
+  preExecute: createComputerPreExecute(),
 };
 
 export class ComputerUseCapability {
@@ -138,6 +209,7 @@ export class ComputerUseCapability {
   private readonly displayNumber?: number;
   private readonly toolVersion: ComputerToolVersion;
   private readonly enableZoom: boolean;
+  private readonly approve?: ComputerUseApprover;
 
   constructor(options: string | ComputerUseOptions = {}) {
     const normalized = typeof options === 'string' ? { gatewayUrl: options } : options;
@@ -148,6 +220,7 @@ export class ComputerUseCapability {
     this.displayNumber = normalized.displayNumber;
     this.toolVersion = normalized.toolVersion ?? '20250124';
     this.enableZoom = normalized.enableZoom ?? false;
+    this.approve = normalized.approve;
   }
 
   public getTool(): ToolDefinition {
@@ -164,6 +237,7 @@ export class ComputerUseCapability {
         ...(this.displayNumber === undefined ? {} : { display_number: this.displayNumber }),
         ...(this.toolVersion === '20251124' && this.enableZoom ? { enable_zoom: true } : {}),
       },
+      preExecute: createComputerPreExecute(this.approve),
       execute: this.execute.bind(this)
     };
   }

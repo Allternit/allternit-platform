@@ -72,6 +72,31 @@ async fn computer_connector_replay_fence_and_approval() {
     assert_eq!(hits.load(Ordering::SeqCst), 2);
     // Someone else's (or an unknown) computer is not reachable.
     assert!(computer::dispatch(&t.st, "u1", "cmp_not_mine", &shot(), false, "k4").await.is_err());
+    // Control lease on this Mac: the agent takes it for input; once the
+    // person takes over, agent input is refused (423) and never dispatched,
+    // while read-only observing still works.
+    {
+        let conn = db.connect().unwrap();
+        conn.execute(
+            "INSERT INTO computers (id, kind, provider, status, owner_type, owner_id, name, os, native_id, billing_source)
+             VALUES ('cmp_mac', 'local', 'host', 'running', 'user', 'u1', 'Mac', 'macos', 'dev-1', 'free')",
+            [],
+        ).unwrap();
+    }
+    let e3 = safety::acquire_fence(db, "run_c3b_cu", "w3").unwrap();
+    fenced(db, "run_c3b_cu", e3, "k5", computer::dispatch(&t.st, "u1", "local", &click(), true, "k5")).await.unwrap();
+    assert_eq!(hits.load(Ordering::SeqCst), 3);
+    {
+        let conn = db.connect().unwrap();
+        let held = crate::computer_control_lease::current(&conn, "cmp_mac", chrono::Utc::now().timestamp()).unwrap().unwrap();
+        assert_eq!(held.holder.kind, crate::computer_control_lease::HolderKind::Agent);
+        let me = crate::computer_control_lease::Holder { kind: crate::computer_control_lease::HolderKind::User, id: "u1".into(), label: Some("Eoj".into()), device_id: Some("dev-1".into()) };
+        crate::computer_control_lease::take(&conn, "cmp_mac", &me, chrono::Utc::now().timestamp()).unwrap();
+    }
+    let locked = computer::dispatch(&t.st, "u1", "local", &click(), true, "k6").await.unwrap_err();
+    assert!(locked.to_string().starts_with(computer::LOCKED_PREFIX), "{locked}");
+    assert_eq!(hits.load(Ordering::SeqCst), 3, "a locked agent click never reaches the computer");
+    assert!(computer::dispatch(&t.st, "u1", "local", &shot(), false, "k7").await.is_ok());
     *computer::ACU_URL_OVERRIDE.lock().unwrap() = None;
 }
 

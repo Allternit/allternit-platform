@@ -203,6 +203,22 @@ pub fn check_input(conn: &Connection, computer_id: &str, caller: &Holder, now: i
     })
 }
 
+/// Agent input on this Mac: the agent takes (or renews) the lease on every
+/// one of `computer_ids` before it may send mouse or keyboard input, the same
+/// rule a person follows. All-or-nothing: when someone it may not preempt (a
+/// person who took over, or another agent) holds any of them, nothing is
+/// taken and that lease is returned so the caller can answer 423.
+pub fn take_all_for_agent(conn: &Connection, computer_ids: &[String], agent: &Holder, now: i64) -> Result<Vec<Lease>, TakeError> {
+    for id in computer_ids {
+        if let Some(lease) = current(conn, id, now).map_err(|e| TakeError::Db(e.to_string()))? {
+            if !may_preempt(agent, &lease.holder) {
+                return Err(TakeError::Held(lease));
+            }
+        }
+    }
+    computer_ids.iter().map(|id| take(conn, id, agent, now)).collect()
+}
+
 /// How long a hand-off request or offer stays open.
 pub const HANDOFF_TTL_SECS: i64 = 600;
 
@@ -443,6 +459,27 @@ mod tests {
     fn free_computer_accepts_input_from_anyone() {
         let conn = db();
         assert_eq!(check_input(&conn, "c1", &agent("a1"), 1_000).unwrap(), Ok(()));
+    }
+
+    #[test]
+    fn an_agent_needs_the_lease_on_this_mac_and_a_person_takes_over() {
+        let conn = db();
+        let ids = vec!["mac".to_string()];
+        // Free: the agent takes it.
+        let taken = take_all_for_agent(&conn, &ids, &agent("a1"), 1_000).unwrap();
+        assert_eq!(taken[0].holder.id, "a1");
+        // The same agent renews it on its next step.
+        assert!(take_all_for_agent(&conn, &ids, &agent("a1"), 1_010).is_ok());
+        // The person takes over; the agent is then locked out (423).
+        take(&conn, "mac", &user("u1", "laptop"), 1_020).unwrap();
+        let Err(TakeError::Held(lease)) = take_all_for_agent(&conn, &ids, &agent("a1"), 1_030) else {
+            panic!("a person holding control must block the agent");
+        };
+        assert_eq!(lease.holder.kind, HolderKind::User);
+        // All-or-nothing: a blocked row means nothing else is taken.
+        let two = vec!["free".to_string(), "mac".to_string()];
+        assert!(take_all_for_agent(&conn, &two, &agent("a1"), 1_030).is_err());
+        assert!(current(&conn, "free", 1_030).unwrap().is_none());
     }
 
     #[test]

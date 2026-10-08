@@ -170,9 +170,21 @@ const tool = computer.getTool();
 const screenshot = await tool.execute!({ action: 'screenshot' }, {});
 ```
 
+### Approvals in the SDK tool
+
+The tool's `preExecute` hook classifies every action with the same three classes the API uses (`aci_safety`): **reversible** (`screenshot`, `cursor_position`, `mouse_move`, `scroll`, `wait`, `zoom`, typing without a newline, keys other than Enter), **risky** (clicks, drags, button down/up, typing that contains a newline, Enter/Return, anything unknown) and **irreversible**. Reversible actions run. Risky and irreversible actions run only when the `approve` callback says yes. With no approver configured they are refused, so the tool never acts without a person's decision.
+
+```typescript
+const computer = new ComputerUseCapability({
+  approve: async ({ action, actionClass, input }) => askThePerson(action, actionClass, input),
+});
+```
+
+The callback may return `true`/`false` or `{ approved, reason }`. `classifyComputerAction(input)` is exported if you want to show the class in your own UI.
+
 ### Vision coordinates
 
-ACI uses absolute pixel coordinates for mouse actions. The capability advertises the display size in tool metadata so the model can reason about coordinates.
+ACI uses absolute pixel coordinates for mouse actions. The capability advertises the display size in tool metadata so the model can reason about coordinates. In the Python engine's planning loop, the coordinate space is the real size of each screenshot (read from the PNG or JPEG header), or the size the session reports. It falls back to 1920x1080, the size of cloud computers. It is no longer fixed at 1280x720.
 
 ### Supported actions
 
@@ -193,6 +205,19 @@ In addition to browser automation, ACI provides a desktop-level tool that can co
 
 The desktop tool uses the same coordinate system and event streaming as browser automation.
 
+### Control lease on this Mac
+
+Only one controller drives a computer at a time. On cloud computers, input without the control lease is refused with `423 computer_controlled_elsewhere`. The Mac running Allternit follows the same rule:
+
+- A person's mouse and keyboard input (`/api/v1/computers/:id/mouse` and `/keyboard`) needs that person to hold control. Without it the API answers `409 take_control_first`. If someone else holds it, the answer is `423`.
+- An agent acting on this Mac (`computer:local` steps in agent runs) takes the lease as an agent before any click or keystroke. If a person has taken over, the agent's input is refused with `423 computer_controlled_elsewhere` and never reaches the computer. Screenshots and other read-only steps still work. The person keeps control until they hand it back.
+
+### Cua Driver and the agent cursor
+
+Allternit Desktop embeds Cua Driver **0.34.0** for macOS (universal), Linux x86_64 and Windows x86_64. It is pinned by SHA-256 in `surfaces/allternit-desktop/resources/computer-use/VERSION.json` and staged by `npm run prepare:cua-driver`, which also records the staged binary's own hash. That way a stale binary is never reused under a newer version. If `/Applications/CuaDriver.app` is installed on a Mac, Desktop uses that app's daemon instead.
+
+When the engine starts a Cua session it calls the driver's `start_session` with a cursor motion style. The default is `signature_arc`. To pick another, set `ALLTERNIT_CUA_CURSOR_MOTION` to `spring_settle`, `magnetic`, `comet_swoop`, `adaptive` or `classic`. Reduced motion is left to the driver's `auto` theme, which follows the operating system's setting and always wins. `ALLTERNIT_CUA_REDUCED_MOTION=on|off` overrides it. Drivers older than 0.34 don't have `start_session`, and actions still run on their implicit session.
+
 ## Error handling
 
 | HTTP | Code / Message | Meaning |
@@ -200,6 +225,8 @@ The desktop tool uses the same coordinate system and event streaming as browser 
 | 200 | — | Run started, streamed, stopped, or approved successfully |
 | 400 | `goal is required` | Missing or empty `goal` in the run request |
 | 502 | `acu_unavailable` | The ACU gateway could not be reached |
+| 409 | `take_control_first` | Input on this Mac without holding its control lease |
+| 423 | `computer_controlled_elsewhere` | Someone else (a person who took over, or another agent) holds control |
 | 502 | `acu_error` | The ACU gateway returned a non-success status |
 
 ## Related pages

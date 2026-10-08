@@ -5,27 +5,31 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
-const VERSION = '0.20.1-nightly.20260818.32173745999';
-const RELEASE = `https://github.com/trycua/cua/releases/download/nightly-cua-driver-rs-v${VERSION}`;
+const VERSION = '0.34.0';
+const RELEASE = `https://github.com/trycua/cua/releases/download/cua-driver-rs-v${VERSION}`;
 const outputRoot = path.resolve(__dirname, '..', 'resources', 'computer-use');
 
 const ASSETS = {
   darwin: {
     asset: `cua-driver-rs-${VERSION}-darwin-universal-binary.tar.gz`,
-    sha256: 'f57e7192da3c818b2cf9e30bacc2c32a9a254387e43612e9dc021debbc17ef93',
+    sha256: '940dc008e0f7c5d217d14c0f247d1ebab91b1bac965f4a649d19e8c789bdfd81',
     binary: 'cua-driver',
   },
   linux: {
     asset: `cua-driver-rs-${VERSION}-linux-x86_64-binary.tar.gz`,
-    sha256: 'a1b178a53fc407215583384ffa28de9132794e1f96d7eb3f7f20048f53ab5c53',
+    sha256: '629ac96eff829d4dfd5cf221f3f2165c2d813aed91e5efb7b20777a741cd70a7',
     binary: 'cua-driver',
   },
   win32: {
     asset: `cua-driver-rs-${VERSION}-windows-x86_64-binary.zip`,
-    sha256: '4770c35556335f9a930b624a9dd3ba31486867d570e08b01ffbea6ba79260d65',
+    sha256: 'bcc520e50861c7092cf775846fec76ae386d7dcd6b5b408608b0ea4423a8b888',
     binary: 'cua-driver.exe',
   },
 };
+
+function sha256File(file) {
+  return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+}
 
 function packTargets() {
   const requested = process.env.ALLTERNIT_PACK_OS;
@@ -97,10 +101,14 @@ async function prepareTarget(platform) {
   if (fs.existsSync(output) && fs.existsSync(versionPath)) {
     try {
       const existing = JSON.parse(fs.readFileSync(versionPath, 'utf8'));
-      const recorded = existing.platforms?.[platform]?.sha256 || (platform === 'darwin' ? existing.sha256 : '');
-      if (existing.version === VERSION && recorded === spec.sha256) {
+      const entry = existing.platforms?.[platform] || {};
+      const recorded = entry.sha256 || (platform === 'darwin' ? existing.sha256 : '');
+      // The archive checksum alone can't prove the staged binary is that
+      // release (a stale binary next to a bumped VERSION.json would pass), so
+      // the binary's own hash, recorded when it was staged, must match too.
+      if (existing.version === VERSION && recorded === spec.sha256 && entry.binarySha256 === sha256File(output)) {
         console.log(`Cua Driver ${VERSION} already present for ${platform} at ${output}`);
-        return spec;
+        return { ...spec, binarySha256: entry.binarySha256 };
       }
     } catch {
       /* re-download */
@@ -122,7 +130,7 @@ async function prepareTarget(platform) {
     fs.copyFileSync(candidate, output);
     if (platform !== 'win32') fs.chmodSync(output, 0o755);
     console.log(`Prepared embedded Cua Driver ${VERSION} for ${platform} at ${output}`);
-    return spec;
+    return { ...spec, binarySha256: sha256File(output) };
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
@@ -132,6 +140,13 @@ async function prepareTarget(platform) {
   const targets = packTargets();
   if (targets.length === 0) return;
   fs.mkdirSync(outputRoot, { recursive: true });
+  const versionPath = path.join(outputRoot, 'VERSION.json');
+  let previous = {};
+  try {
+    previous = JSON.parse(fs.readFileSync(versionPath, 'utf8'));
+  } catch {
+    /* first run */
+  }
   const prepared = {};
   for (const platform of targets) {
     prepared[platform] = await prepareTarget(platform);
@@ -148,6 +163,13 @@ async function prepareTarget(platform) {
         sha256: spec.sha256,
         binary: spec.binary,
         source: `${RELEASE}/${spec.asset}`,
+        // Hash of the staged binary; kept for platforms not staged this run
+        // only when that platform was already staged at this version.
+        ...(prepared[platform]?.binarySha256
+          ? { binarySha256: prepared[platform].binarySha256 }
+          : previous.version === VERSION && previous.platforms?.[platform]?.binarySha256
+            ? { binarySha256: previous.platforms[platform].binarySha256 }
+            : {}),
       }])
     ),
   }, null, 2) + '\n');

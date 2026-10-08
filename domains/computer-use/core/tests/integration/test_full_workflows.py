@@ -423,7 +423,7 @@ class TestVisionGuidedWorkflow:
         
         # Verify API access
         response = client.messages.create(
-            model="claude-3-haiku-20240307",
+            model="claude-haiku-4-5",
             max_tokens=10,
             messages=[{"role": "user", "content": "Say 'test'"}]
         )
