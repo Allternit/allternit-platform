@@ -95,7 +95,12 @@ jobs:
             else
               npm publish --access public
             fi
-            npm view "$name@$VERSION" version
+            # A new package takes a little while to show up in the registry.
+            for i in $(seq 1 30); do
+              if npm view "$name@$VERSION" version 2>/dev/null; then break; fi
+              if [ "$i" = 30 ]; then echo "::error::$name@$VERSION not visible on npm after 5 minutes"; exit 1; fi
+              sleep 10
+            done
             popd >/dev/null
           done
 
