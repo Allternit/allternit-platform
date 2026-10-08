@@ -276,7 +276,7 @@ export class BackendManager {
       ALLTERNIT_CLOUD_API_URL: process.env.ALLTERNIT_CLOUD_API_URL || URLS.CLOUD_API,
       ALLTERNIT_SELF_HOSTED: process.env.ALLTERNIT_SELF_HOSTED || 'false',
       ALLTERNIT_OPERATOR_API_KEY: this.apiKey,
-      ALLTERNIT_DESKTOP_ACCESS_TOKEN: this.desktopAccessToken,
+      ALLTERNIT_DESKTOP_ACCESS_TOKEN: this.ensureDesktopAccessToken(),
       // The human-proof secret itself goes on stdin (below), not here.
       ALLTERNIT_HUMAN_PROOF_STDIN: '1',
       // HMAC secret for short-lived desktop VNC WebSocket tokens (bot-desktop

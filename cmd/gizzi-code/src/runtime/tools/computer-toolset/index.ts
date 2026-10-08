@@ -126,7 +126,7 @@ async function targetMembers(toolset: ToolsetName, computerId: string): Promise<
   const hit = schemaCache.get(key)
   if (hit && Date.now() - hit.at < 5 * 60_000) return hit.enabled
   const schema = await httpExecutor.schema(computerId, toolset, AbortSignal.timeout(3_000)).catch(() => undefined)
-  const enabled = schema?.members?.length ? new Set(schema.members.filter((m) => m.enabled).map((m) => m.name)) : undefined
+  const enabled = schema?.members?.length ? new Set<string>(schema.members.filter((m) => m.enabled).map((m) => m.name as string)) : undefined
   // An empty set (target offline) falls back to the contract defaults so the
   // model still gets a clear per-call error instead of a missing tool.
   const usable = enabled && enabled.size > 0 ? enabled : undefined
