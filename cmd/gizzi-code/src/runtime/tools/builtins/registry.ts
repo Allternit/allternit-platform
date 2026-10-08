@@ -31,7 +31,7 @@ import { CodeSearchTool } from "@/runtime/tools/builtins/codesearch"
 import { Flag } from "@/runtime/context/flag/flag"
 import { Log } from "@/shared/util/log"
 import { LspTool } from "@/runtime/tools/builtins/lsp"
-import { BrowserTool } from "@/runtime/tools/builtins/browser"
+import { BrowserToolsetTool, ComputerToolsetTool } from "@/runtime/tools/computer-toolset"
 import { DesktopTool } from "@/runtime/tools/builtins/desktop"
 import { Truncate } from "@/runtime/tools/builtins/truncation"
 import { PlanExitTool, PlanEnterTool } from "@/runtime/tools/builtins/plan"
@@ -196,7 +196,12 @@ export namespace ToolRegistry {
       ...(Flag.GIZZI_ENABLE_LSP_TOOL ? [LspTool] : []),
       ...(config.experimental?.batch_tool === true ? [BatchTool] : []),
       ...(Flag.GIZZI_CLIENT === "cli" ? [PlanExitTool, PlanEnterTool] : []),
-      ...(Flag.GIZZI_ENABLE_BROWSER_TOOL ? [BrowserTool] : []),
+      // The computer toolset (allternit.browser.v1 / allternit.computer.v1):
+      // one executor in allternit-api for every model. `browser` replaces the
+      // old ACU-gateway browser tool under the same flag; `computer` drives
+      // GIZZI_COMPUTER_ID (default this-device) and is opt-in.
+      ...(Flag.GIZZI_ENABLE_BROWSER_TOOL ? [BrowserToolsetTool] : []),
+      ...(Flag.GIZZI_ENABLE_COMPUTER_TOOL ? [ComputerToolsetTool] : []),
       ...(Flag.GIZZI_ENABLE_DESKTOP_TOOL ? [DesktopTool] : []),
       // Subscription capabilities (presentations, documents, deep research)
       // the user's connected subscriptions can run now; every call is
@@ -214,6 +219,7 @@ export namespace ToolRegistry {
     model: {
       providerID: string
       modelID: string
+      npm?: string
     },
     agent?: Agent.Info,
   ) {
@@ -231,7 +237,7 @@ export namespace ToolRegistry {
         })
         .map(async (t) => {
           using _ = log.time(t.id)
-          const tool = await t.init({ agent })
+          const tool = await t.init({ agent, model })
           const output = {
             description: tool.description,
             parameters: tool.parameters,

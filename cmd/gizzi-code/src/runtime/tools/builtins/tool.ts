@@ -12,6 +12,8 @@ export namespace Tool {
 
   export interface InitContext {
     agent?: Agent.Info
+    /** The model the tool set is being built for (adapters pick their wire shape from it). */
+    model?: { providerID: string; modelID: string; npm?: string }
   }
 
   export type Context<M extends Metadata = Metadata> = {

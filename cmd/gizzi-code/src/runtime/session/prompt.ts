@@ -1409,7 +1409,7 @@ const message = await createUserMessage(input)
     })
 
     for (const item of await ToolRegistry.tools(
-      { modelID: input.model.api.id, providerID: input.model.providerID },
+      { modelID: input.model.api.id, providerID: input.model.providerID, npm: input.model.api.npm },
       input.agent,
     )) {
       const schema = ProviderTransform.schema(input.model, z.toJSONSchema(item.parameters) as any)

@@ -190,6 +190,14 @@
       "evidence": [
         "allternit/cmd/allternit-api/src/cloud_worker.rs"
       ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/runtime/tools",
+      "target": "allternit/cmd/allternit-api/src/computer_*",
+      "kind": "HTTP /api/v1/computers/:id/toolset",
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/runtime/tools/computer-toolset/executor-client.ts"
+      ]
     }
   ]
 }
