@@ -53,6 +53,11 @@ for _ in $(seq 1 60); do
     incus exec "${BUILD_CONTAINER}" -- true >/dev/null 2>&1 && break
     sleep 1
 done
+# systemd's bus comes up a few seconds after the container accepts exec.
+for _ in $(seq 1 90); do
+    incus exec "${BUILD_CONTAINER}" -- test -S /run/systemd/private >/dev/null 2>&1 && break
+    sleep 1
+done
 incus exec "${BUILD_CONTAINER}" -- sh -c 'timeout 120 systemctl is-system-running --wait >/dev/null 2>&1 || true'
 
 # 1. Drop the desktop session: the units that start Xvfb + XFCE + VNC + the
@@ -78,12 +83,12 @@ if [ -n "${API_BINARY:-}" ]; then
     incus file push --quiet "${API_BINARY}" "${BUILD_CONTAINER}/root/allternit-api.new"
     incus exec "${BUILD_CONTAINER}" -- sh -c '
         set -e
-        found=0
-        for f in $(find /opt /usr/lib -type f -name allternit-api -perm -u+x 2>/dev/null); do
-            install -m 0755 /root/allternit-api.new "$f"; echo "replaced $f"; found=1
-        done
-        rm -f /root/allternit-api.new
-        [ "$found" = 1 ] || { echo "no bundled allternit-api found" >&2; exit 1; }
+        find /opt /usr/lib -type f -name allternit-api -perm -u+x 2>/dev/null > /root/api-paths
+        [ -s /root/api-paths ] || { echo "no bundled allternit-api found" >&2; exit 1; }
+        while IFS= read -r f; do
+            install -m 0755 /root/allternit-api.new "$f"; echo "replaced $f"
+        done < /root/api-paths
+        rm -f /root/allternit-api.new /root/api-paths
     '
 fi
 
