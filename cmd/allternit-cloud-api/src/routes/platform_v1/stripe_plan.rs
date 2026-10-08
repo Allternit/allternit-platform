@@ -393,7 +393,9 @@ mod tests {
     #[test]
     fn every_usage_meter_has_a_stripe_meter_and_prices_match_spec() {
         for meter in METERS {
-            assert!(meter_plan(meter).is_some(), "{meter} has no Stripe meter");
+            let pending = PENDING_METERS.iter().any(|p| p.meter == meter);
+            // A priced meter has a Stripe meter; a pending (price TBD) one must not yet.
+            assert_eq!(meter_plan(meter).is_some(), !pending, "{meter}: Stripe meter vs pending list");
         }
         // Stripe prices agree with the spend-cap prices (per unit, in micro-dollars).
         for m in METER_PLANS {
