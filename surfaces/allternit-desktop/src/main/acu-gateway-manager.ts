@@ -116,6 +116,10 @@ export function resolveAcuGatewaySpawn(context: AcuGatewaySpawnContext): AcuGate
         ALLTERNIT_ACU_PORT: String(PORTS.ACU),
         ALLTERNIT_LOCAL_BRAIN_URL: process.env.ALLTERNIT_LOCAL_BRAIN_URL || URLS.GIZZI,
         ALLTERNIT_VISION_PROVIDER: process.env.ALLTERNIT_VISION_PROVIDER || 'allternit',
+        // The computer toolset executor (allternit-api /computers/:id/toolset):
+        // every engine action runs there, with the user's identity from the
+        // ACI run and the desktop access token added at spawn.
+        ALLTERNIT_API_URL: process.env.ALLTERNIT_API_URL || URLS.API,
       },
     };
   }
@@ -140,6 +144,18 @@ export class AcuGatewayManager {
     return { ALLTERNIT_ACU_URL: this.getUrl() };
   }
 
+  private desktopTokenProvider: (() => string | null) | null = null;
+
+  /** Where the desktop access token comes from (backend-manager owns it). */
+  setDesktopTokenProvider(provider: () => string | null): void {
+    this.desktopTokenProvider = provider;
+  }
+
+  private tokenEnv(): Record<string, string> {
+    const token = this.desktopTokenProvider?.();
+    return token ? { ALLTERNIT_DESKTOP_ACCESS_TOKEN: token } : {};
+  }
+
   async start(): Promise<string | null> {
     if (await this.isHealthy()) {
       this.mode = this.child ? 'spawned' : 'adopted';
@@ -156,7 +172,7 @@ export class AcuGatewayManager {
     log.info(`[AcuGateway] Starting ${spec.command} ${spec.args.join(' ')} (cwd ${spec.cwd})`);
     this.child = spawnSidecar(spec.command, spec.args, {
       cwd: spec.cwd,
-      env: { ...process.env, ...spec.extraEnv },
+      env: { ...process.env, ...spec.extraEnv, ...this.tokenEnv() },
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     });

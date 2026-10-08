@@ -281,6 +281,7 @@
               "core/agent-workspace",
               "core/a2a-delegation",
               "core/canonical-computer-use",
+              "core/computer-use-engine",
               "core/intent-graph-kernel",
               "core/memory-kernel",
               "core/memory-drive",

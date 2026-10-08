@@ -115,6 +115,9 @@ class PlanningLoopConfig:
     approval_policy: str = "on-risk"   # never | on-risk | always
     record: bool = True
     vision_provider: Optional[str] = None  # override env
+    # Freshness guard (P7 arc-driver idea): a pointing action planned on a
+    # screenshot older than this is refused and the loop re-observes first.
+    max_snapshot_age_s: float = 120.0
     # P2 batch dispatch (core/batch_dispatch.py): when a plan carries N≥2
     # groundable whitelist actions, ship them as one grant-bound batch through
     # the Rust /api/aci/batch surface instead of N step-by-step turns.
@@ -254,6 +257,7 @@ class PlanningLoop:
         ledger: Optional[Callable[[str, Dict], None]] = None,  # canonical EventLedger writer (session/run bound by caller)
         batch_client: Optional[Any] = None,  # AciBatchClient; default constructed lazily
         code_client: Optional[Any] = None,   # AciCodeClient (core/code_mode.py); default constructed lazily
+        toolset_client: Optional[Any] = None,  # ToolsetExecutorClient (core/toolset_executor.py)
     ):
         self.vision_provider = vision_provider
         # Accept ComputerUseExecutor directly — it has the same execute() interface
@@ -268,6 +272,11 @@ class PlanningLoop:
         self.ledger = ledger
         self.batch_client = batch_client
         self.code_client = code_client
+        # The shared executor (allternit-api /computers/:id/toolset). When set,
+        # every observation and action is a contract call there; the adapter
+        # is only used for batches, code mode and AX reads.
+        self.toolset_client = toolset_client
+        self._snapshot_at: float = 0.0
         self._cancelled = False
         # Steering: notes the user sends while the run is going (ACI's box or
         # the session chat). Folded into the task before the next step.
@@ -386,8 +395,10 @@ class PlanningLoop:
             self._emit({"type": "screenshot.captured", "run_id": run_id, "step": 0, "phase": "initial",
                         "screenshot_b64": _bytes_to_b64(current_screenshot)})
 
-            # Emit coordinate contract from initial screenshot dimensions
-            if _inspector:
+            # Emit coordinate contract from initial screenshot dimensions. With
+            # the toolset executor, the executor owns model-frame <-> screen
+            # scaling (its replies carry `screen`), so the engine maps nothing.
+            if _inspector and self.toolset_client is None:
                 try:
                     contract = await _inspector.get_coordinate_contract()
                     self._emit({"type": "coordinate.contract", "run_id": run_id, **contract.to_dict()})
@@ -667,13 +678,13 @@ class PlanningLoop:
                     # Emit cursor position when coordinates available
                     if plan.immediate_action.coordinates and len(plan.immediate_action.coordinates) >= 2:
                         cx, cy = plan.immediate_action.coordinates[0], plan.immediate_action.coordinates[1]
-                        effect = "ripple" if plan.immediate_action.type in ("click", "double_click") else \
-                                 "glow" if plan.immediate_action.type == "hover" else "none"
+                        effect = "ripple" if plan.immediate_action.type.endswith("_click") else \
+                                 "glow" if plan.immediate_action.type in ("hover", "mouse_move") else "none"
                         self._emit({"type": "cursor.moved", "run_id": run_id, "step": step_num,
                                    "x": cx, "y": cy, "agent_id": "primary", "effect": effect})
 
                     try:
-                        result = await self._execute_action(plan.immediate_action, session_id)
+                        result = await self._execute_action(plan.immediate_action, session_id, step)
                         step.adapter_result = result
                         step.action_succeeded = True
                     except Exception as act_err:
@@ -909,9 +920,21 @@ class PlanningLoop:
         return hasattr(self.adapter, "registered_adapters")
 
     async def _capture_screenshot(self, session_id: str) -> bytes:
-        """Capture screenshot via adapter or executor, then the host display."""
+        """Capture a screenshot: the toolset executor when configured (its
+        image is already in the model frame), else the adapter, then the host."""
+        if self.toolset_client is not None:
+            import base64 as _b64
+            toolset = getattr(self.toolset_client, "observe_toolset", "computer")
+            reply = await self.toolset_client.run(toolset, "screenshot", {})
+            data = reply.image_b64()
+            if not data:
+                logger.warning("executor screenshot failed: %s", reply.text())
+                return b""
+            self._snapshot_at = time.monotonic()
+            return _b64.b64decode(data)
         png = await self._capture_screenshot_adapter(session_id)
         if png:
+            self._snapshot_at = time.monotonic()
             return png
         host = self._capture_screenshot_host()
         if host:
@@ -1359,20 +1382,44 @@ class PlanningLoop:
             except Exception as close_err:
                 logger.warning("Shadow trace recorder close failed: %s", close_err)
 
-    async def _execute_action(self, action, session_id: str) -> Dict:
-        """Execute a VisionAction through the adapter or executor."""
-        params: Dict[str, Any] = {}
-        if action.coordinates:
-            if len(action.coordinates) >= 2:
-                params["x"] = int(action.coordinates[0])
-                params["y"] = int(action.coordinates[1])
-        if hasattr(action, "text") and action.text:
-            params["text"] = action.text
+    async def _execute_action(self, action, session_id: str, step: Optional["LoopStep"] = None) -> Dict:
+        """Run one contract call: on the toolset executor when configured,
+        else (standalone engine) through the in-process adapter waterfall."""
+        from .toolset_executor import legacy_request, normalize_call, point_of
+        toolset, member, call_input = normalize_call(
+            action.type, getattr(action, "input", None), toolset=getattr(action, "toolset", None),
+            coordinates=action.coordinates, text=getattr(action, "text", None), target=action.target,
+        )
+        if (point_of(toolset, call_input) is not None and self._snapshot_at
+                and time.monotonic() - self._snapshot_at > self.config.max_snapshot_age_s):
+            raise RuntimeError("The screenshot this action was planned on is stale; looking again first.")
 
+        if self.toolset_client is not None:
+            run_id = step.run_id if step is not None else None
+            turn = f"{run_id}:{step.step}" if step is not None and run_id else None
+
+            async def _confirm() -> bool:
+                return await self._request_approval(step) if step is not None else False
+
+            reply = await self.toolset_client.run_with_approval(
+                toolset, member, call_input, _confirm, run_id=run_id, turn_id=turn, call_index=0,
+            )
+            if not reply.ok:
+                raise RuntimeError(reply.text() or f"{member} failed")
+            return {
+                "status": "completed",
+                "toolset": toolset,
+                "member": member,
+                "extracted_content": reply.text(),
+                "browser_state": reply.body.get("browser_state"),
+                "screen": reply.body.get("screen"),
+            }
+
+        action_type, target, params = legacy_request(toolset, member, call_input)
         run_id = str(uuid.uuid4())
         req = type("ActionRequest", (), {
-            "action_type": action.type,
-            "target": action.target or "",
+            "action_type": action_type,
+            "target": target or action.target or "",
             "parameters": params,
         })()
 

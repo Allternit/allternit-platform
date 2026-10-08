@@ -66,5 +66,5 @@ def test_plan_from_gizzi_text_parts():
         }
     )
     assert plan.done is False
-    assert plan.immediate_action.type == "click"
+    assert plan.immediate_action.type == "left_click"
     assert plan.immediate_action.target == "ok"

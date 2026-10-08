@@ -97,7 +97,7 @@ function installGatewayVenv(tree) {
   execFileSync(venvPython, ['-m', 'pip', 'install', '--upgrade', 'pip'], { stdio: 'inherit' });
   execFileSync(
     venvPython,
-    ['-m', 'pip', 'install', 'fastapi>=0.110.0', 'pydantic>=2.0.0', 'uvicorn[standard]>=0.27.0', 'starlette>=0.37.0', 'httpx>=0.27.0'],
+    ['-m', 'pip', 'install', 'fastapi>=0.110.0', 'pydantic>=2.0.0', 'uvicorn[standard]>=0.27.0', 'starlette>=0.37.0', 'httpx>=0.27.0', "anthropic>=1.12.0; python_version >= '3.10'"],
     { stdio: 'inherit', cwd: tree },
   );
   execFileSync(venvPython, ['-c', 'import uvicorn, fastapi'], { stdio: 'inherit' });

@@ -142,6 +142,27 @@ def _get_adapter_for_planning(target_scope: str, adapter_preference: Optional[st
 # Run store
 # ---------------------------------------------------------------------------
 
+def _toolset_client_for(body: Any) -> Any:
+    """The shared toolset executor for this run (spec 1.2), when the engine
+    runs next to allternit-api (Desktop / cloud runtime set ALLTERNIT_API_URL).
+    Standalone (tests, demo) keeps the in-process adapter waterfall."""
+    try:
+        from core.toolset_executor import ToolsetExecutorClient, executor_configured
+    except ImportError:
+        return None
+    opts = dict(getattr(body, "options", {}) or {})
+    ctx = dict(getattr(body, "context", {}) or {})
+    computer_id = opts.get("computerId") or ctx.get("computerId")
+    if not executor_configured() and not computer_id:
+        return None
+    return ToolsetExecutorClient(
+        computer_id or "this-device",
+        user_id=opts.get("userId") or ctx.get("userId"),
+        browser_session_id=getattr(body, "session_id", None),
+        observe_toolset="browser" if getattr(body, "target_scope", "browser") == "browser" else "computer",
+    )
+
+
 class RunState:
     def __init__(
         self,
@@ -170,6 +191,8 @@ class RunState:
         self.approval_future: Optional[asyncio.Future] = None
         self.approval_timed_out: bool = False
         self.cancel_event: asyncio.Event = asyncio.Event()
+        # The live PlanningLoop, so steering can reach it (set while it runs).
+        self.planning_loop: Optional[Any] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -430,6 +453,10 @@ class ApproveBody(BaseModel):
     comment: str = ""
 
 
+class SteerBody(BaseModel):
+    text: str
+
+
 class RecordBody(BaseModel):
     session_id: str
     action: Literal["start", "append", "stop"] = "start"
@@ -607,7 +634,10 @@ async def _execute_non_claude_path(
         approval_callback=approval_callback if loop_config.approval_policy != "never" else None,
         history_preflight=history_preflight_for_task,
         ledger=ledger,
+        toolset_client=_toolset_client_for(body),
     )
+
+    run_state.planning_loop = planning_loop
 
     # Hook cancel_event into the loop
     async def _cancel_watcher() -> None:
@@ -1092,6 +1122,26 @@ async def approve_run(run_id: str, body: ApproveBody) -> Dict[str, Any]:
 
     future.set_result({"decision": body.decision, "comment": body.comment})
     return {"run_id": run_id, "decision": body.decision, "acknowledged": True}
+
+
+@router.post("/runs/{run_id}/steer")
+async def steer_run(run_id: str, body: SteerBody) -> Dict[str, Any]:
+    """Guidance from the user for a running planning loop, read before its next step."""
+    state = _run_store.get(run_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+    loop = getattr(state, "planning_loop", None)
+    if loop is None or state.status not in ("running", "awaiting_approval"):
+        raise HTTPException(status_code=409, detail="Run is not taking guidance")
+    if not loop.steer(body.text):
+        raise HTTPException(status_code=409, detail="Nothing to send, or the run has ended")
+    await _run_store.push_event(run_id, {
+        "event_type": "run.steer.received",
+        "run_id": run_id,
+        "message": "Guidance received",
+        "data": {"text": body.text.strip()[:2000]},
+    })
+    return {"run_id": run_id, "accepted": True}
 
 
 @router.post("/runs/{run_id}/cancel")

@@ -255,7 +255,7 @@ async def test_code_mode_is_never_the_default():
     loop = _make_loop(_ScriptedProvider([_code_plan()]), adapter, client, ledger)
     result = await loop.run(task="t", session_id="s-1", run_id="r-1")
     assert client.calls == []
-    assert adapter.calls == ["click"]
+    assert adapter.calls == ["left_click"]
     assert all(not et.startswith("code.context") for et, _ in ledger)
     assert result.status == "completed"
 
@@ -325,7 +325,7 @@ async def test_declined_grant_falls_back_to_whitelist():
     loop.approval_callback = lambda step: False
     result = await loop.run(task="t", session_id="s-1", run_id="r-1")
     # Declined → step-by-step fallback executes the whitelist action.
-    assert adapter.calls == ["click"]
+    assert adapter.calls == ["left_click"]
     closed = [p for et, p in ledger if et == "code.context.closed"][0]
     assert closed["status"] == "denied"
 
@@ -356,7 +356,7 @@ async def test_validation_refusal_surfaces_as_observation_and_replans():
     assert "credential_pattern" in refusal_step.error
     assert refusal_step.adapter_result["code_refusal"]["class"] == "credential_pattern"
     # The loop re-planned with the whitelist action.
-    assert adapter.calls == ["click"]
+    assert adapter.calls == ["left_click"]
     closed = [p for et, p in ledger if et == "code.context.closed"][0]
     assert closed["status"] == "refused"
 

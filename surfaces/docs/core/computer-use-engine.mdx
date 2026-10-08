@@ -1,0 +1,56 @@
+---
+title: Computer Use Engine model paths
+description: How the Python computer-use engine (ACU gateway, port 8760) plans with any model and runs every action on the shared computer toolset executor.
+---
+
+## Overview
+
+The computer-use engine in `domains/computer-use/core` runs ACI runs: it looks at the screen, asks a model for the next step, runs that step and looks again (the planning loop, `core/planning_loop.py`). Since the computer toolset work (P4), every model path speaks one action vocabulary, the Allternit computer toolset contract (`allternit.computer.v1` and `allternit.browser.v1`), and every action runs on one executor in allternit-api.
+
+## One action vocabulary for every model
+
+A plan's `immediate_action` is one contract call:
+
+```json
+{ "toolset": "computer", "member": "left_click", "input": { "coordinate": [640, 410] },
+  "target": "Submit button", "reason": "Send the form" }
+```
+
+- Member names and input fields are the same as Claude's `computer_toolset_20260801` and `browser_toolset_20260801` sets. The generated types live in `contracts/toolset_v1.py`.
+- The planning JSON schema (`ACTION_PLAN_JSON_SCHEMA`) is generated from the contract by `core/toolset_executor.py`. The engine keeps no copy of the action schema of its own.
+- Older verbs that some models still emit (`click`, `goto`, `press`, `fill`, ...) are mapped onto members in one place, `VisionAction` in `core/vision_providers.py`. A verb that is not a member stays as it is for the selector batch path (`core/batch_dispatch.py`) and is never guessed into an action.
+
+| Provider path | How it plans |
+|---|---|
+| `allternit` (default, the Gizzi brain picker) | Gizzi session with the generated JSON schema as structured output. Gizzi stays the only main agent loop. |
+| `anthropic` | Claude's native `computer_toolset_20260801` and `browser_toolset_20260801` tools, built by the SDK driver classes in `core/toolset_driver.py`. The tool_use block is already a contract call. Needs `anthropic>=1.12.0` (Python 3.10 or newer), the `claude` extra. |
+| `openai`, `azure`, `gemini`, `qwen` | JSON plan in contract members, parsed by `_parse_vision_response`. |
+| `showui`, `ui-tars` | Coordinates from the grounding model become `left_click` with `coordinate`. |
+| CLI subprocess | The same planning prompt and contract member list as the Gizzi path. |
+
+## Actions run on the shared executor
+
+When the engine runs next to allternit-api (Allternit Desktop sets `ALLTERNIT_API_URL` for the sidecar), each observation and action is a call to `POST /api/v1/computers/:id/toolset`:
+
+- `:id` is `options.computerId` from the run, or `this-device`. Browser runs pass the engine session as `browser_session_id`.
+- The caller is the run's owner. allternit-api adds `options.userId` to the ACI run, and the Desktop gives the sidecar its desktop access token. A cloud runtime uses its internal service token instead.
+- The executor validates the call, scales coordinates between the model frame and the screen, classifies risk, writes the audit row and dispatches. The engine does no coordinate scaling or screenshot resizing of its own, and its screenshots come from the executor's `screenshot` member, already in the model frame.
+- A `409 approval_required` reply goes through the run's own approval flow (the ACI approval card). After a person approves, the engine approves the grant (`POST /api/aci/handoff/:id/approve`) and retries the call once with it.
+- A pointing action planned on a screenshot older than `max_snapshot_age_s` (120 seconds by default) is refused, and the loop looks at the screen again before acting.
+
+For browser targets, the executor forwards browser members to the gateway's `/v1/execute` handlers, which run Playwright directly and never call the executor. Only the planning loop and the `/v1/computer` alias call the executor, so a call can't loop from the executor to the gateway and back.
+
+Without `ALLTERNIT_API_URL` (tests, the demo launcher), the engine runs the same contract calls on its in-process adapter waterfall.
+
+## The `/v1/computer` alias
+
+`POST /v1/computer` on the gateway still takes the old Claude-native payload (`action`, `coordinate`, `text`, `key`, `delta`, `url`) for old callers, such as the MCP server and the JS SDK's `executeCompatibilityAction`. It turns the payload into one contract call (`alias_v1_computer`) and runs it on the executor. The response keeps the old `status` and `extracted_content` fields and adds the contract result (`content`, `screen`, `browser_state`). Optional `computer_id` and `user_id` fields pick the target and owner.
+
+## SDK drivers
+
+`core/toolset_driver.py` has `ExecutorComputerToolset` and `ExecutorBrowserToolset`, subclasses of the Anthropic SDK's `BetaAsyncAbstractComputerToolset20260801` and `BetaAsyncAbstractBrowserToolset20260801`. Every member calls the executor. The SDK `confirm` callback is the person in the approval flow: it is asked when the executor answers 409, and a yes approves the grant and retries.
+
+## Related pages
+
+- [Canonical Computer Use](/core/canonical-computer-use)
+- [Computer use (ACI)](/tools/computer-use)

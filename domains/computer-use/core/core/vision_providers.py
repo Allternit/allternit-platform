@@ -116,12 +116,48 @@ class VisionElement:
 
 @dataclass
 class VisionAction:
-    """Represents a recommended action."""
-    type: str  # click, type, scroll, etc.
+    """One contract call (allternit.computer.v1 / allternit.browser.v1).
+
+    ``type`` is the contract member (``left_click``, ``navigate``, ...) and
+    ``input`` its contract input; ``toolset`` is ``computer`` or ``browser``.
+    Older verbs and the ``coordinates``/``text`` shorthand some providers
+    still emit are normalized onto the contract here, once, for every
+    provider path (core/toolset_executor.py). ``coordinates`` and ``text``
+    stay filled from ``input`` for the recorder, verifier and events.
+    """
+    type: str
     target: str
     reason: str
-    coordinates: Optional[List[float]] = None  # [x, y] for click actions
-    text: Optional[str] = None               # text payload for type actions
+    coordinates: Optional[List[float]] = None
+    text: Optional[str] = None
+    toolset: Optional[str] = None
+    input: Optional[Dict[str, Any]] = None
+
+    def __post_init__(self) -> None:
+        if self.toolset == "batch":
+            # A selector-batch step (core/batch_dispatch.py vocabulary), not a toolset call.
+            return
+        try:
+            from .toolset_executor import normalize_call, point_of
+        except ImportError:
+            from core.toolset_executor import normalize_call, point_of
+        toolset, member, call_input = normalize_call(
+            self.type, self.input, toolset=self.toolset,
+            coordinates=self.coordinates, text=self.text, target=self.target,
+        )
+        if member == "screenshot" and (self.type or "").lower() not in ("screenshot", "observe", ""):
+            # Not a toolset verb (e.g. the selector batch's `select`): keep it
+            # for the batch path; executing it alone observes instead.
+            self.input = dict(self.input or {})
+            return
+        self.toolset, self.type, self.input = toolset, member, call_input
+        point = point_of(self.toolset, self.input)
+        if point is not None:
+            self.coordinates = point
+        if self.text is None and isinstance(self.input.get("text"), str):
+            self.text = self.input["text"]
+        if self.toolset == "browser" and self.type == "navigate" and not self.target:
+            self.target = str(self.input.get("url") or "")
 
 
 @dataclass
@@ -375,10 +411,13 @@ class OpenAIVisionClient(VisionProvider):
             action = None
             if action_data:
                 action = VisionAction(
-                    type=action_data.get("type", ""),
+                    type=action_data.get("member") or action_data.get("type", ""),
                     target=action_data.get("target", ""),
                     reason=action_data.get("reason", ""),
-                    coordinates=action_data.get("coordinates")
+                    coordinates=action_data.get("coordinates"),
+                    text=action_data.get("text"),
+                    toolset=action_data.get("toolset"),
+                    input=action_data.get("input") if isinstance(action_data.get("input"), dict) else None,
                 )
             
             return VisionResponse(
@@ -519,10 +558,13 @@ class AnthropicVisionClient(VisionProvider):
             action = None
             if action_data:
                 action = VisionAction(
-                    type=action_data.get("type", ""),
+                    type=action_data.get("member") or action_data.get("type", ""),
                     target=action_data.get("target", ""),
                     reason=action_data.get("reason", ""),
-                    coordinates=action_data.get("coordinates")
+                    coordinates=action_data.get("coordinates"),
+                    text=action_data.get("text"),
+                    toolset=action_data.get("toolset"),
+                    input=action_data.get("input") if isinstance(action_data.get("input"), dict) else None,
                 )
             
             return VisionResponse(
@@ -540,6 +582,84 @@ class AnthropicVisionClient(VisionProvider):
                 confidence=0.0,
                 raw_response=content
             )
+
+
+class _AnthropicToolsetPlanning:
+    """The engine's Claude path: Claude plans with its native
+    ``computer_toolset_20260801`` / ``browser_toolset_20260801`` tools, built by
+    the SDK driver classes in core/toolset_driver.py (``to_dict()`` of
+    ``BetaAsyncAbstractComputerToolset20260801`` / ``...Browser...`` subclasses
+    whose members call the Allternit executor). Member names and inputs are
+    the contract's, so the reply is a contract call with no translation; the
+    planning loop runs it on the executor."""
+
+    @staticmethod
+    def tools() -> Optional[List[Dict[str, Any]]]:
+        from .toolset_driver import SDK_TOOLSETS_AVAILABLE
+        if not SDK_TOOLSETS_AVAILABLE:
+            return None
+        from .toolset_driver import ExecutorBrowserToolset, ExecutorComputerToolset
+        from .toolset_executor import ToolsetExecutorClient
+        client = ToolsetExecutorClient()
+        return [ExecutorComputerToolset(client).to_dict(), ExecutorBrowserToolset(client).to_dict()]
+
+    @staticmethod
+    def plan_from_message(message: Any) -> "ActionPlan":
+        texts: List[str] = []
+        action: Optional[VisionAction] = None
+        for block in getattr(message, "content", []) or []:
+            kind = getattr(block, "type", "")
+            if kind == "text":
+                texts.append(getattr(block, "text", "") or "")
+            elif kind == "tool_use" and action is None:
+                action = VisionAction(
+                    type=getattr(block, "name", "") or "screenshot",
+                    target="",
+                    reason="",
+                    toolset=getattr(block, "toolset_name", None) or "computer",
+                    input=dict(getattr(block, "input", {}) or {}),
+                )
+        reasoning = "\n".join(t for t in texts if t).strip()
+        usage = getattr(message, "usage", None)
+        in_tok = int(getattr(usage, "input_tokens", 0) or 0)
+        out_tok = int(getattr(usage, "output_tokens", 0) or 0)
+        return ActionPlan(
+            reasoning=reasoning,
+            plan_steps=[],
+            immediate_action=action or VisionAction(type="screenshot", target="screen", reason="done"),
+            confidence=0.8 if action else 0.9,
+            done=action is None,
+            tokens_used=in_tok + out_tok,
+            input_tokens=in_tok,
+            output_tokens=out_tok,
+        )
+
+
+async def _anthropic_toolset_ground_and_reason(self, screenshot_b64: str, task: str,
+                                               history: Optional[List] = None, **kwargs) -> "ActionPlan":
+    tools = _AnthropicToolsetPlanning.tools() if self.is_available() else None
+    if not tools:
+        return await VisionProvider.ground_and_reason(self, screenshot_b64, task, history, **kwargs)
+    history_text = "\n".join(f"- {h}" for h in (history or [])[-10:]) or "No previous steps."
+    content: List[Dict[str, Any]] = []
+    if screenshot_b64:
+        content.append({"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": screenshot_b64}})
+    content.append({"type": "text", "text": (
+        f"TASK: {task}\nHISTORY:\n{history_text}\n\n"
+        "This is the current screen. Call exactly one computer or browser member for the next step. "
+        "When the task is complete, reply with a short summary and call no tool."
+    )})
+    message = await asyncio.to_thread(
+        self._client.beta.messages.create,
+        model=self.model,
+        max_tokens=self.max_tokens,
+        tools=tools,
+        messages=[{"role": "user", "content": content}],
+    )
+    return _AnthropicToolsetPlanning.plan_from_message(message)
+
+
+AnthropicVisionClient.ground_and_reason = _anthropic_toolset_ground_and_reason  # type: ignore[assignment]
 
 
 class GeminiVisionProvider(VisionProvider):
@@ -596,7 +716,7 @@ class GeminiVisionProvider(VisionProvider):
         action = None
         if "action" in parsed:
             a = parsed["action"]
-            action = VisionAction(type=a.get("type","click"), target=a.get("target",""), reason=a.get("reason",""), coordinates=a.get("coordinates"))
+            action = VisionAction(type=a.get("member") or a.get("type","left_click"), target=a.get("target",""), reason=a.get("reason",""), coordinates=a.get("coordinates"), text=a.get("text"), toolset=a.get("toolset"), input=a.get("input") if isinstance(a.get("input"), dict) else None)
         return VisionResponse(elements=elements, action=action, confidence=parsed.get("confidence", 0.5), raw_response=raw)
 
 
@@ -664,7 +784,7 @@ class QwenVisionProvider(VisionProvider):
         action = None
         if "action" in parsed:
             a = parsed["action"]
-            action = VisionAction(type=a.get("type","click"), target=a.get("target",""), reason=a.get("reason",""), coordinates=a.get("coordinates"))
+            action = VisionAction(type=a.get("member") or a.get("type","left_click"), target=a.get("target",""), reason=a.get("reason",""), coordinates=a.get("coordinates"), text=a.get("text"), toolset=a.get("toolset"), input=a.get("input") if isinstance(a.get("input"), dict) else None)
         return VisionResponse(elements=elements, action=action, confidence=parsed.get("confidence", 0.5), raw_response=raw)
 
 
@@ -705,7 +825,7 @@ class ShowUIVisionProvider(VisionProvider):
             raw = self._processor.decode(outputs[0], skip_special_tokens=True)
             # ShowUI outputs coordinates directly
             coords = self._extract_coords(raw)
-            action = VisionAction(type="click", target="element", reason=raw, coordinates=coords) if coords else None
+            action = VisionAction(type="left_click", target="element", reason=raw, coordinates=coords) if coords else None
             return VisionResponse(elements=[], action=action, confidence=0.75 if coords else 0.3, raw_response=raw)
         except Exception as e:
             raise VisionAPIError(f"ShowUI error: {e}", provider="showui")
@@ -843,10 +963,13 @@ class AzureOpenAIVisionClient(VisionProvider):
             action = None
             if action_data:
                 action = VisionAction(
-                    type=action_data.get("type", ""),
+                    type=action_data.get("member") or action_data.get("type", ""),
                     target=action_data.get("target", ""),
                     reason=action_data.get("reason", ""),
-                    coordinates=action_data.get("coordinates")
+                    coordinates=action_data.get("coordinates"),
+                    text=action_data.get("text"),
+                    toolset=action_data.get("toolset"),
+                    input=action_data.get("input") if isinstance(action_data.get("input"), dict) else None,
                 )
             
             return VisionResponse(
@@ -923,11 +1046,11 @@ Respond with valid JSON only:
   "reasoning": "why you chose this action",
   "plan_steps": ["remaining step 1", "remaining step 2"],
   "immediate_action": {{
-    "type": "click|type|scroll|navigate|key|screenshot",
+    "toolset": "computer|browser",
+    "member": "one member name from the lists below",
+    "input": {{"coordinate": [x, y]}},
     "target": "element description",
-    "reason": "why",
-    "coordinates": [x, y],
-    "text": "text to type (if type action)"
+    "reason": "why"
   }},
   "confidence": 0.0-1.0,
   "requires_approval": false,
@@ -946,61 +1069,24 @@ Respond with valid JSON only:
 "batch" is OPTIONAL: list further actions only when they are all on the same
 page, each uses a CSS selector / XPath target (not coordinates), and none
 depends on observing the screen after an earlier action. Omit it when unsure —
-the engine falls back to one step at a time."""
+the engine falls back to one step at a time.
+
+"immediate_action" is one call of the Allternit computer toolset. Members and
+their input fields (? = optional), the same as Claude's computer/browser
+toolsets:
+{_members_prompt()}
+Coordinates are pixels in the screenshot you were given. Browser targets are
+{{"type": "coordinate", "x": .., "y": ..}} or {{"type": "ref", "ref": "ref_7"}}."""
 
 
-ACTION_PLAN_JSON_SCHEMA: Dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "reasoning": {"type": "string"},
-        "plan_steps": {"type": "array", "items": {"type": "string"}},
-        "immediate_action": {
-            "type": "object",
-            "properties": {
-                "type": {"type": "string"},
-                "target": {"type": "string"},
-                "reason": {"type": "string"},
-                "coordinates": {"type": "array", "items": {"type": "number"}},
-                "text": {"type": "string"},
-            },
-            "required": ["type", "target"],
-        },
-        "confidence": {"type": "number"},
-        "requires_approval": {"type": "boolean"},
-        "risk_level": {"type": "string"},
-        "done": {"type": "boolean"},
-        # Optional batch continuation (core/batch_dispatch.py): further
-        # whitelisted actions on the same page, shipped as one grant-bound
-        # batch. Omit when the next step depends on observing the screen.
-        "batch": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "type": {"type": "string"},
-                    "target": {"type": "string"},
-                    "reason": {"type": "string"},
-                    "coordinates": {"type": "array", "items": {"type": "number"}},
-                    "text": {"type": "string"},
-                },
-                "required": ["type", "target"],
-            },
-        },
-        # Optional code-mode request (core/code_mode.py): validated grant-bound
-        # code payload, consumed only when the run explicitly enabled code
-        # mode. Omit — whitelist actions and batches remain the primary paths.
-        "code": {
-            "type": "object",
-            "properties": {
-                "language": {"type": "string"},
-                "code": {"type": "string"},
-                "declaredTargets": {"type": "array", "items": {"type": "string"}},
-            },
-            "required": ["code"],
-        },
-    },
-    "required": ["immediate_action", "done"],
-}
+# Generated from the contract (contracts/toolset_v1.py); the engine keeps no
+# copy of the action vocabulary of its own.
+try:
+    from .toolset_executor import plan_json_schema as _plan_json_schema, members_prompt as _members_prompt
+except ImportError:  # loaded by file path (tests, tools)
+    from core.toolset_executor import plan_json_schema as _plan_json_schema, members_prompt as _members_prompt
+
+ACTION_PLAN_JSON_SCHEMA: Dict[str, Any] = _plan_json_schema()
 
 
 def gizzi_runtime_base(url: str) -> str:
@@ -1071,11 +1157,13 @@ def _parse_action_plan(raw: str) -> ActionPlan:
         data = json.loads(text)
         ia = data.get("immediate_action", {})
         action = VisionAction(
-            type=ia.get("type", "screenshot"),
-            target=ia.get("target", "screen"),
+            type=ia.get("member") or ia.get("type") or "screenshot",
+            target=ia.get("target", "") or "",
             reason=ia.get("reason", ""),
             coordinates=ia.get("coordinates"),
             text=ia.get("text"),
+            toolset=ia.get("toolset"),
+            input=ia.get("input") if isinstance(ia.get("input"), dict) else None,
         )
         batch = None
         raw_batch = data.get("batch")
@@ -1091,6 +1179,7 @@ def _parse_action_plan(raw: str) -> ActionPlan:
                     reason=item.get("reason", ""),
                     coordinates=item.get("coordinates"),
                     text=item.get("text"),
+                    toolset="batch",
                 ))
             batch = parsed_batch or None
         code = None
@@ -1634,7 +1723,7 @@ Respond in JSON:
   "elements": [
     {{"label": "submit button", "bbox": [0.5, 0.6, 0.6, 0.65], "confidence": 0.95}}
   ],
-  "action": {{"type": "click", "target": "submit button", "reason": "..."}},
+  "action": {{"toolset": "computer", "type": "left_click", "input": {{"coordinate": [640, 410]}}, "target": "submit button", "reason": "..."}},
   "confidence": 0.9
 }}"""
 

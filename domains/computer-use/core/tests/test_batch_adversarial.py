@@ -210,7 +210,7 @@ class TestAdversarialBatchDispatch:
         ledger.attack("refusal closed the batch context honestly",
                       _closed_statuses(events) == ["failed"])
         ledger.attack("fell back to step-by-step, no silent success",
-                      adapter.calls[0] == "click" and result.stop_reason == StopReason.DONE)
+                      adapter.calls[0] == "left_click" and result.stop_reason == StopReason.DONE)
         ledger.finish()
 
     @pytest.mark.asyncio
@@ -260,7 +260,7 @@ class TestAdversarialBatchDispatch:
                       result.steps[0].action_type != "batch")
         ledger.attack("no receipt closed honestly", _closed_statuses(events) == ["failed"])
         ledger.attack("fallback ran the plan's immediate action",
-                      adapter.calls[0] == "click")
+                      adapter.calls[0] == "left_click")
         ledger.finish()
 
     def test_requires_approval_workflow_steps_keep_per_step_path(self):
