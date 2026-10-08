@@ -190,6 +190,7 @@ jobs:
           fi
 
       - name: Install Zig 0.15.2 and protoc
+        timeout-minutes: 15
         # The pane engine links libghostty-vt, built by Zig 0.15.2
         # (factory/pane/build.rs); the engine's build.rs runs tonic-build,
         # which needs protoc. Zig is pinned by checksum.

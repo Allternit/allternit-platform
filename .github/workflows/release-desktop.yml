@@ -625,6 +625,7 @@ jobs:
       - name: Install protobuf compiler
         # prost-build (transitive dep of allternit-api) shells out to protoc;
         # ubuntu runners don't ship it.
+        timeout-minutes: 10
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
       - name: Build allternit-api (Linux)

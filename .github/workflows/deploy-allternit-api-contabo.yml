@@ -41,6 +41,8 @@ jobs:
           free -h
 
       - name: Install protobuf compiler
+        # A stuck apt mirror hung this step for 5+ hours (2026-10-07), holding the deploy queue.
+        timeout-minutes: 10
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
       - name: Install Rust toolchain
@@ -92,6 +94,8 @@ jobs:
           free -h
 
       - name: Install protobuf compiler
+        # A stuck apt mirror hung this step for 5+ hours (2026-10-07), holding the deploy queue.
+        timeout-minutes: 10
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
       - name: Install Rust toolchain
