@@ -80,7 +80,9 @@ class _Driver:
         self._on_approval, self._call_ids, self._session = on_approval, call_ids, browser_session_id
 
     def _call(self, toolset: str, ctx: Any, member: str, input: Any) -> ToolsetResult:
-        call: Dict[str, Any] = {"toolset": toolset, "member": member, "input": dict(input or {})}
+        # The SDK only calls members its toolset config turned on: that is the
+        # opt-in the executor asks for on off-by-default members.
+        call: Dict[str, Any] = {"toolset": toolset, "member": member, "input": dict(input or {}), "enable": [member]}
         if self._call_ids:
             call.update(self._call_ids(ctx, member) or {})
         if self._session:

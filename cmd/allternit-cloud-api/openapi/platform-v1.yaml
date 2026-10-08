@@ -2029,6 +2029,10 @@ components:
         coordinate_space: { type: string, enum: [pixels, normalized_1000], default: pixels }
         approval_grant: { type: string }
         browser_session_id: { type: string }
+        enable:
+          type: array
+          items: { type: string }
+          description: Off-by-default members (file_upload, read_console, read_network, javascript_exec) to allow for this call.
     ToolsetResult:
       type: object
       required: [is_error, content]

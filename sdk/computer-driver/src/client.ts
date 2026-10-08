@@ -56,6 +56,8 @@ export interface ToolsetCall {
   coordinate_space?: CoordinateSpace
   approval_grant?: string
   browser_session_id?: string
+  /** Off-by-default members (file_upload, read_console, read_network, javascript_exec) to allow for this call. */
+  enable?: string[]
 }
 
 export interface Approval {

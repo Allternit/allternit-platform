@@ -44,6 +44,9 @@ async function callMember(o: DriverOptions, toolset: ToolsetName, ctx: BetaTools
     toolset,
     member,
     input: (input ?? {}) as Record<string, unknown>,
+    // The SDK only calls members its toolset config turned on, which is the
+    // opt-in the executor asks for on off-by-default members.
+    enable: [member],
     ...(o.callIds?.(ctx, member) ?? {}),
     ...(o.browserSessionId ? { browser_session_id: o.browserSessionId } : {}),
   }

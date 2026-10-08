@@ -38,7 +38,7 @@ When the engine runs next to allternit-api (Allternit Desktop sets `ALLTERNIT_AP
 - A `409 approval_required` reply goes through the run's own approval flow (the ACI approval card). After a person approves, the engine approves the grant (`POST /api/aci/handoff/:id/approve`) and retries the call once with it.
 - A pointing action planned on a screenshot older than `max_snapshot_age_s` (120 seconds by default) is refused, and the loop looks at the screen again before acting.
 
-For browser targets, the executor forwards browser members to the gateway's `/v1/execute` handlers, which run Playwright directly and never call the executor. Only the planning loop and the `/v1/computer` alias call the executor, so a call can't loop from the executor to the gateway and back.
+For browser targets, the executor forwards each browser member to the gateway's `POST /v1/toolset/browser` (`gateway/toolset_browser.py`). It runs the member with Playwright on the session's tabs, never calls the executor, and returns the tab inventory (`browser_state`) with every reply. See [Browser results](/tools/computer-toolset#browser-results). Only the planning loop and the `/v1/computer` alias call the executor, so a call can't loop from the executor to the gateway and back.
 
 Without `ALLTERNIT_API_URL` (tests, the demo launcher), the engine runs the same contract calls on its in-process adapter waterfall.
 
