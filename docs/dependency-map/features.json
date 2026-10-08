@@ -159,6 +159,7 @@
         "allternit-ai/src/views/aci",
         "allternit-ai/src/components/computers",
         "allternit-ai/src/components/browser-pane",
+        "allternit-ai/src/lib/agent-cursor",
         "allternit/cmd/allternit-api/src/aci_*",
         "allternit/cmd/allternit-api/src/computer_*",
         "allternit/cmd/allternit-api/src/vnc_*",
@@ -166,7 +167,9 @@
         "allternit/mcp/computers-server",
         "allternit/platform/packages/computer-use-protocol"
       ],
-      "decisions": [],
+      "decisions": [
+        {"on": "2026-10-07", "note": "Agent cursor overlay (computer toolset P5) in every computer viewer, from vendored MIT @trycua/cursor-motion, driven by computer.action events; style in Settings → Computers."}
+      ],
       "evidence": ["allternit/surfaces/docs/api/aci.mdx", "allternit/surfaces/docs/guides/computers-and-apps.mdx"]
     },
     {

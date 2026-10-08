@@ -20,6 +20,30 @@ Computer control is separate from the thread's execution state. Use the thread's
 
 Provisioning and available actions depend on the selected computer backend and your access. An attached computer does not automatically grant every tool or service permission.
 
+## The agent cursor
+
+When an agent moves or clicks on a computer you're watching, a cursor glides to the spot and shows a click ring. It's drawn over the screen in the viewer, so the real mouse pointer on that computer is never moved or restyled by it. It appears in every computer viewer: the Computer side of the browser pane and ACI, a bot's computer (pane, page and its own window), your cloud computer's screen, the sign-in screen in Subscriptions, and the full-screen computer view on your phone (ai.allternit.com and the m.allternit.com app), where it's drawn smaller.
+
+- **Change the style or turn it off:** Settings → Computers → **Agent cursor**. Pick Signature arc (the default), Spring settle, Magnetic, Comet swoop, Adaptive, Classic glide, or Off. The choice is saved on this device.
+- **Reduced motion:** with your system's reduce-motion setting on, the cursor doesn't glide. It appears at each point with the click ring.
+- **Screen readers:** the drawing is hidden from assistive tech. A polite status line says what the agent did, for example "Agent clicked at 512, 300", at most every few seconds.
+- The cursor hides after a few quiet seconds and comes back with the agent's next action. Typing and key presses have no point on the screen, so they don't move it.
+
+### For developers: the event it plays
+
+The overlay plays `computer.action` events from the computer's events channel in allternit-api. The computer toolset executor (`POST /computers/:id/toolset`) emits one per pointer action:
+
+```json
+{ "type": "computer.action", "ts": 1760000000,
+  "data": { "member": "left_click", "x": 812, "y": 404, "screen_w": 1920, "screen_h": 1080, "run_id": "run_…" } }
+```
+
+- `x` and `y` are real screen pixels (after the executor's model-frame scaling); `screen_w` and `screen_h` are that screen's size. The viewer maps them onto the displayed picture, accounting for letterboxing and the viewer's fit or actual-size mode.
+- Click members (`left_click`, `right_click`, `middle_click`, `double_click`, `triple_click`, `left_mouse_down`) show the click ring. `mouse_move`, `left_click_drag`, `scroll` and other members with a point glide only. Members without a point are ignored.
+- Live stream: mint a token with `POST /api/v1/computers/:id/ws-token` `{"purpose":"events"}`, then open `/ws/computers/:id/events?token=…`. It replays recent history on connect; the viewer skips events older than the moment it connected. If the stream can't open, the viewer polls `GET /api/v1/computers/:id/events?limit=10` while the page is visible and stops quietly after repeated errors.
+- On this Mac, the ACI engine's own `cursor.moved` run-stream events (model frame, with `coordinate.contract`) drive the same overlay without a round trip.
+- Motion comes from Cua's MIT `@trycua/cursor-motion` player, vendored in allternit-ai at `src/vendor/cua-cursor-motion/` with the upstream commit in its README.
+
 ## Restore points and backups for your cloud computer
 
 Settings → Computers (and the Computers tab on your phone) has a **Restore points and backups** section for each Allternit cloud computer on your account.
