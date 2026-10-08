@@ -56,6 +56,7 @@ import { PlatformConversationsPage } from "@/pages/console/platform/Conversation
 import { PlatformUsagePage } from "@/pages/console/platform/UsagePage";
 import { PlatformComputersPage } from "@/pages/console/platform/ComputersPage";
 import { PlatformWebhooksPage } from "@/pages/console/platform/WebhooksPage";
+import { PlatformBillingPage } from "@/pages/console/platform/BillingPage";
 import { usePlatformAuth } from "@/lib/platform-auth-client";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -551,6 +552,14 @@ export default function App() {
         element={
           <ConsoleRoute>
             <PlatformWebhooksPage />
+          </ConsoleRoute>
+        }
+      />
+      <Route
+        path="/platform/billing"
+        element={
+          <ConsoleRoute>
+            <PlatformBillingPage />
           </ConsoleRoute>
         }
       />

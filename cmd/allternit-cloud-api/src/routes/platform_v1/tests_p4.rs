@@ -87,6 +87,7 @@ async fn ctx(apps: ChannelApps) -> Ctx {
         include_str!("../../../migrations_pg/075_platform_channels.sql"),
         include_str!("../../../migrations_pg/076_platform_twin.sql"),
         include_str!("../../../migrations_pg/080_platform_billing.sql"),
+        include_str!("../../../migrations_pg/084_platform_payment_methods.sql"),
     ] {
         sqlx::raw_sql(&sql.replace("public.", "")).execute(&state.db).await.expect("migration applies");
     }
@@ -100,7 +101,9 @@ async fn ctx(apps: ChannelApps) -> Ctx {
 }
 
 async fn project(c: &Ctx, owner: &str) -> projects::Project {
-    projects::create_project(&c.state.db, &Principal { user_id: owner.into(), org_id: None, org_admin: false }, "P4 test", ProjectEnv::Sandbox).await.unwrap()
+    let p = projects::create_project(&c.state.db, &Principal { user_id: owner.into(), org_id: None, org_admin: false }, "P4 test", ProjectEnv::Sandbox).await.unwrap();
+    super::project_billing::put_test_card(&c.state.db, &p.id).await;
+    p
 }
 
 async fn mint(c: &Ctx, p: &projects::Project, account: Option<&str>, scopes: &[&str]) -> String {

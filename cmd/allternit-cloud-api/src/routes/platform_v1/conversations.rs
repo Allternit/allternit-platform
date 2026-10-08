@@ -267,7 +267,10 @@ pub(crate) async fn ensure_agent(state: &ApiState, host: &dyn AgentHost, caller:
 }
 
 /// [`ensure_agent`], also saying whether the agent runs on the project's own model key.
+/// Waking a hosted runtime is billable work: a project with no card on file gets
+/// `402 payment_method_required` here (conversations, calls, channels, twin).
 async fn ensure_agent_key(state: &ApiState, host: &dyn AgentHost, caller: &PlatformCaller, agent_id: &str) -> Result<(HostRuntime, bool), PlatformError> {
+    super::billing::require_payment_method(&state.db, &caller.project_id).await?;
     let agent = agents::fetch_visible(state, caller, agent_id).await?;
     // An agent on a provider's model runs on the project's own key.
     let own_key = match agent.model.split_once('/') {

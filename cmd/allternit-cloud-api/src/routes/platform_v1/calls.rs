@@ -113,7 +113,7 @@ fn voice_unavailable() -> PlatformError {
         kind: "api_error",
         code: "voice_unavailable".into(),
         message: "Live calls aren't available on this deployment right now.".into(),
-        param: None,
+        param: None, url: None,
     }
 }
 
@@ -124,7 +124,7 @@ fn livekit_failed(e: LiveKitError) -> PlatformError {
         kind: "api_error",
         code: "dial_failed".into(),
         message: "The call couldn't be connected. Retry shortly.".into(),
-        param: None,
+        param: None, url: None,
     }
 }
 

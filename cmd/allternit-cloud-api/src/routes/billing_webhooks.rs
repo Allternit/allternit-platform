@@ -177,6 +177,12 @@ async fn stripe_webhook(
         }
     };
 
+    // Platform API projects (card on file, plan, Growth credit) first: their
+    // events carry no hosted-compute metadata.
+    if let Some(response) = super::platform_v1::project_billing::handle_stripe_event(&state, &event).await {
+        return response;
+    }
+
     let mapped = match map_stripe_event(&event) {
         Ok(mapped) => mapped,
         Err(error) => return error.into_response(),

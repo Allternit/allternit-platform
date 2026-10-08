@@ -9,6 +9,8 @@ export interface ErrorBody {
   code?: string;
   message?: string;
   param?: string | null;
+  /** Where to fix it (402 `payment_method_required`: the console billing page). */
+  url?: string;
 }
 
 export class AllternitError extends Error {
@@ -27,6 +29,8 @@ export class APIError extends AllternitError {
   readonly code: string | undefined;
   /** The request field the error is about, if any. */
   readonly param: string | null | undefined;
+  /** Where to fix it, when the API says (402 `payment_method_required`: the console billing page). */
+  readonly url: string | undefined;
   /** `x-request-id` response header, when the server sent one. */
   readonly requestId: string | undefined;
   readonly headers: Headers | undefined;
@@ -37,6 +41,7 @@ export class APIError extends AllternitError {
     this.type = body?.type;
     this.code = body?.code;
     this.param = body?.param;
+    this.url = body?.url;
     this.headers = headers;
     this.requestId = headers?.get("x-request-id") ?? undefined;
   }
@@ -46,6 +51,11 @@ export class APIError extends AllternitError {
 export class InvalidRequestError extends APIError {}
 /** 401: missing, invalid or revoked API key. */
 export class AuthenticationError extends APIError {}
+/**
+ * 402 `billing_error`: `payment_method_required` (no card on file: open `url`,
+ * the console billing page) or `spend_cap_reached` (raise the cap in the console).
+ */
+export class PaymentRequiredError extends APIError {}
 /** 403: the key lacks a scope, or is bound to another account. */
 export class PermissionError extends APIError {}
 /** 404: no such resource (or it belongs to another project). */
@@ -82,6 +92,7 @@ export function errorFor(status: number, body: ErrorBody | undefined, headers?: 
   const args = [status, body, headers, fallback] as const;
   if (status === 400 || status === 422) return new InvalidRequestError(...args);
   if (status === 401) return new AuthenticationError(...args);
+  if (status === 402) return new PaymentRequiredError(...args);
   if (status === 403) return new PermissionError(...args);
   if (status === 404) return new NotFoundError(...args);
   if (status === 409) return new ConflictError(...args);
@@ -92,6 +103,7 @@ export function errorFor(status: number, body: ErrorBody | undefined, headers?: 
     switch (body?.type) {
       case "invalid_request_error": return new InvalidRequestError(...args);
       case "authentication_error": return new AuthenticationError(...args);
+      case "billing_error": return new PaymentRequiredError(...args);
       case "permission_error": return new PermissionError(...args);
       case "not_found_error": return new NotFoundError(...args);
       case "conflict_error": return new ConflictError(...args);

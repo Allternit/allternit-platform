@@ -74,6 +74,7 @@ async fn ctx() -> Ctx {
 
 async fn project(c: &Ctx, enabled: bool) -> projects::Project {
     let p = projects::create_project(&c.state.db, &Principal { user_id: "dev_cu".into(), org_id: None, org_admin: false }, "Driver", ProjectEnv::Sandbox).await.unwrap();
+    super::project_billing::put_test_card(&c.state.db, &p.id).await;
     sqlx::query("UPDATE platform_projects SET hosted_driver_enabled = $2 WHERE id = $1").bind(&p.id).bind(enabled).execute(&c.state.db).await.unwrap();
     p
 }

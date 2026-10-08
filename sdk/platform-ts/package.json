@@ -1,7 +1,6 @@
 {
   "name": "@allternit/platform",
   "version": "0.1.0",
-  "private": true,
   "description": "TypeScript SDK for the Allternit Platform API (agents, conversations, numbers, messaging, webhooks, usage).",
   "license": "Apache-2.0",
   "type": "module",
@@ -13,13 +12,27 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist", "README.md"],
-  "engines": { "node": ">=18" },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "generate": "python3 ../../scripts/platform-sdk/generate.py",
     "generate:check": "python3 ../../scripts/platform-sdk/generate.py --check",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test test/*.test.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Allternit/allternit-platform.git",
+    "directory": "sdk/platform-ts"
+  },
+  "homepage": "https://docs.allternit.com/api/platform/sdks/typescript",
+  "publishConfig": {
+    "access": "public"
   }
 }

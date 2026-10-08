@@ -3,15 +3,13 @@ title: 'Pricing'
 description: 'Plans and usage prices for the Platform API.'
 ---
 
-<Note>
-The Platform API is in private beta and is not billed yet. These are the planned launch prices. They can change before launch; the console and this page will show the prices that apply before anything is charged.
-</Note>
+There is no free tier. Every project, sandbox included, needs a card on file and a plan (console → **Platform API → Billing**) before it can do billable work; until then billable requests answer `402 payment_method_required`. See [Billing](/api/platform/billing). Using the API means accepting the [Developer Terms](/legal/developer-terms) and the [Acceptable Use Policy](/legal/acceptable-use-policy).
 
 ## Plans
 
 | Plan | Price | Includes |
 |---|---|---|
-| **Sandbox** | Free | A `sandbox` project, 3 agents, 60 voice minutes a month, 100 texts a month to verified numbers only, a shared test number, 60 requests per minute, 1 concurrent call |
+| **Sandbox** | $0, card required | A `sandbox` project on Pay as you go: simulated numbers, 3 agents, 60 requests per minute, 1 concurrent call. Sandbox usage is not charged, but the project needs a card on file like any other |
 | **Pay as you go** | $0 a month plus usage | Card required, $100 default monthly spend cap (you can raise it in the console), 300 requests per minute, 5 concurrent calls, email support |
 | **Growth** | $249 a month | $300 of usage credit each month, 10% off usage above the credit, 1,000 requests per minute, 25 concurrent calls, priority support, 99.5% monthly uptime target |
 | **Enterprise** | Quoted after an audit | Contracted SLA, dedicated voice capacity, custom concurrency, invoicing, security review |
@@ -37,8 +35,8 @@ Each meter matches a `meter` value in [Usage](/api/platform/usage), so `GET /v1/
 
 ## Limits that protect your bill
 
-- Live projects have a monthly spend cap ($100 by default on Pay as you go). Change it per project in the console under **Platform API → Projects**.
-- A card on file is required before buying numbers or placing calls.
+- Every project has a monthly spend cap ($100 by default once a card is on file). Raise or lower it per project in the console under **Platform API → Projects**.
+- A card on file is required before any billable work: agents, conversations, calls, texts, numbers and computers.
 - International calling is off by default.
 - Concurrent calls are capped per plan (see the table above).
 

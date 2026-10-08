@@ -381,6 +381,8 @@ async fn create_agent(
     }
     let metadata = body.metadata.unwrap_or_else(|| json!({}));
     validate_object(&metadata, "metadata")?;
+    // A hosted agent is billable (agent-months): card on file and under the cap.
+    super::spend_allowed(&state.db, &caller.project_id).await?;
 
     let mut tx = state.db.begin().await?;
     // One create at a time per project, so the sandbox cap can't be raced past.

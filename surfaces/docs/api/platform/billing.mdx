@@ -1,7 +1,36 @@
 ---
 title: 'Billing and spend caps'
-description: 'How spend is counted, the monthly spend cap, and the usage.threshold webhook.'
+description: 'Card required (no free tier), plans, payment_method_required, how spend is counted, the monthly spend cap and the usage.threshold webhook.'
 ---
+
+## Payment method
+
+There is no free tier. Every project, **sandbox included**, needs a card on file and a plan before it can do billable work. In the console, open **Platform API → Billing**, pick the project and choose a plan:
+
+| Plan | Price | Who can choose it |
+|---|---|---|
+| Pay as you go | $0 a month plus usage at the [listed prices](/api/platform/pricing) | Any project. On a sandbox project it costs nothing: sandbox usage isn't charged |
+| Growth | $249 a month, with $300 of usage credit each month and 10% off usage | Live projects |
+
+Checkout runs on Stripe. When it completes, the project's card is on file within a few seconds (the page waits for Stripe's confirmation). **Manage billing** opens Stripe's customer portal to change the card, see invoices or cancel. Choosing the other plan later replaces the subscription: the old one ends at once and its usage so far is invoiced.
+
+Until a card is on file, billable requests answer `402` and do nothing:
+
+```json
+{ "error": { "type": "billing_error", "code": "payment_method_required",
+  "message": "This project has no payment method on file. …", "param": null,
+  "url": "https://platform.allternit.com/platform/billing?project=proj_…" } }
+```
+
+That covers creating agents, `POST /v1/conversations/{id}/messages`, calls and realtime sessions (`/v1/calls`), inbound calls to your numbers, `POST /v1/messages`, `POST /v1/numbers`, channel connections, `/v1/computers` (create, start and toolset calls), and `/v1/chat/completions` with a project key. Reading data, accounts, model keys, webhooks and the spend cap keep working, so you can set up before you add a card.
+
+The same `402 payment_method_required` comes back when a project's subscription is cancelled, or when a renewal payment fails and Stripe stops retrying (`unpaid`). While Stripe is still retrying (`past_due`) work continues; update the card in **Manage billing**.
+
+**Growth credit.** Each paid Growth subscription invoice (the first one and every renewal) adds a $300 Stripe credit grant to the project's customer, applied to that period's metered usage. It doesn't carry over.
+
+Each project has its own Stripe customer, so one project's usage never lands on another's bill.
+
+## Spend cap
 
 Every project has a **monthly spend cap**: the most it can spend in one calendar month (UTC). New projects start at **$100**. When the project's spend reaches the cap, billable requests are refused until you raise the cap or the month ends.
 
@@ -11,11 +40,7 @@ Spend is this month's [usage](/api/platform/usage) at the prices on that page: e
 
 ## What the cap stops
 
-At or over the cap, these answer `402` with `{"error": {"type": "billing_error", "code": "spend_cap_reached"}}` and do nothing:
-
-- `POST /v1/conversations/{id}/messages` (the agent doesn't run)
-- `POST /v1/messages` from a real number (sandbox texts are free and not refused)
-- `POST /v1/numbers` for a real number
+At or over the cap, the billable requests listed under [Payment method](#payment-method) answer `402` with `{"error": {"type": "billing_error", "code": "spend_cap_reached"}}` and do nothing (sandbox texts and simulated numbers cost nothing and aren't refused by the cap).
 
 Reading data, managing agents, accounts and webhooks, and receiving texts keep working. One reply or text that starts under the cap can take the project a little past it; the next one is refused.
 
@@ -32,7 +57,7 @@ Scope `usage`.
 ```json
 { "object": "spend_cap", "project_id": "proj_…", "plan": "payg", "spend_cap_cents": 10000,
   "period": "2026-10", "spent_cents": 8213, "spent_microusd": 82125310, "remaining_cents": 1787,
-  "reached": false, "thresholds_sent": [50, 80] }
+  "reached": false, "thresholds_sent": [50, 80], "payment_method": true }
 ```
 
 ```http
@@ -56,7 +81,7 @@ Subscribe a [webhook](/api/platform/webhooks) to `usage.threshold` to hear when 
 
 | Plan | Requests / min | Concurrent calls | Notes |
 |---|---|---|---|
-| Sandbox | 60 | 1 | Free. Test project, 3 agents, simulated numbers. |
+| Sandbox | 60 | 1 | Card required; sandbox usage isn't charged. Test project, 3 agents, simulated numbers. |
 | Pay as you go | 300 | 5 | Card required. Usage at the listed prices. |
 | Growth | 1,000 | 25 | $249 / month with $300 of usage credit each month, 10% off usage. |
 | Enterprise | Contracted | Contracted | Quoted after an audit. |

@@ -311,6 +311,18 @@ pub trait StripeCheckout: Send + Sync {
     ) -> Result<Value, ApiError> {
         Err(ApiError::Internal("this Stripe client can't create objects".to_string()))
     }
+
+    /// `GET https://api.stripe.com{path}` with query fields; returns the object
+    /// (Platform API billing: price lookup by `lookup_key`).
+    async fn get_object(&self, _secret_key: &str, _path: &str, _query: &[(String, String)]) -> Result<Value, ApiError> {
+        Err(ApiError::Internal("this Stripe client can't read objects".to_string()))
+    }
+
+    /// `DELETE https://api.stripe.com{path}` with form fields (Platform API
+    /// billing: cancel a project's previous subscription on a plan change).
+    async fn delete_object(&self, _secret_key: &str, _path: &str, _form: &[(String, String)]) -> Result<Value, ApiError> {
+        Err(ApiError::Internal("this Stripe client can't delete objects".to_string()))
+    }
 }
 
 /// Build the Checkout Session for a validated pack purchase and return its hosted URL.
@@ -413,6 +425,10 @@ impl ReqwestStripeCheckout {
         if let Some(key) = idempotency_key {
             request = request.header("Idempotency-Key", key);
         }
+        Self::send(request).await
+    }
+
+    async fn send(request: reqwest::RequestBuilder) -> Result<Value, ApiError> {
         let response = request
             .send()
             .await
@@ -457,6 +473,22 @@ impl StripeCheckout for ReqwestStripeCheckout {
         form: &[(String, String)],
     ) -> Result<Value, ApiError> {
         self.post_form_value(&format!("https://api.stripe.com{path}"), secret_key, idempotency_key, form).await
+    }
+
+    async fn get_object(&self, secret_key: &str, path: &str, query: &[(String, String)]) -> Result<Value, ApiError> {
+        let request = reqwest::Client::new()
+            .get(format!("https://api.stripe.com{path}"))
+            .basic_auth(secret_key, None::<&str>)
+            .query(query);
+        Self::send(request).await
+    }
+
+    async fn delete_object(&self, secret_key: &str, path: &str, form: &[(String, String)]) -> Result<Value, ApiError> {
+        let request = reqwest::Client::new()
+            .delete(format!("https://api.stripe.com{path}"))
+            .basic_auth(secret_key, None::<&str>)
+            .form(form);
+        Self::send(request).await
     }
 
     async fn create_invoice_item(

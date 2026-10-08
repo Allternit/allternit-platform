@@ -17,7 +17,7 @@ In [platform.allternit.com](https://platform.allternit.com), open **API keys →
 export ALLTERNIT_API_KEY=alt_test_…
 ```
 
-The driver packages are `@allternit/computer-driver` (TypeScript, in `sdk/computer-driver/`) and `allternit-computer-driver` (Python, `import allternit_computer_driver`). They are not yet on npm or PyPI; install them from the repo. Each has:
+The driver packages are `@allternit/computer-driver` (TypeScript, in `sdk/computer-driver/`) and `allternit-computer-driver` (Python, `import allternit_computer_driver`). Install with `npm install @allternit/computer-driver` or `pip install allternit-computer-driver` (the first PyPI release is waiting on publisher setup; until then `pip install /path/to/allternit/sdk/computer-driver/python`). The project needs a card on file first ([Billing](/api/platform/billing)): without one, `POST /v1/computers` answers `402 payment_method_required`. Each package has:
 
 - `AllternitComputers`, a plain client for the `/v1/computers` routes.
 - Anthropic SDK toolset subclasses for the computer and browser toolsets (`BetaAbstractComputerToolset20260801`, `BetaAbstractBrowserToolset20260801`).

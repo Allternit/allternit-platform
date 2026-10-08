@@ -11,6 +11,10 @@ info:
     `Idempotency-Key` header (stored per key for 24 hours). Responses carry
     `x-ratelimit-limit`, `x-ratelimit-remaining` and `x-ratelimit-reset` headers.
 
+    Every project, sandbox included, needs a card on file (console → Billing)
+    before it can do billable work. Until then billable requests answer
+    `402 payment_method_required`, with the console billing page in `error.url`.
+
     This file is the source of truth for the `/v1` routes: a test fails if the
     router and this file disagree.
 servers:
@@ -445,7 +449,8 @@ paths:
         `message.completed` (the stored reply) or `error`. The first message starts the
         project's hosted runtime: `503 runtime_starting` means retry in a few seconds.
         One message at a time per conversation (`409 conversation_busy`). A project at its
-        monthly spend cap gets `402 spend_cap_reached`. Each reply records `tokens_in` and
+        monthly spend cap gets `402 spend_cap_reached`; one with no card on file gets
+        `402 payment_method_required`. Each reply records `tokens_in` and
         `tokens_out` usage (provider list price + 15%; no token charge on the project's own key).
       tags: [Conversations]
       parameters:
@@ -1480,7 +1485,7 @@ paths:
     post:
       operationId: createComputer
       summary: Create a computer
-      description: Provisions a cloud computer your agents drive with the computer and browser toolsets. 402 `spend_cap_reached` at the spend cap; 429 `concurrency_limit` when this key already has `per_key_concurrency` live computers.
+      description: Provisions a cloud computer your agents drive with the computer and browser toolsets. 402 `payment_method_required` without a card on file, 402 `spend_cap_reached` at the spend cap; 429 `concurrency_limit` when this key already has `per_key_concurrency` live computers.
       tags: [Computers]
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -1753,6 +1758,7 @@ components:
             code: { type: string }
             message: { type: string }
             param: { type: [string, "null"] }
+            url: { type: string, description: "Where to fix it. Set on 402 payment_method_required: the console billing page for the project." }
     SpendCap:
       type: object
       required: [object, project_id, plan, spend_cap_cents, period, spent_cents, spent_microusd, remaining_cents, reached, thresholds_sent]
@@ -1766,6 +1772,7 @@ components:
         spent_microusd: { type: integer }
         remaining_cents: { type: integer }
         reached: { type: boolean, description: "true once spend is at or over the cap: billable requests answer 402 spend_cap_reached." }
+        payment_method: { type: boolean, description: "true once the project has a card on file and a plan in good standing. Without one, billable requests answer 402 payment_method_required." }
         thresholds_sent:
           type: array
           description: "usage.threshold webhooks already sent this month (50, 80, 100)."
