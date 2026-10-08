@@ -5,19 +5,27 @@ description: 'How file attachments in the chat composer are stored, and how much
 
 Attach files in the composer the same way on the desktop app, on ai.allternit.com (including the phone layout) and in the m.allternit.com app.
 
-- **Small files** (under 1 MB) travel inside the message.
-- **Larger files** are uploaded to your private Allternit Cloud storage when you are signed in, and the agent receives a permanent link that keeps working in old conversations until you delete the file (on servers without permanent links, a link that works for 7 days). Signed-out or local-only sessions keep sending the file inside the message.
+- **Small images** (under 1 MB) travel inside the message.
+- **Larger images, and video, audio and other files**, are uploaded to your private Allternit Cloud storage when you are signed in, and the agent receives a permanent link that keeps working in old conversations until you delete the file (on servers without permanent links, a link that works for 7 days). Signed-out or local-only sessions keep sending the file inside the message.
+
+## What you can attach
+
+Any file: documents, images, video, audio, archives, code and files with any extension, including dotfiles such as `.env.local`. On Desktop and in a desktop browser you can also attach a whole **folder**: choose **Add a folder** in the **+** menu, or drag a folder onto the chat. Phones can't pick folders, because iOS and Android browsers don't offer it.
 
 ## What you see before you send
 
-- **Desktop:** each file shows as a card under the text box with its name and what's in it, read on your device: page and line counts for PDFs, lines for text and code, rows and columns for CSV, the number of files in a .zip, and a thumbnail for images. If a fact can't be read, the card shows only the file type. Hover a card to remove it.
-- **Phone layout and the m.allternit.com app:** the same files show as small previews above the text box: the image itself, or the first lines of a document, with a remove button.
-- The **Add files** button opens the same menu as before (files, screenshot, GitHub and the rest). Images, PDF, DOCX, text, Markdown, JSON, CSV, ZIP and code files can be picked from it on every surface.
+- A file shows as soon as you pick or drop it. While it is being read on your device, its card says **Reading…**, and send waits until reading finishes. A large PDF or folder can take a few seconds.
+- **Desktop:** each file is a card under the text box with what's in it: page and line counts for PDFs, lines for text and code, rows and columns for CSV, files in a .zip or folder, a thumbnail for images, and a frame and length for videos. Other files show their size and extension. Cards wrap onto more rows, up to three, then scroll. Hover a card to remove it, including while it is still reading.
+- **Phone layout and the m.allternit.com app:** the same files show as small previews above the text box: the image or video frame, or the first lines of a document.
+- You can send attachments without typing anything.
+- In the sent message, attachments show as file chips, not their contents. A file sent as a link opens from its chip.
 
 ## How the agent gets them
 
-- **Documents** (PDF, DOCX, text, CSV, JSON, ZIP, code) are read on your device, and their text is added to your message.
-- **Images** go to the model as images, so it can see them. Photos larger than 2048 px on the long side are scaled down first, and an animated GIF is sent as it is. Up to 10 images go with one message. The sent message lists the attached files by name.
+- **Documents and text** (PDF, DOCX, CSV, JSON, ZIP, code and any file that turns out to be text) are read on your device, and their text is added to your message.
+- **Folders** are read the same way: each text file's contents are added under its path, and other files are listed by name. Hidden folders such as `.git`, and `node_modules`, `dist`, `build` and `target`, are skipped when you drag a folder in.
+- **Images** go to the model as images, so it can see them. Photos larger than 2048 px on the long side are scaled down first, and an animated GIF is sent as it is. Up to 10 images go with one message.
+- **Video, audio and other files** (and PDFs with no readable text) are uploaded to your Allternit Cloud storage, and the message carries a link with the file's name, type and size, so the agent can open it. This needs you to be signed in. If you aren't, the message isn't sent and a notice says why.
 
 ## Storage by plan
 
