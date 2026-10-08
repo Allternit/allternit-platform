@@ -160,6 +160,24 @@ function isUrlReachable(url: string, timeoutMs: number): Promise<boolean> {
  * never configured. Defaults to false (normal cloud-paired behavior) if the
  * file is missing or unreadable, matching every build before this flag existed.
  */
+/**
+ * Headless computers (the hosted-driver image sets ALLTERNIT_HEADLESS=1) run
+ * the runtime on a screen agents drive, so the app must never put its own
+ * windows (welcome, sign-in, platform) on that screen: they'd be the first
+ * thing a developer's screenshot shows.
+ */
+const HEADLESS = process.env.ALLTERNIT_HEADLESS === '1';
+
+/** Keep a window off screen for good on headless computers. */
+function keepHiddenIfHeadless<T extends BrowserWindow>(win: T): T {
+  if (!HEADLESS) return win;
+  win.hide();
+  win.show = () => {};
+  win.showInactive = () => {};
+  win.focus = () => {};
+  return win;
+}
+
 function isSelfHostedBuild(): boolean {
   const repoRoot = resolve(__dirname, '..', '..', '..', '..');
   const companyConfigPath = app.isPackaged
@@ -933,6 +951,7 @@ function createMainWindow(): BrowserWindow {
     mainWindow = null;
   });
   
+  keepHiddenIfHeadless(window);
   // Ensure window is visible and focused
   window.once('ready-to-show', () => {
     log.info('[Main] ready-to-show event fired');
@@ -1151,9 +1170,9 @@ async function initializeBundledMode(): Promise<void> {
   // they always skip straight to the loading screen and into the platform —
   // otherwise they'd sit at "Waiting for browser login..." forever.
   const selfHosted = isSelfHostedBuild();
-  const showStartupWizard = !selfHosted && (!store.get('startupWizardCompleted') || !authManager.hasSession());
+  const showStartupWizard = !selfHosted && !HEADLESS && (!store.get('startupWizardCompleted') || !authManager.hasSession());
   log.info(`[Main] Startup window: ${showStartupWizard ? 'onboarding wizard' : 'loading only'}${selfHosted ? ' (self-hosted)' : ''}`);
-  splashWindow = createStartupWindow({ initialStep: showStartupWizard ? 'welcome' : 'loading' });
+  splashWindow = keepHiddenIfHeadless(createStartupWindow({ initialStep: showStartupWizard ? 'welcome' : 'loading' }));
   appWindowOpened = true;
   // Device pairing is independent of local service readiness. Start waiting
   // immediately so the user can approve in parallel while the runtime boots.

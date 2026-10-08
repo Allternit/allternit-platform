@@ -2093,6 +2093,8 @@ async fn run_hook_command(root: &Path, stores: &Stores, ledger: &Arc<Ledger>, cm
                 std::process::exit(2);
             }));
             let mut raw = String::new();
+            // AsyncReadExt is imported only on unix at the top of this file.
+            use tokio::io::AsyncReadExt as _;
             let read = tokio::io::stdin().read_to_string(&mut raw).await;
             let home = std::env::var_os("HOME").map(PathBuf::from);
             let parsed = read
