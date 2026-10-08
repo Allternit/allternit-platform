@@ -481,7 +481,9 @@ pub async fn send(db: &DbHandle, tx: &dyn ChannelTransport, owner: &str, thread_
     if b.read_only || !b.bidirectional {
         return Ok(SendOutcome::ReadOnly);
     }
-    let text = req.text.trim();
+    // Channels can't draw interactive cards: ```openui fences go out as text.
+    let converted = crate::openui_text::to_plain_text(req.text.trim());
+    let text = converted.as_str();
     if text.is_empty() {
         return Err("text is required".into());
     }
@@ -1269,6 +1271,9 @@ pub fn bind_slack_turn(db: &DbHandle, tx: &dyn ChannelTransport, session_id: &st
 /// Post a bot reply into the bound Slack thread and record it as an outbound
 /// (idempotent per inbound message: correlation `reply:<thread ts>:<n>`).
 pub async fn post_reply(db: &DbHandle, tx: &dyn ChannelTransport, b: &BindingRow, thread_ts: &str, reply: &str) -> Result<(), String> {
+    // Channels can't draw interactive cards: ```openui fences go out as text.
+    let converted = crate::openui_text::to_plain_text(reply);
+    let reply = converted.as_str();
     let out = Outbound { workspace: b.workspace.clone(), channel: b.channel.clone().unwrap_or_default(), thread: Some(thread_ts.to_string()), text: reply.to_string(), identity: None };
     let corr = id("reply");
     let conn = db.connect().map_err(|e| e.to_string())?;

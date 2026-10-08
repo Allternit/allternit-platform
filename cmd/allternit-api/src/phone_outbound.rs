@@ -170,6 +170,9 @@ pub async fn text_attributed<R: ThreadRuntime>(db: &DbHandle, rt: &R, http: Arc<
     if !is_e164(to) {
         return Err(OutError::BadRequest("The number to text must look like +14155550123.".into()));
     }
+    // SMS can't draw interactive cards: ```openui fences go out as text.
+    let converted = crate::openui_text::to_plain_text(text);
+    let text = converted.as_str();
     if text.trim().is_empty() {
         return Err(OutError::BadRequest("There's nothing to send.".into()));
     }
