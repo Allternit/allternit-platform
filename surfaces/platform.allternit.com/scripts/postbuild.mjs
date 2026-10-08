@@ -21,6 +21,15 @@ const routes = [
   'docs',
   'settings',
   'pair',
+  // Platform API console pages (the 402 payment_method_required link opens platform/billing).
+  'platform',
+  'platform/projects',
+  'platform/agents',
+  'platform/conversations',
+  'platform/computers',
+  'platform/usage',
+  'platform/billing',
+  'platform/webhooks',
 ];
 
 for (const route of routes) {
