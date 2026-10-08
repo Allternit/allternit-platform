@@ -432,6 +432,7 @@ pub async fn stream_chat_through_gizzi(
     _agent_name: Option<&str>,
     harness: Option<&serde_json::Value>,
     runtime_env: Option<&HashMap<String, String>>,
+    attachments: Option<&serde_json::Value>,
 ) -> Response {
     let base = gizzi_base.trim_end_matches('/');
     // Use the auth-aware Gizzi client so password-protected Gizzi daemons get
@@ -507,8 +508,10 @@ pub async fn stream_chat_through_gizzi(
         }
     };
 
+    let mut parts = vec![json!({ "type": "text", "text": message })];
+    parts.extend(attachment_file_parts(attachments));
     let mut message_payload = json!({
-        "parts": [{ "type": "text", "text": message }],
+        "parts": parts,
         "model": model,
     });
     // Forward the agent harness and frontend runtime env so the Gizzi
@@ -646,5 +649,94 @@ mod tests {
         );
         assert_eq!(gizzi_error_text(&json!("plain")), "plain");
         assert_eq!(gizzi_error_text(&json!({"name": "Auth"})), "Auth");
+    }
+}
+
+/// Most attachments one message may carry, and their total inline size.
+const MAX_MESSAGE_ATTACHMENTS: usize = 10;
+const MAX_INLINE_ATTACHMENT_CHARS: usize = 24 * 1024 * 1024;
+
+/// Composer attachments → gizzi file parts. Shape (shared by `/agent-chat`
+/// and the Desktop `/ai/chat` bridge):
+/// `attachments: [{ url?, dataBase64?, mediaType, name? }]`. `url` is an
+/// upload (`/api/v1/uploads/:id`), an http(s) URL, or a `data:` URL; a bare
+/// `dataBase64` becomes a data URL. Other schemes (`file:` …) are dropped.
+/// Gizzi hands image parts to the model as image input. Count and total
+/// inline size are capped so one message can't carry an unbounded payload.
+pub(crate) fn attachment_file_parts(attachments: Option<&serde_json::Value>) -> Vec<serde_json::Value> {
+    let mut parts = Vec::new();
+    let mut inline_chars = 0usize;
+    for attachment in attachments.and_then(|v| v.as_array()).into_iter().flatten() {
+        if parts.len() >= MAX_MESSAGE_ATTACHMENTS {
+            break;
+        }
+        let media_type = attachment
+            .get("mediaType")
+            .and_then(|v| v.as_str())
+            .unwrap_or("application/octet-stream");
+        let url = attachment
+            .get("url")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .or_else(|| {
+                attachment
+                    .get("dataBase64")
+                    .and_then(|v| v.as_str())
+                    .map(|data| format!("data:{};base64,{}", media_type, data))
+            });
+        let Some(url) = url else { continue };
+        let inline = url.starts_with("data:");
+        let fetchable = url.starts_with("https://")
+            || url.starts_with("http://")
+            || url.starts_with("/api/v1/uploads/");
+        if !inline && !fetchable {
+            continue;
+        }
+        if inline {
+            inline_chars += url.len();
+            if inline_chars > MAX_INLINE_ATTACHMENT_CHARS {
+                break;
+            }
+        }
+        let mut part = json!({ "type": "file", "url": url, "mime": media_type });
+        if let Some(name) = attachment.get("name").and_then(|v| v.as_str()) {
+            part["filename"] = json!(name);
+        }
+        parts.push(part);
+    }
+    parts
+}
+
+#[cfg(test)]
+mod attachment_file_parts_tests {
+    use super::*;
+
+    #[test]
+    fn none_without_attachments() {
+        assert!(attachment_file_parts(None).is_empty());
+    }
+
+    #[test]
+    fn maps_urls_and_base64_and_drops_other_schemes() {
+        let attachments = json!([
+            { "url": "data:image/png;base64,AAAA", "mediaType": "image/png", "name": "a.png" },
+            { "dataBase64": "BBBB", "mediaType": "image/jpeg" },
+            { "url": "file:///etc/passwd", "mediaType": "text/plain" },
+            { "mediaType": "image/png" }
+        ]);
+        assert_eq!(
+            attachment_file_parts(Some(&attachments)),
+            vec![
+                json!({ "type": "file", "url": "data:image/png;base64,AAAA", "mime": "image/png", "filename": "a.png" }),
+                json!({ "type": "file", "url": "data:image/jpeg;base64,BBBB", "mime": "image/jpeg" }),
+            ]
+        );
+    }
+
+    #[test]
+    fn caps_the_count() {
+        let one = json!({ "url": "data:image/png;base64,AAAA", "mediaType": "image/png" });
+        let attachments = serde_json::Value::Array(vec![one; 15]);
+        assert_eq!(attachment_file_parts(Some(&attachments)).len(), MAX_MESSAGE_ATTACHMENTS);
     }
 }

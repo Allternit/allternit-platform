@@ -4,7 +4,7 @@
 
 use axum::{
     body::Body,
-    extract::{Json, State},
+    extract::{DefaultBodyLimit, Json, State},
     http::{header, HeaderMap, StatusCode},
     response::Response,
     routing::post,
@@ -16,6 +16,9 @@ use tracing::info;
 
 use crate::gizzi_chat_stream::stream_chat_through_gizzi;
 use crate::AppState;
+
+/// Room for the message plus its capped inline attachments.
+const AGENT_CHAT_BODY_LIMIT: usize = 32 * 1024 * 1024;
 
 /// Chat request from frontend
 #[derive(Debug, Deserialize)]
@@ -41,7 +44,12 @@ pub struct ChatRequest {
 /// Create chat router
 pub fn chat_router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/agent-chat", post(handle_agent_chat))
+        // Messages can carry inline images (data URLs); the 2 MB default
+        // body limit would refuse a single phone photo.
+        .route(
+            "/agent-chat",
+            post(handle_agent_chat).layer(DefaultBodyLimit::max(AGENT_CHAT_BODY_LIMIT)),
+        )
         .route("/chat/action", post(handle_chat_action))
 }
 
@@ -76,6 +84,7 @@ async fn handle_agent_chat(
         request.agent_name.as_deref(),
         request.harness.as_ref(),
         request.runtime_env.as_ref(),
+        request.context.get("attachments"),
     )
     .await
 }

@@ -1692,41 +1692,13 @@ async fn agent_chat_bridge(
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty());
 
-        // Composer attachments (mobile "+" sheet): the client uploads each
-        // file via POST /api/v1/uploads first and sends the returned refs as
-        // `attachments: [{url?, dataBase64?, mediaType, name?}]`. Each one
-        // becomes a gizzi file part alongside the text part. A raw
-        // `dataBase64` payload (no upload round-trip) is forwarded as a data
-        // URL so small inline images still work.
+        // Composer attachments: `attachments: [{url?, dataBase64?, mediaType,
+        // name?}]` — uploaded refs (POST /api/v1/uploads) or inline data URLs.
+        // Each becomes a gizzi file part alongside the text part.
         let mut parts = vec![json!({ "type": "text", "text": message })];
-        if let Some(attachments) = body_json.get("attachments").and_then(|v| v.as_array()) {
-            for attachment in attachments {
-                let media_type = attachment
-                    .get("mediaType")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("application/octet-stream");
-                let url = attachment
-                    .get("url")
-                    .and_then(|v| v.as_str())
-                    .map(str::to_string)
-                    .or_else(|| {
-                        attachment
-                            .get("dataBase64")
-                            .and_then(|v| v.as_str())
-                            .map(|data| format!("data:{};base64,{}", media_type, data))
-                    });
-                let Some(url) = url else { continue };
-                let mut part = json!({
-                    "type": "file",
-                    "url": url,
-                    "mime": media_type,
-                });
-                if let Some(name) = attachment.get("name").and_then(|v| v.as_str()) {
-                    part["filename"] = json!(name);
-                }
-                parts.push(part);
-            }
-        }
+        parts.extend(crate::gizzi_chat_stream::attachment_file_parts(
+            body_json.get("attachments"),
+        ));
 
         let mut gizzi_payload = json!({
             "parts": parts,
