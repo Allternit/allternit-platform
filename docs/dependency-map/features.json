@@ -718,6 +718,10 @@
         {
           "on": "2026-10-09",
           "note": "Design artifacts open on the Design studio canvas (DesignTldrawCanvas with the Layers and Properties panels) scoped to one artifact, saved as a versioned canvas document (artboards, layers, design-system ref); older HTML designs open read-only with Convert to canvas. Phone and PWA use the canvas without tldraw chrome and the panels as bottom sheets. Presence is durable in artifact_presence (migration 086) so it works across cloud-api instances."
+        },
+        {
+          "on": "2026-10-09",
+          "note": "The Artifacts tab regained what the Phase 1 rebuild dropped: the animated Make something new tiles are the one template gallery (every kind, plan-gated, Dashboards and Motion included), connected-tools chips, the Design menu and Office button, and real per-kind previews in the grid (body fetched lazily, script-free snapshots for pages, designs and cards)."
         }
       ],
       "evidence": [
