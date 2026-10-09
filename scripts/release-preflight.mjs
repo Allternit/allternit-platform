@@ -131,6 +131,7 @@ function checkScriptExistence(workflowText) {
     'surfaces/allternit-desktop/scripts/prepare-mesh-node.cjs',
     'surfaces/allternit-desktop/scripts/download-lima.cjs',
     'surfaces/allternit-desktop/scripts/prepare-cua-driver.cjs',
+    'surfaces/allternit-desktop/scripts/prepare-allternit-driver.cjs',
     'surfaces/allternit-desktop/scripts/prepare-connector-catalog.cjs',
     'surfaces/allternit-desktop/scripts/prepare-api-binary.cjs',
     'surfaces/allternit-desktop/scripts/prepare-office-engine.cjs',

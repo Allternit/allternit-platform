@@ -2,10 +2,12 @@
 //! for whoever holds its control lease (Eoj 2026-09-28: taking control of
 //! this Mac from the Computer view drives the real screen).
 //!
-//! Input goes through the computer-use driver the desktop app already runs
-//! (Cua Driver), in its screen-wide `desktop` scope: coordinates are real
-//! screen pixels (`get_desktop_state`), keys go to the frontmost app. The
-//! desktop passes the driver's path and socket to this API
+//! Input goes through the Allternit Driver sidecar the desktop app runs
+//! (`domains/computer-use/driver`, socket in `ALLTERNIT_DRIVER_SOCKET`): its
+//! `pixel_*` ops are Cua Driver's screen-wide `desktop` scope, so coordinates
+//! are real screen pixels and keys go to the frontmost app. The sidecar owns
+//! input per window and logs every op to its router audit. When an older
+//! desktop app runs without the sidecar, calls fall back to Cua Driver's CLI
 //! (`ALLTERNIT_CUA_DRIVER_PATH` / `_SOCKET`, computer-use-driver-manager.ts).
 
 use axum::{http::StatusCode, response::IntoResponse, response::Response, Json};
@@ -248,55 +250,86 @@ pub async fn run(call: Result<DriverCall, String>) -> Response {
                 .into_response()
         }
     };
-    let Some((path, flags)) = driver_command() else {
-        return (
+    match call_driver(tool, args).await {
+        Ok(_) => Json(json!({ "success": true })).into_response(),
+        Err(DriverFailure::Unavailable(message)) => (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(json!({ "error": "computer_use_unavailable", "message": "The computer-use driver isn't running on this computer." })),
-        )
-            .into_response();
-    };
-    let output = tokio::process::Command::new(&path)
-        .arg("call")
-        .arg(tool)
-        .arg(args.to_string())
-        .args(&flags)
-        .kill_on_drop(true)
-        .output();
-    match tokio::time::timeout(std::time::Duration::from_secs(10), output).await {
-        // The driver exits 0 on refusals too; only a JSON result without an
-        // error `code` is a success.
-        Ok(Ok(out)) if out.status.success() && driver_accepted(&out.stdout) => {
-            Json(json!({ "success": true })).into_response()
-        }
-        Ok(Ok(out)) => {
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            warn!(tool, %stderr, "computer-use driver call failed");
-            let detail = if stderr.trim().is_empty() {
-                stdout.trim().to_string()
-            } else {
-                stderr.trim().to_string()
-            };
-            (StatusCode::BAD_GATEWAY, Json(json!({ "error": "driver_failed", "message": detail.chars().take(300).collect::<String>() }))).into_response()
-        }
-        Ok(Err(e)) => (
-            StatusCode::BAD_GATEWAY,
-            Json(json!({ "error": "driver_failed", "message": e.to_string() })),
+            Json(json!({ "error": "computer_use_unavailable", "message": message })),
         )
             .into_response(),
-        Err(_) => (
-            StatusCode::GATEWAY_TIMEOUT,
-            Json(json!({ "error": "driver_timeout" })),
+        Err(DriverFailure::Timeout) => (StatusCode::GATEWAY_TIMEOUT, Json(json!({ "error": "driver_timeout" }))).into_response(),
+        Err(DriverFailure::Refused(message)) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({ "error": "driver_failed", "message": message.chars().take(300).collect::<String>() })),
         )
             .into_response(),
     }
 }
 
-/// One driver call for the toolset executor: the driver's JSON reply on
-/// success, a readable reason on failure (same timeout and acceptance rule
-/// as [`run`]).
-pub async fn call_driver(tool: &str, args: Value) -> Result<Value, String> {
-    let (path, flags) = driver_command().ok_or("The computer-use driver isn't running on this computer.")?;
+/// Why a driver call didn't succeed.
+#[derive(Debug)]
+pub enum DriverFailure {
+    Unavailable(String),
+    Timeout,
+    Refused(String),
+}
+
+impl From<DriverFailure> for String {
+    fn from(f: DriverFailure) -> String {
+        match f {
+            DriverFailure::Unavailable(m) => m,
+            DriverFailure::Timeout => "the driver didn't answer in time".into(),
+            DriverFailure::Refused(m) => m,
+        }
+    }
+}
+
+const DRIVER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// The Allternit Driver sidecar's socket, when the desktop app runs it.
+fn allternit_driver_socket() -> Option<String> {
+    std::env::var("ALLTERNIT_DRIVER_SOCKET")
+        .ok()
+        .filter(|s| !s.is_empty() && std::path::Path::new(s).exists())
+}
+
+/// One JSON-RPC call to the Allternit Driver (one JSON object per line).
+#[cfg(unix)]
+pub async fn driver_rpc(socket: &str, method: &str, params: Value) -> Result<Value, DriverFailure> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    let call = async {
+        let mut stream = tokio::net::UnixStream::connect(socket)
+            .await
+            .map_err(|e| DriverFailure::Unavailable(format!("The computer-use driver isn't running on this computer ({e}).")))?;
+        let mut line = serde_json::to_vec(&json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params }))
+            .map_err(|e| DriverFailure::Refused(e.to_string()))?;
+        line.push(b'\n');
+        stream.write_all(&line).await.map_err(|e| DriverFailure::Refused(e.to_string()))?;
+        let mut reply = String::new();
+        BufReader::new(stream).read_line(&mut reply).await.map_err(|e| DriverFailure::Refused(e.to_string()))?;
+        let reply: Value = serde_json::from_str(&reply).map_err(|_| DriverFailure::Refused("the driver closed the connection".into()))?;
+        match reply.get("error") {
+            Some(err) => Err(DriverFailure::Refused(format!(
+                "the driver refused {method}: {}",
+                err.get("message").and_then(Value::as_str).unwrap_or("unknown error")
+            ))),
+            None => Ok(reply.get("result").cloned().unwrap_or(Value::Null)),
+        }
+    };
+    tokio::time::timeout(DRIVER_TIMEOUT, call).await.map_err(|_| DriverFailure::Timeout)?
+}
+
+/// One driver call for the toolset executor and the input routes: a Cua
+/// Driver desktop-scope tool (`click`, `type_text`, `get_cursor_position`…),
+/// sent as the Allternit Driver's `pixel_<tool>` op, or through Cua's CLI
+/// when the sidecar isn't running. The driver's JSON reply on success.
+pub async fn call_driver(tool: &str, args: Value) -> Result<Value, DriverFailure> {
+    #[cfg(unix)]
+    if let Some(socket) = allternit_driver_socket() {
+        return driver_rpc(&socket, &format!("pixel_{tool}"), args).await.inspect_err(|e| warn!(tool, ?e, "allternit driver call failed"));
+    }
+    let (path, flags) = driver_command()
+        .ok_or_else(|| DriverFailure::Unavailable("The computer-use driver isn't running on this computer.".into()))?;
     let output = tokio::process::Command::new(&path)
         .arg("call")
         .arg(tool)
@@ -304,7 +337,9 @@ pub async fn call_driver(tool: &str, args: Value) -> Result<Value, String> {
         .args(&flags)
         .kill_on_drop(true)
         .output();
-    match tokio::time::timeout(std::time::Duration::from_secs(10), output).await {
+    match tokio::time::timeout(DRIVER_TIMEOUT, output).await {
+        // The CLI exits 0 on refusals too; only a JSON result without an
+        // error `code` is a success.
         Ok(Ok(out)) if out.status.success() && driver_accepted(&out.stdout) => {
             Ok(serde_json::from_slice(&out.stdout).unwrap_or(Value::Null))
         }
@@ -312,10 +347,10 @@ pub async fn call_driver(tool: &str, args: Value) -> Result<Value, String> {
             let stderr = String::from_utf8_lossy(&out.stderr);
             let detail = if stderr.trim().is_empty() { String::from_utf8_lossy(&out.stdout).trim().to_string() } else { stderr.trim().to_string() };
             warn!(tool, %detail, "computer-use driver call failed");
-            Err(format!("the driver refused {tool}: {}", detail.chars().take(300).collect::<String>()))
+            Err(DriverFailure::Refused(format!("the driver refused {tool}: {}", detail.chars().take(300).collect::<String>())))
         }
-        Ok(Err(e)) => Err(format!("couldn't run the driver: {e}")),
-        Err(_) => Err("the driver didn't answer in time".into()),
+        Ok(Err(e)) => Err(DriverFailure::Refused(format!("couldn't run the driver: {e}"))),
+        Err(_) => Err(DriverFailure::Timeout),
     }
 }
 

@@ -1060,7 +1060,8 @@ fn parse_xy_lines(out: &str) -> Option<(f64, f64)> {
 }
 
 // ---------------------------------------------------------------------------
-// This device (macOS, Cua Driver 0.34).
+// This device (macOS): the Allternit Driver sidecar's pixel ops (Cua
+// Driver 0.34 desktop scope underneath); hold_key posts CoreGraphics events.
 // ---------------------------------------------------------------------------
 
 /// Cua Driver modifier names for a contract chord (`ctrl+shift`).
@@ -1095,7 +1096,7 @@ fn find_xy(v: &Value) -> Option<(f64, f64)> {
 /// The real cursor in screen pixels (Cua Driver reports points; its desktop
 /// scope takes native screenshot pixels, which differ on Retina).
 async fn this_device_cursor_px(map: &Mapping) -> Result<(i64, i64), String> {
-    let reply = crate::this_device_input::call_driver("get_cursor_position", json!({})).await?;
+    let reply = crate::this_device_input::call_driver("get_cursor_position", json!({})).await.map_err(String::from)?;
     let (px, py) = find_xy(&reply).ok_or("the driver didn't report a cursor position")?;
     let ratio = match crate::computer_routes::this_device_screen_points().await {
         Some(points) if points.width > 0 => map.screen.width as f64 / points.width as f64,
@@ -1361,7 +1362,7 @@ async fn dispatch(
                     } else {
                         td::mouse_call(&this_device_mouse("drag", Some(from), Some(to), None, None))?
                     };
-                    td::call_driver(call.0, call.1).await?;
+                    td::call_driver(call.0, call.1).await.map_err(String::from)?;
                     return Ok((vec![text(ack(spec, scaled))], None));
                 }
                 _ => {}
@@ -1407,7 +1408,7 @@ async fn dispatch(
                 1
             };
             for _ in 0..repeat {
-                td::call_driver(call.0, call.1.clone()).await?;
+                td::call_driver(call.0, call.1.clone()).await.map_err(String::from)?;
             }
             Ok((vec![text(ack(spec, scaled))], None))
         }

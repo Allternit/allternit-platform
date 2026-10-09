@@ -41,6 +41,12 @@
       "label": "Computer-use engine (ACU gateway :8760, Python)",
       "kind": "module",
       "path": "allternit/domains/computer-use/core"
+    },
+    {
+      "id": "allternit/domains/computer-use/driver",
+      "label": "Allternit Driver sidecar (arc + Cua engines, Python)",
+      "kind": "module",
+      "path": "allternit/domains/computer-use/driver"
     }
   ],
   "edges": [
@@ -247,6 +253,24 @@
       "evidence": [
         "allternit/cmd/allternit-api/src/computer_toolset.rs",
         "allternit/domains/computer-use/core/gateway/toolset_browser.py"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/allternit-desktop",
+      "target": "allternit/domains/computer-use/driver",
+      "kind": "sidecar",
+      "evidence": [
+        "allternit/surfaces/allternit-desktop/src/main/computer-use-driver-manager.ts",
+        "allternit/surfaces/allternit-desktop/scripts/prepare-allternit-driver.cjs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api/src/computer_*",
+      "target": "allternit/domains/computer-use/driver",
+      "kind": "JSON-RPC over unix socket (ALLTERNIT_DRIVER_SOCKET, pixel_* ops)",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/this_device_input.rs",
+        "allternit/surfaces/docs/tools/allternit-driver.mdx"
       ]
     }
   ]
