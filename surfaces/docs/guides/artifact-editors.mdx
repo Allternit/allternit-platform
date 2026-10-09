@@ -1,0 +1,109 @@
+---
+title: Docs, Slides, Sheets and Design artifacts
+description: Edit docs, decks, sheets and designs inside the artifact window, ask Allternit to change just a selection, and export them.
+---
+
+Docs, Slides, Sheets and Design artifacts open in an editor inside the
+[artifact window](/guides/artifacts). If you have edit access you can type
+straight into them; otherwise they open read-only. They are available on every
+plan, including Free.
+
+## Editing and autosave
+
+Changes save on their own about a second and a half after you stop typing. A
+small status chip at the bottom right says **Unsaved changes**, **Saving…**,
+**Saved**, or **Couldn't save** with a **Retry** button. Each save is a new
+version. Closing the window or leaving the page saves anything pending first.
+
+If Allternit changes the artifact while you have it open (it saved a new
+version from a chat), the editor shows that version. If you and someone else
+save at the same moment, the window asks whether to keep yours or use theirs.
+
+### Docs
+
+The Docs editor handles headings, paragraphs, bold, italic, underline, strike,
+code, colors, lists, tables, images and dividers. Docs that arrive as
+Markdown (an import, or text Allternit wrote) open in the editor and are saved
+as a Docs file on your first edit.
+
+### Slides
+
+The Slides editor shows a slide list and a canvas. Click a text box to edit,
+drag to move, drag a corner to resize, and drag slides in the list to reorder.
+
+### Sheets
+
+The Sheets editor is a grid with formulas, ranges, merged cells, column and
+row sizing, and several sheets per file.
+
+### Design
+
+The Design editor shows the HTML of the design on one side and a live preview
+on the other. On a phone the two sit behind **Preview** and **HTML** tabs. The
+preview is sandboxed: scripts in a design can't read your Allternit data.
+
+## Edit with Allternit
+
+Select some text, some cells, a slide or a text box, then click **Edit
+selection** (without a selection the button reads **Edit with Allternit**).
+Type what should change, for example "make this paragraph shorter" or "total
+this column". Allternit gets the exact selection and your instruction, reads
+the artifact, and saves a new version that changes only that part. The version
+is marked as written by Allternit.
+
+The request goes to the chat or Cowork session the artifact is open beside.
+If the artifact is open somewhere with no conversation (for example from the
+Artifacts tab), the button tells you to open it from a chat.
+
+## Versions and who made them
+
+Editors see a **Versions** menu (the clock icon). Each version says **You**,
+**A collaborator** or **By Gizzi**. Open any version to look at it; **Back to
+latest** returns to the current one. Older versions open read-only.
+
+## Export
+
+Open **Export** in the window header.
+
+| Kind | Exports |
+|---|---|
+| Docs | Word (.docx), PDF, Markdown, Download source, Copy |
+| Slides | PowerPoint (.pptx), PDF, Download source, Copy |
+| Sheets | Excel (.xlsx), CSV (first sheet), Download source, Copy |
+| Design | Standalone HTML, .zip, PowerPoint (text of each slide), PDF, Download source, Copy |
+
+PDF export opens your browser's print dialog; choose **Save as PDF**.
+
+## On a phone
+
+On the phone layout and the m.allternit.com app the artifact opens full
+screen. Docs, Slides and Design are editable; Sheets open as a grid where you
+can change cells. Sharing settings are not on the phone: the Share window
+shows who has access and says to manage sharing on desktop or the web.
+
+## For developers
+
+- Body formats: `application/vnd.allternit.doc+json` is the editor document
+  (`{title, blocks}`) plus a `markdown` rendering; `sheet+json` is the workbook
+  (`{name, sheets}`) plus the first sheet as a `rows` matrix; `slides+json` is
+  the deck (`{title, slides}`) with each slide's `title` and `body` text added.
+  Design is `text/html` or `design+json` (`{html}`). Loaders and savers are in
+  `allternit-ai/src/lib/artifacts/editors/` (`doc-body.ts`, `sheet-body.ts`,
+  `slides-body.ts`, `design-body.ts`), each with tests. Models can write the
+  simpler shapes (`{markdown}`, `{columns, rows}`, `{slides:[{title, bullets}]}`);
+  the loaders accept them.
+- The editors are the existing packs in `src/views/documents/packs`, mounted by
+  `src/components/artifacts/editors/editors.tsx` on a scratch document id that
+  is seeded from the artifact body and cleared on close. Every
+  `setStoredModel` call raises `allternit:editor-model-saved`, which the
+  window turns into a debounced version save (`autosave.ts`).
+- Selection context: sheets and slides raise `allternit:editor-selection`;
+  text selections are read from the page. The prompt is built by
+  `buildAskPrompt` and sent as `allternit:artifact-ask`, which ChatView and
+  Cowork handle.
+
+## Related
+
+- [Comments, presence and versions](/guides/artifact-collaboration)
+- [Artifacts](/guides/artifacts)
+- [Artifacts v2 API](/api/artifacts-v2)

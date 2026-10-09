@@ -250,6 +250,31 @@ Admins can list what the org has shared outside with `GET /api/v2/org/artifact-s
 
 Pages that store data, call AI or use connectors have their own routes under `/api/v2/artifact-runtime/{id}`. See the [Page runtime API](/api/artifact-runtime).
 
+## Comments
+
+Comments are threaded: a root comment plus replies one level deep. They are stored in `artifact_comments`.
+
+| Method and path | Needs | Body | Returns |
+|---|---|---|---|
+| `GET /api/v2/artifacts/:id/comments` | view | | `{ items }`, oldest first, at most 500 |
+| `POST /api/v2/artifacts/:id/comments` | comment | `{ body, anchor?, parent_id?, version? }` | the comment, `201` |
+| `PATCH /api/v2/artifacts/:id/comments/:cid` | edit, or the author | `{ resolved? , body? }` | the comment |
+| `DELETE /api/v2/artifacts/:id/comments/:cid` | the author or the owner | | `204`. Deleting a root deletes its replies. |
+| `POST /api/v2/artifacts/:id/comments/assistant-reply` | edit | `{ parent_id, body }` | the reply, `201`, with `author_id: "assistant"` |
+
+A comment has `id`, `artifact_id`, `version`, `anchor`, `parent_id`, `author_id`, `author_name`, `author_image_url`, `body`, `to_assistant`, `resolved_at` and `created_at`. `body` is 1 to 4000 characters. `anchor` is an opaque object up to 16 KB; the app writes `{ kind: "text" | "cell" | "slide" | "element", ... }`. A comment that mentions `@gizzi` or `@allternit` is stored with `to_assistant: true`. Docs have no Commenter level, so a viewer of a doc can't comment.
+
+## Presence
+
+Presence is live only and is never written to the database. The server keeps a short in-memory list per artifact.
+
+| Method and path | Needs | Body | Returns |
+|---|---|---|---|
+| `POST /api/v2/artifacts/:id/presence` | view | `{ state: "viewing" \| "editing" \| "left" }` | `204` |
+| `GET /api/v2/artifacts/:id/presence` | view | | `{ enabled, users: [{ user_id, name, image_url, state }] }`, without you |
+
+Send a heartbeat about every 15 seconds. An entry expires after 45 seconds. When the owner's organization turned presence off, `GET` returns `{ enabled: false, users: [] }` and `POST` does nothing.
+
 ## Errors
 
 Errors use the standard Cloud API shape `{ "error", "message", "code" }`. Artifact-specific codes are listed above. `401` means you are not signed in. `404` means the artifact doesn't exist or you have no access.

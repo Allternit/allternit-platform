@@ -261,10 +261,14 @@
         "allternit/platform/packages/allternit-office-suite",
         "allternit/platform/packages/office-docx-engine",
         "allternit/platform/packages/office-pptx-engine",
-        "allternit/platform/packages/office-xlsx-engine"
+        "allternit/platform/packages/office-xlsx-engine",
+        "allternit-ai/src/lib/artifacts",
+        "allternit-ai/src/components/artifacts"
       ],
-      "decisions": [],
-      "evidence": ["allternit/surfaces/docs/api/office.mdx", "allternit/surfaces/docs/surfaces/office-suite.mdx"]
+      "decisions": [
+        {"on": "2026-10-09", "note": "Docs, Slides and Sheets are also artifact kinds: the artifact window mounts the same editor packs on a scratch document id seeded from the artifact body and autosaves each change as a version (artifacts v2 phase 4)."}
+      ],
+      "evidence": ["allternit/surfaces/docs/api/office.mdx", "allternit/surfaces/docs/surfaces/office-suite.mdx", "allternit/surfaces/docs/guides/artifact-editors.mdx"]
     },
     {
       "id": "feature:mcp-apps",
@@ -487,6 +491,10 @@
         {
           "on": "2026-10-09",
           "note": "Page runtime (Phase 4a): page artifacts run in the MCP sandbox-proxy origin with connect-src none and window.allternit.{storage, ai, connectors}. Storage is 20 MB per artifact (personal per viewer, shared for all viewers, consent before the first shared write). AI is billed to the viewer through the hosted model router. Connector calls run in the app with the viewer's credentials via the MCP Apps bridge; tools that ask before each action are unavailable in pages. Outside invitees never get AI or connectors. The org Artifacts settings (Desktop and web only; phone and PWA show a note) include a connector kill switch and a Shared outside review list."
+        },
+        {
+          "on": "2026-10-09",
+          "note": "Phase 4 editors: doc, sheet, slides and design open in the window's editors with autosave to versions, Edit with Allternit on a selection, threaded comments with @gizzi, heartbeat presence (honours the org presence switch), and Word/PDF/Markdown/PowerPoint/XLSX/CSV/HTML/zip exports. Presence is an in-memory heartbeat poll under /api/v2/artifacts/:id/presence, not the deployment WebSocket hub."
         }
       ],
       "evidence": [
@@ -494,7 +502,9 @@
         "allternit/surfaces/docs/api/artifacts-v2.mdx",
         "allternit/surfaces/docs/guides/artifacts.mdx",
         "allternit/surfaces/docs/guides/artifact-apps.mdx",
-        "allternit/surfaces/docs/api/artifact-runtime.mdx"
+        "allternit/surfaces/docs/api/artifact-runtime.mdx",
+        "allternit/surfaces/docs/guides/artifact-editors.mdx",
+        "allternit/surfaces/docs/guides/artifact-collaboration.mdx"
       ]
     },
     {
