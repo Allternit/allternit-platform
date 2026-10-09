@@ -80,8 +80,8 @@ From `domains/computer-use/suite/`:
 ```bash
 python3 -m suite validate                     # schema-check every task file
 python3 -m suite list --os mac
-python3 -m suite run --model openrouter/google/gemini-2.5-flash --mode read_ui
-python3 -m suite run --tasks 'safari-*' --model anthropic/claude-haiku-4-5 --mode pixel,read_ui
+python3 -m suite run --model <provider/model> --mode read_ui
+python3 -m suite run --tasks 'safari-*' --model <provider/model> --mode pixel,read_ui
 python3 -m suite run --tags core --repeat 3 --model <provider/model> --mode read_ui   # pass^3
 python3 -m suite run --mode replay            # re-run the newest passing traces with 0 model calls
 python3 -m suite report results/<run-id> [more dirs]
@@ -110,7 +110,7 @@ Each run writes `results/<run-id>/` (gitignored):
 - `web.jsonl` is every local page submission.
 - `summary.json` and `report.md` hold the results table.
 
-The table has one row per mode × model: success %, pass^3 % (tasks that passed all of their first 3 runs), median planner calls, median $ per task, median time per task, and total $. Each cell is marked ✓ or ✗ against the §8.1 bars. Planner calls, tokens and $ come from the stored gizzi session (one assistant message is one planner call). The account's actual OpenRouter spend during the run is printed under the table.
+The table has one row per mode × model: success %, pass^3 % (tasks that passed all of their first 3 runs), median planner calls, median $ per task, median time per task, and total $. Each cell is marked ✓ or ✗ against the §8.1 bars. Planner calls, tokens and $ come from the stored gizzi session (one assistant message is one planner call). The account's actual provider spend (OpenRouter, when that key is set) during the run is printed under the table.
 
 The **determinism** section covers every task run 3 or more times. It shows whether all runs took the same step sequence: tool, member, op and target, with versions and timings ignored. When they didn't, it shows the first step where they diverged and what each run did there. **Failure causes** group failed attempts: setup, timeout, planner error, no computer actions, or wrong outcome (with the failing checker and the last tool error).
 
