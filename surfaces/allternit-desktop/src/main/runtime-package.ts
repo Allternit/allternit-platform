@@ -316,7 +316,8 @@ export class RuntimePackages {
 
   /** A small feed file (latest.json, a manifest, a signature), bounded by the stall timeout. */
   private fetchSmall(fetchImpl: typeof fetch, url: string) {
-    return fetchImpl(url, { cache: 'no-store', signal: AbortSignal.timeout(this.opts.stallMs) });
+    // undici's RequestInit has no `cache`; the runtime accepts the DOM shape.
+    return fetchImpl(url, { cache: 'no-store', signal: AbortSignal.timeout(this.opts.stallMs) } as RequestInit);
   }
 
   private async runCheck(feedUrl: string, fetchImpl: typeof fetch): Promise<string | null> {

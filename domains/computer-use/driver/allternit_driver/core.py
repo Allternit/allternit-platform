@@ -31,8 +31,8 @@ PIXEL_TOOLS = {
     "type_text", "press_key", "hotkey", "get_cursor_position", "get_screen_size",
 }
 DEFAULT_MAX_ELEMENTS = 200
-COALESCE_S = 0.25
-PREWARM_WHILE_USED_S = 600.0  # A reader that waited on another reader reuses a map this fresh.
+COALESCE_S = 0.25  # A reader that waited on another reader reuses a map this fresh.
+PREWARM_WHILE_USED_S = 600.0  # Prewarm the frontmost app while a read happened this recently.
 
 
 class DriverError(Exception):
@@ -521,7 +521,7 @@ class Driver:
             if expect is None:
                 return {"skipped": "check not expressible as verify_state"}
             r = self.cua.verify(t.pid, t.window_id, [expect], timeout_ms=0)
-            return {"engine": CUA, "ok": bool(r.get("satisfied", r.get("ok"))), "detail": r.get("_text", "")[:200], "ms": _ms(start)}
+            return {"engine": CUA, "ok": _cua_verified(r), "detail": r.get("_text", "")[:200], "ms": _ms(start)}
         except Exception as e:
             return {"engine": CUA if not self._arc_ok() else ARC, "ok": None, "detail": str(e)[:200], "ms": _ms(start)}
 
@@ -539,7 +539,7 @@ class Driver:
             preds = [_cua_predicate(c) for c in checks]
             if d.engine == CUA and all(preds):
                 r = self.cua.verify(t.pid, t.window_id, preds, timeout_ms=int(p.get("timeout_ms", 0)))
-                ok = bool(r.get("satisfied", r.get("ok")))
+                ok = _cua_verified(r)
                 return [{"check": c, "ok": ok, "detail": "verify_state"} for c in checks]
             version = self._read(t, fresh=True)[0]
             out = []
@@ -660,6 +660,16 @@ def _cua_predicate(cond: dict[str, Any]) -> dict[str, Any] | None:
     if "enabled" in cond:
         element["enabled"] = bool(cond["enabled"])
     return {"element": element}
+
+
+def _cua_verified(r: dict[str, Any]) -> bool:
+    """Cua 0.34's verify_state answers ``status: "satisfied"`` (with one status
+    per predicate); other builds expose a boolean ``satisfied`` or ``ok``."""
+    status = r.get("status")
+    if isinstance(status, str):
+        return status == "satisfied"
+    satisfied = r.get("satisfied", r.get("ok"))
+    return bool(satisfied) if satisfied is not None else False
 
 
 def handles_cua_error(e: Exception) -> DriverError:
