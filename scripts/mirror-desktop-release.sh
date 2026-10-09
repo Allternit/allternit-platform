@@ -18,7 +18,7 @@ if [[ -z "$version" || ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+
   echo "usage: $0 <version, e.g. 1.1.3> [--apply]" >&2; exit 2
 fi
 apply=0; [[ "$mode" == "--apply" ]] && apply=1
-REPO="${DESKTOP_REPO:-Gizziio/desktop}"
+REPO="${DESKTOP_REPO:-Allternit/desktop}"
 BUCKET="${R2_BUCKET:-allternit-runtime}"
 PUBLIC="${RUNTIME_PUBLIC_URL:-https://runtime.allternit.com}"
 tag="v$version"
@@ -45,7 +45,8 @@ for f in "${files[@]}"; do
   n="$(basename "$f")"
   printf '  %s (%s bytes, sha256 %s)\n' "$n" "$(wc -c <"$f" | tr -d ' ')" "$(shasum -a 256 "$f" | cut -c1-12)"
   if [[ $apply -eq 1 ]]; then
-    r2 -H "Content-Type: application/octet-stream" -T "$f" "$R2_ENDPOINT/$BUCKET/desktop/$tag/$n"
+    # Multipart with retries: one big curl PUT dies mid-stream on large DMGs.
+    python3 "$(dirname "$0")/r2-upload.py" "$f" "$BUCKET" "desktop/$tag/$n" application/octet-stream
   fi
 done
 

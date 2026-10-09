@@ -133,7 +133,7 @@ jobs:
           VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
           set -euo pipefail
-          python -m pip install --upgrade build pytest
+          python -m pip install --upgrade build pytest pyyaml
           (cd sdk/platform-python && python -m pytest -q tests)
           mkdir -p dist
           for dir in sdk/platform-python sdk/computer-driver/python; do
