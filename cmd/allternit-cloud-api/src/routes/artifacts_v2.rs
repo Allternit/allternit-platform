@@ -57,6 +57,9 @@ use crate::{auth, ApiState};
 // Page runtime (storage, consents, AI) and the org "Shared outside" list.
 #[path = "artifact_runtime.rs"]
 mod artifact_runtime;
+// Motion cloud render (jobs, queue, MP4 download).
+#[path = "artifact_render.rs"]
+mod artifact_render;
 
 pub(crate) type Result<T> = std::result::Result<T, ArtifactError>;
 
@@ -97,6 +100,7 @@ pub fn routes() -> Router<Arc<ApiState>> {
             get(get_org_settings).put(put_org_settings),
         )
         .merge(artifact_runtime::routes())
+        .merge(artifact_render::routes())
 }
 
 // ---------------------------------------------------------------------------
