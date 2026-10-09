@@ -5,8 +5,7 @@
  * `tools/list` + `tools/call` handlers, served over stdio by `serveStdio`, which
  * speaks MCP 2026-07-28 (`server/discover`, per-request `_meta`) and the legacy
  * `initialize` handshake from the same factory. The tool surface is declared
- * separately in `tool-spec.ts` per the `sdk/computer-use/src/mcp-tool-spec.ts`
- * spec-module idiom; tools/list returns it in that fixed order.
+ * separately in `tool-spec.ts`; tools/list returns it in that fixed order.
  *
  * Approval semantics: risky tools accept an optional `approvalId` argument,
  * threaded verbatim as `?approval_id=`. This server never mints or obtains

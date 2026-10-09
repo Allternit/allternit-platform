@@ -3,8 +3,8 @@ Allternit Computer Use — Measured conformance tests
 
 Covers conformance.measured: real suite execution against the mock adapter,
 honest grade computation, adapter_grades.json writing, the implemented
-suites B/C/E, and the honesty rules for adapters whose runtime is
-unavailable (browser-use) or that need --network (retrieval, live browser).
+suites C/E, and the honesty rules for adapters whose runtime is
+unavailable (no CDP endpoint) or that need --network (retrieval, live browser).
 """
 
 import json
@@ -37,7 +37,6 @@ from conformance.measured import (  # noqa: E402
 from conformance.mock_browser_adapter import MockBrowserAdapter  # noqa: E402
 from conformance.suites import (  # noqa: E402
     build_suite_a,
-    build_suite_b,
     build_suite_c,
     build_suite_e,
     build_suite_f,
@@ -82,11 +81,10 @@ class TestMockAdapterMeasuresSuiteA:
         assert result.grade == "beta"  # 50-89% band
 
 
-class TestSuitesBCE:
-    """Suites B/C/E are implemented with real, runnable test functions."""
+class TestSuitesCE:
+    """Suites C/E are implemented with real, runnable test functions."""
 
     @pytest.mark.parametrize("builder,expected", [
-        (build_suite_b, 3),
         (build_suite_c, 5),
         (build_suite_e, 3),
     ])
@@ -137,13 +135,6 @@ class TestGradesWriting:
         assert hybrid["tests_pass"] == 3
         assert "mock" in hybrid["note"]
 
-        # browser-use runtime is unavailable in this environment — honest null.
-        browser_use = document["browser.browser-use"]
-        assert browser_use["measured"] is False
-        assert browser_use["grade"] is None
-        assert browser_use["pass_rate"] is None
-        assert "browser-use" in browser_use["note"]
-
         # Retrieval needs --network — honestly unmeasured without it.
         retrieval = document["retrieval.playwright-crawler"]
         assert retrieval["measured"] is False
@@ -159,7 +150,7 @@ class TestGradesWriting:
     async def test_unmeasured_browser_entries_are_honest(self, tmp_path):
         grades_path = tmp_path / "adapter_grades.json"
         document = await run_measurement(network=False, grades_path=grades_path)
-        for adapter_id in ("browser.playwright", "browser.cdp", "desktop.pyautogui"):
+        for adapter_id in ("browser.playwright", "browser.cdp", "desktop.accessibility"):
             entry = document[adapter_id]
             assert entry["measured"] is False
             assert entry["grade"] is None

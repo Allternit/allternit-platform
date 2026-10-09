@@ -1,5 +1,12 @@
 /**
  * @allternit/sdk/computer-use - Computer Use Engine Client
+ *
+ * @deprecated since 2026-10-09. Use `@allternit/computer-driver` for hosted
+ * computers (one contract call per action on `/v1/computers/:id/toolset`).
+ * This client is a thin shim over the ACU gateway runs API and is not a
+ * drop-in for the driver: it drives gateway runs and receipts, not computers.
+ * `executeCompatibilityAction` now uses the gateway's `/v1/execute` channel
+ * (the old `/v1/computer` route is gone).
  */
 
 export const COMPUTER_USE_CONTRACT_VERSION = "1.0.0-alpha.1" as const
@@ -244,6 +251,9 @@ export interface CompatibilityComputerActionRequest {
   coordinate?: [number, number]
   text?: string
   key?: string
+  target?: string
+  goal?: string
+  adapter_preference?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -334,6 +344,7 @@ export interface StartBrowserSkillVerifyOptions {
   targetUrl?: string
 }
 
+/** @deprecated Use `@allternit/computer-driver`. */
 export class AllternitComputerUseClient {
   readonly baseUrl: string
   readonly fetch: typeof fetch
@@ -370,15 +381,29 @@ export class AllternitComputerUseClient {
     return response
   }
 
-  /** Compatibility-only atomic action transport for products migrating to canonical transactions. */
+  /**
+   * One browser-session action on the gateway's `/v1/execute` channel
+   * (`action`, `session_id`, optional `target`/`text`/`parameters`). Returns the
+   * execute response (`status`, `summary`, `artifacts`, `extracted_content`).
+   * The old `/v1/computer` route this used was removed on 2026-10-09.
+   */
   async executeCompatibilityAction(request: CompatibilityComputerActionRequest): Promise<Record<string, unknown>> {
-    const response = await this.fetch(`${this.baseUrl}/v1/computer`, {
+    const { action, session_id, run_id, parameters, coordinate, text, key, target, goal, adapter_preference } = request
+    const params: Record<string, unknown> = { ...(parameters ?? {}) }
+    if (coordinate) params.coordinate = coordinate
+    if (key !== undefined) params.key = key
+    const response = await this.fetch(`${this.baseUrl}/v1/execute`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...this.headers },
       body: JSON.stringify({
-        ...request,
-        run_id: request.run_id ?? `sdk-${globalThis.crypto?.randomUUID?.() ?? Date.now()}`,
-        parameters: request.parameters ?? {},
+        action,
+        session_id,
+        run_id: run_id ?? `sdk-${globalThis.crypto?.randomUUID?.() ?? Date.now()}`,
+        ...(target !== undefined ? { target } : {}),
+        ...(goal !== undefined ? { goal } : {}),
+        ...(text !== undefined ? { text } : {}),
+        ...(adapter_preference !== undefined ? { adapter_preference } : {}),
+        parameters: params,
       }),
     })
     if (!response.ok) throw new Error(`Compatibility action failed: ${response.status} ${response.statusText}`)
@@ -869,6 +894,7 @@ export class AllternitComputerUseClient {
   }
 }
 
+/** @deprecated Use `@allternit/computer-driver`. */
 export function createComputerUseClient(config?: RequestOptions) {
   return new AllternitComputerUseClient(config)
 }

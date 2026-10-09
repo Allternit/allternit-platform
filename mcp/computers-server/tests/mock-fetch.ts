@@ -1,9 +1,8 @@
 /**
  * Mocked-fetch helpers shared by the computers-server unit tests.
  *
- * Mirrors the recorder idiom in `sdk/computers/tests/client.test.ts`: replace
- * `globalThis.fetch`, record every call (url, method, headers, body), and
- * route the response through a caller-supplied handler.
+ * Replaces `globalThis.fetch`, records every call (url, method, headers, body), and
+ * routes the response through a caller-supplied handler.
  */
 
 export interface RecordedCall {

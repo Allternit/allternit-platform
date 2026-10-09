@@ -38,13 +38,13 @@ When the engine runs next to allternit-api (Allternit Desktop sets `ALLTERNIT_AP
 - A `409 approval_required` reply goes through the run's own approval flow (the ACI approval card). After a person approves, the engine approves the grant (`POST /api/aci/handoff/:id/approve`) and retries the call once with it.
 - A pointing action planned on a screenshot older than `max_snapshot_age_s` (120 seconds by default) is refused, and the loop looks at the screen again before acting.
 
-For browser targets, the executor forwards each browser member to the gateway's `POST /v1/toolset/browser` (`gateway/toolset_browser.py`). It runs the member with Playwright on the session's tabs, never calls the executor, and returns the tab inventory (`browser_state`) with every reply. See [Browser results](/tools/computer-toolset#browser-results). Only the planning loop and the `/v1/computer` alias call the executor, so a call can't loop from the executor to the gateway and back.
+For browser targets, the executor forwards each browser member to the gateway's `POST /v1/toolset/browser` (`gateway/toolset_browser.py`). It runs the member with Playwright on the session's tabs, never calls the executor, and returns the tab inventory (`browser_state`) with every reply. See [Browser results](/tools/computer-toolset#browser-results). Only the planning loop calls the executor, so a call can't loop from the executor to the gateway and back.
 
-Without `ALLTERNIT_API_URL` (tests, the demo launcher), the engine runs the same contract calls on its in-process adapter waterfall.
+Without `ALLTERNIT_API_URL` (tests), the engine runs the same contract calls on its in-process adapter waterfall.
 
-## The `/v1/computer` alias
+## Removed endpoints (2026-10-09)
 
-`POST /v1/computer` on the gateway still takes the old Claude-native payload (`action`, `coordinate`, `text`, `key`, `delta`, `url`) for old callers, such as the MCP server and the JS SDK's `executeCompatibilityAction`. It turns the payload into one contract call (`alias_v1_computer`) and runs it on the executor. The response keeps the old `status` and `extracted_content` fields and adds the contract result (`content`, `screen`, `browser_state`). Optional `computer_id` and `user_id` fields pick the target and owner.
+`POST /v1/computer` (the old Claude-native payload), `POST /v1/run/hybrid` and `POST /v1/run/parallel` were removed. Callers send one contract call to `POST /api/v1/computers/:id/toolset` instead (see [Computer toolset](/tools/computer-toolset)). Browser sessions still use `POST /v1/execute`.
 
 ## SDK drivers
 

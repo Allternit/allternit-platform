@@ -4,9 +4,8 @@ Only suites with real, runnable test functions.
 
 Suites:
   A — Browser Deterministic (Playwright) — 8 tests
-  B — Browser Adaptive (browser-use) — 3 tests
   C — Retrieval (playwright-crawler) — 5 tests
-  D — Desktop (pyautogui) — 4 tests
+  D — Desktop (accessibility, via the gateway bridge) — 4 tests
   E — Hybrid Orchestrator — 3 tests
   F — Routing & Policy — 6 tests
 """
@@ -141,83 +140,7 @@ def build_suite_a() -> ConformanceSuite:
 
 
 # ---------------------------------------------------------------------------
-# Suite B — Browser Adaptive (tests require a browser-use adapter + LLM runtime)
-# ---------------------------------------------------------------------------
-
-async def _b01_goal_envelope(adapter):
-    """Adaptive task execution returns a complete G1 result envelope."""
-    from core import ActionRequest
-    req = ActionRequest(
-        action_type="task", target="Navigate to example.com",
-        parameters={"goal": "Navigate to example.com and report the page title",
-                    "url": "https://example.com"},
-    )
-    result = await adapter.execute(req, session_id="conformance-b01", run_id="run-b01")
-    assert result.run_id == "run-b01"
-    assert result.session_id == "conformance-b01"
-    assert result.adapter_id == adapter.adapter_id
-    assert result.status in ("completed", "failed"), f"Unexpected status: {result.status}"
-    assert result.started_at and result.completed_at
-
-
-async def _b02_clean_failure_semantics(adapter):
-    """A failed adaptive run fails cleanly: structured error, no escaped exception.
-
-    The LLM/runtime may legitimately be unavailable in the measuring
-    environment — what the suite requires is that the adapter degrades to a
-    structured failed envelope instead of raising.
-    """
-    from core import ActionRequest
-    req = ActionRequest(
-        action_type="task", target="report the title of the current page",
-        parameters={"goal": "report the title of the current page"},
-    )
-    result = await adapter.execute(req, session_id="conformance-b02", run_id="run-b02")
-    assert result.status in ("completed", "failed")
-    if result.status == "failed":
-        assert isinstance(result.error, dict), "Failure must be a structured error dict"
-        assert result.error.get("code"), "Failure error must carry a code"
-        assert result.error.get("message"), "Failure error must carry a message"
-    else:
-        assert result.extracted_content is not None
-
-
-async def _b03_goal_forwarded(adapter):
-    """The adapter receives the goal and URL from the action and attempts it."""
-    from core import ActionRequest
-    req = ActionRequest(
-        action_type="task", target="find the main heading",
-        parameters={"goal": "find the main heading", "url": "https://example.com"},
-    )
-    result = await adapter.execute(req, session_id="conformance-b03", run_id="run-b03")
-    # Envelope must record what was attempted, however the run ended.
-    assert result.action == "task"
-    assert result.target == "find the main heading"
-    assert result.status in ("completed", "failed")
-
-
-def build_suite_b() -> ConformanceSuite:
-    """Suite B — Browser Adaptive"""
-    suite = ConformanceSuite(
-        suite_id="browser-adaptive-v1",
-        name="Browser Adaptive",
-        description="Tests for LLM-driven adaptive browser automation (browser-use)",
-    )
-    tests = [
-        ("B-01", "envelope", "G1 envelope for adaptive task", _b01_goal_envelope),
-        ("B-02", "failure", "Clean failure semantics", _b02_clean_failure_semantics),
-        ("B-03", "goal", "Goal forwarding", _b03_goal_forwarded),
-    ]
-    for tid, cat, name, fn in tests:
-        suite.add_test(ConformanceTest(
-            test_id=tid, suite_id=suite.suite_id,
-            name=name, description=name, category=cat, test_fn=fn,
-        ))
-    return suite
-
-
-# ---------------------------------------------------------------------------
-# Suite D — Desktop (tests require a pyautogui adapter)
+# Suite D — Desktop (tests require a desktop adapter, e.g. desktop.accessibility)
 # ---------------------------------------------------------------------------
 
 async def _d01_screenshot(adapter):
@@ -265,7 +188,7 @@ def build_suite_d() -> ConformanceSuite:
     suite = ConformanceSuite(
         suite_id="desktop-v1",
         name="Desktop",
-        description="Tests for desktop automation (pyautogui)",
+        description="Tests for desktop automation (accessibility adapter)",
     )
     tests = [
         ("D-01", "screenshot", "Desktop screenshot", _d01_screenshot),
@@ -365,7 +288,7 @@ async def _f06_all_adapters_routable(_adapter):
                         reachable.add(fb)
                 except RoutingError:
                     pass  # Not every mode×family combo is valid — that's fine
-    expected = {"browser.playwright", "browser.browser-use", "browser.cdp", "desktop.pyautogui"}
+    expected = {"browser.playwright", "browser.cdp", "desktop.accessibility"}
     missing = expected - reachable
     assert not missing, f"Adapters not reachable through router: {missing}"
 
@@ -832,7 +755,6 @@ def build_all_suites() -> list:
     """Build all conformance suites with real test functions."""
     return [
         build_suite_a(),
-        build_suite_b(),
         build_suite_c(),
         build_suite_d(),
         build_suite_dx(),

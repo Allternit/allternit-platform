@@ -178,7 +178,7 @@ The browser tool is a runtime tool (invoked by LLM/planner), not a CLI command. 
 1. **Optional:** Test via GIZZI TUI with LLM
 2. **Then:** Implement persistent sessions (v0.3.0)
 3. **Then:** Add click/fill/extract actions
-4. **Then:** browser-use integration
+4. ~~**Then:** browser-use integration~~ (dropped; adapter removed in the D0 cleanup)
 5. **Blocked until later:** Event Ledger, web mirror
 
 ---

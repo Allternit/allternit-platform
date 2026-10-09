@@ -12,7 +12,7 @@ Price comparison, A/B test capture, multi-page scraping.
 - **Family:** browser
 - **Mode:** parallel
 - **Primary adapter:** browser.playwright
-- **Fallback chain:** browser.browser-use
+- **Fallback chain:** none
 - **Fail mode:** fail closed (partial results returned for completed contexts)
 
 ## Execution Flow

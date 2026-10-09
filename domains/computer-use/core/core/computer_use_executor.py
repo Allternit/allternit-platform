@@ -10,8 +10,7 @@ Adapter waterfall (highest → lowest priority):
   1. browser.extension  — BROWSER.* actions via HTTP relay :3012 → Desktop → TCP 3011 → extension
   2. browser.cdp        — Chrome/Electron CDP connection (headless or headed)
   3. browser.playwright — directly registered physical Playwright adapter
-  4. desktop.pyautogui  — Desktop automation fallback
-  5. desktop.accessibility — Accessibility tree fallback
+  4. desktop.accessibility — native desktop (Quartz events + accessibility tree)
 
 Claude's native computer tool calls this executor directly.
 Non-Claude models use PlanningLoop (planning_loop.py) which also calls this executor.
@@ -99,7 +98,6 @@ ADAPTER_WATERFALL: List[str] = [
     "browser.extension",   # BROWSER.* actions via HTTP relay :3012 → Desktop → TCP 3011 → extension
     "browser.cdp",         # Chrome/Electron CDP
     "browser.playwright",  # Playwright headless
-    "desktop.pyautogui",   # Desktop automation
     "desktop.accessibility",
 ]
 

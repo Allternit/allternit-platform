@@ -56,7 +56,9 @@ function buildTenantContext(context?: ToolRequest['context']): TenantToolContext
   };
 }
 
-const ACU_GATEWAY_URL = process.env.ACU_GATEWAY_URL ?? 'http://127.0.0.1:8760';
+// The computer tool runs on allternit-api's toolset executor
+// (POST /api/v1/computers/:id/toolset, contract allternit.computer.v1).
+const ALLTERNIT_API_URL = (process.env.ALLTERNIT_API_URL ?? 'http://127.0.0.1:8013').replace(/\/+$/, '');
 
 export class ToolExecutor {
   private engine: ExecutionEngine;
@@ -225,44 +227,58 @@ print(json.dumps({"original_hash": oh, "new_hash": nh}))
     }
   }
 
+  /**
+   * `computer` tool: one allternit.computer.v1 member (Anthropic computer-tool
+   * names: screenshot, left_click, type, key, scroll, ...) on the computer
+   * `args.computer_id` (default this-device). `navigate` with a url goes to
+   * the browser toolset.
+   */
   private async executeComputerTool(args: any, context?: any): Promise<ToolResponse> {
     try {
-      const body: Record<string, any> = {
-        action: args.action,
-        session_id: args.session_id ?? context?.sessionId ?? `sess-${Date.now()}`,
-        run_id: args.run_id ?? `ku-${Math.random().toString(36).slice(2, 14)}`,
-        parameters: {},
-      };
-      if (args.coordinate != null) body.coordinate = args.coordinate;
-      if (args.text != null) body.text = args.text;
-      if (args.key != null) body.key = args.key;
-      if (args.delta != null) body.delta = args.delta;
-      if (args.url != null) body.url = args.url;
-      if (args.selector != null) body.selector = args.selector;
-      if (args.ms != null) body.parameters = { ms: args.ms };
-      if (args.adapter_preference != null) body.adapter_preference = args.adapter_preference;
-
-      const res = await fetch(`${ACU_GATEWAY_URL}/v1/computer`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-
-      if (!res.ok) {
-        const text = await res.text().catch(() => res.statusText);
-        return { success: false, output: '', error: `ACU gateway ${res.status}: ${text}` };
+      const member = String(args.action ?? 'screenshot');
+      const toolset = member === 'navigate' || member === 'goto' ? 'browser' : 'computer';
+      const input: Record<string, any> = {};
+      if (toolset === 'browser') {
+        input.url = args.url ?? args.text ?? '';
+      } else {
+        if (args.coordinate != null) input.coordinate = args.coordinate;
+        if (args.start_coordinate != null) input.start_coordinate = args.start_coordinate;
+        if (member === 'key' || member === 'hold_key') input.text = args.key ?? args.text ?? '';
+        else if (args.text != null) input.text = args.text;
+        if (args.scroll_direction != null) input.scroll_direction = args.scroll_direction;
+        if (args.scroll_amount != null) input.scroll_amount = args.scroll_amount;
+        if (args.duration != null) input.duration = args.duration;
       }
+      const computerId = encodeURIComponent(args.computer_id ?? context?.computerId ?? 'this-device');
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (process.env.ALLTERNIT_API_TOKEN) headers.Authorization = `Bearer ${process.env.ALLTERNIT_API_TOKEN}`;
+      if (process.env.ALLTERNIT_INTERNAL_SERVICE_TOKEN) headers['x-allternit-internal-token'] = process.env.ALLTERNIT_INTERNAL_SERVICE_TOKEN;
+      if (context?.userId) headers['x-allternit-user-id'] = String(context.userId);
 
-      const data = await res.json() as Record<string, any>;
-      const ok = data.status === 'completed';
+      const res = await fetch(`${ALLTERNIT_API_URL}/api/v1/computers/${computerId}/toolset`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          toolset,
+          member: toolset === 'browser' ? 'navigate' : member,
+          input,
+          run_id: args.run_id,
+          ...(args.approval_grant ? { approval_grant: args.approval_grant } : {}),
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as Record<string, any>;
+      const text = Array.isArray(data.content)
+        ? data.content.filter((c: any) => c?.type === 'text').map((c: any) => c.text).join('\n')
+        : '';
+      const ok = res.ok && data.is_error !== true;
       return {
         success: ok,
-        output: JSON.stringify(data.extracted_content ?? {}),
-        error: ok ? undefined : (data.error?.message ?? data.status),
+        output: text || JSON.stringify(data.screen ?? {}),
+        error: ok ? undefined : (text || data.error || `toolset executor ${res.status}`),
         metadata: data,
       };
     } catch (e: any) {
-      return { success: false, output: '', error: `ACU unreachable: ${e.message}` };
+      return { success: false, output: '', error: `computer executor unreachable: ${e.message}` };
     }
   }
 

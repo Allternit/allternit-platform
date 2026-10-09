@@ -45,7 +45,6 @@ try:
     )
     from core.vision_providers import AllternitGatewayProvider, VisionProviderFactory
     from core.computer_use_executor import get_executor as _get_executor
-    from gateway.canonical_router import history_preflight_for_task
     from core.cost_accounting import cost_dict_from_planning_result, zero_run_cost
     from core.sandbox_env import (
         sandbox_env_context,
@@ -61,7 +60,6 @@ except ImportError:
     StopReason = None  # type: ignore[assignment,misc]
     VisionProviderFactory = None  # type: ignore[assignment,misc]
     _get_executor = None  # type: ignore[assignment]
-    history_preflight_for_task = None  # type: ignore[assignment,misc]
     _planning_available = False
 
     def zero_run_cost() -> Dict[str, Any]:  # type: ignore[misc]
@@ -632,7 +630,6 @@ async def _execute_non_claude_path(
         recorder=recorder,
         event_callback=event_callback,
         approval_callback=approval_callback if loop_config.approval_policy != "never" else None,
-        history_preflight=history_preflight_for_task,
         ledger=ledger,
         toolset_client=_toolset_client_for(body),
     )

@@ -20,7 +20,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, AsyncIterator
+from typing import Any, Callable, Dict, List, Optional, Tuple, AsyncIterator
 from datetime import datetime, timezone
 from enum import Enum
 
@@ -252,7 +252,6 @@ class PlanningLoop:
         recorder=None,            # Optional ActionRecorder
         event_callback: Optional[Callable[[Dict], None]] = None,
         approval_callback: Optional[Callable[[LoopStep], bool]] = None,
-        history_preflight: Optional[Callable[[str], Awaitable[Optional[Dict]]]] = None,
         monitor: Optional[Any] = None,  # core.monitor.Monitor implementation
         ledger: Optional[Callable[[str, Dict], None]] = None,  # canonical EventLedger writer (session/run bound by caller)
         batch_client: Optional[Any] = None,  # AciBatchClient; default constructed lazily
@@ -267,7 +266,6 @@ class PlanningLoop:
         self.recorder = recorder
         self.event_callback = event_callback
         self.approval_callback = approval_callback
-        self.history_preflight = history_preflight
         self.monitor = monitor
         self.ledger = ledger
         self.batch_client = batch_client
@@ -367,11 +365,6 @@ class PlanningLoop:
 
         # Prepend scratchpad context to task so the vision provider sees it
         augmented_task = (task + "\n\n" + sp_context) if sp_context else task
-
-        # Deterministic Computer History consultation for continuation/recent-work requests.
-        history_context = await self._consult_history(task)
-        if history_context:
-            augmented_task = history_context + "\n\n" + augmented_task
 
         # AX inspector — init once, use throughout loop. `_ax_context` must be
         # bound before the augmentation below reads it (it previously was not,
@@ -944,7 +937,7 @@ class PlanningLoop:
     def _capture_screenshot_host(self) -> bytes:
         """Last-resort capture of the actual computer screen.
 
-        Adapter health often fails (no browser extension, no pyautogui). On
+        Adapter health often fails (no browser extension, no Accessibility permission). On
         macOS, `screencapture` still shows the paired Desktop.
         """
         import os
@@ -1788,61 +1781,6 @@ class PlanningLoop:
         except Exception as exc:
             logger.debug("Monitor evaluation failed at step %s: %s", step, exc)
             return None
-
-    def _should_consult_history(self, task: str) -> bool:
-        """Trigger history consultation for continuation / recent-work requests."""
-        text = task.lower()
-        triggers = (
-            "continue", "resume", "pick up", "finish", "complete",
-            "where did we leave off", "where did i leave off",
-            "what did we do", "what did i do", "recent", "prior run",
-            "last time", "previous session", "earlier",
-        )
-        return any(trigger in text for trigger in triggers)
-
-    async def _consult_history(self, task: str) -> Optional[str]:
-        """Call the deterministic history preflight and return a context string."""
-        if not self.history_preflight or not self._should_consult_history(task):
-            return None
-        try:
-            result = await self.history_preflight(task)
-        except Exception as exc:
-            logger.debug("History preflight failed: %s", exc)
-            return None
-        if not isinstance(result, dict):
-            return None
-
-        status = result.get("status") or {}
-        if not status.get("supported") or not status.get("admitted") or not status.get("enabled"):
-            return None
-
-        events = result.get("events") or []
-        if not events:
-            return None
-
-        lines: List[str] = [
-            "[COMPUTER HISTORY CONTEXT]",
-            f"History state: enabled={'true' if status.get('enabled') else 'false'}, "
-            f"paused={'true' if status.get('paused') else 'false'}, "
-            f"health={status.get('health', 'unknown')}, "
-            f"dropped_events={status.get('dropped_events', 0)}",
-            f"Retrieved {len(events)} recent metadata event(s):",
-        ]
-        for event in events:
-            if not isinstance(event, dict):
-                continue
-            data = event.get("data") or {}
-            payload = data.get("payload") or {}
-            lines.append(
-                f"- seq={data.get('sequence')}, type={event.get('type')}, "
-                f"capability={data.get('capability')}, kind={payload.get('kind')}, "
-                f"effect={payload.get('effect')}, route={payload.get('route')}"
-            )
-        lines.append(
-            "Use this metadata as a lead only. Do not reconstruct typed text, arguments, results, "
-            "file paths, window titles, URLs, or user intent from omitted fields."
-        )
-        return "\n".join(lines)
 
     def _emit(self, event: Dict) -> None:
         if self.event_callback:

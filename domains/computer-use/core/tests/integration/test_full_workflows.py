@@ -40,18 +40,6 @@ def browser_deps_available() -> bool:
 
 
 @pytest.fixture(scope="session")
-def desktop_deps_available() -> bool:
-    """Check if desktop automation dependencies are available."""
-    try:
-        import pyautogui
-        # Try to take a small screenshot to verify permissions
-        pyautogui.screenshot(region=(0, 0, 10, 10))
-        return True
-    except Exception:
-        return False
-
-
-@pytest.fixture(scope="session")
 def vision_deps_available() -> bool:
     """Check if vision model dependencies are available."""
     has_openai = bool(os.getenv("OPENAI_API_KEY"))
@@ -212,117 +200,6 @@ class TestBrowserWorkflow:
         assert screenshot2_path.stat().st_size > 0
 
 
-# Workflow 2: Desktop Automation
-@pytest.mark.requires_desktop
-class TestDesktopWorkflow:
-    """
-    End-to-end desktop automation workflow tests.
-    
-    Workflow: Screenshot -> Find element -> Click
-    """
-    
-    @pytest.fixture
-    def safe_test_area(self):
-        """Define safe area for desktop tests."""
-        import pyautogui
-        return (100, 100, 200, 200)  # x, y, width, height
-    
-    @pytest.fixture
-    def restore_mouse(self):
-        """Restore mouse position after test."""
-        import pyautogui
-        original_x, original_y = pyautogui.position()
-        yield
-        pyautogui.moveTo(original_x, original_y, duration=0.1)
-    
-    def test_screenshot_analyze_click_workflow(
-        self, safe_test_area, restore_mouse
-    ):
-        """
-        Complete workflow: Screenshot -> Analyze -> Click.
-        
-        This is a simplified version that just verifies the steps work.
-        """
-        pytest.importorskip("pyautogui")
-        import pyautogui
-        
-        x, y, width, height = safe_test_area
-        
-        # Step 1: Take screenshot
-        screenshot = pyautogui.screenshot(region=(x, y, width, height))
-        assert screenshot is not None
-        
-        # Step 2: "Analyze" - find a safe point to click
-        # In real scenario, this would use vision model
-        click_x = x + width // 2
-        click_y = y + height // 2
-        
-        # Step 3: Move and click
-        pyautogui.moveTo(click_x, click_y, duration=0.1)
-        pyautogui.click()
-        
-        # Verify mouse position
-        final_x, final_y = pyautogui.position()
-        assert final_x == click_x
-        assert final_y == click_y
-    
-    def test_drag_and_drop_workflow(self, safe_test_area, restore_mouse):
-        """
-        Workflow: Find element -> Drag -> Drop at target.
-        """
-        pytest.importorskip("pyautogui")
-        import pyautogui
-        
-        x, y, width, height = safe_test_area
-        
-        # Starting position
-        start_x = x + 50
-        start_y = y + 50
-        
-        # Target position
-        target_x = x + 150
-        target_y = y + 50
-        
-        # Drag from start to target
-        pyautogui.moveTo(start_x, start_y, duration=0.1)
-        pyautogui.dragTo(target_x, target_y, duration=0.2, button='left')
-        
-        # Verify final position
-        final_x, final_y = pyautogui.position()
-        assert final_x == target_x
-        assert final_y == target_y
-    
-    def test_multi_step_desktop_workflow(self, safe_test_area, restore_mouse):
-        """
-        Workflow: Multiple screenshot -> action cycles.
-        """
-        pytest.importorskip("pyautogui")
-        import pyautogui
-        
-        x, y, width, height = safe_test_area
-        
-        # Perform multiple screenshot-action cycles
-        for i in range(3):
-            # Screenshot
-            screenshot = pyautogui.screenshot(region=(x, y, width, height))
-            assert screenshot is not None
-            
-            # Action: Move mouse to different positions
-            target_x = x + 50 + (i * 30)
-            target_y = y + 50 + (i * 20)
-            pyautogui.moveTo(target_x, target_y, duration=0.05)
-            
-            # Small delay
-            time.sleep(0.1)
-        
-        # Verify we ended at the last position
-        final_x, final_y = pyautogui.position()
-        expected_x = x + 50 + (2 * 30)
-        expected_y = y + 50 + (2 * 20)
-        assert final_x == expected_x
-        assert final_y == expected_y
-
-
 # Workflow 3: Hybrid (Browser + Desktop)
 @pytest.mark.requires_browser
 @pytest.mark.requires_desktop
@@ -467,29 +344,6 @@ class TestMockWorkflows:
         element.click.assert_called_once()
         mock_page.screenshot.assert_called_once()
     
-    def test_mock_desktop_complete_workflow(self):
-        """Mock test of complete desktop workflow."""
-        with patch('pyautogui.screenshot') as mock_screenshot, \
-             patch('pyautogui.moveTo') as mock_move, \
-             patch('pyautogui.click') as mock_click, \
-             patch('pyautogui.position') as mock_position:
-            
-            from PIL import Image
-            mock_screenshot.return_value = Image.new('RGB', (100, 100))
-            mock_position.return_value = (150, 150)
-            
-            # Execute workflow
-            screenshot = mock_screenshot(region=(0, 0, 100, 100))
-            assert screenshot is not None
-            
-            # Analyze and click
-            mock_move(200, 200, duration=0.1)
-            mock_click()
-            
-            mock_screenshot.assert_called_once()
-            mock_move.assert_called_once_with(200, 200, duration=0.1)
-            mock_click.assert_called_once()
-    
     def test_mock_vision_guided_workflow(self):
         """Mock test of vision-guided automation workflow."""
         # Mock vision model response
@@ -506,17 +360,7 @@ class TestMockWorkflows:
         assert coords['x'] == 500
         assert coords['y'] == 300
         assert coords['element'] == 'button'
-        
-        # Mock desktop click at coordinates
-        with patch('pyautogui.moveTo') as mock_move, \
-             patch('pyautogui.click') as mock_click:
-            
-            mock_move(coords['x'], coords['y'])
-            mock_click()
-            
-            mock_move.assert_called_once_with(500, 300)
-            mock_click.assert_called_once()
-    
+
     def test_mock_error_handling_workflow(self):
         """Test workflow error handling with mocks."""
         mock_page = AsyncMock()

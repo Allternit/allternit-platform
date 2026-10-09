@@ -33,7 +33,7 @@ import { Flag } from "@/runtime/context/flag/flag"
 import { Log } from "@/shared/util/log"
 import { LspTool } from "@/runtime/tools/builtins/lsp"
 import { BrowserToolsetTool, ComputerToolsetTool } from "@/runtime/tools/computer-toolset"
-import { DesktopTool } from "@/runtime/tools/builtins/desktop"
+import { ComputersTool } from "@/runtime/tools/builtins/computers"
 import { Truncate } from "@/runtime/tools/builtins/truncation"
 import { PlanExitTool, PlanEnterTool } from "@/runtime/tools/builtins/plan"
 import { ApplyPatchTool } from "@/runtime/tools/builtins/apply_patch"
@@ -206,8 +206,9 @@ export namespace ToolRegistry {
       // old ACU-gateway browser tool under the same flag; `computer` drives
       // GIZZI_COMPUTER_ID (default this-device) and is opt-in.
       ...(Flag.GIZZI_ENABLE_BROWSER_TOOL ? [BrowserToolsetTool] : []),
-      ...(Flag.GIZZI_ENABLE_COMPUTER_TOOL ? [ComputerToolsetTool] : []),
-      ...(Flag.GIZZI_ENABLE_DESKTOP_TOOL ? [DesktopTool] : []),
+      // `computers` (lifecycle + files via allternit-api computer_* tools)
+      // rides the same opt-in as `computer`.
+      ...(Flag.GIZZI_ENABLE_COMPUTER_TOOL ? [ComputerToolsetTool, ComputersTool] : []),
       // Subscription capabilities (presentations, documents, deep research)
       // the user's connected subscriptions can run now; every call is
       // confirmed by the user (D16). Empty when the fabric is not set up.

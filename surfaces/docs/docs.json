@@ -339,7 +339,6 @@
               "tools/mcp",
               "tools/computer-use",
               "tools/computer-toolset",
-              "tools/computer-use-mcp",
               "tools/strict-tool-use",
               "tools/build-a-tool",
               "tools/plugin-adapters",
@@ -851,8 +850,7 @@
               "sdk/workflow-engine",
               "sdk/browser-tools",
               "sdk/computer-use-protocol",
-              "sdk/capsule",
-              "sdk/computer-use"
+              "sdk/capsule"
             ],
             "icon": "/icons/code.svg"
           }

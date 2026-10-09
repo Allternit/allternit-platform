@@ -20,7 +20,7 @@ class ActionType(str, Enum):
     EXTRACT = "extract"
     SCREENSHOT = "screenshot"
     INSPECT = "inspect"
-    EXECUTE = "execute"  # LLM-powered via browser-use
+    EXECUTE = "execute"  # model-driven via the planning loop
     CLOSE = "close"
     # Desktop actions (future)
     KEYBOARD = "keyboard"

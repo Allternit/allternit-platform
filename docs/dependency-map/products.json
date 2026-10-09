@@ -320,8 +320,7 @@
       ],
       "components": [
         "allternit/platform/packages/computer-use-protocol",
-        "allternit/platform/packages/computer-use/plugins/allternit-computer-use",
-        "allternit/sdk/computer-use",
+        "allternit/sdk/computer-driver",
         "allternit/mcp/computers-server",
         "allternit/surfaces/computer-embed",
         "allternit-ai/src/views/aci",
@@ -337,7 +336,7 @@
       ],
       "evidence": [
         "allternit/cmd/allternit-api/src/computer_control.rs",
-        "allternit/surfaces/docs/sdk/computer-use.mdx",
+        "allternit/surfaces/docs/tools/computer-toolset.mdx",
         "brain/Products/ComputerUse.md",
         "brain/Products/ComputerUsePackaging.md"
       ]

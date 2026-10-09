@@ -196,11 +196,12 @@
         "allternit/cmd/allternit-api/src/aci_*",
         "allternit/cmd/allternit-api/src/computer_*",
         "allternit/cmd/allternit-api/src/vnc_*",
-        "allternit/sdk/computer-use",
+        "allternit/sdk/computer-driver",
         "allternit/mcp/computers-server",
         "allternit/platform/packages/computer-use-protocol"
       ],
       "decisions": [
+        {"on": "2026-10-09", "note": "D0 cleanup: removed dead gizzi computer use, sdk/computer-use, sdk/computers, the computer-use plugins package, duplicate canonical providers, the mobile harness and pyautogui; gateway /v1/computer, /v1/run/hybrid, /v1/run/parallel gone; allternit-api computer_screenshot/mouse/keyboard tools now alias the computer toolset executor."},
         {"on": "2026-10-07", "note": "Agent cursor overlay (computer toolset P5) in every computer viewer, from vendored MIT @trycua/cursor-motion, driven by computer.action events; style in Settings → Computers."}
       ],
       "evidence": ["allternit/surfaces/docs/api/aci.mdx", "allternit/surfaces/docs/guides/computers-and-apps.mdx"]

@@ -115,11 +115,12 @@ every `/v1/computers` route answers 404 `hosted_driver_disabled`.
 
 ## Layout
 
-- `src/tool-spec.ts` — `McpToolSpec`-style declarations for all 22 tools (id mirrors `sdk/computer-use/src/mcp-tool-spec.ts`)
+- `src/tool-spec.ts` — `McpToolSpec`-style declarations for all 22 tools
 - `src/client.ts` — thin fetch wrapper over the REST API
 - `src/platform.ts` — project-key mode: `/v1` client, contract tool specs + dispatch
 - `src/server.ts` — `Server` + `StdioServerTransport` + tool dispatch
 - `src/index.ts` — `computers-mcp` bin entry
+- `skills/operating-a-computer.md` — agent skill for driving a computer with these tools (moved from the retired `platform/packages/computer-use/plugins`)
 - `scripts/smoke.mjs` — JSON-RPC handshake smoke test against the built server (`pnpm --filter @allternit/computers-server smoke`)
 
 ## Verification

@@ -208,9 +208,9 @@ ACI uses absolute pixel coordinates for mouse actions. The capability advertises
 
 
 
-## Desktop tool
+## gizzi computer tools
 
-gizzi's `desktop` tool provisions and releases cloud desktops. For screen input, gizzi uses the toolset `computer` tool, which `GIZZI_ENABLE_DESKTOP_TOOL` or `GIZZI_ENABLE_COMPUTER_TOOL` turns on. Its target is `GIZZI_COMPUTER_ID`, and the default is this device. On this device, take control in the Computer view first, so the agent can use the mouse and keyboard.
+`GIZZI_ENABLE_COMPUTER_TOOL` turns on two gizzi tools. The toolset `computer` tool sees the screen and uses the mouse and keyboard. The `computers` tool lists, creates, starts and stops computers and reads or writes files on them; it runs allternit-api's `computer_*` tools. Their target is `GIZZI_COMPUTER_ID`, and the default is this device. On this device, take control in the Computer view first, so the agent can use the mouse and keyboard. (The older `desktop` tool and its `GIZZI_ENABLE_DESKTOP_TOOL` flag were removed on 2026-10-09.)
 
 ### Control lease on this Mac
 

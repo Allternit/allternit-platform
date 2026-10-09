@@ -127,7 +127,6 @@ OPENAI_COMPUTER_TOOL: Dict[str, Any] = {
                         "browser.extension",
                         "browser.cdp",
                         "browser.playwright",
-                        "desktop.pyautogui",
                         "desktop.accessibility",
                     ],
                     "description": "Optional: pin a specific adapter (omit for automatic waterfall)",
