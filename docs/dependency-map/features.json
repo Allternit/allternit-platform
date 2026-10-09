@@ -262,10 +262,14 @@
         "allternit/platform/packages/allternit-office-suite",
         "allternit/platform/packages/office-docx-engine",
         "allternit/platform/packages/office-pptx-engine",
-        "allternit/platform/packages/office-xlsx-engine"
+        "allternit/platform/packages/office-xlsx-engine",
+        "allternit-ai/src/lib/artifacts",
+        "allternit-ai/src/components/artifacts"
       ],
-      "decisions": [],
-      "evidence": ["allternit/surfaces/docs/api/office.mdx", "allternit/surfaces/docs/surfaces/office-suite.mdx"]
+      "decisions": [
+        {"on": "2026-10-09", "note": "Docs, Slides and Sheets are also artifact kinds: the artifact window mounts the same editor packs on a scratch document id seeded from the artifact body and autosaves each change as a version (artifacts v2 phase 4)."}
+      ],
+      "evidence": ["allternit/surfaces/docs/api/office.mdx", "allternit/surfaces/docs/surfaces/office-suite.mdx", "allternit/surfaces/docs/guides/artifact-editors.mdx"]
     },
     {
       "id": "feature:mcp-apps",
@@ -479,18 +483,75 @@
         "allternit/cmd/allternit-cloud-api/src/routes/artifacts_*",
         "allternit-ai/src/components/artifacts",
         "allternit-ai/src/lib/artifacts",
+        "allternit-ai/src/components/settings",
         "allternit-ai/src/views/library"
       ],
       "decisions": [
         {
           "on": "2026-10-08",
           "note": "Eoj accepted the artifacts v2 contract (docs/design/artifacts-v2.md): one typed store in cloud-api under /api/v2/artifacts, private by default, links refused for artifacts that use AI or connectors, owner-only permanent delete, legacy stores import as runtime_version 1."
+        },
+        {
+          "on": "2026-10-09",
+          "note": "Page runtime (Phase 4a): page artifacts run in the MCP sandbox-proxy origin with connect-src none and window.allternit.{storage, ai, connectors}. Storage is 20 MB per artifact (personal per viewer, shared for all viewers, consent before the first shared write). AI is billed to the viewer through the hosted model router. Connector calls run in the app with the viewer's credentials via the MCP Apps bridge; tools that ask before each action are unavailable in pages. Outside invitees never get AI or connectors. The org Artifacts settings (Desktop and web only; phone and PWA show a note) include a connector kill switch and a Shared outside review list."
+        },
+        {
+          "on": "2026-10-09",
+          "note": "Phase 4 editors: doc, sheet, slides and design open in the window's editors with autosave to versions, Edit with Allternit on a selection, threaded comments with @gizzi, heartbeat presence (honours the org presence switch), and Word/PDF/Markdown/PowerPoint/XLSX/CSV/HTML/zip exports. Presence is an in-memory heartbeat poll under /api/v2/artifacts/:id/presence, not the deployment WebSocket hub."
         }
       ],
       "evidence": [
         "allternit/docs/design/artifacts-v2.md",
         "allternit/surfaces/docs/api/artifacts-v2.mdx",
-        "allternit/surfaces/docs/guides/artifacts.mdx"
+        "allternit/surfaces/docs/guides/artifacts.mdx",
+        "allternit/surfaces/docs/guides/artifact-apps.mdx",
+        "allternit/surfaces/docs/api/artifact-runtime.mdx",
+        "allternit/surfaces/docs/guides/artifact-editors.mdx",
+        "allternit/surfaces/docs/guides/artifact-collaboration.mdx"
+      ]
+    },
+    {
+      "id": "feature:artifact-dashboards",
+      "label": "Dashboards (live tiles that query your connectors)",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Artifacts v2 dashboard kind: a 12-column grid of KPI, line, area, bar and table tiles, each carrying its own connector query (or read-only SQL for a warehouse). Runs as the viewer through the MCP Apps bridge with first-use approval, cached first paint, refresh on open/interval/filter, click-to-see-query and per-tile errors. Edited by chat (artifact_update) or by hand (rename, reorder, resize). Paid plans; Desktop, phone layout and the PWA (stacked to one column). Snowflake, BigQuery, Redshift, Databricks and ClickHouse are listed in the connector directory.",
+      "touches": [
+        "allternit-ai/src/lib/artifacts",
+        "allternit-ai/src/components/artifacts",
+        "allternit-ai/src/lib/openui",
+        "allternit-ai/src/views/mini-apps"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-09",
+          "note": "Body is application/vnd.allternit.dashboard+json v1 (dashboards saved as OpenUI cards still open as cards). Queries reuse the card tool client: read-only tools only, plus one read-only SELECT through a warehouse SQL tool. First-use approval is per user and artifact on the device. The owner's client declares capabilities.connectors so link sharing is refused. Warehouses with a per-account address (Snowflake, Databricks) or a self-run server (Redshift) are listed as setup guides, not invented endpoints. PDF export prints the dashboard; PNG is still coming soon."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/dashboards.mdx",
+        "allternit/surfaces/docs/api/artifacts-v2.mdx",
+        "allternit/docs/design/artifacts-v2.md"
+      ]
+    },
+    {
+      "id": "feature:artifacts-motion",
+      "label": "Motion artifacts (animated explainers, MP4 export)",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "The motion artifact kind: short animated compositions (title, counter, chart, logo, list scenes) stored as JSON props, drawn by a pure seekable renderer, edited in the artifact window (scene list, scrub, play/pause/loop, props panel; tabs on the phone layout and PWA) and exported to MP4. Desktop encodes frames with the local ffmpeg through the motion IPC; web and PWA encode in the tab with WebCodecs (MP4, or WebM where the browser has no H.264). Super, Ultra and Team plans; org default Team on, Enterprise off.",
+      "touches": [
+        "allternit-ai/src/lib/artifacts",
+        "allternit-ai/src/components/artifacts",
+        "allternit/surfaces/allternit-desktop",
+        "allternit/cmd/gizzi-code/src/runtime/integrations"
+      ],
+      "decisions": [
+        {"on": "2026-10-09", "note": "No server-side render route: no cloud render worker exists, so web and PWA export in the tab (WebCodecs + mediabunny) and Desktop uses local ffmpeg. Videos are silent. The body is data only, never code."}
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/motion.mdx",
+        "allternit/surfaces/docs/api/artifacts-motion.mdx"
       ]
     },
     {
