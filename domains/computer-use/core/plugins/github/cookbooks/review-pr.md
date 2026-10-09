@@ -20,7 +20,7 @@ execute
 browser.playwright
 
 ## Fallback
-browser.browser-use
+planning loop (vision model driving browser.playwright)
 
 ## Policy
 - Plugin policy profile: `github` (max_destructive_actions: 3, requires_approval: true)
@@ -52,7 +52,7 @@ browser.browser-use
    - `extract(selector="td.blob-code-deletion", multiple=true, limit=50)` → first 50 removed lines
    - Store: `{ changed_files: [...], additions_sample: [...], deletions_sample: [...] }`
 
-5. **Compose review comment** (LLM step — browser.browser-use or external call)
+5. **Compose review comment** (LLM step — planning loop or external call)
    - Prompt: `prompts/review-pr.txt` with variables:
      - `{{ pr_title }}`, `{{ pr_author }}`, `{{ changed_files }}`,
        `{{ additions_sample }}`, `{{ deletions_sample }}`
@@ -92,7 +92,7 @@ browser.browser-use
 ## Failure Handling
 - **Navigation fails / 404**: emit receipt `status: error`, `reason: pr_not_found`. Abort.
 - **Auth expired (redirect to login)**: emit receipt `status: error`, `reason: auth_required`. Do not attempt login. Abort.
-- **Review form not found**: fall back to `browser.browser-use` for adaptive selector resolution. If still failing after 2 retries, abort with `status: error`, `reason: ui_changed`.
+- **Review form not found**: fall back to the planning loop (vision model driving `browser.playwright`) for adaptive selector resolution. If still failing after 2 retries, abort with `status: error`, `reason: ui_changed`.
 - **Approval denied**: emit receipt `status: blocked`, `reason: operator_denied`. No comment is posted.
 - **Submission timeout (>30 s)**: screenshot current page as `timeout-state.png`, abort with `status: error`, `reason: timeout`.
 

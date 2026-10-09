@@ -78,22 +78,13 @@
     "adapter_measured": "_routing_policy",
     "note": "Measured by executing 6 suite case(s) against _routing_policy."
   },
-  "browser.browser-use": {
-    "suite": "browser-adaptive-v1",
-    "tests_total": null,
-    "tests_pass": null,
-    "pass_rate": null,
-    "grade": null,
-    "measured": false,
-    "note": "browser-use runtime unavailable at measurement time \u2014 install browser-use (or place a venv at ~/browser-use/venv/) and rerun: python -m conformance.measured"
-  },
-  "desktop.pyautogui": {
+  "desktop.accessibility": {
     "suite": "desktop-v1",
     "tests_total": 4,
     "tests_pass": null,
     "pass_rate": null,
     "grade": null,
     "measured": false,
-    "note": "Suite D requires an interactive display. Run: python -m conformance.measured --desktop"
+    "note": "Suite D requires an interactive display. Run: POST /v1/conformance/run/d on a live gateway"
   }
 }

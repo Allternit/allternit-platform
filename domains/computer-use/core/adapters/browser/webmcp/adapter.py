@@ -6,7 +6,7 @@ WebMCP-shaped site tools (derived from the gmail/github/notion plugin
 manifests) plus an in-page bridge installing window.__allternitSiteTools.
 
 Mirrors the TS site-tools layer in allternit-browser and follows the same
-interface shape as DomMcpAdapter (initialize/close/navigate/capabilities/
+interface shape as the other browser adapters (initialize/close/navigate/capabilities/
 health_check). Tool invocations are timed, redacted, and optionally recorded
 into the run's JSONL recording as tool_call frames.
 """
@@ -178,7 +178,7 @@ class WebMcpAdapter:
             logger.warning("[webmcp] could not record tool call: %s", exc)
 
     # ------------------------------------------------------------------
-    # Browser conveniences (same shape as DomMcpAdapter)
+    # Browser conveniences (same shape as the other browser adapters)
     # ------------------------------------------------------------------
 
     async def navigate(self, url: str) -> Dict[str, str]:

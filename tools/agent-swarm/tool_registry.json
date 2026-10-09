@@ -1380,88 +1380,59 @@
       "title": "Computer Use",
       "kind": "write",
       "safety_level": "danger",
-      "entrypoint": "http://localhost:8760/v1/computer",
-      "description": "Control the computer: take screenshots, click, type, scroll, navigate browser, extract page content. Routes through the ACU executor waterfall (extension → CDP → Playwright → desktop).",
+      "entrypoint": "http://localhost:8013/api/v1/computers/{computer_id}/toolset",
+      "description": "Control a computer through the Allternit toolset executor (contract allternit.computer.v1; browser members via allternit.browser.v1). One member per call: screenshot, left_click, type, key, scroll, and the rest of the contract.",
       "inputs_schema": {
         "type": "object",
-        "required": ["action", "session_id"],
+        "required": [
+          "toolset",
+          "member"
+        ],
         "properties": {
-          "action": {
+          "computer_id": {
+            "type": "string",
+            "description": "Target computer (path parameter); this-device for the local Mac"
+          },
+          "toolset": {
             "type": "string",
             "enum": [
-              "screenshot",
-              "left_click",
-              "right_click",
-              "middle_click",
-              "double_click",
-              "left_click_drag",
-              "type",
-              "key",
-              "scroll",
-              "cursor_position",
-              "navigate",
-              "extract",
-              "fill",
-              "wait",
-              "tabs"
-            ],
-            "description": "Action to perform. screenshot/cursor_position require no coordinates."
+              "computer",
+              "browser"
+            ]
           },
-          "session_id": {
+          "member": {
             "type": "string",
-            "description": "Browser or desktop session ID to act on"
+            "description": "Contract member, e.g. screenshot, left_click, type, key, scroll, navigate"
+          },
+          "input": {
+            "type": "object",
+            "description": "The member's input, same fields as the contract (coordinate, text, scroll_direction, scroll_amount, url, ...)"
           },
           "run_id": {
+            "type": "string"
+          },
+          "approval_grant": {
             "type": "string",
-            "description": "Unique run ID for tracing (auto-generated if omitted)"
-          },
-          "coordinate": {
-            "type": "array",
-            "items": {"type": "integer"},
-            "minItems": 2,
-            "maxItems": 2,
-            "description": "[x, y] screen coordinates for click/scroll/drag actions"
-          },
-          "text": {
-            "type": "string",
-            "description": "Text to type (for type and fill actions)"
-          },
-          "key": {
-            "type": "string",
-            "description": "Key name or combo to press, e.g. 'Return', 'ctrl+c' (for key action)"
-          },
-          "delta": {
-            "type": "array",
-            "items": {"type": "integer"},
-            "minItems": 2,
-            "maxItems": 2,
-            "description": "[deltaX, deltaY] scroll delta in pixels (for scroll action)"
-          },
-          "url": {
-            "type": "string",
-            "description": "URL to navigate to (for navigate action)"
-          },
-          "selector": {
-            "type": "string",
-            "description": "CSS selector or text selector (for fill/extract actions)"
-          },
-          "adapter_preference": {
-            "type": "string",
-            "enum": ["browser.extension", "browser.cdp", "browser.playwright", "desktop.pyautogui", "desktop.accessibility"],
-            "description": "Pin a specific adapter (skips waterfall). Omit to use automatic waterfall."
+            "description": "Approval id after the person approves a risky action"
           }
         }
       },
       "outputs_schema": {
         "type": "object",
         "properties": {
-          "run_id": {"type": "string"},
-          "session_id": {"type": "string"},
-          "adapter_id": {"type": "string"},
-          "status": {"type": "string", "enum": ["completed", "failed", "cancelled"]},
-          "extracted_content": {},
-          "artifacts": {"type": "array"},
-          "error": {"type": "object", "nullable": true}
+          "is_error": {
+            "type": "boolean"
+          },
+          "content": {
+            "type": "array"
+          },
+          "screen": {
+            "type": "object"
+          },
+          "browser_state": {},
+          "error": {
+            "type": "string"
+          }
         }
       },
       "preconditions": [

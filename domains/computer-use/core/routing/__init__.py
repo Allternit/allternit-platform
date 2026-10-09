@@ -6,9 +6,8 @@ No direct UI-to-adapter paths. All routing decisions are logged.
 Adapters:
   v0.1 (live):
     browser.playwright    — deterministic browser automation (headed/headless)
-    browser.browser-use   — adaptive LLM-powered browser automation
     browser.cdp           — Chrome DevTools Protocol inspect/debug
-    desktop.pyautogui     — native desktop screenshot, click, type
+    desktop.accessibility — native desktop (Quartz events + accessibility tree)
   v0.2 (new):
     retrieval.playwright-crawler — systematic multi-page crawl + extraction
     hybrid.orchestrator          — cross-family browser↔desktop workflow coordination
@@ -82,13 +81,13 @@ ADAPTER_MATRIX: Dict[Tuple[str, str, bool], dict] = {
     # ── browser × execute ──
     ("execute", "browser", True): {
         "primary": "browser.playwright",
-        "fallbacks": ["browser.browser-use"],
+        "fallbacks": [],
         "reason": "Deterministic browser execution → Playwright",
     },
     ("execute", "browser", False): {
-        "primary": "browser.browser-use",
-        "fallbacks": ["browser.playwright"],
-        "reason": "Adaptive browser execution → browser-use",
+        "primary": "browser.playwright",
+        "fallbacks": [],
+        "reason": "Adaptive browser execution → Playwright (planner drives the steps)",
     },
 
     # ── browser × inspect ──
@@ -106,12 +105,12 @@ ADAPTER_MATRIX: Dict[Tuple[str, str, bool], dict] = {
     # ── browser × parallel ──
     ("parallel", "browser", True): {
         "primary": "browser.playwright",
-        "fallbacks": ["browser.browser-use"],
+        "fallbacks": [],
         "reason": "Parallel browser pool → Playwright (multi-context)",
     },
     ("parallel", "browser", False): {
         "primary": "browser.playwright",
-        "fallbacks": ["browser.browser-use"],
+        "fallbacks": [],
         "reason": "Parallel browser pool → Playwright (multi-context)",
     },
 
@@ -129,50 +128,50 @@ ADAPTER_MATRIX: Dict[Tuple[str, str, bool], dict] = {
 
     # ── desktop × desktop ──
     ("desktop", "desktop", True): {
-        "primary": "desktop.pyautogui",
+        "primary": "desktop.accessibility",
         "fallbacks": [],
-        "reason": "Desktop automation → pyautogui",
+        "reason": "Desktop automation → accessibility",
     },
     ("desktop", "desktop", False): {
-        "primary": "desktop.pyautogui",
+        "primary": "desktop.accessibility",
         "fallbacks": [],
-        "reason": "Desktop automation → pyautogui",
+        "reason": "Desktop automation → accessibility",
     },
 
     # ── desktop × execute (desktop asked to execute = same as desktop mode) ──
     ("execute", "desktop", True): {
-        "primary": "desktop.pyautogui",
+        "primary": "desktop.accessibility",
         "fallbacks": [],
-        "reason": "Execute on desktop family → pyautogui",
+        "reason": "Execute on desktop family → accessibility",
     },
     ("execute", "desktop", False): {
-        "primary": "desktop.pyautogui",
+        "primary": "desktop.accessibility",
         "fallbacks": [],
-        "reason": "Execute on desktop family → pyautogui",
+        "reason": "Execute on desktop family → accessibility",
     },
 
     # ── desktop × inspect (desktop screenshot/observe for debugging) ──
     ("inspect", "desktop", True): {
-        "primary": "desktop.pyautogui",
+        "primary": "desktop.accessibility",
         "fallbacks": [],
-        "reason": "Desktop inspect → pyautogui screenshot/observe (read-only)",
+        "reason": "Desktop inspect → accessibility screenshot/observe (read-only)",
     },
     ("inspect", "desktop", False): {
-        "primary": "desktop.pyautogui",
+        "primary": "desktop.accessibility",
         "fallbacks": [],
-        "reason": "Desktop inspect → pyautogui screenshot/observe (read-only)",
+        "reason": "Desktop inspect → accessibility screenshot/observe (read-only)",
     },
 
     # ── desktop × parallel (multi-screenshot / multi-region) ──
     ("parallel", "desktop", True): {
-        "primary": "desktop.pyautogui",
+        "primary": "desktop.accessibility",
         "fallbacks": [],
-        "reason": "Parallel desktop → pyautogui (sequential on single screen)",
+        "reason": "Parallel desktop → accessibility (sequential on single screen)",
     },
     ("parallel", "desktop", False): {
-        "primary": "desktop.pyautogui",
+        "primary": "desktop.accessibility",
         "fallbacks": [],
-        "reason": "Parallel desktop → pyautogui (sequential on single screen)",
+        "reason": "Parallel desktop → accessibility (sequential on single screen)",
     },
 
     # ═══════════════════════════════════════════════════════════════════
@@ -247,20 +246,20 @@ ADAPTER_MATRIX: Dict[Tuple[str, str, bool], dict] = {
     },
     ("assist", "browser", False): {
         "primary": "browser.extension",
-        "fallbacks": ["browser.browser-use"],
-        "reason": "Assist mode → extension adapter (user-present, adaptive fallback)",
+        "fallbacks": ["browser.playwright"],
+        "reason": "Assist mode → extension adapter (user-present workflow)",
     },
 
     # ── desktop × assist (user-present desktop guidance) ──
     ("assist", "desktop", True): {
-        "primary": "desktop.pyautogui",
+        "primary": "desktop.accessibility",
         "fallbacks": [],
-        "reason": "Desktop assist → pyautogui (observe + suggest, user confirms)",
+        "reason": "Desktop assist → accessibility (observe + suggest, user confirms)",
     },
     ("assist", "desktop", False): {
-        "primary": "desktop.pyautogui",
+        "primary": "desktop.accessibility",
         "fallbacks": [],
-        "reason": "Desktop assist → pyautogui (observe + suggest, user confirms)",
+        "reason": "Desktop assist → accessibility (observe + suggest, user confirms)",
     },
 }
 
@@ -326,12 +325,6 @@ class Router:
         reason = entry["reason"]
 
         # Constraint overrides
-
-        # If visual_reasoning required and primary doesn't support it, prefer browser-use
-        if constraints.visual_reasoning and not constraints.deterministic:
-            if family == "browser" and primary == "browser.playwright":
-                primary = "browser.browser-use"
-                reason += " (visual reasoning override)"
 
         # If user_present, run headed (no adapter swap needed — all adapters support headed)
         if constraints.user_present and not constraints.headless_allowed:

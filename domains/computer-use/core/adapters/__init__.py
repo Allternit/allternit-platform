@@ -9,38 +9,14 @@ except ImportError:
     pass
 
 try:
-    from .browser.dom_mcp_adapter import DomMcpAdapter
-    ADAPTER_REGISTRY["browser.dom_mcp"] = DomMcpAdapter
-except ImportError:
-    pass
-
-try:
-    from .browser.skyvern_adapter import SkyvernAdapter
-    ADAPTER_REGISTRY["browser.skyvern"] = SkyvernAdapter
-except ImportError:
-    pass
-
-try:
     from .browser.webmcp import WebMcpAdapter
     ADAPTER_REGISTRY["browser.webmcp"] = WebMcpAdapter
 except ImportError:
     pass
 
 try:
-    from .desktop.pyautogui.pyautogui_adapter import PyAutoGUIAdapter
-    ADAPTER_REGISTRY["desktop.pyautogui"] = PyAutoGUIAdapter
-except ImportError:
-    pass
-
-try:
     from .desktop.accessibility_adapter import AccessibilityAdapter
     ADAPTER_REGISTRY["desktop.accessibility"] = AccessibilityAdapter
-except ImportError:
-    pass
-
-try:
-    from .desktop.interpreter_adapter import InterpreterAdapter
-    ADAPTER_REGISTRY["code.interpreter"] = InterpreterAdapter
 except ImportError:
     pass
 

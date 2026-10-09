@@ -12,7 +12,7 @@ that handles the adapter waterfall automatically.
 browser.extension  ← PRIMARY: PAGE-AGENT + BROWSER-AGENT via TCP 3011
 browser.cdp        ← Chrome/Electron already running with --remote-debugging-port
 browser.playwright ← Playwright launches its own headless Chromium
-desktop.pyautogui  ← Coordinate-based desktop automation (any app)
+desktop.accessibility ← Native desktop (Quartz events + accessibility tree, macOS)
 desktop.terminal   ← Shell command execution
 ```
 
@@ -102,40 +102,12 @@ code --remote-debugging-port=9223
 
 ---
 
-## 3. Desktop Native (macOS / Windows / Linux)
+## 3. Desktop Native (macOS)
 
-**When to use:** Automate any native app using screen coordinates — apps without
-CDP (e.g. native macOS apps, legacy software, games).
-
-```python
-from golden_paths.bootstrap.desktop_native_bootstrap import bootstrap_desktop_native, DesktopNativeConfig
-
-# Default config (auto-detect platform requirements)
-executor = await bootstrap_desktop_native()
-
-# With warnings suppressed
-executor = await bootstrap_desktop_native(warn_on_missing_permissions=False)
-```
-
-**Platform requirements:**
-- **macOS** → Grant Accessibility: *System Settings → Privacy & Security → Accessibility*
-- **Windows** → Works out of the box; some apps require UAC elevation
-- **Linux** → Requires `DISPLAY` or `WAYLAND_DISPLAY`; install `python3-tk` for PIL
-
-```bash
-# Linux: ensure display is set
-export DISPLAY=:0
-```
-
-**Supported actions:** All 9 Claude native actions (screenshot, left_click,
-right_click, middle_click, double_click, left_click_drag, type, key, scroll,
-cursor_position). Vision model required to identify coordinates.
-
-**Claude system prompt hint:**
-> You are controlling a desktop application using screen coordinates. Always
-> call `screenshot` first to see the current screen state. Identify UI elements
-> by their visual position and use `left_click` with their [x, y] coordinates.
-> After each click, `screenshot` again to confirm.
+Native desktop input runs through the `desktop.accessibility` adapter
+(Quartz events + the accessibility tree). The gateway registers it at
+startup; no separate bootstrap is needed. Grant Accessibility in
+*System Settings → Privacy & Security → Accessibility*.
 
 ---
 
@@ -168,8 +140,8 @@ print(result.extracted_content["stdout"])
 print(result.extracted_content["exit_code"])
 ```
 
-**Supported actions:** `shell` (primary), plus pyautogui-backed coordinate/
-keyboard actions if pyautogui is installed.
+**Supported actions:** `shell` (primary), plus coordinate/keyboard actions
+through the accessibility adapter (macOS).
 
 **Claude system prompt hint:**
 > You have access to a shell terminal. Use `shell` actions to run commands.
@@ -214,6 +186,6 @@ executor.register("browser.cdp", cdp)
 |------------------|---------------------------------|---------------------|---------------------|
 | Browser (Chrome) | `bootstrap_browser_cdp()`       | `browser.cdp`       | Chrome installed    |
 | Electron app     | `bootstrap_electron_app(path)`  | `browser.cdp`       | App installed       |
-| Desktop native   | `bootstrap_desktop_native()`    | `desktop.pyautogui` | Accessibility perms |
+| Desktop native   | (registered by the gateway)     | `desktop.accessibility` | Accessibility perms |
 | Shell/terminal   | `bootstrap_desktop_terminal()`  | `desktop.terminal`  | Shell binary        |
 | Extension        | `ExtensionAdapter().initialize()`| `browser.extension`| Extension + Desktop app (HTTP 3012)|

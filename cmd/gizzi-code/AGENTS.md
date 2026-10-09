@@ -435,8 +435,8 @@ bun run typecheck
 `bash script/ci-smoke-test.sh` first run `script/ensure-sdk-dist.sh`, which
 rebuilds `packages/sdk/dist` when it is missing (fresh clone/worktree — only
 `dist/gen` is tracked) or older than `packages/sdk/src` (stale build), and
-also builds the `sdk/computer-use` and `platform/packages/os-contracts`
-dists (same missing-or-stale contract — without this, a fresh worktree
+also builds the `platform/packages/os-contracts`
+dist (same missing-or-stale contract — without this, a fresh worktree
 typechecks with 3x TS2307 on `@allternit/os-contracts`). Freshness is not
 mtime-only: each build records its resolved runtime-dep versions in
 `dist/.build-deps.json` and a resolution change (e.g. a stale pnpm workspace

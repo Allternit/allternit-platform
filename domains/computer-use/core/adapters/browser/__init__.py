@@ -23,16 +23,6 @@ from .cdp_adapter import (
     PlaywrightCDPAdapter,
 )
 
-try:
-    from .dom_mcp_adapter import DomMcpAdapter
-except ImportError:
-    DomMcpAdapter = None  # type: ignore
-
-try:
-    from .skyvern_adapter import SkyvernAdapter
-except ImportError:
-    SkyvernAdapter = None  # type: ignore
-
 from .setup import (
     setup_browsers,
     install_playwright_browsers,
@@ -65,10 +55,6 @@ __all__ = [
     "detect_chrome_executable",
     "get_playwright_browsers_status",
     "is_playwright_installed",
-
-    # Optional adapters
-    "DomMcpAdapter",
-    "SkyvernAdapter",
 ]
 
 __version__ = "0.1.0"

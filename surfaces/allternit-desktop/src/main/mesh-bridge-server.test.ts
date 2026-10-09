@@ -41,6 +41,6 @@ describe('mesh bridge server', () => {
       body: JSON.stringify({ target: '10.0.0.1:5900' }),
     });
     expect(res.status).toBe(502);
-    expect((await res.json()).message).toContain('not a mesh address');
+    expect((await res.json() as { message?: string }).message).toContain('not a mesh address');
   });
 });

@@ -121,7 +121,7 @@ ActionType = Literal[
     "zoom",
 ]
 
-AdapterPreference = Literal["playwright", "browser-use", "cdp", "desktop"]
+AdapterPreference = Literal["playwright", "cdp", "desktop"]
 
 FamilyType = Literal["browser", "desktop", "retrieval", "hybrid"]
 
@@ -225,6 +225,33 @@ class AXSnapshotRequest(BaseModel):
     depth: int = -1
     interactive_only: bool = False
     window_id: Optional[int] = None
+
+
+_desktop_input_adapter: Any = None
+
+
+def _native_desktop():
+    """Accessibility adapter used for native desktop input (Quartz/AppleScript)
+    when an action arrives without an active browser session."""
+    global _desktop_input_adapter
+    if _desktop_input_adapter is None:
+        try:
+            from adapters.desktop.accessibility_adapter import AccessibilityAdapter
+        except ImportError as exc:
+            raise Exception(f"No active browser session and native desktop input is unavailable: {exc}")
+        _desktop_input_adapter = AccessibilityAdapter()
+    return _desktop_input_adapter
+
+
+async def _desktop_input(action: str, params: Dict[str, Any]) -> None:
+    """Run one native desktop input action; raise if it did not succeed."""
+    result = await _native_desktop().execute(action, params)
+    if not result.get("success"):
+        raise Exception(
+            result.get("error")
+            or f"Native desktop {action} failed (no active browser session; "
+               "check the Accessibility permission)"
+        )
 
 
 def utc_now_iso() -> str:
@@ -1096,15 +1123,9 @@ async def handle_double_click(req: ExecuteRequest) -> ExecuteResponse:
             else:
                 raise Exception("target or (x,y) required for double_click")
         else:
-            # Fallback: pyautogui
-            try:
-                import pyautogui as _pag
-                if x is not None and y is not None:
-                    _pag.doubleClick(float(x), float(y))
-                else:
-                    raise Exception("No active session and no coordinates for double_click")
-            except ImportError:
-                raise Exception("No active session. Use 'goto' first or provide coordinates with pyautogui installed.")
+            if x is None or y is None:
+                raise Exception("No active session and no coordinates for double_click")
+            await _desktop_input("double_click", {"x": x, "y": y})
         result = ExecuteResponse(
             run_id=req.run_id, session_id=req.session_id,
             adapter_id="browser.playwright", family="browser", mode="execute",
@@ -1145,14 +1166,9 @@ async def handle_right_click(req: ExecuteRequest) -> ExecuteResponse:
             else:
                 raise Exception("target or (x,y) required for right_click")
         else:
-            try:
-                import pyautogui as _pag
-                if x is not None and y is not None:
-                    _pag.rightClick(float(x), float(y))
-                else:
-                    raise Exception("No active session and no coordinates for right_click")
-            except ImportError:
-                raise Exception("No active session. Use 'goto' first or provide coordinates with pyautogui installed.")
+            if x is None or y is None:
+                raise Exception("No active session and no coordinates for right_click")
+            await _desktop_input("right_click", {"x": x, "y": y})
         result = ExecuteResponse(
             run_id=req.run_id, session_id=req.session_id,
             adapter_id="browser.playwright", family="browser", mode="execute",
@@ -1195,12 +1211,10 @@ async def handle_drag(req: ExecuteRequest) -> ExecuteResponse:
             await page.mouse.move(to_x, to_y, steps=steps)
             await page.mouse.up()
         else:
-            try:
-                import pyautogui as _pag
-                _pag.moveTo(from_x, from_y)
-                _pag.dragTo(to_x, to_y, duration=duration_ms / 1000.0)
-            except ImportError:
-                raise Exception("No active session and pyautogui not installed.")
+            await _desktop_input("drag", {
+                "from_x": from_x, "from_y": from_y, "to_x": to_x, "to_y": to_y,
+                "duration": duration_ms / 1000.0,
+            })
         result = ExecuteResponse(
             run_id=req.run_id, session_id=req.session_id,
             adapter_id="browser.playwright", family="browser", mode="execute",
@@ -1243,15 +1257,7 @@ async def handle_key_combo(req: ExecuteRequest) -> ExecuteResponse:
                         .replace("shift", "Shift"))
             await page.keyboard.press(pw_combo)
         else:
-            try:
-                import pyautogui as _pag
-                parts = [p.strip() for p in combo.split("+")]
-                _pag.hotkey(*parts)
-            except ImportError:
-                # AppleScript fallback
-                import subprocess
-                script = f'tell application "System Events" to keystroke "{combo}"'
-                subprocess.run(["osascript", "-e", script], timeout=5)
+            await _desktop_input("key_combo", {"combo": combo})
         result = ExecuteResponse(
             run_id=req.run_id, session_id=req.session_id,
             adapter_id="browser.playwright", family="browser", mode="execute",
@@ -1455,14 +1461,9 @@ async def handle_hover(req: ExecuteRequest) -> ExecuteResponse:
             else:
                 raise Exception("target or (x,y) required for hover")
         else:
-            try:
-                import pyautogui as _pag
-                if x is not None and y is not None:
-                    _pag.moveTo(float(x), float(y))
-                else:
-                    raise Exception("No active session and no coordinates for hover")
-            except ImportError:
-                raise Exception("No active session. Use 'goto' first or provide coordinates with pyautogui installed.")
+            if x is None or y is None:
+                raise Exception("No active session and no coordinates for hover")
+            await _desktop_input("hover", {"x": x, "y": y})
         result = ExecuteResponse(
             run_id=req.run_id, session_id=req.session_id,
             adapter_id="browser.playwright", family="browser", mode="execute",
@@ -1504,14 +1505,9 @@ async def handle_triple_click(req: ExecuteRequest) -> ExecuteResponse:
             else:
                 raise Exception("target or (x,y) required for triple_click")
         else:
-            try:
-                import pyautogui as _pag
-                if x is not None and y is not None:
-                    _pag.tripleClick(float(x), float(y))
-                else:
-                    raise Exception("No active session and no coordinates for triple_click")
-            except ImportError:
-                raise Exception("No active session. Use 'goto' first or provide coordinates with pyautogui installed.")
+            if x is None or y is None:
+                raise Exception("No active session and no coordinates for triple_click")
+            await _desktop_input("triple_click", {"x": x, "y": y})
         result = ExecuteResponse(
             run_id=req.run_id, session_id=req.session_id,
             adapter_id="browser.playwright", family="browser", mode="execute",
@@ -1747,11 +1743,7 @@ async def handle_mouse_move(req: ExecuteRequest) -> ExecuteResponse:
         if page:
             await page.mouse.move(x, y)
         else:
-            try:
-                import pyautogui as _pag
-                _pag.moveTo(x, y)
-            except ImportError:
-                raise Exception("mouse_move requires an active browser session or pyautogui for desktop control")
+            await _desktop_input("hover", {"x": x, "y": y})
         result = ExecuteResponse(
             run_id=req.run_id, session_id=req.session_id,
             adapter_id="browser.playwright", family="browser", mode="execute",
@@ -1793,14 +1785,14 @@ async def _handle_mouse_click_variant(req: ExecuteRequest, action: str, button: 
                 await page.mouse.down(button=button)
                 await page.mouse.up(button=button)
         else:
-            try:
-                import pyautogui as _pag
-                if x is not None and y is not None:
-                    _pag.click(x, y, button=button)
-                else:
-                    _pag.click(button=button)
-            except ImportError:
-                raise Exception(f"{action} requires an active browser session or pyautogui for desktop control")
+            if button not in ("left", "right"):
+                raise Exception(f"{action} requires an active browser session ({button} button has no native desktop path)")
+            if x is None or y is None:
+                pos = _native_desktop().cursor_position()
+                if pos is None:
+                    raise Exception(f"{action} without coordinates needs the current cursor position (macOS only)")
+                x, y = float(pos[0]), float(pos[1])
+            await _desktop_input("click" if button == "left" else "right_click", {"x": x, "y": y})
         where = f"({x}, {y})" if x is not None and y is not None else "current position"
         result = ExecuteResponse(
             run_id=req.run_id, session_id=req.session_id,
@@ -1867,12 +1859,10 @@ async def handle_left_click_drag(req: ExecuteRequest) -> ExecuteResponse:
             await page.mouse.move(to_x, to_y, steps=steps)
             await page.mouse.up()
         else:
-            try:
-                import pyautogui as _pag
-                _pag.moveTo(x, y)
-                _pag.dragTo(to_x, to_y, duration=duration_ms / 1000.0, button="left")
-            except ImportError:
-                raise Exception("left_click_drag requires an active browser session or pyautogui for desktop control")
+            await _desktop_input("drag", {
+                "from_x": x, "from_y": y, "to_x": to_x, "to_y": to_y,
+                "duration": duration_ms / 1000.0,
+            })
         result = ExecuteResponse(
             run_id=req.run_id, session_id=req.session_id,
             adapter_id="browser.playwright", family="browser", mode="execute",
@@ -1913,16 +1903,10 @@ async def _handle_mouse_button_state(req: ExecuteRequest, action: str, down: boo
             else:
                 await page.mouse.up()
         else:
-            try:
-                import pyautogui as _pag
-                if x is not None and y is not None:
-                    _pag.moveTo(x, y)
-                if down:
-                    _pag.mouseDown(button="left")
-                else:
-                    _pag.mouseUp(button="left")
-            except ImportError:
-                raise Exception(f"{action} requires an active browser session or pyautogui for desktop control")
+            params: Dict[str, Any] = {}
+            if x is not None and y is not None:
+                params = {"x": x, "y": y}
+            await _desktop_input("mouse_down" if down else "mouse_up", params)
         state = "pressed" if down else "released"
         result = ExecuteResponse(
             run_id=req.run_id, session_id=req.session_id,
@@ -1960,22 +1944,20 @@ async def handle_left_mouse_up(req: ExecuteRequest) -> ExecuteResponse:
 
 
 async def handle_cursor_position(req: ExecuteRequest) -> ExecuteResponse:
-    """Return the current OS cursor position. Desktop-only (pyautogui)."""
+    """Return the current OS cursor position. Desktop-only (accessibility adapter, macOS)."""
     trace_id = str(uuid4())
     frame = await maybe_record_before(req)
     try:
-        try:
-            import pyautogui as _pag
-        except ImportError:
+        pos = _native_desktop().cursor_position()
+        if pos is None:
             raise Exception(
-                "cursor_position is a desktop action and requires pyautogui; "
-                "it is not supported on this platform/backend"
+                "cursor_position is a desktop action and needs the macOS "
+                "accessibility adapter; it is not supported on this platform/backend"
             )
-        pos = _pag.position()
         x, y = float(pos[0]), float(pos[1])
         result = ExecuteResponse(
             run_id=req.run_id, session_id=req.session_id,
-            adapter_id="desktop.pyautogui", family="desktop", mode="inspect",
+            adapter_id="desktop.accessibility", family="desktop", mode="inspect",
             status="completed", summary=f"Cursor at ({x}, {y})",
             extracted_content={"x": x, "y": y},
             receipts=[Receipt(action="cursor_position", timestamp=utc_now_iso(), success=True,
@@ -1987,7 +1969,7 @@ async def handle_cursor_position(req: ExecuteRequest) -> ExecuteResponse:
     except Exception as e:
         result = ExecuteResponse(
             run_id=req.run_id, session_id=req.session_id,
-            adapter_id="desktop.pyautogui", family="desktop", mode="inspect",
+            adapter_id="desktop.accessibility", family="desktop", mode="inspect",
             status="failed", summary=f"cursor_position failed: {e}",
             error=ErrorDetail(code="CURSOR_POSITION_ERROR", message=str(e)),
             receipts=[Receipt(action="cursor_position", timestamp=utc_now_iso(), success=False,
@@ -2013,13 +1995,11 @@ async def handle_hold_key(req: ExecuteRequest) -> ExecuteResponse:
             await asyncio.sleep(duration)
             await page.keyboard.up(key)
         else:
+            await _desktop_input("key_down", {"key": key})
             try:
-                import pyautogui as _pag
-                _pag.keyDown(key)
                 await asyncio.sleep(duration)
-                _pag.keyUp(key)
-            except ImportError:
-                raise Exception("hold_key requires an active browser session or pyautogui for desktop control")
+            finally:
+                await _desktop_input("key_up", {"key": key})
         result = ExecuteResponse(
             run_id=req.run_id, session_id=req.session_id,
             adapter_id="browser.playwright", family="browser", mode="execute",
@@ -2540,7 +2520,7 @@ async def startup_event():
 async def _register_startup_adapters() -> None:
     """
     Eagerly register all available adapters into the executor waterfall at startup.
-    Order follows ADAPTER_WATERFALL: extension → cdp → playwright → pyautogui → accessibility.
+    Order follows ADAPTER_WATERFALL: extension → cdp → playwright → accessibility.
     """
     import sys as _sys2, os as _os2, logging as _log2
     _sys2.path.insert(0, _os2.path.join(_os2.path.dirname(__file__), ".."))
@@ -2584,14 +2564,6 @@ async def _register_startup_adapters() -> None:
         except Exception as exc:
             _logger.warning("[startup] Remote CDP adapter registration failed: %s", exc)
 
-        # --- PyAutoGUI desktop adapter (desktop.pyautogui) ---
-        try:
-            from adapters.desktop.pyautogui.pyautogui_adapter import PyAutoGUIAdapter
-            if "desktop.pyautogui" not in executor.registered_adapters():
-                executor.register("desktop.pyautogui", PyAutoGUIAdapter())
-        except Exception:
-            pass  # pyautogui not installed or not on a desktop environment
-
         # --- Accessibility adapter (desktop.accessibility) ---
         try:
             from adapters.desktop.accessibility_adapter import AccessibilityAdapter
@@ -2601,7 +2573,7 @@ async def _register_startup_adapters() -> None:
             pass
 
     except ImportError:
-        pass  # executor module unavailable — /v1/computer will handle lazily
+        pass  # executor module unavailable — adapters register lazily on first use
 
 
 @app.on_event("shutdown")
@@ -2627,228 +2599,6 @@ from cloud_credentials_router import router as cloud_credentials_router
 app.include_router(cloud_credentials_router)
 from toolset_browser import router as toolset_browser_router
 app.include_router(toolset_browser_router)
-
-# Demo UI — mounted only when started via the demo launcher (demo.py sets
-# ALLTERNIT_ACU_DEMO=1). Serves the self-contained page at GET /demo.
-if os.environ.get("ALLTERNIT_ACU_DEMO") == "1":
-    from demo_ui import router as demo_ui_router
-    app.include_router(demo_ui_router)
-
-# ---------------------------------------------------------------------------
-# /v1/computer — compatibility alias for the old Claude-native payload
-#
-# Old callers (acu_mcp, the JS SDK's executeCompatibilityAction, agent-swarm)
-# send {action, coordinate, text, key, delta, url, ...}. That payload is turned
-# into one allternit.computer.v1 / allternit.browser.v1 contract call
-# (core/toolset_executor.alias_v1_computer) and run on the shared executor,
-# allternit-api POST /api/v1/computers/:id/toolset, when the engine runs next
-# to it. Standalone (no ALLTERNIT_API_URL) it runs on the in-process adapter
-# waterfall. The executor reaches browser sessions through /v1/execute, never
-# through this route, so there is no executor -> gateway -> executor loop.
-# ---------------------------------------------------------------------------
-
-import sys as _sys, os as _os
-_sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), ".."))
-
-try:
-    from core.computer_use_executor import ComputerUseExecutor, get_executor, NATIVE_CLAUDE_ACTIONS, BROWSER_EXTENSION_ACTIONS
-    from core.base_adapter import ActionRequest as _ActionRequest
-    _executor_available = True
-except ImportError:
-    _executor_available = False
-
-from core.toolset_executor import (
-    ToolsetExecutorClient as _ToolsetExecutorClient,
-    alias_v1_computer as _alias_v1_computer,
-    executor_configured as _toolset_executor_configured,
-    legacy_request as _legacy_request,
-)
-
-
-class ComputerToolRequest(BaseModel):
-    """The old Claude native computer_use payload (kept for old callers)."""
-    action: str
-    session_id: str = Field(default_factory=lambda: f"sess-{uuid4().hex[:8]}")
-    run_id: str = Field(default_factory=lambda: f"cu-{uuid4().hex[:12]}")
-    coordinate: list[int] | None = None
-    text: str | None = None
-    key: str | None = None
-    delta: list[int] | None = None
-    url: str | None = None
-    selector: str | None = None
-    adapter_preference: str | None = None
-    parameters: dict[str, Any] = Field(default_factory=dict)
-    # Optional: which computer the executor runs on (default this-device) and
-    # whose it is (the executor checks ownership, lease and approval).
-    computer_id: str | None = None
-    user_id: str | None = None
-
-
-def _toolset_reply_to_legacy(toolset: str, member: str, call_input: dict[str, Any], reply: Any) -> dict[str, Any]:
-    body = reply.body
-    out: dict[str, Any] = {
-        "status": "completed" if reply.ok else "failed",
-        "action_type": member,
-        "toolset": toolset,
-        "member": member,
-        "input": call_input,
-        "is_error": not reply.ok,
-        "content": body.get("content") or [],
-        "screen": body.get("screen"),
-        "browser_state": body.get("browser_state"),
-        "extracted_content": {"text": reply.text()},
-    }
-    image = reply.image_b64()
-    if image:
-        out["extracted_content"]["data_url"] = f"data:image/png;base64,{image}"
-    if not reply.ok:
-        out["error"] = body.get("error") or reply.text()
-        if reply.approval_id:
-            out["approval_id"] = reply.approval_id
-    return out
-
-
-@app.post("/v1/computer")
-async def computer_tool(req: ComputerToolRequest) -> dict[str, Any]:
-    """Old Claude-native computer tool payload -> one contract call."""
-    toolset, member, call_input = _alias_v1_computer(req.model_dump())
-    if _toolset_executor_configured() or req.computer_id:
-        client = _ToolsetExecutorClient(
-            req.computer_id or "this-device",
-            user_id=req.user_id,
-            browser_session_id=req.session_id,
-        )
-        reply = await client.run(toolset, member, call_input, run_id=req.run_id)
-        return _toolset_reply_to_legacy(toolset, member, call_input, reply)
-
-    if not _executor_available:
-        raise HTTPException(status_code=503, detail="ComputerUseExecutor not available")
-    action_type, target, params = _legacy_request(toolset, member, call_input)
-    if req.selector:
-        params["selector"] = req.selector
-        target = target or req.selector
-    action = _ActionRequest(action_type=action_type, target=target, parameters=params)
-    result = await get_executor().execute(
-        action,
-        session_id=req.session_id,
-        run_id=req.run_id,
-        adapter_preference=req.adapter_preference,
-    )
-    out = result.to_dict()
-    out.update({"toolset": toolset, "member": member, "input": call_input})
-    return out
-
-
-# ── /v1/run/parallel ─────────────────────────────────────────────────────────
-
-class ParallelTaskBody(BaseModel):
-    task_id: str
-    goal: str
-    url: Optional[str] = None
-    family: str = "browser"
-    adapter_id: str = "browser.playwright"
-    timeout_ms: int = 30000
-
-
-class ParallelRunRequest(BaseModel):
-    tasks: List[ParallelTaskBody]
-    max_concurrent: int = 4
-
-
-@app.post("/v1/run/parallel")
-async def run_parallel(body: ParallelRunRequest) -> dict[str, Any]:
-    """
-    Fan N tasks out across isolated browser/desktop adapter instances and aggregate results.
-
-    Body:
-      tasks: [{task_id, goal, url?, family, adapter_id, timeout_ms?}]
-      max_concurrent: int (default 4)
-
-    Response:
-      {results: [...], total: N, succeeded: N, failed: N}
-    """
-    import sys as _sys_par, os as _os_par
-    _sys_par.path.insert(0, _os_par.path.join(_os_par.path.dirname(__file__), ".."))
-
-    from core.parallel_coordinator import ParallelTask, get_coordinator
-
-    tasks = [
-        ParallelTask(
-            task_id=t.task_id,
-            goal=t.goal,
-            url=t.url,
-            family=t.family,
-            adapter_id=t.adapter_id,
-            timeout_ms=t.timeout_ms,
-        )
-        for t in body.tasks
-    ]
-
-    coordinator = get_coordinator(max_concurrent=body.max_concurrent)
-    results = await coordinator.run(tasks)
-
-    serialized = [
-        {
-            "task_id": r.task_id,
-            "session_id": r.session_id,
-            "success": r.success,
-            "result": r.result,
-            "error": r.error,
-            "duration_ms": r.duration_ms,
-        }
-        for r in results
-    ]
-
-    succeeded = sum(1 for r in results if r.success)
-    return {
-        "results": serialized,
-        "total": len(results),
-        "succeeded": succeeded,
-        "failed": len(results) - succeeded,
-    }
-
-
-# ── /v1/run/hybrid ────────────────────────────────────────────────────────────
-
-class HybridStepBody(BaseModel):
-    surface: str  # "browser" or "desktop"
-    action: str
-    params: dict[str, Any] = Field(default_factory=dict)
-
-
-class HybridRunRequest(BaseModel):
-    steps: List[HybridStepBody]
-    session_id: str = Field(default_factory=lambda: f"hybrid-{uuid4().hex[:8]}")
-
-
-@app.post("/v1/run/hybrid")
-async def run_hybrid(body: HybridRunRequest) -> dict[str, Any]:
-    """
-    Execute a sequence of browser and/or desktop steps in a single session.
-
-    Body:
-      steps: [{surface: "browser"|"desktop", action: "...", params: {...}}]
-      session_id: str (optional; auto-generated if omitted)
-
-    Response:
-      {results: [...], success: bool}
-    """
-    import sys as _sys_hyb, os as _os_hyb
-    _sys_hyb.path.insert(0, _os_hyb.path.join(_os_hyb.path.dirname(__file__), ".."))
-
-    from adapters.desktop.hybrid_adapter import HybridAdapter, HybridStep
-
-    steps = [
-        HybridStep(surface=s.surface, action=s.action, params=s.params)
-        for s in body.steps
-    ]
-
-    adapter = HybridAdapter()
-    results = await adapter.execute_sequence(steps, session_id=body.session_id)
-    overall_success = all(r.get("success", False) for r in results)
-
-    return {"results": results, "success": overall_success}
-
 
 # ── /v1/conformance ──────────────────────────────────────────────────────────
 
@@ -3011,9 +2761,8 @@ class _DesktopConformanceAdapter:
                 # Synthesize: take screenshot + list windows for state summary
                 sc = await self._inner.execute("take_screenshot", {})
                 win = await self._inner.execute("list_windows", {})
-                import pyautogui
-                sw, sh = pyautogui.size()
-                mx, my = pyautogui.position()
+                sw, sh = self._inner.screen_size() or (0, 0)
+                mx, my = self._inner.cursor_position() or (0, 0)
                 raw = {
                     "success": True,
                     "screen_size": {"width": sw, "height": sh},
@@ -3025,8 +2774,7 @@ class _DesktopConformanceAdapter:
                 mapped = self._ACTION_MAP.get(action_type, action_type)
                 raw = await self._inner.execute(mapped, params)
                 # Augment with confirmed position after move
-                import pyautogui
-                mx, my = pyautogui.position()
+                mx, my = self._inner.cursor_position() or (params.get("x", 0), params.get("y", 0))
                 raw = {**raw, "x": mx, "y": my, "position": {"x": mx, "y": my}}
             else:
                 mapped = self._ACTION_MAP.get(action_type, action_type)

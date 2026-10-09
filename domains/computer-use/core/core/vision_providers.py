@@ -93,15 +93,9 @@ class VisionConfigError(VisionProviderError):
 
 class ProviderType(Enum):
     """Supported vision provider types."""
-    UITARS = "uitars"       # UI-TARS skill via Allternit skills HTTP API (best for GUI grounding)
     ALLTERNIT = "allternit" # Platform Gizzi brain (`providerID/modelID` session), same as Home/Code
     SUBPROCESS = "subprocess" # CLI brain subprocess: claude, codex, gemini CLI, or custom command
-    OPENAI = "openai"       # Direct OpenAI API key (dev mode)
     ANTHROPIC = "anthropic" # Direct Anthropic API key (dev mode)
-    AZURE_OPENAI = "azure"  # Direct Azure OpenAI (dev mode)
-    GEMINI = "gemini"       # Direct Google Gemini (dev mode)
-    QWEN = "qwen"           # OpenAI-compat endpoint for Qwen-VL (Ollama/vLLM)
-    SHOWUI = "showui"       # Local ShowUI 2B via HuggingFace transformers
     MOCK = "mock"           # Test-only — never used in production
 
 
@@ -291,149 +285,6 @@ class VisionProvider(ABC):
             raise VisionAPIError(
                 f"Failed to parse JSON response: {e}",
                 self.__class__.__name__
-            )
-
-
-class OpenAIVisionClient(VisionProvider):
-    """OpenAI GPT-4o vision provider."""
-    
-    DEFAULT_MODEL = "gpt-4o"
-    DEFAULT_MAX_TOKENS = 4096
-    
-    def __init__(
-        self,
-        api_key: Optional[str] = None,
-        model: str = DEFAULT_MODEL,
-        max_tokens: int = DEFAULT_MAX_TOKENS,
-        **kwargs
-    ):
-        super().__init__(api_key, **kwargs)
-        self.model = model
-        self.max_tokens = max_tokens
-        self._client = None
-        
-        # Check if openai is installed
-        try:
-            import openai
-            self._openai_module = openai
-        except ImportError:
-            logger.error("OpenAI package not installed. Install with: pip install openai")
-            self._openai_module = None
-    
-    def _init_client(self):
-        """Initialize OpenAI client with current configuration."""
-        if self._openai_module and not self._client and self.api_key:
-            self._client = self._openai_module.OpenAI(api_key=self.api_key)
-    
-    def is_available(self) -> bool:
-        """Check if OpenAI client is configured."""
-        if not self._openai_module:
-            return False
-        if not self.api_key:
-            self.api_key = os.environ.get("OPENAI_API_KEY")
-        if self.api_key:
-            self._init_client()
-        return bool(self.api_key and self._client)
-    
-    def analyze_image(
-        self,
-        image_bytes: bytes,
-        task: str,
-        prompt_template: Optional[str] = None,
-        **kwargs
-    ) -> VisionResponse:
-        """Analyze image using GPT-4o."""
-        if not self.is_available():
-            raise VisionConfigError(
-                "OpenAI client not available. Set OPENAI_API_KEY environment variable."
-            )
-        
-        prompt = prompt_template or self._default_prompt(task)
-        base64_image = self.encode_image(image_bytes)
-        
-        try:
-            response = self._client.chat.completions.create(
-                model=self.model,
-                max_tokens=self.max_tokens,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt},
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/png;base64,{base64_image}"
-                                }
-                            }
-                        ]
-                    }
-                ],
-                **kwargs
-            )
-            
-            content = response.choices[0].message.content
-            usage = response.usage
-            input_tokens = getattr(usage, "prompt_tokens", 0) if usage else 0
-            output_tokens = getattr(usage, "completion_tokens", 0) if usage else 0
-            result = self._parse_vision_response(content)
-            result.tokens_used = input_tokens + output_tokens
-            result.input_tokens = input_tokens
-            result.output_tokens = output_tokens
-            # GPT-4o pricing: $5/1M input, $15/1M output
-            result.cost_usd = (input_tokens * 5 + output_tokens * 15) / 1_000_000
-            return result
-
-        except Exception as e:
-            logger.error(f"OpenAI API error: {e}")
-            raise VisionAPIError(str(e), "openai")
-    
-    def _default_prompt(self, task: str) -> str:
-        """Generate default prompt for computer use."""
-        return VISION_PROMPT_TEMPLATE.format(task=task)
-    
-    def _parse_vision_response(self, content: str) -> VisionResponse:
-        """Parse OpenAI response into structured VisionResponse."""
-        try:
-            data = self._parse_json_response(content)
-            
-            elements = [
-                VisionElement(
-                    label=e.get("label", ""),
-                    bbox=e.get("bbox", [0, 0, 0, 0]),
-                    confidence=e.get("confidence", 0.0),
-                    text=e.get("text")
-                )
-                for e in data.get("elements", [])
-            ]
-            
-            action_data = data.get("action")
-            action = None
-            if action_data:
-                action = VisionAction(
-                    type=action_data.get("member") or action_data.get("type", ""),
-                    target=action_data.get("target", ""),
-                    reason=action_data.get("reason", ""),
-                    coordinates=action_data.get("coordinates"),
-                    text=action_data.get("text"),
-                    toolset=action_data.get("toolset"),
-                    input=action_data.get("input") if isinstance(action_data.get("input"), dict) else None,
-                )
-            
-            return VisionResponse(
-                elements=elements,
-                action=action,
-                confidence=data.get("confidence", 0.0),
-                raw_response=content
-            )
-            
-        except Exception as e:
-            logger.error(f"Failed to parse vision response: {e}")
-            return VisionResponse(
-                elements=[],
-                action=None,
-                confidence=0.0,
-                raw_response=content
             )
 
 
@@ -662,333 +513,6 @@ async def _anthropic_toolset_ground_and_reason(self, screenshot_b64: str, task: 
 AnthropicVisionClient.ground_and_reason = _anthropic_toolset_ground_and_reason  # type: ignore[assignment]
 
 
-class GeminiVisionProvider(VisionProvider):
-    """Google Gemini Vision provider (gemini-2.0-flash-exp or gemini-1.5-pro-vision)."""
-
-    DEFAULT_MODEL = "gemini-2.0-flash-exp"
-
-    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None, **kwargs):
-        super().__init__(api_key=api_key or os.getenv("GOOGLE_API_KEY"), **kwargs)
-        self.model = model or os.getenv("GEMINI_MODEL_NAME", self.DEFAULT_MODEL)
-
-    def is_available(self) -> bool:
-        return bool(self.api_key)
-
-    def analyze_image(self, image_bytes: bytes, task: str, prompt_template: Optional[str] = None, **kwargs) -> VisionResponse:
-        if not self.is_available():
-            raise VisionConfigError("GOOGLE_API_KEY not set")
-        try:
-            import google.generativeai as genai
-            genai.configure(api_key=self.api_key)
-            model = genai.GenerativeModel(self.model)
-            import PIL.Image, io
-            img = PIL.Image.open(io.BytesIO(image_bytes))
-            prompt = prompt_template or VISION_PROMPT_TEMPLATE
-            full_prompt = f"{prompt}\n\nTask: {task}"
-            response = model.generate_content([full_prompt, img])
-            raw = response.text
-            parsed = self._parse_json_response(raw)
-            return self._build_vision_response(parsed, raw)
-        except Exception as e:
-            raise VisionAPIError(f"Gemini API error: {e}", provider="gemini")
-
-    async def ground_and_reason(self, screenshot_b64: Union[str, bytes], task: str, history: Optional[List] = None, screen_size: Optional[Tuple[int, int]] = None, **kwargs) -> ActionPlan:
-        if not self.is_available():
-            raise VisionConfigError("GOOGLE_API_KEY not set")
-        screenshot_bytes = _screenshot_bytes(screenshot_b64)
-        screen_size = resolve_screen_size(screenshot_bytes, screen_size)
-        history = history or []
-        try:
-            import google.generativeai as genai
-            import PIL.Image, io
-            genai.configure(api_key=self.api_key)
-            model = genai.GenerativeModel(self.model)
-            img = PIL.Image.open(io.BytesIO(screenshot_bytes))
-            history_text = "\n".join([f"Step {i+1}: {h.get('action','?')} → {h.get('observation','?')}" if isinstance(h, dict) else f"Step {i+1}: {h}" for i, h in enumerate(history[-5:])])
-            prompt = _build_planning_prompt(task, history_text, screen_size)
-            response = model.generate_content([prompt, img])
-            return _parse_action_plan(response.text)
-        except Exception as e:
-            raise VisionAPIError(f"Gemini ground_and_reason error: {e}", provider="gemini")
-
-    def _build_vision_response(self, parsed: Dict, raw: str) -> VisionResponse:
-        elements = [VisionElement(label=e.get("label",""), bbox=e.get("bbox",[0,0,1,1]), confidence=e.get("confidence",0.5), text=e.get("text")) for e in parsed.get("elements", [])]
-        action = None
-        if "action" in parsed:
-            a = parsed["action"]
-            action = VisionAction(type=a.get("member") or a.get("type","left_click"), target=a.get("target",""), reason=a.get("reason",""), coordinates=a.get("coordinates"), text=a.get("text"), toolset=a.get("toolset"), input=a.get("input") if isinstance(a.get("input"), dict) else None)
-        return VisionResponse(elements=elements, action=action, confidence=parsed.get("confidence", 0.5), raw_response=raw)
-
-
-class QwenVisionProvider(VisionProvider):
-    """Qwen2.5-VL provider via OpenAI-compatible endpoint (vLLM/Ollama)."""
-
-    DEFAULT_MODEL = "Qwen/Qwen2.5-VL-7B-Instruct"
-
-    def __init__(self, base_url: Optional[str] = None, api_key: Optional[str] = None, model: Optional[str] = None, **kwargs):
-        super().__init__(api_key=api_key or os.getenv("QWEN_API_KEY", "not-required"), **kwargs)
-        self.base_url = base_url or os.getenv("QWEN_BASE_URL", "http://localhost:8000/v1")
-        self.model = model or os.getenv("QWEN_MODEL_NAME", self.DEFAULT_MODEL)
-
-    def is_available(self) -> bool:
-        return bool(self.base_url)
-
-    def analyze_image(self, image_bytes: bytes, task: str, prompt_template: Optional[str] = None, **kwargs) -> VisionResponse:
-        if not self.is_available():
-            raise VisionConfigError("QWEN_BASE_URL not set")
-        try:
-            from openai import OpenAI
-            client = OpenAI(base_url=self.base_url, api_key=self.api_key)
-            b64 = self.encode_image(image_bytes)
-            prompt = prompt_template or VISION_PROMPT_TEMPLATE
-            response = client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": [
-                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
-                    {"type": "text", "text": f"{prompt}\n\nTask: {task}"},
-                ]}],
-                max_tokens=1024,
-            )
-            raw = response.choices[0].message.content
-            parsed = self._parse_json_response(raw)
-            return self._build_response(parsed, raw)
-        except Exception as e:
-            raise VisionAPIError(f"Qwen API error: {e}", provider="qwen")
-
-    async def ground_and_reason(self, screenshot_b64: Union[str, bytes], task: str, history: Optional[List] = None, screen_size: Optional[Tuple[int, int]] = None, **kwargs) -> ActionPlan:
-        if not self.is_available():
-            raise VisionConfigError("QWEN_BASE_URL not set")
-        screenshot_bytes = _screenshot_bytes(screenshot_b64)
-        screen_size = resolve_screen_size(screenshot_bytes, screen_size)
-        history = history or []
-        try:
-            from openai import OpenAI
-            client = OpenAI(base_url=self.base_url, api_key=self.api_key)
-            b64 = self.encode_image(screenshot_bytes)
-            history_text = "\n".join([f"Step {i+1}: {h.get('action','?')} → {h.get('observation','?')}" if isinstance(h, dict) else f"Step {i+1}: {h}" for i, h in enumerate(history[-5:])])
-            prompt = _build_planning_prompt(task, history_text, screen_size)
-            response = client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": [
-                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
-                    {"type": "text", "text": prompt},
-                ]}],
-                max_tokens=1024,
-            )
-            return _parse_action_plan(response.choices[0].message.content)
-        except Exception as e:
-            raise VisionAPIError(f"Qwen ground_and_reason error: {e}", provider="qwen")
-
-    def _build_response(self, parsed: Dict, raw: str) -> VisionResponse:
-        elements = [VisionElement(label=e.get("label",""), bbox=e.get("bbox",[0,0,1,1]), confidence=e.get("confidence",0.5)) for e in parsed.get("elements", [])]
-        action = None
-        if "action" in parsed:
-            a = parsed["action"]
-            action = VisionAction(type=a.get("member") or a.get("type","left_click"), target=a.get("target",""), reason=a.get("reason",""), coordinates=a.get("coordinates"), text=a.get("text"), toolset=a.get("toolset"), input=a.get("input") if isinstance(a.get("input"), dict) else None)
-        return VisionResponse(elements=elements, action=action, confidence=parsed.get("confidence", 0.5), raw_response=raw)
-
-
-class ShowUIVisionProvider(VisionProvider):
-    """ShowUI 2B lightweight vision model (local HuggingFace)."""
-
-    DEFAULT_MODEL = "showlab/ShowUI-2B"
-
-    def __init__(self, model_path: Optional[str] = None, **kwargs):
-        super().__init__(**kwargs)
-        self.model_path = model_path or os.getenv("SHOWUI_MODEL_PATH", self.DEFAULT_MODEL)
-        self._model = None
-        self._processor = None
-
-    def is_available(self) -> bool:
-        try:
-            import transformers  # noqa
-            return True
-        except ImportError:
-            return False
-
-    def _load_model(self):
-        if self._model is None:
-            from transformers import AutoProcessor, AutoModelForVision2Seq
-            self._processor = AutoProcessor.from_pretrained(self.model_path)
-            self._model = AutoModelForVision2Seq.from_pretrained(self.model_path)
-
-    def analyze_image(self, image_bytes: bytes, task: str, prompt_template: Optional[str] = None, **kwargs) -> VisionResponse:
-        if not self.is_available():
-            raise VisionConfigError("transformers package not installed")
-        try:
-            import torch, PIL.Image, io
-            self._load_model()
-            img = PIL.Image.open(io.BytesIO(image_bytes))
-            inputs = self._processor(images=img, text=f"Task: {task}\nFind the element to interact with.", return_tensors="pt")
-            with torch.no_grad():
-                outputs = self._model.generate(**inputs, max_new_tokens=256)
-            raw = self._processor.decode(outputs[0], skip_special_tokens=True)
-            # ShowUI outputs coordinates directly
-            coords = self._extract_coords(raw)
-            action = VisionAction(type="left_click", target="element", reason=raw, coordinates=coords) if coords else None
-            return VisionResponse(elements=[], action=action, confidence=0.75 if coords else 0.3, raw_response=raw)
-        except Exception as e:
-            raise VisionAPIError(f"ShowUI error: {e}", provider="showui")
-
-    def _extract_coords(self, text: str) -> Optional[List[float]]:
-        import re
-        m = re.search(r'\[(\d+(?:\.\d+)?),\s*(\d+(?:\.\d+)?)\]', text)
-        if m:
-            return [float(m.group(1)), float(m.group(2))]
-        return None
-
-
-class AzureOpenAIVisionClient(VisionProvider):
-    """Azure OpenAI GPT-4o vision provider."""
-    
-    DEFAULT_MODEL = "gpt-4o"
-    DEFAULT_API_VERSION = "2024-02-15-preview"
-    
-    def __init__(
-        self,
-        api_key: Optional[str] = None,
-        endpoint: Optional[str] = None,
-        deployment_name: Optional[str] = None,
-        api_version: str = DEFAULT_API_VERSION,
-        **kwargs
-    ):
-        super().__init__(api_key, **kwargs)
-        self.endpoint = endpoint
-        self.deployment_name = deployment_name
-        self.api_version = api_version
-        
-        # Try to import openai
-        try:
-            from openai import AzureOpenAI
-            self._client_class = AzureOpenAI
-            self._client = None  # Lazy init
-        except ImportError:
-            logger.error("OpenAI package not installed. Install with: pip install openai")
-            self._client_class = None
-    
-    def _init_client(self):
-        """Initialize Azure OpenAI client with current configuration."""
-        if not self._client and self._client_class:
-            self._client = self._client_class(
-                api_key=self.api_key,
-                azure_endpoint=self.endpoint,
-                api_version=self.api_version
-            )
-    
-    def is_available(self) -> bool:
-        """Check if Azure OpenAI client is configured."""
-        if not self._client_class:
-            return False
-        
-        # Load from environment if not set
-        if not self.api_key:
-            self.api_key = os.environ.get("AZURE_OPENAI_API_KEY")
-        if not self.endpoint:
-            self.endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
-        if not self.deployment_name:
-            self.deployment_name = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME")
-        
-        available = bool(self.api_key and self.endpoint and self.deployment_name)
-        if available:
-            self._init_client()
-        return available
-    
-    def analyze_image(
-        self,
-        image_bytes: bytes,
-        task: str,
-        prompt_template: Optional[str] = None,
-        **kwargs
-    ) -> VisionResponse:
-        """Analyze image using Azure OpenAI GPT-4o."""
-        if not self.is_available():
-            raise VisionConfigError(
-                "Azure OpenAI client not available. Set AZURE_OPENAI_API_KEY, "
-                "AZURE_OPENAI_ENDPOINT, and AZURE_OPENAI_DEPLOYMENT_NAME environment variables."
-            )
-        
-        prompt = prompt_template or self._default_prompt(task)
-        base64_image = self.encode_image(image_bytes)
-        
-        try:
-            response = self._client.chat.completions.create(
-                model=self.deployment_name,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt},
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/png;base64,{base64_image}"
-                                }
-                            }
-                        ]
-                    }
-                ],
-                **kwargs
-            )
-            
-            content = response.choices[0].message.content
-            tokens_used = getattr(getattr(response, "usage", None), "total_tokens", 0) or 0
-            result = self._parse_vision_response(content)
-            result.tokens_used = tokens_used
-            return result
-
-        except Exception as e:
-            logger.error(f"Azure OpenAI API error: {e}")
-            raise VisionAPIError(str(e), "azure_openai")
-    
-    def _default_prompt(self, task: str) -> str:
-        """Generate default prompt for computer use."""
-        return VISION_PROMPT_TEMPLATE.format(task=task)
-    
-    def _parse_vision_response(self, content: str) -> VisionResponse:
-        """Parse Azure OpenAI response into structured VisionResponse."""
-        try:
-            data = self._parse_json_response(content)
-            
-            elements = [
-                VisionElement(
-                    label=e.get("label", ""),
-                    bbox=e.get("bbox", [0, 0, 0, 0]),
-                    confidence=e.get("confidence", 0.0),
-                    text=e.get("text")
-                )
-                for e in data.get("elements", [])
-            ]
-            
-            action_data = data.get("action")
-            action = None
-            if action_data:
-                action = VisionAction(
-                    type=action_data.get("member") or action_data.get("type", ""),
-                    target=action_data.get("target", ""),
-                    reason=action_data.get("reason", ""),
-                    coordinates=action_data.get("coordinates"),
-                    text=action_data.get("text"),
-                    toolset=action_data.get("toolset"),
-                    input=action_data.get("input") if isinstance(action_data.get("input"), dict) else None,
-                )
-            
-            return VisionResponse(
-                elements=elements,
-                action=action,
-                confidence=data.get("confidence", 0.0),
-                raw_response=content
-            )
-            
-        except Exception as e:
-            logger.error(f"Failed to parse vision response: {e}")
-            return VisionResponse(
-                elements=[],
-                action=None,
-                confidence=0.0,
-                raw_response=content
-            )
-
-
 class MockVisionClient(VisionProvider):
     """
     Mock vision provider for testing only.
@@ -1208,99 +732,6 @@ def _parse_action_plan(raw: str) -> ActionPlan:
             plan_steps=[],
             immediate_action=VisionAction(type="screenshot", target="screen", reason="Parse error"),
             confidence=0.1,
-        )
-
-
-class UITARSVisionProvider(VisionProvider):
-    """
-    UI-TARS vision provider — routes to the model.ui_tars.propose skill.
-
-    UI-TARS is purpose-built for GUI grounding and produces the most reliable
-    action proposals. When the skills server is unavailable, falls back gracefully
-    to returning a raw screenshot action so the planning loop can continue.
-
-    Env vars:
-        ACU_SKILLS_URL  — skills HTTP endpoint (default http://localhost:8770)
-    """
-
-    SKILL_ID = "model.ui_tars.propose"
-
-    def __init__(self, skills_url: Optional[str] = None):
-        self._skills_url = (skills_url or os.environ.get("ACU_SKILLS_URL", "http://localhost:8770")).rstrip("/")
-
-    async def analyze_screenshot(self, screenshot_b64: str, task: str, **kwargs) -> VisionResponse:
-        try:
-            import httpx
-            payload = {"skill": self.SKILL_ID, "input": {"screenshot_b64": screenshot_b64, "task": task}}
-            async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.post(f"{self._skills_url}/v1/skills/invoke", json=payload)
-                resp.raise_for_status()
-                data = resp.json().get("output", {})
-            proposals = data.get("proposals", [])
-            top = proposals[0] if proposals else {}
-            action = VisionAction(
-                type=top.get("type", "screenshot"),
-                target=str(top.get("params", {}).get("selector", "screen")),
-                reason=top.get("description", ""),
-                coordinates=[top["params"]["x"], top["params"]["y"]]
-                if "x" in top.get("params", {}) else None,
-            )
-            return VisionResponse(
-                elements=[],
-                action=action,
-                confidence=float(data.get("confidence", 0.9)),
-                raw_response=json.dumps(data),
-            )
-        except Exception as e:
-            logger.warning(f"UI-TARS skill unavailable ({e})")
-            raise
-
-    async def ground_and_reason(self, screenshot_b64: str, task: str, history: Optional[List[str]] = None, **kwargs) -> ActionPlan:
-        try:
-            import httpx
-            payload = {
-                "skill": self.SKILL_ID,
-                "input": {"screenshot_b64": screenshot_b64, "task": task, "history": history or []},
-            }
-            async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.post(f"{self._skills_url}/v1/skills/invoke", json=payload)
-                resp.raise_for_status()
-                data = resp.json().get("output", {})
-            proposals = data.get("proposals", [])
-            top = proposals[0] if proposals else {}
-            action = VisionAction(
-                type=top.get("type", "screenshot"),
-                target=str(top.get("params", {}).get("selector", "screen")),
-                reason=top.get("description", ""),
-                coordinates=[top["params"]["x"], top["params"]["y"]]
-                if "x" in top.get("params", {}) else None,
-            )
-            return ActionPlan(
-                reasoning=data.get("reasoning", ""),
-                plan_steps=[p.get("description", "") for p in proposals[1:]],
-                immediate_action=action,
-                confidence=float(data.get("confidence", 0.9)),
-                done=top.get("type") == "done",
-            )
-        except Exception as e:
-            logger.warning(f"UI-TARS ground_and_reason unavailable ({e})")
-            raise
-
-    def is_available(self) -> bool:
-        return True  # optimistic — skill server absence is handled gracefully in analyze_screenshot
-
-    def analyze_image(self, image_bytes: bytes, task: str, prompt_template=None, **kwargs) -> "VisionResponse":
-        import base64, asyncio
-        b64 = base64.b64encode(image_bytes).decode()
-        try:
-            loop = asyncio.get_event_loop()
-            plan = loop.run_until_complete(self.ground_and_reason(b64, task))
-        except Exception:
-            raise  # propagate — let planning_loop treat this as a hard failure
-        return VisionResponse(
-            elements=[],
-            action=plan.immediate_action,
-            confidence=plan.confidence,
         )
 
 
@@ -1599,14 +1030,8 @@ class VisionProviderFactory:
 
     _providers = {
         ProviderType.ALLTERNIT: AllternitGatewayProvider,
-        ProviderType.UITARS: UITARSVisionProvider,
         ProviderType.SUBPROCESS: SubprocessVisionProvider,
-        ProviderType.OPENAI: OpenAIVisionClient,
         ProviderType.ANTHROPIC: AnthropicVisionClient,
-        ProviderType.AZURE_OPENAI: AzureOpenAIVisionClient,
-        ProviderType.GEMINI: GeminiVisionProvider,
-        ProviderType.QWEN: QwenVisionProvider,
-        ProviderType.SHOWUI: ShowUIVisionProvider,
         ProviderType.MOCK: MockVisionClient,  # test-only, never auto-selected
     }
     
@@ -1620,7 +1045,7 @@ class VisionProviderFactory:
         Create a vision provider instance.
         
         Args:
-            provider_type: Type of provider (openai, anthropic, azure, mock)
+            provider_type: Type of provider (allternit, subprocess, anthropic, mock)
             **kwargs: Provider-specific configuration
             
         Returns:
@@ -1650,17 +1075,9 @@ class VisionProviderFactory:
         Create a vision provider from environment variables.
 
         Environment variables:
-            ALLTERNIT_VISION_PROVIDER: Provider type (openai, anthropic, azure, gemini, qwen, showui, auto)
-                                       When set to "auto" or not set, auto-detects from available API keys.
-            OPENAI_API_KEY: OpenAI API key
-            ANTHROPIC_API_KEY: Anthropic API key
-            AZURE_OPENAI_API_KEY: Azure OpenAI API key
-            AZURE_OPENAI_ENDPOINT: Azure OpenAI endpoint
-            AZURE_OPENAI_DEPLOYMENT_NAME: Azure deployment name
-            GOOGLE_API_KEY: Google Gemini API key
-            QWEN_BASE_URL: Qwen vLLM/Ollama endpoint URL
-            QWEN_API_KEY: Qwen API key (optional)
-            SHOWUI_MODEL_PATH: Local path or HuggingFace model ID for ShowUI
+            ALLTERNIT_VISION_PROVIDER: Provider type (allternit, subprocess, anthropic, mock, auto).
+                                       "auto" or unset uses the Gizzi platform brain.
+            ANTHROPIC_API_KEY: Anthropic API key (anthropic provider only)
 
         Returns:
             VisionProvider instance configured from environment
@@ -1684,16 +1101,8 @@ class VisionProviderFactory:
 
         if provider_type == ProviderType.ALLTERNIT:
             return AllternitGatewayProvider(**kwargs)
-        elif provider_type == ProviderType.UITARS:
-            return UITARSVisionProvider(skills_url=os.getenv("ACU_SKILLS_URL"), **kwargs)
         elif provider_type == ProviderType.SUBPROCESS:
             return SubprocessVisionProvider(**kwargs)
-        elif provider_type == ProviderType.GEMINI:
-            return GeminiVisionProvider(api_key=os.getenv("GOOGLE_API_KEY"), **kwargs)
-        elif provider_type == ProviderType.QWEN:
-            return QwenVisionProvider(**kwargs)
-        elif provider_type == ProviderType.SHOWUI:
-            return ShowUIVisionProvider(**kwargs)
 
         return cls.create(provider_type, **kwargs)
     

@@ -196,11 +196,12 @@
         "allternit/cmd/allternit-api/src/aci_*",
         "allternit/cmd/allternit-api/src/computer_*",
         "allternit/cmd/allternit-api/src/vnc_*",
-        "allternit/sdk/computer-use",
+        "allternit/sdk/computer-driver",
         "allternit/mcp/computers-server",
         "allternit/platform/packages/computer-use-protocol"
       ],
       "decisions": [
+        {"on": "2026-10-09", "note": "D0 cleanup: removed dead gizzi computer use, sdk/computer-use, sdk/computers, the computer-use plugins package, duplicate canonical providers, the mobile harness and pyautogui; gateway /v1/computer, /v1/run/hybrid, /v1/run/parallel gone; allternit-api computer_screenshot/mouse/keyboard tools now alias the computer toolset executor."},
         {"on": "2026-10-07", "note": "Agent cursor overlay (computer toolset P5) in every computer viewer, from vendored MIT @trycua/cursor-motion, driven by computer.action events; style in Settings → Computers."}
       ],
       "evidence": ["allternit/surfaces/docs/api/aci.mdx", "allternit/surfaces/docs/guides/computers-and-apps.mdx"]
@@ -428,13 +429,15 @@
       "touches": [
         "allternit/sdk/computer-toolset",
         "allternit/cmd/allternit-api/src/computer_*",
-        "allternit/cmd/gizzi-code/src/runtime/tools"
+        "allternit/cmd/gizzi-code/src/runtime/tools",
+        "allternit/domains/computer-use/driver"
       ],
       "decisions": [
         {"on": "2026-10-07", "note": "Eoj: computer use works for every model. Anthropic's toolsets are absorbed as one adapter into our contract, gizzi stays the only loop, and there are no hosted third-party drivers. The old gizzi browser tool (goal-driven, a second loop) was removed in favour of the toolset browser tool."},
-        {"on": "2026-10-08", "note": "Member gaps closed: the browser gateway runs all 31 members (refs, tabs with browser_state, console, network, JS, upload) through /v1/toolset/browser with an http(s)-only URL policy and public-only hosts for cloud targets; Windows guests run all 17 computer members through PowerShell/user32; this Mac gets cursor_position, modifier clicks and emulated mouse down/up. hold_key on macOS stays off: Cua Driver 0.34 has no hold call there. Optional browser members need an explicit enable."}
+        {"on": "2026-10-08", "note": "Member gaps closed: the browser gateway runs all 31 members (refs, tabs with browser_state, console, network, JS, upload) through /v1/toolset/browser with an http(s)-only URL policy and public-only hosts for cloud targets; Windows guests run all 17 computer members through PowerShell/user32; this Mac gets cursor_position, modifier clicks and emulated mouse down/up. hold_key on macOS stays off: Cua Driver 0.34 has no hold call there. Optional browser members need an explicit enable."},
+        {"on": "2026-10-09", "note": "D1: the Allternit Driver sidecar (domains/computer-use/driver) sits between allternit-api and the OS: a forked arc-driver (macOS AX reads, settle, freshness guard, menus) and Cua Driver 0.34 (all OS) behind one JSON-RPC API, with our own element ids and map versions, a learned per-op router, and one reader and one input owner per window. This-device input goes through its pixel_* ops; the Desktop app launches it with a bundled Python."}
       ],
-      "evidence": ["allternit/surfaces/docs/tools/computer-toolset.mdx", "allternit/contracts/computer-toolset/README.md", "allternit/cmd/allternit-api/src/computer_toolset.rs"]
+      "evidence": ["allternit/surfaces/docs/tools/computer-toolset.mdx", "allternit/contracts/computer-toolset/README.md", "allternit/cmd/allternit-api/src/computer_toolset.rs", "allternit/surfaces/docs/tools/allternit-driver.mdx"]
     },
     {
       "id": "feature:project-appearance",

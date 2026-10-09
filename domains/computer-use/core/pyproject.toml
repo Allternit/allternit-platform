@@ -30,14 +30,12 @@ dependencies = [
     "pillow>=10.0.0",
     "numpy>=1.24.0",
     # Already used repeatedly via lazy import (vision_providers.py,
-    # firecracker_sandbox.py, receipts/__init__.py, environment_backends.py's
-    # CustomerCloudBackend) but never actually declared -- drive-by fix.
+    # firecracker_sandbox.py, receipts/__init__.py, cloud_provisioning.py) but never actually declared -- drive-by fix.
     "httpx>=0.27.0",
 ]
 
 [project.scripts]
 allternit-computer = "gateway.daemon:main"
-allternit-computer-mcp = "canonical_mcp.server:main"
 
 [project.optional-dependencies]
 # The engine's Claude path: computer_toolset_20260801 / browser_toolset_20260801
@@ -58,35 +56,13 @@ gateway = [
     "uvicorn[standard]>=0.27.0",
 ]
 
-mcp = [
-    # Pinned with the TS SDK (MCP 2026-07-28, dual-era). mcp 2.x needs Python >= 3.10.
-    "mcp==2.3.0; python_version >= '3.10'",
-]
-
-# DroidRun mobile harness integration (Android via mobilerun_core)
-droidrun = [
-    "mobilerun-core[local]>=0.1.0",
-]
-
 # Desktop automation dependencies
 desktop = [
-    "pyautogui>=0.9.54",
-    "pynput>=1.7.6",
     "Pillow>=10.0.0",
     "mss>=9.0.0",
     # RFB/VNC client for VmGuiBackend (Firecracker guest display, tunneled
     # over vsock) -- see research/FIRECRACKER-GUEST-AGENT-VNC-SPEC.md
     "asyncvnc>=1.1.0",
-]
-
-# iOS mobile automation dependencies (phone-harness primary, pymobiledevice3 / idb fallback)
-mobile = [
-    "pymobiledevice3>=4.0",
-    "pyobjc>=10.0; platform_system=='Darwin'",
-    "pyobjc-framework-Quartz>=10.0; platform_system=='Darwin'",
-    "pyobjc-framework-Vision>=10.0; platform_system=='Darwin'",
-    "pyobjc-framework-AppKit>=10.0; platform_system=='Darwin'",
-    "pyobjc-framework-ApplicationServices>=10.0; platform_system=='Darwin'",
 ]
 
 desktop-macos = [
@@ -103,7 +79,6 @@ desktop-windows = [
 
 desktop-linux = [
     "allternit-computer-use[desktop]",
-    "python3-xlib>=0.15; platform_system=='Linux'",
 ]
 
 # All platform-specific desktop dependencies (auto-detects current platform)
@@ -113,28 +88,17 @@ desktop-all = [
     "pyobjc-framework-Quartz>=10.0; platform_system=='Darwin'",
     "pyobjc-framework-ApplicationServices>=10.0; platform_system=='Darwin'",
     "pywin32>=306; platform_system=='Windows'",
-    "python3-xlib>=0.15; platform_system=='Linux'",
 ]
 
-# Operator adapter dependencies (includes desktop + aiohttp)
-operator = [
-    "allternit-computer-use[desktop]",
-    "aiohttp>=3.8.0",
-]
-
-# BYOC cloud provisioning SDKs -- not installed by default (they're heavy and
+# BYOC cloud credential SDKs -- not installed by default (they're heavy and
 # only needed once an org actually connects a cloud account). Imported lazily
-# inside cloud_provisioning.py's strategy methods, gated by an
-# importlib.util.find_spec check (same pattern CuaSandboxBackend already uses
-# for its own optional dependency) that raises a clear, actionable error
+# inside cloud_provisioning.py's credential validators, gated by an
+# importlib.util.find_spec check that raises a clear, actionable error
 # rather than an opaque ImportError if this extra isn't installed.
 byoc = [
     "boto3>=1.34.0",
     "google-cloud-compute>=1.19.0",
     "azure-identity>=1.15.0",
-    "azure-mgmt-compute>=30.0.0",
-    "azure-mgmt-network>=25.0.0",
-    "azure-mgmt-resource>=23.0.0",
 ]
 
 # Shadow-mode local policy head (core/decision_head.py): mlx-lm direct-logit
@@ -154,23 +118,22 @@ shadow-head = [
 # and lazily imported, same contract as [shadow-head].
 semif = [
     "allternit-computer-use[shadow-head]",
-    "semif-phase1[mlx] @ git+https://github.com/TheoLeeCJ/SemIf",
+    # SemIf requires Python >= 3.10 (mlx); the project still supports 3.9
+    # elsewhere, so the 3.9 split must not try to resolve this direct ref.
+    "semif-phase1[mlx] @ git+https://github.com/TheoLeeCJ/SemIf ; python_version >= '3.10'",
 ]
 
-# All dependencies (browser + desktop + operator)
+# All dependencies (browser + desktop)
 all = [
     "playwright>=1.40.0",
     "websocket-client>=1.6.0",
     "requests>=2.31.0",
-    "pyautogui>=0.9.54",
-    "pynput>=1.7.6",
     "mss>=9.0.0",
     "aiohttp>=3.8.0",
     "pyobjc>=10.0; platform_system=='Darwin'",
     "pyobjc-framework-Quartz>=10.0; platform_system=='Darwin'",
     "pyobjc-framework-ApplicationServices>=10.0; platform_system=='Darwin'",
     "pywin32>=306; platform_system=='Windows'",
-    "python3-xlib>=0.15; platform_system=='Linux'",
 ]
 
 dev = [
@@ -188,7 +151,7 @@ Repository = "https://github.com/allternit/computer-use"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["adapters*", "canonical_mcp*", "contracts*", "core*", "gateway*", "observability*", "providers*", "sandbox*"]
+include = ["adapters*", "contracts*", "core*", "gateway*", "observability*", "sandbox*"]
 
 [tool.setuptools.package-data]
 "*" = ["*.json", "*.yaml", "*.yml"]

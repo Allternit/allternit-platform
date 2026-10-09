@@ -11,7 +11,6 @@ Autonomous browser and desktop automation with a Plan→Act→Observe→Reflect 
 3. [Quick Start](#quick-start)
 4. [Components](#components)
    - [Gateway REST API](#gateway-rest-api-port-8760)
-   - [MCP SSE Server](#mcp-sse-server-port-8765)
    - [Planning Loop](#planning-loop)
    - [Vision Providers](#vision-providers)
    - [Adapters](#adapters)
@@ -28,10 +27,11 @@ Autonomous browser and desktop automation with a Plan→Act→Observe→Reflect 
 
 ## Overview
 
-The ACU Engine gives Claude (or any LLM) the ability to control a real browser or desktop application. It runs as two server processes:
+The ACU Engine gives Claude (or any LLM) the ability to control a real browser or desktop application. It runs as one server process:
 
-- **Gateway** (port 8760) — FastAPI HTTP server. Manages browser sessions, handles direct actions, and runs the autonomous planning loop.
-- **MCP Server** (port 8765) — Exposes 12 tools over the Model Context Protocol so Claude Code can call them natively.
+- **Gateway** (port 8760) — FastAPI HTTP server. Manages browser sessions, handles direct actions (`/v1/execute`), and runs the autonomous planning loop (`/v1/computer-use/`).
+
+Model-facing tool access goes through the canonical computer toolset path (the platform's `computer_*` tools), which calls this gateway over HTTP.
 
 On every `execute_task` call the engine runs a loop:
 
@@ -50,8 +50,8 @@ Every step is recorded to JSONL. Every session produces an annotated GIF.
 │  Claude / LLM                                                    │
 │    ↓ MCP tool calls              ↓ /cu:automate slash command    │
 ├──────────────────────────────────────────────────────────────────┤
-│  MCP SSE Server  :8765           Plugin  allternit-computer-use  │
-│  (acu_mcp/server.py)             (packages/computer-use/plugins) │
+│  Canonical computer toolset      Plugin  allternit-computer-use  │
+│  (platform computer_* tools)     (packages/computer-use/plugins) │
 │    ↓ HTTP POST                       ↓ HTTP adapter              │
 ├──────────────────────────────────────────────────────────────────┤
 │  Gateway REST API  :8760                                         │
@@ -62,11 +62,9 @@ Every step is recorded to JSONL. Every session produces an annotated GIF.
 ├──────────────────────────────────────────────────────────────────┤
 │  Planning Loop  (core/planning_loop.py)                          │
 │    ├── VisionProvider (core/vision_providers.py)                 │
-│    │     Anthropic · OpenAI · Gemini · UITARS · Mock · +5 more  │
+│    │     Allternit (Gizzi brain) · Subprocess · Anthropic · Mock │
 │    ├── Adapter (adapters/)                                       │
 │    │     browser.playwright  (direct physical adapter)           │
-│    │     browser.dom_mcp     (DomMcpAdapter)                     │
-│    │     desktop.pyautogui   (PyAutoGUIAdapter)                  │
 │    │     desktop.accessibility (AccessibilityAdapter)            │
 │    └── ActionRecorder (core/action_recorder.py)                  │
 │          ├── JSONL recording  (~/.allternit/recordings/)         │
@@ -109,20 +107,9 @@ ALLTERNIT_VISION_PROVIDER=anthropic \
 ANTHROPIC_API_KEY=sk-ant-... \
 uvicorn main:app --port 8760
 
-# With OpenAI vision
-ALLTERNIT_VISION_PROVIDER=openai \
-OPENAI_API_KEY=sk-... \
+# With a CLI brain (claude, codex, ...)
+ALLTERNIT_VISION_PROVIDER=subprocess ALLTERNIT_BRAIN_CMD=claude \
 uvicorn main:app --port 8760
-```
-
-### Start the MCP server (for Claude Code)
-
-```bash
-# SSE mode — add to Claude Code settings as type: sse
-ALLTERNIT_VISION_PROVIDER=mock python -m acu_mcp.server sse
-
-# stdio mode — add to Claude Desktop config
-ALLTERNIT_VISION_PROVIDER=mock python -m acu_mcp.server stdio
 ```
 
 ### Health check
@@ -131,21 +118,6 @@ ALLTERNIT_VISION_PROVIDER=mock python -m acu_mcp.server stdio
 curl http://localhost:8760/health
 curl http://localhost:8760/v1/computer-use/health
 ```
-
-### One-command demo (no Docker, no API key)
-
-```bash
-cd domains/computer-use/core
-~/.venv-acu311/bin/python demo.py
-```
-
-`demo.py` picks a free localhost port, starts the gateway with the mock
-vision provider (`ALLTERNIT_VISION_PROVIDER=mock`; set that env var
-yourself first to demo with a real provider), mounts a self-contained demo
-UI at `/demo`, prints the URL, and opens it in your browser. The page lists
-runs, starts a canned demo run ("open example.com and screenshot"), and
-watches run events live over SSE. Flags: `--port N` (fixed port),
-`--no-open` (print the URL only). `Ctrl+C` stops the gateway.
 
 ### Run a task
 
@@ -192,7 +164,7 @@ Hit the Playwright session directly without the planning loop.
 | `target` | string | URL for `goto`; CSS selector for `click`/`fill` |
 | `goal` | string | Required for `execute` action |
 | `parameters` | object | Action-specific (see below) |
-| `adapter_preference` | string | `playwright` `browser-use` `cdp` `desktop` |
+| `adapter_preference` | string | `playwright` `cdp` `desktop` |
 
 **Per-action `parameters`:**
 
@@ -278,7 +250,7 @@ Hit the Playwright session directly without the planning loop.
 | Value | Adapter selected |
 |-------|-----------------|
 | `browser` | `browser.playwright` |
-| `desktop` | `desktop.pyautogui` if available, else `desktop.accessibility` |
+| `desktop` | `desktop.accessibility` |
 | `hybrid` | `browser.playwright` |
 | `auto` | `browser.playwright` |
 
@@ -319,68 +291,6 @@ curl -X POST http://localhost:8760/v1/computer-use/runs/cu-xyz789/approve \
 ```
 
 Approvals time out after **120 seconds** and default to denied.
-
----
-
-### MCP SSE Server (port 8765)
-
-**File:** `acu_mcp/server.py`
-
-Exposes 12 tools over the Model Context Protocol. Proxies to the gateway HTTP API.
-
-**Add to Claude Code (`~/.claude/settings.json`):**
-
-```json
-{
-  "mcpServers": {
-    "allternit-computer-use": {
-      "type": "sse",
-      "url": "http://localhost:8765/mcp"
-    }
-  }
-}
-```
-
-**Add to Claude Desktop (`~/.claude/claude_desktop_config.json`):**
-
-```json
-{
-  "mcpServers": {
-    "allternit-computer-use": {
-      "command": "python",
-      "args": ["-m", "acu_mcp.server", "stdio"],
-      "cwd": "/path/to/domains/computer-use/core",
-      "env": {
-        "ALLTERNIT_VISION_PROVIDER": "anthropic",
-        "ANTHROPIC_API_KEY": "sk-ant-..."
-      }
-    }
-  }
-}
-```
-
-#### MCP tool reference
-
-| Tool | Params | Returns |
-|------|--------|---------|
-| `screenshot` | `session_id`, `full_page=false` | `{screenshot: b64, url, width, height}` |
-| `navigate` | `session_id`, `url`, `wait_until="domcontentloaded"` | `{success, url, title}` |
-| `click` | `session_id`, `x?`, `y?`, `selector?` | `{success, element}` |
-| `type` | `session_id`, `text`, `selector?` | `{success, chars_typed}` |
-| `scroll` | `session_id`, `direction="down"`, `amount=3` | `{success, position}` |
-| `key` | `session_id`, `keys` | `{success, keys}` |
-| `find_element` | `session_id`, `description`, `strategy="accessibility"` | `{found, selector, text, bounds}` |
-| `read_screen` | `session_id`, `mode="accessibility"` | `{content, elements}` |
-| `run_code` | `session_id`, `code`, `language="python"`, `timeout=30` | `{success, output, error}` |
-| `record_start` | `session_id`, `name?` | `{recording_id, path}` |
-| `record_stop` | `session_id`, `recording_id` | `{success, frames, path}` |
-| `execute_task` | `session_id`, `task`, `mode="intent"`, `max_steps=20` | `{success, summary, steps, run_id}` |
-
-**`find_element` strategies:** `selector` (CSS) · `text` (visible text match) · `accessibility` (a11y tree) · `vision` (visual description)
-
-**`read_screen` modes:** `text` · `accessibility` · `structured`
-
-**`run_code`** runs in a subprocess with a minimal environment — only `PATH`, `HOME`, `TMPDIR`, `TEMP`, `TMP`, `LANG`, `LC_ALL` are passed through. Maximum timeout 120s.
 
 ---
 
@@ -450,30 +360,19 @@ Pluggable vision backends. All implement `analyze_image()` and `ground_and_reaso
 
 #### Provider selection
 
-Set `ALLTERNIT_VISION_PROVIDER`. If set to `auto` or unset, auto-detection runs in this priority order:
-
-1. `Allternit_VISION_INFERENCE_BASE` → `allternit`
-2. `ACU_SKILLS_URL` → `uitars`
-3. `ALLTERNIT_BRAIN_CMD` → `subprocess`
-4. `ANTHROPIC_API_KEY` → `anthropic`
-5. `OPENAI_API_KEY` → `openai`
-6. `GOOGLE_API_KEY` → `gemini`
-7. `QWEN_BASE_URL` → `qwen`
+Set `ALLTERNIT_VISION_PROVIDER`. If set to `auto`, `allternit` or unset, the
+engine uses the platform Gizzi brain (`AllternitGatewayProvider`), probing
+`ALLTERNIT_GIZZI_URL`, `TERMINAL_SERVER_URL`, `ALLTERNIT_LOCAL_BRAIN_URL`
+and then `http://127.0.0.1:4096`.
 
 #### Provider reference
 
-| Value | Backend | Default model | Required env vars |
-|-------|---------|---------------|-------------------|
-| `anthropic` | Anthropic API | `claude-3-opus-20240229` | `ANTHROPIC_API_KEY` |
-| `openai` | OpenAI API | `gpt-4o` | `OPENAI_API_KEY` |
-| `gemini` | Google Gemini | `gemini-2.0-flash-exp` | `GOOGLE_API_KEY` |
-| `azure` | Azure OpenAI | `gpt-4o` | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT_NAME` |
-| `qwen` | Qwen-VL endpoint | `Qwen2.5-VL-7B-Instruct` | `QWEN_BASE_URL` |
-| `showui` | ShowUI-2B local | `showlab/ShowUI-2B` | `SHOWUI_MODEL_PATH` (optional) |
-| `uitars` | UI-TARS skills API | — | `ACU_SKILLS_URL` (default `http://localhost:8770`) |
-| `allternit` | Allternit internal | `gpt-4o` | `Allternit_VISION_INFERENCE_BASE`, `Allternit_VISION_INFERENCE_KEY` |
-| `subprocess` | Any CLI brain | — | `ALLTERNIT_BRAIN_CMD` (default `claude`) |
-| `mock` | Hardcoded test | — | — (always available) |
+| Value | Backend | Required env vars |
+|-------|---------|-------------------|
+| `allternit` | Platform Gizzi brain session (default) | `ALLTERNIT_GIZZI_URL` (optional), `Allternit_VISION_MODEL_NAME` / `ALLTERNIT_BRAIN_MODEL` (optional) |
+| `subprocess` | Any CLI brain | `ALLTERNIT_BRAIN_CMD` (default `claude`), `ALLTERNIT_BRAIN_ARGS` |
+| `anthropic` | Anthropic API (dev mode) | `ANTHROPIC_API_KEY` |
+| `mock` | Hardcoded test | — (always available) |
 
 #### `ActionPlan` — vision provider output
 
@@ -530,36 +429,13 @@ screenshot → screenshot    scroll → scroll    key / press → key
 extract → extract    inspect → inspect    close → close
 ```
 
-#### `DomMcpAdapter` (`browser.dom_mcp`)
-
-**File:** `adapters/browser/dom_mcp_adapter.py`
-
-DOM-first adapter with its own Playwright instance. Strategy: match against accessibility tree first (zero vision tokens), fall back to returning the tree snapshot for vision grounding.
-
-Methods: `navigate()` · `find_element()` · `click()` · `type_text()` · `scroll()` · `screenshot()` · `read_screen()` · `execute_js()`
-
-#### `PyAutoGUIAdapter` (`desktop.pyautogui`)
-
-**File:** `adapters/desktop/pyautogui/pyautogui_adapter.py`
-
-Cross-platform desktop automation. Uses `mss` for fast screenshots, PyAutoGUI for mouse/keyboard.
-
-Safety: `FAILSAFE = True` (move mouse to corner to abort), `PAUSE = 0.1s` between actions.
-
-Platform permissions required:
-- **macOS:** Accessibility + Screen Recording in System Preferences → Privacy & Security
-- **Windows:** Run with sufficient user rights
-- **Linux:** `$DISPLAY` set, X11 accessible
-
-Supported execute actions: `click` · `type` · `fill` · `scroll` · `key` · `press` · `move`
-
 #### `AccessibilityAdapter` (`desktop.accessibility`)
 
 **File:** `adapters/desktop/accessibility_adapter.py`
 
-Reads native accessibility trees without screenshots — cheaper than vision for structural queries. macOS uses `NSAccessibility`/`AXUIElement` via pyobjc with AppleScript fallback. Windows uses UI Automation (comtypes). Linux is not yet implemented.
+The desktop adapter. Reads native accessibility trees without screenshots (cheaper than vision for structural queries) and posts input as Quartz CGEvents (`core/background_events.py`), with AppleScript for app and window management. macOS only; there is no pyautogui fallback.
 
-Best used for reading app state and finding elements by role/label. Pair with `PyAutoGUIAdapter` for click/type execution.
+Platform permissions required: Accessibility + Screen Recording in System Settings → Privacy & Security.
 
 ---
 
@@ -789,7 +665,7 @@ curl http://localhost:8760/v1/computer-use/cost/summary
     "input_tokens": 200, "output_tokens": 100, "total_tokens": 300,
     "est_cost_usd": 0.003, "pricing": "estimated",
     "by_stage": { "vision_planning": { "total_tokens": 300, "cost_usd": 0.0 } },
-    "model": "gpt-4o", "provider": "OpenAIVisionProvider"
+    "model": "claude-sonnet-4-5", "provider": "AnthropicVisionClient"
   }
 }
 ```
@@ -810,27 +686,14 @@ in. This is observability only: it never gates execution or invoices.
 
 | Variable | Default | Notes |
 |----------|---------|-------|
-| `ALLTERNIT_VISION_PROVIDER` | `auto` | `mock` `anthropic` `openai` `gemini` `uitars` `allternit` `subprocess` `azure` `qwen` `showui` |
+| `ALLTERNIT_VISION_PROVIDER` | `auto` | `allternit` `subprocess` `anthropic` `mock` |
 | `ANTHROPIC_API_KEY` | — | Required for `anthropic` |
-| `OPENAI_API_KEY` | — | Required for `openai` |
-| `GOOGLE_API_KEY` | — | Required for `gemini` |
-| `AZURE_OPENAI_API_KEY` | — | Required for `azure` |
-| `AZURE_OPENAI_ENDPOINT` | — | Required for `azure` |
-| `AZURE_OPENAI_DEPLOYMENT_NAME` | — | Required for `azure` |
-| `QWEN_BASE_URL` | `http://localhost:8000/v1` | |
-| `QWEN_API_KEY` | `not-required` | |
-| `QWEN_MODEL_NAME` | `Qwen/Qwen2.5-VL-7B-Instruct` | |
-| `GEMINI_MODEL_NAME` | `gemini-2.0-flash-exp` | |
-| `SHOWUI_MODEL_PATH` | `showlab/ShowUI-2B` | |
+| `ALLTERNIT_GIZZI_URL` | — | Gizzi brain base URL for `allternit` |
 | `ACU_GATEWAY_PORT` | `8760` | Gateway listen port |
-| `ACU_MCP_PORT` | `8765` | MCP server listen port |
-| `ACU_GATEWAY_URL` | `http://localhost:8760` | Used by MCP and SDK compatibility clients |
-| `ACU_SKILLS_URL` | `http://localhost:8770` | UI-TARS skills API base |
+| `ACU_GATEWAY_URL` | `http://localhost:8760` | Used by SDK compatibility clients |
 | `ACU_RECORDINGS_DIR` | `~/.allternit/recordings` | JSONL output directory |
 | `ACU_GIF_OUTPUT_DIR` | `/tmp/allternit-recordings` | GIF output directory |
-| `Allternit_VISION_INFERENCE_BASE` | — | Internal vision endpoint base URL |
-| `Allternit_VISION_INFERENCE_KEY` | — | Internal vision endpoint API key |
-| `Allternit_VISION_MODEL_NAME` | `gpt-4o` | Internal vision model |
+| `Allternit_VISION_MODEL_NAME` | — | Model for the `allternit` provider (`providerID/modelID`) |
 | `ALLTERNIT_BRAIN_CMD` | `claude` | CLI binary for subprocess provider |
 | `ALLTERNIT_BRAIN_ARGS` | — | Additional args for brain subprocess |
 
@@ -976,7 +839,8 @@ cd domains/computer-use/core
 source gateway/.venv/bin/activate
 
 # Core unit tests (no live browser required)
-ALLTERNIT_VISION_PROVIDER=mock python -m pytest tests/integration/test_adapter_classes.py -v
+ALLTERNIT_VISION_PROVIDER=mock python -m pytest tests/ -q --ignore=tests/integration \
+  --ignore=tests/test_e2e.py --ignore=tests/test_real_adapters.py
 
 # Integration suite
 ALLTERNIT_VISION_PROVIDER=mock python -m pytest tests/integration/ -v \
@@ -1017,14 +881,11 @@ domains/computer-use/core/
 │   └── perceptual_layer.py        Legacy perceptual API
 ├── adapters/
 │   ├── browser/
-│   │   ├── dom_mcp_adapter.py         DOM-first with a11y tree
 │   │   ├── playwright_adapter.py      Direct Playwright
-│   │   └── skyvern_adapter.py         Skyvern integration
+│   │   ├── cdp_adapter.py             Chrome DevTools Protocol
+│   │   └── extension_adapter.py       Browser-session channel (extension relay)
 │   └── desktop/
-│       ├── pyautogui/pyautogui_adapter.py
-│       └── accessibility_adapter.py
-├── acu_mcp/
-│   └── server.py                  MCP SSE server (port 8765)
+│       └── accessibility_adapter.py   Native desktop (Quartz events + AX tree)
 ├── observability/                 Recording, replay, analysis
 ├── conformance/                   Conformance test suites
 └── tests/

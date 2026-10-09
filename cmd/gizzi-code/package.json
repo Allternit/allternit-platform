@@ -104,7 +104,6 @@
     "@ai-sdk/provider": "2.0.1",
     "@ai-sdk/provider-utils": "3.0.21",
     "@alcalzone/ansi-tokenize": "0.2.5",
-    "@allternit/computer-use": "workspace:*",
     "@allternit/gizzi-util": "workspace:*",
     "@allternit/native-sessions": "workspace:*",
     "@allternit/os-contracts": "workspace:*",

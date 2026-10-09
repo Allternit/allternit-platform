@@ -1,0 +1,23 @@
+arc-driver fork
+===============
+
+Upstream:  https://github.com/shhivv/arc-cua (MIT, see LICENSE)
+Pinned at: 6b353039111c08c2c64c5229083606941e364eaf (2026-10-08, arc-cua 0.1.1)
+Forked:    2026-10-09 for the Allternit Driver (domains/computer-use/driver)
+
+Kept, unmodified: src/arc_cua/{driver,models,settling,errors,keyboard,safety}.py
+and src/arc_cua/backends/macos_{app,ax,ax_cache,background,changes,events,
+menus,ocr,parking,permissions}.py.
+
+Rewritten: arc_cua/__init__.py and arc_cua/backends/__init__.py export only
+the driver half.
+
+Removed: the arc-cua action layer and decision models (api.py, runtime.py,
+policies/, protocols.py, validation.py), its CLI and MCP server (cli.py,
+__main__.py, mcp_server.py), the Chrome/CDP backend (backends/chrome.py,
+cdp.py, chrome_page.js; browser work goes through Cua Driver), the hybrid and
+in-memory backends (backends/macos_hybrid.py, memory.py), benchmarks, examples,
+docs, site and tests.
+
+To update: diff the kept files against a newer upstream commit, apply, and
+change the pinned SHA above in the same commit.

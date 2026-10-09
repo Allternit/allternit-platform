@@ -344,7 +344,7 @@
               "tools/mcp",
               "tools/computer-use",
               "tools/computer-toolset",
-              "tools/computer-use-mcp",
+              "tools/allternit-driver",
               "tools/strict-tool-use",
               "tools/build-a-tool",
               "tools/plugin-adapters",
@@ -858,8 +858,7 @@
               "sdk/workflow-engine",
               "sdk/browser-tools",
               "sdk/computer-use-protocol",
-              "sdk/capsule",
-              "sdk/computer-use"
+              "sdk/capsule"
             ],
             "icon": "/icons/code.svg"
           }
@@ -904,7 +903,7 @@
     "socials": {
       "x": "https://x.com/allternit",
       "github": "https://github.com/Allternit",
-      "youtube": "https://www.youtube.com/@gizziioagi",
+      "youtube": "https://www.youtube.com/@allternit",
       "linkedin": "https://www.linkedin.com/in/allternit-llc"
     }
   },

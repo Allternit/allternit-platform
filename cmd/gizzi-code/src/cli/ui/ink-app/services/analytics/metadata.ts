@@ -121,22 +121,10 @@ export function isAnalyticsToolDetailsLoggingEnabled(
  * not user-configured — so logging them is not PII. Checked in addition to
  * isAnalyticsToolDetailsLoggingEnabled's transport/URL gates, which a stdio
  * built-in would otherwise fail.
- *
- * Feature-gated so the set is empty when the feature is off: the name
- * reservation (main.tsx, config.ts addMcpServer) is itself feature-gated, so
- * a user-configured 'computer-use' is possible in builds without the feature.
+  *
+ * Empty today: the vendored computer-use MCP server was removed 2026-10-09.
  */
-/* eslint-disable @typescript-eslint/no-require-imports */
-const BUILTIN_MCP_SERVER_NAMES: ReadonlySet<string> = new Set(
-  feature('CHICAGO_MCP')
-    ? [
-        (
-          require('../../utils/computerUse/common.js') as typeof import('../../utils/computerUse/common.js')
-        ).COMPUTER_USE_MCP_SERVER_NAME,
-      ]
-    : [],
-)
-/* eslint-enable @typescript-eslint/no-require-imports */
+const BUILTIN_MCP_SERVER_NAMES: ReadonlySet<string> = new Set<string>()
 
 /**
  * Spreadable helper for logEvent payloads — returns {mcpServerName, mcpToolName}

@@ -3,3 +3,6 @@
 
 # WXT dev browser profile data
 .wxt/chrome-data/
+
+# WXT generated types (wxt prepare)
+.wxt/

@@ -5,6 +5,8 @@ description: Provider-neutral contract, trust-core runtime, and gated migration 
 
 ## Overview
 
+<Note>2026-10-09 (D0 cleanup): the canonical providers, environments, leases and the canonical MCP server were removed. Computers are driven through the [computer toolset](/tools/computer-toolset). This router keeps receipts, session events and trajectory; with no providers registered, `/observe` and `/transactions` answer provider-not-found.</Note>
+
 **Canonical Computer Use** is the trust-core layer of the Allternit Computer Use Engine. It defines a provider-neutral contract that separates *what* an agent wants to do from *how* a browser, desktop, or sandbox adapter does it. The canonical router exposes this layer over HTTP at `/v1/computer-use/canonical`, and a matching MCP server exposes the same primitives as tools.
 
 The canonical layer is designed for safety and auditability:
@@ -20,7 +22,6 @@ Canonical Computer Use powers:
 - Human-in-the-loop approvals bound to exact transaction state.
 - Integrity-hashed receipts and append-only event trajectories.
 - Evidence-gated migration from legacy routes to canonical providers.
-- Scoped environments, leases, snapshots, and image governance.
 
 ## Key concepts
 
@@ -85,7 +86,6 @@ If a transaction's `base_state_id` resolves to an epoch lower than the resource'
 There are two approval authorities:
 
 - `ApprovalAuthority` issues single-use grants bound to the SHA-256 hash of a canonical transaction. The grant is consumed when the transaction executes.
-- `OperationApprovalAuthority` issues grants for non-transaction environment operations such as file writes, clipboard writes, shell execution, or mobile actions.
 
 Both authorities use HMAC-signed IDs, expire after a configurable TTL (default 120 seconds, max 600), and can be used only once.
 
@@ -100,18 +100,6 @@ Every executed transaction produces a `CanonicalReceipt` stored in SQLite. The r
 - An integrity hash over all of the above.
 
 Receipts can be retrieved and verified through the `/receipts/{receipt_id}` endpoint.
-
-### Environment authority
-
-`EnvironmentAuthority` is the durable registry for environments, images, snapshots, pools, and leases. It enforces:
-
-- Image digest validation and scan attestation.
-- Owner quotas (default 8 active environments per owner).
-- Lease exclusivity per environment.
-- State-machine transitions for environments (`requested` → `provisioning` → `running` → `stopping` → `stopped`).
-- TTL-based cleanup.
-
-Environment backends include local host control, local VM sandboxes, container GUI sandboxes, and customer-cloud BYOC provisioning.
 
 ### Session authority
 
@@ -136,7 +124,7 @@ The `/shadow/observe` endpoint captures the same resource through a primary prov
 ```text
 ┌─────────────────────────────────────────────────────────────────────┐
 │  MCP tools          Platform SDK           curl / custom client      │
-│   (canonical_mcp)      │                         │                  │
+│   (gateway HTTP)       │                         │                  │
 └──────────┬─────────────┴──────────┬──────────────┘                  │
            │                        │                                  │
            └────────────────────────┘                                  │
@@ -202,30 +190,6 @@ When running behind the Allternit platform gateway, routes are available under t
 | `POST` | `/approvals` | Issue a single-use transaction approval. |
 | `POST` | `/operation-approvals` | Issue an operation approval. |
 | `GET` | `/receipts/{receipt_id}` | Retrieve and verify a receipt. |
-
-### Environments
-
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/environment-providers` | List environment backend manifests. |
-| `POST` | `/images` | Register an environment image. |
-| `POST` | `/images/{digest}/scan` | Scan and attest an image. |
-| `POST` | `/environments` | Create an environment. |
-| `GET` | `/environments` | List environments. |
-| `GET` | `/environments/{environment_id}` | Get an environment record. |
-| `POST` | `/environments/{environment_id}/provision` | Provision the environment. |
-| `POST` | `/environments/{environment_id}/stop` | Stop the environment. |
-| `POST` | `/environments/{environment_id}/leases` | Acquire an exclusive lease. |
-| `POST` | `/leases/{lease_id}/release` | Release a lease. |
-| `POST` | `/environments/{environment_id}/snapshots` | Create a snapshot. |
-| `POST` | `/snapshots/{snapshot_id}/clone` | Clone a snapshot into a new environment. |
-| `POST` | `/environments/{environment_id}/exec` | Run a shell command. |
-| `POST` | `/environments/{environment_id}/files/read` | Read a text file. |
-| `POST` | `/environments/{environment_id}/files/write` | Write a text file. |
-| `POST` | `/environments/{environment_id}/files/list` | List files. |
-| `POST` | `/environments/{environment_id}/clipboard` | Read or write clipboard. |
-| `POST` | `/environments/{environment_id}/artifacts/export` | Export an artifact. |
-| `POST` | `/environments/{environment_id}/mobile/actions` | Execute a mobile action. |
 
 ### Evaluation, routing, and sessions
 
@@ -390,46 +354,6 @@ curl -X POST http://127.0.0.1:8760/v1/computer-use/canonical/transactions \
 }
 ```
 
-### Create and provision an environment
-
-```bash
-curl -X POST http://127.0.0.1:8760/v1/computer-use/canonical/environments \
-  -H "Content-Type: application/json" \
-  -d '{
-    "owner_id": "alice@allternit.com",
-    "provider_id": "allternit.local-sandbox",
-    "os": "linux",
-    "isolation": "vm",
-    "image_digest": "sha256:...",
-    "ttl_seconds": 3600,
-    "metadata": { "network_policy": "denied", "memory_mb": 2048 }
-  }'
-```
-
-```json
-{
-  "environment_id": "environment_...",
-  "owner_id": "alice@allternit.com",
-  "provider_id": "allternit.local-sandbox",
-  "os": "linux",
-  "isolation": "vm",
-  "state": "requested",
-  "image_digest": "sha256:..."
-}
-```
-
-Acquire a lease and provision:
-
-```bash
-curl -X POST http://127.0.0.1:8760/v1/computer-use/canonical/environments/environment_.../leases \
-  -H "Content-Type: application/json" \
-  -d '{"holder_id": "alice@allternit.com", "kind": "agent", "ttl_seconds": 300}'
-
-curl -X POST http://127.0.0.1:8760/v1/computer-use/canonical/environments/environment_.../provision \
-  -H "Content-Type: application/json" \
-  -d '{"lease_id": "lease_...", "holder_id": "alice@allternit.com", "approval_id": "operation_approval_..."}'
-```
-
 ### Record an evaluation result
 
 ```bash
@@ -473,14 +397,6 @@ cd domains/computer-use/core/gateway
 source .venv/bin/activate
 uvicorn main:app --port 8760
 ```
-
-### Start the MCP server
-
-```bash
-python -m canonical_mcp.server
-```
-
-The MCP server reads `ALLTERNIT_COMPUTER_URL` (default `http://127.0.0.1:8760`) and calls the canonical HTTP surface.
 
 ## Error codes
 

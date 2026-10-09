@@ -61,8 +61,8 @@ case "$SUITE" in
     ;;
   desktop)
     echo ""
-    echo "Running: Suite D — Desktop (requires display + pyautogui)"
-    echo "         Adapter: desktop.pyautogui"
+    echo "Running: Suite D — Desktop (requires display + Accessibility permission)"
+    echo "         Adapter: desktop.accessibility"
     python3 tests/test_real_adapters.py
     ;;
   routing)

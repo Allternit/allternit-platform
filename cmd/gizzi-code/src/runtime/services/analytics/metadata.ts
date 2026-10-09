@@ -120,18 +120,10 @@ export function isAnalyticsToolDetailsLoggingEnabled(
  * not user-configured — so logging them is not PII. Checked in addition to
  * isAnalyticsToolDetailsLoggingEnabled's transport/URL gates, which a stdio
  * built-in would otherwise fail.
- *
- * Feature-gated so the set is empty when the feature is off: the name
- * reservation (main.tsx, config.ts addMcpServer) is itself feature-gated, so
- * a user-configured 'computer-use' is possible in builds without the feature.
+  *
+ * Empty today: the vendored computer-use MCP server was removed 2026-10-09.
  */
-// src/runtime/utils/computerUse/common.ts is a dormant auto-generated shim
-// (`export {}`) in this tree; mirror the constant contract from the ink-app
-// implementation (src/cli/ui/ink-app/utils/computerUse/common.ts).
-const COMPUTER_USE_MCP_SERVER_NAME = 'computer-use'
-const BUILTIN_MCP_SERVER_NAMES: ReadonlySet<string> = new Set(
-  feature('CHICAGO_MCP') ? [COMPUTER_USE_MCP_SERVER_NAME] : [],
-)
+const BUILTIN_MCP_SERVER_NAMES: ReadonlySet<string> = new Set<string>()
 
 /**
  * Spreadable helper for logEvent payloads — returns {mcpServerName, mcpToolName}

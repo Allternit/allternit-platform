@@ -1,5 +1,5 @@
 """
-Allternit Computer Use — Cost accounting + demo UI tests
+Allternit Computer Use — Cost accounting tests
 
 Covers:
   * core/cost_accounting: honest zero, blended estimation, provider-reported
@@ -8,7 +8,6 @@ Covers:
     aggregate cost_summary.
   * HTTP: GET /v1/computer-use/runs/{id}/cost and /v1/computer-use/cost/summary;
     wiring through the direct, planning, replay, and workflow paths.
-  * gateway/demo_ui: /demo serves the self-contained page, /demo/status JSON.
 """
 
 import sqlite3
@@ -439,36 +438,3 @@ class TestCostEndpoints:
             assert resp.status_code == 404
         finally:
             client.__exit__(None, None, None)
-
-
-# ---------------------------------------------------------------------------
-# Demo UI router
-# ---------------------------------------------------------------------------
-
-class TestDemoUI:
-    def _client(self):
-        from fastapi import FastAPI
-        from fastapi.testclient import TestClient
-        import demo_ui
-
-        app = FastAPI()
-        app.include_router(demo_ui.router)
-        return TestClient(app)
-
-    def test_demo_page_serves_self_contained_html(self):
-        client = self._client()
-        resp = client.get("/demo")
-        assert resp.status_code == 200
-        assert "text/html" in resp.headers["content-type"]
-        body = resp.text
-        assert "Start canned demo run" in body
-        assert "/v1/computer-use/runs" in body
-        assert "EventSource" in body
-
-    def test_demo_status_json(self):
-        client = self._client()
-        resp = client.get("/demo/status")
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["demo"] is True
-        assert "vision_provider" in body

@@ -100,6 +100,16 @@ const required = [
     buildStep: 'npm run prepare:acu-gateway',
   },
   {
+    path: path.join(resourcesDir, 'computer-use', 'driver', 'allternit_driver', '__main__.py'),
+    label: 'Allternit Driver sidecar (allternit_driver)',
+    buildStep: 'npm run prepare:allternit-driver',
+  },
+  {
+    path: path.join(resourcesDir, 'computer-use', 'driver', 'arc', 'arc_cua', 'driver.py'),
+    label: 'Allternit Driver arc engine (forked arc-driver)',
+    buildStep: 'npm run prepare:allternit-driver',
+  },
+  {
     path: path.join(repoRoot, 'surfaces', 'phone-remote', 'client', 'index.html'),
     label: 'phone-remote viewer (client/index.html)',
     buildStep: 'surfaces/phone-remote/client must ship in extraResources',
