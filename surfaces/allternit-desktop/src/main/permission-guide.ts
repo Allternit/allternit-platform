@@ -171,6 +171,12 @@ async function testScreenCapture(): Promise<boolean> {
 export async function presentGuide(panel: PermissionPanel): Promise<PresentResult> {
   log.info(`[PermissionGuide] presentGuide called for panel: ${panel}`);
 
+  // Headless computers (ALLTERNIT_HEADLESS=1) never open app windows; the
+  // overlay would be the first thing a developer's screenshot shows.
+  if (process.env.ALLTERNIT_HEADLESS === '1') {
+    return { success: false, error: 'Permission guide is off on headless computers' };
+  }
+
   // Idempotent: if already granted, don't spawn overlay
   log.info('[PermissionGuide] Checking current permission state before presenting...');
   const status = await checkPermissions();

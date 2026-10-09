@@ -11,8 +11,11 @@
 # which is also the screen the computer toolset drives (xdotool/scrot); the
 # browser toolset uses headless Chrome.
 #
-# Since Desktop 1.1.5 (#1429) the app honors ALLTERNIT_HEADLESS=1: no welcome
-# wizard, its windows stay hidden, so the screen a developer sees is empty.
+# The app honors ALLTERNIT_HEADLESS=1 (#1429, completed by #1434): no welcome
+# wizard or permission overlay, its windows stay hidden, so the screen a
+# developer sees is empty. Desktop 1.1.5 has #1429 only and never redeems the
+# bootstrap when headless (the computer never pairs), so APP_DIR needs a build
+# with #1434; until one exists, build without APP_DIR (base 1.1.3 + API_BINARY).
 # Xvfb still starts at boot: the app still creates (hidden) windows, and the
 # Linux app segfaults on Chromium's headless Ozone platform when it does.
 #
@@ -27,7 +30,8 @@
 #                  `allternit-desktop-linux` artifact of the platform's
 #                  "Release Allternit Desktop" run: a directory, or its .zip),
 #                  installed over the base image's app. The base image ships
-#                  1.1.3, which shows its welcome window; use >= 1.1.5.
+#                  1.1.3, which shows its welcome window; needs a build with
+#                  #1434 (not 1.1.5, see above).
 #   API_BINARY   - optional Linux allternit-api binary to install over the
 #                  app's bundled one (e.g. the host's deployed
 #                  /opt/allternit-api/bin/allternit-api from main)

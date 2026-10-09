@@ -1176,7 +1176,9 @@ async function initializeBundledMode(): Promise<void> {
   appWindowOpened = true;
   // Device pairing is independent of local service readiness. Start waiting
   // immediately so the user can approve in parallel while the runtime boots.
-  const startupSignIn = showStartupWizard
+  // Headless computers skip the wizard but still sign in: the startup gate is
+  // where a provisioned computer redeems /etc/allternit/bootstrap.json.
+  const startupSignIn = showStartupWizard || (HEADLESS && !selfHosted)
     ? authManager.waitForStartupSignIn(splashWindow)
     : Promise.resolve(null);
   const updateSplash = (status: string, progress?: number) => {
@@ -1614,8 +1616,9 @@ async function initializeBundledMode(): Promise<void> {
     // On macOS, guide the user through granting these permissions.
     // The renderer signals readiness via permissionGuide.readyForCheck() when
     // its onboarding wizard reaches the permissions step. We also set a
-    // fallback timeout so old platform versions still get guided.
-    if (isFirstLaunch) {
+    // fallback timeout so old platform versions still get guided. Headless
+    // computers have nobody to grant anything and must stay windowless.
+    if (isFirstLaunch && !HEADLESS) {
       mainWindow.webContents.once('did-finish-load', async () => {
         if (!store.get('permissions').promptedDuringOnboarding) {
           let onboardingStarted = false;
