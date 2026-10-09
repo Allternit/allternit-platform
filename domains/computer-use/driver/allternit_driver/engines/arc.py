@@ -11,14 +11,12 @@ from __future__ import annotations
 import logging
 import sys
 import threading
-import time
 from typing import Any
 
 from ..element_map import RawNode
 
 log = logging.getLogger("allternit_driver.arc")
 
-CACHE_MAX_AGE_S = 5.0  # A no-change re-read reuses the last walk for at most this long.
 
 _KEYS = {
     "return": "ENTER", "enter": "ENTER", "esc": "ESCAPE", "escape": "ESCAPE", "tab": "TAB",
@@ -46,13 +44,14 @@ def arc_keys(spec: str) -> str:
 class ArcEngine:
     name = "arc"
 
-    def __init__(self) -> None:
+    def __init__(self, hub: Any = None) -> None:
         self._lock = threading.RLock()
         self._driver: Any = None
         self.error: str | None = None
-        # window key -> (snapshot, read time); for cheap no-change re-reads.
-        self._last: dict[str, tuple[Any, float]] = {}
-        self._watched: set[int] = set()
+        # The live map's notification hub (live/macos.py): arc's journal, settle
+        # counter and walk caches all run on its one observer per app.
+        self.hub = hub
+        self._resolved: dict[int, tuple[int, int]] = {}  # pid -> (hub epoch, window id)
 
     @property
     def available(self) -> bool:
@@ -65,7 +64,13 @@ class ArcEngine:
         try:
             from arc_cua import Driver
 
-            self._driver = Driver()
+            if self.hub is None:
+                from ..live.macos import AXHub
+
+                self.hub = AXHub()
+            from ..live.macos import app_factory
+
+            self._driver = Driver(app_factory=app_factory(self.hub))
             status = Driver.status()
             # Load the frameworks and backends now (~0.5 s, once), not on the
             # first read a user is waiting for.
@@ -90,17 +95,22 @@ class ArcEngine:
 
     # ---- targets -------------------------------------------------------------
 
-    def _watch(self, pid: int) -> None:
-        """Watch the app's notifications before its first walk (lock held), so
-        the very next re-read can be answered from that walk."""
-        if pid not in self._watched:
-            self._driver._app(pid).settle_probe(wait=True)
-            self._watched.add(pid)
-
     def resolve(self, pid: int, window_id: int | None) -> int:
+        if window_id:
+            return int(window_id)
+        # The app's current window, as last resolved, while no window-level
+        # notification arrived since (no AX call); else ask the app again.
+        epoch = self.hub.epoch(pid) if self.hub is not None else None
+        hit = self._resolved.get(pid)
+        if epoch is not None and hit is not None and hit[0] == epoch:
+            return hit[1]
         with self._lock:
-            self._watch(pid)
-            return int(window_id) if window_id else self._driver.target(pid).window_id
+            self._driver._app(pid)  # Subscribes the app before its first walk.
+            epoch = self.hub.epoch(pid) if self.hub is not None else None
+            wid = self._driver.target(pid).window_id
+        if epoch is not None:
+            self._resolved[pid] = (epoch, wid)
+        return wid
 
     def apps(self) -> list[dict[str, Any]]:
         from arc_cua import Driver
@@ -109,37 +119,40 @@ class ArcEngine:
 
     # ---- reads -----------------------------------------------------------------
 
-    def unchanged(self, key: str) -> Any | None:
-        """The last snapshot of this window when nothing was announced since it
-        was read (no structural change, no AX notification), else None."""
-        last = self._last.get(key)
-        if last is None or time.monotonic() - last[1] > CACHE_MAX_AGE_S:
-            return None
-        snap = last[0]
-        with self._lock:
-            from arc_cua.driver import _COUNT, _MARKER
-
-            app = self._driver._apps.get(snap.context["pid"])
-            if app is None or not app.app.exists(snap.context["window_id"]):
-                return None
-            count = snap.context.get(_COUNT)
-            if count is None or any(e.role == "WebArea" for e in snap.elements):
-                return None  # Notifications not watched, or a web page that announces nothing.
-            if app.journal.sequence != snap.context.get(_MARKER) or app.events.count != count:
-                return None
-        return snap
-
-    def read(self, key: str, pid: int, window_id: int) -> tuple[list[RawNode], dict[str, Any], Any]:
+    def read(self, pid: int, window_id: int, full: bool = True) -> tuple[list[RawNode], dict[str, Any], Any]:
+        """Walk one window. ``full=False`` patches: the walk cache re-reads only
+        the elements the app's notifications named since the last walk (plus a
+        child-list check of containers); ``full`` starts the cache over."""
         from arc_cua import WindowTarget
 
         with self._lock:
-            self._watch(pid)
+            if full:
+                cache = getattr(self._driver._app(pid).backend(window_id), "_cache", None)
+                if cache is not None:
+                    cache.reset(None, None)
             snap = self._driver.observe(WindowTarget(pid, window_id))
-        self._last[key] = (snap, time.monotonic())
         return self.nodes(snap), self.meta(snap), snap
 
-    def remember(self, key: str, snap: Any) -> None:
-        self._last[key] = (snap, time.monotonic())
+    @staticmethod
+    def running(pid: int) -> bool:
+        import AppKit  # type: ignore
+
+        app = AppKit.NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
+        return app is not None and not app.isTerminated()
+
+    def forget_window(self, pid: int) -> None:
+        self._resolved.pop(pid, None)
+
+    def release(self, pid: int) -> None:
+        """Stop working with an app (unwatched, or it quit): its observer, walk
+        caches and parked windows go."""
+        self._resolved.pop(pid, None)
+        with self._lock:
+            if self._driver is not None:
+                try:
+                    self._driver.release(pid)
+                except Exception as e:
+                    log.debug("release %s: %s", pid, e)
 
     @staticmethod
     def nodes(snap: Any) -> list[RawNode]:

@@ -11,6 +11,7 @@ import logging
 import os
 import signal
 import sys
+import time
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(HERE, "arc"))  # The forked arc-driver package.
@@ -48,7 +49,29 @@ def main() -> None:
 
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
-    serve(driver, args.listen, args.endpoint_file, token)
+    if sys.platform != "darwin":
+        serve(driver, args.listen, args.endpoint_file, token)
+        return
+    # macOS: NSWorkspace (running apps, the frontmost app) only updates while
+    # the main thread runs its run loop; without it, an app launched after the
+    # sidecar started is "not running" forever. Serve on a thread, pump here.
+    import threading
+
+    import Foundation  # type: ignore
+
+    def serve_then_exit() -> None:
+        try:
+            serve(driver, args.listen, args.endpoint_file, token)
+        finally:
+            os._exit(1)
+
+    threading.Thread(target=serve_then_exit, name="server", daemon=True).start()
+    loop = Foundation.NSRunLoop.mainRunLoop()
+    while True:
+        began = time.monotonic()
+        loop.runUntilDate_(Foundation.NSDate.dateWithTimeIntervalSinceNow_(1.0))
+        if time.monotonic() - began < 0.01:  # No sources yet: don't spin.
+            time.sleep(0.25)
 
 
 if __name__ == "__main__":

@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from . import element_map as em
+from . import live as lv
 from .engines.arc import ArcEngine
 from .engines.cua import CuaEngine, CuaError
 from .locks import WindowLocks
@@ -71,6 +72,29 @@ class Driver:
         self._labels: dict[int, str] = {}  # pid -> app key
         self._pids: dict[str, int] = {}  # app name / bundle id -> pid
         self._last_use = float("-inf")
+        self.live = lv.LiveMaps(self._observer(), self._live_refresh, self._live_forget)
+
+    def _observer(self) -> lv.Observer:
+        """This OS's accessibility notifications for the live map. Any failure
+        leaves the base Observer: every window then reads on a timer."""
+        try:
+            if self.os == "darwin":
+                from .live.macos import AXHub
+
+                if self.arc.hub is None:
+                    self.arc.hub = AXHub()
+                return self.arc.hub
+            if self.os.startswith("linux"):
+                from .live.atspi import ATSPIObserver
+
+                return ATSPIObserver()
+            if self.os == "win32":
+                from .live.uia import UIAObserver
+
+                return UIAObserver()
+        except Exception as e:
+            log.warning("live map observer unavailable: %s", e)
+        return lv.Observer()
 
     def start(self) -> None:
         if self.os == "darwin":
@@ -104,11 +128,12 @@ class Driver:
                 warmed = pid
                 t = Target(pid, self.arc.resolve(pid, None), self._label(pid))
                 self._targets[t.key] = t
-                self._read(t)
+                self._read(t, asked=False)
             except Exception as e:  # An app without windows, or one quitting.
                 log.debug("prewarm skipped: %s", e)
 
     def close(self) -> None:
+        self.live.close()
         self.router.save()
         self.arc.close()
         self.cua.close()
@@ -224,35 +249,84 @@ class Driver:
         start = time.perf_counter()
         self._last_use = time.monotonic()
         t = self.target(p)
-        version, info = self._read(t, fresh=bool(p.get("fresh")), crops=bool(p.get("crops")))
+        try:
+            version, info = self._read(t, fresh=bool(p.get("fresh")), crops=bool(p.get("crops")))
+        except Exception as e:
+            # The app's window, resolved without a notification since, closed
+            # quietly (in the background): resolve it again once.
+            if p.get("window_id") or type(e).__name__ != "TargetUnavailable" or not self._arc_ok():
+                raise
+            self.arc.forget_window(t.pid)
+            self.live.drop(t.key, "window gone")
+            t = self.target(p)
+            version, info = self._read(t, fresh=bool(p.get("fresh")), crops=bool(p.get("crops")))
         out = self._answer(t, version, info, p)
         out["ms"] = _ms(start)
         return out
 
-    def _read(self, t: Target, fresh: bool = False, crops: bool = False) -> tuple[em.Version, dict[str, Any]]:
+    def _read(self, t: Target, fresh: bool = False, crops: bool = False, asked: bool = True) -> tuple[em.Version, dict[str, Any]]:
+        """The window's map. A watched, clean window answers from the live map
+        with no accessibility call; a dirty one is patched first; ``fresh``
+        (a forced refresh) and first sight walk the whole window."""
+        self.live.ensure(t.key, t.pid, t.window_id, asked)
+
         def run(d: Decision) -> tuple[em.Version, dict[str, Any]]:
             with self.locks.reader(t.key) as waited:
                 cur = self.maps.window(t.key).current
+                mode = "full"
                 if not fresh and not crops and cur is not None and cur.engine == d.engine:
-                    if d.engine == ARC and self.arc.unchanged(t.key) is not None:
+                    mode = self.live.serve(t.key)
+                    if mode is None or (waited and time.monotonic() - cur.meta.get("_at", 0) < COALESCE_S):
                         return cur, {"engine": d.engine, "cached": True}
-                    if waited and time.monotonic() - cur.meta.get("_at", 0) < COALESCE_S:
-                        return cur, {"engine": d.engine, "cached": True}
-                if d.engine == ARC:
-                    nodes, meta, snap = self.arc.read(t.key, t.pid, t.window_id)
-                    self._snaps[t.key] = snap
-                else:
-                    nodes, meta = self.cua.read(t.pid, t.window_id)
-                origin = nodes[0].bounds[:2] if nodes and nodes[0].bounds else (0.0, 0.0)
-                elements = em.build(nodes, origin)
-                if crops and d.engine == ARC:
-                    self.arc.crop_hashes(t.pid, t.window_id, elements)
-                meta["_at"] = time.monotonic()
-                version, _ = self.maps.record(t.key, elements, d.engine, meta)
-                self.router.mark_degraded(t.app, meta.get("degraded"))
-                return version, {"engine": d.engine, "cached": False}
+                return self._walk(t, d.engine, full=mode == "full", crops=crops), {"engine": d.engine, "cached": False}
 
         return self._routed("read", t.app, run)
+
+    def _walk(self, t: Target, engine: str, full: bool, crops: bool = False) -> em.Version:
+        """Re-read one window into its map (reader lock held): a patch or a full
+        walk on arc; a read on Cua (narrow while the window is degraded)."""
+        full = self.live.begin(t.key) or full
+        if engine == ARC:
+            nodes, meta, snap = self.arc.read(t.pid, t.window_id, full=full)
+            self._snaps[t.key] = snap
+        else:
+            w = self.live.get(t.key)
+            narrow = lv.DEGRADED_MAX_ELEMENTS if w is not None and w.degraded else None
+            nodes, meta = self.cua.read(t.pid, t.window_id, max_elements=narrow)
+        origin = nodes[0].bounds[:2] if nodes and nodes[0].bounds else (0.0, 0.0)
+        elements = em.build(nodes, origin)
+        if crops and engine == ARC:
+            self.arc.crop_hashes(t.pid, t.window_id, elements)
+        meta["_at"] = time.monotonic()
+        version, _ = self.maps.record(t.key, elements, engine, meta)
+        self.live.done(t.key, full)
+        self.router.mark_degraded(t.app, meta.get("degraded"))
+        return version
+
+    def _live_refresh(self, key: str, full: bool) -> None:
+        """The live map's worker: patch a window after its notifications."""
+        t = self._targets.get(key)
+        cur = self.maps.window(key).current
+        if t is None or cur is None:
+            return
+        with self.locks.reader(key):
+            try:
+                self._walk(t, cur.engine, full)
+            except Exception as e:
+                if type(e).__name__ != "TargetUnavailable":
+                    raise
+                if self.arc.running(t.pid):
+                    raise lv.WindowGone(str(e)) from e
+                raise lv.AppGone(str(e)) from e
+
+    def _live_forget(self, key: str) -> None:
+        """A window left the live map (idle, evicted, or its app quit)."""
+        t = self._targets.pop(key, None)
+        self._snaps.pop(key, None)
+        self.maps.forget(key)
+        if t is not None and self._arc_ok() and not any(o.pid == t.pid for o in self._targets.values()):
+            self.arc.release(t.pid)
+            self._labels.pop(t.pid, None)
 
     def _answer(self, t: Target, version: em.Version, info: dict[str, Any], p: dict[str, Any]) -> dict[str, Any]:
         meta = version.meta
@@ -261,6 +335,7 @@ class Driver:
             "version": version.number,
             "engine": info["engine"],
             "cached": info["cached"],
+            "live": self.live.state(t.key),
         }
         degraded = self.router.degraded.get(t.app)
         if degraded:
@@ -300,10 +375,11 @@ class Driver:
             raise DriverError("unknown_element", f"{eid} isn't in any element map; call read_ui first")
         t = self._targets[key]
         wm = self.maps.window(key)
+        self._read(t)  # Up to date with every notification so far (no AX call when clean).
         try:
             cur = wm.check(int(p["version"]) if p.get("version") is not None else None)
         except em.StaleVersion:
-            fresh = self.read_ui({"pid": t.pid, "window_id": t.window_id, "fresh": True})
+            fresh = self.read_ui({"pid": t.pid, "window_id": t.window_id})
             return {"status": "stale_version", "map": fresh, "ms": _ms(start)}
         out = self._act_on(t, cur, eid, op, p.get("value"), p.get("key"))
         out["ms"] = _ms(start)
@@ -334,11 +410,11 @@ class Driver:
                     status = res.status
                     if res.snapshot is not None:
                         self._snaps[t.key] = res.snapshot
-                        self.arc.remember(t.key, res.snapshot)
                         nodes = self.arc.nodes(res.snapshot)
                         meta = {**self.arc.meta(res.snapshot), "_at": time.monotonic()}
                         origin = nodes[0].bounds[:2] if nodes and nodes[0].bounds else (0.0, 0.0)
                         cur, _ = self.maps.record(t.key, em.build(nodes, origin), ARC, meta)
+                        self.live.done(t.key, False)
                     settled = getattr(res, "settled", None)
                 else:
                     self.cua.act(t.pid, t.window_id, element.native, op, value, key)
@@ -368,9 +444,7 @@ class Driver:
         def run(d: Decision) -> None:
             with self.locks.input(t.key):
                 if d.engine == ARC:
-                    res = self.arc.menu(t.pid, t.window_id, parts)
-                    if res.snapshot is not None:
-                        self.arc.remember(t.key, res.snapshot)
+                    self.arc.menu(t.pid, t.window_id, parts)
                 else:
                     self.cua.menu(t.pid, t.window_id, parts)
 
@@ -428,7 +502,6 @@ class Driver:
                 with self.locks.reader(t.key):
                     snap = self.arc.wait(self._snaps[t.key], timeout_s=min(remaining, 1.0))
                 self._snaps[t.key] = snap
-                self.arc.remember(t.key, snap)
                 nodes = self.arc.nodes(snap)
                 origin = nodes[0].bounds[:2] if nodes and nodes[0].bounds else (0.0, 0.0)
                 version, _ = self.maps.record(t.key, em.build(nodes, origin), ARC, {**self.arc.meta(snap), "_at": time.monotonic()})
@@ -451,13 +524,12 @@ class Driver:
         first_id = next((s["act"]["id"] for s in steps if isinstance(s.get("act"), dict) and s["act"].get("id")), None)
         t = self.target({**p, "element": first_id})
         wm = self.maps.window(t.key)
+        self._read(t)  # Up to date with every notification so far (no AX call when clean).
         if p.get("version") is not None:
             try:
                 wm.check(int(p["version"]))
             except em.StaleVersion:
-                return {"ok": False, "status": "stale_version", "map": self.read_ui({"pid": t.pid, "window_id": t.window_id, "fresh": True}), "ms": _ms(start)}
-        if wm.current is None:
-            self._read(t)
+                return {"ok": False, "status": "stale_version", "map": self.read_ui({"pid": t.pid, "window_id": t.window_id}), "ms": _ms(start)}
         initial = wm.current.number
         batch_engine = self.router.choose("batch", t.app, self.capable("batch"))
         results: list[dict[str, Any]] = []
@@ -576,16 +648,15 @@ class Driver:
             if d.engine == ARC and t.key in self._snaps:
                 snap = self.arc.wait(self._snaps[t.key], timeout_s=timeout / 1000)
                 self._snaps[t.key] = snap
-                self.arc.remember(t.key, snap)
                 nodes = self.arc.nodes(snap)
                 origin = nodes[0].bounds[:2] if nodes and nodes[0].bounds else (0.0, 0.0)
                 return self.maps.record(t.key, em.build(nodes, origin), ARC, {**self.arc.meta(snap), "_at": time.monotonic()})[0]
             deadline = time.monotonic() + timeout / 1000
-            while True:
-                v = self._read(t, fresh=True)[0]
+            while True:  # The live map patches on each notification; poll it, not the app.
+                v = self._read(t)[0]
                 if v.number != before or time.monotonic() >= deadline:
                     return v
-                time.sleep(0.15)
+                time.sleep(0.02)
 
         version = self._routed("wait", t.app, run)
         out: dict[str, Any] = {"ok": True, "changed": version.number != before, "version": version.number, "ms": _ms(start)}
@@ -646,7 +717,7 @@ class Driver:
     # ---- introspection ----------------------------------------------------------------
 
     def status(self, _p: dict[str, Any] | None = None) -> dict[str, Any]:
-        return {"os": self.os, "engines": self.engines()}
+        return {"os": self.os, "engines": self.engines(), "live": self.live.status()}
 
     def router_table(self, _p: dict[str, Any] | None = None) -> dict[str, Any]:
         return self.router.table()
