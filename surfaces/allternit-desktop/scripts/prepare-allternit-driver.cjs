@@ -51,6 +51,9 @@ const PYTHONS = {
   'win32-x64': ['x86_64-pc-windows-msvc', 'dbada31f91a4fff934dae85e7998d91f1e926135bd88ffed4921a337d5680f48'],
 };
 // Parts of the standard distribution the driver never loads (~25 MB).
+// The live map's event observers (domains/computer-use/driver/allternit_driver/live/):
+// pure-Python wheels, so pip on the build host stages them for any target.
+const OBSERVER_PACKAGES = { linux: ['jeepney==0.9.0'], win32: ['comtypes==1.4.11'] };
 const PRUNE = ['test', 'idlelib', 'tkinter', 'turtledemo', 'ensurepip', 'lib2to3', 'pydoc_data', '__phello__'];
 const SKIP = new Set(['__pycache__', '.pytest_cache', 'tests', '.venv']);
 
@@ -120,7 +123,8 @@ async function stagePython(key) {
   const [triple, sha256] = PYTHONS[key];
   const dir = path.join(pythonRoot, key);
   const stamp = path.join(dir, '.allternit-python.json');
-  const want = { pbs: PBS, python: PY, sha256, pyobjc: key.startsWith('darwin') ? PYOBJC : null, pip: true };
+  const observers = OBSERVER_PACKAGES[key.split('-')[0]] || [];
+  const want = { pbs: PBS, python: PY, sha256, pyobjc: key.startsWith('darwin') ? PYOBJC : null, observers, pip: true };
   try {
     if (JSON.stringify(JSON.parse(fs.readFileSync(stamp, 'utf8'))) === JSON.stringify(want)) {
       log(`Python ${PY} already staged for ${key}`);
@@ -157,6 +161,15 @@ async function stagePython(key) {
       '-m', 'pip', 'install', '--quiet', '--disable-pip-version-check', '--no-compile',
       '--only-binary=:all:', '--platform', 'macosx_11_0_universal2', '--python-version', '3.12',
       '--implementation', 'cp', '--target', sitePackages(dir, key), ...PYOBJC_PACKAGES,
+    ], { stdio: 'inherit' });
+  }
+  if (observers.length) {
+    const runner = [pythonExe(dir, key), 'python3', 'python', pythonExe(path.join(pythonRoot, 'darwin-arm64'), 'darwin-arm64')]
+      .find((candidate) => spawnSync(candidate, ['-m', 'pip', '--version'], { stdio: 'ignore' }).status === 0);
+    if (!runner) throw new Error('no Python with pip available to stage the live-map observer packages');
+    execFileSync(runner, [
+      '-m', 'pip', 'install', '--quiet', '--disable-pip-version-check', '--no-compile', '--no-deps',
+      '--only-binary=:all:', '--target', sitePackages(dir, key), ...observers,
     ], { stdio: 'inherit' });
   }
   // Build-time only: headers, Tcl/Tk, PyObjC's own test suite (~35 MB). pip
