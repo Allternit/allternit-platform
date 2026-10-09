@@ -178,7 +178,11 @@ fn declared_connectors(capabilities: &Value) -> bool {
 /// What the page may use. Storage needs only the declaration; AI and
 /// connectors also need the org switches and an inside viewer.
 pub fn allowed(subject: &RuntimeSubject<'_>, org: Option<&OrgSettings>) -> Allowed {
-    let base: Result<(), Denied> = if !matches!(subject.kind, "page" | "card") {
+    let kind_ok = matches!(subject.kind, "page" | "card");
+    // Dashboards run on the viewer's own connectors (and nothing else), so
+    // they share the connectors capability and its consent, not storage or AI.
+    let dashboard = subject.kind == "dashboard";
+    let base: Result<(), Denied> = if !(kind_ok || dashboard) {
         Err(Denied::NotAPage)
     } else if subject.runtime_version < 2 {
         Err(Denied::LegacyArtifact)
@@ -187,9 +191,10 @@ pub fn allowed(subject: &RuntimeSubject<'_>, org: Option<&OrgSettings>) -> Allow
     } else {
         Ok(())
     };
-    let storage = base.and(if declared_storage(subject.capabilities) { Ok(()) } else { Err(Denied::NotDeclared) });
+    let page_only = if kind_ok { base } else { Err(Denied::NotAPage) };
+    let storage = page_only.and(if declared_storage(subject.capabilities) { Ok(()) } else { Err(Denied::NotDeclared) });
     let outside = if subject.is_outside_invitee() { Err(Denied::OutsideInvitee) } else { Ok(()) };
-    let ai = base.and(outside).and(if declared_ai(subject.capabilities) { Ok(()) } else { Err(Denied::NotDeclared) });
+    let ai = page_only.and(outside).and(if declared_ai(subject.capabilities) { Ok(()) } else { Err(Denied::NotDeclared) });
     let connectors = base
         .and(outside)
         .and(if org.is_some_and(|o| !o.connectors) { Err(Denied::OrgOff) } else { Ok(()) })
@@ -328,6 +333,20 @@ mod tests {
         let a = allowed(&subject(&caps, "member", Some("org_a")), Some(&disabled));
         assert_eq!(a.storage, Err(Denied::OrgOff));
         assert_eq!(a.ai, Err(Denied::OrgOff));
+    }
+
+    #[test]
+    fn dashboards_use_connectors_only() {
+        let caps = json!({"storage": true, "ai": true, "connectors": [{"connector": "stripe", "tools": ["list"]}]});
+        let mut s = subject(&caps, "member", Some("org_a"));
+        s.kind = "dashboard";
+        let a = allowed(&s, Some(&OrgSettings::default()));
+        assert_eq!(a.storage, Err(Denied::NotAPage));
+        assert_eq!(a.ai, Err(Denied::NotAPage));
+        assert_eq!(a.connectors, Ok(()));
+        let none = json!({});
+        s.capabilities = &none;
+        assert_eq!(allowed(&s, None).connectors, Err(Denied::NotDeclared));
     }
 
     #[test]

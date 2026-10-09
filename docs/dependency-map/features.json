@@ -735,17 +735,18 @@
       "label": "Dashboards (live tiles that query your connectors)",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "Artifacts v2 dashboard kind: a 12-column grid of KPI, line, area, bar and table tiles, each carrying its own connector query (or read-only SQL for a warehouse). Runs as the viewer through the MCP Apps bridge with first-use approval, cached first paint, refresh on open/interval/filter, click-to-see-query and per-tile errors. Edited by chat (artifact_update) or by hand (rename, reorder, resize). Paid plans; Desktop, phone layout and the PWA (stacked to one column). Snowflake, BigQuery, Redshift, Databricks and ClickHouse are listed in the connector directory.",
+      "description": "Artifacts v2 dashboard kind: a 12-column grid of KPI, line, area, bar and table tiles, each carrying its own connector query (or read-only SQL for a warehouse). Runs as the viewer through the MCP Apps bridge with first-use approval that follows the account, cached first paint, refresh on open/interval/filter, click-to-see-query and per-tile errors. Edited by chat (artifact_update) or by hand (rename, reorder, resize). Paid plans; Desktop, phone layout and the PWA (stacked to one column). Snowflake, BigQuery, Redshift, Databricks and ClickHouse are listed in the connector directory.",
       "touches": [
         "allternit-ai/src/lib/artifacts",
         "allternit-ai/src/components/artifacts",
         "allternit-ai/src/lib/openui",
-        "allternit-ai/src/views/mini-apps"
+        "allternit-ai/src/views/mini-apps",
+        "allternit/cmd/allternit-cloud-api/src/artifacts/runtime.rs"
       ],
       "decisions": [
         {
           "on": "2026-10-09",
-          "note": "Body is application/vnd.allternit.dashboard+json v1 (dashboards saved as OpenUI cards still open as cards). Queries reuse the card tool client: read-only tools only, plus one read-only SELECT through a warehouse SQL tool. First-use approval is per user and artifact on the device. The owner's client declares capabilities.connectors so link sharing is refused. Warehouses with a per-account address (Snowflake, Databricks) or a self-run server (Redshift) are listed as setup guides, not invented endpoints. PDF export prints the dashboard; PNG is still coming soon."
+          "note": "Body is application/vnd.allternit.dashboard+json v1 (dashboards saved as OpenUI cards still open as cards). Queries reuse the card tool client: read-only tools only, plus one read-only SELECT through a warehouse SQL tool. First-use approval is saved to the account (the page-runtime connectors consent, with per-tool off in denied_tools) and localStorage is only a first-paint cache; signed-out viewers get no connectors. The owner's client declares capabilities.connectors so link sharing is refused. Warehouses with a per-account address (Snowflake, Databricks) or a self-run server (Redshift) are listed as setup guides, not invented endpoints. PDF export prints the dashboard; PNG export captures the rendered grid with modern-screenshot."
         }
       ],
       "evidence": [
