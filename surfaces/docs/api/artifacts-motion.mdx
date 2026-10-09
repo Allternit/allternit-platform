@@ -1,0 +1,91 @@
+---
+title: Motion body format
+description: The JSON body of a motion artifact, how the renderer draws it, and how export works.
+---
+
+A `motion` artifact has `body_format` `application/vnd.allternit.motion+json`.
+The body is data only; nothing in it is run as code. Create and update it
+through the [Artifacts API](/api/artifacts-v2) or the `artifact_create` and
+`artifact_update` tools.
+
+## Body
+
+```json
+{
+  "version": 1,
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "theme": { "bg": "#0b0b0f", "fg": "#f5f5f7", "accent": "#6d7cff", "muted": "#8e8ea0", "font": "sans" },
+  "scenes": [
+    {
+      "id": "s1",
+      "type": "title",
+      "title": "Intro",
+      "duration": 3,
+      "transition": { "type": "cut", "duration": 0 },
+      "bg": "",
+      "color": "",
+      "props": { "text": "Q3 in numbers", "subtitle": "Revenue and users", "align": "left" }
+    }
+  ]
+}
+```
+
+| Field | Notes |
+|---|---|
+| `version` | `1`. A higher number is refused by older apps with a message to update. |
+| `width`, `height` | 320 to 3840. Drawing is scaled from 1080p units. |
+| `fps` | 12 to 60. |
+| `theme` | `bg`, `fg`, `accent`, `muted` as `#rgb` or `#rrggbb`; `font` is `sans`, `serif` or `mono`. |
+| `scenes` | 1 to 40 scenes, at most 180 seconds in all. |
+| scene `id` | Unique in the body. Made up when missing. |
+| scene `type` | `title`, `counter`, `chart`, `logo` or `list`. Guessed from `props` when missing. |
+| scene `title` | The label in the scene list. |
+| scene `duration` | Seconds, 0.5 to 60. |
+| scene `transition` | How the scene comes in: `cut`, `fade`, `wipe` or `slide`, with `duration` in seconds (0.1 to 2). It runs inside the scene's own duration, so the total length is the sum of the scene durations. The first scene is always a cut. |
+| scene `bg`, `color` | Optional `#rrggbb` overrides of the theme background and text colour. |
+
+### Props by type
+
+| Type | Props |
+|---|---|
+| `title` | `text`, `subtitle`, `align` (`left` or `center`) |
+| `counter` | `label`, `from`, `to`, `prefix`, `suffix`, `decimals` (0 to 4), `caption` |
+| `chart` | `chart` (`bar` or `line`), `title`, `labels`, `values`, `unit`; at most 24 points |
+| `logo` | `text`, `caption`, `src` (an `https` URL or `data:image/...`; anything else is dropped) |
+| `list` | `title`, `items`; at most 12 items |
+
+Text is limited to 400 characters per field. The parser fills defaults, clamps
+numbers to the limits above, and keeps going on bad values, so a hand-written or
+model-written body still plays. It refuses a body that isn't JSON, has no
+scenes, or has a `version` newer than it knows. The model-side tools refuse a
+body without a non-empty `scenes` array.
+
+## Renderer
+
+`renderFrame(ctx, composition, t, assets?)` draws the frame at time `t` seconds.
+It is a pure function: it reads no clock and no random numbers and keeps no
+state between calls. The preview, the scrubber, the reduced-motion poster frame
+and the video export all call it, so the same `t` gives the same picture.
+
+- Playback only moves `t` forward from a frame timer. What is drawn never
+  depends on that timer.
+- Motion per object: text rises out of a mask word by word, numbers count up
+  on an ease-out curve, bars grow one after another, lines draw along their
+  length, logos scale in with a small overshoot, list rows slide in in turn.
+- A transition draws the previous scene's last frame, then the incoming scene
+  over it (faded, clipped by a moving edge, or slid in).
+- Logo images are decoded before drawing. A logo that fails to load shows its
+  name as a wordmark.
+
+## Export
+
+Frames are drawn by seeking: frame `i` is drawn at `t = i / fps`.
+
+| Where | Path |
+|---|---|
+| Allternit Desktop | The app sends each frame as a JPEG to the main process (`window.allternit.motion`: `check`, `begin`, `frame`, `finish`, `abort`). It encodes H.264 with the local ffmpeg and shows a save dialog. Without ffmpeg the app uses the browser path. |
+| Web, phone layout, PWA | WebCodecs and an MP4 muxer in the tab. H.264 gives MP4; VP9 or AV1 only gives WebM, and the result says so. No encoder, no export. |
+
+There is no server-side render route. Exported videos have no audio track.

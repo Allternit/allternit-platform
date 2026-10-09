@@ -58,10 +58,14 @@ full screen.
 - **Versions.** Editors can open any earlier version from the clock menu.
   "Back to latest" returns to the current one.
 - **Share** opens the sharing settings (below).
+- **Turn into motion.** On a doc or a dashboard (Super, Ultra and Team), the
+  **Export** menu also has **Turn into motion**, which asks Allternit for a
+  short animation of it. See [Motion](/guides/motion).
 - **Export** lists what this kind can export. Every artifact has **Download
   source** and **Copy**. Diagrams also export **PNG** and **SVG**; pages
   export an **HTML file** (and, on Allternit Desktop with HyperFrames, an
-  **MP4 video**). Word, PDF, PowerPoint, Excel and the other formats are
+  **MP4 video**); motion exports an **MP4 video** on every surface (see
+  [Motion](/guides/motion)). Word, PDF, PowerPoint, Excel and the other formats are
   listed as *Coming soon*.
 - On Desktop and the web, drag the window's left edge to resize it, or use
   the full-width button to give it the whole view. Press the × to close it.
@@ -164,13 +168,15 @@ rest is copied the next time the app starts.
   ChatView) and `ArtifactPaneWindow.tsx` (Cowork and project panes).
 - Model contract: the turn carries `output: {kind}` when an Output is picked,
   and the system prompt carries the artifacts manual
-  (`ARTIFACTS_MANUAL`) plus one line for the picked Output. The model creates
+  (`ARTIFACTS_MANUAL`), the motion body manual when Motion is on for the user,
+  plus one line for the picked Output. The model creates
   artifacts with `artifact_create` / `artifact_update`; the transcript renders
   each call as a card and saves `persisted:false` results under the same id.
 - API, schema and sharing rules: `allternit/docs/design/artifacts-v2.md`.
 
 ## Related
 
+- [Motion](/guides/motion)
 - [Artifact modes](/guides/artifact-modes)
 - [Artifact tools](/tools/artifact-tools)
 - [Artifacts v2 API](/api/artifacts-v2)
