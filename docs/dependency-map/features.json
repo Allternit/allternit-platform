@@ -514,11 +514,10 @@
       "status": "building",
       "description": "Artifacts v2 dashboard kind: a 12-column grid of KPI, line, area, bar and table tiles, each carrying its own connector query (or read-only SQL for a warehouse). Runs as the viewer through the MCP Apps bridge with first-use approval, cached first paint, refresh on open/interval/filter, click-to-see-query and per-tile errors. Edited by chat (artifact_update) or by hand (rename, reorder, resize). Paid plans; Desktop, phone layout and the PWA (stacked to one column). Snowflake, BigQuery, Redshift, Databricks and ClickHouse are listed in the connector directory.",
       "touches": [
-        "allternit-ai/src/lib/artifacts/dashboard",
-        "allternit-ai/src/components/artifacts/dashboard",
-        "allternit-ai/src/lib/openui/card-tools.ts",
-        "allternit-ai/src/lib/openui/answer-instructions.ts",
-        "allternit-ai/src/views/mini-apps/warehouse-servers.ts"
+        "allternit-ai/src/lib/artifacts",
+        "allternit-ai/src/components/artifacts",
+        "allternit-ai/src/lib/openui",
+        "allternit-ai/src/views/mini-apps"
       ],
       "decisions": [
         {
@@ -539,11 +538,10 @@
       "status": "building",
       "description": "The motion artifact kind: short animated compositions (title, counter, chart, logo, list scenes) stored as JSON props, drawn by a pure seekable renderer, edited in the artifact window (scene list, scrub, play/pause/loop, props panel; tabs on the phone layout and PWA) and exported to MP4. Desktop encodes frames with the local ffmpeg through the motion IPC; web and PWA encode in the tab with WebCodecs (MP4, or WebM where the browser has no H.264). Super, Ultra and Team plans; org default Team on, Enterprise off.",
       "touches": [
-        "allternit-ai/src/lib/artifacts/motion",
-        "allternit-ai/src/components/artifacts/motion",
-        "allternit-ai/src/lib/artifacts/compose.ts",
-        "allternit/surfaces/allternit-desktop/src/main/motion-render.ts",
-        "allternit/cmd/gizzi-code/src/runtime/integrations/artifacts"
+        "allternit-ai/src/lib/artifacts",
+        "allternit-ai/src/components/artifacts",
+        "allternit/surfaces/allternit-desktop",
+        "allternit/cmd/gizzi-code/src/runtime/integrations"
       ],
       "decisions": [
         {"on": "2026-10-09", "note": "No server-side render route: no cloud render worker exists, so web and PWA export in the tab (WebCodecs + mediabunny) and Desktop uses local ffmpeg. Videos are silent. The body is data only, never code."}
