@@ -96,7 +96,7 @@ The rules are enforced in `card-tools.ts`, not only in the prompt:
 
 ### Design
 
-Cards follow OpenAI's [Apps SDK inline-card guidelines](https://developers.openai.com/apps-sdk/concepts/ui-guidelines) on Allternit's neutral polish tokens: system type within body and body-small sizes, a title, at most two actions in the footer, no scrolling inside the card, WCAG AA contrast, light and dark themes, and 44 px touch targets on phones. Result numbers animate only right after you change an input; the first paint, streaming and data refreshes show the value at once, and nothing animates with reduced motion on. While a card streams it shows a skeleton, then a shimmer inside the card until it's complete, with a mono working beam after 1.5 s. The manual asks for one short sentence before the card, and tells the model not to repeat the card's numbers in its text.
+Cards follow common inline-card guidelines for chat apps, on Allternit's neutral polish tokens: system type within body and body-small sizes, a title, at most two actions in the footer, no scrolling inside the card, WCAG AA contrast, light and dark themes, and 44 px touch targets on phones. Result numbers animate only right after you change an input; the first paint, streaming and data refreshes show the value at once, and nothing animates with reduced motion on. While a card streams it shows a skeleton, then a shimmer inside the card until it's complete, with a mono working beam after 1.5 s. The manual asks for one short sentence before the card, and tells the model not to repeat the card's numbers in its text.
 
 ### What runs where
 
