@@ -10,7 +10,7 @@ Kinds and body formats (body_format is optional; it is inferred from the kind an
 - sheet: application/vnd.allternit.sheet+json (use the format described in the system prompt)
 - slides: application/vnd.allternit.slides+json (use the format described in the system prompt)
 - design: application/vnd.allternit.design+json (use the format described in the system prompt), or text/html
-- dashboard: application/vnd.allternit.openui (OpenUI Lang; use the format described in the system prompt)
+- dashboard: application/vnd.allternit.dashboard+json (tiles, each with its own connector query; use the format described in the system prompt)
 - motion: application/vnd.allternit.motion+json (scenes + props; use the format described in the system prompt)
 - page: text/html (a complete, self-contained page) or text/markdown
 - card: application/vnd.allternit.openui (OpenUI Lang; use the format described in the system prompt)
