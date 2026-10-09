@@ -664,6 +664,7 @@ mod tests {
             name: Some("Joe".to_string()),
             image_url: None,
             organization_id: None,
+            org_role: None,
         });
 
         // First registration for a user with no users row must not hit the
@@ -703,6 +704,7 @@ mod tests {
             name: None,
             image_url: None,
             organization_id: None,
+            org_role: None,
         });
         ensure_user_row(&pool, &actor).await.unwrap();
 

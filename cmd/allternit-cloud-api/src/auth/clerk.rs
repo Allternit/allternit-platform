@@ -43,6 +43,10 @@ pub struct ClerkUser {
     pub name: Option<String>,
     pub image_url: Option<String>,
     pub organization_id: Option<String>,
+    /// Role in the active Clerk organization (`admin`, `org:admin`,
+    /// `org:member`, ...). Session token v2 carries it as `o.rol`, v1 as
+    /// `org_role`. `None` outside an org or for non-Clerk callers.
+    pub org_role: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -155,6 +159,12 @@ impl ClerkVerifier {
             .and_then(|v| v.as_str())
             .or_else(|| claims.get("org_id").and_then(|v| v.as_str()))
             .map(str::to_owned);
+        let org_role = claims
+            .get("o")
+            .and_then(|o| o.get("rol"))
+            .and_then(|v| v.as_str())
+            .or_else(|| claims.get("org_role").and_then(|v| v.as_str()))
+            .map(str::to_owned);
 
         Ok(ClerkUser {
             id: claims
@@ -166,6 +176,7 @@ impl ClerkVerifier {
             name: str_claim(&claims, "name"),
             image_url: str_claim(&claims, "image_url"),
             organization_id,
+            org_role,
         })
     }
 }

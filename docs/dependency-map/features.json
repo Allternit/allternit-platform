@@ -464,6 +464,27 @@
         "allternit/surfaces/docs/guides/project-appearance.mdx",
         "allternit/surfaces/docs/architecture/project-appearance.mdx"
       ]
+    },
+    {
+      "id": "feature:artifacts",
+      "label": "Artifacts (one typed store, versions, sharing)",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Artifacts v2: one account-level store of typed artifacts (doc, sheet, slides, design, dashboard, motion, page, card, diagram, image, code) in cloud-api Postgres with immutable versions, view/comment/edit sharing, org admin settings and a public link route. Phase 1 server side is in; the app (ArtifactWindow, Artifacts tab) and gizzi artifact_* tools land in sibling PRs.",
+      "touches": [
+        "allternit/cmd/allternit-cloud-api/src/artifacts",
+        "allternit/cmd/allternit-cloud-api/src/routes/artifacts_*"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-08",
+          "note": "Eoj accepted the artifacts v2 contract (docs/design/artifacts-v2.md): one typed store in cloud-api under /api/v2/artifacts, private by default, links refused for artifacts that use AI or connectors, owner-only permanent delete, legacy stores import as runtime_version 1."
+        }
+      ],
+      "evidence": [
+        "allternit/docs/design/artifacts-v2.md",
+        "allternit/surfaces/docs/api/artifacts-v2.mdx"
+      ]
     }
   ],
   "journeys": [
