@@ -436,6 +436,22 @@
       "evidence": ["allternit/surfaces/docs/tools/computer-toolset.mdx", "allternit/contracts/computer-toolset/README.md", "allternit/cmd/allternit-api/src/computer_toolset.rs", "allternit/surfaces/docs/tools/allternit-driver.mdx"]
     },
     {
+      "id": "feature:decision-runtime",
+      "label": "Decision Runtime (typed decisions)",
+      "product": "product:computer-use",
+      "status": "building",
+      "description": "POST /v1/decisions (alias /v1/systemone) in allternit-api's Agency Kernel: one choice over up to 255 caller options, answered by the owned local scorer (one-pass option scoring on MLX or llama.cpp, Qwen3.5-4B), escalating under a per-kind threshold to vendor stubs (off) and the planner model through gizzi, within a latency budget, with abstain. Every decision and its outcome is stored (V245 decisions).",
+      "touches": [
+        "allternit/cmd/allternit-api/src/agency_api",
+        "allternit/domains/decision-runtime",
+        "allternit/surfaces/allternit-desktop"
+      ],
+      "decisions": [
+        {"on": "2026-10-09", "note": "E1: the Decision Runtime lives in the Agency Kernel slot (no second runtime). open-jev's one-pass scoring is ported as an owned sidecar; Qwen3.5-4B is the default (Apache-2.0, no HF login), Gemma 3 4B a config switch. Packages and weights install on first use; nothing heavy ships in the app. Training our own model is the separate M track."}
+      ],
+      "evidence": ["allternit/surfaces/docs/api/agency/decisions.mdx", "allternit/cmd/allternit-api/src/agency_api/decisions/mod.rs", "allternit/domains/decision-runtime/allternit_decisions/engine_mlx.py"]
+    },
+    {
       "id": "feature:project-appearance",
       "label": "Custom project and folder icons",
       "product": "product:ai-allternit",

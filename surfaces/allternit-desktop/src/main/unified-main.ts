@@ -88,6 +88,7 @@ import { workerBus } from './workers/worker-bus.js';
 import { mcpHostManager } from './mcp-host-manager.js';
 import { isLimaInstalled, installLima, startVM, stopVM, getVMStatus } from './lima.js';
 import { computerUseDriverManager } from './computer-use-driver-manager.js';
+import { decisionRuntimeManager } from './decision-runtime-manager.js';
 import { acuGatewayManager } from './acu-gateway-manager.js';
 import { phoneRemoteManager } from './phone-remote-manager.js';
 import { phoneService } from './phone-service.js';
@@ -1293,6 +1294,12 @@ async function initializeBundledMode(): Promise<void> {
         return null;
       }
     })();
+    // Decision Runtime local scorer: binds at once, installs and downloads its
+    // model on the first decision (decision-runtime-manager.ts).
+    const decisionsTask = decisionRuntimeManager.start().catch((decisionsErr) => {
+      log.warn('[Main] Decision runtime failed to start, continuing without it:', decisionsErr);
+      return null;
+    });
     const acuTask = (async (): Promise<string | null> => {
       try {
         acuGatewayManager.setDesktopTokenProvider(() => backendManager.ensureDesktopAccessToken());
@@ -1346,6 +1353,7 @@ async function initializeBundledMode(): Promise<void> {
       acuTask,
       localEngineTask,
       factoryTask,
+      decisionsTask,
     ]);
 
     // Step 2 — allternit-api (Rust operator API, port ${PORTS.API} — VM, rails, terminal)
@@ -1371,6 +1379,7 @@ async function initializeBundledMode(): Promise<void> {
           ...(meshBridge ? { ALLTERNIT_MESH_BRIDGE_URL: meshBridge } : {}),
           ...(localEngineUrl ? { LOCAL_ENGINE_URL: localEngineUrl } : {}),
           ...computerUseDriverManager.getLaunchEnvironment(),
+          ...decisionRuntimeManager.getLaunchEnvironment(),
           ...acuGatewayManager.getLaunchEnvironment(),
           ...authManager.getPlatformEncryptionEnvironment(),
           ...authManager.getConnectorSidecarEnvironment(),
@@ -2711,6 +2720,7 @@ async function shutdownAllServices(): Promise<void> {
   bonsaiCompanion.stop();
   systemOne.stop();
   computerUseDriverManager.stop();
+  decisionRuntimeManager.stop();
   acuGatewayManager.stop();
   phoneRemoteManager.stop();
   phoneService.shutdown();
@@ -2781,9 +2791,11 @@ handleGuarded('backend:restart', async () => {
   await backendManager.stopBackend();
 
   await computerUseDriverManager.start();
+  await decisionRuntimeManager.start();
   return backendManager.ensureBackend({
     extraEnv: {
       ...computerUseDriverManager.getLaunchEnvironment(),
+      ...decisionRuntimeManager.getLaunchEnvironment(),
       ...authManager.getPlatformEncryptionEnvironment(),
       ...authManager.getConnectorSidecarEnvironment(),
     },
@@ -2791,6 +2803,7 @@ handleGuarded('backend:restart', async () => {
 });
 
 ipcMain.handle('computer-use-driver:get-status', () => computerUseDriverManager.getStatus());
+ipcMain.handle('decision-runtime:get-status', () => decisionRuntimeManager.getStatus());
 
 // Phones (Lane 2a): Android over Wi-Fi, no cable — see phone-device-manager.ts
 registerPhoneIpc(handleGuarded);

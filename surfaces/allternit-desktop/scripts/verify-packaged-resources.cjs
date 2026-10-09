@@ -105,6 +105,11 @@ const required = [
     buildStep: 'npm run prepare:allternit-driver',
   },
   {
+    path: path.join(resourcesDir, 'decision-runtime', 'allternit_decisions', '__main__.py'),
+    label: 'Decision Runtime scorer sidecar (allternit_decisions)',
+    buildStep: 'npm run prepare:allternit-driver',
+  },
+  {
     path: path.join(resourcesDir, 'computer-use', 'driver', 'arc', 'arc_cua', 'driver.py'),
     label: 'Allternit Driver arc engine (forked arc-driver)',
     buildStep: 'npm run prepare:allternit-driver',
