@@ -49,6 +49,12 @@
       "path": "allternit/domains/computer-use/driver"
     },
     {
+      "id": "allternit/domains/computer-use/suite",
+      "label": "Computer-use task suite (40 tasks, code checkers, runner, Python)",
+      "kind": "module",
+      "path": "allternit/domains/computer-use/suite"
+    },
+    {
       "id": "allternit/domains/decision-runtime",
       "label": "Decision Runtime local scorer sidecar (MLX / llama.cpp, Python)",
       "kind": "module",
@@ -295,6 +301,31 @@
       "evidence": [
         "allternit/cmd/allternit-api/src/agency_api/decisions/backends.rs",
         "allternit/surfaces/docs/api/agency/decisions.mdx"
+      ]
+    },
+    {
+      "source": "allternit/domains/computer-use/suite",
+      "target": "allternit/cmd/allternit-api/src/computer_*",
+      "kind": "HTTP POST /api/v1/computers/:id/toolset (checkers' verify, replay mode) + control take/renew",
+      "evidence": [
+        "allternit/domains/computer-use/suite/suite/toolset.py",
+        "allternit/domains/computer-use/suite/suite/stack.py"
+      ]
+    },
+    {
+      "source": "allternit/domains/computer-use/suite",
+      "target": "allternit/cmd/gizzi-code",
+      "kind": "process: gizzi run --format json --agent suite (planner-driven runs, any model) + gizzi export (usage)",
+      "evidence": [
+        "allternit/domains/computer-use/suite/suite/planner.py"
+      ]
+    },
+    {
+      "source": "allternit/domains/computer-use/suite",
+      "target": "allternit/domains/computer-use/driver",
+      "kind": "boots a private sidecar for the local stack (unix socket)",
+      "evidence": [
+        "allternit/domains/computer-use/suite/suite/stack.py"
       ]
     }
   ]

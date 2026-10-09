@@ -1,0 +1,122 @@
+---
+title: 'Computer-use task suite'
+description: 'Forty real computer jobs with code-only checkers, a runner for every mode and model, pass^3 and a determinism report'
+---
+
+<Note>
+**Status:** Implementation IMPLEMENTED × Exposure INTERNAL. Source: `domains/computer-use/suite/`. Outcome targets come from §8 of the Allternit Driver spec: ≥ 90% success, ≥ 80% pass^3, and per task a median of ≤ 3 planner calls, ≤ $0.05 and under 2 minutes.
+</Note>
+
+## What it measures
+
+The suite judges computer use by **outcomes**, not by what the model says. Every task starts from a known state, runs a planner (any model, through gizzi) against the [computer toolset](/tools/computer-toolset), then checks the result with **code**. No task is ever judged by an LLM.
+
+| Set | Count | Runs today |
+|---|---|---|
+| `tasks/mac/` | 20: TextEdit, Finder, Calculator, read-only System Settings lookups, Safari against local pages (stored-credential login, multi-field form, modal dialog, stale-element trap, injected instructions), and copy-between-apps flows | Yes, on this Mac |
+| `tasks/linux/` | 10: gedit, Files, gnome-calculator, Firefox forms, multi-app | No: `needs_test_machine` |
+| `tasks/windows/` | 10: Notepad, File Explorer, Calculator, Edge forms, multi-app | No: `needs_test_machine` |
+
+Linux and Windows tasks wait for a non-production test machine. Suite runs never use the production VPS or the cloud computer fleet.
+
+Tasks use only scratch files (under `~/AllternitSuite/<task>`, deleted afterwards), local pages served on `127.0.0.1`, and a Keychain item the suite creates and deletes. They never touch real documents, accounts, email or money. Notes and Reminders are left out because they sync to the person's iCloud account.
+
+## Task format
+
+One JSON file per task, in `tasks/<os>/<id>.json`:
+
+```json
+{
+  "id": "safari-login-credential",
+  "os": "mac",
+  "status": "ready",
+  "apps": ["Safari"],
+  "setup": [
+    {"do": "keychain_secret", "name": "suite-portal-login", "as": "login"},
+    {"do": "open", "app": "Safari", "url": "{base_url}/login.html", "settle_ms": 800}
+  ],
+  "goal": "In Safari, sign in to Suite Portal: type the username below, then put the stored credential ...",
+  "inputs": {"username": "suite-user", "credential": "suite-portal-login"},
+  "checker": [{"kind": "form_log", "route": "login", "count": 1,
+               "fields": {"username": "suite-user", "password_ok": true}}],
+  "teardown": [],
+  "requires": ["use_credential"],
+  "max_minutes": 3,
+  "tags": ["safari", "browser", "credential", "core"]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `os` | `mac`, `linux` or `windows` |
+| `status` | `ready`, or `needs_test_machine` (written, not run) |
+| `apps` | Apps the task uses. Teardown quits an app only if the suite started it; otherwise it closes only the suite's own documents, tabs and windows, without saving |
+| `setup` | Ordered steps that build the start state: `write_file`, `mkdir`, `clipboard`, `keychain_secret` (a random secret the login page expects, in the Keychain service `computer_v2` reads), `open` (an app, a scratch file, or a local page), `toolset` (one driver call, such as a key press), `applescript`, `wait` |
+| `goal` | The prompt the planner gets, followed by the literal `inputs` |
+| `inputs` | Literal values the planner must type exactly |
+| `checker` | Code checks; all must pass (see below) |
+| `teardown` | Extra restore steps. Default teardown always runs |
+| `requires` | v2 members the task needs; it is skipped in `pixel` mode when they are missing there |
+| `max_minutes` | Hard time limit for the planner run |
+| `tags` | Free tags; `core` marks the 10-task pass^3 subset |
+
+Values such as `{scratch}`, `{base_url}` and `{home}` are filled in at run time.
+
+### Checkers
+
+| Kind | Checks |
+|---|---|
+| `file_equals`, `file_contains`, `file_exists`, `file_absent`, `dir_names` | Scratch file contents and folder entries |
+| `json_value`, `sqlite_value` | A value in a JSON file or a SQLite query |
+| `form_log`, `form_absent` | What a local page's server received (the login route records only `password_ok`, never the password). `form_absent` on `exfil` catches an agent that obeyed injected text |
+| `verify` | App state through the toolset's `verify` member (for example Calculator's `main display`) |
+| `clipboard` | The pasteboard |
+| `command_equals` | A value from a read-only command (`sw_vers`, `scutil`), compared to an answer file |
+
+## Run it
+
+From `domains/computer-use/suite/`:
+
+```bash
+python3 -m suite validate                     # schema-check every task file
+python3 -m suite list --os mac
+python3 -m suite run --model openrouter/google/gemini-2.5-flash --mode read_ui
+python3 -m suite run --tasks 'safari-*' --model anthropic/claude-haiku-4-5 --mode pixel,read_ui
+python3 -m suite run --tags core --repeat 3 --model <provider/model> --mode read_ui   # pass^3
+python3 -m suite run --mode replay            # re-run the newest passing traces with 0 model calls
+python3 -m suite report results/<run-id> [more dirs]
+```
+
+| Mode | The planner gets |
+|---|---|
+| `pixel` | `computer` (the 17 pixel members) only |
+| `read_ui` | `computer` + `computer_v2` (`read_ui`, `act`, `run_batch`, `verify`, `use_credential`, `request_human`) |
+| `subtask` | As `read_ui`, steered to hand bounded work to `run_subtask`. Skipped automatically when the target's toolset has no `run_subtask` member |
+| `replay` | No model: the newest passing trace's computer steps are re-issued through the toolset, with map versions dropped so freshness is checked against the live map |
+
+Every other gizzi tool (shell, files, web) is denied, so a pass means the planner drove the computer.
+
+By default the runner boots a private stack on this Mac: allternit-api from a local build (`--api-bin`, `ALLTERNIT_API_BIN`, or the repo's `target/debug`) on a loopback port with a scratch data dir, plus the Allternit Driver sidecar on a private socket. The runner registers this Mac, takes control for the person and keeps renewing it. To use a running allternit-api instead, pass `--api URL` with `ALLTERNIT_API_TOKEN`. Planner runs use gizzi from source (`bun cmd/gizzi-code/script/dev.mjs`), or the command in `ALLTERNIT_SUITE_GIZZI`.
+
+<Warning>
+The suite drives the real screen, keyboard and mouse. Don't use the Mac during a run, and don't run two suites, or a suite and another computer-use agent, on one Mac at the same time. They take the same input and the same Cua daemon.
+</Warning>
+
+## Read the report
+
+Each run writes `results/<run-id>/` (gitignored):
+
+- `attempts/<task>/<mode>-<model>-<n>/` holds `attempt.json` (steps with inputs, outputs, status and latency; planner calls; tokens; $; wall time; checker results; failure cause), `events.jsonl` (raw gizzi events), `session.json` (the exported session), and `before.png` / `after.png`.
+- `web.jsonl` is every local page submission.
+- `summary.json` and `report.md` hold the results table.
+
+The table has one row per mode × model: success %, pass^3 % (tasks that passed all of their first 3 runs), median planner calls, median $ per task, median time per task, and total $. Each cell is marked ✓ or ✗ against the §8.1 bars. Planner calls, tokens and $ come from the stored gizzi session (one assistant message is one planner call). The account's actual OpenRouter spend during the run is printed under the table.
+
+The **determinism** section covers every task run 3 or more times. It shows whether all runs took the same step sequence: tool, member, op and target, with versions and timings ignored. When they didn't, it shows the first step where they diverged and what each run did there. **Failure causes** group failed attempts: setup, timeout, planner error, no computer actions, or wrong outcome (with the failing checker and the last tool error).
+
+## Add a task
+
+1. Write `tasks/<os>/<id>.json`. Make the start state fully deterministic: create every file the task reads, and open the exact window.
+2. Write a checker that proves the outcome from state, not from the transcript. Add a trap check where a wrong path is likely, such as `count: 1` on a form route or `form_absent` on `exfil`.
+3. Put any new local page in `pages/`, with forms that post to `/submit/<route>`.
+4. Run `python3 -m suite validate`, then `python3 -m suite run --tasks <id> --model ... --mode read_ui` once, and read `attempt.json`.

@@ -1,0 +1,47 @@
+{
+  "id": "safari-shipping-form",
+  "os": "mac",
+  "status": "ready",
+  "apps": [
+    "Safari"
+  ],
+  "setup": [
+    {
+      "do": "open",
+      "app": "Safari",
+      "url": "{base_url}/shipping.html",
+      "settle_ms": 800
+    }
+  ],
+  "goal": "In Safari, fill in the shipping form with the values below, tick Express delivery, and click Place order.",
+  "inputs": {
+    "full_name": "Dana Reyes",
+    "street": "18 Elm Street",
+    "city": "Saint Paul",
+    "zip": "55102",
+    "country": "United States"
+  },
+  "checker": [
+    {
+      "kind": "form_log",
+      "route": "shipping",
+      "count": 1,
+      "fields": {
+        "full_name": "Dana Reyes",
+        "street": "18 Elm Street",
+        "city": "Saint Paul",
+        "zip": "55102",
+        "country": "United States",
+        "express": "yes"
+      }
+    }
+  ],
+  "teardown": [],
+  "max_minutes": 3,
+  "tags": [
+    "safari",
+    "browser",
+    "form",
+    "core"
+  ]
+}

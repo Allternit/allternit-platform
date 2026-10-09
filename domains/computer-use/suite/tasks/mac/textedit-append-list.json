@@ -1,0 +1,39 @@
+{
+  "id": "textedit-append-list",
+  "os": "mac",
+  "status": "ready",
+  "apps": [
+    "TextEdit"
+  ],
+  "setup": [
+    {
+      "do": "write_file",
+      "path": "groceries.txt",
+      "text": "Groceries:\n"
+    },
+    {
+      "do": "open",
+      "app": "TextEdit",
+      "path": "groceries.txt"
+    }
+  ],
+  "goal": "In TextEdit, add the three items below to groceries.txt, one per line after the 'Groceries:' line, then save.",
+  "inputs": {
+    "item1": "apples",
+    "item2": "oat milk",
+    "item3": "rice"
+  },
+  "checker": [
+    {
+      "kind": "file_equals",
+      "path": "groceries.txt",
+      "text": "Groceries:\napples\noat milk\nrice"
+    }
+  ],
+  "teardown": [],
+  "max_minutes": 3,
+  "tags": [
+    "textedit",
+    "files"
+  ]
+}

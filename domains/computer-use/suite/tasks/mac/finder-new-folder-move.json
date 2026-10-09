@@ -1,0 +1,50 @@
+{
+  "id": "finder-new-folder-move",
+  "os": "mac",
+  "status": "ready",
+  "apps": [
+    "Finder"
+  ],
+  "setup": [
+    {
+      "do": "write_file",
+      "path": "old.txt",
+      "text": "old notes\n"
+    },
+    {
+      "do": "write_file",
+      "path": "keep.txt",
+      "text": "keep\n"
+    },
+    {
+      "do": "open",
+      "app": "Finder",
+      "path": "."
+    }
+  ],
+  "goal": "In the Finder window for AllternitSuite/finder-new-folder-move, make a new folder named as below and move old.txt into it. Leave keep.txt where it is.",
+  "inputs": {
+    "folder": "Archive"
+  },
+  "checker": [
+    {
+      "kind": "dir_names",
+      "path": ".",
+      "names": [
+        "Archive",
+        "keep.txt"
+      ]
+    },
+    {
+      "kind": "file_equals",
+      "path": "Archive/old.txt",
+      "text": "old notes"
+    }
+  ],
+  "teardown": [],
+  "max_minutes": 3,
+  "tags": [
+    "finder",
+    "files"
+  ]
+}

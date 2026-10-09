@@ -1,0 +1,39 @@
+{
+  "id": "textedit-edit-number",
+  "os": "mac",
+  "status": "ready",
+  "apps": [
+    "TextEdit"
+  ],
+  "setup": [
+    {
+      "do": "write_file",
+      "path": "budget.txt",
+      "text": "Item: lamps\nTotal: 41\n"
+    },
+    {
+      "do": "open",
+      "app": "TextEdit",
+      "path": "budget.txt"
+    }
+  ],
+  "goal": "In TextEdit, budget.txt says 'Total: 41'. Change the total to the new value below and save the document.",
+  "inputs": {
+    "new_total": "42"
+  },
+  "checker": [
+    {
+      "kind": "file_equals",
+      "path": "budget.txt",
+      "text": "Item: lamps\nTotal: 42"
+    }
+  ],
+  "teardown": [],
+  "max_minutes": 3,
+  "tags": [
+    "textedit",
+    "files",
+    "edit",
+    "core"
+  ]
+}

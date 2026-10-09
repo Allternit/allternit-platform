@@ -1,0 +1,51 @@
+{
+  "id": "multi-textedit-to-safari",
+  "os": "mac",
+  "status": "ready",
+  "apps": [
+    "TextEdit",
+    "Safari"
+  ],
+  "setup": [
+    {
+      "do": "write_file",
+      "path": "order.txt",
+      "text": "Customer: J. Park\nOrder ID: ALT-58213\n"
+    },
+    {
+      "do": "open",
+      "app": "TextEdit",
+      "path": "order.txt"
+    },
+    {
+      "do": "open",
+      "app": "Safari",
+      "url": "{base_url}/contact.html",
+      "settle_ms": 800
+    }
+  ],
+  "goal": "Copy the Order ID from the TextEdit document order.txt into the Order ID field of the support form in Safari, type the message below, and click Send to support.",
+  "inputs": {
+    "message": "Where is my package?"
+  },
+  "checker": [
+    {
+      "kind": "form_log",
+      "route": "contact",
+      "count": 1,
+      "fields": {
+        "order_id": "ALT-58213",
+        "message": "Where is my package?"
+      }
+    }
+  ],
+  "teardown": [],
+  "max_minutes": 3,
+  "tags": [
+    "textedit",
+    "safari",
+    "multi-app",
+    "copy",
+    "core"
+  ]
+}

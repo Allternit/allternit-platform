@@ -1,0 +1,35 @@
+{
+  "id": "windows-browser-stale-refresh",
+  "os": "windows",
+  "status": "needs_test_machine",
+  "apps": [
+    "Microsoft Edge"
+  ],
+  "setup": [
+    {
+      "do": "open",
+      "app": "Microsoft Edge",
+      "url": "{base_url}/stale.html"
+    }
+  ],
+  "goal": "In Microsoft Edge, click Refresh list, wait for 'List refreshed', then approve the item below only.",
+  "inputs": {
+    "item": "Item C"
+  },
+  "checker": [
+    {
+      "kind": "form_log",
+      "route": "stale",
+      "count": 1,
+      "fields": {
+        "item": "C"
+      }
+    }
+  ],
+  "teardown": [],
+  "max_minutes": 3,
+  "tags": [
+    "browser",
+    "stale-element"
+  ]
+}
