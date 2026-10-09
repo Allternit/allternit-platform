@@ -339,6 +339,7 @@
               "tools/mcp",
               "tools/computer-use",
               "tools/computer-toolset",
+              "tools/allternit-driver",
               "tools/strict-tool-use",
               "tools/build-a-tool",
               "tools/plugin-adapters",

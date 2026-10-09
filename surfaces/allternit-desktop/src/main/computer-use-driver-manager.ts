@@ -3,7 +3,9 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as net from 'node:net';
 import * as os from 'node:os';
+import * as crypto from 'node:crypto';
 import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import log from 'electron-log';
 import { spawnSidecar } from './process-lifeline.js';
 
@@ -14,7 +16,11 @@ export interface ComputerUseDriverStatus {
   executable?: string;
   socket?: string;
   error?: string;
+  /** The Allternit Driver sidecar (arc + Cua engines) in front of Cua Driver. */
+  allternitDriver?: { running: boolean; endpoint?: string; error?: string };
 }
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const INSTALLED_CUA_DRIVER = '/Applications/CuaDriver.app/Contents/MacOS/cua-driver';
 const INSTALLED_CUA_SOCKET = path.join(os.homedir(), 'Library/Caches/cua-driver/cua-driver.sock');
@@ -82,6 +88,42 @@ export function cuaCursorMotionStyle(value: string | undefined = process.env.ALL
     : 'signature_arc';
 }
 
+/** The bundled Python inside a staged driver directory. */
+export function allternitDriverPython(driverDir: string, platform: NodeJS.Platform = process.platform): string {
+  return platform === 'win32'
+    ? path.join(driverDir, 'python', 'python.exe')
+    : path.join(driverDir, 'python', 'bin', 'python3');
+}
+
+/**
+ * Where the Allternit Driver listens: a private unix socket next to Cua's,
+ * or loopback TCP on Windows (port chosen by the sidecar, token-gated).
+ */
+export function allternitDriverListen(runtimeDir: string, platform: NodeJS.Platform = process.platform): string {
+  return platform === 'win32' ? 'tcp:127.0.0.1:0' : `unix:${path.join(runtimeDir, 'allternit-driver.sock')}`;
+}
+
+/**
+ * Arguments for the sidecar. `-B` keeps Python from writing bytecode into the
+ * signed app bundle, `-s -E` from reading the user's site-packages or PYTHON*
+ * variables; `-m` still imports from the working directory (the driver dir).
+ */
+export function allternitDriverArgs(opts: {
+  listen: string;
+  stateDir: string;
+  endpointFile?: string;
+  cua?: string;
+  cuaSocket?: string;
+  cuaEmbedded?: boolean;
+}): string[] {
+  const args = ['-B', '-s', '-E', '-m', 'allternit_driver', '--listen', opts.listen, '--state-dir', opts.stateDir];
+  if (opts.endpointFile) args.push('--endpoint-file', opts.endpointFile);
+  if (opts.cua) args.push('--cua', opts.cua);
+  if (opts.cuaSocket) args.push('--cua-socket', opts.cuaSocket);
+  if (opts.cuaEmbedded) args.push('--cua-embedded');
+  return args;
+}
+
 function isInstalledCuaDriver(executable: string): boolean {
   return process.platform === 'darwin' && path.resolve(executable) === path.resolve(INSTALLED_CUA_DRIVER);
 }
@@ -103,6 +145,93 @@ class ComputerUseDriverManager {
   private child: ChildProcess | null = null;
   private socketPath: string | null = null;
   private lastError: string | undefined;
+  private driverChild: ChildProcess | null = null;
+  private driverEndpoint: string | null = null;
+  private driverToken: string | null = null;
+  private driverError: string | undefined;
+
+  /** The staged sidecar: packaged resources, else the repo checkout in dev. */
+  resolveAllternitDriver(): { dir: string; python: string } | null {
+    const packaged = path.join(process.resourcesPath ?? '', 'computer-use', 'driver');
+    const candidates: Array<{ dir: string; python: string }> = [{ dir: packaged, python: allternitDriverPython(packaged) }];
+    if (!app.isPackaged) {
+      const repoRoot = path.resolve(__dirname, '..', '..', '..', '..');
+      const desktopDir = path.join(repoRoot, 'surfaces', 'allternit-desktop');
+      const key = `${process.platform}-${process.arch}`;
+      const staged = path.join(desktopDir, 'resources', 'computer-use', 'driver-python', key);
+      candidates.push({
+        dir: path.join(repoRoot, 'domains', 'computer-use', 'driver'),
+        python: process.env.ALLTERNIT_DRIVER_PYTHON
+          || (process.platform === 'win32' ? path.join(staged, 'python.exe') : path.join(staged, 'bin', 'python3')),
+      });
+    }
+    return candidates.find((c) => fs.existsSync(path.join(c.dir, 'allternit_driver', '__main__.py')) && fs.existsSync(c.python)) ?? null;
+  }
+
+  private driverAlive(): boolean {
+    return Boolean(this.driverChild && this.driverChild.exitCode === null && this.driverEndpoint);
+  }
+
+  /** Start the Allternit Driver in front of the Cua Driver this manager runs. */
+  private async startAllternitDriver(cua: string | null): Promise<void> {
+    if (this.driverAlive()) return;
+    const found = this.resolveAllternitDriver();
+    if (!found) {
+      this.driverError = 'The Allternit Driver is not bundled with this build.';
+      log.warn('[AllternitDriver]', this.driverError);
+      return;
+    }
+    const runtimeDir = path.join(app.getPath('userData'), 'computer-use');
+    fs.mkdirSync(runtimeDir, { recursive: true, mode: 0o700 });
+    const listen = allternitDriverListen(runtimeDir);
+    const endpointFile = path.join(runtimeDir, 'allternit-driver.endpoint');
+    fs.rmSync(endpointFile, { force: true });
+    if (listen.startsWith('unix:')) fs.rmSync(listen.slice(5), { force: true });
+    this.driverToken = process.platform === 'win32' ? crypto.randomBytes(24).toString('hex') : null;
+    const args = allternitDriverArgs({
+      listen,
+      stateDir: path.join(runtimeDir, 'driver'),
+      endpointFile,
+      cua: cua ?? undefined,
+      cuaSocket: this.socketPath ?? undefined,
+      cuaEmbedded: Boolean(cua && !isInstalledCuaDriver(cua)),
+    });
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      CUA_DRIVER_RS_TELEMETRY_ENABLED: 'false',
+      CUA_TELEMETRY_ENABLED: 'false',
+      ...(this.driverToken ? { ALLTERNIT_DRIVER_TOKEN: this.driverToken } : {}),
+    };
+    const child = spawnSidecar(found.python, args, { cwd: found.dir, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    this.driverChild = child;
+    child.stdout?.on('data', (data: Buffer) => log.info('[AllternitDriver]', data.toString().trim()));
+    child.stderr?.on('data', (data: Buffer) => log.info('[AllternitDriver]', data.toString().trim()));
+    child.on('error', (error) => {
+      this.driverError = error.message;
+      log.error('[AllternitDriver] failed:', error);
+    });
+    child.on('exit', (code) => {
+      if (code && code !== 0) this.driverError = `Allternit Driver exited with code ${code}.`;
+      if (this.driverChild === child) {
+        this.driverChild = null;
+        this.driverEndpoint = null;
+      }
+      log.info(`[AllternitDriver] stopped (code ${code ?? 'unknown'})`);
+    });
+
+    const deadline = Date.now() + 15_000;
+    while (Date.now() < deadline && child.exitCode === null) {
+      if (fs.existsSync(endpointFile)) {
+        this.driverEndpoint = fs.readFileSync(endpointFile, 'utf8').trim();
+        this.driverError = undefined;
+        log.info(`[AllternitDriver] ready on ${this.driverEndpoint}`);
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    this.driverError ??= 'The Allternit Driver did not become ready within 15 seconds.';
+    log.warn('[AllternitDriver]', this.driverError);
+  }
 
   resolveExecutable(): string | null {
     const binaryName = cuaDriverBinaryName();
@@ -133,6 +262,18 @@ class ComputerUseDriverManager {
   }
 
   async start(): Promise<ComputerUseDriverStatus> {
+    const status = await this.startCua();
+    // The sidecar runs even without Cua (macOS reads go to arc); it reports
+    // which engines it has.
+    await this.startAllternitDriver(status.running ? status.executable ?? null : null);
+    return this.getStatus();
+  }
+
+  private async startCua(): Promise<ComputerUseDriverStatus> {
+    // Called again on backend restart: keep a healthy embedded daemon.
+    if (this.child && this.child.exitCode === null && this.socketPath && fs.existsSync(this.socketPath)) {
+      return this.getStatus();
+    }
     const executable = this.resolveExecutable();
     if (!executable) {
       this.lastError = process.platform === 'darwin'
@@ -216,6 +357,9 @@ class ComputerUseDriverManager {
   }
 
   stop(): void {
+    this.driverChild?.kill('SIGTERM');
+    this.driverChild = null;
+    this.driverEndpoint = null;
     this.child?.kill('SIGTERM');
     this.child = null;
     if (this.socketPath && process.platform !== 'win32' && !this.socketPath.startsWith(INSTALLED_CUA_SOCKET)) {
@@ -225,17 +369,26 @@ class ComputerUseDriverManager {
   }
 
   getLaunchEnvironment(): Record<string, string> {
+    const env: Record<string, string> = {};
     const executable = this.resolveExecutable();
-    if (!executable || !this.socketPath) return {};
-    const env: Record<string, string> = {
-      ALLTERNIT_CUA_DRIVER_PATH: executable,
-      ALLTERNIT_CUA_DRIVER_SOCKET: this.socketPath,
-      CUA_DRIVER_RS_TELEMETRY_ENABLED: 'false',
-      CUA_TELEMETRY_ENABLED: 'false',
-      ALLTERNIT_CUA_CURSOR_MOTION: cuaCursorMotionStyle(),
-    };
-    if (!isInstalledCuaDriver(executable)) {
-      env.ALLTERNIT_CUA_DRIVER_EMBEDDED = 'true';
+    if (executable && this.socketPath) {
+      Object.assign(env, {
+        ALLTERNIT_CUA_DRIVER_PATH: executable,
+        ALLTERNIT_CUA_DRIVER_SOCKET: this.socketPath,
+        CUA_DRIVER_RS_TELEMETRY_ENABLED: 'false',
+        CUA_TELEMETRY_ENABLED: 'false',
+        ALLTERNIT_CUA_CURSOR_MOTION: cuaCursorMotionStyle(),
+      });
+      if (!isInstalledCuaDriver(executable)) env.ALLTERNIT_CUA_DRIVER_EMBEDDED = 'true';
+    }
+    // allternit-api sends this-device input through the sidecar when it's up.
+    if (this.driverAlive() && this.driverEndpoint) {
+      if (this.driverEndpoint.startsWith('unix:')) {
+        env.ALLTERNIT_DRIVER_SOCKET = this.driverEndpoint.slice(5);
+      } else {
+        env.ALLTERNIT_DRIVER_ENDPOINT = this.driverEndpoint;
+        if (this.driverToken) env.ALLTERNIT_DRIVER_TOKEN = this.driverToken;
+      }
     }
     return env;
   }
@@ -251,6 +404,11 @@ class ComputerUseDriverManager {
       executable: executable ?? undefined,
       socket: this.socketPath ?? undefined,
       error: this.lastError,
+      allternitDriver: {
+        running: this.driverAlive(),
+        endpoint: this.driverEndpoint ?? undefined,
+        error: this.driverError,
+      },
     };
   }
 }
