@@ -140,9 +140,9 @@ export const CONTRACTS: Record<ToolsetName, ToolsetContract> = {
   computer: COMPUTER_CONTRACT as unknown as ToolsetContract,
   browser: BROWSER_CONTRACT as unknown as ToolsetContract,
 };
-/** allternit.computer.v2: the 17 pixel members plus the 6 driver-backed structured members. */
+/** allternit.computer.v2: the 17 pixel members plus the 7 driver-backed structured members. */
 export const COMPUTER_V2 = COMPUTER_V2_CONTRACT as unknown as ToolsetContract;
-/** The 6 structured members of allternit.computer.v2 (read_ui, act, run_batch, verify, request_human, use_credential). */
+/** Every member of allternit.computer.v2 (the 17 pixel members, then read_ui, act, run_batch, verify, request_human, use_credential, run_subtask). */
 export const COMPUTER_V2_MEMBER_LIST = COMPUTER_V2.members;`);
   return out.join('\n') + '\n';
 }

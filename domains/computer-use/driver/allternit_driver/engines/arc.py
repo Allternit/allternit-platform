@@ -208,6 +208,36 @@ class ArcEngine:
                 return self._driver.act(snap, kind, native, value="" if value is None else str(value), settle=True)
             return self._driver.act(snap, kind, native, settle=True)
 
+    def write_value(self, snap: Any, native: str, value: str, replace: bool = True) -> bool:
+        """Focus a text field and write ``value`` through accessibility only
+        (no SkyLight key posting): AXValue, read back. WebKit and AppKit
+        fields take it in ~10 ms and fire their input events. Returns False
+        when the field kept a different value (the caller types instead,
+        into the now-focused, emptied field)."""
+        import ApplicationServices as AS  # type: ignore
+
+        with self._lock:
+            app = self._driver._app(snap.context["pid"])
+            ref = getattr(app.backend(snap.context["window_id"]), "_refs", {}).get(native)
+            if ref is None:
+                raise ValueError(f"{native} is no longer in the window")
+            # Focus first so typing (the fallback) lands here; a field in a
+            # background app may refuse focus but still take a value write.
+            focused = AS.AXUIElementSetAttributeValue(ref, "AXFocused", True) == 0
+            target = value if replace else None
+            if target is None:
+                err, current = AS.AXUIElementCopyAttributeValue(ref, "AXValue", None)
+                target = f"{current or ''}{value}"
+            if AS.AXUIElementSetAttributeValue(ref, "AXValue", target) == 0:
+                err, now = AS.AXUIElementCopyAttributeValue(ref, "AXValue", None)
+                if err == 0 and str(now) == target:
+                    return True
+            if not focused:
+                raise ValueError(f"{native} takes neither focus nor a value write")
+            if replace:
+                AS.AXUIElementSetAttributeValue(ref, "AXValue", "")
+            return False
+
     def _focus(self, snap: Any, native: str) -> Any:
         import ApplicationServices as AS  # type: ignore
         from arc_cua.driver import ActResult

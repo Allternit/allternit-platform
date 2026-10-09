@@ -295,6 +295,15 @@
       ]
     },
     {
+      "source": "allternit/cmd/allternit-api/src/computer_*",
+      "target": "allternit/cmd/allternit-api/src/agency_api",
+      "kind": "in-process call: run_subtask's typed decisions (decisions::decide_value, kinds element/verify) and their outcomes (decisions::record_outcome)",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/computer_subtask.rs",
+        "allternit/surfaces/docs/tools/computer-use-decisions.mdx"
+      ]
+    },
+    {
       "source": "allternit/cmd/allternit-api/src/agency_api",
       "target": "allternit/domains/decision-runtime",
       "kind": "HTTP POST /v1/score on loopback (ALLTERNIT_DECISIONS_LOCAL_URL + token)",

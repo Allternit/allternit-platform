@@ -405,6 +405,24 @@ class Driver:
                     status, settled = "done", None
                     cur, _ = self._read(t, fresh=True)
                     d = Decision(CUA, "map")
+                elif op in ("set_value", "type") and cur.engine == ARC:
+                    # Same crash class as press: arc types into web fields
+                    # (and any field that only takes keys) by borrowing key
+                    # focus through SkyLight's private SPI, which SIGSEGVs
+                    # the sidecar on macOS 14 when the app isn't frontmost.
+                    # Write the value through accessibility (focus + AXValue,
+                    # read back; no SkyLight); a field that refuses it is
+                    # typed into on the Cua engine.
+                    text = "" if value is None else str(value)
+                    if self.arc.write_value(self._snaps[t.key], element.native, text, replace=op == "set_value"):
+                        d = Decision(ARC, "map")
+                    elif self.cua.available:
+                        self.cua.act(t.pid, t.window_id, {}, "type", text, None)
+                        d = Decision(CUA, "map")
+                    else:
+                        raise DriverError("unsupported_op", "this field refuses an accessibility value write and no key-input engine is available")
+                    status, settled = "done", None
+                    cur, _ = self._read(t, fresh=True)
                 elif cur.engine == ARC:
                     res = self.arc.act(self._snaps[t.key], element.native, op, value, key)
                     status = res.status

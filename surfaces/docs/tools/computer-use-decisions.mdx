@@ -1,0 +1,68 @@
+---
+title: 'How computer use decides'
+description: 'run_subtask: the planner sets a bounded goal once, and each UI step is a typed decision over the element map, run through the same lease, approval and audit path'
+---
+
+<Note>
+**Status:** Implementation IMPLEMENTED × Exposure PUBLIC PREVIEW (phase E2 of the decision runtime). Loop: `cmd/allternit-api/src/computer_subtask.rs`. Contract member: `run_subtask` in `allternit.computer.v2` (see [Computer toolset](/tools/computer-toolset)). Decisions: [`POST /v1/decisions`](/api/agency/decisions).
+</Note>
+
+## Overview
+
+A planner model (Claude, GPT, Gemini, Kimi, Qwen or a local model) is good at deciding *what* to do and expensive at deciding *which button is next*. `run_subtask` splits the two. The planner sends one bounded subtask: a goal, the literal inputs it may type, success checks and limits. The executor then runs every step as a **typed decision**: one choice from a fixed list of options, answered by the fast decision tiers in about 100–300 ms instead of a planner call.
+
+Every model family gets `run_subtask` the same way, as a member of the `computer_v2` function tool. The tool guidance tells planners to hand bounded step sequences to `run_subtask` and to keep their own calls for planning and for whatever a subtask hands back.
+
+## The loop
+
+Each step:
+
+1. **Read.** `read_ui` on the target window (the first read pins the window; later reads ask for the `since` diff of the [live element map](/tools/allternit-driver) and patch a local copy, which costs well under a millisecond on a watched window).
+2. **Build the options.** Visible, enabled, named elements × the allowed ops: `click` for buttons, checkboxes, links and similar; `type <input> into <field>` for each literal input and text field; `press Return` in the focused field; then `done` and `escalate`. Elements named like send, pay, buy, delete or publish, and anything in `constraints.avoid`, are never options unless `constraints.allow_irreversible` is set.
+3. **Decide.** One `POST /v1/decisions` call (kind `element`, `allow_abstain`). Unfilled inputs first get one `field` decision each ("which field takes the email?"), run concurrently.
+4. **Act.** The choice runs through the same path as every toolset call: control lease, declarative policy and a durable audit row per step (`execute_step`). Predictable steps run as `run_batch` with an `expect` per step (UFO2's speculative multi-action): all confidently placed inputs go in one batch that stops at the first failed check. Clicks run as `act`.
+5. **Check.** The `success` checks run with `verify`; `{ask}` checks are decisions of kind `verify` over the screen.
+6. **Repeat** until the checks hold (`done`), a decision picks `escalate`, `max_steps` or `budget_ms` runs out.
+
+When a decision abstains or lands under its kind's confidence threshold, the subtask stops and hands control back with `status: "escalated"`, the reason, and a compact current screen (window, map version, up to 60 elements). It never guesses past an unsure step and never loops blindly: an action that changed nothing is not offered again.
+
+The subtask runs on the **fast tiers only** (the configured chain without the oracle). The oracle is a planner-class model call, so a step that would need it goes back to the planner instead.
+
+## Approvals and safety
+
+On this computer (non-sandbox), `run_subtask` needs one approval for the whole subtask: the person sees the goal and the literal inputs. Its steps carry that grant and can only type those inputs; lease, policy and audit still run on every step, and every step emits a `computer.action` event for the live view. Secrets never go in `inputs`; use [`use_credential`](/tools/computer-credentials).
+
+## What it returns
+
+```json
+{
+  "status": "done",
+  "decisions": 4,
+  "actions": 5,
+  "elapsed_ms": 2140,
+  "decision_ms": 1180,
+  "action_ms": 610,
+  "success": true,
+  "steps": [
+    { "kind": "field", "decision_id": "dec_…", "choice": "f2", "option": "email", "backend": "local", "latency_ms": 212.4, "confidence": 0.99, "action": { "member": "run_batch", "op": "set_value", "ok": true } },
+    { "kind": "element", "decision_id": "dec_…", "choice": "o4", "option": "click the checkbox \"I agree to the terms\"", "backend": "local", "latency_ms": 251.0, "confidence": 0.87, "action": { "ok": true, "changed": true } }
+  ]
+}
+```
+
+`status` is `done`, `escalated` (with `reason`, `screen` and `next`) or `failed`. Each step names its decision id, chosen option, backend, latency and confidence.
+
+## Outcomes feed the flywheel
+
+Every decision's outcome is written back to the decision store, the same record as `PATCH /v1/decisions/:id`: `success` when its action ran and its check held (a field's value matched the input, the screen changed after a click, the success checks held after `done`), `failure` when the action or check failed, `skipped` when it handed back or never ran. These labelled rows are what the shadow heads of the flywheel (E5) train and promote on.
+
+## Driver note (macOS 14)
+
+Typing into a field no longer borrows key focus through SkyLight's private API, which crashed the driver sidecar on macOS 14 when the app wasn't frontmost. The driver writes the value through accessibility (focus, `AXValue`, read back; about 30–100 ms) and types on the Cua engine only for fields that refuse a value write.
+
+## Related pages
+
+- [Computer toolset](/tools/computer-toolset)
+- [Allternit Driver](/tools/allternit-driver)
+- [Decisions API](/api/agency/decisions)
+- [Decision runtime](/architecture/cognitive-runtime/decision-runtime)
