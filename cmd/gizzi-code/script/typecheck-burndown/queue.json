@@ -3,10 +3,10 @@
   "generatedFrom": "edcf804f88519fc628fe2e524ff13b26e3636326",
   "batchCount": 111,
   "stats": {
-    "totalNocheck": 586,
+    "totalNocheck": 584,
     "excludedCompilerArtifacts": 0,
     "excludedVendored": 93,
-    "totalQueueFiles": 473,
+    "totalQueueFiles": 471,
     "totalQueueLoc": 198673,
     "quarantined": 20,
     "quarantinedByReason": {
@@ -14,7 +14,7 @@
       "suspect-malformed": 2
     },
     "zeroImporter": 187,
-    "totalAccounted": 1494
+    "totalAccounted": 1492
   },
   "batches": [
     {
@@ -1165,7 +1165,6 @@
         "src/cli/ui/ink-app/hooks/useGlobalKeybindings.tsx",
         "src/runtime/services/api/ollama.ts",
         "src/cli/ui/ink-app/utils/cronTasksLock.ts",
-        "src/cli/ui/ink-app/utils/computerUse/computerUseLock.ts",
         "src/cli/ui/ink-app/utils/asciicast.ts",
         "src/cli/ui/ink-app/hooks/usePrStatus.ts",
         "src/shared/utils/mtls.ts",
@@ -1250,7 +1249,6 @@
         "src/runtime/services/mcp/headersHelper.ts",
         "src/cli/ui/ink-app/services/mcp/headersHelper.ts",
         "src/cli/ui/ink-app/utils/exampleCommands.ts",
-        "src/cli/ui/ink-app/utils/computerUse/toolRendering.tsx",
         "src/cli/ui/ink-app/server/directConnectManager.ts",
         "src/cli/ui/ink-app/services/plugins/PluginInstallationManager.ts",
         "src/cli/ui/ink-app/utils/stats.ts",
