@@ -266,6 +266,49 @@ describe("gizzi doctor: Factory engine", () => {
     expect(checks.at(-1)).toMatchObject({ id: "factory-serve", status: "pass" })
     expect(checks.at(-1)!.message).toContain("3999")
   })
+
+  test("Desktop's port 3018 answers before the engine default 3011", async () => {
+    const probed: string[] = []
+    const checks = await checkFactoryEngine({
+      locate: () => ({ path: "/x", source: "env" }),
+      version: () => "v",
+      probe: async (url: string) => {
+        probed.push(url)
+        return url.includes(":3018") ? 200 : null
+      },
+      env: {},
+      home: emptyDir,
+    })
+    expect(checks.at(-1)).toMatchObject({ id: "factory-serve", status: "pass" })
+    expect(checks.at(-1)!.message).toContain("3018")
+    // 3011 must not even be probed once 3018 answered.
+    expect(probed).toEqual(["http://127.0.0.1:3018/api/factory/agents"])
+  })
+
+  test("the CLI/dev engine on 3011 passes when 3018 is silent", async () => {
+    const checks = await checkFactoryEngine({
+      locate: () => ({ path: "/x", source: "env" }),
+      version: () => "v",
+      probe: async (url: string) => (url.includes(":3011") ? 200 : null),
+      env: {},
+      home: emptyDir,
+    })
+    expect(checks.at(-1)).toMatchObject({ id: "factory-serve", status: "pass" })
+    expect(checks.at(-1)!.message).toContain("3011")
+  })
+
+  test("nothing answering names every probed port in the warn", async () => {
+    const checks = await checkFactoryEngine({
+      locate: () => ({ path: "/x", source: "env" }),
+      version: () => "v",
+      probe: async () => null,
+      socketExists: () => true,
+      env: {},
+      home: emptyDir,
+    })
+    expect(checks.at(-1)).toMatchObject({ id: "factory-serve", status: "warn" })
+    expect(checks.at(-1)!.message).toContain("127.0.0.1:3018 or 127.0.0.1:3011")
+  })
 })
 
 describe("gizzi doctor: Factory home move", () => {
