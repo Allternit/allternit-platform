@@ -745,7 +745,7 @@
         "allternit-ai/src/components/artifacts",
         "allternit-ai/src/lib/openui",
         "allternit-ai/src/views/mini-apps",
-        "allternit/cmd/allternit-cloud-api/src/artifacts/runtime.rs"
+        "allternit/cmd/allternit-cloud-api/src/artifacts"
       ],
       "decisions": [
         {
@@ -771,10 +771,8 @@
         "allternit/surfaces/allternit-desktop",
         "allternit/cmd/gizzi-code/src/runtime/integrations",
         "allternit/cmd/allternit-cloud-api/render/motion",
-        "allternit/cmd/allternit-cloud-api/src/routes/artifact_render.rs",
-        "allternit/cmd/allternit-cloud-api/src/artifacts/motion_render.rs",
-        "allternit/cmd/allternit-cloud-api/migrations_pg/087_motion_render_jobs.sql",
-        "allternit/cmd/allternit-cloud-api/deploy-contabo.sh"
+        "allternit/cmd/allternit-cloud-api/src/routes/artifact_*",
+        "allternit/cmd/allternit-cloud-api/src/artifacts"
       ],
       "decisions": [
         {
@@ -789,7 +787,9 @@
       "evidence": [
         "allternit/surfaces/docs/guides/motion.mdx",
         "allternit/surfaces/docs/api/artifacts-motion.mdx",
-        "allternit/cmd/allternit-cloud-api/render/motion/README.md"
+        "allternit/cmd/allternit-cloud-api/render/motion/README.md",
+        "allternit/cmd/allternit-cloud-api/deploy-contabo.sh",
+        "allternit/cmd/allternit-cloud-api/migrations_pg/087_motion_render_jobs.sql"
       ]
     },
     {
