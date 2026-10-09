@@ -278,9 +278,14 @@
         "allternit/cmd/allternit-api/src/vnc_*",
         "allternit/sdk/computer-driver",
         "allternit/mcp/computers-server",
-        "allternit/platform/packages/computer-use-protocol"
+        "allternit/platform/packages/computer-use-protocol",
+        "allternit/domains/computer-use/suite"
       ],
       "decisions": [
+        {
+          "on": "2026-10-09",
+          "note": "Driver spec \u00a78: computer-use task suite (domains/computer-use/suite) \u2014 40 tasks (20 Mac run, 20 Linux/Windows await a test machine), code-only checkers, runner with pixel/read_ui/subtask/replay modes, pass^3 and determinism report."
+        },
         {
           "on": "2026-10-09",
           "note": "D0 cleanup: removed dead gizzi computer use, sdk/computer-use, sdk/computers, the computer-use plugins package, duplicate canonical providers, the mobile harness and pyautogui; gateway /v1/computer, /v1/run/hybrid, /v1/run/parallel gone; allternit-api computer_screenshot/mouse/keyboard tools now alias the computer toolset executor."
@@ -292,7 +297,8 @@
       ],
       "evidence": [
         "allternit/surfaces/docs/api/aci.mdx",
-        "allternit/surfaces/docs/guides/computers-and-apps.mdx"
+        "allternit/surfaces/docs/guides/computers-and-apps.mdx",
+        "allternit/surfaces/docs/tools/computer-use-suite.mdx"
       ]
     },
     {

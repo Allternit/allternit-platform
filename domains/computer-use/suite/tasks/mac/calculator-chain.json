@@ -1,0 +1,50 @@
+{
+  "id": "calculator-chain",
+  "os": "mac",
+  "status": "ready",
+  "apps": [
+    "Calculator"
+  ],
+  "setup": [
+    {
+      "do": "open",
+      "app": "Calculator"
+    },
+    {
+      "do": "toolset",
+      "member": "key",
+      "input": {
+        "text": "Escape"
+      }
+    },
+    {
+      "do": "toolset",
+      "member": "key",
+      "input": {
+        "text": "Escape"
+      }
+    }
+  ],
+  "goal": "Use Calculator to compute the expression below. Leave the result on the display.",
+  "inputs": {
+    "expression": "(12 + 30) / 6"
+  },
+  "checker": [
+    {
+      "kind": "verify",
+      "app": "Calculator",
+      "checks": [
+        {
+          "name": "main display",
+          "value": "7"
+        }
+      ],
+      "timeout_ms": 1500
+    }
+  ],
+  "teardown": [],
+  "max_minutes": 3,
+  "tags": [
+    "calculator"
+  ]
+}

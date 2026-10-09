@@ -1,0 +1,47 @@
+{
+  "id": "windows-multi-editor-to-browser",
+  "os": "windows",
+  "status": "needs_test_machine",
+  "apps": [
+    "Notepad",
+    "Microsoft Edge"
+  ],
+  "setup": [
+    {
+      "do": "write_file",
+      "path": "order.txt",
+      "text": "Order ID: ALT-58213\n"
+    },
+    {
+      "do": "open",
+      "app": "Notepad",
+      "path": "order.txt"
+    },
+    {
+      "do": "open",
+      "app": "Microsoft Edge",
+      "url": "{base_url}/contact.html"
+    }
+  ],
+  "goal": "Copy the Order ID from order.txt in Notepad into the Order ID field of the support form in Microsoft Edge, type the message below and click Send to support.",
+  "inputs": {
+    "message": "Where is my package?"
+  },
+  "checker": [
+    {
+      "kind": "form_log",
+      "route": "contact",
+      "count": 1,
+      "fields": {
+        "order_id": "ALT-58213",
+        "message": "Where is my package?"
+      }
+    }
+  ],
+  "teardown": [],
+  "max_minutes": 3,
+  "tags": [
+    "multi-app",
+    "copy"
+  ]
+}

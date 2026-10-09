@@ -1,0 +1,35 @@
+{
+  "id": "linux-browser-stale-refresh",
+  "os": "linux",
+  "status": "needs_test_machine",
+  "apps": [
+    "Firefox"
+  ],
+  "setup": [
+    {
+      "do": "open",
+      "app": "Firefox",
+      "url": "{base_url}/stale.html"
+    }
+  ],
+  "goal": "In Firefox, click Refresh list, wait for 'List refreshed', then approve the item below only.",
+  "inputs": {
+    "item": "Item C"
+  },
+  "checker": [
+    {
+      "kind": "form_log",
+      "route": "stale",
+      "count": 1,
+      "fields": {
+        "item": "C"
+      }
+    }
+  ],
+  "teardown": [],
+  "max_minutes": 3,
+  "tags": [
+    "browser",
+    "stale-element"
+  ]
+}

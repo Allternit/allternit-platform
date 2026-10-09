@@ -1,0 +1,41 @@
+{
+  "id": "settings-computer-name",
+  "os": "mac",
+  "status": "ready",
+  "apps": [
+    "System Settings",
+    "TextEdit"
+  ],
+  "setup": [
+    {
+      "do": "write_file",
+      "path": "answer.txt",
+      "text": ""
+    },
+    {
+      "do": "open",
+      "app": "TextEdit",
+      "path": "answer.txt"
+    }
+  ],
+  "goal": "Open System Settings > General > Sharing (or About) and read this Mac's computer name. Don't change it. Type the name exactly into the TextEdit window showing answer.txt and save it.",
+  "inputs": {},
+  "checker": [
+    {
+      "kind": "command_equals",
+      "argv": [
+        "scutil",
+        "--get",
+        "ComputerName"
+      ],
+      "file_equals": "answer.txt"
+    }
+  ],
+  "teardown": [],
+  "max_minutes": 3,
+  "tags": [
+    "settings",
+    "read-only",
+    "multi-app"
+  ]
+}
