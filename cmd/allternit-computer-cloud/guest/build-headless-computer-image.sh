@@ -11,11 +11,10 @@
 # which is also the screen the computer toolset drives (xdotool/scrot); the
 # browser toolset uses headless Chrome.
 #
-# Not yet "no screen at boot": the current Linux app (1.1.x) segfaults on
-# Chromium's headless Ozone platform when it opens its window. allternit-api
-# already starts Xvfb itself on the first computer call when none is running
-# (`ensure_local_display`), so once the app can run windowless,
-# allternit-xvfb.service can simply be dropped from this image.
+# Since Desktop 1.1.5 (#1429) the app honors ALLTERNIT_HEADLESS=1: no welcome
+# wizard, its windows stay hidden, so the screen a developer sees is empty.
+# Xvfb still starts at boot: the app still creates (hidden) windows, and the
+# Linux app segfaults on Chromium's headless Ozone platform when it does.
 #
 # Built like build-cloud-computer-image.sh: launch the base, change it,
 # publish. Run on the Incus host that will serve the image.
@@ -24,6 +23,11 @@
 #   BASE_IMAGE   - base alias (default: allternit-cloud-computer, which already
 #                  has the Allternit app for Linux installed)
 #   IMAGE_NAME   - published alias (default: allternit-computer-headless)
+#   APP_DIR      - optional Allternit Desktop for Linux, unpacked (the
+#                  `allternit-desktop-linux` artifact of the platform's
+#                  "Release Allternit Desktop" run: a directory, or its .zip),
+#                  installed over the base image's app. The base image ships
+#                  1.1.3, which shows its welcome window; use >= 1.1.5.
 #   API_BINARY   - optional Linux allternit-api binary to install over the
 #                  app's bundled one (e.g. the host's deployed
 #                  /opt/allternit-api/bin/allternit-api from main)
@@ -43,6 +47,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
+if [ -n "${APP_DIR:-}" ]; then
+    [ -e "${APP_DIR}" ] || { echo "ERROR: ${APP_DIR} not found" >&2; exit 1; }
+fi
 if [ -n "${API_BINARY:-}" ]; then
     [ -x "${API_BINARY}" ] || { echo "ERROR: ${API_BINARY} is not an executable" >&2; exit 1; }
 fi
@@ -77,7 +84,40 @@ incus exec "${BUILD_CONTAINER}" -- sh -c '
     test -x /usr/bin/allternit
 '
 
-# 2. Optional newer allternit-api over the app bundle's copy.
+# 2a. Optional newer Allternit app over the base image's install (the dir
+#     /usr/bin/allternit points into). Keeps the install path, so the .deb's
+#     symlink and desktop file stay valid.
+if [ -n "${APP_DIR:-}" ]; then
+    APP_TAR="$(mktemp /tmp/allternit-app.XXXXXX.tar)"
+    if [ -d "${APP_DIR}" ]; then
+        tar -C "${APP_DIR}" -cf "${APP_TAR}" .
+    else
+        APP_UNZIP="$(mktemp -d /tmp/allternit-app.XXXXXX)"
+        unzip -q "${APP_DIR}" -d "${APP_UNZIP}"
+        tar -C "${APP_UNZIP}" -cf "${APP_TAR}" .
+        rm -rf "${APP_UNZIP}"
+    fi
+    log "installing the app from $(basename "${APP_DIR}")"
+    incus file push --quiet "${APP_TAR}" "${BUILD_CONTAINER}/root/allternit-app.tar"
+    rm -f "${APP_TAR}"
+    incus exec "${BUILD_CONTAINER}" -- sh -c '
+        set -e
+        dir="$(dirname "$(readlink -f /usr/bin/allternit)")"
+        case "$dir" in /opt/*) ;; *) echo "unexpected app dir $dir" >&2; exit 1;; esac
+        test -f "$dir/resources/app.asar"
+        rm -rf "$dir.new" && mkdir -p "$dir.new"
+        tar -C "$dir.new" -xf /root/allternit-app.tar
+        test -x "$dir.new/allternit" && test -f "$dir.new/resources/app.asar"
+        # Keep files the .deb or the cloud image added beside the app (run.sh).
+        for f in "$dir"/*.sh; do [ -e "$f" ] && [ ! -e "$dir.new/$(basename "$f")" ] && cp -a "$f" "$dir.new/"; done
+        chown root:root "$dir.new/chrome-sandbox" && chmod 4755 "$dir.new/chrome-sandbox"
+        rm -rf "$dir" && mv "$dir.new" "$dir"
+        rm -f /root/allternit-app.tar
+        echo "app installed in $dir"
+    '
+fi
+
+# 2b. Optional newer allternit-api over the app bundle's copy.
 if [ -n "${API_BINARY:-}" ]; then
     log "installing $(basename "${API_BINARY}") into the app bundle"
     incus file push --quiet "${API_BINARY}" "${BUILD_CONTAINER}/root/allternit-api.new"
@@ -143,6 +183,6 @@ incus stop "${BUILD_CONTAINER}"
 log "publishing ${IMAGE_NAME}"
 incus image delete "${IMAGE_NAME}" >/dev/null 2>&1 || true
 incus publish "${BUILD_CONTAINER}" --alias "${IMAGE_NAME}" \
-    description="Allternit developer computer (headless): Allternit runtime + Chrome on a bare Xvfb, no desktop session (from ${BASE_IMAGE})" \
+    description="Allternit developer computer (headless): Allternit runtime${APP_DIR:+ ($(basename "${APP_DIR}"))} + Chrome on a bare Xvfb, no desktop session (from ${BASE_IMAGE})" \
     --compression=zstd
 incus image info "${IMAGE_NAME}" | head -8
