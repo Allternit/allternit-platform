@@ -161,7 +161,7 @@ async fn used_bytes(db: &PgPool, id: &str) -> Result<i64> {
     .unwrap_or(0))
 }
 
-fn allowed_json(result: Result<(), Denied>) -> Value {
+fn allowed_json(result: std::result::Result<(), Denied>) -> Value {
     match result {
         Ok(()) => json!({ "ok": true }),
         Err(reason) => json!({ "ok": false, "reason": reason, "message": reason.message() }),
