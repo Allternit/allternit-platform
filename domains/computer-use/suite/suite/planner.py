@@ -91,16 +91,26 @@ def run_planner(task: dict, ctx, stack, model: str, mode: str, attempt_dir: Path
     timed_out = False
     with open(events_path, "w") as out, open(attempt_dir / "planner.stderr.log", "w") as err:
         p = subprocess.Popen(argv, env=env, stdout=out, stderr=err, cwd=str(ctx.scratch))
-        try:
-            p.wait(timeout=float(task.get("max_minutes", 3)) * 60)
-        except subprocess.TimeoutExpired:
-            timed_out = True
+        deadline = t0 + float(task.get("max_minutes", 3)) * 60
+        finished_at = None
+        # `gizzi run` can stay up after the turn ends (background drain); the
+        # turn is over once the last event is the final text and 8 s pass quietly.
+        while p.poll() is None:
+            if time.monotonic() > deadline:
+                timed_out = True
+                break
+            time.sleep(1)
+            last = _last_event(events_path)
+            if last and last.get("type") == "text" and time.time() - last.get("timestamp", 0) / 1000 > 8:
+                finished_at = t0 + (last["timestamp"] / 1000 - (time.time() - (time.monotonic() - t0)))
+                break
+        if p.poll() is None:
             p.terminate()
             try:
                 p.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 p.kill()
-    wall = time.monotonic() - t0
+    wall = (finished_at or time.monotonic()) - t0
     result = parse_events(events_path, wall, timed_out, p.returncode)
     if result.get("session_id"):
         add_usage(result, attempt_dir, env)
@@ -134,6 +144,14 @@ def add_usage(result: dict, attempt_dir: Path, env: dict) -> None:
         if info.get("error"):
             result["errors"].append(json.dumps(info["error"])[:300])
     result.update(planner_calls=calls, cost_usd=round(cost, 6), tokens=tokens)
+
+
+def _last_event(path: Path):
+    try:
+        lines = path.read_text(errors="replace").strip().splitlines()
+        return json.loads(lines[-1]) if lines else None
+    except (OSError, ValueError):
+        return None
 
 
 def parse_events(path: Path, wall: float, timed_out: bool, code) -> dict:
