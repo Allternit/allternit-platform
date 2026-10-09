@@ -491,6 +491,31 @@
       ]
     },
     {
+      "id": "feature:artifact-dashboards",
+      "label": "Dashboards (live tiles that query your connectors)",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Artifacts v2 dashboard kind: a 12-column grid of KPI, line, area, bar and table tiles, each carrying its own connector query (or read-only SQL for a warehouse). Runs as the viewer through the MCP Apps bridge with first-use approval, cached first paint, refresh on open/interval/filter, click-to-see-query and per-tile errors. Edited by chat (artifact_update) or by hand (rename, reorder, resize). Paid plans; Desktop, phone layout and the PWA (stacked to one column). Snowflake, BigQuery, Redshift, Databricks and ClickHouse are listed in the connector directory.",
+      "touches": [
+        "allternit-ai/src/lib/artifacts/dashboard",
+        "allternit-ai/src/components/artifacts/dashboard",
+        "allternit-ai/src/lib/openui/card-tools.ts",
+        "allternit-ai/src/lib/openui/answer-instructions.ts",
+        "allternit-ai/src/views/mini-apps/warehouse-servers.ts"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-09",
+          "note": "Body is application/vnd.allternit.dashboard+json v1 (dashboards saved as OpenUI cards still open as cards). Queries reuse the card tool client: read-only tools only, plus one read-only SELECT through a warehouse SQL tool. First-use approval is per user and artifact on the device. The owner's client declares capabilities.connectors so link sharing is refused. Warehouses with a per-account address (Snowflake, Databricks) or a self-run server (Redshift) are listed as setup guides, not invented endpoints. PDF export prints the dashboard; PNG is still coming soon."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/dashboards.mdx",
+        "allternit/surfaces/docs/api/artifacts-v2.mdx",
+        "allternit/docs/design/artifacts-v2.md"
+      ]
+    },
+    {
       "id": "feature:artifact-model-tools",
       "label": "Artifact tools for every model (Artifacts v2)",
       "product": "product:gizzi-code",

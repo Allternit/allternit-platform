@@ -1,0 +1,128 @@
+---
+title: Dashboards
+description: Live dashboards of KPIs, charts and tables that read your connected apps and data warehouses, built by chat and editable by hand on Desktop, the web and your phone.
+---
+
+## What a dashboard is
+
+A dashboard is an [artifact](/guides/artifacts) made of tiles: a number (KPI),
+a line, area or bar chart, or a table. Every tile reads live data from one of
+your connected apps, such as a billing tool, a CRM or a data warehouse. It is
+not a snapshot: the data is fetched when you open the dashboard and again on a
+timer.
+
+Dashboards need a paid plan. On Team plans they are on by default; on
+Enterprise plans an admin turns them on.
+
+## Make one
+
+Ask in any chat ("build a dashboard of weekly revenue and open deals"), pick
+**Dashboards** in the Output menu under the message box, or type `/dashboard`.
+Allternit chooses tiles from the apps you have connected, writes the queries
+and opens the dashboard in its own window.
+
+Change it by chatting: "add a region filter", "switch the trend to weekly",
+"make the table show only open deals". Each change is a new version, so you can
+go back from the clock menu.
+
+If you haven't connected any apps yet, Allternit says so instead of inventing
+numbers. Connect one under Connectors first.
+
+## Read one
+
+- **Click any number** to see the query behind it: the app, the tool, its
+  arguments, or the SQL for a warehouse. The code button on each tile does the
+  same for charts and tables.
+- **Updated N min ago** under each tile says how fresh it is.
+- **Filters** at the top (a region, a date, a number) re-run the tiles that use
+  them.
+- **Refresh** re-queries every tile now. A dashboard also refreshes when you
+  open it, on its own interval if it has one, and when you come back to the
+  tab.
+- The last values you saw appear straight away while the new ones load, so the
+  page is never blank on a slow connection.
+- **Export → PDF** opens your system print window; choose **Save as PDF**.
+  PNG is listed as *Coming soon*.
+
+## It runs as you
+
+A dashboard never uses its author's accounts. It calls the apps **you** have
+connected, with **your** permissions, so two people can open the same shared
+dashboard and see different numbers if their access differs.
+
+- **First open.** Before anything loads, the dashboard lists the apps and
+  tools it will call and asks you to allow them. It can only read: a tool that
+  changes data is refused. If it later needs a new tool, it asks again.
+- **No access.** If you haven't connected an app a tile needs, that tile shows
+  an error such as "You don't have access to stripe. Connect it under
+  Connectors to see this chart." The other tiles are unaffected.
+- **Always ask.** If you set an app to *Always ask*, you are asked before each
+  query, as everywhere else.
+
+Warehouse queries run through the warehouse's own SQL tool. Only a single
+read-only `SELECT`, `WITH`, `SHOW` or `DESCRIBE` statement is run.
+
+## Edit by hand
+
+Owners and editors see **Edit** at the top of the dashboard. In edit mode each
+tile lets you:
+
+- **Rename** it (click the title).
+- **Reorder** it: drag the handle, or use the earlier and later buttons.
+- **Resize** it: choose a width (quarter to full) and a height.
+- **Remove** it.
+
+Changes save as you go. To change what a tile shows, ask in chat.
+
+## Phone and the m.allternit.com app
+
+On a phone the same dashboard opens full screen with the tiles stacked in one
+column, in reading order (top to bottom, left to right). You can read it, use
+filters, refresh, and make the same edits. Sharing settings are changed on
+Desktop or the web.
+
+## Data warehouses
+
+Connect your warehouse once under **Connectors** and Dashboards can query it.
+
+| Warehouse | How it connects |
+|---|---|
+| Google BigQuery | Listed as an official server. Sign in with your Google account. |
+| ClickHouse Cloud | Listed as an official server. Turn on the remote MCP server for your service in the ClickHouse console first. |
+| Snowflake | Each account has its own MCP server address. Follow the setup guide on the listing, then add the address with **Add by URL**. |
+| Databricks | Each workspace serves its own MCP address. Follow the setup guide on the listing, then add it with **Add by URL**. |
+| Amazon Redshift | AWS publishes an open-source server you run yourself. Follow the setup guide, then add its address with **Add by URL**. |
+
+These are the vendors' own servers; Allternit doesn't run them. What a
+dashboard can read is decided by the roles and permissions you have in the
+warehouse.
+
+## Sharing
+
+A dashboard follows the usual [sharing rules](/guides/artifacts). Because it
+uses your connectors, **Anyone with the link** is not available for it: people
+open it signed in, and it runs with their own connections. Your org admin can
+turn Dashboards off for the org.
+
+---
+
+## For developers
+
+- The body is JSON, `application/vnd.allternit.dashboard+json`. Its schema,
+  parser and the rest of the contract are in [Dashboard body](/api/artifacts-v2#dashboard-body).
+- Client code: `allternit-ai/src/lib/artifacts/dashboard/` (schema, data
+  extraction, filters and SQL guard, layout edits, runtime, the model manual)
+  and `src/components/artifacts/dashboard/` (view, editor, tiles).
+- Queries go through the same MCP Apps bridge as interactive answers
+  (`createCardToolClient` in `src/lib/openui/card-tools.ts`), so connector
+  permission modes apply. First-use approval is stored per user and artifact on
+  the device.
+- The model gets the dashboard manual only when Dashboards is enabled for the
+  user (`dashboardInstructions` in `src/lib/openui/answer-instructions.ts`).
+
+## Related
+
+- [Artifacts](/guides/artifacts)
+- [Interactive answers](/guides/interactive-answers)
+- [Connected apps](/guides/connected-apps)
+- [Artifacts v2 API](/api/artifacts-v2)
