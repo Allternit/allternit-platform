@@ -9,7 +9,7 @@ Kinds and body formats (body_format is optional; it is inferred from the kind an
 - doc: application/vnd.allternit.doc+json (use the format described in the system prompt), or text/markdown
 - sheet: application/vnd.allternit.sheet+json (use the format described in the system prompt)
 - slides: application/vnd.allternit.slides+json (use the format described in the system prompt)
-- design: application/vnd.allternit.design+json (use the format described in the system prompt), or text/html
+- design: application/vnd.allternit.design+json, a canvas document (artboards + layers, described in the system prompt under "Design artifacts"). Do not send text/html for a new design: an HTML design opens read-only until the user converts it.
 - dashboard: application/vnd.allternit.dashboard+json (tiles, each with its own connector query; use the format described in the system prompt)
 - motion: application/vnd.allternit.motion+json (scenes + props; use the format described in the system prompt)
 - page: text/html (a complete, self-contained page) or text/markdown
