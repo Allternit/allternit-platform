@@ -5,16 +5,14 @@
 //! deep: a reply's parent must be a root, and the client rebuilds threads from
 //! `parent_id`. Anchors are stored opaquely (`{kind:'text'|'cell'|'slide'|'element', ..}`).
 //!
-//! Presence is ephemeral and never touches Postgres. The websocket hub in
-//! `src/websocket/mod.rs` is deployment-scoped and not reusable here, so the
-//! clients heartbeat `POST /presence` and poll `GET /presence`; entries live in
-//! an in-process map with a 45 second TTL (a multi-instance deployment shows
-//! each viewer the peers that heartbeat to the same instance, which is an
-//! accepted limit for a cosmetic feature).
+//! Presence is durable and shared across cloud-api instances: clients
+//! heartbeat `POST /presence`, which upserts a row in `artifact_presence`
+//! (migration 086), and poll `GET /presence`, which returns the rows seen in
+//! the last 45 seconds. Rows older than 10 minutes are deleted
+//! opportunistically on about one request in 50.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::sync::Arc;
 
 use axum::{
     extract::{DefaultBodyLimit, Path, State},
@@ -41,8 +39,13 @@ const REQUEST_LIMIT: usize = 64 * 1024;
 const ASSISTANT_ID: &str = "assistant";
 const ANCHOR_KINDS: [&str; 4] = ["text", "cell", "slide", "element"];
 
-const PRESENCE_TTL: Duration = Duration::from_secs(45);
-const PRESENCE_MAX_USERS: usize = 200;
+/// A viewer counts as present for this long after the last heartbeat.
+const PRESENCE_TTL_SECS: i64 = 45;
+/// Rows older than this are garbage.
+const PRESENCE_PURGE_SECS: i64 = 600;
+/// Roughly one request in this many sweeps stale rows.
+const PRESENCE_PURGE_ONE_IN: u32 = 50;
+const PRESENCE_MAX_USERS: i64 = 200;
 
 pub fn routes() -> Router<Arc<ApiState>> {
     Router::new()
@@ -128,78 +131,6 @@ pub(crate) fn validate_anchor(anchor: &Value) -> Result<()> {
         }
     }
     Ok(())
-}
-
-#[derive(Debug, Clone, PartialEq)]
-struct PresenceEntry {
-    name: Option<String>,
-    image_url: Option<String>,
-    state: String,
-    seen: Instant,
-}
-
-#[derive(Debug, Default)]
-struct PresenceStore {
-    artifacts: HashMap<String, HashMap<String, PresenceEntry>>,
-}
-
-impl PresenceStore {
-    /// Drop expired entries and any artifact whose map empties.
-    fn prune(&mut self, now: Instant) {
-        self.artifacts.retain(|_, users| {
-            users.retain(|_, e| now.saturating_duration_since(e.seen) < PRESENCE_TTL);
-            !users.is_empty()
-        });
-    }
-
-    fn heartbeat(
-        &mut self,
-        artifact_id: &str,
-        user_id: &str,
-        name: Option<String>,
-        image_url: Option<String>,
-        state: &str,
-        now: Instant,
-    ) {
-        self.prune(now);
-        if state == "left" {
-            if let Some(users) = self.artifacts.get_mut(artifact_id) {
-                users.remove(user_id);
-                if users.is_empty() {
-                    self.artifacts.remove(artifact_id);
-                }
-            }
-            return;
-        }
-        let users = self.artifacts.entry(artifact_id.to_string()).or_default();
-        if users.len() >= PRESENCE_MAX_USERS && !users.contains_key(user_id) {
-            return;
-        }
-        users.insert(
-            user_id.to_string(),
-            PresenceEntry { name, image_url, state: state.to_string(), seen: now },
-        );
-    }
-
-    fn others(&mut self, artifact_id: &str, exclude: &str, now: Instant) -> Vec<Value> {
-        self.prune(now);
-        let mut out: Vec<(&String, &PresenceEntry)> = self
-            .artifacts
-            .get(artifact_id)
-            .map(|users| users.iter().filter(|(id, _)| id.as_str() != exclude).collect())
-            .unwrap_or_default();
-        out.sort_by(|a, b| a.0.cmp(b.0));
-        out.into_iter()
-            .map(|(id, e)| {
-                json!({ "user_id": id, "name": e.name, "image_url": e.image_url, "state": e.state })
-            })
-            .collect()
-    }
-}
-
-fn presence_store() -> &'static Mutex<PresenceStore> {
-    static STORE: OnceLock<Mutex<PresenceStore>> = OnceLock::new();
-    STORE.get_or_init(|| Mutex::new(PresenceStore::default()))
 }
 
 // ---------------------------------------------------------------------------
@@ -526,6 +457,22 @@ async fn presence_enabled(db: &PgPool, org_id: Option<&str>) -> Result<bool> {
     }
 }
 
+/// True on about one call in `PRESENCE_PURGE_ONE_IN`.
+fn should_purge_presence() -> bool {
+    use rand::Rng;
+    rand::thread_rng().gen_range(0..PRESENCE_PURGE_ONE_IN) == 0
+}
+
+/// Best effort: a failed sweep must never fail the heartbeat.
+async fn purge_stale_presence(db: &PgPool) {
+    let _ = sqlx::query(
+        "DELETE FROM artifact_presence WHERE last_seen < now() - ($1 * interval '1 second')",
+    )
+    .bind(PRESENCE_PURGE_SECS)
+    .execute(db)
+    .await;
+}
+
 async fn post_presence(
     State(state): State<Arc<ApiState>>,
     headers: HeaderMap,
@@ -548,10 +495,31 @@ async fn post_presence(
             image = image.or(i);
         }
     }
-    presence_store()
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .heartbeat(&row.id, &me.id, name, image, &input.state, Instant::now());
+    if input.state == "left" {
+        sqlx::query("DELETE FROM artifact_presence WHERE artifact_id = $1 AND user_id = $2")
+            .bind(&row.id)
+            .bind(&me.id)
+            .execute(&state.db)
+            .await?;
+    } else {
+        sqlx::query(
+            "INSERT INTO artifact_presence (artifact_id, user_id, name, image_url, state, last_seen) \
+             VALUES ($1, $2, $3, $4, $5, now()) \
+             ON CONFLICT (artifact_id, user_id) DO UPDATE SET \
+               name = EXCLUDED.name, image_url = EXCLUDED.image_url, \
+               state = EXCLUDED.state, last_seen = now()",
+        )
+        .bind(&row.id)
+        .bind(&me.id)
+        .bind(&name)
+        .bind(&image)
+        .bind(&input.state)
+        .execute(&state.db)
+        .await?;
+    }
+    if should_purge_presence() {
+        purge_stale_presence(&state.db).await;
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -565,10 +533,24 @@ async fn get_presence(
     if !presence_enabled(&state.db, row.org_id.as_deref()).await? {
         return Ok(Json(json!({ "enabled": false, "users": [] })));
     }
-    let users = presence_store()
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .others(&row.id, &me.id, Instant::now());
+    let rows: Vec<(String, Option<String>, Option<String>, String)> = sqlx::query_as(
+        "SELECT user_id, name, image_url, state FROM artifact_presence \
+         WHERE artifact_id = $1 AND user_id <> $2 \
+           AND last_seen > now() - ($3 * interval '1 second') \
+         ORDER BY user_id LIMIT $4",
+    )
+    .bind(&row.id)
+    .bind(&me.id)
+    .bind(PRESENCE_TTL_SECS)
+    .bind(PRESENCE_MAX_USERS)
+    .fetch_all(&state.db)
+    .await?;
+    let users: Vec<Value> = rows
+        .into_iter()
+        .map(|(id, name, image_url, state)| {
+            json!({ "user_id": id, "name": name, "image_url": image_url, "state": state })
+        })
+        .collect();
     Ok(Json(json!({ "enabled": true, "users": users })))
 }
 

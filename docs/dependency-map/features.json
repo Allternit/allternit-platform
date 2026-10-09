@@ -699,7 +699,8 @@
         "allternit-ai/src/components/artifacts",
         "allternit-ai/src/lib/artifacts",
         "allternit-ai/src/components/settings",
-        "allternit-ai/src/views/library"
+        "allternit-ai/src/views/library",
+        "allternit-ai/src/views/design"
       ],
       "decisions": [
         {
@@ -712,7 +713,11 @@
         },
         {
           "on": "2026-10-09",
-          "note": "Phase 4 editors: doc, sheet, slides and design open in the window's editors with autosave to versions, Edit with Allternit on a selection, threaded comments with @gizzi, heartbeat presence (honours the org presence switch), and Word/PDF/Markdown/PowerPoint/XLSX/CSV/HTML/zip exports. Presence is an in-memory heartbeat poll under /api/v2/artifacts/:id/presence, not the deployment WebSocket hub."
+          "note": "Phase 4 editors: doc, sheet, slides and design open in the window's editors with autosave to versions, Edit with Allternit on a selection, threaded comments with @gizzi, heartbeat presence (honours the org presence switch), and Word/PDF/Markdown/PowerPoint/XLSX/CSV/HTML/zip exports. Presence is a heartbeat poll under /api/v2/artifacts/:id/presence, not the deployment WebSocket hub."
+        },
+        {
+          "on": "2026-10-09",
+          "note": "Design artifacts open on the Design studio canvas (DesignTldrawCanvas with the Layers and Properties panels) scoped to one artifact, saved as a versioned canvas document (artboards, layers, design-system ref); older HTML designs open read-only with Convert to canvas. Phone and PWA use the canvas without tldraw chrome and the panels as bottom sheets. Presence is durable in artifact_presence (migration 086) so it works across cloud-api instances."
         }
       ],
       "evidence": [

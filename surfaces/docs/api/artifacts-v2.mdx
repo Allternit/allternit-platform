@@ -311,14 +311,14 @@ A comment has `id`, `artifact_id`, `version`, `anchor`, `parent_id`, `author_id`
 
 ## Presence
 
-Presence is live only and is never written to the database. The server keeps a short in-memory list per artifact.
+Presence is shared by every Cloud API instance. Each heartbeat upserts one row per artifact and user in `artifact_presence` (migration `086_artifact_presence.sql`); the table holds only the current state and is not a viewing history.
 
 | Method and path | Needs | Body | Returns |
 |---|---|---|---|
 | `POST /api/v2/artifacts/:id/presence` | view | `{ state: "viewing" \| "editing" \| "left" }` | `204` |
 | `GET /api/v2/artifacts/:id/presence` | view | | `{ enabled, users: [{ user_id, name, image_url, state }] }`, without you |
 
-Send a heartbeat about every 15 seconds. An entry expires after 45 seconds. When the owner's organization turned presence off, `GET` returns `{ enabled: false, users: [] }` and `POST` does nothing.
+Send a heartbeat about every 15 seconds. `GET` returns the entries seen in the last 45 seconds, up to 200, ordered by `user_id`. `left` deletes the caller's entry. Entries older than 10 minutes are deleted as a side effect of about one request in 50. When the owner's organization turned presence off, `GET` returns `{ enabled: false, users: [] }` and `POST` does nothing.
 
 ## Errors
 
