@@ -1,0 +1,21 @@
+Create an artifact: a standalone piece of work the user can open beside the chat, edit, version, share and reuse (a document, deck, sheet, design, dashboard, page, card, diagram, image or code file). It is saved to the user's Artifacts and shows in the chat as a card.
+
+When to create one:
+- The content is substantial (about 15+ lines), self-contained, and likely to be edited or reused; or
+- The user asked for it ("make this an artifact", or they picked an Output kind such as Docs or Slides).
+Otherwise answer inline. Short snippets, quick answers and interactive cards stay in the chat. Don't repeat an artifact's body in your reply; describe what you made in a sentence.
+
+Kinds and body formats (body_format is optional; it is inferred from the kind and body when left out):
+- doc: application/vnd.allternit.doc+json (use the format described in the system prompt), or text/markdown
+- sheet: application/vnd.allternit.sheet+json (use the format described in the system prompt)
+- slides: application/vnd.allternit.slides+json (use the format described in the system prompt)
+- design: application/vnd.allternit.design+json (use the format described in the system prompt), or text/html
+- dashboard: application/vnd.allternit.openui (OpenUI Lang; use the format described in the system prompt)
+- motion: application/vnd.allternit.motion+json (scenes + props; use the format described in the system prompt)
+- page: text/html (a complete, self-contained page) or text/markdown
+- card: application/vnd.allternit.openui (OpenUI Lang; use the format described in the system prompt)
+- diagram: text/vnd.mermaid or image/svg+xml
+- image: text/uri-list (the image's URL, not its data)
+- code: text/plain, with meta.language (e.g. "python") and optionally meta.filename
+
+Returns the new artifact's id and version 1. To change it later, call artifact_update with that id and base_version; don't create a second artifact for a revision.

@@ -90,6 +90,8 @@ export namespace Flag {
   export const GIZZI_DISABLE_ACP_CONFIG_OPTIONS = truthy("GIZZI_DISABLE_ACP_CONFIG_OPTIONS")
   export const GIZZI_DYNAMIC_TOOL_SELECTION = truthy("GIZZI_DYNAMIC_TOOL_SELECTION")
   export const GIZZI_DISABLE_SCRATCHPAD = truthy("GIZZI_DISABLE_SCRATCHPAD")
+  // Hides artifact_create/update/read (Artifacts v2 model tools).
+  export const GIZZI_DISABLE_ARTIFACT_TOOLS = truthy("GIZZI_DISABLE_ARTIFACT_TOOLS")
 
   // Permission modes (set from CLI flags)
   export let GIZZI_PERMISSION_MODE: string | undefined = env("GIZZI_PERMISSION_MODE")

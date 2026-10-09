@@ -18,7 +18,7 @@ describe("CliBridge MCP server", () => {
 
     const list = (await CliBridge.handle("ses_1", { jsonrpc: "2.0", id: 2, method: "tools/list" }, signal)) as any
     const names = list.result.tools.map((t: any) => t.name)
-    expect(names).toEqual(["pane_artifact", "pane_browser", "media_generate"])
+    expect(names).toEqual(["pane_artifact", "pane_browser", "media_generate", "artifact_create", "artifact_update", "artifact_read"])
     const media = list.result.tools.find((t: any) => t.name === "media_generate")
     expect(media.inputSchema.type).toBe("object")
     expect(media.inputSchema.properties.kind).toBeDefined()

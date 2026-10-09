@@ -334,6 +334,7 @@
             "pages": [
               "tools/overview",
               "tools/tool-belt",
+              "tools/artifact-tools",
               "tools/mcp",
               "tools/computer-use",
               "tools/computer-toolset",
