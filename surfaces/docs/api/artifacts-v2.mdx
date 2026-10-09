@@ -244,10 +244,35 @@ PUT /api/v2/org/artifact-settings
 
 `GET` returns the settings for your active organization, plus `org_id`, `updated_by`, `updated_at` and `can_edit`. Personal accounts get the defaults with `org_id: null`. `PUT` changes only the fields you send. It needs the Clerk organization role `admin` (or `org:admin`). Everyone else gets `403`.
 
+## Comments
+
+Comments are threaded: a root comment plus replies one level deep. They are stored in `artifact_comments`.
+
+| Method and path | Needs | Body | Returns |
+|---|---|---|---|
+| `GET /api/v2/artifacts/:id/comments` | view | | `{ items }`, oldest first, at most 500 |
+| `POST /api/v2/artifacts/:id/comments` | comment | `{ body, anchor?, parent_id?, version? }` | the comment, `201` |
+| `PATCH /api/v2/artifacts/:id/comments/:cid` | edit, or the author | `{ resolved? , body? }` | the comment |
+| `DELETE /api/v2/artifacts/:id/comments/:cid` | the author or the owner | | `204`. Deleting a root deletes its replies. |
+| `POST /api/v2/artifacts/:id/comments/assistant-reply` | edit | `{ parent_id, body }` | the reply, `201`, with `author_id: "assistant"` |
+
+A comment has `id`, `artifact_id`, `version`, `anchor`, `parent_id`, `author_id`, `author_name`, `author_image_url`, `body`, `to_assistant`, `resolved_at` and `created_at`. `body` is 1 to 4000 characters. `anchor` is an opaque object up to 16 KB; the app writes `{ kind: "text" | "cell" | "slide" | "element", ... }`. A comment that mentions `@gizzi` or `@allternit` is stored with `to_assistant: true`. Docs have no Commenter level, so a viewer of a doc can't comment.
+
+## Presence
+
+Presence is live only and is never written to the database. The server keeps a short in-memory list per artifact.
+
+| Method and path | Needs | Body | Returns |
+|---|---|---|---|
+| `POST /api/v2/artifacts/:id/presence` | view | `{ state: "viewing" \| "editing" \| "left" }` | `204` |
+| `GET /api/v2/artifacts/:id/presence` | view | | `{ enabled, users: [{ user_id, name, image_url, state }] }`, without you |
+
+Send a heartbeat about every 15 seconds. An entry expires after 45 seconds. When the owner's organization turned presence off, `GET` returns `{ enabled: false, users: [] }` and `POST` does nothing.
+
 ## Errors
 
 Errors use the standard Cloud API shape `{ "error", "message", "code" }`. Artifact-specific codes are listed above. `401` means you are not signed in. `404` means the artifact doesn't exist or you have no access.
 
 ## Storage
 
-The schema is `cmd/allternit-cloud-api/migrations_pg/085_artifacts_v2.sql`. It creates `artifacts`, `artifact_versions`, `artifact_shares` and `org_artifact_settings`, plus `artifact_storage`, `artifact_consents` and `artifact_comments` for the Phase 4 page runtime and comments. The migration is idempotent and is applied to production by hand.
+The schema is `cmd/allternit-cloud-api/migrations_pg/085_artifacts_v2.sql`. It creates `artifacts`, `artifact_versions`, `artifact_shares` and `org_artifact_settings`, plus `artifact_storage`, `artifact_consents` and `artifact_comments` for the page runtime and comments. The migration is idempotent and is applied to production by hand.

@@ -261,10 +261,14 @@
         "allternit/platform/packages/allternit-office-suite",
         "allternit/platform/packages/office-docx-engine",
         "allternit/platform/packages/office-pptx-engine",
-        "allternit/platform/packages/office-xlsx-engine"
+        "allternit/platform/packages/office-xlsx-engine",
+        "allternit-ai/src/lib/artifacts",
+        "allternit-ai/src/components/artifacts"
       ],
-      "decisions": [],
-      "evidence": ["allternit/surfaces/docs/api/office.mdx", "allternit/surfaces/docs/surfaces/office-suite.mdx"]
+      "decisions": [
+        {"on": "2026-10-09", "note": "Docs, Slides and Sheets are also artifact kinds: the artifact window mounts the same editor packs on a scratch document id seeded from the artifact body and autosaves each change as a version (artifacts v2 phase 4)."}
+      ],
+      "evidence": ["allternit/surfaces/docs/api/office.mdx", "allternit/surfaces/docs/surfaces/office-suite.mdx", "allternit/surfaces/docs/guides/artifact-editors.mdx"]
     },
     {
       "id": "feature:mcp-apps",
@@ -482,12 +486,18 @@
         {
           "on": "2026-10-08",
           "note": "Eoj accepted the artifacts v2 contract (docs/design/artifacts-v2.md): one typed store in cloud-api under /api/v2/artifacts, private by default, links refused for artifacts that use AI or connectors, owner-only permanent delete, legacy stores import as runtime_version 1."
+        },
+        {
+          "on": "2026-10-09",
+          "note": "Phase 4 editors: doc, sheet, slides and design open in the window's editors with autosave to versions, Edit with Allternit on a selection, threaded comments with @gizzi, heartbeat presence (honours the org presence switch), and Word/PDF/Markdown/PowerPoint/XLSX/CSV/HTML/zip exports. Presence is an in-memory heartbeat poll under /api/v2/artifacts/:id/presence, not the deployment WebSocket hub."
         }
       ],
       "evidence": [
         "allternit/docs/design/artifacts-v2.md",
         "allternit/surfaces/docs/api/artifacts-v2.mdx",
-        "allternit/surfaces/docs/guides/artifacts.mdx"
+        "allternit/surfaces/docs/guides/artifacts.mdx",
+        "allternit/surfaces/docs/guides/artifact-editors.mdx",
+        "allternit/surfaces/docs/guides/artifact-collaboration.mdx"
       ]
     },
     {

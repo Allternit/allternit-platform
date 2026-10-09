@@ -81,6 +81,8 @@
               "guides/subscriptions",
               "plugins/guides/vendor-packs",
               "guides/artifacts",
+              "guides/artifact-editors",
+              "guides/artifact-collaboration",
               "guides/artifact-modes",
               "guides/computers-and-apps",
               "guides/phone-for-your-bot",
