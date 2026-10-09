@@ -1,7 +1,7 @@
 """
 Allternit Computer Use — Real Adapter Integration Tests
-Actually tests browser automation, desktop automation, and the operator service.
-No mocks. Real Playwright, real pyautogui, real HTTP calls.
+Actually tests browser automation, desktop capture, and the operator service.
+No mocks. Real Playwright, real native desktop capture, real HTTP calls.
 """
 
 import asyncio
@@ -308,74 +308,6 @@ async def test_playwright_adapter_wrapper():
 
 
 # ============================================================================
-# Test 3: PyAutoGUI — Real Desktop
-# ============================================================================
-
-async def test_pyautogui_real():
-    print("\n[Test 3] PyAutoGUI — Real Desktop Automation")
-
-    try:
-        import pyautogui
-    except ImportError:
-        results.skip("PyAutoGUI", "pyautogui not installed")
-        return
-
-    tmp_dir = tempfile.mkdtemp()
-
-    try:
-        # Test 3a: Screen size
-        size = pyautogui.size()
-        assert size.width > 0 and size.height > 0
-        results.ok(f"Screen detected — {size.width}x{size.height}")
-
-        # Test 3b: Mouse position
-        pos = pyautogui.position()
-        assert pos.x >= 0 and pos.y >= 0
-        results.ok(f"Mouse position — ({pos.x}, {pos.y})")
-
-        # Test 3c: Screenshot
-        screenshot = pyautogui.screenshot()
-        assert screenshot.size[0] > 0 and screenshot.size[1] > 0
-        screenshot_path = os.path.join(tmp_dir, "desktop_screenshot.png")
-        screenshot.save(screenshot_path)
-        file_size = os.path.getsize(screenshot_path)
-        assert file_size > 1000, f"Screenshot file too small: {file_size}"
-        results.ok(f"Desktop screenshot — {file_size} bytes, {screenshot.size[0]}x{screenshot.size[1]}")
-
-        # Test 3d: Screenshot via adapter wrapper
-        from adapters.desktop.pyautogui import PyAutoGUIAdapter
-
-        adapter = PyAutoGUIAdapter()
-        await adapter.initialize()
-
-        action = ActionRequest(action_type="screenshot", target="desktop")
-        envelope = await adapter.execute(action, session_id="desktop-test", run_id="run-desktop-1")
-
-        assert envelope.status == "completed", f"Desktop screenshot failed: {envelope.error}"
-        assert envelope.adapter_id == "desktop.pyautogui"
-        assert envelope.family == "desktop"
-        assert len(envelope.artifacts) >= 1
-        results.ok(f"PyAutoGUI adapter screenshot — {envelope.artifacts[0].size_bytes} bytes")
-
-        # Test 3e: Observe (captures screen state)
-        action2 = ActionRequest(action_type="observe", target="desktop")
-        envelope2 = await adapter.execute(action2, session_id="desktop-test", run_id="run-desktop-1")
-        assert envelope2.status == "completed"
-        results.ok("PyAutoGUI adapter observe — desktop state captured")
-
-        # Test 3f: Receipt generation
-        assert len(envelope.receipts) >= 1
-        results.ok("PyAutoGUI adapter emits receipts")
-
-        await adapter.close()
-
-    except Exception as e:
-        results.fail("PyAutoGUI real desktop test", str(e))
-    finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-
-
-# ============================================================================
 # Test 4: Operator Service — Real HTTP
 # ============================================================================
 
@@ -570,20 +502,19 @@ async def test_cross_family():
                                              mode="desktop", adapter_id=desktop_decision.primary_adapter)
         desktop_session = session_mgr.activate(desktop_session.session_id)
 
-        from adapters.desktop.pyautogui import PyAutoGUIAdapter
-        desktop_adapter = PyAutoGUIAdapter()
-        action2 = ActionRequest(action_type="screenshot", target="desktop")
-        envelope2 = await desktop_adapter.execute(action2, session_id=desktop_session.session_id, run_id="cross-1")
-        assert envelope2.status == "completed"
-        assert len(envelope2.artifacts) >= 1
+        from adapters.desktop.accessibility_adapter import AccessibilityAdapter
+        desktop_adapter = AccessibilityAdapter()
+        shot = await desktop_adapter.execute("take_screenshot", {})
+        assert shot.get("success"), shot.get("error")
+        shot_bytes = len(shot.get("image_b64") or "")
 
         receipt_writer.emit(
             run_id="cross-1", session_id=desktop_session.session_id,
             action_type="screenshot", adapter_id=desktop_decision.primary_adapter,
             target="desktop",
-            action_data={"action": "screenshot"}, result_data={"bytes": envelope2.artifacts[0].size_bytes},
+            action_data={"action": "screenshot"}, result_data={"b64_chars": shot_bytes},
         )
-        results.ok(f"Phase B: Desktop screenshot — {envelope2.artifacts[0].size_bytes} bytes")
+        results.ok(f"Phase B: Desktop screenshot — {shot_bytes} base64 chars")
 
         # Phase C: Verify session isolation
         assert browser_session.session_id != desktop_session.session_id
@@ -612,7 +543,6 @@ async def test_cross_family():
 
         # Cleanup
         await pw_adapter.close()
-        await desktop_adapter.close()
         session_mgr.destroy(browser_session.session_id)
         session_mgr.destroy(desktop_session.session_id)
         results.ok("Phase F: Both sessions destroyed, adapters closed")
@@ -721,8 +651,8 @@ def test_registry_real():
     assert registry.get_guarantee_grade("browser.playwright", "semantic") == "A"
     assert registry.get_guarantee_grade("browser.extension", "conformance") == "C"
     assert registry.is_production_grade("browser.playwright") == True
-    assert registry.is_production_grade("browser.browser-use") == False
-    assert registry.is_routable("browser.browser-use") == True
+    assert registry.is_production_grade("browser.cdp") == False
+    assert registry.is_routable("browser.cdp") == True
     assert registry.is_routable("browser.extension") == False
     results.ok("Registry helpers (supports/get_guarantee_grade/is_production_grade/is_routable) correct")
 
@@ -737,7 +667,6 @@ def test_registry_real():
         ("browser", "inspect", "browser.cdp"),
         ("browser", "parallel", "browser.playwright"),
         ("browser", "assist", "browser.extension"),
-        ("desktop", "desktop", "desktop.pyautogui"),
         ("retrieval", "crawl", "retrieval.playwright-crawler"),
         ("hybrid", "hybrid", "hybrid.orchestrator"),
     ]
@@ -745,15 +674,15 @@ def test_registry_real():
         sel_result = selector.select(family, mode, allow_experimental=True)
         assert sel_result.primary == expected_primary, \
             f"{family}×{mode}: expected {expected_primary}, got {sel_result.primary}"
-    results.ok("AdapterSelector picks correct primary for all 7 routing cases")
+    results.ok("AdapterSelector picks correct primary for all 6 routing cases")
 
     # Promotion gate
     promo = matrix.promotion_eligible("browser.playwright", 1.0)
     assert promo["current_status"] == "production"
-    promo2 = matrix.promotion_eligible("browser.browser-use", 0.6)
+    promo2 = matrix.promotion_eligible("browser.cdp", 0.6)
     assert promo2["current_status"] == "beta"
     assert promo2["eligible"] == False  # 60% < 90% for production
-    results.ok("Promotion gate: playwright already production, browser-use blocked at 60%")
+    results.ok("Promotion gate: playwright already production, cdp blocked at 60%")
 
     # Cross-check router against manifests for all v0.2 routes
     router = Router()
@@ -1003,7 +932,6 @@ def main():
     # Async tests
     loop = asyncio.new_event_loop()
     loop.run_until_complete(test_playwright_real())
-    loop.run_until_complete(test_pyautogui_real())
     loop.run_until_complete(test_playwright_adapter_wrapper())
     loop.run_until_complete(test_cross_family())
     loop.run_until_complete(test_operator_service())

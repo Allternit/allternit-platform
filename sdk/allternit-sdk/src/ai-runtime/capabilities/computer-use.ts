@@ -201,6 +201,13 @@ export const COMPUTER_USE_TOOL: ToolDefinition = {
   preExecute: createComputerPreExecute(),
 };
 
+/**
+ * @deprecated since 2026-10-09. Use `@allternit/computer-driver`
+ * (`@allternit/computer-driver/anthropic` for the Anthropic computer tool),
+ * which runs each action on a hosted computer's toolset executor. This class
+ * still posts to the local ACU gateway `/v1/execute` and is kept as a thin
+ * shim for existing ai-runtime callers.
+ */
 export class ComputerUseCapability {
   private readonly gatewayUrl: string;
   private readonly fetchImpl: typeof globalThis.fetch;

@@ -8,7 +8,7 @@ Posts clicks, keys, scroll events directly to target processes without:
   - Triggering focus-change handlers
 
 Inspired by background-computer-use's NativeBackgroundClickTransport (SkyLight approach).
-Falls back to pyautogui if Quartz not available.
+Without Quartz, posting reports failure (no foreground fallback).
 
 SkyLight / SLEventPostToPid
 ---------------------------
@@ -42,7 +42,6 @@ _IS_DARWIN = platform.system() == "Darwin"
 # ---------------------------------------------------------------------------
 
 _QUARTZ_AVAILABLE = False
-_PYAUTOGUI_AVAILABLE = False
 
 if _IS_DARWIN:
     try:
@@ -51,12 +50,6 @@ if _IS_DARWIN:
         _QUARTZ_AVAILABLE = True
     except ImportError:
         pass
-
-try:
-    import pyautogui
-    _PYAUTOGUI_AVAILABLE = True
-except ImportError:
-    pass
 
 
 # ---------------------------------------------------------------------------
@@ -119,7 +112,6 @@ def _post_event(event: Any, pid: Optional[int] = None) -> None:
 class EventPostMode(Enum):
     BACKGROUND_QUARTZ = "background_quartz"
     BACKGROUND = "background"
-    FOREGROUND_PYAUTOGUI = "foreground_pyautogui"
     FOREGROUND_APPLESCRIPT = "foreground_applescript"
 
 
@@ -204,7 +196,7 @@ class BackgroundEventPoster:
     """
     Posts macOS input events using Quartz CGEvent APIs without focus stealing.
 
-    Falls back to pyautogui when Quartz is not available.
+    Reports failure when Quartz is not available (no foreground fallback).
 
     When a ``pid`` argument is passed to any posting method AND SkyLight is
     available, events are delivered directly to that process via
@@ -216,7 +208,6 @@ class BackgroundEventPoster:
 
     def __init__(self) -> None:
         self._quartz_ok = _QUARTZ_AVAILABLE
-        self._pyautogui_ok = _PYAUTOGUI_AVAILABLE
 
     # ── Capabilities ──────────────────────────────────────────────────────────
 
@@ -234,8 +225,6 @@ class BackgroundEventPoster:
             modes.append(EventPostMode.BACKGROUND)
         if self._quartz_ok:
             modes.append(EventPostMode.BACKGROUND_QUARTZ)
-        if self._pyautogui_ok:
-            modes.append(EventPostMode.FOREGROUND_PYAUTOGUI)
         modes.append(EventPostMode.FOREGROUND_APPLESCRIPT)
         return modes
 
@@ -262,17 +251,9 @@ class BackgroundEventPoster:
             except Exception as exc:
                 logger.debug("[EventPoster] Quartz click failed: %s", exc)
 
-        if self._pyautogui_ok:
-            try:
-                btn = button if button in ("left", "right", "middle") else "left"
-                pyautogui.click(x, y, button=btn)
-                return EventResult(success=True, mode_used=EventPostMode.FOREGROUND_PYAUTOGUI)
-            except Exception as exc:
-                logger.debug("[EventPoster] pyautogui click failed: %s", exc)
-
         return EventResult(
             success=False,
-            mode_used=EventPostMode.FOREGROUND_PYAUTOGUI,
+            mode_used=EventPostMode.BACKGROUND_QUARTZ,
             notes="No available click backend succeeded",
         )
 
@@ -299,16 +280,9 @@ class BackgroundEventPoster:
             except Exception as exc:
                 logger.debug("[EventPoster] Quartz double-click failed: %s", exc)
 
-        if self._pyautogui_ok:
-            try:
-                pyautogui.doubleClick(x, y)
-                return EventResult(success=True, mode_used=EventPostMode.FOREGROUND_PYAUTOGUI)
-            except Exception as exc:
-                logger.debug("[EventPoster] pyautogui double-click failed: %s", exc)
-
         return EventResult(
             success=False,
-            mode_used=EventPostMode.FOREGROUND_PYAUTOGUI,
+            mode_used=EventPostMode.BACKGROUND_QUARTZ,
             notes="No backend available for double-click",
         )
 
@@ -348,16 +322,9 @@ class BackgroundEventPoster:
             except Exception as exc:
                 logger.debug("[EventPoster] Quartz scroll failed: %s", exc)
 
-        if self._pyautogui_ok:
-            try:
-                pyautogui.scroll(int(dy), x=int(x), y=int(y))
-                return EventResult(success=True, mode_used=EventPostMode.FOREGROUND_PYAUTOGUI)
-            except Exception as exc:
-                logger.debug("[EventPoster] pyautogui scroll failed: %s", exc)
-
         return EventResult(
             success=False,
-            mode_used=EventPostMode.FOREGROUND_PYAUTOGUI,
+            mode_used=EventPostMode.BACKGROUND_QUARTZ,
             notes="No backend available for scroll",
         )
 
@@ -412,16 +379,9 @@ class BackgroundEventPoster:
             except Exception as exc:
                 logger.debug("[EventPoster] Quartz drag failed: %s", exc)
 
-        if self._pyautogui_ok:
-            try:
-                pyautogui.dragTo(to_x, to_y, duration=duration_ms / 1000.0, button="left")
-                return EventResult(success=True, mode_used=EventPostMode.FOREGROUND_PYAUTOGUI)
-            except Exception as exc:
-                logger.debug("[EventPoster] pyautogui drag failed: %s", exc)
-
         return EventResult(
             success=False,
-            mode_used=EventPostMode.FOREGROUND_PYAUTOGUI,
+            mode_used=EventPostMode.BACKGROUND_QUARTZ,
             notes="No backend available for drag",
         )
 
@@ -452,23 +412,9 @@ class BackgroundEventPoster:
             except Exception as exc:
                 logger.debug("[EventPoster] Quartz key failed: %s", exc)
 
-        if self._pyautogui_ok:
-            try:
-                # Map keycode back to key name for pyautogui
-                inv_map = {v: k for k, v in _KEY_MAP.items()}
-                key_name = inv_map.get(keycode, str(keycode))
-                mod_names = [m.replace("cmd", "command").replace("ctrl", "ctrl") for m in modifiers]
-                if mod_names:
-                    pyautogui.hotkey(*mod_names, key_name)
-                else:
-                    pyautogui.press(key_name)
-                return EventResult(success=True, mode_used=EventPostMode.FOREGROUND_PYAUTOGUI)
-            except Exception as exc:
-                logger.debug("[EventPoster] pyautogui key failed: %s", exc)
-
         return EventResult(
             success=False,
-            mode_used=EventPostMode.FOREGROUND_PYAUTOGUI,
+            mode_used=EventPostMode.BACKGROUND_QUARTZ,
             notes="No backend available for key event",
         )
 
@@ -509,17 +455,9 @@ class BackgroundEventPoster:
             except Exception as exc:
                 logger.debug("[EventPoster] Quartz key_combo failed: %s", exc)
 
-        if self._pyautogui_ok:
-            try:
-                parts = [p.strip().lower() for p in combo.split("+")]
-                pyautogui.hotkey(*parts)
-                return EventResult(success=True, mode_used=EventPostMode.FOREGROUND_PYAUTOGUI)
-            except Exception as exc:
-                logger.debug("[EventPoster] pyautogui hotkey failed: %s", exc)
-
         return EventResult(
             success=False,
-            mode_used=EventPostMode.FOREGROUND_PYAUTOGUI,
+            mode_used=EventPostMode.BACKGROUND_QUARTZ,
             notes=f"No backend available for combo {combo!r}",
         )
 
@@ -535,7 +473,6 @@ class BackgroundEventPoster:
         Type text character-by-character.
 
         Uses CGEventKeyboardSetUnicodeString on macOS for full Unicode support.
-        Falls back to pyautogui.typewrite for ASCII.
         """
         if self._quartz_ok:
             try:
@@ -556,17 +493,9 @@ class BackgroundEventPoster:
             except Exception as exc:
                 logger.debug("[EventPoster] Quartz type failed: %s", exc)
 
-        if self._pyautogui_ok:
-            try:
-                # pyautogui.typewrite only handles printable ASCII; use write for Unicode
-                pyautogui.write(text, interval=interval_ms / 1000.0)
-                return EventResult(success=True, mode_used=EventPostMode.FOREGROUND_PYAUTOGUI)
-            except Exception as exc:
-                logger.debug("[EventPoster] pyautogui type failed: %s", exc)
-
         return EventResult(
             success=False,
-            mode_used=EventPostMode.FOREGROUND_PYAUTOGUI,
+            mode_used=EventPostMode.BACKGROUND_QUARTZ,
             notes="No backend available for typing",
         )
 
@@ -586,16 +515,9 @@ class BackgroundEventPoster:
             except Exception as exc:
                 logger.debug("[EventPoster] Quartz move_cursor failed: %s", exc)
 
-        if self._pyautogui_ok:
-            try:
-                pyautogui.moveTo(x, y)
-                return EventResult(success=True, mode_used=EventPostMode.FOREGROUND_PYAUTOGUI)
-            except Exception as exc:
-                logger.debug("[EventPoster] pyautogui moveTo failed: %s", exc)
-
         return EventResult(
             success=False,
-            mode_used=EventPostMode.FOREGROUND_PYAUTOGUI,
+            mode_used=EventPostMode.BACKGROUND_QUARTZ,
             notes="No backend available for cursor move",
         )
 

@@ -279,7 +279,7 @@ brew install ffmpeg  # macOS
 
 ## Design Principles
 
-1. **Adapter-Agnostic**: Works with Playwright, browser-use, CDP, desktop
+1. **Adapter-Agnostic**: Works with Playwright, CDP, extension, desktop
 2. **Zero-Impact**: Recording failures don't break execution
 3. **Async Post-Processing**: Replay generation happens after run
 4. **Truth vs Replay**: Receipts/timeline are source of truth, replay is derived

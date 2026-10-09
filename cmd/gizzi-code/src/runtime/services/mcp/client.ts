@@ -231,18 +231,6 @@ import { isAllternitInChromeMCPServer } from '../../../utils/allternitInChrome/c
 const allternitInChromeToolRendering =
   (): typeof import('../../../shared/utils/allternitInChrome/toolRendering.js') =>
     require('../../../shared/utils/allternitInChrome/toolRendering.js')
-// Lazy: wrapper.tsx → hostAdapter.ts → executor.ts pulls both native modules
-// (@ant/computer-use-input + @ant/computer-use-swift). Runtime-gated by
-// GrowthBook tengu_malort_pedway (see gates.ts).
-const computerUseWrapper = feature('CHICAGO_MCP')
-  ? (): typeof import('../../utils/computerUse/wrapper.js') =>
-      require('../../utils/computerUse/wrapper.js')
-  : undefined
-const isComputerUseMCPServer = feature('CHICAGO_MCP')
-  ? (
-      require('../../utils/computerUse/common.js') as typeof import('../../utils/computerUse/common.js')
-    ).isComputerUseMCPServer
-  : undefined
 
 import { mkdir, readFile, unlink, writeFile } from 'fs/promises'
 import { dirname, join } from 'path'
@@ -941,25 +929,6 @@ export const connectToServer = memoize(
         await (inProcessServer as { connect(t: Transport): Promise<void> }).connect(serverTransport)
         transport = clientTransport
         logMCPDebug(name, `In-process Chrome MCP server started`)
-      } else if (
-        feature('CHICAGO_MCP') &&
-        ((serverRef as any).type === 'stdio' || !(serverRef as any).type) &&
-        isComputerUseMCPServer!(name)
-      ) {
-        // Run the Computer Use MCP server in-process — same rationale as
-        // Chrome above. The package's CallTool handler is a stub; real
-        // dispatch goes through wrapper.tsx's .call() override.
-        const { createComputerUseMcpServerForCli } = await import(
-          '../../utils/computerUse/mcpServer.js'
-        )
-        const { createLinkedTransportPair } = await import(
-          './InProcessTransport.js'
-        )
-        inProcessServer = await createComputerUseMcpServerForCli() as any
-        const [clientTransport, serverTransport] = createLinkedTransportPair()
-        await (inProcessServer as { connect(t: Transport): Promise<void> }).connect(serverTransport)
-        transport = clientTransport
-        logMCPDebug(name, `In-process Computer Use MCP server started`)
       } else if ((serverRef as any).type === 'stdio' || !(serverRef as any).type) {
         const finalCommand =
           process.env.GIZZI_SHELL_PREFIX || serverRef.command
@@ -2037,11 +2006,6 @@ export const fetchToolsForClient = memoizeWithLRU(
               ? allternitInChromeToolRendering().getAllternitInChromeMCPToolOverrides(
                   tool.name,
                 )
-              : {}),
-            ...(feature('CHICAGO_MCP') &&
-            (client.config.type === 'stdio' || !client.config.type) &&
-            isComputerUseMCPServer!(client.name)
-              ? computerUseWrapper!().getComputerUseMCPToolOverrides(tool.name)
               : {}),
           }
         })

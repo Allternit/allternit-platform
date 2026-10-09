@@ -199,7 +199,7 @@ When the executor answers `approval_required`, gizzi asks the person through its
 ## What it replaced
 
 - **gizzi `browser` tool** (ACU gateway, goal-driven `execute`). It is replaced by the toolset `browser` tool under the same `GIZZI_DISABLE_BROWSER_TOOL` switch. Goal-driven browsing was a second agent loop, so it is gone.
-- **gizzi `desktop` tool.** It still provisions and releases cloud desktops (`GIZZI_ENABLE_DESKTOP_TOOL`). Its mouse, keyboard and screenshot actions are superseded by `computer`, which the same flag (or `GIZZI_ENABLE_COMPUTER_TOOL`) turns on.
+- **gizzi `desktop` tool.** Removed on 2026-10-09. Screen input is the `computer` tool; provisioning and files are the `computers` tool, which calls allternit-api's `computer_*` tools. Both are on with `GIZZI_ENABLE_COMPUTER_TOOL`.
 - **`pane_browser`** is unchanged. It drives the page the person can see in the app's browser pane. That pane is a different target from the headless gateway session, so the two stay separate.
 - **allternit-api `computer_screenshot` / `computer_mouse` / `computer_keyboard` tools** (`/tools/execute`). These stay as compatibility aliases on the shared control plane. New work uses the toolset.
 
@@ -215,5 +215,5 @@ Outputs: `sdk/computer-toolset` (`@allternit/computer-toolset`), gizzi `contract
 ## Related pages
 
 - [Allternit Computer Interface (ACI)](/tools/computer-use)
-- [Computer use over MCP](/tools/computer-use-mcp)
+- [Computers MCP server](/api/platform/hosted-computers)
 - [Computers and apps](/guides/computers-and-apps)

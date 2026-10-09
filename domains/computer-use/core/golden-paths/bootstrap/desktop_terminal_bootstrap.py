@@ -6,9 +6,9 @@ Allows running shell commands, reading stdout/stderr, and taking screenshots
 of the terminal window. Cross-platform: macOS Terminal, iTerm2, Windows CMD/
 PowerShell/Windows Terminal, Linux xterm/gnome-terminal.
 
-Does NOT use PyAutoGUI for shell commands — it runs them directly via
-asyncio subprocess with a PTY-like interface. PyAutoGUI is used only for
-screenshot and coordinate actions if also registered.
+Shell commands run directly via asyncio subprocess with a PTY-like
+interface. Screenshot, keyboard and coordinate actions go through the
+accessibility adapter (Quartz events, macOS).
 
 Usage:
     from golden_paths.bootstrap.desktop_terminal_bootstrap import bootstrap_desktop_terminal
@@ -18,8 +18,6 @@ Usage:
 from __future__ import annotations
 
 import asyncio
-import base64
-import io
 import logging
 import os
 import platform
@@ -82,11 +80,11 @@ class TerminalAdapter:
     Registered as "desktop.terminal" in the ComputerUseExecutor.
 
     Supported action types:
-      screenshot     — capture desktop screenshot (via pyautogui if available)
+      screenshot     — capture desktop screenshot (via the accessibility adapter)
       cursor_position — get mouse position
       type           — send text to a running process (if process is tracked)
-      key            — press a key (via pyautogui)
-      left_click     — mouse click (via pyautogui)
+      key            — press a key (via the accessibility adapter)
+      left_click     — mouse click (via the accessibility adapter)
       shell          — run a shell command and return stdout/stderr/exit_code
                        (action_type="shell" is an extension beyond Claude's 9)
     """
@@ -252,65 +250,63 @@ class TerminalAdapter:
             "command": command,
         }
 
-    # ── PyAutoGUI helpers (optional) ──────────────────────────────────────────
+    # ── Native desktop helpers (accessibility adapter, macOS) ──────────────────
 
-    def _pag(self):
-        try:
-            import pyautogui
-            return pyautogui
-        except ImportError:
-            raise RuntimeError("pyautogui not installed — run: pip install pyautogui")
+    def _native(self):
+        adapter = getattr(self, "_native_adapter", None)
+        if adapter is None:
+            sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
+            from adapters.desktop.accessibility_adapter import AccessibilityAdapter
+            adapter = self._native_adapter = AccessibilityAdapter()
+        return adapter
+
+    async def _native_exec(self, command: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        result = await self._native().execute(command, params)
+        if not result.get("success"):
+            raise RuntimeError(result.get("error") or f"native desktop {command} failed")
+        return result
 
     async def _screenshot(self) -> Dict[str, Any]:
-        pag = self._pag()
-        img = pag.screenshot()
-        buf = io.BytesIO()
-        img.save(buf, format="PNG")
-        b64 = base64.b64encode(buf.getvalue()).decode()
-        return {"data_url": f"data:image/png;base64,{b64}"}
+        result = await self._native_exec("take_screenshot", {})
+        return {"data_url": f"data:image/png;base64,{result['image_b64']}"}
 
     async def _cursor_position(self) -> Dict[str, Any]:
-        pag = self._pag()
-        x, y = pag.position()
-        return {"x": x, "y": y}
+        pos = self._native().cursor_position()
+        if pos is None:
+            raise RuntimeError("cursor_position needs the macOS accessibility adapter")
+        return {"x": pos[0], "y": pos[1]}
 
     async def _keyboard_type(self, text: str) -> Dict[str, Any]:
-        pag = self._pag()
-        pag.typewrite(text, interval=0.02)
+        await self._native_exec("type_text", {"text": text})
         return {"chars_typed": len(text)}
 
     async def _keyboard_key(self, key: str) -> Dict[str, Any]:
-        pag = self._pag()
         if "+" in key:
-            keys = [k.strip().lower() for k in key.split("+")]
-            pag.hotkey(*keys)
+            await self._native_exec("key_combo", {"combo": key.lower()})
         else:
-            pag.press(key.lower())
+            await self._native_exec("press_key", {"key": key.lower()})
         return {"key": key}
 
     async def _mouse_click(self, x: int, y: int, action_type: str) -> Dict[str, Any]:
-        pag = self._pag()
-        if action_type == "left_click":
-            pag.click(x, y)
-        elif action_type == "right_click":
-            pag.rightClick(x, y)
-        elif action_type == "double_click":
-            pag.doubleClick(x, y)
-        elif action_type == "middle_click":
-            pag.middleClick(x, y)
+        command = {
+            "left_click": "click",
+            "right_click": "right_click",
+            "double_click": "double_click",
+        }.get(action_type)
+        if command is None:
+            raise RuntimeError(f"{action_type} is not supported by the native desktop adapter")
+        await self._native_exec(command, {"x": x, "y": y})
         return {}
 
     async def _scroll(self, x: int, y_pos: int, dy: int) -> Dict[str, Any]:
-        pag = self._pag()
         clicks = -(dy // 100) or (-1 if dy > 0 else 1)
-        pag.moveTo(x, y_pos)
-        pag.scroll(clicks)
+        await self._native_exec("scroll", {"x": x, "y": y_pos, "delta_x": 0, "delta_y": clicks})
         return {"deltaY": dy}
 
     async def _drag(self, sx: int, sy: int, ex: int, ey: int) -> Dict[str, Any]:
-        pag = self._pag()
-        pag.moveTo(sx, sy)
-        pag.dragTo(ex, ey, duration=0.3, button="left")
+        await self._native_exec("drag", {
+            "from_x": sx, "from_y": sy, "to_x": ex, "to_y": ey, "duration": 0.3,
+        })
         return {}
 
 
@@ -325,7 +321,7 @@ async def bootstrap_desktop_terminal(
     Initialize shell → Health check → Register → Return ready executor.
 
     The returned executor supports "shell" action_type (extension) plus
-    all coordinate/keyboard actions via pyautogui (if installed).
+    all coordinate/keyboard actions via the accessibility adapter (macOS).
     """
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
     from core.computer_use_executor import ComputerUseExecutor

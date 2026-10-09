@@ -188,14 +188,12 @@ def test_router():
     assert decision.primary_adapter == "browser.playwright", f"Expected browser.playwright, got {decision.primary_adapter}"
     assert decision.family == "browser"
     assert decision.mode == "execute"
-    assert "browser.browser-use" in decision.fallback_chain
     results.ok("browser × execute (deterministic) → playwright")
 
     # Adaptive browser execute
     decision = router.route("Extract data", family="browser", mode="execute", constraints=RouteConstraints(deterministic=False))
-    assert decision.primary_adapter == "browser.browser-use", f"Expected browser.browser-use, got {decision.primary_adapter}"
-    assert "browser.playwright" in decision.fallback_chain
-    results.ok("browser × execute (adaptive) → browser-use")
+    assert decision.primary_adapter == "browser.playwright", f"Expected browser.playwright, got {decision.primary_adapter}"
+    results.ok("browser × execute (adaptive) → playwright")
 
     # Inspect mode
     decision = router.route("Debug this page", family="browser", mode="inspect")
@@ -217,23 +215,23 @@ def test_router():
 
     # Desktop × desktop
     decision = router.route("Click button", family="desktop", mode="desktop")
-    assert decision.primary_adapter == "desktop.pyautogui", f"Expected desktop.pyautogui, got {decision.primary_adapter}"
-    results.ok("desktop × desktop → pyautogui")
+    assert decision.primary_adapter == "desktop.accessibility", f"Expected desktop.accessibility, got {decision.primary_adapter}"
+    results.ok("desktop × desktop → accessibility")
 
     # Desktop × execute
     decision = router.route("Type text", family="desktop", mode="execute")
-    assert decision.primary_adapter == "desktop.pyautogui"
-    results.ok("desktop × execute → pyautogui")
+    assert decision.primary_adapter == "desktop.accessibility"
+    results.ok("desktop × execute → accessibility")
 
     # Desktop × inspect
     decision = router.route("Screenshot debug", family="desktop", mode="inspect")
-    assert decision.primary_adapter == "desktop.pyautogui"
-    results.ok("desktop × inspect → pyautogui")
+    assert decision.primary_adapter == "desktop.accessibility"
+    results.ok("desktop × inspect → accessibility")
 
     # Desktop × parallel
     decision = router.route("Multi screenshot", family="desktop", mode="parallel")
-    assert decision.primary_adapter == "desktop.pyautogui"
-    results.ok("desktop × parallel → pyautogui")
+    assert decision.primary_adapter == "desktop.accessibility"
+    results.ok("desktop × parallel → accessibility")
 
     # ── Error cases ──
 
@@ -259,12 +257,6 @@ def test_router():
     assert d1.primary_adapter == d2.primary_adapter, "Same inputs must produce same adapter"
     assert d1.fallback_chain == d2.fallback_chain, "Same inputs must produce same fallbacks"
     results.ok("Routing determinism (G5)")
-
-    # Visual reasoning override
-    d3 = router.route("analyze page", family="browser", mode="execute",
-                      constraints=RouteConstraints(deterministic=False, visual_reasoning=True))
-    assert d3.primary_adapter == "browser.browser-use"
-    results.ok("Visual reasoning override → browser-use")
 
     # ── v0.2 Families and Modes ──
 
@@ -301,8 +293,8 @@ def test_router():
 
     # Desktop × assist
     decision = router.route("Guide user through app", family="desktop", mode="assist")
-    assert decision.primary_adapter == "desktop.pyautogui"
-    results.ok("desktop × assist → pyautogui")
+    assert decision.primary_adapter == "desktop.accessibility"
+    results.ok("desktop × assist → accessibility")
 
     # All supported routes list
     routes = router.list_supported_routes()
@@ -348,7 +340,7 @@ def test_policy():
     result = engine.evaluate(
         target="TextEdit",
         action_type="act",
-        adapter_id="desktop.pyautogui",
+        adapter_id="desktop.accessibility",
         adapter_risk_level="high",
         family="desktop",
     )
@@ -460,7 +452,7 @@ def test_sessions():
 
         # Artifact root isolation
         s1 = mgr.create(run_id="run-2", family="browser", mode="execute", adapter_id="browser.playwright")
-        s2 = mgr.create(run_id="run-3", family="desktop", mode="desktop", adapter_id="desktop.pyautogui")
+        s2 = mgr.create(run_id="run-3", family="desktop", mode="desktop", adapter_id="desktop.accessibility")
         assert s1.artifact_root != s2.artifact_root, "Different sessions must have different artifact roots"
         results.ok("Artifact root isolation between sessions")
 
@@ -557,7 +549,7 @@ def test_telemetry():
     collector.adapter_started("browser.playwright", "browser", "execute", "ses-1", "run-1")
     collector.adapter_completed("browser.playwright", "browser", "execute", "ses-1", "run-1", duration_ms=1500)
     collector.adapter_error("browser.playwright", "browser", "ses-2", "run-2", "Connection refused")
-    collector.fallback_used("browser.playwright", "browser.browser-use", "Primary failed", "ses-2", "run-2")
+    collector.fallback_used("browser.playwright", "browser.cdp", "Primary failed", "ses-2", "run-2")
 
     events = collector.get_events()
     assert len(events) == 4
@@ -608,10 +600,6 @@ def test_registry():
     assert len(browser_adapters) >= 4, f"Expected ≥4 browser adapters, got {len(browser_adapters)}"
     results.ok("Filter by family=browser")
 
-    desktop_adapters = registry.list_adapters(family="desktop")
-    assert len(desktop_adapters) >= 1
-    results.ok("Filter by family=desktop")
-
     retrieval_adapters = registry.list_adapters(family="retrieval")
     assert len(retrieval_adapters) >= 1, f"Expected ≥1 retrieval adapters, got {len(retrieval_adapters)}"
     results.ok("Filter by family=retrieval")
@@ -643,8 +631,8 @@ def test_registry():
 
     # Production status
     assert registry.is_production_grade("browser.playwright") == True
-    assert registry.is_production_grade("browser.browser-use") == False
-    assert registry.is_routable("browser.browser-use") == True   # beta is routable
+    assert registry.is_production_grade("browser.cdp") == False
+    assert registry.is_routable("browser.cdp") == True   # beta is routable
     assert registry.is_routable("browser.extension") == False    # experimental is not
     results.ok("Production status and routability checks")
 

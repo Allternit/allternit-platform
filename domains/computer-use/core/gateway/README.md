@@ -11,9 +11,8 @@ GIZZI Code (TypeScript)
 Computer Use Gateway (Python/FastAPI)
     │
     ├──► Playwright Adapter ──► Browser automation
-    ├──► browser-use Adapter ──► LLM-powered automation
     ├──► CDP Adapter ──► Chrome DevTools Protocol
-    └──► Desktop Adapter ──► System automation
+    └──► Accessibility Adapter ──► Native desktop (Quartz/AX, macOS)
 ```
 
 ## Quick Start
@@ -89,7 +88,6 @@ gizzi browser goto https://example.com
 - [ ] Base64 image artifacts
 
 ### Phase 3: Full Adapters
-- [ ] browser-use adapter (LLM-powered)
 - [ ] CDP adapter
 - [ ] Desktop adapter
 - [ ] Artifact persistence

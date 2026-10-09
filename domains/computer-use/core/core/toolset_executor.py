@@ -18,8 +18,7 @@ and input fields of ``contracts/toolset_v1.py`` (identical to Anthropic's
 
 No loop: the executor reaches a gateway browser session through the gateway's
 ``/v1/execute`` handlers, which run Playwright directly and never call back
-into the executor. Only the planning loop and the ``/v1/computer`` alias call
-the executor.
+into the executor. Only the planning loop calls the executor.
 """
 
 from __future__ import annotations
@@ -35,8 +34,7 @@ logger = logging.getLogger(__name__)
 
 TOOLSETS = ("computer", "browser")
 
-# Older outputs (pre-contract prompts, ShowUI/UI-TARS text, the old Claude
-# /v1/computer payload) use these verbs. They are names, not a second schema:
+# Older outputs (pre-contract prompts and model text) use these verbs. They are names, not a second schema:
 # each maps onto one contract member.
 LEGACY_VERBS: Dict[str, str] = {
     "click": "left_click",
@@ -241,64 +239,6 @@ def legacy_request(toolset: str, member: str, input: Dict[str, Any]) -> Tuple[st
         params["duration"] = input.get("duration", 1)
     target = str(input.get("url") or "") if member == "navigate" else ""
     return action, target, params
-
-
-def alias_v1_computer(payload: Dict[str, Any]) -> Tuple[str, str, Dict[str, Any]]:
-    """Map the old Claude-native ``/v1/computer`` payload onto a contract call.
-
-    Old fields: ``action``, ``coordinate``, ``text``, ``key``, ``delta``,
-    ``url``, ``selector``, ``parameters``. Member names already match the
-    contract for the computer set; ``goto``/``navigate`` and ``url`` go to
-    the browser set.
-    """
-    action = str(payload.get("action") or "screenshot")
-    params = dict(payload.get("parameters") or {})
-    coordinate = payload.get("coordinate")
-    text = payload.get("text")
-    key = payload.get("key")
-    delta = payload.get("delta")
-    url = payload.get("url")
-    toolset, member, _ = normalize_call(action, None, toolset="browser" if url else None)
-    data: Dict[str, Any] = {}
-    point = _point(coordinate)
-    if toolset == "browser":
-        if member == "navigate":
-            data["url"] = url or text or ""
-        elif point:
-            data["target"] = {"type": "coordinate", "x": point[0], "y": point[1]}
-        if member in ("type", "key") and (text or key):
-            data["text"] = text if member == "type" else (key or text)
-    else:
-        if point and member != "left_click_drag":
-            data["coordinate"] = point
-        if member == "left_click_drag":
-            start = _point(params.get("start_coordinate") or payload.get("start_coordinate"))
-            if start and point:
-                data["start_coordinate"], data["coordinate"] = start, point
-        if member == "type" and text is not None:
-            data["text"] = text
-        if member == "key":
-            data["text"] = key or text or ""
-        if member == "scroll":
-            direction = params.get("scroll_direction")
-            amount = params.get("scroll_amount")
-            if not direction and isinstance(delta, (list, tuple)) and len(delta) >= 2:
-                dx, dy = float(delta[0] or 0), float(delta[1] or 0)
-                if abs(dy) >= abs(dx):
-                    direction = "down" if dy >= 0 else "up"
-                    amount = amount or max(1, round(abs(dy) / 100))
-                else:
-                    direction = "right" if dx > 0 else "left"
-                    amount = amount or max(1, round(abs(dx) / 100))
-            data["scroll_direction"] = direction or "down"
-            data["scroll_amount"] = amount or 3
-        if member in ("wait", "hold_key"):
-            data["duration"] = params.get("duration", 1)
-            if member == "hold_key":
-                data["text"] = key or text or ""
-        if member == "zoom" and params.get("region"):
-            data["region"] = params["region"]
-    return toolset, member, data
 
 
 # ---------------------------------------------------------------------------

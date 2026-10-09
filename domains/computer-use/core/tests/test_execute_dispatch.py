@@ -6,7 +6,7 @@ mouse_move, left_click, left_click_drag, middle_click, left_mouse_down,
 left_mouse_up, cursor_position, hold_key, wait, zoom.
 
 The browser Playwright layer is mocked via a fake session_manager/page and the
-desktop layer via a fake pyautogui module, so no real browser or desktop
+desktop layer via a fake accessibility adapter, so no real browser or desktop
 session is needed.
 
 Import shim note: this repo has an outer wrapper package (this directory) and
@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import asyncio
 import sys
-import types
 from pathlib import Path
 
 import pytest
@@ -89,34 +88,20 @@ class FakeSessionManager:
         return self._page
 
 
-class FakePyAutoGUI(types.ModuleType):
-    def __init__(self) -> None:
-        super().__init__("pyautogui")
+class FakeDesktop:
+    """Stands in for the accessibility adapter behind gateway._desktop_input."""
+
+    def __init__(self, position=(10, 20)) -> None:
         self.calls: list[tuple] = []
-        self._position = (10, 20)
+        self._position = position
 
-    def moveTo(self, x, y, **kwargs) -> None:
-        self.calls.append(("moveTo", x, y))
+    async def execute(self, action: str, params: dict) -> dict:
+        if self._position is None:
+            return {"success": False, "error": "no native desktop"}
+        self.calls.append((action, dict(params)))
+        return {"success": True}
 
-    def click(self, x=None, y=None, button="left", **kwargs) -> None:
-        self.calls.append(("click", x, y, button))
-
-    def mouseDown(self, x=None, y=None, button="left", **kwargs) -> None:
-        self.calls.append(("mouseDown", x, y, button))
-
-    def mouseUp(self, x=None, y=None, button="left", **kwargs) -> None:
-        self.calls.append(("mouseUp", x, y, button))
-
-    def dragTo(self, x, y, duration=0.0, button="left", **kwargs) -> None:
-        self.calls.append(("dragTo", x, y, duration, button))
-
-    def keyDown(self, key: str) -> None:
-        self.calls.append(("keyDown", key))
-
-    def keyUp(self, key: str) -> None:
-        self.calls.append(("keyUp", key))
-
-    def position(self):
+    def cursor_position(self):
         return self._position
 
 
@@ -140,23 +125,22 @@ def run_action(gw, action: str, parameters: dict | None = None):
 def browser_page(gw, monkeypatch):
     page = FakePage()
     monkeypatch.setattr(gw, "session_manager", FakeSessionManager(page))
-    monkeypatch.setitem(sys.modules, "pyautogui", None)  # force browser path
     return page
 
 
 @pytest.fixture
 def desktop_only(gw, monkeypatch):
-    """No browser session; returns the fake pyautogui module installed in sys.modules."""
-    fake = FakePyAutoGUI()
+    """No browser session; returns the fake desktop adapter the gateway uses."""
+    fake = FakeDesktop()
     monkeypatch.setattr(gw, "session_manager", FakeSessionManager(None))
-    monkeypatch.setitem(sys.modules, "pyautogui", fake)
+    monkeypatch.setattr(gw, "_desktop_input_adapter", fake)
     return fake
 
 
 @pytest.fixture
 def no_backend(gw, monkeypatch):
     monkeypatch.setattr(gw, "session_manager", FakeSessionManager(None))
-    monkeypatch.setitem(sys.modules, "pyautogui", None)
+    monkeypatch.setattr(gw, "_desktop_input_adapter", FakeDesktop(position=None))
 
 
 def test_mouse_move_browser(gw, browser_page):
@@ -176,7 +160,7 @@ def test_mouse_move_requires_coordinate(gw, browser_page):
 def test_mouse_move_desktop_fallback(gw, desktop_only):
     resp = run_action(gw, "mouse_move", {"x": 50, "y": 60})
     assert resp.status == "completed"
-    assert ("moveTo", 50.0, 60.0) in desktop_only.calls
+    assert ("hover", {"x": 50.0, "y": 60.0}) in desktop_only.calls
 
 
 def test_left_click_browser(gw, browser_page):
@@ -188,7 +172,7 @@ def test_left_click_browser(gw, browser_page):
 def test_left_click_current_position_desktop(gw, desktop_only):
     resp = run_action(gw, "left_click")
     assert resp.status == "completed"
-    assert ("click", None, None, "left") in desktop_only.calls
+    assert ("click", {"x": 10.0, "y": 20.0}) in desktop_only.calls
 
 
 def test_middle_click_browser(gw, browser_page):
@@ -210,7 +194,7 @@ def test_left_click_drag_browser(gw, browser_page):
 def test_left_click_drag_desktop_fallback(gw, desktop_only):
     resp = run_action(gw, "left_click_drag", {"coordinate": [1, 2], "to_x": 3, "to_y": 4})
     assert resp.status == "completed"
-    assert ("dragTo", 3.0, 4.0, 0.5, "left") in desktop_only.calls
+    assert ("drag", {"from_x": 1.0, "from_y": 2.0, "to_x": 3.0, "to_y": 4.0, "duration": 0.5}) in desktop_only.calls
 
 
 def test_left_click_drag_requires_target(gw, browser_page):
@@ -232,15 +216,14 @@ def test_left_mouse_down_up_browser(gw, browser_page):
 def test_left_mouse_down_desktop_fallback(gw, desktop_only):
     resp = run_action(gw, "left_mouse_down", {"coordinate": [9, 9]})
     assert resp.status == "completed"
-    assert ("moveTo", 9.0, 9.0) in desktop_only.calls
-    assert ("mouseDown", None, None, "left") in desktop_only.calls
+    assert ("mouse_down", {"x": 9.0, "y": 9.0}) in desktop_only.calls
 
 
 def test_cursor_position_desktop(gw, desktop_only):
     resp = run_action(gw, "cursor_position")
     assert resp.status == "completed"
     assert resp.extracted_content == {"x": 10.0, "y": 20.0}
-    assert resp.adapter_id == "desktop.pyautogui"
+    assert resp.adapter_id == "desktop.accessibility"
 
 
 def test_cursor_position_explicit_error_without_backend(gw, no_backend):
@@ -266,8 +249,8 @@ def test_hold_key_requires_key(gw, browser_page):
 def test_hold_key_desktop_fallback(gw, desktop_only):
     resp = run_action(gw, "hold_key", {"key": "a", "duration": 0.001})
     assert resp.status == "completed"
-    assert ("keyDown", "a") in desktop_only.calls
-    assert ("keyUp", "a") in desktop_only.calls
+    assert ("key_down", {"key": "a"}) in desktop_only.calls
+    assert ("key_up", {"key": "a"}) in desktop_only.calls
 
 
 def test_wait(gw):

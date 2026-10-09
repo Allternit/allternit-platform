@@ -88,11 +88,9 @@ The full system provides:
   │  ┌────────────────────────────────────────────────────────────────┐     │
   │  │                     Adapter Layer                               │     │
   │  │                                                                 │     │
-  │  │  desktop.accessibility   browser.playwright   browser.browser-use│   │
-  │  │  (53 commands, AX+       (Playwright async)   (LLM-powered)     │   │
-  │  │   Quartz, pyautogui fb)                                         │   │
-  │  │                          desktop.pyautogui    browser.cdp        │   │
-  │  │                          (screenshot/obs)     (CDP WebSocket)    │   │
+  │  │  desktop.accessibility   browser.playwright   browser.cdp        │   │
+  │  │  (53 commands, AX+       (Playwright async)   (CDP WebSocket)    │   │
+  │  │   Quartz events)                                                │   │
   │  └────────────────────────────────────────────────────────────────┘     │
   │                                                                          │
   └──────────────────────────────────────────────────────────────────────────┘
@@ -177,12 +175,10 @@ core/
 ├── adapters/
 │   ├── browser/
 │   │   ├── playwright/               # PlaywrightAdapter — goto, extract, screenshot, act, eval
-│   │   ├── browser-use/              # BrowserUseAdapter — LLM-powered adaptive automation
 │   │   ├── cdp/                      # CDPAdapter — Chrome DevTools Protocol
 │   │   └── extension_adapter.py      # BrowserExtensionAdapter — relay to extension
 │   └── desktop/
-│       ├── accessibility_adapter.py  # Full 53-command AX adapter (~820 lines)
-│       └── pyautogui/                # PyAutoGUIAdapter — screenshot/observe
+│       └── accessibility_adapter.py  # Full 53-command AX adapter (~820 lines)
 │
 ├── policy/                           # 7-rule policy engine
 ├── sessions/                         # Session lifecycle, disk persistence
@@ -257,13 +253,6 @@ python3 -m uvicorn main:app --host 127.0.0.1 --port 8760
 |--------|------|-------------|
 | POST | `/v1/notifications/{id}/dismiss` | Dismiss a notification |
 | POST | `/v1/notifications/{id}/action` | Perform a notification action |
-
-#### Parallel & Hybrid Execution
-
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/v1/run/parallel` | Fan N tasks across adapters concurrently |
-| POST | `/v1/run/hybrid` | Interleaved browser+desktop step sequence |
 
 #### Conformance
 
@@ -401,7 +390,7 @@ await poster.key_combo("cmd+shift+a")        # parsed shorthand
 await poster.type_text("hello world")        # Unicode keyboard events
 ```
 
-**Fallback chain:** Quartz CGEvent → pyautogui → AppleScript. Each attempt is logged; failure at one level tries the next.
+**Fallback chain:** SkyLight per-PID posting → Quartz CGEvent (HID tap). Without Quartz the poster reports failure; there is no pyautogui foreground fallback (removed in the D0 cleanup).
 
 ---
 
@@ -515,19 +504,11 @@ result = await adapter.execute("set_value", {"ref": "@e3", "value": "hello"})
 - Scroll: `CGEventCreateScrollWheelEvent` with `kCGScrollEventUnitLine`
 - Type text: `CGEventCreateKeyboardEvent` + `CGEventKeyboardSetUnicodeString` per character
 - Key combo: parsed `"cmd+shift+a"` → `_sync_key_combo()` → `_sync_press_key()` with flags
-- All fall back to `pyautogui` if Quartz unavailable
-
-### `desktop.pyautogui` (beta, preserved)
-
-Legacy screenshot/observe adapter. Used as final fallback for mouse operations in `desktop.accessibility`.
+- Without Quartz the actions report failure (no pyautogui fallback)
 
 ### `browser.playwright` (beta, fully working)
 
 Playwright async API. Actions: goto, extract, screenshot, act (click/type), eval, observe.
-
-### `browser.browser-use` (code complete, needs library)
-
-LLM-powered adaptive automation via `browser-use` + `langchain-openai`.
 
 ### `browser.cdp` (experimental)
 
@@ -688,15 +669,14 @@ The router uses a static lookup table (`ADAPTER_MATRIX`) keyed by `(mode, family
 
 | Mode | Family | Deterministic | Primary Adapter | Fallback |
 |------|--------|---------------|-----------------|---------|
-| execute | browser | True | browser.playwright | [browser.browser-use] |
-| execute | browser | False | browser.browser-use | [browser.playwright] |
+| execute | browser | * | browser.playwright | [] |
 | inspect | browser | * | browser.cdp | [browser.playwright] |
-| parallel | browser | * | browser.playwright | [browser.browser-use] |
-| execute | desktop | * | desktop.accessibility | [desktop.pyautogui] |
-| inspect | desktop | * | desktop.accessibility | [desktop.pyautogui] |
-| parallel | desktop | * | desktop.accessibility | [desktop.pyautogui] |
+| parallel | browser | * | browser.playwright | [] |
+| execute | desktop | * | desktop.accessibility | [] |
+| inspect | desktop | * | desktop.accessibility | [] |
+| parallel | desktop | * | desktop.accessibility | [] |
 
-Note: `desktop.accessibility` is now the primary desktop adapter (replaces `desktop.pyautogui` as primary). pyautogui remains as fallback and for legacy screenshot-only paths.
+Note: `desktop.accessibility` is the only desktop adapter; the pyautogui adapter was removed in the D0 cleanup.
 
 ---
 
@@ -831,7 +811,7 @@ Run via gateway: `POST /v1/conformance/run/{suite}` · Results: `GET /v1/conform
 
 - [x] ACU Gateway on :8760 with 44 registered routes
 - [x] All discovery endpoints live (`/v1/windows`, `/v1/apps`, `/v1/routes`, `/v1/notifications`)
-- [x] Full 53-command accessibility adapter with Quartz + pyautogui fallback
+- [x] Full 53-command accessibility adapter on Quartz events
 - [x] BackgroundEventPoster wired as primary input backend in `desktop.accessibility`
 - [x] `SLEventPostToPid` background posting via SkyLight ctypes bridge
 - [x] AX tree inspection with skeleton mode and @eN refs
@@ -846,17 +826,13 @@ Run via gateway: `POST /v1/conformance/run/{suite}` · Results: `GET /v1/conform
 - [x] Planning loop emits `cursor.moved`, `ax_tree.captured`, `action.verified`, `coordinate.contract`
 - [x] AX permission check on gateway startup (`ax_permission` in `/health`)
 - [x] CDP adapter: auto-launch Chrome on `--remote-debugging-port=9222`
-- [x] Multi-context parallel execution coordinator (`/v1/run/parallel`)
-- [x] Hybrid browser→desktop→browser adapter (`/v1/run/hybrid`)
 - [x] Retrieval family crawl adapter (`browser.retrieval`: goto/observe/crawl/extract)
 - [x] Receipt gateway HTTP forwarding (`ALLTERNIT_RECEIPT_GATEWAY` env var)
 - [x] Receipt integrity verification (`GET /v1/receipts/verify/{receipt_id}`)
 - [x] Conformance dashboard UI (`ConformanceDashboard.tsx`)
 - [x] All 8 conformance suites (40/40 tests) at **production grade** (100%)
-- [x] browser-use venv passthrough (scans known venv paths, subprocess fallback)
 - [x] TSC passes (zero errors in all new/modified files)
 
 ### Remaining Open Questions
 - `com.apple.private.skylight` entitlement needed for true `SLEventPostToPid` background posting (works in development; requires Apple provisioning for distribution)
-- `browser-use` library install: `pip install browser-use langchain-openai` required separately — not bundled
 - Conformance suites H and PL use stub adapters (`_DummyAdapter`) — full test coverage depends on `HybridAdapter` and `PluginRegistry` being exercised against real workflows

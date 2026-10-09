@@ -31,8 +31,12 @@ try:
     from ...core.background_events import get_poster as _get_poster
     _POSTER_AVAILABLE = True
 except ImportError:
-    logger.debug("background_events not available; falling back to legacy Quartz/pyautogui impl")
-    _get_poster = None  # type: ignore
+    try:  # gateway launched with core/ on sys.path
+        from core.background_events import get_poster as _get_poster
+        _POSTER_AVAILABLE = True
+    except ImportError:
+        logger.debug("background_events not available; desktop input posting disabled")
+        _get_poster = None  # type: ignore
 
 # ── Key code tables ───────────────────────────────────────────────────────────
 
@@ -191,6 +195,8 @@ class AccessibilityAdapter:
             "hover":                    self._cmd_hover,
             "drag":                     self._cmd_drag,
             "drag_element":             self._cmd_drag_element,
+            "mouse_down":               self._cmd_mouse_down,
+            "mouse_up":                 self._cmd_mouse_up,
             # Keyboard
             "type_text":                self._cmd_type_text,
             "clear_field":              self._cmd_clear_field,
@@ -352,6 +358,12 @@ class AccessibilityAdapter:
         duration = float(p.get("duration", 0.5))
         ok = await self._drag(fx, fy, tx, ty, duration)
         return {"success": ok}
+
+    async def _cmd_mouse_down(self, p: Dict) -> Dict:
+        return {"success": self._mouse_button_event(p, down=True)}
+
+    async def _cmd_mouse_up(self, p: Dict) -> Dict:
+        return {"success": self._mouse_button_event(p, down=False)}
 
     async def _cmd_drag_element(self, p: Dict) -> Dict:
         ref = p.get("ref")
@@ -849,19 +861,19 @@ end tell'''
         if _POSTER_AVAILABLE:
             result = await _get_poster().post_click(x, y, button="left")
             return result.success
-        return await asyncio.get_event_loop().run_in_executor(None, self._pyautogui_click, x, y)
+        return False
 
     async def _double_click_at(self, x: int, y: int) -> bool:
         if _POSTER_AVAILABLE:
             result = await _get_poster().post_double_click(x, y)
             return result.success
-        return await asyncio.get_event_loop().run_in_executor(None, self._pyautogui_click, x, y)
+        return False
 
     async def _right_click_at(self, x: int, y: int) -> bool:
         if _POSTER_AVAILABLE:
             result = await _get_poster().post_right_click(x, y)
             return result.success
-        return await asyncio.get_event_loop().run_in_executor(None, self._pyautogui_click, x, y)
+        return False
 
     async def _triple_click_at(self, x: int, y: int) -> bool:
         """Three rapid left clicks — poster handles each click, we sequence them."""
@@ -876,43 +888,26 @@ end tell'''
         if _POSTER_AVAILABLE:
             result = await _get_poster().move_cursor(x, y)
             return result.success
-        return await asyncio.get_event_loop().run_in_executor(None, self._pyautogui_move, x, y)
+        return False
 
     async def _drag(self, fx: int, fy: int, tx: int, ty: int, duration: float = 0.5) -> bool:
         if _POSTER_AVAILABLE:
             # post_drag takes duration_ms (int), convert from seconds
             result = await _get_poster().post_drag(fx, fy, tx, ty, duration_ms=int(duration * 1000))
             return result.success
-        try:
-            import pyautogui  # type: ignore
-            pyautogui.moveTo(fx, fy)
-            pyautogui.dragTo(tx, ty, duration=duration, button="left")
-            return True
-        except Exception:
-            return False
+        return False
 
     async def _scroll(self, x: int, y: int, dx: float, dy: float) -> bool:
         if _POSTER_AVAILABLE:
             result = await _get_poster().post_scroll(x, y, dx, dy)
             return result.success
-        try:
-            import pyautogui  # type: ignore
-            pyautogui.moveTo(x, y)
-            pyautogui.scroll(int(dy))
-            return True
-        except Exception:
-            return False
+        return False
 
     async def _type_text(self, text: str) -> bool:
         if _POSTER_AVAILABLE:
             result = await _get_poster().post_type(text)
             return result.success
-        try:
-            import pyautogui  # type: ignore
-            pyautogui.typewrite(text, interval=0.02)
-            return True
-        except Exception:
-            return False
+        return False
 
     async def _press_key_str(self, key: str) -> bool:
         if _POSTER_AVAILABLE:
@@ -923,21 +918,53 @@ end tell'''
                 return False
             result = await _get_poster().post_key(code)
             return result.success
-        try:
-            import pyautogui  # type: ignore
-            pyautogui.press(key.lower().strip())
-            return True
-        except Exception:
-            return False
+        return False
 
     async def _key_combo_str(self, combo: str) -> bool:
         if _POSTER_AVAILABLE:
             result = await _get_poster().post_key_combo(combo)
             return result.success
+        return False
+
+    def cursor_position(self) -> Optional[Tuple[int, int]]:
+        """Current OS cursor position in global display points (macOS Quartz)."""
+        if self._platform != "darwin":
+            return None
         try:
-            import pyautogui  # type: ignore
-            parts = [p.strip().lower() for p in combo.split("+")]
-            pyautogui.hotkey(*parts)
+            import Quartz  # type: ignore
+            loc = Quartz.CGEventGetLocation(Quartz.CGEventCreate(None))
+            return int(loc.x), int(loc.y)
+        except Exception:
+            return None
+
+    def screen_size(self) -> Optional[Tuple[int, int]]:
+        """Main display size in points (macOS Quartz)."""
+        if self._platform != "darwin":
+            return None
+        try:
+            import Quartz  # type: ignore
+            bounds = Quartz.CGDisplayBounds(Quartz.CGMainDisplayID())
+            return int(bounds.size.width), int(bounds.size.height)
+        except Exception:
+            return None
+
+    def _mouse_button_event(self, p: Dict, down: bool) -> bool:
+        """Post an isolated left-button down/up at (x, y) or the current cursor."""
+        if self._platform != "darwin":
+            return False
+        x, y = p.get("x"), p.get("y")
+        if x is None or y is None:
+            pos = self.cursor_position()
+            if pos is None:
+                return False
+            x, y = pos
+        try:
+            import Quartz  # type: ignore
+            kind = Quartz.kCGEventLeftMouseDown if down else Quartz.kCGEventLeftMouseUp
+            ev = Quartz.CGEventCreateMouseEvent(
+                None, kind, (float(x), float(y)), Quartz.kCGMouseButtonLeft
+            )
+            Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
             return True
         except Exception:
             return False
@@ -959,22 +986,6 @@ end tell'''
             except Exception:
                 pass
         return False
-
-    def _pyautogui_click(self, x: int, y: int) -> bool:
-        try:
-            import pyautogui  # type: ignore
-            pyautogui.click(x, y)
-            return True
-        except Exception:
-            return False
-
-    def _pyautogui_move(self, x: int, y: int) -> bool:
-        try:
-            import pyautogui  # type: ignore
-            pyautogui.moveTo(x, y)
-            return True
-        except Exception:
-            return False
 
     # ═════════════════════════════════════════════════════════════════════════
     # AX action helper

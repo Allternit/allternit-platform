@@ -17,8 +17,8 @@
 //!
 //! The example provisions an Ubuntu/XFCE desktop, starts Chrome with a remote
 //! debugging port inside the container, exposes that port through an Incus proxy,
-//! and drives it via the ACU gateway's /v1/computer endpoint using the
-//! browser.remote-cdp adapter.
+//! and drives it via the ACU gateway's /v1/execute endpoint with the CDP
+//! adapter pointed at that port.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -176,13 +176,13 @@ async fn run_with_desktop(
     let session_id = uuid::Uuid::new_v4().to_string();
 
     // Navigate to example.com.
-    let navigate_url = format!("{}/v1/computer", acu_url.trim_end_matches('/'));
+    let navigate_url = format!("{}/v1/execute", acu_url.trim_end_matches('/'));
     let navigate_payload = serde_json::json!({
-        "action": "navigate",
+        "action": "goto",
         "session_id": session_id,
         "run_id": uuid::Uuid::new_v4().to_string(),
-        "url": "https://example.com",
-        "adapter_preference": "browser.remote-cdp",
+        "target": "https://example.com",
+        "adapter_preference": "cdp",
         "parameters": { "cdp_url": cdp_url },
     });
 
@@ -208,7 +208,7 @@ async fn run_with_desktop(
         "action": "extract",
         "session_id": session_id,
         "run_id": uuid::Uuid::new_v4().to_string(),
-        "adapter_preference": "browser.remote-cdp",
+        "adapter_preference": "cdp",
         "parameters": { "cdp_url": cdp_url, "format": "json" },
     });
     let resp = client
@@ -224,7 +224,7 @@ async fn run_with_desktop(
         "action": "screenshot",
         "session_id": session_id,
         "run_id": uuid::Uuid::new_v4().to_string(),
-        "adapter_preference": "browser.remote-cdp",
+        "adapter_preference": "cdp",
         "parameters": { "cdp_url": cdp_url, "full_page": false },
     });
     let resp = client
@@ -235,11 +235,14 @@ async fn run_with_desktop(
     let body = resp.json::<serde_json::Value>().await?;
 
     // Save the screenshot artifact.
-    if let Some(data_url) = body
-        .get("extracted_content")
-        .and_then(|c| c.get("data_url"))
-        .and_then(|u| u.as_str())
-    {
+    let screenshot = body
+        .get("artifacts")
+        .and_then(|a| a.as_array())
+        .and_then(|a| a.iter().find(|x| x.get("type").and_then(|t| t.as_str()) == Some("screenshot")))
+        .and_then(|x| x.get("content").or_else(|| x.get("url")))
+        .or_else(|| body.get("extracted_content").and_then(|c| c.get("data_url")))
+        .and_then(|u| u.as_str());
+    if let Some(data_url) = screenshot {
         let b64 = data_url.split_once(',').map(|(_, b)| b).unwrap_or(data_url);
         let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, b64)?;
         std::fs::write(proof_path, &bytes)?;

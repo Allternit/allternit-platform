@@ -412,61 +412,119 @@ fn request_approval_id(args: &Value) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-async fn computer_screenshot_tool(
-    state: &AppState,
-    user_id: &str,
-    args: &Value,
-) -> Result<Value, String> {
-    let computer_id = require_computer_id(args)?;
-    execute_computer_tool(
-        &state,
-        user_id,
-        &computer_id,
-        ComputerControlAction::Screenshot,
-        None,
-    )
-    .await
-    .map_err(|(status, body)| format!("computer_screenshot failed ({}): {}", status, body))
+// screenshot / mouse / keyboard are aliases over the computer toolset
+// (`computer_toolset::execute`, contract `allternit.computer.v1`): one
+// executor for every caller, with its lease, approval, batch and receipt
+// rules. Coordinates are in the screenshot's frame (`screen.frame_width` x
+// `screen.frame_height` in the reply), same as the toolset. shell and file
+// have no contract member yet, so they stay on `computer_control`.
+
+/// Map the old `computer_mouse` input onto one toolset member + input.
+fn mouse_to_toolset(input: &MouseInput) -> Result<(&'static str, Value), String> {
+    let point = match (input.x, input.y) {
+        (Some(x), Some(y)) => Some(json!([x, y])),
+        _ => None,
+    };
+    let with_point = |member: &'static str| -> Result<(&'static str, Value), String> {
+        let coordinate = point.clone().ok_or_else(|| format!("{} requires x and y", member))?;
+        Ok((member, json!({ "coordinate": coordinate })))
+    };
+    match input.action.to_lowercase().as_str() {
+        "move" => with_point("mouse_move"),
+        "click" => match input.button.as_deref().unwrap_or("left") {
+            "right" => with_point("right_click"),
+            "middle" => with_point("middle_click"),
+            _ => with_point("left_click"),
+        },
+        "rightclick" => with_point("right_click"),
+        "doubleclick" => with_point("double_click"),
+        "mousedown" => Ok(("left_mouse_down", json!({}))),
+        "mouseup" => Ok(("left_mouse_up", json!({}))),
+        "drag" => match (input.x, input.y, input.end_x, input.end_y) {
+            (Some(x), Some(y), Some(ex), Some(ey)) => Ok((
+                "left_click_drag",
+                json!({ "start_coordinate": [x, y], "coordinate": [ex, ey] }),
+            )),
+            _ => Err("drag requires x, y, end_x, end_y".into()),
+        },
+        "scroll" => {
+            let direction = match input.button.as_deref().unwrap_or("down") {
+                "up" => "up",
+                "down" => "down",
+                other => return Err(format!("scroll button must be up or down, got {}", other)),
+            };
+            let amount = input.amount.unwrap_or(3);
+            if amount <= 0 {
+                return Err("scroll amount must be positive".into());
+            }
+            let mut out = json!({ "scroll_direction": direction, "scroll_amount": amount });
+            if let Some(coordinate) = point.clone() {
+                out["coordinate"] = coordinate;
+            }
+            Ok(("scroll", out))
+        }
+        other => Err(format!(
+            "unknown mouse action '{}' (valid: move, click, rightclick, doubleclick, mousedown, mouseup, drag, scroll)",
+            other
+        )),
+    }
 }
 
-async fn computer_mouse_tool(
-    state: &AppState,
-    user_id: &str,
-    args: &Value,
-) -> Result<Value, String> {
-    let computer_id = require_computer_id(args)?;
-    let approval_id = request_approval_id(args);
-    let input: MouseInput = serde_json::from_value(args.clone())
-        .map_err(|e| format!("invalid mouse input: {}", e))?;
-    execute_computer_tool(
-        &state,
-        user_id,
-        &computer_id,
-        ComputerControlAction::Mouse(input),
-        approval_id.as_deref(),
-    )
-    .await
-    .map_err(|(status, body)| format!("computer_mouse failed ({}): {}", status, body))
+/// Map the old `computer_keyboard` input onto one toolset member + input.
+fn keyboard_to_toolset(input: &KeyboardInput) -> Result<(&'static str, Value), String> {
+    match input.action.to_lowercase().as_str() {
+        "type" => Ok(("type", json!({ "text": input.text.clone().unwrap_or_default() }))),
+        "key" => {
+            let key = input.key.clone().or_else(|| input.text.clone()).ok_or("key requires 'key'")?;
+            Ok(("key", json!({ "text": key })))
+        }
+        other => Err(format!("unknown keyboard action '{}' (valid: type, key)", other)),
+    }
 }
 
-async fn computer_keyboard_tool(
-    state: &AppState,
+/// Run one `allternit.computer.v1` member through the toolset executor.
+async fn run_computer_member(
+    state: &Arc<AppState>,
+    tool: &str,
     user_id: &str,
     args: &Value,
+    member: &str,
+    input: Value,
 ) -> Result<Value, String> {
     let computer_id = require_computer_id(args)?;
-    let approval_id = request_approval_id(args);
-    let input: KeyboardInput = serde_json::from_value(args.clone())
-        .map_err(|e| format!("invalid keyboard input: {}", e))?;
-    execute_computer_tool(
-        &state,
-        user_id,
-        &computer_id,
-        ComputerControlAction::Keyboard(input),
-        approval_id.as_deref(),
-    )
-    .await
-    .map_err(|(status, body)| format!("computer_keyboard failed ({}): {}", status, body))
+    let request: crate::computer_toolset::ToolsetRequest = serde_json::from_value(json!({
+        "toolset": "computer",
+        "member": member,
+        "input": input,
+        "approval_grant": request_approval_id(args),
+    }))
+    .map_err(|e| format!("{} request: {}", tool, e))?;
+    let user = tool_auth_user(user_id, None);
+    let (status, body) =
+        crate::computer_toolset::execute(state, &user, &computer_id, &HeaderMap::new(), request).await;
+    let is_error = body.get("is_error").and_then(Value::as_bool).unwrap_or(false);
+    if status.is_success() && !is_error {
+        Ok(body)
+    } else {
+        Err(format!("{} failed ({}): {}", tool, status, body))
+    }
+}
+
+async fn computer_screenshot_tool(state: &Arc<AppState>, user_id: &str, args: &Value) -> Result<Value, String> {
+    run_computer_member(state, "computer_screenshot", user_id, args, "screenshot", json!({})).await
+}
+
+async fn computer_mouse_tool(state: &Arc<AppState>, user_id: &str, args: &Value) -> Result<Value, String> {
+    let input: MouseInput = serde_json::from_value(args.clone()).map_err(|e| format!("invalid mouse input: {}", e))?;
+    let (member, toolset_input) = mouse_to_toolset(&input)?;
+    run_computer_member(state, "computer_mouse", user_id, args, member, toolset_input).await
+}
+
+async fn computer_keyboard_tool(state: &Arc<AppState>, user_id: &str, args: &Value) -> Result<Value, String> {
+    let input: KeyboardInput =
+        serde_json::from_value(args.clone()).map_err(|e| format!("invalid keyboard input: {}", e))?;
+    let (member, toolset_input) = keyboard_to_toolset(&input)?;
+    run_computer_member(state, "computer_keyboard", user_id, args, member, toolset_input).await
 }
 
 async fn computer_shell_tool(
@@ -1475,7 +1533,7 @@ async fn list_tools() -> impl IntoResponse {
         json!({
             "id": "computer_screenshot",
             "name": "Computer Screenshot",
-            "description": "Capture a PNG screenshot of the bot's cloud desktop computer.",
+            "description": "Capture a screenshot of a computer (alias of the computer toolset member screenshot; the reply gives the frame size clicks are measured in).",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1487,15 +1545,18 @@ async fn list_tools() -> impl IntoResponse {
         json!({
             "id": "computer_mouse",
             "name": "Computer Mouse",
-            "description": "Move or click the mouse on the bot's cloud desktop computer.",
+            "description": "Move, click, drag or scroll the mouse on a computer (alias over the computer toolset; coordinates are in the last screenshot frame).",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "computer_id": { "type": "string", "description": "ID of the computer to control" },
-                    "action": { "type": "string", "enum": ["move", "click", "rightclick", "doubleclick", "mousedown", "mouseup"], "description": "Mouse action" },
+                    "action": { "type": "string", "enum": ["move", "click", "rightclick", "doubleclick", "mousedown", "mouseup", "drag", "scroll"], "description": "Mouse action" },
                     "x": { "type": "integer", "description": "X coordinate" },
                     "y": { "type": "integer", "description": "Y coordinate" },
-                    "button": { "type": "string", "enum": ["left", "middle", "right"], "description": "Mouse button" }
+                    "end_x": { "type": "integer", "description": "Drag end X" },
+                    "end_y": { "type": "integer", "description": "Drag end Y" },
+                    "amount": { "type": "integer", "description": "Scroll clicks (default 3)" },
+                    "button": { "type": "string", "enum": ["left", "middle", "right", "up", "down"], "description": "Mouse button; up or down for scroll" }
                 },
                 "required": ["computer_id", "action"]
             }
@@ -1503,7 +1564,7 @@ async fn list_tools() -> impl IntoResponse {
         json!({
             "id": "computer_keyboard",
             "name": "Computer Keyboard",
-            "description": "Type text or press a key on the bot's cloud desktop computer.",
+            "description": "Type text or press a key on a computer (alias of the computer toolset members type and key).",
             "parameters": {
                 "type": "object",
                 "properties": {

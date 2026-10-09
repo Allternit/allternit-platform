@@ -27,7 +27,7 @@ plugin system.
 - **Plugin:** github
 - **Cookbook:** review-pr
 - **Primary adapter:** browser.playwright
-- **Fallback chain:** browser.browser-use
+- **Fallback chain:** none
 - **Fail mode:** fail closed
 
 ## Execution Flow

@@ -20,7 +20,7 @@ inspect
 browser.playwright
 
 ## Fallback
-browser.browser-use
+planning loop (vision model driving browser.playwright)
 
 ## Policy
 - Plugin policy profile: `gmail` (max_destructive_actions: 2, requires_approval: true)
@@ -112,7 +112,7 @@ browser.browser-use
 
 ## Failure Handling
 - **Auth redirect**: abort immediately with `status: error`, `reason: auth_required`. Do not attempt login.
-- **Gmail UI structure changed** (selectors return empty): fall back to `browser.browser-use` for visual extraction. If still failing, emit `status: partial`, populate what was extractable.
+- **Gmail UI structure changed** (selectors return empty): fall back to the planning loop (vision model driving `browser.playwright`) for visual extraction. If still failing, emit `status: partial`, populate what was extractable.
 - **Message body not visible after 10 s**: skip that message, record `status: timeout` in its entry, continue with next.
 - **LLM summarisation fails**: store raw `snippet` as the summary field, mark `summary_source: snippet_fallback`.
 - **All 5 messages fail to open**: emit receipt `status: error`, `reason: all_messages_failed`.

@@ -1,7 +1,7 @@
 # Baseline for script/check-ts-nocheck.sh
 # Count of files under src containing @ts-nocheck.
 # Regenerate: bash script/check-ts-nocheck.sh --update
-count=590
+count=586
 --- files ---
 cli/hooks/useChromeExtensionNotification.tsx
 cli/ui/ink-app/app.tsx
@@ -71,7 +71,6 @@ cli/ui/ink-app/components/MarkdownTable.tsx
 cli/ui/ink-app/components/MemoryUsageIndicator.tsx
 cli/ui/ink-app/components/NativeAutoUpdater.tsx
 cli/ui/ink-app/components/OffscreenFreeze.tsx
-cli/ui/ink-app/components/PromptInput/FooterStatusBadges.tsx
 cli/ui/ink-app/components/PromptInput/IssueFlagBanner.tsx
 cli/ui/ink-app/components/PromptInput/PromptInput.tsx
 cli/ui/ink-app/components/PromptInput/PromptInputFooter.tsx
@@ -188,7 +187,6 @@ cli/ui/ink-app/hooks/useSSHSession.ts
 cli/ui/ink-app/hooks/useScheduledTasks.ts
 cli/ui/ink-app/hooks/useSearchInput.ts
 cli/ui/ink-app/hooks/useSessionBackgrounding.ts
-cli/ui/ink-app/hooks/useSessionMetrics.ts
 cli/ui/ink-app/hooks/useSettingsChange.ts
 cli/ui/ink-app/hooks/useSkillImprovementSurvey.ts
 cli/ui/ink-app/hooks/useSkillsChange.ts
@@ -405,8 +403,6 @@ cli/ui/ink-app/utils/binaryCheck.ts
 cli/ui/ink-app/utils/cleanup.ts
 cli/ui/ink-app/utils/collapseBackgroundBashNotifications.ts
 cli/ui/ink-app/utils/collapseReadSearch.ts
-cli/ui/ink-app/utils/computerUse/computerUseLock.ts
-cli/ui/ink-app/utils/computerUse/toolRendering.tsx
 cli/ui/ink-app/utils/contextAnalysis.ts
 cli/ui/ink-app/utils/contextSuggestions.ts
 cli/ui/ink-app/utils/cronJitterConfig.ts

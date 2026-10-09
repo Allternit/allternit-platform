@@ -20,7 +20,7 @@ execute
 browser.playwright
 
 ## Fallback
-browser.browser-use
+planning loop (vision model driving browser.playwright)
 
 ## Policy
 - Plugin policy profile: `github` (max_destructive_actions: 3, requires_approval: true)
@@ -44,7 +44,7 @@ browser.browser-use
    - Store: `{ issue_title, issue_body, existing_labels, reporter }`
 
 3. **Classify issue** (LLM step)
-   - Use embedded classification logic with fallback to `browser.browser-use`:
+   - Use embedded classification logic with fallback to the planning loop:
      - Categories: `bug`, `enhancement`, `question`, `documentation`, `duplicate`, `wontfix`
    - Select the label that best matches the issue content.
    - If `existing_labels` already contains the target label, skip step 4.
@@ -99,7 +99,7 @@ browser.browser-use
 ## Failure Handling
 - **Issue is closed**: emit receipt `status: skipped`, `reason: issue_already_closed`. Abort.
 - **Auth expired**: emit receipt `status: error`, `reason: auth_required`. Abort.
-- **Label not found in picker**: fall back to `browser.browser-use` to locate label by visual scan. If still not found, emit receipt `status: partial`, `reason: label_not_found`, continue to step 5.
+- **Label not found in picker**: fall back to the planning loop (vision model driving `browser.playwright`) to locate label by visual scan. If still not found, emit receipt `status: partial`, `reason: label_not_found`, continue to step 5.
 - **Either approval denied**: record `status: partial` on receipt with appropriate `reason`.
 - **Both approvals denied**: emit receipt `status: blocked`. No changes made to the issue.
 - **Comment submission timeout**: screenshot `timeout-state.png`, abort with `status: error`, `reason: timeout`.

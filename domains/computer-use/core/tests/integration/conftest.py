@@ -19,7 +19,7 @@ def pytest_configure(config):
     )
     config.addinivalue_line(
         "markers",
-        "requires_desktop: marks tests as requiring desktop automation (PyAutoGUI + permissions)"
+        "requires_desktop: marks tests as requiring desktop automation (native desktop + permissions)"
     )
     config.addinivalue_line(
         "markers",
@@ -76,7 +76,6 @@ def check_dependencies():
     
     deps = {
         "playwright": False,
-        "pyautogui": False,
         "openai": False,
         "anthropic": False,
         "websockets": False,
@@ -87,12 +86,6 @@ def check_dependencies():
     try:
         import playwright
         deps["playwright"] = True
-    except ImportError:
-        pass
-    
-    try:
-        import pyautogui
-        deps["pyautogui"] = True
     except ImportError:
         pass
     

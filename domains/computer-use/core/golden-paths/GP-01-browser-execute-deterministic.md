@@ -14,7 +14,7 @@ Selectors are known and stable. No LLM reasoning needed.
 - **Mode:** execute
 - **Constraints:** `deterministic=True`
 - **Primary adapter:** browser.playwright
-- **Fallback chain:** browser.browser-use
+- **Fallback chain:** none
 - **Fail mode:** fail closed
 
 ## Execution Flow
