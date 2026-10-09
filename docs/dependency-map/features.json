@@ -470,10 +470,13 @@
       "label": "Artifacts (one typed store, versions, sharing)",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "Artifacts v2: one account-level store of typed artifacts (doc, sheet, slides, design, dashboard, motion, page, card, diagram, image, code) in cloud-api Postgres with immutable versions, view/comment/edit sharing, org admin settings and a public link route. Phase 1 server side is in; gizzi's artifact_* tools are feature:artifact-model-tools; the app (ArtifactWindow, Artifacts tab) lands in a sibling PR.",
+      "description": "Artifacts v2: one account-level store of typed artifacts (doc, sheet, slides, design, dashboard, motion, page, card, diagram, image, code) in cloud-api Postgres with immutable versions, view/comment/edit sharing, org admin settings and a public link route. Phase 1 server side is in; gizzi's artifact_* tools are feature:artifact-model-tools; the app (one ArtifactWindow, Artifacts tab, Share dialog, Output picker, public page /a/<id>) is in allternit-ai.",
       "touches": [
         "allternit/cmd/allternit-cloud-api/src/artifacts",
-        "allternit/cmd/allternit-cloud-api/src/routes/artifacts_*"
+        "allternit/cmd/allternit-cloud-api/src/routes/artifacts_*",
+        "allternit-ai/src/components/artifacts",
+        "allternit-ai/src/lib/artifacts",
+        "allternit-ai/src/views/library"
       ],
       "decisions": [
         {
@@ -483,7 +486,8 @@
       ],
       "evidence": [
         "allternit/docs/design/artifacts-v2.md",
-        "allternit/surfaces/docs/api/artifacts-v2.mdx"
+        "allternit/surfaces/docs/api/artifacts-v2.mdx",
+        "allternit/surfaces/docs/guides/artifacts.mdx"
       ]
     },
     {

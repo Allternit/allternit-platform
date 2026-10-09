@@ -1,0 +1,176 @@
+---
+title: Artifacts
+description: Make, find, version and share docs, decks, sheets, designs, dashboards and other artifacts across Desktop, the web and your phone.
+---
+
+## What an artifact is
+
+An artifact is something Allternit makes that you'd show someone: a doc, a
+deck, a sheet, a design, a dashboard, a motion piece, a web page, an
+interactive card, a diagram, an image or a code file. Each one is saved to
+your Allternit account, so it's the same artifact on Allternit Desktop,
+ai.allternit.com, the phone layout and the m.allternit.com app.
+
+Every artifact has a kind, a title, and versions. Each save is a new
+version; nothing you saved is overwritten.
+
+Artifacts are **private** until you share them.
+
+## Starting an artifact
+
+There are four ways in:
+
+1. **Ask in any chat.** "Write a launch brief", "make a deck from these
+   notes", "draw the signup flow". Allternit makes an artifact on its own when
+   the result is long (about 15 lines or more), stands on its own, or is
+   something you'll edit or reuse. Short answers stay in the chat. You can
+   always say "make this an artifact".
+2. **Pick an Output in the message box.** Click **Output** under the message
+   box and choose **Artifact** (Allternit picks the format), **Docs**,
+   **Slides**, **Sheets**, **Design**, **Dashboards** or **Motion**. The choice
+   applies to your next message, then clears. Click the × on the chip to
+   clear it yourself.
+3. **Type a slash command.** `/docs`, `/slides`, `/sheets`, `/design`,
+   `/dashboard` and `/motion` pick that Output. You can type the request
+   straight after it: `/slides a 6-slide pitch for the Q4 launch`.
+4. **Start from a template** on the Artifacts tab (see below).
+
+Which Outputs you see depends on your plan and your organization:
+
+| Output | Plans |
+|---|---|
+| Docs, Slides, Sheets, Design | Every plan, including Free |
+| Dashboards | Paid plans |
+| Motion | Super, Ultra and Team |
+
+Organization admins can turn templates off for everyone in the org. A turned
+off template doesn't appear in the Output menu.
+
+Interactive cards (the live answers with sliders, tables and buttons) stay in
+the chat. To keep one, hover it and choose **Open as artifact**.
+
+## The artifact window
+
+An artifact opens in its own window beside the chat. On a phone it opens
+full screen.
+
+- **Title.** Click it to rename (if you can edit).
+- **Versions.** Editors can open any earlier version from the clock menu.
+  "Back to latest" returns to the current one.
+- **Share** opens the sharing settings (below).
+- **Export** lists what this kind can export. Every artifact has **Download
+  source** and **Copy**. Diagrams also export **PNG** and **SVG**; pages
+  export an **HTML file** (and, on Allternit Desktop with HyperFrames, an
+  **MP4 video**). Word, PDF, PowerPoint, Excel and the other formats are
+  listed as *Coming soon*.
+- On Desktop and the web, drag the window's left edge to resize it, or use
+  the full-width button to give it the whole view. Press the × to close it.
+
+Web pages run in a sandbox: they can't read your Allternit data, cookies or
+other artifacts.
+
+If someone else saves a newer version while you're editing a text artifact,
+Allternit merges your change onto theirs. When it can't (for example, both of
+you changed the same lines), the window asks whether to keep yours or use
+theirs.
+
+## Sharing
+
+Only the owner can change sharing. Open an artifact and click **Share**.
+
+**Who can open it**
+
+- **Only you** — the default.
+- **Specific people** — add people by email.
+- **Your org** — everyone in your organization can view it.
+- **Anyone with the link** — no sign-in needed; view only.
+
+**What they can do**
+
+- **Can view** — open it and read comments.
+- **Commenter** — also comment.
+- **Can edit** — also change it and save new versions.
+
+Docs have **Can view** and **Can edit** only, and are shared with your org
+(or a link, if your admin allows external sharing), not by email.
+
+**Which version they see.** With **Always share latest version** on, viewers
+see each new version. Turn it off to keep showing the version you shared
+while you keep editing.
+
+**When link sharing is off.** "Anyone with the link" is unavailable when:
+
+- the artifact uses AI or connectors while someone views it, or
+- your organization has external sharing turned off.
+
+The Share window says which one applies.
+
+**People outside your organization.** Invites by email to people outside
+your org work only if your org allows outside invites (personal accounts
+always can), up to 50 people per artifact. An outside invite expires after
+30 days if it isn't accepted.
+
+On phones, sharing is read-only: you can see who has access and copy the
+link; change it from Desktop or the web.
+
+**Copy link** copies a link to the artifact. People you shared it with open
+it in Allternit; with "Anyone with the link", anyone can open it.
+
+## The Artifacts tab
+
+**Artifacts** in the sidebar (or the Artifacts section on the phone) lists
+everything you own and everything shared with you, newest first.
+
+- **Search** by title.
+- **Filter by** kind, and by owner: *Everything*, *Mine*, *Shared with me*.
+- Switch between **grid** and **list**.
+- Labels show where an artifact came from: **Cowork**, **Code**, **Bot**, or
+  **Legacy** (see below). Shared items show the owner's avatar.
+- **Start from a template**: Docs, Slides, Sheets, Design, Dashboards,
+  Motion, Page. Each opens a new chat with that Output picked; describe what
+  you want and send.
+- The **⋯** menu on your own artifacts has **Delete**. Deleting is permanent:
+  there's no trash, and people you shared it with lose access.
+
+If you're signed out, the tab asks you to sign in; offline, it says so and
+shows your artifacts again when you reconnect.
+
+## Older artifacts (Legacy)
+
+Artifacts you made before this update — Office docs, sheets and decks,
+Design projects, saved chat artifacts, canvas outputs and Cowork's local
+artifacts — are copied into your account automatically the first time you
+sign in on each device. They show the **Legacy** label. Nothing is deleted:
+the originals stay where they were.
+
+Legacy artifacts open, can be shared and exported, and keep working as they
+did. Office docs and Design projects have **Open in editor** to edit them in
+their original editor.
+
+The copy runs in the background and never blocks the app. If a device is
+offline, or Allternit Desktop isn't running when you sign in on the web, the
+rest is copied the next time the app starts.
+
+---
+
+## For developers
+
+- Client code: `allternit-ai/src/lib/artifacts/` — `kinds.ts` (kind
+  registry), `api.ts` (`/api/v2/artifacts` client), `store.ts`
+  (`useArtifacts`), `legacy-import.ts`, `share-rules.ts`, `plans.ts`,
+  `output-choice.ts`.
+- The one window: `src/components/artifacts/ArtifactWindow.tsx`; hosts in
+  `ArtifactWindowHost.tsx` (overlay/sheet at the app roots, docked in
+  ChatView) and `ArtifactPaneWindow.tsx` (Cowork and project panes).
+- Model contract: the turn carries `output: {kind}` when an Output is picked,
+  and the system prompt carries the artifacts manual
+  (`ARTIFACTS_MANUAL`) plus one line for the picked Output. The model creates
+  artifacts with `artifact_create` / `artifact_update`; the transcript renders
+  each call as a card and saves `persisted:false` results under the same id.
+- API, schema and sharing rules: `allternit/docs/design/artifacts-v2.md`.
+
+## Related
+
+- [Artifact modes](/guides/artifact-modes)
+- [Artifact tools](/tools/artifact-tools)
+- [Artifacts v2 API](/api/artifacts-v2)
