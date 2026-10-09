@@ -39,6 +39,8 @@ We want to be explicit about what this means:
 
 Recorded in `adapter_grades.json` (last updated 2026-09-09). Each row names
 the suite definition in `domains/computer-use/core/conformance/suites.py`.
+(The `browser-use` and `desktop.pyautogui` adapters were deleted in the 2026-10-09
+D0 cleanup — group 3 and M7 of the driver spec — and no longer have suites.)
 
 | Adapter | Suite | Measured | Pass rate | Grade |
 |---------|-------|----------|-----------|-------|
@@ -48,8 +50,7 @@ the suite definition in `domains/computer-use/core/conformance/suites.py`.
 | `retrieval.playwright-crawler` | `retrieval-v1` (5 tests) | yes | 5/5 = 100% | `production` |
 | `hybrid.orchestrator` | `hybrid-v1` (3 tests) | yes | 3/3 = 100% | `production` |
 | `_routing_policy` | `routing-policy-v1` (6 tests) | yes | 6/6 = 100% | `production` |
-| `browser.browser-use` | `browser-adaptive-v1` (3 tests) | **pending measurement** — browser-use runtime unavailable at measurement time | — | ungraded |
-| `desktop.pyautogui` | `desktop-v1` (4 tests) | **pending measurement** — suite requires an interactive display (`--desktop`) | — | ungraded |
+| `desktop.accessibility` | `desktop-v1` (4 tests) | **pending measurement** — suite requires an interactive display | — | ungraded |
 
 Two honest caveats on the measured rows:
 
@@ -427,11 +428,7 @@ observability, not billing.
 
 - **Vendor agentic benchmarks** (WebArena, OSWorld, WebVoyager, and similar):
   pending measurement — no vendor-run benchmark has been executed yet.
-- **Adaptive browser automation** (`browser.browser-use`,
-  suite `browser-adaptive-v1`): pending measurement — the browser-use runtime
-  was unavailable at measurement time. Install it (or place a venv at
-  `~/browser-use/venv/`) and rerun the measurement command below.
-- **Desktop automation** (`desktop.pyautogui`, suite `desktop-v1`, 4 tests):
+- **Desktop automation** (`desktop.accessibility`, suite `desktop-v1`, 4 tests):
   pending measurement — requires an interactive display; run the measurement
   with `--desktop`.
 - **Cross-family orchestration under real adapters**: the hybrid grade was
