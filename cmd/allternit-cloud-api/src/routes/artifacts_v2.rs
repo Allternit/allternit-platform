@@ -54,6 +54,10 @@ use crate::artifacts::{ids, kinds, MAX_BODY_BYTES, MAX_REQUEST_BYTES};
 use crate::routes::runtime_pairing::{device_token_from_headers, runtime_device_for_token};
 use crate::{auth, ApiState};
 
+// Page runtime (storage, consents, AI) and the org "Shared outside" list.
+#[path = "artifact_runtime.rs"]
+mod artifact_runtime;
+
 type Result<T> = std::result::Result<T, ArtifactError>;
 
 const DEFAULT_LIST_LIMIT: i64 = 50;
@@ -92,6 +96,7 @@ pub fn routes() -> Router<Arc<ApiState>> {
             "/api/v2/org/artifact-settings",
             get(get_org_settings).put(put_org_settings),
         )
+        .merge(artifact_runtime::routes())
 }
 
 // ---------------------------------------------------------------------------
@@ -698,7 +703,13 @@ async fn create_artifact(
     check_json_object(&origin, "origin")?;
     let meta = request.meta.unwrap_or_else(|| json!({}));
     check_json_object(&meta, "meta")?;
-    let capabilities = request.capabilities.unwrap_or_else(|| json!({}));
+    // A page declares what it needs up front; when the creator (often the
+    // model) only wrote it into `meta.capabilities`, that becomes the record's
+    // declaration so the link rule and the runtime see it from the start.
+    let capabilities = request
+        .capabilities
+        .or_else(|| meta.get("capabilities").filter(|c| c.as_object().is_some_and(|m| !m.is_empty())).cloned())
+        .unwrap_or_else(|| json!({}));
     let body_format = request
         .body_format
         .as_deref()

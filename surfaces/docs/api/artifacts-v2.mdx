@@ -238,11 +238,17 @@ PUT /api/v2/org/artifact-settings
 | `templates` | `{}` | `{kind: bool}`. A missing kind uses the plan default. |
 | `external_sharing` | `false` | Allows link sharing. |
 | `outside_invites` | `false` | Allows `email` invites to people outside the org. |
-| `presence` | `true` | Shows who else is viewing (Phase 4). |
-| `connectors` | `true` | When off, artifacts can't declare `capabilities.connectors`. |
+| `presence` | `true` | Shows who else is viewing. |
+| `connectors` | `true` | When off, artifacts can't declare `capabilities.connectors` and pages can't call connectors. |
 | `allowed_external` | `[]` | Artifact ids individually allowed to be shared by link (not docs). |
 
 `GET` returns the settings for your active organization, plus `org_id`, `updated_by`, `updated_at` and `can_edit`. Personal accounts get the defaults with `org_id: null`. `PUT` changes only the fields you send. It needs the Clerk organization role `admin` (or `org:admin`). Everyone else gets `403`.
+
+Admins can list what the org has shared outside with `GET /api/v2/org/artifact-shared-outside`. It returns `{items: [{id, title, kind, owner_id, owner_name, by_link, outside_invites, allowed, updated_at}]}` for artifacts that are public by link or have email invites, and needs the same admin role. `allowed` is whether the artifact is in `allowed_external`.
+
+## Page runtime
+
+Pages that store data, call AI or use connectors have their own routes under `/api/v2/artifact-runtime/{id}`. See the [Page runtime API](/api/artifact-runtime).
 
 ## Errors
 
@@ -250,4 +256,4 @@ Errors use the standard Cloud API shape `{ "error", "message", "code" }`. Artifa
 
 ## Storage
 
-The schema is `cmd/allternit-cloud-api/migrations_pg/085_artifacts_v2.sql`. It creates `artifacts`, `artifact_versions`, `artifact_shares` and `org_artifact_settings`, plus `artifact_storage`, `artifact_consents` and `artifact_comments` for the Phase 4 page runtime and comments. The migration is idempotent and is applied to production by hand.
+The schema is `cmd/allternit-cloud-api/migrations_pg/085_artifacts_v2.sql`. It creates `artifacts`, `artifact_versions`, `artifact_shares` and `org_artifact_settings`, plus `artifact_storage` and `artifact_consents` (used by the [page runtime](/api/artifact-runtime)) and `artifact_comments` for comments. The migration is idempotent and is applied to production by hand.

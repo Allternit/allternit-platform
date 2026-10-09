@@ -44,7 +44,8 @@ Which Outputs you see depends on your plan and your organization:
 | Motion | Super, Ultra and Team |
 
 Organization admins can turn templates off for everyone in the org. A turned
-off template doesn't appear in the Output menu.
+off template doesn't appear in the Output menu. See
+[For organization admins](#for-organization-admins).
 
 Interactive cards (the live answers with sliders, tables and buttons) stay in
 the chat. To keep one, hover it and choose **Open as artifact**.
@@ -67,7 +68,9 @@ full screen.
   the full-width button to give it the whole view. Press the × to close it.
 
 Web pages run in a sandbox: they can't read your Allternit data, cookies or
-other artifacts.
+other artifacts. A page can still save its own data, ask AI and use your
+connected apps if you approve it; see
+[Pages that act like apps](/guides/artifact-apps).
 
 If someone else saves a newer version while you're editing a text artifact,
 Allternit merges your change onto theirs. When it can't (for example, both of
@@ -151,6 +154,34 @@ The copy runs in the background and never blocks the app. If a device is
 offline, or Allternit Desktop isn't running when you sign in on the web, the
 rest is copied the next time the app starts.
 
+## For organization admins
+
+Open **Settings → Organization → Artifacts** (Desktop and web; on a phone the
+section only says to manage this on desktop or web). Admins can change it;
+other members see the same values read-only.
+
+- **Artifacts.** The master switch. Off, members can't create artifacts and
+  the organization's public links close.
+- **Sharing outside the organization.** Allows "Anyone with the link". Docs
+  can only be shared by link when this is on.
+- **Invite people outside the organization.** Allows email invites to people who
+  aren't members. Each invite expires after 30 days until accepted.
+- **Show who's viewing.** Presence on open artifacts.
+- **Pages can use connected apps.** The connector kill switch. Off, no page in
+  the organization can call a connected app, even one a viewer approved.
+- **Templates.** One switch each for Docs, Slides, Sheets, Design, Dashboards,
+  Motion and Page. Dashboards and Motion are on for Team and off for
+  Enterprise until an admin turns them on. A turned off template disappears
+  from the Output menu and the gallery.
+- **Shared outside.** Every artifact from the organization that can be opened
+  by link or by invited email addresses, with its owner. **Allow outside**
+  lets that one artifact be shared by link even when sharing outside is off
+  (not for Docs); **Remove exception** takes it back.
+
+Pages that use AI or connected apps are never available to people outside the
+organization, and can't be shared with a public link, whatever these switches
+say. See [Pages that act like apps](/guides/artifact-apps).
+
 ---
 
 ## For developers
@@ -171,6 +202,8 @@ rest is copied the next time the app starts.
 
 ## Related
 
+- [Pages that act like apps](/guides/artifact-apps)
 - [Artifact modes](/guides/artifact-modes)
 - [Artifact tools](/tools/artifact-tools)
 - [Artifacts v2 API](/api/artifacts-v2)
+- [Page runtime API](/api/artifact-runtime)
