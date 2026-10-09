@@ -11,6 +11,7 @@ import base64
 import itertools
 import json
 import logging
+import re
 import subprocess
 import threading
 from concurrent.futures import Future
@@ -19,6 +20,30 @@ from typing import Any
 from ..element_map import RawNode
 
 log = logging.getLogger("allternit_driver.cua")
+
+# "session 'mcp-...' has ended; tool call 'type_text' was rejected. Call
+# start_session with this id to revive it..." — the daemon-side session died
+# while our stdio child lives; reconnecting is the revival.
+_SESSION_DEAD = re.compile(r"session .+has ended|call start_session", re.IGNORECASE)
+
+# Contract key names (xdotool style, e.g. Return, Page_Up) -> Cua's key names.
+_CUA_KEY_NAMES = {
+    "enter": "return", "return": "return", "kp_enter": "return", "esc": "escape", "escape": "escape",
+    "pgup": "page_up", "pageup": "page_up", "page_up": "page_up", "prior": "page_up",
+    "pgdn": "page_down", "pagedown": "page_down", "page_down": "page_down", "next": "page_down",
+    "del": "delete", "backspace": "backspace", "space": "space", "tab": "tab",
+    "up": "up", "down": "down", "left": "left", "right": "right",
+    "home": "home", "end": "end",
+}
+
+
+def _cua_key(name: str) -> str:
+    n = name.strip().lower().replace("-", "_")
+    if n in _CUA_KEY_NAMES:
+        return _CUA_KEY_NAMES[n]
+    if n.startswith("f") and n[1:].isdigit():
+        return n  # F1..F24
+    return n  # Single characters ('a', '0', '=') pass through as-is.
 
 
 class CuaError(Exception):
@@ -139,6 +164,21 @@ class CuaEngine:
     def call(self, tool: str, args: dict[str, Any], timeout: float = 15.0) -> dict[str, Any]:
         """One tool call. Returns structuredContent plus ``_text`` and
         ``_images`` (raw bytes); raises CuaError on a refusal."""
+        try:
+            return self._call(tool, args, timeout)
+        except CuaError as e:
+            # The daemon-side MCP session can end while our child process
+            # lives on (daemon restart, session timeout). Cua then refuses
+            # every call with "session ... has ended ... call start_session
+            # ... to revive it". Dropping the child and reconnecting starts
+            # a fresh session; retry the call once.
+            if not _SESSION_DEAD.search(str(e)):
+                raise
+            log.warning("cua session ended; reconnecting (%s)", e)
+            self.close()
+            return self._call(tool, args, timeout)
+
+    def _call(self, tool: str, args: dict[str, Any], timeout: float = 15.0) -> dict[str, Any]:
         self._ensure()
         result = self._request("tools/call", {"name": tool, "arguments": args}, timeout)
         self.error = None
@@ -211,7 +251,9 @@ class CuaEngine:
         elif op == "set_value":
             self.call("set_value", {**target, "value": "" if value is None else str(value)})
         elif op == "press":
-            self.call("press_key", {**target, "key": key or "return"})
+            if key and "+" in key:
+                raise CuaError("unsupported_op", "press takes one key (Return, Tab, F5); use a run_batch pixel step ({\"pixel\": {\"tool\": \"hotkey\", \"args\": {\"keys\": [...]}}}) for chords")
+            self.call("press_key", {**target, "key": _cua_key(key or "return")})
         elif op == "type":
             self.call("type_text", {**target, "text": "" if value is None else str(value)})
         else:

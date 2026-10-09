@@ -330,10 +330,6 @@
           "to": "computer-use/driver/"
         },
         {
-          "from": "resources/decision-runtime/",
-          "to": "decision-runtime/"
-        },
-        {
           "from": "resources/computer-use/driver-python/darwin-${arch}/",
           "to": "computer-use/driver/python/"
         },
@@ -426,10 +422,6 @@
           "to": "computer-use/driver/"
         },
         {
-          "from": "resources/decision-runtime/",
-          "to": "decision-runtime/"
-        },
-        {
           "from": "resources/computer-use/driver-python/linux-x64/",
           "to": "computer-use/driver/python/"
         },
@@ -490,10 +482,6 @@
         {
           "from": "resources/computer-use/driver/",
           "to": "computer-use/driver/"
-        },
-        {
-          "from": "resources/decision-runtime/",
-          "to": "decision-runtime/"
         },
         {
           "from": "resources/computer-use/driver-python/win32-x64/",

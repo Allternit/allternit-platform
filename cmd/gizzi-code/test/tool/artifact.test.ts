@@ -285,16 +285,3 @@ describe("tool.artifact_*", () => {
     expect(result.metadata.artifact).toMatchObject({ persisted: false, body_format: "text/uri-list" })
   })
 })
-
-describe("Artifacts.validate for motion", () => {
-  const fmt = "application/vnd.allternit.motion+json"
-  test("accepts a body with scenes", () => {
-    expect(Artifacts.validate("motion", fmt, JSON.stringify({ scenes: [{ type: "title", duration: 2, props: { text: "Hi" } }] }))).toBeUndefined()
-  })
-  test("tells the model what is missing", () => {
-    expect(Artifacts.validate("motion", fmt, "{}")).toContain('"scenes"')
-    expect(Artifacts.validate("motion", fmt, '{"scenes":[]}')).toContain('"scenes"')
-    expect(Artifacts.validate("motion", fmt, "null")).toContain('"scenes"')
-    expect(Artifacts.validate("motion", fmt, "nope")).toContain("must be JSON")
-  })
-})

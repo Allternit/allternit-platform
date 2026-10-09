@@ -11,7 +11,7 @@ This document defines the official port assignments for all Allternit services.
 | 3003 | Policy Service | `2-governance/` | HTTP | ✅ Yes |
 | 3004 | Kernel Service | `4-services/orchestration/kernel-service/` | HTTP | ✅ Yes |
 | 3010 | Operator Service | `4-services/allternit-operator/` | HTTP | ✅ Yes |
-| 3011 | Allternit Factory engine | `cmd/allternit-factory/` (`factory/`) | HTTP | ✅ Yes (engine default; Desktop runs it on **3018** because its extension bridge owns 3011 — see `surfaces/allternit-desktop/src/main/config.ts` `PORTS.FACTORY`) |
+| 3011 | Allternit Factory engine | `cmd/allternit-factory/` (`factory/`) | HTTP | ✅ Yes |
 | 3090 | Link Card Service | `4-services/infrastructure/link-card-service/` | HTTP | ⚠️ Optional |
 
 ### AI/ML Services (8000-8009)

@@ -484,14 +484,6 @@ export interface HyperframesAPI {
   onProgress(handler: (message: string) => void): () => void;
 }
 
-export interface MotionAPI {
-  check(): Promise<{ ffmpeg: boolean }>;
-  begin(opts: { fps: number; width: number; height: number; frames: number }): Promise<{ id: string }>;
-  frame(id: string, index: number, jpeg: ArrayBuffer): Promise<void>;
-  finish(id: string, opts: { title: string }): Promise<{ success: boolean; savedPath?: string; error?: string; cancelled?: boolean }>;
-  abort(id: string): Promise<void>;
-}
-
 export interface MiniAppInstallProgress {
   id: string;
   line: string;
@@ -682,7 +674,6 @@ export interface AllternitDesktopAPI {
   research: ResearchAPI;
   worker: WorkerAPI;
   hyperframes: HyperframesAPI;
-  motion: MotionAPI;
   miniApps: MiniAppsAPI;
   voice: VoiceAPI;
 }

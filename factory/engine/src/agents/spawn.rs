@@ -302,16 +302,7 @@ impl Spawner {
             Err(err) => {
                 self.peers.unregister(&peer.peer_id).ok();
                 cleanup(workdir.clone()).await;
-                // The backend error (e.g. workspace_not_found) says WHAT broke,
-                // not WHY: the transcript names the cause (dead TCC grants on a
-                // deleted build, exec failure, bad cwd).
-                let tail = transcript_tail(&log, 8).await;
-                let detail = if tail.is_empty() {
-                    String::new()
-                } else {
-                    format!("; transcript tail ({}):\n{}", log.display(), tail.join("\n"))
-                };
-                return Err(err.context(format!("starting the pane for {session}{detail}")));
+                return Err(err.context(format!("starting the pane for {session}")));
             }
         };
 
@@ -355,7 +346,9 @@ impl Spawner {
             let _ = self.registry.upsert(&session, entry);
             self.peers.unregister(&peer.peer_id).ok();
             cleanup(workdir.clone()).await;
-            let lines = transcript_tail(&log, 5).await;
+            let tail = tokio::fs::read_to_string(&log).await.unwrap_or_default();
+            let mut lines: Vec<&str> = tail.lines().rev().take(5).collect();
+            lines.reverse();
             bail!("agent exited immediately — transcript tail:\n{}", lines.join("\n"));
         }
         if finished_fast && !still_live {
@@ -772,22 +765,6 @@ async fn git_toplevel(repo: &Path) -> Result<PathBuf> {
     Ok(PathBuf::from(String::from_utf8_lossy(&output.stdout).trim()))
 }
 
-/// Last non-empty transcript lines, newest last, for an error message. Blank
-/// lines drop out so a spinner's empty frames don't crowd the cause off the
-/// tail; long lines truncate so an ANSI blast can't flood the error.
-async fn transcript_tail(path: &Path, max_lines: usize) -> Vec<String> {
-    let text = tokio::fs::read_to_string(path).await.unwrap_or_default();
-    let mut lines: Vec<String> = text
-        .lines()
-        .rev()
-        .filter(|line| !line.trim().is_empty())
-        .take(max_lines)
-        .map(|line| line.chars().take(300).collect())
-        .collect();
-    lines.reverse();
-    lines
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -809,17 +786,5 @@ mod tests {
                 .expect("sh");
             assert_eq!(String::from_utf8_lossy(&out.stdout), word);
         }
-    }
-
-    #[tokio::test]
-    async fn transcript_tail_keeps_last_non_empty_lines_newest_last() {
-        let dir = std::env::temp_dir().join(format!("fpane-tail-{}-{}", std::process::id(), rand::random::<u32>()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let log = dir.join("ao-test.log");
-        std::fs::write(&log, "first\n\nsecond\nthird\n\n\nfourth\nfifth\nsixth\n").unwrap();
-        let lines = transcript_tail(&log, 3).await;
-        assert_eq!(lines, vec!["fourth".to_string(), "fifth".to_string(), "sixth".to_string()]);
-        assert!(transcript_tail(&dir.join("absent.log"), 3).await.is_empty());
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

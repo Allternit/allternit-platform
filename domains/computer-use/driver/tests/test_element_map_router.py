@@ -9,6 +9,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from allternit_driver import element_map as em  # noqa: E402
+from allternit_driver.engines.cua import CuaEngine, CuaError  # noqa: E402
 from allternit_driver.router import ARC, CUA, EXPLORE_EVERY, Router  # noqa: E402
 
 
@@ -131,6 +132,56 @@ class CuaVerifyParseTest(unittest.TestCase):
         self.assertTrue(_cua_verified({"satisfied": True}))  # Other builds' boolean shape.
         self.assertFalse(_cua_verified({"ok": False}))
         self.assertFalse(_cua_verified({}))
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class CuaSessionReviveTest(unittest.TestCase):
+    """A dead daemon-side MCP session must reconnect and retry once."""
+
+    def _engine(self, failures: int) -> CuaEngine:
+        engine = CuaEngine("/bin/true", None, False, {})
+        calls = {"n": 0}
+
+        def fake_call(tool, args, timeout=15.0):
+            calls["n"] += 1
+            if calls["n"] <= failures:
+                raise CuaError("refused", "session 'mcp-1' has ended; tool call 'type_text' was rejected. Call start_session with this id to revive it before issuing further actions.")
+            return {"ok": True, "_text": "", "_images": []}
+
+        engine._call = fake_call  # type: ignore[method-assign]
+        engine.close = lambda: calls.setdefault("closed", True)  # type: ignore[method-assign]
+        return engine
+
+    def test_ended_session_reconnects_and_retries(self):
+        engine = self._engine(failures=1)
+        self.assertEqual(engine.call("type_text", {"text": "x"})["ok"], True)
+        # An ordinary refusal is not retried.
+        engine2 = CuaEngine("/bin/true", None, False, {})
+        def refused(tool, args, timeout=15.0):
+            raise CuaError("refused", "the driver refused: invalid_action_target")
+        engine2._call = refused  # type: ignore[method-assign]
+        with self.assertRaises(CuaError):
+            engine2.call("click", {})
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class CuaKeyNameTest(unittest.TestCase):
+    def test_contract_key_names_map_to_cua(self):
+        from allternit_driver.engines.cua import _cua_key
+
+        self.assertEqual(_cua_key("Return"), "return")
+        self.assertEqual(_cua_key("ENTER"), "return")
+        self.assertEqual(_cua_key("Page_Up"), "page_up")
+        self.assertEqual(_cua_key("escape"), "escape")
+        self.assertEqual(_cua_key("F5"), "f5")
+        self.assertEqual(_cua_key("a"), "a")
+        self.assertEqual(_cua_key("Tab"), "tab")
 
 
 if __name__ == "__main__":

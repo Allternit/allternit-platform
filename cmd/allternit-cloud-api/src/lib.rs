@@ -389,7 +389,6 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // the caller itself (Clerk session or scoped token); the public link
         // route /api/v2/public/artifacts/:id takes no auth.
         .merge(routes::artifacts_v2::routes())
-        .merge(routes::artifacts_comments::routes())
         // Discord shared app: install/send/commands check the Clerk session; the OAuth
         // callback and interactions are public (state / Ed25519 signature).
         .merge(routes::discord_app::routes())

@@ -4,22 +4,27 @@
  * (allternit-api POST /api/v1/computers/:id/toolset), many adapters:
  *
  * - claude-native: Anthropic models get the native `computer_toolset_20260801`
- *   / `browser_toolset_20260801` entries. The AI SDK (@ai-sdk/anthropic 2.0.x)
- *   has no toolset type, so gizzi registers the function tool below and the
- *   provider fetch hook (anthropic-native.ts) swaps it for the native entry on
- *   the wire and maps the toolset tool_use blocks back. If the API rejects the
- *   native entry for a model, the same request is resent with the function tool
- *   (the claude-function fallback).
+ *   / `browser_toolset_20260801` entries (the 17 pixel members) PLUS the six
+ *   `allternit.computer.v2` structured members as the `computer_v2` function
+ *   tool — the wire hook (anthropic-native.ts) only rewrites tools carrying
+ *   the v1 pixel marker, so `computer_v2` passes through untouched. The AI SDK
+ *   (@ai-sdk/anthropic 2.0.x) has no toolset type, so gizzi registers the
+ *   function tool below and the provider fetch hook swaps it for the native
+ *   entry on the wire and maps the toolset tool_use blocks back. If the API
+ *   rejects the native entry for a model, the same request is resent with the
+ *   function tool (the claude-function fallback).
  * - openai / gemini / json-function: JSON function tools generated from the
- *   contract. @ai-sdk/openai 2.0.89 and @ai-sdk/google 2.0.54 cannot parse
- *   OpenAI `computer_call` items or Gemini `computer_use` function calls into
- *   the loop's tool calls, so their native computer tools are not used yet.
+ *   contracts — `computer` (pixel members) plus `computer_v2` (structured
+ *   members) for every family. @ai-sdk/openai 2.0.89 and @ai-sdk/google 2.0.54
+ *   cannot parse OpenAI `computer_call` items or Gemini `computer_use`
+ *   function calls into the loop's tool calls, so their native computer tools
+ *   are not used yet; the v2 members reach them as functions.
  * - grid: GUI-trained open models (UI-TARS, Qwen-VL) answer in a 0..1000 grid;
  *   the executor maps it (coordinate_space "normalized_1000"). Scaling never
  *   happens here.
  */
 import z from "zod/v4"
-import { CONTRACTS, type ToolsetName, type ToolsetMemberSpec } from "./contract.gen"
+import { COMPUTER_V2_CONTRACT, CONTRACTS, type ToolsetMemberSpec, type ToolsetName } from "./contract.gen"
 
 export type AdapterKind = "claude-native" | "openai-function" | "gemini-function" | "json-function"
 
@@ -40,6 +45,9 @@ export const TOOL_MARKER: Record<ToolsetName, string> = {
   computer: "[allternit.computer.v1]",
   browser: "[allternit.browser.v1]",
 }
+
+/** Marker for the v2 structured tool (never rewritten to a native entry). */
+export const V2_TOOL_MARKER = "[allternit.computer.v2]"
 
 const GRID_MODEL = /ui-?tars|qwen[\d.]*-?vl|qwen\d*\.?\d*-vl|glm-4\.?\dv|cogagent|showui|os-atlas/i
 
@@ -125,6 +133,17 @@ export function enabledMembers(toolset: ToolsetName, enabled?: Set<string>): Too
   return CONTRACTS[toolset].members.filter((m) => (enabled ? enabled.has(m.name) : m.default_enabled))
 }
 
+/** The six v2 structured members the target actually runs. */
+export function enabledV2Members(enabled?: Set<string>): ToolsetMemberSpec[] {
+  return COMPUTER_V2_CONTRACT.members.filter((m) => (enabled ? enabled.has(m.name) : m.default_enabled))
+}
+
+/** Steering every model gets: the structured fast path beats pixel loops. */
+const PREFER_STRUCTURED = [
+  "Prefer read_ui + act/run_batch over screenshot + pixel-by-pixel loops: the element tree is faster, cheaper and stable across resizes.",
+  "Reach for screenshots only when the tree is empty (canvas/game), the layout needs eyes, or read_ui says the app is degraded.",
+].join(" ")
+
 export function toolDescription(toolset: ToolsetName, choice: AdapterChoice, members: readonly ToolsetMemberSpec[]): string {
   const frame = choice.grid
     ? "Coordinates are on a 0-1000 grid over the whole screen on both axes (0,0 top-left, 1000,1000 bottom-right)."
@@ -134,11 +153,28 @@ export function toolDescription(toolset: ToolsetName, choice: AdapterChoice, mem
     toolset === "computer"
       ? "Use a computer's screen, mouse and keyboard."
       : "Use a web browser session: navigate, look at the page, click, type and read text."
+  const structured = toolset === "computer" ? `\n${PREFER_STRUCTURED}\nThe structured members (read_ui, act, run_batch, verify, request_human, use_credential) live in the computer_v2 tool.` : ""
   return [
     `${TOOL_MARKER[toolset]} ${what} Set \`action\` to one of the actions below and pass that action's fields.`,
     frame,
     "Calls in one turn run in order; after a failure the rest are not executed.",
     "Actions that need a person's approval pause until they answer.",
+    structured,
+    "",
+    ...lines,
+  ].join("\n")
+}
+
+/** Description for the computer_v2 tool: the structured, driver-backed members. */
+export function toolDescriptionV2(members: readonly ToolsetMemberSpec[]): string {
+  const lines = members.map((m) => `- ${m.name}: ${m.description}`)
+  return [
+    `${V2_TOOL_MARKER} Read and drive this computer's UI as a structured element tree (no screenshots needed). Set \`action\` to one of the actions below and pass that action's fields.`,
+    PREFER_STRUCTURED,
+    "Element ids come from read_ui and are stable until the UI changes; pass the version back to act/run_batch to catch a moved UI.",
+    "run_batch runs many steps in one call and stops at the first failed check, then returns one fresh read — batch aggressively.",
+    "use_credential types a vault secret or TOTP code into the focused field; the value is never shown to you.",
+    "request_human pauses for a person (CAPTCHA, 2FA, judgment calls) and resumes the session when they signal done.",
     "",
     ...lines,
   ].join("\n")

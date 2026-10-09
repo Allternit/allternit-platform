@@ -1,6 +1,7 @@
 /**
- * The `computer` and `browser` tools: the Allternit computer toolset
- * (allternit.computer.v1 / allternit.browser.v1) for every model family.
+ * The `computer`, `computer_v2` and `browser` tools: the Allternit computer
+ * toolset (allternit.computer.v2's 17 pixel members + its 6 structured
+ * members, allternit.browser.v1) for every model family.
  *
  * Each call goes to the one executor, allternit-api
  * `POST /api/v1/computers/:id/toolset`, which validates it against the
@@ -13,7 +14,7 @@
 import { Tool } from "@/runtime/tools/builtins/tool"
 import { Log } from "@/shared/util/log"
 import { CONTRACTS, type ToolsetName, type ToolsetRequest, type ToolsetResult } from "./contract.gen"
-import { chooseAdapter, enabledMembers, toolDescription, toolParameters, type ModelRef } from "./adapter"
+import { chooseAdapter, enabledMembers, enabledV2Members, toolDescription, toolDescriptionV2, toolParameters, type ModelRef } from "./adapter"
 import { httpExecutor, type ExecutorClient } from "./executor-client"
 import { BROWSER_STATE_CLOSE, BROWSER_STATE_OPEN } from "./anthropic-native"
 
@@ -149,12 +150,35 @@ function defineToolset(toolset: ToolsetName) {
   })
 }
 
-/** `computer`: a computer's screen, mouse and keyboard (17 members). */
+/**
+ * The v2 structured members as their own function tool, for every model
+ * family: Claude gets this next to its native toolset (the wire hook only
+ * rewrites the `computer` tool's v1 marker, so this stays a plain function
+ * tool); OpenAI, Gemini and everyone else get it next to `computer`.
+ */
+function defineV2Toolset() {
+  return Tool.define("computer_v2", async () => {
+    const members = enabledV2Members(await targetMembers("computer", targetComputer()))
+    return {
+      description: toolDescriptionV2(members),
+      parameters: toolParameters("computer", members),
+      async execute(args: Record<string, unknown>, ctx: Tool.Context) {
+        // The executor's contract is "computer"; v2 members are members of it.
+        return runToolsetCall("computer", args, ctx, { executor: httpExecutor, computerId: targetComputer(), grid: false })
+      },
+    }
+  })
+}
+
+/** `computer`: a computer's screen, mouse and keyboard (17 pixel members). */
 export const ComputerToolsetTool = defineToolset("computer")
+/** `computer_v2`: the structured driver-backed members (read_ui, act, run_batch, verify, request_human, use_credential). */
+export const ComputerV2ToolsetTool = defineV2Toolset()
 /** `browser`: a browser session (31 members; executor reports which run). */
 export const BrowserToolsetTool = defineToolset("browser")
 
 export const TOOLSET_MEMBER_COUNTS = {
   computer: CONTRACTS.computer.members.length,
+  computer_v2: 6,
   browser: CONTRACTS.browser.members.length,
 }

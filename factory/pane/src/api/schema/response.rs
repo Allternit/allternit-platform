@@ -39,21 +39,6 @@ pub struct ErrorBody {
     pub message: String,
 }
 
-/// Process identity attached to a ping: who answers, from where, and whether
-/// the server's own executable still exists on disk. The Desktop updater
-/// deletes superseded runtime dirs; a server still running from a deleted
-/// build keeps answering the socket, but its terminal permissions (TCC) are
-/// dead and every pane it spawns dies instantly. `exe_deleted` is how a client
-/// tells that apart from a healthy server.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ServerPingInfo {
-    pub pid: u32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub exe: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub exe_deleted: Option<bool>,
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ResponseResult {
@@ -62,8 +47,6 @@ pub enum ResponseResult {
         protocol: u32,
         #[serde(default)]
         capabilities: Option<ServerCapabilities>,
-        #[serde(default)]
-        server: Option<ServerPingInfo>,
     },
     SessionSnapshot {
         snapshot: Box<SessionSnapshot>,

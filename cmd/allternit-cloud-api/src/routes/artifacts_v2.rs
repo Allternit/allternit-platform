@@ -54,11 +54,7 @@ use crate::artifacts::{ids, kinds, MAX_BODY_BYTES, MAX_REQUEST_BYTES};
 use crate::routes::runtime_pairing::{device_token_from_headers, runtime_device_for_token};
 use crate::{auth, ApiState};
 
-// Page runtime (storage, consents, AI) and the org "Shared outside" list.
-#[path = "artifact_runtime.rs"]
-mod artifact_runtime;
-
-pub(crate) type Result<T> = std::result::Result<T, ArtifactError>;
+type Result<T> = std::result::Result<T, ArtifactError>;
 
 const DEFAULT_LIST_LIMIT: i64 = 50;
 const MAX_LIST_LIMIT: i64 = 100;
@@ -96,7 +92,6 @@ pub fn routes() -> Router<Arc<ApiState>> {
             "/api/v2/org/artifact-settings",
             get(get_org_settings).put(put_org_settings),
         )
-        .merge(artifact_runtime::routes())
 }
 
 // ---------------------------------------------------------------------------
@@ -108,10 +103,10 @@ const ARTIFACT_COLUMNS: &str = "id, owner_id, org_id, kind, runtime_version, tit
     link_level, thumbnail_url, created_at, updated_at";
 
 #[derive(Debug, Clone, FromRow)]
-pub(crate) struct ArtifactRow {
-    pub(crate) id: String,
-    pub(crate) owner_id: String,
-    pub(crate) org_id: Option<String>,
+struct ArtifactRow {
+    id: String,
+    owner_id: String,
+    org_id: Option<String>,
     kind: String,
     runtime_version: i32,
     title: String,
@@ -183,11 +178,11 @@ impl ShareRow {
     }
 }
 
-pub(crate) fn ts(at: DateTime<Utc>) -> String {
+fn ts(at: DateTime<Utc>) -> String {
     at.to_rfc3339_opts(SecondsFormat::Micros, true)
 }
 
-pub(crate) async fn caller(state: &ApiState, headers: &HeaderMap) -> Result<Caller> {
+async fn caller(state: &ApiState, headers: &HeaderMap) -> Result<Caller> {
     // Tests stand in for Clerk sessions (org, role, email) with this header;
     // compiled out of every non-test build.
     #[cfg(test)]
@@ -254,7 +249,7 @@ async fn fetch_version(db: &PgPool, id: &str, version: i32) -> Result<Option<Ver
 }
 
 /// The org's artifact settings, or the defaults when it has no row.
-pub(crate) async fn org_settings(db: &PgPool, org_id: &str) -> Result<OrgSettings> {
+async fn org_settings(db: &PgPool, org_id: &str) -> Result<OrgSettings> {
     #[derive(FromRow)]
     struct Row {
         enabled: bool,
@@ -299,7 +294,7 @@ async fn settings_for(db: &PgPool, org_id: Option<&str>) -> Result<Option<OrgSet
 
 /// Best-effort display names from the `users` mirror (Clerk webhook). A
 /// missing table or row just means no name.
-pub(crate) async fn profiles(db: &PgPool, ids: &[String]) -> HashMap<String, (Option<String>, Option<String>)> {
+async fn profiles(db: &PgPool, ids: &[String]) -> HashMap<String, (Option<String>, Option<String>)> {
     if ids.is_empty() {
         return HashMap::new();
     }
@@ -316,7 +311,7 @@ pub(crate) async fn profiles(db: &PgPool, ids: &[String]) -> HashMap<String, (Op
 /// Load an artifact and the caller's access to it; 404 when they have none.
 /// An outside email invite is marked accepted (and stops expiring) the first
 /// time its invitee opens the artifact signed in with that email.
-pub(crate) async fn load_with_access(db: &PgPool, id: &str, caller: &Caller) -> Result<(ArtifactRow, Access)> {
+async fn load_with_access(db: &PgPool, id: &str, caller: &Caller) -> Result<(ArtifactRow, Access)> {
     let row = fetch_row(db, id).await?.ok_or_else(ArtifactError::not_found)?;
     let shares = fetch_shares(db, std::slice::from_ref(&row.id)).await?;
     let grants: Vec<ShareGrant> = shares.iter().map(ShareRow::grant).collect();
@@ -347,7 +342,7 @@ pub(crate) async fn load_with_access(db: &PgPool, id: &str, caller: &Caller) -> 
     Ok((row, access))
 }
 
-pub(crate) fn require(access: Access, needed: Access, what: &str) -> Result<()> {
+fn require(access: Access, needed: Access, what: &str) -> Result<()> {
     if access >= needed {
         Ok(())
     } else {
@@ -445,7 +440,7 @@ async fn artifact_json(db: &PgPool, row: &ArtifactRow, access: Access, caller: &
 
 /// Bodies are parsed after the caller is authenticated, so an unauthenticated
 /// request gets 401 rather than a schema error.
-pub(crate) fn parse_json<T: serde::de::DeserializeOwned>(body: &[u8]) -> Result<T> {
+fn parse_json<T: serde::de::DeserializeOwned>(body: &[u8]) -> Result<T> {
     serde_json::from_slice(body)
         .map_err(|error| ArtifactError::bad_request(format!("invalid JSON body: {error}")))
 }
@@ -703,13 +698,7 @@ async fn create_artifact(
     check_json_object(&origin, "origin")?;
     let meta = request.meta.unwrap_or_else(|| json!({}));
     check_json_object(&meta, "meta")?;
-    // A page declares what it needs up front; when the creator (often the
-    // model) only wrote it into `meta.capabilities`, that becomes the record's
-    // declaration so the link rule and the runtime see it from the start.
-    let capabilities = request
-        .capabilities
-        .or_else(|| meta.get("capabilities").filter(|c| c.as_object().is_some_and(|m| !m.is_empty())).cloned())
-        .unwrap_or_else(|| json!({}));
+    let capabilities = request.capabilities.unwrap_or_else(|| json!({}));
     let body_format = request
         .body_format
         .as_deref()

@@ -35,7 +35,7 @@ See [Authentication](/api/authentication).
 | `sheet` | `application/vnd.allternit.sheet+json` | |
 | `slides` | `application/vnd.allternit.slides+json` | |
 | `design` | `application/vnd.allternit.design+json` | `text/html` |
-| `dashboard` | `application/vnd.allternit.dashboard+json` | `application/vnd.allternit.openui` (dashboards saved before the tile format) |
+| `dashboard` | `application/vnd.allternit.openui` | |
 | `motion` | `application/vnd.allternit.motion+json` | |
 | `page` | `text/html` | `text/markdown` |
 | `card` | `application/vnd.allternit.openui` | |
@@ -150,51 +150,6 @@ DELETE /api/v2/artifacts/{id}
 
 `DELETE` is owner-only and **permanent**. There is no trash. Versions, shares and comments are deleted with the artifact. It returns `204`.
 
-## Dashboard body
-
-A `dashboard` artifact's body is JSON with `body_format` `application/vnd.allternit.dashboard+json`. The server stores it like any other body; the apps parse and validate it. A tile that fails validation is skipped and the rest of the dashboard still draws.
-
-```json
-{
-  "version": 1,
-  "refreshSeconds": 300,
-  "filters": [
-    { "id": "region", "label": "Region", "type": "select",
-      "options": [{ "value": "emea", "label": "EMEA" }], "default": "emea" }
-  ],
-  "tiles": [
-    {
-      "id": "revenue",
-      "title": "Revenue",
-      "type": "kpi",
-      "layout": { "x": 0, "y": 0, "w": 3, "h": 2 },
-      "query": { "tool": "stripe__list_charges", "args": { "region": "{{filters.region}}" } },
-      "encoding": { "y": ["total"], "compare": "previous" },
-      "format": { "style": "currency", "currency": "USD" }
-    }
-  ]
-}
-```
-
-| Field | Meaning |
-| --- | --- |
-| `version` | Always `1`. A newer number is read as far as possible. |
-| `refreshSeconds` | Re-query while the dashboard is open. `0` or missing: only on open. At least 30 when set. |
-| `filters[]` | `id` (letters, digits, `_`), `label`, `type` (`select`, `text`, `number`), `options` for `select`, optional `default`. Up to 8. |
-| `tiles[]` | Up to 40. |
-| `tiles[].type` | `kpi`, `line`, `area`, `bar`, `table`. |
-| `tiles[].layout` | A 12-column grid: `x` and `y` (0-based), `w` (1 to 12 columns), `h` (1 to 40 rows of 72 px). Tiles that overlap are laid out in order. Phones stack tiles in one column, in reading order. |
-| `tiles[].query.tool` | `<connector>__<tool>`, the name in the user's connector tool list. |
-| `tiles[].query.args` | Tool arguments. Strings may contain `{{filters.<id>}}`. |
-| `tiles[].query.sql`, `sqlArg` | SQL for a warehouse tool, placed into the argument named by `sqlArg` (default `query`). In SQL a filter becomes a quoted literal, so write `WHERE region = {{filters.region}}`. Only one read-only statement runs. |
-| `tiles[].query.rowsPath` | Where the rows sit in the result (for example `data.rows`). Without it, rows are found automatically. |
-| `tiles[].encoding` | `x` (column on the x axis), `y` (series columns; for a KPI the first is the number), `compare` (KPI: previous-period column), `columns` (table). |
-| `tiles[].format` | `style` (`number`, `compact`, `currency`, `percent`, `text`, `date`), `currency`, `decimals`, `prefix`, `suffix`. |
-
-A tool result is read as a table: an array of objects, `{ "columns": [], "rows": [[]] }`, or JSON or CSV text.
-
-Dashboards run as the viewer: each call goes through the viewer's own connectors, and a tool that is not read-only is refused (a SQL tool is allowed for a single read-only statement). The owner's client sets `capabilities.connectors` to the connectors and tools the tiles call, so `visibility: "link"` is refused for a dashboard (see [Sharing](#sharing)). Dashboards saved before this format, with `application/vnd.allternit.openui`, still open as cards.
-
 ## Versions
 
 ```http
@@ -283,42 +238,11 @@ PUT /api/v2/org/artifact-settings
 | `templates` | `{}` | `{kind: bool}`. A missing kind uses the plan default. |
 | `external_sharing` | `false` | Allows link sharing. |
 | `outside_invites` | `false` | Allows `email` invites to people outside the org. |
-| `presence` | `true` | Shows who else is viewing. |
-| `connectors` | `true` | When off, artifacts can't declare `capabilities.connectors` and pages can't call connectors. |
+| `presence` | `true` | Shows who else is viewing (Phase 4). |
+| `connectors` | `true` | When off, artifacts can't declare `capabilities.connectors`. |
 | `allowed_external` | `[]` | Artifact ids individually allowed to be shared by link (not docs). |
 
 `GET` returns the settings for your active organization, plus `org_id`, `updated_by`, `updated_at` and `can_edit`. Personal accounts get the defaults with `org_id: null`. `PUT` changes only the fields you send. It needs the Clerk organization role `admin` (or `org:admin`). Everyone else gets `403`.
-
-Admins can list what the org has shared outside with `GET /api/v2/org/artifact-shared-outside`. It returns `{items: [{id, title, kind, owner_id, owner_name, by_link, outside_invites, allowed, updated_at}]}` for artifacts that are public by link or have email invites, and needs the same admin role. `allowed` is whether the artifact is in `allowed_external`.
-
-## Page runtime
-
-Pages that store data, call AI or use connectors have their own routes under `/api/v2/artifact-runtime/{id}`. See the [Page runtime API](/api/artifact-runtime).
-
-## Comments
-
-Comments are threaded: a root comment plus replies one level deep. They are stored in `artifact_comments`.
-
-| Method and path | Needs | Body | Returns |
-|---|---|---|---|
-| `GET /api/v2/artifacts/:id/comments` | view | | `{ items }`, oldest first, at most 500 |
-| `POST /api/v2/artifacts/:id/comments` | comment | `{ body, anchor?, parent_id?, version? }` | the comment, `201` |
-| `PATCH /api/v2/artifacts/:id/comments/:cid` | edit, or the author | `{ resolved? , body? }` | the comment |
-| `DELETE /api/v2/artifacts/:id/comments/:cid` | the author or the owner | | `204`. Deleting a root deletes its replies. |
-| `POST /api/v2/artifacts/:id/comments/assistant-reply` | edit | `{ parent_id, body }` | the reply, `201`, with `author_id: "assistant"` |
-
-A comment has `id`, `artifact_id`, `version`, `anchor`, `parent_id`, `author_id`, `author_name`, `author_image_url`, `body`, `to_assistant`, `resolved_at` and `created_at`. `body` is 1 to 4000 characters. `anchor` is an opaque object up to 16 KB; the app writes `{ kind: "text" | "cell" | "slide" | "element", ... }`. A comment that mentions `@gizzi` or `@allternit` is stored with `to_assistant: true`. Docs have no Commenter level, so a viewer of a doc can't comment.
-
-## Presence
-
-Presence is live only and is never written to the database. The server keeps a short in-memory list per artifact.
-
-| Method and path | Needs | Body | Returns |
-|---|---|---|---|
-| `POST /api/v2/artifacts/:id/presence` | view | `{ state: "viewing" \| "editing" \| "left" }` | `204` |
-| `GET /api/v2/artifacts/:id/presence` | view | | `{ enabled, users: [{ user_id, name, image_url, state }] }`, without you |
-
-Send a heartbeat about every 15 seconds. An entry expires after 45 seconds. When the owner's organization turned presence off, `GET` returns `{ enabled: false, users: [] }` and `POST` does nothing.
 
 ## Errors
 
@@ -326,4 +250,4 @@ Errors use the standard Cloud API shape `{ "error", "message", "code" }`. Artifa
 
 ## Storage
 
-The schema is `cmd/allternit-cloud-api/migrations_pg/085_artifacts_v2.sql`. It creates `artifacts`, `artifact_versions`, `artifact_shares` and `org_artifact_settings`, plus `artifact_storage` and `artifact_consents` (used by the [page runtime](/api/artifact-runtime)) and `artifact_comments` for comments. The migration is idempotent and is applied to production by hand.
+The schema is `cmd/allternit-cloud-api/migrations_pg/085_artifacts_v2.sql`. It creates `artifacts`, `artifact_versions`, `artifact_shares` and `org_artifact_settings`, plus `artifact_storage`, `artifact_consents` and `artifact_comments` for the Phase 4 page runtime and comments. The migration is idempotent and is applied to production by hand.

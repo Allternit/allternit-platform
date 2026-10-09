@@ -7,7 +7,6 @@ pub mod access;
 pub mod error;
 pub mod ids;
 pub mod kinds;
-pub mod runtime;
 pub mod sharing;
 
 /// Largest version body (contract §2: `body` ≤ 16 MiB).

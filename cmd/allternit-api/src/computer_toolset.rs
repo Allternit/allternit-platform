@@ -1,7 +1,11 @@
-//! The computer / browser toolset executor (`allternit.computer.v1`,
+//! The computer / browser toolset executor (`allternit.computer.v2`,
 //! `allternit.browser.v1`). One executor behind every model adapter: gizzi's
 //! Claude-native, OpenAI, Gemini and JSON-function adapters, the Python engine
-//! and the hosted driver all send contract calls here.
+//! and the hosted driver all send contract calls here. The computer contract
+//! is v2: the 17 pixel members of v1 (Anthropic `computer_toolset_20260801`
+//! shape, unchanged) plus the 6 structured members (`computer_v2`): read_ui,
+//! act, run_batch, verify through the Allternit Driver sidecar, request_human
+//! and use_credential.
 //!
 //! `POST /computers/:id/toolset` runs one call. `:id` is a computer id or
 //! `this-device`. Checks run in this order:
@@ -52,7 +56,7 @@ use crate::AppState;
 // ---------------------------------------------------------------------------
 
 const COMPUTER_CONTRACT_JSON: &str =
-    include_str!("../../../contracts/computer-toolset/allternit-computer-v1.json");
+    include_str!("../../../contracts/computer-toolset/allternit-computer-v2.json");
 const BROWSER_CONTRACT_JSON: &str =
     include_str!("../../../contracts/computer-toolset/allternit-browser-v1.json");
 
@@ -452,7 +456,7 @@ pub struct ToolsetResult {
     pub error: Option<String>,
 }
 
-fn text(t: impl Into<String>) -> Value {
+pub(crate) fn text(t: impl Into<String>) -> Value {
     json!({ "type": "text", "text": t.into() })
 }
 
@@ -460,7 +464,7 @@ fn image_block(png: &[u8]) -> Value {
     json!({ "type": "image", "media_type": "image/png", "data": B64.encode(png) })
 }
 
-fn screen_info(map: Option<&Mapping>) -> ScreenInfo {
+pub(crate) fn screen_info(map: Option<&Mapping>) -> ScreenInfo {
     match map {
         Some(m) => ScreenInfo {
             width: m.screen.width,
@@ -631,7 +635,14 @@ impl Target {
 /// Members a target can run, or why not. `None` = supported.
 pub fn unsupported_reason(target_label: &str, toolset: Toolset, member: &str) -> Option<&'static str> {
     match (toolset, target_label) {
-        (Toolset::Computer, "guest_linux" | "guest_windows") => None,
+        (Toolset::Computer, "guest_linux" | "guest_windows") => {
+            if crate::computer_v2::is_v2_member(member) {
+                // D1b: the guest image doesn't carry the Allternit Driver yet.
+                Some("The Allternit Driver doesn't run on this computer yet, and the structured members need it. It arrives with the guest driver image.")
+            } else {
+                None
+            }
+        }
         (Toolset::Computer, "this_device") => match member {
             _ => None,
         },
@@ -735,7 +746,7 @@ pub fn xdotool_script(member: &str, input: &Value) -> Result<Option<String>, Str
     }))
 }
 
-async fn guest_exec(target: &Target, script: &str) -> Result<String, String> {
+pub(crate) async fn guest_exec(target: &Target, script: &str) -> Result<String, String> {
     let Target::Guest { driver, handle, display, .. } = target else {
         return Err("not a guest target".into());
     };
@@ -1029,7 +1040,7 @@ pub fn windows_script(member: &str, input: &Value) -> Result<Option<String>, Str
     Ok(Some(format!("{WIN_INPUT_PREAMBLE}{}\n", lines.join("\n"))))
 }
 
-async fn windows_exec(target: &Target, script: &str) -> Result<String, String> {
+pub(crate) async fn windows_exec(target: &Target, script: &str) -> Result<String, String> {
     let Target::Guest { driver, handle, .. } = target else {
         return Err("not a guest target".into());
     };
@@ -1516,7 +1527,7 @@ async fn build_target(state: &Arc<AppState>, user: &AuthUser, computer: &Compute
 }
 
 /// The agent asking for control: one holder per run.
-fn agent_holder(user: &AuthUser, run_id: Option<&str>) -> Holder {
+pub(crate) fn agent_holder(user: &AuthUser, run_id: Option<&str>) -> Holder {
     Holder {
         kind: HolderKind::Agent,
         id: run_id.map(str::to_string).unwrap_or_else(|| format!("toolset:{}", user.user_id)),
@@ -1664,7 +1675,9 @@ pub async fn execute(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: 
             return respond(StatusCode::FORBIDDEN, error_result("policy_denied", reason, None));
         }
     }
-    if needs_approval(spec, target.sandboxed()) {
+    if needs_approval(spec, target.sandboxed())
+        || crate::computer_v2::v2_member_needs_approval(&req.member, &req.input, target.sandboxed())
+    {
         if let Err(denial) = crate::aci_safety::enforce_confirmation(
             &state.approval_store,
             &user.user_id,
@@ -1722,6 +1735,25 @@ pub async fn execute(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: 
         Target::Browser { session_id, .. } => format!("browser:{session_id}"),
         _ => computer.id.clone(),
     };
+    crate::computer_routes::touch_computer_activity(&state.db, &computer.id);
+    if crate::computer_v2::is_v2_member(&req.member) {
+        // Structured v2 members: no screenshot and no coordinate scaling —
+        // the driver answers read_ui/act/run_batch/verify, the human gate
+        // pauses the lease, the credential backends type the value. The
+        // lease, policy, approval and audit steps above already ran.
+        let outcome = crate::computer_v2::execute_v2(state, user, &computer, &target, &req.member, &req.input, &run_id).await;
+        emit_action(&computer.id, req.toolset, &req.member, None, None, req.run_id.as_deref(), outcome.is_ok());
+        return match outcome {
+            Ok(result) => {
+                settle(true);
+                (StatusCode::OK, serde_json::to_value(result).unwrap_or_default())
+            }
+            Err(fail) => {
+                settle(false);
+                respond(StatusCode::OK, error_result("action_failed", fail.message, None))
+            }
+        };
+    }
     let screen = match input_space(&target, &screen_key, &run_id).await {
         Ok(s) => s,
         Err(e) => {
@@ -1732,7 +1764,6 @@ pub async fn execute(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: 
     let map = Mapping::new(screen, req.model_frame, req.coordinate_space.unwrap_or_default(), &c.model_frame);
     let scaled = scale_input(spec, &req.input, &map);
     let point = primary_point(spec, &scaled);
-    crate::computer_routes::touch_computer_activity(&state.db, &computer.id);
     let outcome = dispatch(&target, req.toolset, spec, &scaled, &map, &screen_key, &run_id).await;
     emit_action(&computer.id, req.toolset, &req.member, point, Some(&map), req.run_id.as_deref(), outcome.is_ok());
     match outcome {
@@ -1758,6 +1789,24 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/computers/:id/toolset", post(post_toolset))
         .route("/computers/:id/toolset/schema", get(get_toolset_schema))
         .route("/computers/:id/toolset/events", get(get_toolset_events))
+        .route("/computers/:id/human-done", post(post_human_done))
+}
+
+/// The person signals the human window is complete (CAPTCHA done, 2FA
+/// answered). Wakes the pending `request_human` call, if any; the agent
+/// session resumes on the same run.
+async fn post_human_done(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let computer = match resolve_computer(&state, &user, &id, &headers).await {
+        Ok(c) => c,
+        Err((status, message)) => return (status, Json(json!({ "error": "computer_unavailable", "message": message }))).into_response(),
+    };
+    let found = crate::computer_v2::human_gate_done(&computer.id);
+    Json(json!({ "ok": true, "window_open": found })).into_response()
 }
 
 async fn post_toolset(
@@ -1822,6 +1871,14 @@ async fn get_toolset_schema(
             .into_response();
         }
     };
+    // The structured v2 members answer through the Allternit Driver sidecar;
+    // without it they would fail per call, so the schema says so up front.
+    let structured_down = match (toolset, target_label) {
+        (Toolset::Computer, "this_device") if crate::this_device_input::DriverEndpoint::resolve().is_none() => {
+            Some("The Allternit Driver sidecar isn't running on this computer. Open Allternit Desktop (or update it); until then the structured members (read_ui, act, run_batch, verify) are unavailable.")
+        }
+        _ => None,
+    };
     let members: Vec<Value> = c
         .members
         .iter()
@@ -1829,6 +1886,8 @@ async fn get_toolset_schema(
             let opted_in = q.enable.as_deref().is_some_and(|e| e.split(',').any(|n| n.trim() == m.name));
             let reason = if !m.default_enabled && !opted_in {
                 Some("Off by default in the contract; request it with ?enable= and send it with \"enable\".")
+            } else if crate::computer_v2::is_v2_member(&m.name) {
+                unavailable.or(structured_down).or_else(|| unsupported_reason(target_label, toolset, &m.name))
             } else {
                 unavailable.or_else(|| unsupported_reason(target_label, toolset, &m.name))
             };
@@ -1860,6 +1919,8 @@ async fn get_toolset_schema(
         "model_frame": { "max_long_edge": c.model_frame.max_long_edge, "max_pixels": c.model_frame.max_pixels },
         "screen": screen,
         "members": members,
+        "credential_backends": crate::computer_v2::credential_backends().into_iter().map(|(name, ok)| json!({ "name": name, "available": ok })).collect::<Vec<_>>(),
+        "human_window": crate::computer_v2::human_gate_pending(&computer.id).map(|(reason, secs)| json!({ "open": true, "reason": reason, "for_secs": secs })),
     }))
     .into_response()
 }
@@ -1903,8 +1964,11 @@ mod tests {
 
     #[test]
     fn contracts_load_with_anthropic_member_sets() {
-        assert_eq!(contract(Toolset::Computer).members.len(), 17);
+        assert_eq!(contract(Toolset::Computer).id, "allternit.computer.v2");
+        assert_eq!(contract(Toolset::Computer).members.len(), 23);
         assert_eq!(contract(Toolset::Browser).members.len(), 31);
+        assert!(contract(Toolset::Computer).member("read_ui").is_some());
+        assert!(contract(Toolset::Computer).member("use_credential").is_some());
         assert_eq!(contract(Toolset::Computer).batch_halt_text, "Not executed: an earlier computer action in this turn failed.");
         assert_eq!(contract(Toolset::Browser).batch_halt_text, "Not executed: an earlier action in this turn failed.");
     }

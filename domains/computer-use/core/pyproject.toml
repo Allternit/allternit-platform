@@ -118,9 +118,7 @@ shadow-head = [
 # and lazily imported, same contract as [shadow-head].
 semif = [
     "allternit-computer-use[shadow-head]",
-    # SemIf requires Python >= 3.10 (mlx); the project still supports 3.9
-    # elsewhere, so the 3.9 split must not try to resolve this direct ref.
-    "semif-phase1[mlx] @ git+https://github.com/TheoLeeCJ/SemIf ; python_version >= '3.10'",
+    "semif-phase1[mlx] @ git+https://github.com/TheoLeeCJ/SemIf",
 ]
 
 # All dependencies (browser + desktop)

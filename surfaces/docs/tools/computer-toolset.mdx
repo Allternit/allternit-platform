@@ -4,14 +4,14 @@ description: 'One contract and one executor for computer and browser use, with a
 ---
 
 <Note>
-**Status:** Implementation IMPLEMENTED × Exposure PUBLIC PREVIEW. Contract: `contracts/computer-toolset/`. Executor: `cmd/allternit-api/src/computer_toolset.rs`. gizzi adapters: `cmd/gizzi-code/src/runtime/tools/computer-toolset/`.
+**Status:** Implementation IMPLEMENTED × Exposure PUBLIC PREVIEW. Contract: `contracts/computer-toolset/` (`allternit.computer.v2`, `allternit.browser.v1`). Executor: `cmd/allternit-api/src/computer_toolset.rs` + `computer_v2.rs`. gizzi adapters: `cmd/gizzi-code/src/runtime/tools/computer-toolset/`.
 </Note>
 
 ## Overview
 
 The computer toolset is how every agent in Allternit uses a screen. There is one contract, one executor and one adapter per model family:
 
-1. **Contract.** `allternit.computer.v1` (17 members) and `allternit.browser.v1` (31 members). Member names and input fields are identical to Anthropic's `computer_toolset_20260801` and `browser_toolset_20260801`.
+1. **Contract.** `allternit.computer.v2` (23 members: the 17 pixel members of `allternit.computer.v1` — byte-identical names and input fields to Anthropic's `computer_toolset_20260801` — plus 6 structured members backed by the Allternit Driver) and `allternit.browser.v1` (31 members, identical to Anthropic's `browser_toolset_20260801`). v2 is additive: every v1 call is a valid v2 call.
 2. **Executor.** `POST /api/v1/computers/:id/toolset` in allternit-api. It validates the call, checks the control lease and approvals, writes the audit row, scales coordinates and dispatches the action.
 3. **Adapters.** gizzi turns each model's tool calls into contract calls. gizzi is the only agent loop. No adapter runs a loop of its own.
 
@@ -36,6 +36,23 @@ The computer toolset is how every agent in Allternit uses a screen. There is one
 | `wait` | reversible | no | `duration` (seconds) |
 | `cursor_position` | reversible | no | none |
 
+### Computer v2 (`allternit.computer.v2`)
+
+The structured members. They read and drive the UI through the [Allternit Driver](/tools/allternit-driver) sidecar — no screenshots for reads — and every model family gets them as the `computer_v2` function tool (Claude gets them next to its native toolset). Prompt guidance in both tools steers models to prefer `read_ui` + `run_batch` over screenshot + pixel loops.
+
+| Member | Risk | Approval | Fields |
+|---|---|---|---|
+| `read_ui` | reversible | no | `app?` / `pid?` / `window_id?` (default: frontmost), `query?`, `max_elements?` (default 200), `since?` (a version: returns only the diff) |
+| `act` | risky | on non-sandbox targets for `set_value` / `select` / `press` (same rule as `type`) | `id` (element id from `read_ui`), `op` (`click`, `set_value`, `select`, `press`, `menu`, `focus`), `value?`, `key?`, `path?` (menu path), `version?` |
+| `run_batch` | risky | on non-sandbox targets, when any `act` step enters text | `steps` (1–50): `{act? {id, op, value?, key?}, menu?, pixel? {tool, args}, wait? ms, wait_for?, expect?, timeout_ms?}`; `version?` |
+| `verify` | reversible | no | `checks` (1–20): `{id?, role?, name?, text?, gone?, value?, enabled?}`, `timeout_ms?` |
+| `request_human` | reversible | no | `reason?`, `timeout_ms?` (default 5 min) |
+| `use_credential` | risky | on non-sandbox targets | `name`, `kind?` (`secret` or `totp`), `source?` (`vault`, `keychain`, `bitwarden`, `onepassword`), `domain?` (must match the credential's binding) |
+
+`run_batch` runs ordered steps in one window. Each step may check `wait_for` (precondition) and `expect` (postcondition); the batch stops at the first failed check and returns one observe read (the fresh element map). `verify` checks bounded conditions — role, name, text, gone, value, enabled — on a fresh read. `request_human` pauses the lease, opens the live view with input enabled, and resumes the same session when the person signals done (`POST /api/v1/computers/:id/human-done`) or the timeout elapses. `use_credential` types a vault secret or a fresh TOTP code into the focused field; the value never enters the model context, the prompts or the logs. See [Computer credentials](/tools/computer-credentials).
+
+Structured members need the Allternit Driver on the computer: today that is this-device (macOS, Linux); cloud guests gain them with the guest driver image. The [schema endpoint](#schema) reports each member's availability per target.
+
 ### Browser (`allternit.browser.v1`)
 
 Targets are either `{ "type": "coordinate", "x": 640, "y": 380 }` or `{ "type": "ref", "ref": "ref_2" }`.
@@ -52,9 +69,10 @@ The executor reports what a target can run (see [Schema](#schema)). A member tha
 
 | Target | What runs |
 |---|---|
-| Cloud and bot computers (Linux) | All 17 computer members, through xdotool and scrot in the guest |
-| Cloud computers (Windows) | All 17 computer members, through PowerShell and user32 (`SetCursorPos`, `mouse_event`, `keybd_event`, SendKeys for `type`) run by the VM driver's guest exec |
-| This device (macOS, [Allternit Driver](/tools/allternit-driver) over Cua Driver 0.34) | All 17 members. Pointer and keyboard members go through the Allternit Driver sidecar's `pixel_*` ops, which run Cua Driver's desktop scope, own input per window and log each op. Cua Driver has no press-and-hold key call on macOS, so `hold_key` posts the key-down and key-up events through CoreGraphics itself (keys go to the frontmost app; it uses the Accessibility permission Allternit Desktop already has). Held modifiers (`text`) work on clicks and drags, not on `scroll`. `cursor_position` uses `get_cursor_position`. Cua Driver has no separate press and release on macOS, so `left_mouse_down` is held by the executor and sent with `left_mouse_up` as one click (same spot) or one press-drag-release gesture. |
+| Cloud and bot computers (Linux) | All 17 pixel members, through xdotool and scrot in the guest. The v2 structured members return `unimplemented` until the guest driver image ships (D1b). |
+| Cloud computers (Windows) | All 17 pixel members, through PowerShell and user32 (`SetCursorPos`, `mouse_event`, `keybd_event`, SendKeys for `type`) run by the VM driver's guest exec. The v2 structured members return `unimplemented` until the guest driver image ships. |
+| This device (macOS, [Allternit Driver](/tools/allternit-driver) over Cua Driver 0.34) | All 17 pixel members and all 6 v2 structured members (the sidecar must be running — the schema endpoint says when it isn't). Pointer and keyboard members go through the Allternit Driver sidecar's `pixel_*` ops, which run Cua Driver's desktop scope, own input per window and log each op. Cua Driver has no press-and-hold key call on macOS, so `hold_key` posts the key-down and key-up events through CoreGraphics itself (keys go to the frontmost app; it uses the Accessibility permission Allternit Desktop already has). Held modifiers (`text`) work on clicks and drags, not on `scroll`. `cursor_position` uses `get_cursor_position`. Cua Driver has no separate press and release on macOS, so `left_mouse_down` is held by the executor and sent with `left_mouse_up` as one click (same spot) or one press-drag-release gesture. |
+| This device (Windows) | All 17 pixel members and the v2 structured members through the same sidecar over loopback TCP (the sidecar picks the port and gates every request with a launch token), replacing the Cua CLI fallback. |
 | Browser (ACU gateway, Playwright) | All 31 browser members, including element refs, tabs, console, network, JavaScript and uploads. The four optional members stay off until the caller turns them on (see [Optional members](#optional-members)). |
 | Paired computers (mesh) | Nothing. They take no agent input. View them live instead. |
 
@@ -87,7 +105,7 @@ The checks run in this order:
 2. **Control lease.** On a cloud computer the agent takes or renews the lease, so viewers can see who is driving and a person can take over. If someone else holds control, the call returns `423 computer_controlled_elsewhere`. On this device the owner must have taken control first, otherwise the call returns `423 take_control_first`.
 3. **Policy and approval.** A declarative policy denial returns `403 policy_denied`. A member that needs approval returns `409 approval_required` with an `approval_id`. Approve it with `POST /api/aci/handoff/:approval_id/approve`, then resend the same call with `approval_grant` set to that id. A grant works once, and only for the exact action it was issued for.
 4. **Audit row.** A row is written to the policy audit log and fsynced before the action runs. If the row can't be written, the action doesn't run.
-5. **Dispatch.** The action is sent to the [Allternit Driver](/tools/allternit-driver) on this device, the guest or the browser gateway.
+5. **Dispatch.** The action is sent to the [Allternit Driver](/tools/allternit-driver) on this device, the guest or the browser gateway. The v2 structured members answer from the driver's element map (or the human gate, or the credential backends): no screenshot is taken, no coordinates are scaled, and the result is a text block with the driver's JSON (element tree, batch result or verify rows).
 
 Every call returns this result shape:
 
@@ -100,6 +118,16 @@ Every call returns this result shape:
 ```
 
 Refusals add an `error` code.
+
+### Human hand-off
+
+`request_human` opens a human window on the computer: `computer.human_requested` and `computer.human_resumed` events on the events stream carry `{ reason, live_view: true, input_enabled: true }` for the UI, and on cloud computers the agent's lease is released for the window (on this-device the person already is the controller). The person signals done with:
+
+```http
+POST /api/v1/computers/:id/human-done
+```
+
+which wakes the waiting call; it re-takes the lease (a person still driving keeps control — agents never preempt a person) and returns "The session has control again."
 
 ### Browser results
 
@@ -186,13 +214,13 @@ Every action that runs emits this event:
 
 | Model family | How it calls the toolset | Why |
 |---|---|---|
-| Claude (Anthropic API) | Native `computer_toolset_20260801` / `browser_toolset_20260801` | The AI SDK has no toolset type, so the provider fetch hook replaces gizzi's function tool with the native entry on the wire. It maps Claude's toolset `tool_use` blocks back, and returns `tool_result` with `toolset_name` and `browser_state`. If a model rejects the native entry, the same request is resent with the function tool. |
+| Claude (Anthropic API) | Native `computer_toolset_20260801` / `browser_toolset_20260801` for the 17 pixel members, plus the `computer_v2` function tool for the 6 structured members | The AI SDK has no toolset type, so the provider fetch hook replaces gizzi's function tool with the native entry on the wire. It maps Claude's toolset `tool_use` blocks back, and returns `tool_result` with `toolset_name` and `browser_state`. If a model rejects the native entry, the same request is resent with the function tool. The wire hook only rewrites the v1 pixel marker, so `computer_v2` passes through as a plain function tool. |
 | Claude via other providers | Function tool | No wire hook outside `@ai-sdk/anthropic` |
 | OpenAI | Function tool | `@ai-sdk/openai` 2.0.89 can't turn Responses `computer_call` items into loop tool calls |
 | Gemini | Function tool | `@ai-sdk/google` 2.0.54 has no `computer_use` tool |
 | Kimi, Qwen, GLM, local and open models | Function tool, with optional 0–1000 grid | Generated from the contract. Grid mode switches on for UI-TARS, Qwen-VL and similar models, or when `GIZZI_COMPUTER_TOOLSET_GRID=1`. |
 
-The function tool is one tool per toolset, named `computer` or `browser`. It takes an `action` (the member name) plus that member's fields. The fields have the same names and types as the contract. The tool only lists members the target reports as enabled.
+The function tools are one per toolset, named `computer` (pixel members), `computer_v2` (structured members) or `browser`. Each takes an `action` (the member name) plus that member's fields. The fields have the same names and types as the contract. A tool only lists members the target reports as enabled. Both computer tools carry the steering guidance: prefer `read_ui` + `run_batch` over screenshot + pixel loops.
 
 When the executor answers `approval_required`, gizzi asks the person through its normal permission prompt, records the approval and retries once with the grant.
 
@@ -210,10 +238,12 @@ node contracts/computer-toolset/generate.mjs          # regenerate TS + Python b
 node contracts/computer-toolset/generate.mjs --check  # fail on drift
 ```
 
-Outputs: `sdk/computer-toolset` (`@allternit/computer-toolset`), gizzi `contract.gen.ts`, and `domains/computer-use/core/contracts/toolset_v1.py`. allternit-api reads the JSON directly.
+Outputs: `sdk/computer-toolset` (`@allternit/computer-toolset`), gizzi `contract.gen.ts`, and `domains/computer-use/core/contracts/toolset_v1.py`. allternit-api reads the JSON directly (`computer_toolset.rs` reads the v2 file; v1 stays as the pixel-only reference for the Claude-native configs).
 
 ## Related pages
 
 - [Allternit Computer Interface (ACI)](/tools/computer-use)
+- [Allternit Driver](/tools/allternit-driver)
+- [Computer credentials](/tools/computer-credentials)
 - [Computers MCP server](/api/platform/hosted-computers)
 - [Computers and apps](/guides/computers-and-apps)

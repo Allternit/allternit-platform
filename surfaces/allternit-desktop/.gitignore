@@ -33,5 +33,4 @@ resources/computer-use/linux/
 resources/computer-use/win32/
 resources/computer-use/driver/
 resources/computer-use/driver-python/
-resources/decision-runtime/
 resources/runtime.json

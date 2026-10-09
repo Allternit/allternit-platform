@@ -16,7 +16,6 @@ import * as http from 'node:http';
 import * as https from 'node:https';
 import * as os from 'node:os';
 import { execFile } from 'node:child_process';
-import { createMotionRender } from './motion-render.js';
 import Store from 'electron-store';
 import log from 'electron-log';
 import { updateElectronApp } from 'update-electron-app';
@@ -89,7 +88,6 @@ import { workerBus } from './workers/worker-bus.js';
 import { mcpHostManager } from './mcp-host-manager.js';
 import { isLimaInstalled, installLima, startVM, stopVM, getVMStatus } from './lima.js';
 import { computerUseDriverManager } from './computer-use-driver-manager.js';
-import { decisionRuntimeManager } from './decision-runtime-manager.js';
 import { acuGatewayManager } from './acu-gateway-manager.js';
 import { phoneRemoteManager } from './phone-remote-manager.js';
 import { phoneService } from './phone-service.js';
@@ -1295,12 +1293,6 @@ async function initializeBundledMode(): Promise<void> {
         return null;
       }
     })();
-    // Decision Runtime local scorer: binds at once, installs and downloads its
-    // model on the first decision (decision-runtime-manager.ts).
-    const decisionsTask = decisionRuntimeManager.start().catch((decisionsErr) => {
-      log.warn('[Main] Decision runtime failed to start, continuing without it:', decisionsErr);
-      return null;
-    });
     const acuTask = (async (): Promise<string | null> => {
       try {
         acuGatewayManager.setDesktopTokenProvider(() => backendManager.ensureDesktopAccessToken());
@@ -1354,7 +1346,6 @@ async function initializeBundledMode(): Promise<void> {
       acuTask,
       localEngineTask,
       factoryTask,
-      decisionsTask,
     ]);
 
     // Step 2 — allternit-api (Rust operator API, port ${PORTS.API} — VM, rails, terminal)
@@ -1380,7 +1371,6 @@ async function initializeBundledMode(): Promise<void> {
           ...(meshBridge ? { ALLTERNIT_MESH_BRIDGE_URL: meshBridge } : {}),
           ...(localEngineUrl ? { LOCAL_ENGINE_URL: localEngineUrl } : {}),
           ...computerUseDriverManager.getLaunchEnvironment(),
-          ...decisionRuntimeManager.getLaunchEnvironment(),
           ...acuGatewayManager.getLaunchEnvironment(),
           ...authManager.getPlatformEncryptionEnvironment(),
           ...authManager.getConnectorSidecarEnvironment(),
@@ -2721,7 +2711,6 @@ async function shutdownAllServices(): Promise<void> {
   bonsaiCompanion.stop();
   systemOne.stop();
   computerUseDriverManager.stop();
-  decisionRuntimeManager.stop();
   acuGatewayManager.stop();
   phoneRemoteManager.stop();
   phoneService.shutdown();
@@ -2792,11 +2781,9 @@ handleGuarded('backend:restart', async () => {
   await backendManager.stopBackend();
 
   await computerUseDriverManager.start();
-  await decisionRuntimeManager.start();
   return backendManager.ensureBackend({
     extraEnv: {
       ...computerUseDriverManager.getLaunchEnvironment(),
-      ...decisionRuntimeManager.getLaunchEnvironment(),
       ...authManager.getPlatformEncryptionEnvironment(),
       ...authManager.getConnectorSidecarEnvironment(),
     },
@@ -2804,7 +2791,6 @@ handleGuarded('backend:restart', async () => {
 });
 
 ipcMain.handle('computer-use-driver:get-status', () => computerUseDriverManager.getStatus());
-ipcMain.handle('decision-runtime:get-status', () => decisionRuntimeManager.getStatus());
 
 // Phones (Lane 2a): Android over Wi-Fi, no cable — see phone-device-manager.ts
 registerPhoneIpc(handleGuarded);
@@ -4472,25 +4458,6 @@ handleGuarded('hyperframes:render', async (event, html: string, options: {
     return { success: false, error: (err as Error).message };
   }
 });
-
-// ─── Motion artifacts: frames from the app → local ffmpeg → MP4 ──────────────
-
-const motionRender = createMotionRender({
-  chooseSavePath: async (defaultName) => {
-    const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
-    const saved = await dialog.showSaveDialog(win, {
-      title: 'Save Video',
-      defaultPath: defaultName,
-      filters: [{ name: 'MP4 video', extensions: ['mp4'] }],
-    });
-    return saved.canceled || !saved.filePath ? null : saved.filePath;
-  },
-});
-handleGuarded('motion:check', () => motionRender.check());
-handleGuarded('motion:begin', (_event, opts) => motionRender.begin(opts));
-handleGuarded('motion:frame', (_event, id: string, index: number, jpeg: ArrayBuffer) => motionRender.frame(id, index, jpeg));
-handleGuarded('motion:finish', (_event, id: string, opts: { title: string }) => motionRender.finish(id, opts));
-handleGuarded('motion:abort', (_event, id: string) => motionRender.abort(id));
 
 // ─── Mini-apps: install / start / stop / status ───────────────────────────────
 

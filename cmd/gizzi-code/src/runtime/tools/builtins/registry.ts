@@ -32,7 +32,7 @@ import { CodeSearchTool } from "@/runtime/tools/builtins/codesearch"
 import { Flag } from "@/runtime/context/flag/flag"
 import { Log } from "@/shared/util/log"
 import { LspTool } from "@/runtime/tools/builtins/lsp"
-import { BrowserToolsetTool, ComputerToolsetTool } from "@/runtime/tools/computer-toolset"
+import { BrowserToolsetTool, ComputerToolsetTool, ComputerV2ToolsetTool } from "@/runtime/tools/computer-toolset"
 import { ComputersTool } from "@/runtime/tools/builtins/computers"
 import { Truncate } from "@/runtime/tools/builtins/truncation"
 import { PlanExitTool, PlanEnterTool } from "@/runtime/tools/builtins/plan"
@@ -201,14 +201,17 @@ export namespace ToolRegistry {
       ...(Flag.GIZZI_ENABLE_LSP_TOOL ? [LspTool] : []),
       ...(config.experimental?.batch_tool === true ? [BatchTool] : []),
       ...(Flag.GIZZI_CLIENT === "cli" ? [PlanExitTool, PlanEnterTool] : []),
-      // The computer toolset (allternit.browser.v1 / allternit.computer.v1):
+      // The computer toolset (allternit.browser.v1 / allternit.computer.v2):
       // one executor in allternit-api for every model. `browser` replaces the
       // old ACU-gateway browser tool under the same flag; `computer` drives
-      // GIZZI_COMPUTER_ID (default this-device) and is opt-in.
+      // GIZZI_COMPUTER_ID (default this-device) and is opt-in; `computer_v2`
+      // is the six structured driver-backed members (read_ui, act,
+      // run_batch, verify, request_human, use_credential) every family gets
+      // as a function tool.
       ...(Flag.GIZZI_ENABLE_BROWSER_TOOL ? [BrowserToolsetTool] : []),
       // `computers` (lifecycle + files via allternit-api computer_* tools)
       // rides the same opt-in as `computer`.
-      ...(Flag.GIZZI_ENABLE_COMPUTER_TOOL ? [ComputerToolsetTool, ComputersTool] : []),
+      ...(Flag.GIZZI_ENABLE_COMPUTER_TOOL ? [ComputerToolsetTool, ComputerV2ToolsetTool, ComputersTool] : []),
       // Subscription capabilities (presentations, documents, deep research)
       // the user's connected subscriptions can run now; every call is
       // confirmed by the user (D16). Empty when the fabric is not set up.

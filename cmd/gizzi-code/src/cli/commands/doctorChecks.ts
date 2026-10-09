@@ -262,19 +262,6 @@ export type FactoryEngineCheckDeps = {
 }
 
 /**
- * Ports a Factory engine may serve on, most specific first. An explicit
- * ALLTERNIT_FACTORY_PORT always wins. Otherwise probe both known homes:
- * Allternit Desktop runs the engine on 3018 (PORTS.FACTORY — its extension
- * bridge owns 3011; see allternit-desktop src/main/config.ts), while a
- * CLI/dev `allternit-factory serve` uses the engine default 3011.
- */
-export function factoryEnginePorts(env: NodeJS.ProcessEnv = process.env): number[] {
-  const fromEnv = Number(env.ALLTERNIT_FACTORY_PORT)
-  if (Number.isInteger(fromEnv) && fromEnv > 0) return [fromEnv]
-  return [3018, 3011]
-}
-
-/**
  * `gizzi doctor` — the Allternit Factory engine: found (and where), its
  * version, and whether `allternit-factory serve` answers on its port.
  */
@@ -301,7 +288,8 @@ export async function checkFactoryEngine(deps: FactoryEngineCheckDeps = {}): Pro
       ? { id: "factory-engine-version", section, status: "info", message: `Engine version: ${version}` }
       : { id: "factory-engine-version", section, status: "warn", message: `\`${found.path} --version\` didn't answer — the engine may be damaged; reinstall it` },
   )
-  const ports = factoryEnginePorts(env)
+  const port = Number(env.ALLTERNIT_FACTORY_PORT) || 3011
+  const url = `http://127.0.0.1:${port}/api/factory/agents`
   const probe =
     deps.probe ??
     (async (u: string) => {
@@ -312,33 +300,25 @@ export async function checkFactoryEngine(deps: FactoryEngineCheckDeps = {}): Pro
         return null
       }
     })
-  let answered: { port: number; status: number } | null = null
-  for (const port of ports) {
-    const status = await probe(`http://127.0.0.1:${port}/api/factory/agents`)
-    if (status !== null) {
-      answered = { port, status }
-      break
-    }
-  }
-  const probed = ports.map((port) => `127.0.0.1:${port}`).join(" or ")
+  const status = await probe(url)
   const home = deps.home ?? (await import("os")).homedir()
   const sock = path.join(home, ".allternit", "factory", "factory.sock")
   const sockExists = (deps.socketExists ?? fs.existsSync)(sock)
-  if (answered) {
-    checks.push({ id: "factory-serve", section, status: "pass", message: `Engine server answering on 127.0.0.1:${answered.port} (HTTP ${answered.status})` })
+  if (status !== null) {
+    checks.push({ id: "factory-serve", section, status: "pass", message: `Engine server answering on 127.0.0.1:${port} (HTTP ${status})` })
   } else if (sockExists) {
     checks.push({
       id: "factory-serve",
       section,
       status: "warn",
-      message: `Engine socket ${sock} exists but nothing answers on ${probed} — the server may have crashed; restart Allternit Desktop`,
+      message: `Engine socket ${sock} exists but nothing answers on 127.0.0.1:${port} — the server may have crashed; restart Allternit Desktop`,
     })
   } else {
     checks.push({
       id: "factory-serve",
       section,
       status: "info",
-      message: `Engine server not running on ${probed} (Allternit Desktop starts it; CLI commands run the engine directly)`,
+      message: `Engine server not running on 127.0.0.1:${port} (Allternit Desktop starts it; CLI commands run the engine directly)`,
     })
   }
   return checks

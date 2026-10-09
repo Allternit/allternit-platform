@@ -51,10 +51,6 @@ On main there is one canonical decision server. It speaks the frozen Kernel ABI 
 
 Its router runs in **shadow mode by default**. Without a bound calibration manifest that has passed the go-live gate, every result is marked uncalibrated and abstains; it is never `AUTO`. `AUTO` needs live mode, a passing manifest for that primitive, the caller attesting the decision is reversible, and a confidence inside the calibrated region. For a manifest from the Q26 gate, live mode also needs the primitive to be in a canary with budget left. Today only `judge.first_pass.tool` qualifies. See [Calibration](/architecture/cognitive-runtime/calibration#canary).
 
-### Typed decisions endpoint (E1)
-
-allternit-api's Agency Kernel serves `POST /v1/decisions` (alias `/v1/systemone`): one choice over up to 255 caller options, for computer-use steps and any other bounded question. A backend chain answers it: the owned local scorer (one-pass option scoring on MLX or llama.cpp, Qwen3.5-4B by default), optional vendor adapters (stubs, off), and the planner model through gizzi as the oracle. Under a per-kind confidence threshold the router escalates to the next backend, within the caller's latency budget, and abstains when the caller allows it. Every decision is stored with its outcome. Its probabilities are relative to the option set and marked uncalibrated. See the [API reference](/api/agency/decisions).
-
 A pre-tool safety hook uses the server in log-only mode: deterministic hard rules decide first and last, and the decision server can only add friction, never allow.
 
 ## Availability
@@ -64,7 +60,6 @@ A pre-tool safety hook uses the server in log-only mode: deterministic hard rule
 | Decision contracts | **IMPLEMENTED** (contract) |
 | Canonical decision server, nine operations | **SHADOW** · INTERNAL |
 | S1 acting on a decision (`AUTO`) | **IMPLEMENTED** (gated; no primitive has passed) |
-| Typed decisions endpoint `POST /v1/decisions` with local scorer, oracle and escalation | **IMPLEMENTED** · PREVIEW |
 | Backend federation across backend classes | **DESIGN** |
 
 ## Developer relevance

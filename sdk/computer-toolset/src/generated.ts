@@ -666,6 +666,1133 @@ export const COMPUTER_CONTRACT = {
   ]
 } as const;
 
+// ---- allternit.computer.v2 (computer_toolset_20260801) ----
+export const COMPUTER_V2_MEMBER_NAMES = ["screenshot","zoom","left_click","right_click","middle_click","double_click","triple_click","mouse_move","left_click_drag","left_mouse_down","left_mouse_up","scroll","type","key","hold_key","wait","cursor_position","read_ui","act","run_batch","verify","request_human","use_credential"] as const;
+export type ComputerV2MemberName = (typeof COMPUTER_V2_MEMBER_NAMES)[number];
+/** Take a screenshot of the screen. */
+export type ComputerV2ScreenshotInput = Record<string, never>;
+/** Take a screenshot of a rectangular region. Region coordinates are in the full-screenshot space (not physical display pixels). The crop is scaled up to fill the image budget so fine details become legible. */
+export type ComputerV2ZoomInput = { region: Array<number> };
+/** Click the left mouse button at the specified (x, y) pixel coordinate, or the current cursor position if `coordinate` is omitted. */
+export type ComputerV2LeftClickInput = { coordinate?: Array<number> | null; text?: string | null };
+/** Click the right mouse button at the specified (x, y) pixel coordinate, or the current cursor position if `coordinate` is omitted. */
+export type ComputerV2RightClickInput = { coordinate?: Array<number> | null; text?: string | null };
+/** Click the middle mouse button at the specified (x, y) pixel coordinate, or the current cursor position if `coordinate` is omitted. */
+export type ComputerV2MiddleClickInput = { coordinate?: Array<number> | null; text?: string | null };
+/** Double-click the left mouse button at the specified (x, y) pixel coordinate, or the current cursor position if `coordinate` is omitted. */
+export type ComputerV2DoubleClickInput = { coordinate?: Array<number> | null; text?: string | null };
+/** Triple-click the left mouse button at the specified (x, y) pixel coordinate, or the current cursor position if `coordinate` is omitted. */
+export type ComputerV2TripleClickInput = { coordinate?: Array<number> | null; text?: string | null };
+/** Move the cursor to a specified (x, y) pixel coordinate. Use this ONLY to hover without clicking; otherwise use a click action directly. */
+export type ComputerV2MouseMoveInput = { coordinate: Array<number> };
+/** Click and drag the cursor from `start_coordinate` to `coordinate`. */
+export type ComputerV2LeftClickDragInput = { coordinate: Array<number>; start_coordinate: Array<number>; text?: string | null };
+/** Press and hold the left mouse button at the current cursor position. */
+export type ComputerV2LeftMouseDownInput = Record<string, never>;
+/** Release the left mouse button. */
+export type ComputerV2LeftMouseUpInput = Record<string, never>;
+/** Scroll the screen at the specified (x, y) pixel coordinate, or the current cursor position if `coordinate` is omitted. Do NOT use PageUp/PageDown to scroll. */
+export type ComputerV2ScrollInput = { scroll_amount: number; scroll_direction: "up" | "down" | "left" | "right"; coordinate?: Array<number> | null; text?: string | null };
+/** Type a string of text on the keyboard. */
+export type ComputerV2TypeInput = { text: string };
+/** Press a key or key-combination on the keyboard. Use "+" to combine modifiers with a key (e.g. "ctrl+s", "alt+Tab", "ctrl+shift+Escape"). Key names are case-insensitive; common names like "Return", "Tab", "Escape", "Up", "Down", "Left", "Right", "Home", "End", "Page_Up", "Page_Down", "Delete", "BackSpace" are supported. */
+export type ComputerV2KeyInput = { text: string; repeat?: number | null };
+/** Hold down a key or key-combination for a specified duration. Uses the same key syntax as `key`. */
+export type ComputerV2HoldKeyInput = { duration: number; text: string };
+/** Wait for a specified duration. */
+export type ComputerV2WaitInput = { duration: number };
+/** Get the current (x, y) pixel coordinate of the cursor. */
+export type ComputerV2CursorPositionInput = Record<string, never>;
+/** Read the target window or app's UI as a structured element tree (roles, names, values, bounds) with NO screenshot. Returns stable element ids for act, run_batch and verify. Pass `since` (a version from an earlier read_ui) to get only the diff; `query` filters by text; `max_elements` caps the list (default 200). */
+export type ComputerV2ReadUiInput = { app?: string | null; pid?: number | null; window_id?: number | null; query?: string | null; max_elements?: number | null; since?: number | null };
+/** Act on an element id from read_ui. op: click, set_value (clear and set the field's value), select (pick a child by name), press (a key), menu (choose a menu path such as 'File > Save'), focus. set_value/select/press on this Mac need the person's approval (the same rule as typing). */
+export type ComputerV2ActInput = { id: string; op: "click" | "set_value" | "select" | "press" | "menu" | "focus"; value?: string | null; key?: string | null; path?: string | Array<string> | null; version?: number | null; app?: string | null; pid?: number | null; window_id?: number | null };
+/** Run ordered steps in one window in a single call: act steps ({id, op, value?, key?}), menu steps (path), pixel steps ({tool, args}) and waits (ms). Each step may carry wait_for (checked before the step) and expect (checked after); a failed check stops the batch and one observe read returns the fresh map. This is the fast path: batch several steps instead of screenshot-per-action loops. */
+export type ComputerV2RunBatchInput = { app?: string | null; pid?: number | null; window_id?: number | null; version?: number | null; steps: Array<{ act?: { id: string; op: "click" | "set_value" | "select" | "press" | "menu" | "focus"; value?: string | null; key?: string | null } | null; menu?: string | Array<string> | null; pixel?: { tool: string; args?: Record<string, never> | null } | null; wait?: number | null; wait_for?: { id?: string | null; role?: string | null; name?: string | null; text?: string | null; gone?: boolean | null; value?: string | null; enabled?: boolean | null } | null; expect?: { id?: string | null; role?: string | null; name?: string | null; text?: string | null; gone?: boolean | null; value?: string | null; enabled?: boolean | null } | null; timeout_ms?: number | null }> };
+/** Check bounded conditions on the current UI without acting: role, name, text, gone, value, enabled. Each check is {id?, role?, name?, text?, gone?, value?, enabled?}; all given parts must hold. Returns one ok per check. Use after act/run_batch, or to poll with timeout_ms. */
+export type ComputerV2VerifyInput = { app?: string | null; pid?: number | null; window_id?: number | null; checks: Array<{ id?: string | null; role?: string | null; name?: string | null; text?: string | null; gone?: boolean | null; value?: string | null; enabled?: boolean | null }>; timeout_ms?: number | null };
+/** Pause and hand the computer to a person: the live view opens with input enabled and the agent's hold on control is released. The same session resumes when the person signals done, or when timeout_ms elapses. Use for CAPTCHAs, push/SMS 2FA and judgment calls. */
+export type ComputerV2RequestHumanInput = { reason?: string | null; timeout_ms?: number | null };
+/** Type a vault credential into the FOCUSED field. The value never enters the model context, prompts or logs. kind: secret (the stored value) or totp (a fresh code from a stored TOTP seed). The credential is bound to an app or domain: pass `domain` (the app you are filling into); it must match the credential's binding. On this Mac a person approves each use, like typing. */
+export type ComputerV2UseCredentialInput = { name: string; kind?: "secret" | "totp" | null; source?: "vault" | "keychain" | "bitwarden" | "onepassword" | null; domain?: string | null };
+export interface ComputerV2MemberInputs {
+  screenshot: ComputerV2ScreenshotInput;
+  zoom: ComputerV2ZoomInput;
+  left_click: ComputerV2LeftClickInput;
+  right_click: ComputerV2RightClickInput;
+  middle_click: ComputerV2MiddleClickInput;
+  double_click: ComputerV2DoubleClickInput;
+  triple_click: ComputerV2TripleClickInput;
+  mouse_move: ComputerV2MouseMoveInput;
+  left_click_drag: ComputerV2LeftClickDragInput;
+  left_mouse_down: ComputerV2LeftMouseDownInput;
+  left_mouse_up: ComputerV2LeftMouseUpInput;
+  scroll: ComputerV2ScrollInput;
+  type: ComputerV2TypeInput;
+  key: ComputerV2KeyInput;
+  hold_key: ComputerV2HoldKeyInput;
+  wait: ComputerV2WaitInput;
+  cursor_position: ComputerV2CursorPositionInput;
+  read_ui: ComputerV2ReadUiInput;
+  act: ComputerV2ActInput;
+  run_batch: ComputerV2RunBatchInput;
+  verify: ComputerV2VerifyInput;
+  request_human: ComputerV2RequestHumanInput;
+  use_credential: ComputerV2UseCredentialInput;
+}
+export const COMPUTER_V2_CONTRACT = {
+  "id": "allternit.computer.v2",
+  "toolset": "computer",
+  "version": 2,
+  "upstream": {
+    "anthropic_type": "computer_toolset_20260801",
+    "toolset_name": "computer",
+    "sdk": "@anthropic-ai/sdk",
+    "sdk_version": "0.132.0"
+  },
+  "batch_halt_text": "Not executed: an earlier computer action in this turn failed.",
+  "model_frame": {
+    "max_long_edge": 1568,
+    "max_pixels": 1150000,
+    "rule": "Screenshots are downscaled (never upscaled) to fit long edge <= max_long_edge and width*height <= max_pixels, keeping aspect. Coordinates the model sends are in that frame; the executor scales them to screen pixels. The executor is the only place scaling happens."
+  },
+  "coordinate_spaces": {
+    "pixels": "Model-frame pixels (default).",
+    "normalized_1000": "A 0..1000 grid over the screen on both axes (UI-TARS / Qwen-VL style); x_screen = round(x / 1000 * screen_width)."
+  },
+  "risk_classes": {
+    "reversible": "aci_safety::ConfirmationClass::Reversible",
+    "risky": "aci_safety::ConfirmationClass::Risky",
+    "irreversible": "aci_safety::ConfirmationClass::Irreversible"
+  },
+  "confirm_rules": {
+    "never": "No human approval.",
+    "non_sandbox": "Needs a single-use action-hash approval grant on non-sandbox targets (this-device, paired computers). Sandboxed targets (cloud/bot computers, gateway browser sessions) run it without approval.",
+    "always": "Always needs a single-use action-hash approval grant.",
+    "irreversible": "Any member whose risk is irreversible needs a grant, whatever its confirm rule."
+  },
+  "result_shape": {
+    "type": "object",
+    "required": [
+      "is_error",
+      "content",
+      "screen"
+    ],
+    "properties": {
+      "is_error": {
+        "type": "boolean"
+      },
+      "content": {
+        "type": "array",
+        "items": {
+          "anyOf": [
+            {
+              "type": "object",
+              "required": [
+                "type",
+                "text"
+              ],
+              "properties": {
+                "type": {
+                  "const": "text"
+                },
+                "text": {
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "required": [
+                "type",
+                "media_type",
+                "data"
+              ],
+              "properties": {
+                "type": {
+                  "const": "image"
+                },
+                "media_type": {
+                  "type": "string"
+                },
+                "data": {
+                  "type": "string",
+                  "description": "base64, no data: prefix"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "screen": {
+        "type": "object",
+        "required": [
+          "width",
+          "height",
+          "scale"
+        ],
+        "properties": {
+          "width": {
+            "type": "integer",
+            "description": "screen (or viewport) width in px"
+          },
+          "height": {
+            "type": "integer"
+          },
+          "scale": {
+            "type": "number",
+            "description": "screen px per model-frame px (>= 1)"
+          },
+          "frame_width": {
+            "type": "integer"
+          },
+          "frame_height": {
+            "type": "integer"
+          }
+        }
+      }
+    }
+  },
+  "members": [
+    {
+      "name": "screenshot",
+      "description": "Take a screenshot of the screen.",
+      "risk": "reversible",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "screenshot",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "zoom",
+      "description": "Take a screenshot of a rectangular region. Region coordinates are in the full-screenshot space (not physical display pixels). The crop is scaled up to fill the image budget so fine details become legible.",
+      "risk": "reversible",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "screenshot",
+      "scale_fields": {
+        "region": "rect"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "region": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 4,
+            "maxItems": 4,
+            "description": "(x0, y0, x1, y1): The region to capture."
+          }
+        },
+        "required": [
+          "region"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "left_click",
+      "description": "Click the left mouse button at the specified (x, y) pixel coordinate, or the current cursor position if `coordinate` is omitted.",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "ack_text": "Clicked.",
+      "scale_fields": {
+        "coordinate": "point"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "coordinate": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "(x, y): x pixels from the left edge, y pixels from the top edge."
+          },
+          "text": {
+            "type": "string",
+            "description": "Optional key combination to hold down during this action (e.g. \"ctrl\", \"shift\", \"ctrl+shift\")."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "right_click",
+      "description": "Click the right mouse button at the specified (x, y) pixel coordinate, or the current cursor position if `coordinate` is omitted.",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "ack_text": "Right-clicked.",
+      "scale_fields": {
+        "coordinate": "point"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "coordinate": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "(x, y): x pixels from the left edge, y pixels from the top edge."
+          },
+          "text": {
+            "type": "string",
+            "description": "Optional key combination to hold down during this action (e.g. \"ctrl\", \"shift\", \"ctrl+shift\")."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "middle_click",
+      "description": "Click the middle mouse button at the specified (x, y) pixel coordinate, or the current cursor position if `coordinate` is omitted.",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "ack_text": "Middle-clicked.",
+      "scale_fields": {
+        "coordinate": "point"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "coordinate": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "(x, y): x pixels from the left edge, y pixels from the top edge."
+          },
+          "text": {
+            "type": "string",
+            "description": "Optional key combination to hold down during this action (e.g. \"ctrl\", \"shift\", \"ctrl+shift\")."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "double_click",
+      "description": "Double-click the left mouse button at the specified (x, y) pixel coordinate, or the current cursor position if `coordinate` is omitted.",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "ack_text": "Double-clicked.",
+      "scale_fields": {
+        "coordinate": "point"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "coordinate": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "(x, y): x pixels from the left edge, y pixels from the top edge."
+          },
+          "text": {
+            "type": "string",
+            "description": "Optional key combination to hold down during this action (e.g. \"ctrl\", \"shift\", \"ctrl+shift\")."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "triple_click",
+      "description": "Triple-click the left mouse button at the specified (x, y) pixel coordinate, or the current cursor position if `coordinate` is omitted.",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "ack_text": "Triple-clicked.",
+      "scale_fields": {
+        "coordinate": "point"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "coordinate": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "(x, y): x pixels from the left edge, y pixels from the top edge."
+          },
+          "text": {
+            "type": "string",
+            "description": "Optional key combination to hold down during this action (e.g. \"ctrl\", \"shift\", \"ctrl+shift\")."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "mouse_move",
+      "description": "Move the cursor to a specified (x, y) pixel coordinate. Use this ONLY to hover without clicking; otherwise use a click action directly.",
+      "risk": "reversible",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "ack_text": "Moved the mouse.",
+      "scale_fields": {
+        "coordinate": "point"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "coordinate": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "(x, y): x pixels from the left edge, y pixels from the top edge."
+          }
+        },
+        "required": [
+          "coordinate"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "left_click_drag",
+      "description": "Click and drag the cursor from `start_coordinate` to `coordinate`.",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "ack_text": "Dragged.",
+      "scale_fields": {
+        "start_coordinate": "point",
+        "coordinate": "point"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "coordinate": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "(x, y): x pixels from the left edge, y pixels from the top edge."
+          },
+          "start_coordinate": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "(x, y): x pixels from the left edge, y pixels from the top edge."
+          },
+          "text": {
+            "type": "string",
+            "description": "Optional key combination to hold down during this action (e.g. \"ctrl\", \"shift\", \"ctrl+shift\")."
+          }
+        },
+        "required": [
+          "coordinate",
+          "start_coordinate"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "left_mouse_down",
+      "description": "Press and hold the left mouse button at the current cursor position.",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "ack_text": "Left mouse button pressed.",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "left_mouse_up",
+      "description": "Release the left mouse button.",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "ack_text": "Left mouse button released.",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "scroll",
+      "description": "Scroll the screen at the specified (x, y) pixel coordinate, or the current cursor position if `coordinate` is omitted. Do NOT use PageUp/PageDown to scroll.",
+      "risk": "reversible",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "ack_text": "Scrolled {scroll_direction}.",
+      "scale_fields": {
+        "coordinate": "point"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "scroll_amount": {
+            "type": "number",
+            "description": "Number of 'clicks' of the scroll wheel."
+          },
+          "scroll_direction": {
+            "type": "string",
+            "enum": [
+              "up",
+              "down",
+              "left",
+              "right"
+            ]
+          },
+          "coordinate": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "(x, y): x pixels from the left edge, y pixels from the top edge."
+          },
+          "text": {
+            "type": "string",
+            "description": "Optional key combination to hold down during this action (e.g. \"ctrl\", \"shift\", \"ctrl+shift\")."
+          }
+        },
+        "required": [
+          "scroll_amount",
+          "scroll_direction"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "type",
+      "description": "Type a string of text on the keyboard.",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": true,
+      "confirm": "non_sandbox",
+      "result_kind": "none",
+      "ack_text": "Typed.",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "The text to type."
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "key",
+      "description": "Press a key or key-combination on the keyboard. Use \"+\" to combine modifiers with a key (e.g. \"ctrl+s\", \"alt+Tab\", \"ctrl+shift+Escape\"). Key names are case-insensitive; common names like \"Return\", \"Tab\", \"Escape\", \"Up\", \"Down\", \"Left\", \"Right\", \"Home\", \"End\", \"Page_Up\", \"Page_Down\", \"Delete\", \"BackSpace\" are supported.",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": true,
+      "confirm": "non_sandbox",
+      "result_kind": "none",
+      "ack_text": "Pressed {text}.",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "The key or key-combination to press."
+          },
+          "repeat": {
+            "type": "number",
+            "description": "Number of times to repeat the key press. Default is 1."
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "hold_key",
+      "description": "Hold down a key or key-combination for a specified duration. Uses the same key syntax as `key`.",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": true,
+      "confirm": "non_sandbox",
+      "result_kind": "none",
+      "ack_text": "Held {text} for {duration}s.",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "duration": {
+            "type": "number",
+            "description": "Duration to hold the key, in seconds."
+          },
+          "text": {
+            "type": "string",
+            "description": "The key or key-combination to hold."
+          }
+        },
+        "required": [
+          "duration",
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "wait",
+      "description": "Wait for a specified duration.",
+      "risk": "reversible",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "ack_text": "Waited {duration}s.",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "duration": {
+            "type": "number",
+            "description": "Duration to wait, in seconds."
+          }
+        },
+        "required": [
+          "duration"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "cursor_position",
+      "description": "Get the current (x, y) pixel coordinate of the cursor.",
+      "risk": "reversible",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "point",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "read_ui",
+      "description": "Read the target window or app's UI as a structured element tree (roles, names, values, bounds) with NO screenshot. Returns stable element ids for act, run_batch and verify. Pass `since` (a version from an earlier read_ui) to get only the diff; `query` filters by text; `max_elements` caps the list (default 200).",
+      "risk": "reversible",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "ack_text": "Read the UI of {app}.",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "app": {
+            "type": "string",
+            "description": "App name or bundle id (macOS); default: the frontmost app."
+          },
+          "pid": {
+            "type": "integer"
+          },
+          "window_id": {
+            "type": "integer"
+          },
+          "query": {
+            "type": "string",
+            "description": "Only elements whose name or value contains this text."
+          },
+          "max_elements": {
+            "type": "integer",
+            "description": "Cap the element list (default 200)."
+          },
+          "since": {
+            "type": "integer",
+            "description": "A map version from an earlier read_ui: answer only the changes since then."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "act",
+      "description": "Act on an element id from read_ui. op: click, set_value (clear and set the field's value), select (pick a child by name), press (a key), menu (choose a menu path such as 'File > Save'), focus. set_value/select/press on this Mac need the person's approval (the same rule as typing).",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "ack_text": "{op} on {id}.",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The element id from read_ui."
+          },
+          "op": {
+            "type": "string",
+            "enum": [
+              "click",
+              "set_value",
+              "select",
+              "press",
+              "menu",
+              "focus"
+            ],
+            "description": "What to do to the element."
+          },
+          "value": {
+            "type": "string",
+            "description": "set_value: the text to type into the element; select: the child's name to pick."
+          },
+          "key": {
+            "type": "string",
+            "description": "press: the key name (Return, Tab, Escape, ...)."
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ],
+            "description": "menu: the menu path, 'File > Save' or ['File', 'Save']."
+          },
+          "version": {
+            "type": "integer",
+            "description": "The read_ui map version this action was planned on; a stale version is refused with the fresh map."
+          },
+          "app": {
+            "type": "string",
+            "description": "App name or bundle id (macOS); default: the frontmost app."
+          },
+          "pid": {
+            "type": "integer"
+          },
+          "window_id": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "op"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "run_batch",
+      "description": "Run ordered steps in one window in a single call: act steps ({id, op, value?, key?}), menu steps (path), pixel steps ({tool, args}) and waits (ms). Each step may carry wait_for (checked before the step) and expect (checked after); a failed check stops the batch and one observe read returns the fresh map. This is the fast path: batch several steps instead of screenshot-per-action loops.",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": true,
+      "confirm": "non_sandbox",
+      "result_kind": "none",
+      "ack_text": "Ran {steps} batch steps.",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "app": {
+            "type": "string",
+            "description": "App name or bundle id (macOS); default: the frontmost app."
+          },
+          "pid": {
+            "type": "integer"
+          },
+          "window_id": {
+            "type": "integer"
+          },
+          "version": {
+            "type": "integer",
+            "description": "Pin the read_ui map version the steps were planned on; stale is refused with the fresh map."
+          },
+          "steps": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 50,
+            "items": {
+              "type": "object",
+              "properties": {
+                "act": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "op": {
+                      "type": "string",
+                      "enum": [
+                        "click",
+                        "set_value",
+                        "select",
+                        "press",
+                        "menu",
+                        "focus"
+                      ]
+                    },
+                    "value": {
+                      "type": "string"
+                    },
+                    "key": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "op"
+                  ],
+                  "additionalProperties": false
+                },
+                "menu": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  ]
+                },
+                "pixel": {
+                  "type": "object",
+                  "properties": {
+                    "tool": {
+                      "type": "string"
+                    },
+                    "args": {
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "tool"
+                  ],
+                  "additionalProperties": false
+                },
+                "wait": {
+                  "type": "number",
+                  "description": "Wait this many milliseconds before the next step."
+                },
+                "wait_for": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "An element id from read_ui."
+                    },
+                    "role": {
+                      "type": "string",
+                      "description": "An accessibility role, e.g. button, textfield, checkbox."
+                    },
+                    "name": {
+                      "type": "string",
+                      "description": "Substring match against the element's name/label."
+                    },
+                    "text": {
+                      "type": "string",
+                      "description": "Substring match against the element's displayed text or value."
+                    },
+                    "gone": {
+                      "type": "boolean",
+                      "description": "True: no element may match; false: at least one must."
+                    },
+                    "value": {
+                      "type": "string",
+                      "description": "The element's value must equal this exactly."
+                    },
+                    "enabled": {
+                      "type": "boolean",
+                      "description": "The element's enabled state must equal this."
+                    }
+                  },
+                  "required": [],
+                  "additionalProperties": false,
+                  "description": "Precondition: checked before the step; failure stops the batch."
+                },
+                "expect": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "An element id from read_ui."
+                    },
+                    "role": {
+                      "type": "string",
+                      "description": "An accessibility role, e.g. button, textfield, checkbox."
+                    },
+                    "name": {
+                      "type": "string",
+                      "description": "Substring match against the element's name/label."
+                    },
+                    "text": {
+                      "type": "string",
+                      "description": "Substring match against the element's displayed text or value."
+                    },
+                    "gone": {
+                      "type": "boolean",
+                      "description": "True: no element may match; false: at least one must."
+                    },
+                    "value": {
+                      "type": "string",
+                      "description": "The element's value must equal this exactly."
+                    },
+                    "enabled": {
+                      "type": "boolean",
+                      "description": "The element's enabled state must equal this."
+                    }
+                  },
+                  "required": [],
+                  "additionalProperties": false,
+                  "description": "Postcondition: checked after the step; failure stops the batch."
+                },
+                "timeout_ms": {
+                  "type": "integer",
+                  "description": "How long to wait for this step's checks (default 3000)."
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "steps"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "verify",
+      "description": "Check bounded conditions on the current UI without acting: role, name, text, gone, value, enabled. Each check is {id?, role?, name?, text?, gone?, value?, enabled?}; all given parts must hold. Returns one ok per check. Use after act/run_batch, or to poll with timeout_ms.",
+      "risk": "reversible",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "ack_text": "Verified.",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "app": {
+            "type": "string",
+            "description": "App name or bundle id (macOS); default: the frontmost app."
+          },
+          "pid": {
+            "type": "integer"
+          },
+          "window_id": {
+            "type": "integer"
+          },
+          "checks": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 20,
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "An element id from read_ui."
+                },
+                "role": {
+                  "type": "string",
+                  "description": "An accessibility role, e.g. button, textfield, checkbox."
+                },
+                "name": {
+                  "type": "string",
+                  "description": "Substring match against the element's name/label."
+                },
+                "text": {
+                  "type": "string",
+                  "description": "Substring match against the element's displayed text or value."
+                },
+                "gone": {
+                  "type": "boolean",
+                  "description": "True: no element may match; false: at least one must."
+                },
+                "value": {
+                  "type": "string",
+                  "description": "The element's value must equal this exactly."
+                },
+                "enabled": {
+                  "type": "boolean",
+                  "description": "The element's enabled state must equal this."
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            }
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "description": "Wait up to this long for every check to hold (default 0: one fresh read)."
+          }
+        },
+        "required": [
+          "checks"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "request_human",
+      "description": "Pause and hand the computer to a person: the live view opens with input enabled and the agent's hold on control is released. The same session resumes when the person signals done, or when timeout_ms elapses. Use for CAPTCHAs, push/SMS 2FA and judgment calls.",
+      "risk": "reversible",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "ack_text": "Human window closed ({reason}).",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "description": "What the person should do, shown in the live view (e.g. 'Complete the CAPTCHA')."
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "description": "How long to wait for the person (default 300000, max 1800000)."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "use_credential",
+      "description": "Type a vault credential into the FOCUSED field. The value never enters the model context, prompts or logs. kind: secret (the stored value) or totp (a fresh code from a stored TOTP seed). The credential is bound to an app or domain: pass `domain` (the app you are filling into); it must match the credential's binding. On this Mac a person approves each use, like typing.",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": true,
+      "confirm": "non_sandbox",
+      "result_kind": "none",
+      "ack_text": "Credential {name} typed.",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The credential's name in the vault."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "secret",
+              "totp"
+            ],
+            "description": "secret: type the stored value; totp: generate and type a fresh TOTP code."
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "vault",
+              "keychain",
+              "bitwarden",
+              "onepassword"
+            ],
+            "description": "Where to resolve the credential from (default: the sealed vault, then this Mac's Keychain)."
+          },
+          "domain": {
+            "type": "string",
+            "description": "The app or domain the credential is being typed into; checked against the credential's binding."
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "note": "Additive over allternit.computer.v1: the 17 pixel members are byte-identical (same names, input fields and Anthropic computer_toolset_20260801 shape). The 6 structured members (read_ui, act, run_batch, verify, request_human, use_credential) are backed by the Allternit Driver sidecar and need it on the computer (this-device today; guests gain it with the guest driver image)."
+} as const;
+
 // ---- allternit.browser.v1 (browser_toolset_20260801) ----
 export const BROWSER_MEMBER_NAMES = ["navigate","screenshot","zoom","left_click","right_click","middle_click","double_click","triple_click","hover","left_click_drag","left_mouse_down","left_mouse_up","mouse_move","scroll","scroll_to","type","key","hold_key","wait","read_page","find","get_page_text","form_input","file_upload","read_console","read_network","javascript_exec","new_tab","list_tabs","switch_tab","close_tab"] as const;
 export type BrowserMemberName = (typeof BROWSER_MEMBER_NAMES)[number];
@@ -2320,3 +3447,7 @@ export const CONTRACTS: Record<ToolsetName, ToolsetContract> = {
   computer: COMPUTER_CONTRACT as unknown as ToolsetContract,
   browser: BROWSER_CONTRACT as unknown as ToolsetContract,
 };
+/** allternit.computer.v2: the 17 pixel members plus the 6 driver-backed structured members. */
+export const COMPUTER_V2 = COMPUTER_V2_CONTRACT as unknown as ToolsetContract;
+/** The 6 structured members of allternit.computer.v2 (read_ui, act, run_batch, verify, request_human, use_credential). */
+export const COMPUTER_V2_MEMBER_LIST = COMPUTER_V2.members;

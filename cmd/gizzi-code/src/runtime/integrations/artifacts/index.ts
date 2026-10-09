@@ -29,7 +29,7 @@ export namespace Artifacts {
     sheet: ["application/vnd.allternit.sheet+json"],
     slides: ["application/vnd.allternit.slides+json"],
     design: ["application/vnd.allternit.design+json", "text/html"],
-    dashboard: ["application/vnd.allternit.dashboard+json", "application/vnd.allternit.openui"],
+    dashboard: ["application/vnd.allternit.openui"],
     motion: ["application/vnd.allternit.motion+json"],
     page: ["text/html", "text/markdown"],
     card: ["application/vnd.allternit.openui"],
@@ -131,12 +131,6 @@ export namespace Artifacts {
         JSON.parse(body)
       } catch (error) {
         return `The body must be JSON for ${bodyFormat} (${error instanceof Error ? error.message : "parse error"}). Use the format described in the system prompt.`
-      }
-    }
-    if (kind === "motion" && bodyFormat.endsWith("+json")) {
-      const scenes = (JSON.parse(body) as { scenes?: unknown })?.scenes
-      if (!Array.isArray(scenes) || scenes.length === 0) {
-        return `A motion body needs a non-empty "scenes" array: {"scenes":[{"type","title","duration","props"}]}. Use the format described in the system prompt.`
       }
     }
     if (bodyFormat === "text/uri-list" && !/^\S+:\/\/\S+|^\//m.test(body.trim())) {

@@ -40,9 +40,8 @@ pub const KINDS: &[KindSpec] = &[
     },
     KindSpec {
         kind: "dashboard",
-        default_body_format: "application/vnd.allternit.dashboard+json",
-        // `openui` stays accepted: Phase 1 dashboards were stored as OpenUI cards.
-        body_formats: &["application/vnd.allternit.dashboard+json", "application/vnd.allternit.openui"],
+        default_body_format: "application/vnd.allternit.openui",
+        body_formats: &["application/vnd.allternit.openui"],
     },
     KindSpec {
         kind: "motion",
@@ -128,16 +127,6 @@ mod tests {
         }
         assert_eq!(default_body_format("diagram"), "text/vnd.mermaid");
         assert_eq!(default_body_format("hologram"), "text/plain");
-    }
-
-    #[test]
-    fn dashboards_default_to_tile_json_and_still_accept_openui() {
-        assert_eq!(
-            default_body_format("dashboard"),
-            "application/vnd.allternit.dashboard+json"
-        );
-        let spec = KINDS.iter().find(|k| k.kind == "dashboard").unwrap();
-        assert!(spec.body_formats.contains(&"application/vnd.allternit.openui"));
     }
 
     #[test]

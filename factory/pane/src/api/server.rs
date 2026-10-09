@@ -355,24 +355,6 @@ fn finish_wait_response(
     result
 }
 
-/// Who answers a ping. `exe_deleted` is the load-bearing field: the Desktop
-/// updater removes superseded runtime dirs, and a server running from a
-/// deleted build answers the socket fine while spawning panes that die
-/// instantly (dead TCC grants). Clients gate spawning on it.
-fn server_ping_info() -> crate::api::schema::ServerPingInfo {
-    let exe = std::env::current_exe()
-        .map(|path| path.display().to_string())
-        .ok();
-    let exe_deleted = exe
-        .as_ref()
-        .is_some_and(|path| !std::path::Path::new(path).exists());
-    crate::api::schema::ServerPingInfo {
-        pid: std::process::id(),
-        exe,
-        exe_deleted: Some(exe_deleted),
-    }
-}
-
 fn handle_request(
     request: Request,
     api_tx: &ApiRequestSender,
@@ -387,7 +369,6 @@ fn handle_request(
                 version: crate::build_info::version(),
                 protocol: crate::protocol::PROTOCOL_VERSION,
                 capabilities,
-                server: Some(server_ping_info()),
             },
         })
         .unwrap_or_else(|_| {

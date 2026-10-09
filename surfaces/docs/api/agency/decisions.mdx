@@ -1,139 +1,151 @@
 ---
 title: 'Decisions'
-description: 'One typed decision over options you supply, answered by the Decision Runtime in about 100 ms when the local scorer is warm, with escalation, abstain and an outcome log.'
+description: 'An optional low-level surface for one bounded, side-effect-free decision over candidates you supply.'
 ---
 
-<Note>
-**Implementation: IMPLEMENTED (E1) · Exposure: PREVIEW.** Served by allternit-api's Agency Kernel Decision Runtime (`cmd/allternit-api/src/agency_api/decisions/`). The local scorer is the sidecar in `domains/decision-runtime/`, managed by Allternit Desktop. Computer use starts calling it in phase E2.
-</Note>
+<Warning>
+**Implementation: DESIGN (server) · Exposure: PUBLIC PREVIEW (contract).** The Agency API is not live yet. This page describes the published v0.3 contract so you can review and build against it; details may change before alpha.
+</Warning>
 
-A decision picks one option from a list you supply. It never invents an option and never generates text: the local scorer reads the answer straight from a model's next-token distribution in one forward pass. The planner model sets a goal once; every step after that (which element, which op, did it work, is it safe, escalate?) can be a decision.
+The decision surface makes one bounded decision over caller-supplied candidates and returns a typed answer with a confidence. It is optional and low-level. Most integrations create [runs](/api/agency/runs) and never call it. It opens with the rest of the API, after a run can survive restart, resume, verify, replay and receipt-backed completion.
 
-Three rules hold for every decision:
+Three properties define it:
 
-- **Bounded.** The answer is always one of your option ids, or `null` when it abstains.
-- **Pure.** A decision has no side effects. Before you act on one, check that the chosen option is still valid (the screen may have changed).
-- **Not authorization.** A decision is never a permission. Policy runs first; a decision can only add caution.
+- **Pure.** A decision has no side effects. That is why `Idempotency-Key` is optional here.
+- **Bounded.** The backend chooses among the candidates you supply. It never invents options.
+- **Not authorization.** A `gate` result is a recommendation about a transition. It is never a permission, and it never stands in for a policy decision.
+
+Which backend served the decision is shown only with `view=debug`.
 
 ## Create a decision
 
 ```http
 POST /v1/decisions
-POST /v1/systemone        (compatibility alias, same request and response)
 ```
 
-Authenticated like every Agency API route. Responses carry `Allternit-Request-Id`.
+### Parameters
+
+{{params:createDecision}}
 
 ### Request body
 
-| Field | Type | Required | Meaning |
-|---|---|---|---|
-| `context` | string, or `{ "text": string, "image": string }` | yes | What the decision is about: the goal, the screen's element map, what happened so far. Up to 64 KB. `image` is a `data:image/...` URL under 6 MB (a screenshot crop). |
-| `options` | array of `{ "id": string, "text": string }` | yes | 2 to 255 options. Ids are 1–128 characters and unique; text is what the model reads. |
-| `kind` | string | no (`choice`) | The decision kind. It picks the confidence threshold and, when `question` is empty, the question. Built in: `choice`, `element`, `op`, `verify`, `safety`, `escalate`, `route`. Any `[A-Za-z0-9_.-]{1,64}` is accepted. |
-| `question` | string | no | The question, when the kind's default does not fit. |
-| `allow_abstain` | boolean | no (`false`) | Return `choice: null` when no backend reaches the kind's threshold within the budget. |
-| `latency_budget_ms` | integer | no (`10000`) | The total time for the decision, escalations included (1–120000). A backend that would start with under 5 ms left is skipped; one that runs past the budget is cut off. |
-| `backends` | array of strings | no | Override the configured chain for this decision, for example `["local"]` or `["oracle"]`. |
-| `session_id`, `task` | string | no | Stored with the decision, for grouping its outcomes later. |
+[DecisionRequest](/api/agency/schemas#decisionrequest)
 
-### Response
+{{fields:DecisionRequest}}
 
-| Field | Type | Meaning |
-|---|---|---|
-| `id` | string | `dec_…`. Use it to report the outcome. |
-| `kind` | string | The decision kind. |
-| `choice` | string or `null` | The chosen option id. `null` when abstained. |
-| `probs` | object | Option id → probability, from the backend that answered. Relative to your option set, not calibrated. |
-| `confidence` | number | The top probability (0–1). |
-| `abstained` | boolean | No answer reached the threshold and `allow_abstain` was set (or the oracle abstained). |
-| `escalated` | boolean | A later backend was tried because an earlier answer was under the threshold. |
-| `threshold` | number | The kind's threshold that applied. |
-| `calibrated` | boolean | Always `false` until per-kind calibration ships (phase E5). |
-| `backend` | string | Which backend answered: `local`, `oracle`, `vendor`, `typesafe`, or `none`. |
-| `latency_ms` | number | Server time for the whole decision. |
-| `attempts` | array | Every backend tried, in order: its latency, confidence, error, or why it was skipped. |
+### Operations
 
-### Example
+| `operation` | Question it answers | Needs | `answer` type |
+|-------------|--------------------|-------|---------------|
+| `belief` | Is this statement true of the state? | | boolean |
+| `choice` | Which one candidate? | `candidates` | candidate ID |
+| `score` | Where on an ordered scale? | `scale` | a label from `scale` |
+| `rank` | In what order? | `candidates` | list of candidate IDs |
+| `subset` | Which of these apply? | `candidates` | list of candidate IDs |
+| `estimate` | What number within bounds? | `range` | number |
+| `gate` | Should this transition proceed? (recommendation only) | `candidates` | candidate ID |
+| `verify` | Does the state satisfy the question? | | boolean |
+| `pair_score` | How do two candidates compare? | `candidates` | number |
+
+`candidates` is required for `choice`, `rank`, `subset`, `gate` and `pair_score`. The contract types `answer` as a candidate ID, a list of IDs, a number or a boolean; the per-operation `answer` types in this table are the expected mapping and are not pinned individually in v0.3.
+
+### Calibration level
+
+`require_level` sets the minimum calibration level the answer must be served at: `L0`, `L1`, `L2` or `auto` (default). Raw uncalibrated readouts are never served for action. The level that was used is returned in `calibration.level_served`.
+
+### Responses
+
+{{responses:createDecision}}
+
+[DecisionResult](/api/agency/schemas#decisionresult):
+
+{{fields:DecisionResult}}
+
+`threshold_action` tells you what the calibrated thresholds recommend doing with the answer:
+
+| `threshold_action` | Meaning |
+|--------------------|---------|
+| `auto` | Confidence is high enough to act on without review. |
+| `review` | Have a person or a verifier review it. |
+| `escalate` | Route to a stronger solver or a person. |
+| `reject` | Do not act on this answer. |
+| `null` | No threshold applies. |
+
+### Examples
+
+Choose among candidates:
 
 ```bash
-curl -X POST "$ALLTERNIT_API/v1/decisions" \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+curl -X POST https://api.allternit.com/v1/decisions \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
+  -H "Content-Type: application/json" \
   -d '{
-    "kind": "element",
-    "context": "Goal: compute 7 + 3 in Calculator.\n\nScreen: Calculator. Display shows 7.",
-    "question": "Which button comes next?",
-    "options": [
-      {"id": "btn_plus", "text": "click button +"},
-      {"id": "btn_3", "text": "click button 3"},
-      {"id": "btn_eq", "text": "click button ="}
+    "operation": "choice",
+    "question": "Which file most likely contains the rounding bug?",
+    "state": {"failing_test": "cart totals round half up", "error": "expected 10.01, got 10.00"},
+    "candidates": [
+      {"id": "a", "label": "checkout/cart.ts"},
+      {"id": "b", "label": "checkout/tax.ts"},
+      {"id": "c", "label": "shared/format.ts"}
     ],
-    "allow_abstain": true,
-    "latency_budget_ms": 1500
+    "require_level": "auto",
+    "max_latency_ms": 500
   }'
 ```
 
 ```json
 {
-  "id": "dec_4f0c…",
-  "object": "decision",
-  "kind": "element",
-  "choice": "btn_plus",
-  "probs": { "btn_plus": 0.93, "btn_3": 0.05, "btn_eq": 0.02 },
-  "confidence": 0.93,
-  "abstained": false,
-  "escalated": false,
-  "threshold": 0.6,
-  "calibrated": false,
-  "backend": "local",
-  "latency_ms": 133.8,
-  "attempts": [{ "backend": "local", "latency_ms": 133.1, "confidence": 0.93, "abstain": false, "detail": { "engine": "mlx", "model": "qwen3.5-4b" } }]
+  "operation": "choice",
+  "answer": "a",
+  "probabilities": { "a": 0.81, "b": 0.14, "c": 0.05 },
+  "confidence": 0.81,
+  "calibration": { "level_served": "L1", "calibrated": true, "calibration_id": "cal_01JB2P0Q1R" },
+  "threshold_action": "review",
+  "evidence_refs": [],
+  "debug": null
 }
 ```
 
-When no backend answers and `allow_abstain` is false, the response is `503` with `error.code` `ERR_DECISION_UNAVAILABLE` and the attempts in `error.detail`.
+Score on an ordered scale:
 
-## Backends and escalation
-
-The router walks the chain in order (default `local,vendor,typesafe,oracle`, set with `ALLTERNIT_DECISIONS_CHAIN`). It stops at the first answer at or over the kind's threshold; a later answer replaces an earlier one. Backends that are not configured are left out; backends that cannot see images are skipped for a decision that carries one.
-
-| Backend | What it is | On by default |
-|---|---|---|
-| `local` | The owned scorer sidecar: one-pass option scoring (ported from open-jev, MIT). MLX on Apple silicon; llama.cpp on Windows, Linux, Intel Macs and cloud hosts. Default model Qwen3.5-4B (Apache-2.0); `ALLTERNIT_DECISIONS_MODEL=gemma-3-4b` switches to Gemma 3 4B (set `HF_TOKEN` if your mirror is gated). Text only. | Yes, wherever Allternit Desktop runs it (`ALLTERNIT_DECISIONS_LOCAL_URL`) |
-| `vendor` | Adapter for a hosted vendor decisions API. A stub: it answers "not available" until phase E6 verifies the vendor's documentation and access. | No (`ALLTERNIT_DECISIONS_VENDOR_KEY`) |
-| `typesafe` | TypeSafe Jev adapter. Stub, same as above. | No (`ALLTERNIT_DECISIONS_TYPESAFE_KEY`) |
-| `oracle` | The planner model through gizzi, like every other model call. Sees images. The escalation path and the source of labels. Model: `ALLTERNIT_DECISIONS_ORACLE_MODEL=provider/model`, else your default model. | Yes (`ALLTERNIT_DECISIONS_ORACLE=0` turns it off) |
-
-Thresholds per kind: `default` 0.6, `verify` 0.8, `safety` 0.9, `escalate` 0.7. Override with a JSON object in `ALLTERNIT_DECISIONS_THRESHOLDS`, for example `{"default": 0.5, "element": 0.55}`.
-
-### The local scorer
-
-The sidecar binds a loopback port at app start and does nothing heavy until the first decision. That decision starts its preparation: it installs its pinned Python packages, downloads the model (about 3 GB) into the app's data folder, and loads it. Until it is ready, decisions escalate past it; its status and download progress are in `GET /health` on the sidecar and in Desktop's `decision-runtime:get-status`. No model weights ship in the app.
-
-To get the most out of it, put what stays the same first in `context` (the goal, the element map) and what changes per step last or in `question`, with blank lines between blocks. The scorer keeps the state at each block boundary, so the next decision over the same screen only reads what changed.
-
-Measured on an M1 Pro (2026-10-09, Qwen3.5-4B 4-bit, machine under load): 19 of 19 obvious Calculator decisions right, p50 154 ms, p95 252 ms; a decision that reuses the screen costs about 130 ms, and one forward pass costs about 110 ms however few tokens it reads. Qwen3.5-2B ran at a 65 ms p50 but got only 9 of 19 right, so 4B stays the default. Newer Apple silicon is faster.
-
-## Report the outcome
-
-```http
-PATCH /v1/decisions/{id}
+```bash
+curl -X POST https://api.allternit.com/v1/decisions \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "operation": "score",
+    "question": "How risky is this change?",
+    "state": "A 14-line change to cart total rounding, covered by 3 unit tests.",
+    "scale": ["low", "medium", "high"]
+  }'
 ```
 
-| Field | Type | Meaning |
-|---|---|---|
-| `status` | `success` · `failure` · `error` · `skipped` | What happened when the choice was acted on. |
-| `label` | string | The option id that was right, when known (from the oracle, a person or a verifier). |
-| `detail` | string | Up to 4000 bytes. |
+Estimate within bounds:
 
-Returns the stored decision. `GET /v1/decisions/{id}` returns it too. The store keeps the context's sha256, never the context itself, plus the options, choice, probabilities, backend, latency, attempts and outcome. These rows are the training data for the trained heads in phase E5.
+```json
+{
+  "operation": "estimate",
+  "question": "How many test files are affected by this change?",
+  "state": { "changed_files": ["checkout/cart.ts"] },
+  "range": { "min": 0, "max": 50 }
+}
+```
 
-## Compatibility with contract v0.3
+Missing candidates for an operation that needs them:
 
-The published [v0.3 contract](/api/agency/schemas#decisionrequest) describes a wider decision surface (`operation`, `scale`, `range`, `require_level`, `threshold_action`). The server implements the choice decision above. It accepts the v0.3 names `state` (for `context`), `candidates` (for `options`), `label` (for an option's `text`) and `max_latency_ms` (for `latency_budget_ms`). The other operations and calibration levels are not served yet.
+```json
+{
+  "error": {
+    "family": "INPUT",
+    "code": "ERR_INPUT_UNSUPPORTED",
+    "message": "candidates is required for operation choice.",
+    "retryable": false,
+    "request_id": "req_c93d02",
+    "param": "candidates"
+  }
+}
+```
 
-## Related
+## Using a gate result
 
-- [Decision runtime architecture](/architecture/cognitive-runtime/decision-runtime)
-- [Abstain and escalate](/architecture/cognitive-runtime/abstain-escalate)
-- [Allternit Driver](/tools/allternit-driver)
+A `gate` decision returns a recommendation. Treat it as input to your own logic or to a run's graph. It does not grant anything. Inside a run, permission always comes from policy: hard rules run first, and a probabilistic result can only add caution. See [Policy and safety](/architecture/policy#hard-policy-before-probabilistic-judgment).

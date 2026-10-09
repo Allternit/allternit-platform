@@ -84,7 +84,6 @@ impl ApiClient {
                 version,
                 protocol,
                 capabilities,
-                ..
             } => Ok(crate::api::RuntimeStatus {
                 version: Some(version),
                 protocol: Some(protocol),
