@@ -106,45 +106,6 @@ if [ "$stale" -eq 1 ]; then
   echo "ensure-sdk-dist: dist rebuilt"
 fi
 
-# ── @allternit/computer-use (sdk/computer-use) ────────────────────────────────
-# The ink-app computerUse subtree imports '@allternit/computer-use'
-# (workspace:*). Like packages/sdk, only its dist is consumable and dist is
-# not tracked — build it when missing or stale so tsc/bun resolve types.
-CU_SDK="../../sdk/computer-use"
-CU_SENTINEL="$CU_SDK/dist/index.js"
-CU_SIDECAR="$CU_SDK/dist/.build-deps.json"
-
-if [ ! -d "$CU_SDK/src" ]; then
-  echo "ERROR: ensure-sdk-dist: $CU_SDK/src not found (run from the gizzi-code tree)" >&2
-  exit 1
-fi
-
-cu_stale=0
-if [ ! -f "$CU_SENTINEL" ]; then
-  cu_stale=1
-  cu_reason="missing $CU_SENTINEL"
-elif [ ! -f "$CU_SIDECAR" ]; then
-  cu_stale=1
-  cu_reason="missing $CU_SIDECAR (dist predates the dependency-snapshot check)"
-elif find "$CU_SDK/src" -type f -name '*.ts' -newer "$CU_SENTINEL" | grep -q .; then
-  cu_stale=1
-  cu_reason="sdk/computer-use/src is newer than $CU_SENTINEL"
-elif ! dep_snapshot "$CU_SDK" | diff -q - "$CU_SIDECAR" >/dev/null 2>&1; then
-  cu_stale=1
-  cu_reason="resolved dependencies changed since the last build (see $CU_SIDECAR)"
-fi
-
-if [ "$cu_stale" -eq 1 ]; then
-  echo "ensure-sdk-dist: rebuilding sdk/computer-use dist ($cu_reason)"
-  (cd "$CU_SDK" && bun run build)
-  if [ ! -f "$CU_SENTINEL" ]; then
-    echo "ERROR: ensure-sdk-dist: build finished but $CU_SENTINEL is still missing" >&2
-    exit 1
-  fi
-  dep_snapshot "$CU_SDK" > "$CU_SIDECAR"
-  echo "ensure-sdk-dist: computer-use dist rebuilt"
-fi
-
 # ── @allternit/os-contracts (platform/packages/os-contracts) ────────────────
 # src/runtime/fabric/* imports '@allternit/os-contracts' (workspace:*). Only
 # its dist is consumable (main/types point at ./dist) and dist is gitignored,

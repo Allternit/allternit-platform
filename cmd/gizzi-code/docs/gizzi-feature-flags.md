@@ -33,7 +33,7 @@ gizzi-code inherited 74 `feature('X')` flags (`import { feature } from 'bun:bund
 
 ## Off, needing Anthropic services
 
-BRIDGE_MODE, CCR_AUTO_CONNECT, CCR_MIRROR, CCR_REMOTE_SETUP, DAEMON (claude.ai remote control / cloud sessions) · ULTRAPLAN (cloud planning) · TEAMMEM (Anthropic team-memory sync) · UPLOAD_USER_SETTINGS, DOWNLOAD_USER_SETTINGS (settings sync) · KAIROS, KAIROS_BRIEF, KAIROS_CHANNELS, KAIROS_GITHUB_WEBHOOKS, KAIROS_PUSH_NOTIFICATION, PROACTIVE (assistant mode, which also has missing modules) · AGENT_TRIGGERS_REMOTE (RemoteTrigger tool, missing) · ANTI_DISTILLATION_CC, NATIVE_CLIENT_ATTESTATION (Anthropic API protections) · CONNECTOR_TEXT (Anthropic API beta) · LODESTONE (claude-cli:// deep links) · CHICAGO_MCP (Anthropic computer-use MCP, superseded by Allternit's own computer use).
+BRIDGE_MODE, CCR_AUTO_CONNECT, CCR_MIRROR, CCR_REMOTE_SETUP, DAEMON (claude.ai remote control / cloud sessions) · ULTRAPLAN (cloud planning) · TEAMMEM (Anthropic team-memory sync) · UPLOAD_USER_SETTINGS, DOWNLOAD_USER_SETTINGS (settings sync) · KAIROS, KAIROS_BRIEF, KAIROS_CHANNELS, KAIROS_GITHUB_WEBHOOKS, KAIROS_PUSH_NOTIFICATION, PROACTIVE (assistant mode, which also has missing modules) · AGENT_TRIGGERS_REMOTE (RemoteTrigger tool, missing) · ANTI_DISTILLATION_CC, NATIVE_CLIENT_ATTESTATION (Anthropic API protections) · CONNECTOR_TEXT (Anthropic API beta) · LODESTONE (claude-cli:// deep links) · CHICAGO_MCP (Anthropic computer-use MCP; code removed 2026-10-09, Allternit uses its own computer toolset).
 
 ## Off, internal, debug, or telemetry
 
