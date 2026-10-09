@@ -919,6 +919,18 @@ const hyperframesAPI = {
   },
 };
 
+// ─── Motion artifacts: export MP4 with the local ffmpeg ───────────────────────
+
+const motionAPI = {
+  check: (): Promise<{ ffmpeg: boolean }> => ipcRenderer.invoke('motion:check'),
+  begin: (opts: { fps: number; width: number; height: number; frames: number }): Promise<{ id: string }> =>
+    ipcRenderer.invoke('motion:begin', opts),
+  frame: (id: string, index: number, jpeg: ArrayBuffer): Promise<void> => ipcRenderer.invoke('motion:frame', id, index, jpeg),
+  finish: (id: string, opts: { title: string }): Promise<{ success: boolean; savedPath?: string; error?: string; cancelled?: boolean }> =>
+    ipcRenderer.invoke('motion:finish', id, opts),
+  abort: (id: string): Promise<void> => ipcRenderer.invoke('motion:abort', id),
+};
+
 // ─── Artifact preview capture ────────────────────────────────────────────────
 // A real render of a site an agent built, as a picture it can look at.
 
@@ -983,6 +995,7 @@ const allternitDesktopAPI = {
   research: researchAPI,
   worker: workerAPI,
   hyperframes: hyperframesAPI,
+  motion: motionAPI,
   miniApps: miniAppsAPI,
   hermesRouting: hermesRoutingAPI,
   browserCapture: browserCaptureAPI,

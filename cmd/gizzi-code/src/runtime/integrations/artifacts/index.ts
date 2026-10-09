@@ -133,6 +133,12 @@ export namespace Artifacts {
         return `The body must be JSON for ${bodyFormat} (${error instanceof Error ? error.message : "parse error"}). Use the format described in the system prompt.`
       }
     }
+    if (kind === "motion" && bodyFormat.endsWith("+json")) {
+      const scenes = (JSON.parse(body) as { scenes?: unknown })?.scenes
+      if (!Array.isArray(scenes) || scenes.length === 0) {
+        return `A motion body needs a non-empty "scenes" array: {"scenes":[{"type","title","duration","props"}]}. Use the format described in the system prompt.`
+      }
+    }
     if (bodyFormat === "text/uri-list" && !/^\S+:\/\/\S+|^\//m.test(body.trim())) {
       return `An image artifact's body is the image URL (text/uri-list), not the image data.`
     }

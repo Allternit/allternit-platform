@@ -533,6 +533,27 @@
       ]
     },
     {
+      "id": "feature:artifacts-motion",
+      "label": "Motion artifacts (animated explainers, MP4 export)",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "The motion artifact kind: short animated compositions (title, counter, chart, logo, list scenes) stored as JSON props, drawn by a pure seekable renderer, edited in the artifact window (scene list, scrub, play/pause/loop, props panel; tabs on the phone layout and PWA) and exported to MP4. Desktop encodes frames with the local ffmpeg through the motion IPC; web and PWA encode in the tab with WebCodecs (MP4, or WebM where the browser has no H.264). Super, Ultra and Team plans; org default Team on, Enterprise off.",
+      "touches": [
+        "allternit-ai/src/lib/artifacts/motion",
+        "allternit-ai/src/components/artifacts/motion",
+        "allternit-ai/src/lib/artifacts/compose.ts",
+        "allternit/surfaces/allternit-desktop/src/main/motion-render.ts",
+        "allternit/cmd/gizzi-code/src/runtime/integrations/artifacts"
+      ],
+      "decisions": [
+        {"on": "2026-10-09", "note": "No server-side render route: no cloud render worker exists, so web and PWA export in the tab (WebCodecs + mediabunny) and Desktop uses local ffmpeg. Videos are silent. The body is data only, never code."}
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/motion.mdx",
+        "allternit/surfaces/docs/api/artifacts-motion.mdx"
+      ]
+    },
+    {
       "id": "feature:artifact-model-tools",
       "label": "Artifact tools for every model (Artifacts v2)",
       "product": "product:gizzi-code",

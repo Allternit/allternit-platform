@@ -62,13 +62,17 @@ full screen.
 - **Versions.** Editors can open any earlier version from the clock menu.
   "Back to latest" returns to the current one.
 - **Share** opens the sharing settings (below).
+- **Turn into motion.** On a doc or a dashboard (Super, Ultra and Team), the
+  **Export** menu also has **Turn into motion**, which asks Allternit for a
+  short animation of it. See [Motion](/guides/motion).
 - **Export** lists what this kind can export. Every artifact has **Download
   source** and **Copy**. Docs export to **Word**, **PDF** and **Markdown**;
   Slides to **PowerPoint** and **PDF**; Sheets to **Excel** and **CSV**;
   Design to **HTML**, **.zip**, **PowerPoint** and **PDF**. Diagrams also
   export **PNG** and **SVG**; pages export an **HTML file** (and, on
   Allternit Desktop with HyperFrames, an **MP4 video**); dashboards export a
-  **PDF** through the print window; motion exports an **MP4 video**.
+  **PDF** through the print window; motion exports an **MP4 video** on every surface (see
+  [Motion](/guides/motion)).
 - **Comments** and the avatars of anyone else who has it open appear for
   Docs, Slides, Sheets and Design. See
   [Comments, presence and versions](/guides/artifact-collaboration).
@@ -205,7 +209,8 @@ say. See [Pages that act like apps](/guides/artifact-apps).
   ChatView) and `ArtifactPaneWindow.tsx` (Cowork and project panes).
 - Model contract: the turn carries `output: {kind}` when an Output is picked,
   and the system prompt carries the artifacts manual
-  (`ARTIFACTS_MANUAL`) plus one line for the picked Output. The model creates
+  (`ARTIFACTS_MANUAL`), the motion body manual when Motion is on for the user,
+  plus one line for the picked Output. The model creates
   artifacts with `artifact_create` / `artifact_update`; the transcript renders
   each call as a card and saves `persisted:false` results under the same id.
 - API, schema and sharing rules: `allternit/docs/design/artifacts-v2.md`.
@@ -216,6 +221,7 @@ say. See [Pages that act like apps](/guides/artifact-apps).
 - [Docs, Slides, Sheets and Design artifacts](/guides/artifact-editors)
 - [Comments, presence and versions](/guides/artifact-collaboration)
 - [Dashboards](/guides/dashboards)
+- [Motion](/guides/motion)
 - [Artifact modes](/guides/artifact-modes)
 - [Artifact tools](/tools/artifact-tools)
 - [Artifacts v2 API](/api/artifacts-v2)

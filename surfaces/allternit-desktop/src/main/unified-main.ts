@@ -16,6 +16,7 @@ import * as http from 'node:http';
 import * as https from 'node:https';
 import * as os from 'node:os';
 import { execFile } from 'node:child_process';
+import { createMotionRender } from './motion-render.js';
 import Store from 'electron-store';
 import log from 'electron-log';
 import { updateElectronApp } from 'update-electron-app';
@@ -4458,6 +4459,25 @@ handleGuarded('hyperframes:render', async (event, html: string, options: {
     return { success: false, error: (err as Error).message };
   }
 });
+
+// ─── Motion artifacts: frames from the app → local ffmpeg → MP4 ──────────────
+
+const motionRender = createMotionRender({
+  chooseSavePath: async (defaultName) => {
+    const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+    const saved = await dialog.showSaveDialog(win, {
+      title: 'Save Video',
+      defaultPath: defaultName,
+      filters: [{ name: 'MP4 video', extensions: ['mp4'] }],
+    });
+    return saved.canceled || !saved.filePath ? null : saved.filePath;
+  },
+});
+handleGuarded('motion:check', () => motionRender.check());
+handleGuarded('motion:begin', (_event, opts) => motionRender.begin(opts));
+handleGuarded('motion:frame', (_event, id: string, index: number, jpeg: ArrayBuffer) => motionRender.frame(id, index, jpeg));
+handleGuarded('motion:finish', (_event, id: string, opts: { title: string }) => motionRender.finish(id, opts));
+handleGuarded('motion:abort', (_event, id: string) => motionRender.abort(id));
 
 // ─── Mini-apps: install / start / stop / status ───────────────────────────────
 
