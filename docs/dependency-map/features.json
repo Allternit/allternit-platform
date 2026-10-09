@@ -713,6 +713,10 @@
         {
           "on": "2026-10-09",
           "note": "Phase 4 editors: doc, sheet, slides and design open in the window's editors with autosave to versions, Edit with Allternit on a selection, threaded comments with @gizzi, heartbeat presence (honours the org presence switch), and Word/PDF/Markdown/PowerPoint/XLSX/CSV/HTML/zip exports. Presence is an in-memory heartbeat poll under /api/v2/artifacts/:id/presence, not the deployment WebSocket hub."
+        },
+        {
+          "on": "2026-10-09",
+          "note": "The Artifacts tab regained what the Phase 1 rebuild dropped: the animated Make something new tiles are the one template gallery (every kind, plan-gated, Dashboards and Motion included), connected-tools chips, the Design menu and Office button, and real per-kind previews in the grid (body fetched lazily, script-free snapshots for pages, designs and cards)."
         }
       ],
       "evidence": [
