@@ -758,6 +758,7 @@
               "api/subscription-gateway",
               "api/conversations",
               "api/artifacts",
+              "api/artifacts-v2",
               "api/boards",
               "api/board-streams",
               "api/inbox",

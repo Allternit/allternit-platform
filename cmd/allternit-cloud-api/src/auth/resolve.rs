@@ -34,6 +34,9 @@ pub struct ResolvedUser {
     pub image_url: Option<String>,
     /// Clerk organization binding; `None` for API-token callers.
     pub organization_id: Option<String>,
+    /// Role in the Clerk organization (`admin` / `org:admin` for admins);
+    /// `None` for API-token callers.
+    pub org_role: Option<String>,
     /// `None` = Clerk session (full access — sessions are user-level).
     /// `Some(perms)` = API token, enforced verbatim: `["*"]` (the
     /// production default for legacy `api_tokens` rows) means full access;
@@ -83,6 +86,7 @@ pub async fn resolve_user(db: &PgPool, headers: &HeaderMap) -> Result<ResolvedUs
             name: user.name,
             image_url: user.image_url,
             organization_id: user.organization_id,
+            org_role: user.org_role,
             token_permissions: None,
         }),
         Err(clerk_error) => {
@@ -96,6 +100,7 @@ pub async fn resolve_user(db: &PgPool, headers: &HeaderMap) -> Result<ResolvedUs
                     name: None,
                     image_url: None,
                     organization_id: None,
+                    org_role: None,
                     token_permissions: Some(user.permissions),
                 }),
                 Ok(None) => Err(clerk_error),
@@ -309,6 +314,7 @@ mod tests {
             name: None,
             image_url: None,
             organization_id: None,
+            org_role: None,
             token_permissions: None,
         };
         assert!(clerk.has_scope("compute"), "Clerk sessions pass every scope");

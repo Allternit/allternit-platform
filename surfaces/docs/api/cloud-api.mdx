@@ -275,6 +275,10 @@ These Cloud API routes authenticate with a Clerk session, resolve the caller's d
 
 HTTP **428** means the account has no healthy node (pair a desktop/VPS or start a provisioned instance). The original `Authorization` header is forwarded. SSE is not buffered.
 
+## Artifacts v2
+
+Unlike the relayed namespaces above, artifacts are stored in Cloud API Postgres itself, so every surface sees the same records. That includes the ones made on a cloud computer or by gizzi. Routes are under `/api/v2/artifacts`, plus a no-auth public link route `/api/v2/public/artifacts/{id}` and `/api/v2/org/artifact-settings`. See [Artifacts v2](/api/artifacts-v2).
+
 ## Provisioned instances
 
 Paid subscriptions can get an Allternit-provisioned data-plane instance (isolated container, per-instance SQLite, auto-pair). These routes are control-plane only: they create/start/stop the instance. Traffic to Allternit API inside the instance still goes through the runtime relay.

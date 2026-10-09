@@ -3,6 +3,7 @@
 //! Backend API for cloud deployment management.
 //! Provides REST endpoints and WebSocket event streaming.
 
+pub mod artifacts;
 pub mod auth;
 pub mod carriers;
 pub mod channels;
@@ -384,6 +385,10 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // User file uploads to R2 with per-plan caps (presigned PUT/GET); 503 when ALLTERNIT_R2_* is unset.
         .merge(routes::files::routes())
         .merge(routes::runtime_files::routes())
+        // Artifacts v2 (docs/design/artifacts-v2.md): every handler resolves
+        // the caller itself (Clerk session or scoped token); the public link
+        // route /api/v2/public/artifacts/:id takes no auth.
+        .merge(routes::artifacts_v2::routes())
         // Discord shared app: install/send/commands check the Clerk session; the OAuth
         // callback and interactions are public (state / Ed25519 signature).
         .merge(routes::discord_app::routes())
