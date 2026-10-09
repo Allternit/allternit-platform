@@ -29,7 +29,7 @@ export namespace Artifacts {
     sheet: ["application/vnd.allternit.sheet+json"],
     slides: ["application/vnd.allternit.slides+json"],
     design: ["application/vnd.allternit.design+json", "text/html"],
-    dashboard: ["application/vnd.allternit.openui"],
+    dashboard: ["application/vnd.allternit.dashboard+json", "application/vnd.allternit.openui"],
     motion: ["application/vnd.allternit.motion+json"],
     page: ["text/html", "text/markdown"],
     card: ["application/vnd.allternit.openui"],

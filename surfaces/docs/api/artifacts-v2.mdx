@@ -35,7 +35,7 @@ See [Authentication](/api/authentication).
 | `sheet` | `application/vnd.allternit.sheet+json` | |
 | `slides` | `application/vnd.allternit.slides+json` | |
 | `design` | `application/vnd.allternit.design+json` | `text/html` |
-| `dashboard` | `application/vnd.allternit.openui` | |
+| `dashboard` | `application/vnd.allternit.dashboard+json` | `application/vnd.allternit.openui` (dashboards saved before the tile format) |
 | `motion` | `application/vnd.allternit.motion+json` | |
 | `page` | `text/html` | `text/markdown` |
 | `card` | `application/vnd.allternit.openui` | |
@@ -149,6 +149,51 @@ DELETE /api/v2/artifacts/{id}
 `PATCH` returns the `Artifact`. `title` and `icon` need `edit`. `shared_version` (from 1 to `current_version`, or `null`) and `capabilities` need `owner`. Turning on `ai` or `connectors` for an artifact shared by link gets `422 link_not_allowed`.
 
 `DELETE` is owner-only and **permanent**. There is no trash. Versions, shares and comments are deleted with the artifact. It returns `204`.
+
+## Dashboard body
+
+A `dashboard` artifact's body is JSON with `body_format` `application/vnd.allternit.dashboard+json`. The server stores it like any other body; the apps parse and validate it. A tile that fails validation is skipped and the rest of the dashboard still draws.
+
+```json
+{
+  "version": 1,
+  "refreshSeconds": 300,
+  "filters": [
+    { "id": "region", "label": "Region", "type": "select",
+      "options": [{ "value": "emea", "label": "EMEA" }], "default": "emea" }
+  ],
+  "tiles": [
+    {
+      "id": "revenue",
+      "title": "Revenue",
+      "type": "kpi",
+      "layout": { "x": 0, "y": 0, "w": 3, "h": 2 },
+      "query": { "tool": "stripe__list_charges", "args": { "region": "{{filters.region}}" } },
+      "encoding": { "y": ["total"], "compare": "previous" },
+      "format": { "style": "currency", "currency": "USD" }
+    }
+  ]
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `version` | Always `1`. A newer number is read as far as possible. |
+| `refreshSeconds` | Re-query while the dashboard is open. `0` or missing: only on open. At least 30 when set. |
+| `filters[]` | `id` (letters, digits, `_`), `label`, `type` (`select`, `text`, `number`), `options` for `select`, optional `default`. Up to 8. |
+| `tiles[]` | Up to 40. |
+| `tiles[].type` | `kpi`, `line`, `area`, `bar`, `table`. |
+| `tiles[].layout` | A 12-column grid: `x` and `y` (0-based), `w` (1 to 12 columns), `h` (1 to 40 rows of 72 px). Tiles that overlap are laid out in order. Phones stack tiles in one column, in reading order. |
+| `tiles[].query.tool` | `<connector>__<tool>`, the name in the user's connector tool list. |
+| `tiles[].query.args` | Tool arguments. Strings may contain `{{filters.<id>}}`. |
+| `tiles[].query.sql`, `sqlArg` | SQL for a warehouse tool, placed into the argument named by `sqlArg` (default `query`). In SQL a filter becomes a quoted literal, so write `WHERE region = {{filters.region}}`. Only one read-only statement runs. |
+| `tiles[].query.rowsPath` | Where the rows sit in the result (for example `data.rows`). Without it, rows are found automatically. |
+| `tiles[].encoding` | `x` (column on the x axis), `y` (series columns; for a KPI the first is the number), `compare` (KPI: previous-period column), `columns` (table). |
+| `tiles[].format` | `style` (`number`, `compact`, `currency`, `percent`, `text`, `date`), `currency`, `decimals`, `prefix`, `suffix`. |
+
+A tool result is read as a table: an array of objects, `{ "columns": [], "rows": [[]] }`, or JSON or CSV text.
+
+Dashboards run as the viewer: each call goes through the viewer's own connectors, and a tool that is not read-only is refused (a SQL tool is allowed for a single read-only statement). The owner's client sets `capabilities.connectors` to the connectors and tools the tiles call, so `visibility: "link"` is refused for a dashboard (see [Sharing](#sharing)). Dashboards saved before this format, with `application/vnd.allternit.openui`, still open as cards.
 
 ## Versions
 
