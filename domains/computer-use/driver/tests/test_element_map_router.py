@@ -122,5 +122,16 @@ class RouterTest(unittest.TestCase):
             self.assertEqual(Router("linux", tmp).table()["apps"], {})  # Another OS starts fresh.
 
 
+class CuaVerifyParseTest(unittest.TestCase):
+    def test_verify_state_status_shape(self):
+        from allternit_driver.core import _cua_verified
+
+        self.assertTrue(_cua_verified({"status": "satisfied", "predicates": [{"status": "satisfied"}]}))
+        self.assertFalse(_cua_verified({"status": "not_satisfied"}))
+        self.assertTrue(_cua_verified({"satisfied": True}))  # Other builds' boolean shape.
+        self.assertFalse(_cua_verified({"ok": False}))
+        self.assertFalse(_cua_verified({}))
+
+
 if __name__ == "__main__":
     unittest.main()
