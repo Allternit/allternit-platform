@@ -93,6 +93,10 @@ pub struct CredentialRecord {
     pub name: String,
     pub credential_type: CredentialType,
     pub sealed_value: String,
+    /// App or domain this credential is bound to (`allternit.computer.v2`
+    /// `use_credential` only types it there). `None` = unbound.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bind: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -102,6 +106,10 @@ pub struct CredentialRecord {
 pub struct CredentialMetadata {
     pub name: String,
     pub credential_type: CredentialType,
+    /// App or domain the credential is bound to (`use_credential` only types
+    /// it there). Absent when unbound.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bind: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -111,6 +119,7 @@ impl From<&CredentialRecord> for CredentialMetadata {
         Self {
             name: record.name.clone(),
             credential_type: record.credential_type,
+            bind: record.bind.clone(),
             created_at: record.created_at.clone(),
             updated_at: record.updated_at.clone(),
         }
@@ -182,6 +191,26 @@ fn validate_value(value: &str) -> Result<(), CredentialStoreError> {
         return Err(CredentialStoreError::InvalidValue(format!(
             "value exceeds {MAX_VALUE_BYTES} byte limit"
         )));
+    }
+    Ok(())
+}
+
+/// An app or domain binding: `use_credential` only types a bound credential
+/// into its app/domain.
+fn validate_bind(bind: &str) -> Result<(), CredentialStoreError> {
+    let len = bind.len();
+    if len == 0 || len > 128 {
+        return Err(CredentialStoreError::InvalidValue(
+            "bind must be 1-128 characters".to_string(),
+        ));
+    }
+    if !bind
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | ':' | '/'))
+    {
+        return Err(CredentialStoreError::InvalidValue(
+            "bind may contain only ASCII alphanumerics and '.', '_', '-', ':', '/'".to_string(),
+        ));
     }
     Ok(())
 }
@@ -293,9 +322,13 @@ impl CredentialStore {
         name: &str,
         credential_type: CredentialType,
         value: &str,
+        bind: Option<&str>,
     ) -> Result<CredentialMetadata, CredentialStoreError> {
         validate_name(name)?;
         validate_value(value)?;
+        if let Some(bind) = bind {
+            validate_bind(bind)?;
+        }
         let sealed = seal_strict(value)?;
         let now = chrono::Utc::now().to_rfc3339();
         let record = CredentialRecord {
@@ -303,6 +336,7 @@ impl CredentialStore {
             name: name.to_string(),
             credential_type,
             sealed_value: sealed,
+            bind: bind.map(str::to_string),
             created_at: now.clone(),
             updated_at: now,
         };
@@ -317,15 +351,20 @@ impl CredentialStore {
         Ok(metadata)
     }
 
-    /// Replace the type and value of an existing credential.
+    /// Replace the type and value of an existing credential. `bind` sets the
+    /// app/domain binding when given.
     pub fn update(
         &self,
         user_id: &str,
         name: &str,
         credential_type: CredentialType,
         value: &str,
+        bind: Option<&str>,
     ) -> Result<CredentialMetadata, CredentialStoreError> {
         validate_value(value)?;
+        if let Some(bind) = bind {
+            validate_bind(bind)?;
+        }
         let sealed = seal_strict(value)?;
         let mut records = self.records.lock().expect("credential store lock");
         let key = (user_id.to_string(), name.to_string());
@@ -334,6 +373,9 @@ impl CredentialStore {
         };
         record.credential_type = credential_type;
         record.sealed_value = sealed;
+        if bind.is_some() {
+            record.bind = bind.map(str::to_string);
+        }
         record.updated_at = chrono::Utc::now().to_rfc3339();
         let metadata = CredentialMetadata::from(&*record);
         self.persist_locked(&records);
@@ -381,6 +423,23 @@ impl CredentialStore {
             .get(&(user_id.to_string(), name.to_string()))?
             .clone();
         Some((record.credential_type, crate::token_crypto::open(&record.sealed_value)))
+    }
+
+    /// Open one credential for `allternit.computer.v2` `use_credential`:
+    /// plaintext, type and app/domain binding. The value exists only in the
+    /// caller's hands (typed into the focused field) and is never logged.
+    pub fn open_for_computer_use(&self, user_id: &str, name: &str) -> Option<(CredentialType, String, Option<String>)> {
+        let record = self
+            .records
+            .lock()
+            .expect("credential store lock")
+            .get(&(user_id.to_string(), name.to_string()))?
+            .clone();
+        let value = crate::token_crypto::open(&record.sealed_value);
+        if value.is_empty() {
+            return None;
+        }
+        Some((record.credential_type, value, record.bind))
     }
 
     /// Resolve a run's credential names to in-memory plaintext material.
@@ -592,6 +651,9 @@ struct CreateCredentialBody {
     #[serde(rename = "type")]
     credential_type: CredentialType,
     value: String,
+    /// Optional app/domain binding for `use_credential`.
+    #[serde(default)]
+    bind: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -599,6 +661,9 @@ struct UpdateCredentialBody {
     #[serde(rename = "type")]
     credential_type: CredentialType,
     value: String,
+    /// Sets the app/domain binding when given.
+    #[serde(default)]
+    bind: Option<String>,
 }
 
 fn store_error_response(error: &CredentialStoreError) -> Response {
@@ -624,6 +689,7 @@ async fn create_credential(
         body.name.trim(),
         body.credential_type,
         &body.value,
+        body.bind.as_deref(),
     ) {
         Ok(metadata) => (StatusCode::CREATED, Json(json!({"credential": metadata}))).into_response(),
         Err(error) => store_error_response(&error),
@@ -650,7 +716,7 @@ async fn update_credential(
     Path(name): Path<String>,
     Json(body): Json<UpdateCredentialBody>,
 ) -> Response {
-    match CREDENTIALS.update(&user.user_id, &name, body.credential_type, &body.value) {
+    match CREDENTIALS.update(&user.user_id, &name, body.credential_type, &body.value, body.bind.as_deref()) {
         Ok(metadata) => Json(json!({"credential": metadata})).into_response(),
         Err(error) => store_error_response(&error),
     }
@@ -1044,7 +1110,7 @@ mod tests {
         ensure_test_key();
         let store = CredentialStore::new();
         let metadata = store
-            .create("user-enc", "k", CredentialType::Token, "super_secret_value")
+            .create("user-enc", "k", CredentialType::Token, "super_secret_value", None)
             .expect("create succeeds with test key");
         assert_eq!(metadata.name, "k");
         // The record on disk/in memory is sealed, never the plaintext.
@@ -1069,7 +1135,7 @@ mod tests {
 
         let store = CredentialStore::new_persisted(path.clone());
         store
-            .create("user-p", "session-cookie", CredentialType::Cookie, "cookie_value_xyz")
+            .create("user-p", "session-cookie", CredentialType::Cookie, "cookie_value_xyz", None)
             .unwrap();
         let on_disk = std::fs::read_to_string(&path).unwrap();
         assert!(!on_disk.contains("cookie_value_xyz"), "no plaintext at rest");
@@ -1098,8 +1164,8 @@ mod tests {
     fn sandbox_env_excludes_totp_seeds() {
         ensure_test_key();
         let store = CredentialStore::new();
-        store.create("u", "api", CredentialType::Token, "tok").unwrap();
-        store.create("u", "otp", CredentialType::TotpSecret, "seed").unwrap();
+        store.create("u", "api", CredentialType::Token, "tok", None).unwrap();
+        store.create("u", "otp", CredentialType::TotpSecret, "seed", None).unwrap();
         let resolved = store.resolve("u", &["api".into(), "otp".into()]).unwrap();
         let env = CredentialStore::sandbox_env(&resolved);
         assert_eq!(env.get("ACI_CRED_API").map(String::as_str), Some("tok"));
@@ -1135,7 +1201,7 @@ mod tests {
         ensure_test_key();
         let store = CredentialStore::new();
         store
-            .create("u", "vault", CredentialType::Token, "very-secret-token")
+            .create("u", "vault", CredentialType::Token, "very-secret-token", None)
             .unwrap();
         let resolved = store.resolve("u", &["vault".into()]).unwrap();
         record_run_binding("run-1", "u", &resolved);

@@ -318,7 +318,18 @@ class Driver:
             start = time.perf_counter()
             d = Decision(cur.engine, "map")
             try:
-                if cur.engine == ARC:
+                if op == "press" and cur.engine == ARC and self.cua.available:
+                    # arc's Skylight key posting can take the whole sidecar
+                    # down (SIGSEGV in the private SPI path on macOS 14).
+                    # Key input runs on the Cua engine instead — the same
+                    # engine the pixel key ops route to. The key goes to the
+                    # window's focus (arc map natives are arc element ids,
+                    # not Cua tokens, so no element token is passed).
+                    self.cua.act(t.pid, t.window_id, {}, op, value, key)
+                    status, settled = "done", None
+                    cur, _ = self._read(t, fresh=True)
+                    d = Decision(CUA, "map")
+                elif cur.engine == ARC:
                     res = self.arc.act(self._snaps[t.key], element.native, op, value, key)
                     status = res.status
                     if res.snapshot is not None:

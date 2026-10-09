@@ -84,7 +84,7 @@ Every op is a JSON-RPC method on the sidecar's socket.
 
 - `npm run prepare:allternit-driver` (`surfaces/allternit-desktop/scripts/prepare-allternit-driver.cjs`) copies `domains/computer-use/driver` into the app's resources and stages a relocatable CPython 3.12 per target from python-build-standalone, pinned by sha256. macOS targets also get the pinned PyObjC frameworks arc needs. A venv would point at the build machine's Python, which users don't have.
 - The Desktop app starts the sidecar after Cua Driver, through `spawnSidecar`, so it and its `cua-driver mcp` child stop with the app. Python runs with `-B -s -E`: no bytecode written into the signed bundle, no user site-packages or `PYTHON*` variables.
-- The socket is `computer-use/allternit-driver.sock` in the app's data folder, mode 0600 in a 0700 folder. Windows listens on 127.0.0.1 on a random port and every request carries a per-launch token.
+- The socket is `computer-use/allternit-driver.sock` in the app's data folder, mode 0600 in a 0700 folder. Windows listens on 127.0.0.1 on a random port and every request carries a per-launch token; allternit-api connects there over loopback TCP (env `ALLTERNIT_DRIVER_ENDPOINT` + `ALLTERNIT_DRIVER_TOKEN`), so this-device `read_ui`/`act`/pixel input all go through the one driver on Windows too — the Cua CLI fallback remains only for Desktops too old to ship the sidecar.
 - allternit-api gets the socket in `ALLTERNIT_DRIVER_SOCKET` and sends this Mac's pointer and keyboard input through `pixel_*`. `hold_key` still posts CoreGraphics events itself. If an older Desktop app runs without the sidecar, input falls back to Cua Driver's CLI.
 
 ## Measurements

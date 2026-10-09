@@ -20,11 +20,24 @@
         "allternit-ai/src/lib/attachments"
       ],
       "decisions": [
-        {"on": "2026-10-01", "note": "Resting orb sits under the last message on every surface (ai #357)."},
-        {"on": "2026-10-07", "note": "Polish pass from three reference shots: card-in-tray composer, numbered question card, working pill and shaped placeholders, one PreviewCard for every grid, Reply tray (the quote travels in the message text). Composer images now reach the model as file parts via `attachments` on /agent-chat and /ai/chat; before, they were never sent. Eoj: cards below the box on Desktop, previews above it on phone; neutral beam, never tan; full-colour logos."},
-        {"on": "2026-10-08", "note": "Any file or folder can be attached (no allow-list; text sniffed by content). Cards appear at once with Reading…; video/audio/other files go as Allternit Cloud links; sent messages show chips, not extracted text. Eoj: no grey ring on the composer; the tray only shows behind a reply strip or attachment cards."}
+        {
+          "on": "2026-10-01",
+          "note": "Resting orb sits under the last message on every surface (ai #357)."
+        },
+        {
+          "on": "2026-10-07",
+          "note": "Polish pass from three reference shots: card-in-tray composer, numbered question card, working pill and shaped placeholders, one PreviewCard for every grid, Reply tray (the quote travels in the message text). Composer images now reach the model as file parts via `attachments` on /agent-chat and /ai/chat; before, they were never sent. Eoj: cards below the box on Desktop, previews above it on phone; neutral beam, never tan; full-colour logos."
+        },
+        {
+          "on": "2026-10-08",
+          "note": "Any file or folder can be attached (no allow-list; text sniffed by content). Cards appear at once with Reading\u2026; video/audio/other files go as Allternit Cloud links; sent messages show chips, not extracted text. Eoj: no grey ring on the composer; the tray only shows behind a reply strip or attachment cards."
+        }
       ],
-      "evidence": ["allternit/surfaces/docs/api/agent-chat.mdx", "allternit/cmd/allternit-api/src/chat_routes.rs", "allternit/surfaces/docs/guides/chat-composer.mdx"]
+      "evidence": [
+        "allternit/surfaces/docs/api/agent-chat.mdx",
+        "allternit/cmd/allternit-api/src/chat_routes.rs",
+        "allternit/surfaces/docs/guides/chat-composer.mdx"
+      ]
     },
     {
       "id": "feature:interactive-answers",
@@ -48,12 +61,27 @@
         "allternit/cmd/allternit-api/src/mcp_*"
       ],
       "decisions": [
-        {"on": "2026-10-07", "note": "Renderer shipped on the polish primitives, with deterministic local state via OpenUI $state and no eval. The model-side prompt is a separate session by Eoj's call: no per-model testing, no training."},
-        {"on": "2026-10-08", "note": "The app (not gizzi-code) sends the manual as systemPrompt / '+' system, so each build only asks for components it renders and the TUI and channels never get it. Settings → Response style → Layout and visuals (Auto / Text only) is per device, like the Memory switches, to avoid a manual prod migration."},
-        {"on": "2026-10-08", "note": "Live data through the MCP Apps bridge: Query() only on read-only tools, writes only as a Mutation() from a button with an Allow bar every time. OpenUI Gateway and observability-cloud are not used (owned infra; no data to Thesys). react-lang pinned to 0.3.1 to respect pnpm's minimum release age."},
-        {"on": "2026-10-08", "note": "Removed the [v:...] pseudo-syntax, AllternitOpenUIRenderer/registry, BlueprintCanvas, the test-only code-compiler and the fake render_walkthrough tool. Design mode previews the reply's card with DESIGN.md tokens; UI Forge is the card playground."}
+        {
+          "on": "2026-10-07",
+          "note": "Renderer shipped on the polish primitives, with deterministic local state via OpenUI $state and no eval. The model-side prompt is a separate session by Eoj's call: no per-model testing, no training."
+        },
+        {
+          "on": "2026-10-08",
+          "note": "The app (not gizzi-code) sends the manual as systemPrompt / '+' system, so each build only asks for components it renders and the TUI and channels never get it. Settings \u2192 Response style \u2192 Layout and visuals (Auto / Text only) is per device, like the Memory switches, to avoid a manual prod migration."
+        },
+        {
+          "on": "2026-10-08",
+          "note": "Live data through the MCP Apps bridge: Query() only on read-only tools, writes only as a Mutation() from a button with an Allow bar every time. OpenUI Gateway and observability-cloud are not used (owned infra; no data to Thesys). react-lang pinned to 0.3.1 to respect pnpm's minimum release age."
+        },
+        {
+          "on": "2026-10-08",
+          "note": "Removed the [v:...] pseudo-syntax, AllternitOpenUIRenderer/registry, BlueprintCanvas, the test-only code-compiler and the fake render_walkthrough tool. Design mode previews the reply's card with DESIGN.md tokens; UI Forge is the card playground."
+        }
       ],
-      "evidence": ["allternit/surfaces/docs/guides/interactive-answers.mdx", "allternit/surfaces/docs/release-notes.mdx"]
+      "evidence": [
+        "allternit/surfaces/docs/guides/interactive-answers.mdx",
+        "allternit/surfaces/docs/release-notes.mdx"
+      ]
     },
     {
       "id": "feature:bot-threads",
@@ -73,9 +101,15 @@
         "allternit/cmd/gizzi-code/src/runtime/bots"
       ],
       "decisions": [
-        {"on": "2026-09-28", "note": "Bot templates shipped and the old Bot Hub was removed (ai #209, #210)."}
+        {
+          "on": "2026-09-28",
+          "note": "Bot templates shipped and the old Bot Hub was removed (ai #209, #210)."
+        }
       ],
-      "evidence": ["allternit/surfaces/docs/guides/bot-threads.mdx", "allternit/surfaces/docs/guides/bot-templates.mdx"]
+      "evidence": [
+        "allternit/surfaces/docs/guides/bot-threads.mdx",
+        "allternit/surfaces/docs/guides/bot-templates.mdx"
+      ]
     },
     {
       "id": "feature:channels",
@@ -98,11 +132,24 @@
         "allternit/services/mail-relay"
       ],
       "decisions": [
-        {"on": "2026-10-06", "note": "Teams and WhatsApp Business connect merged (platform #1340, ai #441)."},
-        {"on": "2026-10-06", "note": "Texts only go to people who texted first; contacts and invites get calls only (platform #1343)."},
-        {"on": "2026-10-06", "note": "Bot email on customer domains runs through mx.allternit.com on the standby server, not the prod VPS."}
+        {
+          "on": "2026-10-06",
+          "note": "Teams and WhatsApp Business connect merged (platform #1340, ai #441)."
+        },
+        {
+          "on": "2026-10-06",
+          "note": "Texts only go to people who texted first; contacts and invites get calls only (platform #1343)."
+        },
+        {
+          "on": "2026-10-06",
+          "note": "Bot email on customer domains runs through mx.allternit.com on the standby server, not the prod VPS."
+        }
       ],
-      "evidence": ["allternit/surfaces/docs/guides/messaging-channels.mdx", "allternit/surfaces/docs/guides/whatsapp-business.mdx", "allternit/cmd/allternit-cloud-api/src/routes/phone.rs"]
+      "evidence": [
+        "allternit/surfaces/docs/guides/messaging-channels.mdx",
+        "allternit/surfaces/docs/guides/whatsapp-business.mdx",
+        "allternit/cmd/allternit-cloud-api/src/routes/phone.rs"
+      ]
     },
     {
       "id": "feature:twin",
@@ -118,7 +165,10 @@
         "allternit/cmd/allternit-api/src/inbox_*"
       ],
       "decisions": [],
-      "evidence": ["allternit/surfaces/docs/guides/your-twin.mdx", "allternit/surfaces/docs/guides/needs-you-inbox.mdx"]
+      "evidence": [
+        "allternit/surfaces/docs/guides/your-twin.mdx",
+        "allternit/surfaces/docs/guides/needs-you-inbox.mdx"
+      ]
     },
     {
       "id": "feature:factory-teams",
@@ -136,11 +186,23 @@
         "allternit/cmd/gizzi-code/src/cli/factory"
       ],
       "decisions": [
-        {"on": "2026-10-07", "note": "Remote panes (platform #1396) and Factory on cloud computers (#1397) merged and deployed."},
-        {"on": "2026-10-07", "note": "Save as template and a team picker added; m.allternit.com redeployed with them."},
-        {"on": "2026-10-07", "note": "Remote bots are mirrored over the peer port instead of a Mesh pane endpoint, so the other computer's pane shell is not exposed."}
+        {
+          "on": "2026-10-07",
+          "note": "Remote panes (platform #1396) and Factory on cloud computers (#1397) merged and deployed."
+        },
+        {
+          "on": "2026-10-07",
+          "note": "Save as template and a team picker added; m.allternit.com redeployed with them."
+        },
+        {
+          "on": "2026-10-07",
+          "note": "Remote bots are mirrored over the peer port instead of a Mesh pane endpoint, so the other computer's pane shell is not exposed."
+        }
       ],
-      "evidence": ["allternit/surfaces/docs/factory/agents.mdx", "allternit/surfaces/docs/factory/how-work-moves.mdx"]
+      "evidence": [
+        "allternit/surfaces/docs/factory/agents.mdx",
+        "allternit/surfaces/docs/factory/how-work-moves.mdx"
+      ]
     },
     {
       "id": "feature:memory-drive",
@@ -157,10 +219,19 @@
         "allternit/services/memory"
       ],
       "decisions": [
-        {"on": "2026-10-06", "note": "All phases merged (platform #1348, #1362; ai #445, #448)."},
-        {"on": "2026-10-06", "note": "Computer sync runs inside the Desktop app, two-way, with no main copy."}
+        {
+          "on": "2026-10-06",
+          "note": "All phases merged (platform #1348, #1362; ai #445, #448)."
+        },
+        {
+          "on": "2026-10-06",
+          "note": "Computer sync runs inside the Desktop app, two-way, with no main copy."
+        }
       ],
-      "evidence": ["allternit/surfaces/docs/guides/memory-drive.mdx", "allternit/surfaces/docs/api/memory-drive.mdx"]
+      "evidence": [
+        "allternit/surfaces/docs/guides/memory-drive.mdx",
+        "allternit/surfaces/docs/api/memory-drive.mdx"
+      ]
     },
     {
       "id": "feature:voice",
@@ -177,10 +248,19 @@
         "allternit/services/voice-tts"
       ],
       "decisions": [
-        {"on": "2026-10-02", "note": "Light-standard plan approved: speech runs in the Rust voice service on any device; cloud voice runs on the standby server."},
-        {"on": "2026-10-02", "note": "Cloud Voice priced at $0.08 per minute, with 100 minutes in Plus."}
+        {
+          "on": "2026-10-02",
+          "note": "Light-standard plan approved: speech runs in the Rust voice service on any device; cloud voice runs on the standby server."
+        },
+        {
+          "on": "2026-10-02",
+          "note": "Cloud Voice priced at $0.08 per minute, with 100 minutes in Plus."
+        }
       ],
-      "evidence": ["allternit/surfaces/docs/guides/voice.mdx", "allternit/surfaces/docs/api/voice-tickets.mdx"]
+      "evidence": [
+        "allternit/surfaces/docs/guides/voice.mdx",
+        "allternit/surfaces/docs/api/voice-tickets.mdx"
+      ]
     },
     {
       "id": "feature:computer-use",
@@ -201,10 +281,19 @@
         "allternit/platform/packages/computer-use-protocol"
       ],
       "decisions": [
-        {"on": "2026-10-09", "note": "D0 cleanup: removed dead gizzi computer use, sdk/computer-use, sdk/computers, the computer-use plugins package, duplicate canonical providers, the mobile harness and pyautogui; gateway /v1/computer, /v1/run/hybrid, /v1/run/parallel gone; allternit-api computer_screenshot/mouse/keyboard tools now alias the computer toolset executor."},
-        {"on": "2026-10-07", "note": "Agent cursor overlay (computer toolset P5) in every computer viewer, from vendored MIT @trycua/cursor-motion, driven by computer.action events; style in Settings → Computers."}
+        {
+          "on": "2026-10-09",
+          "note": "D0 cleanup: removed dead gizzi computer use, sdk/computer-use, sdk/computers, the computer-use plugins package, duplicate canonical providers, the mobile harness and pyautogui; gateway /v1/computer, /v1/run/hybrid, /v1/run/parallel gone; allternit-api computer_screenshot/mouse/keyboard tools now alias the computer toolset executor."
+        },
+        {
+          "on": "2026-10-07",
+          "note": "Agent cursor overlay (computer toolset P5) in every computer viewer, from vendored MIT @trycua/cursor-motion, driven by computer.action events; style in Settings \u2192 Computers."
+        }
       ],
-      "evidence": ["allternit/surfaces/docs/api/aci.mdx", "allternit/surfaces/docs/guides/computers-and-apps.mdx"]
+      "evidence": [
+        "allternit/surfaces/docs/api/aci.mdx",
+        "allternit/surfaces/docs/guides/computers-and-apps.mdx"
+      ]
     },
     {
       "id": "feature:cloud-computers",
@@ -223,17 +312,26 @@
         "allternit/cmd/allternit-api/src/computer_*"
       ],
       "decisions": [
-        {"on": "2026-10-08", "note": "Customer computers get nightly encrypted off-site backups plus owner restore points and downloads (platform #1405, ai #454)."},
-        {"on": "2026-10-01", "note": "First real Plus customer was provisioned automatically."}
+        {
+          "on": "2026-10-08",
+          "note": "Customer computers get nightly encrypted off-site backups plus owner restore points and downloads (platform #1405, ai #454)."
+        },
+        {
+          "on": "2026-10-01",
+          "note": "First real Plus customer was provisioned automatically."
+        }
       ],
-      "evidence": ["allternit/cmd/allternit-cloud-api/src/services/provisioning.rs", "allternit/cmd/allternit-cloud-api/src/routes/billing_webhooks.rs"]
+      "evidence": [
+        "allternit/cmd/allternit-cloud-api/src/services/provisioning.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/billing_webhooks.rs"
+      ]
     },
     {
       "id": "feature:computer-backups",
       "label": "Cloud computer backups and restore points",
       "product": "product:cloud-computers",
       "status": "live",
-      "description": "Every customer cloud computer is backed up off-site each night, encrypted. Owners can take up to 5 restore points, roll back to one, and download a full copy of the computer from Settings → Computers on every surface.",
+      "description": "Every customer cloud computer is backed up off-site each night, encrypted. Owners can take up to 5 restore points, roll back to one, and download a full copy of the computer from Settings \u2192 Computers on every surface.",
       "touches": [
         "allternit-ai/src/components/computers",
         "allternit-ai/src/lib",
@@ -242,10 +340,20 @@
         "allternit/cmd/allternit-cloud-api/src/services"
       ],
       "decisions": [
-        {"on": "2026-10-08", "note": "Nightly incus-export backups to R2 on allternit-standby (8-day daily, 35-day weekly), same key scheme as the host backup; first run verified by decrypting it."},
-        {"on": "2026-10-08", "note": "Restore points and downloads are cloud-api control-plane routes, not the computer's own runtime (which has no Incus access). Cap of 5; download links are 1-hour tokens."}
+        {
+          "on": "2026-10-08",
+          "note": "Nightly incus-export backups to R2 on allternit-standby (8-day daily, 35-day weekly), same key scheme as the host backup; first run verified by decrypting it."
+        },
+        {
+          "on": "2026-10-08",
+          "note": "Restore points and downloads are cloud-api control-plane routes, not the computer's own runtime (which has no Incus access). Cap of 5; download links are 1-hour tokens."
+        }
       ],
-      "evidence": ["allternit/infrastructure/computer-backup/README.md", "allternit/surfaces/docs/guides/computers-and-apps.mdx", "allternit/cmd/allternit-cloud-api/src/routes/provisioned_instances.rs"]
+      "evidence": [
+        "allternit/infrastructure/computer-backup/README.md",
+        "allternit/surfaces/docs/guides/computers-and-apps.mdx",
+        "allternit/cmd/allternit-cloud-api/src/routes/provisioned_instances.rs"
+      ]
     },
     {
       "id": "feature:office",
@@ -267,9 +375,16 @@
         "allternit-ai/src/components/artifacts"
       ],
       "decisions": [
-        {"on": "2026-10-09", "note": "Docs, Slides and Sheets are also artifact kinds: the artifact window mounts the same editor packs on a scratch document id seeded from the artifact body and autosaves each change as a version (artifacts v2 phase 4)."}
+        {
+          "on": "2026-10-09",
+          "note": "Docs, Slides and Sheets are also artifact kinds: the artifact window mounts the same editor packs on a scratch document id seeded from the artifact body and autosaves each change as a version (artifacts v2 phase 4)."
+        }
       ],
-      "evidence": ["allternit/surfaces/docs/api/office.mdx", "allternit/surfaces/docs/surfaces/office-suite.mdx", "allternit/surfaces/docs/guides/artifact-editors.mdx"]
+      "evidence": [
+        "allternit/surfaces/docs/api/office.mdx",
+        "allternit/surfaces/docs/surfaces/office-suite.mdx",
+        "allternit/surfaces/docs/guides/artifact-editors.mdx"
+      ]
     },
     {
       "id": "feature:mcp-apps",
@@ -288,10 +403,19 @@
         "allternit/sdk/mcp-events"
       ],
       "decisions": [
-        {"on": "2026-09-30", "note": "The program ships under the name MCP Apps."},
-        {"on": "2026-10-06", "note": "Events program live: approval_required events carry an approve link (platform #1361, ai #447)."}
+        {
+          "on": "2026-09-30",
+          "note": "The program ships under the name MCP Apps."
+        },
+        {
+          "on": "2026-10-06",
+          "note": "Events program live: approval_required events carry an approve link (platform #1361, ai #447)."
+        }
       ],
-      "evidence": ["allternit/surfaces/docs/guides/mcp-events.mdx", "allternit/surfaces/docs/guides/mcp-apps-status.mdx"]
+      "evidence": [
+        "allternit/surfaces/docs/guides/mcp-events.mdx",
+        "allternit/surfaces/docs/guides/mcp-apps-status.mdx"
+      ]
     },
     {
       "id": "feature:usage-limits",
@@ -308,9 +432,15 @@
         "allternit/cmd/allternit-api/src/credits_*"
       ],
       "decisions": [
-        {"on": "2026-10-01", "note": "Usage dashboard added to the phone layout (ai #355)."}
+        {
+          "on": "2026-10-01",
+          "note": "Usage dashboard added to the phone layout (ai #355)."
+        }
       ],
-      "evidence": ["allternit/surfaces/docs/api/usage.mdx", "allternit/surfaces/docs/admin/spend-limits.mdx"]
+      "evidence": [
+        "allternit/surfaces/docs/api/usage.mdx",
+        "allternit/surfaces/docs/admin/spend-limits.mdx"
+      ]
     },
     {
       "id": "feature:projects",
@@ -326,9 +456,14 @@
         "allternit/cmd/allternit-api/src/thread_*"
       ],
       "decisions": [
-        {"on": "2026-10-01", "note": "Project threads match bot threads, extending the existing page instead of redesigning it (ai #358)."}
+        {
+          "on": "2026-10-01",
+          "note": "Project threads match bot threads, extending the existing page instead of redesigning it (ai #358)."
+        }
       ],
-      "evidence": ["allternit/surfaces/docs/guides/project-coordination.mdx"]
+      "evidence": [
+        "allternit/surfaces/docs/guides/project-coordination.mdx"
+      ]
     },
     {
       "id": "feature:cowork",
@@ -345,7 +480,10 @@
         "allternit/platform/packages/cowork-engine"
       ],
       "decisions": [],
-      "evidence": ["allternit/surfaces/docs/api/cowork.mdx", "allternit/surfaces/docs/api/cowork-teams.mdx"]
+      "evidence": [
+        "allternit/surfaces/docs/api/cowork.mdx",
+        "allternit/surfaces/docs/api/cowork-teams.mdx"
+      ]
     },
     {
       "id": "feature:phone-layout",
@@ -361,10 +499,19 @@
         "surface:ai"
       ],
       "decisions": [
-        {"on": "2026-09-30", "note": "Phones get PhoneShell on ai.allternit.com (ai #341)."},
-        {"on": "2026-10-02", "note": "Every feature lands on Desktop, the ai.allternit.com phone layout and the PWA in the same change."}
+        {
+          "on": "2026-09-30",
+          "note": "Phones get PhoneShell on ai.allternit.com (ai #341)."
+        },
+        {
+          "on": "2026-10-02",
+          "note": "Every feature lands on Desktop, the ai.allternit.com phone layout and the PWA in the same change."
+        }
       ],
-      "evidence": ["allternit/surfaces/docs/surfaces/mobile.mdx", "allternit-ai/src/fabric-session/phone/PhoneShell.tsx"]
+      "evidence": [
+        "allternit/surfaces/docs/surfaces/mobile.mdx",
+        "allternit-ai/src/fabric-session/phone/PhoneShell.tsx"
+      ]
     },
     {
       "id": "feature:platform-api",
@@ -378,11 +525,22 @@
         "allternit/surfaces/platform.allternit.com"
       ],
       "decisions": [
-        {"on": "2026-10-07", "note": "Phases 3 to 5 deployed; P4 channels and twin merged (#1394)."},
-        {"on": "2026-10-07", "note": "Creating Stripe meters, products and prices stays a dry run until the amounts are signed off."},
-        {"on": "2026-10-08", "note": "Launch: card required for every project (402 payment_method_required), console Billing page with Stripe Checkout (Pay as you go / Growth), webhook sets the project's customer and plan, Growth $300 credit grant per invoice, developer terms and AUP published and accepted at key creation, SDK publish workflow."}
+        {
+          "on": "2026-10-07",
+          "note": "Phases 3 to 5 deployed; P4 channels and twin merged (#1394)."
+        },
+        {
+          "on": "2026-10-07",
+          "note": "Creating Stripe meters, products and prices stays a dry run until the amounts are signed off."
+        },
+        {
+          "on": "2026-10-08",
+          "note": "Launch: card required for every project (402 payment_method_required), console Billing page with Stripe Checkout (Pay as you go / Growth), webhook sets the project's customer and plan, Growth $300 credit grant per invoice, developer terms and AUP published and accepted at key creation, SDK publish workflow."
+        }
       ],
-      "evidence": ["allternit/surfaces/docs/api/platform/billing.mdx"]
+      "evidence": [
+        "allternit/surfaces/docs/api/platform/billing.mdx"
+      ]
     },
     {
       "id": "feature:hosted-computer-driver",
@@ -398,9 +556,15 @@
         "allternit/surfaces/docs"
       ],
       "decisions": [
-        {"on": "2026-10-07", "note": "Gated per project by hosted_driver_enabled, set by Allternit only; outside-developer computers can't reach private ranges or 169.254.169.254; pricing to be announced."}
+        {
+          "on": "2026-10-07",
+          "note": "Gated per project by hosted_driver_enabled, set by Allternit only; outside-developer computers can't reach private ranges or 169.254.169.254; pricing to be announced."
+        }
       ],
-      "evidence": ["allternit/surfaces/docs", "allternit/surfaces/docs"]
+      "evidence": [
+        "allternit/surfaces/docs",
+        "allternit/surfaces/docs"
+      ]
     },
     {
       "id": "feature:bot-avatars",
@@ -416,9 +580,14 @@
         "allternit/platform/packages/avatar-adapters"
       ],
       "decisions": [
-        {"on": "2026-10-04", "note": "Photo avatars included with plans (Plus 5, Super 25, Ultra 50) with a $4 cost cap."}
+        {
+          "on": "2026-10-04",
+          "note": "Photo avatars included with plans (Plus 5, Super 25, Ultra 50) with a $4 cost cap."
+        }
       ],
-      "evidence": ["allternit/surfaces/docs/guides/bot-avatars.mdx"]
+      "evidence": [
+        "allternit/surfaces/docs/guides/bot-avatars.mdx"
+      ]
     },
     {
       "id": "feature:computer-toolset",
@@ -433,11 +602,30 @@
         "allternit/domains/computer-use/driver"
       ],
       "decisions": [
-        {"on": "2026-10-07", "note": "Eoj: computer use works for every model. Anthropic's toolsets are absorbed as one adapter into our contract, gizzi stays the only loop, and there are no hosted third-party drivers. The old gizzi browser tool (goal-driven, a second loop) was removed in favour of the toolset browser tool."},
-        {"on": "2026-10-08", "note": "Member gaps closed: the browser gateway runs all 31 members (refs, tabs with browser_state, console, network, JS, upload) through /v1/toolset/browser with an http(s)-only URL policy and public-only hosts for cloud targets; Windows guests run all 17 computer members through PowerShell/user32; this Mac gets cursor_position, modifier clicks and emulated mouse down/up. hold_key on macOS stays off: Cua Driver 0.34 has no hold call there. Optional browser members need an explicit enable."},
-        {"on": "2026-10-09", "note": "D1: the Allternit Driver sidecar (domains/computer-use/driver) sits between allternit-api and the OS: a forked arc-driver (macOS AX reads, settle, freshness guard, menus) and Cua Driver 0.34 (all OS) behind one JSON-RPC API, with our own element ids and map versions, a learned per-op router, and one reader and one input owner per window. This-device input goes through its pixel_* ops; the Desktop app launches it with a bundled Python."}
+        {
+          "on": "2026-10-07",
+          "note": "Eoj: computer use works for every model. Anthropic's toolsets are absorbed as one adapter into our contract, gizzi stays the only loop, and there are no hosted third-party drivers. The old gizzi browser tool (goal-driven, a second loop) was removed in favour of the toolset browser tool."
+        },
+        {
+          "on": "2026-10-08",
+          "note": "Member gaps closed: the browser gateway runs all 31 members (refs, tabs with browser_state, console, network, JS, upload) through /v1/toolset/browser with an http(s)-only URL policy and public-only hosts for cloud targets; Windows guests run all 17 computer members through PowerShell/user32; this Mac gets cursor_position, modifier clicks and emulated mouse down/up. hold_key on macOS stays off: Cua Driver 0.34 has no hold call there. Optional browser members need an explicit enable."
+        },
+        {
+          "on": "2026-10-09",
+          "note": "D1: the Allternit Driver sidecar (domains/computer-use/driver) sits between allternit-api and the OS: a forked arc-driver (macOS AX reads, settle, freshness guard, menus) and Cua Driver 0.34 (all OS) behind one JSON-RPC API, with our own element ids and map versions, a learned per-op router, and one reader and one input owner per window. This-device input goes through its pixel_* ops; the Desktop app launches it with a bundled Python."
+        },
+        {
+          "on": "2026-10-09",
+          "note": "D2: contract v2 (allternit.computer.v2) ships \u2014 the 17 pixel members plus read_ui/act/run_batch/verify through the driver sidecar, request_human (lease pause, live view with input enabled, POST /api/v1/computers/:id/human-done resume) and use_credential (sealed vault + macOS Keychain + Bitwarden/1Password CLI adapters + RFC 6238 TOTP; values never enter the model context or logs; optional app/domain bindings). gizzi offers the structured members as the computer_v2 function tool to every model family (Claude keeps its native toolset for the pixel members). Windows this-device input moves off the Cua CLI fallback onto the sidecar over token-gated loopback TCP."
+        }
       ],
-      "evidence": ["allternit/surfaces/docs/tools/computer-toolset.mdx", "allternit/contracts/computer-toolset/README.md", "allternit/cmd/allternit-api/src/computer_toolset.rs", "allternit/surfaces/docs/tools/allternit-driver.mdx"]
+      "evidence": [
+        "allternit/surfaces/docs/tools/computer-toolset.mdx",
+        "allternit/contracts/computer-toolset/README.md",
+        "allternit/cmd/allternit-api/src/computer_toolset.rs",
+        "allternit/surfaces/docs/tools/allternit-driver.mdx",
+        "allternit/surfaces/docs/tools/computer-credentials.mdx"
+      ]
     },
     {
       "id": "feature:decision-runtime",
@@ -451,9 +639,16 @@
         "allternit/surfaces/allternit-desktop"
       ],
       "decisions": [
-        {"on": "2026-10-09", "note": "E1: the Decision Runtime lives in the Agency Kernel slot (no second runtime). open-jev's one-pass scoring is ported as an owned sidecar; Qwen3.5-4B is the default (Apache-2.0, no HF login), Gemma 3 4B a config switch. Packages and weights install on first use; nothing heavy ships in the app. Training our own model is the separate M track."}
+        {
+          "on": "2026-10-09",
+          "note": "E1: the Decision Runtime lives in the Agency Kernel slot (no second runtime). open-jev's one-pass scoring is ported as an owned sidecar; Qwen3.5-4B is the default (Apache-2.0, no HF login), Gemma 3 4B a config switch. Packages and weights install on first use; nothing heavy ships in the app. Training our own model is the separate M track."
+        }
       ],
-      "evidence": ["allternit/surfaces/docs/api/agency/decisions.mdx", "allternit/cmd/allternit-api/src/agency_api/decisions/mod.rs", "allternit/domains/decision-runtime/allternit_decisions/engine_mlx.py"]
+      "evidence": [
+        "allternit/surfaces/docs/api/agency/decisions.mdx",
+        "allternit/cmd/allternit-api/src/agency_api/decisions/mod.rs",
+        "allternit/domains/decision-runtime/allternit_decisions/engine_mlx.py"
+      ]
     },
     {
       "id": "feature:project-appearance",
@@ -563,7 +758,10 @@
         "allternit/cmd/gizzi-code/src/runtime/integrations"
       ],
       "decisions": [
-        {"on": "2026-10-09", "note": "No server-side render route: no cloud render worker exists, so web and PWA export in the tab (WebCodecs + mediabunny) and Desktop uses local ffmpeg. Videos are silent. The body is data only, never code."}
+        {
+          "on": "2026-10-09",
+          "note": "No server-side render route: no cloud render worker exists, so web and PWA export in the tab (WebCodecs + mediabunny) and Desktop uses local ffmpeg. Videos are silent. The body is data only, never code."
+        }
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/motion.mdx",
@@ -582,9 +780,15 @@
         "allternit/cmd/allternit-cloud-api/src/routes/mod_*"
       ],
       "decisions": [
-        {"on": "2026-10-08", "note": "Contract docs/design/artifacts-v2.md section 5: create an artifact when content is substantial (~15+ lines), self-contained, likely edited or reused, or asked for. gizzi mints art_+ULID ids; 409 stale_version makes the model read, merge and retry."}
+        {
+          "on": "2026-10-08",
+          "note": "Contract docs/design/artifacts-v2.md section 5: create an artifact when content is substantial (~15+ lines), self-contained, likely edited or reused, or asked for. gizzi mints art_+ULID ids; 409 stale_version makes the model read, merge and retry."
+        }
       ],
-      "evidence": ["allternit/docs/design/artifacts-v2.md", "allternit/surfaces/docs/tools/artifact-tools.mdx"]
+      "evidence": [
+        "allternit/docs/design/artifacts-v2.md",
+        "allternit/surfaces/docs/tools/artifact-tools.mdx"
+      ]
     }
   ],
   "journeys": [
@@ -593,108 +797,263 @@
       "label": "Answer with a live data card",
       "description": "From a question to a card that reads your connected app and, with your approval, changes it.",
       "steps": [
-        {"at": "allternit-ai/src/lib/agents", "says": "On send, the app adds the interactive-answers manual (with your connector tools) to the turn's system prompt, unless Settings says Text only."},
-        {"at": "allternit/cmd/gizzi-code/src/runtime/server", "says": "gizzi-code appends it to its own system prompt and the model replies with an openui fence."},
-        {"at": "allternit-ai/src/components/ai-elements", "says": "The transcript splits the fence out and renders the card as it streams."},
-        {"at": "allternit-ai/src/lib/openui", "says": "Query() runs a read-only tool through the MCP Apps bridge; a Mutation() waits for the Allow bar."},
-        {"at": "allternit/cmd/allternit-api/src/mcp_*", "says": "The bridge calls the connector with your own credentials and returns the result straight to the card, not the model."}
+        {
+          "at": "allternit-ai/src/lib/agents",
+          "says": "On send, the app adds the interactive-answers manual (with your connector tools) to the turn's system prompt, unless Settings says Text only."
+        },
+        {
+          "at": "allternit/cmd/gizzi-code/src/runtime/server",
+          "says": "gizzi-code appends it to its own system prompt and the model replies with an openui fence."
+        },
+        {
+          "at": "allternit-ai/src/components/ai-elements",
+          "says": "The transcript splits the fence out and renders the card as it streams."
+        },
+        {
+          "at": "allternit-ai/src/lib/openui",
+          "says": "Query() runs a read-only tool through the MCP Apps bridge; a Mutation() waits for the Allow bar."
+        },
+        {
+          "at": "allternit/cmd/allternit-api/src/mcp_*",
+          "says": "The bridge calls the connector with your own credentials and returns the result straight to the card, not the model."
+        }
       ],
-      "evidence": ["allternit/surfaces/docs/guides/interactive-answers.mdx", "allternit/cmd/allternit-api/src/mcp_apps.rs"]
+      "evidence": [
+        "allternit/surfaces/docs/guides/interactive-answers.mdx",
+        "allternit/cmd/allternit-api/src/mcp_apps.rs"
+      ]
     },
     {
       "id": "journey:chat-reply",
       "label": "Send a message, get a streamed reply",
       "description": "What happens between pressing send in chat and the first token appearing.",
       "steps": [
-        {"at": "surface:ai", "says": "You type in ai.allternit.com (or Desktop, or the phone layout)."},
-        {"at": "allternit-ai/src/views/chat", "says": "The chat view sends the message."},
-        {"at": "allternit-ai/src/lib/chat", "says": "The chat client opens the request and an event stream."},
-        {"at": "allternit/cmd/allternit-api/src/chat_*", "says": "allternit-api records the turn."},
-        {"at": "allternit/cmd/gizzi-code/src/runtime/server", "says": "allternit-api calls gizzi-code over HTTP for the model work; it never calls a provider directly."},
-        {"at": "allternit/cmd/gizzi-code/src/runtime/providers", "says": "gizzi-code routes to the chosen model provider."},
-        {"at": "allternit-ai/src/lib/sse", "says": "Tokens stream back and render as they arrive."}
+        {
+          "at": "surface:ai",
+          "says": "You type in ai.allternit.com (or Desktop, or the phone layout)."
+        },
+        {
+          "at": "allternit-ai/src/views/chat",
+          "says": "The chat view sends the message."
+        },
+        {
+          "at": "allternit-ai/src/lib/chat",
+          "says": "The chat client opens the request and an event stream."
+        },
+        {
+          "at": "allternit/cmd/allternit-api/src/chat_*",
+          "says": "allternit-api records the turn."
+        },
+        {
+          "at": "allternit/cmd/gizzi-code/src/runtime/server",
+          "says": "allternit-api calls gizzi-code over HTTP for the model work; it never calls a provider directly."
+        },
+        {
+          "at": "allternit/cmd/gizzi-code/src/runtime/providers",
+          "says": "gizzi-code routes to the chosen model provider."
+        },
+        {
+          "at": "allternit-ai/src/lib/sse",
+          "says": "Tokens stream back and render as they arrive."
+        }
       ],
-      "evidence": ["allternit/cmd/allternit-api/src/chat_routes.rs", "allternit/surfaces/docs/api/agent-chat.mdx"]
+      "evidence": [
+        "allternit/cmd/allternit-api/src/chat_routes.rs",
+        "allternit/surfaces/docs/api/agent-chat.mdx"
+      ]
     },
     {
       "id": "journey:sms-to-bot",
       "label": "Text your bot",
       "description": "A text to a bot's number reaches the bot on your computer and the reply goes back by SMS.",
       "steps": [
-        {"at": "allternit/cmd/allternit-cloud-api/src/carriers", "says": "The carrier posts the inbound text to the number's relay address."},
-        {"at": "allternit/cmd/allternit-cloud-api/src/routes/channel_*", "says": "The cloud API checks opt-in and queues the text for your runtime."},
-        {"at": "allternit/cmd/allternit-api/src/channel_*", "says": "Your allternit-api picks it up from the relay."},
-        {"at": "allternit/cmd/allternit-api/src/bot_*", "says": "The bot that owns the number handles it in its thread."},
-        {"at": "allternit/cmd/gizzi-code/src/runtime/bots", "says": "gizzi-code runs the bot's turn."},
-        {"at": "allternit/cmd/allternit-cloud-api/src/routes/phone_*", "says": "The reply leaves through the cloud API and the carrier."}
+        {
+          "at": "allternit/cmd/allternit-cloud-api/src/carriers",
+          "says": "The carrier posts the inbound text to the number's relay address."
+        },
+        {
+          "at": "allternit/cmd/allternit-cloud-api/src/routes/channel_*",
+          "says": "The cloud API checks opt-in and queues the text for your runtime."
+        },
+        {
+          "at": "allternit/cmd/allternit-api/src/channel_*",
+          "says": "Your allternit-api picks it up from the relay."
+        },
+        {
+          "at": "allternit/cmd/allternit-api/src/bot_*",
+          "says": "The bot that owns the number handles it in its thread."
+        },
+        {
+          "at": "allternit/cmd/gizzi-code/src/runtime/bots",
+          "says": "gizzi-code runs the bot's turn."
+        },
+        {
+          "at": "allternit/cmd/allternit-cloud-api/src/routes/phone_*",
+          "says": "The reply leaves through the cloud API and the carrier."
+        }
       ],
-      "evidence": ["allternit/cmd/allternit-cloud-api/src/routes/phone.rs", "allternit/surfaces/docs/guides/phone-sms-runtime.mdx"]
+      "evidence": [
+        "allternit/cmd/allternit-cloud-api/src/routes/phone.rs",
+        "allternit/surfaces/docs/guides/phone-sms-runtime.mdx"
+      ]
     },
     {
       "id": "journey:factory-from-phone",
       "label": "Start a Factory team from your phone",
       "description": "From m.allternit.com to agents running in panes on your computer.",
       "steps": [
-        {"at": "surface:pwa", "says": "You open Factory on m.allternit.com."},
-        {"at": "allternit-ai/src/fabric-session", "says": "The phone shell shows the Factory screen."},
-        {"at": "allternit-ai/src/components/factory", "says": "You pick a team or template and start it."},
-        {"at": "allternit/cmd/allternit-api/src/factory_*", "says": "allternit-api proxies the request to the Factory engine on that computer."},
-        {"at": "allternit/factory/engine", "says": "The engine starts the agents and tracks approvals."},
-        {"at": "allternit/factory/pane", "says": "Each agent runs in a pane you can watch live from the phone."}
+        {
+          "at": "surface:pwa",
+          "says": "You open Factory on m.allternit.com."
+        },
+        {
+          "at": "allternit-ai/src/fabric-session",
+          "says": "The phone shell shows the Factory screen."
+        },
+        {
+          "at": "allternit-ai/src/components/factory",
+          "says": "You pick a team or template and start it."
+        },
+        {
+          "at": "allternit/cmd/allternit-api/src/factory_*",
+          "says": "allternit-api proxies the request to the Factory engine on that computer."
+        },
+        {
+          "at": "allternit/factory/engine",
+          "says": "The engine starts the agents and tracks approvals."
+        },
+        {
+          "at": "allternit/factory/pane",
+          "says": "Each agent runs in a pane you can watch live from the phone."
+        }
       ],
-      "evidence": ["allternit/surfaces/docs/factory/how-work-moves.mdx", "allternit/surfaces/docs/surfaces/mobile.mdx"]
+      "evidence": [
+        "allternit/surfaces/docs/factory/how-work-moves.mdx",
+        "allternit/surfaces/docs/surfaces/mobile.mdx"
+      ]
     },
     {
       "id": "journey:cloud-computer",
       "label": "Get a cloud computer with a paid plan",
       "description": "From Stripe checkout to a desktop you can open in the workspace.",
       "steps": [
-        {"at": "allternit/cmd/allternit-cloud-api/src/routes/billing_*", "says": "Stripe's webhook tells the cloud API the plan is paid."},
-        {"at": "allternit/cmd/allternit-cloud-api/src/services", "says": "Provisioning creates the machine."},
-        {"at": "allternit/cmd/allternit-cloud-api/src/routes/provisioned_*", "says": "The new computer is recorded and paired to your account."},
-        {"at": "allternit/cmd/allternit-computer-cloud", "says": "The computer boots with the Allternit runtime."},
-        {"at": "allternit-ai/src/components/computers", "says": "It appears in Computers, where you and your bots can open it."}
+        {
+          "at": "allternit/cmd/allternit-cloud-api/src/routes/billing_*",
+          "says": "Stripe's webhook tells the cloud API the plan is paid."
+        },
+        {
+          "at": "allternit/cmd/allternit-cloud-api/src/services",
+          "says": "Provisioning creates the machine."
+        },
+        {
+          "at": "allternit/cmd/allternit-cloud-api/src/routes/provisioned_*",
+          "says": "The new computer is recorded and paired to your account."
+        },
+        {
+          "at": "allternit/cmd/allternit-computer-cloud",
+          "says": "The computer boots with the Allternit runtime."
+        },
+        {
+          "at": "allternit-ai/src/components/computers",
+          "says": "It appears in Computers, where you and your bots can open it."
+        }
       ],
-      "evidence": ["allternit/cmd/allternit-cloud-api/src/services/provisioning.rs", "allternit/cmd/allternit-cloud-api/src/routes/billing_webhooks.rs"]
+      "evidence": [
+        "allternit/cmd/allternit-cloud-api/src/services/provisioning.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/billing_webhooks.rs"
+      ]
     },
     {
       "id": "journey:voice-call",
       "label": "Talk to a bot by voice",
       "description": "From pressing the mic to hearing the bot answer.",
       "steps": [
-        {"at": "allternit-ai/src/components/voice", "says": "You start voice mode."},
-        {"at": "allternit-ai/src/lib/voice", "says": "The client picks a voice endpoint: local, or cloud with a ticket."},
-        {"at": "allternit/cmd/allternit-cloud-api/src/routes/voice_*", "says": "For cloud voice, the cloud API issues the ticket and records consent."},
-        {"at": "allternit/services/voice", "says": "The voice service turns speech into text and back."},
-        {"at": "allternit/cmd/allternit-api/src/voice_*", "says": "allternit-api runs the bot's turn and returns the reply to speak."}
+        {
+          "at": "allternit-ai/src/components/voice",
+          "says": "You start voice mode."
+        },
+        {
+          "at": "allternit-ai/src/lib/voice",
+          "says": "The client picks a voice endpoint: local, or cloud with a ticket."
+        },
+        {
+          "at": "allternit/cmd/allternit-cloud-api/src/routes/voice_*",
+          "says": "For cloud voice, the cloud API issues the ticket and records consent."
+        },
+        {
+          "at": "allternit/services/voice",
+          "says": "The voice service turns speech into text and back."
+        },
+        {
+          "at": "allternit/cmd/allternit-api/src/voice_*",
+          "says": "allternit-api runs the bot's turn and returns the reply to speak."
+        }
       ],
-      "evidence": ["allternit-ai/src/lib/voice/endpoint.ts", "allternit/surfaces/docs/api/voice-tickets.mdx"]
+      "evidence": [
+        "allternit-ai/src/lib/voice/endpoint.ts",
+        "allternit/surfaces/docs/api/voice-tickets.mdx"
+      ]
     },
     {
       "id": "journey:memory",
       "label": "A bot remembers across surfaces",
       "description": "A note saved in one place is recalled by a bot somewhere else.",
       "steps": [
-        {"at": "allternit-ai/src/components/memory", "says": "You or a bot save a note to Memory Drive."},
-        {"at": "allternit/cmd/allternit-api/src/memory_*", "says": "allternit-api stores it."},
-        {"at": "allternit/cmd/allternit-api/src/memory_consolidation", "says": "Nightly consolidation merges and links notes."},
-        {"at": "allternit/cmd/allternit-api/src/memory_retrieve", "says": "On a later turn, retrieval finds the relevant notes."},
-        {"at": "allternit/cmd/gizzi-code/src/runtime/memory", "says": "gizzi-code puts them in the bot's context."}
+        {
+          "at": "allternit-ai/src/components/memory",
+          "says": "You or a bot save a note to Memory Drive."
+        },
+        {
+          "at": "allternit/cmd/allternit-api/src/memory_*",
+          "says": "allternit-api stores it."
+        },
+        {
+          "at": "allternit/cmd/allternit-api/src/memory_consolidation",
+          "says": "Nightly consolidation merges and links notes."
+        },
+        {
+          "at": "allternit/cmd/allternit-api/src/memory_retrieve",
+          "says": "On a later turn, retrieval finds the relevant notes."
+        },
+        {
+          "at": "allternit/cmd/gizzi-code/src/runtime/memory",
+          "says": "gizzi-code puts them in the bot's context."
+        }
       ],
-      "evidence": ["allternit/surfaces/docs/guides/memory-drive.mdx"]
+      "evidence": [
+        "allternit/surfaces/docs/guides/memory-drive.mdx"
+      ]
     },
     {
       "id": "journey:mcp-approval",
       "label": "Approve an MCP app's action",
       "description": "An app event that needs you, from the app to your approval.",
       "steps": [
-        {"at": "allternit/cmd/allternit-api/src/mcp_*", "says": "A connected MCP app sends an event."},
-        {"at": "allternit/cmd/allternit-api/src/events_*", "says": "The event feed marks it approval_required."},
-        {"at": "allternit/cmd/allternit-api/src/inbox_*", "says": "It lands in your Needs you inbox with an approve link."},
-        {"at": "allternit-ai/src/components/mcp", "says": "You approve it in the workspace."},
-        {"at": "allternit/cmd/allternit-api/src/bot_*", "says": "The bot it was waiting on carries on."}
+        {
+          "at": "allternit/cmd/allternit-api/src/mcp_*",
+          "says": "A connected MCP app sends an event."
+        },
+        {
+          "at": "allternit/cmd/allternit-api/src/events_*",
+          "says": "The event feed marks it approval_required."
+        },
+        {
+          "at": "allternit/cmd/allternit-api/src/inbox_*",
+          "says": "It lands in your Needs you inbox with an approve link."
+        },
+        {
+          "at": "allternit-ai/src/components/mcp",
+          "says": "You approve it in the workspace."
+        },
+        {
+          "at": "allternit/cmd/allternit-api/src/bot_*",
+          "says": "The bot it was waiting on carries on."
+        }
       ],
-      "evidence": ["allternit/surfaces/docs/guides/mcp-events.mdx", "allternit/surfaces/docs/guides/needs-you-inbox.mdx"]
+      "evidence": [
+        "allternit/surfaces/docs/guides/mcp-events.mdx",
+        "allternit/surfaces/docs/guides/needs-you-inbox.mdx"
+      ]
     },
     {
       "id": "journey:project-appearance",

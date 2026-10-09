@@ -12,6 +12,7 @@
 
 use axum::{http::StatusCode, response::IntoResponse, response::Response, Json};
 use serde_json::{json, Value};
+use std::time::Duration;
 use tracing::warn;
 
 use crate::bot_desktop_input::{KeyboardInput, MouseInput};
@@ -286,16 +287,80 @@ impl From<DriverFailure> for String {
 
 const DRIVER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// The Allternit Driver sidecar's socket, when the desktop app runs it.
+/// The Allternit Driver sidecar's endpoint, when the desktop app runs it.
 fn allternit_driver_socket() -> Option<String> {
     std::env::var("ALLTERNIT_DRIVER_SOCKET")
         .ok()
         .filter(|s| !s.is_empty() && std::path::Path::new(s).exists())
 }
 
+/// Where the Allternit Driver listens.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DriverEndpoint {
+    /// Unix socket path (macOS/Linux).
+    #[cfg(unix)]
+    Unix(String),
+    /// Loopback TCP plus the launch token the desktop generated (Windows).
+    Tcp(String, Option<String>),
+}
+
+impl DriverEndpoint {
+    /// Read an endpoint file (`tcp:127.0.0.1:<port>` written by the sidecar).
+    fn from_file(path: &str) -> Option<DriverEndpoint> {
+        let text = std::fs::read_to_string(path).ok()?;
+        let text = text.trim();
+        text.strip_prefix("tcp:").map(|rest| {
+            DriverEndpoint::Tcp(rest.to_string(), std::env::var("ALLTERNIT_DRIVER_TOKEN").ok().filter(|t| !t.is_empty()))
+        })
+    }
+
+    /// Resolve the sidecar: explicit env first (`ALLTERNIT_DRIVER_ENDPOINT`
+    /// for tcp, `ALLTERNIT_DRIVER_SOCKET` for a socket path or an endpoint
+    /// file), then the installed Desktop's default location. Windows allternit
+    /// api only has the tcp form — the unix socket is compiled out there.
+    pub fn resolve() -> Option<DriverEndpoint> {
+        if let Ok(endpoint) = std::env::var("ALLTERNIT_DRIVER_ENDPOINT") {
+            if let Some(rest) = endpoint.trim().strip_prefix("tcp:") {
+                return Some(DriverEndpoint::Tcp(
+                    rest.to_string(),
+                    std::env::var("ALLTERNIT_DRIVER_TOKEN").ok().filter(|t| !t.is_empty()),
+                ));
+            }
+        }
+        if let Some(socket) = allternit_driver_socket() {
+            if let Some(tcp) = DriverEndpoint::from_file(&socket) {
+                return Some(tcp);
+            }
+            #[cfg(unix)]
+            return Some(DriverEndpoint::Unix(socket));
+            #[cfg(not(unix))]
+            return None;
+        }
+        // The installed Desktop's default runtime location (dev fallback; the
+        // manager normally exports the env above).
+        #[cfg(unix)]
+        if let Some(home) = std::env::var_os("HOME") {
+            let sock = std::path::PathBuf::from(home)
+                .join("Library/Application Support/@allternit/desktop/computer-use/allternit-driver.sock");
+            if sock.exists() {
+                return Some(DriverEndpoint::Unix(sock.to_string_lossy().into_owned()));
+            }
+        }
+        #[cfg(not(unix))]
+        if let Some(appdata) = std::env::var_os("APPDATA") {
+            let file = std::path::PathBuf::from(appdata)
+                .join("@allternit/desktop/computer-use/allternit-driver.endpoint");
+            if let Some(tcp) = DriverEndpoint::from_file(&file.to_string_lossy()) {
+                return Some(tcp);
+            }
+        }
+        None
+    }
+}
+
 /// One JSON-RPC call to the Allternit Driver (one JSON object per line).
 #[cfg(unix)]
-pub async fn driver_rpc(socket: &str, method: &str, params: Value) -> Result<Value, DriverFailure> {
+async fn driver_rpc_unix(socket: &str, method: &str, params: Value, timeout: Duration) -> Result<Value, DriverFailure> {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     let call = async {
         let mut stream = tokio::net::UnixStream::connect(socket)
@@ -316,7 +381,45 @@ pub async fn driver_rpc(socket: &str, method: &str, params: Value) -> Result<Val
             None => Ok(reply.get("result").cloned().unwrap_or(Value::Null)),
         }
     };
-    tokio::time::timeout(DRIVER_TIMEOUT, call).await.map_err(|_| DriverFailure::Timeout)?
+    tokio::time::timeout(timeout, call).await.map_err(|_| DriverFailure::Timeout)?
+}
+
+/// The loopback TCP form (Windows): same line protocol, plus the launch token
+/// the desktop generated as the request `auth` field.
+async fn driver_rpc_tcp(addr: &str, token: Option<&str>, method: &str, params: Value, timeout: Duration) -> Result<Value, DriverFailure> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    let call = async {
+        let mut stream = tokio::net::TcpStream::connect(addr)
+            .await
+            .map_err(|e| DriverFailure::Unavailable(format!("The computer-use driver isn't reachable on this computer ({e}).")))?;
+        let mut req = json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params });
+        if let Some(token) = token {
+            req["auth"] = json!(token);
+        }
+        let mut line = serde_json::to_vec(&req).map_err(|e| DriverFailure::Refused(e.to_string()))?;
+        line.push(b'\n');
+        stream.write_all(&line).await.map_err(|e| DriverFailure::Refused(e.to_string()))?;
+        let mut reply = String::new();
+        BufReader::new(stream).read_line(&mut reply).await.map_err(|e| DriverFailure::Refused(e.to_string()))?;
+        let reply: Value = serde_json::from_str(&reply).map_err(|_| DriverFailure::Refused("the driver closed the connection".into()))?;
+        match reply.get("error") {
+            Some(err) => Err(DriverFailure::Refused(format!(
+                "the driver refused {method}: {}",
+                err.get("message").and_then(Value::as_str).unwrap_or("unknown error")
+            ))),
+            None => Ok(reply.get("result").cloned().unwrap_or(Value::Null)),
+        }
+    };
+    tokio::time::timeout(timeout, call).await.map_err(|_| DriverFailure::Timeout)?
+}
+
+/// One sidecar JSON-RPC call on whichever transport this platform uses.
+pub async fn driver_rpc(endpoint: &DriverEndpoint, method: &str, params: Value, timeout: Duration) -> Result<Value, DriverFailure> {
+    match endpoint {
+        #[cfg(unix)]
+        DriverEndpoint::Unix(socket) => driver_rpc_unix(socket, method, params, timeout).await,
+        DriverEndpoint::Tcp(addr, token) => driver_rpc_tcp(addr, token.as_deref(), method, params, timeout).await,
+    }
 }
 
 /// One driver call for the toolset executor and the input routes: a Cua
@@ -324,9 +427,15 @@ pub async fn driver_rpc(socket: &str, method: &str, params: Value) -> Result<Val
 /// sent as the Allternit Driver's `pixel_<tool>` op, or through Cua's CLI
 /// when the sidecar isn't running. The driver's JSON reply on success.
 pub async fn call_driver(tool: &str, args: Value) -> Result<Value, DriverFailure> {
-    #[cfg(unix)]
-    if let Some(socket) = allternit_driver_socket() {
-        return driver_rpc(&socket, &format!("pixel_{tool}"), args).await.inspect_err(|e| warn!(tool, ?e, "allternit driver call failed"));
+    call_driver_timed(tool, args, DRIVER_TIMEOUT).await
+}
+
+/// `call_driver` with a custom timeout (run_batch can wait on conditions).
+pub async fn call_driver_timed(tool: &str, args: Value, timeout: Duration) -> Result<Value, DriverFailure> {
+    if let Some(endpoint) = DriverEndpoint::resolve() {
+        return driver_rpc(&endpoint, &format!("pixel_{tool}"), args, timeout)
+            .await
+            .inspect_err(|e| warn!(tool, ?e, "allternit driver call failed"));
     }
     let (path, flags) = driver_command()
         .ok_or_else(|| DriverFailure::Unavailable("The computer-use driver isn't running on this computer.".into()))?;
@@ -337,7 +446,7 @@ pub async fn call_driver(tool: &str, args: Value) -> Result<Value, DriverFailure
         .args(&flags)
         .kill_on_drop(true)
         .output();
-    match tokio::time::timeout(DRIVER_TIMEOUT, output).await {
+    match tokio::time::timeout(timeout, output).await {
         // The CLI exits 0 on refusals too; only a JSON result without an
         // error `code` is a success.
         Ok(Ok(out)) if out.status.success() && driver_accepted(&out.stdout) => {

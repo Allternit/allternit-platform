@@ -144,6 +144,7 @@ pub mod computer_idle;
 pub mod computer_screens;
 pub mod computer_audit;
 pub mod computer_ws;
+pub mod computer_v2;
 pub mod vnc_auth;
 pub mod vnc_readonly;
 pub mod wallet;
