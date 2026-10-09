@@ -94,6 +94,10 @@ The rules are enforced in `card-tools.ts`, not only in the prompt:
 
 `Table` rows may be arrays (in header order) or objects (cells picked by header, ignoring case, spaces and underscores), so a `Query` result's rows can be passed straight in.
 
+### Design
+
+Cards follow OpenAI's [Apps SDK inline-card guidelines](https://developers.openai.com/apps-sdk/concepts/ui-guidelines) on Allternit's neutral polish tokens: system type within body and body-small sizes, a title, at most two actions in the footer, no scrolling inside the card, WCAG AA contrast, light and dark themes, and 44 px touch targets on phones. Result numbers animate only right after you change an input; the first paint, streaming and data refreshes show the value at once, and nothing animates with reduced motion on. While a card streams it shows a skeleton, then a shimmer inside the card until it's complete, with a mono working beam after 1.5 s. The manual asks for one short sentence before the card, and tells the model not to repeat the card's numbers in its text.
+
 ### What runs where
 
 - **On the page (deterministic):** `$name` state, expressions (`+ - * /`, comparisons, `?:`) and `@` built-ins are evaluated by the OpenUI runtime. No `eval`, no network, no model call.
@@ -105,20 +109,21 @@ The rules are enforced in `card-tools.ts`, not only in the prompt:
 
 | Component | Signature | Use |
 | --- | --- | --- |
-| `Answer` | `(title?, children?)` | The root card. Exactly one, as `root`. |
+| `Answer` | `(title?, children?, actions?)` | The root card. Exactly one, as `root`. `actions`: up to two Buttons in the footer; the first is primary. |
+| `Section` | `(title, children)` | Groups parts under a small label, e.g. "Your inputs" and "Result". |
 | `Row` | `(children)` | Side by side; one column on phones. |
 | `Text` | `(content, tone?)` | `body`, `muted`, `heading`. |
 | `Metric` | `(label, value, format?, unit?, note?)` | `format`: `number`, `currency`, `percent`. `note` says where the number comes from. |
-| `Table` | `(headers, rows)` | Rows are arrays or objects. |
+| `Table` | `(headers, rows)` | Rows are arrays or objects. Numeric columns right-align; more than 6 rows show **Show all**. |
 | `BarChart` | `(labels, values, format?, unit?)` | 2–12 values. |
 | `Steps` | `(items)` | A real sequence. |
 | `Compare` | `(columns)` | `[{ "title", "points": [] }]`, 2–4 columns. |
 | `Callout` | `(content, tone?)` | `info`, `success`, `warning`, `danger`. |
 | `Slider` | `(label, $value, min, max, step?, format?, unit?)` | Writes a number. |
-| `NumberField` | `(label, $value, step?)` | Writes a number. |
-| `Select` | `(label, $value, options)` | Writes a string. |
+| `NumberField` | `(label, $value, step?, format?, unit?, min?, max?)` | Writes a number. − / + steppers; `currency` shows the currency sign, `percent` shows %. |
+| `Select` | `(label, $value, options)` | Writes a string. Up to four short options show as a segmented control. |
 | `Toggle` | `(label, $value)` | Writes `true`/`false`. |
-| `Button` | `(label, action?)` | No action: sends the label to the model. With `Action([...])`: runs those steps. |
+| `Button` | `(label, action?, variant?)` | No action: sends the label to the model. With `Action([...])`: runs those steps. Put buttons in `Answer`'s actions. |
 | `Choice` | `(question, options)` | Numbered options; the pick is sent to the model. |
 
 ### Model instructions
