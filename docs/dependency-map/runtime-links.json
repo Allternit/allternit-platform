@@ -206,6 +206,15 @@
       ]
     },
     {
+      "source": "allternit/cmd/gizzi-code/src/runtime/tools",
+      "target": "allternit/cmd/allternit-cloud-api/src/routes/mod_*",
+      "kind": "HTTP /api/v2/artifacts (artifact_create / artifact_update / artifact_read)",
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/runtime/integrations/artifacts/index.ts",
+        "allternit/docs/design/artifacts-v2.md"
+      ]
+    },
+    {
       "source": "allternit/surfaces/allternit-desktop",
       "target": "allternit/domains/computer-use/core",
       "kind": "sidecar",

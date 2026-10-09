@@ -470,10 +470,13 @@
       "label": "Artifacts (one typed store, versions, sharing)",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "Artifacts v2: one account-level store of typed artifacts (doc, sheet, slides, design, dashboard, motion, page, card, diagram, image, code) in cloud-api Postgres with immutable versions, view/comment/edit sharing, org admin settings and a public link route. Phase 1 server side is in; the app (ArtifactWindow, Artifacts tab) and gizzi artifact_* tools land in sibling PRs.",
+      "description": "Artifacts v2: one account-level store of typed artifacts (doc, sheet, slides, design, dashboard, motion, page, card, diagram, image, code) in cloud-api Postgres with immutable versions, view/comment/edit sharing, org admin settings and a public link route. Phase 1 server side is in; gizzi's artifact_* tools are feature:artifact-model-tools; the app (one ArtifactWindow, Artifacts tab, Share dialog, Output picker, public page /a/<id>) is in allternit-ai.",
       "touches": [
         "allternit/cmd/allternit-cloud-api/src/artifacts",
-        "allternit/cmd/allternit-cloud-api/src/routes/artifacts_*"
+        "allternit/cmd/allternit-cloud-api/src/routes/artifacts_*",
+        "allternit-ai/src/components/artifacts",
+        "allternit-ai/src/lib/artifacts",
+        "allternit-ai/src/views/library"
       ],
       "decisions": [
         {
@@ -483,8 +486,25 @@
       ],
       "evidence": [
         "allternit/docs/design/artifacts-v2.md",
-        "allternit/surfaces/docs/api/artifacts-v2.mdx"
+        "allternit/surfaces/docs/api/artifacts-v2.mdx",
+        "allternit/surfaces/docs/guides/artifacts.mdx"
       ]
+    },
+    {
+      "id": "feature:artifact-model-tools",
+      "label": "Artifact tools for every model (Artifacts v2)",
+      "product": "product:gizzi-code",
+      "status": "building",
+      "description": "artifact_create / artifact_update / artifact_read built into gizzi-code for every model, and for CLI agents over the session MCP bridge. They save to cloud-api /api/v2/artifacts with the session's credential; without one, the result carries the full payload with persisted:false and the app saves it under the same id.",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/runtime/tools",
+        "allternit/cmd/gizzi-code/src/runtime/integrations",
+        "allternit/cmd/allternit-cloud-api/src/routes/mod_*"
+      ],
+      "decisions": [
+        {"on": "2026-10-08", "note": "Contract docs/design/artifacts-v2.md section 5: create an artifact when content is substantial (~15+ lines), self-contained, likely edited or reused, or asked for. gizzi mints art_+ULID ids; 409 stale_version makes the model read, merge and retry."}
+      ],
+      "evidence": ["allternit/docs/design/artifacts-v2.md", "allternit/surfaces/docs/tools/artifact-tools.mdx"]
     }
   ],
   "journeys": [

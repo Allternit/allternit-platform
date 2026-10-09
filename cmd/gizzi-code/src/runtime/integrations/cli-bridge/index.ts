@@ -4,13 +4,14 @@ import type { Tool } from "@/runtime/tools/builtins/tool"
 import { PaneArtifactTool } from "@/runtime/tools/builtins/pane-artifact"
 import { PaneBrowserTool } from "@/runtime/tools/builtins/pane-browser"
 import { MediaGenerateTool } from "@/runtime/tools/builtins/media-generate"
+import { ARTIFACT_TOOLS } from "@/runtime/tools/builtins/artifact"
 import { Log } from "@/shared/util/log"
 
 /**
  * CLI tool bridge: an installed CLI agent (Claude Code, Codex, Kimi…) runs a
  * gizzi session turn with its own tools only. This serves gizzi's
  * session-bound tools — the document open in the pane, the pane's browser,
- * native image/video rendering — to that CLI as an MCP server over HTTP
+ * native image/video rendering, Artifacts v2 — to that CLI as an MCP server over HTTP
  * (stateless, JSON responses), scoped to one session and guarded by a
  * per-process token. The CLI driver hands the CLI this server's config.
  */
@@ -21,7 +22,7 @@ export namespace CliBridge {
   const PROTOCOL_VERSION = "2025-06-18"
 
   /** The tools a CLI gets: the ones only gizzi can do for this session. */
-  export const TOOLS: Tool.Info[] = [PaneArtifactTool, PaneBrowserTool, MediaGenerateTool]
+  export const TOOLS: Tool.Info[] = [PaneArtifactTool, PaneBrowserTool, MediaGenerateTool, ...ARTIFACT_TOOLS]
 
   const token = randomBytes(32).toString("hex")
 
@@ -143,7 +144,7 @@ export namespace CliBridge {
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: SERVER_NAME, version: "1.0.0" },
           instructions:
-            "Allternit session tools: the document open beside the chat (pane_artifact), the pane's browser (pane_browser), and image/video generation rendered in the user's app (media_generate).",
+            "Allternit session tools: the document open beside the chat (pane_artifact), the pane's browser (pane_browser), image/video generation rendered in the user's app (media_generate), and the user's Artifacts (artifact_create, artifact_update, artifact_read).",
         })
       case "ping":
         return ok(req.id, {})

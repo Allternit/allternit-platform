@@ -1,0 +1,4 @@
+Read an artifact's content: its kind, title, body format, current version number and body. Use it before changing an artifact you didn't just write (the user may have edited it), after artifact_update reports a newer version, or when the user refers to an artifact by id.
+
+- id: the artifact id (starts with "art_").
+- version: optional; a specific earlier version. Leave it out for the latest.

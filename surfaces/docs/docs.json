@@ -80,6 +80,7 @@
               "guides/whatsapp-business",
               "guides/subscriptions",
               "plugins/guides/vendor-packs",
+              "guides/artifacts",
               "guides/artifact-modes",
               "guides/computers-and-apps",
               "guides/phone-for-your-bot",
@@ -334,6 +335,7 @@
             "pages": [
               "tools/overview",
               "tools/tool-belt",
+              "tools/artifact-tools",
               "tools/mcp",
               "tools/computer-use",
               "tools/computer-toolset",

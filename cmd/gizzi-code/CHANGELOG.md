@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- Artifacts v2 model tools for every model: `artifact_create`,
+  `artifact_update` and `artifact_read`. They save to the cloud store
+  (`/api/v2/artifacts`) when gizzi has a credential; otherwise the result
+  carries the whole artifact with `persisted: false` and the app saves it
+  under the same id. CLI agents get them over the session MCP bridge too.
+  `GIZZI_DISABLE_ARTIFACT_TOOLS=1` hides them; `GIZZI_ARTIFACTS_OFFLINE=1`
+  skips the cloud.
+
 ## 2.2.3 (2026-10-07)
 
 ### Added
