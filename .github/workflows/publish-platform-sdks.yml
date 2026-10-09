@@ -28,6 +28,10 @@ on:
         description: 'Publish the PyPI packages (needs the trusted publishers set up on pypi.org)'
         type: boolean
         default: true
+      pypi_package:
+        description: 'Which PyPI package: all, allternit-platform or allternit-computer-driver (a new project needs its own pending publisher; publish one at a time the first time)'
+        type: string
+        default: all
 
 permissions:
   contents: read
@@ -136,7 +140,12 @@ jobs:
           python -m pip install --upgrade build pytest pyyaml
           (cd sdk/platform-python && python -m pytest -q tests)
           mkdir -p dist
-          for dir in sdk/platform-python sdk/computer-driver/python; do
+          dirs="sdk/platform-python sdk/computer-driver/python"
+          case "${{ inputs.pypi_package || 'all' }}" in
+            allternit-platform) dirs="sdk/platform-python" ;;
+            allternit-computer-driver) dirs="sdk/computer-driver/python" ;;
+          esac
+          for dir in $dirs; do
             sed -i -E "s/^version = \".*\"/version = \"$VERSION\"/" "$dir/pyproject.toml"
             python -m build --outdir dist "$dir"
           done
