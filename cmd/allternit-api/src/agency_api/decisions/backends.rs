@@ -4,7 +4,7 @@
 //!
 //! - `local`: the owned scorer sidecar (`domains/decision-runtime`): one-pass
 //!   option scoring on MLX (Apple silicon) or llama.cpp (everything else).
-//! - `openai`, `typesafe`: vendor fast paths. Config-only stubs, off unless a
+//! - `vendor` (OpenAI Decisions API), `typesafe` (TypeSafe Jev): vendor fast paths. Config-only stubs, off unless a
 //!   key is set, and even then they answer "not available" until E6 verifies
 //!   the vendor's docs and access.
 //! - `oracle`: the planner model through gizzi (allternit-api never calls a
@@ -222,7 +222,7 @@ fn truncate(s: &str, n: usize) -> String {
 
 /// The configured chain, in escalation order.
 pub fn chain() -> Vec<Box<dyn DecisionBackend>> {
-    let order = env("ALLTERNIT_DECISIONS_CHAIN").unwrap_or_else(|| "local,openai,typesafe,oracle".into());
+    let order = env("ALLTERNIT_DECISIONS_CHAIN").unwrap_or_else(|| "local,vendor,typesafe,oracle".into());
     order
         .split(',')
         .filter_map(|n| backend(n.trim()))
@@ -232,7 +232,8 @@ pub fn chain() -> Vec<Box<dyn DecisionBackend>> {
 pub fn backend(name: &str) -> Option<Box<dyn DecisionBackend>> {
     Some(match name {
         "local" => Box::new(LocalScorer),
-        "openai" => Box::new(VendorStub { name: "openai", key_env: "ALLTERNIT_DECISIONS_OPENAI_KEY" }),
+        // OpenAI's Decisions API (DevDay 2026 preview).
+        "vendor" => Box::new(VendorStub { name: "vendor", key_env: "ALLTERNIT_DECISIONS_VENDOR_KEY" }),
         "typesafe" => Box::new(VendorStub { name: "typesafe", key_env: "ALLTERNIT_DECISIONS_TYPESAFE_KEY" }),
         "oracle" => Box::new(Oracle),
         _ => return None,

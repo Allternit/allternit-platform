@@ -50,7 +50,7 @@ Authenticated like every Agency API route. Responses carry `Allternit-Request-Id
 | `escalated` | boolean | A later backend was tried because an earlier answer was under the threshold. |
 | `threshold` | number | The kind's threshold that applied. |
 | `calibrated` | boolean | Always `false` until per-kind calibration ships (phase E5). |
-| `backend` | string | Which backend answered: `local`, `oracle`, `openai`, `typesafe`, or `none`. |
+| `backend` | string | Which backend answered: `local`, `oracle`, `vendor`, `typesafe`, or `none`. |
 | `latency_ms` | number | Server time for the whole decision. |
 | `attempts` | array | Every backend tried, in order: its latency, confidence, error, or why it was skipped. |
 
@@ -95,12 +95,12 @@ When no backend answers and `allow_abstain` is false, the response is `503` with
 
 ## Backends and escalation
 
-The router walks the chain in order (default `local,openai,typesafe,oracle`, set with `ALLTERNIT_DECISIONS_CHAIN`). It stops at the first answer at or over the kind's threshold; a later answer replaces an earlier one. Backends that are not configured are left out; backends that cannot see images are skipped for a decision that carries one.
+The router walks the chain in order (default `local,vendor,typesafe,oracle`, set with `ALLTERNIT_DECISIONS_CHAIN`). It stops at the first answer at or over the kind's threshold; a later answer replaces an earlier one. Backends that are not configured are left out; backends that cannot see images are skipped for a decision that carries one.
 
 | Backend | What it is | On by default |
 |---|---|---|
 | `local` | The owned scorer sidecar: one-pass option scoring (ported from open-jev, MIT). MLX on Apple silicon; llama.cpp on Windows, Linux, Intel Macs and cloud hosts. Default model Qwen3.5-4B (Apache-2.0); `ALLTERNIT_DECISIONS_MODEL=gemma-3-4b` switches to Gemma 3 4B (set `HF_TOKEN` if your mirror is gated). Text only. | Yes, wherever Allternit Desktop runs it (`ALLTERNIT_DECISIONS_LOCAL_URL`) |
-| `openai` | OpenAI Decisions API adapter. A stub: it answers "not available" until phase E6 verifies the vendor's documentation and access. | No (`ALLTERNIT_DECISIONS_OPENAI_KEY`) |
+| `vendor` | Adapter for a hosted vendor decisions API. A stub: it answers "not available" until phase E6 verifies the vendor's documentation and access. | No (`ALLTERNIT_DECISIONS_VENDOR_KEY`) |
 | `typesafe` | TypeSafe Jev adapter. Stub, same as above. | No (`ALLTERNIT_DECISIONS_TYPESAFE_KEY`) |
 | `oracle` | The planner model through gizzi, like every other model call. Sees images. The escalation path and the source of labels. Model: `ALLTERNIT_DECISIONS_ORACLE_MODEL=provider/model`, else your default model. | Yes (`ALLTERNIT_DECISIONS_ORACLE=0` turns it off) |
 
