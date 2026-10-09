@@ -128,6 +128,29 @@ fn find(client: &ApiClient, session: &str) -> Result<Option<LivePane>, CallError
     Ok(first_pane(client, id)?.and_then(|p| live_pane(session, &p)))
 }
 
+/// A workspace that vanishes between create and first read means the pane
+/// process died instantly and the server reaped it. The bare RPC error sends
+/// people hunting the wrong layer ("workspace w6 not found" reads like a
+/// missing-workspace bug); name what happened and point at the transcript,
+/// which carries the real cause (a deleted build's dead TCC grants, an exec
+/// failure, a bad cwd).
+fn map_spawn_error(e: CallError, session: &str, transcript: Option<&Path>) -> anyhow::Error {
+    match &e {
+        CallError::Rpc { code, .. } if code == "workspace_not_found" => {
+            let mut message = format!(
+                "pane engine: the pane for {session} died instantly after spawn — its workspace was reaped before it could be read"
+            );
+            match transcript {
+                Some(path) => message
+                    .push_str(&format!("; its transcript names the cause: {}", path.display())),
+                None => message.push_str("; no transcript path was recorded for this spawn"),
+            }
+            anyhow!("{message} ({code})")
+        }
+        _ => err(e),
+    }
+}
+
 impl PaneBackend for PaneEngine {
     fn spawn(&self, req: &PaneSpawn) -> Result<LivePane> {
         ao::ensure_ao_session();
@@ -180,9 +203,10 @@ impl PaneBackend for PaneEngine {
                 &client,
                 Method::WorkspaceClose(WorkspaceCloseParams { workspace_id: workspace_id.clone(), close_group: true }),
             );
-            return Err(err(e));
+            return Err(map_spawn_error(e, &req.session, req.transcript.as_deref()));
         }
-        let pane = first_pane(&client, &workspace_id).map_err(err)?;
+        let pane = first_pane(&client, &workspace_id)
+            .map_err(|e| map_spawn_error(e, &req.session, req.transcript.as_deref()))?;
         // A run that finished instantly may already be gone; report the pane
         // id when it can be read, the workspace otherwise.
         Ok(pane
@@ -427,5 +451,30 @@ mod tests {
             Some(AgentViewFilter::Any { filters }) => assert_eq!(filters.len(), 3),
             other => panic!("expected any-of-lists, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn spawn_workspace_not_found_names_the_transcript() {
+        let error = map_spawn_error(
+            CallError::Rpc { code: "workspace_not_found".into(), message: "workspace w6 not found".into() },
+            "ao-av2-dash",
+            Some(Path::new("/logs/ao-av2-dash.log")),
+        );
+        let message = format!("{error:#}");
+        assert!(message.contains("died instantly after spawn"), "unexpected: {message}");
+        assert!(message.contains("/logs/ao-av2-dash.log"), "unexpected: {message}");
+        assert!(message.contains("workspace_not_found"), "unexpected: {message}");
+    }
+
+    #[test]
+    fn spawn_other_errors_keep_the_plain_shape() {
+        let error = map_spawn_error(
+            CallError::Rpc { code: "pane_unavailable".into(), message: "pane busy".into() },
+            "ao-av2-dash",
+            Some(Path::new("/logs/ao-av2-dash.log")),
+        );
+        let message = format!("{error:#}");
+        assert!(message.contains("pane busy (pane_unavailable)"), "unexpected: {message}");
+        assert!(!message.contains("died instantly"), "unexpected: {message}");
     }
 }

@@ -9207,6 +9207,17 @@
                   "minimum": 0,
                   "type": "integer"
                 },
+                "server": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/schemas/success_response/$defs/ServerPingInfo"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                },
                 "type": {
                   "const": "pong",
                   "type": "string"
@@ -10554,6 +10565,32 @@
           },
           "required": [
             "live_handoff"
+          ],
+          "type": "object"
+        },
+        "ServerPingInfo": {
+          "description": "Process identity attached to a ping: who answers, from where, and whether\nthe server's own executable still exists on disk. The Desktop updater\ndeletes superseded runtime dirs; a server still running from a deleted\nbuild keeps answering the socket, but its terminal permissions (TCC) are\ndead and every pane it spawns dies instantly. `exe_deleted` is how a client\ntells that apart from a healthy server.",
+          "properties": {
+            "exe": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "exe_deleted": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "pid": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "pid"
           ],
           "type": "object"
         },

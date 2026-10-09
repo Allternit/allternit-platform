@@ -728,6 +728,7 @@ fn success_response_round_trips() {
                 surface_interest: true,
                 health_check: true,
             }),
+            server: None,
         },
     };
 

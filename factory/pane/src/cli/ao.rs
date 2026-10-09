@@ -129,20 +129,52 @@ pub(crate) fn pane_read_text(client: &ApiClient, pane_id: &str, lines: u32) -> R
     Ok(result["read"]["text"].as_str().unwrap_or_default().to_string())
 }
 
+/// The factory engine's one gate before it spawns: whatever answers the pane
+/// socket must be fit to spawn terminals.
+///
+/// A ping that merely succeeds is not enough. The Desktop updater deletes
+/// superseded runtime dirs, and the pane server process survives the deletion:
+/// it keeps answering the socket while every pane it spawns dies instantly
+/// (the deleted build's terminal permissions are gone), which surfaces far
+/// away as a bare `workspace w6 not found`. Reject that server here, with the
+/// fix, instead of letting the spawn fail downstream.
 pub(crate) fn ensure_engine_running() -> std::io::Result<()> {
     let client = ApiClient::local();
     let request = Request {
         id: "ao:ping".into(),
         method: Method::Ping(PingParams::default()),
     };
-    if client.request_value(&request).is_ok() {
-        return Ok(());
+    if let Ok(value) = client.request_value(&request) {
+        return validate_ping_for_factory(&value["result"], &client.socket_path());
     }
     crate::server::autodetect::spawn_server_daemon()?;
     crate::server::autodetect::wait_for_server_socket(
         &client.socket_path(),
         Duration::from_secs(15),
     )
+}
+
+/// Old pane servers predate the `server` block (no `exe_deleted` field): a
+/// missing field means "cannot tell", not "stale" — only an explicit `true`
+/// gates.
+fn validate_ping_for_factory(result: &serde_json::Value, socket: &Path) -> std::io::Result<()> {
+    if result["server"]["exe_deleted"].as_bool() != Some(true) {
+        return Ok(());
+    }
+    let pid = result["server"]["pid"]
+        .as_u64()
+        .map(|pid| pid.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    let exe = result["server"]["exe"]
+        .as_str()
+        .unwrap_or("the deleted build's executable");
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Other,
+        format!(
+            "the pane engine answering {} (pid {pid}) runs from a deleted app build ({exe} no longer exists on disk) — its terminal permissions are dead, so every pane it spawns dies instantly. Restart Allternit Desktop to respawn the pane engine from the current build; without Desktop, run `allternit-factory pane server stop`, then retry (the pane engine respawns from the current binary on demand). Stopping exits live pane processes.",
+            socket.display(),
+        ),
+    ))
 }
 
 fn alnum(text: &str) -> String {
@@ -368,7 +400,19 @@ fn engine_status_line() -> Result<String, String> {
             let result = &value["result"];
             let protocol = result["protocol"].as_u64().unwrap_or(0);
             let version = result["version"].as_str().unwrap_or("unknown");
-            Ok(format!("  pane engine: OK (socket {socket}, protocol {protocol}, {version})"))
+            let server = &result["server"];
+            let exe = server["exe"].as_str().unwrap_or("");
+            let identity = match (server["pid"].as_u64(), exe) {
+                (Some(pid), exe) if !exe.is_empty() => format!(", pid {pid}, exe {exe}"),
+                (Some(pid), _) => format!(", pid {pid}"),
+                _ => String::new(),
+            };
+            if server["exe_deleted"].as_bool() == Some(true) {
+                return Err(format!(
+                    "  pane engine: STALE BUILD (socket {socket}, protocol {protocol}, {version}{identity}) — the executable was deleted (Desktop updater); spawned panes die instantly. Restart Allternit Desktop."
+                ));
+            }
+            Ok(format!("  pane engine: OK (socket {socket}, protocol {protocol}, {version}{identity})"))
         }
         Err(ApiClientError::Io(err))
             if matches!(
@@ -494,5 +538,37 @@ mod tests {
         assert_eq!(prompt_marker("hello, world!").unwrap(), "helloworld");
         assert!(prompt_marker("!!! ---").is_none());
         assert_eq!(prompt_marker(&"x".repeat(100)).unwrap().len(), 40);
+    }
+
+    #[test]
+    fn factory_ping_rejects_a_deleted_build() {
+        let result = serde_json::json!({
+            "version": "0.5.5",
+            "protocol": 2,
+            "server": { "pid": 80193, "exe": "/Applications/Allternit Desktop.app/…/allternit-factory", "exe_deleted": true },
+        });
+        let err = validate_ping_for_factory(&result, Path::new("/tmp/ao.sock")).unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("deleted app build"), "unexpected: {message}");
+        assert!(message.contains("80193"), "unexpected: {message}");
+        assert!(message.contains("Restart Allternit Desktop"), "unexpected: {message}");
+    }
+
+    #[test]
+    fn factory_ping_accepts_a_healthy_server() {
+        let result = serde_json::json!({
+            "version": "0.5.5",
+            "protocol": 2,
+            "server": { "pid": 56472, "exe": "/Applications/Allternit Desktop.app/…/allternit-factory", "exe_deleted": false },
+        });
+        assert!(validate_ping_for_factory(&result, Path::new("/tmp/ao.sock")).is_ok());
+    }
+
+    #[test]
+    fn factory_ping_treats_missing_server_block_as_unknown() {
+        // Pane servers older than ServerPingInfo don't send `server`:
+        // "cannot tell" must not become "stale".
+        let result = serde_json::json!({ "version": "0.5.5", "protocol": 2 });
+        assert!(validate_ping_for_factory(&result, Path::new("/tmp/ao.sock")).is_ok());
     }
 }
