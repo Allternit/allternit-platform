@@ -96,7 +96,7 @@ The rules are enforced in `card-tools.ts`, not only in the prompt:
 
 ### Design
 
-Cards follow common inline-card guidelines for chat apps, on Allternit's neutral polish tokens: system type within body and body-small sizes, a title, at most two actions in the footer, no scrolling inside the card, WCAG AA contrast, light and dark themes, and 44 px touch targets on phones. Result numbers animate only right after you change an input; the first paint, streaming and data refreshes show the value at once, and nothing animates with reduced motion on. While a card streams it shows a skeleton, then a shimmer inside the card until it's complete, with a mono working beam after 1.5 s. The manual asks for one short sentence before the card, and tells the model not to repeat the card's numbers in its text.
+Cards follow common inline-card guidelines for chat apps, on Allternit's neutral polish tokens: system type within body and body-small sizes, a title, at most two actions in the footer, no scrolling inside the card, WCAG AA contrast, light and dark themes, and 44 px touch targets on phones. Each card has two zones: a controls panel (a Section holding inputs, shown as a soft inset with white fields) and the result, where the first Metric in a row is shown large as the answer and the rest are listed beside it. Number fields show grouped values (10,000) and whole currency amounts drop the cents. Result numbers animate only right after you change an input; the first paint, streaming and data refreshes show the value at once, and nothing animates with reduced motion on. While a card streams, one steady placeholder holds its place (its title, "Building card" and the card's shape, with a mono working beam after 1.5 s), so numbers never flash in digit by digit. The finished card replaces it once with a short fade. The manual asks for one short sentence before the card, and tells the model not to repeat the card's numbers in its text.
 
 ### What runs where
 
@@ -110,7 +110,7 @@ Cards follow common inline-card guidelines for chat apps, on Allternit's neutral
 | Component | Signature | Use |
 | --- | --- | --- |
 | `Answer` | `(title?, children?, actions?)` | The root card. Exactly one, as `root`. `actions`: up to two Buttons in the footer; the first is primary. |
-| `Section` | `(title, children)` | Groups parts under a small label, e.g. "Your inputs" and "Result". |
+| `Section` | `(title, children)` | Groups parts under a short sentence-case label. A Section with inputs becomes the card's controls panel. |
 | `Row` | `(children)` | Side by side; one column on phones. |
 | `Text` | `(content, tone?)` | `body`, `muted`, `heading`. |
 | `Metric` | `(label, value, format?, unit?, note?)` | `format`: `number`, `currency`, `percent`. `note` says where the number comes from. |
