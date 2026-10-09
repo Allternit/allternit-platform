@@ -47,6 +47,12 @@
       "label": "Allternit Driver sidecar (arc + Cua engines, Python)",
       "kind": "module",
       "path": "allternit/domains/computer-use/driver"
+    },
+    {
+      "id": "allternit/domains/decision-runtime",
+      "label": "Decision Runtime local scorer sidecar (MLX / llama.cpp, Python)",
+      "kind": "module",
+      "path": "allternit/domains/decision-runtime"
     }
   ],
   "edges": [
@@ -271,6 +277,24 @@
       "evidence": [
         "allternit/cmd/allternit-api/src/this_device_input.rs",
         "allternit/surfaces/docs/tools/allternit-driver.mdx"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/allternit-desktop",
+      "target": "allternit/domains/decision-runtime",
+      "kind": "sidecar (bundled driver Python; packages and model installed on first use)",
+      "evidence": [
+        "allternit/surfaces/allternit-desktop/src/main/decision-runtime-manager.ts",
+        "allternit/surfaces/allternit-desktop/scripts/prepare-allternit-driver.cjs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api/src/agency_api",
+      "target": "allternit/domains/decision-runtime",
+      "kind": "HTTP POST /v1/score on loopback (ALLTERNIT_DECISIONS_LOCAL_URL + token)",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/agency_api/decisions/backends.rs",
+        "allternit/surfaces/docs/api/agency/decisions.mdx"
       ]
     }
   ]

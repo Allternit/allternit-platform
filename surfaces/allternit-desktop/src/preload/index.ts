@@ -645,6 +645,10 @@ const permissionGuideAPI = {
   getDriverStatus: (): Promise<{
     available: boolean; running: boolean; embedded: boolean; executable?: string; socket?: string; error?: string;
   }> => ipcRenderer.invoke('computer-use-driver:get-status'),
+  /** Decision Runtime local scorer: first-use install/download progress and readiness. */
+  getDecisionRuntimeStatus: (): Promise<{
+    running: boolean; endpoint?: string; status?: string; progress?: number; model?: string; engine?: string; error?: string;
+  }> => ipcRenderer.invoke('decision-runtime:get-status'),
   onStatusChanged: (handler: (status: PermissionStatus) => void): (() => void) => {
     const listener = (_: IpcRendererEvent, status: PermissionStatus) => handler(status);
     ipcRenderer.on('permission-guide:status', listener);
