@@ -52,6 +52,7 @@ class ArcEngine:
         self.error: str | None = None
         # window key -> (snapshot, read time); for cheap no-change re-reads.
         self._last: dict[str, tuple[Any, float]] = {}
+        self._watched: set[int] = set()
 
     @property
     def available(self) -> bool:
@@ -66,6 +67,14 @@ class ArcEngine:
 
             self._driver = Driver()
             status = Driver.status()
+            # Load the frameworks and backends now (~0.5 s, once), not on the
+            # first read a user is waiting for.
+            import AppKit  # noqa: F401  # type: ignore
+            from arc_cua.backends import macos_app, macos_ax, macos_changes, macos_events, macos_menus  # noqa: F401
+            from arc_cua.backends.macos_ocr import _frameworks
+
+            _frameworks()  # Quartz + Vision, loaded by the first window lookup otherwise.
+            AppKit.NSWorkspace.sharedWorkspace().frontmostApplication()
             if not status["permissions"]["accessibility"]:
                 self.error = "Accessibility permission is not granted"
             log.info("arc engine ready: %s", status)
@@ -81,8 +90,16 @@ class ArcEngine:
 
     # ---- targets -------------------------------------------------------------
 
+    def _watch(self, pid: int) -> None:
+        """Watch the app's notifications before its first walk (lock held), so
+        the very next re-read can be answered from that walk."""
+        if pid not in self._watched:
+            self._driver._app(pid).settle_probe(wait=True)
+            self._watched.add(pid)
+
     def resolve(self, pid: int, window_id: int | None) -> int:
         with self._lock:
+            self._watch(pid)
             return int(window_id) if window_id else self._driver.target(pid).window_id
 
     def apps(self) -> list[dict[str, Any]]:
@@ -116,10 +133,7 @@ class ArcEngine:
         from arc_cua import WindowTarget
 
         with self._lock:
-            if pid not in self._driver._apps:
-                # Watch the app's notifications before its first walk, so the
-                # very next re-read can be answered from this one.
-                self._driver._app(pid).settle_probe(wait=True)
+            self._watch(pid)
             snap = self._driver.observe(WindowTarget(pid, window_id))
         self._last[key] = (snap, time.monotonic())
         return self.nodes(snap), self.meta(snap), snap

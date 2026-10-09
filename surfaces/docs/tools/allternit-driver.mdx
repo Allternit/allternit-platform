@@ -89,7 +89,29 @@ Every op is a JSON-RPC method on the sidecar's socket.
 
 ## Measurements
 
-MEASUREMENTS_PLACEHOLDER
+Measured on 2026-10-09 on a Mac running macOS 14.6, through the sidecar's socket, so each figure includes the JSON-RPC round trip. Other work kept the machine's load average at about 14 during the run. The [baseline](#baseline) is Cua Driver 0.34 alone on the same Mac.
+
+| | Calculator | TextEdit | Finder (40-file folder) | Target |
+|---|---|---|---|---|
+| First read of the app (fresh sidecar, no prewarm) | 140 ms | 199 ms | 119 ms | ≤ 150 ms |
+| First read after the user switched to the app (prewarm) | 4 ms | – | 5 ms | ≤ 150 ms |
+| Re-read, median of 5 | 6.2 ms | 5.9 ms | 6.9 ms | ≤ 20 ms |
+| Full walk, `fresh: true`, median of 5 | 51 ms | 134 ms | 84 ms | |
+| Elements | 28 | 47 | 126 | |
+
+| | Allternit Driver | Cua Driver 0.34 alone |
+|---|---|---|
+| Click Calculator "7" until settled, with the fresh map | 336 ms (settle 203 ms) | ~1.3 s, `effect: unverifiable` |
+| 3-step batch (2, +, 3) with `expect` on the display and the cross-check | 1.47 s (341, 766, 343 ms) | `run_actions` not in 0.34 |
+| Pixel op (`pixel_get_cursor_position`) | 2.8 ms | 30–160 ms through `cua-driver call` |
+
+- **First read.** It includes the one-time setup for an app: the notification watch, the window lookup and the walk. TextEdit misses 150 ms because its accessibility answers are slow (about 3 ms per element on this Mac; upstream arc measures the same). While computer use is active, and once at launch, the driver prepares whichever app comes to the front, so the read that follows a switch is a 4–5 ms cached answer. Phase E4 (a live element map patched from notifications) will make every first read of a watched window a cached one.
+- **Batch.** The middle step is slower because Calculator posts no notification for `+`, so arc waits out its 0.6 s no-reaction window before it calls the step settled.
+- Under heavy load (load average 30–200 from other work on the same Mac) walks were 3–10 times slower, and so was upstream arc. Re-reads stayed under 25 ms.
+
+### Baseline
+
+Cua Driver 0.34 on this Mac before the driver (spec §0): full reads without a screenshot of 745 / 647 / 933 ms (Calculator / TextEdit / Finder), 106–130 ms when capped at 60 elements, and about 1.3 s for a verified click.
 
 ## Related
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import os
 import sys
 import threading
 import time
@@ -30,7 +31,8 @@ PIXEL_TOOLS = {
     "type_text", "press_key", "hotkey", "get_cursor_position", "get_screen_size",
 }
 DEFAULT_MAX_ELEMENTS = 200
-COALESCE_S = 0.25  # A reader that waited on another reader reuses a map this fresh.
+COALESCE_S = 0.25
+PREWARM_WHILE_USED_S = 600.0  # A reader that waited on another reader reuses a map this fresh.
 
 
 class DriverError(Exception):
@@ -68,13 +70,43 @@ class Driver:
         self._targets: dict[str, Target] = {}  # window key -> target
         self._labels: dict[int, str] = {}  # pid -> app key
         self._pids: dict[str, int] = {}  # app name / bundle id -> pid
+        self._last_use = float("-inf")
 
     def start(self) -> None:
         if self.os == "darwin":
             self.arc.start()
+        if self._arc_ok():
+            self._last_use = time.monotonic()  # Warm the frontmost app once at launch, too.
+            threading.Thread(target=self._prewarm, name="arc-prewarm", daemon=True).start()
         # Cua's MCP session can take seconds to come up; the API answers
         # meanwhile (macOS reads are arc's), and a Cua call waits for it.
         threading.Thread(target=self.cua.start, name="cua-start", daemon=True).start()
+
+    def _prewarm(self) -> None:
+        """While computer use is active (a read in the last 10 minutes), get the
+        frontmost app's window ready before anyone asks: its notification
+        watch, window lookup and first walk. The first read_ui of an app the
+        user just switched to is then a cached re-read. Nothing runs while no
+        agent is using the driver."""
+        import AppKit  # type: ignore
+
+        ws = AppKit.NSWorkspace.sharedWorkspace()
+        warmed: int | None = None
+        while True:
+            time.sleep(0.5)
+            if time.monotonic() - self._last_use > PREWARM_WHILE_USED_S:
+                continue
+            try:
+                front = ws.frontmostApplication()
+                pid = int(front.processIdentifier()) if front is not None else None
+                if pid is None or pid == warmed or pid == os.getpid():
+                    continue
+                warmed = pid
+                t = Target(pid, self.arc.resolve(pid, None), self._label(pid))
+                self._targets[t.key] = t
+                self._read(t)
+            except Exception as e:  # An app without windows, or one quitting.
+                log.debug("prewarm skipped: %s", e)
 
     def close(self) -> None:
         self.router.save()
@@ -190,6 +222,7 @@ class Driver:
         query, max_elements (default 200), since (a version: answer only the
         changes), fresh (skip the no-change shortcut), crops (attach crop hashes)."""
         start = time.perf_counter()
+        self._last_use = time.monotonic()
         t = self.target(p)
         version, info = self._read(t, fresh=bool(p.get("fresh")), crops=bool(p.get("crops")))
         out = self._answer(t, version, info, p)
