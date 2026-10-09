@@ -1,0 +1,18 @@
+{
+  "name": "allternit-motion-render",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Motion cloud render: the app's renderFrame bundled for Node, drawing into @napi-rs/canvas and piping frames to ffmpeg. Deployed next to allternit-cloud-api.",
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "build": "node ../../../../scripts/build-motion-render.mjs",
+    "test": "node --test test/"
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "0.1.84"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12"
+  }
+}

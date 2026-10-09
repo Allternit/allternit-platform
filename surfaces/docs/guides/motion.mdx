@@ -69,12 +69,45 @@ progress bar shows the render, and you can cancel it.
   computer, then asks where to save the file. If ffmpeg isn't installed,
   Desktop encodes in the app like the web does.
 - **ai.allternit.com, the phone layout and the m.allternit.com app** encode in
-  your browser. You get an MP4 where the browser can encode H.264. Where it
-  can only encode VP9 or AV1, you get a WebM file and Allternit says so. A
-  browser with no video encoder can't export; use Desktop or a current
-  Chrome, Edge or Safari.
+  your browser when it can encode H.264, and you get an MP4. This is the
+  fastest way, and nothing leaves your device.
+- **When your browser can't encode H.264** (for example an older iPhone or
+  iPad), Allternit renders the video in the cloud instead and downloads it
+  when it's ready. You don't have to choose.
 
 The video has no sound. The picture matches the preview frame for frame.
+
+### Export MP4 (cloud)
+
+Press **Export MP4 (cloud)** under the player, or **Export → MP4 video
+(cloud)**, to render on Allternit's servers even when your browser could do it
+itself. It suits long clips and slow or low-power devices. It isn't shown on
+Desktop, which renders locally.
+
+1. Allternit saves your latest edits first, because the cloud renders the saved
+   version.
+2. The status line shows **Waiting for the cloud renderer** (with how many
+   videos are ahead of yours) and then **Rendering in the cloud** with a
+   percentage. You can cancel at any time.
+3. When it's done, the MP4 downloads. Where a **Download MP4** button appears
+   instead, press it to save the file.
+
+Cloud export is on the Super, Ultra and Team plans, the same as Motion. The
+cloud copy of a finished video is deleted after 24 hours.
+
+| Limit | Value |
+|---|---|
+| Frame size | 1920×1080 at most, either way round |
+| Length | 120 seconds at 30 fps (3600 frames in all; a 60 fps clip can run 60 seconds) |
+| Videos rendering at once | 3 per person, including ones waiting |
+| Time for one render | 10 minutes, then it's stopped |
+
+If a limit stops an export, the message says what to change: ask Gizzi for a
+smaller size, a shorter video or a lower frame rate, or export from Allternit
+Desktop, which has no such limit. Two things differ from the preview in a
+cloud export: a logo given as a web address (not an embedded image) shows its
+name as a wordmark, and the fonts are Allternit's own (Inter, Source Serif and
+JetBrains Mono) instead of your device's.
 
 ## On a phone
 
@@ -88,10 +121,10 @@ only on Desktop and the web.
 |---|---|
 | Scenes | 40 |
 | Length of one scene | 0.5 to 60 seconds |
-| Length in all | 180 seconds |
+| Length in all | 180 seconds (cloud export: 120 seconds at 30 fps) |
 | Chart points | 24 |
 | List items | 12 |
-| Frame size | 320 to 3840 pixels per side; 1920×1080 by default |
+| Frame size | 320 to 3840 pixels per side; 1920×1080 by default (cloud export: 1920×1080 at most) |
 | Frame rate | 12 to 60; 30 by default |
 
 ## For developers

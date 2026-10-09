@@ -358,7 +358,7 @@ async fn create_subscription_checkout_url(
 /// The plan of the account's open subscription, if it has one. `past_due`
 /// and `unpaid` count: the subscription still exists and comes back when
 /// the card is fixed.
-async fn open_subscription_plan(db: &PgPool, user_id: &str) -> Result<Option<String>, ApiError> {
+pub(crate) async fn open_subscription_plan(db: &PgPool, user_id: &str) -> Result<Option<String>, ApiError> {
     Ok(sqlx::query_scalar(
         r#"
         SELECT plan_id FROM billing_subscriptions
