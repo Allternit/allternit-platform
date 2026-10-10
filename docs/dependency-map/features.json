@@ -288,6 +288,10 @@
         },
         {
           "on": "2026-10-09",
+          "note": "D0 leftovers: canonical router keeps only ledger routes (events, trajectory, receipts, evaluation, routing, migrations; /providers returns an empty catalog); /observe, /roots, /transactions, /approvals, /streams/negotiate, /shadow/observe and canonical_service/policy removed; @allternit/sdk/computer-use dropped 19 dead canonical methods; computer-use-protocol ProviderKind no longer lists browser-use."
+        },
+        {
+          "on": "2026-10-09",
           "note": "D0 cleanup: removed dead gizzi computer use, sdk/computer-use, sdk/computers, the computer-use plugins package, duplicate canonical providers, the mobile harness and pyautogui; gateway /v1/computer, /v1/run/hybrid, /v1/run/parallel gone; allternit-api computer_screenshot/mouse/keyboard tools now alias the computer toolset executor."
         },
         {

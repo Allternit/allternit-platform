@@ -1,156 +1,21 @@
 ---
 title: Canonical Computer Use
-description: Provider-neutral contract, trust-core runtime, and gated migration surface for Allternit computer-use agents.
+description: The computer-use ledger router — receipts, session events, trajectories, evaluation gates and routing cells. Computers themselves are driven through the computer toolset.
 ---
 
 ## Overview
 
-<Note>2026-10-09 (D0 cleanup): the canonical providers, environments, leases and the canonical MCP server were removed. Computers are driven through the [computer toolset](/tools/computer-toolset). This router keeps receipts, session events and trajectory; with no providers registered, `/observe` and `/transactions` answer provider-not-found.</Note>
+<Note>2026-10-09 (D0 cleanup): the per-backend canonical providers, the `/observe`, `/roots`, `/transactions`, `/approvals`, `/streams/negotiate` and `/shadow/observe` routes, environments, leases, history, and the canonical MCP server were removed. Computers are driven through the [computer toolset](/tools/computer-toolset) (`/v1/execute` on the gateway, `/v1/computers/:id/toolset` for hosted computers via `@allternit/computer-driver`).</Note>
 
-**Canonical Computer Use** is the trust-core layer of the Allternit Computer Use Engine. It defines a provider-neutral contract that separates *what* an agent wants to do from *how* a browser, desktop, or sandbox adapter does it. The canonical router exposes this layer over HTTP at `/v1/computer-use/canonical`, and a matching MCP server exposes the same primitives as tools.
+The canonical router at `/v1/computer-use/canonical` (`domains/computer-use/core/gateway/canonical_router.py`) is now the **ledger layer** of the Computer Use Engine. It keeps:
 
-The canonical layer is designed for safety and auditability:
+- **Session events** — an append-only event ledger. The computer-use runs router and browser skills write to it in the same gateway process.
+- **Trajectories** — an ordered, hashed export of a session's events, plus an MP4 replay built from stored observations.
+- **Receipts** — integrity-hashed records that can be fetched and verified.
+- **Evaluation and routing** — benchmark suites, recorded results, release gates and routing-cell stages.
+- **Migrations** — import of legacy recordings and receipts into the ledgers.
 
-- **Immutable observations** — every screenshot and accessibility tree is assigned a unique state ID and never overwritten.
-- **State-scoped references** — actions target elements or coordinates that belong to a specific observation.
-- **Stale-write rejection** — the runtime tracks an epoch per resource and rejects transactions that were planned against an old state.
-- **Honest outcomes** — providers report `worked`, `didnt`, `unknown`, or `blocked` for every step instead of collapsing failures into success.
-
-Canonical Computer Use powers:
-
-- Multi-provider dispatch across browser, desktop, mobile, and sandbox adapters.
-- Human-in-the-loop approvals bound to exact transaction state.
-- Integrity-hashed receipts and append-only event trajectories.
-- Evidence-gated migration from legacy routes to canonical providers.
-
-## Key concepts
-
-### Canonical contract
-
-The canonical contract lives in `contracts/canonical.py` and uses only the Python standard library so that native adapters, browser extensions, sandboxes, and test harnesses can share it without pulling in framework dependencies.
-
-The current contract version is `1.0.0-alpha.1`. Every provider must declare these invariants:
-
-| Invariant | Guarantee |
-|---|---|
-| `immutable_observations` | Observations are write-once; a state ID always resolves to the same data. |
-| `state_scoped_refs` | Element refs and coordinates are valid only within the observation that produced them. |
-| `stale_write_rejection` | Concurrent mutations to the same resource are serialized and stale plans are rejected. |
-| `honest_outcomes` | Step outcomes preserve ambiguity instead of coercing failures into success. |
-
-### Observations and transactions
-
-An **observation** is the atomic unit of perception. It contains a state ID, session/environment/resource scope, epoch, element tree, optional image evidence, and discovered roots.
-
-A **transaction** is a plan to move one resource from a base state to a successor state. It contains:
-
-- `base_state_id` — the observation the plan was built against.
-- `steps` — ordered `ActionStep` values (action, target ref or coordinates, arguments).
-- `postcondition` — optional semantic condition to verify after execution.
-- `approval_id` — optional approval bound to the exact transaction.
-
-The runtime executes steps one at a time, stops at the first non-`worked` outcome, captures a successor observation, and records a signed receipt.
-
-### Provider registry
-
-`CanonicalComputerService` maintains a registry of providers. Each provider advertises a `CapabilityManifest` that declares supported actions, observation channels, execution modes, operating systems, and limitations. Providers are discovered lazily at startup:
-
-```text
-browser.playwright.canonical      — in-process Playwright session manager
-desktop.accessibility.canonical   — native accessibility APIs (host-gated)
-browser.cdp.canonical             — Chrome DevTools Protocol adapter
-browser.extension.canonical       — browser extension relay
-desktop.cua-driver                — optional native desktop driver
-```
-
-Unavailable providers are reported truthfully in diagnostics instead of being silently omitted.
-
-### Resource scheduler
-
-The `ResourceScheduler` serializes live work per physical resource using an async lock and an integer epoch. This prevents two agents from planning against the same screenshot and then racing to apply conflicting actions.
-
-If a transaction's `base_state_id` resolves to an epoch lower than the resource's current epoch, the runtime returns `409 stale_resource_state` with the expected and actual epochs.
-
-### Policy engine
-
-`CanonicalPolicyEngine` evaluates every transaction before execution. It is fail-closed:
-
-- Read-only transactions are allowed without approval.
-- Side-effect actions require a matching approval.
-- Irreversible actions such as `deleteFile`, `install`, or `submit` are flagged as critical risk.
-- Sandboxed mode cannot target an implicit host environment.
-- Transactions over 50 steps or with argument payloads over 128 KiB are denied.
-
-### Approvals
-
-There are two approval authorities:
-
-- `ApprovalAuthority` issues single-use grants bound to the SHA-256 hash of a canonical transaction. The grant is consumed when the transaction executes.
-
-Both authorities use HMAC-signed IDs, expire after a configurable TTL (default 120 seconds, max 600), and can be used only once.
-
-### Receipt ledger
-
-Every executed transaction produces a `CanonicalReceipt` stored in SQLite. The receipt includes:
-
-- Transaction and successor state IDs.
-- Provider ID and execution mode.
-- Action hash and outcome hash.
-- Approval ID and approver identity.
-- An integrity hash over all of the above.
-
-Receipts can be retrieved and verified through the `/receipts/{receipt_id}` endpoint.
-
-### Session authority
-
-`SessionAuthority` records logical resource bindings across providers. When `/roots` is called, the runtime discovers application roots (browser pages, desktop windows, mobile screens) and binds them to a `(session_id, environment_id, resource_id, provider_id)` tuple so later observations and transactions can be routed correctly.
-
-### Routing and evaluation
-
-`RoutingAuthority` manages staged migration between legacy routes and canonical providers per **capability cell**. The stages are:
-
-```text
-shadow → dual_route → canonical_default → retired
-```
-
-Transitions require a passing evaluation gate from `EvaluationAuthority`. A gate passes when a provider has at least 3 measured samples, a mean score ≥ 0.8, and a Wilson 95% confidence lower bound ≥ 0.5.
-
-### Shadow comparisons
-
-The `/shadow/observe` endpoint captures the same resource through a primary provider and a shadow provider, then returns a semantic Jaccard comparison of element trees and image evidence. Shadow results can also be recorded against a legacy receipt to compare status agreement before retiring a route.
-
-## Architecture
-
-```text
-┌─────────────────────────────────────────────────────────────────────┐
-│  MCP tools          Platform SDK           curl / custom client      │
-│   (gateway HTTP)       │                         │                  │
-└──────────┬─────────────┴──────────┬──────────────┘                  │
-           │                        │                                  │
-           └────────────────────────┘                                  │
-                      │                                                │
-           FastAPI router  /v1/computer-use/canonical                 │
-           (gateway/canonical_router.py)                               │
-                      │                                                │
-    ┌─────────────────┼─────────────────┐                              │
-    ▼                 ▼                 ▼                              │
-Canonical        Environment        Session / Routing / Evaluation     │
-ComputerService  Authority          Authorities                        │
-    │                 │                 │                              │
-    ▼                 ▼                 ▼                              │
-Immutable       Environment         SQLite ledgers                     │
-Observation     Backend Service     (receipts, events,                 │
-Store           (host, sandbox,     evaluations, routing)              │
-                container, BYOC)                                       │
-    │                 │                                                │
-    ▼                 ▼                                                │
-Provider        HostAdapterGate                                        │
-registry        Sandbox backends                                       │
-    │                                                                  │
-    ▼                                                                  │
-Browser, desktop, mobile, and sandbox adapters                         │
-└─────────────────────────────────────────────────────────────────────┘
-```
+`/providers` and `/health` still answer, so older clients get an empty catalog instead of a 404.
 
 ## Base URL
 
@@ -160,38 +25,28 @@ Local gateway:
 http://127.0.0.1:8760/v1/computer-use/canonical
 ```
 
-When running behind the Allternit platform gateway, routes are available under the platform API host.
-
 ## Endpoints
 
-### Providers and health
+### Catalog and host capabilities
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/providers` | List registered provider manifests and diagnostics. |
-| `GET` | `/health` | Canonical subsystem health and contract version. |
+| `GET` | `/providers` | Always `{"providers": [], "diagnostics": {}}` since the D0 cleanup. |
+| `GET` | `/health` | Ledger subsystem status (`degraded`, zero providers) and contract version. |
 | `GET` | `/native-capabilities` | Host-native capability payload. |
-| `POST` | `/native-permissions/request-plan` | Request a permission request plan for a native capability. |
-| `POST` | `/streams/negotiate` | Negotiate viewport/audio stream codecs. |
+| `POST` | `/native-permissions/request-plan` | Permission request plan for a native capability. |
 
-### Observations and roots
+### Sessions, receipts and replay
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/observe` | Capture one immutable observation. |
-| `POST` | `/roots` | Discover and bind roots for a session/environment. |
+| `GET` | `/sessions/{session_id}/events` | List session events (`after_sequence`, `limit`). |
+| `GET` | `/sessions/{session_id}/trajectory` | Export the session trajectory. |
+| `POST` | `/sessions/{session_id}/replay/mp4` | Build a time-aligned MP4 replay from stored observations. |
 | `GET` | `/sessions/{session_id}/resources` | List bound resources. |
-
-### Transactions and approvals
-
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/transactions` | Execute a state-bound transaction. |
-| `POST` | `/approvals` | Issue a single-use transaction approval. |
-| `POST` | `/operation-approvals` | Issue an operation approval. |
 | `GET` | `/receipts/{receipt_id}` | Retrieve and verify a receipt. |
 
-### Evaluation, routing, and sessions
+### Evaluation and routing
 
 | Method | Path | Description |
 |---|---|---|
@@ -201,233 +56,38 @@ When running behind the Allternit platform gateway, routes are available under t
 | `GET` | `/routing/cells` | List routing cells. |
 | `POST` | `/routing/cells` | Configure a routing cell. |
 | `POST` | `/routing/cells/{capability_cell}/transition` | Advance a routing stage. |
-| `GET` | `/sessions/{session_id}/events` | List session events. |
-| `GET` | `/sessions/{session_id}/trajectory` | Export the session trajectory. |
-| `POST` | `/sessions/{session_id}/replay/mp4` | Build a time-aligned MP4 replay. |
 
 ### Shadow and migration
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/shadow/observe` | Compare observations from two providers. |
-| `POST` | `/shadow/results` | Compare a canonical receipt with a legacy result. |
+| `POST` | `/shadow/results` | Compare a stored receipt with a legacy result. |
 | `POST` | `/migrations/legacy-recording` | Import a legacy recording. |
 | `POST` | `/migrations/legacy-receipts` | Import legacy receipts. |
 
-## Request / response examples
+## SDK
 
-### List providers
-
-```bash
-curl http://127.0.0.1:8760/v1/computer-use/canonical/providers
-```
-
-```json
-{
-  "providers": [
-    {
-      "provider_id": "browser.playwright.canonical",
-      "provider_version": "0.1.0",
-      "contract_version": "1.0.0-alpha.1",
-      "invariants": ["immutable_observations", "state_scoped_refs", "stale_write_rejection", "honest_outcomes"],
-      "actions": ["goto", "click", "fill", "key", "scroll", "screenshot"],
-      "observation_channels": ["viewport", "accessibility"],
-      "execution_modes": ["foreground_allowed"],
-      "operating_systems": ["linux", "macos", "windows"]
-    }
-  ],
-  "diagnostics": {
-    "browser.playwright.canonical": { "available": true },
-    "desktop.accessibility.canonical": { "available": false, "reason": "native_dependencies_or_permissions_unavailable" }
-  }
-}
-```
-
-### Capture an observation
-
-```bash
-curl -X POST http://127.0.0.1:8760/v1/computer-use/canonical/observe \
-  -H "Content-Type: application/json" \
-  -d '{
-    "provider_id": "browser.playwright.canonical",
-    "session_id": "sess_abc123",
-    "environment_id": "environment_local_browser",
-    "resource_id": "browser_page_main"
-  }'
-```
-
-```json
-{
-  "state_id": "state_a1b2c3d4",
-  "session_id": "sess_abc123",
-  "environment_id": "environment_local_browser",
-  "resource_id": "browser_page_main",
-  "epoch": 0,
-  "provider_id": "browser.playwright.canonical",
-  "elements": [...],
-  "image": {
-    "artifact_id": "art_1234",
-    "media_type": "image/png",
-    "width": 1280,
-    "height": 720,
-    "sha256": "..."
-  }
-}
-```
-
-### Issue a transaction approval
-
-```bash
-curl -X POST http://127.0.0.1:8760/v1/computer-use/canonical/approvals \
-  -H "Content-Type: application/json" \
-  -d '{
-    "transaction": {
-      "transaction_id": "tx_example",
-      "session_id": "sess_abc123",
-      "environment_id": "environment_local_browser",
-      "resource_id": "browser_page_main",
-      "base_state_id": "state_a1b2c3d4",
-      "mode": "foreground_allowed",
-      "steps": [
-        { "action": "click", "target": { "ref": "el_5" }, "arguments": {} }
-      ]
-    },
-    "approved_by": "alice@allternit.com",
-    "ttl_seconds": 120
-  }'
-```
-
-```json
-{
-  "approval_id": "approval_xxx_yyy",
-  "action_hash": "...",
-  "approved_by": "alice@allternit.com",
-  "issued_at": 1723824000.0,
-  "expires_at": 1723824120.0,
-  "policy": {
-    "decision_id": "policy_...",
-    "decision": "require_approval",
-    "requires_approval": true,
-    "risk": "elevated",
-    "reasons": ["side_effect_action"]
-  }
-}
-```
-
-### Execute a transaction
-
-```bash
-curl -X POST http://127.0.0.1:8760/v1/computer-use/canonical/transactions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "provider_id": "browser.playwright.canonical",
-    "transaction": {
-      "transaction_id": "tx_example",
-      "session_id": "sess_abc123",
-      "environment_id": "environment_local_browser",
-      "resource_id": "browser_page_main",
-      "base_state_id": "state_a1b2c3d4",
-      "mode": "foreground_allowed",
-      "approval_id": "approval_xxx_yyy",
-      "steps": [
-        { "action": "click", "target": { "ref": "el_5" }, "arguments": {} }
-      ]
-    }
-  }'
-```
-
-```json
-{
-  "transaction_id": "tx_example",
-  "status": "worked",
-  "step_outcomes": [
-    {
-      "index": 0,
-      "status": "worked",
-      "evidence": { "grounding": "ref", "delivery": "playwright" }
-    }
-  ],
-  "successor_state_id": "state_e5f6g7h8",
-  "receipt_id": "receipt_zzzz",
-  "receipt": { ... },
-  "policy": { ... }
-}
-```
-
-### Record an evaluation result
-
-```bash
-curl -X POST http://127.0.0.1:8760/v1/computer-use/canonical/evaluation/results \
-  -H "Content-Type: application/json" \
-  -d '{
-    "suite_id": "screenspot",
-    "provider_id": "browser.playwright.canonical",
-    "capability_cell": "browser.click",
-    "environment_id": "environment_...",
-    "passed": true,
-    "score": 0.92,
-    "evidence_sha256": "...",
-    "source": "measured"
-  }'
-```
-
-### Transition a routing cell
-
-```bash
-curl -X POST http://127.0.0.1:8760/v1/computer-use/canonical/routing/cells/browser.click/transition \
-  -H "Content-Type: application/json" \
-  -d '{"stage": "dual_route"}'
-```
+`@allternit/sdk/computer-use` keeps `getCanonicalProviderCatalog()` / `listCanonicalProviders()` (empty catalog), `getCanonicalEvents()` and `getCanonicalTrajectory()`. The observe, roots, transaction, approval, environment, lease, history, file, clipboard and mobile methods were removed with their routes. New code should use `@allternit/computer-driver`.
 
 ## Configuration
 
-### Environment variables
-
 | Variable | Default | Description |
 |---|---|---|
-| `ALLTERNIT_COMPUTER_STATE_DIR` | `~/.allternit/computer-use` | SQLite, artifacts, and replay output directory. |
-| `ALLTERNIT_COMPUTER_APPROVAL_KEY` | random 32 bytes | HMAC key for transaction and operation approvals. |
-| `ALLTERNIT_LEGACY_RECORDING_ROOTS` | `~/.allternit/recordings:/tmp/allternit-recordings` | Roots scanned by the legacy migration service. |
-| `ALLTERNIT_ALLOW_UPSTREAM_TELEMETRY` | unset | Set to `1`/`true`/`yes`/`on` to allow upstream driver telemetry. |
-
-### Start the gateway
-
-```bash
-cd domains/computer-use/core/gateway
-source .venv/bin/activate
-uvicorn main:app --port 8760
-```
+| `ALLTERNIT_COMPUTER_STATE_DIR` | `~/.allternit/computer-use` | SQLite ledgers, artifacts and replay output directory. |
+| `ALLTERNIT_LEGACY_RECORDING_ROOTS` | `~/.allternit/recordings:/tmp/allternit-recordings` | Roots the legacy migration service may read. |
 
 ## Error codes
 
 | HTTP | Code | Meaning |
 |---|---|---|
-| `200` | — | Success. |
-| `403` | `policy_denied` | Transaction violates a policy rule. |
-| `404` | `provider_not_found` | Provider ID is not registered. |
 | `409` | `stale_resource_state` | Resource epoch changed since the base observation. |
-| `409` | `environment_conflict` | Lease, quota, or state transition conflict. |
-| `422` | `canonical_validation_failed` | Invalid transaction, observation scope, or provider contract. |
+| `422` | `canonical_validation_failed` | Invalid input (bad receipt ID, routing stage, migration path). |
 | `500` | `canonical_internal_error` | Unexpected runtime error. |
-
-## Concepts
-
-- **Observation** — an immutable snapshot of a resource at a specific epoch.
-- **Transaction** — a state-bound plan composed of action steps and an optional postcondition.
-- **Capability cell** — a fine-grained routing unit such as `browser.click` or `desktop.type`.
-- **Receipt** — an integrity-hashed record of a transaction outcome.
-- **Lease** — an exclusive, time-bounded right to operate an environment.
-- **Release gate** — an evidence threshold that must pass before a routing cell advances.
-- **Shadow comparison** — a read-only comparison between a primary provider and a candidate provider.
 
 ## Related links
 
+- [Computer toolset](/tools/computer-toolset)
 - [Allternit Computer Interface (ACI)](/tools/computer-use)
+- [Computer Use Engine model paths](/core/computer-use-engine)
 - [Session Manager](/core/session-manager)
-- [Gizzi Runtime](/core/gizzi-runtime)
-- [Allternit Factory](/factory/overview)
-- [BYOC Runtime](/byoc/overview)
-- [Living Agent Architecture](/architecture): the policy floor and receipts that computer-use actions run under
 - [Policy and safety](/architecture/policy)
-- [Intent Graph Kernel](/core/intent-graph-kernel)
-- [Computer Use Engine model paths](/core/computer-use-engine): how every model plans in toolset contract members and acts through the shared executor
