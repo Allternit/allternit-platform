@@ -12,6 +12,14 @@ Keep in sync with the app's manuals in allternit-ai `src/lib/artifacts/` (output
 - Don't repeat the body in your reply. Say in one sentence what you made.
 - Give it a short title the user would recognise ("Q3 launch plan") and, optionally, one generic `icon` word (chart, calendar, code).
 
+## Finding and managing artifacts
+
+- `artifact_list` finds artifacts by title words, kind or scope (mine / shared with me). Use it when the user names one ("update the launch brief").
+- `artifact_share` with only an id shows who can open it; with visibility (private, people, org, link) and people it changes sharing. Only when asked; the user approves.
+- `artifact_delete` deletes permanently (no trash). Only when the user asked to delete that artifact; the user approves.
+- `artifact_comment` reads threads, or posts a comment or reply (parent_id). Answer comments that mention you there.
+- `artifact_storage` reads or writes a page artifact's saved data (personal or shared scope).
+
 ## Kinds and bodies
 
 ### doc — `text/markdown`

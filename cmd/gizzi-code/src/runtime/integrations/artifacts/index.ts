@@ -165,7 +165,7 @@ export namespace Artifacts {
 
   /** undefined = no usable cloud (no credential, rejected, missing route, network/server error): go offline. */
   async function cloud(
-    method: "GET" | "POST",
+    method: "GET" | "POST" | "PUT" | "DELETE",
     path: string,
     body: unknown,
     abort?: AbortSignal,
@@ -371,6 +371,84 @@ export namespace Artifacts {
     }
     if (input.known && (!input.version || input.version === input.known.version)) return input.known
     throw new NotFoundError(input.id)
+  }
+
+  // ----------------------------------------------------------- manage (list, delete, share, comment, storage)
+
+  /** These need the cloud store: no offline fallback. */
+  async function must(method: "GET" | "POST" | "PUT" | "DELETE", path: string, body: unknown, what: string, abort?: AbortSignal) {
+    const res = await cloud(method, path, body, abort)
+    if (!res) throw new Error(`Can't ${what}: no Allternit account is connected here (sign in or pair this device).`)
+    if (res.status === 404) throw new Error(`Can't ${what}: not found, or you don't have access.`)
+    if (res.status >= 400) throw new RejectedError(res.status, `Can't ${what}: ${errorMessage(res.json, res.status)}`)
+    return res.json
+  }
+  const enc = encodeURIComponent
+
+  export interface ListItem {
+    id: string
+    kind: string
+    title: string
+    updated_at?: string
+    current_version?: number
+    visibility?: string
+    my_access?: string
+  }
+
+  export async function list(
+    q: { kind?: string; q?: string; scope?: "mine" | "shared" | "all"; limit?: number; cursor?: string },
+    abort?: AbortSignal,
+  ): Promise<{ items: ListItem[]; next_cursor: string | null }> {
+    const params = new URLSearchParams()
+    for (const [k, v] of Object.entries(q)) if (v !== undefined && v !== "") params.set(k, String(v))
+    const json = await must("GET", `/api/v2/artifacts?${params}`, undefined, "list artifacts", abort)
+    return { items: Array.isArray(json?.items) ? json.items : [], next_cursor: json?.next_cursor ?? null }
+  }
+
+  export async function remove(id: string, abort?: AbortSignal): Promise<void> {
+    await must("DELETE", `/api/v2/artifacts/${enc(id)}`, undefined, "delete the artifact", abort)
+  }
+
+  export async function sharing(id: string, abort?: AbortSignal): Promise<any> {
+    return must("GET", `/api/v2/artifacts/${enc(id)}/sharing`, undefined, "read sharing", abort)
+  }
+
+  export async function setSharing(
+    id: string,
+    input: { visibility: string; shares: Array<{ principal_type: string; principal_id: string; level: string }> },
+    abort?: AbortSignal,
+  ): Promise<any> {
+    return must("PUT", `/api/v2/artifacts/${enc(id)}/sharing`, input, "change sharing", abort)
+  }
+
+  export async function comments(id: string, abort?: AbortSignal): Promise<any[]> {
+    const json = await must("GET", `/api/v2/artifacts/${enc(id)}/comments`, undefined, "read comments", abort)
+    return Array.isArray(json?.items) ? json.items : Array.isArray(json) ? json : []
+  }
+
+  export async function comment(
+    id: string,
+    input: { body: string; parent_id?: string; anchor?: unknown },
+    abort?: AbortSignal,
+  ): Promise<any> {
+    return must("POST", `/api/v2/artifacts/${enc(id)}/comments`, input, "post the comment", abort)
+  }
+
+  export async function storageList(id: string, scope: "personal" | "shared", prefix: string | undefined, abort?: AbortSignal): Promise<any> {
+    const params = new URLSearchParams({ scope, ...(prefix ? { prefix } : {}) })
+    return must("GET", `/api/v2/artifact-runtime/${enc(id)}/storage?${params}`, undefined, "list stored data", abort)
+  }
+
+  export async function storageGet(id: string, scope: "personal" | "shared", key: string, abort?: AbortSignal): Promise<any> {
+    return must("GET", `/api/v2/artifact-runtime/${enc(id)}/storage/${enc(key)}?scope=${scope}`, undefined, "read stored data", abort)
+  }
+
+  export async function storageSet(id: string, scope: "personal" | "shared", key: string, value: string, abort?: AbortSignal): Promise<any> {
+    return must("PUT", `/api/v2/artifact-runtime/${enc(id)}/storage/${enc(key)}?scope=${scope}`, { value }, "save data", abort)
+  }
+
+  export async function storageDelete(id: string, scope: "personal" | "shared", key: string, abort?: AbortSignal): Promise<void> {
+    await must("DELETE", `/api/v2/artifact-runtime/${enc(id)}/storage/${enc(key)}?scope=${scope}`, undefined, "delete stored data", abort)
   }
 
   // ----------------------------------------------------------- transcript
