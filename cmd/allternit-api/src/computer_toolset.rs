@@ -433,6 +433,12 @@ pub struct ToolsetRequest {
     /// runs; never read from the wire.
     #[serde(skip)]
     pub within_subtask: Option<String>,
+    /// The cowork project this call runs in. Not trusted on its own: it is
+    /// checked against the owner's projects and the run's own project before
+    /// it can change which safety settings apply (see
+    /// `computer_safety::resolve_project_scope`).
+    #[serde(default)]
+    pub project_id: Option<String>,
 }
 
 fn empty_object() -> Value {
@@ -1281,10 +1287,12 @@ impl From<&str> for Fail {
 }
 
 /// What screenshot redaction needs: the computer's safety settings and the
-/// person's vault secrets (values never leave this process).
+/// person's vault secrets (values never leave this process), plus the data
+/// dir the server OCR engine caches its models in.
 pub struct Redactor<'a> {
     pub settings: &'a crate::computer_safety::SafetySettings,
     pub secrets: &'a [String],
+    pub data_dir: std::path::PathBuf,
 }
 
 /// Dispatch one action (coordinates already in screen px). Returns the
@@ -1316,7 +1324,7 @@ async fn dispatch(
             let full = png_size(&png).ok_or("couldn't read the screenshot size")?;
             // Personal data is blacked out on the full-size capture, before
             // any copy of it leaves the executor (D5).
-            let (png, report) = crate::computer_safety::redact_png(&png, redactor.settings, target, redactor.secrets)
+            let (png, report) = crate::computer_safety::redact_png(&png, redactor.settings, target, redactor.secrets, &redactor.data_dir)
                 .await
                 .map_err(|m| Fail::coded("redaction_unavailable", m))?;
             // Crop region arrives in input-space px; map it to image px.
@@ -1707,8 +1715,18 @@ pub async fn execute(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: 
     };
 
     // 3c. The safety layer (D5/E3): lists, secret binding, irreversible
-    // classes, watch mode and the per-step monitor.
-    let safety = crate::computer_safety::assess(state, user, &computer, &target, req.toolset, spec, &scaled, req.run_id.as_deref()).await;
+    // classes, watch mode and the per-step monitor. The project scope the
+    // settings resolve through comes from the run's own session project; a
+    // caller-supplied project_id must match it (or, with no run project, name
+    // one of the owner's projects) — never trusted blindly from the wire.
+    let project_scope = match crate::computer_safety::resolve_project_scope(state, &user.user_id, req.project_id.as_deref(), req.run_id.as_deref()).await {
+        Ok(p) => p,
+        Err(message) => {
+            settle(false);
+            return respond(StatusCode::FORBIDDEN, error_result("safety_denied", message, None));
+        }
+    };
+    let safety = crate::computer_safety::assess(state, user, &computer, &target, req.toolset, spec, &scaled, req.run_id.as_deref(), project_scope.as_deref()).await;
     let watching = crate::computer_safety::watch_note(&computer.id, &safety, spec);
     match &safety.verdict {
         crate::computer_safety::Verdict::Deny(reason) => {
@@ -1860,7 +1878,7 @@ pub async fn execute(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: 
     }
     let map = map.expect("pixel members have a mapping");
     let point = primary_point(spec, &scaled);
-    let redactor = Redactor { settings: &safety.settings, secrets: &secrets };
+    let redactor = Redactor { settings: &safety.settings, secrets: &secrets, data_dir: state.data_dir.clone() };
     let outcome = dispatch(&target, req.toolset, spec, &scaled, &map, &screen_key, &run_id, &redactor).await;
     emit_action(&computer.id, req.toolset, &req.member, point, Some(&map), req.run_id.as_deref(), outcome.is_ok());
     crate::computer_safety::record_monitor_outcome(state, user, &safety, if outcome.is_ok() { "success" } else { "error" }, "step ran");
@@ -2047,14 +2065,19 @@ pub(crate) async fn execute_step(
         browser_session_id: None,
         enable: vec![],
         within_subtask: Some(run_id.to_string()),
+        project_id: None,
     };
     lease_check(state, user, computer, target, Some(run_id)).await.map_err(|(_, _, m)| Fail::from(m))?;
     let (policy_desc, verdict) = policy_check(user, computer, &req).map_err(Fail::from)?;
     // The safety layer runs on every step. The subtask's one approval can't
     // cover an irreversible, watch-mode or monitor-flagged step: those end
     // the subtask and hand the step back to the planner, whose own call of
-    // it goes through the person's approval.
-    let safety = crate::computer_safety::assess(state, user, computer, target, Toolset::Computer, spec, &req.input, Some(run_id)).await;
+    // it goes through the person's approval. The project scope comes from
+    // the run itself, like every other step of this subtask.
+    let project_scope = crate::computer_safety::resolve_project_scope(state, &user.user_id, None, Some(run_id))
+        .await
+        .map_err(|m| Fail::coded("safety_denied", m))?;
+    let safety = crate::computer_safety::assess(state, user, computer, target, Toolset::Computer, spec, &req.input, Some(run_id), project_scope.as_deref()).await;
     let watching = crate::computer_safety::watch_note(&computer.id, &safety, spec);
     let refusal = match &safety.verdict {
         crate::computer_safety::Verdict::Deny(r) => Some(("safety_denied", "denied", r.clone())),
@@ -2094,6 +2117,10 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/computers/:id/toolset/events", get(get_toolset_events))
         .route("/computers/:id/human-done", post(post_human_done))
         .route("/computers/:id/safety", get(crate::computer_safety::get_safety).put(crate::computer_safety::put_safety))
+        .route(
+            "/projects/:project_id/safety",
+            get(crate::computer_safety::get_project_safety).put(crate::computer_safety::put_project_safety),
+        )
 }
 
 /// The person signals the human window is complete (CAPTCHA done, 2FA
@@ -2386,6 +2413,7 @@ mod tests {
             browser_session_id: None,
             enable: vec![],
             within_subtask: None,
+            project_id: None,
         };
         let spec = contract(Toolset::Computer).member("type").unwrap();
         assert!(needs_approval(spec, false), "type needs approval on this device");

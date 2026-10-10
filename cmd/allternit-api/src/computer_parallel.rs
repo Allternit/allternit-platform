@@ -415,6 +415,7 @@ async fn run_one(state: &Arc<AppState>, user: &AuthUser, p: &Planned, left: Dura
         browser_session_id: None,
         enable: vec![],
         within_subtask: Some(parent.to_string()),
+        project_id: None,
     };
     let spec = crate::computer_toolset::contract(Toolset::Computer).member("run_subtask").expect("run_subtask is in the contract");
     let (desc, verdict) = match policy_check(user, &p.computer, &req) {

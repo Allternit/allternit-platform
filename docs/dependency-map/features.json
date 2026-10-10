@@ -652,6 +652,10 @@
         {
           "on": "2026-10-10",
           "note": "K2: generate.mjs also emits the published SDK bindings (sdk/computer-driver/src/v2-generated.ts and sdk/computer-driver/python/allternit_computer_driver/_v2_types.py), covered by the same --check drift gate, so the SDKs' v2 types track this contract instead of drifting."
+        },
+        {
+          "on": "2026-10-10",
+          "note": "K4 safety gaps closed. Screenshot redaction no longer depends on a host driver: when no driver OCR is available (a cloud-hosted allternit-api), a built-in pure-Rust OCR engine (ocrs, MIT/Apache-2.0, rten inference) redacts server-side. Its models fetch once into the data dir on first use, pinned by URL and checked against a pinned SHA-256, the engine runs off the async runtime with a 40 MB PNG / 4096x4096 px cap and a timeout, and its word boxes feed the same find_pii + blackout code as the driver; a guest computer's own driver OCR slots in ahead of the server engine when the guest image ships it (computer_ocr.rs). App/domain allow/deny lists gain project scope (V250): settings resolve computer -> project -> owner default through SafetySettings::over, written with cowork_projects ownership verification at GET/PUT /projects/:id/safety; a toolset call's project is its run's session project (the a_run_id session link), a wire project_id is verified against the owner's projects and the run's project, and a mismatch refuses the call."
         }
       ],
       "evidence": [
@@ -663,6 +667,7 @@
         "allternit/surfaces/docs/tools/computer-credentials.mdx",
         "allternit/surfaces/docs/tools/computer-safety.mdx",
         "allternit/cmd/allternit-api/src/computer_safety.rs",
+        "allternit/cmd/allternit-api/src/computer_ocr.rs",
         "allternit/surfaces/docs/tools/computer-use-replay.mdx",
         "allternit/cmd/allternit-api/src/computer_replay.rs"
       ]
