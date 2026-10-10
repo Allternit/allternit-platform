@@ -634,7 +634,7 @@
         },
         {
           "on": "2026-10-09",
-          "note": "D4: replay cache (Stagehand design over the driver element map). run_subtask keys each subtask on hash(goal, app + window shape, input names) per owner (computer_replays, V246); the first run records semantic locators (element id, role, name, tree path, window-relative box, 8x8 pixel hash) plus a verify check per step once the exact success checks hold; later runs replay in one speculative run_batch with zero decisions, re-find a moved element by name/path/pixels or re-infer it with one decision, and rewrite the entry. Input values are never stored ({{name}} placeholders plus a guard). save_as turns a recording into a named skill; run_skill and skills (contract v2 members) run and list them. read_ui gains paths and crops."
+          "note": "D4: replay cache (Stagehand design over the driver element map). run_subtask keys each subtask on hash(goal, app + window shape, input names) per owner (computer_replays, V248); the first run records semantic locators (element id, role, name, tree path, window-relative box, 8x8 pixel hash) plus a verify check per step once the exact success checks hold; later runs replay in one speculative run_batch with zero decisions, re-find a moved element by name/path/pixels or re-infer it with one decision, and rewrite the entry. Input values are never stored ({{name}} placeholders plus a guard). save_as turns a recording into a named skill; run_skill and skills (contract v2 members) run and list them. read_ui gains paths and crops."
         },
         {
           "on": "2026-10-09",
@@ -659,7 +659,7 @@
       "label": "Decision Runtime (typed decisions)",
       "product": "product:computer-use",
       "status": "building",
-      "description": "POST /v1/decisions (alias /v1/systemone) in allternit-api's Agency Kernel: one choice over up to 255 caller options, answered by the owned local scorer (one-pass option scoring on MLX or llama.cpp, Qwen3.5-4B), escalating under a per-kind threshold to optional vendor adapters (off by default, per project) and the planner model through gizzi, within a latency budget, with abstain. Every decision and its outcome is stored (V245 decisions). The flywheel (V246) runs registered heads in shadow, promotes/demotes them on outcome accuracy with hysteresis and an audit trail, and serves live heads first (head.lookup: exact-match over past outcomes, <10 ms). GET/PUT /v1/decisions/heads.",
+      "description": "POST /v1/decisions (alias /v1/systemone) in allternit-api's Agency Kernel: one choice over up to 255 caller options, answered by the owned local scorer (one-pass option scoring on MLX or llama.cpp, Qwen3.5-4B), escalating under a per-kind threshold to optional vendor adapters (off by default, per project) and the planner model through gizzi, within a latency budget, with abstain. Every decision and its outcome is stored (V245 decisions). The flywheel (V247) runs registered heads in shadow, promotes/demotes them on outcome accuracy with hysteresis and an audit trail, and serves live heads first (head.lookup: exact-match over past outcomes, <10 ms). GET/PUT /v1/decisions/heads.",
       "touches": [
         "allternit/cmd/allternit-api/src/agency_api",
         "allternit/domains/decision-runtime",

@@ -98,13 +98,6 @@ def px_to_screen(box: Box, origin: Point, scale: float) -> tuple[float, float, f
     return (origin[0] + box[0] / s, origin[1] + box[1] / s, (box[2] - box[0]) / s, (box[3] - box[1]) / s)
 
 
-def px_to_desktop(p: Point, origin: Point, scale: float) -> Point:
-    """Window image px -> native desktop px (Cua's ``desktop`` scope): the
-    window origin in points times the backing scale, plus the image offset."""
-    s = scale or 1.0
-    return (origin[0] * s + p[0], origin[1] * s + p[1])
-
-
 def hamming(a: str, b: str) -> int:
     """Bit distance of two equal-length hex hashes (mean-hash freshness check)."""
     if not a or not b or len(a) != len(b):

@@ -194,7 +194,9 @@ class Vision:
 
     def fresh_point(self, t: Any, e: em.Element) -> tuple[bool, g.Point]:
         """Is the element's region unchanged on screen? Returns (fresh, the
-        element's centre in native desktop px for Cua's desktop scope)."""
+        element's centre in window-local screenshot px). Cua's pid/window
+        pixel path anchors these to the window wherever it sits, so a window
+        on a secondary or differently scaled display clicks the right spot."""
         shot = self.shot(t, fresh=True)
         # The window-relative image box: still right after the window moved.
         box = tuple((e.native or {}).get("box") or shot.to_px(e.bounds))
@@ -203,7 +205,7 @@ class Vision:
             got = self.worker.call("hash", png=shot.b64, boxes=[list(box)])["hashes"][0]
             if g.hamming(want, got) > HASH_TOLERANCE:
                 return False, (0.0, 0.0)
-        return True, g.px_to_desktop(g.center(box), shot.origin, shot.scale)
+        return True, g.center(box)
 
     def invalidate(self, key: str) -> None:
         self._shots.pop(key, None)

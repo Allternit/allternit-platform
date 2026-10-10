@@ -58,10 +58,10 @@ Holo2-30B-A3B is excluded because its licence is research-only. Prompts and answ
 
 ## Acting on vision elements
 
-`act` on a `v` id (and `run_batch` act steps) runs as screen-wide pixel input. It holds the desktop input lock from the check to the last event.
+`act` on a `v` id (and `run_batch` act steps) runs as pixel input aimed at that window: the click goes to the window-local screenshot point and Cua anchors it to the window wherever it sits, so windows on a secondary or differently scaled display land correctly. It holds the desktop input lock from the check to the last event.
 
 1. **Freshness check.** A new screenshot is taken. If the element's region hash now differs by more than 40 of 256 bits, the action is refused with `status: "stale_version"` and a fresh map, the same contract as a stale tree version.
-2. **The action at the element's centre** in native desktop pixels: `click` / `focus` / `select` click; `double_click` and `right_click` are themselves; `set_value` clicks, selects all and types; `type` clicks and types; `press` sends the key. `menu` needs a window, not a vision id.
+2. **The action at the element's centre** in window-local screenshot pixels, sent to the app's process: `click` / `focus` / `select` click; `double_click` and `right_click` are themselves; `set_value` clicks, selects all and types; `type` clicks and types; `press` sends the key. `menu` needs a window, not a vision id.
 
 `verify` checks that fail on the tree are checked again on fresh marks when the app's last read used vision, so a check like `text: "Saved"` can pass from text drawn on a canvas.
 
@@ -74,4 +74,4 @@ Holo2-30B-A3B is excluded because its licence is research-only. Prompts and answ
 
 ## Self-test
 
-`python -m allternit_driver.vision.selftest [--state-dir DIR] [--no-model]` runs the production path on a static fixture (`vision/fixtures/canvas.png`, a drawn "Sketchpad" with tool buttons, a canvas and Export/Cancel). It does not touch the screen. It checks marks → element ids, then grounds three targets and checks that each snapped element's centre (the point `act` would click) lies inside the target. It also checks the desktop click point for a window at (100, 50) pt on a 2× display. Unit tests: `tests/test_vision.py` (the switch, mark → element mapping, answer parsing, the zoom-reground math, and `read_ui` → `act` through a driver with fake engines).
+`python -m allternit_driver.vision.selftest [--state-dir DIR] [--no-model]` runs the production path on a static fixture (`vision/fixtures/canvas.png`, a drawn "Sketchpad" with tool buttons, a canvas and Export/Cancel). It does not touch the screen. It checks marks → element ids, then grounds three targets and checks that each snapped element's centre (the point `act` would click) lies inside the target. It also reports the window-local click point for each case. Unit tests: `tests/test_vision.py` (the switch, mark → element mapping, answer parsing, the zoom-reground math, and `read_ui` → `act` through a driver with fake engines).

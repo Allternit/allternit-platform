@@ -553,7 +553,10 @@ class Driver:
             raise DriverError("engine_unavailable", "acting on a vision element needs Cua's pixel input")
 
         def px(tool: str, args: dict[str, Any]) -> None:
-            self.cua.pixel(tool, {"scope": "desktop", **args})
+            # Window-targeted: Cua maps window-local screenshot px to the
+            # screen itself (any display, any backing scale) and sends keys
+            # to this pid.
+            self.cua.pixel(tool, {"pid": t.pid, "window_id": t.window_id, **args})
 
         # Pixel input lands on whatever is under the pointer: like pixel_*, it
         # owns all input (desktop_input) from the freshness check to the end.
@@ -563,8 +566,10 @@ class Driver:
             try:
                 fresh, (x, y) = self.vision.fresh_point(t, element)
                 if fresh:
-                    if op in ("double_click", "right_click"):
-                        px(op, {"x": x, "y": y})
+                    if op == "double_click":
+                        px("click", {"x": x, "y": y, "count": 2})
+                    elif op == "right_click":
+                        px("click", {"x": x, "y": y, "button": "right"})
                     elif op != "press":
                         px("click", {"x": x, "y": y})
                     if op in ("set_value", "type"):

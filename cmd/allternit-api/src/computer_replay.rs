@@ -377,7 +377,7 @@ pub fn derive_check(before: &[&Value], after: &[&Value], inputs: &[(String, Stri
 }
 
 // ---------------------------------------------------------------------------
-// Store (`computer_replays`, migration V246).
+// Store (`computer_replays`, migration V248).
 // ---------------------------------------------------------------------------
 
 fn row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Entry> {
@@ -574,7 +574,7 @@ mod tests {
 
     fn db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(include_str!("../migrations/V246__computer_replays.sql")).unwrap();
+        conn.execute_batch(include_str!("../migrations/V248__computer_replays.sql")).unwrap();
         conn
     }
 

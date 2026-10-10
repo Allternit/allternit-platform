@@ -59,7 +59,6 @@ class GeometryTest(unittest.TestCase):
 
     def test_desktop_point_and_screen_box(self):
         # Window at (100, 50) pt on a 2x display: image px (40, 20) -> desktop px (240, 120).
-        self.assertEqual(g.px_to_desktop((40, 20), (100, 50), 2.0), (240, 120))
         self.assertEqual(g.px_to_screen((40, 20, 140, 60), (100, 50), 2.0), (120, 60, 50, 20))
 
     def test_hamming(self):

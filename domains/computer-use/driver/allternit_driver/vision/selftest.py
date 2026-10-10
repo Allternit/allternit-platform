@@ -73,7 +73,7 @@ def main() -> None:
                     box = shot.to_px(e.bounds)
                     row["mark"] = e.mark
                     row["element_box_px"] = [round(v) for v in box]
-                    row["desktop_click_px"] = [round(v, 1) for v in g.px_to_desktop(g.center(box), shot.origin, shot.scale)]
+                    row["window_click_px"] = [round(v, 1) for v in g.center(box)]
                     # The click lands where act would click: the element's centre.
                     row["inside"] = g.contains(target, g.center(box))
                 else:
