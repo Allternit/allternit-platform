@@ -145,7 +145,7 @@ export function enabledV2Members(enabled?: Set<string>): ToolsetMemberSpec[] {
 /** Steering every model gets: the structured fast path beats pixel loops. */
 const PREFER_STRUCTURED = [
   "Prefer read_ui + act/run_batch over screenshot + pixel-by-pixel loops: the element tree is faster, cheaper and stable across resizes.",
-  "Reach for screenshots only when the tree is empty (canvas/game), the layout needs eyes, or read_ui says the app is degraded.",
+  "When the tree is empty (canvas/game/remote desktop), read_ui falls back to vision by itself: elements with source \"vision\" and a mark number act like any other id; pass target (e.g. 'the Export button') to ground one element. Reach for screenshots only when that still isn't enough.",
 ].join(" ")
 
 /**

@@ -627,9 +627,14 @@
         {
           "on": "2026-10-09",
           "note": "E4: live element map in the driver (allternit_driver/live). One AXObserver per app on one run-loop thread feeds arc's journal, settle counter and walk caches plus the map; notifications patch the map incrementally (full walk only on first sight, window-level changes, big bursts, or a failed staleness probe), so a re-read is answered with no accessibility call (0.4-0.5 ms median through the socket on this Mac). Windows are watched on demand, unwatched after 5 min idle, capped at 8; apps without notifications degrade to timed narrow reads and say so. Linux (AT-SPI over D-Bus, jeepney) and Windows (UIA, comtypes) observers are written to the same interface and staged by prepare-allternit-driver.cjs, unverified live until a non-production test machine exists. The macOS sidecar now runs the Cocoa main run loop so apps launched after it starts are found."
+        },
+        {
+          "on": "2026-10-09",
+          "note": "D6: vision fallback in the driver (allternit_driver/vision). Router.choose_source decides per window read: ax, vision (empty/sparse tree, tree error) or hybrid (tree plus marks inside opaque canvas-like regions), recorded per app and audited. Set-of-marks from Apple Vision OCR plus a model-free edge-blob proposer become v-prefixed elements (source vision, mark n) that act/run_batch/verify take like tree ids; vision act is desktop pixel input behind a mean-hash freshness check. read_ui target grounds a description with the local grounder (UI-Venus-1.5-8B MLX 4-bit primary, Holo2-8B fallback, both Apache-2.0) with zoom-and-reground on low confidence. Packages install into the state dir on first use; the model runs in a child vision worker, unloaded after 10 min idle; a vLLM endpoint (ALLTERNIT_GROUNDER_URL) is the cloud seam, configuration only. Cua parse_visual_regions is not used (needs AGPL cua-perception)."
         }
       ],
       "evidence": [
+        "allternit/surfaces/docs/tools/vision-fallback.mdx",
         "allternit/surfaces/docs/tools/computer-toolset.mdx",
         "allternit/contracts/computer-toolset/README.md",
         "allternit/cmd/allternit-api/src/computer_toolset.rs",
