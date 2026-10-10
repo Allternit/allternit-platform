@@ -8,14 +8,18 @@
 * ``ocr``: text lines with per-word boxes for one PNG (Apple Vision), so the
   executor can black out personal data in a screenshot before it reaches a
   model. The PNG is the exact image the executor holds, so boxes line up.
+  macOS only; other platforms answer ``unsupported`` and the executor keeps
+  its rules-based redaction.
 
-macOS only today; other platforms answer ``unsupported`` and the executor
+``context`` runs on macOS (AX hit test), Linux (AT-SPI) and Windows (UIA);
+where it can't gather anything it answers ``unsupported`` and the executor
 falls back to its own rules (documented in surfaces/docs/tools/computer-safety).
 """
 
 from __future__ import annotations
 
 import base64
+import os
 import sys
 import time
 from typing import Any
@@ -130,8 +134,16 @@ def context(p: dict[str, Any], pid_hint: int | None = None, elements: dict[str, 
     """Where an action lands. Params: ``point`` [x, y] in screen pixels (the
     pixel members' space), ``url`` (true to look up the page URL). The caller
     (Driver.context) resolves map ids itself and passes their window's pid."""
-    if sys.platform != "darwin":
-        raise Unsupported("context is available on macOS only")
+    if sys.platform == "darwin":
+        return _context_macos(p, pid_hint, elements)
+    if sys.platform.startswith("linux"):
+        return _context_atspi(p, pid_hint, elements)
+    if sys.platform == "win32":
+        return _context_uia(p, pid_hint, elements)
+    raise Unsupported("context is available on macOS, Linux and Windows only")
+
+
+def _context_macos(p: dict[str, Any], pid_hint: int | None, elements: dict[str, Any] | None) -> dict[str, Any]:
     import AppKit  # type: ignore
     import ApplicationServices as AS  # type: ignore
 
@@ -174,6 +186,181 @@ def context(p: dict[str, Any], pid_hint: int | None = None, elements: dict[str, 
         out["elements"] = elements
     out["ms"] = _ms(start)
     return out
+
+
+def _context_atspi(p: dict[str, Any], pid_hint: int | None, elements: dict[str, Any] | None) -> dict[str, Any]:
+    """Linux safety context: app name, window title and the element under a
+    point, from the AT-SPI tree (the same connection the engine uses). No page
+    URL: browsers don't publish one over AT-SPI."""
+    try:
+        import pyatspi  # type: ignore
+    except Exception as e:
+        raise Unsupported(f"AT-SPI isn't available: {e}") from e
+    start = time.perf_counter()
+    try:
+        desktop = pyatspi.Registry.getDesktop(0)
+    except Exception as e:
+        raise Unsupported(f"the accessibility bus isn't answering: {e}") from e
+    out: dict[str, Any] = {"scale": 1.0}
+    pid = pid_hint
+    point = p.get("point")
+    try:
+        apps = [desktop.getChildAtIndex(i) for i in range(desktop.getChildCount())]
+        apps = [a for a in apps if a is not None]
+    except Exception as e:
+        raise Unsupported(f"the accessibility desktop is empty: {e}") from e
+    if isinstance(point, list) and len(point) == 2:
+        x, y = float(point[0]), float(point[1])
+        for app in apps:
+            if pid is not None:
+                break
+            for i in range(app.getChildCount()):
+                try:
+                    win = app.getChildAtIndex(i)
+                    if win is None or win.getRoleName().lower() not in ("frame", "dialog", "window"):
+                        continue
+                    comp = win.queryComponent()
+                    ext = comp.getExtents(0)
+                    if ext.x <= x <= ext.x + ext.width and ext.y <= y <= ext.y + ext.height:
+                        hit = comp.getAccessibleAtPoint(x, y, 0)
+                        if hit is not None:
+                            out["at_point"] = {"role": _text(hit.getRoleName()), "name": _text(hit.getName())}
+                        pid = _atspi_pid(app)
+                        out["title"] = _text(win.getName())
+                        break
+                except Exception:
+                    continue
+    if pid is None:
+        for app in apps:
+            got = _atspi_pid(app)
+            if got is not None:
+                try:
+                    name = app.getName()
+                except Exception:
+                    name = ""
+                if name:
+                    out["app"] = _text(name)
+                    break
+    else:
+        for app in apps:
+            if _atspi_pid(app) == pid:
+                try:
+                    out["app"] = _text(app.getName())
+                except Exception:
+                    pass
+                try:
+                    for i in range(app.getChildCount()):
+                        win = app.getChildAtIndex(i)
+                        if win is not None and win.getRoleName().lower() in ("frame", "dialog", "window"):
+                            title = _text(win.getName())
+                            if title:
+                                out["title"] = title
+                            break
+                except Exception:
+                    pass
+                break
+    if elements:
+        out["elements"] = elements
+    out["ms"] = _ms(start)
+    return out
+
+
+def _atspi_pid(app: Any) -> int | None:
+    get_pid = getattr(app, "getProcessId", None)
+    if get_pid is not None:
+        try:
+            return int(get_pid())
+        except Exception:
+            pass
+    return None
+
+
+def _context_uia(p: dict[str, Any], pid_hint: int | None, elements: dict[str, Any] | None) -> dict[str, Any]:
+    """Windows safety context: app, window title and the element under a
+    point, from UI Automation. No page URL (the address bar is just an edit
+    control; URLs stay the browser toolset's business)."""
+    try:
+        import comtypes  # type: ignore
+        import comtypes.client  # type: ignore
+
+        comtypes.CoInitialize()
+        comtypes.client.GetModule("UIAutomationCore.dll")
+        from comtypes.gen import UIAutomationClient as U  # type: ignore
+
+        automation = comtypes.client.CreateObject(U.CUIAutomation, interface=U.IUIAutomation)
+    except Exception as e:
+        raise Unsupported(f"UI Automation isn't available: {e}") from e
+    import ctypes
+
+    start = time.perf_counter()
+    out: dict[str, Any] = {"scale": 1.0}
+    pid = pid_hint
+    point = p.get("point")
+    if isinstance(point, list) and len(point) == 2:
+        try:
+            pt = ctypes.wintypes.POINT(x=int(float(point[0])), y=int(float(point[1])))
+            el = automation.ElementFromPoint(pt)
+            if el is not None:
+                out["at_point"] = {"role": _uia_role(int(el.GetCurrentPropertyValue(30003) or 0)),
+                                   "name": _text(el.GetCurrentPropertyValue(30005))}
+                try:
+                    pid = int(el.GetCurrentPropertyValue(30002))
+                except Exception:
+                    pass
+        except Exception:
+            pass
+    if pid is None:
+        out["ms"] = _ms(start)
+        if elements:
+            out["elements"] = elements
+        return out
+    user32 = ctypes.windll.user32
+    hwnd_holder: list[int] = []
+
+    @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+    def enum(hwnd: int, _: Any) -> bool:
+        win_pid = ctypes.c_ulong(0)
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(win_pid))
+        if int(win_pid.value) == pid and user32.IsWindowVisible(hwnd):
+            hwnd_holder.append(int(hwnd))
+            return False
+        return True
+
+    user32.EnumWindows(enum, None)
+    if hwnd_holder:
+        title_buf = ctypes.create_unicode_buffer(512)
+        user32.GetWindowTextW(hwnd_holder[0], title_buf, 512)
+        if title_buf.value:
+            out["title"] = _text(title_buf.value)
+    try:
+        kernel32 = ctypes.windll.kernel32
+        psapi = ctypes.windll.psapi
+        handle = kernel32.OpenProcess(0x1000, False, pid)
+        if handle:
+            try:
+                buf = ctypes.create_unicode_buffer(512)
+                if psapi.GetModuleFileNameExW(handle, None, buf, 512):
+                    out["app"] = _text(os.path.basename(buf.value))
+            finally:
+                kernel32.CloseHandle(handle)
+    except Exception:
+        pass
+    out["pid"] = pid
+    if elements:
+        out["elements"] = elements
+    out["ms"] = _ms(start)
+    return out
+
+
+_UIA_ROLES = {
+    50000: "button", 50002: "checkbox", 50003: "combobox", 50004: "edit", 50005: "link",
+    50006: "image", 50008: "list", 50009: "menu", 50011: "menuitem", 50013: "radiobutton",
+    50015: "slider", 50018: "tab", 50020: "text", 50024: "treeitem", 50032: "window", 50033: "pane",
+}
+
+
+def _uia_role(control_type: int) -> str:
+    return _UIA_ROLES.get(control_type, f"control:{control_type}")
 
 
 def ocr(p: dict[str, Any]) -> dict[str, Any]:

@@ -150,6 +150,7 @@ pub mod computer_subtask;
 pub mod computer_safety;
 pub mod computer_ocr;
 pub mod computer_v2;
+pub mod guest_driver;
 pub mod vnc_auth;
 pub mod vnc_readonly;
 pub mod wallet;

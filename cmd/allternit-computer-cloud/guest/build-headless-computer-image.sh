@@ -137,11 +137,28 @@ if [ -n "${API_BINARY:-}" ]; then
 fi
 
 # 3. The app as a headless service (provisioned mode, no window system).
+#    A shared session bus gives the app, the AT-SPI registry and the
+#    Allternit Driver one accessibility world on the bare Xvfb screen.
 log "installing allternit-headless.service"
 incus exec "${BUILD_CONTAINER}" -- sh -c '
     set -e
     mkdir -p /etc/allternit && chmod 0700 /etc/allternit
     grep -q "^ALLTERNIT_HEADLESS=" /etc/allternit/provisioned.env 2>/dev/null || echo "ALLTERNIT_HEADLESS=1" >> /etc/allternit/provisioned.env
+    cat > /etc/systemd/system/allternit-session-bus.service <<UNIT
+[Unit]
+Description=Allternit headless session bus (shared D-Bus session for the computer and the driver)
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/dbus-daemon --session --nofork --address=unix:path=/run/allternit/bus
+ExecStartPost=/bin/sh -c "printf 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/allternit/bus\n' > /run/allternit/session-bus.env"
+Restart=always
+RestartSec=2
+RuntimeDirectory=allternit
+
+[Install]
+WantedBy=multi-user.target
+UNIT
     cat > /etc/systemd/system/allternit-xvfb.service <<UNIT
 [Unit]
 Description=Allternit developer computer screen (bare Xvfb :0, no desktop session)
@@ -157,7 +174,7 @@ UNIT
     cat > /etc/systemd/system/allternit-headless.service <<UNIT
 [Unit]
 Description=Allternit developer computer runtime (no desktop session, provisioned mode)
-After=network-online.target allternit-xvfb.service
+After=network-online.target allternit-xvfb.service allternit-session-bus.service
 Wants=network-online.target
 Requires=allternit-xvfb.service
 
@@ -168,6 +185,8 @@ Environment=ALLTERNIT_HEADLESS=1
 Environment=ELECTRON_ENABLE_LOGGING=1
 Environment=DISPLAY=:0
 Environment=HOME=/root
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/allternit/bus
+Environment=GTK_MODULES=atk-bridge
 ExecStart=/usr/bin/allternit --no-sandbox --disable-gpu
 Restart=always
 RestartSec=5
@@ -176,7 +195,7 @@ RestartSec=5
 WantedBy=multi-user.target
 UNIT
     systemctl daemon-reload
-    systemctl enable allternit-xvfb.service allternit-headless.service
+    systemctl enable allternit-session-bus.service allternit-xvfb.service allternit-headless.service
     systemctl set-default multi-user.target
 '
 

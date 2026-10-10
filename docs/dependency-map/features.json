@@ -30,7 +30,7 @@
         },
         {
           "on": "2026-10-08",
-          "note": "Any file or folder can be attached (no allow-list; text sniffed by content). Cards appear at once with Reading…; video/audio/other files go as Allternit Cloud links; sent messages show chips, not extracted text. Eoj: no grey ring on the composer; the tray only shows behind a reply strip or attachment cards."
+          "note": "Any file or folder can be attached (no allow-list; text sniffed by content). Cards appear at once with Reading\u2026; video/audio/other files go as Allternit Cloud links; sent messages show chips, not extracted text. Eoj: no grey ring on the composer; the tray only shows behind a reply strip or attachment cards."
         }
       ],
       "evidence": [
@@ -67,7 +67,7 @@
         },
         {
           "on": "2026-10-08",
-          "note": "The app (not gizzi-code) sends the manual as systemPrompt / '+' system, so each build only asks for components it renders and the TUI and channels never get it. Settings → Response style → Layout and visuals (Auto / Text only) is per device, like the Memory switches, to avoid a manual prod migration."
+          "note": "The app (not gizzi-code) sends the manual as systemPrompt / '+' system, so each build only asks for components it renders and the TUI and channels never get it. Settings \u2192 Response style \u2192 Layout and visuals (Auto / Text only) is per device, like the Memory switches, to avoid a manual prod migration."
         },
         {
           "on": "2026-10-08",
@@ -279,12 +279,14 @@
         "allternit/sdk/computer-driver",
         "allternit/mcp/computers-server",
         "allternit/platform/packages/computer-use-protocol",
-        "allternit/domains/computer-use/suite"
+        "allternit/domains/computer-use/suite",
+        "allternit/domains/computer-use/driver",
+        "allternit/domains/computer-use/core/sandbox"
       ],
       "decisions": [
         {
           "on": "2026-10-09",
-          "note": "Driver spec §8: computer-use task suite (domains/computer-use/suite) — 40 tasks (20 Mac run, 20 Linux/Windows await a test machine), code-only checkers, runner with pixel/read_ui/subtask/replay modes, pass^3 and determinism report."
+          "note": "Driver spec \u00a78: computer-use task suite (domains/computer-use/suite) \u2014 40 tasks (20 Mac run, 20 Linux/Windows await a test machine), code-only checkers, runner with pixel/read_ui/subtask/replay modes, pass^3 and determinism report."
         },
         {
           "on": "2026-10-09",
@@ -296,7 +298,11 @@
         },
         {
           "on": "2026-10-07",
-          "note": "Agent cursor overlay (computer toolset P5) in every computer viewer, from vendored MIT @trycua/cursor-motion, driven by computer.action events; style in Settings → Computers."
+          "note": "Agent cursor overlay (computer toolset P5) in every computer viewer, from vendored MIT @trycua/cursor-motion, driven by computer.action events; style in Settings \u2192 Computers."
+        },
+        {
+          "on": "2026-10-10",
+          "note": "D1b (task K5): the driver gained native guest engines \u2014 engines/atspi.py (AT-SPI reads, AT-SPI action/text/value acting, xdotool pixels, scrot+Pillow screenshots) and engines/uia.py (UIA reads on one MTA thread, invoke/value/selection/toggle patterns, user32 input, System.Drawing screenshots) \u2014 plus a hello capability report and Linux/Windows safety context. No platform-specific import crashes off-mac; guests without the deps report degraded and fail closed."
         }
       ],
       "evidence": [
@@ -319,7 +325,9 @@
         "allternit/cmd/allternit-cloud-api/src/routes/provisioned_*",
         "allternit/cmd/allternit-cloud-api/src/routes/instances_*",
         "allternit/cmd/allternit-computer-cloud",
-        "allternit/cmd/allternit-api/src/computer_*"
+        "allternit/cmd/allternit-api/src/computer_*",
+        "allternit/domains/computer-use/driver/packaging",
+        "allternit/infrastructure/tart-host"
       ],
       "decisions": [
         {
@@ -329,6 +337,10 @@
         {
           "on": "2026-10-01",
           "note": "First real Plus customer was provisioned automatically."
+        },
+        {
+          "on": "2026-10-10",
+          "note": "D1b (task K5): guest images install the Allternit Driver and its runtime deps (python3, pyatspi/at-spi2-core or comtypes, xdotool/scrot), publish a session bus for AT-SPI (run.sh writes /run/allternit/session-bus.env; the headless image adds allternit-session-bus.service), and validate-image.sh / validate-windows-image.ps1 check the hello capability report and a real read_ui before publish."
         }
       ],
       "evidence": [
@@ -341,7 +353,7 @@
       "label": "Cloud computer backups and restore points",
       "product": "product:cloud-computers",
       "status": "live",
-      "description": "Every customer cloud computer is backed up off-site each night, encrypted. Owners can take up to 5 restore points, roll back to one, and download a full copy of the computer from Settings → Computers on every surface.",
+      "description": "Every customer cloud computer is backed up off-site each night, encrypted. Owners can take up to 5 restore points, roll back to one, and download a full copy of the computer from Settings \u2192 Computers on every surface.",
       "touches": [
         "allternit-ai/src/components/computers",
         "allternit-ai/src/lib",
@@ -419,9 +431,18 @@
         "allternit/cmd/allternit-api/src/runtime_events.rs"
       ],
       "decisions": [
-        {"on": "2026-09-30", "note": "The program ships under the name MCP Apps."},
-        {"on": "2026-10-06", "note": "Events program live: approval_required events carry an approve link (platform #1361, ai #447)."},
-        {"on": "2026-10-08", "note": "Event automation extension in review: independent rules snapshot task intent; runtime queues and approvals drive real bot sessions; delivery retry and task execution have separate recovery semantics."}
+        {
+          "on": "2026-09-30",
+          "note": "The program ships under the name MCP Apps."
+        },
+        {
+          "on": "2026-10-06",
+          "note": "Events program live: approval_required events carry an approve link (platform #1361, ai #447)."
+        },
+        {
+          "on": "2026-10-08",
+          "note": "Event automation extension in review: independent rules snapshot task intent; runtime queues and approvals drive real bot sessions; delivery retry and task execution have separate recovery semantics."
+        }
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/mcp-events.mdx",
@@ -614,7 +635,11 @@
         "allternit/sdk/computer-toolset",
         "allternit/cmd/allternit-api/src/computer_*",
         "allternit/cmd/gizzi-code/src/runtime/tools",
-        "allternit/domains/computer-use/driver"
+        "allternit/domains/computer-use/driver",
+        "allternit/cmd/allternit-api/src/guest_driver.rs",
+        "allternit/domains/computer-use/driver/packaging",
+        "allternit/cmd/allternit-computer-cloud/guest",
+        "allternit/drivers/firecracker/src/rootfs.rs"
       ],
       "decisions": [
         {
@@ -631,7 +656,7 @@
         },
         {
           "on": "2026-10-09",
-          "note": "D2: contract v2 (allternit.computer.v2) ships — the 17 pixel members plus read_ui/act/run_batch/verify through the driver sidecar, request_human (lease pause, live view with input enabled, POST /api/v1/computers/:id/human-done resume) and use_credential (sealed vault + macOS Keychain + Bitwarden/1Password CLI adapters + RFC 6238 TOTP; values never enter the model context or logs; optional app/domain bindings). gizzi offers the structured members as the computer_v2 function tool to every model family (Claude keeps its native toolset for the pixel members). Windows this-device input moves off the Cua CLI fallback onto the sidecar over token-gated loopback TCP."
+          "note": "D2: contract v2 (allternit.computer.v2) ships \u2014 the 17 pixel members plus read_ui/act/run_batch/verify through the driver sidecar, request_human (lease pause, live view with input enabled, POST /api/v1/computers/:id/human-done resume) and use_credential (sealed vault + macOS Keychain + Bitwarden/1Password CLI adapters + RFC 6238 TOTP; values never enter the model context or logs; optional app/domain bindings). gizzi offers the structured members as the computer_v2 function tool to every model family (Claude keeps its native toolset for the pixel members). Windows this-device input moves off the Cua CLI fallback onto the sidecar over token-gated loopback TCP."
         },
         {
           "on": "2026-10-09",
@@ -656,6 +681,10 @@
         {
           "on": "2026-10-10",
           "note": "K4 safety gaps closed. Screenshot redaction no longer depends on a host driver: when no driver OCR is available (a cloud-hosted allternit-api), a built-in pure-Rust OCR engine (ocrs, MIT/Apache-2.0, rten inference) redacts server-side. Its models fetch once into the data dir on first use, pinned by URL and checked against a pinned SHA-256, the engine runs off the async runtime with a 40 MB PNG / 4096x4096 px cap and a timeout, and its word boxes feed the same find_pii + blackout code as the driver; a guest computer's own driver OCR slots in ahead of the server engine when the guest image ships it (computer_ocr.rs). App/domain allow/deny lists gain project scope (V250): settings resolve computer -> project -> owner default through SafetySettings::over, written with cowork_projects ownership verification at GET/PUT /projects/:id/safety; a toolset call's project is its run's session project (the a_run_id session link), a wire project_id is verified against the owner's projects and the run's project, and a mismatch refuses the call."
+        },
+        {
+          "on": "2026-10-10",
+          "note": "D1b (task K5): the Allternit Driver ships in every guest image (Linux systemd service, Windows logon task, container, tart VMs, Firecracker rootfs), and allternit-api routes the structured members (read_ui, act, run_batch, verify) for Target::Guest through the guest exec channel via the in-guest forwarder (cmd/allternit-api/src/guest_driver.rs). The static \"unimplemented until the guest driver image ships\" refusals are gone: a guest whose driver does not answer fails as driver_unavailable, and pixel members use the driver path first with xdotool/scrot/PowerShell as the explicit fallback."
         }
       ],
       "evidence": [
@@ -781,7 +810,7 @@
         },
         {
           "on": "2026-10-10",
-          "note": "Craft editors Phase 1: `pdf` joins the kind contract (default body format application/pdf) on both sides — cloud-api KINDS allow-list and the app registry. PDFs open in the workspace through the embedded PdfCraft WASM editor over the craft:1 postMessage bridge served from office.allternit.com/craft/pdf/ (see feature:craft-editors). .pdf uploads become pdf-kind records."
+          "note": "Craft editors Phase 1: `pdf` joins the kind contract (default body format application/pdf) on both sides \u2014 cloud-api KINDS allow-list and the app registry. PDFs open in the workspace through the embedded PdfCraft WASM editor over the craft:1 postMessage bridge served from office.allternit.com/craft/pdf/ (see feature:craft-editors). .pdf uploads become pdf-kind records."
         }
       ],
       "evidence": [

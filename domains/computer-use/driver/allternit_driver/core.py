@@ -61,10 +61,11 @@ def _ms(start: float) -> float:
 
 
 class Driver:
-    def __init__(self, cua: CuaEngine, arc: ArcEngine | None = None, state_dir: str | None = None, os_name: str = sys.platform) -> None:
+    def __init__(self, cua: CuaEngine, arc: ArcEngine | None = None, native: Any | None = None, state_dir: str | None = None, os_name: str = sys.platform) -> None:
         self.os = os_name
         self.cua = cua
         self.arc = arc if arc is not None else ArcEngine()
+        self.native = native  # The guest-image engine (AT-SPI on Linux, UIA on Windows); None on macOS.
         self.audit = Audit(state_dir)
         self.router = Router(os_name, state_dir, self.audit)
         self.maps = em.ElementMaps()
@@ -107,7 +108,13 @@ class Driver:
             threading.Thread(target=self._prewarm, name="arc-prewarm", daemon=True).start()
         # Cua's MCP session can take seconds to come up; the API answers
         # meanwhile (macOS reads are arc's), and a Cua call waits for it.
-        threading.Thread(target=self.cua.start, name="cua-start", daemon=True).start()
+        if self.cua.available:
+            threading.Thread(target=self.cua.start, name="cua-start", daemon=True).start()
+        if self.native is not None:
+            try:
+                self.native.start()
+            except Exception as e:  # The native engine reports its own error; reads then refuse clearly.
+                log.warning("native engine start failed: %s", e)
 
     def _prewarm(self) -> None:
         """While computer use is active (a read in the last 10 minutes), get the
@@ -141,29 +148,64 @@ class Driver:
         self.router.save()
         self.arc.close()
         self.cua.close()
+        if self.native is not None:
+            try:
+                self.native.close()
+            except Exception:
+                pass
 
     # ---- engines / routing -------------------------------------------------------
 
     def _arc_ok(self) -> bool:
         return self.os == "darwin" and self.arc.available
 
+    def _native_ok(self) -> bool:
+        return self.native is not None and bool(self.native.available)
+
+    def _fallback(self) -> Any:
+        """The engine that serves non-arc targets: the native guest engine
+        when it is up, else Cua. Raises when neither can serve."""
+        if self._native_ok():
+            return self.native
+        if self.cua.available:
+            return self.cua
+        raise DriverError("engine_unavailable", "no accessibility engine is available on this computer", {"engines": self.engines()})
+
     def capable(self, op: str) -> set[str]:
         arc, cua = self._arc_ok(), self.cua.available
-        table = {
-            "read": {ARC} if arc else set(),
-            "wait": {ARC} if arc else set(),
-            "settle": {ARC} if arc else set(),
-            "menu": {ARC} if arc else set(),
-            # Cua 0.34 has no run_actions: our executor runs batches on the map's engine.
-            "batch": {ARC} if arc else set(),
-            "verify": {ARC} if arc else set(),
-            "screenshot": {ARC} if arc else set(),
-        }.get(op, set())
-        if cua and (op != "batch" or not arc):
-            table = table | {CUA}
-        return table
+        if self.os == "darwin":
+            table = {
+                "read": {ARC} if arc else set(),
+                "wait": {ARC} if arc else set(),
+                "settle": {ARC} if arc else set(),
+                "menu": {ARC} if arc else set(),
+                # Cua 0.34 has no run_actions: our executor runs batches on the map's engine.
+                "batch": {ARC} if arc else set(),
+                "verify": {ARC} if arc else set(),
+                "screenshot": {ARC} if arc else set(),
+            }.get(op, set())
+            if cua and (op != "batch" or not arc):
+                table = table | {CUA}
+            return table
+        # Guests (and any non-mac host): the native engine is primary; Cua
+        # only when it is actually installed here.
+        native_name = self.native.name if self.native is not None else ""
+        if op in ("read", "wait", "settle", "menu", "batch", "verify", "screenshot"):
+            if self._native_ok():
+                return {native_name}
+            return {CUA} if cua else set()
+        if op == "pixel":
+            if cua:
+                return {CUA}
+            if self.native is not None and bool(self.native.pixel_available):
+                return {native_name}
+            return set()
+        # zoom, record, parse_visual_regions: Cua only.
+        return {CUA} if cua else set()
 
     def _engine(self, name: str) -> Any:
+        if self.native is not None and name == self.native.name:
+            return self.native
         return self.arc if name == ARC else self.cua
 
     def _routed(self, op: str, app: str, run: Callable[[Decision], Any], capable: set[str] | None = None) -> Any:
@@ -180,11 +222,14 @@ class Driver:
         return out
 
     def engines(self) -> dict[str, Any]:
-        return {
+        out = {
             "arc": {"available": self._arc_ok(), "error": self.arc.error},
             "cua": {"available": self.cua.available, "error": self.cua.error,
                     "run_actions": "run_actions" in self.cua.tools},
         }
+        if self.native is not None:
+            out["native"] = {"name": self.native.name, "available": bool(self.native.available), "error": self.native.error}
+        return out
 
     # ---- targets ---------------------------------------------------------------------
 
@@ -210,7 +255,8 @@ class Driver:
             wid = self.arc.resolve(pid, wid)
             t = Target(pid, wid, self._label(pid, app))
         else:
-            wins = [w for w in self.cua.windows(pid) if w.get("is_on_screen", True)]
+            engine = self._fallback()
+            wins = [w for w in engine.windows(pid) if w.get("is_on_screen", True)]
             if app:
                 wins = [w for w in wins if app.lower() in str(w.get("app_name", "")).lower()]
             if wid:
@@ -373,7 +419,7 @@ class Driver:
         else:
             w = self.live.get(t.key)
             narrow = lv.DEGRADED_MAX_ELEMENTS if w is not None and w.degraded else None
-            nodes, meta = self.cua.read(t.pid, t.window_id, max_elements=narrow)
+            nodes, meta = self._engine(engine).read(t.pid, t.window_id, max_elements=narrow)
         origin = nodes[0].bounds[:2] if nodes and nodes[0].bounds else (0.0, 0.0)
         elements = em.build(nodes, origin)
         if crops and engine == ARC:
@@ -521,7 +567,7 @@ class Driver:
                         self.live.done(t.key, False)
                     settled = getattr(res, "settled", None)
                 else:
-                    self.cua.act(t.pid, t.window_id, element.native, op, value, key)
+                    self._engine(cur.engine).act(t.pid, t.window_id, element.native, op, value, key)
                     status, settled = "done", None
                     cur, _ = self._read(t, fresh=True)
             except Exception as e:
@@ -597,10 +643,7 @@ class Driver:
 
         def run(d: Decision) -> None:
             with self.locks.input(t.key):
-                if d.engine == ARC:
-                    self.arc.menu(t.pid, t.window_id, parts)
-                else:
-                    self.cua.menu(t.pid, t.window_id, parts)
+                self._engine(d.engine).menu(t.pid, t.window_id, parts)
 
         self._routed("menu", t.app, run)
         cur, info = self._read(t, fresh=True)
@@ -761,10 +804,15 @@ class Driver:
                 ok, why = self.check(final, last) if final.engine == ARC else self.check(self._read(t, fresh=True)[0], last)
                 return {"engine": ARC, "ok": ok, "detail": why, "ms": _ms(start)}
             expect = _cua_predicate(last)
+            if final.engine == CUA and self.cua.available and expect is not None:
+                r = self.cua.verify(t.pid, t.window_id, [expect], timeout_ms=0)
+                return {"engine": CUA, "ok": _cua_verified(r), "detail": r.get("_text", "")[:200], "ms": _ms(start)}
             if expect is None:
                 return {"skipped": "check not expressible as verify_state"}
-            r = self.cua.verify(t.pid, t.window_id, [expect], timeout_ms=0)
-            return {"engine": CUA, "ok": _cua_verified(r), "detail": r.get("_text", "")[:200], "ms": _ms(start)}
+            # One-engine guests: the batch already ended with one fresh
+            # observe; confirm the expect on that map.
+            ok, why = self.check(final, last)
+            return {"engine": final.engine, "ok": ok, "detail": why, "ms": _ms(start)}
         except Exception as e:
             return {"engine": CUA if not self._arc_ok() else ARC, "ok": None, "detail": str(e)[:200], "ms": _ms(start)}
 
@@ -849,7 +897,7 @@ class Driver:
             if d.engine == ARC and t is not None:
                 png, scale = self.arc.screenshot(t.pid, t.window_id)
                 return {"png": base64.b64encode(png).decode(), "scale": scale}
-            png = self.cua.screenshot(t.pid if t else None, t.window_id if t else None)
+            png = self._engine(d.engine).screenshot(t.pid if t else None, t.window_id if t else None)
             return {"png": base64.b64encode(png).decode()}
 
         out = self._routed("screenshot", t.app if t else "desktop", run, capable)
@@ -873,9 +921,10 @@ class Driver:
             png, scale = self.arc.screenshot(t.pid, t.window_id)
             origin = _quartz_window_origin(t.window_id)
         else:
-            png = self.cua.screenshot(t.pid, t.window_id)
+            engine = self._fallback()
+            png = engine.screenshot(t.pid, t.window_id)
             origin, width = (0.0, 0.0), 0.0
-            for w in self.cua.windows(t.pid):
+            for w in engine.windows(t.pid):
                 if int(w.get("window_id", 0)) == t.window_id:
                     b = w.get("bounds") or w.get("frame") or {}
                     origin = (float(b.get("x", 0)), float(b.get("y", 0)))
@@ -889,7 +938,9 @@ class Driver:
         return vz.Shot(png, origin, scale)
 
     def pixel(self, tool: str, args: dict[str, Any]) -> dict[str, Any]:
-        """Screen-wide input through Cua's desktop scope (the existing pixel path)."""
+        """Screen-wide input through the desktop-scope pixel path (Cua's
+        desktop scope on macOS, the native engine's XTEST/user32 path on
+        guest images)."""
         if tool not in PIXEL_TOOLS:
             raise DriverError("bad_input", f"pixel_{tool} isn't a pixel op")
         args = {"scope": "desktop", **args} if tool not in ("get_cursor_position", "get_screen_size") else args
@@ -897,11 +948,11 @@ class Driver:
 
         def run(d: Decision) -> dict[str, Any]:
             if reads:
-                return self.cua.pixel(tool, args)
+                return self._engine(d.engine).pixel(tool, args)
             with self.locks.desktop_input():
-                return self.cua.pixel(tool, args)
+                return self._engine(d.engine).pixel(tool, args)
 
-        out = self._routed("pixel", "desktop", run, {CUA} if self.cua.available else set())
+        out = self._routed("pixel", "desktop", run, self.capable("pixel"))
         out.pop("_images", None)
         text = out.pop("_text", "")
         if text:
@@ -954,6 +1005,31 @@ class Driver:
 
     def status(self, _p: dict[str, Any] | None = None) -> dict[str, Any]:
         return {"os": self.os, "engines": self.engines(), "live": self.live.status(), "vision": self.vision.status()}
+
+    def hello(self, _p: dict[str, Any] | None = None) -> dict[str, Any]:
+        """What this driver can serve — the capability report a control plane
+        (allternit-api) probes before routing structured members here. Every
+        claim is computed from the same ``capable`` table the router uses, so
+        it is never more optimistic than a real call."""
+        structured = bool(self.capable("read"))
+        out = self.status()
+        out["hello"] = {
+            "version": 1,
+            "read_ui": structured,
+            "act": structured,
+            "run_batch": bool(self.capable("batch")),
+            "verify": bool(self.capable("verify")),
+            "wait": bool(self.capable("wait")),
+            "screenshot": bool(self.capable("screenshot")),
+            "zoom": bool(self.capable("zoom")),
+            "pixel": sorted(PIXEL_TOOLS) if self.capable("pixel") else [],
+            # context: macOS (AX hit test) or a guest native engine (AT-SPI /
+            # UIA). ocr stays Apple-Vision-only for now; the executor's own
+            # rules cover the rest, per the computer-safety docs.
+            "safety_context": self.os == "darwin" or self._native_ok(),
+            "safety_ocr": self.os == "darwin",
+        }
+        return out
 
     def router_table(self, _p: dict[str, Any] | None = None) -> dict[str, Any]:
         return self.router.table()

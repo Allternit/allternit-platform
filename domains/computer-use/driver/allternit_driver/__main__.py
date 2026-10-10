@@ -28,6 +28,8 @@ def main() -> None:
     ap.add_argument("--cua", default=os.environ.get("ALLTERNIT_CUA_DRIVER_PATH"), help="cua-driver executable")
     ap.add_argument("--cua-socket", default=os.environ.get("ALLTERNIT_CUA_DRIVER_SOCKET"), help="Cua daemon socket")
     ap.add_argument("--cua-embedded", action="store_true", default=os.environ.get("ALLTERNIT_CUA_DRIVER_EMBEDDED") == "true")
+    ap.add_argument("--engine", choices=["auto", "atspi", "uia", "none"], default=os.environ.get("ALLTERNIT_DRIVER_ENGINE", "auto"),
+                    help="native engine for non-mac hosts: auto picks atspi on Linux, uia on Windows (guest images)")
     ap.add_argument("--state-dir", help="router table and audit log directory")
     args = ap.parse_args()
 
@@ -36,9 +38,22 @@ def main() -> None:
     if args.state_dir:
         os.makedirs(args.state_dir, mode=0o700, exist_ok=True)
 
+    native = None
+    engine = args.engine
+    if engine == "auto":
+        engine = {"linux": "atspi", "win32": "uia"}.get(sys.platform, "none")
+    if engine == "atspi":
+        from .engines.atspi import ATSPIEngine
+
+        native = ATSPIEngine()
+    elif engine == "uia":
+        from .engines.uia import UIAEngine
+
+        native = UIAEngine()
+
     cua_env = {k: v for k, v in os.environ.items() if not k.startswith("ALLTERNIT_DRIVER_")}
     cua_env.update(CUA_DRIVER_RS_TELEMETRY_ENABLED="false", CUA_TELEMETRY_ENABLED="false", NO_COLOR="1")
-    driver = Driver(CuaEngine(args.cua, args.cua_socket, args.cua_embedded, cua_env), state_dir=args.state_dir)
+    driver = Driver(CuaEngine(args.cua, args.cua_socket, args.cua_embedded, cua_env), native=native, state_dir=args.state_dir)
     driver.start()
 
     def stop(*_: object) -> None:
