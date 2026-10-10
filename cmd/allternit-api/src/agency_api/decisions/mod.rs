@@ -12,7 +12,9 @@
 //! A decision is never authorization: policy runs first, always.
 
 pub mod backends;
+pub mod flywheel;
 pub mod store;
+pub mod vendors;
 
 use super::{ApiError, ApiResult, RequestId};
 use crate::auth::AuthUser;
@@ -73,6 +75,9 @@ struct DecisionIn {
     session_id: Option<String>,
     #[serde(default)]
     task: Option<String>,
+    /// Scopes per-project settings (vendor backends are enabled per project).
+    #[serde(default, alias = "project_id")]
+    project: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -132,6 +137,9 @@ fn validate(d: &DecisionIn, rid: &RequestId) -> Result<(), ApiError> {
         if k.is_empty() || k.len() > 64 || !k.chars().all(|c| c.is_ascii_alphanumeric() || "_.-".contains(c)) {
             return Err(bad("kind must be 1-64 characters of [A-Za-z0-9_.-]", "kind", rid));
         }
+    }
+    if d.project.as_ref().is_some_and(|p| p.is_empty() || p.len() > 128) {
+        return Err(bad("project must be 1-128 characters", "project", rid));
     }
     if let Some(names) = &d.backends {
         if let Some(bad_name) = names.iter().find(|n| backends::backend(n).is_none()) {
@@ -237,7 +245,10 @@ pub fn record_outcome(st: &AppState, user: &AuthUser, id: &str, status: &str, la
     }
     let detail: Option<String> = detail.map(|d| d.chars().take(4000).collect());
     match store::set_outcome(&st.db, id, &user.user_id, status, label, detail.as_deref(), &super::store::now()) {
-        Ok(Some(_)) => Ok(()),
+        Ok(Some(_)) => {
+            learn(&st.db, id, &user.user_id);
+            Ok(())
+        }
         Ok(None) => Err(format!("decision {id} not found")),
         Err(e) => Err(e.to_string()),
     }
@@ -264,6 +275,11 @@ async fn decide(st: &Arc<AppState>, user: &AuthUser, rid: &RequestId, d: &Decisi
         Some(names) => names.iter().filter_map(|n| backends::backend(n)).collect(),
         None => backends::chain(),
     };
+    // Vendors only for enabled projects; the head slot becomes the kind's live heads.
+    let chain: Vec<Box<dyn DecisionBackend>> =
+        chain.into_iter().filter(|b| vendors::allowed(b.name(), d.project.as_deref())).collect();
+    let key = flywheel::key_hash(kind, &hex::encode(Sha256::digest(context.as_bytes())), q.question, &q.ids, &q.texts);
+    let chain = flywheel::expand(chain, &st.db, &user.user_id, kind, &key);
     let budget = Duration::from_millis(d.latency_budget_ms.unwrap_or(DEFAULT_BUDGET_MS).clamp(1, MAX_BUDGET_MS));
     let thr = threshold(kind);
     let r = route(&chain, &q, thr, budget).await;
@@ -273,7 +289,7 @@ async fn decide(st: &Arc<AppState>, user: &AuthUser, rid: &RequestId, d: &Decisi
             .with_detail(json!({ "attempts": r.attempts })));
     }
     // With allow_abstain, nothing answering is an abstention, still recorded.
-    Ok(finish(st, user, rid, d, kind, context, image.is_some(), &q, r, thr, started))
+    Ok(finish(st, user, rid, d, kind, context, image.is_some(), &q, r, thr, started, key))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -289,6 +305,7 @@ fn finish(
     r: Routed,
     thr: f64,
     started: Instant,
+    key: String,
 ) -> Value {
     let backend = r.backend.unwrap_or("none");
     let id = super::store::new_id("dec");
@@ -319,8 +336,28 @@ fn finish(
         attempts: &attempts,
     };
     // The decision is served even when it cannot be logged; the log line says so.
-    if let Err(e) = store::insert(&st.db, &row) {
-        tracing::warn!("decision store: {e}");
+    match store::insert(&st.db, &row) {
+        Err(e) => tracing::warn!("decision store: {e}"),
+        // The flywheel: key now, the heads' shadow answers off the latency path.
+        Ok(()) => {
+            let shadow = flywheel::Shadow {
+                decision_id: id.clone(),
+                owner: user.user_id.clone(),
+                kind: kind.to_string(),
+                key,
+                ids: q.ids.iter().map(|s| s.to_string()).collect(),
+                has_image,
+            };
+            if let Err(e) = flywheel::record_key(&st.db, &shadow) {
+                tracing::warn!("decision flywheel key: {e}");
+            }
+            let db = st.db.clone();
+            off_path(move || {
+                if let Err(e) = flywheel::record_shadow(&db, &shadow) {
+                    tracing::warn!("decision flywheel shadow: {e}");
+                }
+            });
+        }
     }
     json!({
         "id": id,
@@ -339,6 +376,26 @@ fn finish(
         "attempts": attempts,
         "request_id": rid.0,
     })
+}
+
+/// Run `f` on the blocking pool when there is a runtime, inline otherwise.
+fn off_path(f: impl FnOnce() + Send + 'static) {
+    match tokio::runtime::Handle::try_current() {
+        Ok(h) => {
+            h.spawn_blocking(f);
+        }
+        Err(_) => f(),
+    }
+}
+
+/// An outcome landed: teach the lookup head and re-judge the kind's heads.
+fn learn(db: &crate::db::DbHandle, id: &str, owner: &str) {
+    let (db, id, owner) = (db.clone(), id.to_string(), owner.to_string());
+    off_path(move || {
+        if let Err(e) = flywheel::on_outcome(&db, &id, &owner) {
+            tracing::warn!("decision flywheel outcome: {e}");
+        }
+    });
 }
 
 fn round4(x: f64) -> f64 {
@@ -375,7 +432,10 @@ pub async fn patch_decision(
         return Err(bad("detail is limited to 4000 bytes and label to 128", "detail", &rid));
     }
     match store::set_outcome(&st.db, &id, &user.user_id, &o.status, o.label.as_deref(), o.detail.as_deref(), &super::store::now()) {
-        Ok(Some(v)) => Ok(Json(v).into_response()),
+        Ok(Some(v)) => {
+            learn(&st.db, &id, &user.user_id);
+            Ok(Json(v).into_response())
+        }
         Ok(None) => Err(ApiError::not_found("decision", &rid)),
         Err(e) => Err(ApiError::internal(e, &rid)),
     }
@@ -383,3 +443,5 @@ pub async fn patch_decision(
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod flywheel_tests;

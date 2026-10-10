@@ -648,7 +648,7 @@
       "label": "Decision Runtime (typed decisions)",
       "product": "product:computer-use",
       "status": "building",
-      "description": "POST /v1/decisions (alias /v1/systemone) in allternit-api's Agency Kernel: one choice over up to 255 caller options, answered by the owned local scorer (one-pass option scoring on MLX or llama.cpp, Qwen3.5-4B), escalating under a per-kind threshold to vendor stubs (off) and the planner model through gizzi, within a latency budget, with abstain. Every decision and its outcome is stored (V245 decisions).",
+      "description": "POST /v1/decisions (alias /v1/systemone) in allternit-api's Agency Kernel: one choice over up to 255 caller options, answered by the owned local scorer (one-pass option scoring on MLX or llama.cpp, Qwen3.5-4B), escalating under a per-kind threshold to optional vendor adapters (off by default, per project) and the planner model through gizzi, within a latency budget, with abstain. Every decision and its outcome is stored (V245 decisions). The flywheel (V246) runs registered heads in shadow, promotes/demotes them on outcome accuracy with hysteresis and an audit trail, and serves live heads first (head.lookup: exact-match over past outcomes, <10 ms). GET/PUT /v1/decisions/heads.",
       "touches": [
         "allternit/cmd/allternit-api/src/agency_api",
         "allternit/domains/decision-runtime",
@@ -662,11 +662,18 @@
         {
           "on": "2026-10-09",
           "note": "E2: computer use runs on typed decisions. run_subtask (allternit.computer.v2, every model family via computer_v2) takes a goal, literal inputs, verify-syntax success checks, constraints and limits; the executor loop (computer_subtask.rs) reads the live element map with since diffs, builds element x op options plus done/escalate, decides on the fast tiers only (no oracle), runs each step through lease/policy/audit (predictable typing batched with expect checks), checks success with verify, hands back to the planner with a compact screen when a decision abstains, and writes every outcome back to the decision store. Driver: text entry writes AXValue instead of arc's SkyLight focus-borrowing, which crashed the sidecar on macOS 14."
+        },
+        {
+          "on": "2026-10-09",
+          "note": "E5 + E6: flywheel framework only (training stays in the M track, which registers trained heads through the same Head trait). Promotion is judged on accuracy against reported outcomes (default 97% over 200 labelled, not overconfident), demotion under 93%, metrics reset at each transition; safety heads never auto-promote; manual moves only for ALLTERNIT_DECISIONS_ADMINS. Vendor adapters follow the vendors' published docs (hosted decisions API public beta; TypeSafe Jev /v1/systemone), gated by key AND per-project enable (ALLTERNIT_DECISIONS_VENDOR_PROJECTS); not exercised live (metered). compare_backends.py gives a same-decisions latency/accuracy table and refuses metered backends without --allow-metered."
         }
       ],
       "evidence": [
         "allternit/surfaces/docs/api/agency/decisions.mdx",
         "allternit/cmd/allternit-api/src/agency_api/decisions/mod.rs",
+        "allternit/cmd/allternit-api/src/agency_api/decisions/flywheel.rs",
+        "allternit/cmd/allternit-api/src/agency_api/decisions/vendors.rs",
+        "allternit/domains/decision-runtime/bench/compare_backends.py",
         "allternit/domains/decision-runtime/allternit_decisions/engine_mlx.py"
       ]
     },

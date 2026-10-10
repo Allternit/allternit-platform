@@ -204,6 +204,9 @@ pub fn agency_router() -> Router<Arc<AppState>> {
         .route("/v1/decisions", post(decisions::create_decision))
         .route("/v1/systemone", post(decisions::create_decision))
         .route("/v1/decisions/:decision_id", get(decisions::get_decision).patch(decisions::patch_decision))
+        // Decision flywheel (E5): heads, their metrics and state; manual moves for decisions admins.
+        .route("/v1/decisions/heads", get(decisions::flywheel::list_heads))
+        .route("/v1/decisions/heads/:head/:kind", axum::routing::put(decisions::flywheel::put_head))
         .route("/v1/capabilities", get(|| async { Json(page(catalog::capabilities())) }))
         .route("/v1/agents", get(|| async { Json(page(vec![catalog::agent_object()])) }))
         .route("/v1/authority-profiles", get(|| async { Json(page(catalog::authority_profiles())) }))
