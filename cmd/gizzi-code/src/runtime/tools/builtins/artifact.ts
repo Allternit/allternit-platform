@@ -141,4 +141,132 @@ export const ArtifactReadTool = Tool.define("artifact_read", {
   },
 })
 
-export const ARTIFACT_TOOLS = [ArtifactCreateTool, ArtifactUpdateTool, ArtifactReadTool]
+export const ArtifactListTool = Tool.define("artifact_list", {
+  description:
+    "List the user's artifacts (their own and ones shared with them), newest first: id, kind, title, version, who can open it. " +
+    "Use it to find an artifact the user mentions by name before artifact_read or artifact_update.",
+  parameters: z.object({
+    q: z.string().max(200).optional().describe("Words in the title"),
+    kind: z.enum(Artifacts.KINDS).optional().describe("Only this kind"),
+    scope: z.enum(["all", "mine", "shared"]).optional().describe("all (default), mine, or shared with me"),
+    limit: z.number().int().min(1).max(50).optional().describe("How many (default 20)"),
+    cursor: z.string().optional().describe("next_cursor from a previous call, for more"),
+  }),
+  async execute(params, ctx) {
+    const { items, next_cursor } = await Artifacts.list({ ...params, limit: params.limit ?? 20 }, ctx.abort)
+    const lines = items.map(
+      (a) => `${a.id}  ${a.kind}  "${a.title}"  v${a.current_version ?? "?"}  ${a.visibility ?? ""}${a.my_access && a.my_access !== "owner" ? ` (${a.my_access})` : ""}  ${a.updated_at ?? ""}`,
+    )
+    return {
+      title: `${items.length} artifact${items.length === 1 ? "" : "s"}`,
+      output: (lines.length ? lines.join("\n") : "No artifacts match.") + (next_cursor ? `\nMore: cursor ${next_cursor}` : ""),
+      metadata: { ok: true, items, next_cursor, truncated: false },
+    }
+  },
+})
+
+export const ArtifactDeleteTool = Tool.define("artifact_delete", {
+  description:
+    "Permanently delete an artifact the user owns: every version, its comments and its share links. There is no trash. " +
+    "Only when the user asked to delete that artifact; the user approves each delete.",
+  parameters: z.object({ id: z.string().min(1).describe("The artifact id (art_…)") }),
+  async execute(params, ctx) {
+    await ctx.ask({ permission: "artifact_delete", patterns: [params.id], always: [], metadata: { id: params.id } })
+    await Artifacts.remove(params.id, ctx.abort)
+    return { title: `Deleted ${params.id}`, output: `Deleted ${params.id} permanently.`, metadata: { ok: true, truncated: false } }
+  },
+})
+
+export const ArtifactShareTool = Tool.define("artifact_share", {
+  description:
+    "Read or change who can open an artifact the user owns. Without visibility it returns the current settings. " +
+    "visibility: private (only me), people (the listed people), org (everyone in their organization), link (anyone with the link; " +
+    "not allowed for artifacts that call AI or connectors, and an org admin may turn it off). Levels: view, comment, edit (Docs: view or edit). " +
+    "Changing sharing is outward-facing: only when the user asked; the user approves each change.",
+  parameters: z.object({
+    id: z.string().min(1).describe("The artifact id (art_…)"),
+    visibility: z.enum(["private", "people", "org", "link"]).optional(),
+    people: z
+      .array(z.object({ email: z.string().email(), level: z.enum(["view", "comment", "edit"]) }))
+      .max(50)
+      .optional()
+      .describe("For people: who, and what they can do. Replaces the current list."),
+  }),
+  async execute(params, ctx) {
+    if (!params.visibility) {
+      const current = await Artifacts.sharing(params.id, ctx.abort)
+      return { title: `Sharing for ${params.id}`, output: JSON.stringify(current, null, 2), metadata: { ok: true, sharing: current, truncated: false } }
+    }
+    await ctx.ask({
+      permission: "artifact_share",
+      patterns: [params.id],
+      always: [],
+      metadata: { id: params.id, visibility: params.visibility, people: params.people ?? [] },
+    })
+    const shares = (params.people ?? []).map((p) => ({ principal_type: "email", principal_id: p.email.toLowerCase(), level: p.level }))
+    const updated = await Artifacts.setSharing(params.id, { visibility: params.visibility, shares }, ctx.abort)
+    return {
+      title: `Shared ${params.id}`,
+      output: `Sharing is now ${params.visibility}${shares.length ? ` with ${shares.map((s) => `${s.principal_id} (${s.level})`).join(", ")}` : ""}.`,
+      metadata: { ok: true, sharing: updated, truncated: false },
+    }
+  },
+})
+
+export const ArtifactCommentTool = Tool.define("artifact_comment", {
+  description:
+    "Read an artifact's comment threads, or post a comment or a reply (parent_id). Use it to answer a comment that mentions you, " +
+    "or to leave a note where the user asked. Leave body out to read.",
+  parameters: z.object({
+    id: z.string().min(1).describe("The artifact id (art_…)"),
+    body: z.string().min(1).max(10_000).optional().describe("The comment text"),
+    parent_id: z.string().optional().describe("Reply to this comment id"),
+  }),
+  async execute(params, ctx) {
+    if (!params.body) {
+      const items = await Artifacts.comments(params.id, ctx.abort)
+      return { title: `${items.length} comments`, output: JSON.stringify(items, null, 2).slice(0, MAX_MODEL_BODY), metadata: { ok: true, items, comment: undefined as unknown, truncated: false } }
+    }
+    const posted = await Artifacts.comment(params.id, { body: params.body, parent_id: params.parent_id }, ctx.abort)
+    return { title: "Comment posted", output: `Posted${params.parent_id ? " a reply" : " a comment"} on ${params.id}.`, metadata: { ok: true, items: [] as any[], comment: posted as unknown, truncated: false } }
+  },
+})
+
+export const ArtifactStorageTool = Tool.define("artifact_storage", {
+  description:
+    "Read or write a page artifact's saved data (what the page stores with window.allternit.storage). scope personal = only this user; " +
+    "shared = everyone who opens it. Actions: list (optional prefix), get, set (value is a string, often JSON), delete. " +
+    "Up to 20 MB of text per artifact.",
+  parameters: z.object({
+    id: z.string().min(1).describe("The artifact id (art_…)"),
+    action: z.enum(["list", "get", "set", "delete"]),
+    scope: z.enum(["personal", "shared"]).default("personal"),
+    key: z.string().min(1).max(200).optional(),
+    value: z.string().optional(),
+    prefix: z.string().max(200).optional(),
+  }),
+  async execute(params, ctx) {
+    const { id, action, scope, key } = params
+    if (action !== "list" && !key) throw new Error("key is required for get, set and delete")
+    const result =
+      action === "list"
+        ? await Artifacts.storageList(id, scope, params.prefix, ctx.abort)
+        : action === "get"
+          ? await Artifacts.storageGet(id, scope, key!, ctx.abort)
+          : action === "set"
+            ? await Artifacts.storageSet(id, scope, key!, params.value ?? "", ctx.abort)
+            : (await Artifacts.storageDelete(id, scope, key!, ctx.abort), { deleted: key })
+    return { title: `Storage ${action}`, output: JSON.stringify(result, null, 2).slice(0, MAX_MODEL_BODY), metadata: { ok: true, truncated: false } }
+  },
+})
+
+export const ARTIFACT_TOOLS = [
+  ArtifactCreateTool,
+  ArtifactUpdateTool,
+  ArtifactReadTool,
+  ArtifactListTool,
+  ArtifactDeleteTool,
+  ArtifactShareTool,
+  ArtifactCommentTool,
+  ArtifactStorageTool,
+]
