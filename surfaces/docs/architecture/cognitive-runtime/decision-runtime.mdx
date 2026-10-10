@@ -51,6 +51,16 @@ On main there is one canonical decision server. It speaks the frozen Kernel ABI 
 
 Its router runs in **shadow mode by default**. Without a bound calibration manifest that has passed the go-live gate, every result is marked uncalibrated and abstains; it is never `AUTO`. `AUTO` needs live mode, a passing manifest for that primitive, the caller attesting the decision is reversible, and a confidence inside the calibrated region. For a manifest from the Q26 gate, live mode also needs the primitive to be in a canary with budget left. Today only `judge.first_pass.tool` qualifies. See [Calibration](/architecture/cognitive-runtime/calibration#canary).
 
+### Typed decisions endpoint (E1)
+
+allternit-api's Agency Kernel serves `POST /v1/decisions` (alias `/v1/systemone`): one choice over up to 255 caller options, for computer-use steps and any other bounded question. A backend chain answers it: the owned local scorer (one-pass option scoring on MLX or llama.cpp, Qwen3.5-4B by default), live flywheel heads first, optional vendor adapters (off by default, enabled per project), and the planner model through gizzi as the oracle. Under a per-kind confidence threshold the router escalates to the next backend, within the caller's latency budget, and abstains when the caller allows it. Every decision is stored with its outcome. Its probabilities are relative to the option set and marked uncalibrated. See the [API reference](/api/agency/decisions).
+
+**Flywheel (E5).** Registered heads run in shadow on every decision of their kind, off the latency path; their choices are stored next to the served choice and the outcome. A head is promoted to live when its accuracy against outcomes clears the kind's bar (default 97% over 200 labelled answers, not overconfident) and demoted when live accuracy drops under 93%; each state is re-earned from scratch, and every change is audited. The first head, `head.lookup`, is an exact-match lookup over the account's past successful choices that answers in well under 10 ms; trained heads from the decision-model track register through the same interface. See [The flywheel](/api/agency/decisions#the-flywheel).
+
+**Vendor backends (E6).** Adapters for a hosted vendor decisions API and for TypeSafe Jev follow the vendors' published request formats. Both are off by default, need the key on the server and the project enabled, and are metered by the vendor. `domains/decision-runtime/bench/compare_backends.py` compares backends on the same decisions (latency and accuracy).
+
+Computer use runs on it through `run_subtask` (E2): the planner sets a bounded goal once and each UI step is an `element`, `field` or `verify` decision on the fast tiers, with every outcome written back. See [How computer use decides](/tools/computer-use-decisions).
+
 A pre-tool safety hook uses the server in log-only mode: deterministic hard rules decide first and last, and the decision server can only add friction, never allow.
 
 ## Availability
@@ -60,6 +70,9 @@ A pre-tool safety hook uses the server in log-only mode: deterministic hard rule
 | Decision contracts | **IMPLEMENTED** (contract) |
 | Canonical decision server, nine operations | **SHADOW** · INTERNAL |
 | S1 acting on a decision (`AUTO`) | **IMPLEMENTED** (gated; no primitive has passed) |
+| Typed decisions endpoint `POST /v1/decisions` with local scorer, oracle and escalation | **IMPLEMENTED** · PREVIEW |
+| Flywheel: shadow heads, promotion and demotion, `head.lookup` (E5) | **IMPLEMENTED** · PREVIEW (shadow until it earns promotion) |
+| Vendor decision backends, per project (E6) | **IMPLEMENTED** · off by default, not exercised live |
 | Backend federation across backend classes | **DESIGN** |
 
 ## Developer relevance

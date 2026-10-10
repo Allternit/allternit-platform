@@ -1,7 +1,15 @@
 /**
  * @allternit/sdk/computer-use - Computer Use Engine Client
+ *
+ * @deprecated since 2026-10-09. Use `@allternit/computer-driver` for hosted
+ * computers (one contract call per action on `/v1/computers/:id/toolset`).
+ * This client is a thin shim over the ACU gateway runs API and is not a
+ * drop-in for the driver: it drives gateway runs and receipts, not computers.
+ * `executeCompatibilityAction` now uses the gateway's `/v1/execute` channel
+ * (the old `/v1/computer` route is gone).
  */
 export const COMPUTER_USE_CONTRACT_VERSION = "1.0.0-alpha.1";
+/** @deprecated Use `@allternit/computer-driver`. */
 export class AllternitComputerUseClient {
     baseUrl;
     fetch;
@@ -35,15 +43,31 @@ export class AllternitComputerUseClient {
             throw new Error(`Computer use stream failed: ${response.status} ${response.statusText}`);
         return response;
     }
-    /** Compatibility-only atomic action transport for products migrating to canonical transactions. */
+    /**
+     * One browser-session action on the gateway's `/v1/execute` channel
+     * (`action`, `session_id`, optional `target`/`text`/`parameters`). Returns the
+     * execute response (`status`, `summary`, `artifacts`, `extracted_content`).
+     * The old `/v1/computer` route this used was removed on 2026-10-09.
+     */
     async executeCompatibilityAction(request) {
-        const response = await this.fetch(`${this.baseUrl}/v1/computer`, {
+        const { action, session_id, run_id, parameters, coordinate, text, key, target, goal, adapter_preference } = request;
+        const params = { ...(parameters ?? {}) };
+        if (coordinate)
+            params.coordinate = coordinate;
+        if (key !== undefined)
+            params.key = key;
+        const response = await this.fetch(`${this.baseUrl}/v1/execute`, {
             method: "POST",
             headers: { "Content-Type": "application/json", ...this.headers },
             body: JSON.stringify({
-                ...request,
-                run_id: request.run_id ?? `sdk-${globalThis.crypto?.randomUUID?.() ?? Date.now()}`,
-                parameters: request.parameters ?? {},
+                action,
+                session_id,
+                run_id: run_id ?? `sdk-${globalThis.crypto?.randomUUID?.() ?? Date.now()}`,
+                ...(target !== undefined ? { target } : {}),
+                ...(goal !== undefined ? { goal } : {}),
+                ...(text !== undefined ? { text } : {}),
+                ...(adapter_preference !== undefined ? { adapter_preference } : {}),
+                parameters: params,
             }),
         });
         if (!response.ok)
@@ -63,6 +87,13 @@ export class AllternitComputerUseClient {
     async listCanonicalProviders() {
         return (await this.getCanonicalProviderCatalog()).providers;
     }
+    /**
+     * Canonical provider catalog. Since the D0 cleanup (2026-10-09) the gateway
+     * registers no per-backend canonical providers, so this returns an empty
+     * catalog. The observe / roots / transactions / approvals / environment /
+     * lease / history methods were removed with their routes; use
+     * `@allternit/computer-driver` for hosted computers.
+     */
     async getCanonicalProviderCatalog() {
         const response = await this.fetch(`${this.baseUrl}/v1/computer-use/canonical/providers`, {
             method: "GET",
@@ -72,95 +103,10 @@ export class AllternitComputerUseClient {
             throw new Error(`Provider discovery failed: ${response.status} ${response.statusText}`);
         return response.json();
     }
-    async observeCanonical(request) {
-        const response = await this.fetch(`${this.baseUrl}/v1/computer-use/canonical/observe`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", ...this.headers },
-            body: JSON.stringify(request),
-        });
-        if (!response.ok)
-            throw new Error(`Canonical observation failed: ${response.status} ${response.statusText}`);
-        return response.json();
-    }
-    async findCanonicalRoots(request) {
-        const response = await this.fetch(`${this.baseUrl}/v1/computer-use/canonical/roots`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", ...this.headers },
-            body: JSON.stringify(request),
-        });
-        if (!response.ok)
-            throw new Error(`Canonical root discovery failed: ${response.status} ${response.statusText}`);
-        return response.json();
-    }
-    async executeCanonicalTransaction(transaction, providerId = "browser.playwright.canonical") {
-        const response = await this.fetch(`${this.baseUrl}/v1/computer-use/canonical/transactions`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", ...this.headers },
-            body: JSON.stringify({ provider_id: providerId, transaction }),
-        });
-        if (!response.ok)
-            throw new Error(`Canonical transaction failed: ${response.status} ${response.statusText}`);
-        return response.json();
-    }
-    async approveCanonicalTransaction(transaction, approvedBy, ttlSeconds = 120) {
-        const response = await this.fetch(`${this.baseUrl}/v1/computer-use/canonical/approvals`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", ...this.headers },
-            body: JSON.stringify({ transaction, approved_by: approvedBy, ttl_seconds: ttlSeconds }),
-        });
-        if (!response.ok)
-            throw new Error(`Canonical approval failed: ${response.status} ${response.statusText}`);
-        return response.json();
-    }
     async getCanonicalEvents(sessionId, afterSequence = 0) {
         const response = await this.fetch(`${this.baseUrl}/v1/computer-use/canonical/sessions/${encodeURIComponent(sessionId)}/events?after_sequence=${afterSequence}`, { method: "GET", headers: this.headers });
         if (!response.ok)
             throw new Error(`Canonical event query failed: ${response.status} ${response.statusText}`);
-        return response.json();
-    }
-    async listCanonicalEnvironmentProviders() {
-        const response = await this.fetch(`${this.baseUrl}/v1/computer-use/canonical/environment-providers`, {
-            method: "GET", headers: this.headers,
-        });
-        if (!response.ok)
-            throw new Error(`Environment provider discovery failed: ${response.status} ${response.statusText}`);
-        return (await response.json()).providers;
-    }
-    async createCanonicalEnvironment(request) {
-        const response = await this.fetch(`${this.baseUrl}/v1/computer-use/canonical/environments`, {
-            method: "POST", headers: { "Content-Type": "application/json", ...this.headers }, body: JSON.stringify(request),
-        });
-        if (!response.ok)
-            throw new Error(`Environment creation failed: ${response.status} ${response.statusText}`);
-        return response.json();
-    }
-    async approveCanonicalEnvironmentOperation(request) {
-        const response = await this.fetch(`${this.baseUrl}/v1/computer-use/canonical/operation-approvals`, {
-            method: "POST", headers: { "Content-Type": "application/json", ...this.headers }, body: JSON.stringify(request),
-        });
-        if (!response.ok)
-            throw new Error(`Operation approval failed: ${response.status} ${response.statusText}`);
-        return response.json();
-    }
-    async provisionCanonicalEnvironment(environmentId, control) {
-        const response = await this.fetch(`${this.baseUrl}/v1/computer-use/canonical/environments/${encodeURIComponent(environmentId)}/provision`, { method: "POST", headers: { "Content-Type": "application/json", ...this.headers }, body: JSON.stringify(control) });
-        if (!response.ok)
-            throw new Error(`Environment provisioning failed: ${response.status} ${response.statusText}`);
-        return response.json();
-    }
-    async stopCanonicalEnvironment(environmentId, control) {
-        const response = await this.fetch(`${this.baseUrl}/v1/computer-use/canonical/environments/${encodeURIComponent(environmentId)}/stop`, { method: "POST", headers: { "Content-Type": "application/json", ...this.headers }, body: JSON.stringify(control) });
-        if (!response.ok)
-            throw new Error(`Environment stop failed: ${response.status} ${response.statusText}`);
-        return response.json();
-    }
-    async acquireCanonicalEnvironmentLease(environmentId, holderId, kind, ttlSeconds = 300) {
-        const response = await this.fetch(`${this.baseUrl}/v1/computer-use/canonical/environments/${encodeURIComponent(environmentId)}/leases`, {
-            method: "POST", headers: { "Content-Type": "application/json", ...this.headers },
-            body: JSON.stringify({ holder_id: holderId, kind, ttl_seconds: ttlSeconds }),
-        });
-        if (!response.ok)
-            throw new Error(`Environment lease failed: ${response.status} ${response.statusText}`);
         return response.json();
     }
     async getCanonicalTrajectory(sessionId) {
@@ -168,32 +114,6 @@ export class AllternitComputerUseClient {
         if (!response.ok)
             throw new Error(`Canonical trajectory failed: ${response.status} ${response.statusText}`);
         return response.json();
-    }
-    async canonicalPost(path, body) {
-        const response = await this.fetch(`${this.baseUrl}/v1/computer-use/canonical${path}`, {
-            method: "POST", headers: { "Content-Type": "application/json", ...this.headers }, body: JSON.stringify(body),
-        });
-        if (!response.ok)
-            throw new Error(`Canonical operation failed: ${response.status} ${response.statusText}`);
-        return response.json();
-    }
-    async releaseCanonicalEnvironmentLease(leaseId, holderId) {
-        return this.canonicalPost(`/leases/${encodeURIComponent(leaseId)}/release`, { holder_id: holderId });
-    }
-    async executeCanonicalEnvironmentCommand(environmentId, request) {
-        return this.canonicalPost(`/environments/${encodeURIComponent(environmentId)}/exec`, request);
-    }
-    async readCanonicalEnvironmentFile(environmentId, request) {
-        return this.canonicalPost(`/environments/${encodeURIComponent(environmentId)}/files/read`, request);
-    }
-    async writeCanonicalEnvironmentFile(environmentId, request) {
-        return this.canonicalPost(`/environments/${encodeURIComponent(environmentId)}/files/write`, request);
-    }
-    async canonicalEnvironmentClipboard(environmentId, request) {
-        return this.canonicalPost(`/environments/${encodeURIComponent(environmentId)}/clipboard`, request);
-    }
-    async executeCanonicalMobileAction(environmentId, request) {
-        return this.canonicalPost(`/environments/${encodeURIComponent(environmentId)}/mobile/actions`, request);
     }
     async watch(options) {
         const response = await this.fetch(`${this.baseUrl}/v1/computer-use/runs/${options.runId}/events`, {
@@ -257,6 +177,21 @@ export class AllternitComputerUseClient {
         });
         if (!response.ok) {
             throw new Error(`Deny run failed: ${response.status} ${response.statusText}`);
+        }
+        return response.json();
+    }
+    /** Guidance for a running planning loop; it reads it before its next step. */
+    async steerRun(runId, text) {
+        const response = await this.fetch(`${this.baseUrl}/v1/computer-use/runs/${runId}/steer`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                ...this.headers,
+            },
+            body: JSON.stringify({ text }),
+        });
+        if (!response.ok) {
+            throw new Error(`Steer run failed: ${response.status} ${response.statusText}`);
         }
         return response.json();
     }
@@ -355,9 +290,9 @@ export class AllternitComputerUseClient {
         return response.json();
     }
     /**
-     * Run the deterministic record -> teach -> batch -> verify chain. Without
-     * a targetUrl this is the canned self-check; with one, the spec'd workflow
-     * is batch-verified against that URL. Poll with getBrowserSkillVerify.
+     * Run the deterministic record → teach → batch → verify chain. Without a
+     * targetUrl this is the canned self-check; with one, the spec'd workflow is
+     * batch-verified against that URL. Poll with getBrowserSkillVerify.
      */
     async startBrowserSkillVerify(options = {}) {
         const body = {};
@@ -411,6 +346,7 @@ export class AllternitComputerUseClient {
         throw new Error("Wait for run was aborted");
     }
 }
+/** @deprecated Use `@allternit/computer-driver`. */
 export function createComputerUseClient(config) {
     return new AllternitComputerUseClient(config);
 }

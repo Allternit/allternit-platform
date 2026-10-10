@@ -12,6 +12,10 @@ across reads and across engines:
   window-relative bbox, quantized to 8 pt, mixed into the hash.
 * An optional crop hash (a hash of the element's pixels) is attached when the
   read included a screenshot; the vision fallback and replay use it.
+* Every element records its ``source``: ``ax`` (the accessibility tree) or
+  ``vision`` (a set-of-marks region or a grounded point, see vision/). Vision
+  ids start with ``v`` instead of ``e`` so ``act`` can route them without a
+  lookup, and they never collide with tree ids.
 
 Each window keeps a short history of versions. A version changes only when
 something a model can see changed (ids, names, values, bounds, state), so a
@@ -47,6 +51,7 @@ class RawNode:
     focused: bool = False
     actions: tuple[str, ...] = ()
     native: Any = None
+    source: str = "ax"  # ax | vision
 
 
 @dataclass(slots=True)
@@ -63,9 +68,12 @@ class Element:
     actions: tuple[str, ...]
     native: Any = field(default=None, repr=False, compare=False)
     crop: str | None = None
+    source: str = "ax"
+    mark: int | None = None  # Set-of-marks number (vision elements).
 
-    def public(self) -> dict[str, Any]:
-        """What a model sees: compact, no engine handles, defaults omitted."""
+    def public(self, paths: bool = False) -> dict[str, Any]:
+        """What a model sees: compact, no engine handles, defaults omitted.
+        ``paths`` adds the tree path (replay locators record it)."""
         out: dict[str, Any] = {"id": self.id, "role": self.role}
         if self.name:
             out["name"] = self.name
@@ -83,6 +91,12 @@ class Element:
             out["parent"] = self.parent
         if self.crop:
             out["crop"] = self.crop
+        if paths:
+            out["path"] = self.path
+        if self.source != "ax":
+            out["source"] = self.source
+        if self.mark is not None:
+            out["mark"] = self.mark
         return out
 
     def signature(self) -> tuple:
@@ -135,13 +149,14 @@ def build(nodes: Iterable[RawNode], origin: tuple[float, float] = (0.0, 0.0)) ->
     ids: dict[str, str] = {}
     for node in nodes:
         path = paths[node.key]
-        eid = "e" + _hash(node.role, node.name, path)
+        prefix = "v" if node.source == "vision" else "e"
+        eid = prefix + _hash(node.role, node.name, path)
         if eid in seen:
             box = ""
             if node.bounds is not None:
                 x, y, w, h = node.bounds
                 box = tuple(round(v / QUANTUM) for v in (x - origin[0], y - origin[1], w, h))
-            eid = "e" + _hash(node.role, node.name, path, box, seen[eid])
+            eid = prefix + _hash(node.role, node.name, path, box, seen[eid])
         seen[eid] = seen.get(eid, 0) + 1
         ids[node.key] = eid
         elements.append(
@@ -157,6 +172,7 @@ def build(nodes: Iterable[RawNode], origin: tuple[float, float] = (0.0, 0.0)) ->
                 focused=node.focused,
                 actions=tuple(node.actions),
                 native=node.native,
+                source=node.source,
             )
         )
     for node, element in zip(nodes, elements):
@@ -222,7 +238,7 @@ class WindowMap:
             raise StaleVersion(cur.number)
         return cur
 
-    def diff(self, since: int) -> dict[str, Any] | None:
+    def diff(self, since: int, paths: bool = False) -> dict[str, Any] | None:
         """Changes from version ``since`` to the current one; None when that
         version is no longer kept (the caller sends the full map)."""
         old = self._versions.get(since)
@@ -233,9 +249,9 @@ class WindowMap:
         for eid, element in cur.elements.items():
             before = old.elements.get(eid)
             if before is None:
-                added.append(element.public())
+                added.append(element.public(paths))
             elif before.signature() != element.signature():
-                changed.append(element.public())
+                changed.append(element.public(paths))
         removed = [eid for eid in old.elements if eid not in cur.elements]
         return {"since": since, "added": added, "changed": changed, "removed": removed}
 

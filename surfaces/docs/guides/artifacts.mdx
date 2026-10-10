@@ -33,18 +33,25 @@ There are four ways in:
 3. **Type a slash command.** `/docs`, `/slides`, `/sheets`, `/design`,
    `/dashboard` and `/motion` pick that Output. You can type the request
    straight after it: `/slides a 6-slide pitch for the Q4 launch`.
-4. **Start from a template** on the Artifacts tab (see below).
+4. **Make something new** on the Artifacts tab (see below).
+5. **The + next to Artifacts** in the sidebar lists every kind you can make,
+   grouped as Office (Docs, Sheets, Slides), Create (Dashboards, Motion,
+   Design, Page, Build) and Generate (Deep Research, Image, Video). Kinds your
+   org admin turned off don't appear.
 
-Which Outputs you see depends on your plan and your organization:
+Each kind has its own Allternit icon (a cream tile with its block letter and
+a coloured page), used the same way in the Output menu, the sidebar, the
+Artifacts tab, chat cards and the artifact window.
 
-| Output | Plans |
-|---|---|
-| Docs, Slides, Sheets, Design | Every plan, including Free |
-| Dashboards | Paid plans |
-| Motion | Super, Ultra and Team |
+Every Output (Docs, Slides, Sheets, Design, Dashboards and Motion) is on
+every plan, including Free.
 
 Organization admins can turn templates off for everyone in the org. A turned
-off template doesn't appear in the Output menu.
+off template doesn't appear in the Output menu. See
+[For organization admins](#for-organization-admins).
+
+Dashboards are live: each tile reads your connected apps and warehouses as you.
+See [Dashboards](/guides/dashboards).
 
 Interactive cards (the live answers with sliders, tables and buttons) stay in
 the chat. To keep one, hover it and choose **Open as artifact**.
@@ -57,17 +64,39 @@ full screen.
 - **Title.** Click it to rename (if you can edit).
 - **Versions.** Editors can open any earlier version from the clock menu.
   "Back to latest" returns to the current one.
-- **Share** opens the sharing settings (below).
-- **Export** lists what this kind can export. Every artifact has **Download
-  source** and **Copy**. Diagrams also export **PNG** and **SVG**; pages
-  export an **HTML file** (and, on Allternit Desktop with HyperFrames, an
-  **MP4 video**). Word, PDF, PowerPoint, Excel and the other formats are
-  listed as *Coming soon*.
+- **Share** (the dark button at the top right) opens the sharing settings
+  (below). The settings open on top of the artifact window.
+- **Copy** copies the artifact's content (an image copies its link). The arrow
+  next to it opens the **Download** menu.
+- **Turn into motion.** On a doc or a dashboard, the
+  **Download** menu also has **Turn into motion**, which asks Allternit for a
+  short animation of it. See [Motion](/guides/motion).
+- **Download** lists the files this kind can save, each with its file type.
+  Every artifact has **Source file**. Docs export to **Word**, **PDF** and **Markdown**;
+  Slides to **PowerPoint** and **PDF**; Sheets to **Excel** and **CSV**;
+  Design to **HTML**, **.zip**, **PowerPoint** and **PDF**. Diagrams also
+  export **PNG** and **SVG**; pages export an **HTML file** (and, on
+  Allternit Desktop with HyperFrames, an **MP4 video**); dashboards export a
+  **PNG image** and a **PDF** through the print window; motion exports an **MP4 video** on every surface, in the cloud where the
+  browser can't encode it (see [Motion](/guides/motion)).
+- **Fix with Gizzi.** When a diagram, a motion piece or a dashboard tile fails
+  to render, the error has a **Fix with Gizzi** button. It sends the error to
+  your open conversation, which reads the artifact and saves a fixed version.
+- **Ask Gizzi about your artifacts anywhere.** In the terminal, a bot or a
+  channel, Gizzi can find your artifacts by name, read and change them, post
+  comments, and (after you approve) change sharing or delete one.
+- **Comments** and the avatars of anyone else who has it open appear for
+  Docs, Slides, Sheets and Design. See
+  [Comments, presence and versions](/guides/artifact-collaboration).
+- Docs, Slides, Sheets and Design are edited right in the window and save on
+  their own; see [Docs, Slides, Sheets and Design artifacts](/guides/artifact-editors).
 - On Desktop and the web, drag the window's left edge to resize it, or use
   the full-width button to give it the whole view. Press the × to close it.
 
 Web pages run in a sandbox: they can't read your Allternit data, cookies or
-other artifacts.
+other artifacts. A page can still save its own data, ask AI and use your
+connected apps if you approve it; see
+[Pages that act like apps](/guides/artifact-apps).
 
 If someone else saves a newer version while you're editing a text artifact,
 Allternit merges your change onto theirs. When it can't (for example, both of
@@ -126,11 +155,40 @@ everything you own and everything shared with you, newest first.
 - Switch between **grid** and **list**.
 - Labels show where an artifact came from: **Cowork**, **Code**, **Bot**, or
   **Legacy** (see below). Shared items show the owner's avatar.
-- **Start from a template**: Docs, Slides, Sheets, Design, Dashboards,
-  Motion, Page. Each opens a new chat with that Output picked; describe what
-  you want and send.
+- **Previews**: each card shows the artifact itself: the image, the first
+  page of a doc, the top rows of a sheet, the first slide, a snapshot of a
+  design, page or card, the diagram, or the first frame of a motion piece.
+  Previews load as you scroll. A snapshot never runs scripts. If a preview
+  can't be drawn, the card shows the artifact's thumbnail or its kind
+  illustration.
 - The **⋯** menu on your own artifacts has **Delete**. Deleting is permanent:
   there's no trash, and people you shared it with lose access.
+
+### Make something new
+
+The row of animated tiles above your artifacts is the template gallery. Hover
+a tile to see what it makes and replay how it's built.
+
+- **Docs, Sheets, Slides, Dashboards, Motion, Design, Page**: opens a new chat
+  with that Output picked. Describe what you want and send. A tile for a
+  template your plan doesn't include shows a lock and the plan that unlocks
+  it. Templates your organization turned off aren't shown.
+- **Research, Build, Image, Video**: opens a session for that type.
+
+On a phone, the tiles slide sideways.
+
+### Start from your connected tools
+
+Below the tiles, chips start a chat from the tools you've connected:
+**What needs my attention** checks all of them, and **Catch me up on** a tool
+summarizes that one. With nothing connected, **Connect your tools** opens the
+connector settings.
+
+### Design and Office
+
+**Design** in the header opens Allternit Design and your design systems (start
+a new one, open one, or browse the marketplace). **Office** opens Allternit
+Office in its own window.
 
 If you're signed out, the tab asks you to sign in; offline, it says so and
 shows your artifacts again when you reconnect.
@@ -151,6 +209,34 @@ The copy runs in the background and never blocks the app. If a device is
 offline, or Allternit Desktop isn't running when you sign in on the web, the
 rest is copied the next time the app starts.
 
+## For organization admins
+
+Open **Settings → Organization → Artifacts** (Desktop and web; on a phone the
+section only says to manage this on desktop or web). Admins can change it;
+other members see the same values read-only.
+
+- **Artifacts.** The master switch. Off, members can't create artifacts and
+  the organization's public links close.
+- **Sharing outside the organization.** Allows "Anyone with the link". Docs
+  can only be shared by link when this is on.
+- **Invite people outside the organization.** Allows email invites to people who
+  aren't members. Each invite expires after 30 days until accepted.
+- **Show who's viewing.** Presence on open artifacts.
+- **Pages can use connected apps.** The connector kill switch. Off, no page in
+  the organization can call a connected app, even one a viewer approved.
+- **Templates.** One switch each for Docs, Slides, Sheets, Design, Dashboards,
+  Motion and Page. Every template is on until an admin turns it off. A
+  turned off template disappears
+  from the Output menu and the gallery.
+- **Shared outside.** Every artifact from the organization that can be opened
+  by link or by invited email addresses, with its owner. **Allow outside**
+  lets that one artifact be shared by link even when sharing outside is off
+  (not for Docs); **Remove exception** takes it back.
+
+Pages that use AI or connected apps are never available to people outside the
+organization, and can't be shared with a public link, whatever these switches
+say. See [Pages that act like apps](/guides/artifact-apps).
+
 ---
 
 ## For developers
@@ -164,13 +250,20 @@ rest is copied the next time the app starts.
   ChatView) and `ArtifactPaneWindow.tsx` (Cowork and project panes).
 - Model contract: the turn carries `output: {kind}` when an Output is picked,
   and the system prompt carries the artifacts manual
-  (`ARTIFACTS_MANUAL`) plus one line for the picked Output. The model creates
+  (`ARTIFACTS_MANUAL`), the motion body manual when Motion is on for the user,
+  plus one line for the picked Output. The model creates
   artifacts with `artifact_create` / `artifact_update`; the transcript renders
   each call as a card and saves `persisted:false` results under the same id.
 - API, schema and sharing rules: `allternit/docs/design/artifacts-v2.md`.
 
 ## Related
 
+- [Pages that act like apps](/guides/artifact-apps)
+- [Docs, Slides, Sheets and Design artifacts](/guides/artifact-editors)
+- [Comments, presence and versions](/guides/artifact-collaboration)
+- [Dashboards](/guides/dashboards)
+- [Motion](/guides/motion)
 - [Artifact modes](/guides/artifact-modes)
 - [Artifact tools](/tools/artifact-tools)
 - [Artifacts v2 API](/api/artifacts-v2)
+- [Page runtime API](/api/artifact-runtime)

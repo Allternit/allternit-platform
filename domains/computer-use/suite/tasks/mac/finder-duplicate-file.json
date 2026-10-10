@@ -1,0 +1,39 @@
+{
+  "id": "finder-duplicate-file",
+  "os": "mac",
+  "status": "ready",
+  "apps": [
+    "Finder"
+  ],
+  "setup": [
+    {
+      "do": "write_file",
+      "path": "template.txt",
+      "text": "template v1\n"
+    },
+    {
+      "do": "open",
+      "app": "Finder",
+      "path": "."
+    }
+  ],
+  "goal": "In the Finder window for AllternitSuite/finder-duplicate-file, duplicate template.txt (File > Duplicate). Keep the default name Finder gives the copy.",
+  "inputs": {},
+  "checker": [
+    {
+      "kind": "file_equals",
+      "path": "template copy.txt",
+      "text": "template v1"
+    },
+    {
+      "kind": "file_exists",
+      "path": "template.txt"
+    }
+  ],
+  "teardown": [],
+  "max_minutes": 3,
+  "tags": [
+    "finder",
+    "files"
+  ]
+}

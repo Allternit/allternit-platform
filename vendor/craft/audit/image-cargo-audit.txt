@@ -1,0 +1,33 @@
+    Fetching advisory database from `https://github.com/RustSec/advisory-db.git`
+      Loaded 1296 security advisories (from /Users/joe/.cargo/advisory-db)
+    Updating crates.io index
+    Scanning Cargo.lock for vulnerabilities (728 crate dependencies)
+Crate:     paste
+Version:   1.0.15
+Warning:   unmaintained
+Title:     paste - no longer maintained
+Date:      2024-10-07
+ID:        RUSTSEC-2024-0436
+URL:       https://rustsec.org/advisories/RUSTSEC-2024-0436
+
+Crate:     rustybuzz
+Version:   0.20.1
+Warning:   unmaintained
+Title:     `rustybuzz` is unmaintained
+Date:      2026-07-11
+ID:        RUSTSEC-2026-0206
+URL:       https://rustsec.org/advisories/RUSTSEC-2026-0206
+
+Crate:     ttf-parser
+Version:   0.25.1
+Warning:   unmaintained
+Title:     `ttf-parser` is unmaintained
+Date:      2026-06-28
+ID:        RUSTSEC-2026-0192
+URL:       https://rustsec.org/advisories/RUSTSEC-2026-0192
+
+Crate:     yoke-derive
+Version:   0.8.3
+Warning:   yanked
+
+warning: 4 allowed warnings found

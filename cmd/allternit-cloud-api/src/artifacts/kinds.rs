@@ -40,8 +40,9 @@ pub const KINDS: &[KindSpec] = &[
     },
     KindSpec {
         kind: "dashboard",
-        default_body_format: "application/vnd.allternit.openui",
-        body_formats: &["application/vnd.allternit.openui"],
+        default_body_format: "application/vnd.allternit.dashboard+json",
+        // `openui` stays accepted: Phase 1 dashboards were stored as OpenUI cards.
+        body_formats: &["application/vnd.allternit.dashboard+json", "application/vnd.allternit.openui"],
     },
     KindSpec {
         kind: "motion",
@@ -72,6 +73,11 @@ pub const KINDS: &[KindSpec] = &[
         kind: "code",
         default_body_format: "text/plain",
         body_formats: &["text/plain"],
+    },
+    KindSpec {
+        kind: "pdf",
+        default_body_format: "application/pdf",
+        body_formats: &["application/pdf"],
     },
 ];
 
@@ -118,7 +124,7 @@ mod tests {
             names,
             [
                 "doc", "sheet", "slides", "design", "dashboard", "motion", "page", "card",
-                "diagram", "image", "code"
+                "diagram", "image", "code", "pdf"
             ]
         );
         for spec in KINDS {
@@ -130,6 +136,16 @@ mod tests {
     }
 
     #[test]
+    fn dashboards_default_to_tile_json_and_still_accept_openui() {
+        assert_eq!(
+            default_body_format("dashboard"),
+            "application/vnd.allternit.dashboard+json"
+        );
+        let spec = KINDS.iter().find(|k| k.kind == "dashboard").unwrap();
+        assert!(spec.body_formats.contains(&"application/vnd.allternit.openui"));
+    }
+
+    #[test]
     fn kind_names() {
         assert!(is_valid_kind_name("doc"));
         assert!(is_valid_kind_name("hologram_v2"));
@@ -137,5 +153,66 @@ mod tests {
         assert!(!is_valid_kind_name("Doc"));
         assert!(!is_valid_kind_name("2doc"));
         assert!(!is_valid_kind_name("doc kind"));
+    }
+}
+
+/// The `capabilities.connectors` a dashboard body declares: one entry per
+/// connector with the tools its tiles call (`<connector>__<tool>`), sorted.
+/// Mirrors `connectorCapabilities` in the app's dashboard schema. The server
+/// derives it on every save so the link rule and viewer consents apply even
+/// before the owner opens the dashboard. Returns None for a body that isn't
+/// dashboard JSON or calls no tools.
+pub fn dashboard_connectors(body: &str) -> Option<serde_json::Value> {
+    use std::collections::{BTreeMap, BTreeSet};
+    let parsed: serde_json::Value = serde_json::from_str(body).ok()?;
+    let tiles = parsed.get("tiles")?.as_array()?;
+    let mut by_connector: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for tile in tiles {
+        let Some(name) = tile.pointer("/query/tool").and_then(|t| t.as_str()).map(str::trim) else { continue };
+        if name.is_empty() {
+            continue;
+        }
+        let (connector, tool) = match name.find("__") {
+            Some(i) if i > 0 => (&name[..i], &name[i + 2..]),
+            _ => (name, name),
+        };
+        by_connector.entry(connector.to_string()).or_default().insert(tool.to_string());
+    }
+    if by_connector.is_empty() {
+        return None;
+    }
+    Some(serde_json::Value::Array(
+        by_connector
+            .into_iter()
+            .map(|(connector, tools)| serde_json::json!({ "connector": connector, "tools": tools.into_iter().collect::<Vec<_>>() }))
+            .collect(),
+    ))
+}
+
+#[cfg(test)]
+mod dashboard_connector_tests {
+    use super::dashboard_connectors;
+
+    #[test]
+    fn groups_tools_by_connector() {
+        let body = r#"{"version":1,"tiles":[
+            {"query":{"tool":"stripe__list_charges"}},
+            {"query":{"tool":"stripe__list_customers"}},
+            {"query":{"tool":"snowflake__run_sql","sql":"select 1"}},
+            {"query":{"tool":"stripe__list_charges"}}]}"#;
+        let got = dashboard_connectors(body).unwrap();
+        assert_eq!(
+            got,
+            serde_json::json!([
+                {"connector":"snowflake","tools":["run_sql"]},
+                {"connector":"stripe","tools":["list_charges","list_customers"]}
+            ])
+        );
+    }
+
+    #[test]
+    fn none_for_no_tools_or_bad_json() {
+        assert!(dashboard_connectors(r#"{"version":1,"tiles":[]}"#).is_none());
+        assert!(dashboard_connectors("not json").is_none());
     }
 }

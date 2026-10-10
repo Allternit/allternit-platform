@@ -15,6 +15,8 @@
 pub mod bugfix; // WP-B1
 pub mod catalog;
 pub mod compiler;
+/// E1 Decision Runtime: `POST /v1/decisions` + backends + store.
+pub mod decisions;
 pub mod effects; // WP-C3a/C3b effect connectors
 pub mod executor;
 pub mod guard;
@@ -85,15 +87,16 @@ impl ApiError {
         self.body["error"]["param"] = json!(p);
         self
     }
+    fn with_detail(mut self, detail: Value) -> Self {
+        self.body["error"]["detail"] = detail;
+        self
+    }
     fn not_found(what: &str, rid: &RequestId) -> Self {
         Self::new(404, "NOT_FOUND", "ERR_NOT_FOUND", format!("{what} not found"), rid)
     }
     fn internal(e: impl std::fmt::Display, rid: &RequestId) -> Self {
         tracing::error!("agency api: {e}");
         Self::new(500, "SYSTEM", "ERR_INTERNAL", "internal error", rid)
-    }
-    fn not_implemented(what: &str, rid: &RequestId) -> Self {
-        Self::new(501, "SYSTEM", "ERR_NOT_IMPLEMENTED", format!("{what} is not available in the alpha"), rid)
     }
 }
 
@@ -197,9 +200,13 @@ pub fn agency_router() -> Router<Arc<AppState>> {
         .route("/v1/replays", post(create_replay))
         .route("/v1/replays/:replay_id", get(get_replay))
         .route("/v1/replays/:replay_id/results", get(get_replay_results))
-        .route("/v1/decisions", post(|Extension(rid): Extension<RequestId>| async move {
-            ApiError::not_implemented("the decision surface", &rid)
-        }))
+        // Decision Runtime (E1): typed decisions; /v1/systemone is the compatibility alias.
+        .route("/v1/decisions", post(decisions::create_decision))
+        .route("/v1/systemone", post(decisions::create_decision))
+        .route("/v1/decisions/:decision_id", get(decisions::get_decision).patch(decisions::patch_decision))
+        // Decision flywheel (E5): heads, their metrics and state; manual moves for decisions admins.
+        .route("/v1/decisions/heads", get(decisions::flywheel::list_heads))
+        .route("/v1/decisions/heads/:head/:kind", axum::routing::put(decisions::flywheel::put_head))
         .route("/v1/capabilities", get(|| async { Json(page(catalog::capabilities())) }))
         .route("/v1/agents", get(|| async { Json(page(vec![catalog::agent_object()])) }))
         .route("/v1/authority-profiles", get(|| async { Json(page(catalog::authority_profiles())) }))

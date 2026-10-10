@@ -1,0 +1,37 @@
+{
+  "id": "windows-editor-type-save",
+  "os": "windows",
+  "status": "needs_test_machine",
+  "apps": [
+    "Notepad"
+  ],
+  "setup": [
+    {
+      "do": "write_file",
+      "path": "notes.txt",
+      "text": ""
+    },
+    {
+      "do": "open",
+      "app": "Notepad",
+      "path": "notes.txt"
+    }
+  ],
+  "goal": "In Notepad, type the line below into notes.txt and save it.",
+  "inputs": {
+    "line": "Allternit suite line one"
+  },
+  "checker": [
+    {
+      "kind": "file_equals",
+      "path": "notes.txt",
+      "text": "Allternit suite line one"
+    }
+  ],
+  "teardown": [],
+  "max_minutes": 3,
+  "tags": [
+    "editor",
+    "files"
+  ]
+}

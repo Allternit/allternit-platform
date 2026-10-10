@@ -1,0 +1,36 @@
+{
+  "id": "linux-calculator-multiply",
+  "os": "linux",
+  "status": "needs_test_machine",
+  "apps": [
+    "gnome-calculator"
+  ],
+  "setup": [
+    {
+      "do": "open",
+      "app": "gnome-calculator"
+    }
+  ],
+  "goal": "Use gnome-calculator to multiply the numbers below and leave the result on the display.",
+  "inputs": {
+    "a": "123",
+    "b": "4"
+  },
+  "checker": [
+    {
+      "kind": "verify",
+      "app": "gnome-calculator",
+      "checks": [
+        {
+          "text": "492"
+        }
+      ],
+      "timeout_ms": 1500
+    }
+  ],
+  "teardown": [],
+  "max_minutes": 3,
+  "tags": [
+    "calculator"
+  ]
+}

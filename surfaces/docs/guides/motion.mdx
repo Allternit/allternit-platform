@@ -1,0 +1,138 @@
+---
+title: Motion
+description: Make short animated explainers, data stories and title cards, edit them scene by scene, and export an MP4.
+---
+
+## What a motion artifact is
+
+A motion artifact is a short animation made of scenes: a title card, a number
+that counts up, a chart that draws itself, a logo, a list that builds line by
+line. Allternit writes it from your request, you scrub and edit it in the
+artifact window, and you export it as a video.
+
+Motion is for text, numbers, charts and logos. It does not generate footage or
+people.
+
+Motion is available on every plan, including Free. Organization admins can
+turn it off for their org.
+
+## Making one
+
+- Pick **Motion** under the message box, or type `/motion` followed by the
+  request: `/motion a 20-second explainer of our Q3 numbers`.
+- Or ask in any chat: "make a short animation of this".
+- To start from something you already have, open a doc or dashboard artifact,
+  open the **Download** menu (the arrow next to **Copy**) and choose **Turn into motion**. Allternit reads the artifact
+  and uses only the facts and figures in it.
+
+## Editing
+
+The motion opens in the artifact window with the player on top.
+
+- **Play, pause and loop.** Press the round button to play. Loop is on by
+  default.
+- **Scrub.** Drag the slider to any moment. Playback pauses while you scrub.
+  The small ticks on the slider mark where scenes start.
+- **Scenes.** The list shows every scene with its length. Click one to jump to
+  it. For the selected scene you can move it up or down, duplicate it, delete
+  it or change its type. **Add scene** inserts a new one after it.
+- **Edit.** Change the text, numbers, colours and length of the selected
+  scene. The preview updates as you type. For charts, edit the labels and
+  values as rows. For a logo, paste an https or `data:image` link, or leave it
+  empty to show the name as a wordmark.
+- **Theme.** Set the background, text, accent and muted colours and the font
+  (sans, serif or mono) for the whole motion.
+- **Transitions.** Each scene after the first has a transition in: fade, wipe,
+  slide or cut.
+
+Edits save by themselves a moment after you stop typing. Each save is a new
+version, like any artifact.
+
+### Edit by asking
+
+You can also ask in the chat: "slow scene 2", "change the figure to 1,250",
+"use our green as the accent". Allternit changes only what you asked and saves
+a new version.
+
+### Reduced motion
+
+If your device is set to reduce motion, the player opens on a still frame and
+does not play by itself. You can still scrub and, if you choose, press play.
+
+## Exporting a video
+
+Open **Download → MP4 video** (the arrow next to **Copy**), or press **Export video** under the player. A
+progress bar shows the render, and you can cancel it.
+
+- **Allternit Desktop** renders each frame and encodes it with ffmpeg on your
+  computer, then asks where to save the file. If ffmpeg isn't installed,
+  Desktop encodes in the app like the web does.
+- **ai.allternit.com, the phone layout and the m.allternit.com app** encode in
+  your browser when it can encode H.264, and you get an MP4. This is the
+  fastest way, and nothing leaves your device.
+- **When your browser can't encode H.264** (for example an older iPhone or
+  iPad), Allternit renders the video in the cloud instead and downloads it
+  when it's ready. You don't have to choose.
+
+The video has no sound. The picture matches the preview frame for frame.
+
+### Export MP4 (cloud)
+
+Press **Export MP4 (cloud)** under the player, or **Download → MP4 video
+(cloud)**, to render on Allternit's servers even when your browser could do it
+itself. It suits long clips and slow or low-power devices. It isn't shown on
+Desktop, which renders locally.
+
+1. Allternit saves your latest edits first, because the cloud renders the saved
+   version.
+2. The status line shows **Waiting for the cloud renderer** (with how many
+   videos are ahead of yours) and then **Rendering in the cloud** with a
+   percentage. You can cancel at any time.
+3. When it's done, the MP4 downloads. Where a **Download MP4** button appears
+   instead, press it to save the file.
+
+Cloud export is on every plan, the same as Motion. You can have two videos
+rendering at once. The
+cloud copy of a finished video is deleted after 24 hours.
+
+| Limit | Value |
+|---|---|
+| Frame size | 1920×1080 at most, either way round |
+| Length | 120 seconds at 30 fps (3600 frames in all; a 60 fps clip can run 60 seconds) |
+| Videos rendering at once | 3 per person, including ones waiting |
+| Time for one render | 10 minutes, then it's stopped |
+
+If a limit stops an export, the message says what to change: ask Gizzi for a
+smaller size, a shorter video or a lower frame rate, or export from Allternit
+Desktop, which has no such limit. Two things differ from the preview in a
+cloud export: a logo given as a web address (not an embedded image) shows its
+name as a wordmark, and the fonts are Allternit's own (Inter, Source Serif and
+JetBrains Mono) instead of your device's.
+
+## On a phone
+
+The player fills the top of the screen. Scenes, Edit and Theme are tabs under
+it. Everything above works the same, including export. Sharing settings are
+only on Desktop and the web.
+
+## Limits
+
+| Item | Limit |
+|---|---|
+| Scenes | 40 |
+| Length of one scene | 0.5 to 60 seconds |
+| Length in all | 180 seconds (cloud export: 120 seconds at 30 fps) |
+| Chart points | 24 |
+| List items | 12 |
+| Frame size | 320 to 3840 pixels per side; 1920×1080 by default (cloud export: 1920×1080 at most) |
+| Frame rate | 12 to 60; 30 by default |
+
+## For developers
+
+See [Motion body format](/api/artifacts-motion) for the JSON schema and the
+renderer.
+
+## Related
+
+- [Artifacts](/guides/artifacts)
+- [Artifacts API](/api/artifacts-v2)

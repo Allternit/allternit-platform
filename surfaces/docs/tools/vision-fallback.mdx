@@ -1,0 +1,77 @@
+---
+title: 'Vision fallback'
+description: 'How the Allternit Driver reads and acts on windows with no usable accessibility tree: set-of-marks, a local grounder (UI-Venus-1.5-8B), and zoom-and-reground'
+---
+
+<Note>
+**Status:** Implementation IMPLEMENTED × Exposure INTERNAL (phase D6 of the driver fast path). Source: `domains/computer-use/driver/allternit_driver/vision/`, wired into `read_ui`, `act`, `run_batch` and `verify` in `allternit_driver/core.py`; the switch is `Router.choose_source` in `router.py`. The ScreenSpot-Pro score of the grounder has not been measured yet.
+</Note>
+
+## Overview
+
+Canvas apps, games, remote desktops and custom-drawn UIs expose little or nothing to accessibility. For those windows `read_ui` falls back to vision on its own. The model keeps the same tools: vision regions come back as elements in the same element-map shape, and `act` / `run_batch` take their ids like any tree id.
+
+## When vision is used
+
+The router decides per window, on every read, and records the decision per app (`router` op → `sources`) and in the audit log (`op: "source"`).
+
+| `source` | `source_reason` | When |
+|---|---|---|
+| `ax` | `tree` | The tree is enough. |
+| `vision` | `empty_tree` | The tree has only the window (or the engine reported an empty tree). |
+| `vision` | `sparse_tree` | Six or fewer elements and fewer than two actionable ones. |
+| `vision` | `ax_error` | The tree read itself failed. |
+| `hybrid` | `opaque_region` | The tree is fine, but a childless group, canvas, image, scroll area or document covers 35% or more of the window. The tree elements stay; vision marks are added only inside those regions, and marks that duplicate a tree element are dropped. |
+| `ax` / `vision` | `off` / `asked` | The caller passed `vision: "off"` or `vision: "only"`. |
+
+## Set-of-marks
+
+One window screenshot is split into numbered regions, licence-clean and with no model:
+
+- **Text:** the OS text recogniser (Apple Vision on macOS, through the bundled PyObjC).
+- **Controls and icons:** a model-free proposer: an 8-px grid of edge density, grouped into connected blobs. Blobs larger than 20% of the window are panels and are skipped.
+- **Merge:** a blob holding one line of text becomes one `control` mark named by that text. Text outside a control is a `text` mark, and a control with no text is an `icon` mark. Duplicates are suppressed (IoU), and the marks are numbered in reading order and capped at 120.
+
+Each mark becomes an element: `id` starts with `v` (tree ids start with `e`), `source: "vision"`, `mark: <n>`, `role` (`control` / `text` / `icon` / `point`), `name`, `bbox` in screen points, and a 256-bit mean hash of its pixels, which is kept in the driver. A vision-only read answers `version` from the vision map and `engine: "vision"`. A hybrid read keeps the tree's `version` and adds `vision_version`. `since` diffs work on either map.
+
+Cua Driver 0.34's `parse_visual_regions` is not used. It needs Cua's optional `cua-perception` extension, which is AGPL (driver spec §5: avoid).
+
+## Grounding a target
+
+`read_ui` with `target: "the Export button"` asks the local grounder for one point. It returns:
+
+```json
+"grounded": { "id": "v4b83685dbdf5", "source": "vision", "point": [1260.0, 427.5],
+              "confidence": "high", "zoomed": true, "model": "ui-venus-1.5-8b", "ms": 5120 }
+```
+
+- The point snaps to the smallest element that contains it, a tree element or a mark (never the window itself). If it hits no element, it becomes a new `point` element in the vision map, so `act` still works.
+- **Zoom and reground.** Pass 1 sees the whole window, scaled down to 1.4 MP for speed. If the answer has low confidence (the window was scaled down, or the point hit no known element), the grounder crops half of each side (at least 448 px) around the point from the same full-resolution screenshot and grounds again. The crop point maps back to the window. `confidence` is `high` when the passes agree within max(12 px, 1.5% of the diagonal) or the point snaps; `medium` when they disagree; `low` when the crop lost the target and pass 1 is kept. `zoom: "always" | "never"` overrides.
+- **Fallback model.** If the primary answers infeasible or unparseable, the next model in the chain tries.
+
+| Model | Licence | Role | On Mac |
+|---|---|---|---|
+| `inclusionAI/UI-Venus-1.5-8B` | Apache-2.0 | Primary | `mlx-community/UI-Venus-1.5-8B-4bit` (5.8 GB), downloaded to the Hugging Face cache on the first grounding |
+| `Hcompany/Holo2-8B` | Apache-2.0 | Fallback | Converted to MLX 4-bit on first use (`mlx_vlm.convert`) into `computer-use/driver/vision/models` |
+
+Holo2-30B-A3B is excluded because its licence is research-only. Prompts and answer formats follow each model's published grounding code. Both answer in a 0–1000 frame.
+
+## Acting on vision elements
+
+`act` on a `v` id (and `run_batch` act steps) runs as pixel input aimed at that window: the click goes to the window-local screenshot point and Cua anchors it to the window wherever it sits, so windows on a secondary or differently scaled display land correctly. It holds the desktop input lock from the check to the last event.
+
+1. **Freshness check.** A new screenshot is taken. If the element's region hash now differs by more than 40 of 256 bits, the action is refused with `status: "stale_version"` and a fresh map, the same contract as a stale tree version.
+2. **The action at the element's centre** in window-local screenshot pixels, sent to the app's process: `click` / `focus` / `select` click; `double_click` and `right_click` are themselves; `set_value` clicks, selects all and types; `type` clicks and types; `press` sends the key. `menu` needs a window, not a vision id.
+
+`verify` checks that fail on the tree are checked again on fresh marks when the app's last read used vision, so a check like `text: "Saved"` can pass from text drawn on a canvas.
+
+## Runtime
+
+- Nothing heavy ships with the app. On the first vision read the driver installs pinned packages into `computer-use/driver/vision/site`: Pillow and NumPy everywhere, plus MLX and mlx-vlm on Apple silicon. It then starts the **vision worker**, a child process, so a model crash or the model's memory (about 6 GB) never takes the sidecar down. The worker stops after 10 minutes without vision work.
+- While packages install, a read waits up to 20 s and then answers without vision (`vision: {state, error}`), or with `vision_unavailable` when the window has no tree at all. `status` reports `vision.state` (`idle` / `installing` / `starting` / `ready` / `error`).
+- **Cloud and guests:** set `ALLTERNIT_GROUNDER_URL` (with `ALLTERNIT_GROUNDER_MODEL` and `ALLTERNIT_GROUNDER_KEY`) to use a vLLM chat-completions endpoint that serves the same model repos, such as `vllm serve inclusionAI/UI-Venus-1.5-8B`. This is configuration only; no cloud grounder is deployed. `ALLTERNIT_GROUNDER_MODELS` overrides the chain (comma-separated preset names or local MLX paths). Without Apple silicon or a URL, marks still work and `target` answers `status: "unavailable"`.
+- allternit-api allows 90 s for `read_ui` / `act` and 300 s for a `read_ui` with `target` (a first grounding loads the model).
+
+## Self-test
+
+`python -m allternit_driver.vision.selftest [--state-dir DIR] [--no-model]` runs the production path on a static fixture (`vision/fixtures/canvas.png`, a drawn "Sketchpad" with tool buttons, a canvas and Export/Cancel). It does not touch the screen. It checks marks → element ids, then grounds three targets and checks that each snapped element's centre (the point `act` would click) lies inside the target. It also reports the window-local click point for each case. Unit tests: `tests/test_vision.py` (the switch, mark → element mapping, answer parsing, the zoom-reground math, and `read_ui` → `act` through a driver with fake engines).

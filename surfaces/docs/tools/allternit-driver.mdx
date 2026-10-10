@@ -29,7 +29,7 @@ Neither engine is primary. Each op goes to the engine that does it best for that
 | Engine | Where | Good at |
 |---|---|---|
 | **arc** | macOS. A fork of [arc-driver](https://github.com/shhivv/arc-cua) (MIT) at a pinned commit in `domains/computer-use/driver/arc/` (see its `NOTICE`). Runs inside the sidecar's Python. | Accessibility reads of the visible rows in tens of ms; settling on AX notifications instead of fixed waits; the freshness guard (refuses to act on a window whose structure changed); menu-bar commands without opening menus; minimized and hidden windows. |
-| **Cua** | macOS, Windows, Linux. The vendored Cua Driver binary (`prepare-cua-driver.cjs`), run as the daemon the Desktop app already starts, reached through one long-lived `cua-driver mcp --socket` session. | Screen-wide pixel input (`desktop` scope), screenshots, `zoom`, `verify_state`, `parse_visual_regions`, recording, AT-SPI and UI Automation trees, browsers. |
+| **Cua** | macOS, Windows, Linux. The vendored Cua Driver binary (`prepare-cua-driver.cjs`), run as the daemon the Desktop app already starts, reached through one long-lived `cua-driver mcp --socket` session. | Screen-wide pixel input (`desktop` scope), screenshots, `zoom`, `verify_state`, recording, AT-SPI and UI Automation trees, browsers. |
 
 Cua Driver runs in its `standard` permission mode, the least privilege that allows observation and input on any app. `bounded` needs a per-app manifest, which can't cover "whatever app the user asked for"; `unrestricted` turns off Cua's approval checks. The `permission_denied` that `run_actions` returned before was not a mode problem: Cua Driver 0.34 (the newest release on 2026-10-09) does not ship `run_actions`, and its policy denies any tool without a reviewed risk class. The Allternit Driver runs batches itself (below).
 
@@ -39,7 +39,7 @@ Every op is a JSON-RPC method on the sidecar's socket.
 
 | Method | Params | Answer |
 |---|---|---|
-| `read_ui` | `app` (name or bundle id) or `pid` [+ `window_id`]; `query`; `max_elements` (default 200); `since` (a map version); `fresh`; `crops` | `window`, `version`, `engine`, `cached`, `elements` (or `diff` with `since`), `total`, `degraded` |
+| `read_ui` | `app` (name or bundle id) or `pid` [+ `window_id`]; `query`; `max_elements` (default 200); `since` (a map version); `fresh`; `crops`; `vision` (`auto` / `off` / `only`); `target` (a description to ground); `zoom` (`auto` / `always` / `never`) | `window`, `version`, `engine`, `cached`, `live` (`state` `live` / `degraded` / `off`, `observer`, `reason`), `elements` (or `diff` with `since`), `total`, `degraded`, `source` (`ax` / `vision` / `hybrid`), `source_reason`; with vision `marks` (and `vision_version` when hybrid); with `target` `grounded` |
 | `act` | `id`, `op` (`click`, `double_click`, `right_click`, `set_value`, `type`, `select`, `press` + `key`, `focus`, or `menu` + `path`), `version`, `value` | `status` (`done`, `changed`, `stale`, `stale_version`), the new `version`, `changes` since the planned version, `settled` |
 | `run_batch` | `steps`: each `{act}`, `{menu}`, `{pixel: {tool, args}}` or `{wait}`, with optional `wait_for` (before), `expect` (after) and `timeout_ms`; optional `version` | per-step status and time, `failed_at`, one final `version` and `changes`, `cross_check` |
 | `verify` | `checks`: `id` or `role`/`name`, plus `text`, `value`, `gone`, `enabled` | `ok` and one result per check |
@@ -47,7 +47,7 @@ Every op is a JSON-RPC method on the sidecar's socket.
 | `screenshot` | a window, or nothing for the whole desktop | PNG (base64) |
 | `zoom` | a window and `region` `[x1, y1, x2, y2]` | PNG (base64) |
 | `pixel_<tool>` | Cua Driver desktop-scope tools: `click`, `double_click`, `right_click`, `move_cursor`, `drag`, `scroll`, `type_text`, `press_key`, `hotkey`, `get_cursor_position`, `get_screen_size` | Cua Driver's structured reply |
-| `status`, `router` | none | engines and their health; the learned router table |
+| `status`, `router` | none | engines and their health, and the live map's watched windows (state, notifications, patches, full walks, idle time); the learned router table |
 
 `run_batch` stops at the first failed step or check and then reads once. After it, the engine that didn't run the steps confirms the last `expect`: on macOS that is arc's freshness check (a fresh, uncached walk), elsewhere Cua's `verify_state`. This catches a batch that "succeeded" without the app reacting.
 
@@ -58,7 +58,22 @@ Every op is a JSON-RPC method on the sidecar's socket.
 - `crops: true` adds `crop` to each element: an 8×8 average hash of its pixels, taken from one window capture (macOS). The vision fallback and replay use it to recognise an element whose tree data changed.
 - Each window keeps its last 8 map versions. A version changes only when something a model can see changed: ids, names, values, bounds, enabled or focus. `since` answers with `added`, `changed` and `removed` from that version, or the whole map with `reset: true` when it has aged out.
 - An action carries the version it was planned on. If the window has moved on, the action is refused with `stale_version` and the fresh map, the same freshness guard arc applies to its own snapshots.
-- A re-read of a window that announced no accessibility change since the last walk (arc journal and notification count unchanged, at most 5 s old, no web area) is answered from the map without walking again (`cached: true`). Two clients reading one window at once share one walk.
+- Before an `act` or `run_batch` checks its version, the map is brought up to date with every notification so far, so a change the app announced a moment ago refuses an action planned before it. The refusal carries the current map (no extra walk).
+
+## Live element map
+
+The driver keeps a **live map** of every window it reads: it subscribes to the OS's accessibility notifications and patches the map as they arrive, instead of walking the tree on each `read_ui`. Code: `domains/computer-use/driver/allternit_driver/live/`.
+
+- **One subscriber per window.** On macOS one `AXObserver` per app runs on one run-loop thread (`live/macos.py`, the `AXHub`). It feeds arc's change journal and settle counter (drop-in adapters installed with arc's `app_factory` hook), each window's walk cache, and the live map. Upstream arc ran three observers per app, each with a thread polling every 20–50 ms; the hub sleeps until an app posts. Both engines, the decision runtime and every caller read the same map.
+- **Notifications** (registered on the app): value, title, created, destroyed, focused element, focused/main window, window created/moved/resized/minimized, layout, row count, rows expanded/collapsed, selected children/rows/text/cells, scroll position, menu opened/closed, sheet/drawer created, app hidden/shown. Web areas also get their own subscription, since a page posts on its web area.
+- **Patching.** A notification marks the window dirty and wakes the patch worker. A patch is arc's incremental walk: only the elements the notifications named are read again, plus a child-list check of containers that catches rows added without a notification. The map is rebuilt from that walk without further accessibility calls, and its version goes up only when something visible changed. A read of a dirty window patches first, so a read never answers older than the last notification.
+- **Full walks** happen only on first sight, on a window-level change (a window, sheet or menu came or went, or focus moved to another window), when more than 40 structural notifications arrive in one burst, on `fresh: true`, or when the **staleness probe** fails. The probe runs every 2 s per watched window and costs two accessibility calls: the window's child count and the app's focused element.
+- **Re-reads cost no accessibility call.** A clean window is answered from the map (`cached: true`); the app's current window is also remembered until a window-level notification, so `read_ui` with only an `app` makes no call either.
+- **Fallback (`live.state: degraded`).** When an app accepts no notifications, its observer fails, or the probe catches a change no notification announced twice, the window is read on a timer: the map is reused for at most 0.5 s, then read again (narrowed to 200 elements on the Cua engine), and every answer says `degraded` with the reason. On macOS every read is arc's. Where the router picks Cua (Windows, Linux, or an app arc can't read), Cua's `get_window_state` runs only on first sight, after a notification, on a forced refresh (`fresh: true`), or on a degraded window's timer.
+- **Lifecycle.** Windows are watched on demand, when first read or acted on (and the prewarmed frontmost app, which is patched only once a caller reads it). A window is unwatched after 5 minutes without use; at most 8 are watched at once (the least recently used goes); each keeps 8 versions. Background patching runs only for windows a caller read in the last minute, at most every 100 ms per window; others are patched when read.
+- **Safety.** The observer callback makes no accessibility call: it counts, queues and returns inside a `try`. Role lookups run on a separate dispatch thread with a 0.25 s messaging timeout, and watched apps get a 1 s timeout instead of the 6 s default, so a hung app can't stall the others. Nothing on this path touches arc's SkyLight input code (the D2 `press` crash). When an app quits, the probe or the next patch drops its watches and releases its arc state; a relaunch is a new pid, watched on its next read.
+- **macOS run loop.** The sidecar's main thread now runs the Cocoa run loop (requests are served on a thread). Without it, `NSWorkspace` never refreshed its list of running apps, so an app launched after the sidecar started answered `app_not_running`.
+- **Linux and Windows (written, not yet verified live).** The same design behind the same `Observer` interface: AT-SPI events over D-Bus with `jeepney` (`live/atspi.py`: children-changed, state, name/value, text, selection, focus, window create/destroy/activate) and UI Automation with `comtypes` (`live/uia.py`: structure-changed and property-changed handlers on the window subtree, plus a focus handler). Reads stay on Cua; the events decide when a read is needed. Both packages are pure-Python wheels staged by `prepare-allternit-driver.cjs`. Live verification waits for a non-production Linux and Windows test machine; until then treat these as unverified. Without the package or an accessibility bus, every window reports `degraded`.
 
 ## Router
 
@@ -68,11 +83,11 @@ Every op is a JSON-RPC method on the sidecar's socket.
 | `batch`, `verify`, `screenshot`, `zoom`, `parse_visual_regions`, `record` | Cua | Cua |
 | pixel input | Cua | Cua |
 
-- **Capability first.** An engine only gets an op it can do. Cua Driver 0.34 has no `run_actions`, so macOS batches run on arc today and the decision says `capability`. `zoom` and `parse_visual_regions` stay with Cua.
+- **Capability first.** An engine only gets an op it can do. Cua Driver 0.34 has no `run_actions`, so macOS batches run on arc today and the decision says `capability`. `zoom` stays with Cua. Cua 0.34's `parse_visual_regions` is not used: it needs Cua's optional `cua-perception` extension, which is AGPL; the [vision fallback](/tools/vision-fallback) proposes its own regions.
 - **Actions follow the map.** An element action goes to the engine that produced the map its id came from, because only that engine holds the element's handle.
 - **Learning.** For every op and app the router keeps calls, failures, a latency EWMA and the last 10 outcomes. An engine that failed at least half of 3 or more recent calls hands the op to the other engine. When both have 5 or more timed calls and the other is at most half as slow, it takes over. Read-only ops (`verify`, `screenshot`, `zoom`) try the other engine on one call in 20 until it has enough samples to compare. Input never explores.
 - **Per user.** The table is saved in the Desktop app's data folder (`computer-use/driver/router.json`). Every routed op is written to `computer-use/driver/audit.jsonl` with its engine, reason, time and outcome.
-- **Degraded apps.** An empty tree (or Cua's `degraded_reason`) marks the app `degraded`, and reads say so (`degraded: true`, `degraded_reason`). The vision fallback that takes over for those apps is phase D6.
+- **Degraded apps.** An empty tree (or Cua's `degraded_reason`) marks the app `degraded`, and reads say so (`degraded: true`, `degraded_reason`). The [vision fallback](/tools/vision-fallback) takes over for those windows: the router decides per read whether elements come from the tree, from vision, or from both, and records it (`source`, `source_reason`, `router.sources`).
 
 ## One reader and one input owner per window
 
@@ -84,7 +99,7 @@ Every op is a JSON-RPC method on the sidecar's socket.
 
 - `npm run prepare:allternit-driver` (`surfaces/allternit-desktop/scripts/prepare-allternit-driver.cjs`) copies `domains/computer-use/driver` into the app's resources and stages a relocatable CPython 3.12 per target from python-build-standalone, pinned by sha256. macOS targets also get the pinned PyObjC frameworks arc needs. A venv would point at the build machine's Python, which users don't have.
 - The Desktop app starts the sidecar after Cua Driver, through `spawnSidecar`, so it and its `cua-driver mcp` child stop with the app. Python runs with `-B -s -E`: no bytecode written into the signed bundle, no user site-packages or `PYTHON*` variables.
-- The socket is `computer-use/allternit-driver.sock` in the app's data folder, mode 0600 in a 0700 folder. Windows listens on 127.0.0.1 on a random port and every request carries a per-launch token.
+- The socket is `computer-use/allternit-driver.sock` in the app's data folder, mode 0600 in a 0700 folder. Windows listens on 127.0.0.1 on a random port and every request carries a per-launch token; allternit-api connects there over loopback TCP (env `ALLTERNIT_DRIVER_ENDPOINT` + `ALLTERNIT_DRIVER_TOKEN`), so this-device `read_ui`/`act`/pixel input all go through the one driver on Windows too — the Cua CLI fallback remains only for Desktops too old to ship the sidecar.
 - allternit-api gets the socket in `ALLTERNIT_DRIVER_SOCKET` and sends this Mac's pointer and keyboard input through `pixel_*`. `hold_key` still posts CoreGraphics events itself. If an older Desktop app runs without the sidecar, input falls back to Cua Driver's CLI.
 
 ## Measurements
@@ -105,9 +120,27 @@ Measured on 2026-10-09 on a Mac running macOS 14.6, through the sidecar's socket
 | 3-step batch (2, +, 3) with `expect` on the display and the cross-check | 1.47 s (341, 766, 343 ms) | `run_actions` not in 0.34 |
 | Pixel op (`pixel_get_cursor_position`) | 2.8 ms | 30–160 ms through `cua-driver call` |
 
-- **First read.** It includes the one-time setup for an app: the notification watch, the window lookup and the walk. TextEdit misses 150 ms because its accessibility answers are slow (about 3 ms per element on this Mac; upstream arc measures the same). While computer use is active, and once at launch, the driver prepares whichever app comes to the front, so the read that follows a switch is a 4–5 ms cached answer. Phase E4 (a live element map patched from notifications) will make every first read of a watched window a cached one.
+- **First read.** It includes the one-time setup for an app: the notification watch, the window lookup and the walk. TextEdit misses 150 ms because its accessibility answers are slow (about 3 ms per element on this Mac; upstream arc measures the same). While computer use is active, and once at launch, the driver prepares whichever app comes to the front, so the read that follows a switch is a 4–5 ms cached answer. The live map (below) replaced these D1 figures for re-reads.
 - **Batch.** The middle step is slower because Calculator posts no notification for `+`, so arc waits out its 0.6 s no-reaction window before it calls the step settled.
 - Under heavy load (load average 30–200 from other work on the same Mac) walks were 3–10 times slower, and so was upstream arc. Re-reads stayed under 25 ms.
+
+### Live map (E4)
+
+Measured on 2026-10-09 on the same Mac (macOS 14.6, load average 5–6), through the socket, one new connection per request.
+
+| | Calculator | TextEdit | Finder | Target |
+|---|---|---|---|---|
+| First read, fresh sidecar (three boots, apps already open) | 48–52 ms | 37–54 ms | 89–91 ms | no regression from D1's 99–132 ms |
+| First read within seconds of the app launching | 107 ms | 157 ms | 145 ms | |
+| Re-read by `app`, median of 40 | 0.34 ms | 0.38 ms | 0.46 ms | ≤ 5 ms |
+| Re-read by `app`, 95th percentile | 0.62 ms | 0.55 ms | 0.71 ms | |
+| Re-read by `pid` + `window_id`, median | 0.17 ms | 0.22 ms | 0.38 ms | |
+| Re-read while the apps were still settling after launch, 95th percentile | 6.3 ms | 5.4 ms | | |
+
+- **A change made outside the driver** (a `pixel_click` on Calculator's "8", typing into TextEdit with `pixel_type_text`): the first `read_ui` with `since` after the input already had the new version and the right `diff` (display `78`; the text area's new value), 0.7 ms and 9 ms after the input call returned.
+- **Stale version:** `act` with the version from before a click came back `stale_version` with the current map in 5 ms.
+- **Idle:** 0.2–0.4 % CPU over 30 s while watching 4–6 windows (one of them a terminal posting over a thousand notifications), measured in three runs.
+- **App quit and relaunch:** after Calculator quit, `read_ui` answered `app_not_running` and its watch was gone within one probe; after the relaunch the first read took 28 ms and the re-read 0.45 ms. The sidecar kept running.
 
 ### Baseline
 

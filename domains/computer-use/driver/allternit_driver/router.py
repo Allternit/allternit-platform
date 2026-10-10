@@ -13,7 +13,12 @@ per user (persisted as JSON), and every decision lands in the audit log.
   one call in ``EXPLORE_EVERY`` until it has enough samples, so latency can be
   compared at all. Input never explores.
 * An app whose tree comes back empty or degraded is marked ``degraded``: reads
-  still answer, flagged, and the vision fallback (a later phase) takes over.
+  still answer, flagged.
+* Per window, ``choose_source`` decides where elements come from: the tree
+  (``ax``), the vision fallback (``vision``: set-of-marks + the local
+  grounder, see vision/), or both (``hybrid``: the tree plus marks inside the
+  regions the tree can't see into, such as a canvas). Every decision is
+  remembered per app, reported in ``table()`` and written to the audit log.
 """
 
 from __future__ import annotations
@@ -44,6 +49,17 @@ DEFAULTS: dict[str, dict[str, str]] = {
 }
 
 EXPLORABLE = {"verify", "screenshot", "zoom"}
+
+# Vision fallback switch (choose_source).
+SOURCE_MODES = ("auto", "off", "only")
+MIN_ACTIONABLE = 2  # Fewer actionable elements than this in a small tree: the tree is too thin.
+SPARSE_TOTAL = 6
+OPAQUE_FRAC = 0.35  # A childless opaque element covering this share of the window hides a drawn UI.
+OPAQUE_ROLES = {"group", "unknown", "canvas", "image", "scrollarea", "layoutarea", "pane", "custom", "document", "splitgroup"}
+INTERACTIVE_ROLES = {
+    "button", "checkbox", "radiobutton", "textfield", "textarea", "combobox", "popupbutton", "menubutton",
+    "slider", "link", "menuitem", "tab", "cell", "row", "incrementor", "colorwell", "disclosuretriangle", "searchfield",
+}
 EXPLORE_EVERY = 20
 MIN_FAIL_CALLS = 3
 MIN_LATENCY_SAMPLES = 5
@@ -82,6 +98,36 @@ class Decision:
     reason: str  # default | capability | failures | latency | explore | only
 
 
+@dataclass(frozen=True)
+class SourceDecision:
+    source: str  # ax | vision | hybrid
+    reason: str  # tree | off | asked | empty_tree | sparse_tree | opaque_region | ax_error | degraded:<why>
+    regions: tuple[tuple[float, float, float, float], ...] = ()  # Screen points x, y, w, h (hybrid).
+
+
+def assess_tree(elements: list[Any], degraded: str | None = None) -> SourceDecision:
+    """Is this window's tree enough to act on? ``elements`` are element-map
+    elements (role, bounds, actions, parent); the first is the window."""
+    if degraded == "empty_tree" or len(elements) <= 1:
+        return SourceDecision("vision", "empty_tree")
+    win = elements[0].bounds
+    win_area = (win[2] * win[3]) if win else 0.0
+    parents = {e.parent for e in elements if e.parent}
+    actionable = sum(1 for e in elements[1:] if e.actions or e.role.lower() in INTERACTIVE_ROLES)
+    if actionable < MIN_ACTIONABLE and len(elements) <= SPARSE_TOTAL:
+        return SourceDecision("vision", "sparse_tree")
+    regions = []
+    if win_area > 0:
+        for e in elements[1:]:
+            if e.id in parents or e.bounds is None or e.role.lower() not in OPAQUE_ROLES:
+                continue
+            if e.bounds[2] * e.bounds[3] >= OPAQUE_FRAC * win_area:
+                regions.append(tuple(e.bounds))
+    if regions:
+        return SourceDecision("hybrid", "opaque_region", tuple(regions))
+    return SourceDecision("ax", "tree")
+
+
 def _other(engine: str) -> str:
     return CUA if engine == ARC else ARC
 
@@ -95,6 +141,7 @@ class Router:
         self._stats: dict[tuple[str, str, str], Stats] = {}  # (op, app, engine)
         self._counts: dict[tuple[str, str], int] = {}
         self.degraded: dict[str, str] = {}  # app -> reason
+        self.sources: dict[str, dict[str, Any]] = {}  # app -> last source decision
         self._dirty = 0
         self._saved_at = 0.0
         self._load()
@@ -151,6 +198,24 @@ class Router:
             )
         self._maybe_save()
 
+    def choose_source(self, app: str, elements: list[Any], mode: str = "auto", ax_error: str | None = None) -> SourceDecision:
+        """AX or vision for one window read, recorded per app and audited."""
+        if mode == "off":
+            d = SourceDecision("ax", "off")
+        elif mode == "only":
+            d = SourceDecision("vision", "asked")
+        elif ax_error is not None:
+            d = SourceDecision("vision", "ax_error")
+        else:
+            d = assess_tree(elements, self.degraded.get(app))
+        with self._lock:
+            prev = self.sources.get(app)
+            self.sources[app] = {"source": d.source, "reason": d.reason, "at": round(time.time(), 3)}
+        if self._audit is not None and (prev is None or prev["source"] != d.source or prev["reason"] != d.reason):
+            self._audit.write({"op": "source", "app": app, "source": d.source, "reason": d.reason,
+                               **({"error": ax_error[:200]} if ax_error else {})})
+        return d
+
     def mark_degraded(self, app: str, reason: str | None) -> None:
         with self._lock:
             if reason:
@@ -179,7 +244,8 @@ class Router:
                         continue
                     d = self._pick(op, app, None) if self.os == "darwin" else Decision(CUA, "only")
                     engines["pick"] = {"engine": d.engine, "reason": d.reason}
-        return {"os": self.os, "defaults": DEFAULTS[self.os], "apps": out, "degraded": degraded}
+            sources = {app: dict(d) for app, d in self.sources.items()}
+        return {"os": self.os, "defaults": DEFAULTS[self.os], "apps": out, "degraded": degraded, "sources": sources}
 
     def _load(self) -> None:
         if not self._path or not os.path.exists(self._path):

@@ -7,9 +7,15 @@
  * 2. Stages a relocatable CPython 3.12 (python-build-standalone, pinned by
  *    sha256) per target into resources/computer-use/driver-python/<os>-<arch>.
  *    A venv would point at the build machine's Python, which users don't have.
- * 3. On macOS targets, installs the pinned PyObjC frameworks the arc engine
+ * 3. Keeps pip (the Decision Runtime installs its packages with it). On
+ *    macOS targets, installs the pinned PyObjC frameworks the arc engine
  *    needs into that Python. Linux and Windows run the Cua engine only and
  *    need nothing beyond the standard library.
+ *
+ * 4. Copies the Decision Runtime scorer sidecar (domains/decision-runtime:
+ *    the allternit_decisions package, its pinned requirements, NOTICE) into
+ *    resources/decision-runtime. It runs on this same Python and installs its
+ *    packages and model on first use, so nothing heavy ships in the app.
  *
  * Targets follow prepare-cua-driver.cjs: ALLTERNIT_PACK_OS (+ ALLTERNIT_PACK_ARCH)
  * picks one; a Mac stages every target, so one Mac can pack them all.
@@ -28,6 +34,8 @@ const repoRoot = path.resolve(desktopDir, '..', '..');
 const driverSrc = path.join(repoRoot, 'domains', 'computer-use', 'driver');
 const driverDest = path.join(desktopDir, 'resources', 'computer-use', 'driver');
 const pythonRoot = path.join(desktopDir, 'resources', 'computer-use', 'driver-python');
+const decisionsSrc = path.join(repoRoot, 'domains', 'decision-runtime');
+const decisionsDest = path.join(desktopDir, 'resources', 'decision-runtime');
 
 const PBS = '20260602';
 const PY = '3.12.13';
@@ -43,6 +51,9 @@ const PYTHONS = {
   'win32-x64': ['x86_64-pc-windows-msvc', 'dbada31f91a4fff934dae85e7998d91f1e926135bd88ffed4921a337d5680f48'],
 };
 // Parts of the standard distribution the driver never loads (~25 MB).
+// The live map's event observers (domains/computer-use/driver/allternit_driver/live/):
+// pure-Python wheels, so pip on the build host stages them for any target.
+const OBSERVER_PACKAGES = { linux: ['jeepney==0.9.0'], win32: ['comtypes==1.4.11'] };
 const PRUNE = ['test', 'idlelib', 'tkinter', 'turtledemo', 'ensurepip', 'lib2to3', 'pydoc_data', '__phello__'];
 const SKIP = new Set(['__pycache__', '.pytest_cache', 'tests', '.venv']);
 
@@ -112,7 +123,8 @@ async function stagePython(key) {
   const [triple, sha256] = PYTHONS[key];
   const dir = path.join(pythonRoot, key);
   const stamp = path.join(dir, '.allternit-python.json');
-  const want = { pbs: PBS, python: PY, sha256, pyobjc: key.startsWith('darwin') ? PYOBJC : null };
+  const observers = OBSERVER_PACKAGES[key.split('-')[0]] || [];
+  const want = { pbs: PBS, python: PY, sha256, pyobjc: key.startsWith('darwin') ? PYOBJC : null, observers, pip: true };
   try {
     if (JSON.stringify(JSON.parse(fs.readFileSync(stamp, 'utf8'))) === JSON.stringify(want)) {
       log(`Python ${PY} already staged for ${key}`);
@@ -151,10 +163,21 @@ async function stagePython(key) {
       '--implementation', 'cp', '--target', sitePackages(dir, key), ...PYOBJC_PACKAGES,
     ], { stdio: 'inherit' });
   }
-  // Build-time only: pip, headers, Tcl/Tk, PyObjC's own test suite (~45 MB).
+  if (observers.length) {
+    const runner = [pythonExe(dir, key), 'python3', 'python', pythonExe(path.join(pythonRoot, 'darwin-arm64'), 'darwin-arm64')]
+      .find((candidate) => spawnSync(candidate, ['-m', 'pip', '--version'], { stdio: 'ignore' }).status === 0);
+    if (!runner) throw new Error('no Python with pip available to stage the live-map observer packages');
+    execFileSync(runner, [
+      '-m', 'pip', 'install', '--quiet', '--disable-pip-version-check', '--no-compile', '--no-deps',
+      '--only-binary=:all:', '--target', sitePackages(dir, key), ...observers,
+    ], { stdio: 'inherit' });
+  }
+  // Build-time only: headers, Tcl/Tk, PyObjC's own test suite (~35 MB). pip
+  // stays: the Decision Runtime sidecar installs its pinned packages with it
+  // on first use (domains/decision-runtime/allternit_decisions/runtime.py).
   const site = sitePackages(dir, key);
   for (const entry of fs.existsSync(site) ? fs.readdirSync(site) : []) {
-    if (/^(pip|PyObjCTest)([-.].*)?$/.test(entry)) fs.rmSync(path.join(site, entry), { recursive: true, force: true });
+    if (/^PyObjCTest([-.].*)?$/.test(entry)) fs.rmSync(path.join(site, entry), { recursive: true, force: true });
   }
   const top = key.startsWith('win32') ? dir : path.join(dir, 'lib');
   for (const entry of fs.readdirSync(top)) {
@@ -174,6 +197,12 @@ async function stagePython(key) {
   fs.rmSync(driverDest, { recursive: true, force: true });
   copyTree(driverSrc, driverDest);
   log(`staged driver source at ${driverDest}`);
+  if (!fs.existsSync(path.join(decisionsSrc, 'allternit_decisions', '__main__.py'))) {
+    throw new Error(`missing ${path.join(decisionsSrc, 'allternit_decisions', '__main__.py')}`);
+  }
+  fs.rmSync(decisionsDest, { recursive: true, force: true });
+  copyTree(decisionsSrc, decisionsDest);
+  log(`staged decision runtime source at ${decisionsDest}`);
   for (const key of targets()) await stagePython(key);
 })().catch((error) => {
   process.stderr.write(`[prepare-allternit-driver] ✗ ${error.message}\n`);

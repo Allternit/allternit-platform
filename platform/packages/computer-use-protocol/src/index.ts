@@ -13,7 +13,6 @@ export const SurfaceSchema = z.enum([
 export const ProviderKindSchema = z.enum([
   "local-playwright",
   "extension-tab",
-  "browser-use",
   "stagehand",
 ]);
 

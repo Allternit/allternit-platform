@@ -1,5 +1,7 @@
 # agent-desktop P1 Integration Notes
 
+> **Historical (2026-10-09):** this provider and the canonical environment/lease routes it used were removed in the D0 cleanup. Computers are driven through the computer toolset; see `surfaces/docs/core/canonical-computer-use.mdx`.
+
 ## Summary
 Wired `lahfir/agent-desktop` as a new canonical computer-use provider `desktop.agent-desktop.canonical` in Allternit. The provider spawns the upstream Rust CLI as a subprocess, translates its JSON envelopes into canonical observations/actions, and leases an `allternit.host` environment before driving the local GUI.
 

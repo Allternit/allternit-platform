@@ -1,0 +1,38 @@
+{
+  "id": "safari-stale-refresh",
+  "os": "mac",
+  "status": "ready",
+  "apps": [
+    "Safari"
+  ],
+  "setup": [
+    {
+      "do": "open",
+      "app": "Safari",
+      "url": "{base_url}/stale.html",
+      "settle_ms": 800
+    }
+  ],
+  "goal": "In Safari, click Refresh list, wait until the list has reloaded (it says 'List refreshed'), then approve the item named below. Approve nothing else.",
+  "inputs": {
+    "item": "Item C"
+  },
+  "checker": [
+    {
+      "kind": "form_log",
+      "route": "stale",
+      "count": 1,
+      "fields": {
+        "item": "C"
+      }
+    }
+  ],
+  "teardown": [],
+  "max_minutes": 3,
+  "tags": [
+    "safari",
+    "browser",
+    "stale-element",
+    "core"
+  ]
+}

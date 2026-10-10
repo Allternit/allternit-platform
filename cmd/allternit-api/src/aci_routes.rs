@@ -47,7 +47,9 @@ pub fn aci_router() -> Router<Arc<AppState>> {
             get(crate::aci_code::aci_code_receipt),
         )
         .route("/aci/policy/audit", get(aci_policy_audit))
-        .merge(crate::aci_credentials::credential_routes())
+        // The credential vault lives under /aci too (POST /api/aci/credentials,
+        // matching this module's documented surface).
+        .nest("/aci", crate::aci_credentials::credential_routes())
 }
 
 fn acu_base(state: &AppState) -> String {
@@ -1981,7 +1983,7 @@ mod credential_binding_http_tests {
         // delete first so re-runs don't trip DuplicateName.
         let _ = crate::aci_credentials::CREDENTIALS.delete(E2E_USER, E2E_CRED);
         crate::aci_credentials::CREDENTIALS
-            .create(E2E_USER, E2E_CRED, crate::aci_credentials::CredentialType::Token, E2E_VALUE)
+            .create(E2E_USER, E2E_CRED, crate::aci_credentials::CredentialType::Token, E2E_VALUE, None)
             .expect("seed credential");
 
         let (acu_url, capture) = start_mock_acu().await;
