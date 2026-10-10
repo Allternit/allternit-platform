@@ -421,7 +421,7 @@ async fn run_one(state: &Arc<AppState>, user: &AuthUser, p: &Planned, left: Dura
         Ok(pv) => pv,
         Err(reason) => return json!({ "status": "refused", "error": "policy_denied", "reason": reason }),
     };
-    if audit(user, &p.computer, &p.target, spec, &req, &desc, verdict.as_ref()).is_err() {
+    if audit(user, &p.computer, &p.target, spec, &req, &desc, verdict.as_ref(), None).is_err() {
         return json!({ "status": "refused", "error": "audit_unavailable", "reason": "The action log couldn't be written, so the subtask did not run." });
     }
     crate::computer_routes::touch_computer_activity(&state.db, &p.computer.id);
@@ -495,7 +495,7 @@ pub async fn execute(state: &Arc<AppState>, user: &AuthUser, headers: &HeaderMap
         }
     }
     // `planned` is never empty (both planners refuse an empty call).
-    if audit(user, route, &planned[0].target, spec, req, &desc, verdict.as_ref()).is_err() {
+    if audit(user, route, &planned[0].target, spec, req, &desc, verdict.as_ref(), None).is_err() {
         return refuse(StatusCode::INTERNAL_SERVER_ERROR, "audit_unavailable", "The action log couldn't be written, so nothing ran.");
     }
 

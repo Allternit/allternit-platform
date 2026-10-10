@@ -2269,7 +2269,7 @@ mod tests {
     #[test]
     fn contracts_load_with_anthropic_member_sets() {
         assert_eq!(contract(Toolset::Computer).id, "allternit.computer.v2");
-        assert_eq!(contract(Toolset::Computer).members.len(), 26);
+        assert_eq!(contract(Toolset::Computer).members.len(), 27);
         assert_eq!(contract(Toolset::Browser).members.len(), 31);
         assert!(contract(Toolset::Computer).member("read_ui").is_some());
         assert!(contract(Toolset::Computer).member("use_credential").is_some());

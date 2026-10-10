@@ -371,13 +371,31 @@ impl DecisionBackend for LiveHead {
         true
     }
     async fn decide(&self, q: &Query<'_>) -> Result<Answer, String> {
-        let conn = self.db.connect().map_err(|e| e.to_string())?;
         let input = HeadInput { owner: &self.owner, kind: q.kind, key: &self.key, ids: &q.ids };
-        match self.head.predict(&conn, &input).map_err(|e| e.to_string())? {
+        let predicted = with_head_conn(&self.db, |conn| self.head.predict(conn, &input)).map_err(|e| e.to_string())?;
+        match predicted {
             Some(a) => Ok(Answer { probs: a.probs, abstain: false, detail: json!({ "head": self.head.name() }) }),
             None => Err("no match".into()),
         }
     }
+}
+
+thread_local! {
+    /// One SQLite connection per worker thread for live heads: a head answers
+    /// in well under 10 ms only when it skips the open (and keeps its
+    /// prepared statement cache) on every decision.
+    static HEAD_CONN: std::cell::RefCell<Option<(std::path::PathBuf, Connection)>> = const { std::cell::RefCell::new(None) };
+}
+
+fn with_head_conn<T>(db: &DbHandle, f: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> rusqlite::Result<T> {
+    HEAD_CONN.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        if slot.as_ref().map(|(p, _)| p.as_path()) != Some(db.path()) {
+            *slot = Some((db.path().to_path_buf(), db.connect()?));
+        }
+        let (_, conn) = slot.as_ref().expect("set above");
+        f(conn)
+    })
 }
 
 /// The `head` placeholder backend: never runs by itself. `expand` swaps it

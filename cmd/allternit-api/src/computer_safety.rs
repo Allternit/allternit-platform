@@ -1495,7 +1495,7 @@ pub async fn get_safety(
         "computer": own,
         "default": base,
         "effective": effective,
-        "builtin_watch": { "email_apps": EMAIL_APPS, "email_domains": EMAIL_DOMAINS, "banking_domains": BANKING_DOMAINS, "admin_apps": ADMIN_APPS, "admin_domains": ADMIN_DOMAINS },
+        "builtin_watch": { "email_apps": &EMAIL_APPS[..], "email_domains": &EMAIL_DOMAINS[..], "banking_domains": &BANKING_DOMAINS[..], "admin_apps": &ADMIN_APPS[..], "admin_domains": &ADMIN_DOMAINS[..] },
         "monitor": { "backends": fast_backends(), "enabled": monitor_enabled() },
     }))
     .into_response()

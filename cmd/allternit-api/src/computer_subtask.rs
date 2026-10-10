@@ -1018,7 +1018,7 @@ impl<'a> Run<'a> {
     /// Re-infer one stale step: ONE decision over the current screen's
     /// options of the same kind (click, press, or typing the same input).
     async fn reinfer(&mut self, s: &replay::Step, screen: &Screen, typed: &HashMap<usize, String>, history: &[String]) -> Option<(String, Decided)> {
-        let all = options(&self.spec, screen, typed, &HashSet::new());
+        let all = options(&self.spec, screen, typed, &HashSet::new(), false);
         let fits = |a: &Action| match (s.op.as_str(), a) {
             ("click", Action::Click { .. }) => true,
             ("press", Action::Press { key, .. }) => s.key.as_deref().unwrap_or("Return") == key,
@@ -1981,8 +1981,7 @@ mod tests {
     }
 
     async fn go(io: &FakeIo, s: Spec, pinned: Option<replay::Entry>) -> Value {
-        let r = drive(io, "run-test", s, pinned).await.expect("subtask ran");
-        serde_json::from_str(r.content[0]["text"].as_str().unwrap()).unwrap()
+        drive(io, "run-test", s, pinned).await.expect("subtask ran")
     }
 
     #[tokio::test]
