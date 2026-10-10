@@ -7,7 +7,35 @@ Bots are reusable agents with an identity, role, instructions, model, tools, and
 
 ## Open and manage a bot
 
-Open Bots in the workspace at `ai.allternit.com` or Allternit Desktop. Choose a bot from the rail to return to its work, create a bot with the wizard, or browse a template. Bot home contains its configuration and work; its menu includes Duplicate and Delete.
+Open Bots in the workspace at `ai.allternit.com` or Allternit Desktop. Choose a bot from the rail to open its bot screen, create a bot with the wizard, or browse a template. The bot's **⋯** menu includes Make main bot, Promote, Duplicate and Delete.
+
+## The Bots rail
+
+From top to bottom:
+
+| Part | What it shows |
+| --- | --- |
+| **+ New** | Opens the bots home, where you can hand work to your bots or create one. |
+| Main bot | Your main bot as a large photo tile. Click it to open its bot screen. With no main bot set, the tile asks you to choose one (or create your first bot). |
+| Promoted | Up to three promoted bots as round icons. Use **⋯ → Unpromote** on an icon to remove it. |
+| Projects | Your bot projects. Threads are not listed here; open the project to see them. |
+| Bots | One row per bot: photo, status dot and the last line from its newest thread. Click to open its bot screen. |
+| Group chats | Pinned at the bottom, above your account row. |
+
+Only one bot is the main bot at a time. Making a bot the main bot removes the flag from the previous one. Needs-you items appear on the bots home and the project page, not in the rail. The phone drawer (`ai.allternit.com` phone layout and the `m.allternit.com` PWA) shows the same rail.
+
+## Bot screen
+
+The bot screen opens with a large header: the bot's photo, name, description, where it runs, its phone number, email and channels, and its status. **Open phone** opens the bot's phone and **Settings** opens its settings.
+
+The **Chat + threads** tab is the default:
+
+- **Main chat.** Every bot keeps one always-on main chat. It knows the status of the bot's threads but not their full context, so long-running preferences and decisions stay clean. A bot with no main chat yet shows **Start main chat**; nothing is sent until you write.
+- **Threads.** The bot's threads, grouped as Needs you, Working, Queued and Idle, with a project filter and search. **+ New thread** starts a task thread; **Incognito** starts a private thread. Threads idle for 7 days fold into **Stale** (threads waiting on you never go stale). Click a thread to open it.
+
+On desktop the main chat and threads sit side by side; on a phone they stack. The other tabs are Routines, Memory, Computer, Performance and Settings.
+
+**Settings → Phone and reach** holds the bot's phone number (texting and voice calls on or off, change number), its phone, its email and channels with connect buttons, and who it can text, call or email without asking you. The rest of the bot's configuration follows below it.
 
 The standalone Bot Hub was removed from the workspace. Its old `agent-hub` navigation entry aliases the Bots launch surface. Use Bots, bot home, or Project home rather than looking for the former hub tabs.
 
@@ -21,7 +49,7 @@ The standalone Bot Hub was removed from the workspace. Its old `agent-hub` navig
 | Project | Team membership and context shared by coordinated threads. |
 | Al | Coordinator that plans, assigns, routes, and reports project work. |
 
-Several threads can belong to one bot. A new thread does not replace the bot's standing conversation. A group-chat mention can open a task thread and show a live card in the room.
+Several threads can belong to one bot. A new thread does not replace the bot's always-on main chat. A group-chat mention can open a task thread and show a live card in the room.
 
 ## Configuration and access
 
@@ -55,7 +83,7 @@ Bot records use the [Agents API](/api/agents). Durable thread, project coordinat
 
 ## Thread and project panes
 
-A thread's one-row top keeps the bot avatar, vendor provenance chip, and controls together. The avatar opens bot home; the pill opens the pane. Use the pane menu for Thread, Browser, or Computer. On the phone, **⋯** includes Computer, the pane opens full screen, and **Back** returns to chat. See [Thread controls and history](/guides/bot-threads).
+A thread's one-row top keeps the bot avatar, vendor provenance chip, and controls together. The avatar opens the bot screen, the bot name opens the pane, and the thread title opens the [thread switcher](/guides/bot-threads#switching-threads). Use the pane menu for Thread, Browser, or Computer. On the phone, **⋯** includes Computer, the pane opens full screen, and **Back** returns to chat. See [Thread controls and history](/guides/bot-threads).
 
 Bot Mode and **Projects → Bot** share one server project list. Projects support pin/archive, shared server context files, a per-device folder, coordinator instructions, and a pane for Threads, Library, Routines, and Browser. A thread's model and permissions come from its bot; bot projects have no separate model or permission selectors. See [Project context and panes](/guides/project-coordination).
 
