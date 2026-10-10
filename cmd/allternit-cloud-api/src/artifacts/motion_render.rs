@@ -124,16 +124,11 @@ pub fn check_queue(active_for_user: i64) -> Result<(), Refusal> {
     Ok(())
 }
 
-/// Cloud renders follow the Motion plan rule: Super, Ultra and Team (and
-/// Enterprise). `plan_id` is the caller's open subscription, if any; a caller
-/// acting inside a Clerk org counts as Team, the same signal the app uses.
-pub fn plan_allows(plan_id: Option<&str>, in_org: bool) -> Result<(), Refusal> {
-    let paid = matches!(plan_id, Some("super" | "ultra" | "team" | "enterprise"));
-    if paid || in_org {
-        Ok(())
-    } else {
-        Err(refuse(402, "plan_required", "Cloud video export is on the Super, Ultra and Team plans."))
-    }
+/// Motion (and its cloud render) is on every plan (Eoj, 2026-10-10). Kept as
+/// the one place a plan rule would go; the per-user concurrency limit and the
+/// org switch still apply.
+pub fn plan_allows(_plan_id: Option<&str>, _in_org: bool) -> Result<(), Refusal> {
+    Ok(())
 }
 
 /// The artifact's org can switch artifacts, or Motion alone, off.
@@ -259,8 +254,8 @@ mod tests {
         assert!(plan_allows(Some("ultra"), false).is_ok());
         assert!(plan_allows(Some("team"), false).is_ok());
         assert!(plan_allows(None, true).is_ok());
-        assert_eq!(plan_allows(Some("plus"), false).unwrap_err().code, "plan_required");
-        assert_eq!(plan_allows(None, false).unwrap_err().status, 402);
+        assert!(plan_allows(Some("plus"), false).is_ok());
+        assert!(plan_allows(None, false).is_ok(), "free plans can render too");
     }
 
     #[test]
