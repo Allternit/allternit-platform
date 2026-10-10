@@ -17,6 +17,7 @@ Artifact modes tell the agent what deliverable to create and which capabilities 
 | Deep Research | A structured research report with sources and citations. |
 | Image | A generated image checked against the request. |
 | Video | A playable video with the requested duration and format. |
+| PDF | An editable PDF, opened in the PDF editor pane. |
 | Code | Real file changes and runnable code, with appropriate verification. |
 | Agent Swarm | A coordinated run with named roles, ownership, and a synthesized deliverable. |
 
@@ -24,7 +25,9 @@ A missing tool, provider, or editor capability can block a mode. Choose an avail
 
 ## Editor panes and bot threads
 
-Docs, Sheets, and Slides work through artifact sessions with an editor pane. Subsequent turns edit the document already open in that pane. These sessions differ from a one-shot generation that emits a new artifact each time.
+Docs, Sheets, Slides and PDFs work through artifact sessions with an editor pane. Subsequent turns edit the document already open in that pane. These sessions differ from a one-shot generation that emits a new artifact each time.
+
+PDFs open in the embedded PDF craft editor: the document saves back as a new version of the same artifact, and a read-only preview is available where the editor is not. Uploading a `.pdf` file to the workspace library also creates a PDF artifact.
 
 Bot threads do not offer these three editor-pane modes. Use the workspace artifact session for the editable Office flow. A bot can still produce file deliverables through tools available to its thread; that is a different path from editing an open pane.
 
