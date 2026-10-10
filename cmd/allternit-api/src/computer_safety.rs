@@ -35,7 +35,10 @@
 //! redacted ([`redact_png`]) before they leave the executor: emails, card
 //! numbers (Luhn-checked), phone numbers, SSNs, common API-key shapes and the
 //! person's vault secrets are blacked out, located by OCR of the exact image
-//! (the Allternit Driver's Vision OCR).
+//! — through the target's own driver where one has it (the Allternit Driver's
+//! Vision OCR), else through the built-in server OCR engine
+//! ([`crate::computer_ocr`], pure Rust, models in the data dir), so a
+//! cloud-hosted allternit-api redacts too.
 //!
 //! Rollback: on cloud computers, the first risky step of a run takes a VM
 //! snapshot through the existing snapshot driver, so the person can restore
@@ -46,7 +49,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     Extension, Json,
@@ -211,7 +214,9 @@ pub fn classify_key(spec: &str) -> Option<Irreversible> {
 }
 
 // ---------------------------------------------------------------------------
-// Settings: per computer, with an owner-wide default.
+// Settings: per computer, per project, with an owner-wide default. The
+// effective chain is computer -> project -> default (most specific set field
+// wins, per `over`).
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -303,6 +308,13 @@ fn scope_key(computer_id: Option<&str>) -> String {
     computer_id.map_or_else(|| "default".to_string(), |id| format!("computer:{id}"))
 }
 
+/// The settings scope of one cowork project: `project:<id>`, where the id is
+/// a cowork_projects row owned by the settings' owner (verified at write
+/// time; see `project_owned`).
+fn project_scope_key(project_id: &str) -> String {
+    format!("project:{project_id}")
+}
+
 fn read_settings(conn: &rusqlite::Connection, owner: &str, scope: &str) -> rusqlite::Result<Option<SafetySettings>> {
     use rusqlite::OptionalExtension;
     let raw: Option<String> = conn
@@ -320,16 +332,111 @@ fn write_settings(conn: &rusqlite::Connection, owner: &str, scope: &str, s: &Saf
     Ok(())
 }
 
-/// The effective settings for one computer (its own over the owner default).
-/// A store error answers the defaults; the lists then can't be enforced, so
-/// it is logged loudly.
-pub async fn load_settings(state: &Arc<AppState>, owner: &str, computer_id: &str) -> SafetySettings {
-    let (db, owner, cid) = (state.db.clone(), owner.to_string(), computer_id.to_string());
+/// The effective settings for one call: the computer's own settings over the
+/// project scope over the owner default, field by field (`over`). A store
+/// error answers the defaults; the lists then can't be enforced, so it is
+/// logged loudly.
+pub fn effective_settings(
+    conn: &rusqlite::Connection,
+    owner: &str,
+    computer_id: &str,
+    project_id: Option<&str>,
+) -> rusqlite::Result<SafetySettings> {
+    let base = read_settings(conn, owner, "default")?.unwrap_or_default();
+    let project = match project_id {
+        Some(p) => read_settings(conn, owner, &project_scope_key(p))?.unwrap_or_default(),
+        None => SafetySettings::default(),
+    };
+    let own = read_settings(conn, owner, &scope_key(Some(computer_id)))?.unwrap_or_default();
+    Ok(own.over(project).over(base))
+}
+
+/// Does this cowork project exist and belong to the owner? Project safety
+/// settings are written and applied only after this check.
+pub fn project_owned(conn: &rusqlite::Connection, owner: &str, project_id: &str) -> rusqlite::Result<bool> {
+    use rusqlite::OptionalExtension;
+    Ok(conn
+        .query_row(
+            "SELECT 1 FROM cowork_projects WHERE id = ?1 AND user_id = ?2",
+            rusqlite::params![project_id, owner],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some())
+}
+
+/// The project of the session a run belongs to: cowork sessions carry their
+/// run link in metadata (`a_run_id`) and optionally a project_id. This is how
+/// a toolset call learns its project from the run context rather than from
+/// anything the model says.
+pub fn project_for_run(conn: &rusqlite::Connection, owner: &str, run_id: &str) -> rusqlite::Result<Option<String>> {
+    use rusqlite::OptionalExtension;
+    conn.query_row(
+        "SELECT project_id FROM cowork_sessions
+          WHERE user_id = ?1 AND project_id IS NOT NULL
+            AND json_extract(metadata, '$.a_run_id') = ?2
+          LIMIT 1",
+        rusqlite::params![owner, run_id],
+        |r| r.get(0),
+    )
+    .optional()
+}
+
+/// The project whose safety scope applies to a toolset call. The run's own
+/// project (from the session link) is authoritative; a `project_id` the
+/// caller supplies is accepted only when it names one of the owner's projects
+/// and doesn't contradict the run's project, so a model can't widen its own
+/// limits by naming a scope.
+pub async fn resolve_project_scope(
+    state: &Arc<AppState>,
+    owner: &str,
+    requested: Option<&str>,
+    run_id: Option<&str>,
+) -> Result<Option<String>, String> {
+    let (db, owner, requested, run_id) = (
+        state.db.clone(),
+        owner.to_string(),
+        requested.map(str::to_string),
+        run_id.map(str::to_string),
+    );
+    let (run_project, requested_owned) = tokio::task::spawn_blocking(move || -> rusqlite::Result<(Option<String>, bool)> {
+        let conn = db.connect()?;
+        let run_project = match run_id.as_deref() {
+            Some(r) => project_for_run(&conn, &owner, r)?,
+            None => None,
+        };
+        let requested_owned = match requested.as_deref() {
+            Some(p) => project_owned(&conn, &owner, p)?,
+            None => true,
+        };
+        Ok((run_project, requested_owned))
+    })
+    .await
+    .map_err(|_| "internal error resolving the project scope".to_string())?
+    .map_err(|e| format!("couldn't verify the project: {e}"))?;
+    match (run_project, requested) {
+        (Some(rp), Some(p)) if rp != p => Err(format!(
+            "project {p} isn't the project of this run ({rp}), so the call did not run"
+        )),
+        (Some(rp), _) => Ok(Some(rp)),
+        (None, Some(p)) if !requested_owned => Err(format!("project {p} wasn't found for this user")),
+        (None, Some(p)) => Ok(Some(p)),
+        (None, None) => Ok(None),
+    }
+}
+
+/// The effective settings for one computer call. A store error answers the
+/// defaults; the lists then can't be enforced, so it is logged loudly.
+pub async fn load_settings(state: &Arc<AppState>, owner: &str, computer_id: &str, project_id: Option<&str>) -> SafetySettings {
+    let (db, owner, cid, pid) = (
+        state.db.clone(),
+        owner.to_string(),
+        computer_id.to_string(),
+        project_id.map(str::to_string),
+    );
     let loaded = tokio::task::spawn_blocking(move || -> rusqlite::Result<SafetySettings> {
         let conn = db.connect()?;
-        let base = read_settings(&conn, &owner, "default")?.unwrap_or_default();
-        let own = read_settings(&conn, &owner, &scope_key(Some(&cid)))?.unwrap_or_default();
-        Ok(own.over(base))
+        effective_settings(&conn, &owner, &cid, pid.as_deref())
     })
     .await;
     match loaded {
@@ -801,6 +908,10 @@ pub struct Assessment {
     pub snapshot: bool,
     #[serde(skip)]
     pub settings: SafetySettings,
+    /// The project scope the settings resolved through, when the call ran in
+    /// a project context (never serialized to the model; in the audit note).
+    #[serde(skip)]
+    pub project_id: Option<String>,
 }
 
 impl Assessment {
@@ -821,6 +932,9 @@ impl Assessment {
         }
         if let Some(m) = &self.monitor {
             s.push_str(&format!(" monitor={}", m.verdict));
+        }
+        if let Some(p) = &self.project_id {
+            s.push_str(&format!(" project={p}"));
         }
         if let Some(h) = &self.context.host {
             s.push_str(&format!(" host={h}"));
@@ -914,6 +1028,7 @@ pub fn classify_step(member: &str, input: &Value, ctx: &Context) -> Option<Irrev
 }
 
 /// Assess one step. `scaled` is the input with coordinates in screen px.
+/// `project_id` is the verified scope from `resolve_project_scope`.
 #[allow(clippy::too_many_arguments)]
 pub async fn assess(
     state: &Arc<AppState>,
@@ -924,10 +1039,11 @@ pub async fn assess(
     spec: &MemberSpec,
     scaled: &Value,
     run_id: Option<&str>,
+    project_id: Option<&str>,
 ) -> Assessment {
     let member = spec.name.as_str();
     let mutating = !read_only(spec);
-    let settings = load_settings(state, &user.user_id, &computer.id).await;
+    let settings = load_settings(state, &user.user_id, &computer.id, project_id).await;
     let secrets = crate::aci_credentials::CREDENTIALS.screening_secrets(&user.user_id);
     let texts = typed_texts(member, scaled);
     let needs_context = mutating || settings.lists_set() || matches!(target, Target::Browser { .. });
@@ -946,6 +1062,7 @@ pub async fn assess(
         context: ctx,
         snapshot: false,
         settings,
+        project_id: project_id.map(str::to_string),
     };
 
     // 1. Lists, host policy, secret binding: deny.
@@ -1391,10 +1508,42 @@ pub fn redaction_mode(settings: &SafetySettings, target: &Target) -> &'static st
     }
 }
 
+/// OCR of the exact image a screenshot shows, in the driver's reply shape
+/// (`{lines: [{text, box, words: [{start, end, box}]}]}`), wherever the API
+/// runs. Preferred source is the target's own driver: this host's Allternit
+/// Driver answers for any image (the PNG is just bytes to it), and when the
+/// guest image gains the driver, a cloud computer's own OCR is preferred for
+/// its screenshots — that lane plugs in on the `Guest` arm. The built-in
+/// server engine ([`crate::computer_ocr`]) is the fallback whenever no driver
+/// OCR is available, which is what makes redaction work on a cloud-hosted
+/// allternit-api.
+async fn ocr_lines(target: &Target, png: &[u8], level: &str, data_dir: &std::path::Path) -> Result<Value, String> {
+    match target {
+        // Guest lane (parallel work): when the guest image carries the
+        // Allternit Driver, its own `ocr` answers here and is preferred for
+        // its screenshots; until that image ships, cloud computers fall
+        // through to the server engine below.
+        Target::Guest { .. } => {}
+        Target::ThisDevice | Target::Browser { .. } => {}
+    }
+    match crate::this_device_input::call_driver_timed("ocr", json!({ "png": B64.encode(png), "level": level }), Duration::from_secs(10)).await {
+        Ok(reply) => return Ok(reply),
+        Err(e) => tracing::debug!("driver OCR unavailable for redaction ({e}); trying the server OCR engine"),
+    }
+    crate::computer_ocr::ocr_png(png, data_dir).await
+}
+
 /// Redact personal data from a screenshot before a model sees it. OCR runs
-/// on the exact image through the Allternit Driver on this host. `Err` only
-/// when redaction is required and couldn't run (the screenshot is withheld).
-pub async fn redact_png(png: &[u8], settings: &SafetySettings, target: &Target, secrets: &[String]) -> Result<(Vec<u8>, RedactionReport), String> {
+/// on the exact image through the target's driver where one has it, else
+/// through the built-in server engine. `Err` only when redaction is required
+/// and couldn't run (the screenshot is withheld).
+pub async fn redact_png(
+    png: &[u8],
+    settings: &SafetySettings,
+    target: &Target,
+    secrets: &[String],
+    data_dir: &std::path::Path,
+) -> Result<(Vec<u8>, RedactionReport), String> {
     let mode = redaction_mode(settings, target);
     if mode == "off" {
         return Ok((png.to_vec(), RedactionReport { status: RedactionStatus::Off, regions: 0, kinds: vec![] }));
@@ -1404,7 +1553,7 @@ pub async fn redact_png(png: &[u8], settings: &SafetySettings, target: &Target, 
         None => REDACT_KINDS.to_vec(),
     };
     let level = std::env::var("ALLTERNIT_REDACTION_OCR_LEVEL").ok().filter(|l| l == "accurate").unwrap_or_else(|| "fast".into());
-    let ocr = crate::this_device_input::call_driver_timed("ocr", json!({ "png": B64.encode(png), "level": level }), Duration::from_secs(10)).await;
+    let ocr = ocr_lines(target, png, &level, data_dir).await;
     match ocr {
         Ok(reply) => {
             let (boxes, found) = pii_boxes(&reply, &kinds, secrets);
@@ -1453,7 +1602,7 @@ pub async fn snapshot_before(target: &Target, computer_id: &str, run_id: Option<
 }
 
 // ---------------------------------------------------------------------------
-// Routes: GET/PUT /computers/:id/safety.
+// Routes: GET/PUT /computers/:id/safety and /projects/:id/safety.
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Deserialize)]
@@ -1465,8 +1614,45 @@ pub struct PutSafety {
     pub settings: SafetySettings,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct GetSafetyQuery {
+    /// Layer this project's scope into `effective` too (ownership verified).
+    #[serde(default)]
+    pub project_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ProjectPutSafety {
+    pub settings: SafetySettings,
+}
+
 fn err(status: StatusCode, msg: impl Into<String>) -> Response {
     (status, Json(json!({ "error": msg.into() }))).into_response()
+}
+
+/// The `builtin_watch` and `monitor` blocks every safety settings reply
+/// carries.
+fn builtin_monitor_json() -> Value {
+    json!({
+        "builtin_watch": { "email_apps": &EMAIL_APPS[..], "email_domains": &EMAIL_DOMAINS[..], "banking_domains": &BANKING_DOMAINS[..], "admin_apps": &ADMIN_APPS[..], "admin_domains": &ADMIN_DOMAINS[..] },
+        "monitor": { "backends": fast_backends(), "enabled": monitor_enabled() },
+    })
+}
+
+/// `None` when the cowork project exists and belongs to the user, else the
+/// refusal to return.
+async fn verify_project(state: &Arc<AppState>, owner: &str, project_id: &str) -> Option<Response> {
+    let (db, owner, pid) = (state.db.clone(), owner.to_string(), project_id.to_string());
+    let owned = tokio::task::spawn_blocking(move || -> rusqlite::Result<bool> {
+        let conn = db.connect()?;
+        project_owned(&conn, &owner, &pid)
+    })
+    .await;
+    match owned {
+        Ok(Ok(true)) => None,
+        Ok(Ok(false)) => Some(err(StatusCode::NOT_FOUND, "project not found")),
+        _ => Some(err(StatusCode::INTERNAL_SERVER_ERROR, "couldn't verify the project")),
+    }
 }
 
 pub async fn get_safety(
@@ -1474,31 +1660,55 @@ pub async fn get_safety(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<String>,
     headers: HeaderMap,
+    Query(q): Query<GetSafetyQuery>,
 ) -> Response {
     let computer = match crate::computer_toolset::resolve_computer(&state, &user, &id, &headers).await {
         Ok(c) => c,
         Err((s, m)) => return err(s, m),
     };
-    let (db, owner, cid) = (state.db.clone(), user.user_id.clone(), computer.id.clone());
-    let rows = tokio::task::spawn_blocking(move || -> rusqlite::Result<(Option<SafetySettings>, Option<SafetySettings>)> {
-        let conn = db.connect()?;
-        Ok((read_settings(&conn, &owner, "default")?, read_settings(&conn, &owner, &scope_key(Some(&cid)))?))
-    })
+    let project_id = match q.project_id.as_deref() {
+        Some(p) => match verify_project(&state, &user.user_id, p).await {
+            None => Some(p.to_string()),
+            Some(r) => return r,
+        },
+        None => None,
+    };
+    let (db, owner, cid, pid) = (state.db.clone(), user.user_id.clone(), computer.id.clone(), project_id.clone());
+    let rows = tokio::task::spawn_blocking(
+        move || -> rusqlite::Result<(Option<SafetySettings>, Option<SafetySettings>, Option<SafetySettings>)> {
+            let conn = db.connect()?;
+            let project = match pid.as_deref() {
+                Some(p) => read_settings(&conn, &owner, &project_scope_key(p))?,
+                None => None,
+            };
+            Ok((read_settings(&conn, &owner, "default")?, read_settings(&conn, &owner, &scope_key(Some(&cid)))?, project))
+        },
+    )
     .await;
-    let (base, own) = match rows {
+    let (base, own, project) = match rows {
         Ok(Ok(r)) => r,
         _ => return err(StatusCode::INTERNAL_SERVER_ERROR, "couldn't read the safety settings"),
     };
-    let effective = own.clone().unwrap_or_default().over(base.clone().unwrap_or_default());
-    Json(json!({
+    let effective = own
+        .clone()
+        .unwrap_or_default()
+        .over(project.clone().unwrap_or_default())
+        .over(base.clone().unwrap_or_default());
+    let mut body = json!({
         "computer_id": computer.id,
         "computer": own,
         "default": base,
         "effective": effective,
-        "builtin_watch": { "email_apps": &EMAIL_APPS[..], "email_domains": &EMAIL_DOMAINS[..], "banking_domains": &BANKING_DOMAINS[..], "admin_apps": &ADMIN_APPS[..], "admin_domains": &ADMIN_DOMAINS[..] },
-        "monitor": { "backends": fast_backends(), "enabled": monitor_enabled() },
-    }))
-    .into_response()
+    });
+    if let Some(p) = &project_id {
+        body["project_id"] = json!(p);
+        body["project"] = json!(project);
+    }
+    let extras = builtin_monitor_json();
+    for k in ["builtin_watch", "monitor"] {
+        body[k] = extras[k].clone();
+    }
+    Json(body).into_response()
 }
 
 pub async fn put_safety(
@@ -1524,6 +1734,66 @@ pub async fn put_safety(
     let saved = tokio::task::spawn_blocking(move || -> rusqlite::Result<()> {
         let conn = db.connect()?;
         write_settings(&conn, &owner, &scope, &settings)
+    })
+    .await;
+    match saved {
+        Ok(Ok(())) => Json(json!({ "ok": true, "settings": body.settings })).into_response(),
+        _ => err(StatusCode::INTERNAL_SERVER_ERROR, "couldn't save the safety settings"),
+    }
+}
+
+/// GET /projects/:id/safety: the project's own scope over the owner default.
+pub async fn get_project_safety(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(project_id): Path<String>,
+) -> Response {
+    if let Some(r) = verify_project(&state, &user.user_id, &project_id).await {
+        return r;
+    }
+    let (db, owner, pid) = (state.db.clone(), user.user_id.clone(), project_id.clone());
+    let rows = tokio::task::spawn_blocking(move || -> rusqlite::Result<(Option<SafetySettings>, Option<SafetySettings>)> {
+        let conn = db.connect()?;
+        Ok((read_settings(&conn, &owner, "default")?, read_settings(&conn, &owner, &project_scope_key(&pid))?))
+    })
+    .await;
+    let (base, project) = match rows {
+        Ok(Ok(r)) => r,
+        _ => return err(StatusCode::INTERNAL_SERVER_ERROR, "couldn't read the safety settings"),
+    };
+    let effective = project.clone().unwrap_or_default().over(base.clone().unwrap_or_default());
+    let mut body = json!({
+        "project_id": project_id,
+        "project": project,
+        "default": base,
+        "effective": effective,
+    });
+    let extras = builtin_monitor_json();
+    for k in ["builtin_watch", "monitor"] {
+        body[k] = extras[k].clone();
+    }
+    Json(body).into_response()
+}
+
+/// PUT /projects/:id/safety: write the project's scope. Applies to every
+/// computer call whose run belongs to this project (computer settings still
+/// win field by field; the owner default fills the rest).
+pub async fn put_project_safety(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(project_id): Path<String>,
+    Json(body): Json<ProjectPutSafety>,
+) -> Response {
+    if let Some(r) = verify_project(&state, &user.user_id, &project_id).await {
+        return r;
+    }
+    if let Err(m) = body.settings.validate() {
+        return err(StatusCode::BAD_REQUEST, m);
+    }
+    let (db, owner, settings) = (state.db.clone(), user.user_id.clone(), body.settings.clone());
+    let saved = tokio::task::spawn_blocking(move || -> rusqlite::Result<()> {
+        let conn = db.connect()?;
+        write_settings(&conn, &owner, &project_scope_key(&project_id), &settings)
     })
     .await;
     match saved {
@@ -1726,6 +1996,66 @@ mod tests {
         assert!(SafetySettings { redaction: Some("maybe".into()), ..Default::default() }.validate().is_err());
         assert!(SafetySettings { redact: Some(vec!["dna".into()]), ..Default::default() }.validate().is_err());
         assert!(serde_json::from_value::<SafetySettings>(json!({ "allow_appz": [] })).is_err(), "unknown fields are refused");
+    }
+
+    fn scopes_db() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE computer_safety_settings (owner TEXT NOT NULL, scope TEXT NOT NULL, settings_json TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (owner, scope));
+             CREATE TABLE cowork_projects (id TEXT PRIMARY KEY, user_id TEXT NOT NULL);
+             CREATE TABLE cowork_sessions (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, project_id TEXT, metadata TEXT);",
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn project_scope_sits_between_computer_and_default() {
+        let conn = scopes_db();
+        write_settings(&conn, "u1", "default", &SafetySettings { allow_apps: Some(vec!["DefaultApp".into()]), monitor: Some(true), ..Default::default() }).unwrap();
+        write_settings(&conn, "u1", "project:p1", &SafetySettings { allow_apps: Some(vec!["ProjectApp".into()]), watch_domains: Some(vec!["project.test".into()]), ..Default::default() }).unwrap();
+        write_settings(&conn, "u1", "computer:c1", &SafetySettings { monitor: Some(false), ..Default::default() }).unwrap();
+        // Without a project: computer over default, as before V250.
+        let no_project = effective_settings(&conn, "u1", "c1", None).unwrap();
+        assert_eq!(no_project.allow_apps, Some(vec!["DefaultApp".to_string()]));
+        assert_eq!(no_project.monitor, Some(false));
+        // With the project: project fields beat the default, the computer
+        // still beats both.
+        let with_project = effective_settings(&conn, "u1", "c1", Some("p1")).unwrap();
+        assert_eq!(with_project.allow_apps, Some(vec!["ProjectApp".to_string()]));
+        assert_eq!(with_project.watch_domains, Some(vec!["project.test".to_string()]));
+        assert_eq!(with_project.monitor, Some(false), "computer scope still wins");
+        // Another computer in the same project inherits project over default.
+        let other = effective_settings(&conn, "u1", "c2", Some("p1")).unwrap();
+        assert_eq!(other.allow_apps, Some(vec!["ProjectApp".to_string()]));
+        assert_eq!(other.monitor, Some(true), "default fills what neither scope sets");
+    }
+
+    #[test]
+    fn project_ownership_is_checked() {
+        let conn = scopes_db();
+        conn.execute("INSERT INTO cowork_projects (id, user_id) VALUES ('p1', 'u1'), ('p2', 'u2')", []).unwrap();
+        assert!(project_owned(&conn, "u1", "p1").unwrap());
+        assert!(!project_owned(&conn, "u1", "p2").unwrap(), "another user's project doesn't count");
+        assert!(!project_owned(&conn, "u1", "nope").unwrap());
+    }
+
+    #[test]
+    fn project_comes_from_the_run_link_not_the_wire() {
+        let conn = scopes_db();
+        conn.execute("INSERT INTO cowork_projects (id, user_id) VALUES ('p1', 'u1'), ('p9', 'u2')", []).unwrap();
+        conn.execute(
+            "INSERT INTO cowork_sessions (id, user_id, project_id, metadata) VALUES
+             ('s1', 'u1', 'p1', '{\"a_run_id\":\"run-1\"}'),
+             ('s2', 'u1', NULL, '{\"a_run_id\":\"run-2\"}'),
+             ('s3', 'u2', 'p9', '{\"a_run_id\":\"run-1\"}')",
+            [],
+        )
+        .unwrap();
+        assert_eq!(project_for_run(&conn, "u1", "run-1").unwrap(), Some("p1".to_string()));
+        assert_eq!(project_for_run(&conn, "u1", "run-2").unwrap(), None, "a session without a project stays unscoped");
+        assert_eq!(project_for_run(&conn, "u1", "run-9").unwrap(), None);
+        assert_eq!(project_for_run(&conn, "u2", "run-1").unwrap(), Some("p9".to_string()), "scoped to the user");
     }
 
     #[test]
