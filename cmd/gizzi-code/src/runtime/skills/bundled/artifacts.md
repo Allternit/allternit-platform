@@ -23,7 +23,7 @@ Keep in sync with the app's manuals in allternit-ai `src/lib/artifacts/` (output
 ## Kinds and bodies
 
 ### doc — `text/markdown`
-Plain Markdown: headings, lists, tables, links. The editor turns it into its block format on first edit (`application/vnd.allternit.doc+json`); you can always write Markdown.
+Plain Markdown: headings, lists, tables, links. For a doc with tabs, send `application/vnd.allternit.doc+json` as `{"title":"…","tabs":[{"title":"Overview","markdown":"…"},{"title":"Appendix","markdown":"…"}]}`. The editor turns it into its block format on first edit (`application/vnd.allternit.doc+json`); you can always write Markdown.
 
 ### sheet — `application/vnd.allternit.sheet+json`
 `{"columns":["Region","Q3","Q4"],"rows":[["EMEA",120,140],["APAC",90,110]]}`. A bare 2-D array or CSV text also loads. Numbers as numbers, not strings.
