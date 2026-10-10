@@ -12,7 +12,19 @@ A bot can have several threads. Each thread tracks an objective, success criteri
 | `standing` | A bot's continuing conversation or a routine's home. It stays open rather than resolving as a finished task. |
 | `task` | A specific objective that can resolve as done or failed. |
 
-Open a bot from the Bots rail to return to its conversation, or create a new thread for a separate task. In a group conversation, a bot mention can start a task thread; the inline card opens that work and exposes its running state.
+Every bot has one always-on **main chat** (its standing conversation). It knows the status of the bot's other threads but not their full context. Open a bot from the Bots rail to reach its main chat and threads on its [bot screen](/surfaces/bots#bot-screen), or create a new thread for a separate task. **Incognito** threads are private: they are left out of the bot's thread list and the main chat's view of its work. In a group conversation, a bot mention can start a task thread; the inline card opens that work and exposes its running state.
+
+Open threads with no activity for 7 days are marked **Stale** automatically and fold to the bottom of the list. A thread waiting on you is never marked stale.
+
+## Switching threads
+
+In a thread, click the thread title (with the small arrow) to open the switcher. It lists, in order:
+
+1. The bot's **Main chat**.
+2. The bot's other threads, grouped Needs you, Working, Queued and Idle, then a folded **Stale** group.
+3. **Same project · other bots**, when the thread belongs to a project.
+
+Type to filter by title. Use the arrow keys and Enter, or click; **Esc** closes. Picking a thread opens its session in place. The footer has **+ New thread**, **+ Incognito** and a link to all of the bot's threads on its bot screen. On a phone the switcher opens as a bottom sheet.
 
 ## Status and progress
 
@@ -55,7 +67,7 @@ Continue with [project coordination](/guides/project-coordination) or [artifact 
 
 ## Thread top and reading the history
 
-The thread top uses one row: the bot pill, the vendor provenance chip when connected, and thread controls. Tap the avatar to open the bot. Tap the rest of the pill to open the Thread pane. Task threads also offer **Resolve**.
+The thread top uses one row: the bot pill, the vendor provenance chip when connected, and thread controls. Tap the avatar to open the bot screen. Tap the bot name or progress to open the Thread pane. Tap the thread title to [switch threads](#switching-threads). Task threads also offer **Resolve**.
 
 The **via Vendor ✓** chip identifies the connected vendor. The check indicates verified connection identity; it does not verify the answer. Open the chip to see the agent, connection mode, lane, guarantee level, connection health, and channel when present. A browser lane can be best effort even when the account is verified.
 
