@@ -79,6 +79,11 @@ pub const KINDS: &[KindSpec] = &[
         default_body_format: "application/pdf",
         body_formats: &["application/pdf"],
     },
+    KindSpec {
+        kind: "video",
+        default_body_format: "application/vnd.allternit.video+json",
+        body_formats: &["application/vnd.allternit.video+json"],
+    },
 ];
 
 pub fn spec(kind: &str) -> Option<&'static KindSpec> {
@@ -124,7 +129,7 @@ mod tests {
             names,
             [
                 "doc", "sheet", "slides", "design", "dashboard", "motion", "page", "card",
-                "diagram", "image", "code", "pdf"
+                "diagram", "image", "code", "pdf", "video"
             ]
         );
         for spec in KINDS {
