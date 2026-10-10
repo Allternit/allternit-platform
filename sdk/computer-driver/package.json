@@ -1,7 +1,7 @@
 {
   "name": "@allternit/computer-driver",
-  "version": "0.1.0",
-  "description": "Drop-in drivers for Allternit hosted computers: a plain client plus Anthropic (computer/browser toolset), OpenAI computer-use and Gemini computer_use adapters.",
+  "version": "0.2.0",
+  "description": "Drop-in drivers for Allternit hosted computers: a plain client, contract-v2 structured UI driving (read_ui, act, run_batch, verify, run_subtask, …) and Anthropic (computer/browser toolset), OpenAI computer-use and Gemini computer_use adapters.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -26,7 +26,8 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
   "engines": {
     "node": ">=18"

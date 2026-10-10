@@ -558,7 +558,7 @@
       "label": "Hosted computer driver",
       "product": "product:platform-api",
       "status": "building",
-      "description": "Platform API /v1/computers: hosted computers that run a model's computer and browser tool calls, with drop-in drivers for the Anthropic SDK, OpenAI and Gemini, an MCP server, approvals and per-key limits.",
+      "description": "Platform API /v1/computers: hosted computers that run a model's computer and browser tool calls, with drop-in drivers for the Anthropic SDK, OpenAI and Gemini, an MCP server, approvals and per-key limits. Both published SDKs (@allternit/computer-driver, allternit-computer-driver) also expose contract v2's structured members (read_ui … skills) as typed client methods and the computer_v2 function tool.",
       "touches": [
         "allternit/cmd/allternit-cloud-api/src/routes/platform_v1",
         "allternit/sdk/computer-driver",
@@ -570,6 +570,10 @@
         {
           "on": "2026-10-07",
           "note": "Gated per project by hosted_driver_enabled, set by Allternit only; outside-developer computers can't reach private ranges or 169.254.169.254; pricing to be announced."
+        },
+        {
+          "on": "2026-10-10",
+          "note": "SDKs 0.2.0 gain allternit.computer.v2: typed ComputerV2Driver methods for the ten structured members (types generated from the contract by generate.mjs, not hand-copied), the computer_v2 function tool with gizzi's steering in the Anthropic/OpenAI/Gemini adapters of both languages, a toolsetWithApproval helper for the 409 approval_required + approval_grant retry, and typed errors (ComputerV2Error, ComputerBusyError, SandboxRequiredError, ComputerConflictError)."
         }
       ],
       "evidence": [
@@ -605,7 +609,7 @@
       "label": "Computer toolset for every model",
       "product": "product:computer-use",
       "status": "building",
-      "description": "One contract (allternit.computer.v1 / allternit.browser.v1, Anthropic's 20260801 member sets) and one executor (POST /computers/:id/toolset) that every gizzi model adapter calls: Claude-native toolsets, OpenAI, Gemini and JSON function tools. Lease, approval, audit and coordinate scaling happen in one place.",
+      "description": "Two contract generations (allternit.computer.v1 + allternit.browser.v1, and allternit.computer.v2: the v1 pixel members plus ten driver-backed structured members) and one executor (POST /computers/:id/toolset) that every gizzi model adapter and both published computer-driver SDKs call: Claude-native toolsets, OpenAI, Gemini and JSON function tools. Lease, approval, audit and coordinate scaling happen in one place.",
       "touches": [
         "allternit/sdk/computer-toolset",
         "allternit/cmd/allternit-api/src/computer_*",
@@ -644,6 +648,10 @@
         {
           "on": "2026-10-09",
           "note": "D6: vision fallback in the driver (allternit_driver/vision). Router.choose_source decides per window read: ax, vision (empty/sparse tree, tree error) or hybrid (tree plus marks inside opaque canvas-like regions), recorded per app and audited. Set-of-marks from Apple Vision OCR plus a model-free edge-blob proposer become v-prefixed elements (source vision, mark n) that act/run_batch/verify take like tree ids; vision act is desktop pixel input behind a mean-hash freshness check. read_ui target grounds a description with the local grounder (UI-Venus-1.5-8B MLX 4-bit primary, Holo2-8B fallback, both Apache-2.0) with zoom-and-reground on low confidence. Packages install into the state dir on first use; the model runs in a child vision worker, unloaded after 10 min idle; a vLLM endpoint (ALLTERNIT_GROUNDER_URL) is the cloud seam, configuration only. Cua parse_visual_regions is not used (needs AGPL cua-perception)."
+        },
+        {
+          "on": "2026-10-10",
+          "note": "K2: generate.mjs also emits the published SDK bindings (sdk/computer-driver/src/v2-generated.ts and sdk/computer-driver/python/allternit_computer_driver/_v2_types.py), covered by the same --check drift gate, so the SDKs' v2 types track this contract instead of drifting."
         }
       ],
       "evidence": [

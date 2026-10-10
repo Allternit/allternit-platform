@@ -14,6 +14,7 @@ import re
 from typing import Any, Callable, Dict, Optional
 
 from .client import AllternitComputers, ApprovalRequiredError, ToolsetResult, result_image, result_text
+from .v2 import computer_v2_tool, run_computer_v2_member
 
 
 def _sdk_base(module: str, names: tuple) -> Optional[type]:
@@ -177,3 +178,43 @@ class AllternitBrowserToolset(_Driver, _BrowserBase):
         if name == "close_tab":
             return None
         return result_text(r) or None
+
+
+class ComputerV2Tool:
+    """The ``computer_v2`` function tool (Anthropic wire shape): the ten structured
+    members next to the native pixel toolset. Hand ``to_dict()`` in the tools list
+    (or call ``tool_result(tool_use)`` from your own loop) like any function tool.
+
+    Without ``on_approval``, a held call (409 approval_required) resolves its held
+    result as an error, the same rule as the toolsets above.
+    """
+
+    def __init__(self, client: AllternitComputers, computer_id: str, on_approval: Optional[Callable[[Dict[str, Any]], bool]] = None) -> None:
+        self._client, self._computer_id, self._on_approval = client, computer_id, on_approval
+
+    def to_dict(self) -> Dict[str, Any]:
+        t = computer_v2_tool()
+        return {"name": t["name"], "description": t["description"], "input_schema": t["schema"]}
+
+    def execute(self, name: str, input: Any) -> Any:
+        action, fields = _action_and_fields(input)
+        res = run_computer_v2_member(self._client, self._computer_id, action, fields, self._on_approval)
+        if res.get("is_error"):
+            raise ToolError(_blocks(res))
+        return _blocks(res)
+
+    def tool_result(self, tool_use: Dict[str, Any]) -> Dict[str, Any]:
+        base = {"type": "tool_result", "tool_use_id": tool_use["id"]}
+        try:
+            content = self.execute(tool_use["name"], tool_use.get("input") or {})
+        except Exception as e:  # noqa: BLE001
+            return {**base, "content": getattr(e, "content", str(e)), "is_error": True}
+        return {**base, "content": content}
+
+
+def _action_and_fields(input: Any) -> tuple:
+    args = dict(input or {})
+    action = args.pop("action", None)
+    if not action:
+        raise ToolError("The computer_v2 call needs an action.")
+    return str(action), args

@@ -113,6 +113,45 @@ export class ApprovalRequiredError extends AllternitApiError {
   }
 }
 
+/** 423 computer_busy / computer_controlled_elsewhere: someone else holds the computer right now; retry shortly or request_human. */
+export class ComputerBusyError extends AllternitApiError {
+  constructor(status: number, err: Partial<ApiErrorBody>, body: unknown) {
+    super(status, err, body)
+    this.name = "ComputerBusyError"
+  }
+}
+
+/** 409 sandbox_required: the call only runs on a sandbox (cloud/bot) computer. */
+export class SandboxRequiredError extends AllternitApiError {
+  constructor(status: number, err: Partial<ApiErrorBody>, body: unknown) {
+    super(status, err, body)
+    this.name = "SandboxRequiredError"
+  }
+}
+
+/** 409 computer_conflict: the call conflicts with another subtask or lease on the computer. */
+export class ComputerConflictError extends AllternitApiError {
+  constructor(status: number, err: Partial<ApiErrorBody>, body: unknown) {
+    super(status, err, body)
+    this.name = "ComputerConflictError"
+  }
+}
+
+/** Maps a toolset error body onto the typed error for its code, if one exists. */
+function typedApiError(status: number, err: Partial<ApiErrorBody>, body: unknown): AllternitApiError {
+  switch (err.code) {
+    case "computer_busy":
+    case "computer_controlled_elsewhere":
+      return new ComputerBusyError(status, err, body)
+    case "sandbox_required":
+      return new SandboxRequiredError(status, err, body)
+    case "computer_conflict":
+      return new ComputerConflictError(status, err, body)
+    default:
+      return new AllternitApiError(status, err, body)
+  }
+}
+
 export interface ClientOptions {
   /** Project key (alt_live_… / alt_test_…). Defaults to ALLTERNIT_API_KEY. */
   apiKey?: string
@@ -156,6 +195,23 @@ export class AllternitComputers {
   toolset(id: string, call: ToolsetCall): Promise<ToolsetResult> {
     return this.#req("POST", `/v1/computers/${enc(id)}/toolset`, call)
   }
+  /**
+   * Run one toolset member, answering a 409 approval_required hold. When the
+   * server holds the call and `onApproval` returns true, the approval is
+   * granted (POST /approvals/{id}) and the same call resent with the
+   * single-use `approval_grant`. When `onApproval` is missing or returns
+   * false, the held result resolves (is_error:true) so the model sees it.
+   */
+  async toolsetWithApproval(id: string, call: ToolsetCall, onApproval?: (approval: Approval) => boolean | Promise<boolean>): Promise<ToolsetResult> {
+    try {
+      return await this.toolset(id, call)
+    } catch (e) {
+      if (!(e instanceof ApprovalRequiredError)) throw e
+      if (!onApproval || !(await onApproval(e.approval))) return e.result
+      await this.approve(id, e.approval.id)
+      return this.toolset(id, { ...call, approval_grant: e.approval.id })
+    }
+  }
   schema(id: string, toolset: ToolsetName = "computer"): Promise<Record<string, unknown>> {
     return this.#req("GET", `/v1/computers/${enc(id)}/toolset/schema${qs({ toolset })}`)
   }
@@ -187,7 +243,7 @@ export class AllternitComputers {
     if (res.status === 409 && err.code === "approval_required" && json?.approval) {
       throw new ApprovalRequiredError(err, json.approval, json.result ?? { is_error: true, content: [] }, json)
     }
-    throw new AllternitApiError(res.status, err, json)
+    throw typedApiError(res.status, err, json)
   }
 }
 

@@ -21,6 +21,7 @@ import {
   type ToolsetName,
   type ToolsetResult,
 } from "./client.ts"
+import { computerV2Tool, runComputerV2Member } from "./v2.ts"
 
 export interface DriverOptions {
   client: AllternitComputers
@@ -154,4 +155,31 @@ export class AllternitBrowserToolset extends BetaAbstractBrowserToolset20260801 
         return textOrVoid(r)
     }
   }
+}
+
+// ------------------------------------------------------------------ computer_v2
+
+/**
+ * The `computer_v2` function tool for Anthropic models: the ten structured
+ * members (read_ui … skills) next to the native pixel toolset. The Anthropic
+ * wire hook only rewrites tools carrying the v1 pixel marker, so this passes
+ * through untouched.
+ */
+export function computerV2AnthropicTool(): { name: string; description: string; input_schema: Record<string, unknown> } {
+  const t = computerV2Tool()
+  return { name: t.name, description: t.description, input_schema: t.schema }
+}
+
+/**
+ * Run one `computer_v2` function call (`{action, ...fields}`) and return the
+ * tool-result content blocks, like any toolset member. Throws ToolError on a
+ * failed action; without `onApproval`, a held call (409 approval_required)
+ * resolves its held result as an error, the same rule as the toolsets.
+ */
+export async function runAnthropicComputerV2(o: DriverOptions, name: string, input: unknown): Promise<any[]> {
+  const { action, ...fields } = (input ?? {}) as { action?: string } & Record<string, unknown>
+  if (!action) throw new ToolError("The computer_v2 call needs an action.")
+  const res = await runComputerV2Member({ client: o.client, computerId: o.computerId, onApproval: o.onApproval }, action, fields)
+  if (res.is_error) throw new ToolError(toAnthropicBlocks(res))
+  return toAnthropicBlocks(res)
 }
