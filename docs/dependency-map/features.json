@@ -30,7 +30,7 @@
         },
         {
           "on": "2026-10-08",
-          "note": "Any file or folder can be attached (no allow-list; text sniffed by content). Cards appear at once with Reading\u2026; video/audio/other files go as Allternit Cloud links; sent messages show chips, not extracted text. Eoj: no grey ring on the composer; the tray only shows behind a reply strip or attachment cards."
+          "note": "Any file or folder can be attached (no allow-list; text sniffed by content). Cards appear at once with Reading…; video/audio/other files go as Allternit Cloud links; sent messages show chips, not extracted text. Eoj: no grey ring on the composer; the tray only shows behind a reply strip or attachment cards."
         }
       ],
       "evidence": [
@@ -67,7 +67,7 @@
         },
         {
           "on": "2026-10-08",
-          "note": "The app (not gizzi-code) sends the manual as systemPrompt / '+' system, so each build only asks for components it renders and the TUI and channels never get it. Settings \u2192 Response style \u2192 Layout and visuals (Auto / Text only) is per device, like the Memory switches, to avoid a manual prod migration."
+          "note": "The app (not gizzi-code) sends the manual as systemPrompt / '+' system, so each build only asks for components it renders and the TUI and channels never get it. Settings → Response style → Layout and visuals (Auto / Text only) is per device, like the Memory switches, to avoid a manual prod migration."
         },
         {
           "on": "2026-10-08",
@@ -284,7 +284,7 @@
       "decisions": [
         {
           "on": "2026-10-09",
-          "note": "Driver spec \u00a78: computer-use task suite (domains/computer-use/suite) \u2014 40 tasks (20 Mac run, 20 Linux/Windows await a test machine), code-only checkers, runner with pixel/read_ui/subtask/replay modes, pass^3 and determinism report."
+          "note": "Driver spec §8: computer-use task suite (domains/computer-use/suite) — 40 tasks (20 Mac run, 20 Linux/Windows await a test machine), code-only checkers, runner with pixel/read_ui/subtask/replay modes, pass^3 and determinism report."
         },
         {
           "on": "2026-10-09",
@@ -296,7 +296,7 @@
         },
         {
           "on": "2026-10-07",
-          "note": "Agent cursor overlay (computer toolset P5) in every computer viewer, from vendored MIT @trycua/cursor-motion, driven by computer.action events; style in Settings \u2192 Computers."
+          "note": "Agent cursor overlay (computer toolset P5) in every computer viewer, from vendored MIT @trycua/cursor-motion, driven by computer.action events; style in Settings → Computers."
         }
       ],
       "evidence": [
@@ -341,7 +341,7 @@
       "label": "Cloud computer backups and restore points",
       "product": "product:cloud-computers",
       "status": "live",
-      "description": "Every customer cloud computer is backed up off-site each night, encrypted. Owners can take up to 5 restore points, roll back to one, and download a full copy of the computer from Settings \u2192 Computers on every surface.",
+      "description": "Every customer cloud computer is backed up off-site each night, encrypted. Owners can take up to 5 restore points, roll back to one, and download a full copy of the computer from Settings → Computers on every surface.",
       "touches": [
         "allternit-ai/src/components/computers",
         "allternit-ai/src/lib",
@@ -626,7 +626,7 @@
         },
         {
           "on": "2026-10-09",
-          "note": "D2: contract v2 (allternit.computer.v2) ships \u2014 the 17 pixel members plus read_ui/act/run_batch/verify through the driver sidecar, request_human (lease pause, live view with input enabled, POST /api/v1/computers/:id/human-done resume) and use_credential (sealed vault + macOS Keychain + Bitwarden/1Password CLI adapters + RFC 6238 TOTP; values never enter the model context or logs; optional app/domain bindings). gizzi offers the structured members as the computer_v2 function tool to every model family (Claude keeps its native toolset for the pixel members). Windows this-device input moves off the Cua CLI fallback onto the sidecar over token-gated loopback TCP."
+          "note": "D2: contract v2 (allternit.computer.v2) ships — the 17 pixel members plus read_ui/act/run_batch/verify through the driver sidecar, request_human (lease pause, live view with input enabled, POST /api/v1/computers/:id/human-done resume) and use_credential (sealed vault + macOS Keychain + Bitwarden/1Password CLI adapters + RFC 6238 TOTP; values never enter the model context or logs; optional app/domain bindings). gizzi offers the structured members as the computer_v2 function tool to every model family (Claude keeps its native toolset for the pixel members). Windows this-device input moves off the Cua CLI fallback onto the sidecar over token-gated loopback TCP."
         },
         {
           "on": "2026-10-09",
@@ -734,7 +734,7 @@
       "label": "Artifacts (one typed store, versions, sharing)",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "Artifacts v2: one account-level store of typed artifacts (doc, sheet, slides, design, dashboard, motion, page, card, diagram, image, code) in cloud-api Postgres with immutable versions, view/comment/edit sharing, org admin settings and a public link route. Phase 1 server side is in; gizzi's artifact_* tools are feature:artifact-model-tools; the app (one ArtifactWindow, Artifacts tab, Share dialog, Output picker, public page /a/<id>) is in allternit-ai.",
+      "description": "Artifacts v2: one account-level store of typed artifacts (doc, sheet, slides, design, dashboard, motion, page, card, diagram, image, code, pdf) in cloud-api Postgres with immutable versions, view/comment/edit sharing, org admin settings and a public link route. Phase 1 server side is in; gizzi's artifact_* tools are feature:artifact-model-tools; the app (one ArtifactWindow, Artifacts tab, Share dialog, Output picker, public page /a/<id>) is in allternit-ai.",
       "touches": [
         "allternit/cmd/allternit-cloud-api/src/artifacts",
         "allternit/cmd/allternit-cloud-api/src/routes/artifacts_*",
@@ -764,6 +764,10 @@
         {
           "on": "2026-10-09",
           "note": "The Artifacts tab regained what the Phase 1 rebuild dropped: the animated Make something new tiles are the one template gallery (every kind, plan-gated, Dashboards and Motion included), connected-tools chips, the Design menu and Office button, and real per-kind previews in the grid (body fetched lazily, script-free snapshots for pages, designs and cards)."
+        },
+        {
+          "on": "2026-10-10",
+          "note": "Craft editors Phase 1: `pdf` joins the kind contract (default body format application/pdf) on both sides — cloud-api KINDS allow-list and the app registry. PDFs open in the workspace through the embedded PdfCraft WASM editor over the craft:1 postMessage bridge served from office.allternit.com/craft/pdf/ (see feature:craft-editors). .pdf uploads become pdf-kind records."
         }
       ],
       "evidence": [
@@ -854,6 +858,29 @@
       "evidence": [
         "allternit/docs/design/artifacts-v2.md",
         "allternit/surfaces/docs/tools/artifact-tools.mdx"
+      ]
+    },
+    {
+      "id": "feature:craft-editors",
+      "label": "Craft editors (embedded WASM editors over craft:1)",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "The vendored craft editors (PdfCraft, PhotoCraft, FilmCraft) run sandboxed in cross-origin iframes served from office.allternit.com/craft/<app>/ and speak the craft:1 postMessage protocol with the workspace host page: token-validated handshake, craft:open with transferable bytes, craft:save-request -> host persists via /api/v2/artifacts -> craft:save-ack, and a craft:command channel so agents drive the same visible editor. Phase 1 (2026-10-10) wires the pdf kind end to end; image and video follow after their audits.",
+      "touches": [
+        "allternit-ai/src/components/craft",
+        "allternit-ai/src/lib/artifacts",
+        "allternit-ai/src/views/library",
+        "allternit/cmd/allternit-cloud-api/src/artifacts"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-10",
+          "note": "Phase 1 approved: pdf artifact kind + host-side craft:1 bridge (src/components/craft/bridge.ts) + CraftEditor wrapper + pdfjs read-only preview in the kind registry. The editor iframe 404s until the office.allternit.com/craft/pdf/ bundle deploys, so the allternit-ai PR stays unmerged until Eoj approves that deploy. Protocol: vendor/craft/craft-host/PROTOCOL.md (craft:1)."
+        }
+      ],
+      "evidence": [
+        "allternit-ai/src/components/craft/bridge.ts",
+        "allternit-ai/src/components/craft/CraftEditor.tsx"
       ]
     }
   ],
