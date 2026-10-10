@@ -652,6 +652,10 @@
         {
           "on": "2026-10-09",
           "note": "E1: the Decision Runtime lives in the Agency Kernel slot (no second runtime). open-jev's one-pass scoring is ported as an owned sidecar; Qwen3.5-4B is the default (Apache-2.0, no HF login), Gemma 3 4B a config switch. Packages and weights install on first use; nothing heavy ships in the app. Training our own model is the separate M track."
+        },
+        {
+          "on": "2026-10-09",
+          "note": "E2: computer use runs on typed decisions. run_subtask (allternit.computer.v2, every model family via computer_v2) takes a goal, literal inputs, verify-syntax success checks, constraints and limits; the executor loop (computer_subtask.rs) reads the live element map with since diffs, builds element x op options plus done/escalate, decides on the fast tiers only (no oracle), runs each step through lease/policy/audit (predictable typing batched with expect checks), checks success with verify, hands back to the planner with a compact screen when a decision abstains, and writes every outcome back to the decision store. Driver: text entry writes AXValue instead of arc's SkyLight focus-borrowing, which crashed the sidecar on macOS 14."
         }
       ],
       "evidence": [

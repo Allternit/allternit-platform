@@ -55,6 +55,8 @@ Its router runs in **shadow mode by default**. Without a bound calibration manif
 
 allternit-api's Agency Kernel serves `POST /v1/decisions` (alias `/v1/systemone`): one choice over up to 255 caller options, for computer-use steps and any other bounded question. A backend chain answers it: the owned local scorer (one-pass option scoring on MLX or llama.cpp, Qwen3.5-4B by default), optional vendor adapters (stubs, off), and the planner model through gizzi as the oracle. Under a per-kind confidence threshold the router escalates to the next backend, within the caller's latency budget, and abstains when the caller allows it. Every decision is stored with its outcome. Its probabilities are relative to the option set and marked uncalibrated. See the [API reference](/api/agency/decisions).
 
+Computer use runs on it through `run_subtask` (E2): the planner sets a bounded goal once and each UI step is an `element`, `field` or `verify` decision on the fast tiers, with every outcome written back. See [How computer use decides](/tools/computer-use-decisions).
+
 A pre-tool safety hook uses the server in log-only mode: deterministic hard rules decide first and last, and the decision server can only add friction, never allow.
 
 ## Availability

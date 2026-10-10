@@ -1,6 +1,7 @@
-//! Contract v2 (`allternit.computer.v2`): the six structured members every
+//! Contract v2 (`allternit.computer.v2`): the seven structured members every
 //! model family gets as function tools — `read_ui`, `act`, `run_batch`,
-//! `verify` through the Allternit Driver sidecar, `request_human` (lease
+//! `verify` through the Allternit Driver sidecar, `run_subtask` (the bounded
+//! decision loop, `computer_subtask`), `request_human` (lease
 //! pause/resume around a human window) and `use_credential` (vault-backed
 //! typing where the value never enters the model context or the logs).
 //!
@@ -30,7 +31,7 @@ use crate::this_device_input as td;
 use crate::AppState;
 
 /// The driver-backed structured members of allternit.computer.v2.
-pub const V2_MEMBERS: [&str; 6] = ["read_ui", "act", "run_batch", "verify", "request_human", "use_credential"];
+pub const V2_MEMBERS: [&str; 7] = ["read_ui", "act", "run_batch", "verify", "request_human", "use_credential", "run_subtask"];
 
 /// Is `member` one of the v2 structured members?
 pub fn is_v2_member(member: &str) -> bool {
@@ -109,7 +110,7 @@ async fn screen_block() -> ScreenInfo {
 
 /// One sidecar op for a structured member. The params pass nearly verbatim;
 /// the driver answers JSON (element trees, batch results, verify rows).
-async fn driver_op(member: &str, params: &Value) -> Result<Value, Fail> {
+pub(crate) async fn driver_op(member: &str, params: &Value) -> Result<Value, Fail> {
     let endpoint = td::DriverEndpoint::resolve().ok_or(
         "The Allternit Driver sidecar isn't running on this computer. Open Allternit Desktop (or update it) and try again.",
     )?;
@@ -547,7 +548,7 @@ mod tests {
 
     #[test]
     fn v2_member_list_is_the_spec_set() {
-        assert_eq!(V2_MEMBERS, ["read_ui", "act", "run_batch", "verify", "request_human", "use_credential"]);
+        assert_eq!(V2_MEMBERS, ["read_ui", "act", "run_batch", "verify", "request_human", "use_credential", "run_subtask"]);
         assert!(is_v2_member("read_ui"));
         assert!(!is_v2_member("left_click"));
         assert!(!is_v2_member("screenshot"));

@@ -217,9 +217,35 @@ pub async fn create_decision(
     Extension(rid): Extension<RequestId>,
     body: axum::body::Bytes,
 ) -> ApiResult {
-    let started = Instant::now();
     let d: DecisionIn = serde_json::from_slice(&body).map_err(|e| bad(format!("invalid decision request: {e}"), "body", &rid))?;
-    validate(&d, &rid)?;
+    decide(&st, &user, &rid, &d).await.map(|v| Json(v).into_response())
+}
+
+/// In-process entry for hosts inside allternit-api (computer use's
+/// `run_subtask`): the same validation, routing and store as
+/// `POST /v1/decisions`, without the HTTP hop. `body` is the request JSON.
+pub async fn decide_value(st: &Arc<AppState>, user: &AuthUser, body: Value) -> Result<Value, String> {
+    let rid = RequestId(super::store::new_id("req"));
+    let d: DecisionIn = serde_json::from_value(body).map_err(|e| format!("invalid decision request: {e}"))?;
+    decide(st, user, &rid, &d).await.map_err(|e| e.body["error"]["message"].as_str().unwrap_or("decision failed").to_string())
+}
+
+/// In-process outcome write, the same as `PATCH /v1/decisions/:id`.
+pub fn record_outcome(st: &AppState, user: &AuthUser, id: &str, status: &str, label: Option<&str>, detail: Option<&str>) -> Result<(), String> {
+    if !OUTCOMES.contains(&status) {
+        return Err(format!("status must be one of {}", OUTCOMES.join(", ")));
+    }
+    let detail: Option<String> = detail.map(|d| d.chars().take(4000).collect());
+    match store::set_outcome(&st.db, id, &user.user_id, status, label, detail.as_deref(), &super::store::now()) {
+        Ok(Some(_)) => Ok(()),
+        Ok(None) => Err(format!("decision {id} not found")),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+async fn decide(st: &Arc<AppState>, user: &AuthUser, rid: &RequestId, d: &DecisionIn) -> Result<Value, ApiError> {
+    let started = Instant::now();
+    validate(d, rid)?;
     let (context, image) = match &d.context {
         ContextIn::Text(t) => (t.as_str(), None),
         ContextIn::Parts { text, image } => (text.as_str(), image.as_deref()),
@@ -243,15 +269,15 @@ pub async fn create_decision(
     let r = route(&chain, &q, thr, budget).await;
 
     if r.backend.is_none() && !d.allow_abstain {
-        return Err(ApiError::new(503, "SYSTEM", "ERR_DECISION_UNAVAILABLE", "no decision backend answered within the latency budget", &rid)
+        return Err(ApiError::new(503, "SYSTEM", "ERR_DECISION_UNAVAILABLE", "no decision backend answered within the latency budget", rid)
             .with_detail(json!({ "attempts": r.attempts })));
     }
     // With allow_abstain, nothing answering is an abstention, still recorded.
-    finish(&st, &user, &rid, &d, kind, context, image.is_some(), &q, r, thr, started).await
+    Ok(finish(st, user, rid, d, kind, context, image.is_some(), &q, r, thr, started))
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn finish(
+fn finish(
     st: &Arc<AppState>,
     user: &AuthUser,
     rid: &RequestId,
@@ -263,7 +289,7 @@ async fn finish(
     r: Routed,
     thr: f64,
     started: Instant,
-) -> ApiResult {
+) -> Value {
     let backend = r.backend.unwrap_or("none");
     let id = super::store::new_id("dec");
     let created_at = super::store::now();
@@ -296,7 +322,7 @@ async fn finish(
     if let Err(e) = store::insert(&st.db, &row) {
         tracing::warn!("decision store: {e}");
     }
-    Ok(Json(json!({
+    json!({
         "id": id,
         "object": "decision",
         "created_at": created_at,
@@ -312,8 +338,7 @@ async fn finish(
         "latency_ms": latency_ms,
         "attempts": attempts,
         "request_id": rid.0,
-    }))
-    .into_response())
+    })
 }
 
 fn round4(x: f64) -> f64 {

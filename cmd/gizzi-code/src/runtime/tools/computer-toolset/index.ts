@@ -1,6 +1,6 @@
 /**
  * The `computer`, `computer_v2` and `browser` tools: the Allternit computer
- * toolset (allternit.computer.v2's 17 pixel members + its 6 structured
+ * toolset (allternit.computer.v2's 17 pixel members + its 7 structured
  * members, allternit.browser.v1) for every model family.
  *
  * Each call goes to the one executor, allternit-api
@@ -14,7 +14,7 @@
 import { Tool } from "@/runtime/tools/builtins/tool"
 import { Log } from "@/shared/util/log"
 import { CONTRACTS, type ToolsetName, type ToolsetRequest, type ToolsetResult } from "./contract.gen"
-import { chooseAdapter, enabledMembers, enabledV2Members, toolDescription, toolDescriptionV2, toolParameters, type ModelRef } from "./adapter"
+import { chooseAdapter, enabledMembers, enabledV2Members, toolDescription, toolDescriptionV2, toolParameters, V2_STRUCTURED_MEMBERS, type ModelRef } from "./adapter"
 import { httpExecutor, type ExecutorClient } from "./executor-client"
 import { BROWSER_STATE_CLOSE, BROWSER_STATE_OPEN } from "./anthropic-native"
 
@@ -172,13 +172,13 @@ function defineV2Toolset() {
 
 /** `computer`: a computer's screen, mouse and keyboard (17 pixel members). */
 export const ComputerToolsetTool = defineToolset("computer")
-/** `computer_v2`: the structured driver-backed members (read_ui, act, run_batch, verify, request_human, use_credential). */
+/** `computer_v2`: the structured driver-backed members (read_ui, act, run_batch, verify, request_human, use_credential, run_subtask). */
 export const ComputerV2ToolsetTool = defineV2Toolset()
 /** `browser`: a browser session (31 members; executor reports which run). */
 export const BrowserToolsetTool = defineToolset("browser")
 
 export const TOOLSET_MEMBER_COUNTS = {
   computer: CONTRACTS.computer.members.length,
-  computer_v2: 6,
+  computer_v2: V2_STRUCTURED_MEMBERS.length,
   browser: CONTRACTS.browser.members.length,
 }

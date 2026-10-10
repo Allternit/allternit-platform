@@ -667,7 +667,7 @@ export const COMPUTER_CONTRACT = {
 } as const;
 
 // ---- allternit.computer.v2 (computer_toolset_20260801) ----
-export const COMPUTER_V2_MEMBER_NAMES = ["screenshot","zoom","left_click","right_click","middle_click","double_click","triple_click","mouse_move","left_click_drag","left_mouse_down","left_mouse_up","scroll","type","key","hold_key","wait","cursor_position","read_ui","act","run_batch","verify","request_human","use_credential"] as const;
+export const COMPUTER_V2_MEMBER_NAMES = ["screenshot","zoom","left_click","right_click","middle_click","double_click","triple_click","mouse_move","left_click_drag","left_mouse_down","left_mouse_up","scroll","type","key","hold_key","wait","cursor_position","read_ui","act","run_batch","verify","request_human","use_credential","run_subtask"] as const;
 export type ComputerV2MemberName = (typeof COMPUTER_V2_MEMBER_NAMES)[number];
 /** Take a screenshot of the screen. */
 export type ComputerV2ScreenshotInput = Record<string, never>;
@@ -715,6 +715,8 @@ export type ComputerV2VerifyInput = { app?: string | null; pid?: number | null; 
 export type ComputerV2RequestHumanInput = { reason?: string | null; timeout_ms?: number | null };
 /** Type a vault credential into the FOCUSED field. The value never enters the model context, prompts or logs. kind: secret (the stored value) or totp (a fresh code from a stored TOTP seed). The credential is bound to an app or domain: pass `domain` (the app you are filling into); it must match the credential's binding. On this Mac a person approves each use, like typing. */
 export type ComputerV2UseCredentialInput = { name: string; kind?: "secret" | "totp" | null; source?: "vault" | "keychain" | "bitwarden" | "onepassword" | null; domain?: string | null };
+/** Hand a bounded UI subtask (fill a form, search and pick a result, toggle settings) to the fast decision loop instead of driving each step yourself. Give the goal, the literal inputs it may type (it never invents text), success checks in verify syntax, and limits. Each step reads the element map, picks one action from the visible elements x allowed ops with a ~100 ms typed decision (POST /v1/decisions), runs it through the same lease/approval/audit path (predictable steps batched with expect checks), and checks success with verify. Returns a step trace and a status: done, escalated (with the reason and the current screen: continue from there yourself), or failed. One approval covers the whole subtask on this computer. */
+export type ComputerV2RunSubtaskInput = { goal: string; inputs?: Array<{ name: string; value: string }> | null; success?: Array<{ id?: string | null; role?: string | null; name?: string | null; text?: string | null; gone?: boolean | null; value?: string | null; enabled?: boolean | null; ask?: string | null }> | null; constraints?: { ops?: Array<"click" | "set_value" | "select" | "press" | "focus"> | null; avoid?: Array<string> | null; allow_irreversible?: boolean | null } | null; max_steps?: number | null; budget_ms?: number | null; app?: string | null; pid?: number | null; window_id?: number | null; query?: string | null; max_elements?: number | null };
 export interface ComputerV2MemberInputs {
   screenshot: ComputerV2ScreenshotInput;
   zoom: ComputerV2ZoomInput;
@@ -739,6 +741,7 @@ export interface ComputerV2MemberInputs {
   verify: ComputerV2VerifyInput;
   request_human: ComputerV2RequestHumanInput;
   use_credential: ComputerV2UseCredentialInput;
+  run_subtask: ComputerV2RunSubtaskInput;
 }
 export const COMPUTER_V2_CONTRACT = {
   "id": "allternit.computer.v2",
@@ -1788,9 +1791,160 @@ export const COMPUTER_V2_CONTRACT = {
         ],
         "additionalProperties": false
       }
+    },
+    {
+      "name": "run_subtask",
+      "description": "Hand a bounded UI subtask (fill a form, search and pick a result, toggle settings) to the fast decision loop instead of driving each step yourself. Give the goal, the literal inputs it may type (it never invents text), success checks in verify syntax, and limits. Each step reads the element map, picks one action from the visible elements x allowed ops with a ~100 ms typed decision (POST /v1/decisions), runs it through the same lease/approval/audit path (predictable steps batched with expect checks), and checks success with verify. Returns a step trace and a status: done, escalated (with the reason and the current screen: continue from there yourself), or failed. One approval covers the whole subtask on this computer.",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": true,
+      "confirm": "non_sandbox",
+      "result_kind": "none",
+      "ack_text": "Ran the subtask.",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "goal": {
+            "type": "string",
+            "description": "What the subtask must achieve, in one or two sentences (e.g. 'Fill the sign-up form and submit it')."
+          },
+          "inputs": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "What the value is (e.g. 'email', 'full name')."
+                },
+                "value": {
+                  "type": "string",
+                  "description": "The literal text to type."
+                }
+              },
+              "required": [
+                "name",
+                "value"
+              ],
+              "additionalProperties": false
+            },
+            "description": "The only text the subtask may type. Not for secrets: use use_credential."
+          },
+          "success": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 10,
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "An element id from read_ui."
+                },
+                "role": {
+                  "type": "string",
+                  "description": "An accessibility role, e.g. button, textfield, checkbox."
+                },
+                "name": {
+                  "type": "string",
+                  "description": "Substring match against the element's name/label."
+                },
+                "text": {
+                  "type": "string",
+                  "description": "Substring match against the element's displayed text or value."
+                },
+                "gone": {
+                  "type": "boolean",
+                  "description": "True: no element may match; false: at least one must."
+                },
+                "value": {
+                  "type": "string",
+                  "description": "The element's value must equal this exactly."
+                },
+                "enabled": {
+                  "type": "boolean",
+                  "description": "The element's enabled state must equal this."
+                },
+                "ask": {
+                  "type": "string",
+                  "description": "A fuzzy yes/no check in plain words (\"Is the confirmation message showing?\"), answered by a typed verify decision over the screen. Use only when role/name/text/value checks can't express it."
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            },
+            "description": "Checks that all hold when the goal is met, in verify syntax ({role?, name?, text?, value?, gone?, enabled?}) or {ask: '...'} for a fuzzy yes/no. Without checks the loop stops when a decision picks done."
+          },
+          "constraints": {
+            "type": "object",
+            "properties": {
+              "ops": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "click",
+                    "set_value",
+                    "select",
+                    "press",
+                    "focus"
+                  ]
+                },
+                "description": "Ops the subtask may use (default click, set_value, select, press)."
+              },
+              "avoid": {
+                "type": "array",
+                "maxItems": 20,
+                "items": {
+                  "type": "string"
+                },
+                "description": "Never act on elements whose name contains any of these."
+              },
+              "allow_irreversible": {
+                "type": "boolean",
+                "description": "Let the subtask click buttons named like send, pay, buy, delete, publish (default false: those hand back to you)."
+              }
+            },
+            "required": [],
+            "additionalProperties": false
+          },
+          "max_steps": {
+            "type": "integer",
+            "description": "Most actions the subtask may take (default 12, at most 40)."
+          },
+          "budget_ms": {
+            "type": "integer",
+            "description": "Wall-clock budget in milliseconds (default 60000, at most 300000)."
+          },
+          "app": {
+            "type": "string",
+            "description": "App name or bundle id (macOS); default: the frontmost app."
+          },
+          "pid": {
+            "type": "integer"
+          },
+          "window_id": {
+            "type": "integer"
+          },
+          "query": {
+            "type": "string",
+            "description": "Only consider elements whose name or value contains this text."
+          },
+          "max_elements": {
+            "type": "integer",
+            "description": "Cap the elements read per step (default 120)."
+          }
+        },
+        "required": [
+          "goal"
+        ],
+        "additionalProperties": false
+      }
     }
   ],
-  "note": "Additive over allternit.computer.v1: the 17 pixel members are byte-identical (same names, input fields and Anthropic computer_toolset_20260801 shape). The 6 structured members (read_ui, act, run_batch, verify, request_human, use_credential) are backed by the Allternit Driver sidecar and need it on the computer (this-device today; guests gain it with the guest driver image)."
+  "note": "Additive over allternit.computer.v1: the 17 pixel members are byte-identical (same names, input fields and Anthropic computer_toolset_20260801 shape). The 7 structured members (read_ui, act, run_batch, verify, request_human, use_credential, run_subtask) are backed by the Allternit Driver sidecar and need it on the computer (this-device today; guests gain it with the guest driver image)."
 } as const;
 
 // ---- allternit.browser.v1 (browser_toolset_20260801) ----
@@ -3447,7 +3601,7 @@ export const CONTRACTS: Record<ToolsetName, ToolsetContract> = {
   computer: COMPUTER_CONTRACT as unknown as ToolsetContract,
   browser: BROWSER_CONTRACT as unknown as ToolsetContract,
 };
-/** allternit.computer.v2: the 17 pixel members plus the 6 driver-backed structured members. */
+/** allternit.computer.v2: the 17 pixel members plus the 7 driver-backed structured members. */
 export const COMPUTER_V2 = COMPUTER_V2_CONTRACT as unknown as ToolsetContract;
-/** The 6 structured members of allternit.computer.v2 (read_ui, act, run_batch, verify, request_human, use_credential). */
+/** Every member of allternit.computer.v2 (the 17 pixel members, then read_ui, act, run_batch, verify, request_human, use_credential, run_subtask). */
 export const COMPUTER_V2_MEMBER_LIST = COMPUTER_V2.members;
