@@ -12,16 +12,23 @@ Adopt the ArtCraft craft suite (PhotoCraft/PdfCraft/FilmCraft — pure-Rust, MIT
 - Mirror-cloned the three repos to `~/Desktop/allternit-workspace/craft-mirrors/` (machine-local, not committed). Pinned revs: photocraft `0c72d9542…` (2026-10-09), pdfcraft `68e91d481…`, filmcraft `7bd762126…`.
 - Vendored trees into `vendor/craft/{image,pdf,video}/` (~34/29/34 MB) at those revs. Wrote `vendor/craft/VENDOR.md` (provenance, license/trademark handling, refresh ritual) + `refresh-from-upstream.sh` (dry-run/apply).
 - cargo-audit installing in background (not previously installed).
-- Three parallel agents rebranding the trees (strip ArtCraft marks → "Allternit Image/PDF/Video Editor" descriptive labels; docs/brand removed) + writing per-app audit inventories to `vendor/craft/audit/{image,pdf,video}.md`.
+- All three rebrand+audit agents DONE: rebrands complete (docs/brand removed, community UI stripped, i18n verified by script — 1,285 literals × 16 catalogs for image; deep PDF-embedded strings and export-format provenance strings for pdf/video), per-app audit inventories written.
+- AUDIT.md verdict: PASS with documented conditions (rsa/rustls-webpki not reachable in embed posture; zero analytics in all three trees).
+- Committed + pushed: 5edf5f6afb on session/craft-editors-20261009 (vendored trees, VENDOR.md, refresh script, AUDIT.md, audit reports, craft-host/PROTOCOL.md). Upstream .github CI stripped (would have executed in our repo).
 
 ## Next
-1. Collect rebrand/audit agent reports → consolidate `vendor/craft/AUDIT.md` (cargo audit results + telemetry inventory + unsafe inventory; product wiring waits on this gate).
-2. Design + implement `vendor/craft/craft-host` bridge crate (postMessage protocol: init/open/save/command; FilmCraft's `window.filmcraft` is the reference shape).
-3. WASM build pipeline (GHA: wasm32 builds → bundles into `surfaces/office.allternit.com/public/craft/<app>/` + allternit-ai mirror), bare open-edit-save test page; Eoj checkpoint before product wiring.
-4. Phase 1 (separate session, after ai checkout fast-forwards): `pdf` kind in cloud-api kinds.rs + KIND_REGISTRY; CraftEditor component; save→versions; docs.
+1. Implement the craft-host bridge: PROTOCOL.md + per-app adapter mapping are done and
+   committed (5edf5f6afb); write the crate + the three web adapters (video wraps the
+   existing `window.filmcraft` behind the token/origin gate; pdf adds the save-bytes
+   write-back; image feeds postMessage into its transport-agnostic `control::handle()`).
+2. WASM build pipeline (GHA: wasm32 builds → bundles into
+   `surfaces/office.allternit.com/public/craft/<app>/` + allternit-ai mirror), bare
+   open-edit-save test page; Eoj checkpoint before product wiring.
+3. Phase 1 (separate session, after ai checkout fast-forwards): `pdf` kind in cloud-api
+   kinds.rs + KIND_REGISTRY; CraftEditor component; save→versions; docs.
 
 ## Open questions
-- COOP/COEP header support on the office.allternit.com Pages surface (needed for wasm threads; single-threaded fallback exists) — verify in Phase 0 step 5.
+- ~~COOP/COEP~~ RESOLVED: all three current web builds are single-threaded; COOP/COEP only needed for a future threaded build. No header changes required for v1.
 - Editor canvas theming inside egui (accept themed params, not full design tokens) — Eoj judges at the Phase-0 checkpoint.
 - Plans/entitlements gating for the new kinds (Eoj's call at review, Phase 4).
 - `gizzi workspace node add` CLI shape (help is unclear; DAG plan + node n_8583 exist, node breakdown tracked here meanwhile).
