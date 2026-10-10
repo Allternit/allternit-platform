@@ -1,6 +1,6 @@
 ---
 title: 'Artifacts v2 API'
-description: 'One account-level store of typed artifacts (docs, sheets, slides, designs, dashboards, motion, pages, cards, diagrams, images, code) with versions and sharing, served by the hosted Cloud API.'
+description: 'One account-level store of typed artifacts (docs, sheets, slides, designs, dashboards, motion, pages, cards, diagrams, images, PDFs, videos, code) with versions and sharing, served by the hosted Cloud API.'
 ---
 
 ## Overview
@@ -42,6 +42,8 @@ See [Authentication](/api/authentication).
 | `diagram` | `text/vnd.mermaid` | `image/svg+xml` |
 | `image` | `text/uri-list` | |
 | `code` | `text/plain` (`meta.language` names the language) | |
+| `pdf` | `application/pdf` | |
+| `video` | `application/vnd.allternit.video+json` | |
 
 When a create leaves out `body_format`, the kind's default is used. The server also accepts well-formed kinds it doesn't know (lower-case, at most 32 characters) so newer clients keep working. Apps show an unknown kind as a page when the body is HTML and as code otherwise.
 
