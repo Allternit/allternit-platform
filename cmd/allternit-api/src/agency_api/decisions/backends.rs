@@ -4,9 +4,11 @@
 //!
 //! - `local`: the owned scorer sidecar (`domains/decision-runtime`): one-pass
 //!   option scoring on MLX (Apple silicon) or llama.cpp (everything else).
-//! - `vendor` (OpenAI Decisions API), `typesafe` (TypeSafe Jev): vendor fast paths. Config-only stubs, off unless a
-//!   key is set, and even then they answer "not available" until E6 verifies
-//!   the vendor's docs and access.
+//! - `head`: the slot for the kind's live flywheel heads (`super::flywheel`),
+//!   expanded per decision; empty until a head earns promotion.
+//! - `vendor` (OpenAI Decisions API), `typesafe` (TypeSafe Jev): optional
+//!   vendor fast paths (`super::vendors`), off unless a key is set and the
+//!   decision's project is enabled for them.
 //! - `oracle`: the planner model through gizzi (allternit-api never calls a
 //!   provider directly). The escalation path and the label source.
 
@@ -114,32 +116,6 @@ impl DecisionBackend for LocalScorer {
     }
 }
 
-// ── vendor stubs ────────────────────────────────────────────────────────────
-
-/// A vendor decision API, wired for config only. Enabled when its key is set;
-/// it still answers "not available" until E6 (vendor docs and access
-/// verified, Eoj's OK on the paid account) replaces the stub.
-pub struct VendorStub {
-    pub name: &'static str,
-    pub key_env: &'static str,
-}
-
-#[async_trait]
-impl DecisionBackend for VendorStub {
-    fn name(&self) -> &'static str {
-        self.name
-    }
-    fn vision(&self) -> bool {
-        true
-    }
-    fn enabled(&self) -> bool {
-        env(self.key_env).is_some()
-    }
-    async fn decide(&self, _q: &Query<'_>) -> Result<Answer, String> {
-        Err(format!("{} decisions adapter is a stub until E6", self.name))
-    }
-}
-
 // ── oracle (planner model via gizzi) ────────────────────────────────────────
 
 pub struct Oracle;
@@ -222,7 +198,7 @@ fn truncate(s: &str, n: usize) -> String {
 
 /// The configured chain, in escalation order.
 pub fn chain() -> Vec<Box<dyn DecisionBackend>> {
-    let order = env("ALLTERNIT_DECISIONS_CHAIN").unwrap_or_else(|| "local,vendor,typesafe,oracle".into());
+    let order = env("ALLTERNIT_DECISIONS_CHAIN").unwrap_or_else(|| "head,local,vendor,typesafe,oracle".into());
     order
         .split(',')
         .filter_map(|n| backend(n.trim()))
@@ -231,10 +207,10 @@ pub fn chain() -> Vec<Box<dyn DecisionBackend>> {
 
 pub fn backend(name: &str) -> Option<Box<dyn DecisionBackend>> {
     Some(match name {
+        "head" => Box::new(super::flywheel::HeadSlot),
         "local" => Box::new(LocalScorer),
-        // OpenAI's Decisions API (DevDay 2026 preview).
-        "vendor" => Box::new(VendorStub { name: "vendor", key_env: "ALLTERNIT_DECISIONS_VENDOR_KEY" }),
-        "typesafe" => Box::new(VendorStub { name: "typesafe", key_env: "ALLTERNIT_DECISIONS_TYPESAFE_KEY" }),
+        "vendor" => Box::new(super::vendors::OpenAiDecisions),
+        "typesafe" => Box::new(super::vendors::TypeSafeJev),
         "oracle" => Box::new(Oracle),
         _ => return None,
     })
