@@ -86,6 +86,125 @@ Frames are drawn by seeking: frame `i` is drawn at `t = i / fps`.
 | Where | Path |
 |---|---|
 | Allternit Desktop | The app sends each frame as a JPEG to the main process (`window.allternit.motion`: `check`, `begin`, `frame`, `finish`, `abort`). It encodes H.264 with the local ffmpeg and shows a save dialog. Without ffmpeg the app uses the browser path. |
-| Web, phone layout, PWA | WebCodecs and an MP4 muxer in the tab. H.264 gives MP4; VP9 or AV1 only gives WebM, and the result says so. No encoder, no export. |
+| Web, phone layout, PWA | WebCodecs and an MP4 muxer in the tab, when the browser can encode H.264. VP9 or AV1 only gives WebM, and the result says so. |
+| Cloud | The cloud-api host renders the saved version (below). Chosen automatically when the browser has no H.264 encoder and the artifact is saved, or on request (**Export MP4 (cloud)**). `chooseMotionExport` in `src/lib/artifacts/motion/cloud-render.ts` makes the choice: local ffmpeg, then an H.264 tab encoder, then the cloud. |
 
-There is no server-side render route. Exported videos have no audio track.
+Exported videos have no audio track.
+
+## Cloud render
+
+There is one renderer. The host runs the app's own `renderFrame`
+(`src/lib/artifacts/motion/render.ts`) bundled for Node: it draws each frame
+into an `@napi-rs/canvas` canvas and pipes raw frames to ffmpeg, which writes
+H.264 (`yuv420p`, `faststart`) at the composition's frame rate and size. The
+bundle and its runtime package live together in
+`cmd/allternit-cloud-api/render/motion/`. The bundle is checked in and
+regenerated with `node scripts/build-motion-render.mjs --ai <allternit-ai>`
+(see that folder's README); `dist/SOURCE.json` records the allternit-ai commit
+it came from.
+
+All routes need the same sign-in as the rest of `/api/v2/artifacts`. A caller
+needs at least `view` access to the artifact; a job belongs to the person who
+started it, and other callers get `404`.
+
+### Start a job
+
+`POST /api/v2/artifacts/{id}/render`
+
+```json
+{ "version": 3 }
+```
+
+`version` is optional. Without it the job renders the version the caller sees
+(the latest for editors and the owner, the shared version for everyone else).
+Only editors and the owner may ask for another version. Answers `202` with the
+job:
+
+```json
+{
+  "id": "rj_01J9ZK3Q8M5T7N2V4X6Y8B0C1D",
+  "artifact_id": "art_01J9ZK2…",
+  "version": 3,
+  "status": "queued",
+  "progress": 0,
+  "ahead": 0,
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "frames": 225,
+  "error": null,
+  "file_url": null,
+  "bytes": null,
+  "created_at": "2026-10-09T12:00:00.000000Z",
+  "started_at": null,
+  "finished_at": null,
+  "expires_at": null
+}
+```
+
+### Read a job
+
+`GET /api/v2/artifacts/{id}/render/{job}`
+
+Returns the same object. `status` is `queued`, `running`, `done`, `failed`,
+`canceled` or `expired`. `progress` runs from 0 to 1; `ahead` counts the jobs
+queued or running before this one. When `status` is `failed`, `error` is
+`{ "code", "message" }`. When it is `done`, `file_url` is the path of the file
+and `expires_at` is 24 hours after it finished. Poll about every 1.5 seconds.
+
+### Download
+
+`GET /api/v2/artifacts/{id}/render/{job}/file`
+
+Streams `video/mp4` as an attachment. `409 render_not_ready` while the job is
+unfinished; `410 render_expired` after the 24 hours.
+
+### Cancel
+
+`DELETE /api/v2/artifacts/{id}/render/{job}`
+
+Cancels a queued or running job (the renderer process is stopped), or deletes
+a finished file early. Answers `204`.
+
+### Limits and errors
+
+| Limit | Value |
+|---|---|
+| Renders running at once, on the host | 2; others wait in `queued` |
+| Queued or running jobs per person | 3 |
+| Frame size | 1920×1080 at most (`1080×1920` is fine) |
+| Length | 120 seconds, and at most 3600 frames (120 s at 30 fps) |
+| Time per job | 10 minutes, then the renderer is killed |
+| Output file | 256 MB; kept 24 hours |
+
+| Status | `code` | Meaning |
+|---|---|---|
+| 402 | `plan_required` | Cloud export is on Super, Ultra and Team. |
+| 403 | `org_disabled` | The org admin turned artifacts or Motion off. |
+| 422 | `not_motion` | The artifact isn't a motion artifact. |
+| 422 | `invalid_motion_body` | The saved body can't be read. |
+| 422 | `render_too_large` | Over 1920×1080. |
+| 422 | `render_too_long` | Over 120 seconds or 3600 frames. |
+| 429 | `render_limit_reached` | Three jobs are already queued or running for this caller. |
+| 503 | `render_unavailable` | The renderer isn't installed on the host, or storage can't be reached. |
+
+A job can also end `failed` with `render_timeout`, `render_failed`,
+`render_too_large` (the output file) or `render_interrupted` (the service
+restarted while it ran).
+
+### Storage and host setup
+
+Finished files go to the private R2 bucket when `ALLTERNIT_R2_*` is set
+(key `motion-render/{user}/{job}.mp4`), otherwise to the host's temp folder.
+A sweep every ten minutes deletes files 24 hours after they finished. Jobs are
+rows in `motion_render_jobs` (migration `087_motion_render_jobs.sql`).
+
+`deploy-contabo.sh` ships the render folder with the binary and runs
+`npm ci --omit=dev` into `/opt/allternit-cloud-api/render/motion`. Settings:
+`ALLTERNIT_MOTION_RENDER_DIR`, `ALLTERNIT_NODE_BIN` (default `/usr/bin/node`),
+`ALLTERNIT_FFMPEG_BIN` (default `/usr/bin/ffmpeg`) and
+`ALLTERNIT_MOTION_RENDER_TMP`.
+
+Logos given as `https` addresses are not fetched by the server; those scenes
+draw the wordmark. Embedded `data:image/...` logos are drawn. Fonts are the
+bundled Inter, Source Serif 4 and JetBrains Mono.

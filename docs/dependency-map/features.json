@@ -705,7 +705,8 @@
         "allternit-ai/src/components/artifacts",
         "allternit-ai/src/lib/artifacts",
         "allternit-ai/src/components/settings",
-        "allternit-ai/src/views/library"
+        "allternit-ai/src/views/library",
+        "allternit-ai/src/views/design"
       ],
       "decisions": [
         {
@@ -718,7 +719,15 @@
         },
         {
           "on": "2026-10-09",
-          "note": "Phase 4 editors: doc, sheet, slides and design open in the window's editors with autosave to versions, Edit with Allternit on a selection, threaded comments with @gizzi, heartbeat presence (honours the org presence switch), and Word/PDF/Markdown/PowerPoint/XLSX/CSV/HTML/zip exports. Presence is an in-memory heartbeat poll under /api/v2/artifacts/:id/presence, not the deployment WebSocket hub."
+          "note": "Phase 4 editors: doc, sheet, slides and design open in the window's editors with autosave to versions, Edit with Allternit on a selection, threaded comments with @gizzi, heartbeat presence (honours the org presence switch), and Word/PDF/Markdown/PowerPoint/XLSX/CSV/HTML/zip exports. Presence is a heartbeat poll under /api/v2/artifacts/:id/presence, not the deployment WebSocket hub."
+        },
+        {
+          "on": "2026-10-09",
+          "note": "Design artifacts open on the Design studio canvas (DesignTldrawCanvas with the Layers and Properties panels) scoped to one artifact, saved as a versioned canvas document (artboards, layers, design-system ref); older HTML designs open read-only with Convert to canvas. Phone and PWA use the canvas without tldraw chrome and the panels as bottom sheets. Presence is durable in artifact_presence (migration 086) so it works across cloud-api instances."
+        },
+        {
+          "on": "2026-10-09",
+          "note": "The Artifacts tab regained what the Phase 1 rebuild dropped: the animated Make something new tiles are the one template gallery (every kind, plan-gated, Dashboards and Motion included), connected-tools chips, the Design menu and Office button, and real per-kind previews in the grid (body fetched lazily, script-free snapshots for pages, designs and cards)."
         }
       ],
       "evidence": [
@@ -736,17 +745,18 @@
       "label": "Dashboards (live tiles that query your connectors)",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "Artifacts v2 dashboard kind: a 12-column grid of KPI, line, area, bar and table tiles, each carrying its own connector query (or read-only SQL for a warehouse). Runs as the viewer through the MCP Apps bridge with first-use approval, cached first paint, refresh on open/interval/filter, click-to-see-query and per-tile errors. Edited by chat (artifact_update) or by hand (rename, reorder, resize). Paid plans; Desktop, phone layout and the PWA (stacked to one column). Snowflake, BigQuery, Redshift, Databricks and ClickHouse are listed in the connector directory.",
+      "description": "Artifacts v2 dashboard kind: a 12-column grid of KPI, line, area, bar and table tiles, each carrying its own connector query (or read-only SQL for a warehouse). Runs as the viewer through the MCP Apps bridge with first-use approval that follows the account, cached first paint, refresh on open/interval/filter, click-to-see-query and per-tile errors. Edited by chat (artifact_update) or by hand (rename, reorder, resize). Paid plans; Desktop, phone layout and the PWA (stacked to one column). Snowflake, BigQuery, Redshift, Databricks and ClickHouse are listed in the connector directory.",
       "touches": [
         "allternit-ai/src/lib/artifacts",
         "allternit-ai/src/components/artifacts",
         "allternit-ai/src/lib/openui",
-        "allternit-ai/src/views/mini-apps"
+        "allternit-ai/src/views/mini-apps",
+        "allternit/cmd/allternit-cloud-api/src/artifacts"
       ],
       "decisions": [
         {
           "on": "2026-10-09",
-          "note": "Body is application/vnd.allternit.dashboard+json v1 (dashboards saved as OpenUI cards still open as cards). Queries reuse the card tool client: read-only tools only, plus one read-only SELECT through a warehouse SQL tool. First-use approval is per user and artifact on the device. The owner's client declares capabilities.connectors so link sharing is refused. Warehouses with a per-account address (Snowflake, Databricks) or a self-run server (Redshift) are listed as setup guides, not invented endpoints. PDF export prints the dashboard; PNG is still coming soon."
+          "note": "Body is application/vnd.allternit.dashboard+json v1 (dashboards saved as OpenUI cards still open as cards). Queries reuse the card tool client: read-only tools only, plus one read-only SELECT through a warehouse SQL tool. First-use approval is saved to the account (the page-runtime connectors consent, with per-tool off in denied_tools) and localStorage is only a first-paint cache; signed-out viewers get no connectors. The owner's client declares capabilities.connectors so link sharing is refused. Warehouses with a per-account address (Snowflake, Databricks) or a self-run server (Redshift) are listed as setup guides, not invented endpoints. PDF export prints the dashboard; PNG export captures the rendered grid with modern-screenshot."
         }
       ],
       "evidence": [
@@ -760,22 +770,32 @@
       "label": "Motion artifacts (animated explainers, MP4 export)",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "The motion artifact kind: short animated compositions (title, counter, chart, logo, list scenes) stored as JSON props, drawn by a pure seekable renderer, edited in the artifact window (scene list, scrub, play/pause/loop, props panel; tabs on the phone layout and PWA) and exported to MP4. Desktop encodes frames with the local ffmpeg through the motion IPC; web and PWA encode in the tab with WebCodecs (MP4, or WebM where the browser has no H.264). Super, Ultra and Team plans; org default Team on, Enterprise off.",
+      "description": "The motion artifact kind: short animated compositions (title, counter, chart, logo, list scenes) stored as JSON props, drawn by a pure seekable renderer, edited in the artifact window (scene list, scrub, play/pause/loop, props panel; tabs on the phone layout and PWA) and exported to MP4. Desktop encodes frames with the local ffmpeg through the motion IPC; web and PWA encode in the tab with WebCodecs (MP4, or WebM where the browser has no H.264). Where the browser can't encode H.264, or on request (Export MP4 (cloud)), the cloud-api host renders the saved version with the same renderer bundled for Node (@napi-rs/canvas + ffmpeg): /api/v2/artifacts/:id/render, 2 renders at once, 3 per user, 1920x1080 and 120 s at 30 fps, 24 h files. Super, Ultra and Team plans; org default Team on, Enterprise off.",
       "touches": [
         "allternit-ai/src/lib/artifacts",
         "allternit-ai/src/components/artifacts",
         "allternit/surfaces/allternit-desktop",
-        "allternit/cmd/gizzi-code/src/runtime/integrations"
+        "allternit/cmd/gizzi-code/src/runtime/integrations",
+        "allternit/cmd/allternit-cloud-api/render/motion",
+        "allternit/cmd/allternit-cloud-api/src/routes/artifact_*",
+        "allternit/cmd/allternit-cloud-api/src/artifacts"
       ],
       "decisions": [
         {
           "on": "2026-10-09",
           "note": "No server-side render route: no cloud render worker exists, so web and PWA export in the tab (WebCodecs + mediabunny) and Desktop uses local ffmpeg. Videos are silent. The body is data only, never code."
+        },
+        {
+          "on": "2026-10-09",
+          "note": "Cloud render added (supersedes the no-server-render ruling above for browsers without H.264 and for long clips): one renderer, the app's renderFrame bundled for Node into a vendored dist/render.mjs (regenerated by scripts/build-motion-render.mjs), run as a child process of cloud-api (node + @napi-rs/canvas + ffmpeg) under /api/v2/artifacts/:id/render. Jobs in motion_render_jobs (087). Files go to R2 when configured, else the host temp dir, deleted after 24 h. Same plan rule as Motion (Super, Ultra, Team). Desktop keeps local ffmpeg; the in-tab WebCodecs path stays the fast option."
         }
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/motion.mdx",
-        "allternit/surfaces/docs/api/artifacts-motion.mdx"
+        "allternit/surfaces/docs/api/artifacts-motion.mdx",
+        "allternit/cmd/allternit-cloud-api/render/motion/README.md",
+        "allternit/cmd/allternit-cloud-api/deploy-contabo.sh",
+        "allternit/cmd/allternit-cloud-api/migrations_pg/087_motion_render_jobs.sql"
       ]
     },
     {

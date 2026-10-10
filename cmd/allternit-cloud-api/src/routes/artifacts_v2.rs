@@ -57,6 +57,9 @@ use crate::{auth, ApiState};
 // Page runtime (storage, consents, AI) and the org "Shared outside" list.
 #[path = "artifact_runtime.rs"]
 mod artifact_runtime;
+// Motion cloud render (jobs, queue, MP4 download).
+#[path = "artifact_render.rs"]
+mod artifact_render;
 
 pub(crate) type Result<T> = std::result::Result<T, ArtifactError>;
 
@@ -97,6 +100,7 @@ pub fn routes() -> Router<Arc<ApiState>> {
             get(get_org_settings).put(put_org_settings),
         )
         .merge(artifact_runtime::routes())
+        .merge(artifact_render::routes())
 }
 
 // ---------------------------------------------------------------------------
@@ -508,6 +512,27 @@ fn check_body_format(format: &str) -> Result<()> {
 }
 
 /// Capabilities shape + the org's connector kill switch.
+/// For a dashboard, set `capabilities.connectors` from the tiles in its body
+/// (see `kinds::dashboard_connectors`). Other kinds pass through unchanged.
+fn with_dashboard_connectors(mut capabilities: Value, kind: &str, body: &str) -> Value {
+    if kind != "dashboard" {
+        return capabilities;
+    }
+    if !capabilities.is_object() {
+        capabilities = json!({});
+    }
+    let map = capabilities.as_object_mut().expect("object");
+    match kinds::dashboard_connectors(body) {
+        Some(connectors) => {
+            map.insert("connectors".to_string(), connectors);
+        }
+        None => {
+            map.remove("connectors");
+        }
+    }
+    capabilities
+}
+
 fn check_capabilities(capabilities: &Value, settings: Option<&OrgSettings>) -> Result<()> {
     validate_capabilities(capabilities)?;
     let wants_connectors = capabilities
@@ -748,6 +773,7 @@ async fn create_artifact(
         ));
     }
     check_capabilities(&capabilities, settings.as_ref())?;
+    let capabilities = with_dashboard_connectors(capabilities, &kind, &request.body);
 
     let mut tx = state.db.begin().await?;
     let inserted = sqlx::query(
@@ -1053,12 +1079,15 @@ async fn append_version(
     .bind(&author_id)
     .execute(&mut *tx)
     .await?;
+    // A dashboard's connector declaration follows its body on every save.
+    let capabilities = with_dashboard_connectors(row.capabilities.clone(), &row.kind, &request.body);
     let updated = sqlx::query_as::<_, ArtifactRow>(&format!(
-        "UPDATE artifacts SET current_version = $2, updated_at = now() WHERE id = $1 \
+        "UPDATE artifacts SET current_version = $2, capabilities = $3, updated_at = now() WHERE id = $1 \
          RETURNING {ARTIFACT_COLUMNS}"
     ))
     .bind(&row.id)
     .bind(next)
+    .bind(&capabilities)
     .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;

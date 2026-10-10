@@ -34,49 +34,15 @@ fn body_and_anchor_validation() {
     assert!(validate_anchor(&json!({"kind":"text","q":"x".repeat(17000)})).is_err());
 }
 
-#[test]
-fn presence_ttl_prune_exclusion() {
-    let mut s = PresenceStore::default();
-    let t0 = Instant::now();
-    s.heartbeat("a", "u1", Some("One".into()), None, "viewing", t0);
-    s.heartbeat("a", "u2", None, None, "editing", t0);
-    let seen = s.others("a", "u1", t0);
-    assert_eq!(seen.len(), 1);
-    assert_eq!(seen[0]["user_id"], "u2");
-    assert_eq!(seen[0]["state"], "editing");
-    // u1 refreshes, u2 expires.
-    s.heartbeat("a", "u1", None, None, "viewing", t0 + Duration::from_secs(40));
-    let later = t0 + Duration::from_secs(50);
-    assert!(s.others("a", "u1", later).is_empty());
-    assert_eq!(s.others("a", "u2", later).len(), 1);
-    // Everything expires: the artifact map is removed.
-    let end = t0 + Duration::from_secs(200);
-    assert!(s.others("a", "x", end).is_empty());
-    assert!(s.artifacts.is_empty());
-    // "left" removes and drops an emptied map.
-    s.heartbeat("b", "u1", None, None, "viewing", end);
-    s.heartbeat("b", "u1", None, None, "left", end);
-    assert!(s.artifacts.is_empty());
-}
-
-#[test]
-fn presence_cap() {
-    let mut s = PresenceStore::default();
-    let t = Instant::now();
-    for i in 0..(PRESENCE_MAX_USERS + 20) {
-        s.heartbeat("a", &format!("u{i}"), None, None, "viewing", t);
-    }
-    assert_eq!(s.artifacts["a"].len(), PRESENCE_MAX_USERS);
-    // An existing user can still refresh at the cap.
-    s.heartbeat("a", "u0", None, None, "editing", t);
-    assert_eq!(s.artifacts["a"]["u0"].state, "editing");
-}
-
 // ----- DB-backed route tests -----
 
 async fn setup() -> (Router, PgPool) {
     let state = test_state(Arc::new(MockGateway::new(None, vec![]))).await;
     sqlx::raw_sql(include_str!("../../migrations_pg/085_artifacts_v2.sql"))
+        .execute(&state.db)
+        .await
+        .unwrap();
+    sqlx::raw_sql(include_str!("../../migrations_pg/086_artifact_presence.sql"))
         .execute(&state.db)
         .await
         .expect("085 applies");
@@ -238,4 +204,43 @@ async fn presence_routes_and_org_toggle() {
     assert_eq!(off, json!({"enabled": false, "users": []}));
     let (st, _) = call(&router, "POST", &path, &b, Some(json!({"state":"viewing"}))).await;
     assert_eq!(st, StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn presence_expires_leaves_and_purges() {
+    let (router, db) = setup().await;
+    let a = who("qa", None);
+    let b = who("qb", None);
+    let id = make(&router, &a, "page").await;
+    call(&router, "PUT", &format!("/api/v2/artifacts/{id}/sharing"), &a,
+        Some(json!({"visibility":"people","shares":[{"principal_type":"user","principal_id":"qb","level":"edit"}]}))).await;
+    let path = format!("/api/v2/artifacts/{id}/presence");
+    call(&router, "POST", &path, &a, Some(json!({"state":"viewing"}))).await;
+    let (_, seen) = call(&router, "GET", &path, &b, None).await;
+    assert_eq!(seen["users"].as_array().unwrap().len(), 1);
+    // A heartbeat from another instance is the same row: a second POST updates state.
+    call(&router, "POST", &path, &a, Some(json!({"state":"editing"}))).await;
+    let (_, seen) = call(&router, "GET", &path, &b, None).await;
+    assert_eq!(seen["users"][0]["state"], "editing");
+    // Older than 45 s: hidden, but not yet deleted.
+    sqlx::query("UPDATE artifact_presence SET last_seen = now() - interval '60 seconds'")
+        .execute(&db).await.unwrap();
+    let (_, seen) = call(&router, "GET", &path, &b, None).await;
+    assert!(seen["users"].as_array().unwrap().is_empty());
+    // A fresh heartbeat revives it; "left" removes it.
+    call(&router, "POST", &path, &a, Some(json!({"state":"viewing"}))).await;
+    let (_, seen) = call(&router, "GET", &path, &b, None).await;
+    assert_eq!(seen["users"].as_array().unwrap().len(), 1);
+    call(&router, "POST", &path, &a, Some(json!({"state":"left"}))).await;
+    let (_, seen) = call(&router, "GET", &path, &b, None).await;
+    assert!(seen["users"].as_array().unwrap().is_empty());
+    // The sweep deletes rows older than 10 minutes and keeps fresh ones.
+    call(&router, "POST", &path, &a, Some(json!({"state":"viewing"}))).await;
+    call(&router, "POST", &path, &b, Some(json!({"state":"viewing"}))).await;
+    sqlx::query("UPDATE artifact_presence SET last_seen = now() - interval '11 minutes' WHERE user_id = 'qa'")
+        .execute(&db).await.unwrap();
+    purge_stale_presence(&db).await;
+    let left: Vec<(String,)> = sqlx::query_as("SELECT user_id FROM artifact_presence")
+        .fetch_all(&db).await.unwrap();
+    assert_eq!(left, vec![("qb".to_string(),)]);
 }

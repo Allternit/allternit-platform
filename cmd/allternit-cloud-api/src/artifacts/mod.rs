@@ -7,6 +7,7 @@ pub mod access;
 pub mod error;
 pub mod ids;
 pub mod kinds;
+pub mod motion_render;
 pub mod runtime;
 pub mod sharing;
 

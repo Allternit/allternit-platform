@@ -166,6 +166,8 @@ Viewers who aren't editors see `shared_version` (or latest when null); editors a
 
 Phase 4 adds, under the same prefix: `/:id/storage` (GET `?scope&prefix`, PUT/DELETE `/:key`), `/:id/consents`, `/:id/ai`, `/:id/connectors/:connector/:tool`, `/:id/comments`.
 
+Presence (`/:id/presence`, `POST` heartbeat and `GET`) is stored in `artifact_presence` (migration 086), keyed by (artifact, user): `POST` upserts `last_seen`, `GET` returns the rows seen in the last 45 s without the caller, and rows older than 10 minutes are deleted on about one request in 50. It follows the org `presence` switch.
+
 ### Types
 
 ```ts
