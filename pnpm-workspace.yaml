@@ -67,6 +67,12 @@ packages:
   # See surfaces/computer-embed/README.md.
   - '!surfaces/computer-embed'
   - '!surfaces/computer-embed/**'
+  # Motion cloud renderer — runs on the cloud-api host, installed there with
+  # `npm ci` from its own package-lock (deploy-contabo.sh). Managed via plain
+  # npm, not pnpm; cmd/*/*/* would otherwise pull it in and break the root
+  # --frozen-lockfile install.
+  - '!cmd/allternit-cloud-api/render/motion'
+  - '!cmd/allternit-cloud-api/render/motion/**'
   # Desktop build output: prepare-office-engine writes resources/office-engine/package.json,
   # which surfaces/*/*/* would pick up as a workspace package and add an importer to the lockfile.
   - '!surfaces/allternit-desktop/resources/**'
