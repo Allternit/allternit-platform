@@ -12,7 +12,9 @@ use photocraft_ui_egui::theme::ThemeKind;
 use photocraft_ui_egui::{FileDialogAnswer, FileDialogRequest, PhotocraftApp, Services};
 use wasm_bindgen::JsCast as _;
 
-type Inbox = Arc<Mutex<Vec<(String, Vec<u8>)>>>;
+/// The file-intake queue the frame loop drains (`Services::inbox`): file picker, drops and
+/// craft:1 host-seeded opens all land here. Shared with the embed adapter.
+pub(crate) type Inbox = Arc<Mutex<Vec<(String, Vec<u8>)>>>;
 
 /// Everything File › Open reads: PhotoCraft, Photoshop and Affinity documents, flat images, and
 /// Photoshop brushes (.abr), gradients (.grd) and swatches (.aco, .ase), which go to the preset libraries.
@@ -82,7 +84,18 @@ pub fn start() {
                     load_font_manifest(served.clone(), cc.egui_ctx.clone());
                     let (session, warnings) = crate::preset_bridge::session(presets.clone());
                     preset_warnings.extend(warnings);
-                    let mut app = PhotocraftApp::new(session, services(inbox.clone()));
+                    // craft:1 embed bridge: None on a standalone visit (see embed.rs).
+                    #[cfg(feature = "embed")]
+                    let embed = crate::embed::Embed::start(&inbox);
+                    #[cfg(feature = "embed")]
+                    let mut svcs = services(inbox.clone());
+                    #[cfg(not(feature = "embed"))]
+                    let svcs = services(inbox.clone());
+                    #[cfg(feature = "embed")]
+                    if let Some(em) = &embed {
+                        em.hook_saves(&mut svcs);
+                    }
+                    let mut app = PhotocraftApp::new(session, svcs);
                     if !preset_warnings.is_empty() {
                         photocraft_ui_egui::notices::post(&mut app, i18n::t("Some brush presets could not be loaded"), preset_warnings, true, None);
                     }
@@ -96,7 +109,12 @@ pub fn start() {
                     }
                     let unsaved = Arc::new(AtomicBool::new(false));
                     guard_unload(unsaved.clone());
-                    Ok(Box::new(WebShell { app, inbox, unsaved, served, database, presets }))
+                    #[cfg(feature = "embed")]
+                    let (app, embed) = match embed {
+                        Some(mut em) => (em.attach(app), Some(em)),
+                        None => (app, None),
+                    };
+                    Ok(Box::new(WebShell { app, inbox, unsaved, served, database, presets, #[cfg(feature = "embed")] embed }))
                 }),
             )
             .await;
@@ -157,7 +175,7 @@ fn guard_unload(unsaved: Arc<AtomicBool>) {
     }
 }
 
-fn query() -> String {
+pub(crate) fn query() -> String {
     web_sys::window().and_then(|w| w.location().search().ok()).unwrap_or_default()
 }
 
@@ -227,6 +245,9 @@ struct WebShell {
     served: Served,
     database: Option<web_sys::IdbDatabase>,
     presets: crate::preset_bridge::Bridge,
+    /// The craft:1 embed session (None on a standalone visit).
+    #[cfg(feature = "embed")]
+    embed: Option<crate::embed::Embed>,
 }
 
 impl WebShell {
@@ -299,7 +320,15 @@ impl eframe::App for WebShell {
             });
         }
         self.serve_fonts(ctx);
+        #[cfg(feature = "embed")]
+        if let Some(embed) = &mut self.embed {
+            embed.pre_frame(&mut self.app, ctx);
+        }
         self.app.logic(ctx, frame);
+        #[cfg(feature = "embed")]
+        if let Some(embed) = &mut self.embed {
+            embed.post_frame(&mut self.app);
+        }
         self.save_presets(ctx);
     }
 
@@ -389,8 +418,9 @@ fn local_storage() -> Option<web_sys::Storage> {
     web_sys::window()?.local_storage().ok().flatten()
 }
 
-/// Trigger a browser download of `bytes` named after the last component of `path`.
-fn download(path: &str, bytes: &[u8]) -> Result<(), String> {
+/// Trigger a browser download of `bytes` named after the last component of `path`. The craft:1
+/// embed adapter calls this directly for saves the bridge cannot deliver to the host.
+pub(crate) fn download(path: &str, bytes: &[u8]) -> Result<(), String> {
     let js = |e: wasm_bindgen::JsValue| format!("{e:?}");
     let name = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "photocraft".into());
     let window = web_sys::window().ok_or("no window")?;

@@ -144,6 +144,16 @@ pub fn inflight() -> usize {
     FS.with(|fs| fs.borrow().inflight.len())
 }
 
+/// Bytes of an in-memory entry (a file the app wrote). Blob entries (imported media) are not
+/// copied whole. Used by the embed adapter's save watcher to stream saves to the host.
+#[cfg(feature = "embed")]
+pub fn mem_bytes(path: &str) -> Option<Vec<u8>> {
+    FS.with(|fs| match fs.borrow().entries.get(path)? {
+        Entry::Mem(b) => Some(b.to_vec()),
+        Entry::Blob { .. } => None,
+    })
+}
+
 /// Wait until no fetch is running.
 pub async fn idle() {
     while inflight() > 0 {

@@ -27,6 +27,33 @@ pub enum SaveTarget {
     As,
 }
 
+/// A save produced on wasm32, waiting for the embed bridge to forward it to the host page.
+/// The same bytes a standalone build would offer as a browser download.
+#[cfg(target_arch = "wasm32")]
+pub struct PendingSave {
+    pub name: String,
+    pub bytes: std::sync::Arc<Vec<u8>>,
+}
+
+/// Where Save bytes go in the browser. The standalone build downloads; an embedding host page
+/// (craft:1) takes over persistence and the download is suppressed unless it opted back in.
+#[cfg(target_arch = "wasm32")]
+#[derive(Clone)]
+pub enum SaveOutput {
+    /// Offer the bytes as a browser download (the standalone web build).
+    Download,
+    /// Hand the bytes to the craft:1 host bridge; `also_download` keeps the browser download
+    /// alongside the bridge write-back (the embed page's `?download=1`).
+    Embed { tx: std::sync::mpsc::Sender<PendingSave>, also_download: bool },
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Default for SaveOutput {
+    fn default() -> Self {
+        Self::Download
+    }
+}
+
 impl PdfCraftApp {
     /// Apply an edit to the active document. Returns `true` on success; failures are shown.
     pub fn apply_edit(&mut self, edit: Edit) -> bool {
@@ -414,21 +441,41 @@ impl PdfCraftApp {
                     return false;
                 }
             };
-            match download(&name, &bytes) {
+            match self.deliver_save(&name, &bytes) {
                 Ok(()) => {
                     let _ = self.session.mark_saved(id, bytes, None);
                     if let Some(doc) = self.session.get(id) {
                         self.views[index].document_changed(&doc.info);
                     }
-                    self.notify_fmt("Downloaded {name}", &[("name", &name)]);
+                    // In an embed the bytes go to the host (save write-back); standalone downloads.
+                    let done = match &self.save_output {
+                        SaveOutput::Embed { .. } => "Saved {name}",
+                        SaveOutput::Download => "Downloaded {name}",
+                    };
+                    self.notify_fmt(done, &[("name", &name)]);
                     after(self);
                     true
                 }
                 Err(e) => {
-                    self.notify_fmt("Couldn't download {name}: {e}", &[("name", &name), ("e", &e.to_string())]);
+                    self.notify_fmt("Couldn't save {name}: {e}", &[("name", &name), ("e", &e.to_string())]);
                     false
                 }
             }
+        }
+    }
+
+    /// Deliver save bytes on wasm32: a browser download normally, or the craft:1 embed bridge
+    /// when a host page took over persistence (the download stays too when the host asked for it).
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn deliver_save(&self, name: &str, bytes: &std::sync::Arc<Vec<u8>>) -> Result<(), String> {
+        match &self.save_output {
+            SaveOutput::Embed { tx, also_download } => {
+                if *also_download {
+                    download(name, bytes)?;
+                }
+                tx.send(PendingSave { name: name.to_string(), bytes: bytes.clone() }).map_err(|e| e.to_string())
+            }
+            SaveOutput::Download => download(name, bytes),
         }
     }
 

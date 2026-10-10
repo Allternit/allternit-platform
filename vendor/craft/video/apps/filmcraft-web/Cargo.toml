@@ -12,9 +12,17 @@ workspace = true
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+default = []
+# craft:1 host-page embed protocol (vendor/craft/craft-host/PROTOCOL.md): loaded with
+# `?embed=1&origin=<parent>` in a sandboxed iframe, the app speaks postMessage through the
+# `craft-host` bridge instead of exposing the raw `window.filmcraft` object.
+embed = ["dep:craft-host"]
+
 # Everything is wasm32-only: on other targets this crate is empty (so `cargo test --workspace`
 # and clippy stay cheap). Build with `cargo xtask web` (see docs/web.md).
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+craft-host = { path = "../../../craft-host", optional = true }
 filmcraft-engine = { workspace = true }
 filmcraft-ui-egui = { workspace = true }
 filmcraft-media = { workspace = true }

@@ -117,6 +117,8 @@ use pdfcraft_engine::{DocId, Session};
 
 pub use canvas::{DocView, RasterMemory};
 pub use editing::{CloseRequest, SaveTarget};
+#[cfg(target_arch = "wasm32")]
+pub use editing::{PendingSave, SaveOutput};
 pub use files::{ExtractDraft, FilePurpose, FileRequest, RotateDraft, SplitDraft, SplitMode, SplitPlan};
 pub use recovery::{AUTOSAVE_SECS, RecoveryMeta, RecoveryStore};
 use theme::{ThemeKind, ThemePreference};
@@ -430,6 +432,9 @@ pub struct PdfCraftApp {
     pub close_request: Option<CloseRequest>,
     /// Save to this path instead of asking (tests and automation).
     pub save_override: Option<String>,
+    /// Where Save bytes go in the browser: a download, or the craft:1 host bridge when embedded.
+    #[cfg(target_arch = "wasm32")]
+    pub save_output: SaveOutput,
     /// Document Properties ▸ Description fields being edited: (document, Title/Author/Subject/Keywords).
     pub props_draft: Option<(DocId, [String; 4])>,
     /// Document Properties ▸ Initial View (and reading options) being edited.
@@ -692,6 +697,8 @@ impl PdfCraftApp {
             os_events: None,
             close_request: None,
             save_override: None,
+            #[cfg(target_arch = "wasm32")]
+            save_output: SaveOutput::default(),
             props_draft: None,
             view_draft: None,
             requests: Default::default(),

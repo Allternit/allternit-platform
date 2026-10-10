@@ -1091,6 +1091,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "craft-host"
+version = "0.1.0"
+dependencies = [
+ "js-sys",
+ "log",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
 name = "crc32fast"
 version = "1.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3940,10 +3952,12 @@ dependencies = [
 name = "pdfcraft-web"
 version = "0.5.0"
 dependencies = [
+ "craft-host",
  "eframe",
  "egui",
  "js-sys",
  "pdfcraft-ui-egui",
+ "serde_json",
  "wasm-bindgen-futures",
  "web-sys",
 ]

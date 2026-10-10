@@ -9,10 +9,17 @@ publish = false
 [lints]
 workspace = true
 
+[features]
+# craft:1 host-page embed (vendor/craft/craft-host/PROTOCOL.md): postMessage bridge, command
+# channel and save write-back when the app is loaded with `?embed=1&origin=<parent-origin>`.
+embed = ["dep:craft-host", "dep:serde_json"]
+
 [dependencies]
 pdfcraft-ui-egui = { workspace = true }
 eframe = { workspace = true, features = ["default_fonts", "glow", "persistence", "accesskit"] }
 egui = { workspace = true }
+craft-host = { path = "../../../craft-host", optional = true }
+serde_json = { workspace = true, optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures = "0.4"

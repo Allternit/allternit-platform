@@ -20,6 +20,8 @@
 
 pub mod api;
 pub mod audio;
+#[cfg(feature = "embed")]
+pub mod embed;
 pub mod fs;
 pub mod import;
 pub mod opfs;
@@ -66,6 +68,13 @@ pub fn set_context(ctx: egui::Context) {
     CTX.with(|c| *c.borrow_mut() = Some(ctx));
 }
 
+/// The egui context registered by [`set_context`], for the embed bridge's hooks (invoking a
+/// command needs it, as it does in the per-frame control handler).
+#[cfg(feature = "embed")]
+pub fn context() -> Option<egui::Context> {
+    CTX.with(|c| c.borrow().clone())
+}
+
 /// Environment facts reported by `filmcraft.info()` (backend, isolation, codecs…).
 pub fn set_info(key: &str, v: serde_json::Value) {
     INFO.with(|i| {
@@ -108,6 +117,8 @@ impl eframe::App for WebApp {
             a.pump();
         }
         self.autosave.tick(&self.app.session, ctx);
+        #[cfg(feature = "embed")]
+        crate::embed::pump(self);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
@@ -140,7 +151,16 @@ pub async fn start(canvas_id: String) -> Result<(), JsValue> {
     let recovered = if query_flag("fresh") || query_flag("norecover") { None } else { recovery::load_snapshot().await };
     webcodecs::probe().await;
 
-    api::install()?;
+    // Embed mode (`?embed=1&origin=…`): the page is driven over the craft:1 postMessage bridge
+    // (vendor/craft/craft-host/PROTOCOL.md) and the raw `window.filmcraft` object stays
+    // uninstalled — the bridge is the only, authenticated control surface.
+    #[cfg(feature = "embed")]
+    let embedded = crate::embed::init();
+    #[cfg(not(feature = "embed"))]
+    let embedded = false;
+    if !embedded {
+        api::install()?;
+    }
     import::install_drop_handlers()?;
 
     let demo = !query_flag("empty");
@@ -162,6 +182,12 @@ pub async fn start(canvas_id: String) -> Result<(), JsValue> {
                 let ctx = cc.egui_ctx.clone();
                 fs::set_on_data(move || ctx.request_repaint());
                 fs::set_on_write(|path, data| {
+                    #[cfg(feature = "embed")]
+                    if crate::embed::suppress_download() {
+                        // Embed mode: the host persists saves (`craft:save-request`); the
+                        // hidden-anchor download would fire inside a sandboxed iframe for nothing.
+                        return;
+                    }
                     if let Err(e) = fs::download(path, data) {
                         log::warn!("download {path}: {e:?}");
                     }
@@ -213,7 +239,17 @@ pub async fn start(canvas_id: String) -> Result<(), JsValue> {
                 }
                 set_info("audio", json!(audio.is_some()));
                 set_info("restoredMedia", json!(restored));
-                Ok(Box::new(WebApp { app, audio, autosave: recovery::Autosave::default() }))
+                let web = WebApp { app, audio, autosave: recovery::Autosave::default() };
+                #[cfg(feature = "embed")]
+                {
+                    // Embed mode shares the app with the craft:1 bridge, which must reach it
+                    // between frames to run host commands; eframe owns the `SharedApp` wrapper.
+                    let shared = std::rc::Rc::new(std::cell::RefCell::new(web));
+                    crate::embed::attach(shared.clone());
+                    return Ok(Box::new(crate::embed::SharedApp { inner: shared }));
+                }
+                #[cfg(not(feature = "embed"))]
+                Ok(Box::new(web))
             }),
         )
         .await?;

@@ -10,6 +10,10 @@ publish = false
 # Open HEIC/HEIF photos (the optional photocraft-heif crate). Not default so distributors choose
 # it; official builds (CI, packaging/, release) build with `--features heif`.
 heif = ["photocraft-codecs/heif"]
+# craft:1 host-page embed bridge: with `?embed=1&origin=<parent>` the app speaks the postMessage
+# protocol from ../craft-host/PROTOCOL.md (host-seeded opens, command channel, save write-back)
+# instead of showing its standalone UI. See src/embed.rs.
+embed = ["dep:craft-host", "dep:serde_json"]
 
 [lints]
 workspace = true
@@ -26,6 +30,8 @@ photocraft-doc = { workspace = true }
 photocraft-ui-egui = { workspace = true }
 egui = { workspace = true }
 log = { workspace = true }
+craft-host = { path = "../../../craft-host", optional = true }
+serde_json = { workspace = true, optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # `wgpu` pulls egui-wgpu's defaults: WebGPU plus the WebGL2 fallback.

@@ -3,6 +3,9 @@
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+#[cfg(all(feature = "embed", target_arch = "wasm32"))]
+mod embed;
+
 #[cfg(target_arch = "wasm32")]
 fn main() {
     use eframe::wasm_bindgen::JsCast;
@@ -51,6 +54,14 @@ fn main() {
                             ctx.request_repaint();
                         });
                     }
+                    // craft:1 host-page embed: with `?embed=1&origin=…` the app speaks the
+                    // postMessage protocol (open/command/theme/save write-back) instead of
+                    // standalone downloads; without it this returns the plain app.
+                    #[cfg(feature = "embed")]
+                    {
+                        return Ok(embed::start_embedded(app));
+                    }
+                    #[cfg(not(feature = "embed"))]
                     Ok(Box::new(app))
                 }),
             )

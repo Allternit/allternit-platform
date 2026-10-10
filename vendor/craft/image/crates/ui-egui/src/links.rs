@@ -101,7 +101,7 @@ mod tests {
         let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), Default::default());
         let ctx = egui::Context::default();
         for (id, url) in [("help.github", "https://github.com/storytold/photocraft")] {
-            let r = crate::menus::invoke(&mut app, &ctx, serde_json::json!({})).unwrap();
+            let r = crate::menus::invoke(&mut app, &ctx, id, serde_json::json!({})).unwrap();
             assert_eq!(r["url"], url);
             assert_eq!(app.ui.status, format!("Opened {url}"));
         }

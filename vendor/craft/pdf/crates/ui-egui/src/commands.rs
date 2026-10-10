@@ -25,6 +25,13 @@ impl PdfCraftApp {
             && (spec.needs != commands::Needs::TwoPageView || self.active.and_then(|i| self.views.get(i)).is_some_and(crate::DocView::cover_applies))
     }
 
+    /// Whether `id` names a registered engine command — the catalogue ids [`Self::execute`] runs
+    /// (the same list the menus, palette and MCP/CLI expose). Unknown ids are refused here so a
+    /// host bridge can say "unknown/disallowed command" without a side-effect notification.
+    pub fn command_known(id: &str) -> bool {
+        commands::command(id).is_some()
+    }
+
     /// Run a registered command by id. Returns `false` when the id is unknown or the command
     /// is disabled right now (the user is told why).
     ///

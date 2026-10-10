@@ -111,6 +111,41 @@ pub const UI_SET_FIELDS: [&str; 29] = [
 /// the same ceiling as the steps of one batch request.
 pub const MAX_CLICKS: u64 = 256;
 
+/// Every control method [`dispatch`] answers, for adapters (e.g. the craft:1 web embed) that
+/// route an external command name onto the control channel: an incoming name that matches this
+/// list is a control method; anything else is treated as an engine/UI command id and run through
+/// `engine.execute` (which falls back to the UI command table).
+pub const METHODS: [&str; 28] = [
+    "ui.context.choose",
+    "engine.execute",
+    "engine.commands",
+    "jobs.list",
+    "jobs.cancel",
+    "ui.menu.list",
+    "ui.menu.invoke",
+    "ui.inspect",
+    "ui.set",
+    "ui.dialog.open",
+    "ui.dialog.set",
+    "ui.dialog.confirm",
+    "ui.dialog.apply",
+    "ui.dialog.cancel",
+    "ui.window.open",
+    "ui.window.close",
+    "ui.pointer",
+    "ui.click",
+    "ui.move",
+    "ui.key",
+    "ui.type",
+    "ui.resize",
+    "ui.gpu.simulateLoss",
+    "ui.focus",
+    "ui.screenshot",
+    "app.open",
+    "app.save",
+    "app.quit",
+];
+
 fn ok(v: Value) -> Outcome {
     Outcome::Done(json!({"ok": true, "result": v}))
 }

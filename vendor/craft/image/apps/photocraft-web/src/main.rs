@@ -8,16 +8,23 @@
 //! - no TCP control server (browsers can't listen on sockets);
 //! - File → Open uses the browser file picker; bytes arrive asynchronously through
 //!   `Services::inbox`;
-//! - saving/exporting triggers a browser download;
+//! - saving/exporting triggers a browser download — unless the app is embedded with
+//!   `?embed=1&origin=<parent>`, when it speaks the craft:1 postMessage protocol instead
+//!   (`embed` feature): host-seeded opens through the inbox, the control channel over
+//!   postMessage, and saves stream back to the host (see `embed.rs`);
 //! - dropped files are read asynchronously by `web::WebShell` and delivered through the inbox.
 //!
 //! URL query flags: `?cpu` forces the CPU canvas path (same as `PHOTOCRAFT_CPU_CANVAS=1`);
-//! `?webgl` forces the WebGL2 backend instead of WebGPU.
+//! `?webgl` forces the WebGL2 backend instead of WebGPU; `?download=1` (embed mode) keeps the
+//! browser download alongside the craft:1 save write-back.
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 #[cfg(any(target_arch = "wasm32", test))]
 mod preset_bridge;
+
+#[cfg(all(target_arch = "wasm32", feature = "embed"))]
+mod embed;
 
 #[cfg(target_arch = "wasm32")]
 mod indexed_presets;
