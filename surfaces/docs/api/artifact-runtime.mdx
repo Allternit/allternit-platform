@@ -117,8 +117,11 @@ accepted only from the page's parent window.
 
 All routes sit under `/api/v2/artifact-runtime/{id}` and need a signed-in
 caller with at least `view` access to the artifact. No access answers `404`.
-Only `page` and `card` artifacts at `runtime_version` 2 run; anything else is
-`409` with `legacy_artifact` or `not_a_page`.
+Only `page` and `card` artifacts at `runtime_version` 2 run apps; anything
+else is `409` with `legacy_artifact` or `not_a_page`. The **storage** routes
+also serve `image` (and `video`) artifacts that declare `storage: true` — the
+craft editors keep their layered source documents there; for those kinds
+storage is allowed but AI and connectors stay `409 not_a_page`.
 
 | Method and path | Purpose |
 | --- | --- |

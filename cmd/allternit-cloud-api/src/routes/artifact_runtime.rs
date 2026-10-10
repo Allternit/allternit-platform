@@ -105,7 +105,7 @@ async fn ctx(state: &ApiState, headers: &HeaderMap, id: &str) -> Result<Ctx> {
 
 fn deny(reason: Denied) -> ArtifactError {
     let status = match reason {
-        Denied::NotDeclared | Denied::LegacyArtifact | Denied::NotAPage => StatusCode::CONFLICT,
+        Denied::NotDeclared | Denied::LegacyArtifact | Denied::NotAPage | Denied::NotStorageKind => StatusCode::CONFLICT,
         Denied::OrgOff | Denied::OutsideInvitee => StatusCode::FORBIDDEN,
     };
     let code = match reason {
@@ -114,6 +114,7 @@ fn deny(reason: Denied) -> ArtifactError {
         Denied::OutsideInvitee => "outside_invitee",
         Denied::LegacyArtifact => "legacy_artifact",
         Denied::NotAPage => "not_a_page",
+        Denied::NotStorageKind => "not_a_storage_kind",
     };
     ArtifactError::coded(status, code, reason.message())
 }
