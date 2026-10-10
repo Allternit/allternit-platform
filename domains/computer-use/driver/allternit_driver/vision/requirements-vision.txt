@@ -1,0 +1,4 @@
+# Installed by the driver into <state-dir>/vision/site on the first vision read (client.py).
+# Versions verified on Apple silicon, 2026-10-09.
+pillow==12.3.0
+numpy==2.4.6

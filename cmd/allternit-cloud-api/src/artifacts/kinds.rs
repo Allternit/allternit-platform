@@ -74,6 +74,11 @@ pub const KINDS: &[KindSpec] = &[
         default_body_format: "text/plain",
         body_formats: &["text/plain"],
     },
+    KindSpec {
+        kind: "pdf",
+        default_body_format: "application/pdf",
+        body_formats: &["application/pdf"],
+    },
 ];
 
 pub fn spec(kind: &str) -> Option<&'static KindSpec> {
@@ -119,7 +124,7 @@ mod tests {
             names,
             [
                 "doc", "sheet", "slides", "design", "dashboard", "motion", "page", "card",
-                "diagram", "image", "code"
+                "diagram", "image", "code", "pdf"
             ]
         );
         for spec in KINDS {

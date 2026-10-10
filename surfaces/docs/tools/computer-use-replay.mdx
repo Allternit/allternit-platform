@@ -1,0 +1,132 @@
+---
+title: 'Replay cache and skills'
+description: 'A subtask that ran once replays its recorded steps with no decisions, heals a step whose element moved, and can be saved as a named skill'
+---
+
+<Note>
+**Status:** Implementation IMPLEMENTED × Exposure PUBLIC PREVIEW (driver phase D4). Code: `cmd/allternit-api/src/computer_replay.rs` (key, locators, store) and the replay path in `cmd/allternit-api/src/computer_subtask.rs`. Store: the `computer_replays` table (migration V246). Contract: the `cache` and `save_as` fields of `run_subtask`, plus the `run_skill` and `skills` members of `allternit.computer.v2` (see [Computer toolset](/tools/computer-toolset)).
+</Note>
+
+## Overview
+
+Most computer-use work repeats: the same form, the same settings page, the same export. The first time, [`run_subtask`](/tools/computer-use-decisions) decides each step. After that the steps are known, so the replay cache runs them again with **zero decisions and zero planner calls**, checking each step as it goes. When the app changes under a recording, only the step that broke is worked out again.
+
+The design follows Stagehand's action cache and self-healing (MIT), on top of the [Allternit Driver](/tools/allternit-driver) element map instead of a browser DOM.
+
+## The cache key
+
+```
+key = hash(goal, app + window shape, input names)
+```
+
+- **Goal**: whitespace and case folded; input values in it become `{{name}}` placeholders.
+- **App**: the `app` the call names, else the app of the first read.
+- **Window shape**: the window title with input values templated and digit runs folded, so `Invoice 1042 — Ada` and `Invoice 7 — Bo` are the same window.
+- **Input names, not values**: the values are variables. The same subtask with a new email address replays the same steps and types the new address.
+
+Keys are per person. A different goal, app, window shape or set of input names is a miss.
+
+## What a recording holds
+
+Only subtasks with at least one exact `success` check (`role`, `name`, `text`, `value`, `gone`, `enabled`) are cached. A replay is judged by `verify`, never by a decision, so a subtask whose only checks are `{ask}` runs uncached (`cache.status: "uncached"`).
+
+A run records each step that moved the UI. A recording is stored only once the subtask's exact success checks hold. Each step stores:
+
+| Field | What |
+|---|---|
+| `op` | `click`, `press` (with its key) or `set_value` (with the input's **name**) |
+| `locator.id` | the driver's element id, a hash of role, name and tree path |
+| `locator.role`, `locator.name` | the element's role and its name, with input values templated |
+| `locator.path` | the tree path (`read_ui` with `paths: true`) |
+| `locator.bbox` | the element's box relative to the window |
+| `locator.crop` | an 8x8 pixel hash (`read_ui` with `crops: true`, macOS) |
+| `check` | what the step changed, in `verify` syntax: an element that appeared (`{role, name}`) or one that went away (`{role, name, gone: true}`). A `set_value` step checks the field's value instead |
+
+## Replay
+
+1. **Speculative batch.** Every remaining step goes into one `run_batch`. Each step waits for its recorded element id (`wait_for`), acts, and checks its `expect`. Input values are substituted now. The batch stops at the first failed check.
+2. **A moved element** (its `wait_for` timed out) is found again on a fresh read, in this order. Ambiguity counts as a miss, never a guess:
+   - the same id;
+   - the one element of that role with that name;
+   - the one element with that tree path (renamed in place);
+   - the one element of that role in the same place, with a matching pixel hash when the name changed.
+3. **Re-infer once.** If nothing matches, one typed decision picks the element from the current screen's options of the same kind (click, press, or typing the same input). That is one decision for that step only. The step then runs with its check, and the replay continues with the next batch.
+4. **Success.** The exact success checks run with `verify`. A clean replay counts a hit. A healed replay rewrites the entry (same id, new locators) so the next run is clean again.
+
+If a step runs but its check fails, re-inference can't place it, or the success checks don't hold, the replay **diverges**. The decision loop takes over from the current screen, and the steps that already replayed stay in the recording. If the run then succeeds, its recording replaces the entry.
+
+Replayed steps take the same path as every other step: control lease, declarative policy, a durable audit row per step, and the subtask's single approval. Each replayed step is also checked against this call's `constraints`. A recorded click on an element named like send, pay or delete, or an op the call doesn't allow, diverges into the decision loop, and that loop applies the usual rules.
+
+## Secrets
+
+- **Input values are never stored.** Every place a value appeared (goal, window title, element names, labels, checks) holds `{{name}}`, and an entry that still contains a value of 3 or more characters is refused, not stored. A shorter value is templated only where a whole string equals it.
+- **Element values are never recorded.** Locators keep role, name, path, box and pixel hash. Checks use names only, never secure fields.
+- **Credentials never pass through a subtask.** `use_credential` is its own member and isn't a step a subtask can take.
+
+## Contract
+
+`run_subtask` gains two fields:
+
+| Field | What |
+|---|---|
+| `cache` | `auto` (default): replay a recording when one exists, record one when not. `refresh`: ignore the recording and record anew. `off`: neither read nor write |
+| `save_as` | save this run's recording as a named skill once it succeeds (overwrites a skill of that name) |
+
+The result carries a `cache` block:
+
+```json
+{
+  "status": "done",
+  "decisions": 0,
+  "cache": { "status": "hit", "replayed_steps": 4, "healed_steps": [], "stored": true, "key": "9f2c…", "skill": "expense-report" }
+}
+```
+
+`cache.status` is `hit` (replayed, nothing moved), `healed` (replayed, `healed_steps` lists each step and how it was found again: `name`, `path`, `pixels` or `decision`), `miss` (no recording yet), `diverged` (`cache.reason` says why), `uncached` (no exact success check) or `off`.
+
+## Skills
+
+A recording saved with `save_as` is a **skill**: a taught routine any model can run by name.
+
+| Member | Fields | What |
+|---|---|---|
+| `run_skill` | `name`, `inputs?`, `app?` / `pid?` / `window_id?`, `max_steps?`, `budget_ms?` | Runs the skill's recording with these input values. Its goal and success checks are the skill's own, with the values substituted. It replays even in a window whose title differs and heals the same way. Every input name is required and unknown names are refused. Approved once on non-sandbox targets, like `run_subtask` |
+| `skills` | `forget?` | Lists the saved skills: name, goal, app, input names, step count, runs, heals, last use. `forget` deletes one first |
+
+```json
+{ "member": "run_subtask", "input": {
+  "goal": "File the expense report",
+  "inputs": [{ "name": "amount", "value": "42.10" }, { "name": "memo", "value": "Team lunch" }],
+  "success": [{ "role": "StaticText", "name": "Report submitted" }],
+  "save_as": "expense-report"
+} }
+
+{ "member": "run_skill", "input": {
+  "name": "expense-report",
+  "inputs": [{ "name": "amount", "value": "18.00" }, { "name": "memo", "value": "Parking" }]
+} }
+```
+
+## Store
+
+`computer_replays` (SQLite, migration V248) holds one row per owner and key. It stores the templated goal, app, window shape, input names, templated success checks, steps, hit and heal counts, timestamps, and an optional unique name. A newer recording of the same key or name replaces the older one.
+
+## Relation to the task suite
+
+The [task suite](/tools/computer-use-suite) has its own `replay` mode. That mode re-sends a passing run's raw toolset calls to measure determinism offline, and it makes no cache entries. The replay cache is the product path. In the suite's `subtask` mode, the second run of a repeated task (`--repeat`) is a cache hit.
+
+## Tests
+
+Unit tests in `computer_replay.rs` cover the key (values out, names in), templating, locator resolution tiers, step checks, the store and the secret guard. Tests in `computer_subtask.rs` drive the loop over a simulated app and check:
+
+- record, then replay with zero decisions and new values;
+- a stale step re-inferred with one decision and the entry rewritten;
+- another window or input name is a miss, and `off` and `{ask}`-only runs never write;
+- a saved skill runs by name.
+
+## Related pages
+
+- [How computer use decides](/tools/computer-use-decisions)
+- [Computer toolset](/tools/computer-toolset)
+- [Allternit Driver](/tools/allternit-driver)
+- [Computer-use task suite](/tools/computer-use-suite)

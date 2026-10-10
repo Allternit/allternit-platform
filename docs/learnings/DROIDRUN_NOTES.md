@@ -1,5 +1,7 @@
 # DroidRun Mobile Harness P1 Integration Notes
 
+> **Historical (2026-10-09):** this provider and the canonical environment/lease routes it used were removed in the D0 cleanup. Computers are driven through the computer toolset; see `surfaces/docs/core/canonical-computer-use.mdx`.
+
 **Worktree:** `~/Desktop/allternit-workspace/allternit-session-droidrun-p1`  
 **Branch:** `session/droidrun-p1`  
 **Provider ID:** `mobile.droidrun.canonical`

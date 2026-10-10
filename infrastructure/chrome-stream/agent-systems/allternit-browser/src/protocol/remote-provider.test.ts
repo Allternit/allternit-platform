@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { BrowserEventSchema, COMPUTER_USE_PROTOCOL_VERSION } from '@allternit/computer-use-protocol';
-import { ExtensionTabProvider, createBrowserUseProvider, createStagehandProvider } from './remote-provider.js';
+import { ExtensionTabProvider, RemoteBrowserProvider, createStagehandProvider } from './remote-provider.js';
 
 describe('remote browser providers', () => {
-  it('validates Browser Use provider events from the remote endpoint', async () => {
+  it('validates remote provider events from the remote endpoint', async () => {
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify([
       BrowserEventSchema.parse({
         schemaVersion: COMPUTER_USE_PROTOCOL_VERSION,
@@ -16,7 +16,19 @@ describe('remote browser providers', () => {
         payload: { actionId: 'action-1', state: 'committed' },
       }),
     ]), { status: 200 }));
-    const provider = createBrowserUseProvider({ baseUrl: 'https://browser-use.internal', fetchImpl });
+    const provider = new RemoteBrowserProvider({
+      baseUrl: 'https://browser.internal',
+      fetchImpl,
+      capabilities: {
+        provider: 'local-playwright',
+        capabilities: ['navigate'],
+        local: false,
+        attachedToUserSession: false,
+        supportsPrivateNetwork: false,
+        supportsPersistentProfile: false,
+        limits: {},
+      },
+    });
     const events = await provider.execute({
       schemaVersion: COMPUTER_USE_PROTOCOL_VERSION,
       actionId: 'action-1',
@@ -26,9 +38,9 @@ describe('remote browser providers', () => {
       reason: 'Open page',
       input: { url: 'https://example.com/' },
     });
-    expect(provider.capabilities.provider).toBe('browser-use');
+    expect(provider.capabilities.provider).toBe('local-playwright');
     expect(events[0].type).toBe('action.state_changed');
-    expect(fetchImpl).toHaveBeenCalledWith(new URL('/v1/browser/actions', 'https://browser-use.internal'), expect.objectContaining({
+    expect(fetchImpl).toHaveBeenCalledWith(new URL('/v1/browser/actions', 'https://browser.internal'), expect.objectContaining({
       method: 'POST',
     }));
   });
