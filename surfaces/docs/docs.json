@@ -349,6 +349,7 @@
               "tools/computer-use-decisions",
               "tools/computer-safety",
               "tools/computer-use-replay",
+              "tools/computer-parallel",
               "tools/computer-credentials",
               "tools/strict-tool-use",
               "tools/build-a-tool",

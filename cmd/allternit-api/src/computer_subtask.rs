@@ -26,6 +26,14 @@
 //! Every decision's outcome is written back (the `PATCH /v1/decisions/:id`
 //! store) for the E5 flywheel.
 //!
+//! API over GUI (UFO2): `api_options` names MCP tools / API actions the
+//! planner holds that could do the goal without the screen. They are offered
+//! ahead of every GUI option on the first step (before any GUI action ran,
+//! so a half-done GUI path never doubles up with an API call); a pick ends
+//! the subtask with status `use_api` and the planner makes that call itself.
+//! allternit-api never runs the planner's MCP tools on its behalf: it doesn't
+//! hold them, and their arguments are the planner's to build.
+//!
 //! The person approves the subtask once (its goal and literal inputs, on
 //! non-sandbox targets); its steps carry that grant and cannot type anything
 //! that isn't one of the inputs.
@@ -115,7 +123,7 @@ const DECISION_BUDGET_CAP_MS: u64 = 8_000;
 /// control back to the planner instead (with a compact state), which is the
 /// point of the loop. Empty when no fast backend is configured: then every
 /// step hands back. Shared with the safety monitor.
-fn fast_backends() -> Vec<&'static str> {
+pub(crate) fn fast_backends() -> Vec<&'static str> {
     crate::computer_safety::fast_backends()
 }
 const DEFAULT_OPS: [&str; 4] = ["click", "set_value", "select", "press"];
@@ -127,6 +135,8 @@ const REPLAY_STEP_TIMEOUT_MS: u64 = 5_000;
 struct Spec {
     goal: String,
     inputs: Vec<(String, String)>,
+    /// MCP tools / API actions the planner offered (tool, description).
+    api: Vec<(String, String)>,
     exact: Vec<Value>,
     fuzzy: Vec<String>,
     ops: HashSet<String>,
@@ -160,6 +170,20 @@ fn parse(input: &Value) -> Result<Spec, Fail> {
     if let Some((dup, _)) = inputs.iter().find(|(n, _)| !seen.insert(n.to_lowercase())) {
         return Err(Fail::from(format!("run_subtask input names must be unique ({dup} repeats)")));
     }
+    let api: Vec<(String, String)> = input
+        .get("api_options")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(|o| {
+                    let tool = o.get("tool")?.as_str()?.trim().to_string();
+                    let what = o.get("description").and_then(Value::as_str).unwrap_or("").trim().to_string();
+                    (!tool.is_empty()).then_some((tool, what))
+                })
+                .take(10)
+                .collect()
+        })
+        .unwrap_or_default();
     let (mut exact, mut fuzzy) = (Vec::new(), Vec::new());
     for check in input.get("success").and_then(Value::as_array).into_iter().flatten() {
         let mut c = check.as_object().cloned().unwrap_or_default();
@@ -192,6 +216,7 @@ fn parse(input: &Value) -> Result<Spec, Fail> {
     Ok(Spec {
         goal,
         inputs,
+        api,
         exact,
         fuzzy,
         ops,
@@ -383,6 +408,8 @@ enum Action {
     Click { id: String },
     Type { id: String, input: usize },
     Press { id: String, key: String },
+    /// Hand the goal to the planner's MCP tool / API action `api[index]`.
+    UseApi { index: usize },
     Done,
     Escalate,
 }
@@ -413,13 +440,26 @@ impl Spec {
 /// The step's options: actionable elements x allowed ops, `type <input>`
 /// into each text field, then done and escalate. Option ids are short and
 /// stable (`o1`…); the action stays on our side, so a decision can only pick
-/// what the host built.
-fn options(spec: &Spec, screen: &Screen, typed: &HashMap<usize, String>, spent: &HashSet<String>) -> Vec<Opt> {
+/// what the host built. While `api_open` (no GUI action has run yet), the
+/// planner's MCP/API options come first: an API call beats GUI clicks when
+/// both can do the goal (UFO2).
+fn options(spec: &Spec, screen: &Screen, typed: &HashMap<usize, String>, spent: &HashSet<String>, api_open: bool) -> Vec<Opt> {
     let mut out = Vec::new();
+    if api_open {
+        for (i, (tool, what)) in spec.api.iter().enumerate() {
+            let what = if what.is_empty() { String::new() } else { format!(": {}", clip(what, 100)) };
+            out.push(Opt {
+                id: String::new(),
+                text: format!("call the API/MCP tool {}{what} (does the whole goal without the GUI)", clip(tool, 80)),
+                action: Action::UseApi { index: i },
+            });
+        }
+    }
+    let gui_from = out.len();
     let can = |op: &str| spec.ops.contains(op);
     let query = spec.query.as_deref().map(str::to_lowercase);
     for e in screen.elements() {
-        if out.len() >= MAX_ELEMENT_OPTIONS {
+        if out.len() - gui_from >= MAX_ELEMENT_OPTIONS {
             break;
         }
         if !enabled(e) || spec.blocked(e).is_some() {
@@ -473,6 +513,7 @@ fn action_key(a: &Action) -> String {
         Action::Click { id } => format!("click:{id}"),
         Action::Type { id, input } => format!("type:{id}:{input}"),
         Action::Press { id, key } => format!("press:{id}:{key}"),
+        Action::UseApi { index } => format!("api:{index}"),
         Action::Done => "done".into(),
         Action::Escalate => "escalate".into(),
     }
@@ -528,6 +569,8 @@ struct Run<'a> {
     cache: Cache,
     /// The step the safety layer refused (hand-back for the planner).
     held: Option<Value>,
+    /// The API/MCP call a `use_api` ending hands to the planner.
+    api_pick: Option<Value>,
 }
 
 impl<'a> Run<'a> {
@@ -1191,7 +1234,7 @@ impl<'a> Run<'a> {
                 }
                 self.step("run_batch", b).await?
             }
-            Action::Done | Action::Escalate => return Ok((true, String::new())),
+            Action::Done | Action::Escalate | Action::UseApi { .. } => return Ok((true, String::new())),
         };
         self.actions += 1;
         if let Some(map) = reply.get("map") {
@@ -1216,7 +1259,7 @@ impl<'a> Run<'a> {
         Ok((ok, detail))
     }
 
-    fn finish(mut self, status: &str, reason: Option<String>, screen: &Screen, success: Value) -> ToolsetResult {
+    fn finish(mut self, status: &str, reason: Option<String>, screen: &Screen, success: Value) -> Value {
         // Verify decisions resolve now: "yes" was right iff the subtask is done.
         let pending = std::mem::take(&mut self.pending);
         for id in pending {
@@ -1261,6 +1304,9 @@ impl<'a> Run<'a> {
         if let Some(step) = self.held.take() {
             body["held_step"] = step;
         }
+        if let Some(api) = self.api_pick.take() {
+            body["api"] = api;
+        }
         if status != "done" {
             body["screen"] = screen.compact(60);
             body["next"] = json!(match status {
@@ -1268,16 +1314,22 @@ impl<'a> Run<'a> {
                 "needs_confirmation" => "The next step (held_step) needs the person's confirmation. If it is what the person asked for, run it yourself with act or run_batch: that call asks the person to approve it.",
                 "paused" => "The safety monitor paused the subtask. Stop and call request_human so a person can look at the screen; don't retry the step on your own.",
                 "denied" => "The next step isn't allowed on this computer (its app/domain lists or a credential binding). Find another way, or ask the person.",
+                "use_api" => "Make the named API/MCP call yourself instead of driving the GUI; the screen is untouched.",
                 _ => "The subtask stopped. Read the screen and decide how to recover.",
             });
         }
-        ToolsetResult {
-            is_error: false,
-            content: vec![text(serde_json::to_string(&body).unwrap_or_else(|_| "{}".into()))],
-            browser_state: None,
-            screen: screen_info(None),
-            error: None,
-        }
+        body
+    }
+}
+
+/// The model-facing result for one subtask body.
+pub(crate) fn as_result(body: &Value) -> ToolsetResult {
+    ToolsetResult {
+        is_error: false,
+        content: vec![text(serde_json::to_string(body).unwrap_or_else(|_| "{}".into()))],
+        browser_state: None,
+        screen: screen_info(None),
+        error: None,
     }
 }
 
@@ -1292,6 +1344,19 @@ pub async fn run(
     input: &Value,
     run_id: &str,
 ) -> Result<ToolsetResult, Fail> {
+    run_body(state, user, computer, target, input, run_id).await.map(|b| as_result(&b))
+}
+
+/// `run`, returning the result body (status, trace, cost) as JSON — what
+/// `run_parallel` and Best-of-N aggregate and judge.
+pub(crate) async fn run_body(
+    state: &Arc<AppState>,
+    user: &AuthUser,
+    computer: &ComputerResponse,
+    target: &Target,
+    input: &Value,
+    run_id: &str,
+) -> Result<Value, Fail> {
     let spec = parse(input)?;
     let io = Live { state, user, computer, target, run_id };
     drive(&io, run_id, spec, None).await
@@ -1316,7 +1381,7 @@ pub async fn run_skill(
     .ok_or_else(|| Fail::from(format!("There is no saved skill named \"{name}\". The skills member lists them; run_subtask with save_as teaches one.")))?;
     let io = Live { state, user, computer, target, run_id };
     let spec = skill_spec(&entry, input)?;
-    drive(&io, run_id, spec, Some(entry)).await
+    drive(&io, run_id, spec, Some(entry)).await.map(|b| as_result(&b))
 }
 
 /// The subtask a skill runs as: its goal and success checks with this call's
@@ -1395,7 +1460,7 @@ pub fn skills(state: &Arc<AppState>, user: &AuthUser, input: &Value) -> Result<T
 /// The loop: first read, the replay cache, then decisions until done,
 /// escalate, `max_steps` or `budget_ms`. `pinned`: a skill's entry, replayed
 /// whatever this screen's key.
-async fn drive(io: &dyn Io, run_id: &str, spec: Spec, pinned: Option<replay::Entry>) -> Result<ToolsetResult, Fail> {
+async fn drive(io: &dyn Io, run_id: &str, spec: Spec, pinned: Option<replay::Entry>) -> Result<Value, Fail> {
     let mode = spec.cache;
     let mut run = Run {
         io,
@@ -1424,6 +1489,7 @@ async fn drive(io: &dyn Io, run_id: &str, spec: Spec, pinned: Option<replay::Ent
             stored: false,
         },
         held: None,
+        api_pick: None,
     };
     let mut screen = Screen::default();
     match drive_loop(&mut run, &mut screen, pinned, mode).await {
@@ -1522,7 +1588,7 @@ async fn drive_loop(run: &mut Run<'_>, screen: &mut Screen, pinned: Option<repla
         }
 
         // One step decision.
-        let opts = options(&run.spec, screen, &typed, &spent);
+        let opts = options(&run.spec, screen, &typed, &spent, run.actions == 0);
         let ctx = run.context(screen, &typed, &history);
         let pairs: Vec<(String, String)> = opts.iter().map(|o| (o.id.clone(), o.text.clone())).collect();
         let d = run.decide("element", &ctx, "Which one action moves the goal forward next?", &pairs).await;
@@ -1540,6 +1606,13 @@ async fn drive_loop(run: &mut Run<'_>, screen: &mut Screen, pinned: Option<repla
         let (option_text, action) = (opt.text.clone(), opt.action.clone());
 
         match action {
+            Action::UseApi { index } => {
+                let (tool, what) = run.spec.api[index].clone();
+                run.trace_decision("element", &d, Some(&option_text), json!({ "api": tool }));
+                run.outcome(&d, "skipped", "handed to the planner's API/MCP call");
+                run.api_pick = Some(json!({ "tool": tool, "description": what }));
+                return Ok(ending("use_api", Some(format!("an API/MCP call does this goal: {tool}")), json!(false)));
+            }
             Action::Escalate => {
                 run.trace_decision("element", &d, Some(&option_text), json!(null));
                 run.outcome(&d, "skipped", "escalated to the planner");
@@ -1655,7 +1728,7 @@ mod tests {
     #[test]
     fn options_offer_literal_inputs_safe_clicks_done_and_escalate() {
         let s = spec(json!({ "goal": "Sign up", "inputs": [{ "name": "full name", "value": "Ada" }, { "name": "email", "value": "ada@example.com" }] }));
-        let opts = options(&s, &form(), &HashMap::new(), &HashSet::new());
+        let opts = options(&s, &form(), &HashMap::new(), &HashSet::new(), true);
         let actions: Vec<&Action> = opts.iter().map(|o| &o.action).collect();
         // Both inputs into the empty field; the email field already holds the email.
         assert!(actions.contains(&&Action::Type { id: "e1".into(), input: 0 }));
@@ -1670,11 +1743,30 @@ mod tests {
         // Opting in to irreversible clicks, and spent actions dropping out.
         let s2 = spec(json!({ "goal": "x", "constraints": { "allow_irreversible": true, "avoid": ["submit"] } }));
         let spent: HashSet<String> = ["click:e4".to_string()].into();
-        let acts: Vec<Action> = options(&s2, &form(), &HashMap::new(), &HashSet::new()).into_iter().map(|o| o.action).collect();
+        let acts: Vec<Action> = options(&s2, &form(), &HashMap::new(), &HashSet::new(), true).into_iter().map(|o| o.action).collect();
         assert!(acts.contains(&Action::Click { id: "e4".into() }));
         assert!(!acts.contains(&Action::Click { id: "e3".into() }), "avoid wins");
-        let acts: Vec<Action> = options(&s2, &form(), &HashMap::new(), &spent).into_iter().map(|o| o.action).collect();
+        let acts: Vec<Action> = options(&s2, &form(), &HashMap::new(), &spent, true).into_iter().map(|o| o.action).collect();
         assert!(!acts.contains(&Action::Click { id: "e4".into() }));
+    }
+
+    #[test]
+    fn api_options_come_ahead_of_gui_steps_until_the_gui_moves() {
+        let s = spec(json!({
+            "goal": "File the bug",
+            "inputs": [{ "name": "full name", "value": "Ada" }],
+            "api_options": [{ "tool": "github.create_issue", "description": "Open an issue" }, { "tool": " " }],
+        }));
+        assert_eq!(s.api.len(), 1, "blank tools are dropped");
+        let opts = options(&s, &form(), &HashMap::new(), &HashSet::new(), true);
+        assert_eq!(opts[0].action, Action::UseApi { index: 0 });
+        assert_eq!(opts[0].id, "o1");
+        assert!(opts[0].text.contains("github.create_issue"));
+        assert!(opts[1..].iter().all(|o| !matches!(o.action, Action::UseApi { .. })), "every GUI option comes after");
+        // Once a GUI action ran, the API path is closed (no doubling up).
+        let later = options(&s, &form(), &HashMap::new(), &HashSet::new(), false);
+        assert!(!later.iter().any(|o| matches!(o.action, Action::UseApi { .. })));
+        assert_eq!(later.len(), opts.len() - 1);
     }
 
     #[test]

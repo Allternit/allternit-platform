@@ -1079,7 +1079,7 @@
     },
     {
       "name": "run_subtask",
-      "description": "Hand a bounded UI subtask (fill a form, search and pick a result, toggle settings) to the fast decision loop instead of driving each step yourself. Give the goal, the literal inputs it may type (it never invents text), success checks in verify syntax, and limits. Each step reads the element map, picks one action from the visible elements x allowed ops with a ~100 ms typed decision (POST /v1/decisions), runs it through the same lease/approval/audit path (predictable steps batched with expect checks), and checks success with verify. Returns a step trace and a status: done, escalated (with the reason and the current screen: continue from there yourself), or failed. One approval covers the whole subtask on this computer. Repeat subtasks replay from the cache with zero decisions (the result's cache block says hit, healed, recorded or miss); only subtasks with at least one exact (non-ask) success check are cached. Input values are never stored, only their names.",
+      "description": "Hand a bounded UI subtask (fill a form, search and pick a result, toggle settings) to the fast decision loop instead of driving each step yourself. Give the goal, the literal inputs it may type (it never invents text), success checks in verify syntax, and limits. Each step reads the element map, picks one action from the visible elements x allowed ops with a ~100 ms typed decision (POST /v1/decisions), runs it through the same lease/approval/audit path (predictable steps batched with expect checks), and checks success with verify. Returns a step trace and a status: done, escalated (with the reason and the current screen: continue from there yourself), or failed. One approval covers the whole subtask on this computer. Repeat subtasks replay from the cache with zero decisions (the result's cache block says hit, healed, recorded or miss); only subtasks with at least one exact (non-ask) success check are cached. Input values are never stored, only their names. With api_options, an MCP/API call you hold is offered ahead of GUI steps (status use_api hands it back to you). With best_of N and computers, N rollouts run on N sandbox computers and a judge picks one by step narratives.",
       "risk": "risky",
       "default_enabled": true,
       "needs_confirm": true,
@@ -1233,10 +1233,252 @@
           "save_as": {
             "type": "string",
             "description": "Save this subtask's recording as a named skill once it succeeds (overwrites a skill of that name). Run it later with run_skill and new input values."
+          },
+          "api_options": {
+            "type": "array",
+            "maxItems": 10,
+            "items": {
+              "type": "object",
+              "properties": {
+                "tool": {
+                  "type": "string",
+                  "description": "The MCP tool or API action you can call yourself (e.g. 'github.create_issue')."
+                },
+                "description": {
+                  "type": "string",
+                  "description": "What it does, in one line."
+                }
+              },
+              "required": [
+                "tool"
+              ],
+              "additionalProperties": false
+            },
+            "description": "MCP tools or API actions you hold that could do this goal without the GUI. They are offered ahead of every GUI option on the first step; if the decision picks one, the subtask stops with status use_api and names it, and you make that call yourself. An API call beats GUI clicks when both exist."
+          },
+          "best_of": {
+            "type": "integer",
+            "description": "Behavior Best-of-N for high-value subtasks: run N rollouts (2-5) at once on N sandbox computers listed in computers, then a judge decision picks one by the rollouts' step narratives. Sandbox/cloud computers only, never the person's own machine. Returns the chosen rollout, why, and every rollout's narrative."
+          },
+          "computers": {
+            "type": "array",
+            "maxItems": 5,
+            "items": {
+              "type": "string"
+            },
+            "description": "With best_of: the sandbox computer ids the rollouts run on, one rollout per computer (at least best_of distinct ids)."
+          },
+          "max_cost_usd": {
+            "type": "number",
+            "description": "With best_of: the cap on decision spend for the whole call in USD (default 0.25, at most 5). The judge may use the planner-class tier only while under it."
           }
         },
         "required": [
           "goal"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "run_parallel",
+      "description": "Run independent bounded subtasks on separate computers at the same time (one run_subtask per computer, each under its own computer's control lease), and get every result back in order. Each subtask names its computer (default: this one) and takes run_subtask's fields. One computer never runs two subtasks at once: a repeated computer, or one another subtask is already driving, is refused. Limits: max_parallel subtasks at once, a total budget_ms, and max_cost_usd on decision spend; subtasks that can't start inside them come back skipped. One approval covers the whole call when any subtask targets a non-sandbox computer.",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": true,
+      "confirm": "non_sandbox",
+      "result_kind": "none",
+      "ack_text": "Ran the subtasks.",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "subtasks": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "items": {
+              "type": "object",
+              "properties": {
+                "computer": {
+                  "type": "string",
+                  "description": "The computer id this subtask runs on (default: the computer this call is made on)."
+                },
+                "goal": {
+                  "type": "string",
+                  "description": "What the subtask must achieve, in one or two sentences (e.g. 'Fill the sign-up form and submit it')."
+                },
+                "inputs": {
+                  "type": "array",
+                  "maxItems": 20,
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "description": "What the value is (e.g. 'email', 'full name')."
+                      },
+                      "value": {
+                        "type": "string",
+                        "description": "The literal text to type."
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "value"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "description": "The only text the subtask may type. Not for secrets: use use_credential."
+                },
+                "success": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 10,
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "description": "An element id from read_ui."
+                      },
+                      "role": {
+                        "type": "string",
+                        "description": "An accessibility role, e.g. button, textfield, checkbox."
+                      },
+                      "name": {
+                        "type": "string",
+                        "description": "Substring match against the element's name/label."
+                      },
+                      "text": {
+                        "type": "string",
+                        "description": "Substring match against the element's displayed text or value."
+                      },
+                      "gone": {
+                        "type": "boolean",
+                        "description": "True: no element may match; false: at least one must."
+                      },
+                      "value": {
+                        "type": "string",
+                        "description": "The element's value must equal this exactly."
+                      },
+                      "enabled": {
+                        "type": "boolean",
+                        "description": "The element's enabled state must equal this."
+                      },
+                      "ask": {
+                        "type": "string",
+                        "description": "A fuzzy yes/no check in plain words (\"Is the confirmation message showing?\"), answered by a typed verify decision over the screen. Use only when role/name/text/value checks can't express it."
+                      }
+                    },
+                    "required": [],
+                    "additionalProperties": false
+                  },
+                  "description": "Checks that all hold when the goal is met, in verify syntax ({role?, name?, text?, value?, gone?, enabled?}) or {ask: '...'} for a fuzzy yes/no. Without checks the loop stops when a decision picks done."
+                },
+                "constraints": {
+                  "type": "object",
+                  "properties": {
+                    "ops": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "click",
+                          "set_value",
+                          "select",
+                          "press",
+                          "focus"
+                        ]
+                      },
+                      "description": "Ops the subtask may use (default click, set_value, select, press)."
+                    },
+                    "avoid": {
+                      "type": "array",
+                      "maxItems": 20,
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Never act on elements whose name contains any of these."
+                    },
+                    "allow_irreversible": {
+                      "type": "boolean",
+                      "description": "Let the subtask click buttons named like send, pay, buy, delete, publish (default false: those hand back to you)."
+                    }
+                  },
+                  "required": [],
+                  "additionalProperties": false
+                },
+                "max_steps": {
+                  "type": "integer",
+                  "description": "Most actions the subtask may take (default 12, at most 40)."
+                },
+                "budget_ms": {
+                  "type": "integer",
+                  "description": "Wall-clock budget in milliseconds (default 60000, at most 300000)."
+                },
+                "app": {
+                  "type": "string",
+                  "description": "App name or bundle id (macOS); default: the frontmost app."
+                },
+                "pid": {
+                  "type": "integer"
+                },
+                "window_id": {
+                  "type": "integer"
+                },
+                "query": {
+                  "type": "string",
+                  "description": "Only consider elements whose name or value contains this text."
+                },
+                "max_elements": {
+                  "type": "integer",
+                  "description": "Cap the elements read per step (default 120)."
+                },
+                "api_options": {
+                  "type": "array",
+                  "maxItems": 10,
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "tool": {
+                        "type": "string",
+                        "description": "The MCP tool or API action you can call yourself (e.g. 'github.create_issue')."
+                      },
+                      "description": {
+                        "type": "string",
+                        "description": "What it does, in one line."
+                      }
+                    },
+                    "required": [
+                      "tool"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "description": "MCP tools or API actions you hold that could do this goal without the GUI. They are offered ahead of every GUI option on the first step; if the decision picks one, the subtask stops with status use_api and names it, and you make that call yourself. An API call beats GUI clicks when both exist."
+                }
+              },
+              "required": [
+                "goal"
+              ],
+              "additionalProperties": false
+            },
+            "description": "Independent subtasks, one per computer. Same fields as run_subtask plus computer."
+          },
+          "max_parallel": {
+            "type": "integer",
+            "description": "Most subtasks running at once (default 4, at most 8)."
+          },
+          "budget_ms": {
+            "type": "integer",
+            "description": "Wall-clock budget for the whole call in milliseconds (default 120000, at most 600000). Each subtask's own budget_ms is cut to what is left when it starts."
+          },
+          "max_cost_usd": {
+            "type": "number",
+            "description": "Cap on decision spend for the whole call in USD (default 0.25, at most 5). Once reached, subtasks not yet started come back skipped."
+          }
+        },
+        "required": [
+          "subtasks"
         ],
         "additionalProperties": false
       }
@@ -1329,5 +1571,5 @@
       }
     }
   ],
-  "note": "Additive over allternit.computer.v1: the 17 pixel members are byte-identical (same names, input fields and Anthropic computer_toolset_20260801 shape). The 9 structured members (read_ui, act, run_batch, verify, request_human, use_credential, run_subtask, run_skill, skills) are backed by the Allternit Driver sidecar and need it on the computer (this-device today; guests gain it with the guest driver image)."
+  "note": "Additive over allternit.computer.v1: the 17 pixel members are byte-identical (same names, input fields and Anthropic computer_toolset_20260801 shape). The 10 structured members (read_ui, act, run_batch, verify, request_human, use_credential, run_subtask, run_parallel, run_skill, skills) are backed by the Allternit Driver sidecar and need it on the computer (this-device today; guests gain it with the guest driver image)."
 }

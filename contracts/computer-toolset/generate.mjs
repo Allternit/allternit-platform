@@ -17,7 +17,7 @@
 // The computer toolset has two contract generations: v1 is the 17-member
 // pixel set (byte-identical to Anthropic's computer_toolset_20260801 and the
 // member list the Claude-native wire entry may carry); v2 is additive (the
-// same 17 plus 9 structured members backed by the Allternit Driver). TS
+// same 17 plus 10 structured members backed by the Allternit Driver). TS
 // keeps `CONTRACTS.computer` on v1 because the Claude-native configs loop
 // must only name native members; v2 is exported as COMPUTER_V2_CONTRACT.
 // Python keys CONTRACTS["computer"] at v2 (a superset: membership checks
@@ -140,9 +140,9 @@ export const CONTRACTS: Record<ToolsetName, ToolsetContract> = {
   computer: COMPUTER_CONTRACT as unknown as ToolsetContract,
   browser: BROWSER_CONTRACT as unknown as ToolsetContract,
 };
-/** allternit.computer.v2: the 17 pixel members plus the 7 driver-backed structured members. */
+/** allternit.computer.v2: the 17 pixel members plus the 8 driver-backed structured members. */
 export const COMPUTER_V2 = COMPUTER_V2_CONTRACT as unknown as ToolsetContract;
-/** Every member of allternit.computer.v2 (the 17 pixel members, then read_ui, act, run_batch, verify, request_human, use_credential, run_subtask, run_skill, skills). */
+/** Every member of allternit.computer.v2 (the 17 pixel members, then read_ui, act, run_batch, verify, request_human, use_credential, run_subtask, run_parallel, run_skill, skills). */
 export const COMPUTER_V2_MEMBER_LIST = COMPUTER_V2.members;`);
   return out.join('\n') + '\n';
 }

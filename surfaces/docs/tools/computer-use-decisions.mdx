@@ -30,6 +30,10 @@ A subtask that ran before skips the loop: the [replay cache](/tools/computer-use
 
 The subtask runs on the **fast tiers only** (the configured chain without the oracle). The oracle is a planner-class model call, so a step that would need it goes back to the planner instead.
 
+## API over GUI
+
+A goal that an MCP tool or an API action can do is faster and steadier through that call than through clicks (Microsoft UFO2's API-over-GUI routing, MIT). allternit-api doesn't hold the planner's MCP tools and doesn't build their arguments, so the planner names the candidates: `api_options: [{ tool, description? }]` (up to 10). On the first step, before any GUI action runs, they are the first options in the decision, ahead of every GUI option. If the decision picks one, the subtask stops untouched with `status: "use_api"` and `api: { tool, description }`, and the planner makes that call itself. After the first GUI action they are no longer offered, so a half-done GUI path never doubles up with an API call. The tool guidance also tells planners to call an MCP tool directly when it plainly does the job.
+
 ## Approvals and safety
 
 On this computer (non-sandbox), `run_subtask` needs one approval for the whole subtask: the person sees the goal and the literal inputs. Its steps carry that grant and can only type those inputs. Lease, policy, the [safety layer](/tools/computer-safety) and audit still run on every step, and every step emits a `computer.action` event for the live view. The grant never covers a step the safety layer flags: an irreversible step, a mutating step in watch mode, or one the monitor wants confirmed ends the subtask with `needs_confirmation` and the step in `held_step`; a monitor pause ends it with `paused`; an app/domain list or credential-binding refusal ends it with `denied`. The planner runs a held step itself (with `act`), which asks the person. Secrets never go in `inputs`; use [`use_credential`](/tools/computer-credentials). The decision contexts wrap the screen text as [untrusted data](/tools/computer-safety#untrusted-observations-spotlighting).
@@ -52,7 +56,7 @@ On this computer (non-sandbox), `run_subtask` needs one approval for the whole s
 }
 ```
 
-`status` is `done`, `escalated` (with `reason`, `screen` and `next`), `needs_confirmation` (with `held_step`), `paused`, `denied` or `failed`. The whole result reaches the planner spotlighted as untrusted screen data. Each step names its decision id, chosen option, backend, latency and confidence.
+`status` is `done`, `escalated` (with `reason`, `screen` and `next`), `needs_confirmation` (with `held_step`), `paused`, `denied`, `use_api` (with `api`) or `failed`. The whole result reaches the planner spotlighted as untrusted screen data. Each step names its decision id, chosen option, backend, latency and confidence.
 
 ## Outcomes feed the flywheel
 
@@ -62,8 +66,13 @@ Every decision's outcome is written back to the decision store, the same record 
 
 Typing into a field no longer borrows key focus through SkyLight's private API, which crashed the driver sidecar on macOS 14 when the app wasn't frontmost. The driver writes the value through accessibility (focus, `AXValue`, read back; about 30–100 ms) and types on the Cua engine only for fields that refuse a value write.
 
+## Parallel and Best-of-N
+
+Independent subtasks on separate computers run together in one `run_parallel` call, and a high-value subtask can run as N rollouts on N sandbox computers with a judge picking one (`best_of`). See [Parallel subtasks and Best-of-N](/tools/computer-parallel).
+
 ## Related pages
 
+- [Parallel subtasks and Best-of-N](/tools/computer-parallel)
 - [Computer toolset](/tools/computer-toolset)
 - [Computer-use safety](/tools/computer-safety)
 - [Allternit Driver](/tools/allternit-driver)

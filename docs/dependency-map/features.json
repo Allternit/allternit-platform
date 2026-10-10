@@ -672,6 +672,10 @@
         {
           "on": "2026-10-09",
           "note": "E5 + E6: flywheel framework only (training stays in the M track, which registers trained heads through the same Head trait). Promotion is judged on accuracy against reported outcomes (default 97% over 200 labelled, not overconfident), demotion under 93%, metrics reset at each transition; safety heads never auto-promote; manual moves only for ALLTERNIT_DECISIONS_ADMINS. Vendor adapters follow the vendors' published docs (hosted decisions API public beta; TypeSafe Jev /v1/systemone), gated by key AND per-project enable (ALLTERNIT_DECISIONS_VENDOR_PROJECTS); not exercised live (metered). compare_backends.py gives a same-decisions latency/accuracy table and refuses metered backends without --allow-metered."
+        },
+        {
+          "on": "2026-10-09",
+          "note": "D7: run_parallel runs independent subtasks on separate computers at once (per-computer target/lease/audit, one input owner per computer via a process-wide registry, max_parallel/budget_ms/max_cost_usd); run_subtask best_of N runs N rollouts on N sandbox computers only (refused on the person's own machine) and a judge decision picks one by step narratives (computer_parallel.rs). run_subtask api_options offers the planner's MCP/API calls ahead of GUI steps (status use_api). Subtasks on cloud computers wait for the guest driver image (D1b)."
         }
       ],
       "evidence": [

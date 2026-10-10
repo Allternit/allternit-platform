@@ -156,6 +156,8 @@ const PREFER_STRUCTURED = [
 const PREFER_SUBTASK = [
   "Plan, then delegate: give each bounded UI step sequence (fill a form, search and pick, toggle settings) to run_subtask with the goal, the literal inputs it may type and success checks, instead of choosing every click yourself.",
   "A typical task is one run_subtask call plus your final answer. Keep your own calls for planning, for judgment the subtask hands back (status escalated: continue from the screen it returns), and for steps outside the UI.",
+  "API over GUI: when one of your MCP tools or an API does the goal, call it instead of driving the screen; when unsure, pass the candidates as run_subtask api_options (status use_api names the one to call).",
+  "Independent subtasks on separate computers go in one run_parallel call. For a high-value subtask, best_of N with N sandbox computers runs N rollouts and a judge picks one by their step narratives (never on the person's own machine).",
 ].join(" ")
 
 export function toolDescription(toolset: ToolsetName, choice: AdapterChoice, members: readonly ToolsetMemberSpec[]): string {
