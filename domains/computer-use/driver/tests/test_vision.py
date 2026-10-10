@@ -293,7 +293,7 @@ class ReadActTest(unittest.TestCase):
         res = d.act({"id": ids[0], "op": "click"})
         self.assertEqual(res["status"], "done")
         # Mark 1 centre (120, 50) px, window at (100, 50) pt, 2 px/pt -> desktop px (320, 150).
-        self.assertEqual(cua.calls[-1], ("click", {"scope": "desktop", "x": 320.0, "y": 150.0}))
+        self.assertEqual(cua.calls[-1], ("click", {"pid": 7, "window_id": 9, "x": 120.0, "y": 50.0}))  # window-local px, any display
         res = d.act({"id": ids[1], "op": "set_value", "value": "hi"})
         self.assertEqual([c[0] for c in cua.calls[-3:]], ["click", "hotkey", "type_text"])
         self.assertEqual(d.router.table()["sources"]["Paint"]["source"], "vision")
