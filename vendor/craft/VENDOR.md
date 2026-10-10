@@ -57,3 +57,29 @@ The WASM frontends (`apps/*-web`) are built in CI and published as static bundle
 `office.allternit.com/craft/<app>/`) and mirrored into `allternit-ai/public/craft/`.
 The app embeds them sandboxed cross-origin. The host-page bridge lives in
 `craft-host/` (shared crate).
+
+## Building the bundles (manual until CI lands)
+
+Requirements: `wasm-bindgen-cli` at the pinned `wasm-bindgen` version (all three trees
+currently pin 0.2.129 — `cargo install wasm-bindgen-cli --version 0.2.129 --locked`),
+`trunk` (`cargo install trunk --locked`), and `CARGO_TARGET_DIR` pointed at the
+workspace shared target.
+
+**The bundles MUST be built with the `embed` feature** — a stock bundle does not speak
+the craft:1 protocol and the host handshake will time out.
+
+```sh
+# NB: this shell exports NO_COLOR=1, which trunk's CLI rejects — override it:
+export NO_COLOR=true
+export CARGO_TARGET_DIR="$HOME/Desktop/allternit-workspace/.shared-target"
+(cd vendor/craft/image/apps/photocraft-web && trunk build --release --features embed)  # → vendor/craft/image/dist/web/
+(cd vendor/craft/pdf/apps/pdfcraft-web    && trunk build --release --features embed)  # → vendor/craft/pdf/dist/web/
+(cd vendor/craft/video && cargo xtask web)  # CRAFT_FEATURES=embed → target/web/dist
+cp -R vendor/craft/image/dist/web/. surfaces/office.allternit.com/public/craft/image/
+cp -R vendor/craft/pdf/dist/web/.    surfaces/office.allternit.com/public/craft/pdf/
+cp -R vendor/craft/video/target/web/dist/. surfaces/office.allternit.com/public/craft/video/
+```
+
+Constraints: every file < 25 MiB (Pages per-file limit); video's xtask runs wasm-opt.
+Verify a bundle speaks craft:1 with `strings <name>_bg.wasm | grep craft:1`.
+

@@ -6,6 +6,8 @@
 //!   and the web app.
 //! - `web [--dev] [--serve PORT]`: build the web app (`apps/filmcraft-web`) into
 //!   `<target>/web/dist` with `wasm-bindgen` (docs/web.md); `--serve` serves it on localhost.
+//!   `CRAFT_FEATURES=<csv>` forwards cargo `--features` (e.g. `CRAFT_FEATURES=embed` builds the
+//!   craft:1 host-page embed bridge); without it the build is unchanged.
 //! - `assets`: every asset file (image, icon, font, LUT, audio, video…) has a complete
 //!   `<file>.attribution` sidecar and an entry in `ATTRIBUTION.md` (AGENTS.md §1).
 //! - `fixtures [crate…]`: pre-generate the ffmpeg fixture matrix of the oracle tests (runs each
@@ -276,6 +278,11 @@ fn web(args: &[String]) -> Result<(), String> {
     let profile = if dev { "dev" } else { "release" };
     let mut build = Command::new(env!("CARGO"));
     build.args(["build", "--target", "wasm32-unknown-unknown", "-p", "filmcraft-web", "--profile", profile]);
+    if let Some(features) = std::env::var_os("CRAFT_FEATURES") {
+        // Optional cargo features for the bundle (e.g. `embed` = the craft:1 host-page bridge).
+        // Absent by default, so a plain `cargo xtask web` build is unchanged.
+        build.arg("--features").arg(features);
+    }
     run(&mut build)?;
     let out = Command::new("wasm-bindgen")
         .arg("--version")

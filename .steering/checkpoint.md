@@ -7,6 +7,9 @@
 Adopt the ArtCraft craft suite (PhotoCraft/PdfCraft/FilmCraft — pure-Rust, MIT/Apache-2.0) as the PDF, Image, and Video artifact editors. Approved plan (Eoj, 2026-10-09): local vendoring (NO GitHub forks), existing names/surfaces (Allternit Office for PDF, Allternit Design for image/video), WASM bundles served from the existing office.allternit.com surface, sandboxed iframe embedding with a craft-host bridge, Tier-C audit before any product wiring. Plan file: session plans dir (`nightcrawler-drax-black-panther.md`).
 
 ## Just did
+- craft-host bridge crate + all three craft:1 embed adapters IMPLEMENTED and verified (wasm32 embed + standalone checks green on all three web apps; craft-host 8/8 host tests; all three trees cargo-check clean). Committed d522a0a0ec + pushed: adapters (video gate/save-watcher, pdf deliver_save write-back, image control-channel dispatch + Services::write interception), per-tree rust-toolchain pins (>=1.95), office-surface test harness page + CSP _headers.
+- VENDOR.md gained the bundle-build recipe (trunk/xtask web, embed feature mandatory, wasm-bindgen-cli 0.2.129, <25MiB gate, craft:1 strings check).
+- WASM release bundle build RUNNING (agent-8): tool installs + image/pdf trunk builds + video xtask build with feature plumbing, then copy to surfaces/office.allternit.com/public/craft/{image,pdf,video} + verification.
 - Deep research on `github.com/storytold` (7 apps, licenses verified MIT/Apache; `artcraft` engine repos legally blocked — excluded) and on our artifact system (v2 kinds registry `src/lib/artifacts/kinds.ts` on origin/main; local checkout 17 behind — fast-forward before Phase 1).
 - Session worktree + DAG plan (`dag_387644`) created.
 - Mirror-cloned the three repos to `~/Desktop/allternit-workspace/craft-mirrors/` (machine-local, not committed). Pinned revs: photocraft `0c72d9542…` (2026-10-09), pdfcraft `68e91d481…`, filmcraft `7bd762126…`.
@@ -17,15 +20,11 @@ Adopt the ArtCraft craft suite (PhotoCraft/PdfCraft/FilmCraft — pure-Rust, MIT
 - Committed + pushed: 5edf5f6afb on session/craft-editors-20261009 (vendored trees, VENDOR.md, refresh script, AUDIT.md, audit reports, craft-host/PROTOCOL.md). Upstream .github CI stripped (would have executed in our repo).
 
 ## Next
-1. Implement the craft-host bridge: PROTOCOL.md + per-app adapter mapping are done and
-   committed (5edf5f6afb); write the crate + the three web adapters (video wraps the
-   existing `window.filmcraft` behind the token/origin gate; pdf adds the save-bytes
-   write-back; image feeds postMessage into its transport-agnostic `control::handle()`).
-2. WASM build pipeline (GHA: wasm32 builds → bundles into
-   `surfaces/office.allternit.com/public/craft/<app>/` + allternit-ai mirror), bare
-   open-edit-save test page; Eoj checkpoint before product wiring.
-3. Phase 1 (separate session, after ai checkout fast-forwards): `pdf` kind in cloud-api
-   kinds.rs + KIND_REGISTRY; CraftEditor component; save→versions; docs.
+1. Bundle build lands → verify + final commit → Eoj tries the open→edit→save harness at
+   office.allternit.com/craft/ (needs the office surface deployed — Eoj's deploy go-ahead).
+2. Phase 1 (separate session, after ai checkout fast-forwards): `pdf` kind in cloud-api
+   kinds.rs + KIND_REGISTRY; CraftEditor component (host-side TS bridge client);
+   save→versions; docs; phone/PWA sheet mode.
 
 ## Open questions
 - ~~COOP/COEP~~ RESOLVED: all three current web builds are single-threaded; COOP/COEP only needed for a future threaded build. No header changes required for v1.
