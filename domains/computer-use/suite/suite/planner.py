@@ -40,7 +40,12 @@ def gizzi_argv() -> list:
     custom = os.environ.get("ALLTERNIT_SUITE_GIZZI")
     if custom:
         return shlex.split(custom)
-    return ["bun", str(REPO / "cmd/gizzi-code/script/dev.mjs")]
+    src = REPO / "cmd/gizzi-code"
+    if not (REPO / "node_modules/@allternit/gizzi-sdk").exists() or not (src / "packages/sdk/dist").exists():
+        raise SystemExit(f"gizzi source at {src} is not set up: run `pnpm install --frozen-lockfile` at the repo root "
+                         "and `node scripts/build.mjs` in cmd/gizzi-code/packages/sdk, "
+                         "or set ALLTERNIT_SUITE_GIZZI to a gizzi command")
+    return ["bun", str(src / "script/dev.mjs")]
 
 
 def agent_config(mode: str, max_steps: int) -> dict:
