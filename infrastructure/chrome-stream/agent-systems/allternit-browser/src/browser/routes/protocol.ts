@@ -26,7 +26,7 @@ const StartRunBodySchema = z.object({
   accountId: z.string().min(1).default('local'),
   conversationId: z.string().min(1).default('browser'),
   objective: z.string().min(1),
-  provider: z.enum(['local-playwright', 'extension-tab', 'browser-use', 'stagehand']).default('local-playwright'),
+  provider: z.enum(['local-playwright', 'extension-tab', 'stagehand']).default('local-playwright'),
   startedBy: z.enum(['platform-web', 'desktop', 'gizzi', 'extension', 'api']).default('api'),
   sessionId: z.string().min(1).optional(),
   runId: z.string().min(1).optional(),
