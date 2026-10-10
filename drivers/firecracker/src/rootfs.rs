@@ -1311,6 +1311,84 @@ impl RootfsBuilder {
             );
         }
 
+        // Best-effort: bake the Allternit Driver (phase D1b) when the build
+        // provides it (ALLTERNIT_DRIVER_DIR, same prebuilt-artifact convention
+        // as ALLTERNIT_GUEST_AGENT_BINARY). Structured toolset members
+        // (read_ui/act/run_batch/verify) then answer on /run/allternit/driver.sock
+        // via rc.local; Execute/Ping still work when this is absent, and the
+        // rootfs is published either way (fail-open at the image layer, the
+        // same philosophy as the Xvnc block above).
+        if let Ok(driver_dir) = std::env::var("ALLTERNIT_DRIVER_DIR") {
+            let pkg_src = std::path::Path::new(&driver_dir).join("allternit_driver");
+            if pkg_src.is_dir() {
+                let dest = format!("{mount_point}/opt/allternit-driver");
+                fs::create_dir_all(&dest).await.map_err(|e| DriverError::InternalError {
+                    message: format!("Failed to create {dest}: {e}"),
+                })?;
+                let mut copy = Command::new("cp");
+                copy.args(["-R", &format!("{}/", pkg_src.display()), &dest]);
+                let copied = copy.output().await.map(|o| o.status.success()).unwrap_or(false);
+                if copied {
+                    let rpc_src = pkg_src.join("guest_rpc.py");
+                    let _ = fs::copy(&rpc_src, format!("{dest}/guest-rpc.py")).await;
+                    let rpc_wrapper = format!("{mount_point}/usr/local/bin/allternit-driver-rpc");
+                    let _ = fs::create_dir_all(format!("{mount_point}/usr/local/bin")).await;
+                    let _ = fs::write(&rpc_wrapper, "#!/bin/sh\nexec /usr/bin/python3 /opt/allternit-driver/guest-rpc.py \"$@\"\n").await;
+                    let _ = Command::new("chmod").args(["755", &rpc_wrapper]).output().await;
+                    // Start at boot next to the guest agent. The socket dir is
+                    // created by the driver itself (mode 0700 under /run).
+                    let driver_line = "PYTHONPATH=/opt/allternit-driver /usr/bin/python3 -m allternit_driver --listen unix:/run/allternit/driver.sock --engine auto --state-dir /var/lib/allternit/driver >/var/log/allternit-driver.log 2>&1 &\n";
+                    let existing_driver = fs::read_to_string(&rc_local_path).await.unwrap_or_default();
+                    if !existing_driver.contains("allternit_driver") {
+                        let mut contents = if existing_driver.trim().is_empty() {
+                            "#!/bin/sh\n".to_string()
+                        } else {
+                            existing_driver
+                        };
+                        contents.push_str(driver_line);
+                        let _ = fs::write(&rc_local_path, contents).await;
+                        let _ = Command::new("chmod").args(["755", &rc_local_path]).output().await;
+                    }
+                    info!(event = "rootfs.driver_installed", "Installed the Allternit Driver into the rootfs");
+                    if has_apt {
+                        let deps = Command::new("chroot")
+                            .args([
+                                mount_point,
+                                "apt-get",
+                                "install",
+                                "-y",
+                                "--no-install-recommends",
+                                "python3",
+                                "python3-pyatspi",
+                                "at-spi2-core",
+                                "libatk-adaptor",
+                                "libatk-bridge2.0-0",
+                                "python3-pil",
+                                "xdotool",
+                                "scrot",
+                            ])
+                            .output()
+                            .await;
+                        match deps {
+                            Ok(output) if output.status.success() => {
+                                info!(event = "rootfs.driver_deps_installed", "Installed the driver runtime packages");
+                            }
+                            Ok(output) => {
+                                warn!(event = "rootfs.driver_deps_failed", stderr = %String::from_utf8_lossy(&output.stderr), "Driver runtime packages failed -- the driver reports its engines degraded until they exist");
+                            }
+                            Err(e) => {
+                                warn!(event = "rootfs.driver_deps_error", error = %e, "chroot apt-get failed to run for driver deps");
+                            }
+                        }
+                    }
+                } else {
+                    warn!(event = "rootfs.driver_copy_failed", "Failed to copy the driver package -- structured toolset members stay unavailable in this image");
+                }
+            } else {
+                warn!(event = "rootfs.driver_missing", path = %pkg_src.display(), "ALLTERNIT_DRIVER_DIR has no allternit_driver package");
+            }
+        }
+
         Ok(())
     }
 

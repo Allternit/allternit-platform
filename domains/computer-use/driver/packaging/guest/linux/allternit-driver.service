@@ -1,0 +1,26 @@
+[Unit]
+Description=Allternit Driver (computer-use sidecar)
+# After the desktop session (which starts X and writes the session-bus env)
+# and after the headless session-bus unit; both are optional services, and
+# the driver retries its engine connections, so ordering is soft on purpose.
+After=allternit-desktop.service allternit-session-bus.service allternit-xvfb.service network.target
+
+[Service]
+Type=simple
+Environment=DISPLAY=:0
+Environment=HOME=/root
+Environment=PYTHONPATH=/opt/allternit-driver
+# Written by /opt/allternit-desktop/run.sh (desktop images) or the
+# allternit-session-bus unit (headless images): the session bus the desktop's
+# AT-SPI registry answers on.
+EnvironmentFile=-/run/allternit/session-bus.env
+ExecStart=/usr/bin/python3 -m allternit_driver --listen unix:/run/allternit/driver.sock --engine auto --state-dir /var/lib/allternit/driver
+ExecStop=/bin/kill -TERM $MAINPID
+KillMode=mixed
+Restart=on-failure
+RestartSec=5
+RuntimeDirectory=allternit
+StateDirectory=allternit/driver
+
+[Install]
+WantedBy=multi-user.target

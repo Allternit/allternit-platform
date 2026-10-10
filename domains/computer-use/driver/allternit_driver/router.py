@@ -31,7 +31,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 ARC, CUA = "arc", "cua"
-ENGINES = (ARC, CUA)
+ATSPI, UIA = "atspi", "uia"
+ENGINES = (ARC, CUA, ATSPI, UIA)
 
 # Op classes the router decides. ``act`` is not routed: an element action goes
 # to the engine that produced the element map it was planned on.
@@ -43,9 +44,10 @@ DEFAULTS: dict[str, dict[str, str]] = {
         "batch": CUA, "verify": CUA, "screenshot": CUA, "zoom": CUA,
         "parse_visual_regions": CUA, "record": CUA, "pixel": CUA,
     },
-    # Linux and Windows: Cua only.
-    "linux": {op: CUA for op in OPS},
-    "win32": {op: CUA for op in OPS},
+    # Linux and Windows guests run the native engine (AT-SPI / UIA); Cua only
+    # when it is actually installed on the host.
+    "linux": {op: ATSPI for op in OPS},
+    "win32": {op: UIA for op in OPS},
 }
 
 EXPLORABLE = {"verify", "screenshot", "zoom"}
@@ -242,7 +244,7 @@ class Router:
                     if op not in OPS:  # act: bound to the engine that produced the map.
                         engines["pick"] = {"engine": "map", "reason": "element map's engine"}
                         continue
-                    d = self._pick(op, app, None) if self.os == "darwin" else Decision(CUA, "only")
+                    d = self._pick(op, app, None) if self.os == "darwin" else Decision(DEFAULTS[self.os].get(op, CUA), "only")
                     engines["pick"] = {"engine": d.engine, "reason": d.reason}
             sources = {app: dict(d) for app, d in self.sources.items()}
         return {"os": self.os, "defaults": DEFAULTS[self.os], "apps": out, "degraded": degraded, "sources": sources}

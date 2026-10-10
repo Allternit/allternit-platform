@@ -19,6 +19,16 @@ packages:
   - ca-certificates
   - wget
   - gnupg
+  # Allternit Driver runtime (phase D1b): the structured computer-toolset
+  # sidecar. The driver package itself lands at /opt/allternit-driver from
+  # the CI image pipeline, like the allternit-factory binary; the unit is
+  # inert until then (ConditionPathExists).
+  - python3
+  - python3-pyatspi
+  - at-spi2-core
+  - libatk-adaptor
+  - libatk-bridge2.0-0
+  - python3-pil
 
 # Let Incus DHCP supply the bridge-local DNS resolver (10.1.x.1). Hard-coding
 # public DNS here broke outbound resolution on this host because the container
@@ -33,7 +43,7 @@ write_files:
       set -e
       export DISPLAY=:0
       export HOME=/root
-      mkdir -p /var/log/allternit-desktop
+      mkdir -p /var/log/allternit-desktop /run/allternit
 
       # Start the in-memory X server.
       Xvfb :0 -screen 0 1280x720x24 -ac +extension GLX +render -noreset \
@@ -42,7 +52,18 @@ write_files:
       # Give Xvfb a moment to come up.
       sleep 2
 
-      # Start the XFCE session.
+      # One D-Bus session for the whole desktop, published where system
+      # services (the Allternit Driver) can find it: AT-SPI's registry
+      # answers on this bus.
+      if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
+        eval "$(dbus-launch --sh-syntax)"
+      fi
+      printf 'DBUS_SESSION_BUS_ADDRESS=%s\n' "${DBUS_SESSION_BUS_ADDRESS}" \
+        > /run/allternit/session-bus.env
+      chmod 0644 /run/allternit/session-bus.env
+      export GTK_MODULES=atk-bridge
+
+      # Start the XFCE session (on this bus, so its apps expose AT-SPI trees).
       xfce4-session >/var/log/allternit-desktop/xfce.log 2>&1 &
 
       # Share the display over VNC (password = allternit for the MVP).
@@ -93,6 +114,43 @@ write_files:
       [Install]
       WantedBy=multi-user.target
 
+  - path: /etc/systemd/system/allternit-driver.service
+    owner: root:root
+    permissions: "0644"
+    content: |
+      # The Allternit Driver (phase D1b). Enabled here; starts once the CI
+      # image pipeline places the package at /opt/allternit-driver (the same
+      # pipeline that places the allternit-factory binary).
+      [Unit]
+      Description=Allternit Driver (computer-use sidecar)
+      After=allternit-desktop.service network.target
+      ConditionPathExists=/opt/allternit-driver/allternit_driver
+
+      [Service]
+      Type=simple
+      Environment=DISPLAY=:0
+      Environment=HOME=/root
+      Environment=PYTHONPATH=/opt/allternit-driver
+      EnvironmentFile=-/run/allternit/session-bus.env
+      ExecStart=/usr/bin/python3 -m allternit_driver --listen unix:/run/allternit/driver.sock --engine auto --state-dir /var/lib/allternit/driver
+      ExecStop=/bin/kill -TERM $MAINPID
+      KillMode=mixed
+      Restart=on-failure
+      RestartSec=5
+      RuntimeDirectory=allternit
+      StateDirectory=allternit/driver
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /usr/local/bin/allternit-driver-rpc
+    owner: root:root
+    permissions: "0755"
+    content: |
+      #!/bin/sh
+      # allternit-api -> guest agent -> this -> the driver's local socket.
+      exec /usr/bin/python3 /opt/allternit-driver/guest-rpc.py "$@"
+
 runcmd:
   # Install Google Chrome stable for remote CDP browser automation.
   - wget -q -O /usr/share/keyrings/google-chrome.gpg https://dl-ssl.google.com/linux/linux_signing_key.pub
@@ -103,6 +161,7 @@ runcmd:
   - systemctl enable allternit-desktop.service
   - systemctl start allternit-desktop.service
   - systemctl enable allternit-factory-pane.service
+  - systemctl enable allternit-driver.service
   # Do not start allternit-factory-pane here; the binary is placed by the CI
   # image pipeline (Phase 15). When present, systemd will start it on next boot.
 

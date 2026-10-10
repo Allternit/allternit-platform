@@ -4,7 +4,7 @@ description: 'One computer-use sidecar with two engines (a fork of arc-driver an
 ---
 
 <Note>
-**Status:** Implementation IMPLEMENTED × Exposure INTERNAL (phase D1 of the driver fast path). Source: `domains/computer-use/driver/`. Launched by `surfaces/allternit-desktop/src/main/computer-use-driver-manager.ts`. Called by `cmd/allternit-api/src/this_device_input.rs`. The structured members (`read_ui`, `act`, `run_batch`, `verify`) reach models in contract v2 (phase D2).
+**Status:** Implementation IMPLEMENTED × Exposure INTERNAL (phase D1 of the driver fast path; phase D1b ships the driver in every guest image — Linux, Windows, the sandbox container, and the tart VMs). Source: `domains/computer-use/driver/`. Launched by `surfaces/allternit-desktop/src/main/computer-use-driver-manager.ts` on this device, and by a boot service / logon task in the guest images (`domains/computer-use/driver/packaging/`). Called by `cmd/allternit-api/src/this_device_input.rs` (this device) and `cmd/allternit-api/src/guest_driver.rs` (guests, through the guest exec channel). The structured members (`read_ui`, `act`, `run_batch`, `verify`) reach models in contract v2 (phase D2).
 </Note>
 
 ## Overview
@@ -13,23 +13,29 @@ The Allternit Driver is the process that actually touches the screen on a comput
 
 ```
 allternit-api executor (lease, approval, audit, scaling)
-        │  JSON-RPC, one JSON object per line, private unix socket
+        │  JSON-RPC, one JSON object per line
+        │  this device: private unix socket / loopback TCP + token
+        │  guests: guest exec channel -> allternit-driver-rpc -> the socket
 Allternit Driver (one sidecar)
   ├─ element map: our ids + map versions
   ├─ router: per op × app × OS, learned from latency and failures
   ├─ locks: one reader and one input owner per window
   ├─ arc engine (forked arc-driver, macOS, in process)
-  └─ Cua engine (Cua Driver 0.34, every OS, one persistent `cua-driver mcp` session)
+  ├─ Cua engine (Cua Driver 0.34, every OS it is installed on)
+  └─ native engine (guest images): AT-SPI + xdotool/scrot on Linux,
+     UI Automation + user32 on Windows
 ```
 
-Neither engine is primary. Each op goes to the engine that does it best for that app, and the router keeps learning which one that is.
+Neither engine is primary on macOS. Each op goes to the engine that does it best for that app, and the router keeps learning which one that is. On guests the native engine is the primary path; Cua only serves where it is actually installed.
 
 ## Engines
 
 | Engine | Where | Good at |
 |---|---|---|
 | **arc** | macOS. A fork of [arc-driver](https://github.com/shhivv/arc-cua) (MIT) at a pinned commit in `domains/computer-use/driver/arc/` (see its `NOTICE`). Runs inside the sidecar's Python. | Accessibility reads of the visible rows in tens of ms; settling on AX notifications instead of fixed waits; the freshness guard (refuses to act on a window whose structure changed); menu-bar commands without opening menus; minimized and hidden windows. |
-| **Cua** | macOS, Windows, Linux. The vendored Cua Driver binary (`prepare-cua-driver.cjs`), run as the daemon the Desktop app already starts, reached through one long-lived `cua-driver mcp --socket` session. | Screen-wide pixel input (`desktop` scope), screenshots, `zoom`, `verify_state`, recording, AT-SPI and UI Automation trees, browsers. |
+| **Cua** | macOS, Windows, Linux — wherever the vendored Cua Driver binary (`prepare-cua-driver.cjs`) is installed. Reached through one long-lived `cua-driver mcp --socket` session. | Screen-wide pixel input (`desktop` scope), screenshots, `zoom`, `verify_state`, recording, AT-SPI and UI Automation trees, browsers. |
+| **AT-SPI** (native) | Linux guests. Direct `pyatspi` tree walks (no cua-driver in the image); actions invoke AT-SPI action/text/value interfaces, with keyboard and pixel input through `xdotool`; screenshots through `scrot` (full screen, cropped to the window with Pillow). | `read_ui`/`act`/`run_batch`/`verify` on cloud computers and the sandbox container; the live observer's events decide when a re-read is needed. |
+| **UIA** (native) | Windows guests. Direct UI Automation tree walks with `comtypes` on one MTA thread; actions invoke the element's invoke/value/selection/toggle patterns; input posts through `user32` (SetCursorPos, mouse_event, SendInput, keybd_event); screenshots through System.Drawing. | The same structured members on Windows guests, running in the interactive session at logon. |
 
 Cua Driver runs in its `standard` permission mode, the least privilege that allows observation and input on any app. `bounded` needs a per-app manifest, which can't cover "whatever app the user asked for"; `unrestricted` turns off Cua's approval checks. The `permission_denied` that `run_actions` returned before was not a mode problem: Cua Driver 0.34 (the newest release on 2026-10-09) does not ship `run_actions`, and its policy denies any tool without a reviewed risk class. The Allternit Driver runs batches itself (below).
 
@@ -46,8 +52,9 @@ Every op is a JSON-RPC method on the sidecar's socket.
 | `wait` | a window, `timeout_ms`, optional `for` (a check) | whether the window changed, and the changes |
 | `screenshot` | a window, or nothing for the whole desktop | PNG (base64) |
 | `zoom` | a window and `region` `[x1, y1, x2, y2]` | PNG (base64) |
-| `pixel_<tool>` | Cua Driver desktop-scope tools: `click`, `double_click`, `right_click`, `move_cursor`, `drag`, `scroll`, `type_text`, `press_key`, `hotkey`, `get_cursor_position`, `get_screen_size` | Cua Driver's structured reply |
+| `pixel_<tool>` | Cua Driver desktop-scope tools: `click`, `double_click`, `right_click`, `move_cursor`, `drag`, `scroll`, `type_text`, `press_key`, `hotkey`, `get_cursor_position`, `get_screen_size` | Cua Driver's structured reply (on guests, the native engine's equivalent over xdotool / user32) |
 | `status`, `router` | none | engines and their health, and the live map's watched windows (state, notifications, patches, full walks, idle time); the learned router table |
+| `hello` | none | the capability report a control plane probes before routing: which members and pixel tools this driver serves (`read_ui`, `act`, `run_batch`, `verify`, `screenshot`, `pixel`, `safety_context`, `safety_ocr`), computed from the same capability table the router uses |
 
 `run_batch` stops at the first failed step or check and then reads once. After it, the engine that didn't run the steps confirms the last `expect`: on macOS that is arc's freshness check (a fresh, uncached walk), elsewhere Cua's `verify_state`. This catches a batch that "succeeded" without the app reacting.
 
@@ -73,15 +80,16 @@ The driver keeps a **live map** of every window it reads: it subscribes to the O
 - **Lifecycle.** Windows are watched on demand, when first read or acted on (and the prewarmed frontmost app, which is patched only once a caller reads it). A window is unwatched after 5 minutes without use; at most 8 are watched at once (the least recently used goes); each keeps 8 versions. Background patching runs only for windows a caller read in the last minute, at most every 100 ms per window; others are patched when read.
 - **Safety.** The observer callback makes no accessibility call: it counts, queues and returns inside a `try`. Role lookups run on a separate dispatch thread with a 0.25 s messaging timeout, and watched apps get a 1 s timeout instead of the 6 s default, so a hung app can't stall the others. Nothing on this path touches arc's SkyLight input code (the D2 `press` crash). When an app quits, the probe or the next patch drops its watches and releases its arc state; a relaunch is a new pid, watched on its next read.
 - **macOS run loop.** The sidecar's main thread now runs the Cocoa run loop (requests are served on a thread). Without it, `NSWorkspace` never refreshed its list of running apps, so an app launched after the sidecar started answered `app_not_running`.
-- **Linux and Windows (written, not yet verified live).** The same design behind the same `Observer` interface: AT-SPI events over D-Bus with `jeepney` (`live/atspi.py`: children-changed, state, name/value, text, selection, focus, window create/destroy/activate) and UI Automation with `comtypes` (`live/uia.py`: structure-changed and property-changed handlers on the window subtree, plus a focus handler). Reads stay on Cua; the events decide when a read is needed. Both packages are pure-Python wheels staged by `prepare-allternit-driver.cjs`. Live verification waits for a non-production Linux and Windows test machine; until then treat these as unverified. Without the package or an accessibility bus, every window reports `degraded`.
+- **Linux and Windows (D1b: the guest-image engines).** The native engines run the structured members on guest images: `engines/atspi.py` walks the AT-SPI tree with pyatspi (roles mapped to the same AX-style vocabulary arc and Cua emit, so element ids and router decisions are comparable across OSes), acts through AT-SPI action/text/value interfaces, and posts keys and pixels through `xdotool`; `engines/uia.py` walks UI Automation with comtypes on one MTA thread, acts through invoke/value/selection/toggle patterns, and posts input through `user32`. Reads stay behind the same live-map contract: the observer (above) decides when a read is needed, the engine answers the tree. Both observers and engines were written to the macOS design and run for the first time on these images — `validate-image.sh` / `validate-windows-image.ps1` prove `hello` and a populated `read_ui` before an image ships. Without pyatspi/comtypes or an accessibility bus, every window reports `degraded` and the API fails structured calls as `driver_unavailable`, never silently.
 
 ## Router
 
 | Op | macOS default | Windows / Linux |
 |---|---|---|
-| `read`, `wait`, `settle`, `menu` | arc | Cua |
-| `batch`, `verify`, `screenshot`, `zoom`, `parse_visual_regions`, `record` | Cua | Cua |
-| pixel input | Cua | Cua |
+| `read`, `wait`, `settle`, `menu` | arc | the native engine (UIA / AT-SPI), else Cua |
+| `batch`, `verify`, `screenshot` | Cua | the native engine, else Cua |
+| `zoom`, `parse_visual_regions`, `record` | Cua | Cua only (guest images without Cua refuse these clearly) |
+| pixel input | Cua | Cua where installed, else the native engine's xdotool / user32 path |
 
 - **Capability first.** An engine only gets an op it can do. Cua Driver 0.34 has no `run_actions`, so macOS batches run on arc today and the decision says `capability`. `zoom` stays with Cua. Cua 0.34's `parse_visual_regions` is not used: it needs Cua's optional `cua-perception` extension, which is AGPL; the [vision fallback](/tools/vision-fallback) proposes its own regions.
 - **Actions follow the map.** An element action goes to the engine that produced the map its id came from, because only that engine holds the element's handle.
@@ -97,8 +105,10 @@ The driver keeps a **live map** of every window it reads: it subscribes to the O
 
 ## Packaging
 
-- `npm run prepare:allternit-driver` (`surfaces/allternit-desktop/scripts/prepare-allternit-driver.cjs`) copies `domains/computer-use/driver` into the app's resources and stages a relocatable CPython 3.12 per target from python-build-standalone, pinned by sha256. macOS targets also get the pinned PyObjC frameworks arc needs. A venv would point at the build machine's Python, which users don't have.
+- **This device (Desktop).** `npm run prepare:allternit-driver` (`surfaces/allternit-desktop/scripts/prepare-allternit-driver.cjs`) copies `domains/computer-use/driver` into the app's resources and stages a relocatable CPython 3.12 per target from python-build-standalone, pinned by sha256. macOS targets also get the pinned PyObjC frameworks arc needs. A venv would point at the build machine's Python, which users don't have.
 - The Desktop app starts the sidecar after Cua Driver, through `spawnSidecar`, so it and its `cua-driver mcp` child stop with the app. Python runs with `-B -s -E`: no bytecode written into the signed bundle, no user site-packages or `PYTHON*` variables.
+- The this-device socket is `computer-use/allternit-driver.sock` in the app's data folder, mode 0600 in a 0700 folder. Windows listens on 127.0.0.1 on a random port and every request carries a per-launch token; allternit-api connects there over loopback TCP (env `ALLTERNIT_DRIVER_ENDPOINT` + `ALLTERNIT_DRIVER_TOKEN`), so this-device `read_ui`/`act`/pixel input all go through the one driver on Windows too — the Cua CLI fallback remains only for Desktops too old to ship the sidecar. allternit-api gets the socket in `ALLTERNIT_DRIVER_SOCKET` and sends this Mac's pointer and keyboard input through `pixel_*`. `hold_key` still posts CoreGraphics events itself. If an older Desktop app runs without the sidecar, input falls back to Cua Driver's CLI.
+- **Guests (D1b).** `domains/computer-use/driver/packaging/` installs the driver into every image that ships to users: the Incus desktop/cloud/headless builds (`cmd/allternit-computer-cloud/guest/build-*.sh` and `cloud-init.yaml`), the sandbox container (`core/sandbox/container/Dockerfile.driver`), the tart VMs (`infrastructure/tart-host/build-image.sh`, as a session autostart entry), and Firecracker rootfses (`ALLTERNIT_DRIVER_DIR` in `drivers/firecracker/src/rootfs.rs`). Linux guests run it as `allternit-driver.service` on `/run/allternit/driver.sock`; Windows guests run it as a logon scheduled task on loopback TCP with a launch token; both expose the `allternit-driver-rpc` forwarder that allternit-api drives through the guest exec channel. xdotool/scrot and the PowerShell input helpers remain installed as the explicit fallback when the driver is down. `validate-image.sh` and `validate-windows-image.ps1` check the service, the `hello` capability report and a real `read_ui` before an image ships.
 - The socket is `computer-use/allternit-driver.sock` in the app's data folder, mode 0600 in a 0700 folder. Windows listens on 127.0.0.1 on a random port and every request carries a per-launch token; allternit-api connects there over loopback TCP (env `ALLTERNIT_DRIVER_ENDPOINT` + `ALLTERNIT_DRIVER_TOKEN`), so this-device `read_ui`/`act`/pixel input all go through the one driver on Windows too — the Cua CLI fallback remains only for Desktops too old to ship the sidecar.
 - allternit-api gets the socket in `ALLTERNIT_DRIVER_SOCKET` and sends this Mac's pointer and keyboard input through `pixel_*`. `hold_key` still posts CoreGraphics events itself. If an older Desktop app runs without the sidecar, input falls back to Cua Driver's CLI.
 
