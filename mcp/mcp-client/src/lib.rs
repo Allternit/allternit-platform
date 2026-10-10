@@ -478,6 +478,11 @@ impl McpClient {
         secret: &str,
         ttl_ms: Option<u64>,
     ) -> Result<Value> {
+        self.subscribe_event_with_cursor(name, arguments, url, secret, ttl_ms, None).await
+    }
+
+    /// Resume an event stream after the last durably accepted cursor.
+    pub async fn subscribe_event_with_cursor(&self, name: &str, arguments: &Value, url: &str, secret: &str, ttl_ms: Option<u64>, cursor: Option<&str>) -> Result<Value> {
         let mut params = json!({
             "name": name,
             "arguments": arguments,
@@ -486,6 +491,7 @@ impl McpClient {
         if let Some(ttl) = ttl_ms {
             params["ttlMs"] = json!(ttl);
         }
+        if let Some(cursor) = cursor { params["cursor"] = json!(cursor); }
         self.send("events/subscribe", Some(params)).await
     }
 

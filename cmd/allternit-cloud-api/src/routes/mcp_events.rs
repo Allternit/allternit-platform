@@ -22,8 +22,8 @@
 //!   http_5xx | challenge_failed`). TTL: omitted = 24 h, `null` = clamped to
 //!   7 days (we never grant "no expiry"), otherwise clamped to [1 min, 7 days].
 //!   A refresh with a new secret rotates it: deliveries are signed with both
-//!   keys for [`ROTATION_GRACE`]. Events are not replayable: `cursor` is
-//!   always `null`. At most [`MAX_SUBSCRIPTIONS`] live subscriptions per
+//!   keys for [`ROTATION_GRACE`]. User events have seven-day replay with
+//!   subscription-scoped cursors. At most [`MAX_SUBSCRIPTIONS`] live subscriptions per
 //!   principal (`-32013`, `data: {limit: "subscriptions", max}`).
 //! * **Unsubscribe** is idempotent (`{}` whether or not one existed).
 //! * **Revoke**: when the owner revokes the app's approval (or a CLI key), the
@@ -114,6 +114,9 @@ pub trait EventsStore: Send + Sync {
     async fn save(&self, sub: &Subscription) -> Result<(), String>;
     /// End it; `false` when there was nothing live.
     async fn remove(&self, id: &str, reason: &str) -> Result<bool, String>;
+    /// Queue retained history and return a safe cursor. Stores without history
+    /// keep the non-replay profile.
+    async fn replay(&self, _sub: &Subscription, _cursor: Option<&str>) -> Result<(Option<String>, bool), String> { Ok((None, false)) }
     /// POST a signed verification challenge; `Ok` when 2xx echoed it.
     async fn verify_callback(&self, url: &str, secret: &str, subscription_id: &str, challenge: &str) -> Result<(), CallbackError>;
 }
@@ -204,6 +207,7 @@ async fn subscribe(store: &dyn EventsStore, principal: &Principal, id: &Value, p
         Err((_, msg)) => return invalid(id, &msg),
     };
     let sub_id = ev::subscription_id(&principal.key(), &url, event.name, &arguments);
+    if let Some(cursor)=p.cursor.as_deref() { if let Err(e)=parse_cursor(cursor,&replay_scope(&sub_id)) {return invalid(id,&e);} }
     let existing = match store.get(&sub_id).await {
         Ok(e) => e,
         Err(e) => return store_failed(id, e),
@@ -251,13 +255,16 @@ async fn subscribe(store: &dyn EventsStore, principal: &Principal, id: &Value, p
     if let Err(e) = store.save(&sub).await {
         return store_failed(id, e);
     }
+    let (cursor, truncated) = match store.replay(&sub, p.cursor.as_deref()).await {
+        Ok(v) => v, Err(e) => return invalid(id, &e),
+    };
     mcp_protocol::rpc_ok(
         id,
         json!({
             "id": sub_id,
             "refreshBefore": refresh_before.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-            "cursor": null,
-            "truncated": false,
+            "cursor": cursor,
+            "truncated": truncated,
             "deliveryStatus": {
                 "active": true,
                 "lastDeliveryAt": sub.last_delivery_at.map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
@@ -379,6 +386,27 @@ impl EventsStore for PgEventsStore<'_> {
         .await
         .map_err(|e| e.to_string())?;
         Ok(())
+    }
+
+    async fn replay(&self, sub: &Subscription, requested: Option<&str>) -> Result<(Option<String>, bool), String> {
+        let mut tx = self.db.begin().await.map_err(|e|e.to_string())?;
+        // Serialize with event emission: sequence allocation cannot outrun commit.
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))").bind(&sub.principal.user_id).execute(&mut *tx).await.map_err(|e|e.to_string())?;
+        let ceiling:i64=sqlx::query_scalar("SELECT COALESCE(max(mcp_sequence),0) FROM platform_events WHERE subject='user' AND user_id=$1").bind(&sub.principal.user_id).fetch_one(&mut *tx).await.map_err(|e|e.to_string())?;
+        let scope = replay_scope(&sub.id);
+        let after = match requested {Some(c)=>parse_cursor(c,&scope)?,None=>ceiling};
+        if after>ceiling {return Err("cursor is ahead of this account's history".into())}
+        let truncated:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM platform_events WHERE subject='user' AND user_id=$1 AND mcp_sequence>$2 AND created_at<now()-interval '7 days' AND type=$3 AND data @> $4::jsonb)").bind(&sub.principal.user_id).bind(after).bind(&sub.name).bind(&sub.arguments).fetch_one(&mut *tx).await.map_err(|e|e.to_string())?;
+        if requested.is_some() {
+            sqlx::query("INSERT INTO platform_webhook_deliveries(id,webhook_id,event_id) SELECT 'whd_'||replace(gen_random_uuid()::text,'-',''),$1,e.id FROM platform_events e WHERE e.subject='user' AND e.user_id=$2 AND e.type=$3 AND e.data @> $4::jsonb AND e.mcp_sequence>$5 AND e.created_at>=now()-interval '7 days' ON CONFLICT DO NOTHING")
+                .bind(&sub.id).bind(&sub.principal.user_id).bind(&sub.name).bind(&sub.arguments).bind(after).execute(&mut *tx).await.map_err(|e|e.to_string())?;
+            // Expired delivery failures are recoverable. Permanent 413 failures stay failed.
+            sqlx::query("UPDATE platform_webhook_deliveries d SET state='pending',next_attempt_at=now(),attempts=0,last_error=NULL,replay_started_at=now() FROM platform_events e WHERE d.event_id=e.id AND d.webhook_id=$1 AND d.state='failed' AND d.last_status IS DISTINCT FROM 413 AND d.last_status IS DISTINCT FROM 410 AND e.mcp_sequence>$2 AND e.created_at>=now()-interval '7 days'")
+                .bind(&sub.id).bind(after).execute(&mut *tx).await.map_err(|e|e.to_string())?;
+        }
+        let pending:Option<i64>=sqlx::query_scalar("SELECT min(e.mcp_sequence) FROM platform_webhook_deliveries d JOIN platform_events e ON e.id=d.event_id WHERE d.webhook_id=$1 AND e.created_at>=now()-interval '7 days' AND (d.state='pending' OR (d.state='failed' AND d.last_status IS DISTINCT FROM 413 AND d.last_status IS DISTINCT FROM 410))").bind(&sub.id).fetch_one(&mut *tx).await.map_err(|e|e.to_string())?;
+        tx.commit().await.map_err(|e|e.to_string())?;
+        Ok((Some(make_cursor(&scope,pending.map(|n|n-1).unwrap_or(ceiling).min(ceiling))),truncated))
     }
 
     async fn remove(&self, id: &str, reason: &str) -> Result<bool, String> {
@@ -826,6 +854,31 @@ mod tests {
             db
         }
 
+        #[tokio::test]
+        async fn replay_is_scoped_filtered_and_keeps_pending_cursor_safe() {
+            let db=db().await;
+            let p=agents();
+            let id=subscribe_pg(&db,&p,"message.received",json!({"bot_id":"b1"}),"https://93.184.216.34/replay",&secret(1),Utc::now()).await;
+            let store=PgEventsStore{db:&db};
+            let sub=store.get(&id).await.unwrap().unwrap();
+            let (start,truncated)=store.replay(&sub,None).await.unwrap();
+            assert!(!truncated);
+            sqlx::query("UPDATE platform_webhooks SET refresh_before=now()-interval '1 minute' WHERE id=$1").bind(&id).execute(&db).await.unwrap();
+            let wanted=allternit_events::emit_user_event(&db,&p.user_id,"message.received",&json!({"bot_id":"b1","text":"a"}),None,"replay-test",Some("a")).await.unwrap().unwrap();
+            allternit_events::emit_user_event(&db,&p.user_id,"message.received",&json!({"bot_id":"b2","text":"foreign bot"}),None,"replay-test",Some("b")).await.unwrap();
+            allternit_events::emit_user_event(&db,"another-owner","message.received",&json!({"bot_id":"b1","text":"foreign owner"}),None,"replay-test",Some("c")).await.unwrap();
+            sqlx::query("UPDATE platform_webhooks SET refresh_before=now()+interval '1 day' WHERE id=$1").bind(&id).execute(&db).await.unwrap();
+            let (safe,_) = store.replay(&sub,start.as_deref()).await.unwrap();
+            let rows:Vec<String>=sqlx::query_scalar("SELECT event_id FROM platform_webhook_deliveries WHERE webhook_id=$1").bind(&id).fetch_all(&db).await.unwrap();
+            assert_eq!(rows,vec![wanted]);
+            assert_eq!(safe,start,"Cursor must not skip the retained event still awaiting delivery");
+            store.replay(&sub,start.as_deref()).await.unwrap();
+            assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM platform_webhook_deliveries WHERE webhook_id=$1").bind(&id).fetch_one(&db).await.unwrap(),1);
+            assert!(store.replay(&sub,Some("mcp1:another-subscription:0")).await.is_err());
+            sqlx::query("UPDATE platform_events SET created_at=now()-interval '8 days' WHERE source='replay-test'").execute(&db).await.unwrap();
+            assert!(store.replay(&sub,start.as_deref()).await.unwrap().1);
+        }
+
         /// Subscribe through the real Postgres store (challenge scripted OK).
         struct PgOk<'a>(PgEventsStore<'a>);
         #[async_trait::async_trait]
@@ -833,6 +886,7 @@ mod tests {
             async fn get(&self, id: &str) -> Result<Option<Subscription>, String> { self.0.get(id).await }
             async fn live_count(&self, p: &Principal) -> Result<i64, String> { self.0.live_count(p).await }
             async fn save(&self, s: &Subscription) -> Result<(), String> { self.0.save(s).await }
+            async fn replay(&self,s:&Subscription,cursor:Option<&str>)->Result<(Option<String>,bool),String>{self.0.replay(s,cursor).await}
             async fn remove(&self, id: &str, r: &str) -> Result<bool, String> { self.0.remove(id, r).await }
             async fn verify_callback(&self, _: &str, _: &str, _: &str, _: &str) -> Result<(), CallbackError> { Ok(()) }
         }
@@ -884,7 +938,8 @@ mod tests {
             assert_eq!(h["X-MCP-Subscription-Id"], b1);
             assert_eq!(h["webhook-id"], evt, "webhook-id is the event id, stable across retries");
             let v: Value = serde_json::from_slice(body).unwrap();
-            assert_eq!((v["eventId"].as_str(), v["name"].as_str(), v["data"]["text"].as_str(), v["cursor"].clone()), (Some(evt.as_str()), Some("message.received"), Some("hi"), Value::Null));
+            assert_eq!((v["eventId"].as_str(), v["name"].as_str(), v["data"]["text"].as_str()), (Some(evt.as_str()), Some("message.received"), Some("hi")));
+            assert!(v["cursor"].as_str().is_some_and(|c|c.starts_with("mcp1:")));
             assert!(v["timestamp"].as_str().unwrap().ends_with('Z'));
             // Signed with the current key and, during the rotation window, the previous one too.
             let key = mcp_protocol::webhooks::parse_secret(&secret(1)).unwrap();
@@ -1100,3 +1155,8 @@ mod tests {
         }
     }
 }
+
+/// Cursors are scoped to one authorized subscription, including its principal and filters.
+pub(crate) fn replay_scope(subscription_id:&str)->String { subscription_id.to_string() }
+pub(crate) fn make_cursor(scope:&str,sequence:i64)->String { format!("mcp1:{scope}:{sequence}") }
+fn parse_cursor(cursor:&str,scope:&str)->Result<i64,String> {cursor.strip_prefix(&format!("mcp1:{scope}:" )).and_then(|s|s.parse::<i64>().ok()).filter(|n|*n>=0).ok_or_else(||"invalid cursor or cursor belongs to another subscription".into())}

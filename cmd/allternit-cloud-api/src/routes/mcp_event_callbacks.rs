@@ -304,13 +304,13 @@ pub async fn receive(state: &ApiState, key: &str, headers: &HeaderMap, body: &[u
         return Ok(Received::Gone);
     }
     let db = &state.db;
-    let row: Option<(String, String, Option<String>, Option<DateTime<Utc>>)> = sqlx::query_as(
-        "SELECT route_id, secret, previous_secret, previous_secret_until FROM mcp_event_client_subscriptions WHERE key = $1 AND status = 'active'",
+    let row: Option<(String, String, Option<String>, Option<DateTime<Utc>>, String)> = sqlx::query_as(
+        "SELECT route_id, secret, previous_secret, previous_secret_until, event_name FROM mcp_event_client_subscriptions WHERE key = $1 AND status = 'active'",
     )
     .bind(key)
     .fetch_optional(db)
     .await?;
-    let Some((route_id, secret, previous, previous_until)) = row else { return Ok(Received::Gone) };
+    let Some((route_id, secret, previous, previous_until, event_name)) = row else { return Ok(Received::Gone) };
 
     let h = |n: &str| headers.get(n).and_then(|v| v.to_str().ok()).map(str::trim).filter(|v| !v.is_empty());
     let (Some(msg_id), Some(ts), Some(sig)) = (h(sw::HEADER_ID), h(sw::HEADER_TIMESTAMP), h(sw::HEADER_SIGNATURE)) else {
@@ -346,14 +346,12 @@ pub async fn receive(state: &ApiState, key: &str, headers: &HeaderMap, body: &[u
         let _ = sqlx::query("UPDATE mcp_event_client_subscriptions SET verified_at = now() WHERE key = $1").bind(key).execute(db).await;
         return Ok(Received::Challenge(challenge.to_string()));
     }
-    let event_id = event
-        .get("eventId")
-        .and_then(Value::as_str)
-        .filter(|s| !s.is_empty() && s.len() <= 200)
-        .unwrap_or(msg_id)
-        .chars()
-        .take(200)
-        .collect::<String>();
+    let event_id = if kind == Some("terminated") {msg_id.to_string()} else {
+        if kind.is_some() || event.get("name").and_then(Value::as_str)!=Some(event_name.as_str()) {return Ok(Received::BadRequest)}
+        let Some(id)=event.get("eventId").and_then(Value::as_str).filter(|id|!id.is_empty()&&id.len()<=200&&*id==msg_id) else{return Ok(Received::BadRequest)};
+        if event.get("timestamp").and_then(Value::as_str).is_none_or(|at|DateTime::parse_from_rfc3339(at).is_err()) || event.get("data").is_none() {return Ok(Received::BadRequest)}
+        id.to_string()
+    };
     if channel_inbound::route_is_full(db, &route_id).await? {
         return Ok(Received::Full);
     }
@@ -513,13 +511,13 @@ mod tests {
         assert!(ev::challenge_echoed(&echoed, "ch_123"));
 
         // An event is queued as the runtime envelope, on an internal mcp_events route.
-        let Received::Accepted { route_id } = deliver(&state, &key, &secret(1), "msg_1", &event("evt_1")).await else { panic!("accepted") };
+        let Received::Accepted { route_id } = deliver(&state, &key, &secret(1), "evt_1", &event("evt_1")).await else { panic!("accepted") };
         let (provider, runtime): (String, String) = sqlx::query_as("SELECT provider, runtime_id FROM channel_inbound_routes WHERE id = $1").bind(&route_id).fetch_one(&state.db).await.unwrap();
         assert_eq!((provider.as_str(), runtime.as_str()), (MCP_EVENTS_PROVIDER, RT));
         let q = queued(&state, &route_id).await;
         assert_eq!(q.len(), 1);
         assert_eq!(q[0]["subscriptionKey"], key.as_str());
-        assert_eq!(q[0]["webhookId"], "msg_1");
+        assert_eq!(q[0]["webhookId"], "evt_1");
         assert_eq!(q[0]["event"]["eventId"], "evt_1");
         assert_eq!(q[0]["event"]["data"]["subject"], "hi");
         assert_eq!(channel_inbound::target_path(MCP_EVENTS_PROVIDER), Some("/api/v1/mcp/event-deliveries"));
@@ -562,11 +560,11 @@ mod tests {
         let state = state().await;
         let key = key();
         put(&state, RT, &key, &secret(1)).await;
-        assert!(matches!(deliver(&state, &key, &secret(1), "msg_1", &event("evt_1")).await, Received::Accepted { .. }));
-        // Same delivery retried, and the same eventId under a new webhook-id.
-        assert_eq!(deliver(&state, &key, &secret(1), "msg_1", &event("evt_1")).await, Received::Duplicate);
-        assert_eq!(deliver(&state, &key, &secret(1), "msg_9", &event("evt_1")).await, Received::Duplicate);
-        assert!(matches!(deliver(&state, &key, &secret(1), "msg_2", &event("evt_2")).await, Received::Accepted { .. }));
+        assert!(matches!(deliver(&state, &key, &secret(1), "evt_1", &event("evt_1")).await, Received::Accepted { .. }));
+        // Retries preserve wire identity; a correctly signed mismatching ID is refused.
+        assert_eq!(deliver(&state, &key, &secret(1), "evt_1", &event("evt_1")).await, Received::Duplicate);
+        assert_eq!(deliver(&state, &key, &secret(1), "msg_9", &event("evt_1")).await, Received::BadRequest);
+        assert!(matches!(deliver(&state, &key, &secret(1), "evt_2", &event("evt_2")).await, Received::Accepted { .. }));
         let n: i64 = sqlx::query_scalar("SELECT count(*) FROM channel_inbound_queue").fetch_one(&state.db).await.unwrap();
         assert_eq!(n, 2);
     }

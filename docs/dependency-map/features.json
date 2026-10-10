@@ -401,7 +401,7 @@
       "label": "MCP Apps and events",
       "product": "product:mcp-apps",
       "status": "live",
-      "description": "Interactive MCP apps run inside the workspace, and their events can wake a bot or ask you to approve.",
+      "description": "Interactive MCP apps run inside the workspace. Event automations have owner instructions, approval-gated durable runs, batching, limits, history and subscription-scoped replay.",
       "touches": [
         "allternit-ai/src/views/mini-apps",
         "allternit-ai/src/components/mcp",
@@ -410,17 +410,18 @@
         "allternit/sdk/apps-server",
         "allternit/sdk/apps-ui",
         "allternit/sdk/apps-bridge",
-        "allternit/sdk/mcp-events"
+        "allternit/sdk/mcp-events",
+        "allternit/cmd/allternit-cloud-api/src/routes/mcp_events.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/mcp_event_callbacks.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/platform_v1/events.rs",
+        "allternit/cmd/allternit-api/src/agent_session_routes.rs",
+        "allternit/cmd/allternit-api/src/mcp_event_automations.rs",
+        "allternit/cmd/allternit-api/src/runtime_events.rs"
       ],
       "decisions": [
-        {
-          "on": "2026-09-30",
-          "note": "The program ships under the name MCP Apps."
-        },
-        {
-          "on": "2026-10-06",
-          "note": "Events program live: approval_required events carry an approve link (platform #1361, ai #447)."
-        }
+        {"on": "2026-09-30", "note": "The program ships under the name MCP Apps."},
+        {"on": "2026-10-06", "note": "Events program live: approval_required events carry an approve link (platform #1361, ai #447)."},
+        {"on": "2026-10-08", "note": "Event automation extension in review: independent rules snapshot task intent; runtime queues and approvals drive real bot sessions; delivery retry and task execution have separate recovery semantics."}
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/mcp-events.mdx",

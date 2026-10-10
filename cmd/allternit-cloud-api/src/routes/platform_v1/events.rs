@@ -199,6 +199,7 @@ struct Due {
     data: Value,
     event_created: DateTime<Utc>,
     occurred_at: Option<DateTime<Utc>>,
+    replay_sequence: Option<i64>,
     created_at: DateTime<Utc>,
 }
 
@@ -281,7 +282,7 @@ pub fn standard_headers(keys: &[&[u8]], msg_id: &str, ts: i64, body: &[u8]) -> V
 fn body_for(d: &Due) -> Vec<u8> {
     let v = if d.endpoint_kind == KIND_MCP {
         let at = d.occurred_at.unwrap_or(d.event_created);
-        mcp_protocol::events::event_envelope(&d.event_id, &d.kind, &at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true), d.data.clone(), None)
+        mcp_protocol::events::event_envelope(&d.event_id, &d.kind, &at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true), d.data.clone(), d.replay_sequence.map(|n| crate::routes::mcp_events::make_cursor(&d.endpoint_id,n)).as_deref())
     } else {
         envelope(&d.event_id, &d.kind, d.event_created, d.project_id.as_deref().unwrap_or_default(), d.account_id.as_deref(), &d.data)
     };
@@ -378,7 +379,9 @@ pub async fn deliver_due_with(db: &PgPool, poster: &dyn Poster) -> Result<usize,
            AND w.id = d.webhook_id AND e.id = d.event_id \
          RETURNING d.id, d.attempts, w.id AS endpoint_id, w.kind AS endpoint_kind, w.signer, w.url, w.secret, w.previous_secret, w.previous_secret_until, \
                    w.refresh_before, (w.deleted_at IS NOT NULL) AS endpoint_ended, \
-                   e.id AS event_id, e.type AS kind, e.project_id, e.account_id, e.data, e.created_at AS event_created, e.occurred_at, d.created_at",
+                   e.id AS event_id, e.type AS kind, e.project_id, e.account_id, e.data, e.created_at AS event_created, e.occurred_at,
+                   CASE WHEN w.kind='mcp_subscription' THEN LEAST(e.mcp_sequence,COALESCE((SELECT min(pe.mcp_sequence)-1 FROM platform_webhook_deliveries pd JOIN platform_events pe ON pe.id=pd.event_id WHERE pd.webhook_id=w.id AND pe.created_at>=now()-interval '7 days' AND (pd.state='pending' OR (pd.state='failed' AND pd.last_status IS DISTINCT FROM 413 AND pd.last_status IS DISTINCT FROM 410)) AND pe.mcp_sequence<e.mcp_sequence),e.mcp_sequence)) ELSE NULL END AS replay_sequence,
+                   COALESCE(d.replay_started_at,d.created_at) AS created_at",
     )
     .bind(BATCH)
     .fetch_all(db)

@@ -66,7 +66,7 @@ On a bot connector, `bot_id` is always that bot. Passing a different `bot_id` is
   "result": {
     "id": "sub_3f2a…",
     "refreshBefore": "2026-10-06T12:00:00Z",
-    "cursor": null,
+    "cursor": "mcp1:sub_3f2a…:81",
     "truncated": false,
     "deliveryStatus": { "active": true, "lastDeliveryAt": null, "lastError": null }
   }
@@ -78,7 +78,7 @@ On a bot connector, `bot_id` is always that bot. Passing a different `bot_id` is
 - **Idempotent**: the same app, server, URL, event name and arguments always give the same `id`. Subscribing again refreshes it.
 - **TTL**: leave out `ttlMs` for 24 hours. Anything you ask for is clamped to between 1 minute and 7 days; `ttlMs: null` (no expiry) gets 7 days. Subscribe again before `refreshBefore`, or deliveries stop.
 - **Secret rotation**: refresh with a new `secret`. For the next hour, deliveries are signed with both the new and the old key (two space-separated signatures), so you can switch over without dropping events.
-- **Replay**: not offered. `cursor` is always `null`; events that happen while a subscription is expired are not resent.
+- **Replay**: user events are available for seven-day catch-up. Cursors are scoped to the authenticated subscription, including its filters and target. Initial subscribe starts at the current position; a refresh with a saved cursor queues matching retained events. `truncated: true` reports matching history older than that window. Cursors stay behind earlier recoverable deliveries, so out-of-order delivery cannot silently skip them.
 - **Limit**: 50 live subscriptions per app per server (`-32013`).
 
 ### Verification challenge
@@ -190,3 +190,10 @@ Allternit is also an MCP Events **client**. When a server you connected as a con
 - [Wake a bot from a connected app's events](/guides/wake-a-bot-from-app-events)
 - [MCP Servers API](/api/mcp-servers)
 - [Platform API webhooks](/api/platform/webhooks), which can use the same Standard Webhooks signatures
+
+
+## ChatGPT interoperability
+
+[OpenAI's MCP Events integration](https://developers.openai.com/plugins/build/mcp-events) uses protocol `2026-07-28`, webhook delivery and callback verification. It works in Work web chats, desktop Work chats with Cloud selected, and dots. Rescan a plugin after changing its event catalog.
+
+ChatGPT does not support polling, streaming, or the draft's `gap` / `terminated` control notifications. Allternit stops delivery on revocation regardless of whether the client understands a termination notification. A `2xx` acknowledges receipt; task execution and output are asynchronous. Test discovery, filtered subscriptions, refresh/replay, real task output, unsubscribe, revocation and duplicate deliveries before describing a plugin workflow as verified.

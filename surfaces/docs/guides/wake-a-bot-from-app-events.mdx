@@ -11,26 +11,54 @@ This is the opposite direction of [MCP Events on Allternit's own servers](/guide
 
 1. Connect the app in **Settings › Connectors** (or from the app directory) and sign in to it if it asks.
 2. Open the connector. If the app offers events, an **Events** section lists them with a short description of each.
-3. Pick an event, fill in its filters if it has any (for example a mail label or a repository), and choose the bot to wake.
-4. Choose whether the bot asks before acting (**Ask first**, the default) or acts on its own.
+3. Pick an event, fill in its filters if it has any (for example a mail label or a repository), and choose a native bot.
+4. Write **What should this bot do?** and its **Expected result**. For example: “Investigate each bug report, prepare a draft fix, and show the validation evidence.”
+5. Expand **Preview automation** to inspect the task before saving.
+6. Choose whether the bot asks before acting (**Ask first**, the default) or acts on its own.
 
 <Warning>
 Event data comes from outside your account: anyone can send you an email or open an issue. Treat it as untrusted input. Keep **Ask first** for events whose content other people control, and only let a bot act on its own when it has nothing risky it could be talked into doing.
 </Warning>
-5. Save. The status shows **Active** once the app has confirmed the subscription.
+7. Save. The status shows **Active** once the app has confirmed the subscription.
 
-Subscribing to the same event with the same filters again does not add a second one: it updates the existing subscription (for example to wake a different bot). One event + filter combination wakes one bot.
+Subscribing to the same event with the same filters updates that transport subscription and its default automation. Under **Automations and results**, use **Add automation** to give the same events another task or target bot without creating another upstream subscription.
 
-## What the bot gets
+## Rules and execution
 
-Each event becomes a task assigned to the bot, the same kind of task a [webhook trigger](/api/webhook-triggers) creates:
+Each rule has its own instructions, expected output and execution policy. Editing task instructions affects future events; a queued run retains its original task snapshot. Pause and daily admission limits apply to queued work too. Changing a rule to ask before starting holds previously automatic queued runs for approval.
 
-- The title names the app and the event.
-- The task carries the event's data (data over 64 KiB is replaced by a note of its size).
-- With **Ask first**, the task is marked as needing your approval before the bot acts.
-- The bot's activity history records a `connector.event.received` entry.
+- **Ask before starting** holds the run until you approve that specific task. Denying it prevents execution.
+- **Plan only** allows a model response but denies tools.
+- **Start automatically** starts a bot turn without a separate run approval. Tools still ask for permission. Approving a task does not grant permission to send money, publish, deploy, or contact a client.
 
-An app may resend an event it isn't sure arrived. Allternit recognises the event's id and creates the task only once.
+Native bots use Allternit's normal thread and session runtime. Bots placed on another Allternit use that computer's session permission API. Vendor adapters that cannot enforce these tool permissions are refused when you save a rule.
+
+## Batching, limits and pause
+
+Open **Automations and results** to edit a rule, pause/resume it, or remove it.
+
+- **Batch window:** combine events arriving during a fixed window into one task. Default is zero (one task per event); maximum is one hour. A batch holds at most 100 events and 512 KiB of event data.
+- **Maximum runs per day:** a rolling 24-hour limit counting execution attempts, including failed attempts and retries. Default is 20.
+- **Timeout:** default five minutes, configurable from 30 seconds to 30 minutes. On timeout, Allternit requests cancellation and holds the run for inspection.
+- **Recorded daily spend threshold:** optional. New runs wait after reported model usage for this rule reaches the threshold. Reporting may lag and a running task can exceed it; this is not a guaranteed spending ceiling.
+
+Runs execute serially per runtime. There are at most 50 rules per subscription and 1,000 pending runs per owner. Pausing a rule holds already queued work and stops creating runs for new events; resume it to continue the held work. Subscription renewal continues while a bot works or a rule is paused. Changing a rule to ask-first or plan-only also restricts queued work; its saved task instructions stay the same.
+
+Events explicitly marked as outbound echoes (`data.own`) or carrying the originating local `automationRunId` are suppressed. For external apps that do not preserve these markers, use source filters and daily limits to bound feedback loops.
+
+## Results, approval and recovery
+
+**Past automations** preserves results after a subscription is stopped.
+
+**Recent runs** shows the saved task, source event IDs, approval state, conversation, result or error, and previous execution attempts. **Inspect event data** retrieves the original data, including data too large for the compatibility Factory ticket. **Open conversation** opens the bot's session.
+
+Each source event also gets a stable Factory ticket and `connector.event.received` activity entry. Duplicate callbacks create neither a second task nor another execution. A batching rule can map several event tickets to one run.
+
+Use **Approve this task**, **Deny**, **Stop run**, or **Request retry (asks first)** as appropriate. A retry always requires a fresh task approval. It does not erase the previous attempt or its recorded usage.
+
+If Allternit restarts while work is queued, the queue survives. If it restarts during execution, the run becomes **Interrupted** instead of being automatically repeated: inspect the conversation, stop the run, and request a retry only when it is appropriate to repeat the task. An external action may already have occurred before a timeout or disconnection.
+
+Allternit rechecks bot ownership, rule state, connector state and subscription state before dispatch. Removing a rule or ending source access cancels queued work that no longer has an active source.
 
 ## Your computer can be asleep
 
@@ -53,7 +81,7 @@ The app sends events to Allternit's cloud, which checks the app's signature and 
 
 ## Privacy
 
-Event data stays on your computer: it is not forwarded to the cloud event backbone, push notifications, or other apps. The cloud keeps only what it needs to check signatures and hold undelivered events (deleted 7 days after delivery).
+Automation rules, run history and results stay on your computer. Incoming event data is held by the cloud receiver before delivery; after delivery the bot processes it on your chosen computer. Event data is not forwarded to the cloud event backbone, push notifications, or other apps. The cloud keeps only what it needs to check signatures and hold undelivered events (deleted 7 days after delivery).
 
 ## Related
 
