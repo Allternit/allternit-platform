@@ -103,7 +103,6 @@ function mapAcuProvider(visionProvider: string | undefined): BrowserTrajectory['
   const value = (visionProvider ?? '').toLowerCase();
   if (value.includes('playwright')) return 'local-playwright';
   if (value.includes('extension')) return 'extension-tab';
-  if (value.includes('browser-use')) return 'browser-use';
   if (value.includes('stagehand')) return 'stagehand';
   return 'local-playwright';
 }

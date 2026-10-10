@@ -69,24 +69,6 @@ export class RemoteBrowserProvider implements BrowserProvider {
   }
 }
 
-export function createBrowserUseProvider(options: Omit<RemoteBrowserProviderOptions, 'capabilities'>): RemoteBrowserProvider {
-  return new RemoteBrowserProvider({
-    ...options,
-    capabilities: {
-      provider: 'browser-use',
-      capabilities: [
-        'navigate', 'observe.dom', 'observe.accessibility', 'observe.screenshot',
-        'interact.pointer', 'interact.keyboard', 'tabs', 'files.download', 'record', 'replay',
-      ],
-      local: false,
-      attachedToUserSession: false,
-      supportsPrivateNetwork: false,
-      supportsPersistentProfile: true,
-      limits: { maxRunMs: 30 * 60_000 },
-    },
-  });
-}
-
 export function createStagehandProvider(
   options: Omit<RemoteBrowserProviderOptions, 'capabilities'> & StagehandSidecarOptions = {
     baseUrl: 'sidecar://local',
