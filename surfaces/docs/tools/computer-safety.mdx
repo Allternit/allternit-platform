@@ -4,7 +4,7 @@ description: 'The safety layer every computer-use step runs through: spotlighted
 ---
 
 <Note>
-**Status:** Implementation IMPLEMENTED × Exposure PUBLIC PREVIEW (driver phase D5, decision-runtime phase E3). Code: `cmd/allternit-api/src/computer_safety.rs` (wired into `computer_toolset::execute` and `execute_step`), the driver's `context` and `ocr` methods (`domains/computer-use/driver/allternit_driver/safety.py`). Settings table: migration `V246__computer_safety_settings.sql`.
+**Status:** Implementation IMPLEMENTED × Exposure PUBLIC PREVIEW (driver phase D5, decision-runtime phase E3). Code: `cmd/allternit-api/src/computer_safety.rs` (wired into `computer_toolset::execute` and `execute_step`) and `cmd/allternit-api/src/computer_ocr.rs` (the server OCR engine), the driver's `context` and `ocr` methods (`domains/computer-use/driver/allternit_driver/safety.py`). Settings tables: migrations `V246__computer_safety_settings.sql`, `V250__computer_safety_project_scope.sql`.
 </Note>
 
 ## Overview
@@ -91,6 +91,8 @@ Add your own with `watch_apps` and `watch_domains`, or turn the built-ins off wi
 ```http
 GET /api/v1/computers/:id/safety
 PUT /api/v1/computers/:id/safety
+GET /api/v1/projects/:id/safety
+PUT /api/v1/projects/:id/safety
 ```
 
 ```json
@@ -111,6 +113,8 @@ PUT /api/v1/computers/:id/safety
 ```
 
 - `scope` is `computer` (this computer) or `default` (all of your computers). A computer's own settings override the default field by field. `GET` returns `computer`, `default`, `effective`, the built-in watch lists and the monitor's backends.
+- Settings can also be scoped to a **project** with `PUT /api/v1/projects/:id/safety` (the project must be yours). The chain for a toolset call is **computer → project → owner default**: the most specific scope that sets a field wins, exactly like the computer-over-default rule. `GET /computers/:id/safety?project_id=…` previews that chain for one computer.
+- Which project applies is decided by the run, not by the model: a call's project is its run's session project. A toolset request may also carry `project_id`, but it is verified — it must name one of your projects and match the run's project, or the call is refused (`403 safety_denied`).
 - Apps match by name or bundle id; `*` globs. Domains: `example.com` covers its subdomains; `*.example.com` globs.
 - A deny entry always wins. When `allow_apps` is set, steps may only target those apps. When `allow_domains` is set, browser pages must be on those domains.
 - When a list is set and the executor can't tell where a step lands, mutating steps are refused and reads are let through. The same goes for a browser page whose URL can't be read.
@@ -142,7 +146,7 @@ Before a screenshot or zoom leaves the executor, personal data is blacked out on
 - common API-key shapes
 - the person's vault secrets
 
-Text is located by OCR of the exact image, through the driver's `ocr` method (Apple Vision, fast level; set `ALLTERNIT_REDACTION_OCR_LEVEL=accurate` for the accurate level).
+Text is located by OCR of the exact image. The preferred source is the target's own driver — the driver's `ocr` method (Apple Vision, fast level; set `ALLTERNIT_REDACTION_OCR_LEVEL=accurate` for the accurate level) answers on this Mac for every target, and when a cloud computer's guest image carries the driver, its own OCR is preferred for its screenshots. When no driver OCR is available — a cloud-hosted allternit-api — the executor falls back to a built-in, pure-Rust OCR engine (the `ocrs` engine, MIT/Apache-2.0). Its models download once into the API's data dir on first use, are pinned by URL and checked against a pinned SHA-256, and the engine runs off the async runtime with a size cap (40 MB PNG, 4096×4096 px) and a timeout. Its word boxes feed the same redaction code as the driver's, so behaviour matches on every host.
 
 | `redaction` | Behaviour |
 |---|---|
@@ -150,7 +154,7 @@ Text is located by OCR of the exact image, through the driver's `ocr` method (Ap
 | `best_effort` (default elsewhere) | If OCR can't run, the screenshot is returned and its note says redaction wasn't available. |
 | `off` | No redaction. |
 
-OCR needs the Allternit Driver on the host that runs allternit-api. Desktop has it, so cloud computers and gateway browsers driven from Desktop are redacted too. A cloud-hosted allternit-api has no OCR engine, so its screenshots are best effort. Set `"redaction": "required"` on a computer to refuse unredacted screenshots there.
+That fallback is why cloud computers and gateway browsers are fully redacted from a cloud-hosted API too, not best effort: as long as the models can be fetched, OCR runs. Set `"redaction": "required"` on a computer to refuse unredacted screenshots there — when OCR is unavailable for any reason (no driver, download blocked, timeout), no screenshot leaves.
 
 ## Rollback snapshots
 
@@ -171,6 +175,20 @@ There's one snapshot per run (and at most one every 30 minutes for calls without
 ```
 
 `phase` is `watch`, `confirm`, `paused`, `denied`, `snapshot` or `snapshot_failed`. Steps refused inside a `run_subtask` carry `within_subtask: true`.
+
+`watch` is the watch category (`email`, `banking`, `admin`) or `null`.
+
+### In the app
+
+Every computer live view (Allternit Desktop, the ai.allternit.com phone layout and the m.allternit.com app) shows these events over the screen:
+
+- **confirm**: a banner with the step, the app or site and the reason, and **Approve** / **Deny** buttons. They resolve the same approval (`approval_id`) through `POST /api/aci/handoff/:id/approve|deny`. The banner clears once the approval resolves or the next action arrives.
+- **paused**: "Paused by safety check" with the reason and **Take over**, which opens the person's control of the computer.
+- **denied**: a dismissible notice with the reason, pointing to the computer's safety settings.
+- **watch**: a "Watch mode" badge while consecutive steps are on a watch-listed app or site. It clears on the first ordinary step.
+- **snapshot** / **snapshot_failed**: a "Rollback point saved" or "Rollback point failed" toast.
+
+**Settings → Computers → Safety** edits a computer's lists (or the owner-wide default) through `GET`/`PUT /computers/:id/safety` and shows the effective result. The built-in watch lists and the monitor state are shown read-only.
 
 ## Not measured yet
 

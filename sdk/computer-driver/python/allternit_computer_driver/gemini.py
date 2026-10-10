@@ -3,9 +3,10 @@ is sent with ``coordinate_space: "normalized_1000"`` and the server scales to th
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List, Optional
 
 from .client import AllternitComputers, result_image, result_text
+from .v2 import computer_v2_tool, run_computer_v2_member
 
 Step = Dict[str, Any]
 _MAP = {"control": "ctrl", "meta": "super", "command": "super", "enter": "Return", "escape": "Escape", "backspace": "BackSpace", "tab": "Tab", "delete": "Delete"}
@@ -89,3 +90,40 @@ def run_gemini_call(client: AllternitComputers, computer_id: str, name: str, arg
     if error:
         response["error"] = result_text(error)
     return {"function_response": {"name": name, "response": response}, "inline_data": {"mime_type": img["media_type"], "data": img["data"]}, "error": error}
+
+
+def gemini_computer_v2_declaration() -> Dict[str, Any]:
+    """The ``computer_v2`` function declaration for Gemini models: the ten structured members
+    next to the ``computer_use`` declaration. Route matching ``functionCall`` parts through
+    ``run_gemini_v2_call``."""
+    t = computer_v2_tool()
+    return {"name": t["name"], "description": t["description"], "parameters": t["schema"]}
+
+
+def run_gemini_v2_call(
+    client: AllternitComputers,
+    computer_id: str,
+    name: str,
+    input: Dict[str, Any],
+    on_approval: Optional[Callable[[Dict[str, Any]], Any]] = None,
+) -> Dict[str, Any]:
+    """Run one ``computer_v2`` function call (``{action, ...fields}``).
+
+    Returns ``{"function_response": {name, response}, "error": ...}``. Without
+    ``on_approval`` the ApprovalRequiredError propagates, like the pixel adapter.
+    """
+    args = dict(input or {})
+    action = args.pop("action", None)
+    if not action:
+        raise ValueError("The computer_v2 call needs an action.")
+    if on_approval is not None:
+        res = run_computer_v2_member(client, computer_id, str(action), args, on_approval)
+    else:
+        res = client.toolset(computer_id, {"toolset": "computer", "member": str(action), "input": args})
+    text = result_text(res)
+    response: Dict[str, Any] = {"result": text}
+    error = None
+    if res.get("is_error"):
+        response["error"] = text or "The action failed."
+        error = res
+    return {"function_response": {"name": name, "response": response}, "error": error}

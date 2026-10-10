@@ -67,7 +67,7 @@ pub fn v2_member_needs_approval(member: &str, input: &Value, sandboxed: bool) ->
 
 /// How long one driver call may take (reads are tens of ms; a batch with
 /// wait_for/expect conditions can wait seconds per step).
-fn driver_timeout(member: &str, input: &Value) -> Duration {
+pub(crate) fn driver_timeout(member: &str, input: &Value) -> Duration {
     match member {
         "run_batch" => {
             let steps = input.get("steps").and_then(Value::as_array);
@@ -101,10 +101,25 @@ async fn driver_screen_size() -> Option<Frame> {
     (w > 0.0 && h > 0.0).then_some(Frame { width: w.round() as u32, height: h.round() as u32 })
 }
 
-/// The result's screen block for structured members: the real screen size
-/// from the driver (no capture) and the frame a screenshot would use.
+/// The result's screen block for structured members on this device: the real
+/// screen size from the driver (no capture) and the frame a screenshot would
+/// use.
 async fn screen_block() -> ScreenInfo {
     match driver_screen_size().await {
+        Some(f) => screen_info(Some(&Mapping::new(
+            f,
+            None,
+            CoordinateSpace::Pixels,
+            &crate::computer_toolset::contract(Toolset::Computer).model_frame,
+        ))),
+        None => screen_info(None),
+    }
+}
+
+/// The guest variant of `screen_block`: the screen size comes from the
+/// guest's own driver, over the exec channel.
+async fn guest_screen_block(target: &Target) -> ScreenInfo {
+    match crate::guest_driver::guest_screen_size(target).await {
         Some(f) => screen_info(Some(&Mapping::new(
             f,
             None,
@@ -140,12 +155,27 @@ pub async fn execute_v2(
 ) -> Result<ToolsetResult, Fail> {
     match member {
         "read_ui" | "act" | "run_batch" | "verify" => {
-            let reply = driver_op(member, input).await?;
+            // D1b: this-device reaches the local sidecar; a guest reaches the
+            // driver inside the guest image through the guest exec channel
+            // (guest_driver). Same lease/policy/safety/audit gate either way —
+            // `execute` ran it before dispatching here.
+            let (reply, screen) = match target {
+                Target::Guest { .. } => {
+                    let reply = crate::guest_driver::guest_driver_op(target, member, input, driver_timeout(member, input)).await?;
+                    let screen = guest_screen_block(target).await;
+                    (reply, screen)
+                }
+                _ => {
+                    let reply = driver_op(member, input).await?;
+                    let screen = screen_block().await;
+                    (reply, screen)
+                }
+            };
             Ok(ToolsetResult {
                 is_error: false,
                 content: vec![text(serde_json::to_string(&reply).unwrap_or_else(|_| "{}".into()))],
                 browser_state: None,
-                screen: screen_block().await,
+                screen,
                 error: None,
             })
         }
@@ -482,15 +512,29 @@ async fn resolve_credential(user: &AuthUser, input: &Value) -> Result<ResolvedFo
 }
 
 /// Type the resolved value into the focused field, per target. The value
-/// rides the local driver socket or the guest's exec channel (base64-wrapped
-/// there, in a temp file that is removed at once); it is never written to
-/// logs, the audit row, or the model result.
+/// rides the local driver socket or the guest driver's pixel path when the
+/// guest image's driver is answering (the value goes straight into the
+/// in-guest socket; nothing touches the guest's disk or the exec channel's
+/// command line beyond the base64 line itself); otherwise it takes the
+/// legacy guest exec channel (base64-wrapped there, in a temp file that is
+/// removed at once). It is never written to logs, the audit row, or the
+/// model result.
 async fn type_secret(target: &Target, value: &str) -> Result<(), Fail> {
     match target {
         Target::ThisDevice => td::call_driver("type_text", json!({ "scope": "desktop", "text": value }))
             .await
             .map(|_| ())
             .map_err(|e| Fail::from(String::from(e))),
+        Target::Guest { .. } if crate::guest_driver::guest_driver_available(target).await => {
+            crate::guest_driver::guest_driver_raw(
+                target,
+                "pixel_type_text",
+                json!({ "scope": "desktop", "text": value }),
+                Duration::from_secs(30),
+            )
+            .await
+            .map(|_| ())
+        }
         Target::Guest { os, .. } if os == "windows" => {
             let script = format!(
                 "$t = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{}'))\n$t = [regex]::Replace($t, '[+^%~(){{}}\\[\\]]', '{{$0}}')\nAdd-Type -AssemblyName System.Windows.Forms\n[System.Windows.Forms.SendKeys]::SendWait($t)",
@@ -598,11 +642,15 @@ mod tests {
     }
 
     #[test]
-    fn guests_do_not_run_structured_members_yet() {
-        assert!(crate::computer_toolset::unsupported_reason("guest_linux", crate::computer_toolset::Toolset::Computer, "read_ui").is_some());
-        assert!(crate::computer_toolset::unsupported_reason("guest_windows", crate::computer_toolset::Toolset::Computer, "use_credential").is_some());
+    fn guests_run_structured_members_through_the_guest_driver() {
+        // D1b: the guest image ships the driver, so guests no longer refuse
+        // structured members statically; whether the driver answers is
+        // probed at runtime (guest_structured_down / guest_driver).
+        assert!(crate::computer_toolset::unsupported_reason("guest_linux", crate::computer_toolset::Toolset::Computer, "read_ui").is_none());
+        assert!(crate::computer_toolset::unsupported_reason("guest_windows", crate::computer_toolset::Toolset::Computer, "use_credential").is_none());
         assert!(crate::computer_toolset::unsupported_reason("guest_linux", crate::computer_toolset::Toolset::Computer, "left_click").is_none());
         assert!(crate::computer_toolset::unsupported_reason("this_device", crate::computer_toolset::Toolset::Computer, "read_ui").is_none());
+        assert!(crate::computer_toolset::unsupported_reason("browser_gateway", crate::computer_toolset::Toolset::Computer, "read_ui").is_some());
     }
 
     #[test]

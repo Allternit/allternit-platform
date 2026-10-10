@@ -2,5 +2,6 @@
 // The Anthropic toolsets live on the "@allternit/computer-driver/anthropic" subpath
 // so this entry never loads the optional @anthropic-ai/sdk peer.
 export * from "./client.ts"
+export * from "./v2.ts"
 export * from "./openai.ts"
 export * from "./gemini.ts"

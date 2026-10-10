@@ -3,9 +3,10 @@ computer and return a ``computer_call_output`` item carrying the next screenshot
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
-from .client import AllternitComputers, result_image
+from .client import AllternitComputers, result_image, result_text
+from .v2 import computer_v2_tool, run_computer_v2_member
 
 _KEYS = {
     "CTRL": "ctrl", "CONTROL": "ctrl", "ALT": "alt", "OPTION": "alt", "SHIFT": "shift", "CMD": "super", "META": "super",
@@ -99,4 +100,39 @@ def run_openai_action(
             "output": {"type": "computer_screenshot", "image_url": f"data:{img['media_type']};base64,{img['data']}"},
         },
         "error": error,
+    }
+
+
+def openai_computer_v2_tool() -> Dict[str, Any]:
+    """The ``computer_v2`` function tool for the Responses API: the ten structured members
+    next to the ``computer_use_preview`` tool. Register it in ``tools``; route matching
+    ``function_call`` items through ``run_openai_v2_call``."""
+    t = computer_v2_tool()
+    return {"type": "function", "name": t["name"], "description": t["description"], "parameters": t["schema"], "strict": False}
+
+
+def run_openai_v2_call(
+    client: AllternitComputers,
+    computer_id: str,
+    call_id: str,
+    input: Dict[str, Any],
+    on_approval: Optional[Callable[[Dict[str, Any]], Any]] = None,
+) -> Dict[str, Any]:
+    """Run one ``computer_v2`` function call (``{action, ...fields}``).
+
+    Returns ``{"output": <function_call_output item>, "error": <failed result or None>}``.
+    Without ``on_approval`` the ApprovalRequiredError propagates, like the pixel adapter.
+    """
+    args = dict(input or {})
+    action = args.pop("action", None)
+    if not action:
+        raise ValueError("The computer_v2 call needs an action.")
+    if on_approval is not None:
+        res = run_computer_v2_member(client, computer_id, str(action), args, on_approval)
+    else:
+        res = client.toolset(computer_id, {"toolset": "computer", "member": str(action), "input": args})
+    text = result_text(res)
+    return {
+        "output": {"type": "function_call_output", "call_id": call_id, "output": text or "Done."},
+        "error": res if res.get("is_error") else None,
     }

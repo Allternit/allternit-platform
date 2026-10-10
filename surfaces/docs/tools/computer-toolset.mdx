@@ -73,7 +73,7 @@ A subtask that has run before replays from the **replay cache** with no decision
 }
 ```
 
-Structured members need the Allternit Driver on the computer: today that is this-device (macOS, Linux); cloud guests gain them with the guest driver image. The [schema endpoint](#schema) reports each member's availability per target.
+Structured members need the Allternit Driver on the computer: this-device (macOS, Linux) and cloud guests (Linux, Windows — the driver ships in the guest image and the [schema endpoint](#schema) reports when it isn't answering).
 
 ### Browser (`allternit.browser.v1`)
 
@@ -91,8 +91,8 @@ The executor reports what a target can run (see [Schema](#schema)). A member tha
 
 | Target | What runs |
 |---|---|
-| Cloud and bot computers (Linux) | All 17 pixel members, through xdotool and scrot in the guest. The v2 structured members return `unimplemented` until the guest driver image ships (D1b). |
-| Cloud computers (Windows) | All 17 pixel members, through PowerShell and user32 (`SetCursorPos`, `mouse_event`, `keybd_event`, SendKeys for `type`) run by the VM driver's guest exec. The v2 structured members return `unimplemented` until the guest driver image ships. |
+| Cloud and bot computers (Linux) | All 17 pixel members and the v2 structured members through the Allternit Driver that ships in the guest image (`read_ui`/`act`/`run_batch`/`verify` over AT-SPI; the driver runs as a boot service on `/run/allternit/driver.sock`). allternit-api reaches it through the guest exec channel, and pixel members use the driver's pixel path first. When the driver doesn't answer, members fail as `driver_unavailable` and pixel members fall back to xdotool/scrot. |
+| Cloud computers (Windows) | All 17 pixel members and the v2 structured members through the in-guest driver (UIA reads and pattern actions; user32 input; the driver runs at logon of the desktop session on loopback TCP with a launch token). When it doesn't answer, the same `driver_unavailable` failure and the PowerShell/user32 fallback apply. |
 | This device (macOS, [Allternit Driver](/tools/allternit-driver) over Cua Driver 0.34) | All 17 pixel members and all 7 v2 structured members (the sidecar must be running — the schema endpoint says when it isn't). Pointer and keyboard members go through the Allternit Driver sidecar's `pixel_*` ops, which run Cua Driver's desktop scope, own input per window and log each op. Cua Driver has no press-and-hold key call on macOS, so `hold_key` posts the key-down and key-up events through CoreGraphics itself (keys go to the frontmost app; it uses the Accessibility permission Allternit Desktop already has). Held modifiers (`text`) work on clicks and drags, not on `scroll`. `cursor_position` uses `get_cursor_position`. Cua Driver has no separate press and release on macOS, so `left_mouse_down` is held by the executor and sent with `left_mouse_up` as one click (same spot) or one press-drag-release gesture. |
 | This device (Windows) | All 17 pixel members and the v2 structured members through the same sidecar over loopback TCP (the sidecar picks the port and gates every request with a launch token), replacing the Cua CLI fallback. |
 | Browser (ACU gateway, Playwright) | All 31 browser members, including element refs, tabs, console, network, JavaScript and uploads. The four optional members stay off until the caller turns them on (see [Optional members](#optional-members)). |

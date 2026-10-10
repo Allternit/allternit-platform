@@ -433,6 +433,12 @@ pub struct ToolsetRequest {
     /// runs; never read from the wire.
     #[serde(skip)]
     pub within_subtask: Option<String>,
+    /// The cowork project this call runs in. Not trusted on its own: it is
+    /// checked against the owner's projects and the run's own project before
+    /// it can change which safety settings apply (see
+    /// `computer_safety::resolve_project_scope`).
+    #[serde(default)]
+    pub project_id: Option<String>,
 }
 
 fn empty_object() -> Value {
@@ -637,22 +643,38 @@ impl Target {
 }
 
 /// Members a target can run, or why not. `None` = supported.
+///
+/// D1b: guests run the structured members through the Allternit Driver that
+/// ships in the guest image (`guest_driver`). This table is static; whether
+/// the guest's driver actually answers is probed at runtime (execute, the
+/// schema endpoint and subtask steps share one TTL cache), because a driver
+/// that isn't up must fail as `driver_unavailable`, not as "unsupported".
 pub fn unsupported_reason(target_label: &str, toolset: Toolset, member: &str) -> Option<&'static str> {
     match (toolset, target_label) {
-        (Toolset::Computer, "guest_linux" | "guest_windows") => {
-            if crate::computer_v2::is_v2_member(member) {
-                // D1b: the guest image doesn't carry the Allternit Driver yet.
-                Some("The Allternit Driver doesn't run on this computer yet, and the structured members need it. It arrives with the guest driver image.")
-            } else {
-                None
-            }
-        }
+        (Toolset::Computer, "guest_linux" | "guest_windows") => None,
         (Toolset::Computer, "this_device") => match member {
             _ => None,
         },
         (Toolset::Computer, _) => Some("The computer toolset doesn't run on this target."),
         (Toolset::Browser, "browser_gateway") => None,
         (Toolset::Browser, _) => Some("The browser toolset doesn't run on this target."),
+    }
+}
+
+/// Why a structured member can't run on a guest right now: the driver isn't
+/// answering. `None` when it can run (or the member/target doesn't need it).
+pub(crate) async fn guest_structured_down(target: &Target, member: &str) -> Option<&'static str> {
+    // The structured members need the driver per call; subtask/skill loops
+    // need it for their steps, so they fail here instead of step by step.
+    let needs_driver = crate::guest_driver::is_structured_member(member) || matches!(member, "run_subtask" | "run_skill");
+    if !needs_driver {
+        return None;
+    }
+    match target {
+        Target::Guest { .. } if !crate::guest_driver::guest_driver_available(target).await => Some(
+            "The Allternit Driver on this computer isn't answering. It ships with the guest image; the structured members (read_ui, act, run_batch, verify) need it running.",
+        ),
+        _ => None,
     }
 }
 
@@ -751,6 +773,11 @@ pub fn xdotool_script(member: &str, input: &Value) -> Result<Option<String>, Str
 }
 
 pub(crate) async fn guest_exec(target: &Target, script: &str) -> Result<String, String> {
+    guest_exec_timed(target, script, Duration::from_secs(45)).await
+}
+
+/// `guest_exec` with a custom timeout (driver calls may wait on conditions).
+pub(crate) async fn guest_exec_timed(target: &Target, script: &str, timeout: Duration) -> Result<String, String> {
     let Target::Guest { driver, handle, display, .. } = target else {
         return Err("not a guest target".into());
     };
@@ -764,7 +791,7 @@ pub(crate) async fn guest_exec(target: &Target, script: &str) -> Result<String, 
         capture_stdout: true,
         capture_stderr: true,
     };
-    let out = tokio::time::timeout(Duration::from_secs(45), driver.exec(handle, spec))
+    let out = tokio::time::timeout(timeout, driver.exec(handle, spec))
         .await
         .map_err(|_| "the computer didn't answer in time".to_string())?
         .map_err(|e| format!("couldn't reach the computer: {e}"))?;
@@ -1045,10 +1072,15 @@ pub fn windows_script(member: &str, input: &Value) -> Result<Option<String>, Str
 }
 
 pub(crate) async fn windows_exec(target: &Target, script: &str) -> Result<String, String> {
+    windows_exec_timed(target, script, Duration::from_secs(60)).await
+}
+
+/// `windows_exec` with a custom timeout (driver calls may wait on conditions).
+pub(crate) async fn windows_exec_timed(target: &Target, script: &str, timeout: Duration) -> Result<String, String> {
     let Target::Guest { driver, handle, .. } = target else {
         return Err("not a guest target".into());
     };
-    let out = tokio::time::timeout(Duration::from_secs(60), driver.exec(handle, crate::bot_desktop_windows::shell_command(script)))
+    let out = tokio::time::timeout(timeout, driver.exec(handle, crate::bot_desktop_windows::shell_command(script)))
         .await
         .map_err(|_| "the computer didn't answer in time".to_string())?
         .map_err(|e| format!("couldn't reach the computer: {e}"))?;
@@ -1183,6 +1215,22 @@ static PRESSES: Lazy<Mutex<HashMap<String, (i64, i64)>>> = Lazy::new(|| Mutex::n
 
 /// Capture the target's screen at full resolution.
 async fn capture(target: &Target, run_id: &str) -> Result<Vec<u8>, String> {
+    // D1b: on guests the driver's native screenshot (AT-SPI engine + scrot /
+    // UIA engine + System.Drawing) is the primary path when the driver is up;
+    // the shell capture below stays the explicit fallback.
+    if let Target::Guest { .. } = target {
+        if crate::guest_driver::guest_driver_available(target).await {
+            match crate::guest_driver::guest_driver_raw(target, "screenshot", json!({}), Duration::from_secs(45)).await {
+                Ok(reply) => {
+                    if let Some(png) = reply.get("png").and_then(Value::as_str).and_then(|d| B64.decode(d.trim()).ok()) {
+                        return Ok(png);
+                    }
+                    warn!("the guest driver returned no screenshot; falling back to the shell capture");
+                }
+                Err(e) => warn!(error = %e.message, "the guest driver screenshot failed; falling back to the shell capture"),
+            }
+        }
+    }
     match target {
         Target::ThisDevice if cfg!(target_os = "linux") => {
             let out = local_x_exec("scrot -z -o /tmp/allternit-toolset.png && base64 -w0 /tmp/allternit-toolset.png").await?;
@@ -1281,10 +1329,86 @@ impl From<&str> for Fail {
 }
 
 /// What screenshot redaction needs: the computer's safety settings and the
-/// person's vault secrets (values never leave this process).
+/// person's vault secrets (values never leave this process), plus the data
+/// dir the server OCR engine caches its models in.
 pub struct Redactor<'a> {
     pub settings: &'a crate::computer_safety::SafetySettings,
     pub secrets: &'a [String],
+    pub data_dir: std::path::PathBuf,
+}
+
+/// Driver-served pixel members on guests: the same desktop-scope calls the
+/// this-device arm builds, sent to the guest's own driver instead of the
+/// local sidecar. `Ok(None)` = the member stays on the shell input path
+/// (hold_key, the press/release pair, modifier-scroll); `Err` = the driver
+/// call failed and the caller decides whether to fall back.
+async fn guest_pixel_via_driver(target: &Target, spec: &MemberSpec, scaled: &Value, map: &Mapping) -> Result<Option<Vec<Value>>, Fail> {
+    use crate::this_device_input as td;
+
+    let member = spec.name.as_str();
+    let mods: Vec<&str> = match scaled.get("text").and_then(Value::as_str) {
+        Some(t) if member.ends_with("click") || member == "scroll" || member == "left_click_drag" => {
+            cua_modifiers(t).map_err(Fail::from)?
+        }
+        _ => vec![],
+    };
+    if member == "scroll" && !mods.is_empty() {
+        return Ok(None); // The driver's scroll holds no modifiers; the shell path does.
+    }
+    let at = point_of(scaled, "coordinate");
+    let need_at = || at.ok_or_else(|| Fail::from(format!("{member} needs a coordinate")));
+    let (tool, mut args) = match member {
+        "left_click" => td::mouse_call(&this_device_mouse("click", Some(need_at()?), None, Some("left"), None)),
+        "middle_click" => td::mouse_call(&this_device_mouse("click", Some(need_at()?), None, Some("middle"), None)),
+        "right_click" => td::mouse_call(&this_device_mouse("rightclick", Some(need_at()?), None, None, None)),
+        "double_click" => td::mouse_call(&this_device_mouse("doubleclick", Some(need_at()?), None, None, None)),
+        "triple_click" => td::mouse_call(&this_device_mouse("doubleclick", Some(need_at()?), None, None, None)).map(|(tool, mut a)| {
+            a["count"] = json!(3);
+            (tool, a)
+        }),
+        "mouse_move" => td::mouse_call(&this_device_mouse("move", Some(need_at()?), None, None, None)),
+        "left_click_drag" => {
+            let start = point_of(scaled, "start_coordinate").ok_or_else(|| Fail::from("start_coordinate is required"))?;
+            td::mouse_call(&this_device_mouse("drag", Some(start), Some(need_at()?), None, None))
+        }
+        "scroll" => td::mouse_call(&this_device_mouse(
+            "scroll",
+            at,
+            None,
+            scaled.get("scroll_direction").and_then(Value::as_str),
+            scaled.get("scroll_amount").and_then(Value::as_f64).map(|a| a.round() as i32),
+        )),
+        "type" => td::keyboard_call(&crate::bot_desktop_input::KeyboardInput {
+            action: "type".into(),
+            text: scaled.get("text").and_then(Value::as_str).map(str::to_string),
+            key: None,
+        }),
+        "key" => td::keyboard_call(&crate::bot_desktop_input::KeyboardInput {
+            action: "key".into(),
+            text: None,
+            key: scaled.get("text").and_then(Value::as_str).map(str::to_string),
+        }),
+        "cursor_position" => Ok(("get_cursor_position", json!({}))),
+        _ => return Ok(None),
+    }
+    .map_err(Fail::from)?;
+    if !mods.is_empty() {
+        args["modifier"] = json!(mods);
+    }
+    let repeat = if member == "key" {
+        scaled.get("repeat").and_then(Value::as_f64).unwrap_or(1.0).round().clamp(1.0, 100.0) as u32
+    } else {
+        1
+    };
+    for _ in 0..repeat {
+        let reply = crate::guest_driver::guest_driver_raw(target, &format!("pixel_{tool}"), args.clone(), Duration::from_secs(45)).await?;
+        if member == "cursor_position" {
+            let (x, y) = find_xy(&reply).ok_or_else(|| Fail::from("the driver didn't report a cursor position"))?;
+            let (mx, my) = map.to_model(x, y);
+            return Ok(Some(vec![text(format!("X={mx},Y={my}"))]));
+        }
+    }
+    Ok(Some(vec![text(ack(spec, scaled))]))
 }
 
 /// Dispatch one action (coordinates already in screen px). Returns the
@@ -1316,7 +1440,7 @@ async fn dispatch(
             let full = png_size(&png).ok_or("couldn't read the screenshot size")?;
             // Personal data is blacked out on the full-size capture, before
             // any copy of it leaves the executor (D5).
-            let (png, report) = crate::computer_safety::redact_png(&png, redactor.settings, target, redactor.secrets)
+            let (png, report) = crate::computer_safety::redact_png(&png, redactor.settings, target, redactor.secrets, &redactor.data_dir)
                 .await
                 .map_err(|m| Fail::coded("redaction_unavailable", m))?;
             // Crop region arrives in input-space px; map it to image px.
@@ -1337,6 +1461,18 @@ async fn dispatch(
 
     match (toolset, target) {
         (Toolset::Computer, Target::Guest { os, .. }) => {
+            // D1b: the driver's native pixel path is primary when the driver
+            // answers; the xdotool/PowerShell path below is the explicit
+            // fallback (and serves the members the driver doesn't).
+            if crate::guest_driver::guest_driver_available(target).await {
+                match guest_pixel_via_driver(target, spec, scaled, map).await {
+                    Ok(Some(blocks)) => return Ok((blocks, None)),
+                    Ok(None) => {}
+                    Err(fail) => {
+                        warn!(member, error = %fail.message, "guest driver pixel path failed; falling back to the shell input path");
+                    }
+                }
+            }
             let out = if os == "windows" {
                 let script = windows_script(member, scaled)?.ok_or("nothing to run")?;
                 windows_exec(target, &script).await?
@@ -1664,6 +1800,12 @@ pub async fn execute(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: 
         settle(false);
         return respond(StatusCode::OK, error_result("unimplemented", format!("{} is not available on this computer: {reason}", req.member), None));
     }
+    // D1b: structured members on guests need the in-guest driver answering;
+    // the probe is cached, and the schema endpoint reports the same state.
+    if let Some(reason) = guest_structured_down(&target, &req.member).await {
+        settle(false);
+        return respond(StatusCode::OK, error_result("driver_unavailable", format!("{} is not available on this computer: {reason}", req.member), None));
+    }
 
     // 2. Control lease (computers only; a gateway browser session is not a
     // shared screen).
@@ -1707,8 +1849,18 @@ pub async fn execute(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: 
     };
 
     // 3c. The safety layer (D5/E3): lists, secret binding, irreversible
-    // classes, watch mode and the per-step monitor.
-    let safety = crate::computer_safety::assess(state, user, &computer, &target, req.toolset, spec, &scaled, req.run_id.as_deref()).await;
+    // classes, watch mode and the per-step monitor. The project scope the
+    // settings resolve through comes from the run's own session project; a
+    // caller-supplied project_id must match it (or, with no run project, name
+    // one of the owner's projects) — never trusted blindly from the wire.
+    let project_scope = match crate::computer_safety::resolve_project_scope(state, &user.user_id, req.project_id.as_deref(), req.run_id.as_deref()).await {
+        Ok(p) => p,
+        Err(message) => {
+            settle(false);
+            return respond(StatusCode::FORBIDDEN, error_result("safety_denied", message, None));
+        }
+    };
+    let safety = crate::computer_safety::assess(state, user, &computer, &target, req.toolset, spec, &scaled, req.run_id.as_deref(), project_scope.as_deref()).await;
     let watching = crate::computer_safety::watch_note(&computer.id, &safety, spec);
     match &safety.verdict {
         crate::computer_safety::Verdict::Deny(reason) => {
@@ -1860,7 +2012,7 @@ pub async fn execute(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: 
     }
     let map = map.expect("pixel members have a mapping");
     let point = primary_point(spec, &scaled);
-    let redactor = Redactor { settings: &safety.settings, secrets: &secrets };
+    let redactor = Redactor { settings: &safety.settings, secrets: &secrets, data_dir: state.data_dir.clone() };
     let outcome = dispatch(&target, req.toolset, spec, &scaled, &map, &screen_key, &run_id, &redactor).await;
     emit_action(&computer.id, req.toolset, &req.member, point, Some(&map), req.run_id.as_deref(), outcome.is_ok());
     crate::computer_safety::record_monitor_outcome(state, user, &safety, if outcome.is_ok() { "success" } else { "error" }, "step ran");
@@ -2028,7 +2180,9 @@ pub(crate) async fn execute_step(
     input: Value,
     run_id: &str,
 ) -> Result<Value, Fail> {
-    if !matches!(member, "read_ui" | "act" | "run_batch" | "verify") || !matches!(target, Target::ThisDevice) {
+    let structured_target = matches!(target, Target::ThisDevice)
+        || (matches!(target, Target::Guest { .. }) && crate::guest_driver::guest_driver_available(target).await);
+    if !matches!(member, "read_ui" | "act" | "run_batch" | "verify") || !structured_target {
         return Err(Fail::from(format!("{member} can't run inside a subtask on this target")));
     }
     let c = contract(Toolset::Computer);
@@ -2047,14 +2201,19 @@ pub(crate) async fn execute_step(
         browser_session_id: None,
         enable: vec![],
         within_subtask: Some(run_id.to_string()),
+        project_id: None,
     };
     lease_check(state, user, computer, target, Some(run_id)).await.map_err(|(_, _, m)| Fail::from(m))?;
     let (policy_desc, verdict) = policy_check(user, computer, &req).map_err(Fail::from)?;
     // The safety layer runs on every step. The subtask's one approval can't
     // cover an irreversible, watch-mode or monitor-flagged step: those end
     // the subtask and hand the step back to the planner, whose own call of
-    // it goes through the person's approval.
-    let safety = crate::computer_safety::assess(state, user, computer, target, Toolset::Computer, spec, &req.input, Some(run_id)).await;
+    // it goes through the person's approval. The project scope comes from
+    // the run itself, like every other step of this subtask.
+    let project_scope = crate::computer_safety::resolve_project_scope(state, &user.user_id, None, Some(run_id))
+        .await
+        .map_err(|m| Fail::coded("safety_denied", m))?;
+    let safety = crate::computer_safety::assess(state, user, computer, target, Toolset::Computer, spec, &req.input, Some(run_id), project_scope.as_deref()).await;
     let watching = crate::computer_safety::watch_note(&computer.id, &safety, spec);
     let refusal = match &safety.verdict {
         crate::computer_safety::Verdict::Deny(r) => Some(("safety_denied", "denied", r.clone())),
@@ -2077,7 +2236,13 @@ pub(crate) async fn execute_step(
     }
     // Straight to the driver: a subtask step needs the driver's JSON, not the
     // model-facing result (whose screen block costs a screen-size query).
-    let outcome = crate::computer_v2::driver_op(member, &req.input).await;
+    let outcome = match target {
+        Target::ThisDevice => crate::computer_v2::driver_op(member, &req.input).await,
+        Target::Guest { .. } => {
+            crate::guest_driver::guest_driver_op(target, member, &req.input, crate::computer_v2::driver_timeout(member, &req.input)).await
+        }
+        Target::Browser { .. } => Err(Fail::from(format!("{member} can't run inside a subtask on the browser toolset"))),
+    };
     emit_action(&computer.id, Toolset::Computer, member, None, None, Some(run_id), outcome.is_ok());
     crate::computer_safety::record_monitor_outcome(state, user, &safety, if outcome.is_ok() { "success" } else { "error" }, "step ran");
     outcome
@@ -2094,6 +2259,10 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/computers/:id/toolset/events", get(get_toolset_events))
         .route("/computers/:id/human-done", post(post_human_done))
         .route("/computers/:id/safety", get(crate::computer_safety::get_safety).put(crate::computer_safety::put_safety))
+        .route(
+            "/projects/:project_id/safety",
+            get(crate::computer_safety::get_project_safety).put(crate::computer_safety::put_project_safety),
+        )
 }
 
 /// The person signals the human window is complete (CAPTCHA done, 2FA
@@ -2158,13 +2327,15 @@ async fn get_toolset_schema(
         Ok(c) => c,
         Err((status, message)) => return (status, Json(json!({ "error": "computer_unavailable", "message": message }))).into_response(),
     };
-    let (target_label, sandboxed, unavailable) = match build_target(&state, &user, &computer, toolset, None).await {
+    let (target, target_label, sandboxed, unavailable) = match build_target(&state, &user, &computer, toolset, None).await {
         Ok(t) => {
             let down = match &t {
                 Target::Browser { base, .. } if !gateway_healthy(base).await => Some("The browser driver (ACU gateway) isn't running for this computer."),
                 _ => None,
             };
-            (t.label(), t.sandboxed(), down)
+            let label = t.label();
+            let sandboxed = t.sandboxed();
+            (t, label, sandboxed, down)
         }
         Err((_, message)) => {
             return Json(json!({
@@ -2175,12 +2346,14 @@ async fn get_toolset_schema(
             .into_response();
         }
     };
-    // The structured v2 members answer through the Allternit Driver sidecar;
+    // The structured v2 members answer through the Allternit Driver sidecar
+    // (this device) or the driver inside the guest image (cloud computers);
     // without it they would fail per call, so the schema says so up front.
     let structured_down = match (toolset, target_label) {
         (Toolset::Computer, "this_device") if crate::this_device_input::DriverEndpoint::resolve().is_none() => {
             Some("The Allternit Driver sidecar isn't running on this computer. Open Allternit Desktop (or update it); until then the structured members (read_ui, act, run_batch, verify) are unavailable.")
         }
+        (Toolset::Computer, "guest_linux" | "guest_windows") => guest_structured_down(&target, "read_ui").await,
         _ => None,
     };
     let members: Vec<Value> = c
@@ -2386,6 +2559,7 @@ mod tests {
             browser_session_id: None,
             enable: vec![],
             within_subtask: None,
+            project_id: None,
         };
         let spec = contract(Toolset::Computer).member("type").unwrap();
         assert!(needs_approval(spec, false), "type needs approval on this device");

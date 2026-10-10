@@ -203,6 +203,28 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 5b. Install the Allternit Driver (structured computer-toolset sidecar).
+# ---------------------------------------------------------------------------
+# The tart desktop runs as the logged-in user `admin` on DISPLAY :99, so the
+# driver installs as a session autostart entry (it needs that session's D-Bus
+# and AT-SPI registry), not the systemd unit the Incus images use.
+DRIVER_SRC_DIR="${DRIVER_SRC_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../domains/computer-use/driver" && pwd)}"
+if [ -d "${DRIVER_SRC_DIR}/allternit_driver" ]; then
+    log "installing the Allternit Driver from ${DRIVER_SRC_DIR}"
+    rm -rf "${LOCAL_DIR}/driver-pkg" "${LOCAL_DIR}/driver-packaging"
+    cp -R "${DRIVER_SRC_DIR}/allternit_driver" "${LOCAL_DIR}/driver-pkg"
+    cp -R "${DRIVER_SRC_DIR}/packaging/guest/linux" "${LOCAL_DIR}/driver-packaging"
+    ${SSH} sudo mkdir -p /tmp/allternit-driver-pkg /tmp/allternit-driver-packaging
+    ${SCP} -r "${LOCAL_DIR}/driver-pkg/." "admin@${IP}:/tmp/allternit-driver-pkg/"
+    ${SCP} -r "${LOCAL_DIR}/driver-packaging/." "admin@${IP}:/tmp/allternit-driver-packaging/"
+    ${SSH} sudo bash /tmp/allternit-driver-packaging/install-driver.sh --user-session admin --display :99 /tmp/allternit-driver-pkg
+    ${SSH} sudo rm -rf /tmp/allternit-driver-pkg /tmp/allternit-driver-packaging
+else
+    echo "ERROR: DRIVER_SRC_DIR ${DRIVER_SRC_DIR} has no allternit_driver package" >&2
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
 # 6. Clean up.
 # ---------------------------------------------------------------------------
 log "cleaning package cache"

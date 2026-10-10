@@ -22,6 +22,7 @@ The driver packages are `@allternit/computer-driver` (TypeScript, in `sdk/comput
 - `AllternitComputers`, a plain client for the `/v1/computers` routes.
 - Anthropic SDK toolset subclasses for the computer and browser toolsets (`BetaAbstractComputerToolset20260801`, `BetaAbstractBrowserToolset20260801`).
 - An OpenAI computer-use adapter and a Gemini `computer_use` adapter.
+- The contract-v2 structured members (`read_ui`, `act`, `run_batch`, `verify`, `request_human`, `use_credential`, `run_subtask`, `run_parallel`, `run_skill`, `skills`) as typed client methods and as the `computer_v2` function tool in every adapter.
 
 ## 2. Create a computer
 
@@ -82,7 +83,75 @@ const step = await runOpenAIAction(
 );
 ```
 
-## 5. Or connect over MCP
+## 5. Structured UI driving (contract v2)
+
+The computer toolset contract has a second generation, `allternit.computer.v2`: the same 17 pixel members plus ten driver-backed structured members — `read_ui`, `act`, `run_batch`, `verify`, `request_human`, `use_credential`, `run_subtask`, `run_parallel`, `run_skill`, `skills`. The structured members read and drive the UI as an element tree (no screenshots), hand bounded step sequences to the fast decision loop (`run_subtask`), type vault credentials without the value ever reaching the model (`use_credential`), pause for a person (`request_human`), and run independent subtasks on separate computers in one call (`run_parallel`). They need the Allternit Driver on the computer (this-device today; see [Allternit Driver](/tools/allternit-driver)).
+
+Both driver packages expose them two ways: typed client methods on `ComputerV2Driver` (TypeScript) / `ComputerV2Driver` (Python), and — for model loops — as the `computer_v2` function tool next to the pixel tool in every adapter, with the same steering guidance gizzi sends. A `computer_v2` call is `{ "action": "<member>", …member fields }`; it maps 1:1 onto a toolset member call.
+
+<CodeGroup>
+```ts TypeScript
+import { AllternitComputers, ComputerV2Driver, computerV2AnthropicTool, runAnthropicComputerV2 } from "@allternit/computer-driver";
+import { AllternitComputerToolset } from "@allternit/computer-driver/anthropic";
+
+const computers = new AllternitComputers();
+const v2 = new ComputerV2Driver({ client: computers, computerId: "cmp_123", onApproval: async (a) => askAPerson(a) });
+
+const ui = await v2.read_ui({ app: "Safari" });
+const field = ui.elements?.find((e) => e.role === "textfield");
+if (field) await v2.act({ id: field.id, op: "set_value", value: "jane@example.com", version: ui.version });
+
+const sub = await v2.run_subtask({
+  goal: "Fill the signup form and submit it",
+  inputs: [{ name: "email", value: "jane@example.com" }],
+  success: [{ role: "button", name: "Submit" }],
+});
+// In an Anthropic loop, register computerV2AnthropicTool() next to the
+// toolset in tools, and answer computer_v2 tool_use blocks with
+// runAnthropicComputerV2({ client: computers, computerId: "cmp_123" }, name, input).
+```
+
+```python Python
+from allternit_computer_driver import AllternitComputers, ComputerV2Driver
+from allternit_computer_driver.anthropic import AllternitComputerToolset, ComputerV2Tool
+
+computers = AllternitComputers()
+v2 = ComputerV2Driver(computers, "cmp_123", on_approval=lambda a: ask_a_person(a))
+
+ui = v2.read_ui({"app": "Safari"})
+field = next((e for e in ui.get("elements", []) if e.get("role") == "textfield"), None)
+if field:
+    v2.act({"id": field["id"], "op": "set_value", "value": "jane@example.com", "version": ui["version"]})
+
+sub = v2.run_subtask({
+    "goal": "Fill the signup form and submit it",
+    "inputs": [{"name": "email", "value": "jane@example.com"}],
+    "success": [{"role": "button", "name": "Submit"}],
+})
+# In an Anthropic loop, register ComputerV2Tool(computers, "cmp_123").to_dict()
+# next to the toolset in tools.
+```
+</CodeGroup>
+
+The OpenAI and Gemini adapters expose the same members with `openaiComputerV2Tool` / `runOpenAIV2Call` and `geminiComputerV2Declaration` / `runGeminiV2Call` (Python: `openai_computer_v2_tool` / `run_openai_v2_call`, `gemini_computer_v2_declaration` / `run_gemini_v2_call`). Input and result types are generated from the contract (`contracts/computer-toolset/allternit-computer-v2.json`), so they track the server.
+
+### Subtask safety statuses
+
+`run_subtask`, `run_skill` and `run_parallel` results end with a `status`:
+
+- `done` — the goal is met.
+- `escalated` — handed back with a `reason` and the current `screen`; continue from there yourself.
+- `needs_confirmation` — the next step (`held_step`) needs the person's confirmation; run it yourself with `act`/`run_batch` and the server asks them.
+- `paused` — the safety monitor paused the subtask; stop and call `request_human`.
+- `denied` — the step isn't allowed on this computer (app/domain lists or a credential binding); find another way.
+- `use_api` — make the named API/MCP call yourself; the screen is untouched.
+- `failed` — ran out of steps, budget, or a hard error. Skipped parallel subtasks (budget exhausted) come back as `skipped`.
+
+### Structured-member errors
+
+Alongside the approval flow above, the driver packages raise typed errors the plain client maps from the server's error codes: `ComputerV2Error` (a structured member answered `is_error`), `ComputerBusyError` (423 `computer_busy` / `computer_controlled_elsewhere`), `SandboxRequiredError` (409 `sandbox_required`) and `ComputerConflictError` (409 `computer_conflict`). `toolsetWithApproval` / `toolset_with_approval` answers a 409 `approval_required` hold for any member, pixel or structured.
+
+## 6. Or connect over MCP
 
 The `@allternit/computers-server` stdio MCP server accepts a project key. With `ALLTERNIT_API_KEY=alt_live_…` (or `alt_test_…`) it talks to `https://api.allternit.com/v1` and adds four tools: `computer_toolset`, `computer_toolset_schema`, `computer_events` and `computer_approve`. Screenshots come back as MCP image content.
 

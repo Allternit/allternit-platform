@@ -1,7 +1,8 @@
 // Gemini computer_use adapter: runs one predefined function call on an Allternit
 // hosted computer. Gemini coordinates are 0–999 normalized, so every call is sent
 // with coordinate_space "normalized_1000" and the server scales to the screen.
-import { resultImage, type AllternitComputers, type ToolsetCall, type ToolsetResult } from "./client.ts"
+import { resultImage, resultText, type AllternitComputers, type Approval, type ToolsetCall, type ToolsetResult } from "./client.ts"
+import { computerV2Tool, runComputerV2Member } from "./v2.ts"
 
 export interface GeminiFunctionCall {
   name: string
@@ -99,4 +100,41 @@ export async function runGeminiCall(o: GeminiAdapterOptions, fc: GeminiFunctionC
     inlineData: { mimeType: img.media_type, data: img.data },
     ...(error ? { error } : {}),
   }
+}
+
+// ------------------------------------------------------------------ computer_v2
+
+/**
+ * The `computer_v2` function declaration for Gemini models: the ten structured
+ * members next to the `computer_use` declaration. Route matching
+ * `functionCall` parts through runGeminiV2Call.
+ */
+export function geminiComputerV2Declaration(): { name: string; description: string; parameters: Record<string, unknown> } {
+  const t = computerV2Tool()
+  return { name: t.name, description: t.description, parameters: t.schema }
+}
+
+export interface GeminiV2AdapterOptions extends GeminiAdapterOptions {
+  /** Called when the server holds the call (409 approval_required). Without it the ApprovalRequiredError propagates, like the pixel adapter. */
+  onApproval?: (approval: Approval) => boolean | Promise<boolean>
+}
+
+export interface GeminiV2StepResult {
+  /** A `functionResponse` part for the next turn. */
+  functionResponse: { name: string; response: Record<string, unknown> }
+  error?: ToolsetResult
+}
+
+/** Run one `computer_v2` function call (`{action, ...fields}`) and return the function response part. */
+export async function runGeminiV2Call(o: GeminiV2AdapterOptions, name: string, input: unknown): Promise<GeminiV2StepResult> {
+  const { action, ...fields } = (input ?? {}) as { action?: string } & Record<string, unknown>
+  if (!action) throw new Error("The computer_v2 call needs an action.")
+  const base = { client: o.client, computerId: o.computerId }
+  const res = o.onApproval
+    ? await runComputerV2Member({ ...base, onApproval: o.onApproval }, action, fields)
+    : await o.client.toolset(o.computerId, { toolset: "computer", member: action, input: fields })
+  const text = resultText(res)
+  const response: Record<string, unknown> = { result: text }
+  if (res.is_error) response.error = text || "The action failed."
+  return { functionResponse: { name, response }, ...(res.is_error ? { error: res } : {}) }
 }

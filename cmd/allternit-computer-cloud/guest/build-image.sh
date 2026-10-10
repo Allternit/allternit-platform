@@ -10,6 +10,8 @@
 #   FACTORY_SRC_DIR - allternit-platform checkout to build it from
 #                     (default: /tmp/allternit-platform-src; needs Rust and
 #                     Zig 0.15.2 for the pane engine's libghostty-vt)
+#   DRIVER_SRC_DIR  - the driver package to bake in
+#                     (default: this checkout's domains/computer-use/driver)
 #   IMAGE_NAME   - published image alias (default: allternit-desktop)
 #   UBUNTU_IMAGE - source image alias (default: images:ubuntu/24.04/cloud)
 #   KEEP_BUILDER - if set, do not delete the build container
@@ -149,7 +151,7 @@ cat > /tmp/allternit-desktop-run.sh <<'EOF'
 set -e
 export DISPLAY=:0
 export HOME=/root
-mkdir -p /var/log/allternit-desktop
+mkdir -p /var/log/allternit-desktop /run/allternit
 
 # Start the in-memory X server.
 Xvfb :0 -screen 0 1280x720x24 -ac +extension GLX +render -noreset \
@@ -158,7 +160,17 @@ Xvfb :0 -screen 0 1280x720x24 -ac +extension GLX +render -noreset \
 # Give Xvfb a moment to come up.
 sleep 2
 
-# Start the XFCE session.
+# One D-Bus session for the whole desktop, published where system services
+# (the Allternit Driver) can find it: AT-SPI's registry answers on this bus.
+if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
+  eval "$(dbus-launch --sh-syntax)"
+fi
+printf 'DBUS_SESSION_BUS_ADDRESS=%s\n' "${DBUS_SESSION_BUS_ADDRESS}" \
+  > /run/allternit/session-bus.env
+chmod 0644 /run/allternit/session-bus.env
+export GTK_MODULES=atk-bridge
+
+# Start the XFCE session (on this bus, so its apps expose AT-SPI trees).
 xfce4-session >/var/log/allternit-desktop/xfce.log 2>&1 &
 
 # Share the display over VNC (password = allternit for the MVP).
@@ -210,6 +222,24 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 incus file push /tmp/allternit-factory-pane.service "${BUILD_CONTAINER}/etc/systemd/system/allternit-factory-pane.service"
+
+# ---------------------------------------------------------------------------
+# 4b. Install the Allternit Driver (the structured computer-toolset sidecar).
+# ---------------------------------------------------------------------------
+# Every guest image ships the driver: contract v2 members (read_ui, act,
+# run_batch, verify) run on the guest itself, over AT-SPI, with xdotool/scrot
+# kept only as the pixel fallback. See domains/computer-use/driver/packaging/.
+DRIVER_SRC_DIR="${DRIVER_SRC_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../domains/computer-use/driver" && pwd)}"
+if [ -d "${DRIVER_SRC_DIR}/allternit_driver" ]; then
+    log "installing the Allternit Driver from ${DRIVER_SRC_DIR}"
+    incus file push --quiet -r "${DRIVER_SRC_DIR}/allternit_driver" "${BUILD_CONTAINER}/tmp/allternit-driver-pkg"
+    incus file push --quiet -r "${DRIVER_SRC_DIR}/packaging/guest/linux" "${BUILD_CONTAINER}/tmp/allternit-driver-packaging"
+    incus exec "${BUILD_CONTAINER}" -- bash /tmp/allternit-driver-packaging/install-driver.sh /tmp/allternit-driver-pkg
+    incus exec "${BUILD_CONTAINER}" -- rm -rf /tmp/allternit-driver-pkg /tmp/allternit-driver-packaging
+else
+    echo "ERROR: DRIVER_SRC_DIR ${DRIVER_SRC_DIR} has no allternit_driver package" >&2
+    exit 1
+fi
 
 incus exec "${BUILD_CONTAINER}" -- systemctl daemon-reload
 incus exec "${BUILD_CONTAINER}" -- systemctl enable allternit-desktop.service

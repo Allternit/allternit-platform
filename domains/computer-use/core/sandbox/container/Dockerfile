@@ -25,7 +25,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-websockify \
     git \
     ca-certificates \
+    # Allternit Driver runtime (phase D1b): the structured computer-toolset
+    # sidecar. The package itself is baked by Dockerfile.driver or mounted
+    # at /opt/allternit-driver; entrypoint.sh starts it when present.
+    python3-pyatspi \
+    at-spi2-core \
+    libatk-adaptor \
+    libatk-bridge2.0-0 \
+    python3-pil \
+    dbus-x11 \
     && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /run/allternit /opt/allternit-driver
 
 # noVNC -- browser-based VNC viewer for human oversight only (never used by
 # agent control, which goes through xdotool/scrot via `docker exec` instead).

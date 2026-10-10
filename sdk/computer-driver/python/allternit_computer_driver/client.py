@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
@@ -34,6 +34,29 @@ class ApprovalRequiredError(AllternitApiError):
         super().__init__(409, error, body)
         self.approval = approval
         self.result = result
+
+
+class ComputerBusyError(AllternitApiError):
+    """423 ``computer_busy`` / ``computer_controlled_elsewhere``: someone else holds the computer right now."""
+
+
+class SandboxRequiredError(AllternitApiError):
+    """409 ``sandbox_required``: the call only runs on a sandbox (cloud/bot) computer."""
+
+
+class ComputerConflictError(AllternitApiError):
+    """409 ``computer_conflict``: the call conflicts with another subtask or lease on the computer."""
+
+
+def _typed_api_error(status: int, err: Dict[str, Any], body: Any) -> AllternitApiError:
+    code = err.get("code")
+    if code in ("computer_busy", "computer_controlled_elsewhere"):
+        return ComputerBusyError(status, err, body)
+    if code == "sandbox_required":
+        return SandboxRequiredError(status, err, body)
+    if code == "computer_conflict":
+        return ComputerConflictError(status, err, body)
+    return AllternitApiError(status, err, body)
 
 
 class AllternitComputers:
@@ -68,6 +91,27 @@ class AllternitComputers:
         """Run one member. Action failures return ``is_error: True``; a held call raises ApprovalRequiredError."""
         return self._req("POST", f"/v1/computers/{quote(computer_id)}/toolset", call)
 
+    def toolset_with_approval(
+        self,
+        computer_id: str,
+        call: Dict[str, Any],
+        on_approval: Optional[Callable[[Dict[str, Any]], Any]] = None,
+    ) -> ToolsetResult:
+        """Run one member, answering a 409 ``approval_required`` hold.
+
+        When the server holds the call and ``on_approval`` returns truthy, the
+        approval is granted (POST /approvals/{id}) and the same call resent with
+        the single-use ``approval_grant``. When ``on_approval`` is missing or
+        returns false, the held result resolves (``is_error: True``).
+        """
+        try:
+            return self.toolset(computer_id, call)
+        except ApprovalRequiredError as e:
+            if not on_approval or not on_approval(e.approval):
+                return e.result
+            self.approve(computer_id, e.approval["id"])
+            return self.toolset(computer_id, {**call, "approval_grant": e.approval["id"]})
+
     def schema(self, computer_id: str, toolset: str = "computer") -> Dict[str, Any]:
         return self._req("GET", f"/v1/computers/{quote(computer_id)}/toolset/schema" + _qs(toolset=toolset))
 
@@ -99,7 +143,7 @@ class AllternitComputers:
             err = payload.get("error") or {}
             if e.code == 409 and err.get("code") == "approval_required" and payload.get("approval"):
                 raise ApprovalRequiredError(err, payload["approval"], payload.get("result") or {"is_error": True, "content": []}, payload) from None
-            raise AllternitApiError(e.code, err, payload) from None
+            raise _typed_api_error(e.code, err, payload) from None
         except URLError as e:
             raise AllternitApiError(0, {"type": "connection_error", "code": "connection_error", "message": str(e.reason)}, None) from None
 
@@ -120,4 +164,7 @@ def _qs(**q: Any) -> str:
     return "?" + urlencode(p) if p else ""
 
 
-__all__: List[str] = ["AllternitComputers", "AllternitApiError", "ApprovalRequiredError", "DEFAULT_BASE_URL", "result_text", "result_image"]
+__all__: List[str] = [
+    "AllternitComputers", "AllternitApiError", "ApprovalRequiredError", "ComputerBusyError", "SandboxRequiredError",
+    "ComputerConflictError", "DEFAULT_BASE_URL", "result_text", "result_image",
+]

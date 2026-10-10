@@ -1,6 +1,7 @@
 // OpenAI computer-use adapter: runs one `computer_call` action on an Allternit
 // hosted computer and returns a `computer_call_output` with the next screenshot.
-import { resultImage, type AllternitComputers, type ToolsetCall, type ToolsetResult } from "./client.ts"
+import { resultImage, type AllternitComputers, type Approval, type ToolsetCall, type ToolsetResult } from "./client.ts"
+import { computerV2Tool, runComputerV2Member } from "./v2.ts"
 
 type Pt = { x: number; y: number }
 export type OpenAIComputerAction =
@@ -108,5 +109,44 @@ export async function runOpenAIAction(o: OpenAIAdapterOptions, callId: string, a
       output: { type: "computer_screenshot", image_url: `data:${img.media_type};base64,${img.data}` },
     },
     ...(error ? { error } : {}),
+  }
+}
+
+// ------------------------------------------------------------------ computer_v2
+
+/**
+ * The `computer_v2` function tool for the Responses API: the ten structured
+ * members next to the `computer_use_preview` tool. Register it in `tools`;
+ * route matching `function_call` items through runOpenAIV2Call.
+ */
+export function openaiComputerV2Tool(): { type: "function"; name: string; description: string; parameters: Record<string, unknown>; strict: false } {
+  const t = computerV2Tool()
+  return { type: "function", name: t.name, description: t.description, parameters: t.schema, strict: false }
+}
+
+export interface OpenAIV2AdapterOptions extends OpenAIAdapterOptions {
+  /** Called when the server holds the call (409 approval_required). Without it the ApprovalRequiredError propagates, like the pixel adapter. */
+  onApproval?: (approval: Approval) => boolean | Promise<boolean>
+}
+
+export interface OpenAIV2StepResult {
+  /** Ready for the Responses API `input`: `{type:"function_call_output", call_id, output}`. */
+  output: { type: "function_call_output"; call_id: string; output: string }
+  /** The failed action result, if the action failed. */
+  error?: ToolsetResult
+}
+
+/** Run one `computer_v2` function call (`{action, ...fields}`) and return the `function_call_output` item. */
+export async function runOpenAIV2Call(o: OpenAIV2AdapterOptions, callId: string, input: unknown): Promise<OpenAIV2StepResult> {
+  const { action, ...fields } = (input ?? {}) as { action?: string } & Record<string, unknown>
+  if (!action) throw new Error("The computer_v2 call needs an action.")
+  const base = { client: o.client, computerId: o.computerId }
+  const res = o.onApproval
+    ? await runComputerV2Member({ ...base, onApproval: o.onApproval }, action, fields)
+    : await o.client.toolset(o.computerId, { toolset: "computer", member: action, input: fields })
+  const text = res.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("\n")
+  return {
+    output: { type: "function_call_output", call_id: callId, output: text || "Done." },
+    ...(res.is_error ? { error: res } : {}),
   }
 }
