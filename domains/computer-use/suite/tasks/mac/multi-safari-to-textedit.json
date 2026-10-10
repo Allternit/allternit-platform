@@ -1,0 +1,44 @@
+{
+  "id": "multi-safari-to-textedit",
+  "os": "mac",
+  "status": "ready",
+  "apps": [
+    "Safari",
+    "TextEdit"
+  ],
+  "setup": [
+    {
+      "do": "write_file",
+      "path": "answer.txt",
+      "text": ""
+    },
+    {
+      "do": "open",
+      "app": "TextEdit",
+      "path": "answer.txt"
+    },
+    {
+      "do": "open",
+      "app": "Safari",
+      "url": "{base_url}/code.html",
+      "settle_ms": 800
+    }
+  ],
+  "goal": "Safari shows a booking confirmation code. Put that code into the TextEdit window showing answer.txt (just the code) and save it.",
+  "inputs": {},
+  "checker": [
+    {
+      "kind": "file_equals",
+      "path": "answer.txt",
+      "text": "QX-7741"
+    }
+  ],
+  "teardown": [],
+  "max_minutes": 3,
+  "tags": [
+    "safari",
+    "textedit",
+    "multi-app",
+    "copy"
+  ]
+}

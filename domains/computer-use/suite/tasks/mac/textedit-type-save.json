@@ -1,0 +1,37 @@
+{
+  "id": "textedit-type-save",
+  "os": "mac",
+  "status": "ready",
+  "apps": [
+    "TextEdit"
+  ],
+  "setup": [
+    {
+      "do": "write_file",
+      "path": "notes.txt",
+      "text": ""
+    },
+    {
+      "do": "open",
+      "app": "TextEdit",
+      "path": "notes.txt"
+    }
+  ],
+  "goal": "In the TextEdit window showing notes.txt, type the line given below, then save the document (File > Save).",
+  "inputs": {
+    "line": "Allternit suite line one"
+  },
+  "checker": [
+    {
+      "kind": "file_equals",
+      "path": "notes.txt",
+      "text": "Allternit suite line one"
+    }
+  ],
+  "teardown": [],
+  "max_minutes": 3,
+  "tags": [
+    "textedit",
+    "files"
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "id": "safari-modal-confirm",
+  "os": "mac",
+  "status": "ready",
+  "apps": [
+    "Safari"
+  ],
+  "setup": [
+    {
+      "do": "open",
+      "app": "Safari",
+      "url": "{base_url}/modal.html",
+      "settle_ms": 800
+    }
+  ],
+  "goal": "In Safari, delete draft #12: click Delete draft, tick the 'I understand' box in the dialog, then click Confirm delete.",
+  "inputs": {},
+  "checker": [
+    {
+      "kind": "form_log",
+      "route": "modal",
+      "count": 1,
+      "fields": {
+        "action": "delete_draft",
+        "draft": "12",
+        "understood": "True"
+      }
+    }
+  ],
+  "teardown": [],
+  "max_minutes": 3,
+  "tags": [
+    "safari",
+    "browser",
+    "dialog",
+    "core"
+  ]
+}

@@ -345,6 +345,7 @@
               "tools/computer-use",
               "tools/computer-toolset",
               "tools/allternit-driver",
+              "tools/computer-use-suite",
               "tools/computer-credentials",
               "tools/strict-tool-use",
               "tools/build-a-tool",

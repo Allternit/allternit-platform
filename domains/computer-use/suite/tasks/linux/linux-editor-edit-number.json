@@ -1,0 +1,38 @@
+{
+  "id": "linux-editor-edit-number",
+  "os": "linux",
+  "status": "needs_test_machine",
+  "apps": [
+    "gedit"
+  ],
+  "setup": [
+    {
+      "do": "write_file",
+      "path": "budget.txt",
+      "text": "Item: lamps\nTotal: 41\n"
+    },
+    {
+      "do": "open",
+      "app": "gedit",
+      "path": "budget.txt"
+    }
+  ],
+  "goal": "In gedit, change 'Total: 41' in budget.txt to the new total below and save.",
+  "inputs": {
+    "new_total": "42"
+  },
+  "checker": [
+    {
+      "kind": "file_equals",
+      "path": "budget.txt",
+      "text": "Item: lamps\nTotal: 42"
+    }
+  ],
+  "teardown": [],
+  "max_minutes": 3,
+  "tags": [
+    "editor",
+    "files",
+    "edit"
+  ]
+}

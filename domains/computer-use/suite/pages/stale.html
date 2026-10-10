@@ -1,0 +1,7 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><style>body{font:16px -apple-system,system-ui,sans-serif;max-width:560px;margin:40px auto;padding:0 16px}label{display:block;margin:12px 0 4px}input,select{font:inherit;padding:6px;width:100%;box-sizing:border-box}input[type=checkbox]{width:auto}button{font:inherit;margin-top:16px;padding:8px 16px}.note{background:#fff7d6;padding:12px;border:1px solid #e0c96a}</style><title>Suite Approvals</title></head><body><h1>Pending approvals</h1>
+<button id="refresh">Refresh list</button><p id="state" role="status">List loaded</p><ul id="list"></ul>
+<script>
+function render(order){const ul=document.getElementById('list');ul.replaceChildren();for(const x of order){const li=document.createElement('li');li.textContent='Item '+x+' ';const b=document.createElement('button');b.textContent='Approve Item '+x;b.onclick=()=>fetch('/submit/stale',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({item:x})}).then(()=>{document.getElementById('state').textContent='Approved Item '+x});li.appendChild(b);ul.appendChild(li)}}
+render(['A','B','C']);
+document.getElementById('refresh').onclick=()=>{document.getElementById('state').textContent='Refreshing…';document.getElementById('list').replaceChildren();setTimeout(()=>{render(['C','A','B']);document.getElementById('state').textContent='List refreshed'},1200)};
+</script></body></html>

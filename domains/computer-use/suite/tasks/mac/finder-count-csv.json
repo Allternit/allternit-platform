@@ -1,0 +1,73 @@
+{
+  "id": "finder-count-csv",
+  "os": "mac",
+  "status": "ready",
+  "apps": [
+    "Finder",
+    "TextEdit"
+  ],
+  "setup": [
+    {
+      "do": "write_file",
+      "path": "data/jan.csv",
+      "text": "x\n"
+    },
+    {
+      "do": "write_file",
+      "path": "data/feb.csv",
+      "text": "x\n"
+    },
+    {
+      "do": "write_file",
+      "path": "data/mar.csv",
+      "text": "x\n"
+    },
+    {
+      "do": "write_file",
+      "path": "data/notes.txt",
+      "text": "x\n"
+    },
+    {
+      "do": "write_file",
+      "path": "data/apr.csv",
+      "text": "x\n"
+    },
+    {
+      "do": "write_file",
+      "path": "data/readme.md",
+      "text": "x\n"
+    },
+    {
+      "do": "open",
+      "app": "Finder",
+      "path": "data"
+    },
+    {
+      "do": "write_file",
+      "path": "answer.txt",
+      "text": ""
+    },
+    {
+      "do": "open",
+      "app": "TextEdit",
+      "path": "answer.txt"
+    }
+  ],
+  "goal": "A Finder window shows the folder 'data'. Count the files in it that end in .csv. Then type just that number into the TextEdit window showing answer.txt and save it.",
+  "inputs": {},
+  "checker": [
+    {
+      "kind": "file_equals",
+      "path": "answer.txt",
+      "text": "4"
+    }
+  ],
+  "teardown": [],
+  "max_minutes": 3,
+  "tags": [
+    "finder",
+    "textedit",
+    "multi-app",
+    "read"
+  ]
+}

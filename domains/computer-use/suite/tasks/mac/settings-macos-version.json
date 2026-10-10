@@ -1,0 +1,41 @@
+{
+  "id": "settings-macos-version",
+  "os": "mac",
+  "status": "ready",
+  "apps": [
+    "System Settings",
+    "TextEdit"
+  ],
+  "setup": [
+    {
+      "do": "write_file",
+      "path": "answer.txt",
+      "text": ""
+    },
+    {
+      "do": "open",
+      "app": "TextEdit",
+      "path": "answer.txt"
+    }
+  ],
+  "goal": "Open System Settings > General > About and read the macOS version number (for example 14.6). Don't change any setting. Type just that version number into the TextEdit window showing answer.txt and save it.",
+  "inputs": {},
+  "checker": [
+    {
+      "kind": "command_equals",
+      "argv": [
+        "sw_vers",
+        "-productVersion"
+      ],
+      "file_equals": "answer.txt"
+    }
+  ],
+  "teardown": [],
+  "max_minutes": 3,
+  "tags": [
+    "settings",
+    "read-only",
+    "multi-app",
+    "core"
+  ]
+}
