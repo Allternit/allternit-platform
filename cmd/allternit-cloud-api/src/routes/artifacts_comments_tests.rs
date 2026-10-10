@@ -83,6 +83,29 @@ async fn make(router: &Router, owner: &Value, kind: &str) -> String {
 }
 
 #[tokio::test]
+async fn server_answers_a_mention_the_app_does_not_handle() {
+    let (router, _db) = setup().await;
+    let owner = who("srv_owner", None);
+    let id = make(&router, &owner, "doc").await;
+    let base = format!("/api/v2/artifacts/{id}/comments");
+    let (st, root) = call(&router, "POST", &base, &owner, Some(json!({"body":"@gizzi what is this?"}))).await;
+    assert_eq!(st, StatusCode::CREATED, "{root}");
+    assert_eq!(root["assistant_reply"], "server");
+    // The test server has no model: the reply says so instead of leaving the thread waiting.
+    let mut reply = Value::Null;
+    for _ in 0..50 {
+        let (_, list) = call(&router, "GET", &base, &owner, None).await;
+        if let Some(r) = list["items"].as_array().and_then(|a| a.iter().find(|c| c["author_id"] == "assistant").cloned()) {
+            reply = r;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert_eq!(reply["parent_id"], root["id"], "{reply}");
+    assert!(reply["body"].as_str().unwrap_or_default().starts_with("I couldn't answer"), "{reply}");
+}
+
+#[tokio::test]
 async fn comment_lifecycle() {
     let (router, _db) = setup().await;
     let owner = who("owner1", None);
@@ -103,8 +126,9 @@ async fn comment_lifecycle() {
 
     // Owner comments with an anchor and an @-mention.
     let (st, root) = call(&router, "POST", &base, &owner,
-        Some(json!({"body":" look @Gizzi ","anchor":{"kind":"cell","ref":"A1"},"version":1}))).await;
+        Some(json!({"body":" look @Gizzi ","anchor":{"kind":"cell","ref":"A1"},"version":1,"assistant_by_client":true}))).await;
     assert_eq!(st, StatusCode::CREATED, "{root}");
+    assert!(root.get("assistant_reply").is_none(), "the app said it answers this one");
     assert_eq!(root["body"], "look @Gizzi");
     assert_eq!(root["to_assistant"], true);
     assert_eq!(root["anchor"]["ref"], "A1");

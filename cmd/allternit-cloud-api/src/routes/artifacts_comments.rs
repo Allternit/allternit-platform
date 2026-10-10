@@ -246,6 +246,8 @@ struct CreateComment {
     parent_id: Option<String>,
     version: Option<i32>,
     to_assistant: Option<bool>,
+    /// The commenter's app will run an edit-capable reply in its open chat.
+    assistant_by_client: Option<bool>,
 }
 
 async fn create_comment(
@@ -319,7 +321,95 @@ async fn create_comment(
     .bind(to_assistant)
     .fetch_one(&state.db)
     .await?;
-    Ok((StatusCode::CREATED, Json(one_json(&state.db, &inserted, &me).await)))
+    let mut out = one_json(&state.db, &inserted, &me).await;
+    if to_assistant && !input.assistant_by_client.unwrap_or(false) {
+        // The server answers @gizzi (the commenter pays, like any model call they
+        // make), so a reply arrives even if the commenter closes the app.
+        let root_id = input.parent_id.clone().unwrap_or_else(|| cid.clone());
+        tokio::spawn(answer_assistant_mention(state.clone(), row.id.clone(), version, root_id, me.id.clone()));
+        if let Some(obj) = out.as_object_mut() {
+            obj.insert("assistant_reply".into(), json!("server"));
+        }
+    }
+    Ok((StatusCode::CREATED, Json(out)))
+}
+
+/// Writes Gizzi's reply to a comment that mentions it. Failures become a short
+/// reply saying why, so the thread never waits forever.
+async fn answer_assistant_mention(state: Arc<ApiState>, artifact_id: String, version: Option<i32>, root_id: String, payer: String) {
+    let text = match assistant_answer(&state, &artifact_id, version, &root_id, &payer).await {
+        Ok(t) if !t.trim().is_empty() => t,
+        Ok(_) => "I couldn't come up with an answer to that. Try rephrasing it.".to_string(),
+        Err(e) => format!("I couldn't answer: {}", reply_reason(&e)),
+    };
+    let text: String = text.chars().take(MAX_ASSISTANT_REPLY_CHARS).collect();
+    let anchor_version: Option<(serde_json::Value, Option<i32>)> =
+        sqlx::query_as("SELECT anchor, version FROM artifact_comments WHERE id = $1 AND artifact_id = $2")
+            .bind(&root_id)
+            .bind(&artifact_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten();
+    let Some((anchor, v)) = anchor_version else { return };
+    let _ = sqlx::query(
+        "INSERT INTO artifact_comments (id, artifact_id, version, anchor, parent_id, author_id, body, to_assistant) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, false)",
+    )
+    .bind(ids::ulid())
+    .bind(&artifact_id)
+    .bind(v)
+    .bind(anchor)
+    .bind(&root_id)
+    .bind(ASSISTANT_ID)
+    .bind(text)
+    .execute(&state.db)
+    .await;
+}
+
+const MAX_ASSISTANT_REPLY_CHARS: usize = 8_000;
+
+fn reply_reason(e: &ArtifactError) -> String {
+    match e {
+        ArtifactError::Coded { message, .. } => message.clone(),
+        ArtifactError::Api(api) => api.to_string(),
+    }
+}
+const MAX_CONTEXT_BODY_CHARS: usize = 24_000;
+
+async fn assistant_answer(state: &Arc<ApiState>, artifact_id: &str, version: Option<i32>, root_id: &str, payer: &str) -> Result<String> {
+    let (title, kind, body): (String, String, String) = sqlx::query_as(
+        "SELECT a.title, a.kind, v.body FROM artifacts a \
+         JOIN artifact_versions v ON v.artifact_id = a.id AND v.version = COALESCE($2, a.current_version) \
+         WHERE a.id = $1",
+    )
+    .bind(artifact_id)
+    .bind(version)
+    .fetch_one(&state.db)
+    .await?;
+    let thread: Vec<(String, String)> = sqlx::query_as(
+        "SELECT author_id, body FROM artifact_comments WHERE artifact_id = $1 AND (id = $2 OR parent_id = $2) \
+         ORDER BY created_at ASC LIMIT 40",
+    )
+    .bind(artifact_id)
+    .bind(root_id)
+    .fetch_all(&state.db)
+    .await?;
+    let excerpt: String = body.chars().take(MAX_CONTEXT_BODY_CHARS).collect();
+    let system = format!(
+        "You are Gizzi, the assistant in Allternit, answering a comment thread on the {kind} artifact \"{title}\". \
+         Answer the latest comment in plain, short sentences (at most a few paragraphs). You can't edit the artifact from here; \
+         if the person wants a change, say exactly what you'd change and that they can ask you in a chat to apply it.\n\n\
+         The artifact's content{}:\n{excerpt}",
+        if body.chars().count() > MAX_CONTEXT_BODY_CHARS { " (start only)" } else { "" }
+    );
+    let mut messages = vec![("system".to_string(), system)];
+    for (author, text) in thread {
+        let role = if author == ASSISTANT_ID { "assistant" } else { "user" };
+        messages.push((role.to_string(), text));
+    }
+    let out = super::artifacts_v2::artifact_runtime::billed_completion(state, payer, messages, 1024, Some(0.4)).await?;
+    Ok(out.get("text").and_then(Value::as_str).unwrap_or_default().to_string())
 }
 
 #[derive(Deserialize)]
