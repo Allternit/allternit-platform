@@ -627,6 +627,10 @@
         {
           "on": "2026-10-09",
           "note": "E4: live element map in the driver (allternit_driver/live). One AXObserver per app on one run-loop thread feeds arc's journal, settle counter and walk caches plus the map; notifications patch the map incrementally (full walk only on first sight, window-level changes, big bursts, or a failed staleness probe), so a re-read is answered with no accessibility call (0.4-0.5 ms median through the socket on this Mac). Windows are watched on demand, unwatched after 5 min idle, capped at 8; apps without notifications degrade to timed narrow reads and say so. Linux (AT-SPI over D-Bus, jeepney) and Windows (UIA, comtypes) observers are written to the same interface and staged by prepare-allternit-driver.cjs, unverified live until a non-production test machine exists. The macOS sidecar now runs the Cocoa main run loop so apps launched after it starts are found."
+        },
+        {
+          "on": "2026-10-09",
+          "note": "D5/E3 safety layer (computer_safety.rs): one assessment per toolset call and run_subtask step. Untrusted observations spotlighted (nonce-delimited, secrets scrubbed); per-step /v1/decisions monitor of kind safety on mutating non-sandbox steps (fast tiers, fail-closed to confirm when unsure or failed, absent when no fast tier; read-only steps never wait on it); one irreversible classifier (send/pay/purchase/transfer/delete/publish/credentials/account) shared with run_subtask, always confirmed on every target; watch mode on email/banking/admin apps and sites (computer.safety events, mutating steps confirmed); per-computer and owner-default app/domain allow/deny lists (V246, GET/PUT /computers/:id/safety); vault secrets screened on every free-text path against their bind; screenshot redaction by driver OCR before images leave the executor; VM snapshot before the first risky step of a run on cloud computers."
         }
       ],
       "evidence": [
@@ -634,7 +638,9 @@
         "allternit/contracts/computer-toolset/README.md",
         "allternit/cmd/allternit-api/src/computer_toolset.rs",
         "allternit/surfaces/docs/tools/allternit-driver.mdx",
-        "allternit/surfaces/docs/tools/computer-credentials.mdx"
+        "allternit/surfaces/docs/tools/computer-credentials.mdx",
+        "allternit/surfaces/docs/tools/computer-safety.mdx",
+        "allternit/cmd/allternit-api/src/computer_safety.rs"
       ]
     },
     {

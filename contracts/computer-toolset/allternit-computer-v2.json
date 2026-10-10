@@ -29,6 +29,28 @@
     "always": "Always needs a single-use action-hash approval grant.",
     "irreversible": "Any member whose risk is irreversible needs a grant, whatever its confirm rule."
   },
+  "safety": {
+    "doc": "surfaces/docs/tools/computer-safety.mdx",
+    "observations": "Text a model reads back from the screen (read_ui, act, run_batch, verify, run_subtask results; browser page text) arrives spotlighted: a block opened by '<<untrusted NONCE source=MEMBER>>' and closed by '<<end-untrusted NONCE>>' with a fresh nonce, declared as data, forged markers neutralized and vault secrets scrubbed. Screenshots carry a following text note and have personal data (email, card, phone, ssn, secret) blacked out before they leave the executor.",
+    "verdicts": {
+      "allow": "The step runs.",
+      "confirm": "The step needs the person's approval (409 approval_required with a 'safety' object): irreversible classes (send, pay, purchase, transfer, delete, publish, credentials, account) on every target, mutating steps in watch mode (email, banking, admin apps and sites), and steps the per-step monitor answered confirm, abstained on or failed to answer.",
+      "pause": "The monitor judged the screen or the step suspicious; the step did not run (error safety_paused). Stop and call request_human.",
+      "deny": "The computer's app/domain lists, the workspace host policy, or a vault secret typed outside its bound app/domain refused the step (403 safety_denied)."
+    },
+    "error_codes": [
+      "safety_denied",
+      "safety_paused",
+      "approval_required",
+      "redaction_unavailable"
+    ],
+    "run_subtask_statuses": [
+      "needs_confirmation",
+      "paused",
+      "denied"
+    ],
+    "settings": "GET/PUT /api/v1/computers/:id/safety"
+  },
   "result_shape": {
     "type": "object",
     "required": [

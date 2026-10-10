@@ -1216,13 +1216,13 @@ async fn browser_shot(target: &Target, input: &Value, run_id: &str) -> Result<(V
     let state = reply.get("browser_state").cloned();
     if reply.get("is_error").and_then(Value::as_bool).unwrap_or(false) {
         let message = reply.get("text").and_then(Value::as_str).unwrap_or("the browser couldn't take a screenshot").to_string();
-        return Err(Fail { message, browser_state: state });
+        return Err(Fail { message, browser_state: state, code: None });
     }
     let png = reply
         .get("image")
         .and_then(Value::as_str)
         .and_then(|d| B64.decode(d.trim()).ok())
-        .ok_or_else(|| Fail { message: "the browser driver returned no screenshot".into(), browser_state: state.clone() })?;
+        .ok_or_else(|| Fail { message: "the browser driver returned no screenshot".into(), browser_state: state.clone(), code: None })?;
     Ok((png, state))
 }
 
@@ -1257,22 +1257,39 @@ fn this_device_mouse(action: &str, xy: Option<(i64, i64)>, end: Option<(i64, i64
 pub struct Fail {
     pub message: String,
     pub browser_state: Option<Value>,
+    /// Machine-readable code for refusals that aren't driver failures
+    /// (`safety_denied`, `safety_paused`, `needs_confirmation`).
+    pub code: Option<&'static str>,
+}
+
+impl Fail {
+    pub fn coded(code: &'static str, message: impl Into<String>) -> Self {
+        Fail { message: message.into(), browser_state: None, code: Some(code) }
+    }
 }
 
 impl From<String> for Fail {
     fn from(message: String) -> Self {
-        Fail { message, browser_state: None }
+        Fail { message, browser_state: None, code: None }
     }
 }
 
 impl From<&str> for Fail {
     fn from(message: &str) -> Self {
-        Fail { message: message.to_string(), browser_state: None }
+        Fail { message: message.to_string(), browser_state: None, code: None }
     }
+}
+
+/// What screenshot redaction needs: the computer's safety settings and the
+/// person's vault secrets (values never leave this process).
+pub struct Redactor<'a> {
+    pub settings: &'a crate::computer_safety::SafetySettings,
+    pub secrets: &'a [String],
 }
 
 /// Dispatch one action (coordinates already in screen px). Returns the
 /// content blocks for a successful call.
+#[allow(clippy::too_many_arguments)]
 async fn dispatch(
     target: &Target,
     toolset: Toolset,
@@ -1281,6 +1298,7 @@ async fn dispatch(
     map: &Mapping,
     screen_key: &str,
     run_id: &str,
+    redactor: &Redactor<'_>,
 ) -> Result<(Vec<Value>, Option<Value>), Fail> {
     let member = spec.name.as_str();
     // Members the executor runs the same way on every target.
@@ -1296,6 +1314,11 @@ async fn dispatch(
                 _ => (capture(target, run_id).await?, None),
             };
             let full = png_size(&png).ok_or("couldn't read the screenshot size")?;
+            // Personal data is blacked out on the full-size capture, before
+            // any copy of it leaves the executor (D5).
+            let (png, report) = crate::computer_safety::redact_png(&png, redactor.settings, target, redactor.secrets)
+                .await
+                .map_err(|m| Fail::coded("redaction_unavailable", m))?;
             // Crop region arrives in input-space px; map it to image px.
             let crop = if member == "zoom" {
                 let r = scaled.get("region").and_then(Value::as_array).ok_or("region is required")?;
@@ -1307,7 +1330,7 @@ async fn dispatch(
                 None
             };
             let (out, _) = render_for_model(&png, map.frame, crop)?;
-            return Ok((vec![image_block(&out)], state));
+            return Ok((vec![image_block(&out), text(crate::computer_safety::screenshot_note(&report))], state));
         }
         _ => {}
     }
@@ -1443,7 +1466,7 @@ async fn dispatch(
             let state = reply.get("browser_state").cloned();
             let said = reply.get("text").and_then(Value::as_str).filter(|t| !t.is_empty()).map(str::to_string);
             if reply.get("is_error").and_then(Value::as_bool).unwrap_or(false) {
-                return Err(Fail { message: said.unwrap_or_else(|| format!("{member} failed in the browser")), browser_state: state });
+                return Err(Fail { message: said.unwrap_or_else(|| format!("{member} failed in the browser")), browser_state: state, code: None });
             }
             if matches!(member, "navigate" | "new_tab" | "switch_tab" | "close_tab") {
                 // A different page or tab can change the viewport; re-learn it.
@@ -1462,7 +1485,7 @@ async fn dispatch(
 pub const THIS_DEVICE_ID: &str = "this-device";
 
 /// Resolve `:id` (`this-device` or a computer id) to the caller's computer.
-async fn resolve_computer(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: &HeaderMap) -> Result<ComputerResponse, (StatusCode, String)> {
+pub(crate) async fn resolve_computer(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: &HeaderMap) -> Result<ComputerResponse, (StatusCode, String)> {
     let id = if id == THIS_DEVICE_ID {
         let db = state.db.clone();
         let owner = user.user_id.clone();
@@ -1650,21 +1673,81 @@ pub async fn execute(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: 
             return respond(StatusCode::FORBIDDEN, error_result("policy_denied", reason, None));
         }
     };
+    // 3b. Pixel members: coordinates into screen px now, so the safety layer
+    // can hit-test the element under the point (the screen size is cached).
+    let v2 = crate::computer_v2::is_v2_member(&req.member);
+    let screen_key = match &target {
+        Target::Browser { session_id, .. } => format!("browser:{session_id}"),
+        _ => computer.id.clone(),
+    };
+    let run_id = req.run_id.clone().unwrap_or_else(|| format!("toolset-{}", uuid::Uuid::new_v4().simple()));
+    let map = if v2 {
+        None
+    } else {
+        match input_space(&target, &screen_key, &run_id).await {
+            Ok(screen) => Some(Mapping::new(screen, req.model_frame, req.coordinate_space.unwrap_or_default(), &c.model_frame)),
+            Err(e) => {
+                settle(false);
+                return respond(StatusCode::OK, error_result("driver_failed", e, None));
+            }
+        }
+    };
+    let scaled = match &map {
+        Some(m) => scale_input(spec, &req.input, m),
+        None => req.input.clone(),
+    };
+
+    // 3c. The safety layer (D5/E3): lists, secret binding, irreversible
+    // classes, watch mode and the per-step monitor.
+    let safety = crate::computer_safety::assess(state, user, &computer, &target, req.toolset, spec, &scaled, req.run_id.as_deref()).await;
+    let watching = crate::computer_safety::watch_note(&computer.id, &safety, spec);
+    match &safety.verdict {
+        crate::computer_safety::Verdict::Deny(reason) => {
+            settle(false);
+            let _ = audit(user, &computer, &target, spec, &req, &policy_desc, verdict.as_ref(), Some(&safety));
+            crate::computer_safety::emit(&computer.id, "denied", Some(&safety), &req.member, req.run_id.as_deref(), json!({}));
+            return respond(StatusCode::FORBIDDEN, error_result("safety_denied", reason.clone(), map.as_ref()));
+        }
+        crate::computer_safety::Verdict::Pause(reason) => {
+            settle(false);
+            let _ = audit(user, &computer, &target, spec, &req, &policy_desc, verdict.as_ref(), Some(&safety));
+            crate::computer_safety::emit(&computer.id, "paused", Some(&safety), &req.member, req.run_id.as_deref(), json!({}));
+            crate::computer_safety::record_monitor_outcome(state, user, &safety, "skipped", "paused before running");
+            return respond(
+                StatusCode::OK,
+                error_result(
+                    "safety_paused",
+                    format!("{reason} The step did not run. Stop here: call request_human so a person can look at the screen, and don't retry this step on your own."),
+                    map.as_ref(),
+                ),
+            );
+        }
+        _ => {}
+    }
+    let safety_confirm = matches!(safety.verdict, crate::computer_safety::Verdict::Confirm(_));
+
     // Steps inside an approved run_subtask carry that subtask's grant: the
     // person approved the bounded goal and its literal inputs once, and the
     // loop can only type those inputs. Lease, policy and audit still run.
-    if req.within_subtask.is_none()
-        && (needs_approval(spec, target.sandboxed())
-            || crate::computer_v2::v2_member_needs_approval(&req.member, &req.input, target.sandboxed()))
+    // Irreversible, watch-mode and monitor confirmations always ask.
+    if safety_confirm
+        || (req.within_subtask.is_none()
+            && (needs_approval(spec, target.sandboxed())
+                || crate::computer_v2::v2_member_needs_approval(&req.member, &req.input, target.sandboxed())))
     {
+        let class = if safety.irreversible.is_some() {
+            ConfirmationClass::Irreversible
+        } else {
+            match risk_class(spec) {
+                ConfirmationClass::Reversible => ConfirmationClass::Risky,
+                other => other,
+            }
+        };
         if let Err(denial) = crate::aci_safety::enforce_confirmation(
             &state.approval_store,
             &user.user_id,
             "computer.toolset",
-            match risk_class(spec) {
-                ConfirmationClass::Reversible => ConfirmationClass::Risky,
-                other => other,
-            },
+            class,
             &action_descriptor(&computer.id, &req),
             req.approval_grant.as_deref(),
         ) {
@@ -1677,85 +1760,107 @@ pub async fn execute(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: 
             } else {
                 (denial.status, code)
             };
+            let why = match &safety.verdict {
+                crate::computer_safety::Verdict::Confirm(r) => format!(": {r}"),
+                _ => String::new(),
+            };
+            if code == "approval_required" {
+                crate::computer_safety::emit(&computer.id, "confirm", Some(&safety), &req.member, req.run_id.as_deref(), json!({ "approval_id": body.get("approval_id") }));
+            }
             body["error"] = json!(code);
             body["is_error"] = json!(true);
             body["member"] = json!(req.member);
             body["toolset"] = json!(req.toolset.as_str());
-            body["risk"] = json!(spec.risk);
-            body["content"] = json!([text(format!("{} needs a person's approval before it runs.", req.member))]);
+            body["risk"] = json!(if safety.irreversible.is_some() { "irreversible" } else { spec.risk.as_str() });
+            body["safety"] = serde_json::to_value(&safety).unwrap_or_default();
+            body["content"] = json!([text(format!("{} needs a person's approval before it runs{why}.", req.member))]);
             body["screen"] = serde_json::to_value(screen_info(None)).unwrap_or_default();
             return (status, body);
         }
     }
 
     // 4. Audit row, durable before the action.
-    if let Err(e) = audit(user, &computer, &target, spec, &req, &policy_desc, verdict.as_ref()) {
+    if let Err(e) = audit(user, &computer, &target, spec, &req, &policy_desc, verdict.as_ref(), Some(&safety)) {
         warn!(error = %e, "toolset audit write failed; refusing to dispatch");
         settle(false);
         return respond(StatusCode::INTERNAL_SERVER_ERROR, error_result("audit_unavailable", "The action log couldn't be written, so the action did not run.", None));
     }
+    if watching {
+        crate::computer_safety::emit(&computer.id, "watch", Some(&safety), &req.member, req.run_id.as_deref(), json!({}));
+    }
+
+    // 4b. Rollback point on cloud computers before a risky step.
+    let mut notes: Vec<Value> = Vec::new();
+    if safety.snapshot {
+        match crate::computer_safety::snapshot_before(&target, &computer.id, req.run_id.as_deref()).await {
+            Ok(Some(snap)) => {
+                crate::computer_safety::emit(&computer.id, "snapshot", Some(&safety), &req.member, req.run_id.as_deref(), json!({ "snapshot_id": snap }));
+                notes.push(text(format!("Rollback point {snap} was saved before this step (restore it from the computer's snapshots).")));
+            }
+            Ok(None) => {}
+            Err(e) => {
+                warn!(computer_id = %computer.id, error = %e, "safety rollback snapshot failed; the confirmed step runs without one");
+                crate::computer_safety::emit(&computer.id, "snapshot_failed", Some(&safety), &req.member, req.run_id.as_deref(), json!({ "error": e }));
+            }
+        }
+    }
 
     // 5. Dispatch.
-    let run_id = req.run_id.clone().unwrap_or_else(|| format!("toolset-{}", uuid::Uuid::new_v4().simple()));
-    let screen_key = match &target {
-        Target::Browser { session_id, .. } => format!("browser:{session_id}"),
-        _ => computer.id.clone(),
-    };
+    let secrets: Vec<String> = crate::aci_credentials::CREDENTIALS.screening_secrets(&user.user_id).into_iter().map(|(_, v, _)| v).collect();
     crate::computer_routes::touch_computer_activity(&state.db, &computer.id);
-    if req.member == "run_subtask" {
-        // The bounded decision loop. Each of its steps goes back through
-        // `execute_step` (lease, policy, audit, dispatch, event).
-        let outcome = crate::computer_subtask::run(state, user, &computer, &target, &req.input, &run_id).await;
+    if req.member == "run_subtask" || v2 {
+        // run_subtask: the bounded decision loop; each of its steps goes back
+        // through `execute_step` (lease, policy, safety, audit, dispatch,
+        // event). Structured v2 members: no screenshot and no coordinate
+        // scaling — the driver answers read_ui/act/run_batch/verify, the human
+        // gate pauses the lease, the credential backends type the value.
+        let outcome = if req.member == "run_subtask" {
+            crate::computer_subtask::run(state, user, &computer, &target, &req.input, &run_id).await
+        } else {
+            crate::computer_v2::execute_v2(state, user, &computer, &target, &req.member, &req.input, &run_id).await
+        };
         emit_action(&computer.id, req.toolset, &req.member, None, None, req.run_id.as_deref(), outcome.is_ok());
+        crate::computer_safety::record_monitor_outcome(state, user, &safety, if outcome.is_ok() { "success" } else { "error" }, "step ran");
         return match outcome {
-            Ok(result) => {
+            Ok(mut result) => {
                 settle(!result.is_error);
+                if crate::computer_safety::observation_member(&req.member) {
+                    crate::computer_safety::mark_untrusted(&req.member, &mut result.content, &secrets);
+                }
+                result.content.extend(notes);
                 (StatusCode::OK, serde_json::to_value(result).unwrap_or_default())
             }
             Err(fail) => {
                 settle(false);
-                respond(StatusCode::OK, error_result("action_failed", fail.message, None))
+                respond(StatusCode::OK, error_result(fail.code.unwrap_or("action_failed"), fail.message, None))
             }
         };
     }
-    if crate::computer_v2::is_v2_member(&req.member) {
-        // Structured v2 members: no screenshot and no coordinate scaling —
-        // the driver answers read_ui/act/run_batch/verify, the human gate
-        // pauses the lease, the credential backends type the value. The
-        // lease, policy, approval and audit steps above already ran.
-        let outcome = crate::computer_v2::execute_v2(state, user, &computer, &target, &req.member, &req.input, &run_id).await;
-        emit_action(&computer.id, req.toolset, &req.member, None, None, req.run_id.as_deref(), outcome.is_ok());
-        return match outcome {
-            Ok(result) => {
-                settle(true);
-                (StatusCode::OK, serde_json::to_value(result).unwrap_or_default())
-            }
-            Err(fail) => {
-                settle(false);
-                respond(StatusCode::OK, error_result("action_failed", fail.message, None))
-            }
-        };
-    }
-    let screen = match input_space(&target, &screen_key, &run_id).await {
-        Ok(s) => s,
-        Err(e) => {
-            settle(false);
-            return respond(StatusCode::OK, error_result("driver_failed", e, None));
-        }
-    };
-    let map = Mapping::new(screen, req.model_frame, req.coordinate_space.unwrap_or_default(), &c.model_frame);
-    let scaled = scale_input(spec, &req.input, &map);
+    let map = map.expect("pixel members have a mapping");
     let point = primary_point(spec, &scaled);
-    let outcome = dispatch(&target, req.toolset, spec, &scaled, &map, &screen_key, &run_id).await;
+    let redactor = Redactor { settings: &safety.settings, secrets: &secrets };
+    let outcome = dispatch(&target, req.toolset, spec, &scaled, &map, &screen_key, &run_id, &redactor).await;
     emit_action(&computer.id, req.toolset, &req.member, point, Some(&map), req.run_id.as_deref(), outcome.is_ok());
+    crate::computer_safety::record_monitor_outcome(state, user, &safety, if outcome.is_ok() { "success" } else { "error" }, "step ran");
     match outcome {
-        Ok((content, browser_state)) => {
+        Ok((mut content, browser_state)) => {
             settle(true);
+            if let Target::Browser { session_id, .. } = &target {
+                let said = content.iter().find_map(|b| b.get("text").and_then(Value::as_str)).map(str::to_string);
+                crate::computer_safety::remember_browser(session_id, &req.member, said.as_deref(), browser_state.as_ref());
+            }
+            if crate::computer_safety::observation_member(&req.member) {
+                crate::computer_safety::mark_untrusted(&req.member, &mut content, &secrets);
+            }
+            content.extend(notes);
             respond(StatusCode::OK, ToolsetResult { is_error: false, content, browser_state, screen: screen_info(Some(&map)), error: None })
         }
         Err(fail) => {
             settle(false);
-            let mut r = error_result("action_failed", fail.message, Some(&map));
+            if let (Target::Browser { session_id, .. }, Some(state)) = (&target, fail.browser_state.as_ref()) {
+                crate::computer_safety::remember_browser(session_id, &req.member, None, Some(state));
+            }
+            let mut r = error_result(fail.code.unwrap_or("action_failed"), fail.message, Some(&map));
             r.browser_state = fail.browser_state;
             respond(StatusCode::OK, r)
         }
@@ -1817,6 +1922,7 @@ fn policy_check(
 }
 
 /// The audit row, written (and fsynced) before the action runs.
+#[allow(clippy::too_many_arguments)]
 fn audit(
     user: &AuthUser,
     computer: &ComputerResponse,
@@ -1825,16 +1931,26 @@ fn audit(
     req: &ToolsetRequest,
     policy_desc: &crate::policy_config::PolicyDescriptor,
     verdict: Option<&crate::permission_policy::PolicyVerdict>,
+    safety: Option<&crate::computer_safety::Assessment>,
 ) -> Result<(), String> {
+    // A safety refusal is a denied row of its own; an allowed step carries
+    // the safety note in its intent.
+    let refused = safety.is_some_and(|a| matches!(a.verdict, crate::computer_safety::Verdict::Deny(_) | crate::computer_safety::Verdict::Pause(_)));
+    let note = safety.map(|a| a.audit_note()).unwrap_or_default();
     let audited = match verdict {
-        Some(v) => crate::policy_config::record_decision(policy_desc, v, Some(&user.user_id), req.run_id.as_deref()),
-        None => {
-            let mut row = crate::policy_audit::PolicyAuditRow::new(crate::policy_audit::PolicyDecision::Allowed, policy_desc.tool.clone());
+        Some(v) if !refused => {
+            let mut desc = policy_desc.clone();
+            desc.intent = Some(format!("{}{note}", desc.intent.as_deref().unwrap_or(&req.member)));
+            crate::policy_config::record_decision(&desc, v, Some(&user.user_id), req.run_id.as_deref())
+        }
+        _ => {
+            let decision = if refused { crate::policy_audit::PolicyDecision::Denied } else { crate::policy_audit::PolicyDecision::Allowed };
+            let mut row = crate::policy_audit::PolicyAuditRow::new(decision, policy_desc.tool.clone());
             row.actor = Some(user.user_id.clone());
             row.bot_id = computer.bot_id.clone();
             row.session_id = computer.session_id.clone();
             let within = req.within_subtask.as_deref().map(|p| format!(" subtask={p}")).unwrap_or_default();
-            row.intent = Some(format!("risk={} target={} computer={}{within}", spec.risk, target.label(), computer.id));
+            row.intent = Some(format!("risk={} target={} computer={}{within}{note}", spec.risk, target.label(), computer.id));
             row.host = policy_desc.network_host.clone();
             row.run_id = req.run_id.clone();
             crate::policy_audit::record(&row)
@@ -1878,12 +1994,36 @@ pub(crate) async fn execute_step(
     };
     lease_check(state, user, computer, target, Some(run_id)).await.map_err(|(_, _, m)| Fail::from(m))?;
     let (policy_desc, verdict) = policy_check(user, computer, &req).map_err(Fail::from)?;
-    audit(user, computer, target, spec, &req, &policy_desc, verdict.as_ref())
+    // The safety layer runs on every step. The subtask's one approval can't
+    // cover an irreversible, watch-mode or monitor-flagged step: those end
+    // the subtask and hand the step back to the planner, whose own call of
+    // it goes through the person's approval.
+    let safety = crate::computer_safety::assess(state, user, computer, target, Toolset::Computer, spec, &req.input, Some(run_id)).await;
+    let watching = crate::computer_safety::watch_note(&computer.id, &safety, spec);
+    let refusal = match &safety.verdict {
+        crate::computer_safety::Verdict::Deny(r) => Some(("safety_denied", "denied", r.clone())),
+        crate::computer_safety::Verdict::Pause(r) => Some(("safety_paused", "paused", r.clone())),
+        crate::computer_safety::Verdict::Confirm(r) => Some(("needs_confirmation", "confirm", r.clone())),
+        crate::computer_safety::Verdict::Allow => None,
+    };
+    if let Some((code, phase, reason)) = refusal {
+        if code != "needs_confirmation" {
+            let _ = audit(user, computer, target, spec, &req, &policy_desc, verdict.as_ref(), Some(&safety));
+        }
+        crate::computer_safety::emit(&computer.id, phase, Some(&safety), member, Some(run_id), json!({ "within_subtask": true }));
+        crate::computer_safety::record_monitor_outcome(state, user, &safety, "skipped", "handed back to the planner");
+        return Err(Fail::coded(code, reason));
+    }
+    audit(user, computer, target, spec, &req, &policy_desc, verdict.as_ref(), Some(&safety))
         .map_err(|_| Fail::from("The action log couldn't be written, so the action did not run."))?;
+    if watching {
+        crate::computer_safety::emit(&computer.id, "watch", Some(&safety), member, Some(run_id), json!({ "within_subtask": true }));
+    }
     // Straight to the driver: a subtask step needs the driver's JSON, not the
     // model-facing result (whose screen block costs a screen-size query).
     let outcome = crate::computer_v2::driver_op(member, &req.input).await;
     emit_action(&computer.id, Toolset::Computer, member, None, None, Some(run_id), outcome.is_ok());
+    crate::computer_safety::record_monitor_outcome(state, user, &safety, if outcome.is_ok() { "success" } else { "error" }, "step ran");
     outcome
 }
 
@@ -1897,6 +2037,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/computers/:id/toolset/schema", get(get_toolset_schema))
         .route("/computers/:id/toolset/events", get(get_toolset_events))
         .route("/computers/:id/human-done", post(post_human_done))
+        .route("/computers/:id/safety", get(crate::computer_safety::get_safety).put(crate::computer_safety::put_safety))
 }
 
 /// The person signals the human window is complete (CAPTCHA done, 2FA

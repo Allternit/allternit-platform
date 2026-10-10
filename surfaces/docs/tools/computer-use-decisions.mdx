@@ -18,7 +18,7 @@ Every model family gets `run_subtask` the same way, as a member of the `computer
 Each step:
 
 1. **Read.** `read_ui` on the target window (the first read pins the window; later reads ask for the `since` diff of the [live element map](/tools/allternit-driver) and patch a local copy, which costs well under a millisecond on a watched window).
-2. **Build the options.** Visible, enabled, named elements × the allowed ops: `click` for buttons, checkboxes, links and similar; `type <input> into <field>` for each literal input and text field; `press Return` in the focused field; then `done` and `escalate`. Elements named like send, pay, buy, delete or publish, and anything in `constraints.avoid`, are never options unless `constraints.allow_irreversible` is set.
+2. **Build the options.** Visible, enabled, named elements × the allowed ops: `click` for buttons, checkboxes, links and similar; `type <input> into <field>` for each literal input and text field; `press Return` in the focused field; then `done` and `escalate`. Elements the shared [irreversible classifier](/tools/computer-safety#irreversible-actions) flags (send, pay, buy, delete, publish and the rest), and anything in `constraints.avoid`, are never options unless `constraints.allow_irreversible` is set; even then, choosing one ends the subtask with `needs_confirmation` instead of running it.
 3. **Decide.** One `POST /v1/decisions` call (kind `element`, `allow_abstain`). Unfilled inputs first get one `field` decision each ("which field takes the email?"), run concurrently.
 4. **Act.** The choice runs through the same path as every toolset call: control lease, declarative policy and a durable audit row per step (`execute_step`). Predictable steps run as `run_batch` with an `expect` per step (UFO2's speculative multi-action): all confidently placed inputs go in one batch that stops at the first failed check. Clicks run as `act`.
 5. **Check.** The `success` checks run with `verify`; `{ask}` checks are decisions of kind `verify` over the screen.
@@ -30,7 +30,7 @@ The subtask runs on the **fast tiers only** (the configured chain without the or
 
 ## Approvals and safety
 
-On this computer (non-sandbox), `run_subtask` needs one approval for the whole subtask: the person sees the goal and the literal inputs. Its steps carry that grant and can only type those inputs; lease, policy and audit still run on every step, and every step emits a `computer.action` event for the live view. Secrets never go in `inputs`; use [`use_credential`](/tools/computer-credentials).
+On this computer (non-sandbox), `run_subtask` needs one approval for the whole subtask: the person sees the goal and the literal inputs. Its steps carry that grant and can only type those inputs. Lease, policy, the [safety layer](/tools/computer-safety) and audit still run on every step, and every step emits a `computer.action` event for the live view. The grant never covers a step the safety layer flags: an irreversible step, a mutating step in watch mode, or one the monitor wants confirmed ends the subtask with `needs_confirmation` and the step in `held_step`; a monitor pause ends it with `paused`; an app/domain list or credential-binding refusal ends it with `denied`. The planner runs a held step itself (with `act`), which asks the person. Secrets never go in `inputs`; use [`use_credential`](/tools/computer-credentials). The decision contexts wrap the screen text as [untrusted data](/tools/computer-safety#untrusted-observations-spotlighting).
 
 ## What it returns
 
@@ -50,7 +50,7 @@ On this computer (non-sandbox), `run_subtask` needs one approval for the whole s
 }
 ```
 
-`status` is `done`, `escalated` (with `reason`, `screen` and `next`) or `failed`. Each step names its decision id, chosen option, backend, latency and confidence.
+`status` is `done`, `escalated` (with `reason`, `screen` and `next`), `needs_confirmation` (with `held_step`), `paused`, `denied` or `failed`. The whole result reaches the planner spotlighted as untrusted screen data. Each step names its decision id, chosen option, backend, latency and confidence.
 
 ## Outcomes feed the flywheel
 
@@ -63,6 +63,7 @@ Typing into a field no longer borrows key focus through SkyLight's private API, 
 ## Related pages
 
 - [Computer toolset](/tools/computer-toolset)
+- [Computer-use safety](/tools/computer-safety)
 - [Allternit Driver](/tools/allternit-driver)
 - [Decisions API](/api/agency/decisions)
 - [Decision runtime](/architecture/cognitive-runtime/decision-runtime)

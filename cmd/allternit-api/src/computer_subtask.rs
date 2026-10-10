@@ -55,16 +55,10 @@ const DECISION_BUDGET_CAP_MS: u64 = 8_000;
 /// oracle IS a planner-class model call; a subtask that would need it hands
 /// control back to the planner instead (with a compact state), which is the
 /// point of the loop. Empty when no fast backend is configured: then every
-/// step hands back.
+/// step hands back. Shared with the safety monitor.
 fn fast_backends() -> Vec<&'static str> {
-    crate::agency_api::decisions::backends::chain().iter().map(|b| b.name()).filter(|n| *n != "oracle").collect()
+    crate::computer_safety::fast_backends()
 }
-/// Elements named like this are irreversible and hand back to the planner
-/// unless `constraints.allow_irreversible` (driver spec D5).
-const IRREVERSIBLE: [&str; 14] = [
-    "delete", "remove", "erase", "send", "pay", "purchase", "buy", "place order", "publish", "transfer", "unsubscribe", "sign out",
-    "log out", "empty trash",
-];
 const DEFAULT_OPS: [&str; 4] = ["click", "set_value", "select", "press"];
 
 /// The subtask as the planner gave it.
@@ -335,7 +329,11 @@ impl Spec {
         if self.avoid.iter().any(|a| n.contains(a)) {
             return Some("avoid");
         }
-        if !self.allow_irreversible && IRREVERSIBLE.iter().any(|w| n.contains(w)) {
+        // One classifier for the whole executor (computer_safety): with
+        // allow_irreversible such an element is offered, and choosing it
+        // ends the subtask with `needs_confirmation`, since the person
+        // confirms every irreversible step.
+        if !self.allow_irreversible && crate::computer_safety::classify_element(e.get("role").and_then(Value::as_str).unwrap_or(""), &name_of(e)).is_some() {
             return Some("irreversible");
         }
         None
@@ -441,6 +439,8 @@ struct Run<'a> {
     oracle_cost: f64,
     /// Decisions whose outcome is known only at the end (verify "yes").
     pending: Vec<String>,
+    /// The step the safety layer refused (hand-back for the planner).
+    held: Option<Value>,
 }
 
 impl<'a> Run<'a> {
@@ -464,8 +464,14 @@ impl<'a> Run<'a> {
 
     async fn step(&mut self, member: &str, input: Value) -> Result<Value, Fail> {
         let t = Instant::now();
-        let out = execute_step(self.state, self.user, self.computer, self.target, member, input, self.run_id).await;
+        let out = execute_step(self.state, self.user, self.computer, self.target, member, input.clone(), self.run_id).await;
         self.action_ms += t.elapsed().as_secs_f64() * 1000.0;
+        if let Err(f) = &out {
+            if f.code.is_some() {
+                // The safety layer refused this step: the planner gets it back.
+                self.held = Some(json!({ "member": member, "input": input }));
+            }
+        }
         out
     }
 
@@ -511,7 +517,7 @@ impl<'a> Run<'a> {
         }
         let app = screen.window.get("app").and_then(Value::as_str).unwrap_or("");
         let title = screen.window.get("title").and_then(Value::as_str).unwrap_or("");
-        s.push_str(&format!("Screen: {app} — {title}\n"));
+        let mut seen = format!("Screen: {app} — {title}\n");
         let mut shown = 0;
         for e in screen.elements() {
             if shown >= 25 {
@@ -532,10 +538,12 @@ impl<'a> Run<'a> {
             if focused(e) {
                 line.push_str(" (focused)");
             }
-            s.push_str(&line);
-            s.push('\n');
+            seen.push_str(&line);
+            seen.push('\n');
             shown += 1;
         }
+        // Screen text is untrusted: the decision model reads it as data.
+        s.push_str(&crate::computer_safety::spotlight("screen", &seen, &[]));
         s
     }
 
@@ -862,10 +870,16 @@ impl<'a> Run<'a> {
         if let Some(r) = reason {
             body["reason"] = json!(r);
         }
+        if let Some(step) = self.held.take() {
+            body["held_step"] = step;
+        }
         if status != "done" {
             body["screen"] = screen.compact(60);
             body["next"] = json!(match status {
                 "escalated" => "Continue from this screen yourself (read_ui/act/run_batch), or call run_subtask again with a narrower goal.",
+                "needs_confirmation" => "The next step (held_step) needs the person's confirmation. If it is what the person asked for, run it yourself with act or run_batch: that call asks the person to approve it.",
+                "paused" => "The safety monitor paused the subtask. Stop and call request_human so a person can look at the screen; don't retry the step on your own.",
+                "denied" => "The next step isn't allowed on this computer (its app/domain lists or a credential binding). Find another way, or ask the person.",
                 _ => "The subtask stopped. Read the screen and decide how to recover.",
             });
         }
@@ -907,44 +921,69 @@ pub async fn run(
         oracle_tokens: 0,
         oracle_cost: 0.0,
         pending: Vec::new(),
+        held: None,
     };
     let mut screen = Screen::default();
+    match drive(&mut run, &mut screen).await {
+        Ok((status, reason, success)) => Ok(run.finish(status, reason, &screen, success)),
+        Err(f) => {
+            let status = match f.code {
+                Some("safety_paused") => "paused",
+                Some("needs_confirmation") => "needs_confirmation",
+                Some("safety_denied") => "denied",
+                _ => return Err(f),
+            };
+            Ok(run.finish(status, Some(f.message), &screen, json!(false)))
+        }
+    }
+}
+
+/// How a subtask ended: status, reason, success.
+type Ending = (&'static str, Option<String>, Value);
+
+fn ending(status: &'static str, reason: Option<String>, success: Value) -> Ending {
+    (status, reason, success)
+}
+
+/// The loop itself. A step the safety layer refuses ends it with that
+/// step's code (`run` turns it into a status the planner can act on).
+async fn drive(run: &mut Run<'_>, screen: &mut Screen) -> Result<Ending, Fail> {
     let mut typed: HashMap<usize, String> = HashMap::new();
     let mut history: Vec<String> = Vec::new();
     // Actions that ran without changing the screen: not offered again.
     let mut spent: HashSet<String> = HashSet::new();
 
-    run.read(&mut screen).await?;
+    run.read(screen).await?;
     // Already done? (A re-issued subtask, or a goal the screen already meets.)
-    if let Some(true) = run.met(&screen, &typed, &history, 0).await? {
-        return Ok(run.finish("done", Some("the success checks already held".into()), &screen, json!(true)));
+    if let Some(true) = run.met(screen, &typed, &history, 0).await? {
+        return Ok(ending("done", Some("the success checks already held".into()), json!(true)));
     }
 
     loop {
         if run.left().is_zero() {
             let why = format!("budget_ms ({} ms) spent", run.spec.budget.as_millis());
-            return Ok(run.finish("escalated", Some(why), &screen, json!(false)));
+            return Ok(ending("escalated", Some(why), json!(false)));
         }
         if run.actions >= run.spec.max_steps {
             let why = format!("max_steps ({}) reached", run.spec.max_steps);
-            return Ok(run.finish("escalated", Some(why), &screen, json!(false)));
+            return Ok(ending("escalated", Some(why), json!(false)));
         }
 
         // Fill every input the screen can take in one speculative batch.
         if typed.len() < run.spec.inputs.len() {
-            let landed = run.fill(&mut screen, &mut typed, &mut history).await?;
+            let landed = run.fill(screen, &mut typed, &mut history).await?;
             if landed > 0 {
-                if let Some(true) = run.met(&screen, &typed, &history, 0).await? {
-                    return Ok(run.finish("done", None, &screen, json!(true)));
+                if let Some(true) = run.met(screen, &typed, &history, 0).await? {
+                    return Ok(ending("done", None, json!(true)));
                 }
-                run.read(&mut screen).await?;
+                run.read(screen).await?;
                 continue;
             }
         }
 
         // One step decision.
-        let opts = options(&run.spec, &screen, &typed, &spent);
-        let ctx = run.context(&screen, &typed, &history);
+        let opts = options(&run.spec, screen, &typed, &spent);
+        let ctx = run.context(screen, &typed, &history);
         let pairs: Vec<(String, String)> = opts.iter().map(|o| (o.id.clone(), o.text.clone())).collect();
         let d = run.decide("element", &ctx, "Which one action moves the goal forward next?", &pairs).await;
         let chosen = d.choice.as_deref().and_then(|c| opts.iter().find(|o| o.id == c));
@@ -956,7 +995,7 @@ pub async fn run(
             };
             run.trace_decision("element", &d, None, json!(null));
             run.outcome(&d, "skipped", "abstained: handed back to the planner");
-            return Ok(run.finish("escalated", Some(why), &screen, json!(false)));
+            return Ok(ending("escalated", Some(why), json!(false)));
         };
         let (option_text, action) = (opt.text.clone(), opt.action.clone());
 
@@ -964,21 +1003,21 @@ pub async fn run(
             Action::Escalate => {
                 run.trace_decision("element", &d, Some(&option_text), json!(null));
                 run.outcome(&d, "skipped", "escalated to the planner");
-                return Ok(run.finish("escalated", Some("the decision found no option that moves the goal forward".into()), &screen, json!(false)));
+                return Ok(ending("escalated", Some("the decision found no option that moves the goal forward".into()), json!(false)));
             }
             Action::Done => {
                 // Trust, then verify (give a settling UI a moment).
-                let met = run.met(&screen, &typed, &history, 2_000).await?;
+                let met = run.met(screen, &typed, &history, 2_000).await?;
                 run.trace_decision("element", &d, Some(&option_text), json!(null));
                 return Ok(match met {
                     Some(false) => {
                         run.outcome(&d, "failure", "picked done but the success checks failed");
-                        run.finish("escalated", Some("the decision said done, but the success checks don't hold".into()), &screen, json!(false))
+                        ending("escalated", Some("the decision said done, but the success checks don't hold".into()), json!(false))
                     }
                     _ => {
                         run.outcome(&d, "success", "success checks held");
                         let unchecked = met.is_none();
-                        run.finish("done", unchecked.then(|| "no success checks were given; the decision judged the goal met".to_string()), &screen, json!(!unchecked))
+                        ending("done", unchecked.then(|| "no success checks were given; the decision judged the goal met".to_string()), json!(!unchecked))
                     }
                 });
             }
@@ -986,7 +1025,7 @@ pub async fn run(
         }
 
         let before = screen.version;
-        let (ok, detail) = run.perform(&mut screen, &action).await?;
+        let (ok, detail) = run.perform(screen, &action).await?;
         let key = action_key(&action);
         if let Action::Type { input, id } = &action {
             if ok {
@@ -994,7 +1033,7 @@ pub async fn run(
             }
         }
         history.push(format!("{option_text}{}", if ok { "" } else { " (failed)" }));
-        run.read(&mut screen).await?;
+        run.read(screen).await?;
         let changed = screen.version != before;
         if !changed || !ok {
             spent.insert(key);
@@ -1003,8 +1042,8 @@ pub async fn run(
         run.outcome(&d, if outcome_ok { "success" } else { "failure" }, if outcome_ok { "action ran and the screen changed" } else if ok { "action ran but nothing changed" } else { &detail });
         run.trace_decision("element", &d, Some(&option_text), json!({ "ok": ok, "changed": changed, "detail": if ok { Value::Null } else { json!(detail) } }));
 
-        if let Some(true) = run.met(&screen, &typed, &history, 0).await? {
-            return Ok(run.finish("done", None, &screen, json!(true)));
+        if let Some(true) = run.met(screen, &typed, &history, 0).await? {
+            return Ok(ending("done", None, json!(true)));
         }
     }
 }

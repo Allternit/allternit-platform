@@ -52,7 +52,7 @@ The structured members. They read and drive the UI through the [Allternit Driver
 
 `run_batch` runs ordered steps in one window. Each step may check `wait_for` (precondition) and `expect` (postcondition); the batch stops at the first failed check and returns one observe read (the fresh element map). `verify` checks bounded conditions — role, name, text, gone, value, enabled — on a fresh read. `request_human` pauses the lease, opens the live view with input enabled, and resumes the same session when the person signals done (`POST /api/v1/computers/:id/human-done`) or the timeout elapses. `use_credential` types a vault secret or a fresh TOTP code into the focused field; the value never enters the model context, the prompts or the logs. See [Computer credentials](/tools/computer-credentials).
 
-`run_subtask` hands a bounded step sequence (fill a form, search and pick a result, toggle settings) to the decision loop instead of the planner model. Each step reads the element map, picks one option from the visible elements × allowed ops with a typed decision (`POST /v1/decisions`, about 100–150 ms on a local scorer), runs it through the same lease → policy → audit path as every other call, and checks `success` with `verify`. It returns a step trace (decision, backend, latency, confidence per step) and a status: `done`, `escalated` (with the reason and a compact current screen, so the planner continues from there) or `failed`. A decision under its confidence threshold hands control back instead of guessing. Elements named like send, pay, buy, delete or publish are never options unless `constraints.allow_irreversible` is set. Secrets never go in `inputs`: use `use_credential`. See [How computer use decides](/tools/computer-use-decisions) for the loop and measured numbers.
+`run_subtask` hands a bounded step sequence (fill a form, search and pick a result, toggle settings) to the decision loop instead of the planner model. Each step reads the element map, picks one option from the visible elements × allowed ops with a typed decision (`POST /v1/decisions`, about 100–150 ms on a local scorer), runs it through the same lease → policy → audit path as every other call, and checks `success` with `verify`. It returns a step trace (decision, backend, latency, confidence per step) and a status: `done`, `escalated` (with the reason and a compact current screen, so the planner continues from there) or `failed`. A decision under its confidence threshold hands control back instead of guessing. Irreversible elements (the [safety layer](/tools/computer-safety)'s shared classifier) are never options unless `constraints.allow_irreversible` is set, and even then they end the subtask with `needs_confirmation` for the planner to run with the person's approval. Secrets never go in `inputs`: use `use_credential`. See [How computer use decides](/tools/computer-use-decisions) for the loop and measured numbers.
 
 ```json
 {
@@ -119,8 +119,9 @@ The checks run in this order:
 1. **Contract validation.** The member must exist and its input must match the member schema. The batch rule applies (see below). A bad request returns `400`.
 2. **Control lease.** On a cloud computer the agent takes or renews the lease, so viewers can see who is driving and a person can take over. If someone else holds control, the call returns `423 computer_controlled_elsewhere`. On this device the owner must have taken control first, otherwise the call returns `423 take_control_first`.
 3. **Policy and approval.** A declarative policy denial returns `403 policy_denied`. A member that needs approval returns `409 approval_required` with an `approval_id`. Approve it with `POST /api/aci/handoff/:approval_id/approve`, then resend the same call with `approval_grant` set to that id. A grant works once, and only for the exact action it was issued for.
-4. **Audit row.** A row is written to the policy audit log and fsynced before the action runs. If the row can't be written, the action doesn't run.
-5. **Dispatch.** The action is sent to the [Allternit Driver](/tools/allternit-driver) on this device, the guest or the browser gateway. The v2 structured members answer from the driver's element map (or the human gate, or the credential backends): no screenshot is taken, no coordinates are scaled, and the result is a text block with the driver's JSON (element tree, batch result or verify rows).
+4. **Safety.** Evaluated between the policy check and the approval check of step 3, so its confirmations ride the same approval. The [safety layer](/tools/computer-safety) assesses the step: app/domain lists, host policy and credential binding can deny it (`403 safety_denied`); the per-step monitor can pause it (`safety_paused`); irreversible classes, watch mode and monitor confirmations turn it into `409 approval_required` on every target, with a `safety` object explaining why. On cloud computers a rollback snapshot is taken before the first risky step of a run.
+5. **Audit row.** A row is written to the policy audit log and fsynced before the action runs. If the row can't be written, the action doesn't run.
+6. **Dispatch.** The action is sent to the [Allternit Driver](/tools/allternit-driver) on this device, the guest or the browser gateway. The v2 structured members answer from the driver's element map (or the human gate, or the credential backends): no screenshot is taken, no coordinates are scaled, and the result is a text block with the driver's JSON (element tree, batch result or verify rows).
 
 Every call returns this result shape:
 
@@ -132,7 +133,7 @@ Every call returns this result shape:
 }
 ```
 
-Refusals add an `error` code.
+Refusals add an `error` code. Text results that carry screen or page content arrive [spotlighted](/tools/computer-safety#untrusted-observations-spotlighting) as untrusted data, and screenshots arrive with personal data blacked out and a short text note after the image.
 
 ### Human hand-off
 
@@ -260,6 +261,7 @@ Outputs: `sdk/computer-toolset` (`@allternit/computer-toolset`), gizzi `contract
 - [Allternit Computer Interface (ACI)](/tools/computer-use)
 - [Allternit Driver](/tools/allternit-driver)
 - [How computer use decides](/tools/computer-use-decisions)
+- [Computer-use safety](/tools/computer-safety)
 - [Computer credentials](/tools/computer-credentials)
 - [Computers MCP server](/api/platform/hosted-computers)
 - [Computers and apps](/guides/computers-and-apps)

@@ -279,10 +279,12 @@
     {
       "source": "allternit/cmd/allternit-api/src/computer_*",
       "target": "allternit/domains/computer-use/driver",
-      "kind": "JSON-RPC over unix socket or token-gated loopback TCP (ALLTERNIT_DRIVER_SOCKET/ENDPOINT; pixel_* + read_ui/act/run_batch/verify)",
+      "kind": "JSON-RPC over unix socket or token-gated loopback TCP (ALLTERNIT_DRIVER_SOCKET/ENDPOINT; pixel_* + read_ui/act/run_batch/verify; context + ocr for the safety layer)",
       "evidence": [
         "allternit/cmd/allternit-api/src/this_device_input.rs",
-        "allternit/cmd/allternit-api/src/computer_v2.rs"
+        "allternit/cmd/allternit-api/src/computer_v2.rs",
+        "allternit/cmd/allternit-api/src/computer_safety.rs",
+        "allternit/domains/computer-use/driver/allternit_driver/safety.py"
       ]
     },
     {
@@ -297,10 +299,12 @@
     {
       "source": "allternit/cmd/allternit-api/src/computer_*",
       "target": "allternit/cmd/allternit-api/src/agency_api",
-      "kind": "in-process call: run_subtask's typed decisions (decisions::decide_value, kinds element/verify) and their outcomes (decisions::record_outcome)",
+      "kind": "in-process call: run_subtask's typed decisions (decisions::decide_value, kinds element/verify), the safety monitor (kind safety) and their outcomes (decisions::record_outcome)",
       "evidence": [
         "allternit/cmd/allternit-api/src/computer_subtask.rs",
-        "allternit/surfaces/docs/tools/computer-use-decisions.mdx"
+        "allternit/cmd/allternit-api/src/computer_safety.rs",
+        "allternit/surfaces/docs/tools/computer-use-decisions.mdx",
+        "allternit/surfaces/docs/tools/computer-safety.mdx"
       ]
     },
     {

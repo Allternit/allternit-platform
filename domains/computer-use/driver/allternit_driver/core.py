@@ -734,6 +734,48 @@ class Driver:
 
     # ---- introspection ----------------------------------------------------------------
 
+    # ---- safety (allternit-api computer_safety) -------------------------------------
+
+    def context(self, p: dict[str, Any]) -> dict[str, Any]:
+        """Where an action lands: app, bundle id, window title, page URL, the
+        element under ``point`` (screen px) and map elements by ``ids``. The
+        elements' own window decides the app when ids are given."""
+        from . import safety
+
+        described: dict[str, Any] = {}
+        pid: int | None = int(p["pid"]) if p.get("pid") else None
+        for eid in [str(i) for i in (p.get("ids") or [])][:64]:
+            key = self.maps.window_of(eid)
+            cur = self.maps.window(key).current if key else None
+            element = cur.elements.get(eid) if cur is not None else None
+            if element is None:
+                continue
+            d: dict[str, Any] = {"role": element.role, "name": element.name}
+            if "secure" in (element.role or "").lower():
+                d["secure"] = True
+            described[eid] = d
+            t = self._targets.get(key) if key else None
+            if t is not None and pid is None:
+                pid = t.pid
+        if pid is None and (p.get("app") or p.get("window_id")):
+            try:
+                pid = self.target(p).pid
+            except Exception:
+                pid = None
+        try:
+            return safety.context(p, pid, described)
+        except safety.Unsupported as e:
+            raise DriverError("unsupported", str(e)) from e
+
+    def ocr(self, p: dict[str, Any]) -> dict[str, Any]:
+        """Text lines with per-word boxes for one PNG (redaction input)."""
+        from . import safety
+
+        try:
+            return safety.ocr(p)
+        except safety.Unsupported as e:
+            raise DriverError("unsupported", str(e)) from e
+
     def status(self, _p: dict[str, Any] | None = None) -> dict[str, Any]:
         return {"os": self.os, "engines": self.engines(), "live": self.live.status()}
 
