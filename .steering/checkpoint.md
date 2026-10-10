@@ -1,33 +1,30 @@
 # Steering checkpoint
 
-**Session:** `session/craft-editors-20261009` · worktree `allternit-session-craft-1009` · plan dag_387644
-**Date:** 2026-10-09
+**Session:** `session/craft-video-kind-20261010` · worktree `allternit-wt-craft-video` (+ ai worktree `allternit-ai-wt-craft-video` at 5d26d443) · plan dag_724767 (gizzi `workspace node add|claim|close` all error with yargs "unexpected argument" — noted, TodoList tracking instead)
+**Date:** 2026-10-10
 
 ## Goal
-Adopt the ArtCraft craft suite (PhotoCraft/PdfCraft/FilmCraft — pure-Rust, MIT/Apache-2.0) as the PDF, Image, and Video artifact editors. Approved plan (Eoj, 2026-10-09): local vendoring (NO GitHub forks), existing names/surfaces (Allternit Office for PDF, Allternit Design for image/video), WASM bundles served from the existing office.allternit.com surface, sandboxed iframe embedding with a craft-host bridge, Tier-C audit before any product wiring. Plan file: session plans dir (`nightcrawler-drax-black-panther.md`).
+Craft editors item 2, app-independent slice (HANDOFF-craft-editors-2026-10-10): `video` kind in both registries, runtime.rs gate verify, VENDOR.md note, clean FilmCraft embed rebuild, publish to office surface, dep-map + docs, PRs both repos (NO MERGE — Eoj). OUT of scope: footage refs, OPFS, media_generate, phone view+trim, host save/open plumbing, agent co-editing, Phase-4 cleanup.
 
 ## Just did
-- craft-host bridge crate + all three craft:1 embed adapters IMPLEMENTED and verified (wasm32 embed + standalone checks green on all three web apps; craft-host 8/8 host tests; all three trees cargo-check clean). Committed d522a0a0ec + pushed: adapters (video gate/save-watcher, pdf deliver_save write-back, image control-channel dispatch + Services::write interception), per-tree rust-toolchain pins (>=1.95), office-surface test harness page + CSP _headers.
-- VENDOR.md gained the bundle-build recipe (trunk/xtask web, embed feature mandatory, wasm-bindgen-cli 0.2.129, <25MiB gate, craft:1 strings check).
-- WASM release bundle build RUNNING (agent-8): tool installs + image/pdf trunk builds + video xtask build with feature plumbing, then copy to surfaces/office.allternit.com/public/craft/{image,pdf,video} + verification.
-- Deep research on `github.com/storytold` (7 apps, licenses verified MIT/Apache; `artcraft` engine repos legally blocked — excluded) and on our artifact system (v2 kinds registry `src/lib/artifacts/kinds.ts` on origin/main; local checkout 17 behind — fast-forward before Phase 1).
-- Session worktree + DAG plan (`dag_387644`) created.
-- Mirror-cloned the three repos to `~/Desktop/allternit-workspace/craft-mirrors/` (machine-local, not committed). Pinned revs: photocraft `0c72d9542…` (2026-10-09), pdfcraft `68e91d481…`, filmcraft `7bd762126…`.
-- Vendored trees into `vendor/craft/{image,pdf,video}/` (~34/29/34 MB) at those revs. Wrote `vendor/craft/VENDOR.md` (provenance, license/trademark handling, refresh ritual) + `refresh-from-upstream.sh` (dry-run/apply).
-- cargo-audit installing in background (not previously installed).
-- All three rebrand+audit agents DONE: rebrands complete (docs/brand removed, community UI stripped, i18n verified by script — 1,285 literals × 16 catalogs for image; deep PDF-embedded strings and export-format provenance strings for pdf/video), per-app audit inventories written.
-- AUDIT.md verdict: PASS with documented conditions (rsa/rustls-webpki not reachable in embed posture; zero analytics in all three trees).
-- Committed + pushed: 5edf5f6afb on session/craft-editors-20261009 (vendored trees, VENDOR.md, refresh script, AUDIT.md, audit reports, craft-host/PROTOCOL.md). Upstream .github CI stripped (would have executed in our repo).
+- **Platform** (all verified):
+  - kinds.rs `video` KindSpec + contract test list → `cargo check -p allternit-cloud-api` ✅ 1m33s; kinds tests 5/5 ✅.
+  - runtime.rs gate VERIFIED already admitting `"image" | "video"` storage-only (line 187 + test 371-388, from PR #1477) — no change.
+  - VENDOR.md CRAFT_FEATURES=embed note added.
+  - features.json: Phase 3 app-independent description + 2026-10-10 decision; fixed pre-existing #1477 validate break (touches `src/routes/artifact_runtime.rs` → `src/routes/artifact_*`). `--validate` ✅ "Valid: 33 products, 28 features, 9 journeys, 1190 components, 5701 relationships, 17299 files."
+  - Docs: pdf+video rows in both kind tables (pdf was missing — gap closed), prose lists, minimal true-today video paragraph in artifact-modes.mdx. check_links ✅ 0 problems (525 nav / 520 pages).
+  - **FilmCraft bundle rebuilt cleanly**: `CRAFT_FEATURES=embed cargo xtask web` → 4m41s release build (craft-host compiled = embed active), wasm-bindgen 0.2.129, wasm-opt v133 accepted the xtask's existing flags — NO patch needed. Output: 23.1 MB wasm / 23.3 MB total. craft:1 strings ✅ (7 matches: "craft:1 embed mode: … authenticated bridge is the only control surface"). Size gate ✅ 0 files ≥25 MiB. Published to `surfaces/office.allternit.com/public/craft/video/` (wasm+index.html changed; js/audio-worklet byte-identical).
+- **ai worktree** (all verified):
+  - types.ts ARTIFACT_KINDS += 'video'; kinds.ts video entry (Viewer V.code interim, Editor null, SOURCE+COPY, ALL_PLANS, comment marks the host-wiring slice); ArtifactKindIcon KIND_ICON += video.
+  - `pnpm install --ignore-scripts` ✅; `pnpm typecheck` (tsc --noEmit) ✅ exit 0; vitest registry+api-store+craft suites 57/57 ✅; `check-sw-cache-bump.mjs` → "No Fabric Session asset changes." ✅.
+  - Impact query recorded (Craft editors/Artifacts/Motion/Dashboards/Office [building]; surfaces ai.allternit.com, Desktop, m.allternit.com PWA; 280 components).
+  - **No public/craft mirror**: image/pdf bundles are not mirrored in allternit-ai (bridge loads cross-origin from office.allternit.com via CRAFT_BASE); mirroring video alone would diverge — reported in PR body instead.
 
 ## Next
-1. Bundle build lands → verify + final commit → Eoj tries the open→edit→save harness at
-   office.allternit.com/craft/ (needs the office surface deployed — Eoj's deploy go-ahead).
-2. Phase 1 (separate session, after ai checkout fast-forwards): `pdf` kind in cloud-api
-   kinds.rs + KIND_REGISTRY; CraftEditor component (host-side TS bridge client);
-   save→versions; docs; phone/PWA sheet mode.
+1. Platform commits (5 logical) → push → PR with evidence. DO NOT MERGE.
+2. ai commits → push → PR with evidence. DO NOT MERGE.
+3. Final report: PRs, SHAs, evidence, deferrals.
 
 ## Open questions
-- ~~COOP/COEP~~ RESOLVED: all three current web builds are single-threaded; COOP/COEP only needed for a future threaded build. No header changes required for v1.
-- Editor canvas theming inside egui (accept themed params, not full design tokens) — Eoj judges at the Phase-0 checkpoint.
-- Plans/entitlements gating for the new kinds (Eoj's call at review, Phase 4).
-- `gizzi workspace node add` CLI shape (help is unclear; DAG plan + node n_8583 exist, node breakdown tracked here meanwhile).
+- Whether Eoj wants craft bundles mirrored into allternit-ai public/ at all (image/pdf never were) — flagged in PR bodies.
+- wasm-opt needed no patch; the handoff's feared flag error did not occur with v133 on this module.
