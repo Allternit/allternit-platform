@@ -9,7 +9,7 @@ description: 'run_subtask: the planner sets a bounded goal once, and each UI ste
 
 ## Overview
 
-A planner model (Claude, GPT, Gemini, Kimi, Qwen or a local model) is good at deciding *what* to do and expensive at deciding *which button is next*. `run_subtask` splits the two. The planner sends one bounded subtask: a goal, the literal inputs it may type, success checks and limits. The executor then runs every step as a **typed decision**: one choice from a fixed list of options, answered by the fast decision tiers in about 100–300 ms instead of a planner call.
+A planner model (any hosted or local model) is good at deciding *what* to do and expensive at deciding *which button is next*. `run_subtask` splits the two. The planner sends one bounded subtask: a goal, the literal inputs it may type, success checks and limits. The executor then runs every step as a **typed decision**: one choice from a fixed list of options, answered by the fast decision tiers in about 100–300 ms instead of a planner call.
 
 Every model family gets `run_subtask` the same way, as a member of the `computer_v2` function tool. The tool guidance tells planners to hand bounded step sequences to `run_subtask` and to keep their own calls for planning and for whatever a subtask hands back.
 
