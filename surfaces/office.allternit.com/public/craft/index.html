@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Allternit craft embed test</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; font: 14px/1.4 system-ui, sans-serif; background: #141110; color: #e8e2da;
+         display: flex; flex-direction: column; height: 100vh; }
+  header { display: flex; gap: 8px; align-items: center; padding: 8px 12px; background: #1d1917;
+           border-bottom: 1px solid #322b27; flex-wrap: wrap; }
+  button, select { background: #2a2422; color: inherit; border: 1px solid #453c37; border-radius: 6px;
+                   padding: 6px 10px; cursor: pointer; font: inherit; }
+  button:hover { background: #362e2b; }
+  #status { margin-left: auto; opacity: .85; }
+  #log { height: 140px; overflow: auto; background: #0d0b0a; border-top: 1px solid #322b27;
+         padding: 8px 12px; font: 12px/1.5 ui-monospace, monospace; white-space: pre-wrap; }
+  #frame-wrap { flex: 1; display: flex; }
+  iframe { flex: 1; border: 0; background: #000; }
+  .ok { color: #9fd89f; } .err { color: #e8a1a1; }
+</style>
+</head>
+<body>
+<header>
+  <strong>craft:1 test</strong>
+  <select id="app">
+    <option value="pdf">pdf</option>
+    <option value="image">image</option>
+    <option value="video">video</option>
+  </select>
+  <button id="load">Load editor</button>
+  <button id="open" disabled>Open file…</button>
+  <input type="file" id="picker" hidden />
+  <button id="save" disabled>Request save</button>
+  <button id="ping" disabled>Ping</button>
+  <span id="status">idle</span>
+</header>
+<div id="frame-wrap"></div>
+<div id="log"></div>
+<script>
+const $ = (id) => document.getElementById(id);
+const log = (msg, cls) => { const el = $("log"); const line = document.createElement("div");
+  if (cls) line.className = cls; line.textContent = `${new Date().toLocaleTimeString()} ${msg}`;
+  el.appendChild(line); el.scrollTop = el.scrollHeight; };
+const status = (t) => { $("status").textContent = t; };
+
+let iframe = null, token = null, ready = false, saveSeq = 0;
+
+function makeToken() {
+  const b = new Uint8Array(16); crypto.getRandomValues(b);
+  return [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
+}
+
+function send(msg, bytes) {
+  if (!iframe || !iframe.contentWindow) return;
+  const env = { msg, has_bytes: !!bytes };
+  if (bytes) {
+    const arr = [JSON.stringify(env), bytes, bytes];
+    iframe.contentWindow.postMessage(arr, "*", [bytes]);
+  } else {
+    iframe.contentWindow.postMessage(JSON.stringify(env), "*");
+  }
+}
+
+function unload() { if (iframe) iframe.remove(); iframe = null; ready = false;
+  $("open").disabled = $("save").disabled = $("ping").disabled = true; }
+
+$("load").onclick = () => {
+  unload();
+  const app = $("app").value;
+  token = makeToken();
+  const parent = encodeURIComponent(location.origin);
+  iframe = document.createElement("iframe");
+  iframe.sandbox = "allow-scripts allow-downloads";
+  iframe.src = `./${app}/?embed=1&origin=${parent}`;
+  $("frame-wrap").appendChild(iframe);
+  status(`loading ${app}…`);
+  log(`iframe → ./${app}/?embed=1 (token ${token.slice(0, 8)}…)`);
+};
+
+window.addEventListener("message", (e) => {
+  if (!iframe || e.source !== iframe.contentWindow) return;
+  const raw = typeof e.data === "string" ? e.data : null;
+  if (raw === null) return log(`← binary message (${e.data?.byteLength ?? "?"} bytes)`);
+  let env; try { env = JSON.parse(raw); } catch { return log("← unparseable message", "err"); }
+  const m = env.msg;
+  log(`← ${m.type} ${JSON.stringify({ ...m, bytes: undefined }).slice(0, 160)}`,
+      m.type === "hello-ack" ? (m.ok ? "ok" : "err") : "");
+  if (m.type === "ready") {
+    send({ type: "hello", protocol: "craft:1", token, theme: { dark: true }, chrome: "hidden",
+           capabilities: { save: true, command: true } });
+  } else if (m.type === "hello-ack") {
+    ready = m.ok;
+    status(m.ok ? "ready — edit in the pane; Save posts bytes here" : `refused: ${m.error}`);
+    if (m.ok) { $("open").disabled = $("save").disabled = $("ping").disabled = false; }
+  } else if (m.type === "save-request") {
+    const blob = new Blob([e.data[1] ?? new Uint8Array(0)]);
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = m.name; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    saveSeq += 1;
+    send({ type: "save-ack", ok: true });
+    log(`saved ${m.name} (${blob.size} bytes) — downloaded`, "ok");
+  }
+});
+
+$("open").onclick = () => $("picker").click();
+$("picker").onchange = async () => {
+  const f = $("picker").files[0]; if (!f) return;
+  const bytes = await f.arrayBuffer();
+  send({ type: "open", name: f.name, format: f.type || null }, bytes);
+  log(`→ open ${f.name} (${bytes.byteLength} bytes)`);
+};
+$("save").onclick = () => { log("save is editor-initiated in craft:1 — use the editor's Save"); };
+$("ping").onclick = () => send({ type: "ping" });
+</script>
+</body>
+</html>

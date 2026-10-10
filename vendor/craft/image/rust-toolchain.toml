@@ -1,0 +1,5 @@
+[toolchain]
+# Vendored craft crates require rustc >= 1.95; the platform pins 1.94.1.
+# Nearest-toolchain-file wins: platform builds stay on 1.94.1, craft trees on stable.
+# Survives refresh-from-upstream (not shipped upstream).
+channel = "stable"
