@@ -631,14 +631,31 @@
         {
           "on": "2026-10-09",
           "note": "E4: live element map in the driver (allternit_driver/live). One AXObserver per app on one run-loop thread feeds arc's journal, settle counter and walk caches plus the map; notifications patch the map incrementally (full walk only on first sight, window-level changes, big bursts, or a failed staleness probe), so a re-read is answered with no accessibility call (0.4-0.5 ms median through the socket on this Mac). Windows are watched on demand, unwatched after 5 min idle, capped at 8; apps without notifications degrade to timed narrow reads and say so. Linux (AT-SPI over D-Bus, jeepney) and Windows (UIA, comtypes) observers are written to the same interface and staged by prepare-allternit-driver.cjs, unverified live until a non-production test machine exists. The macOS sidecar now runs the Cocoa main run loop so apps launched after it starts are found."
+        },
+        {
+          "on": "2026-10-09",
+          "note": "D5/E3 safety layer (computer_safety.rs): one assessment per toolset call and run_subtask step. Untrusted observations spotlighted (nonce-delimited, secrets scrubbed); per-step /v1/decisions monitor of kind safety on mutating non-sandbox steps (fast tiers, fail-closed to confirm when unsure or failed, absent when no fast tier; read-only steps never wait on it); one irreversible classifier (send/pay/purchase/transfer/delete/publish/credentials/account) shared with run_subtask, always confirmed on every target; watch mode on email/banking/admin apps and sites (computer.safety events, mutating steps confirmed); per-computer and owner-default app/domain allow/deny lists (V246, GET/PUT /computers/:id/safety); vault secrets screened on every free-text path against their bind; screenshot redaction by driver OCR before images leave the executor; VM snapshot before the first risky step of a run on cloud computers."
+        },
+        {
+          "on": "2026-10-09",
+          "note": "D4: replay cache (Stagehand design over the driver element map). run_subtask keys each subtask on hash(goal, app + window shape, input names) per owner (computer_replays, V248); the first run records semantic locators (element id, role, name, tree path, window-relative box, 8x8 pixel hash) plus a verify check per step once the exact success checks hold; later runs replay in one speculative run_batch with zero decisions, re-find a moved element by name/path/pixels or re-infer it with one decision, and rewrite the entry. Input values are never stored ({{name}} placeholders plus a guard). save_as turns a recording into a named skill; run_skill and skills (contract v2 members) run and list them. read_ui gains paths and crops."
+        },
+        {
+          "on": "2026-10-09",
+          "note": "D6: vision fallback in the driver (allternit_driver/vision). Router.choose_source decides per window read: ax, vision (empty/sparse tree, tree error) or hybrid (tree plus marks inside opaque canvas-like regions), recorded per app and audited. Set-of-marks from Apple Vision OCR plus a model-free edge-blob proposer become v-prefixed elements (source vision, mark n) that act/run_batch/verify take like tree ids; vision act is desktop pixel input behind a mean-hash freshness check. read_ui target grounds a description with the local grounder (UI-Venus-1.5-8B MLX 4-bit primary, Holo2-8B fallback, both Apache-2.0) with zoom-and-reground on low confidence. Packages install into the state dir on first use; the model runs in a child vision worker, unloaded after 10 min idle; a vLLM endpoint (ALLTERNIT_GROUNDER_URL) is the cloud seam, configuration only. Cua parse_visual_regions is not used (needs AGPL cua-perception)."
         }
       ],
       "evidence": [
+        "allternit/surfaces/docs/tools/vision-fallback.mdx",
         "allternit/surfaces/docs/tools/computer-toolset.mdx",
         "allternit/contracts/computer-toolset/README.md",
         "allternit/cmd/allternit-api/src/computer_toolset.rs",
         "allternit/surfaces/docs/tools/allternit-driver.mdx",
-        "allternit/surfaces/docs/tools/computer-credentials.mdx"
+        "allternit/surfaces/docs/tools/computer-credentials.mdx",
+        "allternit/surfaces/docs/tools/computer-safety.mdx",
+        "allternit/cmd/allternit-api/src/computer_safety.rs",
+        "allternit/surfaces/docs/tools/computer-use-replay.mdx",
+        "allternit/cmd/allternit-api/src/computer_replay.rs"
       ]
     },
     {
@@ -646,7 +663,7 @@
       "label": "Decision Runtime (typed decisions)",
       "product": "product:computer-use",
       "status": "building",
-      "description": "POST /v1/decisions (alias /v1/systemone) in allternit-api's Agency Kernel: one choice over up to 255 caller options, answered by the owned local scorer (one-pass option scoring on MLX or llama.cpp, Qwen3.5-4B), escalating under a per-kind threshold to vendor stubs (off) and the planner model through gizzi, within a latency budget, with abstain. Every decision and its outcome is stored (V245 decisions).",
+      "description": "POST /v1/decisions (alias /v1/systemone) in allternit-api's Agency Kernel: one choice over up to 255 caller options, answered by the owned local scorer (one-pass option scoring on MLX or llama.cpp, Qwen3.5-4B), escalating under a per-kind threshold to optional vendor adapters (off by default, per project) and the planner model through gizzi, within a latency budget, with abstain. Every decision and its outcome is stored (V245 decisions). The flywheel (V247) runs registered heads in shadow, promotes/demotes them on outcome accuracy with hysteresis and an audit trail, and serves live heads first (head.lookup: exact-match over past outcomes, <10 ms). GET/PUT /v1/decisions/heads.",
       "touches": [
         "allternit/cmd/allternit-api/src/agency_api",
         "allternit/domains/decision-runtime",
@@ -660,11 +677,22 @@
         {
           "on": "2026-10-09",
           "note": "E2: computer use runs on typed decisions. run_subtask (allternit.computer.v2, every model family via computer_v2) takes a goal, literal inputs, verify-syntax success checks, constraints and limits; the executor loop (computer_subtask.rs) reads the live element map with since diffs, builds element x op options plus done/escalate, decides on the fast tiers only (no oracle), runs each step through lease/policy/audit (predictable typing batched with expect checks), checks success with verify, hands back to the planner with a compact screen when a decision abstains, and writes every outcome back to the decision store. Driver: text entry writes AXValue instead of arc's SkyLight focus-borrowing, which crashed the sidecar on macOS 14."
+        },
+        {
+          "on": "2026-10-09",
+          "note": "E5 + E6: flywheel framework only (training stays in the M track, which registers trained heads through the same Head trait). Promotion is judged on accuracy against reported outcomes (default 97% over 200 labelled, not overconfident), demotion under 93%, metrics reset at each transition; safety heads never auto-promote; manual moves only for ALLTERNIT_DECISIONS_ADMINS. Vendor adapters follow the vendors' published docs (hosted decisions API public beta; TypeSafe Jev /v1/systemone), gated by key AND per-project enable (ALLTERNIT_DECISIONS_VENDOR_PROJECTS); not exercised live (metered). compare_backends.py gives a same-decisions latency/accuracy table and refuses metered backends without --allow-metered."
+        },
+        {
+          "on": "2026-10-09",
+          "note": "D7: run_parallel runs independent subtasks on separate computers at once (per-computer target/lease/audit, one input owner per computer via a process-wide registry, max_parallel/budget_ms/max_cost_usd); run_subtask best_of N runs N rollouts on N sandbox computers only (refused on the person's own machine) and a judge decision picks one by step narratives (computer_parallel.rs). run_subtask api_options offers the planner's MCP/API calls ahead of GUI steps (status use_api). Subtasks on cloud computers wait for the guest driver image (D1b)."
         }
       ],
       "evidence": [
         "allternit/surfaces/docs/api/agency/decisions.mdx",
         "allternit/cmd/allternit-api/src/agency_api/decisions/mod.rs",
+        "allternit/cmd/allternit-api/src/agency_api/decisions/flywheel.rs",
+        "allternit/cmd/allternit-api/src/agency_api/decisions/vendors.rs",
+        "allternit/domains/decision-runtime/bench/compare_backends.py",
         "allternit/domains/decision-runtime/allternit_decisions/engine_mlx.py"
       ]
     },

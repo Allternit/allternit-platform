@@ -1,7 +1,9 @@
-//! Contract v2 (`allternit.computer.v2`): the seven structured members every
+//! Contract v2 (`allternit.computer.v2`): the ten structured members every
 //! model family gets as function tools — `read_ui`, `act`, `run_batch`,
 //! `verify` through the Allternit Driver sidecar, `run_subtask` (the bounded
-//! decision loop, `computer_subtask`), `request_human` (lease
+//! decision loop, `computer_subtask`, with its replay cache), `run_parallel`
+//! + Best-of-N (`computer_parallel`), the saved skills a subtask teaches
+//! (`run_skill`, `skills`), `request_human` (lease
 //! pause/resume around a human window) and `use_credential` (vault-backed
 //! typing where the value never enters the model context or the logs).
 //!
@@ -31,7 +33,8 @@ use crate::this_device_input as td;
 use crate::AppState;
 
 /// The driver-backed structured members of allternit.computer.v2.
-pub const V2_MEMBERS: [&str; 7] = ["read_ui", "act", "run_batch", "verify", "request_human", "use_credential", "run_subtask"];
+pub const V2_MEMBERS: [&str; 10] =
+    ["read_ui", "act", "run_batch", "verify", "request_human", "use_credential", "run_subtask", "run_parallel", "run_skill", "skills"];
 
 /// Is `member` one of the v2 structured members?
 pub fn is_v2_member(member: &str) -> bool {
@@ -74,6 +77,10 @@ fn driver_timeout(member: &str, input: &Value) -> Duration {
             });
             Duration::from_secs((30 + waits / 1000 + count * 2).clamp(60, 300))
         }
+        // The vision fallback: a first vision read may wait for the worker,
+        // and grounding a `target` runs the local model (with a zoom pass).
+        "read_ui" if input.get("target").and_then(Value::as_str).is_some_and(|t| !t.is_empty()) => Duration::from_secs(300),
+        "read_ui" | "act" => Duration::from_secs(90),
         _ => Duration::from_secs(30),
     }
 }
@@ -144,6 +151,7 @@ pub async fn execute_v2(
         }
         "request_human" => request_human(state, user, computer, target, input, run_id).await,
         "use_credential" => use_credential(user, target, input).await,
+        "skills" => crate::computer_subtask::skills(state, user, input),
         other => Err(Fail::from(format!("{other} isn't a v2 member"))),
     }
 }
@@ -548,7 +556,7 @@ mod tests {
 
     #[test]
     fn v2_member_list_is_the_spec_set() {
-        assert_eq!(V2_MEMBERS, ["read_ui", "act", "run_batch", "verify", "request_human", "use_credential", "run_subtask"]);
+        assert_eq!(V2_MEMBERS, ["read_ui", "act", "run_batch", "verify", "request_human", "use_credential", "run_subtask", "run_parallel", "run_skill", "skills"]);
         assert!(is_v2_member("read_ui"));
         assert!(!is_v2_member("left_click"));
         assert!(!is_v2_member("screenshot"));
@@ -603,6 +611,8 @@ mod tests {
         let big = json!({ "steps": [{ "wait_for": { "name": "Go" }, "timeout_ms": 60_000 }] });
         assert!(driver_timeout("run_batch", &small) >= Duration::from_secs(60));
         assert!(driver_timeout("run_batch", &big) > driver_timeout("run_batch", &small));
+        assert!(driver_timeout("read_ui", &json!({ "target": "the Export button" })) >= Duration::from_secs(240));
+        assert!(driver_timeout("read_ui", &json!({})) >= Duration::from_secs(60));
         assert!(driver_timeout("verify", &json!({})) < driver_timeout("run_batch", &small));
     }
 }

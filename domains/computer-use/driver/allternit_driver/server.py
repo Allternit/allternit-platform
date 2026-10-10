@@ -22,7 +22,7 @@ log = logging.getLogger("allternit_driver.server")
 METHODS = {
     "read_ui": "read_ui", "act": "act", "run_batch": "run_batch", "verify": "verify",
     "screenshot": "screenshot", "zoom": "zoom", "wait": "wait", "status": "status",
-    "router": "router_table",
+    "router": "router_table", "context": "context", "ocr": "ocr",
 }
 
 

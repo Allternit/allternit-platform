@@ -667,7 +667,7 @@ export const COMPUTER_CONTRACT = {
 } as const;
 
 // ---- allternit.computer.v2 (computer_toolset_20260801) ----
-export const COMPUTER_V2_MEMBER_NAMES = ["screenshot","zoom","left_click","right_click","middle_click","double_click","triple_click","mouse_move","left_click_drag","left_mouse_down","left_mouse_up","scroll","type","key","hold_key","wait","cursor_position","read_ui","act","run_batch","verify","request_human","use_credential","run_subtask"] as const;
+export const COMPUTER_V2_MEMBER_NAMES = ["screenshot","zoom","left_click","right_click","middle_click","double_click","triple_click","mouse_move","left_click_drag","left_mouse_down","left_mouse_up","scroll","type","key","hold_key","wait","cursor_position","read_ui","act","run_batch","verify","request_human","use_credential","run_subtask","run_parallel","run_skill","skills"] as const;
 export type ComputerV2MemberName = (typeof COMPUTER_V2_MEMBER_NAMES)[number];
 /** Take a screenshot of the screen. */
 export type ComputerV2ScreenshotInput = Record<string, never>;
@@ -703,9 +703,9 @@ export type ComputerV2HoldKeyInput = { duration: number; text: string };
 export type ComputerV2WaitInput = { duration: number };
 /** Get the current (x, y) pixel coordinate of the cursor. */
 export type ComputerV2CursorPositionInput = Record<string, never>;
-/** Read the target window or app's UI as a structured element tree (roles, names, values, bounds) with NO screenshot. Returns stable element ids for act, run_batch and verify. Pass `since` (a version from an earlier read_ui) to get only the diff; `query` filters by text; `max_elements` caps the list (default 200). */
-export type ComputerV2ReadUiInput = { app?: string | null; pid?: number | null; window_id?: number | null; query?: string | null; max_elements?: number | null; since?: number | null };
-/** Act on an element id from read_ui. op: click, set_value (clear and set the field's value), select (pick a child by name), press (a key), menu (choose a menu path such as 'File > Save'), focus. set_value/select/press on this Mac need the person's approval (the same rule as typing). */
+/** Read the target window or app's UI as a structured element tree (roles, names, values, bounds) with NO screenshot. Returns stable element ids for act, run_batch and verify. Pass `since` (a version from an earlier read_ui) to get only the diff; `query` filters by text; `max_elements` caps the list (default 200). When the window has no usable accessibility tree (canvas apps, games, remote desktops, custom-drawn UIs) the read falls back to vision: numbered set-of-marks regions come back as elements with `source: "vision"` and a `mark` number, and act on their ids works the same way. `source` and `source_reason` say which was used. Pass `target` (a description such as 'the Export button') to ground it with the local grounder: `grounded.id` is the element to act on. */
+export type ComputerV2ReadUiInput = { app?: string | null; pid?: number | null; window_id?: number | null; query?: string | null; max_elements?: number | null; since?: number | null; paths?: boolean | null; crops?: boolean | null; vision?: "auto" | "off" | "only" | null; target?: string | null; zoom?: "auto" | "always" | "never" | null };
+/** Act on an element id from read_ui (tree ids and vision ids alike; a vision element is clicked or typed into at its centre after a pixel freshness check, and menu needs a window). op: click, set_value (clear and set the field's value), select (pick a child by name), press (a key), menu (choose a menu path such as 'File > Save'), focus. set_value/select/press on this Mac need the person's approval (the same rule as typing). */
 export type ComputerV2ActInput = { id: string; op: "click" | "set_value" | "select" | "press" | "menu" | "focus"; value?: string | null; key?: string | null; path?: string | Array<string> | null; version?: number | null; app?: string | null; pid?: number | null; window_id?: number | null };
 /** Run ordered steps in one window in a single call: act steps ({id, op, value?, key?}), menu steps (path), pixel steps ({tool, args}) and waits (ms). Each step may carry wait_for (checked before the step) and expect (checked after); a failed check stops the batch and one observe read returns the fresh map. This is the fast path: batch several steps instead of screenshot-per-action loops. */
 export type ComputerV2RunBatchInput = { app?: string | null; pid?: number | null; window_id?: number | null; version?: number | null; steps: Array<{ act?: { id: string; op: "click" | "set_value" | "select" | "press" | "menu" | "focus"; value?: string | null; key?: string | null } | null; menu?: string | Array<string> | null; pixel?: { tool: string; args?: Record<string, never> | null } | null; wait?: number | null; wait_for?: { id?: string | null; role?: string | null; name?: string | null; text?: string | null; gone?: boolean | null; value?: string | null; enabled?: boolean | null } | null; expect?: { id?: string | null; role?: string | null; name?: string | null; text?: string | null; gone?: boolean | null; value?: string | null; enabled?: boolean | null } | null; timeout_ms?: number | null }> };
@@ -715,8 +715,14 @@ export type ComputerV2VerifyInput = { app?: string | null; pid?: number | null; 
 export type ComputerV2RequestHumanInput = { reason?: string | null; timeout_ms?: number | null };
 /** Type a vault credential into the FOCUSED field. The value never enters the model context, prompts or logs. kind: secret (the stored value) or totp (a fresh code from a stored TOTP seed). The credential is bound to an app or domain: pass `domain` (the app you are filling into); it must match the credential's binding. On this Mac a person approves each use, like typing. */
 export type ComputerV2UseCredentialInput = { name: string; kind?: "secret" | "totp" | null; source?: "vault" | "keychain" | "bitwarden" | "onepassword" | null; domain?: string | null };
-/** Hand a bounded UI subtask (fill a form, search and pick a result, toggle settings) to the fast decision loop instead of driving each step yourself. Give the goal, the literal inputs it may type (it never invents text), success checks in verify syntax, and limits. Each step reads the element map, picks one action from the visible elements x allowed ops with a ~100 ms typed decision (POST /v1/decisions), runs it through the same lease/approval/audit path (predictable steps batched with expect checks), and checks success with verify. Returns a step trace and a status: done, escalated (with the reason and the current screen: continue from there yourself), or failed. One approval covers the whole subtask on this computer. */
-export type ComputerV2RunSubtaskInput = { goal: string; inputs?: Array<{ name: string; value: string }> | null; success?: Array<{ id?: string | null; role?: string | null; name?: string | null; text?: string | null; gone?: boolean | null; value?: string | null; enabled?: boolean | null; ask?: string | null }> | null; constraints?: { ops?: Array<"click" | "set_value" | "select" | "press" | "focus"> | null; avoid?: Array<string> | null; allow_irreversible?: boolean | null } | null; max_steps?: number | null; budget_ms?: number | null; app?: string | null; pid?: number | null; window_id?: number | null; query?: string | null; max_elements?: number | null };
+/** Hand a bounded UI subtask (fill a form, search and pick a result, toggle settings) to the fast decision loop instead of driving each step yourself. Give the goal, the literal inputs it may type (it never invents text), success checks in verify syntax, and limits. Each step reads the element map, picks one action from the visible elements x allowed ops with a ~100 ms typed decision (POST /v1/decisions), runs it through the same lease/approval/audit path (predictable steps batched with expect checks), and checks success with verify. Returns a step trace and a status: done, escalated (with the reason and the current screen: continue from there yourself), or failed. One approval covers the whole subtask on this computer. Repeat subtasks replay from the cache with zero decisions (the result's cache block says hit, healed, recorded or miss); only subtasks with at least one exact (non-ask) success check are cached. Input values are never stored, only their names. With api_options, an MCP/API call you hold is offered ahead of GUI steps (status use_api hands it back to you). With best_of N and computers, N rollouts run on N sandbox computers and a judge picks one by step narratives. */
+export type ComputerV2RunSubtaskInput = { goal: string; inputs?: Array<{ name: string; value: string }> | null; success?: Array<{ id?: string | null; role?: string | null; name?: string | null; text?: string | null; gone?: boolean | null; value?: string | null; enabled?: boolean | null; ask?: string | null }> | null; constraints?: { ops?: Array<"click" | "set_value" | "select" | "press" | "focus"> | null; avoid?: Array<string> | null; allow_irreversible?: boolean | null } | null; max_steps?: number | null; budget_ms?: number | null; app?: string | null; pid?: number | null; window_id?: number | null; query?: string | null; max_elements?: number | null; cache?: "auto" | "off" | "refresh" | null; save_as?: string | null; api_options?: Array<{ tool: string; description?: string | null }> | null; best_of?: number | null; computers?: Array<string> | null; max_cost_usd?: number | null };
+/** Run independent bounded subtasks on separate computers at the same time (one run_subtask per computer, each under its own computer's control lease), and get every result back in order. Each subtask names its computer (default: this one) and takes run_subtask's fields. One computer never runs two subtasks at once: a repeated computer, or one another subtask is already driving, is refused. Limits: max_parallel subtasks at once, a total budget_ms, and max_cost_usd on decision spend; subtasks that can't start inside them come back skipped. One approval covers the whole call when any subtask targets a non-sandbox computer. */
+export type ComputerV2RunParallelInput = { subtasks: Array<{ computer?: string | null; goal: string; inputs?: Array<{ name: string; value: string }> | null; success?: Array<{ id?: string | null; role?: string | null; name?: string | null; text?: string | null; gone?: boolean | null; value?: string | null; enabled?: boolean | null; ask?: string | null }> | null; constraints?: { ops?: Array<"click" | "set_value" | "select" | "press" | "focus"> | null; avoid?: Array<string> | null; allow_irreversible?: boolean | null } | null; max_steps?: number | null; budget_ms?: number | null; app?: string | null; pid?: number | null; window_id?: number | null; query?: string | null; max_elements?: number | null; api_options?: Array<{ tool: string; description?: string | null }> | null }>; max_parallel?: number | null; budget_ms?: number | null; max_cost_usd?: number | null };
+/** Run a saved skill (a recording taught with run_subtask save_as) by name, with new values for its inputs. It replays the recorded steps with no decisions, checks each step and the skill's success checks with verify, re-infers a step whose element moved and rewrites the recording. Returns the same result as run_subtask. List skills with the skills member. */
+export type ComputerV2RunSkillInput = { name: string; inputs?: Array<{ name: string; value: string }> | null; app?: string | null; pid?: number | null; window_id?: number | null; max_steps?: number | null; budget_ms?: number | null };
+/** List the saved skills (taught recordings) this person can run with run_skill: name, goal, app, input names, step count, last use. Pass forget to delete one first. */
+export type ComputerV2SkillsInput = { forget?: string | null };
 export interface ComputerV2MemberInputs {
   screenshot: ComputerV2ScreenshotInput;
   zoom: ComputerV2ZoomInput;
@@ -742,6 +748,9 @@ export interface ComputerV2MemberInputs {
   request_human: ComputerV2RequestHumanInput;
   use_credential: ComputerV2UseCredentialInput;
   run_subtask: ComputerV2RunSubtaskInput;
+  run_parallel: ComputerV2RunParallelInput;
+  run_skill: ComputerV2RunSkillInput;
+  skills: ComputerV2SkillsInput;
 }
 export const COMPUTER_V2_CONTRACT = {
   "id": "allternit.computer.v2",
@@ -773,6 +782,28 @@ export const COMPUTER_V2_CONTRACT = {
     "non_sandbox": "Needs a single-use action-hash approval grant on non-sandbox targets (this-device, paired computers). Sandboxed targets (cloud/bot computers, gateway browser sessions) run it without approval.",
     "always": "Always needs a single-use action-hash approval grant.",
     "irreversible": "Any member whose risk is irreversible needs a grant, whatever its confirm rule."
+  },
+  "safety": {
+    "doc": "surfaces/docs/tools/computer-safety.mdx",
+    "observations": "Text a model reads back from the screen (read_ui, act, run_batch, verify, run_subtask results; browser page text) arrives spotlighted: a block opened by '<<untrusted NONCE source=MEMBER>>' and closed by '<<end-untrusted NONCE>>' with a fresh nonce, declared as data, forged markers neutralized and vault secrets scrubbed. Screenshots carry a following text note and have personal data (email, card, phone, ssn, secret) blacked out before they leave the executor.",
+    "verdicts": {
+      "allow": "The step runs.",
+      "confirm": "The step needs the person's approval (409 approval_required with a 'safety' object): irreversible classes (send, pay, purchase, transfer, delete, publish, credentials, account) on every target, mutating steps in watch mode (email, banking, admin apps and sites), and steps the per-step monitor answered confirm, abstained on or failed to answer.",
+      "pause": "The monitor judged the screen or the step suspicious; the step did not run (error safety_paused). Stop and call request_human.",
+      "deny": "The computer's app/domain lists, the workspace host policy, or a vault secret typed outside its bound app/domain refused the step (403 safety_denied)."
+    },
+    "error_codes": [
+      "safety_denied",
+      "safety_paused",
+      "approval_required",
+      "redaction_unavailable"
+    ],
+    "run_subtask_statuses": [
+      "needs_confirmation",
+      "paused",
+      "denied"
+    ],
+    "settings": "GET/PUT /api/v1/computers/:id/safety"
   },
   "result_shape": {
     "type": "object",
@@ -1351,7 +1382,7 @@ export const COMPUTER_V2_CONTRACT = {
     },
     {
       "name": "read_ui",
-      "description": "Read the target window or app's UI as a structured element tree (roles, names, values, bounds) with NO screenshot. Returns stable element ids for act, run_batch and verify. Pass `since` (a version from an earlier read_ui) to get only the diff; `query` filters by text; `max_elements` caps the list (default 200).",
+      "description": "Read the target window or app's UI as a structured element tree (roles, names, values, bounds) with NO screenshot. Returns stable element ids for act, run_batch and verify. Pass `since` (a version from an earlier read_ui) to get only the diff; `query` filters by text; `max_elements` caps the list (default 200). When the window has no usable accessibility tree (canvas apps, games, remote desktops, custom-drawn UIs) the read falls back to vision: numbered set-of-marks regions come back as elements with `source: \"vision\"` and a `mark` number, and act on their ids works the same way. `source` and `source_reason` say which was used. Pass `target` (a description such as 'the Export button') to ground it with the local grounder: `grounded.id` is the element to act on.",
       "risk": "reversible",
       "default_enabled": true,
       "needs_confirm": false,
@@ -1383,6 +1414,36 @@ export const COMPUTER_V2_CONTRACT = {
           "since": {
             "type": "integer",
             "description": "A map version from an earlier read_ui: answer only the changes since then."
+          },
+          "paths": {
+            "type": "boolean",
+            "description": "Add each element's tree path (role:ordinal chain from the window). Replay locators use it; you rarely need it."
+          },
+          "crops": {
+            "type": "boolean",
+            "description": "Add an 8x8 pixel hash per element (macOS). Slower: forces a fresh walk of the window. Replay's pixel fallback uses it."
+          },
+          "vision": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "off",
+              "only"
+            ],
+            "description": "The vision fallback: auto (default; used when the tree is empty or can't see into part of the window), off (tree only), only (vision only)."
+          },
+          "target": {
+            "type": "string",
+            "description": "Ground this description to one element with the local grounder; the answer's `grounded` has its id, point and confidence."
+          },
+          "zoom": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "always",
+              "never"
+            ],
+            "description": "target: zoom into a crop around a low-confidence answer and ground again (default auto)."
           }
         },
         "required": [],
@@ -1391,7 +1452,7 @@ export const COMPUTER_V2_CONTRACT = {
     },
     {
       "name": "act",
-      "description": "Act on an element id from read_ui. op: click, set_value (clear and set the field's value), select (pick a child by name), press (a key), menu (choose a menu path such as 'File > Save'), focus. set_value/select/press on this Mac need the person's approval (the same rule as typing).",
+      "description": "Act on an element id from read_ui (tree ids and vision ids alike; a vision element is clicked or typed into at its centre after a pixel freshness check, and menu needs a window). op: click, set_value (clear and set the field's value), select (pick a child by name), press (a key), menu (choose a menu path such as 'File > Save'), focus. set_value/select/press on this Mac need the person's approval (the same rule as typing).",
       "risk": "risky",
       "default_enabled": true,
       "needs_confirm": false,
@@ -1794,7 +1855,7 @@ export const COMPUTER_V2_CONTRACT = {
     },
     {
       "name": "run_subtask",
-      "description": "Hand a bounded UI subtask (fill a form, search and pick a result, toggle settings) to the fast decision loop instead of driving each step yourself. Give the goal, the literal inputs it may type (it never invents text), success checks in verify syntax, and limits. Each step reads the element map, picks one action from the visible elements x allowed ops with a ~100 ms typed decision (POST /v1/decisions), runs it through the same lease/approval/audit path (predictable steps batched with expect checks), and checks success with verify. Returns a step trace and a status: done, escalated (with the reason and the current screen: continue from there yourself), or failed. One approval covers the whole subtask on this computer.",
+      "description": "Hand a bounded UI subtask (fill a form, search and pick a result, toggle settings) to the fast decision loop instead of driving each step yourself. Give the goal, the literal inputs it may type (it never invents text), success checks in verify syntax, and limits. Each step reads the element map, picks one action from the visible elements x allowed ops with a ~100 ms typed decision (POST /v1/decisions), runs it through the same lease/approval/audit path (predictable steps batched with expect checks), and checks success with verify. Returns a step trace and a status: done, escalated (with the reason and the current screen: continue from there yourself), or failed. One approval covers the whole subtask on this computer. Repeat subtasks replay from the cache with zero decisions (the result's cache block says hit, healed, recorded or miss); only subtasks with at least one exact (non-ask) success check are cached. Input values are never stored, only their names. With api_options, an MCP/API call you hold is offered ahead of GUI steps (status use_api hands it back to you). With best_of N and computers, N rollouts run on N sandbox computers and a judge picks one by step narratives.",
       "risk": "risky",
       "default_enabled": true,
       "needs_confirm": true,
@@ -1935,6 +1996,57 @@ export const COMPUTER_V2_CONTRACT = {
           "max_elements": {
             "type": "integer",
             "description": "Cap the elements read per step (default 120)."
+          },
+          "cache": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "off",
+              "refresh"
+            ],
+            "description": "Replay cache (default auto). auto: a subtask seen before (same goal, app and window, same input names) replays its recorded steps with no decisions, checking each with verify, and re-infers only a step whose element moved; a new one runs the decision loop and is recorded once its success checks hold. refresh: ignore the cached steps and record anew. off: neither read nor write the cache."
+          },
+          "save_as": {
+            "type": "string",
+            "description": "Save this subtask's recording as a named skill once it succeeds (overwrites a skill of that name). Run it later with run_skill and new input values."
+          },
+          "api_options": {
+            "type": "array",
+            "maxItems": 10,
+            "items": {
+              "type": "object",
+              "properties": {
+                "tool": {
+                  "type": "string",
+                  "description": "The MCP tool or API action you can call yourself (e.g. 'github.create_issue')."
+                },
+                "description": {
+                  "type": "string",
+                  "description": "What it does, in one line."
+                }
+              },
+              "required": [
+                "tool"
+              ],
+              "additionalProperties": false
+            },
+            "description": "MCP tools or API actions you hold that could do this goal without the GUI. They are offered ahead of every GUI option on the first step; if the decision picks one, the subtask stops with status use_api and names it, and you make that call yourself. An API call beats GUI clicks when both exist."
+          },
+          "best_of": {
+            "type": "integer",
+            "description": "Behavior Best-of-N for high-value subtasks: run N rollouts (2-5) at once on N sandbox computers listed in computers, then a judge decision picks one by the rollouts' step narratives. Sandbox/cloud computers only, never the person's own machine. Returns the chosen rollout, why, and every rollout's narrative."
+          },
+          "computers": {
+            "type": "array",
+            "maxItems": 5,
+            "items": {
+              "type": "string"
+            },
+            "description": "With best_of: the sandbox computer ids the rollouts run on, one rollout per computer (at least best_of distinct ids)."
+          },
+          "max_cost_usd": {
+            "type": "number",
+            "description": "With best_of: the cap on decision spend for the whole call in USD (default 0.25, at most 5). The judge may use the planner-class tier only while under it."
           }
         },
         "required": [
@@ -1942,9 +2054,300 @@ export const COMPUTER_V2_CONTRACT = {
         ],
         "additionalProperties": false
       }
+    },
+    {
+      "name": "run_parallel",
+      "description": "Run independent bounded subtasks on separate computers at the same time (one run_subtask per computer, each under its own computer's control lease), and get every result back in order. Each subtask names its computer (default: this one) and takes run_subtask's fields. One computer never runs two subtasks at once: a repeated computer, or one another subtask is already driving, is refused. Limits: max_parallel subtasks at once, a total budget_ms, and max_cost_usd on decision spend; subtasks that can't start inside them come back skipped. One approval covers the whole call when any subtask targets a non-sandbox computer.",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": true,
+      "confirm": "non_sandbox",
+      "result_kind": "none",
+      "ack_text": "Ran the subtasks.",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "subtasks": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "items": {
+              "type": "object",
+              "properties": {
+                "computer": {
+                  "type": "string",
+                  "description": "The computer id this subtask runs on (default: the computer this call is made on)."
+                },
+                "goal": {
+                  "type": "string",
+                  "description": "What the subtask must achieve, in one or two sentences (e.g. 'Fill the sign-up form and submit it')."
+                },
+                "inputs": {
+                  "type": "array",
+                  "maxItems": 20,
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "description": "What the value is (e.g. 'email', 'full name')."
+                      },
+                      "value": {
+                        "type": "string",
+                        "description": "The literal text to type."
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "value"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "description": "The only text the subtask may type. Not for secrets: use use_credential."
+                },
+                "success": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 10,
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "description": "An element id from read_ui."
+                      },
+                      "role": {
+                        "type": "string",
+                        "description": "An accessibility role, e.g. button, textfield, checkbox."
+                      },
+                      "name": {
+                        "type": "string",
+                        "description": "Substring match against the element's name/label."
+                      },
+                      "text": {
+                        "type": "string",
+                        "description": "Substring match against the element's displayed text or value."
+                      },
+                      "gone": {
+                        "type": "boolean",
+                        "description": "True: no element may match; false: at least one must."
+                      },
+                      "value": {
+                        "type": "string",
+                        "description": "The element's value must equal this exactly."
+                      },
+                      "enabled": {
+                        "type": "boolean",
+                        "description": "The element's enabled state must equal this."
+                      },
+                      "ask": {
+                        "type": "string",
+                        "description": "A fuzzy yes/no check in plain words (\"Is the confirmation message showing?\"), answered by a typed verify decision over the screen. Use only when role/name/text/value checks can't express it."
+                      }
+                    },
+                    "required": [],
+                    "additionalProperties": false
+                  },
+                  "description": "Checks that all hold when the goal is met, in verify syntax ({role?, name?, text?, value?, gone?, enabled?}) or {ask: '...'} for a fuzzy yes/no. Without checks the loop stops when a decision picks done."
+                },
+                "constraints": {
+                  "type": "object",
+                  "properties": {
+                    "ops": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "click",
+                          "set_value",
+                          "select",
+                          "press",
+                          "focus"
+                        ]
+                      },
+                      "description": "Ops the subtask may use (default click, set_value, select, press)."
+                    },
+                    "avoid": {
+                      "type": "array",
+                      "maxItems": 20,
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Never act on elements whose name contains any of these."
+                    },
+                    "allow_irreversible": {
+                      "type": "boolean",
+                      "description": "Let the subtask click buttons named like send, pay, buy, delete, publish (default false: those hand back to you)."
+                    }
+                  },
+                  "required": [],
+                  "additionalProperties": false
+                },
+                "max_steps": {
+                  "type": "integer",
+                  "description": "Most actions the subtask may take (default 12, at most 40)."
+                },
+                "budget_ms": {
+                  "type": "integer",
+                  "description": "Wall-clock budget in milliseconds (default 60000, at most 300000)."
+                },
+                "app": {
+                  "type": "string",
+                  "description": "App name or bundle id (macOS); default: the frontmost app."
+                },
+                "pid": {
+                  "type": "integer"
+                },
+                "window_id": {
+                  "type": "integer"
+                },
+                "query": {
+                  "type": "string",
+                  "description": "Only consider elements whose name or value contains this text."
+                },
+                "max_elements": {
+                  "type": "integer",
+                  "description": "Cap the elements read per step (default 120)."
+                },
+                "api_options": {
+                  "type": "array",
+                  "maxItems": 10,
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "tool": {
+                        "type": "string",
+                        "description": "The MCP tool or API action you can call yourself (e.g. 'github.create_issue')."
+                      },
+                      "description": {
+                        "type": "string",
+                        "description": "What it does, in one line."
+                      }
+                    },
+                    "required": [
+                      "tool"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "description": "MCP tools or API actions you hold that could do this goal without the GUI. They are offered ahead of every GUI option on the first step; if the decision picks one, the subtask stops with status use_api and names it, and you make that call yourself. An API call beats GUI clicks when both exist."
+                }
+              },
+              "required": [
+                "goal"
+              ],
+              "additionalProperties": false
+            },
+            "description": "Independent subtasks, one per computer. Same fields as run_subtask plus computer."
+          },
+          "max_parallel": {
+            "type": "integer",
+            "description": "Most subtasks running at once (default 4, at most 8)."
+          },
+          "budget_ms": {
+            "type": "integer",
+            "description": "Wall-clock budget for the whole call in milliseconds (default 120000, at most 600000). Each subtask's own budget_ms is cut to what is left when it starts."
+          },
+          "max_cost_usd": {
+            "type": "number",
+            "description": "Cap on decision spend for the whole call in USD (default 0.25, at most 5). Once reached, subtasks not yet started come back skipped."
+          }
+        },
+        "required": [
+          "subtasks"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "run_skill",
+      "description": "Run a saved skill (a recording taught with run_subtask save_as) by name, with new values for its inputs. It replays the recorded steps with no decisions, checks each step and the skill's success checks with verify, re-infers a step whose element moved and rewrites the recording. Returns the same result as run_subtask. List skills with the skills member.",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": true,
+      "confirm": "non_sandbox",
+      "result_kind": "none",
+      "ack_text": "Ran the skill {name}.",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The skill's name (from skills)."
+          },
+          "inputs": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "What the value is (e.g. 'email', 'full name')."
+                },
+                "value": {
+                  "type": "string",
+                  "description": "The literal text to type."
+                }
+              },
+              "required": [
+                "name",
+                "value"
+              ],
+              "additionalProperties": false
+            },
+            "description": "A value for each of the skill's inputs (skills lists their names). Not for secrets: use use_credential."
+          },
+          "app": {
+            "type": "string",
+            "description": "App name or bundle id (macOS); default: the frontmost app."
+          },
+          "pid": {
+            "type": "integer"
+          },
+          "window_id": {
+            "type": "integer"
+          },
+          "max_steps": {
+            "type": "integer",
+            "description": "Most actions the subtask may take (default 12, at most 40)."
+          },
+          "budget_ms": {
+            "type": "integer",
+            "description": "Wall-clock budget in milliseconds (default 60000, at most 300000)."
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "skills",
+      "description": "List the saved skills (taught recordings) this person can run with run_skill: name, goal, app, input names, step count, last use. Pass forget to delete one first.",
+      "risk": "reversible",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "ack_text": "Listed the saved skills.",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "forget": {
+            "type": "string",
+            "description": "Delete the saved skill with this name before listing."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
     }
   ],
-  "note": "Additive over allternit.computer.v1: the 17 pixel members are byte-identical (same names, input fields and Anthropic computer_toolset_20260801 shape). The 7 structured members (read_ui, act, run_batch, verify, request_human, use_credential, run_subtask) are backed by the Allternit Driver sidecar and need it on the computer (this-device today; guests gain it with the guest driver image)."
+  "note": "Additive over allternit.computer.v1: the 17 pixel members are byte-identical (same names, input fields and Anthropic computer_toolset_20260801 shape). The 10 structured members (read_ui, act, run_batch, verify, request_human, use_credential, run_subtask, run_parallel, run_skill, skills) are backed by the Allternit Driver sidecar and need it on the computer (this-device today; guests gain it with the guest driver image)."
 } as const;
 
 // ---- allternit.browser.v1 (browser_toolset_20260801) ----
@@ -3601,7 +4004,7 @@ export const CONTRACTS: Record<ToolsetName, ToolsetContract> = {
   computer: COMPUTER_CONTRACT as unknown as ToolsetContract,
   browser: BROWSER_CONTRACT as unknown as ToolsetContract,
 };
-/** allternit.computer.v2: the 17 pixel members plus the 7 driver-backed structured members. */
+/** allternit.computer.v2: the 17 pixel members plus the 8 driver-backed structured members. */
 export const COMPUTER_V2 = COMPUTER_V2_CONTRACT as unknown as ToolsetContract;
-/** Every member of allternit.computer.v2 (the 17 pixel members, then read_ui, act, run_batch, verify, request_human, use_credential, run_subtask). */
+/** Every member of allternit.computer.v2 (the 17 pixel members, then read_ui, act, run_batch, verify, request_human, use_credential, run_subtask, run_parallel, run_skill, skills). */
 export const COMPUTER_V2_MEMBER_LIST = COMPUTER_V2.members;

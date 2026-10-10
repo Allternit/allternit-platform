@@ -145,7 +145,7 @@ export function enabledV2Members(enabled?: Set<string>): ToolsetMemberSpec[] {
 /** Steering every model gets: the structured fast path beats pixel loops. */
 const PREFER_STRUCTURED = [
   "Prefer read_ui + act/run_batch over screenshot + pixel-by-pixel loops: the element tree is faster, cheaper and stable across resizes.",
-  "Reach for screenshots only when the tree is empty (canvas/game), the layout needs eyes, or read_ui says the app is degraded.",
+  "When the tree is empty (canvas/game/remote desktop), read_ui falls back to vision by itself: elements with source \"vision\" and a mark number act like any other id; pass target (e.g. 'the Export button') to ground one element. Reach for screenshots only when that still isn't enough.",
 ].join(" ")
 
 /**
@@ -156,6 +156,8 @@ const PREFER_STRUCTURED = [
 const PREFER_SUBTASK = [
   "Plan, then delegate: give each bounded UI step sequence (fill a form, search and pick, toggle settings) to run_subtask with the goal, the literal inputs it may type and success checks, instead of choosing every click yourself.",
   "A typical task is one run_subtask call plus your final answer. Keep your own calls for planning, for judgment the subtask hands back (status escalated: continue from the screen it returns), and for steps outside the UI.",
+  "API over GUI: when one of your MCP tools or an API does the goal, call it instead of driving the screen; when unsure, pass the candidates as run_subtask api_options (status use_api names the one to call).",
+  "Independent subtasks on separate computers go in one run_parallel call. For a high-value subtask, best_of N with N sandbox computers runs N rollouts and a judge picks one by their step narratives (never on the person's own machine).",
 ].join(" ")
 
 export function toolDescription(toolset: ToolsetName, choice: AdapterChoice, members: readonly ToolsetMemberSpec[]): string {

@@ -4,7 +4,7 @@ description: 'One typed decision over options you supply, answered by the Decisi
 ---
 
 <Note>
-**Implementation: IMPLEMENTED (E1) · Exposure: PREVIEW.** Served by allternit-api's Agency Kernel Decision Runtime (`cmd/allternit-api/src/agency_api/decisions/`). The local scorer is the sidecar in `domains/decision-runtime/`, managed by Allternit Desktop. Computer use starts calling it in phase E2.
+**Implementation: IMPLEMENTED (E1, E5 flywheel, E6 vendor adapters) · Exposure: PREVIEW.** Served by allternit-api's Agency Kernel Decision Runtime (`cmd/allternit-api/src/agency_api/decisions/`). The local scorer is the sidecar in `domains/decision-runtime/`, managed by Allternit Desktop. Computer use starts calling it in phase E2.
 </Note>
 
 A decision picks one option from a list you supply. It never invents an option and never generates text: the local scorer reads the answer straight from a model's next-token distribution in one forward pass. The planner model sets a goal once; every step after that (which element, which op, did it work, is it safe, escalate?) can be a decision.
@@ -36,6 +36,7 @@ Authenticated like every Agency API route. Responses carry `Allternit-Request-Id
 | `latency_budget_ms` | integer | no (`10000`) | The total time for the decision, escalations included (1–120000). A backend that would start with under 5 ms left is skipped; one that runs past the budget is cut off. |
 | `backends` | array of strings | no | Override the configured chain for this decision, for example `["local"]` or `["oracle"]`. |
 | `session_id`, `task` | string | no | Stored with the decision, for grouping its outcomes later. |
+| `project` (alias `project_id`) | string | no | The project the decision belongs to (1–128 characters). Vendor backends run only for projects enabled for them. |
 
 ### Response
 
@@ -49,8 +50,8 @@ Authenticated like every Agency API route. Responses carry `Allternit-Request-Id
 | `abstained` | boolean | No answer reached the threshold and `allow_abstain` was set (or the oracle abstained). |
 | `escalated` | boolean | A later backend was tried because an earlier answer was under the threshold. |
 | `threshold` | number | The kind's threshold that applied. |
-| `calibrated` | boolean | Always `false` until per-kind calibration ships (phase E5). |
-| `backend` | string | Which backend answered: `local`, `oracle`, `vendor`, `typesafe`, or `none`. |
+| `calibrated` | boolean | Always `false`: probabilities are relative to the option set. |
+| `backend` | string | Which backend answered: a live head (`head.lookup`), `local`, `oracle`, `vendor`, `typesafe`, or `none`. |
 | `latency_ms` | number | Server time for the whole decision. |
 | `attempts` | array | Every backend tried, in order: its latency, confidence, error, or why it was skipped. |
 
@@ -95,14 +96,27 @@ When no backend answers and `allow_abstain` is false, the response is `503` with
 
 ## Backends and escalation
 
-The router walks the chain in order (default `local,vendor,typesafe,oracle`, set with `ALLTERNIT_DECISIONS_CHAIN`). It stops at the first answer at or over the kind's threshold; a later answer replaces an earlier one. Backends that are not configured are left out; backends that cannot see images are skipped for a decision that carries one.
+The router walks the chain in order (default `head,local,vendor,typesafe,oracle`, set with `ALLTERNIT_DECISIONS_CHAIN`). It stops at the first answer at or over the kind's threshold; a later answer replaces an earlier one. Backends that are not configured are left out; backends that cannot see images are skipped for a decision that carries one.
 
 | Backend | What it is | On by default |
 |---|---|---|
 | `local` | The owned scorer sidecar: one-pass option scoring (ported from open-jev, MIT). MLX on Apple silicon; llama.cpp on Windows, Linux, Intel Macs and cloud hosts. Default model Qwen3.5-4B (Apache-2.0); `ALLTERNIT_DECISIONS_MODEL=gemma-3-4b` switches to Gemma 3 4B (set `HF_TOKEN` if your mirror is gated). Text only. | Yes, wherever Allternit Desktop runs it (`ALLTERNIT_DECISIONS_LOCAL_URL`) |
-| `vendor` | Adapter for a hosted vendor decisions API. A stub: it answers "not available" until phase E6 verifies the vendor's documentation and access. | No (`ALLTERNIT_DECISIONS_VENDOR_KEY`) |
-| `typesafe` | TypeSafe Jev adapter. Stub, same as above. | No (`ALLTERNIT_DECISIONS_TYPESAFE_KEY`) |
+| `head` | The slot for the decision kind's live flywheel heads (see [The flywheel](#the-flywheel)). Empty until a head earns promotion; a head that has no answer passes the decision on. Text only. | Yes, but empty until a head is live |
+| `vendor` | Adapter for a hosted vendor decisions API (its public beta `POST /v1/decisions`: one `choice` question, the options as choices, text and image input). Metered by the vendor. | No: needs `ALLTERNIT_DECISIONS_VENDOR_KEY` **and** the project enabled |
+| `typesafe` | TypeSafe Jev adapter (`POST /v1/systemone`, one `choice` question, the options as criteria). Text only. Metered by the vendor. | No: needs `ALLTERNIT_DECISIONS_TYPESAFE_KEY` **and** the project enabled |
 | `oracle` | The planner model through gizzi, like every other model call. Sees images. The escalation path and the source of labels. Model: `ALLTERNIT_DECISIONS_ORACLE_MODEL=provider/model`, else your default model. | Yes (`ALLTERNIT_DECISIONS_ORACLE=0` turns it off) |
+
+### Vendor backends
+
+Both vendor backends are off by default and gated twice: the key has to be configured on the server (it comes from the server's secret environment, is sent only as the vendor's bearer token, and never appears in logs, attempts or errors), and the decision's `project` has to be enabled for that backend in `ALLTERNIT_DECISIONS_VENDOR_PROJECTS`:
+
+```json
+{ "vendor": ["proj_a", "proj_b"], "typesafe": ["*"] }
+```
+
+`*` enables every decision, with or without a project. A request that names a vendor in `backends` for a project that is not enabled leaves it out of the chain. Endpoint and model can be overridden with `ALLTERNIT_DECISIONS_VENDOR_URL` / `_MODEL` and `ALLTERNIT_DECISIONS_TYPESAFE_URL` / `_MODEL`. Both vendors bill per token; get the spend approved before enabling a project.
+
+To compare backends on the same decisions, run `domains/decision-runtime/bench/compare_backends.py`. It sends each case once per backend through `/v1/decisions` (same adapters as production) and prints a latency and accuracy table. It refuses metered backends unless `--allow-metered` is passed.
 
 Thresholds per kind: `default` 0.6, `verify` 0.8, `safety` 0.9, `escalate` 0.7. Override with a JSON object in `ALLTERNIT_DECISIONS_THRESHOLDS`, for example `{"default": 0.5, "element": 0.55}`.
 
@@ -126,7 +140,48 @@ PATCH /v1/decisions/{id}
 | `label` | string | The option id that was right, when known (from the oracle, a person or a verifier). |
 | `detail` | string | Up to 4000 bytes. |
 
-Returns the stored decision. `GET /v1/decisions/{id}` returns it too. The store keeps the context's sha256, never the context itself, plus the options, choice, probabilities, backend, latency, attempts and outcome. These rows are the training data for the trained heads in phase E5.
+Returns the stored decision. `GET /v1/decisions/{id}` returns it too. The store keeps the context's sha256, never the context itself, plus the options, choice, probabilities, backend, latency, attempts and outcome. These rows are the training data for the trained heads, and an outcome also feeds the flywheel below.
+
+## The flywheel
+
+A **head** is a tiny, fast decider registered for a decision kind. It earns its place on live traffic:
+
+1. **Shadow.** Every decision of the kind runs each registered head after the answer is stored, off the latency path. The head's choice is kept next to the served choice and, once you report it, the outcome.
+2. **Promotion.** When a head's accuracy against outcomes reaches the kind's bar over a minimum number of labelled answers, and its confidence is not higher than its accuracy, it goes **live**: it is tried first in the chain (the `head` slot). If it has no answer, or answers under the threshold, the decision escalates as usual.
+3. **Demotion.** When a live head's accuracy drops under a lower bar, it goes back to shadow. Metrics count only answers since the last change of state, so every state has to be earned again.
+
+Every change of state, automatic or by hand, is audited with the metrics that caused it. Outcomes count as follows: `success` confirms `label` (or the served choice); `failure` with a different `label` names the right option, otherwise it rules out the served choice; `error` and `skipped` do not count.
+
+| Bar setting | Default | Meaning |
+|---|---|---|
+| `min_samples` | 200 | Labelled answers needed before promotion. |
+| `promote_at` | 0.97 | Accuracy needed to go live. |
+| `demote_at` | 0.93 | Live accuracy under this demotes. |
+| `min_demote_samples` | 50 | Labelled live answers needed before demotion is judged. |
+| `window` | 1000 | Most recent answers the metrics look at. |
+| `max_overconfidence` | 0.05 | Mean confidence may exceed accuracy by at most this much. |
+| `auto_promote` | `true` (`false` for `safety`) | A `safety` head never goes live by itself. |
+
+Override per kind with JSON in `ALLTERNIT_DECISIONS_FLYWHEEL`, for example `{"default": {"min_samples": 300}, "element": {"promote_at": 0.98}}`.
+
+The first head is **`head.lookup`**: an exact-match lookup over your own past outcomes. Same kind, same context, same question and the same options in the same order: it answers with the option that succeeded there before (one success gives 0.67, five give 0.86; failures count against it). It reads one indexed row and answers in well under 10 ms. It never sees images, it learns from the first outcome of each decision only, and it is per account. With no traffic it stays in shadow.
+
+### List heads
+
+```http
+GET /v1/decisions/heads
+```
+
+Every head and kind it has seen: `state` (`shadow`, `live` or `retired`), `state_since`, the `bar`, `metrics` since the last change of state (`decisions`, `answered`, `coverage`, `agreement` with the served choice, `labelled`, `accuracy`, `overconfidence`, head `p50_latency_ms` / `p95_latency_ms`), `next` (the change the metrics call for, if any) and the last ten `audit` entries. Counts only: no contexts or options.
+
+### Change a head's state
+
+```http
+PUT /v1/decisions/heads/{head}/{kind}
+{ "state": "retired", "reason": "drift on the new Settings app" }
+```
+
+Head state is server-wide, so only user ids listed in `ALLTERNIT_DECISIONS_ADMINS` (comma separated; `*` for a single-user Desktop) may change it; others get `403`. `retired` takes a head out of shadow and serving until it is set back to `shadow`.
 
 ## Compatibility with contract v0.3
 

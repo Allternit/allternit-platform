@@ -442,6 +442,29 @@ impl CredentialStore {
         Some((record.credential_type, value, record.bind))
     }
 
+    /// Every vault secret of one user as (name, plaintext, binding), for the
+    /// computer-use safety layer's screening only: spotting a secret in text
+    /// the agent is about to type (bind enforcement) or in a screenshot or
+    /// observation before it reaches a model (redaction). Values shorter than
+    /// 6 characters are left out (too many false matches). Never logged.
+    pub fn screening_secrets(&self, user_id: &str) -> Vec<(String, String, Option<String>)> {
+        let records: Vec<(String, CredentialRecord)> = self
+            .records
+            .lock()
+            .expect("credential store lock")
+            .iter()
+            .filter(|((owner, _), _)| owner == user_id)
+            .map(|((_, name), record)| (name.clone(), record.clone()))
+            .collect();
+        records
+            .into_iter()
+            .filter_map(|(name, record)| {
+                let value = crate::token_crypto::open(&record.sealed_value);
+                (value.chars().count() >= 6).then_some((name, value, record.bind))
+            })
+            .collect()
+    }
+
     /// Resolve a run's credential names to in-memory plaintext material.
     /// Fails with the list of missing names (names only — no values anywhere
     /// in the error path).
