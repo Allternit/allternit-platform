@@ -656,6 +656,10 @@
         {
           "on": "2026-10-09",
           "note": "E2: computer use runs on typed decisions. run_subtask (allternit.computer.v2, every model family via computer_v2) takes a goal, literal inputs, verify-syntax success checks, constraints and limits; the executor loop (computer_subtask.rs) reads the live element map with since diffs, builds element x op options plus done/escalate, decides on the fast tiers only (no oracle), runs each step through lease/policy/audit (predictable typing batched with expect checks), checks success with verify, hands back to the planner with a compact screen when a decision abstains, and writes every outcome back to the decision store. Driver: text entry writes AXValue instead of arc's SkyLight focus-borrowing, which crashed the sidecar on macOS 14."
+        },
+        {
+          "on": "2026-10-09",
+          "note": "D7: run_parallel runs independent subtasks on separate computers at once (per-computer target/lease/audit, one input owner per computer via a process-wide registry, max_parallel/budget_ms/max_cost_usd); run_subtask best_of N runs N rollouts on N sandbox computers only (refused on the person's own machine) and a judge decision picks one by step narratives (computer_parallel.rs). run_subtask api_options offers the planner's MCP/API calls ahead of GUI steps (status use_api). Subtasks on cloud computers wait for the guest driver image (D1b)."
         }
       ],
       "evidence": [

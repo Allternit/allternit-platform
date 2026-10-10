@@ -1,7 +1,8 @@
-//! Contract v2 (`allternit.computer.v2`): the seven structured members every
+//! Contract v2 (`allternit.computer.v2`): the eight structured members every
 //! model family gets as function tools — `read_ui`, `act`, `run_batch`,
 //! `verify` through the Allternit Driver sidecar, `run_subtask` (the bounded
-//! decision loop, `computer_subtask`), `request_human` (lease
+//! decision loop, `computer_subtask`), `run_parallel` + Best-of-N
+//! (`computer_parallel`), `request_human` (lease
 //! pause/resume around a human window) and `use_credential` (vault-backed
 //! typing where the value never enters the model context or the logs).
 //!
@@ -31,7 +32,7 @@ use crate::this_device_input as td;
 use crate::AppState;
 
 /// The driver-backed structured members of allternit.computer.v2.
-pub const V2_MEMBERS: [&str; 7] = ["read_ui", "act", "run_batch", "verify", "request_human", "use_credential", "run_subtask"];
+pub const V2_MEMBERS: [&str; 8] = ["read_ui", "act", "run_batch", "verify", "request_human", "use_credential", "run_subtask", "run_parallel"];
 
 /// Is `member` one of the v2 structured members?
 pub fn is_v2_member(member: &str) -> bool {
@@ -548,7 +549,7 @@ mod tests {
 
     #[test]
     fn v2_member_list_is_the_spec_set() {
-        assert_eq!(V2_MEMBERS, ["read_ui", "act", "run_batch", "verify", "request_human", "use_credential", "run_subtask"]);
+        assert_eq!(V2_MEMBERS, ["read_ui", "act", "run_batch", "verify", "request_human", "use_credential", "run_subtask", "run_parallel"]);
         assert!(is_v2_member("read_ui"));
         assert!(!is_v2_member("left_click"));
         assert!(!is_v2_member("screenshot"));

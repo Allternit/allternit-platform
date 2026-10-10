@@ -297,10 +297,12 @@
     {
       "source": "allternit/cmd/allternit-api/src/computer_*",
       "target": "allternit/cmd/allternit-api/src/agency_api",
-      "kind": "in-process call: run_subtask's typed decisions (decisions::decide_value, kinds element/verify) and their outcomes (decisions::record_outcome)",
+      "kind": "in-process call: run_subtask's typed decisions (decisions::decide_value, kinds element/verify), the Best-of-N judge (kind judge, fast tiers then oracle under the cost cap) and their outcomes (decisions::record_outcome)",
       "evidence": [
         "allternit/cmd/allternit-api/src/computer_subtask.rs",
-        "allternit/surfaces/docs/tools/computer-use-decisions.mdx"
+        "allternit/cmd/allternit-api/src/computer_parallel.rs",
+        "allternit/surfaces/docs/tools/computer-use-decisions.mdx",
+        "allternit/surfaces/docs/tools/computer-parallel.mdx"
       ]
     },
     {

@@ -481,7 +481,7 @@ pub(crate) fn screen_info(map: Option<&Mapping>) -> ScreenInfo {
     }
 }
 
-fn error_result(code: &str, message: impl Into<String>, map: Option<&Mapping>) -> ToolsetResult {
+pub(crate) fn error_result(code: &str, message: impl Into<String>, map: Option<&Mapping>) -> ToolsetResult {
     ToolsetResult {
         is_error: true,
         content: vec![text(message)],
@@ -582,7 +582,7 @@ fn remember_screen(key: &str, frame: Frame) {
 pub static ACTION_EVENTS: Lazy<tokio::sync::broadcast::Sender<(String, Value)>> =
     Lazy::new(|| tokio::sync::broadcast::channel(256).0);
 
-fn emit_action(computer_id: &str, toolset: Toolset, member: &str, point: Option<(i64, i64)>, map: Option<&Mapping>, run_id: Option<&str>, ok: bool) {
+pub(crate) fn emit_action(computer_id: &str, toolset: Toolset, member: &str, point: Option<(i64, i64)>, map: Option<&Mapping>, run_id: Option<&str>, ok: bool) {
     let screen = map.map(|m| m.screen);
     let event = json!({
         "type": "computer.action",
@@ -1462,7 +1462,7 @@ async fn dispatch(
 pub const THIS_DEVICE_ID: &str = "this-device";
 
 /// Resolve `:id` (`this-device` or a computer id) to the caller's computer.
-async fn resolve_computer(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: &HeaderMap) -> Result<ComputerResponse, (StatusCode, String)> {
+pub(crate) async fn resolve_computer(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: &HeaderMap) -> Result<ComputerResponse, (StatusCode, String)> {
     let id = if id == THIS_DEVICE_ID {
         let db = state.db.clone();
         let owner = user.user_id.clone();
@@ -1495,7 +1495,7 @@ async fn resolve_computer(state: &Arc<AppState>, user: &AuthUser, id: &str, head
     }
 }
 
-async fn build_target(state: &Arc<AppState>, user: &AuthUser, computer: &ComputerResponse, toolset: Toolset, browser_session_id: Option<&str>) -> Result<Target, (StatusCode, String)> {
+pub(crate) async fn build_target(state: &Arc<AppState>, user: &AuthUser, computer: &ComputerResponse, toolset: Toolset, browser_session_id: Option<&str>) -> Result<Target, (StatusCode, String)> {
     if toolset == Toolset::Browser {
         let session_id = browser_session_id
             .map(str::to_string)
@@ -1621,6 +1621,15 @@ pub async fn execute(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: 
         }
     };
 
+    // Fan-out (run_parallel, run_subtask with best_of): its subtasks name
+    // their own computers, so their targets, leases, approval and audit are
+    // gated per computer there, not on this route's computer.
+    if req.toolset == Toolset::Computer && crate::computer_parallel::is_fanout(&req.member, &req.input) {
+        let (status, body) = crate::computer_parallel::execute(state, user, headers, &computer, spec, &req).await;
+        settle(status == StatusCode::OK && !body.get("is_error").and_then(Value::as_bool).unwrap_or(false));
+        return (status, body);
+    }
+
     let target = match build_target(state, user, &computer, req.toolset, req.browser_session_id.as_deref()).await {
         Ok(t) => t,
         Err((status, message)) => {
@@ -1657,34 +1666,10 @@ pub async fn execute(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: 
         && (needs_approval(spec, target.sandboxed())
             || crate::computer_v2::v2_member_needs_approval(&req.member, &req.input, target.sandboxed()))
     {
-        if let Err(denial) = crate::aci_safety::enforce_confirmation(
-            &state.approval_store,
-            &user.user_id,
-            "computer.toolset",
-            match risk_class(spec) {
-                ConfirmationClass::Reversible => ConfirmationClass::Risky,
-                other => other,
-            },
-            &action_descriptor(&computer.id, &req),
-            req.approval_grant.as_deref(),
-        ) {
+        if let Err(refusal) = approval_gate(state, user, &computer.id, spec, &req) {
             // Unresolved until the retry with a grant settles it.
             settle(false);
-            let mut body = denial.body;
-            let code = body.get("error").and_then(Value::as_str).unwrap_or("approval_required").to_string();
-            let (status, code) = if code == "confirmation_required" {
-                (StatusCode::CONFLICT, "approval_required".to_string())
-            } else {
-                (denial.status, code)
-            };
-            body["error"] = json!(code);
-            body["is_error"] = json!(true);
-            body["member"] = json!(req.member);
-            body["toolset"] = json!(req.toolset.as_str());
-            body["risk"] = json!(spec.risk);
-            body["content"] = json!([text(format!("{} needs a person's approval before it runs.", req.member))]);
-            body["screen"] = serde_json::to_value(screen_info(None)).unwrap_or_default();
-            return (status, body);
+            return refusal;
         }
     }
 
@@ -1704,7 +1689,15 @@ pub async fn execute(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: 
     crate::computer_routes::touch_computer_activity(&state.db, &computer.id);
     if req.member == "run_subtask" {
         // The bounded decision loop. Each of its steps goes back through
-        // `execute_step` (lease, policy, audit, dispatch, event).
+        // `execute_step` (lease, policy, audit, dispatch, event). One
+        // subtask loop per computer at a time: a second one is refused.
+        let _owner = match crate::computer_parallel::claim_input(&computer.id, &run_id) {
+            Ok(g) => g,
+            Err(holder) => {
+                settle(false);
+                return respond(StatusCode::LOCKED, error_result("computer_busy", crate::computer_parallel::busy_text(&holder), None));
+            }
+        };
         let outcome = crate::computer_subtask::run(state, user, &computer, &target, &req.input, &run_id).await;
         emit_action(&computer.id, req.toolset, &req.member, None, None, req.run_id.as_deref(), outcome.is_ok());
         return match outcome {
@@ -1762,9 +1755,43 @@ pub async fn execute(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: 
     }
 }
 
+/// The person's approval for one call: `Err((status, body))` with the
+/// approval-required refusal until the call carries a valid single-use grant
+/// bound to `action_descriptor(computer_id, req)`.
+pub(crate) fn approval_gate(state: &Arc<AppState>, user: &AuthUser, computer_id: &str, spec: &MemberSpec, req: &ToolsetRequest) -> Result<(), (StatusCode, Value)> {
+    if let Err(denial) = crate::aci_safety::enforce_confirmation(
+        &state.approval_store,
+        &user.user_id,
+        "computer.toolset",
+        match risk_class(spec) {
+            ConfirmationClass::Reversible => ConfirmationClass::Risky,
+            other => other,
+        },
+        &action_descriptor(computer_id, req),
+        req.approval_grant.as_deref(),
+    ) {
+        let mut body = denial.body;
+        let code = body.get("error").and_then(Value::as_str).unwrap_or("approval_required").to_string();
+        let (status, code) = if code == "confirmation_required" {
+            (StatusCode::CONFLICT, "approval_required".to_string())
+        } else {
+            (denial.status, code)
+        };
+        body["error"] = json!(code);
+        body["is_error"] = json!(true);
+        body["member"] = json!(req.member);
+        body["toolset"] = json!(req.toolset.as_str());
+        body["risk"] = json!(spec.risk);
+        body["content"] = json!([text(format!("{} needs a person's approval before it runs.", req.member))]);
+        body["screen"] = serde_json::to_value(screen_info(None)).unwrap_or_default();
+        return Err((status, body));
+    }
+    Ok(())
+}
+
 /// The control-lease gate for one call: `Err((status, code, message))`
 /// when someone else holds control or this device's owner hasn't taken it.
-async fn lease_check(
+pub(crate) async fn lease_check(
     state: &Arc<AppState>,
     user: &AuthUser,
     computer: &ComputerResponse,
@@ -1793,7 +1820,7 @@ async fn lease_check(
 
 /// Declarative policy for one call: the descriptor and verdict, or the
 /// refusal reason when the policy denies it (the denial is recorded).
-fn policy_check(
+pub(crate) fn policy_check(
     user: &AuthUser,
     computer: &ComputerResponse,
     req: &ToolsetRequest,
@@ -1817,7 +1844,7 @@ fn policy_check(
 }
 
 /// The audit row, written (and fsynced) before the action runs.
-fn audit(
+pub(crate) fn audit(
     user: &AuthUser,
     computer: &ComputerResponse,
     target: &Target,
