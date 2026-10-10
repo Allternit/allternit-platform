@@ -1,33 +1,21 @@
 # Steering checkpoint
 
-**Session:** `session/craft-editors-20261009` · worktree `allternit-session-craft-1009` · plan dag_387644
-**Date:** 2026-10-09
+**Session:** `session/craft-video-kind-20261010` · worktree `allternit-wt-craft-video` (+ ai worktree `allternit-ai-wt-craft-video`) · plan dag_724767 (gizzi node commands error — noted below)
+**Date:** 2026-10-10 · **State: PRs OPEN, awaiting Eoj's review/merge (human gate — do not merge)**
 
 ## Goal
-Adopt the ArtCraft craft suite (PhotoCraft/PdfCraft/FilmCraft — pure-Rust, MIT/Apache-2.0) as the PDF, Image, and Video artifact editors. Approved plan (Eoj, 2026-10-09): local vendoring (NO GitHub forks), existing names/surfaces (Allternit Office for PDF, Allternit Design for image/video), WASM bundles served from the existing office.allternit.com surface, sandboxed iframe embedding with a craft-host bridge, Tier-C audit before any product wiring. Plan file: session plans dir (`nightcrawler-drax-black-panther.md`).
+Craft editors item 2, app-independent slice — COMPLETE. Footage refs, OPFS, media_generate, phone view+trim, host save/open plumbing, agent co-editing, Phase-4 cleanup remain for later slices per the handoff.
 
-## Just did
-- craft-host bridge crate + all three craft:1 embed adapters IMPLEMENTED and verified (wasm32 embed + standalone checks green on all three web apps; craft-host 8/8 host tests; all three trees cargo-check clean). Committed d522a0a0ec + pushed: adapters (video gate/save-watcher, pdf deliver_save write-back, image control-channel dispatch + Services::write interception), per-tree rust-toolchain pins (>=1.95), office-surface test harness page + CSP _headers.
-- VENDOR.md gained the bundle-build recipe (trunk/xtask web, embed feature mandatory, wasm-bindgen-cli 0.2.129, <25MiB gate, craft:1 strings check).
-- WASM release bundle build RUNNING (agent-8): tool installs + image/pdf trunk builds + video xtask build with feature plumbing, then copy to surfaces/office.allternit.com/public/craft/{image,pdf,video} + verification.
-- Deep research on `github.com/storytold` (7 apps, licenses verified MIT/Apache; `artcraft` engine repos legally blocked — excluded) and on our artifact system (v2 kinds registry `src/lib/artifacts/kinds.ts` on origin/main; local checkout 17 behind — fast-forward before Phase 1).
-- Session worktree + DAG plan (`dag_387644`) created.
-- Mirror-cloned the three repos to `~/Desktop/allternit-workspace/craft-mirrors/` (machine-local, not committed). Pinned revs: photocraft `0c72d9542…` (2026-10-09), pdfcraft `68e91d481…`, filmcraft `7bd762126…`.
-- Vendored trees into `vendor/craft/{image,pdf,video}/` (~34/29/34 MB) at those revs. Wrote `vendor/craft/VENDOR.md` (provenance, license/trademark handling, refresh ritual) + `refresh-from-upstream.sh` (dry-run/apply).
-- cargo-audit installing in background (not previously installed).
-- All three rebrand+audit agents DONE: rebrands complete (docs/brand removed, community UI stripped, i18n verified by script — 1,285 literals × 16 catalogs for image; deep PDF-embedded strings and export-format provenance strings for pdf/video), per-app audit inventories written.
-- AUDIT.md verdict: PASS with documented conditions (rsa/rustls-webpki not reachable in embed posture; zero analytics in all three trees).
-- Committed + pushed: 5edf5f6afb on session/craft-editors-20261009 (vendored trees, VENDOR.md, refresh script, AUDIT.md, audit reports, craft-host/PROTOCOL.md). Upstream .github CI stripped (would have executed in our repo).
+## Just did (final state)
+- **Platform PR #1480** (branch `session/craft-video-kind-20261010`, head 4d76cd1f46): video KindSpec in kinds.rs (cargo check ✅, kinds tests 5/5 ✅); runtime.rs gate verified already-open (no change); VENDOR.md CRAFT_FEATURES note; clean CRAFT_FEATURES=embed rebuild published to office surface (craft:1 ✅ ×7 strings, 0 files ≥25 MiB, wasm-opt v133 needed NO patch); docs (pdf+video rows, gap closed); features.json decision + pre-existing #1477 validate break fixed (`--validate` clean); check_links 0 problems.
+- **ai PR #500** (branch `session/craft-video-kind-20261010`, head 9fbd3b67): ARTIFACT_KINDS + KIND_REGISTRY video entry (interim V.code rendering, Editor null) + KIND_ICON; typecheck ✅; vitest 57/57 ✅; SW guard "No Fabric Session asset changes." ✅; impact query recorded. No public/craft mirror (image/pdf never were; bridge is cross-origin to office.allternit.com) — flagged in PR body.
+- Lifecycle steps 5–9 (merge, sync, attest, desktop rebuild, worktree cleanup) deliberately NOT run: Eoj merges, per the handoff's DO-NOT-MERGE instruction. git-discipline-check on the shared checkout is expected-red from other sessions (pre-existing, not mine to fix).
 
-## Next
-1. Bundle build lands → verify + final commit → Eoj tries the open→edit→save harness at
-   office.allternit.com/craft/ (needs the office surface deployed — Eoj's deploy go-ahead).
-2. Phase 1 (separate session, after ai checkout fast-forwards): `pdf` kind in cloud-api
-   kinds.rs + KIND_REGISTRY; CraftEditor component (host-side TS bridge client);
-   save→versions; docs; phone/PWA sheet mode.
+## Next (after Eoj merges both PRs)
+1. Deploys per the runbook (Eoj gate): cloud-api → office.allternit.com Pages (craft/video bundle) → ai.allternit.com manual wrangler → m.allternit.com PWA + SW bump (only when user-facing video work ships).
+2. Next slice: FilmCraft host open/save plumbing (VideoCraftEditor), footage refs, OPFS, media_generate, phone view+trim.
+3. Ledger attestation for this session when merging (lifecycle step 7).
 
 ## Open questions
-- ~~COOP/COEP~~ RESOLVED: all three current web builds are single-threaded; COOP/COEP only needed for a future threaded build. No header changes required for v1.
-- Editor canvas theming inside egui (accept themed params, not full design tokens) — Eoj judges at the Phase-0 checkpoint.
-- Plans/entitlements gating for the new kinds (Eoj's call at review, Phase 4).
-- `gizzi workspace node add` CLI shape (help is unclear; DAG plan + node n_8583 exist, node breakdown tracked here meanwhile).
+- Should craft bundles ever be mirrored into allternit-ai public/ (Desktop offline concern)? Image/pdf never were; needs Eoj's call, not this session's invention.
+- gizzi `workspace node add|claim|close` all fail with yargs "unexpected argument" on gizzi 2.1.9 — plan dag_724767 exists but node-level tracking was impossible; used the session TodoList instead. Worth a tooling issue.

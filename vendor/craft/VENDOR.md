@@ -68,6 +68,14 @@ workspace shared target.
 **The bundles MUST be built with the `embed` feature** — a stock bundle does not speak
 the craft:1 protocol and the host handshake will time out.
 
+The video xtask reads the feature from the **`CRAFT_FEATURES`** env var
+(`vendor/craft/video/xtask/src/main.rs` forwards it to cargo `--features`), so the
+FilmCraft build is `CRAFT_FEATURES=embed cargo xtask web`, never a bare `cargo xtask web`.
+Future CI for the craft trees (rebuilt under `.github/workflows/` once the WASM build
+pipeline lands; builds are manual until then) must set `CRAFT_FEATURES=embed` on the
+video job the same way the image/pdf trunk jobs pass `--features embed`, and fail the
+job when the bundle does not speak craft:1 (the `strings … | grep craft:1` check below).
+
 ```sh
 # NB: this shell exports NO_COLOR=1, which trunk's CLI rejects — override it:
 export NO_COLOR=true

@@ -866,13 +866,13 @@
       "label": "Craft editors (embedded WASM editors over craft:1)",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "The vendored craft editors (PdfCraft, PhotoCraft, FilmCraft) run sandboxed in cross-origin iframes served from office.allternit.com/craft/<app>/ and speak the craft:1 postMessage protocol with the workspace host page: token-validated handshake, craft:open with transferable bytes, craft:save-request -> host persists via /api/v2/artifacts -> craft:save-ack, and a craft:command channel so agents drive the same visible editor. Phase 1 (2026-10-10) wired the pdf kind end to end; Phase 2 (2026-10-10) wires the image kind: PhotoCraft opens the stored layered source (.pcraft/PSD in artifact runtime storage) when there is one, saves the source back to storage, flattens a PNG per save that becomes the new artifact version (R2 URL body), and gains a Download PSD export. Video follows in Phase 3.",
+      "description": "The vendored craft editors (PdfCraft, PhotoCraft, FilmCraft) run sandboxed in cross-origin iframes served from office.allternit.com/craft/<app>/ and speak the craft:1 postMessage protocol with the workspace host page: token-validated handshake, craft:open with transferable bytes, craft:save-request -> host persists via /api/v2/artifacts -> craft:save-ack, and a craft:command channel so agents drive the same visible editor. Phase 1 (2026-10-10) wired the pdf kind end to end; Phase 2 (2026-10-10) wires the image kind: PhotoCraft opens the stored layered source (.pcraft/PSD in artifact runtime storage) when there is one, saves the source back to storage, flattens a PNG per save that becomes the new artifact version (R2 URL body), and gains a Download PSD export. Phase 3 (the video kind) started 2026-10-10 with its app-independent parts: `video` joins the kind contract on both sides (body = the FilmCraft project JSON, `application/vnd.allternit.video+json`), the runtime storage gate already admitted video, and the FilmCraft embed bundle (built with `CRAFT_FEATURES=embed`) is published to office.allternit.com/craft/video/. The FilmCraft host wiring (open/save plumbing, media-plane footage refs, OPFS buffers, media_generate integration, phone view+trim) is the next slice.",
       "touches": [
         "allternit-ai/src/components/craft",
         "allternit-ai/src/lib/artifacts",
         "allternit-ai/src/views/library",
         "allternit/cmd/allternit-cloud-api/src/artifacts",
-        "allternit/cmd/allternit-cloud-api/src/routes/artifact_runtime.rs"
+        "allternit/cmd/allternit-cloud-api/src/routes/artifact_*"
       ],
       "decisions": [
         {
@@ -882,6 +882,10 @@
         {
           "on": "2026-10-10",
           "note": "Phase 2 approved: image kind gets CraftEditor app=image (ImageCraftEditor). Save routing by save-request extension: user .pcraft/.psd saves -> artifact runtime storage (craft/source.pcraft, craft/source.psd) via the existing /api/v2/artifact-runtime storage routes, whose kind gate now admits image/video with a declared storage capability (Denied::NotStorageKind otherwise); host-requested app.save {path} exports (meta.path correlation) -> flattened PNG uploaded to Allternit Cloud file storage becomes the new text/uri-list version body. Bridge save-requests now pass the app's meta through. New Upload image in the library. Server: allternit-cloud-api runtime.rs allowed(); app: src/components/craft/image-io.ts + CraftEditor.tsx, src/lib/artifacts/runtime-storage.ts."
+        },
+        {
+          "on": "2026-10-10",
+          "note": "Phase 3 app-independent parts: `video` joins the kind contract — cloud-api KINDS gains the kind (default body format application/vnd.allternit.video+json) and the app registry gains the allow-list entry (interim rendering as code; no editor until the host-wiring slice). The craft_store runtime gate already admitted image|video (PR #1477), so no server gate change was needed. FilmCraft bundle rebuilt cleanly with CRAFT_FEATURES=embed (the video xtask forwards CRAFT_FEATURES to cargo --features; documented in vendor/craft/VENDOR.md for the future CI job) and published to office.allternit.com/craft/video/ plus mirrored into allternit-ai public/craft/video/. Server: cmd/allternit-cloud-api/src/artifacts/kinds.rs; app: src/lib/artifacts/{types,kinds}.ts."
         }
       ],
       "evidence": [

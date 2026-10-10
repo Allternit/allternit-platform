@@ -31,6 +31,8 @@ PDFs open in the embedded PDF craft editor: the document saves back as a new ver
 
 Images open in the embedded PhotoCraft editor: the layered source (`.pcraft`/PSD) is kept in the artifact's runtime storage so edits keep their layers across sessions, and every save also writes a flattened image as a new artifact version — that flat image is what previews, shares and downloads show by default. "Download PSD" exports the layered source for use in other tools. Uploading an image file (PNG, JPEG, WebP, PSD, …) to the workspace library creates an editable image artifact.
 
+Video is a registered artifact kind — the body is the FilmCraft project JSON and its layered source will live in the artifact's runtime storage like the image kind's. The embedded FilmCraft editor, generated-video integration and phone trimming land with the host-wiring update; until then a video artifact opens as its project JSON.
+
 Bot threads do not offer these three editor-pane modes. Use the workspace artifact session for the editable Office flow. A bot can still produce file deliverables through tools available to its thread; that is a different path from editing an open pane.
 
 ## Inspect and continue

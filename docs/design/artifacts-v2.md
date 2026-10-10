@@ -6,7 +6,7 @@ This document is the contract every Phase 1 workstream builds against: the cloud
 
 ## 1. Model
 
-One account-level store of **typed artifacts** in **allternit-cloud-api** (Postgres). Every surface (Desktop, ai.allternit.com, the phone layout, the m.allternit.com PWA, cloud computers, gizzi) reads and writes the same records. An artifact is something the assistant (or a person) made that you'd show someone: a doc, deck, sheet, design, dashboard, motion, page, card, diagram, image or code file.
+One account-level store of **typed artifacts** in **allternit-cloud-api** (Postgres). Every surface (Desktop, ai.allternit.com, the phone layout, the m.allternit.com PWA, cloud computers, gizzi) reads and writes the same records. An artifact is something the assistant (or a person) made that you'd show someone: a doc, deck, sheet, design, dashboard, motion, page, card, diagram, image, PDF, video or code file.
 
 Every record has a `kind` and a `runtime_version`:
 
@@ -28,6 +28,8 @@ Every record has a `kind` and a `runtime_version`:
 | `diagram` | `text/vnd.mermaid` or `image/svg+xml` | Diagram viewer | 1 |
 | `image` | `text/uri-list` (URL to the file store) | Image viewer | 1 |
 | `code` | `text/plain` + `language` in `meta` | Code viewer | 1 |
+| `pdf` | `application/pdf` | PDF craft editor | craft editors Phase 1 (live) |
+| `video` | `application/vnd.allternit.video+json` (FilmCraft project) | FilmCraft editor | craft editors Phase 3 |
 
 Unknown kinds render as `page` if HTML, otherwise as code. The kind list lives in one shared file per side: `cmd/allternit-cloud-api/src/artifacts/kinds.rs` and `allternit-ai/src/lib/artifacts/kinds.ts`.
 

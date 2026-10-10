@@ -65,9 +65,9 @@
     addEventListener("unhandledrejection", (ev) => { if (window.filmcraftLoad.readyMs && isFatal(ev.reason)) window.filmcraftFatal(ev.reason); });
   </script>
   <script type="module">
-    // `8919c606e8cbf94b` is replaced by `cargo xtask web` with a hash of the build: the glue and the
+    // `8d3a49d173cf3ba4` is replaced by `cargo xtask web` with a hash of the build: the glue and the
     // wasm are cached as immutable, so their URLs must change with every build.
-    const build = "8919c606e8cbf94b";
+    const build = "8d3a49d173cf3ba4";
     const v = build.startsWith("__") ? "" : "?v=" + build;
     const t0 = performance.now();
     const params = new URLSearchParams(location.search);
