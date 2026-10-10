@@ -116,6 +116,7 @@ pub enum Denied {
     OutsideInvitee,
     LegacyArtifact,
     NotAPage,
+    NotStorageKind,
 }
 
 impl Denied {
@@ -126,6 +127,7 @@ impl Denied {
             Denied::OutsideInvitee => "AI and connectors aren't available to people outside the organization.",
             Denied::LegacyArtifact => "This artifact predates the page runtime. Ask its owner to re-save it.",
             Denied::NotAPage => "Only pages and cards can run apps.",
+            Denied::NotStorageKind => "Only pages, cards and craft-editor artifacts can use runtime storage.",
         }
     }
 }
@@ -178,21 +180,25 @@ fn declared_connectors(capabilities: &Value) -> bool {
 /// What the page may use. Storage needs only the declaration; AI and
 /// connectors also need the org switches and an inside viewer.
 pub fn allowed(subject: &RuntimeSubject<'_>, org: Option<&OrgSettings>) -> Allowed {
-    let kind_ok = matches!(subject.kind, "page" | "card");
+    let page_like = matches!(subject.kind, "page" | "card");
+    // Craft-editor kinds (image now, video in Phase 3) keep their layered
+    // source documents in artifact storage; they don't run page apps, AI or
+    // viewer connectors.
+    let craft_store = matches!(subject.kind, "image" | "video");
     // Dashboards run on the viewer's own connectors (and nothing else), so
     // they share the connectors capability and its consent, not storage or AI.
     let dashboard = subject.kind == "dashboard";
-    let base: Result<(), Denied> = if !(kind_ok || dashboard) {
-        Err(Denied::NotAPage)
-    } else if subject.runtime_version < 2 {
+    let common: Result<(), Denied> = if subject.runtime_version < 2 {
         Err(Denied::LegacyArtifact)
     } else if org.is_some_and(|o| !o.enabled) {
         Err(Denied::OrgOff)
     } else {
         Ok(())
     };
-    let page_only = if kind_ok { base } else { Err(Denied::NotAPage) };
-    let storage = page_only.and(if declared_storage(subject.capabilities) { Ok(()) } else { Err(Denied::NotDeclared) });
+    let base = if page_like || dashboard { common } else { Err(Denied::NotAPage) };
+    let storage_base = if page_like || craft_store { common } else { Err(Denied::NotStorageKind) };
+    let storage = storage_base.and(if declared_storage(subject.capabilities) { Ok(()) } else { Err(Denied::NotDeclared) });
+    let page_only = if page_like { common } else { Err(Denied::NotAPage) };
     let outside = if subject.is_outside_invitee() { Err(Denied::OutsideInvitee) } else { Ok(()) };
     let ai = page_only.and(outside).and(if declared_ai(subject.capabilities) { Ok(()) } else { Err(Denied::NotDeclared) });
     let connectors = base
@@ -341,7 +347,7 @@ mod tests {
         let mut s = subject(&caps, "member", Some("org_a"));
         s.kind = "dashboard";
         let a = allowed(&s, Some(&OrgSettings::default()));
-        assert_eq!(a.storage, Err(Denied::NotAPage));
+        assert_eq!(a.storage, Err(Denied::NotStorageKind));
         assert_eq!(a.ai, Err(Denied::NotAPage));
         assert_eq!(a.connectors, Ok(()));
         let none = json!({});
@@ -354,11 +360,31 @@ mod tests {
         let caps = json!({"storage": true});
         let mut s = subject(&caps, "owner", Some("org_a"));
         s.kind = "doc";
-        assert_eq!(allowed(&s, None).storage, Err(Denied::NotAPage));
+        assert_eq!(allowed(&s, None).storage, Err(Denied::NotStorageKind));
         s.kind = "card";
         assert_eq!(allowed(&s, None).storage, Ok(()));
         s.runtime_version = 1;
         assert_eq!(allowed(&s, None).storage, Err(Denied::LegacyArtifact));
+    }
+
+    #[test]
+    fn craft_editor_kinds_store_sources_but_never_run_apps() {
+        // The image/video craft editors persist layered sources (.pcraft/PSD)
+        // to runtime storage, but get no page AI or connectors.
+        let caps = json!({"storage": true, "ai": true, "connectors": [{"connector": "gh", "tools": ["list"]}]});
+        for kind in ["image", "video"] {
+            let mut s = subject(&caps, "owner", Some("org_a"));
+            s.kind = kind;
+            let a = allowed(&s, Some(&OrgSettings::default()));
+            assert_eq!(a.storage, Ok(()), "{kind} should store its craft source");
+            assert_eq!(a.ai, Err(Denied::NotAPage), "{kind} must not run page AI");
+            assert_eq!(a.connectors, Err(Denied::NotAPage), "{kind} must not run connectors");
+        }
+        // The declaration is still required.
+        let none = json!({});
+        let mut s = subject(&none, "owner", Some("org_a"));
+        s.kind = "image";
+        assert_eq!(allowed(&s, None).storage, Err(Denied::NotDeclared));
     }
 
     #[test]
