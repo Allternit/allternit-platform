@@ -667,7 +667,7 @@ export const COMPUTER_CONTRACT = {
 } as const;
 
 // ---- allternit.computer.v2 (computer_toolset_20260801) ----
-export const COMPUTER_V2_MEMBER_NAMES = ["screenshot","zoom","left_click","right_click","middle_click","double_click","triple_click","mouse_move","left_click_drag","left_mouse_down","left_mouse_up","scroll","type","key","hold_key","wait","cursor_position","read_ui","act","run_batch","verify","request_human","use_credential","run_subtask"] as const;
+export const COMPUTER_V2_MEMBER_NAMES = ["screenshot","zoom","left_click","right_click","middle_click","double_click","triple_click","mouse_move","left_click_drag","left_mouse_down","left_mouse_up","scroll","type","key","hold_key","wait","cursor_position","read_ui","act","run_batch","verify","request_human","use_credential","run_subtask","run_skill","skills"] as const;
 export type ComputerV2MemberName = (typeof COMPUTER_V2_MEMBER_NAMES)[number];
 /** Take a screenshot of the screen. */
 export type ComputerV2ScreenshotInput = Record<string, never>;
@@ -704,7 +704,7 @@ export type ComputerV2WaitInput = { duration: number };
 /** Get the current (x, y) pixel coordinate of the cursor. */
 export type ComputerV2CursorPositionInput = Record<string, never>;
 /** Read the target window or app's UI as a structured element tree (roles, names, values, bounds) with NO screenshot. Returns stable element ids for act, run_batch and verify. Pass `since` (a version from an earlier read_ui) to get only the diff; `query` filters by text; `max_elements` caps the list (default 200). */
-export type ComputerV2ReadUiInput = { app?: string | null; pid?: number | null; window_id?: number | null; query?: string | null; max_elements?: number | null; since?: number | null };
+export type ComputerV2ReadUiInput = { app?: string | null; pid?: number | null; window_id?: number | null; query?: string | null; max_elements?: number | null; since?: number | null; paths?: boolean | null; crops?: boolean | null };
 /** Act on an element id from read_ui. op: click, set_value (clear and set the field's value), select (pick a child by name), press (a key), menu (choose a menu path such as 'File > Save'), focus. set_value/select/press on this Mac need the person's approval (the same rule as typing). */
 export type ComputerV2ActInput = { id: string; op: "click" | "set_value" | "select" | "press" | "menu" | "focus"; value?: string | null; key?: string | null; path?: string | Array<string> | null; version?: number | null; app?: string | null; pid?: number | null; window_id?: number | null };
 /** Run ordered steps in one window in a single call: act steps ({id, op, value?, key?}), menu steps (path), pixel steps ({tool, args}) and waits (ms). Each step may carry wait_for (checked before the step) and expect (checked after); a failed check stops the batch and one observe read returns the fresh map. This is the fast path: batch several steps instead of screenshot-per-action loops. */
@@ -715,8 +715,12 @@ export type ComputerV2VerifyInput = { app?: string | null; pid?: number | null; 
 export type ComputerV2RequestHumanInput = { reason?: string | null; timeout_ms?: number | null };
 /** Type a vault credential into the FOCUSED field. The value never enters the model context, prompts or logs. kind: secret (the stored value) or totp (a fresh code from a stored TOTP seed). The credential is bound to an app or domain: pass `domain` (the app you are filling into); it must match the credential's binding. On this Mac a person approves each use, like typing. */
 export type ComputerV2UseCredentialInput = { name: string; kind?: "secret" | "totp" | null; source?: "vault" | "keychain" | "bitwarden" | "onepassword" | null; domain?: string | null };
-/** Hand a bounded UI subtask (fill a form, search and pick a result, toggle settings) to the fast decision loop instead of driving each step yourself. Give the goal, the literal inputs it may type (it never invents text), success checks in verify syntax, and limits. Each step reads the element map, picks one action from the visible elements x allowed ops with a ~100 ms typed decision (POST /v1/decisions), runs it through the same lease/approval/audit path (predictable steps batched with expect checks), and checks success with verify. Returns a step trace and a status: done, escalated (with the reason and the current screen: continue from there yourself), or failed. One approval covers the whole subtask on this computer. */
-export type ComputerV2RunSubtaskInput = { goal: string; inputs?: Array<{ name: string; value: string }> | null; success?: Array<{ id?: string | null; role?: string | null; name?: string | null; text?: string | null; gone?: boolean | null; value?: string | null; enabled?: boolean | null; ask?: string | null }> | null; constraints?: { ops?: Array<"click" | "set_value" | "select" | "press" | "focus"> | null; avoid?: Array<string> | null; allow_irreversible?: boolean | null } | null; max_steps?: number | null; budget_ms?: number | null; app?: string | null; pid?: number | null; window_id?: number | null; query?: string | null; max_elements?: number | null };
+/** Hand a bounded UI subtask (fill a form, search and pick a result, toggle settings) to the fast decision loop instead of driving each step yourself. Give the goal, the literal inputs it may type (it never invents text), success checks in verify syntax, and limits. Each step reads the element map, picks one action from the visible elements x allowed ops with a ~100 ms typed decision (POST /v1/decisions), runs it through the same lease/approval/audit path (predictable steps batched with expect checks), and checks success with verify. Returns a step trace and a status: done, escalated (with the reason and the current screen: continue from there yourself), or failed. One approval covers the whole subtask on this computer. Repeat subtasks replay from the cache with zero decisions (the result's cache block says hit, healed, recorded or miss); only subtasks with at least one exact (non-ask) success check are cached. Input values are never stored, only their names. */
+export type ComputerV2RunSubtaskInput = { goal: string; inputs?: Array<{ name: string; value: string }> | null; success?: Array<{ id?: string | null; role?: string | null; name?: string | null; text?: string | null; gone?: boolean | null; value?: string | null; enabled?: boolean | null; ask?: string | null }> | null; constraints?: { ops?: Array<"click" | "set_value" | "select" | "press" | "focus"> | null; avoid?: Array<string> | null; allow_irreversible?: boolean | null } | null; max_steps?: number | null; budget_ms?: number | null; app?: string | null; pid?: number | null; window_id?: number | null; query?: string | null; max_elements?: number | null; cache?: "auto" | "off" | "refresh" | null; save_as?: string | null };
+/** Run a saved skill (a recording taught with run_subtask save_as) by name, with new values for its inputs. It replays the recorded steps with no decisions, checks each step and the skill's success checks with verify, re-infers a step whose element moved and rewrites the recording. Returns the same result as run_subtask. List skills with the skills member. */
+export type ComputerV2RunSkillInput = { name: string; inputs?: Array<{ name: string; value: string }> | null; app?: string | null; pid?: number | null; window_id?: number | null; max_steps?: number | null; budget_ms?: number | null };
+/** List the saved skills (taught recordings) this person can run with run_skill: name, goal, app, input names, step count, last use. Pass forget to delete one first. */
+export type ComputerV2SkillsInput = { forget?: string | null };
 export interface ComputerV2MemberInputs {
   screenshot: ComputerV2ScreenshotInput;
   zoom: ComputerV2ZoomInput;
@@ -742,6 +746,8 @@ export interface ComputerV2MemberInputs {
   request_human: ComputerV2RequestHumanInput;
   use_credential: ComputerV2UseCredentialInput;
   run_subtask: ComputerV2RunSubtaskInput;
+  run_skill: ComputerV2RunSkillInput;
+  skills: ComputerV2SkillsInput;
 }
 export const COMPUTER_V2_CONTRACT = {
   "id": "allternit.computer.v2",
@@ -1383,6 +1389,14 @@ export const COMPUTER_V2_CONTRACT = {
           "since": {
             "type": "integer",
             "description": "A map version from an earlier read_ui: answer only the changes since then."
+          },
+          "paths": {
+            "type": "boolean",
+            "description": "Add each element's tree path (role:ordinal chain from the window). Replay locators use it; you rarely need it."
+          },
+          "crops": {
+            "type": "boolean",
+            "description": "Add an 8x8 pixel hash per element (macOS). Slower: forces a fresh walk of the window. Replay's pixel fallback uses it."
           }
         },
         "required": [],
@@ -1794,7 +1808,7 @@ export const COMPUTER_V2_CONTRACT = {
     },
     {
       "name": "run_subtask",
-      "description": "Hand a bounded UI subtask (fill a form, search and pick a result, toggle settings) to the fast decision loop instead of driving each step yourself. Give the goal, the literal inputs it may type (it never invents text), success checks in verify syntax, and limits. Each step reads the element map, picks one action from the visible elements x allowed ops with a ~100 ms typed decision (POST /v1/decisions), runs it through the same lease/approval/audit path (predictable steps batched with expect checks), and checks success with verify. Returns a step trace and a status: done, escalated (with the reason and the current screen: continue from there yourself), or failed. One approval covers the whole subtask on this computer.",
+      "description": "Hand a bounded UI subtask (fill a form, search and pick a result, toggle settings) to the fast decision loop instead of driving each step yourself. Give the goal, the literal inputs it may type (it never invents text), success checks in verify syntax, and limits. Each step reads the element map, picks one action from the visible elements x allowed ops with a ~100 ms typed decision (POST /v1/decisions), runs it through the same lease/approval/audit path (predictable steps batched with expect checks), and checks success with verify. Returns a step trace and a status: done, escalated (with the reason and the current screen: continue from there yourself), or failed. One approval covers the whole subtask on this computer. Repeat subtasks replay from the cache with zero decisions (the result's cache block says hit, healed, recorded or miss); only subtasks with at least one exact (non-ask) success check are cached. Input values are never stored, only their names.",
       "risk": "risky",
       "default_enabled": true,
       "needs_confirm": true,
@@ -1935,6 +1949,19 @@ export const COMPUTER_V2_CONTRACT = {
           "max_elements": {
             "type": "integer",
             "description": "Cap the elements read per step (default 120)."
+          },
+          "cache": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "off",
+              "refresh"
+            ],
+            "description": "Replay cache (default auto). auto: a subtask seen before (same goal, app and window, same input names) replays its recorded steps with no decisions, checking each with verify, and re-infers only a step whose element moved; a new one runs the decision loop and is recorded once its success checks hold. refresh: ignore the cached steps and record anew. off: neither read nor write the cache."
+          },
+          "save_as": {
+            "type": "string",
+            "description": "Save this subtask's recording as a named skill once it succeeds (overwrites a skill of that name). Run it later with run_skill and new input values."
           }
         },
         "required": [
@@ -1942,9 +1969,96 @@ export const COMPUTER_V2_CONTRACT = {
         ],
         "additionalProperties": false
       }
+    },
+    {
+      "name": "run_skill",
+      "description": "Run a saved skill (a recording taught with run_subtask save_as) by name, with new values for its inputs. It replays the recorded steps with no decisions, checks each step and the skill's success checks with verify, re-infers a step whose element moved and rewrites the recording. Returns the same result as run_subtask. List skills with the skills member.",
+      "risk": "risky",
+      "default_enabled": true,
+      "needs_confirm": true,
+      "confirm": "non_sandbox",
+      "result_kind": "none",
+      "ack_text": "Ran the skill {name}.",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The skill's name (from skills)."
+          },
+          "inputs": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "What the value is (e.g. 'email', 'full name')."
+                },
+                "value": {
+                  "type": "string",
+                  "description": "The literal text to type."
+                }
+              },
+              "required": [
+                "name",
+                "value"
+              ],
+              "additionalProperties": false
+            },
+            "description": "A value for each of the skill's inputs (skills lists their names). Not for secrets: use use_credential."
+          },
+          "app": {
+            "type": "string",
+            "description": "App name or bundle id (macOS); default: the frontmost app."
+          },
+          "pid": {
+            "type": "integer"
+          },
+          "window_id": {
+            "type": "integer"
+          },
+          "max_steps": {
+            "type": "integer",
+            "description": "Most actions the subtask may take (default 12, at most 40)."
+          },
+          "budget_ms": {
+            "type": "integer",
+            "description": "Wall-clock budget in milliseconds (default 60000, at most 300000)."
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "skills",
+      "description": "List the saved skills (taught recordings) this person can run with run_skill: name, goal, app, input names, step count, last use. Pass forget to delete one first.",
+      "risk": "reversible",
+      "default_enabled": true,
+      "needs_confirm": false,
+      "confirm": "never",
+      "result_kind": "none",
+      "ack_text": "Listed the saved skills.",
+      "scale_fields": {},
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "forget": {
+            "type": "string",
+            "description": "Delete the saved skill with this name before listing."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
     }
   ],
-  "note": "Additive over allternit.computer.v1: the 17 pixel members are byte-identical (same names, input fields and Anthropic computer_toolset_20260801 shape). The 7 structured members (read_ui, act, run_batch, verify, request_human, use_credential, run_subtask) are backed by the Allternit Driver sidecar and need it on the computer (this-device today; guests gain it with the guest driver image)."
+  "note": "Additive over allternit.computer.v1: the 17 pixel members are byte-identical (same names, input fields and Anthropic computer_toolset_20260801 shape). The 9 structured members (read_ui, act, run_batch, verify, request_human, use_credential, run_subtask, run_skill, skills) are backed by the Allternit Driver sidecar and need it on the computer (this-device today; guests gain it with the guest driver image)."
 } as const;
 
 // ---- allternit.browser.v1 (browser_toolset_20260801) ----
@@ -3603,5 +3717,5 @@ export const CONTRACTS: Record<ToolsetName, ToolsetContract> = {
 };
 /** allternit.computer.v2: the 17 pixel members plus the 7 driver-backed structured members. */
 export const COMPUTER_V2 = COMPUTER_V2_CONTRACT as unknown as ToolsetContract;
-/** Every member of allternit.computer.v2 (the 17 pixel members, then read_ui, act, run_batch, verify, request_human, use_credential, run_subtask). */
+/** Every member of allternit.computer.v2 (the 17 pixel members, then read_ui, act, run_batch, verify, request_human, use_credential, run_subtask, run_skill, skills). */
 export const COMPUTER_V2_MEMBER_LIST = COMPUTER_V2.members;

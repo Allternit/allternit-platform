@@ -627,6 +627,10 @@
         {
           "on": "2026-10-09",
           "note": "E4: live element map in the driver (allternit_driver/live). One AXObserver per app on one run-loop thread feeds arc's journal, settle counter and walk caches plus the map; notifications patch the map incrementally (full walk only on first sight, window-level changes, big bursts, or a failed staleness probe), so a re-read is answered with no accessibility call (0.4-0.5 ms median through the socket on this Mac). Windows are watched on demand, unwatched after 5 min idle, capped at 8; apps without notifications degrade to timed narrow reads and say so. Linux (AT-SPI over D-Bus, jeepney) and Windows (UIA, comtypes) observers are written to the same interface and staged by prepare-allternit-driver.cjs, unverified live until a non-production test machine exists. The macOS sidecar now runs the Cocoa main run loop so apps launched after it starts are found."
+        },
+        {
+          "on": "2026-10-09",
+          "note": "D4: replay cache (Stagehand design over the driver element map). run_subtask keys each subtask on hash(goal, app + window shape, input names) per owner (computer_replays, V246); the first run records semantic locators (element id, role, name, tree path, window-relative box, 8x8 pixel hash) plus a verify check per step once the exact success checks hold; later runs replay in one speculative run_batch with zero decisions, re-find a moved element by name/path/pixels or re-infer it with one decision, and rewrite the entry. Input values are never stored ({{name}} placeholders plus a guard). save_as turns a recording into a named skill; run_skill and skills (contract v2 members) run and list them. read_ui gains paths and crops."
         }
       ],
       "evidence": [
@@ -634,7 +638,9 @@
         "allternit/contracts/computer-toolset/README.md",
         "allternit/cmd/allternit-api/src/computer_toolset.rs",
         "allternit/surfaces/docs/tools/allternit-driver.mdx",
-        "allternit/surfaces/docs/tools/computer-credentials.mdx"
+        "allternit/surfaces/docs/tools/computer-credentials.mdx",
+        "allternit/surfaces/docs/tools/computer-use-replay.mdx",
+        "allternit/cmd/allternit-api/src/computer_replay.rs"
       ]
     },
     {

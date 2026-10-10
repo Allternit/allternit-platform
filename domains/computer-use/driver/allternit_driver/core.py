@@ -245,7 +245,8 @@ class Driver:
     def read_ui(self, p: dict[str, Any]) -> dict[str, Any]:
         """Tree of a window as our element map. Params: app | pid [+ window_id],
         query, max_elements (default 200), since (a version: answer only the
-        changes), fresh (skip the no-change shortcut), crops (attach crop hashes)."""
+        changes), fresh (skip the no-change shortcut), crops (attach crop hashes),
+        paths (add each element's tree path: replay locators)."""
         start = time.perf_counter()
         self._last_use = time.monotonic()
         t = self.target(p)
@@ -341,16 +342,17 @@ class Driver:
         if degraded:
             out["degraded"] = True
             out["degraded_reason"] = degraded
+        paths = bool(p.get("paths"))
         since = p.get("since")
         if since is not None:
-            diff = self.maps.window(t.key).diff(int(since))
+            diff = self.maps.window(t.key).diff(int(since), paths)
             if diff is not None:
                 out["diff"] = diff
                 return out
             out["reset"] = True  # That version is gone: here is the whole map.
         limit = p.get("max_elements", DEFAULT_MAX_ELEMENTS)
         kept, total = em.select(version.elements.values(), p.get("query"), int(limit) if limit else None)
-        out["elements"] = [e.public() for e in kept]
+        out["elements"] = [e.public(paths) for e in kept]
         out["total"] = total
         if len(kept) < total and not p.get("query"):
             out["truncated"] = True

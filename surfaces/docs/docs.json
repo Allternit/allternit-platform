@@ -347,6 +347,7 @@
               "tools/allternit-driver",
               "tools/computer-use-suite",
               "tools/computer-use-decisions",
+              "tools/computer-use-replay",
               "tools/computer-credentials",
               "tools/strict-tool-use",
               "tools/build-a-tool",

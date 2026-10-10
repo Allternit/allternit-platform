@@ -64,8 +64,9 @@ class Element:
     native: Any = field(default=None, repr=False, compare=False)
     crop: str | None = None
 
-    def public(self) -> dict[str, Any]:
-        """What a model sees: compact, no engine handles, defaults omitted."""
+    def public(self, paths: bool = False) -> dict[str, Any]:
+        """What a model sees: compact, no engine handles, defaults omitted.
+        ``paths`` adds the tree path (replay locators record it)."""
         out: dict[str, Any] = {"id": self.id, "role": self.role}
         if self.name:
             out["name"] = self.name
@@ -83,6 +84,8 @@ class Element:
             out["parent"] = self.parent
         if self.crop:
             out["crop"] = self.crop
+        if paths:
+            out["path"] = self.path
         return out
 
     def signature(self) -> tuple:
@@ -222,7 +225,7 @@ class WindowMap:
             raise StaleVersion(cur.number)
         return cur
 
-    def diff(self, since: int) -> dict[str, Any] | None:
+    def diff(self, since: int, paths: bool = False) -> dict[str, Any] | None:
         """Changes from version ``since`` to the current one; None when that
         version is no longer kept (the caller sends the full map)."""
         old = self._versions.get(since)
@@ -233,9 +236,9 @@ class WindowMap:
         for eid, element in cur.elements.items():
             before = old.elements.get(eid)
             if before is None:
-                added.append(element.public())
+                added.append(element.public(paths))
             elif before.signature() != element.signature():
-                changed.append(element.public())
+                changed.append(element.public(paths))
         removed = [eid for eid in old.elements if eid not in cur.elements]
         return {"since": since, "added": added, "changed": changed, "removed": removed}
 

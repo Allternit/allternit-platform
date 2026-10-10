@@ -42,17 +42,21 @@ The structured members. They read and drive the UI through the [Allternit Driver
 
 | Member | Risk | Approval | Fields |
 |---|---|---|---|
-| `read_ui` | reversible | no | `app?` / `pid?` / `window_id?` (default: frontmost), `query?`, `max_elements?` (default 200), `since?` (a version: returns only the diff) |
+| `read_ui` | reversible | no | `app?` / `pid?` / `window_id?` (default: frontmost), `query?`, `max_elements?` (default 200), `since?` (a version: returns only the diff), `paths?` (add each element's tree path), `crops?` (add an 8x8 pixel hash per element; forces a fresh walk) |
 | `act` | risky | on non-sandbox targets for `set_value` / `select` / `press` (same rule as `type`) | `id` (element id from `read_ui`), `op` (`click`, `set_value`, `select`, `press`, `menu`, `focus`), `value?`, `key?`, `path?` (menu path), `version?` |
 | `run_batch` | risky | on non-sandbox targets, when any `act` step enters text | `steps` (1–50): `{act? {id, op, value?, key?}, menu?, pixel? {tool, args}, wait? ms, wait_for?, expect?, timeout_ms?}`; `version?` |
 | `verify` | reversible | no | `checks` (1–20): `{id?, role?, name?, text?, gone?, value?, enabled?}`, `timeout_ms?` |
 | `request_human` | reversible | no | `reason?`, `timeout_ms?` (default 5 min) |
 | `use_credential` | risky | on non-sandbox targets | `name`, `kind?` (`secret` or `totp`), `source?` (`vault`, `keychain`, `bitwarden`, `onepassword`), `domain?` (must match the credential's binding) |
-| `run_subtask` | risky | on non-sandbox targets, **once per subtask** (its steps carry that grant) | `goal`, `inputs?` (`[{name, value}]`, the only text it may type), `success?` (1–10 `verify` checks, or `{ask}` for a fuzzy yes/no), `constraints?` (`ops?`, `avoid?`, `allow_irreversible?`), `max_steps?` (default 12, max 40), `budget_ms?` (default 60 000), `app?` / `pid?` / `window_id?`, `query?`, `max_elements?` (default 300) |
+| `run_subtask` | risky | on non-sandbox targets, **once per subtask** (its steps carry that grant) | `goal`, `inputs?` (`[{name, value}]`, the only text it may type), `success?` (1–10 `verify` checks, or `{ask}` for a fuzzy yes/no), `constraints?` (`ops?`, `avoid?`, `allow_irreversible?`), `max_steps?` (default 12, max 40), `budget_ms?` (default 60 000), `app?` / `pid?` / `window_id?`, `query?`, `max_elements?` (default 300), `cache?` (`auto` default, `refresh`, `off`), `save_as?` (save the recording as a named skill) |
+| `run_skill` | risky | on non-sandbox targets, **once per run** (like `run_subtask`) | `name`, `inputs?` (a value for each of the skill's input names), `app?` / `pid?` / `window_id?`, `max_steps?`, `budget_ms?` |
+| `skills` | reversible | no | `forget?` (delete this saved skill before listing) |
 
 `run_batch` runs ordered steps in one window. Each step may check `wait_for` (precondition) and `expect` (postcondition); the batch stops at the first failed check and returns one observe read (the fresh element map). `verify` checks bounded conditions — role, name, text, gone, value, enabled — on a fresh read. `request_human` pauses the lease, opens the live view with input enabled, and resumes the same session when the person signals done (`POST /api/v1/computers/:id/human-done`) or the timeout elapses. `use_credential` types a vault secret or a fresh TOTP code into the focused field; the value never enters the model context, the prompts or the logs. See [Computer credentials](/tools/computer-credentials).
 
 `run_subtask` hands a bounded step sequence (fill a form, search and pick a result, toggle settings) to the decision loop instead of the planner model. Each step reads the element map, picks one option from the visible elements × allowed ops with a typed decision (`POST /v1/decisions`, about 100–150 ms on a local scorer), runs it through the same lease → policy → audit path as every other call, and checks `success` with `verify`. It returns a step trace (decision, backend, latency, confidence per step) and a status: `done`, `escalated` (with the reason and a compact current screen, so the planner continues from there) or `failed`. A decision under its confidence threshold hands control back instead of guessing. Elements named like send, pay, buy, delete or publish are never options unless `constraints.allow_irreversible` is set. Secrets never go in `inputs`: use `use_credential`. See [How computer use decides](/tools/computer-use-decisions) for the loop and measured numbers.
+
+A subtask that has run before replays from the **replay cache** with no decisions: same goal, app and window, same input names, new values. A step whose element moved is found again or re-inferred with one decision, and the recording is rewritten. `save_as` keeps a recording as a named skill that `run_skill` runs with new input values; `skills` lists them. The result's `cache` block says what happened (`hit`, `healed`, `miss`, `diverged`, `uncached`, `off`). See [Replay cache and skills](/tools/computer-use-replay).
 
 ```json
 {
@@ -260,6 +264,7 @@ Outputs: `sdk/computer-toolset` (`@allternit/computer-toolset`), gizzi `contract
 - [Allternit Computer Interface (ACI)](/tools/computer-use)
 - [Allternit Driver](/tools/allternit-driver)
 - [How computer use decides](/tools/computer-use-decisions)
+- [Replay cache and skills](/tools/computer-use-replay)
 - [Computer credentials](/tools/computer-credentials)
 - [Computers MCP server](/api/platform/hosted-computers)
 - [Computers and apps](/guides/computers-and-apps)

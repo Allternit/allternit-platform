@@ -1702,10 +1702,15 @@ pub async fn execute(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: 
         _ => computer.id.clone(),
     };
     crate::computer_routes::touch_computer_activity(&state.db, &computer.id);
-    if req.member == "run_subtask" {
-        // The bounded decision loop. Each of its steps goes back through
-        // `execute_step` (lease, policy, audit, dispatch, event).
-        let outcome = crate::computer_subtask::run(state, user, &computer, &target, &req.input, &run_id).await;
+    if req.member == "run_subtask" || req.member == "run_skill" {
+        // The bounded decision loop (a skill is a saved recording of one).
+        // Each of its steps goes back through `execute_step` (lease, policy,
+        // audit, dispatch, event); replayed steps too.
+        let outcome = if req.member == "run_skill" {
+            crate::computer_subtask::run_skill(state, user, &computer, &target, &req.input, &run_id).await
+        } else {
+            crate::computer_subtask::run(state, user, &computer, &target, &req.input, &run_id).await
+        };
         emit_action(&computer.id, req.toolset, &req.member, None, None, req.run_id.as_deref(), outcome.is_ok());
         return match outcome {
             Ok(result) => {
@@ -2072,12 +2077,15 @@ mod tests {
     #[test]
     fn contracts_load_with_anthropic_member_sets() {
         assert_eq!(contract(Toolset::Computer).id, "allternit.computer.v2");
-        assert_eq!(contract(Toolset::Computer).members.len(), 24);
+        assert_eq!(contract(Toolset::Computer).members.len(), 26);
         assert_eq!(contract(Toolset::Browser).members.len(), 31);
         assert!(contract(Toolset::Computer).member("read_ui").is_some());
         assert!(contract(Toolset::Computer).member("use_credential").is_some());
         let sub = contract(Toolset::Computer).member("run_subtask").expect("run_subtask");
         assert!(needs_approval(sub, false) && !needs_approval(sub, true), "one approval per subtask on this device, none in a sandbox");
+        let skill = contract(Toolset::Computer).member("run_skill").expect("run_skill");
+        assert!(needs_approval(skill, false) && !needs_approval(skill, true), "a skill run is approved like a subtask");
+        assert!(!needs_approval(contract(Toolset::Computer).member("skills").expect("skills"), false));
         assert_eq!(contract(Toolset::Computer).batch_halt_text, "Not executed: an earlier computer action in this turn failed.");
         assert_eq!(contract(Toolset::Browser).batch_halt_text, "Not executed: an earlier action in this turn failed.");
     }
