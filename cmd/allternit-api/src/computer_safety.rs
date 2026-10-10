@@ -399,13 +399,14 @@ pub async fn resolve_project_scope(
         requested.map(str::to_string),
         run_id.map(str::to_string),
     );
+    let requested_q = requested.clone();
     let (run_project, requested_owned) = tokio::task::spawn_blocking(move || -> rusqlite::Result<(Option<String>, bool)> {
         let conn = db.connect()?;
         let run_project = match run_id.as_deref() {
             Some(r) => project_for_run(&conn, &owner, r)?,
             None => None,
         };
-        let requested_owned = match requested.as_deref() {
+        let requested_owned = match requested_q.as_deref() {
             Some(p) => project_owned(&conn, &owner, p)?,
             None => true,
         };
@@ -1528,7 +1529,7 @@ async fn ocr_lines(target: &Target, png: &[u8], level: &str, data_dir: &std::pat
     }
     match crate::this_device_input::call_driver_timed("ocr", json!({ "png": B64.encode(png), "level": level }), Duration::from_secs(10)).await {
         Ok(reply) => return Ok(reply),
-        Err(e) => tracing::debug!("driver OCR unavailable for redaction ({e}); trying the server OCR engine"),
+        Err(e) => tracing::debug!("driver OCR unavailable for redaction ({}); trying the server OCR engine", String::from(e)),
     }
     crate::computer_ocr::ocr_png(png, data_dir).await
 }

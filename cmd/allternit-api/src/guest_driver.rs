@@ -99,7 +99,7 @@ pub async fn guest_driver_op(target: &Target, member: &str, params: &Value, time
     if !is_structured_member(member) {
         return Err(Fail::from(format!("{member} isn't a driver-served member")));
     }
-    guest_driver_raw(target, member, params, timeout).await
+    guest_driver_raw(target, member, params.clone(), timeout).await
 }
 
 /// Any driver method (structured members, `pixel_*`, `screenshot`,
