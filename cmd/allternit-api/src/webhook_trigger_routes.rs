@@ -636,16 +636,64 @@ pub(crate) async fn create_ticket_for_trigger(
     event: &str,
     payload: &Value,
 ) -> Result<String, ApiError> {
+    create_trigger_ticket(rails, trigger, event, payload, None)
+}
+
+/// Serialize durable MCP ticket creation with the runtime database. Stable IDs
+/// recover the file-store/SQL boundary if a process stops after writing a ticket.
+pub(crate) fn create_mcp_ticket(
+    db: &crate::db::DbHandle,
+    rails: &RailsState,
+    trigger: &WebhookTrigger,
+    event: &str,
+    payload: &Value,
+    event_id: &str,
+) -> Result<String, ApiError> {
+    let mut c = db
+        .connect()
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let tx = c
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let result = create_trigger_ticket(rails, trigger, event, payload, Some(event_id))?;
+    tx.commit().map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok(result)
+}
+
+fn create_trigger_ticket(
+    rails: &RailsState,
+    trigger: &WebhookTrigger,
+    event: &str,
+    payload: &Value,
+    stable_event: Option<&str>,
+) -> Result<String, ApiError> {
     let store = TicketStore::new(&rails.root_dir).map_err(|e| ApiError::Internal(e.to_string()))?;
 
     let now = chrono::Utc::now();
-    let id = TicketId::mint(format!("webhook:{}:{}:{}", trigger.id, event, now).as_bytes());
+    let seed = match stable_event {
+        Some(id) => format!("mcp:{}:{id}", trigger.id),
+        None => format!("webhook:{}:{}:{}", trigger.id, event, now),
+    };
+    let id = if stable_event.is_some() {
+        TicketId::new(format!("T-{}",hex::encode(&Sha256::digest(seed.as_bytes())[..16])))
+    } else {TicketId::mint(seed.as_bytes())};
+    if stable_event.is_some()
+        && store
+            .get(&id)
+            .map_err(|e| ApiError::Internal(e.to_string()))?
+            .is_some()
+    {
+        return Ok(id.to_string());
+    }
     let title = format!("[{}] {} → {}", trigger.source, event, trigger.name);
     let mut metadata = std::collections::HashMap::new();
     metadata.insert("source".to_string(), json!(trigger.source));
     metadata.insert("event".to_string(), json!(event));
     metadata.insert("trigger_id".to_string(), json!(trigger.id));
-    metadata.insert("target_agent_id".to_string(), json!(trigger.target_agent_id));
+    metadata.insert(
+        "target_agent_id".to_string(),
+        json!(trigger.target_agent_id),
+    );
     metadata.insert("execution_mode".to_string(), json!(trigger.execution_mode));
     metadata.insert("payload".to_string(), payload.clone());
     if let Some(ref tpl) = trigger.prompt_template {

@@ -8,6 +8,7 @@ name = "allternit-api"
 path = "src/main.rs"
 
 [dependencies]
+jsonschema = { version = "0.58.6", default-features = false }
 # Vendored OpenSSL: allternit-api links openssl transitively (webauthn-rs-core),
 # and CI cross-compiles x86_64-apple-darwin from arm64 hosts where no
 # x86_64 Homebrew openssl exists. Vendoring builds openssl from source for

@@ -150,3 +150,67 @@ The runtime answers `200 {"status":"triggered","ticketId","eventId"}`, `200 {"st
 - Runtime: `mcp_event_subscriptions` (migration V241). Secrets sealed with the runtime's token key.
 - Cloud: `mcp_event_client_subscriptions` + `mcp_event_client_seen` (migration 059). Secrets sealed with `ALLTERNIT_CREDENTIALS_KEY` when set. Dedupe marks are kept 7 days.
 - Connector event data is not forwarded to the cloud event backbone.
+
+
+## Automation rules and runs
+
+The event transport identity remains `(owner, connector URL, event name, canonical filters)`. Independent rules fan out from that subscription; do not create multiple upstream subscriptions for different tasks.
+
+`POST /connectors/:id/events` accepts an optional `automation` object. When present, it saves the subscription's default rule (`<subscription-id>:default`). Omitting it preserves existing rules and keeps the older ticket-only contract compatible.
+
+```json
+{
+  "name": "email.received",
+  "arguments": { "label": "inbox" },
+  "botId": "bot_1",
+  "executionMode": "REQUIRE_APPROVAL",
+  "automation": {
+    "botId": "bot_1",
+    "instructions": "Investigate the report and prepare a draft fix.",
+    "expectedOutput": "Draft and validation evidence",
+    "executionMode": "REQUIRE_APPROVAL",
+    "paused": false,
+    "batchSeconds": 60,
+    "maxRunsPerDay": 20,
+    "timeoutSeconds": 300,
+    "dailySpendThresholdUsd": null
+  }
+}
+```
+
+Rule instructions are required, at most 16,000 UTF-8 bytes; expected output at most 4,000 bytes. Modes are `REQUIRE_APPROVAL`, `PLAN_ONLY`, or `ACCEPT_EDITS`; automation rules cannot bypass permissions. The bot must belong to the caller and support enforceable session tool permissions. Unrecognized rule fields are rejected.
+
+All paths below have the `/api/v1/mcp` prefix and the same authenticated owner boundary as the connector. `<base>` means `/connectors/:id/events/subscriptions/:sid`.
+
+| Method and path | Behavior |
+|---|---|
+| `GET <base>/rules` | `{rules: [{id, version, config}]}`. |
+| `POST <base>/rules` | Save a new independent rule from the object above; returns `{id}`. Maximum 50 per subscription. |
+| `POST <base>/rules/:rid` | Replace a rule's configuration and increment its version. Existing jobs retain their snapshot. |
+| `DELETE <base>/rules/:rid` | Remove a rule; queued work is cancelled at dispatch. |
+| `GET <base>/runs` | Latest 100 jobs with status, saved config, source IDs, ticket/thread/session references, output/error and attempt history. |
+| `GET <base>/runs/:jid/events` | `{events: [...]}` containing the original, owner-scoped event payloads. |
+| `POST <base>/runs/:jid/approve` | Atomically transition `awaiting_approval` to `queued`; record the approving owner. |
+| `POST <base>/runs/:jid/deny` | Transition `awaiting_approval` to `denied`. |
+| `POST <base>/runs/:jid/stop` | Hold dispatch, cancel the owning runtime session when present, and mark `cancelled` only after acknowledgement. Unconfirmed cancellation stays `interrupted`. |
+| `POST <base>/runs/:jid/retry` | Failed/cancelled jobs return to `awaiting_approval`. Every retry requires a fresh approval; attempts and usage remain recorded. |
+
+State progression is `batching` → `awaiting_approval` or `queued` → `running` → `completed` / `failed` / `interrupted`. Other terminal states are `denied` and `cancelled`; `stopping` is transient. Paused rules and daily limits leave jobs queued with a reason and do not block other rules.
+
+### Delivery and execution reliability
+
+Runtime acceptance, event deduplication and rule fan-out share an immediate SQLite transaction. Execution uses compare-and-set claims and a serial runtime dispatcher. Factory tickets use an event-derived identity and recover safely if ticket writing succeeded before ledger append. Neither webhook receipt nor ticket creation means the bot finished the task.
+
+The dispatch worker runs separately from subscription renewal. Each job snapshots rule version/config and its original event data. Approval is enforced before dispatch; all native tool actions still ask (or are denied in plan mode). Subscription/rule/bot/connector access is rechecked before a turn starts. Restarted executions become interrupted rather than being replayed automatically. Runs awaiting cancellation block new dispatch until cancellation is acknowledged or held for inspection. Cancellation requests have a 15-second deadline. Strengthening a rule to ask-first or plan-only applies to pending work while preserving its original task instructions.
+
+Event names must match the subscribed name, IDs must match the signed `webhook-id`, and timestamps must be RFC3339. Arguments and payloads are checked against the advertised JSON Schemas with offline reference resolution; schemas cannot fetch local files or arbitrary remote URLs. Automation subscriptions require an advertised event definition before a rule is saved. Existing ticket-only subscriptions retain visible transport error states for unsupported or missing events. Event discovery caches are scoped to the runtime database, owner and connector.
+
+The connector list also includes `archivedSubscriptions: [{id, name}]` for up to 20 stopped subscriptions with run history. Read-only run history and event payloads remain owner-scoped after the transport subscription is removed.
+
+### Cursor recovery
+
+The last durably accepted incoming cursor is persisted and supplied on refresh. A server response with `truncated: true` records that history was unavailable; data not provided by the source cannot be reconstructed. Transport retry remains a separate 24-hour cloud queue.
+
+Each execution attempt also has a canonical `agent_runs` record, so the existing MCP `list_runs`, `get_run` and `get_run_result` tools can read its result. Terminal results commit with a durable notice outbox. Notice delivery is idempotent and forwards run references and status, without forwarding raw source payloads, task instructions or result text. Runtime restart records interrupted work and queues a notice for inspection.
+
+Storage adds migration V246: `mcp_event_rules`, `mcp_event_jobs`, `mcp_event_receipts`, `mcp_event_attempts` `mcp_event_job_actions` and `mcp_event_notices`. Raw source receipt deduplication lasts seven days; job identities remain stable. Run limits are rolling 24-hour attempt counts. Spend thresholds use reported `llm_usage_events` attributed to all attempts' sessions, not estimates or a hard budget reservation.

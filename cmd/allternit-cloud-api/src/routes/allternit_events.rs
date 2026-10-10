@@ -324,6 +324,7 @@ pub async fn emit_user_event(
 ) -> Result<Option<String>, sqlx::Error> {
     let id = new_id("evt_");
     let mut tx = db.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))").bind(user_id).execute(&mut *tx).await?;
     let stored: Option<String> = sqlx::query_scalar(
         "INSERT INTO platform_events (id, project_id, subject, user_id, type, data, source, source_id, occurred_at) \
          VALUES ($1, NULL, 'user', $2, $3, $4, $5, $6, $7) \

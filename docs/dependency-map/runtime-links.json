@@ -1,6 +1,42 @@
 {
   "nodes": [
     {
+      "id": "allternit/cmd/allternit-cloud-api/src/routes/mcp_events.rs",
+      "label": "mcp events",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-cloud-api/src/routes/mcp_events.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-cloud-api/src/routes/mcp_event_callbacks.rs",
+      "label": "mcp event callbacks",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-cloud-api/src/routes/mcp_event_callbacks.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-cloud-api/src/routes/platform_v1/events.rs",
+      "label": "events",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-cloud-api/src/routes/platform_v1/events.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/mcp_event_automations.rs",
+      "label": "mcp event automations",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/mcp_event_automations.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/agent_session_routes.rs",
+      "label": "Agent session execution and cancellation",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/agent_session_routes.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/runtime_events.rs",
+      "label": "Runtime event metadata forwarding",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/runtime_events.rs"
+    },
+    {
       "id": "surface:desktop",
       "label": "Allternit Desktop app",
       "kind": "surface",
@@ -44,6 +80,24 @@
     }
   ],
   "edges": [
+    {
+      "source": "allternit/cmd/allternit-api/src/mcp_*",
+      "target": "allternit/cmd/allternit-api/src/runtime_events.rs",
+      "kind": "canonical agent_runs results and idempotent bot ledger outcome notices; forward references and status only",
+      "evidence": ["allternit/cmd/allternit-api/src/mcp_event_automations.rs", "allternit/cmd/allternit-api/src/runtime_events.rs"]
+    },
+    {
+      "source": "allternit-ai/src/components/mcp",
+      "target": "allternit/cmd/allternit-api/src/mcp_*",
+      "kind": "authenticated HTTP: connector event rules, approvals, run history and payload inspection",
+      "evidence": ["allternit-ai/src/lib/ai/mcp/connector-events-api.ts", "allternit/cmd/allternit-api/src/mcp_event_automations.rs"]
+    },
+    {
+      "source": "allternit/cmd/allternit-api/src/mcp_*",
+      "target": "allternit/cmd/allternit-api/src/agent_session_routes.rs",
+      "kind": "durable event job dispatch: create bot thread, enforce session permissions, run and cancel bot turn",
+      "evidence": ["allternit/cmd/allternit-api/src/mcp_event_automations.rs"]
+    },
     {
       "source": "surface:desktop",
       "target": "allternit/surfaces/allternit-desktop",

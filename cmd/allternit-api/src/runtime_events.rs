@@ -52,7 +52,7 @@ const TEXT_PREVIEW: usize = 240;
 const DATA_KEYS: &[&str] = &[
     "approvalId", "authority", "action", "state", "decision", "source", "remoteRef",
     "ticketId", "vendorBotId", "deadlineAt", "lane", "summary",
-    "runId", "run_id", "routineId", "title", "trigger", "durationMs",
+    "runId", "run_id", "automationRunId", "automationRuleId", "connectorId", "subscriptionId", "status", "routineId", "title", "trigger", "durationMs",
     "durationSec", "reason", "missed", "answered", "direction", "from", "channel", "provider",
     "itemId", "kind", "severity", "actionUrl",
     "loginId", "health", "previous", "label",

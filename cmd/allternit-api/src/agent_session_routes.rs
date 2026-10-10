@@ -3357,3 +3357,16 @@ mod session_status_tests {
         assert_eq!(session_status_kind(&json!({}), "ses_a"), "idle");
     }
 }
+
+/// Stop a server-created automation session through the same runtime that owns it.
+pub(crate) async fn abort_automation_session(db:&DbHandle,session_id:&str)->Result<(),String>{
+    if let Some(confirmed)=crate::gateway_runner::intercept_abort(session_id).await {
+        return if confirmed {Ok(())}else{Err("Vendor did not confirm cancellation".into())};
+    }
+    if let Some(target)=crate::placement::session_target(db,session_id){
+        crate::placement::call(&target,reqwest::Method::POST,&format!("/agent-sessions/{}/abort",urlencoding::encode(session_id)),Some(json!({}))).await?;
+        return Ok(());
+    }
+    let client=gizzi_client(&HeaderMap::new());
+    gizzi_no_content(&client,reqwest::Method::POST,&format!("/v1/session/{}/abort",urlencoding::encode(session_id)),Some(json!({}))).await.map_err(|_|"Runtime did not confirm cancellation".into())
+}

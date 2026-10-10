@@ -158,6 +158,7 @@ pub fn connector_events_router() -> Router<Arc<AppState>> {
 
 pub fn connector_events_router_with(ctx: Ctx) -> Router<Arc<AppState>> {
     Router::new()
+        .merge(crate::mcp_event_automations::router())
         .route("/connectors/:id/events", get(list_h).post(subscribe_h))
         .route("/connectors/:id/events/subscriptions/:sid", delete(unsubscribe_h))
         .layer(Extension(ctx))
@@ -192,9 +193,10 @@ pub struct SubRow {
     pub event_count: i64,
     pub created_at: String,
     pub updated_at: String,
+    pub replay_truncated: bool,
 }
 
-const COLS: &str = "id, user_id, connector_id, name, arguments, bot_id, execution_mode, secret, callback_url, status, error_code, error_reason, error_message, had_auth, refresh_before, last_event_at, last_event_id, event_count, created_at, updated_at";
+const COLS: &str = "id, user_id, connector_id, name, arguments, bot_id, execution_mode, secret, callback_url, status, error_code, error_reason, error_message, had_auth, refresh_before, last_event_at, last_event_id, event_count, created_at, updated_at, replay_truncated";
 
 fn read_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<SubRow> {
     Ok(SubRow {
@@ -218,6 +220,7 @@ fn read_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<SubRow> {
         event_count: r.get(17)?,
         created_at: r.get(18)?,
         updated_at: r.get(19)?,
+        replay_truncated: r.get::<_,i64>(20)? != 0,
     })
 }
 
@@ -240,6 +243,7 @@ impl SubRow {
             "lastEventAt": self.last_event_at,
             "lastEventId": self.last_event_id,
             "eventCount": self.event_count,
+            "replayTruncated": self.replay_truncated,
             "createdAt": self.created_at,
             "updatedAt": self.updated_at,
         })
@@ -378,7 +382,7 @@ async fn session(state: &Arc<AppState>, ctx: &Ctx, user: &str, connector_id: &st
     Ok((connector, client))
 }
 
-type ListCache = Mutex<HashMap<(String, String), (Instant, Result<(bool, Vec<Value>), Failure>)>>;
+type ListCache = Mutex<HashMap<(String, String, String), (Instant, Result<(bool, Vec<Value>), Failure>)>>;
 
 fn list_cache() -> &'static ListCache {
     static CACHE: OnceLock<ListCache> = OnceLock::new();
@@ -387,7 +391,7 @@ fn list_cache() -> &'static ListCache {
 
 /// `(supported, events)` from the connector, live, reused for [`LIST_CACHE`].
 pub async fn connector_events(state: &Arc<AppState>, ctx: &Ctx, user: &str, connector_id: &str) -> Result<(bool, Vec<Value>), Failure> {
-    let key = (user.to_string(), connector_id.to_string());
+    let key = (state.db.path().to_string_lossy().into_owned(), user.to_string(), connector_id.to_string());
     if let Some((at, hit)) = list_cache().lock().ok().and_then(|c| c.get(&key).cloned()) {
         if at.elapsed() < LIST_CACHE {
             return hit;
@@ -413,9 +417,9 @@ pub async fn connector_events(state: &Arc<AppState>, ctx: &Ctx, user: &str, conn
     result
 }
 
-fn forget_list(user: &str, connector_id: &str) {
+fn forget_list(state: &AppState, user: &str, connector_id: &str) {
     if let Ok(mut c) = list_cache().lock() {
-        c.remove(&(user.to_string(), connector_id.to_string()));
+        c.remove(&(state.db.path().to_string_lossy().into_owned(), user.to_string(), connector_id.to_string()));
     }
 }
 
@@ -433,6 +437,8 @@ pub struct SubscribeRequest {
     /// `ACCEPT_EDITS` or `BYPASS_PERMISSIONS`.
     #[serde(default)]
     pub execution_mode: Option<String>,
+    #[serde(default)]
+    pub automation: Option<crate::mcp_event_automations::Rule>,
 }
 
 fn empty_object() -> Value {
@@ -449,7 +455,20 @@ pub enum Refused {
 /// Create or update the subscription for `(user, connector, name, arguments)` and
 /// call `events/subscribe`. The row is returned whatever the outcome: its
 /// `status`/`error` say whether the server took it.
-pub async fn subscribe(state: &Arc<AppState>, ctx: &Ctx, user: &str, connector_id: &str, req: SubscribeRequest) -> Result<SubRow, Refused> {
+pub async fn subscribe(
+    state: &Arc<AppState>,
+    ctx: &Ctx,
+    user: &str,
+    connector_id: &str,
+    req: SubscribeRequest,
+) -> Result<SubRow, Refused> {
+    if let Some(rule) = &req.automation {
+        rule.validate().map_err(Refused::BadRequest)?;
+        crate::mcp_event_automations::target_supported(state,user,&rule.bot_id).map_err(Refused::BadRequest)?;
+        if !crate::bot_event_routes::verify_bot_ownership(state, user, &rule.bot_id).await {
+            return Err(Refused::NotFound("bot_not_found"));
+        }
+    }
     let name = req.name.trim().to_string();
     if name.is_empty() || name.len() > 200 {
         return Err(Refused::BadRequest("name is required".into()));
@@ -457,10 +476,18 @@ pub async fn subscribe(state: &Arc<AppState>, ctx: &Ctx, user: &str, connector_i
     if !req.arguments.is_object() {
         return Err(Refused::BadRequest("arguments must be an object".into()));
     }
-    let mode = req.execution_mode.unwrap_or_else(|| "REQUIRE_APPROVAL".into());
+    let mode = req
+        .execution_mode
+        .unwrap_or_else(|| "REQUIRE_APPROVAL".into());
     // The webhook-trigger execution modes (webhook_trigger_routes::validate_trigger_body).
-    if !matches!(mode.as_str(), "PLAN_ONLY" | "REQUIRE_APPROVAL" | "ACCEPT_EDITS" | "BYPASS_PERMISSIONS") {
-        return Err(Refused::BadRequest("executionMode must be PLAN_ONLY, REQUIRE_APPROVAL, ACCEPT_EDITS or BYPASS_PERMISSIONS".into()));
+    if !matches!(
+        mode.as_str(),
+        "PLAN_ONLY" | "REQUIRE_APPROVAL" | "ACCEPT_EDITS" | "BYPASS_PERMISSIONS"
+    ) {
+        return Err(Refused::BadRequest(
+            "executionMode must be PLAN_ONLY, REQUIRE_APPROVAL, ACCEPT_EDITS or BYPASS_PERMISSIONS"
+                .into(),
+        ));
     }
     if !crate::bot_event_routes::verify_bot_ownership(state, user, &req.bot_id).await {
         return Err(Refused::NotFound("bot_not_found"));
@@ -470,10 +497,21 @@ pub async fn subscribe(state: &Arc<AppState>, ctx: &Ctx, user: &str, connector_i
         .ok()
         .flatten()
         .ok_or(Refused::NotFound("connector_not_found"))?;
+    let (_, definitions) = connector_events(state, ctx, user, connector_id).await.map_err(|e| Refused::BadRequest(e.message))?;
+    let definition = definitions.iter().find(|d| d["name"] == name);
+    if req.automation.is_some() && definition.is_none() {return Err(Refused::NotFound("event_not_found"));}
+    // Preserve ticket-only subscriptions' visible transport error states.
+    if let Some(schema) = definition.and_then(|d|d.get("inputSchema")) { crate::mcp_event_automations::validate_event_schema(schema, &req.arguments).map_err(Refused::BadRequest)?; }
+    let payload_schema = definition.and_then(|d|d.get("payloadSchema")).cloned();
+    if let Some(schema)=&payload_schema {crate::mcp_event_automations::check_event_schema(schema).map_err(Refused::BadRequest)?;}
     let id = ev::subscription_id(user, &connector.url, &name, &req.arguments);
     let existing = get_row(state, &id).await.ok().flatten();
     // Re-subscribing keeps a live secret (idempotent); anything else starts fresh.
-    let secret = existing.as_ref().filter(|r| r.status == "active").map(|r| r.secret.clone()).unwrap_or_else(new_secret);
+    let secret = existing
+        .as_ref()
+        .filter(|r| r.status == "active")
+        .map(|r| r.secret.clone())
+        .unwrap_or_else(new_secret);
     {
         let (id, user, cid, name, args, bot, mode, sealed, had_auth) = (
             id.clone(),
@@ -486,28 +524,40 @@ pub async fn subscribe(state: &Arc<AppState>, ctx: &Ctx, user: &str, connector_i
             crate::token_crypto::seal(&secret),
             connector.has_token(),
         );
+        let automation=req.automation.clone();
         blocking(state, move |c| {
-            c.execute(
+            let tx=c.unchecked_transaction()?;
+            tx.execute(
                 "INSERT INTO mcp_event_subscriptions (id, user_id, connector_id, name, arguments, bot_id, execution_mode, secret, status, had_auth, created_at, updated_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'pending', ?9, ?10, ?10)
                  ON CONFLICT(id) DO UPDATE SET bot_id = excluded.bot_id, execution_mode = excluded.execution_mode,
                     secret = excluded.secret, had_auth = excluded.had_auth, updated_at = excluded.updated_at,
                     status = CASE WHEN mcp_event_subscriptions.status = 'active' THEN 'active' ELSE 'pending' END",
                 params![id, user, cid, name, args, bot, mode, sealed, had_auth as i64, now()],
-            )
+            )?;
+            tx.execute("UPDATE mcp_event_subscriptions SET payload_schema=?2 WHERE id=?1",params![id,payload_schema.map(|s|s.to_string())])?;
+            if let Some(rule)=&automation {crate::mcp_event_automations::store_rule(&tx,&user,&id,&format!("{id}:default"),rule)?;}
+            tx.commit()?;
+            Ok(())
         })
         .await
         .map_err(Refused::BadRequest)?;
     }
     activate(state, ctx, &id, &secret).await;
-    forget_list(user, connector_id);
-    get_row(state, &id).await.ok().flatten().ok_or(Refused::NotFound("subscription_not_found"))
+    forget_list(state, user, connector_id);
+    get_row(state, &id)
+        .await
+        .ok()
+        .flatten()
+        .ok_or(Refused::NotFound("subscription_not_found"))
 }
 
 /// Register `secret` with the cloud, then `events/subscribe` with it. Leaves
 /// the row `active` (with `refreshBefore`) or in the failure's state.
 async fn activate(state: &Arc<AppState>, ctx: &Ctx, id: &str, secret: &str) -> bool {
-    let Ok(Some(row)) = get_row(state, id).await else { return false };
+    let Ok(Some(row)) = get_row(state, id).await else {
+        return false;
+    };
     match try_activate(state, ctx, &row, secret).await {
         Ok(()) => true,
         Err(f) => {
@@ -516,37 +566,94 @@ async fn activate(state: &Arc<AppState>, ctx: &Ctx, id: &str, secret: &str) -> b
                 // The server won't deliver; stop the receiver too.
                 let _ = ctx.cloud.remove(id).await;
             }
-            set_status(state, id, f.status, f.code, Some(&f.reason), Some(&f.message)).await;
+            set_status(
+                state,
+                id,
+                f.status,
+                f.code,
+                Some(&f.reason),
+                Some(&f.message),
+            )
+            .await;
             false
         }
     }
 }
 
-async fn try_activate(state: &Arc<AppState>, ctx: &Ctx, row: &SubRow, secret: &str) -> Result<(), Failure> {
+async fn try_activate(
+    state: &Arc<AppState>,
+    ctx: &Ctx,
+    row: &SubRow,
+    secret: &str,
+) -> Result<(), Failure> {
     let (connector, client) = session(state, ctx, &row.user_id, &row.connector_id).await?;
     let result = async {
         if !client.supports_events() {
-            return Err(Failure::error("unsupported", "this app does not offer events"));
+            return Err(Failure::error(
+                "unsupported",
+                "this app does not offer events",
+            ));
         }
-        let callback = ctx.cloud.register(&row.id, secret, &row.connector_id, &row.name).await.map_err(|e| {
-            let reason = if e.starts_with("not_paired") { "not_paired" } else { "cloud_unreachable" };
-            Failure::error(reason, e)
-        })?;
-        let result = client.subscribe_event(&row.name, &row.arguments, &callback, secret, None).await.map_err(|e| classify_error(&e))?;
+        let callback = ctx
+            .cloud
+            .register(&row.id, secret, &row.connector_id, &row.name)
+            .await
+            .map_err(|e| {
+                let reason = if e.starts_with("not_paired") {
+                    "not_paired"
+                } else {
+                    "cloud_unreachable"
+                };
+                Failure::error(reason, e)
+            })?;
+        let cursor: Option<String> = blocking(state, {
+            let id = row.id.clone();
+            move |c| {
+                c.query_row(
+                    "SELECT cursor FROM mcp_event_subscriptions WHERE id=?1",
+                    params![id],
+                    |r| r.get(0),
+                )
+            }
+        })
+        .await
+        .unwrap_or(None);
+        let result = client
+            .subscribe_event_with_cursor(
+                &row.name,
+                &row.arguments,
+                &callback,
+                secret,
+                None,
+                cursor.as_deref(),
+            )
+            .await
+            .map_err(|e| classify_error(&e))?;
         Ok((callback, result))
     }
     .await;
     mcp_apps::close_session(client).await;
     let (callback, result) = result?;
-    let refresh_before = result.get("refreshBefore").and_then(Value::as_str).map(String::from);
-    let cursor = result.get("cursor").and_then(Value::as_str).map(String::from);
-    let (id, sealed, had_auth) = (row.id.clone(), crate::token_crypto::seal(secret), connector.has_token());
+    let refresh_before = result
+        .get("refreshBefore")
+        .and_then(Value::as_str)
+        .map(String::from);
+    let truncated = result.get("truncated").and_then(Value::as_bool).unwrap_or(false);
+    let cursor = result
+        .get("cursor")
+        .and_then(Value::as_str)
+        .map(String::from);
+    let (id, sealed, had_auth) = (
+        row.id.clone(),
+        crate::token_crypto::seal(secret),
+        connector.has_token(),
+    );
     blocking(state, move |c| {
         c.execute(
             "UPDATE mcp_event_subscriptions SET status = 'active', error_code = NULL, error_reason = NULL, error_message = NULL,
-                secret = ?2, callback_url = ?3, refresh_before = ?4, cursor = COALESCE(?5, cursor), had_auth = ?6, updated_at = ?7
+                secret = ?2, callback_url = ?3, refresh_before = ?4, cursor = COALESCE(?5, cursor), had_auth = ?6, updated_at = ?7, replay_truncated=?8
               WHERE id = ?1",
-            params![id, sealed, callback, refresh_before, cursor, had_auth as i64, now()],
+            params![id, sealed, callback, refresh_before, cursor, had_auth as i64, now(),truncated as i64],
         )
     })
     .await
@@ -567,12 +674,17 @@ pub async fn unsubscribe(state: &Arc<AppState>, ctx: &Ctx, row: &SubRow) {
     if let Some(url) = row.callback_url.as_deref() {
         match session(state, ctx, &row.user_id, &row.connector_id).await {
             Ok((_c, client)) => {
-                if let Err(e) = client.unsubscribe_event(&row.name, &row.arguments, url).await {
+                if let Err(e) = client
+                    .unsubscribe_event(&row.name, &row.arguments, url)
+                    .await
+                {
                     debug!(subscription = %row.id, "mcp events: unsubscribe refused: {e}");
                 }
                 mcp_apps::close_session(client).await;
             }
-            Err(f) => debug!(subscription = %row.id, reason = %f.reason, "mcp events: unsubscribe skipped"),
+            Err(f) => {
+                debug!(subscription = %row.id, reason = %f.reason, "mcp events: unsubscribe skipped")
+            }
         }
     }
     end_at_cloud(state, ctx, row).await;
@@ -582,20 +694,45 @@ async fn end_at_cloud(state: &Arc<AppState>, ctx: &Ctx, row: &SubRow) {
     let id = row.id.clone();
     match ctx.cloud.remove(&row.id).await {
         Ok(()) => {
-            let _ = blocking(state, move |c| c.execute("DELETE FROM mcp_event_subscriptions WHERE id = ?1", params![id])).await;
+            let _ = blocking(state, move |c| {
+                c.execute(
+                    "DELETE FROM mcp_event_subscriptions WHERE id = ?1",
+                    params![id],
+                )
+            })
+            .await;
         }
         Err(e) => {
             warn!(subscription = %row.id, "mcp events: cloud removal pending: {e}");
-            set_status(state, &row.id, "ended", None, Some("cloud_unreachable"), Some(&e)).await;
+            set_status(
+                state,
+                &row.id,
+                "ended",
+                None,
+                Some("cloud_unreachable"),
+                Some(&e),
+            )
+            .await;
         }
     }
-    forget_list(&row.user_id, &row.connector_id);
+    forget_list(state, &row.user_id, &row.connector_id);
 }
 
 /// End every subscription `user` has on `connector_id` (unsubscribe at the app, remove at the cloud, delete the
 /// row), before the connector itself is deleted: afterwards there is nothing left to unsubscribe with.
-pub async fn end_connector_subscriptions(state: &Arc<AppState>, ctx: &Ctx, user: &str, connector_id: &str) -> usize {
-    let rows = rows_where(state, "user_id = ?1 AND connector_id = ?2", vec![user.to_string(), connector_id.to_string()]).await.unwrap_or_default();
+pub async fn end_connector_subscriptions(
+    state: &Arc<AppState>,
+    ctx: &Ctx,
+    user: &str,
+    connector_id: &str,
+) -> usize {
+    let rows = rows_where(
+        state,
+        "user_id = ?1 AND connector_id = ?2",
+        vec![user.to_string(), connector_id.to_string()],
+    )
+    .await
+    .unwrap_or_default();
     for row in &rows {
         if row.status == "ended" {
             end_at_cloud(state, ctx, row).await;
@@ -604,29 +741,57 @@ pub async fn end_connector_subscriptions(state: &Arc<AppState>, ctx: &Ctx, user:
         }
     }
     // Rows whose cloud removal failed stay `ended` for the lifecycle loop; it finishes them without the connector.
-    forget_list(user, connector_id);
+    forget_list(state, user, connector_id);
     rows.len()
 }
 
 /// When an active subscription is due for renewal.
-pub fn due_for_refresh(refresh_before: Option<&str>, now: chrono::DateTime<chrono::Utc>, updated_at: Option<&str>) -> bool {
-    let Some(rb) = refresh_before.and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok()) else { return false };
+pub fn due_for_refresh(
+    refresh_before: Option<&str>,
+    now: chrono::DateTime<chrono::Utc>,
+    updated_at: Option<&str>,
+) -> bool {
+    let Some(rb) = refresh_before.and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok()) else {
+        return false;
+    };
     let rb = rb.with_timezone(&chrono::Utc);
-    let since = updated_at.and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok()).map(|t| t.with_timezone(&chrono::Utc));
+    let since = updated_at
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|t| t.with_timezone(&chrono::Utc));
     // Half the granted window, capped at the margin: a 2-minute TTL refreshes after 1 minute.
-    let margin = since.map(|s| ((rb - s).num_seconds() / 2).clamp(0, REFRESH_MARGIN_SECS)).unwrap_or(REFRESH_MARGIN_SECS);
+    let margin = since
+        .map(|s| ((rb - s).num_seconds() / 2).clamp(0, REFRESH_MARGIN_SECS))
+        .unwrap_or(REFRESH_MARGIN_SECS);
     now + chrono::Duration::seconds(margin) >= rb
 }
 
 /// Failure reasons [`tick`] retries by itself.
 pub fn is_transient(reason: &str) -> bool {
     // `approval_required` heals once the owner approves the app on their account.
-    matches!(reason, "connector_unreachable" | "connector_timeout" | "cloud_unreachable" | "not_paired" | "timeout" | "connection_refused" | "http_5xx" | "approval_required")
+    matches!(
+        reason,
+        "connector_unreachable"
+            | "connector_timeout"
+            | "cloud_unreachable"
+            | "not_paired"
+            | "timeout"
+            | "connection_refused"
+            | "http_5xx"
+            | "approval_required"
+    )
 }
 
 /// One pass of the lifecycle loop. Returns how many rows it acted on.
 pub async fn tick(state: &Arc<AppState>, ctx: &Ctx) -> usize {
-    let Ok(rows) = rows_where(state, "status IN ('active', 'needs_reauth', 'ended', 'error')", vec![]).await else { return 0 };
+    let Ok(rows) = rows_where(
+        state,
+        "status IN ('active', 'needs_reauth', 'ended', 'error')",
+        vec![],
+    )
+    .await
+    else {
+        return 0;
+    };
     let mut acted = 0;
     for row in rows {
         if row.status == "ended" {
@@ -634,7 +799,11 @@ pub async fn tick(state: &Arc<AppState>, ctx: &Ctx) -> usize {
             acted += 1;
             continue;
         }
-        let connector = mcp_apps::load_connector(state, &row.user_id, &row.connector_id, ctx.allow_private).await.ok().flatten();
+        let connector =
+            mcp_apps::load_connector(state, &row.user_id, &row.connector_id, ctx.allow_private)
+                .await
+                .ok()
+                .flatten();
         let Some(connector) = connector else {
             // Connector deleted or disabled: nothing to unsubscribe with; stop the receiver and forget it.
             info!(subscription = %row.id, "mcp events: connector gone, ending subscription");
@@ -648,12 +817,22 @@ pub async fn tick(state: &Arc<AppState>, ctx: &Ctx) -> usize {
             info!(subscription = %row.id, "mcp events: connector credentials lost, unsubscribing");
             if let Some(url) = row.callback_url.as_deref() {
                 if let Ok(client) = mcp_apps::open_session(&connector, ctx.allow_private).await {
-                    let _ = client.unsubscribe_event(&row.name, &row.arguments, url).await;
+                    let _ = client
+                        .unsubscribe_event(&row.name, &row.arguments, url)
+                        .await;
                     mcp_apps::close_session(client).await;
                 }
             }
             let _ = ctx.cloud.remove(&row.id).await;
-            set_status(state, &row.id, "needs_reauth", None, Some("needs_reauth"), Some("reconnect the app to resume its events")).await;
+            set_status(
+                state,
+                &row.id,
+                "needs_reauth",
+                None,
+                Some("needs_reauth"),
+                Some("reconnect the app to resume its events"),
+            )
+            .await;
             acted += 1;
             continue;
         }
@@ -673,7 +852,11 @@ pub async fn tick(state: &Arc<AppState>, ctx: &Ctx) -> usize {
             }
             continue;
         }
-        if due_for_refresh(row.refresh_before.as_deref(), chrono::Utc::now(), Some(&row.updated_at)) {
+        if due_for_refresh(
+            row.refresh_before.as_deref(),
+            chrono::Utc::now(),
+            Some(&row.updated_at),
+        ) {
             refresh(state, ctx, &row).await;
             acted += 1;
         }
@@ -684,13 +867,18 @@ pub async fn tick(state: &Arc<AppState>, ctx: &Ctx) -> usize {
 /// Background lifecycle loop (refresh, re-auth resume, connector removal / revoke).
 pub async fn run(state: Arc<AppState>) {
     let ctx = Ctx::production();
-    loop {
+    if let Err(e)=crate::mcp_event_automations::recover(&state){warn!(error=%e,"event automation recovery failed");}
+    let lifecycle=async {loop {
         tokio::time::sleep(LOOP_EVERY).await;
-        let n = tick(&state, &ctx).await;
-        if n > 0 {
-            debug!(acted = n, "mcp events lifecycle pass");
-        }
-    }
+        let n=tick(&state,&ctx).await;
+        if n>0 {debug!(acted=n,"mcp events lifecycle pass");}
+    }};
+    let work=async {loop {
+        if let Err(e)=crate::mcp_event_automations::dispatch(&state,&crate::mcp_event_automations::BotExecutor).await {warn!(error=%e,"event automation dispatch failed");}
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    }};
+    // A slow bot turn must not prevent subscription renewal or access revocation.
+    tokio::select! {_=lifecycle=>{},_=work=>{}}
 }
 
 // ---------------------------------------------------------------- ingest
@@ -699,7 +887,10 @@ pub async fn run(state: Arc<AppState>) {
 #[derive(Debug, PartialEq)]
 pub enum Ingested {
     /// Ledger entry written and the bot's ticket created.
-    Triggered { ticket_id: String, ledger_id: String },
+    Triggered {
+        ticket_id: String,
+        ledger_id: String,
+    },
     Duplicate,
     /// A `terminated` envelope: the subscription's state was updated.
     Terminated,
@@ -710,21 +901,55 @@ pub enum Ingested {
 
 /// Handle one delivery the cloud verified and relayed for `owner`.
 pub async fn ingest(state: &Arc<AppState>, owner: &str, body: &Value) -> Result<Ingested, String> {
-    let Some(key) = body.get("subscriptionKey").and_then(Value::as_str) else { return Ok(Ingested::Invalid("subscriptionKey required")) };
-    let Some(event) = body.get("event").filter(|e| e.is_object()) else { return Ok(Ingested::Invalid("event required")) };
-    let Some(row) = get_row(state, key).await?.filter(|r| r.user_id == owner) else { return Ok(Ingested::Unknown) };
+    let Some(key) = body.get("subscriptionKey").and_then(Value::as_str) else {
+        return Ok(Ingested::Invalid("subscriptionKey required"));
+    };
+    let Some(event) = body.get("event").filter(|e| e.is_object()) else {
+        return Ok(Ingested::Invalid("event required"));
+    };
+    let Some(row) = get_row(state, key).await?.filter(|r| r.user_id == owner) else {
+        return Ok(Ingested::Unknown);
+    };
 
     if event.get("type").and_then(Value::as_str) == Some("terminated") {
         let code = event.pointer("/error/code").and_then(Value::as_i64);
-        let reason = event.pointer("/error/data/reason").and_then(Value::as_str).unwrap_or("terminated");
-        let message = event.pointer("/error/message").and_then(Value::as_str).unwrap_or("the app ended this subscription");
-        let status = if code == Some(codes::FORBIDDEN) { "needs_reauth" } else { "error" };
+        let reason = event
+            .pointer("/error/data/reason")
+            .and_then(Value::as_str)
+            .unwrap_or("terminated");
+        let message = event
+            .pointer("/error/message")
+            .and_then(Value::as_str)
+            .unwrap_or("the app ended this subscription");
+        let status = if code == Some(codes::FORBIDDEN) {
+            "needs_reauth"
+        } else {
+            "error"
+        };
         set_status(state, &row.id, status, code, Some(reason), Some(message)).await;
-        forget_list(&row.user_id, &row.connector_id);
+        forget_list(state, &row.user_id, &row.connector_id);
         return Ok(Ingested::Terminated);
     }
 
-    let name = event.get("name").and_then(Value::as_str).unwrap_or(&row.name).to_string();
+    if row.status != "active" {
+        return Ok(Ingested::Unknown);
+    }
+    if event.get("name").and_then(Value::as_str) != Some(row.name.as_str()) {
+        return Ok(Ingested::Invalid("event name does not match subscription"));
+    }
+    if body
+        .get("webhookId")
+        .and_then(Value::as_str)
+        .zip(event.get("eventId").and_then(Value::as_str))
+        .is_some_and(|(a, b)| a != b)
+    {
+        return Ok(Ingested::Invalid("eventId must match webhookId"));
+    }
+    let name = event
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or(&row.name)
+        .to_string();
     let event_id = event
         .get("eventId")
         .and_then(Value::as_str)
@@ -740,12 +965,22 @@ pub async fn ingest(state: &Arc<AppState>, owner: &str, body: &Value) -> Result<
     {
         let (bot, key) = (row.bot_id.clone(), idempotency.clone());
         let seen = blocking(state, move |c| {
-            c.query_row("SELECT 1 FROM bot_events WHERE bot_id = ?1 AND idempotency_key = ?2", params![bot, key], |_| Ok(())).optional()
+            c.query_row(
+                "SELECT 1 FROM bot_events WHERE bot_id = ?1 AND idempotency_key = ?2",
+                params![bot, key],
+                |_| Ok(()),
+            )
+            .optional()
         })
         .await?;
         if seen.is_some() {
             return Ok(Ingested::Duplicate);
         }
+    }
+    let schema: Option<String> = blocking(state, {let id=row.id.clone();move |c|c.query_row("SELECT payload_schema FROM mcp_event_subscriptions WHERE id=?1",params![id],|r|r.get(0))}).await?;
+    if let Some(schema) = schema {
+        let schema:Value=serde_json::from_str(&schema).map_err(|e|e.to_string())?;
+        if crate::mcp_event_automations::validate_event_schema(&schema, event.get("data").unwrap_or(&Value::Null)).is_err() {return Ok(Ingested::Invalid("event data does not match payload schema"));}
     }
     let connector_name = connector_label(state, &row).await;
     let mut data = event.get("data").cloned().unwrap_or(Value::Null);
@@ -778,15 +1013,31 @@ pub async fn ingest(state: &Arc<AppState>, owner: &str, body: &Value) -> Result<
         created_at: row.created_at.clone(),
         updated_at: row.updated_at.clone(),
     };
-    let ticket_id = crate::webhook_trigger_routes::create_ticket_for_trigger(&state.rails, &trigger, &name, &payload)
-        .await
-        .map_err(|e| format!("ticket: {e}"))?;
+    let mut automation_payload=payload.clone();
+    automation_payload["data"]=event.get("data").cloned().unwrap_or(Value::Null);
+    crate::mcp_event_automations::enqueue(state, owner, &row.id, &event_id, &automation_payload)?;
+    let ticket_id = crate::webhook_trigger_routes::create_mcp_ticket(
+        &state.db,
+        &state.rails,
+        &trigger,
+        &name,
+        &payload,
+        &event_id,
+    )
+    .map_err(|e| format!("ticket: {e}"))?;
 
+    blocking(state,{let sid=row.id.clone();let eid=event_id.clone();let tid=ticket_id.clone();move |c| {
+        c.execute("UPDATE mcp_event_receipts SET ticket_id=?3 WHERE subscription_id=?1 AND event_id=?2",params![sid,eid,tid])?;
+        c.execute("UPDATE mcp_event_jobs SET ticket_id=COALESCE(ticket_id,?3) WHERE subscription_id=?1 AND EXISTS(SELECT 1 FROM json_each(event_ids) WHERE value=?2)",params![sid,eid,tid])
+    }}).await?;
     let mut ledger_payload = payload.clone();
     ledger_payload["ticketId"] = json!(ticket_id);
     let append = crate::bot_event_routes::AppendEventBody {
         event_type: LEDGER_TYPE.to_string(),
-        actor: crate::bot_event_routes::ActorBody { r#type: "connector".into(), id: row.connector_id.clone() },
+        actor: crate::bot_event_routes::ActorBody {
+            r#type: "connector".into(),
+            id: row.connector_id.clone(),
+        },
         payload: ledger_payload,
         occurred_at: None,
         session_id: None,
@@ -797,21 +1048,38 @@ pub async fn ingest(state: &Arc<AppState>, owner: &str, body: &Value) -> Result<
         idempotency_key: Some(idempotency),
     };
     let (db, bot) = (state.db.clone(), row.bot_id.clone());
-    let at = event.get("timestamp").and_then(Value::as_str).filter(|t| chrono::DateTime::parse_from_rfc3339(t).is_ok()).map(String::from).unwrap_or_else(now);
-    let (stored, _fresh) = tokio::task::spawn_blocking(move || crate::bot_event_routes::append_event(&db, &bot, &append, &at))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())?;
-    let (id, eid) = (row.id.clone(), event_id.clone());
+    let at = event
+        .get("timestamp")
+        .and_then(Value::as_str)
+        .filter(|t| chrono::DateTime::parse_from_rfc3339(t).is_ok())
+        .map(String::from)
+        .unwrap_or_else(now);
+    let (stored, _fresh) = tokio::task::spawn_blocking(move || {
+        crate::bot_event_routes::append_event(&db, &bot, &append, &at)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    let (id, eid, cursor) = (
+        row.id.clone(),
+        event_id.clone(),
+        event
+            .get("cursor")
+            .and_then(Value::as_str)
+            .map(String::from),
+    );
     let _ = blocking(state, move |c| {
         c.execute(
-            "UPDATE mcp_event_subscriptions SET last_event_at = ?2, last_event_id = ?3, event_count = event_count + 1 WHERE id = ?1",
-            params![id, now(), eid],
+            "UPDATE mcp_event_subscriptions SET last_event_at = ?2, last_event_id = ?3, event_count = event_count + 1, cursor=COALESCE(?4,cursor) WHERE id = ?1",
+            params![id, now(), eid, cursor],
         )
     })
     .await;
     info!(subscription = %row.id, event = %name, ticket = %ticket_id, "mcp events: bot woken");
-    Ok(Ingested::Triggered { ticket_id, ledger_id: stored.id })
+    Ok(Ingested::Triggered {
+        ticket_id,
+        ledger_id: stored.id,
+    })
 }
 
 async fn connector_label(state: &Arc<AppState>, row: &SubRow) -> String {
@@ -834,7 +1102,8 @@ fn err(status: StatusCode, code: &str, message: &str) -> Response {
 async fn list_h(State(state): State<Arc<AppState>>, Extension(ctx): Extension<Ctx>, Extension(user): Extension<AuthUser>, Path(id): Path<String>) -> Response {
     let exists = mcp_apps::load_connector(&state, &user.user_id, &id, ctx.allow_private).await.ok().flatten().is_some();
     let subs = rows_where(&state, "user_id = ?1 AND connector_id = ?2 AND status <> 'ended'", vec![user.user_id.clone(), id.clone()]).await.unwrap_or_default();
-    if !exists && subs.is_empty() {
+    let archived=crate::mcp_event_automations::archived(&state,&user.user_id,&id).unwrap_or_default();
+    if !exists && subs.is_empty() && archived.is_empty() {
         return err(StatusCode::NOT_FOUND, "connector_not_found", "connector not found");
     }
     let (supported, events, error) = match connector_events(&state, &ctx, &user.user_id, &id).await {
@@ -849,6 +1118,7 @@ async fn list_h(State(state): State<Arc<AppState>>, Extension(ctx): Extension<Ct
         "supported": supported,
         "events": events,
         "subscriptions": subs.iter().map(SubRow::view).collect::<Vec<_>>(),
+        "archivedSubscriptions": archived,
         "error": error,
     }))
     .into_response()
