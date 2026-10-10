@@ -82,31 +82,36 @@ pub fn target_path(provider: &str) -> Option<&'static str> {
 }
 
 /// Headers a platform signs or the runtime needs to verify it. Everything else
-/// a public caller sends is dropped.
+/// a public caller sends is dropped. One list for both storing a queued event
+/// and relaying it, so a header the runtime verifies can't be kept on the way
+/// in and dropped on the way out (that dropped Telnyx's signature and 401'd
+/// every relayed text).
+const CHANNEL_HEADERS: &[&str] = &[
+    "content-type",
+    "x-telegram-bot-api-secret-token",
+    "x-slack-signature",
+    "x-slack-request-timestamp",
+    "x-slack-retry-num",
+    "x-hub-signature-256",
+    "x-signature-ed25519",
+    "x-signature-timestamp",
+    // SMS (Telnyx Ed25519).
+    "telnyx-signature-ed25519",
+    "telnyx-timestamp",
+    // Teams: the Bot Framework JWT or the outgoing-webhook HMAC.
+    "authorization",
+    // Email: mailflare's HMAC of the webhook body (same name the runtime's
+    // verify_mailflare_signature checks).
+    "x-email-platform-signature",
+];
+
+/// The [`CHANNEL_HEADERS`] a caller sent, lowercased.
 pub fn channel_headers(headers: &HeaderMap) -> HashMap<String, String> {
-    const KEEP: &[&str] = &[
-        "content-type",
-        "x-telegram-bot-api-secret-token",
-        "x-slack-signature",
-        "x-slack-request-timestamp",
-        "x-slack-retry-num",
-        "x-hub-signature-256",
-        "x-signature-ed25519",
-        "x-signature-timestamp",
-        // SMS (Telnyx Ed25519).
-        "telnyx-signature-ed25519",
-        "telnyx-timestamp",
-        // Teams: the Bot Framework JWT or the outgoing-webhook HMAC.
-        "authorization",
-        // Email: mailflare's HMAC of the webhook body (same name the runtime's
-        // verify_mailflare_signature checks).
-        "x-email-platform-signature",
-    ];
     headers
         .iter()
         .filter_map(|(name, value)| {
             let name = name.as_str().to_ascii_lowercase();
-            if !KEEP.contains(&name.as_str()) {
+            if !CHANNEL_HEADERS.contains(&name.as_str()) {
                 return None;
             }
             value.to_str().ok().map(|v| (name, v.to_string()))
@@ -390,16 +395,7 @@ fn base64_encode(body: &[u8]) -> String {
 
 /// Names the relay passes through for channel deliveries (on top of its own allow-list).
 fn channel_header_names() -> &'static [&'static str] {
-    &[
-        "x-telegram-bot-api-secret-token",
-        "x-slack-signature",
-        "x-slack-request-timestamp",
-        "x-slack-retry-num",
-        "x-hub-signature-256",
-        "x-signature-ed25519",
-        "x-signature-timestamp",
-        "x-email-platform-signature",
-    ]
+    CHANNEL_HEADERS
 }
 
 async fn inbound(
@@ -735,6 +731,14 @@ mod tests {
         assert_eq!(kept.get("x-telegram-bot-api-secret-token").map(String::as_str), Some("s"));
         assert_eq!(kept.get("x-email-platform-signature").map(String::as_str), Some("sig"));
         assert!(!kept.contains_key(QUEUED_AT_HEADER), "a public caller can't claim a queue time");
+    }
+
+    #[test]
+    fn relay_passes_every_stored_signature_header() {
+        // The runtime re-verifies Telnyx's signature; dropping it 401'd every text.
+        for name in ["telnyx-signature-ed25519", "telnyx-timestamp", "x-email-platform-signature", "x-slack-signature"] {
+            assert!(channel_header_names().contains(&name), "{name} must reach the runtime");
+        }
     }
 
     #[test]
