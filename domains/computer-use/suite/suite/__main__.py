@@ -81,6 +81,14 @@ def replay(task: dict, ctx, source: str) -> dict:
             "timed_out": False, "exit_code": 0, "errors": errors, "final_text": "", "replayed_from": src.get("dir")}
 
 
+def _last_stderr_line(attempt_dir) -> str:
+    try:
+        lines = (Path(attempt_dir) / "planner.stderr.log").read_text(errors="replace").splitlines()
+    except (OSError, TypeError):
+        return "no stderr"
+    return next((l.strip() for l in reversed(lines) if l.strip() and not l.startswith("Bun v")), "no stderr")
+
+
 def failure_cause(result: dict, checks: list, setup_error) -> str:
     if setup_error:
         return f"setup: {setup_error[:80]}"
@@ -89,6 +97,8 @@ def failure_cause(result: dict, checks: list, setup_error) -> str:
     if result.get("errors"):
         return "planner error: " + result["errors"][0][:100]
     if not result.get("steps"):
+        if result.get("exit_code") and not result.get("planner_calls"):
+            return "planner failed to start: " + _last_stderr_line(result.get("dir"))[:100]
         return "no computer actions"
     failed_tools = [s for s in result["steps"] if s.get("status") == "error"]
     first_bad = next((c for c in checks if not c["ok"]), None)
@@ -135,7 +145,7 @@ def run_attempt(task, mode, model, k, stack, web, run_dir, args) -> dict:
     rec.setdefault("cost_usd", 0.0)
     rec.setdefault("wall_s", 0.0)
     if not passed:
-        rec["failure_cause"] = failure_cause(result, checks, setup_error)
+        rec["failure_cause"] = failure_cause(rec, checks, setup_error)
     (attempt_dir / "attempt.json").write_text(json.dumps(rec, indent=2))
     return rec
 
