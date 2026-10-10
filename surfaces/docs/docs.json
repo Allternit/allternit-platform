@@ -348,6 +348,7 @@
               "tools/computer-use-suite",
               "tools/computer-use-decisions",
               "tools/computer-safety",
+              "tools/computer-use-replay",
               "tools/computer-credentials",
               "tools/strict-tool-use",
               "tools/build-a-tool",

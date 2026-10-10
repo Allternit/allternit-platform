@@ -54,6 +54,18 @@ class ElementMapTest(unittest.TestCase):
         self.assertEqual(diff["removed"], [])
         self.assertEqual(maps.window_of(diff["added"][0]["id"]), "1:1")
 
+    def test_paths_only_when_asked(self):
+        # Replay locators record the tree path; models don't see it by default.
+        maps = em.ElementMaps()
+        v1, _ = maps.record("1:1", em.build(calc("0")), ARC)
+        seven = next(e for e in v1.elements.values() if e.name == "7")
+        self.assertNotIn("path", seven.public())
+        self.assertEqual(seven.public(paths=True)["path"], "/Window:0/Button:0")
+        maps.record("1:1", em.build(calc("7", extra_row=True)), ARC)
+        diff = maps.window("1:1").diff(v1.number, paths=True)
+        self.assertEqual(diff["added"][0]["path"], "/Window:0/Button:0")
+        self.assertNotIn("path", maps.window("1:1").diff(v1.number)["added"][0])
+
     def test_stale_versions_are_refused(self):
         wm = em.WindowMap("1:1")
         wm.update(em.build(calc("0")), ARC)

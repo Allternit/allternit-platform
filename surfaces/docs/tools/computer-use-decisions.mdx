@@ -26,6 +26,8 @@ Each step:
 
 When a decision abstains or lands under its kind's confidence threshold, the subtask stops and hands control back with `status: "escalated"`, the reason, and a compact current screen (window, map version, up to 60 elements). It never guesses past an unsure step and never loops blindly: an action that changed nothing is not offered again.
 
+A subtask that ran before skips the loop: the [replay cache](/tools/computer-use-replay) replays its recorded steps with no decisions and re-infers only a step whose element moved.
+
 The subtask runs on the **fast tiers only** (the configured chain without the oracle). The oracle is a planner-class model call, so a step that would need it goes back to the planner instead.
 
 ## Approvals and safety

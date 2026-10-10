@@ -631,6 +631,10 @@
         {
           "on": "2026-10-09",
           "note": "D5/E3 safety layer (computer_safety.rs): one assessment per toolset call and run_subtask step. Untrusted observations spotlighted (nonce-delimited, secrets scrubbed); per-step /v1/decisions monitor of kind safety on mutating non-sandbox steps (fast tiers, fail-closed to confirm when unsure or failed, absent when no fast tier; read-only steps never wait on it); one irreversible classifier (send/pay/purchase/transfer/delete/publish/credentials/account) shared with run_subtask, always confirmed on every target; watch mode on email/banking/admin apps and sites (computer.safety events, mutating steps confirmed); per-computer and owner-default app/domain allow/deny lists (V246, GET/PUT /computers/:id/safety); vault secrets screened on every free-text path against their bind; screenshot redaction by driver OCR before images leave the executor; VM snapshot before the first risky step of a run on cloud computers."
+        },
+        {
+          "on": "2026-10-09",
+          "note": "D4: replay cache (Stagehand design over the driver element map). run_subtask keys each subtask on hash(goal, app + window shape, input names) per owner (computer_replays, V246); the first run records semantic locators (element id, role, name, tree path, window-relative box, 8x8 pixel hash) plus a verify check per step once the exact success checks hold; later runs replay in one speculative run_batch with zero decisions, re-find a moved element by name/path/pixels or re-infer it with one decision, and rewrite the entry. Input values are never stored ({{name}} placeholders plus a guard). save_as turns a recording into a named skill; run_skill and skills (contract v2 members) run and list them. read_ui gains paths and crops."
         }
       ],
       "evidence": [
@@ -640,7 +644,9 @@
         "allternit/surfaces/docs/tools/allternit-driver.mdx",
         "allternit/surfaces/docs/tools/computer-credentials.mdx",
         "allternit/surfaces/docs/tools/computer-safety.mdx",
-        "allternit/cmd/allternit-api/src/computer_safety.rs"
+        "allternit/cmd/allternit-api/src/computer_safety.rs",
+        "allternit/surfaces/docs/tools/computer-use-replay.mdx",
+        "allternit/cmd/allternit-api/src/computer_replay.rs"
       ]
     },
     {

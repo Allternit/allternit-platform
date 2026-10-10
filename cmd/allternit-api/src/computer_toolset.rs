@@ -1808,16 +1808,17 @@ pub async fn execute(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: 
     // 5. Dispatch.
     let secrets: Vec<String> = crate::aci_credentials::CREDENTIALS.screening_secrets(&user.user_id).into_iter().map(|(_, v, _)| v).collect();
     crate::computer_routes::touch_computer_activity(&state.db, &computer.id);
-    if req.member == "run_subtask" || v2 {
-        // run_subtask: the bounded decision loop; each of its steps goes back
-        // through `execute_step` (lease, policy, safety, audit, dispatch,
+    if req.member == "run_subtask" || req.member == "run_skill" || v2 {
+        // run_subtask / run_skill: the bounded decision loop (a skill is a
+        // saved recording of one); each of its steps, replayed ones too, goes
+        // back through `execute_step` (lease, policy, safety, audit, dispatch,
         // event). Structured v2 members: no screenshot and no coordinate
         // scaling — the driver answers read_ui/act/run_batch/verify, the human
         // gate pauses the lease, the credential backends type the value.
-        let outcome = if req.member == "run_subtask" {
-            crate::computer_subtask::run(state, user, &computer, &target, &req.input, &run_id).await
-        } else {
-            crate::computer_v2::execute_v2(state, user, &computer, &target, &req.member, &req.input, &run_id).await
+        let outcome = match req.member.as_str() {
+            "run_subtask" => crate::computer_subtask::run(state, user, &computer, &target, &req.input, &run_id).await,
+            "run_skill" => crate::computer_subtask::run_skill(state, user, &computer, &target, &req.input, &run_id).await,
+            _ => crate::computer_v2::execute_v2(state, user, &computer, &target, &req.member, &req.input, &run_id).await,
         };
         emit_action(&computer.id, req.toolset, &req.member, None, None, req.run_id.as_deref(), outcome.is_ok());
         crate::computer_safety::record_monitor_outcome(state, user, &safety, if outcome.is_ok() { "success" } else { "error" }, "step ran");
@@ -2213,12 +2214,15 @@ mod tests {
     #[test]
     fn contracts_load_with_anthropic_member_sets() {
         assert_eq!(contract(Toolset::Computer).id, "allternit.computer.v2");
-        assert_eq!(contract(Toolset::Computer).members.len(), 24);
+        assert_eq!(contract(Toolset::Computer).members.len(), 26);
         assert_eq!(contract(Toolset::Browser).members.len(), 31);
         assert!(contract(Toolset::Computer).member("read_ui").is_some());
         assert!(contract(Toolset::Computer).member("use_credential").is_some());
         let sub = contract(Toolset::Computer).member("run_subtask").expect("run_subtask");
         assert!(needs_approval(sub, false) && !needs_approval(sub, true), "one approval per subtask on this device, none in a sandbox");
+        let skill = contract(Toolset::Computer).member("run_skill").expect("run_skill");
+        assert!(needs_approval(skill, false) && !needs_approval(skill, true), "a skill run is approved like a subtask");
+        assert!(!needs_approval(contract(Toolset::Computer).member("skills").expect("skills"), false));
         assert_eq!(contract(Toolset::Computer).batch_halt_text, "Not executed: an earlier computer action in this turn failed.");
         assert_eq!(contract(Toolset::Browser).batch_halt_text, "Not executed: an earlier action in this turn failed.");
     }
