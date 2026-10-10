@@ -1,15 +1,54 @@
 ---
-title: 'Interactive answers (developers)'
-description: 'How an assistant reply renders an interactive card from OpenUI Lang, which components exist, and what runs locally.'
+title: 'Interactive answers'
+description: 'Cards in assistant replies: what they can do, the Layout and visuals setting, live data from your connectors, and how the app tells the model about them.'
 ---
 
-An assistant reply can include an interactive card: metrics, tables, bar charts, steps, comparisons, and inputs that recompute on the page. The model doesn't write HTML. It picks from a fixed set of Allternit components, and the app renders them while the reply streams.
+An assistant reply can include an interactive card: metrics, tables, bar charts, steps, comparisons, and inputs that recompute on the page. Cards can also show live data from your connected apps and, with your approval each time, make changes through them. The model doesn't write HTML or code. It picks from a fixed set of Allternit components, and the app renders them while the reply streams.
 
-Source: `allternit-ai/src/lib/openui/` (`answers-library.tsx`, `InteractiveAnswer.tsx`, `openui-fences.ts`).
+Cards work the same in Chat, Cowork, Code, bot threads, the HUD and Design mode, on Desktop, ai.allternit.com (including the phone layout) and the m.allternit.com app.
 
-## Format
+## Using cards
 
-The model writes [OpenUI Lang](https://www.openui.com/docs) in a fenced block tagged `openui`, anywhere in its markdown:
+- **Inputs update instantly.** Moving a slider or changing a number recomputes the card on your device. Nothing is sent to the model.
+- **Buttons and numbered choices** send their label to the assistant as your next message.
+- **What you set is remembered.** Reopen the chat and the card is as you left it. This is kept on the device you used.
+- **Live data** comes from your connected apps (Settings → Connectors). A card that reads data loads it when it opens. A card that changes data only does so when you press its button, and shows an **Allow** bar with the exact tool and arguments first. Nothing changes until you approve. **Cancel** leaves everything as it was.
+- **Numbers say where they come from.** Every metric carries a note: your input, an estimate, or a named source.
+
+### Turning cards off
+
+Settings → **Response style** → **Layout and visuals**:
+
+| Option | What happens |
+| --- | --- |
+| **Auto** (default) | The assistant can answer with a card when it helps. Plain text stays the default. |
+| **Text only** | The assistant isn't told about cards, so replies stay plain text. Cards already in a chat still show. |
+
+The setting is saved on each device, like the Memory switches. On phones it's in the same Settings section.
+
+### In Slack, Telegram, email and other channels
+
+Channels can't show cards, so a card in a bot's reply is sent there as readable text: the title, numbers (worked out from the card's starting values), table rows, steps, and numbered options with "Reply with a number or the option." Voice calls read the card aloud the same way. If a card can't be read, it becomes one line saying to open the reply in Allternit. The raw card code is never posted. This covers Slack, Discord, Telegram, WhatsApp, Teams, SMS, email and voice (allternit-api `openui_text.rs`).
+
+## For developers
+
+Source: `allternit-ai/src/lib/openui/`:
+
+| File | Role |
+| --- | --- |
+| `answers-library.tsx` | The component library, plus `interactiveAnswersPrompt()`, the model manual generated from the same schemas. |
+| `InteractiveAnswer.tsx` | Renders one card: actions, saved state, tool calls, the **Allow** bar. |
+| `openui-fences.ts` | Splits reply text into markdown and card fences (also while streaming). |
+| `answer-instructions.ts` | Builds the manual sent with each chat turn; empty when Settings says Text only. |
+| `card-tools.ts` | The user's connector tools for `Query()`/`Mutation()` and the rules for running them. |
+| `card-state.ts` | Per-card saved state on the device. |
+| `answer-prefs.ts` | The Layout and visuals setting. |
+
+Built on [OpenUI](https://www.openui.com/docs) (`@openuidev/react-lang`, MIT).
+
+### Format
+
+The model writes OpenUI Lang in a fenced block tagged `openui` (`openui-lang` is accepted too), anywhere in its markdown:
 
 ````markdown
 Here's the split:
@@ -28,32 +67,80 @@ ask = Button("Round up each share")
 
 Text before and after the fence renders as normal markdown. An unclosed fence at the end of a streaming reply renders as far as it has arrived. Unknown components and broken lines are skipped; the rest of the card still renders.
 
-## What runs where
+### Live data: Query and Mutation
 
-- **On the page (deterministic):** `$name` state and expressions (`+ - * /`, comparisons, `?:`) are evaluated by the OpenUI runtime. No `eval`, no network, no model call. `Slider`, `NumberField`, `Select` and `Toggle` write state; everything that reads it updates at once.
-- **Back to the model:** `Button` and `Choice` send their label as the next user message.
+When the user has connectors, the manual lists their tools as `<connector>__<tool>` (for example `crm__list_deals`), read-only tools first, at most 24. A card can then use them:
+
+````markdown
+```openui
+root = Answer("Open deals", [tbl, add])
+$title = "Acme"
+deals = Query("crm__list_deals", {stage: "open"}, {rows: []})
+create = Mutation("crm__create_deal", {title: $title})
+tbl = Table(["Title", "Stage"], deals.rows)
+add = Button("Add Acme", Action([@Run(create), @Run(deals)]))
+```
+````
+
+- `Query(tool, args, defaults, refreshSeconds?)` runs when the card opens and again when a `$variable` in its args changes. Built-ins such as `@Count`, `@Filter`, `@Sort` and `@Sum` work on its results.
+- `Mutation(tool, args)` runs only from a `Button` action (`Action([@Run(m), @Run(q), @Set($x, v), @Reset($x)])`).
+- Calls go through the MCP Apps host bridge (`POST /api/mcp/apps`, `tools/call`) with the user's own connector credentials, never to a provider directly. The model never sees the results; they go straight into the card.
+
+The rules are enforced in `card-tools.ts`, not only in the prompt:
+
+1. A `Query()` may only use a tool its connector marks read-only (`readOnlyHint`). Any other tool is refused before it runs.
+2. A tool that changes something must be declared as a `Mutation()` in the card. Every call shows the **Allow** bar with the tool and its arguments, whatever the connector's install permission mode.
+3. The install permission mode still applies to reads: **Always ask** asks before reads too.
+
+`Table` rows may be arrays (in header order) or objects (cells picked by header, ignoring case, spaces and underscores), so a `Query` result's rows can be passed straight in.
+
+### Design
+
+Cards follow common inline-card guidelines for chat apps, on Allternit's neutral polish tokens: system type within body and body-small sizes, a title, at most two actions in the footer, no scrolling inside the card, WCAG AA contrast, light and dark themes, and 44 px touch targets on phones. Each card has two zones: a controls panel (a Section holding inputs, shown as a soft inset with white fields) and the result, where the first Metric in a row is shown large as the answer and the rest are listed beside it. Number fields show grouped values (10,000) and whole currency amounts drop the cents. Result numbers animate only right after you change an input; the first paint, streaming and data refreshes show the value at once, and nothing animates with reduced motion on. While a card streams, one steady placeholder holds its place (its title, "Building card" and the card's shape, with a mono working beam after 1.5 s), so numbers never flash in digit by digit. The finished card replaces it once with a short fade. The manual asks for one short sentence before the card, and tells the model not to repeat the card's numbers in its text.
+
+### What runs where
+
+- **On the page (deterministic):** `$name` state, expressions (`+ - * /`, comparisons, `?:`) and `@` built-ins are evaluated by the OpenUI runtime. No `eval`, no network, no model call.
+- **Through the user's connectors:** `Query()` and `Mutation()`, under the rules above.
+- **Back to the model:** a `Button` without an action, and `Choice`, send their label as the next user message.
 - Links open only when they are `http(s)`. No other code runs. Anything that needs real code stays an artifact.
 
-## Components
+### Components
 
 | Component | Signature | Use |
 | --- | --- | --- |
-| `Answer` | `(title?, children?)` | The root card. Exactly one, as `root`. |
+| `Answer` | `(title?, children?, actions?)` | The root card. Exactly one, as `root`. `actions`: up to two Buttons in the footer; the first is primary. |
+| `Section` | `(title, children)` | Groups parts under a short sentence-case label. A Section with inputs becomes the card's controls panel. |
 | `Row` | `(children)` | Side by side; one column on phones. |
 | `Text` | `(content, tone?)` | `body`, `muted`, `heading`. |
 | `Metric` | `(label, value, format?, unit?, note?)` | `format`: `number`, `currency`, `percent`. `note` says where the number comes from. |
-| `Table` | `(headers, rows)` | `rows` is an array of arrays. |
+| `Table` | `(headers, rows)` | Rows are arrays or objects. Numeric columns right-align; more than 6 rows show **Show all**. |
 | `BarChart` | `(labels, values, format?, unit?)` | 2–12 values. |
 | `Steps` | `(items)` | A real sequence. |
 | `Compare` | `(columns)` | `[{ "title", "points": [] }]`, 2–4 columns. |
 | `Callout` | `(content, tone?)` | `info`, `success`, `warning`, `danger`. |
 | `Slider` | `(label, $value, min, max, step?, format?, unit?)` | Writes a number. |
-| `NumberField` | `(label, $value, step?)` | Writes a number. |
-| `Select` | `(label, $value, options)` | Writes a string. |
+| `NumberField` | `(label, $value, step?, format?, unit?, min?, max?)` | Writes a number. − / + steppers; `currency` shows the currency sign, `percent` shows %. |
+| `Select` | `(label, $value, options)` | Writes a string. Up to four short options show as a segmented control. |
 | `Toggle` | `(label, $value)` | Writes `true`/`false`. |
-| `Button` | `(label)` | Sends the label to the model. |
+| `Button` | `(label, action?, variant?)` | No action: sends the label to the model. With `Action([...])`: runs those steps. Put buttons in `Answer`'s actions. |
 | `Choice` | `(question, options)` | Numbered options; the pick is sent to the model. |
 
-## Model instructions
+### Model instructions
 
-`interactiveAnswersPrompt()` in `answers-library.tsx` returns the model-facing manual, generated from the same schemas as the renderer, so the two can't drift. Adding it to the runtime's system prompt (gizzi-code) is a separate change. Until then, a card appears only when a model writes the fence on its own or a message contains one.
+The app, not gizzi-code, sends the manual. On every chat turn it builds `interactiveAnswersPrompt({ tools })` and adds it to the request's `systemPrompt` (the `/api/agent-chat` and Desktop `/api/v1/ai/chat` bridges) or, for direct gizzi sessions, to the message's `system` field with the `+` prefix, which appends to gizzi's own system prompt instead of replacing it. Because of this:
+
+- Each build only asks for the components it can render, and older Desktop builds never get instructions they can't show.
+- The terminal (`gizzi` TUI) and channels never get the manual.
+- **Text only** sends nothing.
+- With the same tools, the text is byte-identical turn to turn, so it stays in the provider's prompt cache. A send waits at most 1.5 s for the connector tool list, then goes without tools.
+
+The manual is generated from the component schemas, so it can't drift from the renderer. The same manual and a live preview are in **UI Forge**, a playground for writing and checking cards.
+
+### Design mode
+
+Design mode's preview tab shows the latest card in the reply, re-skinned with the project's DESIGN.md: `background`, `text`, `primary` and `fontFamily` set the card's surface, text and accent colours and its font. Only tokens DESIGN.md actually names are applied.
+
+### Privacy
+
+OpenUI's renderer runs entirely in the app. Its observability stream is turned off (`publishObservability={false}`), and its runtime telemetry is opt-in and never runs in a browser. Its package install script is blocked by pnpm's build-script allow-list, so it doesn't run either.

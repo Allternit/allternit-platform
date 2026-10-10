@@ -1,0 +1,52 @@
+{
+  "id": "calculator-add",
+  "os": "mac",
+  "status": "ready",
+  "apps": [
+    "Calculator"
+  ],
+  "setup": [
+    {
+      "do": "open",
+      "app": "Calculator"
+    },
+    {
+      "do": "toolset",
+      "member": "key",
+      "input": {
+        "text": "Escape"
+      }
+    },
+    {
+      "do": "toolset",
+      "member": "key",
+      "input": {
+        "text": "Escape"
+      }
+    }
+  ],
+  "goal": "Use Calculator to add the two numbers below. Leave the result on the display.",
+  "inputs": {
+    "a": "7",
+    "b": "8"
+  },
+  "checker": [
+    {
+      "kind": "verify",
+      "app": "Calculator",
+      "checks": [
+        {
+          "name": "main display",
+          "value": "15"
+        }
+      ],
+      "timeout_ms": 1500
+    }
+  ],
+  "teardown": [],
+  "max_minutes": 3,
+  "tags": [
+    "calculator",
+    "core"
+  ]
+}

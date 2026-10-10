@@ -1,6 +1,7 @@
 /** Built-in workflow skills. User and project skills intentionally override these. */
 import agentOrchestratorMd from "./bundled/agentOrchestrator.md"
 import steerParallelAgentMd from "./bundled/steerParallelAgent.md"
+import artifactsMd from "./bundled/artifacts.md"
 
 export interface BundledSkillDefinition {
   name: string
@@ -22,6 +23,13 @@ export const BUNDLED_SKILLS: readonly BundledSkillDefinition[] = [
     description: "Steer an already-running parallel agent session working on the same project — discover it, read its context, write non-invasive steering docs, activate via pointer prompt, and verify the steering landed.",
     builtin: true,
     content: steerParallelAgentMd,
+  },
+  {
+    name: "artifacts",
+    description:
+      "Make or change an Allternit artifact (doc, slides, sheet, design, dashboard, motion, page, card, diagram, image, code): when to make one, and the exact body format for each kind. Load before calling artifact_create or artifact_update unless the system prompt already has the artifact format guides (the Allternit app sends them).",
+    builtin: true,
+    content: artifactsMd,
   },
   {
     name: "import-from-claude-codex",

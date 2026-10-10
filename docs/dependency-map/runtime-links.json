@@ -77,6 +77,24 @@
       "label": "Computer-use engine (ACU gateway :8760, Python)",
       "kind": "module",
       "path": "allternit/domains/computer-use/core"
+    },
+    {
+      "id": "allternit/domains/computer-use/driver",
+      "label": "Allternit Driver sidecar (arc + Cua engines, Python)",
+      "kind": "module",
+      "path": "allternit/domains/computer-use/driver"
+    },
+    {
+      "id": "allternit/domains/computer-use/suite",
+      "label": "Computer-use task suite (40 tasks, code checkers, runner, Python)",
+      "kind": "module",
+      "path": "allternit/domains/computer-use/suite"
+    },
+    {
+      "id": "allternit/domains/decision-runtime",
+      "label": "Decision Runtime local scorer sidecar (MLX / llama.cpp, Python)",
+      "kind": "module",
+      "path": "allternit/domains/decision-runtime"
     }
   ],
   "edges": [
@@ -260,6 +278,15 @@
       ]
     },
     {
+      "source": "allternit/cmd/gizzi-code/src/runtime/tools",
+      "target": "allternit/cmd/allternit-cloud-api/src/routes/mod_*",
+      "kind": "HTTP /api/v2/artifacts (artifact_create / artifact_update / artifact_read)",
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/runtime/integrations/artifacts/index.ts",
+        "allternit/docs/design/artifacts-v2.md"
+      ]
+    },
+    {
       "source": "allternit/surfaces/allternit-desktop",
       "target": "allternit/domains/computer-use/core",
       "kind": "sidecar",
@@ -292,6 +319,82 @@
       "evidence": [
         "allternit/cmd/allternit-api/src/computer_toolset.rs",
         "allternit/domains/computer-use/core/gateway/toolset_browser.py"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/allternit-desktop",
+      "target": "allternit/domains/computer-use/driver",
+      "kind": "sidecar",
+      "evidence": [
+        "allternit/surfaces/allternit-desktop/src/main/computer-use-driver-manager.ts",
+        "allternit/surfaces/allternit-desktop/scripts/prepare-allternit-driver.cjs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api/src/computer_*",
+      "target": "allternit/domains/computer-use/driver",
+      "kind": "JSON-RPC over unix socket or token-gated loopback TCP (ALLTERNIT_DRIVER_SOCKET/ENDPOINT; pixel_* + read_ui/act/run_batch/verify; context + ocr for the safety layer)",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/this_device_input.rs",
+        "allternit/cmd/allternit-api/src/computer_v2.rs",
+        "allternit/cmd/allternit-api/src/computer_safety.rs",
+        "allternit/domains/computer-use/driver/allternit_driver/safety.py"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/allternit-desktop",
+      "target": "allternit/domains/decision-runtime",
+      "kind": "sidecar (bundled driver Python; packages and model installed on first use)",
+      "evidence": [
+        "allternit/surfaces/allternit-desktop/src/main/decision-runtime-manager.ts",
+        "allternit/surfaces/allternit-desktop/scripts/prepare-allternit-driver.cjs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api/src/computer_*",
+      "target": "allternit/cmd/allternit-api/src/agency_api",
+      "kind": "in-process call: run_subtask's typed decisions (decisions::decide_value, kinds element/verify), the safety monitor (kind safety), the Best-of-N judge (kind judge, fast tiers then oracle under the cost cap) and their outcomes (decisions::record_outcome)",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/computer_subtask.rs",
+        "allternit/cmd/allternit-api/src/computer_safety.rs",
+        "allternit/surfaces/docs/tools/computer-use-decisions.mdx",
+        "allternit/surfaces/docs/tools/computer-safety.mdx",
+        "allternit/cmd/allternit-api/src/computer_parallel.rs",
+        "allternit/surfaces/docs/tools/computer-parallel.mdx"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api/src/agency_api",
+      "target": "allternit/domains/decision-runtime",
+      "kind": "HTTP POST /v1/score on loopback (ALLTERNIT_DECISIONS_LOCAL_URL + token)",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/agency_api/decisions/backends.rs",
+        "allternit/surfaces/docs/api/agency/decisions.mdx"
+      ]
+    },
+    {
+      "source": "allternit/domains/computer-use/suite",
+      "target": "allternit/cmd/allternit-api/src/computer_*",
+      "kind": "HTTP POST /api/v1/computers/:id/toolset (checkers' verify, replay mode) + control take/renew",
+      "evidence": [
+        "allternit/domains/computer-use/suite/suite/toolset.py",
+        "allternit/domains/computer-use/suite/suite/stack.py"
+      ]
+    },
+    {
+      "source": "allternit/domains/computer-use/suite",
+      "target": "allternit/cmd/gizzi-code",
+      "kind": "process: gizzi run --format json --agent suite (planner-driven runs, any model) + gizzi export (usage)",
+      "evidence": [
+        "allternit/domains/computer-use/suite/suite/planner.py"
+      ]
+    },
+    {
+      "source": "allternit/domains/computer-use/suite",
+      "target": "allternit/domains/computer-use/driver",
+      "kind": "boots a private sidecar for the local stack (unix socket)",
+      "evidence": [
+        "allternit/domains/computer-use/suite/suite/stack.py"
       ]
     }
   ]

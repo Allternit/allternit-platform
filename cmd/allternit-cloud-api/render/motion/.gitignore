@@ -1,0 +1,3 @@
+# The bundle is checked in and shipped by deploy-contabo.sh.
+!/dist/
+node_modules/

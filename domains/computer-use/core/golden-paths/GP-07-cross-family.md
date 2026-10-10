@@ -7,7 +7,7 @@ a native desktop app.
 
 ## Preconditions
 - Chromium installed (for browser)
-- Desktop visible (for pyautogui)
+- Desktop visible with the Accessibility permission (macOS)
 - Both adapters available
 
 ## Routing
@@ -19,7 +19,7 @@ session isolation (G2) so browser and desktop contexts don't leak.
 Router.route(family="browser", mode="execute")  → browser.playwright
 
 # Session 2: desktop
-Router.route(family="desktop", mode="desktop")  → desktop.pyautogui
+Router.route(family="desktop", mode="desktop")  → desktop.accessibility
 ```
 
 ## Execution Flow
@@ -32,9 +32,9 @@ PlaywrightAdapter.execute(screenshot)
 
 # Phase B — Desktop
 SessionManager.create(family="desktop")
-PyAutoGUIAdapter.execute(screenshot)  # verify file appeared
-PyAutoGUIAdapter.execute(act, click, open-file)
-PyAutoGUIAdapter.execute(screenshot)  # verify app opened
+AccessibilityAdapter.execute("take_screenshot")      # verify file appeared
+AccessibilityAdapter.execute("click", {x, y})        # open the file
+AccessibilityAdapter.execute("take_screenshot")      # verify app opened
 
 # Phase C — Isolation
 assert browser_session.artifact_root != desktop_session.artifact_root

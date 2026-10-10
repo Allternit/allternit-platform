@@ -22,7 +22,7 @@ NOT_GIVEN: Any = _Unset()
 
 Call = TypedDict('Call', {'id': str, 'object': Literal['call'], 'account_id': str, 'agent_id': str, 'number_id': Optional[str], 'direction': Literal['inbound', 'outbound', 'realtime'], 'from': Optional[str], 'to': Optional[str], 'purpose': Optional[str], 'status': Literal['queued', 'ringing', 'in_progress', 'completed', 'failed', 'no_answer', 'canceled'], 'end_reason': Optional[str], 'simulated': bool, 'recording': bool, 'transferred_to': Optional[str], 'duration_seconds': Optional[int], 'created_at': str, 'answered_at': Optional[str], 'ended_at': Optional[str]}, total=False)
 Error = TypedDict('Error', {'error': Dict[str, Any]}, total=False)
-SpendCap = TypedDict('SpendCap', {'object': Literal['spend_cap'], 'project_id': str, 'plan': Literal['sandbox', 'payg', 'growth', 'enterprise'], 'spend_cap_cents': int, 'period': str, 'spent_cents': int, 'spent_microusd': int, 'remaining_cents': int, 'reached': bool, 'thresholds_sent': List[int]}, total=False)
+SpendCap = TypedDict('SpendCap', {'object': Literal['spend_cap'], 'project_id': str, 'plan': Literal['sandbox', 'payg', 'growth', 'enterprise'], 'spend_cap_cents': int, 'period': str, 'spent_cents': int, 'spent_microusd': int, 'remaining_cents': int, 'reached': bool, 'payment_method': bool, 'thresholds_sent': List[int]}, total=False)
 ListEnvelope = TypedDict('ListEnvelope', {'data': List[Any], 'has_more': bool, 'next_cursor': Optional[str]}, total=False)
 Account = TypedDict('Account', {'id': str, 'object': Literal['account'], 'name': str, 'external_ref': Optional[str], 'metadata': Dict[str, Any], 'created_at': str}, total=False)
 Agent = TypedDict('Agent', {'id': str, 'object': Literal['agent'], 'account_id': str, 'name': str, 'instructions': str, 'greeting': str, 'model': str, 'voice': "StockVoice", 'tools': List["AgentTool"], 'autonomy': "Autonomy", 'transfer_targets': List[str], 'business_hours': Optional[Dict[str, Any]], 'metadata': Dict[str, Any], 'status': Literal['pending', 'ready'], 'created_at': str, 'updated_at': str}, total=False)
@@ -45,7 +45,7 @@ ComputerList = TypedDict('ComputerList', {'data': List["Computer"], 'has_more': 
 ComputerEvent = TypedDict('ComputerEvent', {'id': str, 'type': Literal['computer.action'], 'ts': str, 'data': Dict[str, Any]}, total=False)
 ComputerEventList = TypedDict('ComputerEventList', {'data': List["ComputerEvent"], 'has_more': bool, 'next_cursor': Optional[str]}, total=False)
 ComputerSettings = TypedDict('ComputerSettings', {'hosted_driver_enabled': bool, 'approval_mode': Literal['owner', 'api_key'], 'per_key_concurrency': int, 'browser_toolset': bool}, total=False)
-ToolsetCall = TypedDict('ToolsetCall', {'toolset': Literal['computer', 'browser'], 'member': str, 'input': Dict[str, Any], 'run_id': str, 'turn_id': str, 'call_index': int, 'model_frame': Dict[str, Any], 'coordinate_space': Literal['pixels', 'normalized_1000'], 'approval_grant': str, 'browser_session_id': str}, total=False)
+ToolsetCall = TypedDict('ToolsetCall', {'toolset': Literal['computer', 'browser'], 'member': str, 'input': Dict[str, Any], 'run_id': str, 'turn_id': str, 'call_index': int, 'model_frame': Dict[str, Any], 'coordinate_space': Literal['pixels', 'normalized_1000'], 'approval_grant': str, 'browser_session_id': str, 'enable': List[str]}, total=False)
 ToolsetResult = TypedDict('ToolsetResult', {'is_error': bool, 'content': List[Dict[str, Any]], 'browser_state': Dict[str, Any], 'screen': Dict[str, Any], 'error': str}, total=False)
 ToolsetApprovalRequired = TypedDict('ToolsetApprovalRequired', {'error': Dict[str, Any], 'approval': Dict[str, Any], 'result': "ToolsetResult"}, total=False)
 
@@ -394,7 +394,8 @@ class ConversationsResource:
         `message.completed` (the stored reply) or `error`. The first message starts the
         project's hosted runtime: `503 runtime_starting` means retry in a few seconds.
         One message at a time per conversation (`409 conversation_busy`). A project at its
-        monthly spend cap gets `402 spend_cap_reached`. Each reply records `tokens_in` and
+        monthly spend cap gets `402 spend_cap_reached`; one with no card on file gets
+        `402 payment_method_required`. Each reply records `tokens_in` and
         `tokens_out` usage (provider list price + 15%; no token charge on the project's own key).
 
         ``POST /v1/conversations/{id}/messages``
@@ -1079,7 +1080,7 @@ class ComputersResource:
     def create(self, *, name: str = NOT_GIVEN, account_id: str = NOT_GIVEN, metadata: Dict[str, Any] = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "Computer":
         """Create a computer
 
-        Provisions a cloud computer your agents drive with the computer and browser toolsets. 402 `spend_cap_reached` at the spend cap; 429 `concurrency_limit` when this key already has `per_key_concurrency` live computers.
+        Provisions a cloud computer your agents drive with the computer and browser toolsets. 402 `payment_method_required` without a card on file, 402 `spend_cap_reached` at the spend cap; 429 `concurrency_limit` when this key already has `per_key_concurrency` live computers.
 
         ``POST /v1/computers``
         """
@@ -1122,7 +1123,7 @@ class ComputersResource:
         """
         return self._client.request("POST", f"/v1/computers/{_q(id)}/stop", idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
-    def call_toolset(self, id: str, *, toolset: Literal['computer', 'browser'], member: str, input: Dict[str, Any] = NOT_GIVEN, run_id: str = NOT_GIVEN, turn_id: str = NOT_GIVEN, call_index: int = NOT_GIVEN, model_frame: Dict[str, Any] = NOT_GIVEN, coordinate_space: Literal['pixels', 'normalized_1000'] = NOT_GIVEN, approval_grant: str = NOT_GIVEN, browser_session_id: str = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "ToolsetResult":
+    def call_toolset(self, id: str, *, toolset: Literal['computer', 'browser'], member: str, input: Dict[str, Any] = NOT_GIVEN, run_id: str = NOT_GIVEN, turn_id: str = NOT_GIVEN, call_index: int = NOT_GIVEN, model_frame: Dict[str, Any] = NOT_GIVEN, coordinate_space: Literal['pixels', 'normalized_1000'] = NOT_GIVEN, approval_grant: str = NOT_GIVEN, browser_session_id: str = NOT_GIVEN, enable: List[str] = NOT_GIVEN, idempotency_key: Optional[str] = None, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> "ToolsetResult":
         """Run one toolset call
 
         One `allternit.computer.v1` / `allternit.browser.v1` call (member names and inputs match Anthropic's `computer_toolset_20260801` / `browser_toolset_20260801`). Runs through the computer's executor: contract validation, control lease, policy, approval, audit, then the action. Action failures are 200 with `is_error: true`.
@@ -1151,6 +1152,8 @@ class ComputersResource:
             _body['approval_grant'] = approval_grant
         if browser_session_id is not NOT_GIVEN:
             _body['browser_session_id'] = browser_session_id
+        if enable is not NOT_GIVEN:
+            _body['enable'] = enable
         return self._client.request("POST", f"/v1/computers/{_q(id)}/toolset", body=_body, idempotency_key=idempotency_key, timeout=timeout, extra_headers=extra_headers)  # type: ignore[return-value]
 
     def get_toolset_schema(self, id: str, *, toolset: Literal['computer', 'browser'] = NOT_GIVEN, timeout: Optional[float] = None, extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:

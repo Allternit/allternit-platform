@@ -77,10 +77,7 @@ pub struct PendingMeter {
     pub unit: &'static str,
 }
 
-pub const PENDING_METERS: &[PendingMeter] = &[
-    PendingMeter { meter: "computer_minute", event_name: "allternit_computer_minutes", display_name: "Hosted computer minutes", unit: "minute" },
-    PendingMeter { meter: "computer_action", event_name: "allternit_computer_actions", display_name: "Hosted computer toolset actions", unit: "action" },
-];
+pub const PENDING_METERS: &[PendingMeter] = &[];
 
 pub const METER_PLANS: &[MeterPlan] = &[
     MeterPlan { meters: &["voice_min_allternit"], event_name: "allternit_voice_seconds_allternit", display_name: "Voice agent seconds (Allternit model)", unit: "second", value: MeterValue::Seconds, payg_cents: "0.15", growth_cents: "0.135", free_units: 0 },
@@ -92,6 +89,8 @@ pub const METER_PLANS: &[MeterPlan] = &[
     MeterPlan { meters: &["sms_segment"], event_name: "allternit_sms_segments", display_name: "SMS segments", unit: "segment", value: MeterValue::Quantity, payg_cents: "1.2", growth_cents: "1.08", free_units: 0 },
     MeterPlan { meters: &["mms"], event_name: "allternit_mms", display_name: "MMS messages", unit: "message", value: MeterValue::Quantity, payg_cents: "3", growth_cents: "2.7", free_units: 0 },
     MeterPlan { meters: &["registration_passthrough_cents"], event_name: "allternit_registration_passthrough_cents", display_name: "Carrier registration (at cost)", unit: "cent", value: MeterValue::Quantity, payg_cents: "1", growth_cents: "1", free_units: 0 },
+    MeterPlan { meters: &["computer_minute"], event_name: "allternit_computer_minutes", display_name: "Hosted computer minutes", unit: "minute", value: MeterValue::CeilQuantity, payg_cents: "0.8", growth_cents: "0.72", free_units: 0 },
+    MeterPlan { meters: &["computer_action"], event_name: "allternit_computer_actions", display_name: "Hosted computer toolset actions", unit: "action", value: MeterValue::Quantity, payg_cents: "0.05", growth_cents: "0.045", free_units: 10_000 },
     MeterPlan { meters: &["recording_min_month"], event_name: "allternit_recording_minute_months", display_name: "Recording storage after 90 days", unit: "minute-month", value: MeterValue::CeilQuantity, payg_cents: "0.2", growth_cents: "0.18", free_units: 0 },
 ];
 
@@ -117,12 +116,31 @@ fn f(k: &str, v: impl Into<String>) -> (String, String) {
     (k.to_string(), v.into())
 }
 
+/// The `lookup_key` of a meter's price on a plan (`payg` / `growth`), e.g.
+/// `platform_payg_sms_segments`. Checkout finds the prices by these.
+pub fn price_lookup_key(plan: &str, m: &MeterPlan) -> String {
+    format!("platform_{plan}_{}", m.event_name.trim_start_matches("allternit_"))
+}
+
+/// The Growth base fee's `lookup_key`.
+pub const GROWTH_BASE_LOOKUP_KEY: &str = "platform_growth_base";
+
+/// Every price a plan's subscription carries: its metered prices, plus the
+/// Growth base fee.
+pub fn plan_lookup_keys(plan: &str) -> Vec<String> {
+    let mut keys: Vec<String> = METER_PLANS.iter().map(|m| price_lookup_key(plan, m)).collect();
+    if plan == "growth" {
+        keys.push(GROWTH_BASE_LOOKUP_KEY.to_string());
+    }
+    keys
+}
+
 fn price_step(key: String, product: &str, m: &MeterPlan, plan: &str, cents: &str) -> PlanStep {
     let mut form = vec![
         f("currency", "usd"),
         f("product", format!("{{product:{product}}}")),
         f("nickname", format!("{} ({plan})", m.display_name)),
-        f("lookup_key", format!("platform_{plan}_{}", m.event_name.trim_start_matches("allternit_"))),
+        f("lookup_key", price_lookup_key(plan, m)),
         f("recurring[interval]", "month"),
         f("recurring[usage_type]", "metered"),
         f("recurring[meter]", format!("{{meter:{}}}", m.event_name)),
@@ -192,7 +210,7 @@ pub fn plan() -> Vec<PlanStep> {
             f("currency", "usd"),
             f("product", "{product:growth_base}"),
             f("nickname", "Growth plan, monthly"),
-            f("lookup_key", "platform_growth_base"),
+            f("lookup_key", GROWTH_BASE_LOOKUP_KEY),
             f("unit_amount", GROWTH_BASE_CENTS.to_string()),
             f("recurring[interval]", "month"),
             f("recurring[usage_type]", "licensed"),

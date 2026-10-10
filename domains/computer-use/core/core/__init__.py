@@ -37,9 +37,7 @@ from .multi_model_tools import (
 
 from .vision_providers import (
     VisionProvider,
-    OpenAIVisionClient,
     AnthropicVisionClient,
-    AzureOpenAIVisionClient,
     MockVisionClient,
     VisionProviderFactory,
     VisionResponse,
@@ -76,9 +74,7 @@ __all__ = [
     "GEMINI_COMPUTER_TOOL",
     # Vision Providers (non-Claude model path)
     "VisionProvider",
-    "OpenAIVisionClient",
     "AnthropicVisionClient",
-    "AzureOpenAIVisionClient",
     "MockVisionClient",
     "VisionProviderFactory",
     "VisionResponse",

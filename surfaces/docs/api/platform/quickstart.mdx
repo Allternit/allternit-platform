@@ -19,7 +19,16 @@ export ALLTERNIT_API_KEY=alt_test_…
 
 Sandbox projects use simulated numbers and can have 3 agents. Keys and scopes are covered in [Authentication](/api/platform/authentication).
 
-Install an SDK if you are not using curl (both are not yet on npm or PyPI; install from the repo, see [TypeScript SDK](/api/platform/sdks/typescript) and [Python SDK](/api/platform/sdks/python)).
+Creating a key asks you to accept the [Developer Terms](/legal/developer-terms) and the [Acceptable Use Policy](/legal/acceptable-use-policy).
+
+**Add a payment method.** There is no free tier: every project, sandbox included, needs a card on file before it can create agents, run conversations, place calls, text, buy numbers or use computers. Open **Platform API → Billing**, pick the project and choose **Pay as you go** ($0 a month plus usage) or, for a live project, **Growth** ($249 a month with $300 of usage credit). Checkout is Stripe's. Sandbox traffic is not charged, but the card is still required. Until a card is on file those calls answer:
+
+```json
+{ "error": { "type": "billing_error", "code": "payment_method_required", "message": "This project has no payment method on file. …",
+  "param": null, "url": "https://platform.allternit.com/platform/billing?project=proj_…" } }
+```
+
+Install an SDK if you are not using curl: `npm install @allternit/platform` or `pip install allternit-platform` (see [TypeScript SDK](/api/platform/sdks/typescript) and [Python SDK](/api/platform/sdks/python)).
 
 ## 2. Create an account
 

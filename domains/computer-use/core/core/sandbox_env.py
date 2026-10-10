@@ -13,7 +13,7 @@ Contract (mirrors the Rust side):
 * Values reach the run environment through :func:`sandbox_env_context`,
   which sets ``os.environ`` for the duration of the run so every child
   process the adapters launch (Playwright browser processes, desktop
-  interpreter/pyautogui subprocesses) inherits them. There is no Python
+  helper subprocesses such as osascript) inherits them. There is no Python
   VM/microVM session path: the Firecracker/container sandbox under
   ``sandbox/`` is a separate provisioning concept and does not participate
   in the execute path, and the cloud-VM ``/etc/environment`` bootstrap is

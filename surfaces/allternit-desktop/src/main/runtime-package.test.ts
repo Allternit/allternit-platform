@@ -219,7 +219,7 @@ describe('per-file delta updates (feed format 2)', () => {
   it('retries a download that stalls and still stages the update', async () => {
     bundle('api v1', '<html>same</html>');
     const { fetchImpl, fetched } = deltaFeed('r2', 200, 'api v2', '<html>same</html>');
-    const quick = new RuntimePackages({ root, resourcesPath: resources, publicKey: PUB, platform: 'test-x', shellApi: 1, stallMs: 50 });
+    const quick = new RuntimePackages({ root, resourcesPath: resources, publicKey: PUB, platform: 'test-x', shellApi: 1, stallMs: 400 });
     expect(await quick.checkForUpdate('https://feed.test', stalling(fetchImpl, 1))).toBe('r2');
     expect(fetched).toEqual([sha('api v2')]);
   });
@@ -227,7 +227,7 @@ describe('per-file delta updates (feed format 2)', () => {
   it('gives up with an error when a download keeps stalling', async () => {
     bundle('api v1', '<html>same</html>');
     const { fetchImpl } = deltaFeed('r2', 200, 'api v2', '<html>same</html>');
-    const quick = new RuntimePackages({ root, resourcesPath: resources, publicKey: PUB, platform: 'test-x', shellApi: 1, stallMs: 50 });
+    const quick = new RuntimePackages({ root, resourcesPath: resources, publicKey: PUB, platform: 'test-x', shellApi: 1, stallMs: 400 });
     await expect(quick.checkForUpdate('https://feed.test', stalling(fetchImpl, 99))).rejects.toThrow(/stalled/);
     expect(quick.readState().pending).toBeUndefined();
   });

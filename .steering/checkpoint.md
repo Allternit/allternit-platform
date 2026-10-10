@@ -1,6 +1,9 @@
-# Vendor account bots checkpoint
+# D2 checkpoint (feat/computer-contract-v2)
 
-Goal: Execute docs/VENDOR_ACCOUNT_BOTS_TASK.md offline in this worktree only.
-Just did: Account-bot discovery, kind labels/avatars/contracts, durable context routing, API forwarding, Grok named-bot identity, and reconnect refresh implemented. Full gateway suite: 565 tests / 45 files PASS; source hygiene OK; typecheck PASS; docs 0 problems and no FAIL. Temporary two-worker test config removed. Tracking: dag:dag_76438; implementation wih:wih_5506 DONE, gateway verification wih:wih_6034 DONE.
-Next: Preserve implementation on gateway/vendor-account-bots and uncommitted notes; Rust checks and fresh-data real-binary smoke boot after disk gate clears. Completion sentinel withheld while verification is incomplete.
-Open questions: Free disk 28 GiB, below task's 40 GB Rust build gate; owner cleanup requested. Rust and successful completion DAG nodes explicitly deferred/labeled. The installed work-engine CLI (now the Factory engine) supplied the DAG after discovering the alternate name. No vendor traffic, push/PR/merge/deploy, branch deletion, other-checkout git, or shared-checkout landing ritual permitted.
+Goal: Allternit Driver spec phase D2 — contract `allternit.computer.v2` (6 structured members added to the 17 pixel members), executor wiring (approvals+audit, run_batch, request_human lease pause), credential backends (vault/Keychain/Bitwarden/1Password/TOTP), Windows TCP transport for the sidecar client, per-family adapters + prompt guidance, docs, verification.
+
+Just did: worktree `allternit-wt-d2-contract` off origin/main (d6799e78fd); explored executor (computer_toolset.rs), driver sidecar (read_ui/act/run_batch/verify already server-side), lease, aci_credentials vault (totp_code exists), gizzi adapters.
+
+Next: write contracts/computer-toolset/allternit-computer-v2.json; update generate.mjs; Rust executor + computer_v2.rs + this_device_input TCP transport; gizzi computer_v2 tool; tests; docs; per-family live verification; PR + merge.
+
+Open questions: guests unreachable (same as D1) — cloud-computer verification will be recorded as an open item. Bitwarden/1Password CLIs — check availability on this machine.

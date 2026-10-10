@@ -5,9 +5,11 @@ description: 'The @allternit/platform package: typed client, idempotency keys, t
 
 `@allternit/platform` is a typed client for the Platform API. It has no runtime dependencies and uses the global `fetch`, so it runs on Node 18+, Deno, Bun and in browsers (keep live keys on your server).
 
-<Note>
-Not yet published to npm; publishing needs approval. Until then, install it from the repository: build `sdk/platform-ts` (`tsc -p tsconfig.json`) and `npm install /path/to/allternit/sdk/platform-ts`.
-</Note>
+```bash
+npm install @allternit/platform
+```
+
+A project needs a card on file before it can do billable work; until then those calls throw `PaymentRequiredError` (402, `code: "payment_method_required"`) with `err.url`, the console billing page. See [Billing](/api/platform/billing).
 
 ## Create a client
 

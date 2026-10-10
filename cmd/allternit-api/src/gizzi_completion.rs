@@ -22,7 +22,7 @@ pub async fn complete(
     system: Option<&str>,
     model: Option<&(String, String)>,
 ) -> Option<String> {
-    run(prompt, system, model, false, false, None, &mut None).await.map(|(t, _)| t)
+    run(prompt, &[], system, model, false, false, None, &mut None).await.map(|(t, _)| t)
 }
 
 /// Like [`complete`], but deletes the temporary Gizzi session afterwards, so
@@ -33,7 +33,7 @@ pub async fn complete_ephemeral(
     system: Option<&str>,
     model: Option<&(String, String)>,
 ) -> Option<String> {
-    run(prompt, system, model, true, false, None, &mut None).await.map(|(t, _)| t)
+    run(prompt, &[], system, model, true, false, None, &mut None).await.map(|(t, _)| t)
 }
 
 /// [`complete_ephemeral`] with a JSON-schema constrained reply (O10). gizzi
@@ -47,7 +47,28 @@ pub async fn complete_ephemeral_structured(
     schema: &serde_json::Value,
 ) -> Option<String> {
     let format = json!({ "type": "json_schema", "schema": schema, "retryCount": 1 });
-    run(prompt, system, model, true, true, Some(&format), &mut None).await.map(|(t, _)| t)
+    run(prompt, &[], system, model, true, true, Some(&format), &mut None).await.map(|(t, _)| t)
+}
+
+/// One typed decision from the planner model (the Decision Runtime's oracle):
+/// ephemeral, tools off except the StructuredOutput tool that enforces
+/// `schema`, with optional images as data URLs. `Err` carries the provider's
+/// error when gizzi reported one.
+pub async fn complete_decision(
+    prompt: &str,
+    images: &[String],
+    system: Option<&str>,
+    model: Option<&(String, String)>,
+    schema: &serde_json::Value,
+) -> Result<(String, Usage), String> {
+    let format = json!({ "type": "json_schema", "schema": schema, "retryCount": 1 });
+    let mut provider_error = None;
+    let reply = run(prompt, images, system, model, true, true, Some(&format), &mut provider_error).await;
+    match (reply, provider_error) {
+        (_, Some(e)) => Err(e),
+        (Some(r), None) => Ok(r),
+        (None, None) => Err("gizzi-code gave no answer".into()),
+    }
 }
 
 /// Model usage gizzi-code reported for a completion (summed over the
@@ -96,7 +117,7 @@ pub async fn complete_ephemeral_usage(
     model: Option<&(String, String)>,
 ) -> Result<(String, Usage), String> {
     let mut provider_error = None;
-    let reply = run(prompt, system, model, true, true, None, &mut provider_error).await;
+    let reply = run(prompt, &[], system, model, true, true, None, &mut provider_error).await;
     match (reply, provider_error) {
         (_, Some(e)) => Err(e),
         (Some(r), None) => Ok(r),
@@ -130,7 +151,7 @@ pub async fn complete_for(
             return Some((text, Usage::default()));
         }
     }
-    let out = run(prompt, system, Some(&resolved), ephemeral, false, None, &mut None).await?;
+    let out = run(prompt, &[], system, Some(&resolved), ephemeral, false, None, &mut None).await?;
     if let Some(key) = &key {
         cc::store(store, call_type, key, &out.0);
     }
@@ -143,8 +164,10 @@ pub async fn complete_for(
     Some(out)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run(
     prompt: &str,
+    images: &[String],
     system: Option<&str>,
     model: Option<&(String, String)>,
     delete_after: bool,
@@ -199,7 +222,7 @@ async fn run(
     let session_id = session.get("id")?.as_str()?.to_string();
     info!(session_id, model = %model_label, "Created Gizzi completion session");
     let started = std::time::Instant::now();
-    let text = collect(&client, &gizzi, &session_id, prompt, system, tools_off, format, provider_error).await;
+    let text = collect(&client, &gizzi, &session_id, prompt, images, system, tools_off, format, provider_error).await;
     record_ledger(&provider_id, &model_id, &session_id, text.as_ref().map(|(_, u)| *u), started.elapsed());
     if delete_after {
         if let Err(err) = client
@@ -214,11 +237,13 @@ async fn run(
 }
 
 /// Send the prompt into an existing session and collect the reply text.
+#[allow(clippy::too_many_arguments)]
 async fn collect(
     client: &Client,
     gizzi: &str,
     session_id: &str,
     prompt: &str,
+    images: &[String],
     system: Option<&str>,
     tools_off: bool,
     format: Option<&serde_json::Value>,
@@ -249,9 +274,12 @@ async fn collect(
     // so pass the system prompt there instead of folding it into the text.
     // "+" prefix: APPEND to gizzi's default assembled system prompt rather
     // than replace it.
-    let mut message_payload = json!({
-        "parts": [{ "type": "text", "text": prompt }]
-    });
+    let mut parts = vec![json!({ "type": "text", "text": prompt })];
+    for (i, url) in images.iter().enumerate() {
+        let mime = url.strip_prefix("data:").and_then(|r| r.split(';').next()).unwrap_or("image/png");
+        parts.push(json!({ "type": "file", "mime": mime, "filename": format!("image-{i}"), "url": url }));
+    }
+    let mut message_payload = json!({ "parts": parts });
     if let Some(system_text) = system.map(str::trim).filter(|s| !s.is_empty()) {
         message_payload["system"] = json!(format!("+{system_text}"));
     }

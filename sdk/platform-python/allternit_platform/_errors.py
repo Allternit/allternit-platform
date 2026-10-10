@@ -23,6 +23,8 @@ class APIError(AllternitError):
         self.type: Optional[str] = body.get("type")
         self.code: Optional[str] = body.get("code")
         self.param: Optional[str] = body.get("param")
+        #: Where to fix it (402 ``payment_method_required``: the console billing page).
+        self.url: Optional[str] = body.get("url")
         self.headers = dict(headers or {})
         lower = {k.lower(): v for k, v in self.headers.items()}
         self.request_id: Optional[str] = lower.get("x-request-id")
@@ -51,6 +53,11 @@ PermissionError = PermissionDeniedError  # noqa: A001
 
 class NotFoundError(APIError):
     """404: no such resource (or it belongs to another project)."""
+
+
+class PaymentRequiredError(APIError):
+    """402 ``billing_error``: ``payment_method_required`` (no card on file; open
+    ``url``, the console billing page) or ``spend_cap_reached``."""
 
 
 class ConflictError(APIError):
@@ -84,6 +91,7 @@ class APITimeoutError(APIConnectionError):
 _BY_TYPE = {
     "invalid_request_error": InvalidRequestError,
     "authentication_error": AuthenticationError,
+    "billing_error": PaymentRequiredError,
     "permission_error": PermissionDeniedError,
     "not_found_error": NotFoundError,
     "conflict_error": ConflictError,
@@ -102,6 +110,8 @@ def error_for(
         cls: type = InvalidRequestError
     elif status == 401:
         cls = AuthenticationError
+    elif status == 402:
+        cls = PaymentRequiredError
     elif status == 403:
         cls = PermissionDeniedError
     elif status == 404:

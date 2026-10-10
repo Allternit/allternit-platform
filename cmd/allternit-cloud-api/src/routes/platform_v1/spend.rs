@@ -3,6 +3,9 @@
 //! billable work it can't take back (a phone call, a realtime session) asks
 //! [`spend_allowed`] first and refuses with [`cap_reached`] when it says no.
 //!
+//! Without a card on file the check answers `Err(402 payment_method_required)`
+//! (billing's [`super::billing::require_payment_method`]), not `Ok(false)`.
+//!
 //! The check itself is billing's ([`super::billing::spend_allowed`]): the
 //! month's priced usage against the cap. Callers depend only on this signature.
 
@@ -33,6 +36,6 @@ pub fn cap_reached() -> PlatformError {
         kind: "invalid_request_error",
         code: "spend_cap_reached".into(),
         message: "This project reached its monthly spend cap. Raise the cap in the console to continue.".into(),
-        param: None,
+        param: None, url: None,
     }
 }

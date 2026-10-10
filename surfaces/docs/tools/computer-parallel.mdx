@@ -1,0 +1,118 @@
+---
+title: 'Parallel subtasks and Best-of-N'
+description: 'run_parallel runs independent subtasks on separate computers at once; run_subtask with best_of runs N rollouts on N sandbox computers and a judge picks one by their step narratives'
+---
+
+<Note>
+**Status:** Implementation IMPLEMENTED × Exposure PUBLIC PREVIEW (Driver phase D7). Code: `cmd/allternit-api/src/computer_parallel.rs`. Contract: `run_parallel` and the `best_of` / `computers` / `api_options` fields of `run_subtask` in `allternit.computer.v2` (see [Computer toolset](/tools/computer-toolset)). Subtasks run on computers that carry the [Allternit Driver](/tools/allternit-driver): this device today. Cloud computers run subtasks once the guest driver image ships (phase D1b); until then a subtask on a cloud computer comes back `failed` with `error: "unimplemented"`, and Best-of-N, which runs only on cloud computers, returns no winner.
+</Note>
+
+## Overview
+
+[`run_subtask`](/tools/computer-use-decisions) runs one bounded subtask on one computer. Two fan-outs build on it:
+
+- **`run_parallel`**: independent subtasks, one per computer, run at the same time. Each result comes back in input order.
+- **Best-of-N** (`run_subtask` with `best_of: N`): for a high-value subtask, N rollouts of the same subtask run at once on N sandbox computers. A judge picks one by the rollouts' step narratives. This is Agent S3's Behavior Best-of-N design (Apache-2.0).
+
+Both are members of the `computer_v2` function tool, so every model family gets them the same way.
+
+## run_parallel
+
+```json
+{
+  "member": "run_parallel",
+  "input": {
+    "subtasks": [
+      { "computer": "cmp_build_box", "goal": "Open the build page and start the nightly build", "success": [{ "text": "Build queued" }] },
+      { "computer": "cmp_report_box", "goal": "Export the weekly report as PDF", "success": [{ "text": "Export complete" }] }
+    ],
+    "max_parallel": 2,
+    "budget_ms": 120000,
+    "max_cost_usd": 0.25
+  }
+}
+```
+
+- Each subtask takes `run_subtask`'s fields plus `computer`, the computer id it runs on. Without `computer` it runs on the computer the call was made on.
+- Each subtask goes through its own computer's gates: target, control lease, policy, a durable audit row, then the subtask loop. Its steps then go through lease, policy and audit as usual.
+- **One input owner per computer.** A computer listed twice is refused before anything runs (`409 computer_conflict`; `this-device` and its own id count as one). A computer that another subtask loop is already driving, from this call or another, comes back `refused` with `error: "computer_busy"`. On a cloud computer, a lease held by another agent run also refuses.
+- **Approval:** one approval covers the whole call when any subtask targets a non-sandbox computer (this device). Subtasks on cloud computers need none.
+
+Result:
+
+```json
+{
+  "status": "partial",
+  "done": 1,
+  "subtasks": 2,
+  "max_parallel": 2,
+  "elapsed_ms": 4310,
+  "cost_usd": 0,
+  "results": [
+    { "subtask": 1, "computer": "cmp_build_box", "status": "done", "steps": ["…"] },
+    { "subtask": 2, "computer": "cmp_report_box", "status": "escalated", "reason": "…", "screen": {} }
+  ]
+}
+```
+
+`status` is `done` (every subtask done), `partial` (some) or `failed` (none). Each result is a `run_subtask` result plus `subtask` and `computer`, or `skipped` / `refused` / `failed` with a `reason`.
+
+## Best-of-N
+
+```json
+{
+  "member": "run_subtask",
+  "input": {
+    "goal": "Book the 9:00 meeting room for Friday",
+    "success": [{ "text": "Booked" }],
+    "best_of": 3,
+    "computers": ["cmp_cloud_1", "cmp_cloud_2", "cmp_cloud_3"],
+    "max_cost_usd": 0.25
+  }
+}
+```
+
+1. **Rollouts.** One rollout per listed computer, all at once (`best_of` 2–5, at least that many distinct ids in `computers`). Every computer must be a sandbox/cloud computer. Listing this device, or any computer that isn't a sandbox, refuses the call with `409 sandbox_required`. Rollouts never run as copies on the person's own machine.
+2. **Narratives.** Each rollout's step trace becomes a narrative: every step's chosen option and what happened after it (`ran, the screen changed`, `ran, the screen didn't change`, `failed: …`), whether the success checks held, and what the final screen shows.
+3. **Shortlist.** The candidates are the rollouts whose success checks held. If none held, the candidates are the rollouts that ended `done`. If exactly one rollout is a candidate, it wins with no judge call.
+4. **Judge.** With several candidates, one decision of kind `judge` over their narratives (`POST /v1/decisions`, options `r1`…`rN`) picks one. The fast tiers answer first. When they abstain, the oracle (the planner-class tier) gets one try, but only while the call is under `max_cost_usd`. If nobody picks, the call returns `escalated` with every narrative so the planner decides.
+
+Result:
+
+```json
+{
+  "status": "done",
+  "best_of": 3,
+  "chosen": { "rollout": "r2", "computer": "cmp_cloud_2", "why": "the judge (local, confidence 0.91) picked r2 by the step narratives among 2 rollouts that reached the goal" },
+  "judge_decisions": 1,
+  "elapsed_ms": 9120,
+  "cost_usd": 0,
+  "rollouts": [
+    { "rollout": "r1", "computer": "cmp_cloud_1", "status": "done", "narrative": "Rollout r1 on computer cmp_cloud_1: ended done.\n1. click the button \"Book\" -> ran, the screen changed\n…", "result": {} }
+  ]
+}
+```
+
+Continue on the chosen rollout's computer. The other computers stay as their rollouts left them. The judge's decision outcome is written back to the decision store (`success` for the pick), the same as every subtask decision.
+
+## Budgets
+
+| Limit | Applies to | Default | Max |
+|---|---|---|---|
+| `max_parallel` | `run_parallel`: subtasks running at once | 4 | 8 |
+| `budget_ms` | `run_parallel`: wall clock for the whole call. Each subtask's own `budget_ms` is cut to what is left when it starts | 120 000 | 600 000 |
+| `max_cost_usd` | decision spend for the whole call. Once reached, subtasks not yet started come back `skipped`; Best-of-N's judge skips the oracle tier | 0.25 | 5 |
+| `max_steps`, `budget_ms` | each subtask or rollout (`run_subtask`'s own) | 12, 60 000 | 40, 300 000 |
+
+Subtask loops run on the fast decision tiers only, so their spend is normally 0. The cost cap matters when a configured fast tier is metered and for the judge's oracle fallback.
+
+## API over GUI
+
+Both fan-outs take `run_subtask`'s `api_options`. When an MCP tool or API action can do a subtask's goal, it is offered ahead of the GUI steps, and a pick returns `status: "use_api"` for the planner to make that call. See [How computer use decides](/tools/computer-use-decisions#api-over-gui).
+
+## Related pages
+
+- [How computer use decides](/tools/computer-use-decisions)
+- [Computer toolset](/tools/computer-toolset)
+- [Allternit Driver](/tools/allternit-driver)
+- [Decisions API](/api/agency/decisions)

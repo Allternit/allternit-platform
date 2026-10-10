@@ -359,9 +359,11 @@ registry.rehydrate(snapshot);
 | Capability | Tools Provided | Config Option |
 |-----------|----------------|---------------|
 | `filesystem` | `read_file`, `write_file` | — |
-| `computer-use` | `computer` (mouse, keyboard, screenshots) | `computerUseBaseUrl` |
+| `computer-use` (deprecated) | `computer` (mouse, keyboard, screenshots) | `computerUseBaseUrl` |
 | `brain` | `query_brain` | — |
 | HITL | `ask_user_question` | — |
+
+The `computer-use` capability and the `@allternit/sdk/computer-use` client are deprecated (2026-10-09). New code uses `@allternit/computer-driver`, which drives hosted computers through the computer toolset (`/v1/computers/:id/toolset`) and ships Anthropic, OpenAI and Gemini adapters. The old pieces are not drop-ins for it, so they stay as thin shims.
 
 ### AgentRun Events
 

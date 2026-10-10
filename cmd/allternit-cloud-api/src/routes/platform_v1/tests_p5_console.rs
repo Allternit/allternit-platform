@@ -33,6 +33,8 @@ async fn state() -> Arc<ApiState> {
         include_str!("../../../migrations_pg/057_allternit_events_backbone.sql"),
         include_str!("../../../migrations_pg/063_platform_agents.sql"),
         include_str!("../../../migrations_pg/064_platform_conversations.sql"),
+        include_str!("../../../migrations_pg/080_platform_billing.sql"),
+        include_str!("../../../migrations_pg/084_platform_payment_methods.sql"),
     ] {
         sqlx::raw_sql(&sql.replace("public.", "")).execute(&state.db).await.expect("migration applies");
     }
@@ -87,6 +89,7 @@ const SESSION: &str = "console-session-jwt";
 async fn the_console_acts_on_its_own_project_over_v1() {
     let st = state().await;
     let p = projects::create_project(&st.db, &who("owner_1"), "Console", ProjectEnv::Sandbox).await.unwrap();
+    super::project_billing::put_test_card(&st.db, &p.id).await;
     let app = app_as(&st, "owner_1");
     let pid = Some(p.id.as_str());
 
@@ -122,6 +125,7 @@ async fn the_console_acts_on_its_own_project_over_v1() {
 async fn the_console_cannot_reach_projects_it_does_not_manage() {
     let st = state().await;
     let p = projects::create_project(&st.db, &who("owner_2"), "Mine", ProjectEnv::Sandbox).await.unwrap();
+    super::project_billing::put_test_card(&st.db, &p.id).await;
     let pid = Some(p.id.as_str());
 
     // Someone else's session: the project doesn't exist for them.
@@ -145,6 +149,7 @@ async fn the_console_cannot_reach_projects_it_does_not_manage() {
 
     // A project key still authenticates as itself even if the header names another project.
     let other = projects::create_project(&st.db, &who("owner_3"), "Other", ProjectEnv::Sandbox).await.unwrap();
+    super::project_billing::put_test_card(&st.db, &other.id).await;
     let key = mint(&st, &p, None, &["agents"]).await;
     let (s, list) = send(&app_as(&st, "owner_3"), "GET", "/v1/agents", &key, Some(other.id.as_str()), None).await;
     assert_eq!((s, list["data"].as_array().map(Vec::len)), (StatusCode::OK, Some(0)));
@@ -165,6 +170,7 @@ async fn the_console_cannot_reach_projects_it_does_not_manage() {
 async fn conversations_list_per_agent_with_pages_and_isolation() {
     let st = state().await;
     let p = projects::create_project(&st.db, &who("owner_4"), "Convs", ProjectEnv::Sandbox).await.unwrap();
+    super::project_billing::put_test_card(&st.db, &p.id).await;
     let app = router_gated(&st, Gate::Forced(true)).with_state(st.clone());
     let admin = mint(&st, &p, None, &["agents"]).await;
     let (_, a) = send(&app, "POST", "/v1/accounts", &admin, None, Some(json!({ "name": "A" }))).await;

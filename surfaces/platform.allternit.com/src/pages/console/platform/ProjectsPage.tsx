@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Link } from "react-router-dom";
-import { Archive, CircleNotch, Cube, Key, PencilSimple, Plus, X } from "@phosphor-icons/react";
+import { Archive, CircleNotch, Cube, Key, PencilSimple, Plus, X, CreditCard } from "@phosphor-icons/react";
 import { formatApiError } from "@/lib/api-client";
 import { createProject, updateProject, type PlatformProject, type ProjectEnv } from "@/lib/platform-projects";
 import { Badge, EmptyState, MonoChip, SkeletonCard } from "@/components/console-ui";
@@ -210,6 +210,9 @@ function ProjectRow({
           )}
           <Link to="/api-keys" onClick={onSelect} className={QUIET_BUTTON_CLASS}>
             <Key size={14} aria-hidden /> Keys
+          </Link>
+          <Link to={`/platform/billing?project=${encodeURIComponent(project.id)}`} onClick={onSelect} className={QUIET_BUTTON_CLASS}>
+            <CreditCard size={14} aria-hidden /> Billing
           </Link>
           <button type="button" className={QUIET_BUTTON_CLASS} onClick={() => setEditing((v) => !v)} aria-expanded={editing}>
             <PencilSimple size={14} aria-hidden /> Edit

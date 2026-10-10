@@ -22,6 +22,9 @@ pub struct PlatformError {
     pub code: String,
     pub message: String,
     pub param: Option<String>,
+    /// Where to fix it (`payment_method_required`: the console billing page).
+    /// Sent as `error.url` only when set.
+    pub url: Option<String>,
 }
 
 impl PlatformError {
@@ -32,7 +35,13 @@ impl PlatformError {
             code: code.to_string(),
             message: message.into(),
             param: None,
+            url: None,
         }
+    }
+
+    pub fn with_url(mut self, url: impl Into<String>) -> Self {
+        self.url = Some(url.into());
+        self
     }
 
     pub fn with_param(mut self, param: &str) -> Self {
@@ -98,7 +107,7 @@ impl std::fmt::Display for PlatformError {
 
 impl IntoResponse for PlatformError {
     fn into_response(self) -> Response {
-        let body = json!({
+        let mut body = json!({
             "error": {
                 "type": self.kind,
                 "code": self.code,
@@ -106,6 +115,9 @@ impl IntoResponse for PlatformError {
                 "param": self.param,
             }
         });
+        if let Some(url) = self.url {
+            body["error"]["url"] = json!(url);
+        }
         (self.status, Json(body)).into_response()
     }
 }
@@ -132,6 +144,13 @@ impl From<ApiError> for PlatformError {
             | ApiError::InvalidToken(m)
             | ApiError::TokenExpired(m) => Self::authentication("unauthorized", m),
             ApiError::TooManyRequests(m) => Self::rate_limit("rate_limited", m),
+            ApiError::ServiceUnavailable(m) if m.starts_with(crate::services::provisioning::HOSTED_POOL_FULL) => {
+                Self::service_unavailable("computer_capacity", m)
+            }
+            ApiError::ServiceUnavailable(m) => {
+                tracing::warn!(error = %m, "platform api: service unavailable");
+                Self::service_unavailable("service_unavailable", "No capacity right now. Retry in a few minutes.")
+            }
             other => {
                 tracing::error!(error = %other, "platform api internal error");
                 Self::api_error("internal_error", "An internal error occurred. Please retry.")

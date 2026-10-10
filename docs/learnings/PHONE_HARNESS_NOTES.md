@@ -1,5 +1,7 @@
 # Phone-Harness iOS Provider — P1 Integration Notes
 
+> **Historical (2026-10-09):** this provider and the canonical environment/lease routes it used were removed in the D0 cleanup. Computers are driven through the computer toolset; see `surfaces/docs/core/canonical-computer-use.mdx`.
+
 ## Goal
 Wire the vendored `phone-harness` project as the canonical iOS mobile computer-use
 provider `mobile.phone.canonical` in Allternit.

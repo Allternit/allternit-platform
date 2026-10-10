@@ -684,7 +684,7 @@ async fn turn_h(State(state): State<Arc<AppState>>, Extension(deps): Extension<A
             match result {
                 Ok(reply) => {
                     if let TurnReply::Final(reply) = reply {
-                        for chunk in speakable_chunks(&reply) {
+                        for chunk in speakable_chunks(&crate::openui_text::to_spoken_text(&reply)) {
                             let _ = tx.send(json!({ "type": "text.delta", "text": chunk }));
                         }
                     }

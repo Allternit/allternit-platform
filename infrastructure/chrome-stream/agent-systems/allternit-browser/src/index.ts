@@ -91,7 +91,6 @@ export type {
 export {
   ExtensionTabProvider,
   RemoteBrowserProvider,
-  createBrowserUseProvider,
   createStagehandProvider,
   providerKind,
 } from './protocol/remote-provider.js';

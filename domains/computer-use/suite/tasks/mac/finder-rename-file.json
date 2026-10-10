@@ -1,0 +1,45 @@
+{
+  "id": "finder-rename-file",
+  "os": "mac",
+  "status": "ready",
+  "apps": [
+    "Finder"
+  ],
+  "setup": [
+    {
+      "do": "write_file",
+      "path": "report-draft.txt",
+      "text": "q3 report\n"
+    },
+    {
+      "do": "open",
+      "app": "Finder",
+      "path": "."
+    }
+  ],
+  "goal": "A Finder window shows the folder AllternitSuite/finder-rename-file. Rename the file report-draft.txt to the new name below.",
+  "inputs": {
+    "new_name": "report-final.txt"
+  },
+  "checker": [
+    {
+      "kind": "dir_names",
+      "path": ".",
+      "names": [
+        "report-final.txt"
+      ]
+    },
+    {
+      "kind": "file_equals",
+      "path": "report-final.txt",
+      "text": "q3 report"
+    }
+  ],
+  "teardown": [],
+  "max_minutes": 3,
+  "tags": [
+    "finder",
+    "files",
+    "core"
+  ]
+}

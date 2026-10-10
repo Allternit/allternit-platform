@@ -1,4 +1,4 @@
-# GP-05: Desktop Execute (pyautogui)
+# GP-05: Desktop Execute (accessibility adapter)
 
 ## Purpose
 Automate native desktop applications — screenshot, click, type, observe.
@@ -7,13 +7,13 @@ For legacy apps, GUI-only systems, or cross-app workflows.
 ## Preconditions
 - Target application launchable
 - Desktop visible (not headless server)
-- `pyautogui` installed
+- macOS with the Accessibility (and Screen Recording) permission granted
 - Screen accessible (not locked)
 
 ## Routing
 - **Family:** desktop
-- **Mode:** desktop (or execute — both route to pyautogui)
-- **Primary adapter:** desktop.pyautogui
+- **Mode:** desktop (or execute — both route to desktop.accessibility)
+- **Primary adapter:** desktop.accessibility
 - **Fallback chain:** none
 - **Fail mode:** fail closed
 
@@ -23,21 +23,21 @@ goal → Router.route(family="desktop", mode="desktop")
      → PolicyEngine.evaluate(adapter_risk_level="high", family="desktop")
        → forces headed mode (P-003)
      → SessionManager.create(family="desktop")
-     → PyAutoGUIAdapter.execute(screenshot)     # full screen capture
-     → PyAutoGUIAdapter.execute(observe)         # screen size, mouse pos
-     → PyAutoGUIAdapter.execute(act, click x=500 y=300)
-     → PyAutoGUIAdapter.execute(act, type text="hello")
+     → AccessibilityAdapter.execute("take_screenshot")          # full screen capture
+     → AccessibilityAdapter.screen_size() / cursor_position()   # observe
+     → AccessibilityAdapter.execute("click", {x: 500, y: 300})
+     → AccessibilityAdapter.execute("type_text", {text: "hello"})
      → ReceiptWriter.emit(...)
      → SessionManager.destroy()
 ```
 
 ## Supported Actions
-| Action       | pyautogui Method     | Notes                    |
-|-------------|----------------------|--------------------------|
-| `screenshot` | `pyautogui.screenshot()` | Full screen PNG      |
-| `observe`    | `size()`, `position()`   | Screen dims + cursor |
-| `act:click`  | `pyautogui.click(x, y)`  | Absolute coordinates |
-| `act:type`   | `pyautogui.write(text)`  | Keyboard input       |
+| Action       | Accessibility adapter call            | Notes                    |
+|-------------|----------------------------------------|--------------------------|
+| `screenshot` | `execute("take_screenshot")`          | Full screen PNG          |
+| `observe`    | `screen_size()`, `cursor_position()`  | Screen dims + cursor     |
+| `act:click`  | `execute("click", {x, y})`            | Quartz event, absolute   |
+| `act:type`   | `execute("type_text", {text})`        | Quartz keyboard events   |
 
 ## Evidence Requirements
 - Screenshot before each action

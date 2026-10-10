@@ -42,7 +42,7 @@ pub fn starting() -> PlatformError {
         kind: "api_error",
         code: "runtime_starting".into(),
         message: "The agent's hosted runtime is starting. Retry in a few seconds.".into(),
-        param: None,
+        param: None, url: None,
     }
 }
 
@@ -55,7 +55,7 @@ fn unavailable(detail: &str) -> PlatformError {
         kind: "api_error",
         code: "runtime_unavailable".into(),
         message: "The agent's hosted runtime couldn't be reached. Retry shortly.".into(),
-        param: None,
+        param: None, url: None,
     }
 }
 

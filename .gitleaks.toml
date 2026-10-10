@@ -41,6 +41,8 @@ paths = [
 
   # DLP/ACI pattern files intentionally contain secret-shaped strings
   '''^cmd/allternit-api/src/aci_safety\.rs$''',
+  # computer-use safety layer: screenshot/observation redaction patterns and their fake-key tests
+  '''^cmd/allternit-api/src/computer_safety\.rs$''',
   '''^cmd/allternit-api/src/llm_gateway/dlp_patterns\.rs$''',
 
   # CI ephemeral postgres service password (test-only, lives for the job run)

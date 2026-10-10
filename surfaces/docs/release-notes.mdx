@@ -5,6 +5,24 @@ description: 'Changelog for the Allternit platform, SDKs, and Gizzi Code CLI'
 
 # Release Notes
 
+## 2026-10-08 — Polished interactive cards
+
+- Cards in replies have a new design: inputs and results in labelled groups, sliders with a filled track, number fields with $ / % and − / + buttons, segmented choices, and up to two actions at the bottom. Numbers animate when you change an input. Light and dark, desktop and phone. See [Interactive answers](/guides/interactive-answers#design).
+- Cards now draw in Chat, Cowork, Code and bot threads instead of showing as a code block, and no longer show up under Outputs.
+- While a card is being written, one steady placeholder holds its place with the card's title, then the finished card appears in one step. Numbers no longer flash in digit by digit.
+- Cards have a controls panel for the numbers you change and lead with the answer in large type.
+- Starting a new chat shows your message and **Starting chat…** right away, instead of an empty screen while the chat is set up.
+
+## 2026-10-08 — Interactive answers turned on, with live data
+
+- Assistants now know they can answer with an [interactive card](/guides/interactive-answers) (sliders, metrics, tables, charts, choices) in Chat, Cowork, Code, bot threads, the HUD and Design mode. Plain text stays the default.
+- Cards can show live data from your connected apps and refresh it. A card that changes something asks first with an **Allow** bar showing the exact tool and arguments; nothing runs until you approve.
+- What you set on a card is remembered when you come back to the chat (on that device).
+- Settings → Response style → **Layout and visuals**: choose **Auto** or **Text only**.
+- Bot threads and the HUD now render cards instead of showing their code. In Slack, Telegram, email and other channels a card is sent as readable text.
+- Design mode's preview shows the reply's card re-skinned with your DESIGN.md. UI Forge is now a working playground for cards.
+- Removed: the old `[v:…]` preview syntax (no model was ever told to write it, and the text after a stray `[v:` in a reply disappeared), BlueprintCanvas, and the `render_walkthrough` tool, which reported a render that never happened.
+
 ## 2026-10-08 — Attach any file or folder
 
 - Attach any file type in the composer: video, audio, ZIP, and files with any extension, including dotfiles. On Desktop and desktop browsers, attach whole folders from **Add a folder** or by dragging them in. See [Attachments](/guides/attachments).

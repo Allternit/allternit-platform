@@ -1,0 +1,8 @@
+Save a new version of an existing artifact (one made with artifact_create, or an id the user gave you). The body replaces the whole content; earlier versions stay in the artifact's history.
+
+- id: the artifact id (starts with "art_").
+- body: the complete new content, in the artifact's existing body format.
+- base_version: the version your change is based on (the version artifact_create, artifact_update or artifact_read last returned). If the artifact has changed since then (the user or someone else edited it), nothing is saved and you get an error: call artifact_read for the latest version, apply your change to it, and retry with the new base_version.
+- note: optional one-line summary of what changed.
+
+Use this for revisions instead of creating a new artifact. Don't repeat the body in your reply.

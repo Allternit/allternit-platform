@@ -90,6 +90,8 @@ export namespace Flag {
   export const GIZZI_DISABLE_ACP_CONFIG_OPTIONS = truthy("GIZZI_DISABLE_ACP_CONFIG_OPTIONS")
   export const GIZZI_DYNAMIC_TOOL_SELECTION = truthy("GIZZI_DYNAMIC_TOOL_SELECTION")
   export const GIZZI_DISABLE_SCRATCHPAD = truthy("GIZZI_DISABLE_SCRATCHPAD")
+  // Hides artifact_create/update/read (Artifacts v2 model tools).
+  export const GIZZI_DISABLE_ARTIFACT_TOOLS = truthy("GIZZI_DISABLE_ARTIFACT_TOOLS")
 
   // Permission modes (set from CLI flags)
   export let GIZZI_PERMISSION_MODE: string | undefined = env("GIZZI_PERMISSION_MODE")
@@ -121,11 +123,9 @@ export namespace Flag {
   // enabled by default; set this to opt out (mirrors GIZZI_DISABLE_BROWSER_TOOL).
   export const GIZZI_ENABLE_LSP_TOOL = !truthy("GIZZI_DISABLE_LSP_TOOL")
   export const GIZZI_ENABLE_BROWSER_TOOL = !truthy("GIZZI_DISABLE_BROWSER_TOOL")
-  export const GIZZI_ENABLE_DESKTOP_TOOL = truthy("GIZZI_ENABLE_DESKTOP_TOOL")
-  // Computer toolset `computer` tool (screen/mouse/keyboard of GIZZI_COMPUTER_ID).
-  // GIZZI_ENABLE_DESKTOP_TOOL also turns it on: the desktop tool's input
-  // actions are superseded by it.
-  export const GIZZI_ENABLE_COMPUTER_TOOL = truthy("GIZZI_ENABLE_COMPUTER_TOOL") || truthy("GIZZI_ENABLE_DESKTOP_TOOL")
+  // Computer toolset `computer` tool (screen/mouse/keyboard of GIZZI_COMPUTER_ID)
+  // plus the `computers` lifecycle/files tool.
+  export const GIZZI_ENABLE_COMPUTER_TOOL = truthy("GIZZI_ENABLE_COMPUTER_TOOL")
   export const GIZZI_DISABLE_FILETIME_CHECK = truthy("GIZZI_DISABLE_FILETIME_CHECK")
   export const GIZZI_EXPERIMENTAL_PLAN_MODE = GIZZI_EXPERIMENTAL || truthy("GIZZI_EXPERIMENTAL_PLAN_MODE")
   export const GIZZI_EXPERIMENTAL_MARKDOWN = truthy("GIZZI_EXPERIMENTAL_MARKDOWN")

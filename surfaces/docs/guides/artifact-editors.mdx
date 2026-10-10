@@ -1,0 +1,178 @@
+---
+title: Docs, Slides, Sheets and Design artifacts
+description: Edit docs, decks, sheets and designs inside the artifact window, ask Allternit to change just a selection, and export them.
+---
+
+Docs, Slides, Sheets and Design artifacts open in an editor inside the
+[artifact window](/guides/artifacts). If you have edit access you can type
+straight into them; otherwise they open read-only. They are available on every
+plan, including Free.
+
+## Editing and autosave
+
+Changes save on their own about a second and a half after you stop typing. A
+small status chip at the bottom right says **Unsaved changes**, **Saving…**,
+**Saved**, or **Couldn't save** with a **Retry** button. Each save is a new
+version. Closing the window or leaving the page saves anything pending first.
+
+If Allternit changes the artifact while you have it open (it saved a new
+version from a chat), the editor shows that version. If you and someone else
+save at the same moment, the window asks whether to keep yours or use theirs.
+
+### Docs
+
+The Docs editor handles headings, paragraphs, bold, italic, underline, strike,
+code, colors, lists, tables, images and dividers. Docs that arrive as
+Markdown (an import, or text Allternit wrote) open in the editor and are saved
+as a Docs file on your first edit.
+
+### Slides
+
+The Slides editor shows a slide list and a canvas. Click a text box to edit,
+drag to move, drag a corner to resize, and drag slides in the list to reorder.
+
+### Sheets
+
+The Sheets editor is a grid with formulas, ranges, merged cells, column and
+row sizing, and several sheets per file.
+
+### Design
+
+A Design artifact opens on the same canvas as Design mode. Each artboard is a
+frame; text, shapes, components and UI blocks sit on the artboards. The
+**Layers** panel lists everything on the canvas, and the **Properties** panel
+edits the selected layer (fill, border, corner radius, shadow, layout). The
+**Design system** menu above the canvas records which design system the design
+follows. Changes autosave as versions, like the other editors.
+
+Select a layer and use **Edit selection** (or the adjustment box in the
+Properties panel) to ask Allternit to change only that layer. Comments attach
+to the selected layer, and clicking **On the layer …** in the Comments panel
+selects it on the canvas.
+
+Designs made before the canvas editor, and designs a model wrote as an HTML
+page, open as a read-only preview with a **Convert to canvas** button.
+Converting puts the page on one artboard as a single HTML layer, shown in a
+sandboxed frame: scripts in a design can't read your Allternit data. Standalone
+Design mode is unchanged.
+
+## Edit with Allternit
+
+Select some text, some cells, a slide or a text box, then click **Edit
+selection** (without a selection the button reads **Edit with Allternit**).
+Type what should change, for example "make this paragraph shorter" or "total
+this column". Allternit gets the exact selection and your instruction, reads
+the artifact, and saves a new version that changes only that part. The version
+is marked as written by Allternit.
+
+The request goes to the chat or Cowork session the artifact is open beside.
+If the artifact is open somewhere with no conversation (for example from the
+Artifacts tab), the button tells you to open it from a chat.
+
+## Versions and who made them
+
+Editors see a **Versions** menu (the clock icon). Each version says **You**,
+**A collaborator** or **By Gizzi**. Open any version to look at it; **Back to
+latest** returns to the current one. Older versions open read-only.
+
+## Present (Slides)
+
+Press **Present** in the window header to show the deck full screen, one slide
+at a time. Use the arrow keys, Space or Page Up/Down to move, Home and End for
+the first and last slide, 1–9 to jump, F for full screen and Esc to stop. On a
+phone, tap the right half of the screen for the next slide and the left half
+for the previous one.
+
+## Export
+
+Open the **Download** menu (the arrow next to **Copy**) in the window header.
+
+| Kind | Exports |
+|---|---|
+| Docs | Word (.docx), PDF, Markdown, Google Docs, Source file, Copy |
+| Slides | PowerPoint (.pptx), PDF, Google Slides, Source file, Copy |
+| Sheets | Excel (.xlsx), CSV (first sheet), Source file, Copy |
+| Design | Standalone HTML, .zip, PowerPoint (each artboard is a slide: its headings and text), PDF, PNG, Source file, Copy |
+
+PDF export opens your browser's print dialog; choose **Save as PDF**.
+
+**Google Docs** and **Google Slides** need Google Drive connected under
+Connectors. Allternit uploads the file to your Drive, converts it to a Google
+file, removes the temporary upload and opens the new file in a tab.
+
+## Tabs (Docs)
+
+Press **+ Add tab** above a doc to split it into tabs. Double-click a tab to
+rename it; the × next to the open tab deletes it. Each tab edits on its own,
+and exports, the read-only view and Allternit see the whole doc, tab by tab.
+
+## On a phone
+
+On the phone layout and the m.allternit.com app the artifact opens full
+screen. Docs, Slides and Design are editable; Sheets open as a grid where you
+can change cells. A Design opens on the canvas without the drawing toolbar:
+tap to select, drag to move, double-tap text to edit it, and use **Layers** and
+**Properties** (they open as sheets from the bottom). Adding new shapes and
+drawing are on desktop and the web. Sharing settings are not on the phone: the Share window
+shows who has access and says to manage sharing on desktop or the web.
+
+## For developers
+
+- Body formats: `application/vnd.allternit.doc+json` is the editor document
+  (`{title, blocks}`) plus a `markdown` rendering; `sheet+json` is the workbook
+  (`{name, sheets}`) plus the first sheet as a `rows` matrix; `slides+json` is
+  the deck (`{title, slides}`) with each slide's `title` and `body` text added.
+  Design is `design+json` with the canvas document below, or the older
+  `text/html` / `design+json` `{html}` page (read-only until converted).
+  Loaders and savers are in `allternit-ai/src/lib/artifacts/editors/`
+  (`doc-body.ts`, `sheet-body.ts`, `slides-body.ts`, `design-canvas.ts`,
+  `design-body.ts`), each with tests. Models can write the
+  simpler shapes (`{markdown}`, `{columns, rows}`, `{slides:[{title, bullets}]}`);
+  the loaders accept them.
+- The editors are the existing packs in `src/views/documents/packs`, mounted by
+  `src/components/artifacts/editors/editors.tsx` on a scratch document id that
+  is seeded from the artifact body and cleared on close. Every
+  `setStoredModel` call raises `allternit:editor-model-saved`, which the
+  window turns into a debounced version save (`autosave.ts`).
+- Selection context: sheets and slides raise `allternit:editor-selection`;
+  text selections are read from the page. The prompt is built by
+  `buildAskPrompt` and sent as `allternit:artifact-ask`, which ChatView and
+  Cowork handle.
+
+### Design canvas document
+
+```json
+{
+  "v": 2,
+  "kind": "canvas",
+  "designSystem": "allternit",
+  "artboards": [
+    { "id": "shape:home", "name": "Home", "x": 80, "y": 80, "w": 1280, "h": 800, "fill": "#ffffff" }
+  ],
+  "layers": [
+    { "id": "shape:title", "type": "text", "name": "Title", "artboard": "shape:home",
+      "x": 40, "y": 40, "w": 600, "h": 48, "props": { "text": "Welcome", "size": "xl", "color": "black" } }
+  ]
+}
+```
+
+Artboards are the studio's `design-frame` shapes. A layer's `type` is the
+studio shape type (`design-component`, `design-uiblock`, `design-html`, or a
+canvas shape such as `text` or `geo`), `x` and `y` are relative to its
+artboard (`artboard: null` places it on the bare canvas), `props` are the
+shape's props, and array order is stacking order, bottom first. Ids start with
+`shape:`; the loader adds the prefix when a model leaves it out and drops
+anything it can't use. `design-canvas.ts` maps the document to and from canvas
+shapes and renders it to HTML (exports, the read-only viewer) and to an SVG
+(PNG export); `design-canvas-editor.ts` moves it in and out of a live canvas.
+`DesignCanvasEditor.tsx` mounts `DesignTldrawCanvas` on it (panel `variant`
+and `compact` props give the phone sheets). Selecting a layer raises
+`allternit:editor-selection` with an `element` anchor (`shapeId`, `label`,
+`artboard`); comments store that anchor, and `allternit:artifact-focus-anchor`
+asks the editor to select it.
+
+## Related
+
+- [Comments, presence and versions](/guides/artifact-collaboration)
+- [Artifacts](/guides/artifacts)
+- [Artifacts v2 API](/api/artifacts-v2)

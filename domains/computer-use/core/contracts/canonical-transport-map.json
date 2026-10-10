@@ -4,13 +4,6 @@
   "transports": {
     "rest": {"prefix": "/v1/computer-use/canonical", "schema": "schemas/canonical.schema.json"},
     "events": {"path": "/sessions/{session_id}/events", "ordering": "sqlite_sequence"},
-    "local_ipc": {"kind": "mcp_stdio", "command": "allternit-computer-mcp"},
-    "mcp": {
-      "tools": [
-        "computer_providers", "computer_roots", "computer_observe",
-        "computer_approve_transaction", "computer_execute_transaction", "computer_trajectory"
-      ]
-    },
     "cli": {"command": "allternit-computer", "read_commands": ["status", "providers", "native", "resources"]}
   },
   "rule": "Every transport delegates to the canonical authority and may not weaken policy, state scope, approvals, or outcome semantics."

@@ -21,7 +21,7 @@ execute
 browser.playwright
 
 ## Fallback
-browser.browser-use
+planning loop (vision model driving browser.playwright)
 
 ## Policy
 - Plugin policy profile: `notion` (max_destructive_actions: 2, requires_approval: true)
@@ -101,7 +101,7 @@ browser.browser-use
 ## Failure Handling
 - **Auth redirect on load**: abort with `status: error`, `reason: auth_required`.
 - **Operator approval denied**: emit receipt `status: blocked`. Abort — no page is created.
-- **New page command fails (both strategies)**: fall back to `browser.browser-use` for visual "New page" button discovery. If still failing, abort with `status: error`, `reason: ui_changed`.
+- **New page command fails (both strategies)**: fall back to the planning loop (vision model driving `browser.playwright`) for visual "New page" button discovery. If still failing, abort with `status: error`, `reason: ui_changed`.
 - **Slash command menu does not appear**: type block content as plain text without block formatting; note `formatting_degraded: true` in receipt.
 - **Auto-save timeout (>10 s)**: screenshot current state as `save-timeout.png`. Emit receipt `status: partial`, `reason: save_unconfirmed`. Include `new_page_url` if extractable.
 - **Page URL not extractable**: store `new_page_url: null` in receipt.

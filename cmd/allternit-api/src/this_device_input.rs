@@ -2,14 +2,17 @@
 //! for whoever holds its control lease (Eoj 2026-09-28: taking control of
 //! this Mac from the Computer view drives the real screen).
 //!
-//! Input goes through the computer-use driver the desktop app already runs
-//! (Cua Driver), in its screen-wide `desktop` scope: coordinates are real
-//! screen pixels (`get_desktop_state`), keys go to the frontmost app. The
-//! desktop passes the driver's path and socket to this API
+//! Input goes through the Allternit Driver sidecar the desktop app runs
+//! (`domains/computer-use/driver`, socket in `ALLTERNIT_DRIVER_SOCKET`): its
+//! `pixel_*` ops are Cua Driver's screen-wide `desktop` scope, so coordinates
+//! are real screen pixels and keys go to the frontmost app. The sidecar owns
+//! input per window and logs every op to its router audit. When an older
+//! desktop app runs without the sidecar, calls fall back to Cua Driver's CLI
 //! (`ALLTERNIT_CUA_DRIVER_PATH` / `_SOCKET`, computer-use-driver-manager.ts).
 
 use axum::{http::StatusCode, response::IntoResponse, response::Response, Json};
 use serde_json::{json, Value};
+use std::time::Duration;
 use tracing::warn;
 
 use crate::bot_desktop_input::{KeyboardInput, MouseInput};
@@ -120,6 +123,90 @@ pub fn keyboard_call(input: &KeyboardInput) -> Result<DriverCall, String> {
     }
 }
 
+/// macOS virtual key code for a contract key name (xdotool-style names, as
+/// the toolset uses them: `Return`, `Page_Up`, `shift`, `a`, `F5`).
+pub fn mac_keycode(name: &str) -> Option<u16> {
+    let n = name.trim().to_lowercase().replace('-', "_");
+    let code = match n.as_str() {
+        "a" => 0, "s" => 1, "d" => 2, "f" => 3, "h" => 4, "g" => 5, "z" => 6, "x" => 7, "c" => 8, "v" => 9,
+        "b" => 11, "q" => 12, "w" => 13, "e" => 14, "r" => 15, "y" => 16, "t" => 17, "1" => 18, "2" => 19,
+        "3" => 20, "4" => 21, "6" => 22, "5" => 23, "=" | "equal" => 24, "9" => 25, "7" => 26,
+        "-" | "minus" => 27, "8" => 28, "0" => 29, "]" | "bracketright" => 30, "o" => 31, "u" => 32,
+        "[" | "bracketleft" => 33, "i" => 34, "p" => 35, "return" | "enter" | "kp_enter" => 36, "l" => 37,
+        "j" => 38, "'" | "apostrophe" => 39, "k" => 40, ";" | "semicolon" => 41, "\\" | "backslash" => 42,
+        "," | "comma" => 43, "/" | "slash" => 44, "n" => 45, "m" => 46, "." | "period" => 47, "tab" => 48,
+        "space" | " " => 49, "`" | "grave" => 50, "backspace" => 51, "escape" | "esc" => 53,
+        "cmd" | "command" | "super" | "super_l" | "meta" | "meta_l" | "win" => 55,
+        "shift" | "shift_l" => 56, "caps_lock" | "capslock" => 57, "alt" | "alt_l" | "option" | "opt" => 58,
+        "ctrl" | "control" | "control_l" | "ctrl_l" => 59, "shift_r" => 60, "alt_r" => 61,
+        "control_r" | "ctrl_r" => 62, "super_r" | "cmd_r" => 54, "fn" => 63,
+        "f1" => 122, "f2" => 120, "f3" => 99, "f4" => 118, "f5" => 96, "f6" => 97, "f7" => 98, "f8" => 100,
+        "f9" => 101, "f10" => 109, "f11" => 103, "f12" => 111, "home" => 115,
+        "page_up" | "pageup" | "prior" => 116, "delete" => 117, "end" => 119,
+        "page_down" | "pagedown" | "next" => 121, "left" => 123, "right" => 124, "down" => 125, "up" => 126,
+        _ => return None,
+    };
+    Some(code)
+}
+
+/// CGEvent modifier flag a key sets while held (0 for ordinary keys).
+fn mac_flag(code: u16) -> u64 {
+    match code {
+        56 | 60 => 0x20000,  // shift
+        59 | 62 => 0x40000,  // control
+        58 | 61 => 0x80000,  // option
+        55 | 54 => 0x100000, // command
+        _ => 0,
+    }
+}
+
+/// The JXA script that holds a chord (`shift`, `cmd+a`) for `secs` seconds:
+/// keys go down in order, stay down, then come up in reverse, each event
+/// carrying the modifier flags held at that moment.
+pub fn hold_key_script(spec: &str, secs: f64) -> Result<String, String> {
+    let codes: Vec<u16> = spec
+        .split('+')
+        .filter(|p| !p.trim().is_empty())
+        .map(|p| mac_keycode(p).ok_or_else(|| format!("not a key name this Mac understands: {p}")))
+        .collect::<Result<_, _>>()?;
+    if codes.is_empty() {
+        return Err("text is required".into());
+    }
+    let mut lines = vec!["ObjC.import('CoreGraphics');".to_string(), "function k(c, d, f) { const e = $.CGEventCreateKeyboardEvent(null, c, d); $.CGEventSetFlags(e, f); $.CGEventPost(0, e); }".to_string()];
+    let mut flags = 0u64;
+    for c in &codes {
+        flags |= mac_flag(*c);
+        lines.push(format!("k({c}, true, {flags});"));
+    }
+    lines.push(format!("delay({:.3});", secs.clamp(0.0, 30.0)));
+    for c in codes.iter().rev() {
+        flags &= !mac_flag(*c);
+        lines.push(format!("k({c}, false, {flags});"));
+    }
+    Ok(lines.join("\n"))
+}
+
+/// Hold a key or chord on this Mac. Cua Driver 0.34 has no press-and-hold
+/// call on macOS, so this posts the key-down/key-up events itself through
+/// CoreGraphics (keys go to the frontmost app, like the driver's desktop
+/// scope). Needs the Accessibility permission Allternit Desktop already has.
+pub async fn hold_key(spec: &str, secs: f64) -> Result<(), String> {
+    let script = hold_key_script(spec, secs)?;
+    let wait = std::time::Duration::from_secs_f64(secs.clamp(0.0, 30.0) + 10.0);
+    let out = tokio::time::timeout(
+        wait,
+        tokio::process::Command::new("/usr/bin/osascript").args(["-l", "JavaScript", "-e", &script]).output(),
+    )
+    .await
+    .map_err(|_| "holding the key didn't finish in time".to_string())?
+    .map_err(|e| format!("couldn't post key events: {e}"))?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        return Err(format!("couldn't hold the key: {}", err.trim().chars().take(300).collect::<String>()));
+    }
+    Ok(())
+}
+
 fn driver_command() -> Option<(String, Vec<String>)> {
     let path = std::env::var("ALLTERNIT_CUA_DRIVER_PATH")
         .ok()
@@ -164,55 +251,194 @@ pub async fn run(call: Result<DriverCall, String>) -> Response {
                 .into_response()
         }
     };
-    let Some((path, flags)) = driver_command() else {
-        return (
+    match call_driver(tool, args).await {
+        Ok(_) => Json(json!({ "success": true })).into_response(),
+        Err(DriverFailure::Unavailable(message)) => (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(json!({ "error": "computer_use_unavailable", "message": "The computer-use driver isn't running on this computer." })),
-        )
-            .into_response();
-    };
-    let output = tokio::process::Command::new(&path)
-        .arg("call")
-        .arg(tool)
-        .arg(args.to_string())
-        .args(&flags)
-        .kill_on_drop(true)
-        .output();
-    match tokio::time::timeout(std::time::Duration::from_secs(10), output).await {
-        // The driver exits 0 on refusals too; only a JSON result without an
-        // error `code` is a success.
-        Ok(Ok(out)) if out.status.success() && driver_accepted(&out.stdout) => {
-            Json(json!({ "success": true })).into_response()
-        }
-        Ok(Ok(out)) => {
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            warn!(tool, %stderr, "computer-use driver call failed");
-            let detail = if stderr.trim().is_empty() {
-                stdout.trim().to_string()
-            } else {
-                stderr.trim().to_string()
-            };
-            (StatusCode::BAD_GATEWAY, Json(json!({ "error": "driver_failed", "message": detail.chars().take(300).collect::<String>() }))).into_response()
-        }
-        Ok(Err(e)) => (
-            StatusCode::BAD_GATEWAY,
-            Json(json!({ "error": "driver_failed", "message": e.to_string() })),
+            Json(json!({ "error": "computer_use_unavailable", "message": message })),
         )
             .into_response(),
-        Err(_) => (
-            StatusCode::GATEWAY_TIMEOUT,
-            Json(json!({ "error": "driver_timeout" })),
+        Err(DriverFailure::Timeout) => (StatusCode::GATEWAY_TIMEOUT, Json(json!({ "error": "driver_timeout" }))).into_response(),
+        Err(DriverFailure::Refused(message)) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({ "error": "driver_failed", "message": message.chars().take(300).collect::<String>() })),
         )
             .into_response(),
     }
 }
 
-/// One driver call for the toolset executor: the driver's JSON reply on
-/// success, a readable reason on failure (same timeout and acceptance rule
-/// as [`run`]).
-pub async fn call_driver(tool: &str, args: Value) -> Result<Value, String> {
-    let (path, flags) = driver_command().ok_or("The computer-use driver isn't running on this computer.")?;
+/// Why a driver call didn't succeed.
+#[derive(Debug)]
+pub enum DriverFailure {
+    Unavailable(String),
+    Timeout,
+    Refused(String),
+}
+
+impl From<DriverFailure> for String {
+    fn from(f: DriverFailure) -> String {
+        match f {
+            DriverFailure::Unavailable(m) => m,
+            DriverFailure::Timeout => "the driver didn't answer in time".into(),
+            DriverFailure::Refused(m) => m,
+        }
+    }
+}
+
+const DRIVER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// The Allternit Driver sidecar's endpoint, when the desktop app runs it.
+fn allternit_driver_socket() -> Option<String> {
+    std::env::var("ALLTERNIT_DRIVER_SOCKET")
+        .ok()
+        .filter(|s| !s.is_empty() && std::path::Path::new(s).exists())
+}
+
+/// Where the Allternit Driver listens.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DriverEndpoint {
+    /// Unix socket path (macOS/Linux).
+    #[cfg(unix)]
+    Unix(String),
+    /// Loopback TCP plus the launch token the desktop generated (Windows).
+    Tcp(String, Option<String>),
+}
+
+impl DriverEndpoint {
+    /// Read an endpoint file (`tcp:127.0.0.1:<port>` written by the sidecar).
+    fn from_file(path: &str) -> Option<DriverEndpoint> {
+        let text = std::fs::read_to_string(path).ok()?;
+        let text = text.trim();
+        text.strip_prefix("tcp:").map(|rest| {
+            DriverEndpoint::Tcp(rest.to_string(), std::env::var("ALLTERNIT_DRIVER_TOKEN").ok().filter(|t| !t.is_empty()))
+        })
+    }
+
+    /// Resolve the sidecar: explicit env first (`ALLTERNIT_DRIVER_ENDPOINT`
+    /// for tcp, `ALLTERNIT_DRIVER_SOCKET` for a socket path or an endpoint
+    /// file), then the installed Desktop's default location. Windows allternit
+    /// api only has the tcp form — the unix socket is compiled out there.
+    pub fn resolve() -> Option<DriverEndpoint> {
+        if let Ok(endpoint) = std::env::var("ALLTERNIT_DRIVER_ENDPOINT") {
+            if let Some(rest) = endpoint.trim().strip_prefix("tcp:") {
+                return Some(DriverEndpoint::Tcp(
+                    rest.to_string(),
+                    std::env::var("ALLTERNIT_DRIVER_TOKEN").ok().filter(|t| !t.is_empty()),
+                ));
+            }
+        }
+        if let Some(socket) = allternit_driver_socket() {
+            if let Some(tcp) = DriverEndpoint::from_file(&socket) {
+                return Some(tcp);
+            }
+            #[cfg(unix)]
+            return Some(DriverEndpoint::Unix(socket));
+            #[cfg(not(unix))]
+            return None;
+        }
+        // The installed Desktop's default runtime location (dev fallback; the
+        // manager normally exports the env above).
+        #[cfg(unix)]
+        if let Some(home) = std::env::var_os("HOME") {
+            let sock = std::path::PathBuf::from(home)
+                .join("Library/Application Support/@allternit/desktop/computer-use/allternit-driver.sock");
+            if sock.exists() {
+                return Some(DriverEndpoint::Unix(sock.to_string_lossy().into_owned()));
+            }
+        }
+        #[cfg(not(unix))]
+        if let Some(appdata) = std::env::var_os("APPDATA") {
+            let file = std::path::PathBuf::from(appdata)
+                .join("@allternit/desktop/computer-use/allternit-driver.endpoint");
+            if let Some(tcp) = DriverEndpoint::from_file(&file.to_string_lossy()) {
+                return Some(tcp);
+            }
+        }
+        None
+    }
+}
+
+/// One JSON-RPC call to the Allternit Driver (one JSON object per line).
+#[cfg(unix)]
+async fn driver_rpc_unix(socket: &str, method: &str, params: Value, timeout: Duration) -> Result<Value, DriverFailure> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    let call = async {
+        let mut stream = tokio::net::UnixStream::connect(socket)
+            .await
+            .map_err(|e| DriverFailure::Unavailable(format!("The computer-use driver isn't running on this computer ({e}).")))?;
+        let mut line = serde_json::to_vec(&json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params }))
+            .map_err(|e| DriverFailure::Refused(e.to_string()))?;
+        line.push(b'\n');
+        stream.write_all(&line).await.map_err(|e| DriverFailure::Refused(e.to_string()))?;
+        let mut reply = String::new();
+        BufReader::new(stream).read_line(&mut reply).await.map_err(|e| DriverFailure::Refused(e.to_string()))?;
+        let reply: Value = serde_json::from_str(&reply).map_err(|_| DriverFailure::Refused("the driver closed the connection".into()))?;
+        match reply.get("error") {
+            Some(err) => Err(DriverFailure::Refused(format!(
+                "the driver refused {method}: {}",
+                err.get("message").and_then(Value::as_str).unwrap_or("unknown error")
+            ))),
+            None => Ok(reply.get("result").cloned().unwrap_or(Value::Null)),
+        }
+    };
+    tokio::time::timeout(timeout, call).await.map_err(|_| DriverFailure::Timeout)?
+}
+
+/// The loopback TCP form (Windows): same line protocol, plus the launch token
+/// the desktop generated as the request `auth` field.
+async fn driver_rpc_tcp(addr: &str, token: Option<&str>, method: &str, params: Value, timeout: Duration) -> Result<Value, DriverFailure> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    let call = async {
+        let mut stream = tokio::net::TcpStream::connect(addr)
+            .await
+            .map_err(|e| DriverFailure::Unavailable(format!("The computer-use driver isn't reachable on this computer ({e}).")))?;
+        let mut req = json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params });
+        if let Some(token) = token {
+            req["auth"] = json!(token);
+        }
+        let mut line = serde_json::to_vec(&req).map_err(|e| DriverFailure::Refused(e.to_string()))?;
+        line.push(b'\n');
+        stream.write_all(&line).await.map_err(|e| DriverFailure::Refused(e.to_string()))?;
+        let mut reply = String::new();
+        BufReader::new(stream).read_line(&mut reply).await.map_err(|e| DriverFailure::Refused(e.to_string()))?;
+        let reply: Value = serde_json::from_str(&reply).map_err(|_| DriverFailure::Refused("the driver closed the connection".into()))?;
+        match reply.get("error") {
+            Some(err) => Err(DriverFailure::Refused(format!(
+                "the driver refused {method}: {}",
+                err.get("message").and_then(Value::as_str).unwrap_or("unknown error")
+            ))),
+            None => Ok(reply.get("result").cloned().unwrap_or(Value::Null)),
+        }
+    };
+    tokio::time::timeout(timeout, call).await.map_err(|_| DriverFailure::Timeout)?
+}
+
+/// One sidecar JSON-RPC call on whichever transport this platform uses.
+pub async fn driver_rpc(endpoint: &DriverEndpoint, method: &str, params: Value, timeout: Duration) -> Result<Value, DriverFailure> {
+    match endpoint {
+        #[cfg(unix)]
+        DriverEndpoint::Unix(socket) => driver_rpc_unix(socket, method, params, timeout).await,
+        DriverEndpoint::Tcp(addr, token) => driver_rpc_tcp(addr, token.as_deref(), method, params, timeout).await,
+    }
+}
+
+/// One driver call for the toolset executor and the input routes: a Cua
+/// Driver desktop-scope tool (`click`, `type_text`, `get_cursor_position`…),
+/// sent as the Allternit Driver's `pixel_<tool>` op, or through Cua's CLI
+/// when the sidecar isn't running. The driver's JSON reply on success.
+pub async fn call_driver(tool: &str, args: Value) -> Result<Value, DriverFailure> {
+    call_driver_timed(tool, args, DRIVER_TIMEOUT).await
+}
+
+/// `call_driver` with a custom timeout (run_batch can wait on conditions).
+pub async fn call_driver_timed(tool: &str, args: Value, timeout: Duration) -> Result<Value, DriverFailure> {
+    if let Some(endpoint) = DriverEndpoint::resolve() {
+        return driver_rpc(&endpoint, &format!("pixel_{tool}"), args, timeout)
+            .await
+            .inspect_err(|e| warn!(tool, ?e, "allternit driver call failed"));
+    }
+    let (path, flags) = driver_command()
+        .ok_or_else(|| DriverFailure::Unavailable("The computer-use driver isn't running on this computer.".into()))?;
     let output = tokio::process::Command::new(&path)
         .arg("call")
         .arg(tool)
@@ -220,7 +446,9 @@ pub async fn call_driver(tool: &str, args: Value) -> Result<Value, String> {
         .args(&flags)
         .kill_on_drop(true)
         .output();
-    match tokio::time::timeout(std::time::Duration::from_secs(10), output).await {
+    match tokio::time::timeout(timeout, output).await {
+        // The CLI exits 0 on refusals too; only a JSON result without an
+        // error `code` is a success.
         Ok(Ok(out)) if out.status.success() && driver_accepted(&out.stdout) => {
             Ok(serde_json::from_slice(&out.stdout).unwrap_or(Value::Null))
         }
@@ -228,10 +456,10 @@ pub async fn call_driver(tool: &str, args: Value) -> Result<Value, String> {
             let stderr = String::from_utf8_lossy(&out.stderr);
             let detail = if stderr.trim().is_empty() { String::from_utf8_lossy(&out.stdout).trim().to_string() } else { stderr.trim().to_string() };
             warn!(tool, %detail, "computer-use driver call failed");
-            Err(format!("the driver refused {tool}: {}", detail.chars().take(300).collect::<String>()))
+            Err(DriverFailure::Refused(format!("the driver refused {tool}: {}", detail.chars().take(300).collect::<String>())))
         }
-        Ok(Err(e)) => Err(format!("couldn't run the driver: {e}")),
-        Err(_) => Err("the driver didn't answer in time".into()),
+        Ok(Err(e)) => Err(DriverFailure::Refused(format!("couldn't run the driver: {e}"))),
+        Err(_) => Err(DriverFailure::Timeout),
     }
 }
 
@@ -303,6 +531,16 @@ mod tests {
             args,
             json!({ "scope": "desktop", "direction": "up", "amount": 50, "x": 5, "y": 6 })
         );
+    }
+
+    #[test]
+    fn hold_key_presses_then_releases_in_reverse() {
+        let s = hold_key_script("cmd+shift+a", 0.5).unwrap();
+        let downs: Vec<&str> = s.lines().filter(|l| l.contains("true")).collect();
+        assert_eq!(downs, ["k(55, true, 1048576);", "k(56, true, 1179648);", "k(0, true, 1179648);"]);
+        assert!(s.contains("delay(0.500);"));
+        assert!(s.trim_end().ends_with("k(55, false, 0);"));
+        assert!(hold_key_script("hyper", 1.0).is_err());
     }
 
     #[test]

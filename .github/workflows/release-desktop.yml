@@ -698,6 +698,10 @@ jobs:
         run: npm run prepare:cua-driver
         working-directory: surfaces/allternit-desktop
 
+      - name: Stage Allternit Driver (sidecar + bundled Python)
+        run: npm run prepare:allternit-driver
+        working-directory: surfaces/allternit-desktop
+
       - name: Download Lima
         run: npm run download:lima
         working-directory: surfaces/allternit-desktop

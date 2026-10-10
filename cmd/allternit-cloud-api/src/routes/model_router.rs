@@ -61,6 +61,22 @@ pub async fn list_models(State(state): State<Arc<ApiState>>) -> Result<Json<Mode
 /// completion is metered and settled against the user's prepaid credits
 /// (Phase B): blocked up front when the balance is exhausted, deducted after
 /// the response from the upstream usage report (or a marked estimate).
+/// The Platform API project an `api_keys` key belongs to, if it is a project key.
+/// A schema without project keys (or a failed lookup) means none.
+async fn platform_project_of_key(db: &sqlx::PgPool, key_id: &str) -> Option<String> {
+    match sqlx::query_scalar::<_, Option<String>>("SELECT project_id FROM api_keys WHERE id = $1")
+        .bind(key_id)
+        .fetch_optional(db)
+        .await
+    {
+        Ok(row) => row.flatten(),
+        Err(error) => {
+            tracing::debug!(%error, "project key lookup skipped");
+            None
+        }
+    }
+}
+
 pub async fn chat_completions(
     State(state): State<Arc<ApiState>>,
     Extension(auth): Extension<AuthContext>,
@@ -80,6 +96,14 @@ pub async fn chat_completions(
         return Err(ApiError::ServiceUnavailable(
             "Model router is not configured".to_string(),
         ));
+    }
+
+    // A Platform API project key (`alt_live_…` / `alt_test_…`) bills to its
+    // project: no card on file, no inference (Eoj 2026-10-08, no free usage).
+    if let Some(project_id) = platform_project_of_key(&state.db, &auth.user.token_id).await {
+        if let Err(e) = crate::routes::platform_v1::billing::spend_allowed(&state.db, &project_id).await {
+            return Ok(e.into_response());
+        }
     }
 
     let user_id = auth.user.user_id.clone();

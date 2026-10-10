@@ -8,6 +8,9 @@
 //! registers, and the test `openapi_matches_router` compares that list with
 //! `openapi/platform-v1.yaml`, so a route can't ship without its spec entry.
 //!
+//! `project_billing` adds the console's payment method / plan routes and
+//! handles the project events of the shared Stripe webhook.
+//!
 //! Everything here is inert until `ALLTERNIT_PLATFORM_API=1` (404
 //! `platform_api_disabled`). Console routes for projects and keys live in
 //! `console` under `/api/v1/platform/*` (Clerk session auth).
@@ -40,6 +43,7 @@ pub mod messages;
 pub mod model_keys;
 pub mod numbers;
 pub mod page;
+pub mod project_billing;
 pub mod projects;
 pub mod slots;
 pub mod spend;
@@ -248,6 +252,7 @@ pub fn router_with_agency(state: &Arc<ApiState>, gate: Gate, agency: Arc<crate::
         .layer(axum::middleware::from_fn_with_state(ps.clone(), v1_middleware));
 
     let console = console::routes()
+        .merge(project_billing::routes())
         .layer(axum::middleware::from_fn_with_state(ps, console_gate));
 
     Router::new().merge(v1).merge(console)

@@ -53,6 +53,8 @@ pub(crate) struct TurnFold {
     /// Deltas that arrived before their part declared its type, in order.
     pending: Vec<(String, String)>,
     buf: String,
+    /// Interactive cards (```openui fences) are held until they close, then spoken as text.
+    cards: crate::openui_text::SpokenFilter,
     /// callID -> 1 started, 2 finished.
     tools: HashMap<String, u8>,
     /// The turn's assistant messages (latest `message.updated` info per id):
@@ -63,7 +65,7 @@ pub(crate) struct TurnFold {
 
 impl TurnFold {
     pub(crate) fn new(session_id: &str) -> Self {
-        Self { session_id: session_id.into(), parts: HashMap::new(), part_message: HashMap::new(), user_messages: HashSet::new(), pending: Vec::new(), buf: String::new(), tools: HashMap::new(), assistant: HashMap::new(), spoke: false }
+        Self { session_id: session_id.into(), parts: HashMap::new(), part_message: HashMap::new(), user_messages: HashSet::new(), pending: Vec::new(), buf: String::new(), cards: crate::openui_text::SpokenFilter::new(), tools: HashMap::new(), assistant: HashMap::new(), spoke: false }
     }
 
     fn say(&mut self, out: &mut Vec<Value>, text: String) {
@@ -75,7 +77,8 @@ impl TurnFold {
 
     /// Emit whole words only; the unfinished last word waits for its end.
     fn push_text(&mut self, out: &mut Vec<Value>, delta: &str) {
-        self.buf.push_str(delta);
+        let delta = self.cards.push(delta);
+        self.buf.push_str(&delta);
         if let Some((i, c)) = self.buf.char_indices().rev().find(|(_, c)| c.is_whitespace()) {
             let rest = self.buf.split_off(i + c.len_utf8());
             let head = std::mem::replace(&mut self.buf, rest);
@@ -84,6 +87,8 @@ impl TurnFold {
     }
 
     pub(crate) fn flush(&mut self, out: &mut Vec<Value>) {
+        let held = self.cards.finish();
+        self.buf.push_str(&held);
         let head = std::mem::take(&mut self.buf);
         self.say(out, head);
     }
@@ -459,6 +464,25 @@ mod tests {
                 json!({ "type": "text.delta", "text": "free" }),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn an_interactive_card_is_spoken_as_text_never_as_code() {
+        let events = vec![
+            json!({ "type": "message.updated", "properties": { "info": { "id": "m1", "role": "user", "sessionID": "s1" } } }),
+            part("text", "p1"),
+            delta("p1", "Here it is.\n```open"),
+            delta("p1", "ui\nroot = Answer(\"Bill\", [Metric(\"Each\", 120 / 4, \"currency\")])\n"),
+            delta("p1", "```\nAnything else?"),
+            idle(),
+        ];
+        let (r, got, _) = run(events, Duration::from_millis(50)).await;
+        assert_eq!(r.unwrap(), TurnReply::Streamed);
+        let said: String = got.iter().filter_map(|e| e["text"].as_str()).collect();
+        assert!(said.starts_with("Here it is."), "{said}");
+        assert!(said.contains("Each: $30.00"), "{said}");
+        assert!(said.ends_with("Anything else?"), "{said}");
+        assert!(!said.contains("```") && !said.contains("Answer("), "{said}");
     }
 
     #[tokio::test]

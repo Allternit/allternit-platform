@@ -1,0 +1,170 @@
+---
+title: Page runtime API
+description: window.allternit for page artifacts (storage, AI, connectors), the sandbox it runs in, and the cloud-api routes behind it.
+---
+
+A `page` artifact with `runtime_version: 2` runs as an app. This page covers
+what the page can call, how it declares what it needs, the sandbox it runs in
+and the routes behind it. For the artifact record itself see the
+[Artifacts v2 API](/api/artifacts-v2).
+
+## Sandbox
+
+The page's HTML runs in an iframe inside the MCP sandbox proxy
+(`mcp-sandbox-proxy/sandbox.html`), served from a different origin than the
+app (`VITE_MCP_SANDBOX_ORIGIN`). If that origin is missing, or is the same as
+the app's, the page does not run and the viewer shows an error. There is no
+fallback to the app's own origin.
+
+| Control | Setting |
+| --- | --- |
+| Origin | Opaque. The inner iframe has no `allow-same-origin`. |
+| Sandbox flags | `allow-scripts allow-popups allow-popups-to-escape-sandbox allow-downloads allow-modals`. No forms, no top navigation. |
+| Network | `connect-src 'none'`. The page cannot call `fetch`, `XMLHttpRequest` or `WebSocket`. |
+| Scripts, styles, fonts, images | Inline, `data:`, or `cdnjs.cloudflare.com`, `cdn.jsdelivr.net`, `unpkg.com`, `fonts.googleapis.com`, `fonts.gstatic.com`. |
+| Credentials | None. The page never sees a token, cookie or connector secret. |
+
+The host accepts a message only when it comes from the iframe it created and
+from the sandbox origin, validates its shape, and drops anything else without
+a reply. At most 32 requests per page are in flight at once.
+
+## Declaring what the page needs
+
+A page declares its capabilities with a meta tag:
+
+```html
+<meta name="allternit:capabilities" content='{
+  "storage": true,
+  "ai": true,
+  "connectors": [{ "connector": "github", "tools": ["list_issues"] }]
+}'>
+```
+
+`connector` is the connector id. A page can only call tools it declared.
+Calls to `allternit.storage.*` and `allternit.ai.complete` in the page's own
+script also count as use, so leaving the tag out doesn't hide them from the
+sharing rule. Connector tools can only be declared.
+
+The record's `capabilities` is what the server and the share dialog read. It is
+set when the artifact is created (from `capabilities`, or from
+`meta.capabilities` when only that is given) and kept in step by the owner's
+copy of the page when it opens. Editors and viewers never change it.
+
+Because `capabilities.ai` or a non-empty `capabilities.connectors` marks a
+page as unsharable by link, the `link` visibility is refused for it (`422
+link_not_allowed`), on the server and in the share dialog.
+
+## `window.allternit`
+
+Version `1`. The object is frozen. All calls return promises and reject with an
+`Error` whose `name` is `AllternitError` and whose `code` is one of the codes
+below.
+
+```js
+await allternit.ready;            // { signedIn, capabilities }
+allternit.version;                // 1
+allternit.signedIn;               // boolean
+
+// Storage: text only. scope is 'personal' (default) or 'shared'.
+await allternit.storage.set('score', '42');
+await allternit.storage.get('score');                   // '42' or null
+await allternit.storage.list({ prefix: 'sc' });         // ['score']
+await allternit.storage.delete('score');
+await allternit.storage.setJSON('board', { a: 1 }, { scope: 'shared' });
+await allternit.storage.getJSON('board', { scope: 'shared' });
+
+// AI: billed to the viewer.
+const { text } = await allternit.ai.complete('Summarize: ' + notes);
+await allternit.ai.complete({ system: '…', messages: [{ role: 'user', content: '…' }], max_tokens: 500 });
+
+// Connectors: the viewer's own credentials.
+await allternit.connectors.list();                      // declared apps and tools, with the viewer's on/off
+const r = await allternit.connectors.call('github', 'list_issues', { repo: 'a/b' });
+// r = { content, structuredContent, isError }
+```
+
+### Errors
+
+| `code` | When |
+| --- | --- |
+| `signin_required` | The viewer is signed out. The host shows "Sign in to use this." |
+| `capability_not_declared` | The page didn't declare it (or the tool). |
+| `capability_unavailable` | The org turned it off, the viewer is outside the org, or the artifact is a legacy (v1) record. |
+| `consent_declined` | The viewer chose **Don't allow**. |
+| `tool_off` | The viewer turned this tool off for this page. |
+| `tool_needs_approval` | The tool asks for approval before each action, so it can't run in a page. |
+| `storage_full` / `value_too_large` | 20 MB per artifact; 5 MB per value. |
+| `rate_limited` | More than 30 AI calls a minute for this viewer on this page, or too many requests in flight. |
+| `bad_request` / `failed` | A malformed call, or any other failure. |
+
+### Wire format
+
+The client script (`src/lib/artifacts/runtime/client-script.ts`) and the host
+(`host.ts`) speak this over `postMessage`:
+
+```text
+page → host   { allternit: 1, event: 'hello' }
+host → page   { allternit: 1, event: 'ready', viewer: { signedIn }, capabilities }
+page → host   { allternit: 1, id, method, params }
+host → page   { allternit: 1, id, ok: true, result } | { allternit: 1, id, ok: false, error: { code, message } }
+```
+
+Methods: `storage.get`, `storage.set`, `storage.delete`, `storage.list`,
+`ai.complete`, `connectors.list`, `connectors.call`. The page replies are
+accepted only from the page's parent window.
+
+## Routes
+
+All routes sit under `/api/v2/artifact-runtime/{id}` and need a signed-in
+caller with at least `view` access to the artifact. No access answers `404`.
+Only `page` and `card` artifacts at `runtime_version` 2 run; anything else is
+`409` with `legacy_artifact` or `not_a_page`.
+
+| Method and path | Purpose |
+| --- | --- |
+| `GET /context` | The caller's access, the declared capabilities, what is allowed for this viewer (`allowed.storage`, `.ai`, `.connectors`, each `{ok, reason?, message?}`), their consents and the storage usage. |
+| `GET /storage?scope&prefix` | Keys the caller can see in that scope, at most 1,000. |
+| `GET /storage/{key}?scope` | `{key, scope, value}`; `value` is `null` when unset. |
+| `PUT /storage/{key}?scope` | Body `{value: string}`. `413 storage_full` or `value_too_large`. |
+| `DELETE /storage/{key}?scope` | `204`. |
+| `GET /consents`, `PUT /consents` | Body `{capability: 'storage_shared' \| 'ai' \| 'connectors', granted, denied_tools?}`. `denied_tools` are `connector/tool` ids the viewer turned off. |
+| `POST /ai` | Body `{prompt, system?}` or `{messages, max_tokens?, temperature?}`. Returns `{text, model, usage, finish_reason}`. |
+| `GET /api/v2/org/artifact-shared-outside` | Org admins: artifacts shared by link or to email addresses. |
+
+Rules the server enforces:
+
+- A capability must be declared on the record, or the call is `409
+  capability_not_declared`.
+- **Storage** is 20 MB of text per artifact across both scopes and all viewers.
+  Writes take a per-artifact lock so concurrent writes can't pass the cap.
+  Personal keys are per viewer. Shared keys are visible to everyone who can
+  open the artifact.
+- A **shared write or delete** needs the viewer's `storage_shared` consent
+  first (`403 consent_required`, with `capability`).
+- **AI** needs `ai` consent. It goes through the hosted model router with the
+  **viewer's** credits or free allowance, with the same checks as
+  `/v1/chat/completions`. The owner is never charged. Prompts are limited to
+  100,000 characters and 40 messages, and output to 4,096 tokens. The model is
+  chosen by Allternit (`ARTIFACT_RUNTIME_MODEL`), not by the page.
+- **AI and connectors** are refused for viewers outside the artifact's org
+  (`403 outside_invitee`) and when the org turned them off (`403
+  org_disabled`). Signed-out callers get `401`.
+- **Connector calls** don't pass through cloud-api. They run in the app
+  through the MCP Apps bridge with the viewer's connector credentials, after
+  the host checks the declaration, the viewer's consent and per-tool switches,
+  and that the tool doesn't ask for approval each time.
+
+## Org settings that apply
+
+`enabled` off stops pages running for that org's artifacts. `connectors` off
+stops connector calls in pages. `external_sharing` and `allowed_external`
+decide link sharing. See [Organization settings](/api/artifacts-v2#organization-settings).
+
+## Code
+
+- App: `allternit-ai/src/lib/artifacts/runtime/` (protocol, client script,
+  host, capabilities, API client) and `src/components/artifacts/runtime/`
+  (`PageRuntimeFrame`, `ConsentSheet`).
+- Org admin: `src/components/settings/OrgArtifactsSettings.tsx`.
+- Server: `cmd/allternit-cloud-api/src/artifacts/runtime.rs` (rules) and
+  `src/routes/artifact_runtime.rs` (routes).

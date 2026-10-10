@@ -1,0 +1,93 @@
+---
+title: 'Developer Terms'
+description: 'The terms for using the Allternit Platform API, console, SDKs and docs.'
+---
+
+# Allternit Platform API Developer Terms
+
+These terms are between you (the developer, and the company you act for) and Allternit LLC, Saint Paul, Minnesota ("Allternit", "we"). They cover your use of the Allternit Platform API, the console at platform.allternit.com, the SDKs, and the documentation ("the Services"). You accept them when you create a Platform API project.
+
+## 1. Accounts, projects, and keys
+
+- You need an Allternit account to create projects. You are responsible for everything done with your projects and API keys.
+- Keep keys secret. Do not put live keys in client-side code or public repositories. Revoke a key in the console as soon as you think it has been exposed.
+- Sandbox projects are for testing. Sandbox numbers are simulated and sandbox traffic has lower limits.
+
+## 2. Your end customers
+
+You may use the Services to serve your own customers ("end customers"). You are responsible for:
+
+- having an agreement with each end customer that is at least as protective of Allternit as these terms and the Acceptable Use Policy;
+- each end customer's use of the agents, numbers, and channels you set up for them;
+- getting and recording the consents described in the Acceptable Use Policy.
+
+## 3. Acceptable use
+
+You and your end customers must follow the Allternit Acceptable Use Policy. It is part of these terms.
+
+## 4. Fees and spend caps
+
+- Paid plans and usage are charged at the prices on the pricing page in effect when the usage happens. Taxes are extra.
+- Live projects have a monthly spend cap. When a project reaches it, billable actions may be paused until you raise the cap or the month ends.
+- A payment method on file and a chosen plan (Pay as you go or Growth) are required before any billable work, in sandbox and live projects alike. There is no free usage tier, except the free allowances listed on the pricing page.
+- Carrier registration fees are passed through at cost and shown before filing.
+
+### Billing and payment
+
+- You pay through Stripe, our payment processor. By choosing a plan you authorize us to charge your payment method for the plan and your usage.
+- Usage is billed monthly, after the month it happens in. The Growth base fee is billed monthly, in advance. Invoices and receipts are in the console and the Stripe customer portal.
+- The Growth plan's monthly usage credit applies to that month's usage only. Unused credit does not carry over and has no cash value.
+- We will give at least 30 days' notice before raising a price you already pay. New prices apply to usage after the change takes effect.
+
+### Failed payments
+
+- If a charge fails, Stripe retries it and we email the project owner. You can update your payment method in the console at any time.
+- While retries are running, your projects keep working. If the payment is still unpaid when retries end, billable actions stop (the API answers `402 payment_method_required`) until the balance is paid.
+- If a balance stays unpaid for 30 days, we may suspend the project under section 7. We do not delete your data because of a late payment without first telling you.
+
+### Refunds and cancellation
+
+- You can cancel your plan at any time in the console. Cancellation takes effect at the end of the current billing period. Usage up to then is still billed.
+- Fees are not refundable, except when we billed you in error. Tell us about a billing error within 60 days of the invoice and we will correct it or refund the difference.
+
+### Billing disputes
+
+- If you think an invoice is wrong, email billing@allternit.com within 60 days of the invoice date with the invoice number and what you think is wrong. We will reply within 10 business days.
+- Please contact us before opening a dispute (chargeback) with your bank. A chargeback on an undisputed invoice may lead to suspension under section 7.
+
+## 5. Data
+
+- You own the content you and your end customers send through the Services. You give Allternit the rights it needs to run the Services for you.
+- Call recordings and transcripts are kept for 90 days unless you choose longer storage.
+- We use your content only to run, secure, and support the Services for you. We do not sell it, and we do not use it to train AI models.
+- **Sub-processors.** We use these service providers to run the Services: Contabo (servers), Cloudflare (network, storage, and web hosting), Stripe (payments), Clerk (sign-in), Telnyx (phone numbers, calls, and texts), and Resend (email). When an agent uses an AI model, the request is sent to that model's provider, chosen by you or by the Allternit model you select. We will update this list before adding a new sub-processor that handles your content.
+- **Location.** Our servers are in France (European Union). Some sub-processors, including Stripe, Cloudflare, Clerk, and AI model providers, may process data in the United States and other countries.
+- **Security.** Traffic to the Services is encrypted in transit (TLS). Access to production systems is limited to Allternit staff who need it. API keys can be revoked at any time, and actions on hosted computers are recorded in an audit log. We will tell you without undue delay if we learn of a security breach that affects your content.
+- **Deletion.** When you archive a project or close your account, you can ask us to delete its content at legal@allternit.com. We delete it within 30 days, except what we must keep for legal, tax, or fraud-prevention reasons.
+
+## 6. Availability and changes
+
+- We aim for the uptime targets stated for your plan. Targets are not guarantees. Only an Enterprise contract carries a service level agreement.
+- We do not promise call answer rates, text deliverability, rankings, sales, or any other business result.
+- The API is versioned under `/v1`. We will give notice before removing or breaking a `/v1` endpoint, except for security or legal reasons. For other breaking changes we will give at least 90 days' notice by email and in the changelog.
+
+## 7. Suspension and termination
+
+We may suspend keys, numbers, agents, or projects that break these terms or the Acceptable Use Policy, put the Services or others at risk, or have unpaid fees. You can stop using the Services and archive your projects at any time.
+
+## 8. Disclaimers and liability
+
+- **No warranty.** The Services are provided "as is" and "as available". To the extent the law allows, Allternit disclaims all warranties, express or implied, including merchantability, fitness for a particular purpose, and non-infringement. AI models can produce wrong or harmful output. You are responsible for reviewing what your agents do and say before you rely on it.
+- **Limit of liability.** To the extent the law allows, neither party is liable for indirect, incidental, special, consequential, or punitive damages, or for lost profits, revenue, or data. Allternit's total liability for any claim relating to the Services is limited to the fees you paid Allternit in the 12 months before the claim arose.
+- **Your indemnity.** You will defend and indemnify Allternit against third-party claims that arise from your or your end customers' use of the Services, your content, or a breach of these terms or the Acceptable Use Policy.
+- **Governing law and disputes.** These terms are governed by the laws of the State of Minnesota, without regard to its conflict-of-laws rules. Any dispute will be heard in the state or federal courts in Ramsey County, Minnesota, and both parties agree to those courts' jurisdiction. Before filing a claim, each party will first try to resolve the dispute in good faith for 30 days after written notice.
+
+## 9. Changes to these terms
+
+We may update these terms. We will post the new version and give at least 30 days' notice by email before material changes take effect. If you keep using the Services after that, the new terms apply.
+
+## 10. Contact
+
+Allternit LLC, Saint Paul, Minnesota. Legal: legal@allternit.com. Billing: billing@allternit.com.
+
+Effective October 9, 2026.

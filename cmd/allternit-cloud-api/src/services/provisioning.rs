@@ -72,7 +72,7 @@ use crate::ApiError;
 mod free;
 pub use free::{
     note_runtime_attached, start_free_computer_task, touch_provisioned_activity, FreeDefaults,
-    ProvisionedWakeOutcome, WakeReason, WakeResult,
+    HostedDriverDefaults, ProvisionedWakeOutcome, WakeReason, WakeResult, HOSTED_POOL_FULL,
 };
 
 /// Why a paid computer is suspended by the billing webhook.
@@ -1846,6 +1846,7 @@ pub struct ProvisioningService {
     db: PgPool,
     defaults: ProvisionDefaults,
     free: FreeDefaults,
+    hosted: HostedDriverDefaults,
     registry: Arc<dyn BackendRegistry>,
     /// Downloadable copies being prepared or ready, by export id. In memory:
     /// Incus deletes the file itself after a day, and a restart only means
@@ -1926,6 +1927,7 @@ impl ProvisioningService {
             db,
             defaults: ProvisionDefaults::from_env(),
             free: FreeDefaults::from_env(),
+            hosted: HostedDriverDefaults::from_env(),
             registry,
             exports: Mutex::new(HashMap::new()),
         }
@@ -2031,6 +2033,9 @@ impl ProvisioningService {
         tier: &str,
     ) -> Result<InstanceView, ApiError> {
         let free = tier == TIER_FREE;
+        // Developer computers (the hosted driver) ride the free lane with
+        // their own image, size and pool cap.
+        let hosted = free && is_hosted_driver_owner(user_id);
         if let Some(row) = self.live_row_for(user_id, subscription_id, tier).await? {
             if row.status == "suspended" {
                 if let Some(view) = self.resume(row, subscription_id).await? {
@@ -2062,7 +2067,7 @@ impl ProvisioningService {
         }
 
         let (plan_id, size) = if free {
-            (None, self.free.size())
+            (None, if hosted { self.hosted.size() } else { self.free.size() })
         } else {
             self.plan_size(subscription_id).await
         };
@@ -2128,6 +2133,10 @@ impl ProvisioningService {
         } else {
             Vec::new()
         };
+        if hosted && free::hosted_awake(&mut *transaction).await? >= self.hosted.max_running {
+            transaction.rollback().await?;
+            return Err(self.hosted.full_error());
+        }
         let hosts: Vec<HostCapacity> = host_rows
             .into_iter()
             .map(HostCapacityRow::into_capacity)
@@ -2213,10 +2222,13 @@ impl ProvisioningService {
         // 2. Drive the backend. On failure: error status + release the slot.
         let image = match &restore {
             Some((_, _, alias)) => alias.clone(),
+            None if hosted => self.hosted.image.clone(),
             None if free => self.free.image.clone(),
             None => self.defaults.image.clone(),
         };
-        let cpu = if free {
+        let cpu = if hosted {
+            CpuShare { allowance: None, priority: self.hosted.cpu_priority }
+        } else if free {
             CpuShare {
                 allowance: self.free.cpu_allowance.clone(),
                 priority: self.free.cpu_priority,

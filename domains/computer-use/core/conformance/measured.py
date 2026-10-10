@@ -9,8 +9,6 @@ without running anything.
 What gets measured:
   * Suite A (browser-deterministic-v1) against browser.mock always, and
     against browser.cdp when a CDP endpoint is reachable (--network).
-  * Suite B (browser-adaptive-v1) against browser.browser-use only when a
-    browser-use runtime (native import or known venv) is available.
   * Suite C (retrieval-v1) against retrieval.playwright-crawler with
     --network (headless Chromium crawl of real sites).
   * Suite E (hybrid-v1) against hybrid.orchestrator always, offline, with
@@ -18,17 +16,19 @@ What gets measured:
     semantics (delegation, workflow chaining, envelope), not real cross-family
     execution; the grade note says so explicitly.
   * Suite F (routing-policy-v1) — adapter-free; always measured.
-  * Suite D (desktop-v1) only with --desktop (env-dependent, pyautogui).
+  * Suite D (desktop-v1) is not measured here: the accessibility adapter
+    runs it through the gateway's conformance bridge on an interactive
+    display (POST /v1/conformance/run/d).
 
 Honesty rules:
   * Grades are written under the adapter id that was actually executed.
     Mock results are labeled browser.mock and never upgrade a real
     adapter's grade.
-  * Adapters whose runtime is unavailable (e.g. browser-use not installed)
+  * Adapters whose runtime is unavailable (e.g. no CDP endpoint)
     are written with grade/pass_rate null and measured=false — no invented
     numbers.
 
-Run:  python -m conformance.measured [--network] [--desktop]
+Run:  python -m conformance.measured [--network]
 """
 
 from __future__ import annotations
@@ -45,9 +45,7 @@ from conformance import ConformanceRunner, SuiteResult
 from conformance.mock_browser_adapter import MockBrowserAdapter
 from conformance.suites import (
     build_suite_a,
-    build_suite_b,
     build_suite_c,
-    build_suite_d,
     build_suite_e,
     build_suite_f,
 )
@@ -62,24 +60,9 @@ GRADING_SCALE = {
 
 # Suite each adapter id is measured against.
 ADAPTER_SUITE = {
-    "desktop.pyautogui": "desktop-v1",
     "retrieval.playwright-crawler": "retrieval-v1",
     "hybrid.orchestrator": "hybrid-v1",
-    "browser.browser-use": "browser-adaptive-v1",
 }
-
-
-def _browser_use_available() -> bool:
-    """True when a browser-use runtime exists (native import or known venv)."""
-    try:
-        from adapters.browser.browser_use import (  # noqa: F401
-            _BROWSER_USE_NATIVE,
-            _BROWSER_USE_PYTHON,
-        )
-
-        return bool(_BROWSER_USE_NATIVE or _BROWSER_USE_PYTHON is not None)
-    except Exception:
-        return False
 
 
 async def _discover_hybrid() -> Optional[Any]:
@@ -153,35 +136,20 @@ async def discover_adapters(network: bool = False) -> Dict[str, Any]:
                 await crawler.close()
         except Exception:
             pass
-    # Adaptive browser-use — only when its runtime actually exists.
-    if _browser_use_available():
-        try:
-            from adapters.browser.browser_use import BrowserUseAdapter
-
-            bu = BrowserUseAdapter()
-            await bu.initialize()
-            adapters["browser.browser-use"] = bu
-        except Exception:
-            pass  # runtime vanished between check and init — stay honest
     return adapters
 
 
 async def measure_adapters(
     adapters: Dict[str, Any],
-    *,
-    include_desktop: bool = False,
 ) -> Dict[str, List[SuiteResult]]:
     """Run suites against each adapter. Returns {adapter_id: [SuiteResult]}."""
     results: Dict[str, List[SuiteResult]] = {}
     runner = ConformanceRunner()
 
     runner.register_suite(build_suite_a())
-    runner.register_suite(build_suite_b())
     runner.register_suite(build_suite_c())
     runner.register_suite(build_suite_e())
     runner.register_suite(build_suite_f())
-    if include_desktop:
-        runner.register_suite(build_suite_d())
 
     for adapter_id, adapter in adapters.items():
         suite_id = ADAPTER_SUITE.get(adapter_id, "browser-deterministic-v1")
@@ -190,8 +158,6 @@ async def measure_adapters(
     # Suite F is adapter-free (policy/routing modules); run once under its
     # pseudo-adapter id.
     results["_routing_policy"] = [await runner.run_suite("routing-policy-v1", adapters["browser.mock"])]
-    if include_desktop and "desktop.pyautogui" not in adapters:
-        pass  # no desktop adapter available; Suite D stays unmeasured
     return results
 
 
@@ -243,14 +209,6 @@ def write_grades(
 
     # Honest unmeasured entries — grade null, never invented.
     unmeasured: Dict[str, Dict[str, str]] = {
-        "browser.browser-use": {
-            "suite": "browser-adaptive-v1",
-            "note": (
-                "browser-use runtime unavailable at measurement time — install "
-                "browser-use (or place a venv at ~/browser-use/venv/) and rerun: "
-                "python -m conformance.measured"
-            ),
-        },
         "retrieval.playwright-crawler": {
             "suite": "retrieval-v1",
             "note": "Crawl not measured at measurement time — run: python -m conformance.measured --network",
@@ -302,16 +260,16 @@ def write_grades(
             "note": "Headless Chromium unavailable at measurement time — run: python -m conformance.measured --network",
         }
 
-    # Suite D stays ungraded unless --desktop measured it.
+    # Suite D is measured through the gateway bridge, never here.
     if not any(r.suite_id == "desktop-v1" for rs in results.values() for r in rs):
-        document["desktop.pyautogui"] = {
+        document["desktop.accessibility"] = {
             "suite": "desktop-v1",
             "tests_total": 4,
             "tests_pass": None,
             "pass_rate": None,
             "grade": None,
             "measured": False,
-            "note": "Suite D requires an interactive display. Run: python -m conformance.measured --desktop",
+            "note": "Suite D requires an interactive display. Run: POST /v1/conformance/run/d on a live gateway",
         }
 
     path.write_text(json.dumps(document, indent=2, sort_keys=False) + "\n", encoding="utf-8")
@@ -321,32 +279,21 @@ def write_grades(
 async def run_measurement(
     *,
     network: bool = False,
-    desktop: bool = False,
     grades_path: Path = GRADES_PATH,
 ) -> Dict[str, Any]:
     adapters = await discover_adapters(network=network)
-    if desktop:
-        try:
-            from adapters.desktop.pyautogui.pyautogui_adapter import PyAutoGUIAdapter
-
-            desktop_adapter = PyAutoGUIAdapter()
-            if await desktop_adapter.health_check():
-                adapters["desktop.pyautogui"] = desktop_adapter
-        except Exception:
-            pass
-    results = await measure_adapters(adapters, include_desktop=desktop)
+    results = await measure_adapters(adapters)
     return write_grades(results, grades_path, cdp_available="browser.cdp" in adapters)
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Run measured conformance and rewrite adapter_grades.json")
     parser.add_argument("--network", action="store_true", help="also measure against a live CDP endpoint (Suite A hits real sites)")
-    parser.add_argument("--desktop", action="store_true", help="also measure Suite D against pyautogui (needs a display)")
     parser.add_argument("--grades-path", type=Path, default=GRADES_PATH)
     args = parser.parse_args(argv)
 
     document = asyncio.run(run_measurement(
-        network=args.network, desktop=args.desktop, grades_path=args.grades_path,
+        network=args.network, grades_path=args.grades_path,
     ))
     for adapter_id, entry in document.items():
         if adapter_id.startswith("_"):

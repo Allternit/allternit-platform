@@ -1,0 +1,158 @@
+name: Publish Platform API SDKs
+
+# Publishes the Platform API SDKs:
+#   npm:  @allternit/platform (sdk/platform-ts), @allternit/computer-driver (sdk/computer-driver)
+#   PyPI: allternit-platform (sdk/platform-python), allternit-computer-driver (sdk/computer-driver/python)
+#
+# npm uses the NPM_TOKEN secret (same as publish-gizzi-code-npm.yml).
+# PyPI uses trusted publishing (OIDC, no token): each PyPI project must list
+# this repo + workflow file + environment `pypi` as a trusted publisher
+# (a "pending publisher" for a project's first release). See
+# surfaces/docs/api/platform/sdks/python.mdx and the Platform API spec.
+
+on:
+  push:
+    tags:
+      - 'platform-sdk/v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (e.g. 0.1.0); the same for all four packages'
+        required: true
+        type: string
+      npm:
+        description: 'Publish the npm packages'
+        type: boolean
+        default: true
+      pypi:
+        description: 'Publish the PyPI packages (needs the trusted publishers set up on pypi.org)'
+        type: boolean
+        default: true
+      pypi_package:
+        description: 'Which PyPI package: all, allternit-platform or allternit-computer-driver (a new project needs its own pending publisher; publish one at a time the first time)'
+        type: string
+        default: all
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-platform-sdks-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  npm:
+    if: github.event_name == 'push' || inputs.npm
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "VERSION=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "VERSION=${GITHUB_REF_NAME#platform-sdk/v}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generated SDK code matches the OpenAPI spec
+        run: python3 scripts/platform-sdk/generate.py --check
+
+      - name: Build, test and publish
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          for dir in sdk/platform-ts sdk/computer-driver; do
+            pushd "$dir" >/dev/null
+            name=$(node -p "require('./package.json').name")
+            # Standalone install (no lockfile): these packages have no runtime deps.
+            npm install --no-package-lock --no-audit --no-fund
+            # TypeScript for the build (not a declared devDependency of every package).
+            npm install --no-save --no-package-lock --no-audit --no-fund typescript@5.9.3
+            npm version "$VERSION" --no-git-tag-version --allow-same-version
+            npm run build
+            if [ -d test ]; then node --test test/*.test.ts; fi
+            # The published manifest must not point at local packages (the gizzi npm bug).
+            node -e '
+              const pkg = require("./package.json");
+              const bad = [];
+              for (const field of ["dependencies", "optionalDependencies", "peerDependencies"]) {
+                for (const [dep, spec] of Object.entries(pkg[field] || {})) {
+                  if (/^(workspace|file|link|portal):/.test(String(spec))) bad.push(`${field}.${dep}=${spec}`);
+                }
+              }
+              if (pkg.private) bad.push("private: true");
+              if (bad.length) { console.error("Refusing to publish:", bad.join(", ")); process.exit(1); }
+            '
+            npm pack --dry-run
+            if npm view "$name@$VERSION" version >/dev/null 2>&1; then
+              echo "$name@$VERSION already published; skipping"
+            else
+              npm publish --access public
+            fi
+            # A new package takes a little while to show up in the registry.
+            for i in $(seq 1 30); do
+              if npm view "$name@$VERSION" version 2>/dev/null; then break; fi
+              if [ "$i" = 30 ]; then echo "::error::$name@$VERSION not visible on npm after 5 minutes"; exit 1; fi
+              sleep 10
+            done
+            popd >/dev/null
+          done
+
+  pypi:
+    if: github.event_name == 'push' || inputs.pypi
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "VERSION=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "VERSION=${GITHUB_REF_NAME#platform-sdk/v}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build both distributions
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade build pytest pyyaml
+          (cd sdk/platform-python && python -m pytest -q tests)
+          mkdir -p dist
+          dirs="sdk/platform-python sdk/computer-driver/python"
+          case "${{ inputs.pypi_package || 'all' }}" in
+            allternit-platform) dirs="sdk/platform-python" ;;
+            allternit-computer-driver) dirs="sdk/computer-driver/python" ;;
+          esac
+          for dir in $dirs; do
+            sed -i -E "s/^version = \".*\"/version = \"$VERSION\"/" "$dir/pyproject.toml"
+            python -m build --outdir dist "$dir"
+          done
+          ls -l dist
+
+      - name: Publish to PyPI (trusted publishing)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+          skip-existing: true

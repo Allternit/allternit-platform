@@ -1,0 +1,86 @@
+---
+title: Pages that act like apps
+description: A page can save data, ask AI and use your connected apps. What it can do, what you approve, and who pays.
+---
+
+A **page** artifact can be more than a static page. It can remember things,
+ask AI questions and call the apps you've connected. The page asks for each of
+these up front, and you approve them the first time it uses one.
+
+Pages that don't need any of this keep working as plain pages.
+
+## What a page can do
+
+| Capability | What it means |
+|---|---|
+| **Storage** | The page saves small bits of text (a to-do list, scores, settings). *Personal* data is only yours. *Shared* data is seen, and can be changed, by everyone who can open the page. |
+| **AI** | The page asks AI a question and shows the answer, for example "summarize my notes". |
+| **Connected apps** | The page reads from, or acts in, apps you've connected, such as a calendar or an issue tracker. |
+
+A page can only use what it declared before you opened it. If it tries
+anything else, the call fails and nothing happens.
+
+## What you approve
+
+The first time a page needs one of these, a sheet slides up over the page:
+
+- **Shared data.** Asked before the page's first *shared* write. Reading shared
+  data and using personal storage need no approval.
+- **AI.** Asked before the page's first AI call.
+- **Connected apps.** Asked before the page's first call to an app. The sheet
+  lists every app and tool the page declared, each with its own switch. Turn a
+  tool off and it stays off for you the next time the page runs.
+
+Choose **Don't allow** and the page gets an error for that call; it can ask
+again later. Your choices are kept per page and per person: approving a page
+for yourself doesn't approve it for anyone else.
+
+## Who pays
+
+AI runs on **your** account, not the owner's. It uses your credits or your free
+allowance and follows your usage limits, the same as asking in a chat. If you
+are out of credits, the page shows that the call couldn't run.
+
+Apps run with **your** sign-ins. The page never sees your credentials, only the
+result of the call.
+
+## What's limited
+
+- **Storage is 20 MB of text per page**, counting everyone's data together. A
+  single stored value can be at most 5 MB. When the page is full, saves fail
+  until something is deleted.
+- **Tools that ask for approval before each action aren't available in
+  pages.** If an app's permission mode asks you every time (or the tool changes
+  things), the page can't call it. Use the app in a chat instead.
+- **Pages with AI or connected apps can't be shared with "Anyone with the
+  link".** Link viewers aren't signed in, so there's nobody to bill and no
+  account to use. Share with people or your org instead.
+- **People outside your organization never get AI or connected apps** on your
+  page. They can still open it and use storage.
+- **Signed-out viewers** (opening a link) see "Sign in to use this" when the
+  page tries storage, AI or an app.
+- Your organization's admin can turn pages' use of connected apps off for
+  everyone, or turn artifacts off altogether.
+
+## Where it works
+
+Pages run the same way on Allternit Desktop, ai.allternit.com, the phone layout
+and the m.allternit.com app. The approval sheet is full width on a phone.
+Organization and sharing settings are changed on Desktop or the web.
+
+## Making a page that uses these
+
+Ask for what you want ("a habit tracker that remembers my streaks", "a page that
+summarizes my notes with AI"). Allternit writes the page and declares what it
+needs. When you open your own page, its declaration is saved with it, so the
+sharing window already knows it can't be a public link.
+
+If you write the page yourself, see
+[Page runtime API](/api/artifact-runtime) for the `window.allternit` calls and
+how to declare capabilities.
+
+## Related
+
+- [Artifacts](/guides/artifacts)
+- [Page runtime API](/api/artifact-runtime)
+- [Connected apps](/guides/connected-apps)

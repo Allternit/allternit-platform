@@ -112,7 +112,9 @@ async fn call_raw(app: &Router, method: &str, path: &str, token: &str, body: Val
 }
 
 async fn project(c: &Ctx, owner: &str, env: ProjectEnv) -> projects::Project {
-    projects::create_project(&c.state.db, &Principal { user_id: owner.into(), org_id: None, org_admin: false }, "P2 test", env).await.unwrap()
+    let p = projects::create_project(&c.state.db, &Principal { user_id: owner.into(), org_id: None, org_admin: false }, "P2 test", env).await.unwrap();
+    super::project_billing::put_test_card(&c.state.db, &p.id).await;
+    p
 }
 
 async fn mint(c: &Ctx, p: &projects::Project, account: Option<&str>, scopes: &[&str]) -> String {

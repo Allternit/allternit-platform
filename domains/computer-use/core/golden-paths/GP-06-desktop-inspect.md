@@ -1,4 +1,4 @@
-# GP-06: Desktop Inspect (pyautogui — Read-Only)
+# GP-06: Desktop Inspect (accessibility adapter — Read-Only)
 
 ## Purpose
 Capture desktop state for debugging — screenshot the screen, read mouse
@@ -6,12 +6,12 @@ position, observe screen dimensions. No clicks or typing.
 
 ## Preconditions
 - Desktop visible
-- `pyautogui` installed
+- macOS with the Screen Recording permission granted
 
 ## Routing
 - **Family:** desktop
 - **Mode:** inspect
-- **Primary adapter:** desktop.pyautogui
+- **Primary adapter:** desktop.accessibility
 - **Fail mode:** fail open (read-only)
 
 ## Execution Flow
@@ -19,8 +19,8 @@ position, observe screen dimensions. No clicks or typing.
 goal → Router.route(family="desktop", mode="inspect")
      → PolicyEngine.evaluate(action_type="observe")  # read-only
      → SessionManager.create(family="desktop")
-     → PyAutoGUIAdapter.execute(screenshot)
-     → PyAutoGUIAdapter.execute(observe)
+     → AccessibilityAdapter.execute("take_screenshot")
+     → AccessibilityAdapter.screen_size() / cursor_position()
      → ReceiptWriter.emit(...)
      → SessionManager.destroy()
 ```

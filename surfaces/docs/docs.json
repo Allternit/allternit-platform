@@ -80,7 +80,13 @@
               "guides/whatsapp-business",
               "guides/subscriptions",
               "plugins/guides/vendor-packs",
+              "guides/artifacts",
+              "guides/artifact-apps",
+              "guides/artifact-editors",
+              "guides/artifact-collaboration",
+              "guides/dashboards",
               "guides/artifact-modes",
+              "guides/motion",
               "guides/computers-and-apps",
               "guides/phone-for-your-bot",
               "guides/vendor-bots-on-the-phone",
@@ -334,10 +340,18 @@
             "pages": [
               "tools/overview",
               "tools/tool-belt",
+              "tools/artifact-tools",
               "tools/mcp",
               "tools/computer-use",
               "tools/computer-toolset",
-              "tools/computer-use-mcp",
+              "tools/allternit-driver",
+              "tools/vision-fallback",
+              "tools/computer-use-suite",
+              "tools/computer-use-decisions",
+              "tools/computer-safety",
+              "tools/computer-use-replay",
+              "tools/computer-parallel",
+              "tools/computer-credentials",
               "tools/strict-tool-use",
               "tools/build-a-tool",
               "tools/plugin-adapters",
@@ -606,6 +620,13 @@
             ]
           },
           {
+            "group": "Legal",
+            "pages": [
+              "legal/developer-terms",
+              "legal/acceptable-use-policy"
+            ]
+          },
+          {
             "group": "Overview",
             "pages": [
               "api/overview",
@@ -751,6 +772,9 @@
               "api/subscription-gateway",
               "api/conversations",
               "api/artifacts",
+              "api/artifacts-v2",
+              "api/artifact-runtime",
+              "api/artifacts-motion",
               "api/boards",
               "api/board-streams",
               "api/inbox",
@@ -841,8 +865,7 @@
               "sdk/workflow-engine",
               "sdk/browser-tools",
               "sdk/computer-use-protocol",
-              "sdk/capsule",
-              "sdk/computer-use"
+              "sdk/capsule"
             ],
             "icon": "/icons/code.svg"
           }
@@ -887,7 +910,7 @@
     "socials": {
       "x": "https://x.com/allternit",
       "github": "https://github.com/Allternit",
-      "youtube": "https://www.youtube.com/@gizziioagi",
+      "youtube": "https://www.youtube.com/@allternit",
       "linkedin": "https://www.linkedin.com/in/allternit-llc"
     }
   },

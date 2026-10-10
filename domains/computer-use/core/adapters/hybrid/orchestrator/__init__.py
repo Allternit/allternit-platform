@@ -12,7 +12,7 @@ Actions:
 
 Example workflow:
   1. browser.playwright → goto + extract (download CSV)
-  2. desktop.pyautogui → open file in native app, process
+  2. desktop.accessibility → open file in native app, process
   3. browser.playwright → upload result
 
 The orchestrator does NOT hold browser/desktop sessions itself.

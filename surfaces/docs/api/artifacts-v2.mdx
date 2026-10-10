@@ -1,0 +1,329 @@
+---
+title: 'Artifacts v2 API'
+description: 'One account-level store of typed artifacts (docs, sheets, slides, designs, dashboards, motion, pages, cards, diagrams, images, code) with versions and sharing, served by the hosted Cloud API.'
+---
+
+## Overview
+
+Artifacts v2 is the one store every Allternit surface reads and writes: Desktop, ai.allternit.com, the phone layout, the m.allternit.com PWA, cloud computers and gizzi. An artifact is something the assistant (or a person) made that you would show someone. Each one has a `kind`, an immutable list of versions, and sharing settings. The design contract is `docs/design/artifacts-v2.md` in allternit-platform.
+
+<Note>
+This is a different API from the sectioned [Artifacts API](/api/artifacts) under `/api/v1/artifacts`, which lives on your data-plane node. Artifacts v2 is served by the hosted Cloud API under the separate `/api/v2` prefix.
+</Note>
+
+## Base URL
+
+```text
+https://api.allternit.com/api/v2
+```
+
+## Authentication
+
+Every route except the public link route takes one of:
+
+- a Clerk session JWT (`Authorization: Bearer <jwt>`). This is the only caller that carries an organization, a role and an email;
+- an `allternit_*` API token with the `compute` scope (or `*`). A token without it gets `403`;
+- a paired device's token (`allternit_runtime_…`, what `gizzi login` stores). It acts as the device's owner, with no organization.
+
+See [Authentication](/api/authentication).
+
+## Kinds
+
+| kind | Default `body_format` | Other formats |
+| --- | --- | --- |
+| `doc` | `application/vnd.allternit.doc+json` | `text/markdown` |
+| `sheet` | `application/vnd.allternit.sheet+json` | |
+| `slides` | `application/vnd.allternit.slides+json` | |
+| `design` | `application/vnd.allternit.design+json` | `text/html` |
+| `dashboard` | `application/vnd.allternit.dashboard+json` | `application/vnd.allternit.openui` (dashboards saved before the tile format) |
+| `motion` | `application/vnd.allternit.motion+json` | |
+| `page` | `text/html` | `text/markdown` |
+| `card` | `application/vnd.allternit.openui` | |
+| `diagram` | `text/vnd.mermaid` | `image/svg+xml` |
+| `image` | `text/uri-list` | |
+| `code` | `text/plain` (`meta.language` names the language) | |
+
+When a create leaves out `body_format`, the kind's default is used. The server also accepts well-formed kinds it doesn't know (lower-case, at most 32 characters) so newer clients keep working. Apps show an unknown kind as a page when the body is HTML and as code otherwise.
+
+`runtime_version` is `2` for current artifacts. `1` marks legacy artifacts imported from the old local stores. A create with `runtime_version: 1` must set `origin.legacy_source`.
+
+## Access
+
+Your access to an artifact is the highest of:
+
+| Source | Access |
+| --- | --- |
+| You own it | `owner` |
+| A share row for your user id, your email (lower-cased) or your organization (a `group` share naming your org id) | the row's `level`: `view`, `comment` or `edit` |
+| `visibility: "org"` and you are in the artifact's organization | `view` |
+| `visibility: "link"` | `view`, only through the public link route |
+
+If you have no access, every route answers `404`, so it doesn't reveal that the artifact exists. If you can see it but lack the level an action needs, you get `403`.
+
+| Action | Needs |
+| --- | --- |
+| Read the artifact and its versions | `view` |
+| Save a new version, rename, change the icon | `edit` |
+| Sharing, `shared_version`, `capabilities`, delete | `owner` |
+
+Viewers and commenters see `shared_version`, or the latest version when it is `null` ("always share latest"). Editors and the owner see every version. An outside email invite counts as accepted the first time its invitee opens the artifact while signed in with that email. From then on it no longer expires.
+
+## Objects
+
+### ArtifactSummary
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | string | `art_` + a ULID, or the id the client supplied. |
+| `kind` | string | See [Kinds](#kinds). |
+| `title` | string | Up to 300 characters. |
+| `icon` | string \| null | One generic word, such as `chart`. |
+| `owner` | object | `{id, name, image_url}`. The name and image are filled when known. |
+| `updated_at` | string | RFC 3339. |
+| `current_version` | number | The latest version. |
+| `visibility` | string | `private`, `people`, `org` or `link`. |
+| `my_access` | string | `owner`, `edit`, `comment` or `view`. |
+| `origin` | object | Where it came from. The owner sees the full object (`surface`, `session_id`, `message_id`, `computer_id`, `legacy_source`, `legacy_id`). Everyone else sees only `surface` and `legacy_source`. |
+| `runtime_version` | number | `2`, or `1` for legacy. |
+| `thumbnail_url` | string \| null | |
+
+### Artifact
+
+An `ArtifactSummary` plus:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `template_id` | string \| null | |
+| `capabilities` | object | `{storage?: bool, ai?: bool, connectors?: [{connector, tools: [string]}]}` |
+| `shared_version` | number \| null | The version viewers see. `null` means the latest. |
+| `created_at` | string | |
+| `version` | object | The version you see: `{version, body, body_format, meta, size_bytes, sha256, author_id, created_at}`. `author_id` is a user id or `assistant`. |
+
+## List artifacts
+
+```http
+GET /api/v2/artifacts?scope=all&kind=page&q=plan&origin=chat&limit=50&cursor=...
+```
+
+| Query | Description |
+| --- | --- |
+| `scope` | `mine`, `shared` (shared with you, or visible to your org), or `all` (default). Link-shared artifacts are never listed for people who don't own them. |
+| `kind` | Only this kind. |
+| `q` | Case-insensitive title search. |
+| `origin` | Only artifacts whose `origin.surface` matches. |
+| `limit` | 1–100, default 50. |
+| `cursor` | The `next_cursor` from the previous page. |
+
+Returns `{ "items": [ArtifactSummary], "next_cursor": string | null }`, newest `updated_at` first.
+
+## Create an artifact
+
+```http
+POST /api/v2/artifacts
+{
+  "kind": "page",
+  "title": "Launch plan",
+  "icon": "rocket",
+  "body": "<h1>Launch plan</h1>",
+  "body_format": "text/html",
+  "meta": {},
+  "origin": { "surface": "chat", "session_id": "ses_1", "message_id": "msg_9" },
+  "capabilities": {}
+}
+```
+
+Returns `201` with the `Artifact` (version 1). Optional fields: `id`, `icon`, `template_id`, `origin`, `capabilities`, `body_format`, `meta`, `runtime_version`.
+
+- **Idempotent create.** If you send an `id` you already own, you get that artifact back unchanged with `200`. If someone else owns the `id`, you get `409 id_conflict`. Client ids are `art_` followed by letters, digits, `_` or `-`, at most 128 characters. Legacy imports use `art_legacy_<source>_<localId>`.
+- **Body limit.** A body can be at most 16 MiB. A larger one gets `413 body_too_large`.
+- **Organization.** The artifact belongs to the creator's active Clerk organization, and its sharing follows that organization. If the org has turned artifacts off, the create gets `403 artifacts_disabled`. If the org has turned connectors off, `capabilities.connectors` gets `422 connectors_disabled`.
+
+## Get, update and delete
+
+```http
+GET    /api/v2/artifacts/{id}
+PATCH  /api/v2/artifacts/{id}   { "title"?, "icon"?, "shared_version"?: number | null, "capabilities"? }
+DELETE /api/v2/artifacts/{id}
+```
+
+`PATCH` returns the `Artifact`. `title` and `icon` need `edit`. `shared_version` (from 1 to `current_version`, or `null`) and `capabilities` need `owner`. Turning on `ai` or `connectors` for an artifact shared by link gets `422 link_not_allowed`.
+
+`DELETE` is owner-only and **permanent**. There is no trash. Versions, shares and comments are deleted with the artifact. It returns `204`.
+
+## Dashboard body
+
+A `dashboard` artifact's body is JSON with `body_format` `application/vnd.allternit.dashboard+json`. The server stores it like any other body; the apps parse and validate it. A tile that fails validation is skipped and the rest of the dashboard still draws.
+
+```json
+{
+  "version": 1,
+  "refreshSeconds": 300,
+  "filters": [
+    { "id": "region", "label": "Region", "type": "select",
+      "options": [{ "value": "emea", "label": "EMEA" }], "default": "emea" }
+  ],
+  "tiles": [
+    {
+      "id": "revenue",
+      "title": "Revenue",
+      "type": "kpi",
+      "layout": { "x": 0, "y": 0, "w": 3, "h": 2 },
+      "query": { "tool": "stripe__list_charges", "args": { "region": "{{filters.region}}" } },
+      "encoding": { "y": ["total"], "compare": "previous" },
+      "format": { "style": "currency", "currency": "USD" }
+    }
+  ]
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `version` | Always `1`. A newer number is read as far as possible. |
+| `refreshSeconds` | Re-query while the dashboard is open. `0` or missing: only on open. At least 30 when set. |
+| `filters[]` | `id` (letters, digits, `_`), `label`, `type` (`select`, `text`, `number`), `options` for `select`, optional `default`. Up to 8. |
+| `tiles[]` | Up to 40. |
+| `tiles[].type` | `kpi`, `line`, `area`, `bar`, `table`. |
+| `tiles[].layout` | A 12-column grid: `x` and `y` (0-based), `w` (1 to 12 columns), `h` (1 to 40 rows of 72 px). Tiles that overlap are laid out in order. Phones stack tiles in one column, in reading order. |
+| `tiles[].query.tool` | `<connector>__<tool>`, the name in the user's connector tool list. |
+| `tiles[].query.args` | Tool arguments. Strings may contain `{{filters.<id>}}`. |
+| `tiles[].query.sql`, `sqlArg` | SQL for a warehouse tool, placed into the argument named by `sqlArg` (default `query`). In SQL a filter becomes a quoted literal, so write `WHERE region = {{filters.region}}`. Only one read-only statement runs. |
+| `tiles[].query.rowsPath` | Where the rows sit in the result (for example `data.rows`). Without it, rows are found automatically. |
+| `tiles[].encoding` | `x` (column on the x axis), `y` (series columns; for a KPI the first is the number), `compare` (KPI: previous-period column), `columns` (table). |
+| `tiles[].format` | `style` (`number`, `compact`, `currency`, `percent`, `text`, `date`), `currency`, `decimals`, `prefix`, `suffix`. |
+
+A tool result is read as a table: an array of objects, `{ "columns": [], "rows": [[]] }`, or JSON or CSV text.
+
+Dashboards run as the viewer: each call goes through the viewer's own connectors, and a tool that is not read-only is refused (a SQL tool is allowed for a single read-only statement). The owner's client sets `capabilities.connectors` to the connectors and tools the tiles call, so `visibility: "link"` is refused for a dashboard (see [Sharing](#sharing)). Dashboards saved before this format, with `application/vnd.allternit.openui`, still open as cards.
+
+## Versions
+
+```http
+GET  /api/v2/artifacts/{id}/versions          # { items: [{version, author_id, created_at, size_bytes, meta}] }, newest first
+GET  /api/v2/artifacts/{id}/versions/{v}      # {artifact_id, version, body, body_format, meta, size_bytes, sha256, author_id, created_at}
+POST /api/v2/artifacts/{id}/versions
+{ "base_version": 3, "body": "...", "body_format"?: "...", "meta"?: {}, "author"?: "user" | "assistant" }
+```
+
+Appending needs `edit` and returns `201` with the `Artifact`. `body_format` defaults to the previous version's. If `base_version` is not the current version, the server answers:
+
+```json
+HTTP/1.1 409 Conflict
+{ "error": "stale_version", "code": "stale_version", "message": "...", "current_version": 4 }
+```
+
+Fetch version 4, merge your change onto it, and append again with `base_version: 4`. Viewers only see the shared version, so asking them for any other version gets `404`.
+
+## Sharing
+
+```http
+GET /api/v2/artifacts/{id}/sharing
+PUT /api/v2/artifacts/{id}/sharing
+{
+  "visibility": "people",
+  "shares": [
+    { "principal_type": "user",  "principal_id": "user_2abc", "level": "edit" },
+    { "principal_type": "email", "principal_id": "pat@example.com", "level": "view" },
+    { "principal_type": "group", "principal_id": "org_2xyz", "level": "comment" }
+  ]
+}
+```
+
+Both routes are owner-only. `PUT` replaces the whole share list. Rows you leave out are removed, and rows you keep only change level. Both return a `Sharing` object:
+
+```json
+{
+  "visibility": "link",
+  "shares": [{ "principal_type": "email", "principal_id": "pat@example.com", "level": "view",
+               "display": "pat@example.com", "expires_at": "2026-11-07T…Z", "accepted_at": null }],
+  "link_url": "https://ai.allternit.com/a/art_01J…",
+  "policy": { "link_allowed": true, "outside_invites_allowed": true }
+}
+```
+
+`link_url` appears only when `visibility` is `link`. `policy.reason` explains why links are not allowed. The server sets the link base from `ARTIFACTS_PUBLIC_BASE_URL` (default `https://ai.allternit.com/a`).
+
+### Sharing rules
+
+All of these failures return `422` with the `code` shown.
+
+| Rule | Code |
+| --- | --- |
+| `visibility` must be `private`, `people`, `org` or `link`. | `invalid_visibility` |
+| `private` carries no shares. Use `people` for specific people. | `private_has_no_shares` |
+| `org` needs an artifact that was created in an organization. | `org_required` |
+| `link` is refused when `capabilities.ai` or `capabilities.connectors` is set. It is also refused when the org has `external_sharing` off and the artifact isn't in its `allowed_external` list. Personal accounts may use links. | `link_not_allowed` |
+| `email` principals are outside invites. They need the org to allow them (personal accounts may always invite). Each invite expires 30 days after it is sent unless it is accepted. | `outside_invites_not_allowed` |
+| At most 50 outside invites per artifact. | `too_many_outside_invites` |
+| A `doc` can only be shared with `view` or `edit`. | `doc_level_not_allowed` |
+| A `doc` can't have `email` principals. | `doc_email_not_allowed` |
+| A `doc` can only be shared by link when the org has `external_sharing` on. The per-artifact `allowed_external` list doesn't apply to docs. | `link_not_allowed` |
+| `principal_type` must be `user`, `email` or `group`. `level` must be `view`, `comment` or `edit`. | `invalid_share` |
+
+The owner always has access, so a share naming the owner is dropped. If the same principal is listed twice, the higher level is kept.
+
+## Public link
+
+```http
+GET /api/v2/public/artifacts/{id}     # no auth
+```
+
+This route returns `{id, kind, title, icon, body, body_format, meta, version, updated_at, runtime_version, owner_name}`. It works only while `visibility` is `link` and the policy still allows links. If an org turns off external sharing or artifacts, its links stop working at once. Viewers get `shared_version`, or the latest version when it is `null`. Every other case answers `404`. Responses carry `Cache-Control: private, no-store` and `X-Robots-Tag: noindex`.
+
+## Organization settings
+
+```http
+GET /api/v2/org/artifact-settings
+PUT /api/v2/org/artifact-settings
+{ "external_sharing": true, "allowed_external": ["art_01J…"] }
+```
+
+| Field | Default | Effect |
+| --- | --- | --- |
+| `enabled` | `true` | When off, members can't create artifacts and the org's public links close. |
+| `templates` | `{}` | `{kind: bool}`. A missing kind uses the plan default. |
+| `external_sharing` | `false` | Allows link sharing. |
+| `outside_invites` | `false` | Allows `email` invites to people outside the org. |
+| `presence` | `true` | Shows who else is viewing. |
+| `connectors` | `true` | When off, artifacts can't declare `capabilities.connectors` and pages can't call connectors. |
+| `allowed_external` | `[]` | Artifact ids individually allowed to be shared by link (not docs). |
+
+`GET` returns the settings for your active organization, plus `org_id`, `updated_by`, `updated_at` and `can_edit`. Personal accounts get the defaults with `org_id: null`. `PUT` changes only the fields you send. It needs the Clerk organization role `admin` (or `org:admin`). Everyone else gets `403`.
+
+Admins can list what the org has shared outside with `GET /api/v2/org/artifact-shared-outside`. It returns `{items: [{id, title, kind, owner_id, owner_name, by_link, outside_invites, allowed, updated_at}]}` for artifacts that are public by link or have email invites, and needs the same admin role. `allowed` is whether the artifact is in `allowed_external`.
+
+## Page runtime
+
+Pages that store data, call AI or use connectors have their own routes under `/api/v2/artifact-runtime/{id}`. See the [Page runtime API](/api/artifact-runtime).
+
+## Comments
+
+Comments are threaded: a root comment plus replies one level deep. They are stored in `artifact_comments`.
+
+| Method and path | Needs | Body | Returns |
+|---|---|---|---|
+| `GET /api/v2/artifacts/:id/comments` | view | | `{ items }`, oldest first, at most 500 |
+| `POST /api/v2/artifacts/:id/comments` | comment | `{ body, anchor?, parent_id?, version? }` | the comment, `201` |
+| `PATCH /api/v2/artifacts/:id/comments/:cid` | edit, or the author | `{ resolved? , body? }` | the comment |
+| `DELETE /api/v2/artifacts/:id/comments/:cid` | the author or the owner | | `204`. Deleting a root deletes its replies. |
+| `POST /api/v2/artifacts/:id/comments/assistant-reply` | edit | `{ parent_id, body }` | the reply, `201`, with `author_id: "assistant"` |
+
+A comment has `id`, `artifact_id`, `version`, `anchor`, `parent_id`, `author_id`, `author_name`, `author_image_url`, `body`, `to_assistant`, `resolved_at` and `created_at`. `body` is 1 to 4000 characters. `anchor` is an opaque object up to 16 KB; the app writes `{ kind: "text" | "cell" | "slide" | "element", ... }`. A comment that mentions `@gizzi` or `@allternit` is stored with `to_assistant: true`. Docs have no Commenter level, so a viewer of a doc can't comment.
+
+## Presence
+
+Presence is shared by every Cloud API instance. Each heartbeat upserts one row per artifact and user in `artifact_presence` (migration `086_artifact_presence.sql`); the table holds only the current state and is not a viewing history.
+
+| Method and path | Needs | Body | Returns |
+|---|---|---|---|
+| `POST /api/v2/artifacts/:id/presence` | view | `{ state: "viewing" \| "editing" \| "left" }` | `204` |
+| `GET /api/v2/artifacts/:id/presence` | view | | `{ enabled, users: [{ user_id, name, image_url, state }] }`, without you |
+
+Send a heartbeat about every 15 seconds. `GET` returns the entries seen in the last 45 seconds, up to 200, ordered by `user_id`. `left` deletes the caller's entry. Entries older than 10 minutes are deleted as a side effect of about one request in 50. When the owner's organization turned presence off, `GET` returns `{ enabled: false, users: [] }` and `POST` does nothing.
+
+## Errors
+
+Errors use the standard Cloud API shape `{ "error", "message", "code" }`. Artifact-specific codes are listed above. `401` means you are not signed in. `404` means the artifact doesn't exist or you have no access.
+
+## Storage
+
+The schema is `cmd/allternit-cloud-api/migrations_pg/085_artifacts_v2.sql`. It creates `artifacts`, `artifact_versions`, `artifact_shares` and `org_artifact_settings`, plus `artifact_storage` and `artifact_consents` (used by the [page runtime](/api/artifact-runtime)) and `artifact_comments` for comments. The migration is idempotent and is applied to production by hand.

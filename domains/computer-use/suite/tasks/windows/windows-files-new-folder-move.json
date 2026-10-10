@@ -1,0 +1,39 @@
+{
+  "id": "windows-files-new-folder-move",
+  "os": "windows",
+  "status": "needs_test_machine",
+  "apps": [
+    "File Explorer"
+  ],
+  "setup": [
+    {
+      "do": "write_file",
+      "path": "old.txt",
+      "text": "old\n"
+    },
+    {
+      "do": "open",
+      "app": "File Explorer",
+      "path": "."
+    }
+  ],
+  "goal": "In File Explorer, create a folder named as below and move old.txt into it.",
+  "inputs": {
+    "folder": "Archive"
+  },
+  "checker": [
+    {
+      "kind": "file_exists",
+      "path": "Archive/old.txt"
+    },
+    {
+      "kind": "file_absent",
+      "path": "old.txt"
+    }
+  ],
+  "teardown": [],
+  "max_minutes": 3,
+  "tags": [
+    "files"
+  ]
+}

@@ -99,6 +99,7 @@ export const consoleNav: ConsoleNavConfig = {
         { to: "/platform/conversations", label: "Conversations", icon: BubbleChatIcon },
         { to: "/platform/computers", label: "Computers", icon: ComputerIcon },
         { to: "/platform/usage", label: "Usage", icon: Analytics01Icon },
+        { to: "/platform/billing", label: "Billing", icon: Dollar01Icon },
         { to: "/platform/webhooks", label: "Webhooks", icon: WebhookIcon },
       ],
     },

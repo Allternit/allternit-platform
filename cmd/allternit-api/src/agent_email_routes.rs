@@ -331,6 +331,11 @@ async fn send_email_inner(
     extra: SendEmailExtra<'_>,
 ) -> Result<Value, ApiError> {
     require_agent_owner_id(state, user_id, &req.agent_id)?;
+    // Email can't draw interactive cards: ```openui fences in the text body go out as text.
+    let mut req = req;
+    if let Some(text) = req.text.as_deref().filter(|t| crate::openui_text::has_fence(t)) {
+        req.text = Some(crate::openui_text::to_plain_text(text));
+    }
     // Autonomy (the owner's per-place level) can only tighten here: a hold means mailflare's review.
     let autonomy = crate::autonomy::email_eval(&state.db, user_id, &req.agent_id, &req.to);
     let held = autonomy.as_ref().is_some_and(|e| e.held());

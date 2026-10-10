@@ -1167,6 +1167,7 @@ async fn approver_from_headers(state: &ApiState, headers: &HeaderMap) -> Result<
             name: None,
             image_url: None,
             organization_id: None,
+            org_role: None,
         });
     }
     match clerk::user_from_headers(headers).await {
@@ -1181,6 +1182,7 @@ async fn approver_from_headers(state: &ApiState, headers: &HeaderMap) -> Result<
                 name: None,
                 image_url: None,
                 organization_id: None,
+                org_role: None,
             })
         }
     }

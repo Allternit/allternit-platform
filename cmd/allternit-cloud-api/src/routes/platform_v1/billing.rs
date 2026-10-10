@@ -10,6 +10,10 @@
 //! * **Spend** is the UTC calendar month's usage rows × prices, in micro-dollars
 //!   ([`month_spend`]). It is what the month would bill at list price, before any
 //!   plan credit or discount (those apply on the invoice).
+//! * **Payment method.** Every project, sandbox included, needs a card on file
+//!   and a plan (Stripe Checkout from the console, `project_billing`) before it
+//!   can do billable work: [`spend_allowed`] answers `402 payment_method_required`
+//!   first, with the console billing page in `error.url`.
 //! * **Cap.** `platform_projects.spend_cap_cents` (default $100). Billable work
 //!   calls [`spend_allowed`] first: at or over the cap it answers
 //!   `402 spend_cap_reached`. One turn or text can still take a project a little
@@ -37,6 +41,8 @@ use crate::ApiState;
 pub const TOKEN_MARKUP_PERCENT: i64 = 15;
 /// Hosted agents free each month (spec §7: first 3 free, then $4 / agent / month).
 pub const FREE_AGENTS: f64 = 3.0;
+/// Hosted computer toolset actions free each month (Eoj 2026-10-08).
+pub const FREE_COMPUTER_ACTIONS: f64 = 10_000.0;
 /// Spend-cap thresholds that send `usage.threshold`, in percent.
 pub const THRESHOLDS: [i64; 3] = [50, 80, 100];
 
@@ -58,8 +64,10 @@ pub fn unit_price_microusd(meter: &str) -> Option<i64> {
         // Quantity is already in cents (passed through at cost).
         "registration_passthrough_cents" => 10_000,
         "recording_min_month" => 2_000,
-        // Hosted computer driver: price TBD (Eoj decides). Counted, billed $0 until set.
-        "computer_minute" | "computer_action" => 0,
+        // Hosted computer driver (Eoj 2026-10-08): 0.8¢ per computer-minute;
+        // toolset actions 0.05¢ each after the first 10,000 a month.
+        "computer_minute" => 8_000,
+        "computer_action" => 500,
         _ => return None,
     })
 }
@@ -87,7 +95,11 @@ pub fn spend_from_totals(totals: &[MeterTotal]) -> i64 {
         .iter()
         .map(|t| match unit_price_microusd(&t.meter) {
             Some(price) => {
-                let units = if t.meter == "agent_month" { (t.quantity - FREE_AGENTS).max(0.0) } else { t.quantity.max(0.0) };
+                let units = match t.meter.as_str() {
+                    "agent_month" => (t.quantity - FREE_AGENTS).max(0.0),
+                    "computer_action" => (t.quantity - FREE_COMPUTER_ACTIONS).max(0.0),
+                    _ => t.quantity.max(0.0),
+                };
                 (units * price as f64).round() as i64
             }
             None => t.amount_microusd.max(0),
@@ -126,9 +138,56 @@ pub fn dollars(microusd: i64) -> String {
     format!("${:.2}", microusd as f64 / 1_000_000.0)
 }
 
-/// `Ok` while the project is under its monthly spend cap; `402 spend_cap_reached`
-/// once it is at or over it. A failed check refuses the work (fail closed).
+/// The console page where a project adds its card and picks a plan.
+pub fn billing_page_url(project_id: &str) -> String {
+    let base = std::env::var("ALLTERNIT_PLATFORM_CONSOLE_URL").unwrap_or_else(|_| "https://platform.allternit.com".into());
+    format!("{}/platform/billing?project={project_id}", base.trim_end_matches('/'))
+}
+
+/// Billing states that may do billable work: a subscription that is paid up, or
+/// one whose renewal failed while Stripe is still retrying (`past_due`, grace).
+pub fn status_allows_work(billing_status: Option<&str>) -> bool {
+    matches!(billing_status, Some("active" | "past_due"))
+}
+
+/// 402 `payment_method_required`, with the console billing page as `error.url`.
+pub fn payment_method_required(project_id: &str) -> PlatformError {
+    let url = billing_page_url(project_id);
+    PlatformError::payment_required(
+        "payment_method_required",
+        format!(
+            "This project has no payment method on file. Every project, sandbox included, needs a card and a plan \
+             (Pay as you go or Growth) before it can do billable work; there is no free usage. Add one at {url}"
+        ),
+    )
+    .with_url(url)
+}
+
+/// `Ok` once the project has a card on file and a subscription in good standing
+/// (Eoj 2026-10-08: card required, $0 free usage, sandbox included); otherwise
+/// `402 payment_method_required`. A failed check refuses the work (fail closed).
+pub async fn require_payment_method(db: &PgPool, project_id: &str) -> Result<(), PlatformError> {
+    let row: Result<Option<(Option<String>, Option<String>)>, sqlx::Error> =
+        sqlx::query_as("SELECT stripe_customer_id, billing_status FROM platform_projects WHERE id = $1")
+            .bind(project_id)
+            .fetch_optional(db)
+            .await;
+    match row {
+        Ok(Some((Some(_customer), status))) if status_allows_work(status.as_deref()) => Ok(()),
+        Ok(_) => Err(payment_method_required(project_id)),
+        Err(error) => {
+            tracing::error!(%error, project_id, "platform payment method check failed; refusing billable work");
+            Err(PlatformError::service_unavailable("spend_check_unavailable", "The project's billing couldn't be checked. Retry shortly."))
+        }
+    }
+}
+
+/// `Ok` while the project has a payment method on file ([`require_payment_method`])
+/// and is under its monthly spend cap; `402 payment_method_required` without a
+/// card, `402 spend_cap_reached` at or over the cap. A failed check refuses the
+/// work (fail closed).
 pub async fn spend_allowed(db: &PgPool, project_id: &str) -> Result<(), PlatformError> {
+    require_payment_method(db, project_id).await?;
     let checked = async {
         let cap = cap_cents(db, project_id).await?;
         let spent = month_spend(db, project_id, Utc::now()).await?;
@@ -219,6 +278,7 @@ async fn cap_json(db: &PgPool, caller: &PlatformCaller) -> Result<Value, Platfor
         .fetch_all(db)
         .await?;
     let cap_micro = cap.saturating_mul(10_000);
+    let payment_method = require_payment_method(db, &caller.project_id).await.is_ok();
     Ok(json!({
         "object": "spend_cap",
         "project_id": caller.project_id,
@@ -230,6 +290,7 @@ async fn cap_json(db: &PgPool, caller: &PlatformCaller) -> Result<Value, Platfor
         "remaining_cents": ((cap_micro - spent).max(0)) / 10_000,
         "reached": spent >= cap_micro,
         "thresholds_sent": sent,
+        "payment_method": payment_method,
     }))
 }
 

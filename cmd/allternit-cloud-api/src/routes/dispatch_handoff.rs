@@ -262,6 +262,7 @@ async fn handoff_user(state: &ApiState, headers: &HeaderMap) -> Result<ClerkUser
                 name: None,
                 image_url: None,
                 organization_id: None,
+                org_role: None,
             });
         }
     }
@@ -277,6 +278,7 @@ async fn handoff_user(state: &ApiState, headers: &HeaderMap) -> Result<ClerkUser
                 name: None,
                 image_url: None,
                 organization_id: None,
+                org_role: None,
             })
         }
     }

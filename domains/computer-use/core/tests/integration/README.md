@@ -10,7 +10,6 @@ tests/integration/
 ├── pytest.ini                       # Pytest configuration
 ├── README.md                        # This file
 ├── test_browser_automation.py       # Browser automation tests (Playwright/CDP)
-├── test_desktop_automation.py       # Desktop automation tests (PyAutoGUI)
 ├── test_vision_models.py            # Vision model tests (OpenAI/Anthropic)
 ├── test_full_workflows.py           # End-to-end workflow tests
 └── .github/
@@ -24,7 +23,7 @@ All tests use pytest markers for categorization:
 
 - `@pytest.mark.integration` - Integration tests (may require external deps)
 - `@pytest.mark.requires_browser` - Needs Playwright/Chrome
-- `@pytest.mark.requires_desktop` - Needs PyAutoGUI + permissions
+- `@pytest.mark.requires_desktop` - Needs native desktop access + permissions
 - `@pytest.mark.requires_vision` - Needs OpenAI/Anthropic API keys
 - `@pytest.mark.slow` - Slow tests (can skip with `-m "not slow"`)
 - `@pytest.mark.asyncio` - Async tests
@@ -59,7 +58,6 @@ pytest -m "requires_browser and requires_vision"
 ```bash
 # Mock tests work in CI without real dependencies
 pytest test_browser_automation.py::TestBrowserAutomationMock
-pytest test_desktop_automation.py::TestDesktopAutomationMock
 pytest test_vision_models.py::TestVisionModelsMock
 pytest test_full_workflows.py::TestMockWorkflows
 ```
@@ -78,16 +76,6 @@ pytest -m "integration and not slow"
 pip install playwright pytest-asyncio
 playwright install chromium
 ```
-
-### Desktop Tests
-
-```bash
-pip install pyautogui Pillow
-```
-
-**macOS**: Requires Screen Recording and Accessibility permissions in System Preferences.
-
-**Linux**: Requires X11 or Wayland display server.
 
 ### Vision Tests
 
@@ -127,13 +115,6 @@ Tests browser automation with:
 - **CDP**: Chrome DevTools Protocol (when Chrome available)
 - **Mock**: Simulated browser for CI
 
-### Desktop Automation (`test_desktop_automation.py`)
-
-Tests desktop automation with:
-- **PyAutoGUI**: Real desktop control (screenshots, mouse, keyboard)
-- **Safe test area**: All tests use non-destructive actions only
-- **Mock**: Simulated desktop for CI
-
 ### Vision Models (`test_vision_models.py`)
 
 Tests vision model integration with:
@@ -145,7 +126,6 @@ Tests vision model integration with:
 
 End-to-end workflow tests:
 - **Browser workflows**: Navigate → Find → Click → Screenshot
-- **Desktop workflows**: Screenshot → Find → Click
 - **Hybrid workflows**: Browser + Desktop combined
 - **Vision-guided**: Screenshot → Vision analysis → Automation
 

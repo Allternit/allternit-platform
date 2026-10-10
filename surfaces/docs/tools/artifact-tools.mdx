@@ -1,0 +1,100 @@
+---
+title: 'Artifact Tools'
+description: 'The artifact_create, artifact_update and artifact_read tools gizzi gives every model for Artifacts v2'
+---
+
+## Overview
+
+gizzi-code gives every model three built-in tools for **Artifacts v2**: one account-level store of typed artifacts (docs, decks, sheets, designs, dashboards, motion, pages, cards, diagrams, images and code files) that Desktop, ai.allternit.com, the phone layout, the m.allternit.com PWA, cloud computers and gizzi all read and write. The tools behave the same for every model and provider. Any CLI agent that runs inside a gizzi session gets them too, through the session's `allternit` MCP bridge.
+
+| Tool | Input | Returns |
+|------|-------|---------|
+| `artifact_create` | `{kind, title, body, body_format?, icon?, meta?}` | `{id, version: 1}` |
+| `artifact_update` | `{id, body, base_version, note?}` | `{id, version}` |
+| `artifact_read` | `{id, version?}` | the body, with kind, title, format and version |
+
+The app renders every `artifact_*` tool part in the transcript as an artifact card that opens the artifact beside the chat (full screen on phones).
+
+## When the model creates an artifact
+
+The tool descriptions carry the rule from the contract:
+
+- Create an artifact when the content is substantial (about 15 lines or more), self-contained, and likely to be edited or reused, or when the user asked for one ("make this an artifact", or an Output kind such as Docs or Slides was picked in the composer).
+- Otherwise answer inline. Short snippets and interactive cards stay in the chat.
+- Revise with `artifact_update` on the same id; don't create a second artifact for a revision.
+
+## Kinds and body formats
+
+`body_format` is optional on create. When it is left out, gizzi infers it from the kind and the body (for example, a `doc` whose body is JSON gets the doc JSON format, otherwise Markdown).
+
+| kind | body_format |
+|------|-------------|
+| `doc` | `application/vnd.allternit.doc+json` or `text/markdown` |
+| `sheet` | `application/vnd.allternit.sheet+json` |
+| `slides` | `application/vnd.allternit.slides+json` |
+| `design` | `application/vnd.allternit.design+json` or `text/html` |
+| `dashboard` | `application/vnd.allternit.openui` |
+| `motion` | `application/vnd.allternit.motion+json` |
+| `page` | `text/html` or `text/markdown` |
+| `card` | `application/vnd.allternit.openui` |
+| `diagram` | `text/vnd.mermaid` or `image/svg+xml` |
+| `image` | `text/uri-list` (the image URL, not its data) |
+| `code` | `text/plain`, with `meta.language` and optionally `meta.filename` |
+
+The JSON and OpenUI formats (docs, sheets, slides, designs, dashboards, motion, cards) are described to the model by the app's system prompt; the tool descriptions point the model there. gizzi refuses a format that doesn't belong to the kind and a `+json` body that isn't valid JSON, with an error the model can act on.
+
+## Where artifacts are saved
+
+The tools write to the cloud store, `/api/v2/artifacts` on allternit-cloud-api (see the [Artifacts v2 contract](https://github.com/Allternit/allternit-platform/blob/main/docs/design/artifacts-v2.md)):
+
+- `artifact_create` → `POST /api/v2/artifacts` with an id gizzi mints itself (`art_` + ULID), `runtime_version: 2` and `origin: {surface: "gizzi", client, session_id, message_id}`.
+- `artifact_update` → `POST /api/v2/artifacts/:id/versions` with `base_version`, `meta.note` and `author: "assistant"`.
+- `artifact_read` → `GET /api/v2/artifacts/:id`, or `GET /api/v2/artifacts/:id/versions/:v` for a specific version.
+
+**Credentials**, tried in order (a rejected one falls through to the next): `ALLTERNIT_API_KEY`, `ALLTERNIT_API_TOKEN`, then the device token from `gizzi login` / `gizzi pair`. The token needs the `compute` scope.
+
+**Base URL**: `ALLTERNIT_CLOUD_API_URL`, else `GIZZI_PLATFORM_API_URL`, else `https://api.allternit.com`.
+
+### When gizzi can't reach the store
+
+If there is no credential, the cloud rejects every credential, the route isn't there, the network fails, or the cloud returns a server error, the tools still succeed:
+
+- `artifact_create` returns the artifact with the id gizzi minted and `persisted: false`. The app saves it with an idempotent create under the same id, so a retry never makes a duplicate.
+- `artifact_update` returns version `base_version + 1` with `persisted: false` and `base_version`, built on the artifact this session already has in its transcript.
+- `artifact_read` falls back to the newest copy in this session's transcript.
+
+Set `GIZZI_ARTIFACTS_OFFLINE=1` to skip the cloud and always let the app persist. Set `GIZZI_DISABLE_ARTIFACT_TOOLS=1` to hide the three tools.
+
+## Tool results
+
+Every result's metadata carries `artifact`, which is everything the app needs to render and persist it:
+
+```json
+{
+  "id": "art_01JABCDEF0123456789XYZABCD",
+  "kind": "page",
+  "title": "Launch plan",
+  "version": 1,
+  "body": "# Plan\n...",
+  "body_format": "text/markdown",
+  "meta": {},
+  "persisted": true
+}
+```
+
+The text the model sees starts with the same fields as a JSON line, without the body, so a CLI that drives the tools over the MCP bridge (where only text comes back) still has the id and version. `artifact_create` and `artifact_update` leave the body out of the model-visible text; `artifact_read` shows it, cut at 60,000 characters, while the metadata keeps all of it.
+
+## Errors the model sees
+
+| Situation | What the tool says |
+|-----------|--------------------|
+| Someone edited the artifact since `base_version` (cloud `409 stale_version`) | Nothing was saved. Call `artifact_read`, apply the change to the latest body, and retry with the new `base_version` (named in the message). |
+| Unknown id, or no access | The artifact was not found; check the id or create a new one. |
+| Format doesn't fit the kind, or invalid JSON | The allowed formats for that kind, or the JSON parse error. |
+| The store refused the body (for example over 16 MiB) | The store's message. |
+
+## Source
+
+- Tools: `cmd/gizzi-code/src/runtime/tools/builtins/artifact.ts` (descriptions in `artifact-create.txt`, `artifact-update.txt`, `artifact-read.txt`)
+- Store client: `cmd/gizzi-code/src/runtime/integrations/artifacts/index.ts`
+- Tests: `cmd/gizzi-code/test/tool/artifact.test.ts`

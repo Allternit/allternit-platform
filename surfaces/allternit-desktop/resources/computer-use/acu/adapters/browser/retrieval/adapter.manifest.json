@@ -1,8 +1,0 @@
-{
-  "adapter_id": "browser.retrieval",
-  "family": "retrieval",
-  "supports": ["crawl", "extract_links", "extract_structured", "search_page"],
-  "risk_level": "low",
-  "conformance_grade": "beta",
-  "requires_headed": false
-}

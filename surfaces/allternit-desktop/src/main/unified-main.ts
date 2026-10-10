@@ -16,6 +16,7 @@ import * as http from 'node:http';
 import * as https from 'node:https';
 import * as os from 'node:os';
 import { execFile } from 'node:child_process';
+import { createMotionRender } from './motion-render.js';
 import Store from 'electron-store';
 import log from 'electron-log';
 import { updateElectronApp } from 'update-electron-app';
@@ -88,6 +89,7 @@ import { workerBus } from './workers/worker-bus.js';
 import { mcpHostManager } from './mcp-host-manager.js';
 import { isLimaInstalled, installLima, startVM, stopVM, getVMStatus } from './lima.js';
 import { computerUseDriverManager } from './computer-use-driver-manager.js';
+import { decisionRuntimeManager } from './decision-runtime-manager.js';
 import { acuGatewayManager } from './acu-gateway-manager.js';
 import { phoneRemoteManager } from './phone-remote-manager.js';
 import { phoneService } from './phone-service.js';
@@ -160,6 +162,24 @@ function isUrlReachable(url: string, timeoutMs: number): Promise<boolean> {
  * never configured. Defaults to false (normal cloud-paired behavior) if the
  * file is missing or unreadable, matching every build before this flag existed.
  */
+/**
+ * Headless computers (the hosted-driver image sets ALLTERNIT_HEADLESS=1) run
+ * the runtime on a screen agents drive, so the app must never put its own
+ * windows (welcome, sign-in, platform) on that screen: they'd be the first
+ * thing a developer's screenshot shows.
+ */
+const HEADLESS = process.env.ALLTERNIT_HEADLESS === '1';
+
+/** Keep a window off screen for good on headless computers. */
+function keepHiddenIfHeadless<T extends BrowserWindow>(win: T): T {
+  if (!HEADLESS) return win;
+  win.hide();
+  win.show = () => {};
+  win.showInactive = () => {};
+  win.focus = () => {};
+  return win;
+}
+
 function isSelfHostedBuild(): boolean {
   const repoRoot = resolve(__dirname, '..', '..', '..', '..');
   const companyConfigPath = app.isPackaged
@@ -933,6 +953,7 @@ function createMainWindow(): BrowserWindow {
     mainWindow = null;
   });
   
+  keepHiddenIfHeadless(window);
   // Ensure window is visible and focused
   window.once('ready-to-show', () => {
     log.info('[Main] ready-to-show event fired');
@@ -1151,13 +1172,15 @@ async function initializeBundledMode(): Promise<void> {
   // they always skip straight to the loading screen and into the platform —
   // otherwise they'd sit at "Waiting for browser login..." forever.
   const selfHosted = isSelfHostedBuild();
-  const showStartupWizard = !selfHosted && (!store.get('startupWizardCompleted') || !authManager.hasSession());
+  const showStartupWizard = !selfHosted && !HEADLESS && (!store.get('startupWizardCompleted') || !authManager.hasSession());
   log.info(`[Main] Startup window: ${showStartupWizard ? 'onboarding wizard' : 'loading only'}${selfHosted ? ' (self-hosted)' : ''}`);
-  splashWindow = createStartupWindow({ initialStep: showStartupWizard ? 'welcome' : 'loading' });
+  splashWindow = keepHiddenIfHeadless(createStartupWindow({ initialStep: showStartupWizard ? 'welcome' : 'loading' }));
   appWindowOpened = true;
   // Device pairing is independent of local service readiness. Start waiting
   // immediately so the user can approve in parallel while the runtime boots.
-  const startupSignIn = showStartupWizard
+  // Headless computers skip the wizard but still sign in: the startup gate is
+  // where a provisioned computer redeems /etc/allternit/bootstrap.json.
+  const startupSignIn = showStartupWizard || (HEADLESS && !selfHosted)
     ? authManager.waitForStartupSignIn(splashWindow)
     : Promise.resolve(null);
   const updateSplash = (status: string, progress?: number) => {
@@ -1272,6 +1295,12 @@ async function initializeBundledMode(): Promise<void> {
         return null;
       }
     })();
+    // Decision Runtime local scorer: binds at once, installs and downloads its
+    // model on the first decision (decision-runtime-manager.ts).
+    const decisionsTask = decisionRuntimeManager.start().catch((decisionsErr) => {
+      log.warn('[Main] Decision runtime failed to start, continuing without it:', decisionsErr);
+      return null;
+    });
     const acuTask = (async (): Promise<string | null> => {
       try {
         acuGatewayManager.setDesktopTokenProvider(() => backendManager.ensureDesktopAccessToken());
@@ -1325,6 +1354,7 @@ async function initializeBundledMode(): Promise<void> {
       acuTask,
       localEngineTask,
       factoryTask,
+      decisionsTask,
     ]);
 
     // Step 2 — allternit-api (Rust operator API, port ${PORTS.API} — VM, rails, terminal)
@@ -1350,6 +1380,7 @@ async function initializeBundledMode(): Promise<void> {
           ...(meshBridge ? { ALLTERNIT_MESH_BRIDGE_URL: meshBridge } : {}),
           ...(localEngineUrl ? { LOCAL_ENGINE_URL: localEngineUrl } : {}),
           ...computerUseDriverManager.getLaunchEnvironment(),
+          ...decisionRuntimeManager.getLaunchEnvironment(),
           ...acuGatewayManager.getLaunchEnvironment(),
           ...authManager.getPlatformEncryptionEnvironment(),
           ...authManager.getConnectorSidecarEnvironment(),
@@ -1595,8 +1626,9 @@ async function initializeBundledMode(): Promise<void> {
     // On macOS, guide the user through granting these permissions.
     // The renderer signals readiness via permissionGuide.readyForCheck() when
     // its onboarding wizard reaches the permissions step. We also set a
-    // fallback timeout so old platform versions still get guided.
-    if (isFirstLaunch) {
+    // fallback timeout so old platform versions still get guided. Headless
+    // computers have nobody to grant anything and must stay windowless.
+    if (isFirstLaunch && !HEADLESS) {
       mainWindow.webContents.once('did-finish-load', async () => {
         if (!store.get('permissions').promptedDuringOnboarding) {
           let onboardingStarted = false;
@@ -2689,6 +2721,7 @@ async function shutdownAllServices(): Promise<void> {
   bonsaiCompanion.stop();
   systemOne.stop();
   computerUseDriverManager.stop();
+  decisionRuntimeManager.stop();
   acuGatewayManager.stop();
   phoneRemoteManager.stop();
   phoneService.shutdown();
@@ -2759,9 +2792,11 @@ handleGuarded('backend:restart', async () => {
   await backendManager.stopBackend();
 
   await computerUseDriverManager.start();
+  await decisionRuntimeManager.start();
   return backendManager.ensureBackend({
     extraEnv: {
       ...computerUseDriverManager.getLaunchEnvironment(),
+      ...decisionRuntimeManager.getLaunchEnvironment(),
       ...authManager.getPlatformEncryptionEnvironment(),
       ...authManager.getConnectorSidecarEnvironment(),
     },
@@ -2769,6 +2804,7 @@ handleGuarded('backend:restart', async () => {
 });
 
 ipcMain.handle('computer-use-driver:get-status', () => computerUseDriverManager.getStatus());
+ipcMain.handle('decision-runtime:get-status', () => decisionRuntimeManager.getStatus());
 
 // Phones (Lane 2a): Android over Wi-Fi, no cable — see phone-device-manager.ts
 registerPhoneIpc(handleGuarded);
@@ -4436,6 +4472,25 @@ handleGuarded('hyperframes:render', async (event, html: string, options: {
     return { success: false, error: (err as Error).message };
   }
 });
+
+// ─── Motion artifacts: frames from the app → local ffmpeg → MP4 ──────────────
+
+const motionRender = createMotionRender({
+  chooseSavePath: async (defaultName) => {
+    const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+    const saved = await dialog.showSaveDialog(win, {
+      title: 'Save Video',
+      defaultPath: defaultName,
+      filters: [{ name: 'MP4 video', extensions: ['mp4'] }],
+    });
+    return saved.canceled || !saved.filePath ? null : saved.filePath;
+  },
+});
+handleGuarded('motion:check', () => motionRender.check());
+handleGuarded('motion:begin', (_event, opts) => motionRender.begin(opts));
+handleGuarded('motion:frame', (_event, id: string, index: number, jpeg: ArrayBuffer) => motionRender.frame(id, index, jpeg));
+handleGuarded('motion:finish', (_event, id: string, opts: { title: string }) => motionRender.finish(id, opts));
+handleGuarded('motion:abort', (_event, id: string) => motionRender.abort(id));
 
 // ─── Mini-apps: install / start / stop / status ───────────────────────────────
 

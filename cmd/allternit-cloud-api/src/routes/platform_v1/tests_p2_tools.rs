@@ -63,6 +63,8 @@ async fn ctx() -> Ctx {
         include_str!("../../../migrations_pg/063_platform_agents.sql"),
         include_str!("../../../migrations_pg/064_platform_conversations.sql"),
         include_str!("../../../migrations_pg/067_platform_agent_knowledge.sql"),
+        include_str!("../../../migrations_pg/080_platform_billing.sql"),
+        include_str!("../../../migrations_pg/084_platform_payment_methods.sql"),
     ] {
         sqlx::raw_sql(&sql.replace("public.", "")).execute(&state.db).await.expect("migration applies");
     }
@@ -105,6 +107,7 @@ async fn call(app: &Router, method: &str, path: &str, token: &str, body: Option<
 /// A project with two accounts and an agent in each; the project key, both account ids and agent ids.
 async fn setup(c: &Ctx, owner: &str) -> (projects::Project, String, [String; 2], [String; 2]) {
     let p = projects::create_project(&c.state.db, &Principal { user_id: owner.into(), org_id: None, org_admin: false }, "Tools", ProjectEnv::Sandbox).await.unwrap();
+    super::project_billing::put_test_card(&c.state.db, &p.id).await;
     let key = mint(c, &p, None).await;
     let mut accounts = vec![];
     let mut agents = vec![];
