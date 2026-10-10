@@ -635,9 +635,14 @@
         {
           "on": "2026-10-09",
           "note": "D4: replay cache (Stagehand design over the driver element map). run_subtask keys each subtask on hash(goal, app + window shape, input names) per owner (computer_replays, V246); the first run records semantic locators (element id, role, name, tree path, window-relative box, 8x8 pixel hash) plus a verify check per step once the exact success checks hold; later runs replay in one speculative run_batch with zero decisions, re-find a moved element by name/path/pixels or re-infer it with one decision, and rewrite the entry. Input values are never stored ({{name}} placeholders plus a guard). save_as turns a recording into a named skill; run_skill and skills (contract v2 members) run and list them. read_ui gains paths and crops."
+        },
+        {
+          "on": "2026-10-09",
+          "note": "D6: vision fallback in the driver (allternit_driver/vision). Router.choose_source decides per window read: ax, vision (empty/sparse tree, tree error) or hybrid (tree plus marks inside opaque canvas-like regions), recorded per app and audited. Set-of-marks from Apple Vision OCR plus a model-free edge-blob proposer become v-prefixed elements (source vision, mark n) that act/run_batch/verify take like tree ids; vision act is desktop pixel input behind a mean-hash freshness check. read_ui target grounds a description with the local grounder (UI-Venus-1.5-8B MLX 4-bit primary, Holo2-8B fallback, both Apache-2.0) with zoom-and-reground on low confidence. Packages install into the state dir on first use; the model runs in a child vision worker, unloaded after 10 min idle; a vLLM endpoint (ALLTERNIT_GROUNDER_URL) is the cloud seam, configuration only. Cua parse_visual_regions is not used (needs AGPL cua-perception)."
         }
       ],
       "evidence": [
+        "allternit/surfaces/docs/tools/vision-fallback.mdx",
         "allternit/surfaces/docs/tools/computer-toolset.mdx",
         "allternit/contracts/computer-toolset/README.md",
         "allternit/cmd/allternit-api/src/computer_toolset.rs",

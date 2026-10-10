@@ -3,7 +3,8 @@
 Ops: read_ui, act, run_batch, verify, screenshot, zoom, wait, pixel_*,
 status and router. Each op is routed (router.py), each read lands in our own
 element map (element_map.py), and every window has one reader and one input
-owner at a time (locks.py).
+owner at a time (locks.py). A window whose tree is empty or can't see into a
+drawn region reads through the vision fallback (vision/) instead or as well.
 """
 
 from __future__ import annotations
@@ -19,10 +20,11 @@ from typing import Any, Callable
 
 from . import element_map as em
 from . import live as lv
+from . import vision as vz
 from .engines.arc import ArcEngine
 from .engines.cua import CuaEngine, CuaError
 from .locks import WindowLocks
-from .router import ARC, CUA, Audit, Decision, Router
+from .router import ARC, CUA, SOURCE_MODES, Audit, Decision, Router
 
 log = logging.getLogger("allternit_driver")
 
@@ -73,6 +75,7 @@ class Driver:
         self._pids: dict[str, int] = {}  # app name / bundle id -> pid
         self._last_use = float("-inf")
         self.live = lv.LiveMaps(self._observer(), self._live_refresh, self._live_forget)
+        self.vision = vz.Vision(state_dir, self._shoot)
 
     def _observer(self) -> lv.Observer:
         """This OS's accessibility notifications for the live map. Any failure
@@ -133,6 +136,7 @@ class Driver:
                 log.debug("prewarm skipped: %s", e)
 
     def close(self) -> None:
+        self.vision.close()
         self.live.close()
         self.router.save()
         self.arc.close()
@@ -194,7 +198,7 @@ class Driver:
 
     def target(self, p: dict[str, Any]) -> Target:
         if p.get("element"):
-            key = self.maps.window_of(p["element"])
+            key = self.maps.window_of(p["element"]) or self.vision.maps.window_of(p["element"])
             if key and key in self._targets:
                 return self._targets[key]
         pid = int(p["pid"]) if p.get("pid") else None
@@ -246,10 +250,55 @@ class Driver:
         """Tree of a window as our element map. Params: app | pid [+ window_id],
         query, max_elements (default 200), since (a version: answer only the
         changes), fresh (skip the no-change shortcut), crops (attach crop hashes),
-        paths (add each element's tree path: replay locators)."""
+        paths (add each element's tree path: replay locators),
+        vision (auto | off | only: the vision fallback switch, default auto),
+        target (ground this description to one element id), zoom (auto |
+        always | never: zoom-and-reground for target)."""
         start = time.perf_counter()
         self._last_use = time.monotonic()
+        mode = str(p.get("vision") or "auto")
+        if mode not in SOURCE_MODES:
+            raise DriverError("bad_input", f"vision must be one of {', '.join(SOURCE_MODES)}")
         t = self.target(p)
+        version: em.Version | None = None
+        ax_error: str | None = None
+        if mode != "only":
+            try:
+                version, info, t = self._read_tree(t, p)
+            except DriverError:
+                raise
+            except Exception as e:  # No tree at all: vision may still read the window.
+                if mode == "off":
+                    raise
+                ax_error = f"{type(e).__name__}: {e}"
+        elements = list(version.elements.values()) if version is not None else []
+        decision = self.router.choose_source(t.app, elements, mode, ax_error)
+        if version is not None:
+            out = self._answer(t, version, info, p)
+        else:
+            out = {"window": {"pid": t.pid, "window_id": t.window_id, "app": t.app}, "engine": None, "cached": False}
+        out["source"] = decision.source
+        out["source_reason"] = decision.reason
+        if decision.source != "ax":
+            try:
+                vver, _shot = self.vision.read(t, decision.regions, elements, fresh=bool(p.get("fresh")))
+                self._merge_vision(out, t, vver, decision.source, p)
+            except Exception as e:
+                state = getattr(e, "state", "error")
+                if version is None:
+                    raise DriverError("vision_unavailable", f"this window has no usable tree and vision isn't ready: {e}",
+                                      {"vision": {**self.vision.status(), "state": state}, **({"ax_error": ax_error} if ax_error else {})}) from e
+                out["vision"] = {"state": state, "error": str(e)[:300]}
+        if p.get("target"):
+            candidates = elements + list(self._vision_elements(t.key))
+            try:
+                out["grounded"] = self.vision.ground(t, str(p["target"]), candidates, str(p.get("zoom") or "auto"))
+            except Exception as e:
+                out["grounded"] = {"status": "unavailable", "state": getattr(e, "state", "error"), "error": str(e)[:300]}
+        out["ms"] = _ms(start)
+        return out
+
+    def _read_tree(self, t: Target, p: dict[str, Any]) -> tuple[em.Version, dict[str, Any], Target]:
         try:
             version, info = self._read(t, fresh=bool(p.get("fresh")), crops=bool(p.get("crops")))
         except Exception as e:
@@ -261,9 +310,40 @@ class Driver:
             self.live.drop(t.key, "window gone")
             t = self.target(p)
             version, info = self._read(t, fresh=bool(p.get("fresh")), crops=bool(p.get("crops")))
-        out = self._answer(t, version, info, p)
-        out["ms"] = _ms(start)
-        return out
+        return version, info, t
+
+    def _vision_elements(self, key: str) -> list[em.Element]:
+        cur = self.vision.maps.window(key).current
+        return list(cur.elements.values()) if cur is not None else []
+
+    def _merge_vision(self, out: dict[str, Any], t: Target, vver: em.Version, source: str, p: dict[str, Any]) -> None:
+        """Put a vision map into a read_ui answer: the whole answer for a
+        vision-only read, extra elements for a hybrid one."""
+        limit = p.get("max_elements", DEFAULT_MAX_ELEMENTS)
+        kept, total = em.select(vver.elements.values(), p.get("query"), int(limit) if limit else None)
+        rows = [e.public() for e in kept]
+        out["marks"] = len(vver.elements)
+        if source == "vision":
+            out.update(version=vver.number, engine="vision", cached=False)
+            for k in ("diff", "reset", "elements", "total", "truncated"):
+                out.pop(k, None)
+            since = p.get("since")
+            if since is not None:
+                diff = self.vision.maps.window(t.key).diff(int(since))
+                if diff is not None:
+                    out["diff"] = diff
+                    return
+                out["reset"] = True
+            out["elements"], out["total"] = rows, total
+            if len(kept) < total and not p.get("query"):
+                out["truncated"] = True
+            return
+        out["vision_version"] = vver.number
+        if "elements" in out:
+            out["elements"].extend(rows)
+            out["total"] = out.get("total", 0) + total
+        else:
+            out["vision_elements"] = rows
 
     def _read(self, t: Target, fresh: bool = False, crops: bool = False, asked: bool = True) -> tuple[em.Version, dict[str, Any]]:
         """The window's map. A watched, clean window answers from the live map
@@ -372,6 +452,10 @@ class Driver:
             out["ms"] = _ms(start)
             return out
         eid = str(p.get("id") or "")
+        if eid.startswith("v"):
+            out = self._act_vision(eid, op, p.get("value"), p.get("key"))
+            out["ms"] = _ms(start)
+            return out
         key = self.maps.window_of(eid)
         if not key or key not in self._targets:
             raise DriverError("unknown_element", f"{eid} isn't in any element map; call read_ui first")
@@ -454,6 +538,51 @@ class Driver:
         else:  # changed / stale: the app moved under the plan; hand back the fresh map.
             out["map"] = self._answer(t, cur, {"engine": cur.engine, "cached": False}, {})
         return out
+
+    def _act_vision(self, eid: str, op: str, value: Any, key: str | None) -> dict[str, Any]:
+        """Act on a vision element: a pixel action at its centre, after the
+        pixel freshness check. Same ops as a tree element except menu."""
+        found = self.vision.locate(eid)
+        if found is None or found[0] not in self._targets:
+            raise DriverError("unknown_element", f"{eid} isn't in any element map; call read_ui first")
+        wkey, element = found
+        t = self._targets[wkey]
+        if op not in ("click", "focus", "select", "set_value", "type", "double_click", "right_click", "press"):
+            raise DriverError("unsupported_op", f"{op} isn't an element action")
+        if not self.cua.available:
+            raise DriverError("engine_unavailable", "acting on a vision element needs Cua's pixel input")
+
+        def px(tool: str, args: dict[str, Any]) -> None:
+            self.cua.pixel(tool, {"scope": "desktop", **args})
+
+        # Pixel input lands on whatever is under the pointer: like pixel_*, it
+        # owns all input (desktop_input) from the freshness check to the end.
+        with self.locks.desktop_input():
+            s0 = time.perf_counter()
+            d = Decision("vision", "map")
+            try:
+                fresh, (x, y) = self.vision.fresh_point(t, element)
+                if fresh:
+                    if op in ("double_click", "right_click"):
+                        px(op, {"x": x, "y": y})
+                    elif op != "press":
+                        px("click", {"x": x, "y": y})
+                    if op in ("set_value", "type"):
+                        if op == "set_value":
+                            px("hotkey", {"keys": ["cmd" if self.os == "darwin" else "ctrl", "a"]})
+                        px("type_text", {"text": "" if value is None else str(value)})
+                    elif op == "press":
+                        from .engines.cua import _cua_key
+
+                        px("press_key", {"key": _cua_key(key or "return")})
+            except Exception as e:
+                self.router.record("act", t.app, d, _ms(s0), False, str(e))
+                raise
+            self.router.record("act", t.app, d, _ms(s0), fresh)
+        self.vision.invalidate(t.key)
+        if not fresh:  # The region changed since the read: hand back the fresh map.
+            return {"status": "stale_version", "map": self.read_ui({"pid": t.pid, "window_id": t.window_id})}
+        return {"status": "done", "engine": "vision", "source": "vision", "point": [round(x, 1), round(y, 1)]}
 
     def _menu(self, t: Target, path: Any) -> dict[str, Any]:
         parts = [s.strip() for s in (path.split(">") if isinstance(path, str) else list(path or [])) if str(s).strip()]
@@ -564,7 +693,13 @@ class Driver:
                     ok, why, _ = self._await(t, step["wait_for"], timeout)
                     if not ok:
                         raise DriverError("wait_for_failed", why)
-                if isinstance(step.get("act"), dict):
+                if isinstance(step.get("act"), dict) and str(step["act"].get("id") or "").startswith("v"):
+                    a = step["act"]
+                    out = self._act_vision(str(a["id"]), str(a.get("op") or "click"), a.get("value"), a.get("key"))
+                    engines_used.add("vision")
+                    if out["status"] != "done":
+                        raise DriverError(out["status"], f"the window changed before step {i}")
+                elif isinstance(step.get("act"), dict):
                     a = step["act"]
                     cur = wm.current
                     out = self._act_on(t, cur, str(a.get("id")), str(a.get("op") or "click"), a.get("value"), a.get("key"))
@@ -652,6 +787,18 @@ class Driver:
             return out
 
         results = self._routed("verify", t.app, run)
+        if not all(r["ok"] for r in results) and self.router.sources.get(t.app, {}).get("source") in ("vision", "hybrid"):
+            # The window reads through vision: checks the tree can't see (a
+            # canvas label, a drawn status) are checked on fresh marks too.
+            try:
+                vver, _ = self.vision.read(t, fresh=True)
+                for r in results:
+                    if not r["ok"]:
+                        ok, why = self.check(vver, r["check"])
+                        if ok:
+                            r.update(ok=True, detail="ok (vision)")
+            except Exception as e:
+                log.info("vision verify skipped: %s", e)
         return {"ok": all(r["ok"] for r in results), "results": results, "ms": _ms(start)}
 
     def wait(self, p: dict[str, Any]) -> dict[str, Any]:
@@ -713,6 +860,28 @@ class Driver:
             raise DriverError("bad_input", "zoom needs region [x1, y1, x2, y2]")
         png = self._routed("zoom", t.app, lambda d: self.cua.zoom(t.pid, t.window_id, [float(v) for v in region]))
         return {"png": base64.b64encode(png).decode(), "ms": _ms(start)}
+
+    def _shoot(self, t: Target) -> vz.Shot:
+        """A window screenshot for the vision fallback, with the window's
+        top-left in screen points and its image px per point."""
+        if self._arc_ok():
+            png, scale = self.arc.screenshot(t.pid, t.window_id)
+            origin = _quartz_window_origin(t.window_id)
+        else:
+            png = self.cua.screenshot(t.pid, t.window_id)
+            origin, width = (0.0, 0.0), 0.0
+            for w in self.cua.windows(t.pid):
+                if int(w.get("window_id", 0)) == t.window_id:
+                    b = w.get("bounds") or w.get("frame") or {}
+                    origin = (float(b.get("x", 0)), float(b.get("y", 0)))
+                    width = float(b.get("width", b.get("w", 0)) or 0)
+                    break
+            scale = vz.png_size(png)[0] / width if width else 1.0
+        if origin is None:
+            cur = self.maps.window(t.key).current
+            first = next(iter(cur.elements.values()), None) if cur else None
+            origin = tuple(first.bounds[:2]) if first is not None and first.bounds else (0.0, 0.0)
+        return vz.Shot(png, origin, scale)
 
     def pixel(self, tool: str, args: dict[str, Any]) -> dict[str, Any]:
         """Screen-wide input through Cua's desktop scope (the existing pixel path)."""
@@ -779,10 +948,25 @@ class Driver:
             raise DriverError("unsupported", str(e)) from e
 
     def status(self, _p: dict[str, Any] | None = None) -> dict[str, Any]:
-        return {"os": self.os, "engines": self.engines(), "live": self.live.status()}
+        return {"os": self.os, "engines": self.engines(), "live": self.live.status(), "vision": self.vision.status()}
 
     def router_table(self, _p: dict[str, Any] | None = None) -> dict[str, Any]:
         return self.router.table()
+
+
+def _quartz_window_origin(window_id: int) -> tuple[float, float] | None:
+    """A macOS window's top-left in screen points (CGWindow bounds)."""
+    try:
+        import Quartz  # type: ignore
+
+        info = Quartz.CGWindowListCopyWindowInfo(Quartz.kCGWindowListOptionIncludingWindow, window_id) or []
+        for w in info:
+            b = w.get("kCGWindowBounds")
+            if b:
+                return (float(b["X"]), float(b["Y"]))
+    except Exception as e:
+        log.debug("window origin: %s", e)
+    return None
 
 
 def _cua_predicate(cond: dict[str, Any]) -> dict[str, Any] | None:

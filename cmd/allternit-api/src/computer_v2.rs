@@ -77,6 +77,10 @@ fn driver_timeout(member: &str, input: &Value) -> Duration {
             });
             Duration::from_secs((30 + waits / 1000 + count * 2).clamp(60, 300))
         }
+        // The vision fallback: a first vision read may wait for the worker,
+        // and grounding a `target` runs the local model (with a zoom pass).
+        "read_ui" if input.get("target").and_then(Value::as_str).is_some_and(|t| !t.is_empty()) => Duration::from_secs(300),
+        "read_ui" | "act" => Duration::from_secs(90),
         _ => Duration::from_secs(30),
     }
 }
@@ -607,6 +611,8 @@ mod tests {
         let big = json!({ "steps": [{ "wait_for": { "name": "Go" }, "timeout_ms": 60_000 }] });
         assert!(driver_timeout("run_batch", &small) >= Duration::from_secs(60));
         assert!(driver_timeout("run_batch", &big) > driver_timeout("run_batch", &small));
+        assert!(driver_timeout("read_ui", &json!({ "target": "the Export button" })) >= Duration::from_secs(240));
+        assert!(driver_timeout("read_ui", &json!({})) >= Duration::from_secs(60));
         assert!(driver_timeout("verify", &json!({})) < driver_timeout("run_batch", &small));
     }
 }

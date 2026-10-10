@@ -703,9 +703,9 @@ export type ComputerV2HoldKeyInput = { duration: number; text: string };
 export type ComputerV2WaitInput = { duration: number };
 /** Get the current (x, y) pixel coordinate of the cursor. */
 export type ComputerV2CursorPositionInput = Record<string, never>;
-/** Read the target window or app's UI as a structured element tree (roles, names, values, bounds) with NO screenshot. Returns stable element ids for act, run_batch and verify. Pass `since` (a version from an earlier read_ui) to get only the diff; `query` filters by text; `max_elements` caps the list (default 200). */
-export type ComputerV2ReadUiInput = { app?: string | null; pid?: number | null; window_id?: number | null; query?: string | null; max_elements?: number | null; since?: number | null; paths?: boolean | null; crops?: boolean | null };
-/** Act on an element id from read_ui. op: click, set_value (clear and set the field's value), select (pick a child by name), press (a key), menu (choose a menu path such as 'File > Save'), focus. set_value/select/press on this Mac need the person's approval (the same rule as typing). */
+/** Read the target window or app's UI as a structured element tree (roles, names, values, bounds) with NO screenshot. Returns stable element ids for act, run_batch and verify. Pass `since` (a version from an earlier read_ui) to get only the diff; `query` filters by text; `max_elements` caps the list (default 200). When the window has no usable accessibility tree (canvas apps, games, remote desktops, custom-drawn UIs) the read falls back to vision: numbered set-of-marks regions come back as elements with `source: "vision"` and a `mark` number, and act on their ids works the same way. `source` and `source_reason` say which was used. Pass `target` (a description such as 'the Export button') to ground it with the local grounder: `grounded.id` is the element to act on. */
+export type ComputerV2ReadUiInput = { app?: string | null; pid?: number | null; window_id?: number | null; query?: string | null; max_elements?: number | null; since?: number | null; paths?: boolean | null; crops?: boolean | null; vision?: "auto" | "off" | "only" | null; target?: string | null; zoom?: "auto" | "always" | "never" | null };
+/** Act on an element id from read_ui (tree ids and vision ids alike; a vision element is clicked or typed into at its centre after a pixel freshness check, and menu needs a window). op: click, set_value (clear and set the field's value), select (pick a child by name), press (a key), menu (choose a menu path such as 'File > Save'), focus. set_value/select/press on this Mac need the person's approval (the same rule as typing). */
 export type ComputerV2ActInput = { id: string; op: "click" | "set_value" | "select" | "press" | "menu" | "focus"; value?: string | null; key?: string | null; path?: string | Array<string> | null; version?: number | null; app?: string | null; pid?: number | null; window_id?: number | null };
 /** Run ordered steps in one window in a single call: act steps ({id, op, value?, key?}), menu steps (path), pixel steps ({tool, args}) and waits (ms). Each step may carry wait_for (checked before the step) and expect (checked after); a failed check stops the batch and one observe read returns the fresh map. This is the fast path: batch several steps instead of screenshot-per-action loops. */
 export type ComputerV2RunBatchInput = { app?: string | null; pid?: number | null; window_id?: number | null; version?: number | null; steps: Array<{ act?: { id: string; op: "click" | "set_value" | "select" | "press" | "menu" | "focus"; value?: string | null; key?: string | null } | null; menu?: string | Array<string> | null; pixel?: { tool: string; args?: Record<string, never> | null } | null; wait?: number | null; wait_for?: { id?: string | null; role?: string | null; name?: string | null; text?: string | null; gone?: boolean | null; value?: string | null; enabled?: boolean | null } | null; expect?: { id?: string | null; role?: string | null; name?: string | null; text?: string | null; gone?: boolean | null; value?: string | null; enabled?: boolean | null } | null; timeout_ms?: number | null }> };
@@ -1382,7 +1382,7 @@ export const COMPUTER_V2_CONTRACT = {
     },
     {
       "name": "read_ui",
-      "description": "Read the target window or app's UI as a structured element tree (roles, names, values, bounds) with NO screenshot. Returns stable element ids for act, run_batch and verify. Pass `since` (a version from an earlier read_ui) to get only the diff; `query` filters by text; `max_elements` caps the list (default 200).",
+      "description": "Read the target window or app's UI as a structured element tree (roles, names, values, bounds) with NO screenshot. Returns stable element ids for act, run_batch and verify. Pass `since` (a version from an earlier read_ui) to get only the diff; `query` filters by text; `max_elements` caps the list (default 200). When the window has no usable accessibility tree (canvas apps, games, remote desktops, custom-drawn UIs) the read falls back to vision: numbered set-of-marks regions come back as elements with `source: \"vision\"` and a `mark` number, and act on their ids works the same way. `source` and `source_reason` say which was used. Pass `target` (a description such as 'the Export button') to ground it with the local grounder: `grounded.id` is the element to act on.",
       "risk": "reversible",
       "default_enabled": true,
       "needs_confirm": false,
@@ -1422,6 +1422,28 @@ export const COMPUTER_V2_CONTRACT = {
           "crops": {
             "type": "boolean",
             "description": "Add an 8x8 pixel hash per element (macOS). Slower: forces a fresh walk of the window. Replay's pixel fallback uses it."
+          },
+          "vision": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "off",
+              "only"
+            ],
+            "description": "The vision fallback: auto (default; used when the tree is empty or can't see into part of the window), off (tree only), only (vision only)."
+          },
+          "target": {
+            "type": "string",
+            "description": "Ground this description to one element with the local grounder; the answer's `grounded` has its id, point and confidence."
+          },
+          "zoom": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "always",
+              "never"
+            ],
+            "description": "target: zoom into a crop around a low-confidence answer and ground again (default auto)."
           }
         },
         "required": [],
@@ -1430,7 +1452,7 @@ export const COMPUTER_V2_CONTRACT = {
     },
     {
       "name": "act",
-      "description": "Act on an element id from read_ui. op: click, set_value (clear and set the field's value), select (pick a child by name), press (a key), menu (choose a menu path such as 'File > Save'), focus. set_value/select/press on this Mac need the person's approval (the same rule as typing).",
+      "description": "Act on an element id from read_ui (tree ids and vision ids alike; a vision element is clicked or typed into at its centre after a pixel freshness check, and menu needs a window). op: click, set_value (clear and set the field's value), select (pick a child by name), press (a key), menu (choose a menu path such as 'File > Save'), focus. set_value/select/press on this Mac need the person's approval (the same rule as typing).",
       "risk": "risky",
       "default_enabled": true,
       "needs_confirm": false,

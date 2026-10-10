@@ -345,6 +345,7 @@
               "tools/computer-use",
               "tools/computer-toolset",
               "tools/allternit-driver",
+              "tools/vision-fallback",
               "tools/computer-use-suite",
               "tools/computer-use-decisions",
               "tools/computer-safety",

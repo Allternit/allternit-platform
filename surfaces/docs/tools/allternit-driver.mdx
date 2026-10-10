@@ -29,7 +29,7 @@ Neither engine is primary. Each op goes to the engine that does it best for that
 | Engine | Where | Good at |
 |---|---|---|
 | **arc** | macOS. A fork of [arc-driver](https://github.com/shhivv/arc-cua) (MIT) at a pinned commit in `domains/computer-use/driver/arc/` (see its `NOTICE`). Runs inside the sidecar's Python. | Accessibility reads of the visible rows in tens of ms; settling on AX notifications instead of fixed waits; the freshness guard (refuses to act on a window whose structure changed); menu-bar commands without opening menus; minimized and hidden windows. |
-| **Cua** | macOS, Windows, Linux. The vendored Cua Driver binary (`prepare-cua-driver.cjs`), run as the daemon the Desktop app already starts, reached through one long-lived `cua-driver mcp --socket` session. | Screen-wide pixel input (`desktop` scope), screenshots, `zoom`, `verify_state`, `parse_visual_regions`, recording, AT-SPI and UI Automation trees, browsers. |
+| **Cua** | macOS, Windows, Linux. The vendored Cua Driver binary (`prepare-cua-driver.cjs`), run as the daemon the Desktop app already starts, reached through one long-lived `cua-driver mcp --socket` session. | Screen-wide pixel input (`desktop` scope), screenshots, `zoom`, `verify_state`, recording, AT-SPI and UI Automation trees, browsers. |
 
 Cua Driver runs in its `standard` permission mode, the least privilege that allows observation and input on any app. `bounded` needs a per-app manifest, which can't cover "whatever app the user asked for"; `unrestricted` turns off Cua's approval checks. The `permission_denied` that `run_actions` returned before was not a mode problem: Cua Driver 0.34 (the newest release on 2026-10-09) does not ship `run_actions`, and its policy denies any tool without a reviewed risk class. The Allternit Driver runs batches itself (below).
 
@@ -39,7 +39,7 @@ Every op is a JSON-RPC method on the sidecar's socket.
 
 | Method | Params | Answer |
 |---|---|---|
-| `read_ui` | `app` (name or bundle id) or `pid` [+ `window_id`]; `query`; `max_elements` (default 200); `since` (a map version); `fresh`; `crops` | `window`, `version`, `engine`, `cached`, `live` (`state` `live` / `degraded` / `off`, `observer`, `reason`), `elements` (or `diff` with `since`), `total`, `degraded` |
+| `read_ui` | `app` (name or bundle id) or `pid` [+ `window_id`]; `query`; `max_elements` (default 200); `since` (a map version); `fresh`; `crops`; `vision` (`auto` / `off` / `only`); `target` (a description to ground); `zoom` (`auto` / `always` / `never`) | `window`, `version`, `engine`, `cached`, `live` (`state` `live` / `degraded` / `off`, `observer`, `reason`), `elements` (or `diff` with `since`), `total`, `degraded`, `source` (`ax` / `vision` / `hybrid`), `source_reason`; with vision `marks` (and `vision_version` when hybrid); with `target` `grounded` |
 | `act` | `id`, `op` (`click`, `double_click`, `right_click`, `set_value`, `type`, `select`, `press` + `key`, `focus`, or `menu` + `path`), `version`, `value` | `status` (`done`, `changed`, `stale`, `stale_version`), the new `version`, `changes` since the planned version, `settled` |
 | `run_batch` | `steps`: each `{act}`, `{menu}`, `{pixel: {tool, args}}` or `{wait}`, with optional `wait_for` (before), `expect` (after) and `timeout_ms`; optional `version` | per-step status and time, `failed_at`, one final `version` and `changes`, `cross_check` |
 | `verify` | `checks`: `id` or `role`/`name`, plus `text`, `value`, `gone`, `enabled` | `ok` and one result per check |
@@ -83,11 +83,11 @@ The driver keeps a **live map** of every window it reads: it subscribes to the O
 | `batch`, `verify`, `screenshot`, `zoom`, `parse_visual_regions`, `record` | Cua | Cua |
 | pixel input | Cua | Cua |
 
-- **Capability first.** An engine only gets an op it can do. Cua Driver 0.34 has no `run_actions`, so macOS batches run on arc today and the decision says `capability`. `zoom` and `parse_visual_regions` stay with Cua.
+- **Capability first.** An engine only gets an op it can do. Cua Driver 0.34 has no `run_actions`, so macOS batches run on arc today and the decision says `capability`. `zoom` stays with Cua. Cua 0.34's `parse_visual_regions` is not used: it needs Cua's optional `cua-perception` extension, which is AGPL; the [vision fallback](/tools/vision-fallback) proposes its own regions.
 - **Actions follow the map.** An element action goes to the engine that produced the map its id came from, because only that engine holds the element's handle.
 - **Learning.** For every op and app the router keeps calls, failures, a latency EWMA and the last 10 outcomes. An engine that failed at least half of 3 or more recent calls hands the op to the other engine. When both have 5 or more timed calls and the other is at most half as slow, it takes over. Read-only ops (`verify`, `screenshot`, `zoom`) try the other engine on one call in 20 until it has enough samples to compare. Input never explores.
 - **Per user.** The table is saved in the Desktop app's data folder (`computer-use/driver/router.json`). Every routed op is written to `computer-use/driver/audit.jsonl` with its engine, reason, time and outcome.
-- **Degraded apps.** An empty tree (or Cua's `degraded_reason`) marks the app `degraded`, and reads say so (`degraded: true`, `degraded_reason`). The vision fallback that takes over for those apps is phase D6.
+- **Degraded apps.** An empty tree (or Cua's `degraded_reason`) marks the app `degraded`, and reads say so (`degraded: true`, `degraded_reason`). The [vision fallback](/tools/vision-fallback) takes over for those windows: the router decides per read whether elements come from the tree, from vision, or from both, and records it (`source`, `source_reason`, `router.sources`).
 
 ## One reader and one input owner per window
 
