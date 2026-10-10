@@ -56,7 +56,7 @@ use crate::{auth, ApiState};
 
 // Page runtime (storage, consents, AI) and the org "Shared outside" list.
 #[path = "artifact_runtime.rs"]
-mod artifact_runtime;
+pub(crate) mod artifact_runtime;
 // Motion cloud render (jobs, queue, MP4 download).
 #[path = "artifact_render.rs"]
 mod artifact_render;

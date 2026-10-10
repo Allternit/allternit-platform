@@ -542,15 +542,29 @@ async fn complete_ai(
             "This page is making too many AI calls. Wait a minute.".to_string(),
         )));
     }
+    let viewer = c.caller.id.clone();
+    let out = billed_completion(&state, &viewer, messages, max_tokens, temperature).await?;
+    Ok(Json(out))
+}
+
+/// One non-streamed model call billed to `payer`: the same credit gate, free-tier
+/// limit, pool checks and settlement as /v1/chat/completions. Returns
+/// `{text, model, usage, finish_reason}`. Used by page artifacts (the viewer
+/// pays) and by @gizzi comment replies (the commenter pays).
+pub(crate) async fn billed_completion(
+    state: &Arc<ApiState>,
+    payer: &str,
+    messages: Vec<(String, String)>,
+    max_tokens: u32,
+    temperature: Option<f32>,
+) -> Result<Value> {
     if !state.model_router.is_enabled() {
         return Err(ArtifactError::Api(ApiError::ServiceUnavailable(
             "AI isn't available right now".to_string(),
         )));
     }
 
-    // The viewer pays: same gate and settlement as /v1/chat/completions,
-    // against the viewer's id, never the owner's.
-    let viewer = c.caller.id.clone();
+    let viewer = payer.to_string();
     let alias = ai_model();
     let balance = inference_settlement::credit_balance_row(&state.db, &viewer).await?;
     inference_settlement::check_inference_allowed(&state.db, &viewer, balance).await?;
@@ -562,7 +576,7 @@ async fn complete_ai(
             ))));
         }
     }
-    let prompt_chars: usize = shape.iter().map(|(_, n)| *n).sum();
+    let prompt_chars: usize = messages.iter().map(|(_, t)| t.chars().count()).sum();
     let prices = state.model_router.retail_prices(&alias).await.map_err(ApiError::from)?;
     let pool = match state.model_router.provider_for_alias(&alias) {
         Some(provider) => state.inference_pool_service.pool_for_provider(provider).await?,
@@ -600,12 +614,12 @@ async fn complete_ai(
         .pointer("/choices/0/message/content")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    Ok(Json(json!({
+    Ok(json!({
         "text": text,
         "model": alias,
         "usage": upstream.get("usage").cloned().unwrap_or(Value::Null),
         "finish_reason": upstream.pointer("/choices/0/finish_reason").cloned().unwrap_or(Value::Null),
-    })))
+    }))
 }
 
 // ---------------------------------------------------------------------------
