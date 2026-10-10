@@ -176,6 +176,20 @@ There's one snapshot per run (and at most one every 30 minutes for calls without
 
 `phase` is `watch`, `confirm`, `paused`, `denied`, `snapshot` or `snapshot_failed`. Steps refused inside a `run_subtask` carry `within_subtask: true`.
 
+`watch` is the watch category (`email`, `banking`, `admin`) or `null`.
+
+### In the app
+
+Every computer live view (Allternit Desktop, the ai.allternit.com phone layout and the m.allternit.com app) shows these events over the screen:
+
+- **confirm**: a banner with the step, the app or site and the reason, and **Approve** / **Deny** buttons. They resolve the same approval (`approval_id`) through `POST /api/aci/handoff/:id/approve|deny`. The banner clears once the approval resolves or the next action arrives.
+- **paused**: "Paused by safety check" with the reason and **Take over**, which opens the person's control of the computer.
+- **denied**: a dismissible notice with the reason, pointing to the computer's safety settings.
+- **watch**: a "Watch mode" badge while consecutive steps are on a watch-listed app or site. It clears on the first ordinary step.
+- **snapshot** / **snapshot_failed**: a "Rollback point saved" or "Rollback point failed" toast.
+
+**Settings → Computers → Safety** edits a computer's lists (or the owner-wide default) through `GET`/`PUT /computers/:id/safety` and shows the effective result. The built-in watch lists and the monitor state are shown read-only.
+
 ## Not measured yet
 
 The prompt-injection benchmarks in the driver spec's D5 row (an RTC-Bench subset and AgentDojo) haven't been run. They're metered model spend and wait for a cost estimate.
