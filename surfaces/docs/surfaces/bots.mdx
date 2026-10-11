@@ -159,6 +159,8 @@ Bot mascots appear without nested tile and circle frames. Hover text uses the se
 
 ## Watching a bot’s computer
 
+In **Settings → Tools**, the tool list uses the connected-app catalog's owned tool metadata. Existing qualified tool names are preserved. A failed catalog request displays its error with **Retry**; it does not appear as an empty catalog. Desktop also guards the optional macOS socket QoS hint against `EINVAL` so that the older Electron HTTP client can continue the request without showing a fatal error dialog.
+
 The live computer screen includes a message box for steering the bot’s running thread. If there is no running thread, it uses the open thread belonging to that bot, or its main chat. While you have control, enter an optional **Hand-back note** before choosing **Hand back**. The note is submitted to the bot’s thread after control returns. Failed messages reappear in the message field for retry.
 
 Pending safety approvals are restored when reopening the viewer and checked against their server status. Approvals, computer selection and connection status use the same shared viewer on Desktop and phone.
