@@ -249,7 +249,8 @@
       "target": "allternit/cmd/allternit-cloud-api",
       "kind": "cloud HTTP",
       "evidence": [
-        "allternit-ai/src/lib/cloud-api.ts"
+        "allternit-ai/src/lib/cloud-api.ts",
+        "allternit-ai/src/lib/ai/cloud-completion.ts"
       ]
     },
     {
