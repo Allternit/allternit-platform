@@ -886,8 +886,13 @@ async fn whatsapp_challenge(State(state): State<Arc<AppState>>, Path(provider): 
 /// Route normalized inbound events into threads, run the resulting turns, and post replies back.
 /// Shared by the webhook and the Discord gateway websocket.
 /// The chat-facing line when a bot couldn't answer: who, and the first line of why.
+/// Anyone who can message the bot sees it, so URLs and hosts are cut, not just the first line kept.
 pub(crate) fn failure_notice(speaker: Option<&str>, err: &str) -> String {
-    let why: String = err.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("unknown error").chars().take(160).collect();
+    static URL: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| regex::Regex::new(r"(?i)(:\s*)?(error sending request for url\s*)?\(?\b[a-z][a-z0-9+.-]*://[^\s)]*\)?").unwrap());
+    let first = err.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("unknown error");
+    let why = URL.replace_all(first, "");
+    let why = why.trim().trim_end_matches(|c: char| c == ':' || c == ',' || c.is_whitespace());
+    let why: String = if why.is_empty() { "unknown error" } else { why }.chars().take(160).collect();
     format!("{} couldn't answer this time ({why}). Try again in a moment.", speaker.unwrap_or("The bot"))
 }
 
@@ -1750,6 +1755,9 @@ mod tests {
         let n = failure_notice(Some("engineer"), "VENDOR_UNAVAILABLE: locator.click: Timeout 30000ms exceeded.\nCall log:\n - waiting");
         assert_eq!(n, "engineer couldn't answer this time (VENDOR_UNAVAILABLE: locator.click: Timeout 30000ms exceeded.). Try again in a moment.");
         assert!(failure_notice(None, "").starts_with("The bot couldn't answer"));
+        let n = failure_notice(None, "the subscription gateway answered 502 Bad Gateway: proxy upstream is unreachable: error sending request for url (http://mail.news.allternit.com:30021/aai/call)");
+        assert_eq!(n, "The bot couldn't answer this time (the subscription gateway answered 502 Bad Gateway: proxy upstream is unreachable). Try again in a moment.");
+        assert!(!failure_notice(None, "GET https://10.0.0.5:7788/x failed").contains("10.0.0.5"));
     }
 
     #[tokio::test]

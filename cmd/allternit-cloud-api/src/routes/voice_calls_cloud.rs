@@ -55,6 +55,9 @@ const GIVE_UP_AFTER_HOURS: i64 = 24;
 const MAX_PENDING_PER_CALL: i64 = 1000;
 const WORKER_INTERVAL: Duration = Duration::from_secs(5);
 const LOCK_MINUTES: i32 = 3;
+/// A call with no event from the worker for this long is over: the worker
+/// died or never reported `call.ended`, and the thread would show it live forever.
+const LOST_CALL_SILENT_HOURS: i32 = 4;
 /// Runtime path that receives the relayed `call.started` (voice session owns
 /// the handler in allternit-api's voice_calls.rs).
 const RUNTIME_CALLS_PATH: &str = "/api/v1/voice/calls";
@@ -1125,6 +1128,13 @@ pub fn start_voice_calls_worker(state: Arc<ApiState>) {
                 tracing::warn!("voice calls worker: {error}");
             }
             ticks += 1;
+            if ticks % 60 == 0 {
+                match end_lost_calls(&state.db).await {
+                    Ok(0) => {}
+                    Ok(n) => tracing::warn!(calls = n, "voice calls worker: ended calls the worker stopped reporting"),
+                    Err(error) => tracing::warn!("voice calls worker: lost-call sweep: {error}"),
+                }
+            }
             if ticks % 720 == 0 {
                 let _ = sqlx::query(
                     "DELETE FROM voice_call_events WHERE (delivered_at IS NOT NULL AND delivered_at < now() - interval '7 days')
@@ -1136,6 +1146,31 @@ pub fn start_voice_calls_worker(state: Arc<ApiState>) {
             tokio::time::sleep(WORKER_INTERVAL).await;
         }
     });
+}
+
+/// Queue `call.ended` (`reason: "lost"`) for each call that has no
+/// `call.ended` and no event for [`LOST_CALL_SILENT_HOURS`]; the runtime then
+/// ends it like any other call. The key is the worker's own first `call.ended`,
+/// so a late real one is a duplicate, not a second end.
+async fn end_lost_calls(db: &sqlx::PgPool) -> Result<usize, ApiError> {
+    let lost: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT e.call_id, max(e.seq) FROM voice_call_events e
+          GROUP BY e.call_id
+         HAVING max(e.received_at) < now() - make_interval(hours => $1)
+            AND bool_and(e.event_type <> 'call.ended')
+          LIMIT 50",
+    )
+    .bind(LOST_CALL_SILENT_HOURS)
+    .fetch_all(db)
+    .await?;
+    let mut ended = 0;
+    for (call_id, seq) in lost {
+        let payload = json!({ "reason": "lost", "detail": format!("no word from the call worker for {LOST_CALL_SILENT_HOURS} hours") });
+        if enqueue_event(db, &call_id, "call.ended", 1, seq + 1, Some(chrono::Utc::now().timestamp_millis()), &payload).await? {
+            ended += 1;
+        }
+    }
+    Ok(ended)
 }
 
 async fn deliver_due_calls(state: &Arc<ApiState>) -> Result<(), ApiError> {
