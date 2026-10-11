@@ -1234,3 +1234,5 @@ Cross-compiled gizzi-code-win32-x64 from macOS (`bun build --target=win32-x64` �
 - 2026-10-11 Codex: [Artifact typography and neutral glass navigation](summaries/2026-10-11-1005-artifact-glass-codex-navigation.md) — UI #513 and platform #1501 merged; 10 mode tests pass, docs links and dependency map valid. Build/deploy explicitly assigned to another terminal.
 
 - 2026-10-11 · Codex · Agency Kernel dashboard/configuration gap completion; UI #515 and platform #1502 merged, 39 targeted tests/typecheck/docs and CI passed. [Attestation](summaries/2026-10-11-1036-kernel-gaps-codex-agency-kernel.md).
+
+- 2026-10-11 Codex: [Bot redesign feedback, all eight Computer gaps, and latest-push builds](summaries/2026-10-11-1700-bot-redesign-codex-feedback-build.md) — UI #514/#516–#520 (includes #515), platform #1503/#1504; live rail placement/replacement and chunked transfer verified; 399 Desktop tests, native release/Clippy, docs/map passed. Final publication and local development installer recorded in the durable completion handoff.
