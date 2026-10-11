@@ -122,6 +122,10 @@
         {
           "on": "2026-10-11",
           "note": "Template avatars share sprite animation and hover/focus activity across rail, bot headers and composer; mascot footing is anchored to the composer edge. Reduced motion and hidden/off-screen pausing are preserved."
+        },
+        {
+          "on": "2026-10-11",
+          "note": "Character avatars use shared optical sizing and activity animation. Gizzi YouTube joins the picker; Allternit Series replaces Office Professionals choices; Codex Carry has true transparent backgrounds. Category selection uses one accessible portalled control."
         }
       ],
       "evidence": [
@@ -561,6 +565,10 @@
         {
           "on": "2026-10-02",
           "note": "Every feature lands on Desktop, the ai.allternit.com phone layout and the PWA in the same change."
+        },
+        {
+          "on": "2026-10-11",
+          "note": "Floating mode controls, shell rail tabs and the Chat/Cowork toggle share glass selection, Allternit slash details and accessible interaction motion across Desktop, web and PWA."
         }
       ],
       "evidence": [
