@@ -86,7 +86,9 @@ async fn clipboard(target: &Target, text: Option<&str>) -> Result<String, String
         "Get-Clipboard -Raw".into()
     };
     let linux = if write {
-        format!("printf %s '{encoded}' | base64 -d | xclip -selection clipboard -in")
+        // xclip keeps a background owner alive. Close its capture pipes so
+        // the driver can finish the transfer while that owner retains text.
+        format!("printf %s '{encoded}' | base64 -d | xclip -selection clipboard -in >/dev/null 2>&1")
     } else {
         "xclip -selection clipboard -out".into()
     };
