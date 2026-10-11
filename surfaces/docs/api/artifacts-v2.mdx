@@ -329,3 +329,7 @@ Errors use the standard Cloud API shape `{ "error", "message", "code" }`. Artifa
 ## Storage
 
 The schema is `cmd/allternit-cloud-api/migrations_pg/085_artifacts_v2.sql`. It creates `artifacts`, `artifact_versions`, `artifact_shares` and `org_artifact_settings`, plus `artifact_storage` and `artifact_consents` (used by the [page runtime](/api/artifact-runtime)) and `artifact_comments` for comments. The migration is idempotent and is applied to production by hand.
+
+## Navigation presentation
+
+The shared client uses `src/styles/artifact-navigation.css` for the Artifacts toolbar and inline mode selector. `ArtifactsView` keeps its title outside a nonwrapping, horizontally scrollable controls group; `ModeDock` uses nonshrinking buttons in the same single-row pattern. Both use `--font-ui`. Selection uses neutral translucent gradients and inset highlights rather than mode accent tokens, with solid surfaces for reduced transparency or increased contrast. This CSS is imported by the shared components used on Desktop, web and the phone PWA.
