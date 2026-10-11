@@ -65,6 +65,7 @@
             "group": "Workspace workflows",
             "pages": [
               "guides/platform-workflows",
+              "guides/agency-kernel",
               "guides/bot-threads",
               "guides/bot-routines",
               "guides/phone-sms-runtime",
