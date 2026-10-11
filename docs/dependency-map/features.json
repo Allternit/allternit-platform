@@ -791,11 +791,16 @@
         {
           "on": "2026-10-11",
           "note": "Project Details and bot project banners have independent saved bannerColor with the same 20 presets as bot banners and custom hue selection."
+        },
+        {
+          "on": "2026-10-11",
+          "note": "Project homes and Details now share a full-width bot-style banner; compact two-column appearance editor keeps Save and Cancel visible with a scrollable phone body."
         }
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/project-appearance.mdx",
-        "allternit/surfaces/docs/architecture/project-appearance.mdx"
+        "allternit/surfaces/docs/architecture/project-appearance.mdx",
+        "allternit-ai/src/views/BaseProjectView.tsx"
       ]
     },
     {
