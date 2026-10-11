@@ -6923,3 +6923,124 @@ export type GlobalVersionResponses = {
      */
     200: unknown;
 };
+
+export type SessionBackgroundTasksListData = {
+    body?: never;
+    path: {
+        sessionID: string;
+    };
+    query?: never;
+    url: '/session/{sessionID}/background-tasks';
+};
+
+export type SessionBackgroundTasksListResponses = {
+    /**
+     * Background tasks
+     */
+    200: unknown;
+};
+
+export type SessionTasksListData = {
+    body?: never;
+    path: {
+        sessionID: string;
+    };
+    query?: never;
+    url: '/session/{sessionID}/tasks';
+};
+
+export type SessionTasksListResponses = {
+    /**
+     * Session tasks
+     */
+    200: Array<{
+        id: string;
+        kind: string;
+        status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
+        background: boolean;
+        description: string;
+        agent: string | null;
+        childSessionID: string | null;
+        output: string | null;
+        error: string | null;
+        time: {
+            created: number;
+            updated: number;
+            finished: number | null;
+        };
+    }>;
+};
+
+export type SessionTasksListResponse = SessionTasksListResponses[keyof SessionTasksListResponses];
+
+export type SessionBackgroundTasksGetData = {
+    body?: never;
+    path: {
+        sessionID: string;
+        taskID: string;
+    };
+    query?: never;
+    url: '/session/{sessionID}/background-tasks/{taskID}';
+};
+
+export type SessionBackgroundTasksGetErrors = {
+    /**
+     * Not found
+     */
+    404: {
+        message: string;
+    };
+};
+
+export type SessionBackgroundTasksGetError = SessionBackgroundTasksGetErrors[keyof SessionBackgroundTasksGetErrors];
+
+export type SessionBackgroundTasksGetResponses = {
+    /**
+     * Background task
+     */
+    200: {
+        id: string;
+        parentSessionID: string;
+        childSessionID: string | null;
+        kind: string;
+        status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
+        description: string;
+        output: string | null;
+        error: string | null;
+        time: {
+            created: number;
+            updated: number;
+            finished: number | null;
+        };
+    };
+};
+
+export type SessionBackgroundTasksGetResponse = SessionBackgroundTasksGetResponses[keyof SessionBackgroundTasksGetResponses];
+
+export type SessionBackgroundTasksCancelData = {
+    body?: never;
+    path: {
+        sessionID: string;
+        taskID: string;
+    };
+    query?: never;
+    url: '/session/{sessionID}/background-tasks/{taskID}/cancel';
+};
+
+export type SessionBackgroundTasksCancelErrors = {
+    /**
+     * Not found
+     */
+    404: {
+        message: string;
+    };
+};
+
+export type SessionBackgroundTasksCancelError = SessionBackgroundTasksCancelErrors[keyof SessionBackgroundTasksCancelErrors];
+
+export type SessionBackgroundTasksCancelResponses = {
+    /**
+     * Background task cancelled
+     */
+    200: unknown;
+};

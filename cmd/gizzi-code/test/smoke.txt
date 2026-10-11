@@ -152,3 +152,4 @@ test/project/workdir.test.ts
 test/session/background-task.test.ts
 test/session/background-shell.test.ts
 test/session/session-tasks.test.ts
+test/session/background-task-mirror.test.ts
