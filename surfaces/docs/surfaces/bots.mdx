@@ -44,6 +44,8 @@ The **Chat + threads** tab is the default:
 
 On desktop the main chat and threads sit side by side; on a phone they stack. The other tabs are Routines, Memory, Computer, Performance and Settings.
 
+**Banner color.** Use the color control in the bot header to choose a background. A:// starts with a neutral background; its avatar is the living Allternit orb and its name uses the A:// wordmark. The Bots home **To:** menu lets you choose a bot and defaults to the main bot or your last selection.
+
 **Settings → Phone and reach** holds the bot's phone number (texting and voice calls on or off, change number), its phone, its email and channels with connect buttons, and who it can text, call or email without asking you. The rest of the bot's configuration follows below it.
 
 The standalone Bot Hub was removed from the workspace. Its old `agent-hub` navigation entry aliases the Bots launch surface. Use Bots, bot home, or Project home rather than looking for the former hub tabs.
@@ -134,3 +136,15 @@ Bot Mode and **Projects → Bot** share one server project list. Projects suppor
 Every carried vendor (see [Subscriptions](/surfaces/subscriptions)) has its own thread look, with a neutral fallback for any vendor that has none yet. Slack, Telegram, Discord, WhatsApp, Microsoft Teams, email, and SMS have channel looks. Appearance does not change the connection lane or its availability. The composer remains Allternit's by default; a vendor composer skin is an opt-in developer flag. See [Vendor looks and composer setting](/plugins/guides/vendor-packs).
 
 Gemini and Copilot are new carried vendors and are not yet verified against the live services. Sign in under **Settings → Subscriptions**, read the provider-terms warning, and inspect the connection before relying on it. Their connection lane is `ui_bridge` and best effort.
+
+## Edit workspace files with chat
+
+Open **Settings → Workspace & Config → Workspace** to edit the bot's personality and workspace files. The editor and **Edit with chat** appear side by side on wide screens and stack on phones. Select a file and either edit it directly or describe a change in chat. Review the suggested file, then choose **Apply and save**, or **Discard**. Saving writes the file to the bot's runtime workspace and clears its cached copy; the bot reads the saved configuration from its next message. Changes do not rewrite earlier conversations. A bot without workspace files starts with its default files.
+
+Chat suggestions require an available model. If the model cannot answer, the editor remains available for direct edits.
+
+For developers: `BotWorkspaceEditor` saves through `agentWorkspaceFS` and invalidates the bot's file cache. `WorkspaceChatPanel` proposes the complete selected file through the chat completion endpoint; a proposal is saved only when the user applies it.
+
+## Bot Inbox on Desktop
+
+The Inbox shows bot messages through the local Factory API in Allternit Desktop. A deployment without that API explains where bot messages are available; a failed request offers **Try again**. Connecting a phone or external channel is a separate setup step under **Phone and reach**.
