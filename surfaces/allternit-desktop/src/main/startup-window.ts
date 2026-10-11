@@ -9,11 +9,10 @@
  * single status line, and a bottom "Details" toggle for the live service list.
  */
 
-import { BrowserWindow } from 'electron';
+import { app, BrowserWindow } from 'electron';
 import log from 'electron-log';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { PLATFORM_MANIFEST } from './manifest.js';
 import { openExternalAllowlisted } from './security.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -311,7 +310,7 @@ function buildStartupHtml(initialStep: StartupInitialStep): string {
     </div>
   </div>
 
-  <div class="version">v${PLATFORM_MANIFEST.version}</div>
+  <div class="version">v${app.getVersion()}</div>
 
   <script>
     (function () {
