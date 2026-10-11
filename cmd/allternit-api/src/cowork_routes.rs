@@ -190,8 +190,28 @@ const LIST_MAX_LIMIT: i64 = 1000;
 
 #[derive(Debug, Deserialize)]
 struct ListQuery {
+    // `#[serde(flatten)]` (MemoryPrincipalQuery) hands every query value over
+    // as a string, so the bounds accept "200" as well as 200.
+    #[serde(default, deserialize_with = "de_opt_i64")]
     limit: Option<i64>,
+    #[serde(default, deserialize_with = "de_opt_i64")]
     offset: Option<i64>,
+}
+
+/// An optional integer from a number or a numeric string (query strings).
+fn de_opt_i64<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<i64>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum NumOrStr {
+        Num(i64),
+        Str(String),
+    }
+    match Option::<NumOrStr>::deserialize(d)? {
+        None => Ok(None),
+        Some(NumOrStr::Num(n)) => Ok(Some(n)),
+        Some(NumOrStr::Str(s)) if s.trim().is_empty() => Ok(None),
+        Some(NumOrStr::Str(s)) => s.trim().parse().map(Some).map_err(serde::de::Error::custom),
+    }
 }
 
 /// Bound an unbounded list query: caller-provided limit wins when under the
