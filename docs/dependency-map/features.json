@@ -479,12 +479,17 @@
         "allternit-ai/src/lib/credits",
         "allternit/cmd/allternit-api/src/usage_*",
         "allternit/cmd/allternit-api/src/spend_*",
-        "allternit/cmd/allternit-api/src/credits_*"
+        "allternit/cmd/allternit-api/src/credits_*",
+        "allternit/cmd/gizzi-code/src/runtime/session"
       ],
       "decisions": [
         {
           "on": "2026-10-01",
           "note": "Usage dashboard added to the phone layout (ai #355)."
+        },
+        {
+          "on": "2026-10-11",
+          "note": "Context window panel: per-session breakdown by category (gizzi /session/:id/context, relayed as /agent-sessions/:id/context) with plan limits, in the composer and in gizzi /context."
         }
       ],
       "evidence": [

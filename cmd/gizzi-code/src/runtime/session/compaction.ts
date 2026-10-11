@@ -32,6 +32,21 @@ export namespace SessionCompaction {
 
   const COMPACTION_BUFFER = 20_000
 
+  function usableTokens(model: Provider.Model, configuredReserve: number | undefined) {
+    const reserved = configuredReserve ?? Math.min(COMPACTION_BUFFER, ProviderTransform.maxOutputTokens(model))
+    return model.limit.input
+      ? model.limit.input - reserved
+      : model.limit.context - ProviderTransform.maxOutputTokens(model)
+  }
+
+  /** Tokens of the window auto-compaction keeps free (0 when it is off). */
+  export async function bufferTokens(model: Provider.Model) {
+    const config = await Config.get()
+    if (config.compaction?.auto === false) return 0
+    if (model.limit.context === 0) return 0
+    return Math.max(0, model.limit.context - usableTokens(model, config.compaction?.reserved))
+  }
+
   export async function isOverflow(input: { tokens: MessageV2.Assistant["tokens"]; model: Provider.Model }) {
     const config = await Config.get()
     if (config.compaction?.auto === false) return false
@@ -42,12 +57,7 @@ export namespace SessionCompaction {
       input.tokens.total ||
       input.tokens.input + input.tokens.output + input.tokens.cache.read + input.tokens.cache.write
 
-    const reserved =
-      config.compaction?.reserved ?? Math.min(COMPACTION_BUFFER, ProviderTransform.maxOutputTokens(input.model))
-    const usable = input.model.limit.input
-      ? input.model.limit.input - reserved
-      : context - ProviderTransform.maxOutputTokens(input.model)
-    return count >= usable
+    return count >= usableTokens(input.model, config.compaction?.reserved)
   }
 
   export const PRUNE_MINIMUM = 20_000

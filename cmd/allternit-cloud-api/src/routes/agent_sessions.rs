@@ -88,6 +88,11 @@ pub fn routes() -> Router<Arc<ApiState>> {
             "/api/v1/agent-sessions/:id/origin",
             get(get_native_origin),
         )
+        // The composer's context-window panel (category breakdown + plan limits).
+        .route(
+            "/api/v1/agent-sessions/:id/context",
+            get(get_session_context),
+        )
         .route(
             "/api/v1/agent-sessions/:id/export-native",
             post(export_native_session),
@@ -361,6 +366,22 @@ async fn export_native_session(
     .await
 }
 
+async fn get_session_context(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    query: RawQuery,
+) -> Result<Response, ApiError> {
+    relay_agent_sessions_request(
+        &state,
+        &headers,
+        "GET",
+        with_query(&format!("/api/v1/agent-sessions/{id}/context"), &query),
+        &[],
+    )
+    .await
+}
+
 async fn get_native_origin(
     State(state): State<Arc<ApiState>>,
     headers: HeaderMap,
@@ -613,7 +634,7 @@ mod tests {
 
         let gateway = Arc::new(MockGateway::new(
             Some(MockGateway::healthy_node()),
-            (0..9).map(|_| MockGateway::json(StatusCode::OK, "{}")).collect(),
+            (0..10).map(|_| MockGateway::json(StatusCode::OK, "{}")).collect(),
         ));
         let state = test_state(gateway.clone()).await;
         let router = routes().with_state(state);
@@ -625,6 +646,7 @@ mod tests {
             ("/api/v1/agent-sessions/sess_9/revert", "/api/v1/agent-sessions/sess_9/revert"),
             ("/api/v1/agent-sessions/sess_9/unrevert", "/api/v1/agent-sessions/sess_9/unrevert"),
             ("/api/v1/agent-sessions/sess_9/compact", "/api/v1/agent-sessions/sess_9/compact"),
+            ("/api/v1/agent-sessions/sess_9/context?limits=false", "/api/v1/agent-sessions/sess_9/context?limits=false"),
             ("/api/v1/agent-sessions/sess_9/tasks", "/api/v1/agent-sessions/sess_9/tasks"),
             ("/api/v1/agent-sessions/sess_9/background-tasks/tsk_1", "/api/v1/agent-sessions/sess_9/background-tasks/tsk_1"),
             (
@@ -632,7 +654,11 @@ mod tests {
                 "/api/v1/agent-sessions/sess_9/background-tasks/tsk_1/cancel",
             ),
         ] {
-            let method = if uri.contains("messages?") || uri.ends_with("/tasks") || uri.ends_with("/tsk_1") {
+            let method = if uri.contains("messages?")
+                || uri.contains("/context")
+                || uri.ends_with("/tasks")
+                || uri.ends_with("/tsk_1")
+            {
                 "GET"
             } else {
                 "POST"

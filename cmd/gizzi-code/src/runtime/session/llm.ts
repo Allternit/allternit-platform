@@ -29,6 +29,7 @@ import { Auth } from "@/runtime/integrations/auth"
 import { SessionTrace } from "@/runtime/session/trace"
 import { ContextProjector } from "@/runtime/session/context-projector"
 import { ContextAccounting } from "@/runtime/session/context-accounting"
+import { ContextBreakdown } from "@/runtime/session/context-breakdown"
 import { RuntimeTelemetry } from "@/runtime/telemetry"
 import { Bus } from "@/shared/bus"
 import { SessionContext } from "./context-event"
@@ -64,6 +65,8 @@ export namespace LLM {
   }
 
   export type StreamOutput = StreamTextResult<ToolSet, any>
+
+  const HELPER_AGENTS = new Set(["title", "summary", "compaction"])
 
   export async function stream(input: StreamInput) {
     const l = log
@@ -270,6 +273,25 @@ export namespace LLM {
       contextWindow: input.model.limit.context,
       reservedOutputTokens: maxOutputTokens ?? Math.min(32_000, input.model.limit.output),
     })
+    // The context-window panel shows the session's own turns, not the hidden
+    // helper calls (title, summary, compaction) that share its sessionID.
+    if (!input.small && !HELPER_AGENTS.has(input.agent.name)) {
+      ContextBreakdown.record(
+        ContextBreakdown.build({
+          sessionID: input.sessionID,
+          messageID: input.user.id,
+          providerID: input.model.providerID,
+          modelID: input.model.id,
+          contextWindow: input.model.limit.context,
+          system,
+          instructions: input.system,
+          tools,
+          messages: projected.messages,
+          // Filled in at read time (session route): compaction depends on this module.
+          autoCompactBuffer: 0,
+        }),
+      )
+    }
     Bus.publish(SessionContext.Event.Updated, {
       sessionID: input.sessionID,
       used: context.inputTokens,
