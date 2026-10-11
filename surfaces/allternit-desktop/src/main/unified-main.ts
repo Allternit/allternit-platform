@@ -1114,7 +1114,7 @@ function initializeAppOnce(): Promise<void> {
 }
 
 async function initializeApp(): Promise<void> {
-  log.info('[Main] Initializing Allternit Desktop v' + PLATFORM_MANIFEST.version);
+  log.info('[Main] Initializing Allternit Desktop v' + app.getVersion());
   // Voice is an optional local capability: start it automatically, but never
   // prevent the rest of the desktop from opening if model initialization fails.
   if (!process.env.ALLTERNIT_DISABLE_VOICE) {
