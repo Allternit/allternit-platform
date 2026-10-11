@@ -58,6 +58,7 @@ test/server/mesh.test.ts
 test/server/reasoning-trace.test.ts
 test/server/agent-compat-event-message.test.ts
 test/session/context-accounting.test.ts
+test/session/context-breakdown.test.ts
 test/session/context-projector.test.ts
 test/session/instruction.test.ts
 test/session/message-v2.test.ts
@@ -149,3 +150,7 @@ test/cli-bridge/cli-bridge.test.ts
 test/pane-artifact/pane-artifact.test.ts
 test/pane-browser/pane-browser.test.ts
 test/project/workdir.test.ts
+test/session/background-task.test.ts
+test/session/background-shell.test.ts
+test/session/session-tasks.test.ts
+test/session/background-task-mirror.test.ts

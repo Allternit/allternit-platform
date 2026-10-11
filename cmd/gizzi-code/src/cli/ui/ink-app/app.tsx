@@ -29,6 +29,7 @@ import { asSessionId } from './types/ids'
 import { Log } from '../../../shared/util/log'
 import { registerRailsPeer } from '../../../runtime/gizzi-core/services/railsPeer.js'
 import { RailsInboxBridge } from './components/RailsInboxBridge'
+import { TaskMirrorBridge } from './components/TaskMirrorBridge'
 import { RailsDagBridge } from './components/RailsDagBridge'
 import { getSessionId } from './bootstrap/state.js'
 import { routeInternalFetch } from './utils/routeInternalFetch'
@@ -143,6 +144,7 @@ export async function tui(options?: any): Promise<void> {
           />
           <RailsInboxBridge />
           <RailsDagBridge />
+          <TaskMirrorBridge />
         </>
       </App>
     )

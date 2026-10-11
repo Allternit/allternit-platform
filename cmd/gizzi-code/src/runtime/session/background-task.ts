@@ -1,7 +1,7 @@
 import { Bus } from "@/shared/bus"
 import { BusEvent } from "@/shared/bus/bus-event"
 import { Instance } from "@/runtime/context/project/instance"
-import { Database, and, desc, eq } from "@/runtime/session/storage/db"
+import { Database, and, desc, eq, notLike } from "@/runtime/session/storage/db"
 import { BackgroundTaskTable } from "@/runtime/session/session.sql"
 import z from "zod/v4"
 import { HookDispatcher } from "@/runtime/hooks/dispatcher"
@@ -28,11 +28,26 @@ export namespace BackgroundTask {
   export const Event = {
     Started: BusEvent.define("background.task.started", Info),
     Finished: BusEvent.define("background.task.finished", Info),
+    // Live progress for a running task (e.g. a background shell's output tail).
+    Updated: BusEvent.define("background.task.updated", Info),
   }
 
+  // Cap on the output kept for a running task; the newest bytes win.
+  export const MAX_LIVE_OUTPUT = 64_000
+
+  /** Id prefix of rows another process owns (the TUI's mirrored tasks); restart cleanup leaves them alone. */
+  export const EXTERNAL_ID_PREFIX = "tui_"
+
+  // Restart cleanup is per process, not per Instance: a daemon serving several
+  // directories must not mark one project's live tasks interrupted when it
+  // opens another.
+  let initialized = false
+
   const state = Instance.state(() => ({
-    initialized: false,
     policies: {} as Record<string, PrintPolicy>,
+    // In-process cancel hooks (kill a shell, abort a child session). They do
+    // not survive a restart, which `initialize` settles as `interrupted`.
+    cancellers: {} as Record<string, () => void | Promise<void>>,
   }))
 
   function fromRow(row: typeof BackgroundTaskTable.$inferSelect): Info {
@@ -54,10 +69,10 @@ export namespace BackgroundTask {
   }
 
   export async function initialize(): Promise<void> {
-    const current = state()
-    if (current.initialized) return
-    current.initialized = true
+    if (initialized) return
+    initialized = true
     const now = Date.now()
+    const owned = notLike(BackgroundTaskTable.id, `${EXTERNAL_ID_PREFIX}%`)
     Database.use((db) =>
       db
         .update(BackgroundTaskTable)
@@ -67,7 +82,7 @@ export namespace BackgroundTask {
           time_finished: now,
           time_updated: now,
         })
-        .where(eq(BackgroundTaskTable.status, "running"))
+        .where(and(eq(BackgroundTaskTable.status, "running"), owned))
         .run(),
     )
     Database.use((db) =>
@@ -79,7 +94,7 @@ export namespace BackgroundTask {
           time_finished: now,
           time_updated: now,
         })
-        .where(eq(BackgroundTaskTable.status, "queued"))
+        .where(and(eq(BackgroundTaskTable.status, "queued"), owned))
         .run(),
     )
   }
@@ -122,8 +137,33 @@ export namespace BackgroundTask {
     return info
   }
 
+  export function onCancel(id: string, cancel: () => void | Promise<void>): void {
+    state().cancellers[id] = cancel
+  }
+
+  export function tail(output: string, max = MAX_LIVE_OUTPUT): string {
+    return output.length > max ? output.slice(output.length - max) : output
+  }
+
+  export async function progress(id: string, output: string): Promise<Info | undefined> {
+    await initialize()
+    const row = Database.use((db) =>
+      db
+        .update(BackgroundTaskTable)
+        .set({ output: tail(output), time_updated: Date.now() })
+        .where(and(eq(BackgroundTaskTable.id, id), eq(BackgroundTaskTable.status, "running")))
+        .returning()
+        .get(),
+    )
+    if (!row) return undefined
+    const info = fromRow(row)
+    Bus.publish(Event.Updated, info)
+    return info
+  }
+
   async function settle(id: string, status: Status, fields: { output?: string; error?: string }): Promise<Info> {
     await initialize()
+    delete state().cancellers[id]
     const now = Date.now()
     const row = Database.use((db) =>
       db
@@ -159,11 +199,13 @@ export namespace BackgroundTask {
     return settle(id, "completed", { output })
   }
 
-  export function fail(id: string, error: unknown): Promise<Info> {
-    return settle(id, "failed", { error: error instanceof Error ? error.message : String(error) })
+  export function fail(id: string, error: unknown, output?: string): Promise<Info> {
+    return settle(id, "failed", { error: error instanceof Error ? error.message : String(error), output })
   }
 
-  export function cancel(id: string, reason = "Cancelled by user"): Promise<Info> {
+  export async function cancel(id: string, reason = "Cancelled by user"): Promise<Info> {
+    const canceller = state().cancellers[id]
+    if (canceller) await Promise.resolve(canceller()).catch(() => undefined)
     return settle(id, "cancelled", { error: reason })
   }
 

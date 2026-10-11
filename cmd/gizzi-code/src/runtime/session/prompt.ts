@@ -1092,6 +1092,16 @@ const message = await createUserMessage(input)
           const workspaceSystemPrompt = await WorkspaceContext.getWorkspaceSystemPrompt(session.directory)
           return workspaceSystemPrompt ? [workspaceSystemPrompt] : []
         },
+        // Configured servers only: the per-user connectors proxy is opened per turn in resolveTools.
+        mcpInstructions: async () => {
+          const block = MCP.instructionsPrompt(
+            await MCP.instructions().catch((error) => {
+              log.warn("failed to read MCP server instructions", { sessionID, error })
+              return []
+            }),
+          )
+          return block ? [block] : []
+        },
         botChat: botSystemPrompt,
         scratchpad: scratchpadSystemPrompt,
       })

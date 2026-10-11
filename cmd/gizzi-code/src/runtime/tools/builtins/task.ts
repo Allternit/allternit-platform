@@ -222,6 +222,7 @@ export const TaskTool = Tool.define<typeof parameters, TaskMetadata>("task", asy
           kind: "subagent",
           description: params.description,
         })
+        BackgroundTask.onCancel(backgroundTaskID, () => SessionPrompt.cancel(session.id))
 
         const notify = async (status: "completed" | "failed", content: string) => {
           if (BackgroundTask.getPrintPolicy(ctx.sessionID) !== "steer") return

@@ -54,6 +54,8 @@ import { Hono } from "hono"
 import { streamSSE } from "hono/streaming"
 import { Session } from "@/runtime/session"
 import { SessionPrompt } from "@/runtime/session/prompt"
+import { BackgroundTask } from "@/runtime/session/background-task"
+import { SessionTasks } from "@/runtime/session/session-tasks"
 import { McpUserProxy } from "@/runtime/tools/mcp/user-proxy"
 import { SessionRevert } from "@/runtime/session/revert"
 import { SessionSummary } from "@/runtime/session/summary"
@@ -369,6 +371,15 @@ export const AgentCompatRoutes = () =>
               message_id: props.messageID ?? null,
               part_id: props.partID ?? null,
             }
+          case "background.task.started":
+          case "background.task.updated":
+          case "background.task.finished":
+            return {
+              type: "background_task",
+              phase: String(event.type).slice("background.task.".length),
+              session_id: props.parentSessionID ?? null,
+              task: props,
+            }
           case "session.compacted":
             return {
               type: "session_compacted",
@@ -555,6 +566,21 @@ export const AgentCompatRoutes = () =>
       if (typeof body.text !== "string" || body.text === "") return c.json({ error: "text required" }, 400)
       if (!(await findSession(sessionID))) return c.json({ error: "Session not found" }, 404)
       return c.json(await VendorMessage.append({ sessionID, text: body.text, metadata: body.metadata }))
+    })
+    // The surfaces' background-tasks pane (same contract as allternit-api).
+    .get("/v1/agent-sessions/:sessionID/tasks", async (c) => {
+      return c.json(await SessionTasks.list(c.req.param("sessionID")))
+    })
+    .get("/v1/agent-sessions/:sessionID/background-tasks/:taskID", async (c) => {
+      const task = await BackgroundTask.get(c.req.param("taskID"))
+      if (!task || task.parentSessionID !== c.req.param("sessionID")) return c.json({ error: "Background task not found" }, 404)
+      return c.json(task)
+    })
+    .post("/v1/agent-sessions/:sessionID/background-tasks/:taskID/cancel", async (c) => {
+      const task = await BackgroundTask.get(c.req.param("taskID"))
+      if (!task || task.parentSessionID !== c.req.param("sessionID")) return c.json({ error: "Background task not found" }, 404)
+      if (task.childSessionID) SessionPrompt.cancel(task.childSessionID)
+      return c.json(await BackgroundTask.cancel(task.id))
     })
     .post("/v1/agent-sessions/:sessionID/abort", async (c) => {
       // abort_session: stop the loop; incognito sessions are purged on abort.

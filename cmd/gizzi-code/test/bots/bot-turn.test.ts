@@ -22,6 +22,10 @@ async function turnPrompt(opts: { bot?: BotTurn.BotTurnInfo; userSystem?: string
       loaded.push("workspace")
       return ["# Identity\nfrom ~/.gizzi"]
     },
+    mcpInstructions: () => {
+      loaded.push("mcpInstructions")
+      return ["# MCP Server Instructions\n\n## github\nUse search_code first."]
+    },
     scratchpad: "scratchpad note",
   })
   const header = headerParts({
@@ -60,7 +64,7 @@ describe("bot turn system prompt", () => {
   test("non-bot sessions are unchanged: provider header first, instructions loaded, + text last", async () => {
     const { header, loaded } = await turnPrompt({ userSystem: "+standing instructions" })
     expect(header.startsWith("You are Allternit Shell (allternit-shell), an AI coding agent.")).toBe(true)
-    expect(loaded).toEqual(["instructions", "workspace"])
+    expect(loaded).toEqual(["instructions", "workspace", "mcpInstructions"])
     expect(header).toContain("my name is Eoj")
     expect(header.trimEnd().endsWith("standing instructions")).toBe(true)
     expect(header).not.toContain("# Operating guidance")
@@ -154,5 +158,21 @@ describe("claude-cli bot tool decisions", () => {
     expect(BotTurn.claudeToolDecision(b, "Write", "allternit")).toBe("deny")
     expect(BotTurn.claudeToolDecision({ ...b, gated: true }, "Write", "allternit")).toBe("ask")
     expect(BotTurn.deniedMessage({ id: "a", name: "A://" }, "Write")).toContain("A://'s allowed tools")
+  })
+})
+
+describe("MCP server instructions in the turn system", () => {
+  test("a normal turn carries them after the workspace identity, before the scratchpad", async () => {
+    const { header, loaded } = await turnPrompt({})
+    expect(loaded).toContain("mcpInstructions")
+    const at = header.indexOf("# MCP Server Instructions")
+    expect(at).toBeGreaterThan(header.indexOf("# Identity"))
+    expect(at).toBeLessThan(header.indexOf("scratchpad note"))
+  })
+
+  test("a bot turn does not load them", async () => {
+    const { header, loaded } = await turnPrompt({ bot, userSystem: `+${PERSONA}` })
+    expect(loaded).not.toContain("mcpInstructions")
+    expect(header).not.toContain("# MCP Server Instructions")
   })
 })

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
-  "version": "2.2.3",
+  "version": "2.2.4",
   "name": "@allternit/gizzi-code",
   "description": "AI-powered terminal interface for the Allternit ecosystem",
   "type": "module",

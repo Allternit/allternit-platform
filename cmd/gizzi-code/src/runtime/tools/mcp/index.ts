@@ -618,6 +618,43 @@ export namespace MCP {
     return state().then((state) => state.clients)
   }
 
+  /** Heading of the system block `instructionsPrompt` builds (ContextBreakdown finds it by this). */
+  export const INSTRUCTIONS_HEADING = "# MCP Server Instructions"
+  /** A server's instructions are guidance, not a document: cap what one server can put in the prompt. */
+  const MAX_INSTRUCTIONS_CHARS = 8_000
+
+  /**
+   * The `instructions` each connected server returned at initialize, in
+   * server-name order (stable, so the cached system prefix stays stable).
+   */
+  export async function instructions(extraClients: Record<string, MCPClient> = {}) {
+    const all = { ...(await clients()), ...extraClients }
+    return Object.entries(all)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .flatMap(([server, client]) => {
+        let text: string | undefined
+        try {
+          text = client.getInstructions()?.trim()
+        } catch {
+          return []
+        }
+        if (!text) return []
+        return [{ server, text: text.length > MAX_INSTRUCTIONS_CHARS ? `${text.slice(0, MAX_INSTRUCTIONS_CHARS)}…` : text }]
+      })
+  }
+
+  /** The system block for those instructions — same shape as the terminal's prompt — or undefined when none. */
+  export function instructionsPrompt(list: Array<{ server: string; text: string }>) {
+    if (list.length === 0) return undefined
+    return [
+      INSTRUCTIONS_HEADING,
+      "",
+      "The following MCP servers have provided instructions for how to use their tools and resources:",
+      "",
+      list.map((item) => `## ${item.server}\n${item.text}`).join("\n\n"),
+    ].join("\n")
+  }
+
   export async function connect(name: string) {
     const cfg = await Config.get()
     const config = withBundled(cfg.mcp)

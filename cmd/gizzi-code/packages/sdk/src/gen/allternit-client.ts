@@ -128,6 +128,10 @@ import {
   sessionAbort,
   sessionAllStatus,
   sessionChildren,
+  sessionTasksList,
+  sessionBackgroundTasksList,
+  sessionBackgroundTasksGet,
+  sessionBackgroundTasksCancel,
   sessionClear,
   sessionCommand,
   sessionCreate,
@@ -998,6 +1002,23 @@ class Session extends HeyApiClient {
 
   children(options?: Parameters<typeof sessionChildren>[0]) {
     return sessionChildren({ ...this.convertOptions(options), client: this.client } as any);
+  }
+
+  /** Everything the session delegated: background tasks and foreground subagents. */
+  tasks(options?: Parameters<typeof sessionTasksList>[0]) {
+    return sessionTasksList({ ...this.convertOptions(options), client: this.client } as any);
+  }
+
+  backgroundTasks(options?: Parameters<typeof sessionBackgroundTasksList>[0]) {
+    return sessionBackgroundTasksList({ ...this.convertOptions(options), client: this.client } as any);
+  }
+
+  backgroundTask(options?: Parameters<typeof sessionBackgroundTasksGet>[0]) {
+    return sessionBackgroundTasksGet({ ...this.convertOptions(options), client: this.client } as any);
+  }
+
+  cancelBackgroundTask(options?: Parameters<typeof sessionBackgroundTasksCancel>[0]) {
+    return sessionBackgroundTasksCancel({ ...this.convertOptions(options), client: this.client } as any);
   }
 
   clear(options?: Parameters<typeof sessionClear>[0]) {

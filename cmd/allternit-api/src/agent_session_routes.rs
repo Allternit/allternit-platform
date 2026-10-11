@@ -139,6 +139,18 @@ pub fn agent_session_router() -> Router<Arc<AppState>> {
         .route("/agent-sessions/:id/resume", post(resume_session))
         .route("/agent-sessions/:id/handoff", post(handoff_session))
         .route("/agent-sessions/:id/lineage", get(lineage_session))
+        .route("/agent-sessions/:id/context", get(context_session))
+        // Everything a session delegated (background shells, background and
+        // foreground subagents) for the surfaces' background-tasks pane.
+        .route("/agent-sessions/:id/tasks", get(list_session_tasks))
+        .route(
+            "/agent-sessions/:id/background-tasks/:task_id",
+            get(get_background_task),
+        )
+        .route(
+            "/agent-sessions/:id/background-tasks/:task_id/cancel",
+            post(cancel_background_task),
+        )
         .route("/agent-sessions/sync", get(sync_sessions))
         // Answers to gizzi's in-chat questions (the question tool). Without
         // these the app's reply never reached gizzi and the turn waited forever.
@@ -1580,6 +1592,71 @@ async fn lineage_session(headers: HeaderMap, Path(session_id): Path<String>) -> 
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct ContextQuery {
+    limits: Option<bool>,
+}
+
+/// What fills the session's context window, by category, plus the provider's
+/// plan usage limits — Gizzi's `/session/:id/context`, passed through as is
+/// (the composer's context-window panel reads it).
+async fn context_session(
+    headers: HeaderMap,
+    Path(session_id): Path<String>,
+    Query(query): Query<ContextQuery>,
+) -> impl IntoResponse {
+    let client = gizzi_client(&headers);
+    let mut path = format!("/v1/session/{}/context", urlencoding::encode(&session_id));
+    if query.limits == Some(false) {
+        path.push_str("?limits=false");
+    }
+    match gizzi_json::<serde_json::Value>(&client, reqwest::Method::GET, &path, None).await {
+        Ok(result) => Json(result).into_response(),
+        Err(response) => response,
+    }
+}
+
+async fn list_session_tasks(headers: HeaderMap, Path(session_id): Path<String>) -> impl IntoResponse {
+    let client = gizzi_client(&headers);
+    let path = format!("/v1/session/{}/tasks", urlencoding::encode(&session_id));
+    match gizzi_json::<serde_json::Value>(&client, reqwest::Method::GET, &path, None).await {
+        Ok(result) => Json(result).into_response(),
+        Err(response) => response,
+    }
+}
+
+async fn get_background_task(
+    headers: HeaderMap,
+    Path((session_id, task_id)): Path<(String, String)>,
+) -> impl IntoResponse {
+    let client = gizzi_client(&headers);
+    let path = format!(
+        "/v1/session/{}/background-tasks/{}",
+        urlencoding::encode(&session_id),
+        urlencoding::encode(&task_id)
+    );
+    match gizzi_json::<serde_json::Value>(&client, reqwest::Method::GET, &path, None).await {
+        Ok(result) => Json(result).into_response(),
+        Err(response) => response,
+    }
+}
+
+async fn cancel_background_task(
+    headers: HeaderMap,
+    Path((session_id, task_id)): Path<(String, String)>,
+) -> impl IntoResponse {
+    let client = gizzi_client(&headers);
+    let path = format!(
+        "/v1/session/{}/background-tasks/{}/cancel",
+        urlencoding::encode(&session_id),
+        urlencoding::encode(&task_id)
+    );
+    match gizzi_json::<serde_json::Value>(&client, reqwest::Method::POST, &path, Some(json!({}))).await {
+        Ok(result) => Json(result).into_response(),
+        Err(response) => response,
+    }
+}
+
 /// Resume a session paused before a usage limit (P3.17). With `{model}` it
 /// is the explicit "Resume now on …"; without, it continues on its own model.
 async fn resume_session(
@@ -1865,6 +1942,18 @@ async fn transform_bus_event(
             "message_id": props.get("messageID"),
             "trip": props.get("trip"),
         })),
+        // Background task lifecycle (shells, background subagents): the
+        // surfaces' tasks pane updates live from these.
+        "background.task.started" | "background.task.updated" | "background.task.finished" => {
+            let phase = event_type.trim_start_matches("background.task.").to_string();
+            let session_id = props.get("parentSessionID").cloned();
+            Some(json!({
+                "type": "background_task",
+                "phase": phase,
+                "session_id": session_id,
+                "task": props,
+            }))
+        }
         "message.part.updated" => Some(json!({
             "type": "part_updated",
             "session_id": props.get("sessionID"),
@@ -3072,6 +3161,30 @@ mod tests {
         .unwrap();
         let out = transform_bus_event(&Client::new(), &db, event).await.expect("guardrail event");
         assert_eq!(out, json!({ "type": "guardrail_tripped", "session_id": "ses_g", "message_id": "msg_1", "trip": trip }));
+    }
+
+    #[tokio::test]
+    async fn background_task_lifecycle_reaches_clients() {
+        let temp = std::env::temp_dir().join(format!("bg-task-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp).unwrap();
+        let db = crate::db::DbHandle::new(temp.join("test.db")).expect("test db");
+        let task = json!({
+            "id": "tsk_1", "parentSessionID": "ses_p", "childSessionID": null, "kind": "shell",
+            "status": "running", "description": "Dev server", "output": "$ bun dev\n", "error": null,
+            "time": { "created": 1, "updated": 2, "finished": null },
+        });
+        for phase in ["started", "updated", "finished"] {
+            let event: GizziBusEvent = serde_json::from_value(json!({
+                "type": format!("background.task.{phase}"),
+                "properties": task,
+            }))
+            .unwrap();
+            let out = transform_bus_event(&Client::new(), &db, event).await.expect("background task event");
+            assert_eq!(
+                out,
+                json!({ "type": "background_task", "phase": phase, "session_id": "ses_p", "task": task })
+            );
+        }
     }
 
     #[tokio::test]
