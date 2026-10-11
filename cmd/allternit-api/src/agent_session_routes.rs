@@ -151,6 +151,11 @@ pub fn agent_session_router() -> Router<Arc<AppState>> {
             "/agent-sessions/:id/background-tasks/:task_id/cancel",
             post(cancel_background_task),
         )
+        // Code mode's diff pane and PR chip: the branch against its base, and
+        // its pull request with CI checks and auto-merge.
+        .route("/agent-sessions/:id/changes", get(session_changes))
+        .route("/agent-sessions/:id/pr", get(session_pr))
+        .route("/agent-sessions/:id/pr/auto-merge", post(session_pr_auto_merge))
         .route("/agent-sessions/sync", get(sync_sessions))
         // Answers to gizzi's in-chat questions (the question tool). Without
         // these the app's reply never reached gizzi and the turn waited forever.
@@ -1620,6 +1625,49 @@ async fn list_session_tasks(headers: HeaderMap, Path(session_id): Path<String>) 
     let client = gizzi_client(&headers);
     let path = format!("/v1/session/{}/tasks", urlencoding::encode(&session_id));
     match gizzi_json::<serde_json::Value>(&client, reqwest::Method::GET, &path, None).await {
+        Ok(result) => Json(result).into_response(),
+        Err(response) => response,
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct ChangesQuery {
+    base: Option<String>,
+}
+
+async fn session_changes(
+    headers: HeaderMap,
+    Path(session_id): Path<String>,
+    Query(query): Query<ChangesQuery>,
+) -> impl IntoResponse {
+    let client = gizzi_client(&headers);
+    let mut path = format!("/v1/session/{}/changes", urlencoding::encode(&session_id));
+    if let Some(base) = query.base.filter(|b| !b.is_empty()) {
+        path.push_str(&format!("?base={}", urlencoding::encode(&base)));
+    }
+    match gizzi_json::<serde_json::Value>(&client, reqwest::Method::GET, &path, None).await {
+        Ok(result) => Json(result).into_response(),
+        Err(response) => response,
+    }
+}
+
+async fn session_pr(headers: HeaderMap, Path(session_id): Path<String>) -> impl IntoResponse {
+    let client = gizzi_client(&headers);
+    let path = format!("/v1/session/{}/pr", urlencoding::encode(&session_id));
+    match gizzi_json::<serde_json::Value>(&client, reqwest::Method::GET, &path, None).await {
+        Ok(result) => Json(result).into_response(),
+        Err(response) => response,
+    }
+}
+
+async fn session_pr_auto_merge(
+    headers: HeaderMap,
+    Path(session_id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let client = gizzi_client(&headers);
+    let path = format!("/v1/session/{}/pr/auto-merge", urlencoding::encode(&session_id));
+    match gizzi_json::<serde_json::Value>(&client, reqwest::Method::POST, &path, Some(body)).await {
         Ok(result) => Json(result).into_response(),
         Err(response) => response,
     }

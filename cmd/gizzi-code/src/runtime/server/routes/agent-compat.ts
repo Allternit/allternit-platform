@@ -56,6 +56,7 @@ import { Session } from "@/runtime/session"
 import { SessionPrompt } from "@/runtime/session/prompt"
 import { BackgroundTask } from "@/runtime/session/background-task"
 import { SessionTasks } from "@/runtime/session/session-tasks"
+import { SessionVcs } from "@/runtime/session/session-vcs"
 import { McpUserProxy } from "@/runtime/tools/mcp/user-proxy"
 import { SessionRevert } from "@/runtime/session/revert"
 import { SessionSummary } from "@/runtime/session/summary"
@@ -570,6 +571,28 @@ export const AgentCompatRoutes = () =>
     // The surfaces' background-tasks pane (same contract as allternit-api).
     .get("/v1/agent-sessions/:sessionID/tasks", async (c) => {
       return c.json(await SessionTasks.list(c.req.param("sessionID")))
+    })
+    // Code mode's diff pane and PR chip (same contract as allternit-api).
+    .get("/v1/agent-sessions/:sessionID/changes", async (c) => {
+      const session = await findSession(c.req.param("sessionID"))
+      if (!session) return c.json({ error: "Session not found" }, 404)
+      return c.json(await SessionVcs.changes(session.directory, { base: c.req.query("base") || undefined }))
+    })
+    .get("/v1/agent-sessions/:sessionID/pr", async (c) => {
+      const session = await findSession(c.req.param("sessionID"))
+      if (!session) return c.json({ error: "Session not found" }, 404)
+      return c.json(await SessionVcs.pullRequest(session.directory))
+    })
+    .post("/v1/agent-sessions/:sessionID/pr/auto-merge", async (c) => {
+      const session = await findSession(c.req.param("sessionID"))
+      if (!session) return c.json({ error: "Session not found" }, 404)
+      const body = await c.req.json().catch(() => ({}))
+      if (typeof body?.enabled !== "boolean") return c.json({ error: "enabled must be a boolean" }, 400)
+      const current = await SessionVcs.pullRequest(session.directory)
+      if (!current.pr) return c.json({ error: current.reason ?? "No pull request for this branch" }, 404)
+      const result = await SessionVcs.setAutoMerge(session.directory, current.pr.number, body.enabled)
+      if (!result.ok) return c.json({ error: result.reason }, 422)
+      return c.json(await SessionVcs.pullRequest(session.directory))
     })
     .get("/v1/agent-sessions/:sessionID/background-tasks/:taskID", async (c) => {
       const task = await BackgroundTask.get(c.req.param("taskID"))

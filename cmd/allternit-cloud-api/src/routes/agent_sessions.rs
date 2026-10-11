@@ -64,6 +64,13 @@ pub fn routes() -> Router<Arc<ApiState>> {
             "/api/v1/agent-sessions/:id/background-tasks/:task_id/cancel",
             post(cancel_background_task),
         )
+        // Code mode's diff pane and PR chip.
+        .route("/api/v1/agent-sessions/:id/changes", get(session_changes))
+        .route("/api/v1/agent-sessions/:id/pr", get(session_pr))
+        .route(
+            "/api/v1/agent-sessions/:id/pr/auto-merge",
+            post(session_pr_auto_merge),
+        )
         // Replies the app sends back to the node's gizzi runtime: answers to
         // in-chat questions, and pane_browser / pane_artifact / pane_render results.
         .route("/api/v1/questions/:id/reply", post(reply_question))
@@ -280,6 +287,39 @@ async fn list_session_tasks(
     relay_agent_sessions_request(&state, &headers, "GET", format!("/api/v1/agent-sessions/{id}/tasks"), &[]).await
 }
 
+async fn session_changes(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    query: RawQuery,
+) -> Result<Response, ApiError> {
+    relay_agent_sessions_request(
+        &state,
+        &headers,
+        "GET",
+        with_query(&format!("/api/v1/agent-sessions/{id}/changes"), &query),
+        &[],
+    )
+    .await
+}
+
+async fn session_pr(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Response, ApiError> {
+    relay_agent_sessions_request(&state, &headers, "GET", format!("/api/v1/agent-sessions/{id}/pr"), &[]).await
+}
+
+async fn session_pr_auto_merge(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    relay_agent_sessions_request(&state, &headers, "POST", format!("/api/v1/agent-sessions/{id}/pr/auto-merge"), &body).await
+}
+
 async fn get_background_task(
     State(state): State<Arc<ApiState>>,
     headers: HeaderMap,
@@ -467,6 +507,9 @@ mod tests {
             ("GET", "/api/v1/agent-sessions/sync"),
             ("POST", "/api/v1/agent-sessions/sess_1/abort"),
             ("GET", "/api/v1/agent-sessions/sess_1/tasks"),
+            ("GET", "/api/v1/agent-sessions/sess_1/changes"),
+            ("GET", "/api/v1/agent-sessions/sess_1/pr"),
+            ("POST", "/api/v1/agent-sessions/sess_1/pr/auto-merge"),
             ("GET", "/api/v1/agent-sessions/sess_1/background-tasks/tsk_1"),
             ("POST", "/api/v1/agent-sessions/sess_1/background-tasks/tsk_1/cancel"),
             ("POST", "/api/v1/agent-sessions/sess_1/revert"),
@@ -634,7 +677,7 @@ mod tests {
 
         let gateway = Arc::new(MockGateway::new(
             Some(MockGateway::healthy_node()),
-            (0..10).map(|_| MockGateway::json(StatusCode::OK, "{}")).collect(),
+            (0..13).map(|_| MockGateway::json(StatusCode::OK, "{}")).collect(),
         ));
         let state = test_state(gateway.clone()).await;
         let router = routes().with_state(state);
@@ -648,6 +691,9 @@ mod tests {
             ("/api/v1/agent-sessions/sess_9/compact", "/api/v1/agent-sessions/sess_9/compact"),
             ("/api/v1/agent-sessions/sess_9/context?limits=false", "/api/v1/agent-sessions/sess_9/context?limits=false"),
             ("/api/v1/agent-sessions/sess_9/tasks", "/api/v1/agent-sessions/sess_9/tasks"),
+            ("/api/v1/agent-sessions/sess_9/changes?base=main", "/api/v1/agent-sessions/sess_9/changes?base=main"),
+            ("/api/v1/agent-sessions/sess_9/pr", "/api/v1/agent-sessions/sess_9/pr"),
+            ("/api/v1/agent-sessions/sess_9/pr/auto-merge", "/api/v1/agent-sessions/sess_9/pr/auto-merge"),
             ("/api/v1/agent-sessions/sess_9/background-tasks/tsk_1", "/api/v1/agent-sessions/sess_9/background-tasks/tsk_1"),
             (
                 "/api/v1/agent-sessions/sess_9/background-tasks/tsk_1/cancel",
@@ -657,6 +703,8 @@ mod tests {
             let method = if uri.contains("messages?")
                 || uri.contains("/context")
                 || uri.ends_with("/tasks")
+                || uri.contains("/changes")
+                || uri.ends_with("/pr")
                 || uri.ends_with("/tsk_1")
             {
                 "GET"

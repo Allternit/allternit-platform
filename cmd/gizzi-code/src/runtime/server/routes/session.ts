@@ -17,6 +17,7 @@ import { SessionSummary } from "@/runtime/session/summary"
 import { Todo } from "@/runtime/session/todo"
 import { BackgroundTask } from "@/runtime/session/background-task"
 import { SessionTasks } from "@/runtime/session/session-tasks"
+import { SessionVcs } from "@/runtime/session/session-vcs"
 import { Agent } from "@/runtime/loop/agent"
 import { Snapshot } from "@/runtime/session/snapshot"
 import { Log } from "@/shared/util/log"
@@ -180,6 +181,58 @@ export const SessionRoutes = lazy(() =>
       async (c) => {
         const { sessionID } = c.req.valid("param")
         return c.json(await SessionTasks.list(sessionID))
+      },
+    )
+    .get(
+      "/:sessionID/changes",
+      describeRoute({
+        summary: "Get the session branch's changes",
+        description:
+          "The session directory's branch against its base (merge base with the default branch, plus uncommitted and untracked files), per file with counts and before/after text.",
+        operationId: "session.changes",
+        responses: { 200: { description: "Branch changes", content: { "application/json": { schema: resolver(SessionVcs.Changes) } } }, ...errors(404) },
+      }),
+      validator("param", z.object({ sessionID: z.string() })),
+      validator("query", z.object({ base: z.string().optional() })),
+      async (c) => {
+        const session = await Session.get(c.req.valid("param").sessionID).catch(() => undefined)
+        if (!session) return c.json({ error: "Session not found" }, 404)
+        return c.json(await SessionVcs.changes(session.directory, { base: c.req.valid("query").base }))
+      },
+    )
+    .get(
+      "/:sessionID/pr",
+      describeRoute({
+        summary: "Get the session branch's pull request",
+        description: "The pull request for the session directory's current branch, with CI checks and auto-merge state (GitHub CLI).",
+        operationId: "session.pr",
+        responses: { 200: { description: "Pull request", content: { "application/json": { schema: resolver(SessionVcs.PrResult) } } }, ...errors(404) },
+      }),
+      validator("param", z.object({ sessionID: z.string() })),
+      async (c) => {
+        const session = await Session.get(c.req.valid("param").sessionID).catch(() => undefined)
+        if (!session) return c.json({ error: "Session not found" }, 404)
+        return c.json(await SessionVcs.pullRequest(session.directory))
+      },
+    )
+    .post(
+      "/:sessionID/pr/auto-merge",
+      describeRoute({
+        summary: "Turn auto-merge on or off",
+        description: "Enable or disable auto-merge on the session branch's pull request.",
+        operationId: "session.pr.autoMerge",
+        responses: { 200: { description: "Updated", content: { "application/json": { schema: resolver(SessionVcs.PrResult) } } }, ...errors(404) },
+      }),
+      validator("param", z.object({ sessionID: z.string() })),
+      validator("json", z.object({ enabled: z.boolean() })),
+      async (c) => {
+        const session = await Session.get(c.req.valid("param").sessionID).catch(() => undefined)
+        if (!session) return c.json({ error: "Session not found" }, 404)
+        const current = await SessionVcs.pullRequest(session.directory)
+        if (!current.pr) return c.json({ error: current.reason ?? "No pull request for this branch" }, 404)
+        const result = await SessionVcs.setAutoMerge(session.directory, current.pr.number, c.req.valid("json").enabled)
+        if (!result.ok) return c.json({ error: result.reason }, 422)
+        return c.json(await SessionVcs.pullRequest(session.directory))
       },
     )
     .get(
