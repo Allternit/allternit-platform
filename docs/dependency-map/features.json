@@ -793,6 +793,10 @@
       ],
       "decisions": [
         {
+          "on": "2026-10-11",
+          "note": "Artifact toolbar and inline mode tabs use the UI font, a single horizontally scrolling row, and neutral glass selection across Desktop, web phone and PWA; reduced transparency and increased contrast get solid selection surfaces."
+        },
+        {
           "on": "2026-10-08",
           "note": "Eoj accepted the artifacts v2 contract (docs/design/artifacts-v2.md): one typed store in cloud-api under /api/v2/artifacts, private by default, links refused for artifacts that use AI or connectors, owner-only permanent delete, legacy stores import as runtime_version 1."
         },
