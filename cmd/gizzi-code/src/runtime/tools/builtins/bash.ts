@@ -25,11 +25,23 @@ import { Plugin } from "@/runtime/integrations/plugin"
 import { SessionSandbox } from "@/runtime/context/sandbox/session-sandbox"
 import { Sandbox } from "@/runtime/integrations/shell/sandbox"
 import { VmSession } from "@/runtime/context/vm/vm-session"
+import { BackgroundTask } from "@/runtime/session/background-task"
+import { Identifier } from "@/shared/id/id"
 
 const MAX_METADATA_LENGTH = 30_000
 const DEFAULT_TIMEOUT = Flag.GIZZI_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS || 2 * 60 * 1000
 
 export const log = Log.create({ service: "bash-tool" })
+
+type BashMetadata = {
+  output: string
+  description: string
+  exit?: number | null
+  vm_backed?: boolean
+  background?: boolean
+  backgroundTaskID?: string
+}
+type BashResult = { title: string; metadata: BashMetadata; output: string }
 
 const resolveWasm = (asset: string) => {
   if (asset.startsWith("file://")) return fileURLToPath(asset)
@@ -83,8 +95,14 @@ export const BashTool = Tool.define("bash", async () => {
         .describe(
           "Clear, concise description of what this command does in 5-10 words. Examples:\nInput: ls\nOutput: Lists files in current directory\n\nInput: git status\nOutput: Shows working tree status\n\nInput: npm install\nOutput: Installs package dependencies\n\nInput: mkdir foo\nOutput: Creates directory 'foo'",
         ),
+      run_in_background: z
+        .boolean()
+        .describe(
+          "Run the command as a durable background task and return immediately with its task id. Use task_output to read its output and task_stop to stop it.",
+        )
+        .optional(),
     }),
-    async execute(params, ctx) {
+    async execute(params, ctx): Promise<BashResult> {
       const cwd = params.workdir || Instance.workdir
       if (params.timeout !== undefined && params.timeout < 0) {
         throw new Error(`Invalid timeout value: ${params.timeout}. Timeout must be a positive number.`)
@@ -210,6 +228,9 @@ export const BashTool = Tool.define("bash", async () => {
         }
       }
       const vmState = VmSession.get(ctx.sessionID)
+      if (vmState && params.run_in_background) {
+        throw new Error("run_in_background is not supported while this session runs commands in a VM.")
+      }
       if (vmState) {
         try {
           log.info("routing through VM session", {
@@ -340,6 +361,14 @@ export const BashTool = Tool.define("bash", async () => {
       }
       // ── End sandbox wrapping ───────────────────────────────────────────────
 
+      if (params.run_in_background) {
+        return runInBackground(proc, {
+          sessionID: ctx.sessionID,
+          command: params.command,
+          description: params.description || params.command,
+        })
+      }
+
       let output = ""
 
       // Initialize metadata with empty output
@@ -432,3 +461,67 @@ export const BashTool = Tool.define("bash", async () => {
     },
   }
 })
+
+// A background shell is a durable BackgroundTask (kind "shell"): its output
+// tail streams as `background.task.updated`, it settles on exit, and
+// task_stop / the cancel route kill its process tree.
+export async function runInBackground(
+  proc: ReturnType<typeof spawn>,
+  input: { sessionID: string; command: string; description: string },
+): Promise<BashResult> {
+  const taskID = Identifier.ascending("task")
+  const header = `$ ${input.command}\n`
+  let body = ""
+  let exited = false
+  let cancelled = false
+  let pending: ReturnType<typeof setTimeout> | undefined
+
+  await BackgroundTask.create({
+    id: taskID,
+    parentSessionID: input.sessionID,
+    kind: "shell",
+    description: input.description,
+  })
+  BackgroundTask.onCancel(taskID, async () => {
+    cancelled = true
+    await Shell.killTree(proc, { exited: () => exited })
+  })
+
+  const snapshot = () => header + BackgroundTask.tail(body, BackgroundTask.MAX_LIVE_OUTPUT - header.length)
+  const flush = () => {
+    pending = undefined
+    void BackgroundTask.progress(taskID, snapshot()).catch((error) => {
+      log.warn("background shell progress failed", { taskID, error })
+    })
+  }
+  const append = (chunk: Buffer) => {
+    body = BackgroundTask.tail(body + chunk.toString())
+    pending ??= setTimeout(flush, 500)
+  }
+  proc.stdout?.on("data", append)
+  proc.stderr?.on("data", append)
+
+  const settle = (error?: string) => {
+    exited = true
+    if (pending) clearTimeout(pending)
+    pending = undefined
+    if (cancelled) return
+    const settled = error ? BackgroundTask.fail(taskID, error, snapshot()) : BackgroundTask.complete(taskID, snapshot())
+    settled.catch((err) => log.error("background shell settlement failed", { taskID, error: err }))
+  }
+  proc.once("exit", (code, signal) => {
+    if (code === 0) settle()
+    else settle(signal ? `Terminated by ${signal}` : `Exited with code ${code}`)
+  })
+  proc.once("error", (error) => settle(error.message))
+
+  return {
+    title: input.description,
+    metadata: { output: "", description: input.description, background: true, backgroundTaskID: taskID },
+    output: [
+      `background_task_id: ${taskID}`,
+      "status: running",
+      "The command is running in the background. Use task_output to read its output and task_stop to stop it.",
+    ].join("\n"),
+  }
+}
