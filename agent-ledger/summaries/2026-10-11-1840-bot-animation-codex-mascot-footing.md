@@ -1,0 +1,13 @@
+# Grounded composer mascots and template animation
+
+Eoj requested that bot mascots rest on the composer instead of floating above it, and that all template identities animate in the rail, bot headers and other placements like Gizzi.
+
+UI #521/#522/#523 unify sheet rendering across BotAvatar, ActiveAgentMascot, vendor fighters, mascot templates, character picker and editor previews. A saved sheet takes precedence over its still portrait. Hover/focus wakes the animation and working/planning threads drive working state. Portrait-only avatars keep their existing artwork and use breathing/greeting motion. No new generated assets or runtime dependencies were added. Sprite frames are drawn immediately on load; animation loops stop for reduced motion and hidden/off-screen views and are cleaned up on unmount. Render failure recovery reattaches visibility listeners. Decorative previews are hidden from screen readers.
+
+Composer footing removes the selected-bot positive offset and the hidden inline text baseline; the A:// orb aligns to the bottom of its box. Tooltip text retains normal line height. Avatars remain unframed.
+
+Verification: 54 targeted tests passed, one existing test skipped, UI TypeScript clean. New tests prove actual frame advancement/cleanup, reduced-motion still rendering, rail hover/focus, portrait+sheet precedence and picker sheet/portrait motion. Docs 527 nav entries/522 pages/zero problems. Dependency map validates (33 products/29 features/9 journeys). Desktop main/preload/auth renderer rebuilt; installed verified native API/Gizzi/Factory/driver binaries retained because native source is unchanged. Package preflight reports all resources present; the connector catalog staging gap was corrected by staging the verified installed catalog in its source build location.
+
+Live review of the first merged bundle showed moving rail/team/header characters and exposed the remaining text-baseline gap; #522 removes it. The Designer editor then became active with unsaved-looking owner edits, so that editor is preserved. The updated signed runtime and installer are built from the final merged UI; final distribution/apply status and artifact hashes are recorded in handoffs/bot-redesign-2026-10-11/animation-completion.md. No owner bot settings were saved or discarded by this session. Local development distribution remains unnotarized because Apple credentials are unavailable.
+
+All three surfaces share the same code. Manual phone PWA cache v112 ships in this continuation. Shared unrelated WIP and other sessions are preserved. Durable Factory task: dag_463331/n_1306/wih_9076 in shared platform root. Own worktrees, branches and staging outputs are cleaned after publication.
