@@ -56,3 +56,5 @@ See [customization instructions](/guides/project-appearance).
 The client symbol catalog and `validate_appearance` runtime allowlist must change together. The current catalog has 48 Phosphor symbols and 71 Simple Icons brand paths. Image drop, paste and file selection all run through the same bounded raster import. Project header banners derive from the account’s saved appearance color.
 
 `ProjectBanner.tsx` shares the full-width identity band across `BaseProjectView` (including bot project homes) and `ProjectCoordinatorWorkspace` (Chat, Cowork, Code and Design). Both use the same mode/project recipe key as their icons and settings. The appearance editor bounds its scrolling control area, keeps its footer visible, and separates preview/import/transform controls from color/catalog controls.
+
+Project settings pass mode-specific configuration into the shared AppearanceEditor shell. Appearance and Configuration share bounded dialog geometry; the latter is available during appearance errors. `bot-config.css` uses inline-size container queries rather than outer viewport breakpoints for bot phone Workspace & Config.
