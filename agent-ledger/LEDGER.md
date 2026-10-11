@@ -1238,3 +1238,5 @@ Cross-compiled gizzi-code-win32-x64 from macOS (`bun build --target=win32-x64` �
 - 2026-10-11 Codex: [Bot redesign feedback, all eight Computer gaps, and latest-push builds](summaries/2026-10-11-1700-bot-redesign-codex-feedback-build.md) — UI #514/#516–#520 (includes #515), platform #1503/#1504; live rail placement/replacement and chunked transfer verified; 399 Desktop tests, native release/Clippy, docs/map passed. Final publication and local development installer recorded in the durable completion handoff.
 
 - 2026-10-11 Codex: [Composer mascot footing and shared template animation](summaries/2026-10-11-1840-bot-animation-codex-mascot-footing.md) — UI #521–#523; 54 targeted tests, TypeScript/docs/map clean. Rail/header/picker share the real sheet engine, hover/focus and reduced-motion behavior. Final artifact and apply status in animation-completion handoff; owner Designer editing session preserved.
+
+- 2026-10-11 Codex — [Project banner and compact customization](summaries/2026-10-11-1900-project-banner-codex-layout.md).
