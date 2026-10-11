@@ -1004,6 +1004,38 @@
         "allternit-ai/src/views/settings/agent-rules/AgentRulesPanel.tsx",
         "allternit/cmd/allternit-api/src/kernel_ui/agent_rules.rs"
       ]
+    },
+    {
+      "id": "feature:background-tasks",
+      "label": "Background tasks pane",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Code sessions list everything the agent delegated (background shells and subagents, background or foreground) in a Tasks pane with live status, a running count on the pane strip, Stop, and each task's live output or subagent transcript.",
+      "touches": [
+        "allternit-ai/src/views/code",
+        "allternit-ai/src/lib/agents",
+        "allternit/cmd/allternit-api",
+        "allternit/cmd/gizzi-code/src/runtime/session",
+        "allternit/cmd/gizzi-code/src/runtime/server",
+        "allternit/cmd/gizzi-code/src/runtime/tools",
+        "allternit/cmd/allternit-cloud-api",
+        "allternit/cmd/gizzi-code/src/cli"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-11",
+          "note": "Claude Code parity: one SessionTasks list (gizzi GET /session/:id/tasks, proxied as /agent-sessions/:id/tasks) merges durable BackgroundTask rows with foreground subagent child sessions. Bash gains run_in_background (kind \"shell\", 64KB live output tail, background.task.updated events, killed by cancel). background.task.* now reach the /sync feed as `background_task`."
+        },
+        {
+          "on": "2026-10-11",
+          "note": "cloud-api relays the task routes for ai.allternit.com. A TUI attached to a runtime session mirrors its shells and agents into the task table (ids tui_*, no daemon Bus events, so the pane refreshes every 10s); a surface's Stop settles the row and the TUI stops the task. Background-task restart cleanup now runs once per process and skips tui_* rows."
+        }
+      ],
+      "evidence": [
+        "allternit/docs/upstream/background-scenarios.md",
+        "allternit/cmd/gizzi-code/test/session/session-tasks.test.ts",
+        "allternit/cmd/gizzi-code/test/session/background-shell.test.ts"
+      ]
     }
   ],
   "journeys": [

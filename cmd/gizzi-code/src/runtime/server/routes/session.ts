@@ -16,6 +16,7 @@ import { RunRegistry } from "@/runtime/session/run-registry"
 import { SessionSummary } from "@/runtime/session/summary"
 import { Todo } from "@/runtime/session/todo"
 import { BackgroundTask } from "@/runtime/session/background-task"
+import { SessionTasks } from "@/runtime/session/session-tasks"
 import { Agent } from "@/runtime/loop/agent"
 import { Snapshot } from "@/runtime/session/snapshot"
 import { Log } from "@/shared/util/log"
@@ -164,6 +165,37 @@ export const SessionRoutes = lazy(() =>
       async (c) => {
         const { sessionID } = c.req.valid("param")
         return c.json(await BackgroundTask.list(sessionID))
+      },
+    )
+    .get(
+      "/:sessionID/tasks",
+      describeRoute({
+        summary: "List session tasks",
+        description:
+          "Return everything the session delegated: durable background tasks (shells, background subagents) and foreground subagent child sessions.",
+        operationId: "session.tasks.list",
+        responses: { 200: { description: "Session tasks", content: { "application/json": { schema: resolver(SessionTasks.Item.array()) } } } },
+      }),
+      validator("param", z.object({ sessionID: z.string() })),
+      async (c) => {
+        const { sessionID } = c.req.valid("param")
+        return c.json(await SessionTasks.list(sessionID))
+      },
+    )
+    .get(
+      "/:sessionID/background-tasks/:taskID",
+      describeRoute({
+        summary: "Get a session background task",
+        description: "Return one durable background task record, including its latest output.",
+        operationId: "session.backgroundTasks.get",
+        responses: { 200: { description: "Background task", content: { "application/json": { schema: resolver(BackgroundTask.Info) } } }, ...errors(404) },
+      }),
+      validator("param", z.object({ sessionID: z.string(), taskID: z.string() })),
+      async (c) => {
+        const { sessionID, taskID } = c.req.valid("param")
+        const task = await BackgroundTask.get(taskID)
+        if (!task || task.parentSessionID !== sessionID) return c.json({ error: "Background task not found" }, 404)
+        return c.json(task)
       },
     )
     .post(

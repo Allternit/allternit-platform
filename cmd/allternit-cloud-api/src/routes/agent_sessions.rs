@@ -53,6 +53,17 @@ pub fn routes() -> Router<Arc<ApiState>> {
             get(list_messages).post(send_message),
         )
         .route("/api/v1/agent-sessions/:id/abort", post(abort_session))
+        // The background-tasks pane: what a session delegated, one task,
+        // and stopping it.
+        .route("/api/v1/agent-sessions/:id/tasks", get(list_session_tasks))
+        .route(
+            "/api/v1/agent-sessions/:id/background-tasks/:task_id",
+            get(get_background_task),
+        )
+        .route(
+            "/api/v1/agent-sessions/:id/background-tasks/:task_id/cancel",
+            post(cancel_background_task),
+        )
         // Replies the app sends back to the node's gizzi runtime: answers to
         // in-chat questions, and pane_browser / pane_artifact / pane_render results.
         .route("/api/v1/questions/:id/reply", post(reply_question))
@@ -261,6 +272,45 @@ async fn abort_session(
     relay_agent_sessions_request(&state, &headers, "POST", format!("/api/v1/agent-sessions/{id}/abort"), &[]).await
 }
 
+async fn list_session_tasks(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Response, ApiError> {
+    relay_agent_sessions_request(&state, &headers, "GET", format!("/api/v1/agent-sessions/{id}/tasks"), &[]).await
+}
+
+async fn get_background_task(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Path((id, task_id)): Path<(String, String)>,
+) -> Result<Response, ApiError> {
+    relay_agent_sessions_request(
+        &state,
+        &headers,
+        "GET",
+        format!("/api/v1/agent-sessions/{id}/background-tasks/{task_id}"),
+        &[],
+    )
+    .await
+}
+
+async fn cancel_background_task(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Path((id, task_id)): Path<(String, String)>,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    relay_agent_sessions_request(
+        &state,
+        &headers,
+        "POST",
+        format!("/api/v1/agent-sessions/{id}/background-tasks/{task_id}/cancel"),
+        &body,
+    )
+    .await
+}
+
 async fn revert_session(
     State(state): State<Arc<ApiState>>,
     headers: HeaderMap,
@@ -416,6 +466,9 @@ mod tests {
             ("POST", "/api/v1/agent-sessions/sess_1/messages"),
             ("GET", "/api/v1/agent-sessions/sync"),
             ("POST", "/api/v1/agent-sessions/sess_1/abort"),
+            ("GET", "/api/v1/agent-sessions/sess_1/tasks"),
+            ("GET", "/api/v1/agent-sessions/sess_1/background-tasks/tsk_1"),
+            ("POST", "/api/v1/agent-sessions/sess_1/background-tasks/tsk_1/cancel"),
             ("POST", "/api/v1/agent-sessions/sess_1/revert"),
             ("POST", "/api/v1/agent-sessions/sess_1/unrevert"),
             ("POST", "/api/v1/agent-sessions/sess_1/compact"),
@@ -581,7 +634,7 @@ mod tests {
 
         let gateway = Arc::new(MockGateway::new(
             Some(MockGateway::healthy_node()),
-            (0..7).map(|_| MockGateway::json(StatusCode::OK, "{}")).collect(),
+            (0..10).map(|_| MockGateway::json(StatusCode::OK, "{}")).collect(),
         ));
         let state = test_state(gateway.clone()).await;
         let router = routes().with_state(state);
@@ -594,8 +647,22 @@ mod tests {
             ("/api/v1/agent-sessions/sess_9/unrevert", "/api/v1/agent-sessions/sess_9/unrevert"),
             ("/api/v1/agent-sessions/sess_9/compact", "/api/v1/agent-sessions/sess_9/compact"),
             ("/api/v1/agent-sessions/sess_9/context?limits=false", "/api/v1/agent-sessions/sess_9/context?limits=false"),
+            ("/api/v1/agent-sessions/sess_9/tasks", "/api/v1/agent-sessions/sess_9/tasks"),
+            ("/api/v1/agent-sessions/sess_9/background-tasks/tsk_1", "/api/v1/agent-sessions/sess_9/background-tasks/tsk_1"),
+            (
+                "/api/v1/agent-sessions/sess_9/background-tasks/tsk_1/cancel",
+                "/api/v1/agent-sessions/sess_9/background-tasks/tsk_1/cancel",
+            ),
         ] {
-            let method = if uri.contains("messages?") || uri.contains("/context") { "GET" } else { "POST" };
+            let method = if uri.contains("messages?")
+                || uri.contains("/context")
+                || uri.ends_with("/tasks")
+                || uri.ends_with("/tsk_1")
+            {
+                "GET"
+            } else {
+                "POST"
+            };
             let response = router
                 .clone()
                 .oneshot(authed_request(method, uri, r#"{"text":"hi"}"#))
