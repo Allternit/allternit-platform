@@ -429,6 +429,18 @@
       "evidence": [
         "allternit/domains/computer-use/suite/suite/stack.py"
       ]
+    },
+    {
+      "source": "allternit-ai/src/components/computers",
+      "target": "allternit/cmd/allternit-api/src/computer_*",
+      "kind": "HTTP computer history, snapshots, clipboard and file transfer",
+      "evidence": [
+        "allternit-ai/src/lib/computer-history-api.ts",
+        "allternit-ai/src/components/computers/ComputerActivityPanel.tsx",
+        "allternit-ai/src/components/computers/ComputerTransferControls.tsx",
+        "allternit/cmd/allternit-api/src/computer_history.rs",
+        "allternit/cmd/allternit-api/src/computer_transfer.rs"
+      ]
     }
   ]
 }
