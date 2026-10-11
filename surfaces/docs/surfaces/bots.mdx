@@ -35,7 +35,7 @@ Every account has a main bot. It is your first stop: it answers directly, or han
 
 ## Bot screen
 
-The bot screen opens with a large header: the bot's photo, name, description, where it runs, its phone number, email and channels, and its status. **Open phone** opens the bot's phone and **Settings** opens its settings.
+The bot screen opens with a large header: the bot's photo, name, description, where it runs, its phone number, email and channels, and its status. **Open phone** opens the bot's phone. **Edit bot** in the banner is the single entry point for editing its profile. The Settings tab and the thread's **Bot settings** gear open its settings.
 
 The **Chat + threads** tab is the default:
 
@@ -139,7 +139,7 @@ Gemini and Copilot are new carried vendors and are not yet verified against the 
 
 ## Edit workspace files with chat
 
-Open **Settings → Workspace & Config → Workspace** to edit the bot's personality and workspace files. The editor and **Edit with chat** appear side by side on wide screens and stack on phones. Select a file and either edit it directly or describe a change in chat. Review the suggested file, then choose **Apply and save**, or **Discard**. Saving writes the file to the bot's runtime workspace and clears its cached copy; the bot reads the saved configuration from its next message. Changes do not rewrite earlier conversations. A bot without workspace files starts with its default files.
+Open **Settings → Workspace & Config → Workspace** to edit the bot's personality and workspace files. The editor uses the full width, with **Edit with chat** across the bottom on desktop and phone. Select a file and either edit it directly or describe a change in chat. Review the suggested file, then choose **Apply and save**, or **Discard**. Saving writes the file to the bot's runtime workspace and clears its cached copy; the bot reads the saved configuration from its next message. Changes do not rewrite earlier conversations. A bot without workspace files starts with its default files.
 
 Chat suggestions require a live Allternit Cloud sign-in and an available Cloud model, and use your Cloud allowance. Default suggestions choose a model from the live Cloud catalog, preferring the configured model family; this does not change the bot's configured brain. If the model cannot answer, the editor remains available for direct edits. Switching files clears the previous file's suggestions. A suggestion for content you have since edited must be regenerated, and a failed save remains an error rather than being marked applied.
 
@@ -148,3 +148,21 @@ For developers: `BotWorkspaceEditor` saves through `agentWorkspaceFS` and invali
 ## Bot Inbox on Desktop
 
 The Inbox shows bot messages through the local Factory API in Allternit Desktop. A deployment without that API explains where bot messages are available; a failed request offers **Try again**. Connecting a phone or external channel is a separate setup step under **Phone and reach**.
+
+## Layout and rail placement
+
+Settings stays in the bot’s section tabs. Workspace files use the full page width, with **Edit with chat** underneath the editor and runtime information below it. Agent Gateway messaging uses the same channel marks as Phone and reach.
+
+Drag a bot onto the main tile to make it your main bot. Drop onto a promoted bot to replace that slot; dragging one promoted bot onto another swaps their positions. On touch screens, use the bot’s menu to promote it.
+
+Bot mascots appear without nested tile and circle frames. Hover text uses the selected bot’s name and description. Session transcripts and composers keep a bounded reading width on large screens.
+
+## Watching a bot’s computer
+
+The live computer screen includes a message box for steering the bot’s running thread. If there is no running thread, it uses the open thread belonging to that bot, or its main chat. While you have control, enter an optional **Hand-back note** before choosing **Hand back**. The note is submitted to the bot’s thread after control returns. Failed messages reappear in the message field for retry.
+
+Pending safety approvals are restored when reopening the viewer and checked against their server status. Approvals, computer selection and connection status use the same shared viewer on Desktop and phone.
+
+The **Computer steps** panel shows the current action and saved steps. Choose a run and a step, scrub the timeline, or choose **Replay** to review recorded screens. Replay is read-only and never repeats an action on the computer. Snapshots are redacted before storage; a failed capture or redaction leaves the step visible with no snapshot. History keeps the last 500 steps per computer for up to 30 days; full images have a 100 MB budget per computer, with older full images evicted first. Runs from before recording was installed have no retrospective screenshots.
+
+While you have control, **Send clipboard**, **Get clipboard**, and **Upload file** move text and files between your device and the computer. You can also drop a file onto the screen (25 MB per file). The transfer result shows its destination path; uploads use a unique name to avoid overwriting files. If your browser cannot access the clipboard, use the text field. Focus the computer view and press **⌘/Ctrl + Shift + H** to take over or hand back. These controls and run history are available on Desktop, the web phone layout, and the PWA.

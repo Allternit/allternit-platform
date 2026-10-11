@@ -98,7 +98,9 @@
         "allternit-ai/src/components/templates",
         "allternit/cmd/allternit-api/src/bot_*",
         "allternit/cmd/allternit-api/src/thread_*",
-        "allternit/cmd/gizzi-code/src/runtime/bots"
+        "allternit/cmd/gizzi-code/src/runtime/bots",
+        "allternit/cmd/allternit-api/src/computer_*",
+        "allternit-ai/src/components/computers"
       ],
       "decisions": [
         {
@@ -108,6 +110,14 @@
         {
           "on": "2026-10-11",
           "note": "Bot home adds a selectable banner color, the main-bot recipient on launch, a shared scheduled-task creation form, and a workspace file editor with reviewable chat proposals. Saved workspace files apply from the next message. Desktop Inbox uses the local Factory API."
+        },
+        {
+          "on": "2026-10-11",
+          "note": "Workspace edit chat docks below the full-width editor; rail drops replace promoted slots or swap promoted bots; identity marks and hover text follow the selected bot."
+        },
+        {
+          "on": "2026-10-11",
+          "note": "Computer viewer records redacted per-step snapshots with bounded read-only run replay; includes watching messages, hand-back notes, explicit clipboard/file transfer and focused control shortcut on Desktop/web phone/PWA. Banner Edit bot is sole profile edit entry; thread gear opens bot Settings."
         }
       ],
       "evidence": [
@@ -748,7 +758,7 @@
       "label": "Custom project and folder icons",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "Personal folder recipes with color, paper layers, symbols/brands, text/emoji and raster logos, shared by project and folder views. Source is implemented; installed Desktop and separate PWA releases remain pending.",
+      "description": "Personal folder recipes with 48 symbols, 71 brand marks, color, paper layers, text/emoji and raster logos; project Details and bot project headers have independently configurable banners with 20 presets and custom hues.",
       "touches": [
         "allternit-ai/src/components/appearance",
         "allternit-ai/src/lib/appearance",
@@ -769,6 +779,14 @@
         {
           "on": "2026-10-08",
           "note": "Integrated with the current PreviewCard polish layout; customization stays in the card options menu. Runtime API tests are added, not locally compiled under the no-build instruction."
+        },
+        {
+          "on": "2026-10-11",
+          "note": "Expanded searchable catalogs, drag/drop image import, hover/focus rail controls, and appearance-derived project header banners on all shared surfaces."
+        },
+        {
+          "on": "2026-10-11",
+          "note": "Project Details and bot project banners have independent saved bannerColor with the same 20 presets as bot banners and custom hue selection."
         }
       ],
       "evidence": [

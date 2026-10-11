@@ -63,3 +63,25 @@ See [MCP tools](/tools/mcp), [the computers MCP server](/api/platform/hosted-com
 ## Interactive results
 
 An MCP App can display a tool result as a sandboxed interface rather than plain text. The expanded Allternit host, directory, and extensions have merged to source in a separate integration package. Deployment and installation checks still apply. See [MCP Apps status](/guides/mcp-apps-status) before treating that package as available on your installation.
+
+## Step history and replay
+
+The shared viewer shows the current action, steps grouped by run, and a recorded screen after each action when capture and redaction succeed. Choose a past run, click a step, scrub **Replay step**, or play the run. **Return to live screen** closes the recorded screen. Replay only reads history; it cannot send mouse, keyboard or tool actions. Runs predating this feature do not gain historical screenshots.
+
+Snapshots are redacted in required mode before saving. History stores action names, result and time, never raw tool inputs or typed text. It is account-authorized through the computer's existing access check, bounded to 500 steps per computer and 30 days, with a 100 MB budget for full images (oldest full images are evicted first). Screens that cannot be safely captured show **No snapshot**.
+
+While controlling the computer, send/get clipboard text or upload/drop a file (25 MB maximum). Clipboard access requires an explicit button action. Browser permission failures expose a manual text field. Uploads use a unique name in this Mac's `Downloads/Allternit`, a Linux guest's `/tmp`, or a Windows guest's Public Downloads. The resulting path appears after transfer. Focus the viewer and use **⌘/Ctrl + Shift + H** to toggle take-over and hand-back. Phone and PWA share these controls.
+
+### Runtime routes
+
+All routes below use the existing authenticated computer visibility rules:
+
+| Route | Result |
+| --- | --- |
+| `GET /api/v1/computers/:id/history` | Current action and chronological steps grouped by `run_id`, thumbnails, retention bounds |
+| `GET /api/v1/computers/:id/history/:step/snapshot` | Recorded redacted PNG, private/no-store; validates step UUID |
+| `GET /api/v1/computers/:id/clipboard` | UTF-8 clipboard text, capped at 256 KB |
+| `PUT /api/v1/computers/:id/clipboard` | Explicit human clipboard write `{text}` |
+| `POST /api/v1/computers/:id/transfer/file?name=…` | Raw file bytes, up to 25 MB; returns safe unique destination path |
+
+Clipboard and file transfer require this user's active control lease on this device, or this user's active bot desktop take-over. Watching access alone cannot transfer data. Step recording hooks into both direct computer tool calls and structured subtask steps; it never bypasses action policy, lease or approvals.

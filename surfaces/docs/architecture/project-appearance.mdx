@@ -17,6 +17,7 @@ Recipes are stored in the existing `runtime_settings` table under `appearance:<k
 | --- | --- |
 | `version` | `1` |
 | `color`, `paperColor`, `overlayColor` | Six-digit hex colors |
+| `bannerColor` | Optional six-digit hex, independent project banner tint; absent uses folder color |
 | `documents` | Boolean |
 | `overlay` | `none`, `symbol`, `text`, or `image` |
 | `symbol` | Allowlisted symbol or brand name |
@@ -51,3 +52,5 @@ Frontend tests cover recipe bounds, upload rejection, authenticated save/load/re
 Release the supporting runtime alongside the workspace UI. Desktop needs a new package; ai.allternit.com uses the workspace release path; m.allternit.com needs its separate approved deploy. Source changes alone do not update installed applications or deployed sites.
 
 See [customization instructions](/guides/project-appearance).
+
+The client symbol catalog and `validate_appearance` runtime allowlist must change together. The current catalog has 48 Phosphor symbols and 71 Simple Icons brand paths. Image drop, paste and file selection all run through the same bounded raster import. Project header banners derive from the account’s saved appearance color.
