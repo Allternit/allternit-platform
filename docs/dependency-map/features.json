@@ -795,6 +795,10 @@
         {
           "on": "2026-10-11",
           "note": "Project homes and Details now share a full-width bot-style banner; compact two-column appearance editor keeps Save and Cancel visible with a scrollable phone body."
+        },
+        {
+          "on": "2026-10-11",
+          "note": "Unified Appearance/Configuration project dialog across modes, explicit compact geometry and scrolling, adaptive symbol cells. Bot phone Workspace & Config uses panel container sizing, horizontal file tabs and stacked cards."
         }
       ],
       "evidence": [
