@@ -139,6 +139,7 @@ pub fn agent_session_router() -> Router<Arc<AppState>> {
         .route("/agent-sessions/:id/resume", post(resume_session))
         .route("/agent-sessions/:id/handoff", post(handoff_session))
         .route("/agent-sessions/:id/lineage", get(lineage_session))
+        .route("/agent-sessions/:id/context", get(context_session))
         .route("/agent-sessions/sync", get(sync_sessions))
         // Answers to gizzi's in-chat questions (the question tool). Without
         // these the app's reply never reached gizzi and the turn waited forever.
@@ -1574,6 +1575,30 @@ async fn handoff_session(
 async fn lineage_session(headers: HeaderMap, Path(session_id): Path<String>) -> impl IntoResponse {
     let client = gizzi_client(&headers);
     let path = format!("/v1/session/{}/lineage", urlencoding::encode(&session_id));
+    match gizzi_json::<serde_json::Value>(&client, reqwest::Method::GET, &path, None).await {
+        Ok(result) => Json(result).into_response(),
+        Err(response) => response,
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct ContextQuery {
+    limits: Option<bool>,
+}
+
+/// What fills the session's context window, by category, plus the provider's
+/// plan usage limits — Gizzi's `/session/:id/context`, passed through as is
+/// (the composer's context-window panel reads it).
+async fn context_session(
+    headers: HeaderMap,
+    Path(session_id): Path<String>,
+    Query(query): Query<ContextQuery>,
+) -> impl IntoResponse {
+    let client = gizzi_client(&headers);
+    let mut path = format!("/v1/session/{}/context", urlencoding::encode(&session_id));
+    if query.limits == Some(false) {
+        path.push_str("?limits=false");
+    }
     match gizzi_json::<serde_json::Value>(&client, reqwest::Method::GET, &path, None).await {
         Ok(result) => Json(result).into_response(),
         Err(response) => response,

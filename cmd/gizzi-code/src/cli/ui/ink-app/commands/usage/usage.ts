@@ -42,6 +42,37 @@ function severityColor(ratio: number): string {
   return 'green'
 }
 
+/**
+ * Plan quota for `model`'s provider, when the provider reports it
+ * (ProviderQuotas caches 60s). Providers without a quota source get an
+ * honest "not reported" — never a fabricated window. Shared with /context.
+ */
+export async function planQuotaLines(model: string): Promise<string[]> {
+  const lines = ['Plan quota']
+  const quotaProviderId = resolveQuotaProviderId(model)
+  if (!quotaProviderId) {
+    lines.push('  Not reported for this provider.')
+    return lines
+  }
+  const quota = await fetchProviderQuota(quotaProviderId)
+  if (!quota || quota.status === 'unsupported') {
+    lines.push('  Not reported for this provider.')
+  } else if (quota.status !== 'ok') {
+    lines.push(`  ${quota.message}`)
+  } else if (quota.quota.windows.length === 0) {
+    lines.push('  Reported, but no plan windows were included.')
+  } else {
+    for (const window of quota.quota.windows) {
+      const bar = renderProgressBar(window.usedRatio, PROGRESS_BAR_WIDTH)
+      const resets = formatResetsIn(window.resetAt)
+      lines.push(
+        `  ${window.id.padEnd(6)}${bar}  ${Math.round(window.usedRatio * 100)}% used${resets ? ` · resets in ${resets}` : ''}`,
+      )
+    }
+  }
+  return lines
+}
+
 export const call: LocalCommandCall = async (_args, context) => {
   // TODO(types): AppState has no `messages` field (upstream drift shared with
   // status.tsx/session-info.tsx/statusModel.ts); runtime value is always
@@ -114,32 +145,7 @@ export const call: LocalCommandCall = async (_args, context) => {
 
   lines.push('')
 
-  // Plan quota for the current model's provider, when the provider reports
-  // it (ProviderQuotas caches 60s). Providers without a quota source get an
-  // honest "not reported" — never a fabricated window.
-  lines.push('Plan quota')
-  const quotaProviderId = resolveQuotaProviderId(model)
-  if (!quotaProviderId) {
-    lines.push('  Not reported for this provider.')
-  } else {
-    const quota = await fetchProviderQuota(quotaProviderId)
-    if (!quota || quota.status === 'unsupported') {
-      lines.push('  Not reported for this provider.')
-    } else if (quota.status !== 'ok') {
-      lines.push(`  ${quota.message}`)
-    } else if (quota.quota.windows.length === 0) {
-      lines.push('  Reported, but no plan windows were included.')
-    } else {
-      for (const window of quota.quota.windows) {
-        const bar = renderProgressBar(window.usedRatio, PROGRESS_BAR_WIDTH)
-        const resets = formatResetsIn(window.resetAt)
-        lines.push(
-          `  ${window.id.padEnd(6)}${bar}  ${Math.round(window.usedRatio * 100)}% used${resets ? ` · resets in ${resets}` : ''}`,
-        )
-      }
-    }
-  }
-
+  lines.push(...(await planQuotaLines(model)))
   lines.push('')
 
   return { type: 'text', value: lines.join('\n') }
