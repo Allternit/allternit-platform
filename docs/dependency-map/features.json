@@ -948,6 +948,30 @@
         "allternit-ai/src/components/craft/video-io.ts",
         "allternit/surfaces/docs/guides/artifact-modes.mdx"
       ]
+    },
+    {
+      "id": "feature:agency-kernel-settings",
+      "label": "Agency Kernel configuration",
+      "product": "product:ai-allternit",
+      "status": "live",
+      "description": "Shared responsive kernel dashboard with scoped rules, frozen schema inspection, decision policy navigation, model routing and installed capabilities. Availability follows the connected runtime.",
+      "touches": [
+        "allternit-ai/src/views/settings",
+        "allternit-ai/src/lib/agent-rules",
+        "allternit-ai/src/data",
+        "allternit/cmd/allternit-api/src/kernel_ui"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-11",
+          "note": "Unify five kernel areas; retain canonical S0 Commands / S1 Decisions / S2 Generate / S3 Solve. Network and privacy controls reuse enforced fence, approvals and scoped local-only routing; no unsupported retention or firewall claims."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/agency-kernel.mdx",
+        "allternit-ai/src/views/settings/agent-rules/AgentRulesPanel.tsx",
+        "allternit/cmd/allternit-api/src/kernel_ui/agent_rules.rs"
+      ]
     }
   ],
   "journeys": [
