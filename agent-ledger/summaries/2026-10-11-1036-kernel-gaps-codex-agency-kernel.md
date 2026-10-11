@@ -31,3 +31,5 @@ The configured steering consult returned a transport error: no steering backend 
 The UI source ships to all three surfaces. Desktop packaging and the separate PWA release deployment were not performed: user requested source changes, commit and merge, with an explicit no-build/no-dev-server rule. Privacy restricts Agency model candidates, not arbitrary tools/connectors. Retrieval preference remains trace-only and is labelled accordingly. No domain firewall, sensitivity-label enforcement or general retention policy was invented.
 
 Existing unrelated edits in the shared checkouts were preserved. Session-owned worktrees/branches and browser were cleaned up after merge.
+
+Final global checkout gate: FAIL due to 48 pre-existing unmerged stale branches outside this session. Shared main equals origin/main; both kernel worktrees/branches are removed. Existing unrelated dirty work is a soft warning and was preserved. These other branches were not merged, deleted or newly allowlisted.
