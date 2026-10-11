@@ -56,8 +56,11 @@ fn validate_appearance(a: &Value) -> bool {
     for key in ["color", "paperColor", "overlayColor"] {
         if !a[key].as_str().is_some_and(|s| s.len() == 7 && s.starts_with('#') && s[1..].bytes().all(|b| b.is_ascii_hexdigit())) { return false; }
     }
+    if let Some(color) = obj.get("bannerColor") {
+        if !color.as_str().is_some_and(|s| s.len() == 7 && s.starts_with('#') && s[1..].bytes().all(|b| b.is_ascii_hexdigit())) { return false; }
+    }
     if !a["overlay"].as_str().is_some_and(|s| ["none", "symbol", "text", "image"].contains(&s)) { return false; }
-    if !a["symbol"].as_str().is_some_and(|s| ["sparkle", "code", "briefcase", "robot", "star", "heart", "lightning", "leaf", "globe", "music", "camera", "book", "game", "palette", "terminal", "diamond", "github", "figma", "react", "typescript", "python", "slack", "notion", "openai"].contains(&s)) { return false; }
+    if !a["symbol"].as_str().is_some_and(|s| ["sparkle", "code", "briefcase", "robot", "star", "heart", "lightning", "leaf", "globe", "music", "camera", "book", "game", "palette", "terminal", "diamond", "github", "figma", "react", "typescript", "python", "slack", "notion", "openai", "folder", "rocket", "shield", "target", "chart", "database", "cloud", "puzzle", "gear", "wrench", "bug", "flask", "graduation", "megaphone", "users", "chat", "mail", "calendar", "clock", "check", "map", "compass", "plant", "coffee", "sun", "moon", "mountains", "lightbulb", "cube", "stack", "shopping", "gift", "apple", "google", "microsoft", "amazon", "adobe", "android", "discord", "telegram", "whatsapp", "spotify", "youtube", "x", "linkedin", "instagram", "facebook", "tiktok", "twitch", "reddit", "pinterest", "zoom", "dropbox", "googledrive", "gmail", "gitlab", "bitbucket", "docker", "kubernetes", "cloudflare", "vercel", "netlify", "nodedotjs", "javascript", "rust", "go", "swift", "kotlin", "cplusplus", "postgresql", "mysql", "mongodb", "redis", "supabase", "firebase", "stripe", "shopify", "wordpress", "webflow", "framer", "canva", "linear", "trello", "asana", "jira", "confluence", "obsidian", "anthropic", "openstreetmap", "blender", "unity", "unrealengine", "godotengine", "arduino", "raspberrypi"].contains(&s)) { return false; }
     if !a["text"].as_str().is_some_and(|s| s.chars().count() <= 12) { return false; }
     for (key, min, max) in [("x", -60.0, 60.0), ("y", -50.0, 50.0), ("scale", 0.3, 1.6), ("rotation", -180.0, 180.0)] {
         if !a[key].as_f64().is_some_and(|n| n.is_finite() && n >= min && n <= max) { return false; }
@@ -694,6 +697,15 @@ mod tests {
         json!({ "version": 1, "color": "#397ad5", "paperColor": "#ffffff", "documents": true,
             "overlay": "text", "symbol": "sparkle", "text": "AI", "overlayColor": "#ffffff",
             "x": 0, "y": 0, "scale": 1, "rotation": 0 })
+    }
+
+    #[test]
+    fn appearance_accepts_expanded_catalog() {
+        for symbol in ["sparkle", "code", "briefcase", "robot", "star", "heart", "lightning", "leaf", "globe", "music", "camera", "book", "game", "palette", "terminal", "diamond", "github", "figma", "react", "typescript", "python", "slack", "notion", "openai", "folder", "rocket", "shield", "target", "chart", "database", "cloud", "puzzle", "gear", "wrench", "bug", "flask", "graduation", "megaphone", "users", "chat", "mail", "calendar", "clock", "check", "map", "compass", "plant", "coffee", "sun", "moon", "mountains", "lightbulb", "cube", "stack", "shopping", "gift", "apple", "google", "microsoft", "amazon", "adobe", "android", "discord", "telegram", "whatsapp", "spotify", "youtube", "x", "linkedin", "instagram", "facebook", "tiktok", "twitch", "reddit", "pinterest", "zoom", "dropbox", "googledrive", "gmail", "gitlab", "bitbucket", "docker", "kubernetes", "cloudflare", "vercel", "netlify", "nodedotjs", "javascript", "rust", "go", "swift", "kotlin", "cplusplus", "postgresql", "mysql", "mongodb", "redis", "supabase", "firebase", "stripe", "shopify", "wordpress", "webflow", "framer", "canva", "linear", "trello", "asana", "jira", "confluence", "obsidian", "anthropic", "openstreetmap", "blender", "unity", "unrealengine", "godotengine", "arduino", "raspberrypi"] {
+            let mut recipe = appearance_recipe();
+            recipe["symbol"] = json!(symbol);
+            assert!(validate_appearance(&recipe), "rejected {symbol}");
+        }
     }
 
     #[test]

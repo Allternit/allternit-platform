@@ -1214,7 +1214,7 @@ async fn local_x_exec(script: &str) -> Result<String, String> {
 static PRESSES: Lazy<Mutex<HashMap<String, (i64, i64)>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 
 /// Capture the target's screen at full resolution.
-async fn capture(target: &Target, run_id: &str) -> Result<Vec<u8>, String> {
+pub(crate) async fn capture(target: &Target, run_id: &str) -> Result<Vec<u8>, String> {
     // D1b: on guests the driver's native screenshot (AT-SPI engine + scrot /
     // UIA engine + System.Drawing) is the primary path when the driver is up;
     // the shell capture below stays the explicit fallback.
@@ -1988,12 +1988,14 @@ pub async fn execute(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: 
         } else {
             None
         };
+        crate::computer_history::start(&computer.id, &run_id, &req.member);
         let outcome = match req.member.as_str() {
             "run_subtask" => crate::computer_subtask::run(state, user, &computer, &target, &req.input, &run_id).await,
             "run_skill" => crate::computer_subtask::run_skill(state, user, &computer, &target, &req.input, &run_id).await,
             _ => crate::computer_v2::execute_v2(state, user, &computer, &target, &req.member, &req.input, &run_id).await,
         };
         emit_action(&computer.id, req.toolset, &req.member, None, None, req.run_id.as_deref(), outcome.is_ok());
+        crate::computer_history::record(state, &target, &computer.id, &run_id, &req.member, outcome.is_ok(), &safety.settings, &secrets).await;
         crate::computer_safety::record_monitor_outcome(state, user, &safety, if outcome.is_ok() { "success" } else { "error" }, "step ran");
         return match outcome {
             Ok(mut result) => {
@@ -2013,8 +2015,10 @@ pub async fn execute(state: &Arc<AppState>, user: &AuthUser, id: &str, headers: 
     let map = map.expect("pixel members have a mapping");
     let point = primary_point(spec, &scaled);
     let redactor = Redactor { settings: &safety.settings, secrets: &secrets, data_dir: state.data_dir.clone() };
+    crate::computer_history::start(&computer.id, &run_id, &req.member);
     let outcome = dispatch(&target, req.toolset, spec, &scaled, &map, &screen_key, &run_id, &redactor).await;
     emit_action(&computer.id, req.toolset, &req.member, point, Some(&map), req.run_id.as_deref(), outcome.is_ok());
+    crate::computer_history::record(state, &target, &computer.id, &run_id, &req.member, outcome.is_ok(), &safety.settings, &secrets).await;
     crate::computer_safety::record_monitor_outcome(state, user, &safety, if outcome.is_ok() { "success" } else { "error" }, "step ran");
     match outcome {
         Ok((mut content, browser_state)) => {
@@ -2234,6 +2238,7 @@ pub(crate) async fn execute_step(
     if watching {
         crate::computer_safety::emit(&computer.id, "watch", Some(&safety), member, Some(run_id), json!({ "within_subtask": true }));
     }
+    crate::computer_history::start(&computer.id, run_id, member);
     // Straight to the driver: a subtask step needs the driver's JSON, not the
     // model-facing result (whose screen block costs a screen-size query).
     let outcome = match target {
@@ -2244,6 +2249,8 @@ pub(crate) async fn execute_step(
         Target::Browser { .. } => Err(Fail::from(format!("{member} can't run inside a subtask on the browser toolset"))),
     };
     emit_action(&computer.id, Toolset::Computer, member, None, None, Some(run_id), outcome.is_ok());
+    let secrets: Vec<String> = crate::aci_credentials::CREDENTIALS.screening_secrets(&user.user_id).into_iter().map(|(_, v, _)| v).collect();
+    crate::computer_history::record(state, target, &computer.id, run_id, member, outcome.is_ok(), &safety.settings, &secrets).await;
     crate::computer_safety::record_monitor_outcome(state, user, &safety, if outcome.is_ok() { "success" } else { "error" }, "step ran");
     outcome
 }
@@ -2254,6 +2261,8 @@ pub(crate) async fn execute_step(
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
+        .merge(crate::computer_history::router())
+        .merge(crate::computer_transfer::router())
         .route("/computers/:id/toolset", post(post_toolset))
         .route("/computers/:id/toolset/schema", get(get_toolset_schema))
         .route("/computers/:id/toolset/events", get(get_toolset_events))

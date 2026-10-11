@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve, basename } from 'node:path';
 import * as fs from 'node:fs';
 import * as net from 'node:net';
+import { installSocketQosGuard } from './socket-qos.js';
 import * as http from 'node:http';
 import * as https from 'node:https';
 import * as os from 'node:os';
@@ -220,6 +221,9 @@ function resolveLocalPlatformStaticPath(): string | null {
   }
   return null;
 }
+
+// Optional network QoS can fail outside fetch's rejection handler on macOS.
+installSocketQosGuard(net.Socket.prototype);
 
 // Configure logging
 log.transports.file.resolvePath = () => join(app.getPath('userData'), 'main.log');

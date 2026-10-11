@@ -146,6 +146,8 @@ pub mod computer_screens;
 pub mod computer_audit;
 pub mod computer_ws;
 pub mod computer_replay;
+pub mod computer_history;
+pub mod computer_transfer;
 pub mod computer_parallel;
 pub mod computer_subtask;
 pub mod computer_safety;
