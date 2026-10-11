@@ -202,3 +202,7 @@ These tests cover the contracts. A conformance suite for a running kernel is not
 - [Kernel contracts reference](/architecture/kernel-contracts-reference)
 - [Agency API: Versioning](/api/agency/versioning)
 - [Agency API: Schemas](/api/agency/schemas)
+
+## Workspace inspector
+
+The shared [Agency Kernel settings](/guides/agency-kernel) browser bundles the frozen schema documents alongside the contract metadata. `allternit-ai/scripts/gen-kernel-abi.py` projects the platform manifest, schemas, examples and primitive count into `src/data/kernel-abi/contracts.json`. Regenerate it with the platform `spec/Contracts/kernel/v1` path and source commit when refreshing the bundled ABI. The inspector copies the complete schema with a reference to the selected definition; it does not mutate the frozen package.

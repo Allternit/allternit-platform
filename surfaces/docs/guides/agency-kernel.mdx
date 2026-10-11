@@ -1,0 +1,37 @@
+---
+title: "Configure the Agency Kernel"
+description: "Inspect contracts and configure scoped rules, decisions, model routing, skills and plugins."
+---
+
+Open **Settings → Customize → Agent rules** on Desktop, ai.allternit.com or the m.allternit.com PWA. The Agency Kernel overview groups configuration into five areas. Live summaries use your signed-in organization's configuration; unavailable services show their status instead of example data.
+
+## Configure
+
+Choose Organization, Workspace or Project, then choose a section: Guardrails, Approvals, Budgets, Completion, Network & environment, Data & privacy, or Custom rules. Inheritance labels identify where an effective value comes from. Reset an override to restore its parent value.
+
+- **Network & environment:** ask before private-network access or enable strict execution fencing. Metadata and link-local targets remain blocked. Hosted Agency runs retain their strict fence.
+- **Data & privacy:** local-only model routing restricts Agency model candidates at the selected scope. Without a local candidate, a run requests attention before executing a model. This setting does not restrict tools or connectors. Credential-read exceptions must be permitted at organization scope.
+- **Custom rules:** supply rule text and a matching pattern. Patterns match tool names, commands and paths as case-insensitive substrings or globs (`*`, `?`). Choose ask or deny. Incomplete rules remain drafts until both fields are filled; complete rules save when you leave a field. Patterns are not a network firewall.
+- **Completion:** require verification; agent self-close stays locked off. Hosted kernel policies cannot be weakened by a setting.
+
+## ABI & Contracts
+
+The browser displays frozen ABI 1.0.0, 65 contracts and 191 primitives. Search contracts, select one, and inspect its full JSON Schema, fields, validation rules, example, related references and source provenance. **Copy schema** copies the complete schema document with `$ref` pointing to the selected definition, retaining sibling definitions needed for validation. Cross-file references retain their canonical schema locations.
+
+The version selector lists the bundled current version. Frozen contracts are read-only; **Propose v1.1** opens a proposal. See [Kernel contracts](/architecture/kernel-contracts) and the [contract reference](/architecture/kernel-contracts-reference).
+
+## Decisions
+
+**Categories** lists registered decision types and their calibration. Custom types start in shadow with recommendation authority; they cannot grant permissions or close work. **Policies** opens custom ask/deny rules. **Verifiers** opens templates where verifier steps can be added. **Completion** configures verification requirements. **Overrides** opens model routing and capability overrides.
+
+## Execution tiers
+
+The canonical tiers are **S0 Commands**, **S1 Decisions**, **S2 Generate** and **S3 Solve**. Configure the S1 backend, S2 default and per-capability models, S3 solver and fallback, and local-only routing. The retrieval preference is currently recorded in routing evidence; the context compiler does not use it yet. Switching S1 backends requires confirmation and resets decision types to shadow for recalibration. The router selects M0–M6 modes; those are not additional user-defined tiers.
+
+Supported Desktop builds also expose decision-text retention for local S1 training. Web and PWA do not expose this device-only setting.
+
+## Skills & Plugins
+
+Manage **Installed plugins**, **My skills**, and **Templates** in the kernel area. Browse/Add opens the existing capabilities manager; enable switches use the installed capability persistence path. Templates can include commands, decisions, generation, verification and attention gates. Actual package availability depends on the connected runtime.
+
+Changes to the shared UI reach all three surfaces. The PWA requires its separate release deployment; Desktop requires a new packaged build.

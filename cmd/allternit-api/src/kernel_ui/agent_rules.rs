@@ -3,8 +3,9 @@
 //!
 //! Enforcement: `guardrails.allow_credential_read` is enforced for Agency API
 //! runs (merged into the run's JudgePolicy at creation, see
-//! [`apply_to_policy`]). Everything else is stored, not yet enforced; the GET
-//! response says so per field under `enforcement`.
+//! [`apply_to_policy`]). Approvals, custom rules, completion and budget limits
+//! are folded into JudgePolicy and task_ir at run creation. The GET response
+//! reports enforcement details per field.
 
 use super::*;
 use axum::extract::{Query, State};
