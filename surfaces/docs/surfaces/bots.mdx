@@ -141,7 +141,7 @@ Gemini and Copilot are new carried vendors and are not yet verified against the 
 
 Open **Settings → Workspace & Config → Workspace** to edit the bot's personality and workspace files. The editor and **Edit with chat** appear side by side on wide screens and stack on phones. Select a file and either edit it directly or describe a change in chat. Review the suggested file, then choose **Apply and save**, or **Discard**. Saving writes the file to the bot's runtime workspace and clears its cached copy; the bot reads the saved configuration from its next message. Changes do not rewrite earlier conversations. A bot without workspace files starts with its default files.
 
-Chat suggestions require an available model. If the model cannot answer, the editor remains available for direct edits.
+Chat suggestions require a live Allternit Cloud sign-in and an available Cloud model, and use your Cloud allowance. Default suggestions choose a model from the live Cloud catalog, preferring the configured model family; this does not change the bot's configured brain. If the model cannot answer, the editor remains available for direct edits. Switching files clears the previous file's suggestions. A suggestion for content you have since edited must be regenerated, and a failed save remains an error rather than being marked applied.
 
 For developers: `BotWorkspaceEditor` saves through `agentWorkspaceFS` and invalidates the bot's file cache. `WorkspaceChatPanel` proposes the complete selected file through the chat completion endpoint; a proposal is saved only when the user applies it.
 
