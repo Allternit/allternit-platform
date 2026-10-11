@@ -26,6 +26,7 @@ import { lazy } from "@/shared/util/lazy"
 import { SessionTrace } from "@/runtime/session/trace"
 import { SessionSupportBundle } from "@/runtime/session/support-bundle"
 import { Scratchpad } from "@/runtime/session/scratchpad"
+import { SessionContextUsage } from "@/runtime/session/context-usage"
 
 const log = Log.create({ service: "server" })
 
@@ -582,6 +583,29 @@ export const SessionRoutes = lazy(() =>
         const { sessionID } = c.req.valid("param")
         const sessions = await SessionHandoff.lineage(sessionID)
         return c.json({ head: sessions[sessions.length - 1].id, sessions })
+      },
+    )
+    .get(
+      "/:sessionID/context",
+      describeRoute({
+        summary: "Session context usage",
+        description:
+          "What fills the session's context window, by category (messages, system prompt, tools, MCP tools, memory files, skills, autocompact buffer, free space), plus the provider's plan usage limits. Estimates until the provider reports a turn's real usage (`basis`).",
+        operationId: "session.context",
+        responses: {
+          200: {
+            description: "Context breakdown (null before the first turn) and plan limits",
+            content: { "application/json": { schema: resolver(SessionContextUsage.Result) } },
+          },
+          ...errors(404),
+        },
+      }),
+      validator("param", z.object({ sessionID: z.string() })),
+      validator("query", z.object({ limits: z.enum(["true", "false"]).optional() })),
+      async (c) => {
+        const { sessionID } = c.req.valid("param")
+        const { limits } = c.req.valid("query")
+        return c.json(await SessionContextUsage.read(sessionID, { limits: limits !== "false" }))
       },
     )
     .post(

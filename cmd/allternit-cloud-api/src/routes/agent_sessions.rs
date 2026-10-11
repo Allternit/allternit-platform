@@ -77,6 +77,11 @@ pub fn routes() -> Router<Arc<ApiState>> {
             "/api/v1/agent-sessions/:id/origin",
             get(get_native_origin),
         )
+        // The composer's context-window panel (category breakdown + plan limits).
+        .route(
+            "/api/v1/agent-sessions/:id/context",
+            get(get_session_context),
+        )
         .route(
             "/api/v1/agent-sessions/:id/export-native",
             post(export_native_session),
@@ -307,6 +312,22 @@ async fn export_native_session(
         "POST",
         format!("/api/v1/agent-sessions/{id}/export-native"),
         &body,
+    )
+    .await
+}
+
+async fn get_session_context(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    query: RawQuery,
+) -> Result<Response, ApiError> {
+    relay_agent_sessions_request(
+        &state,
+        &headers,
+        "GET",
+        with_query(&format!("/api/v1/agent-sessions/{id}/context"), &query),
+        &[],
     )
     .await
 }
@@ -560,7 +581,7 @@ mod tests {
 
         let gateway = Arc::new(MockGateway::new(
             Some(MockGateway::healthy_node()),
-            (0..6).map(|_| MockGateway::json(StatusCode::OK, "{}")).collect(),
+            (0..7).map(|_| MockGateway::json(StatusCode::OK, "{}")).collect(),
         ));
         let state = test_state(gateway.clone()).await;
         let router = routes().with_state(state);
@@ -572,8 +593,9 @@ mod tests {
             ("/api/v1/agent-sessions/sess_9/revert", "/api/v1/agent-sessions/sess_9/revert"),
             ("/api/v1/agent-sessions/sess_9/unrevert", "/api/v1/agent-sessions/sess_9/unrevert"),
             ("/api/v1/agent-sessions/sess_9/compact", "/api/v1/agent-sessions/sess_9/compact"),
+            ("/api/v1/agent-sessions/sess_9/context?limits=false", "/api/v1/agent-sessions/sess_9/context?limits=false"),
         ] {
-            let method = if uri.contains("messages?") { "GET" } else { "POST" };
+            let method = if uri.contains("messages?") || uri.contains("/context") { "GET" } else { "POST" };
             let response = router
                 .clone()
                 .oneshot(authed_request(method, uri, r#"{"text":"hi"}"#))
