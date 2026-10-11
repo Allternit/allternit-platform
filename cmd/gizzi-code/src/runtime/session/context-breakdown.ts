@@ -20,6 +20,7 @@ export namespace ContextBreakdown {
     "skills",
     "system_prompt",
     "mcp_tools",
+    "mcp_instructions",
     "autocompact_buffer",
     "free_space",
   ])
@@ -70,12 +71,15 @@ export namespace ContextBreakdown {
     skills: "Skills",
     system_prompt: "System prompt",
     mcp_tools: "MCP tools",
+    mcp_instructions: "MCP server instructions",
     autocompact_buffer: "Autocompact buffer",
     free_space: "Free space",
   }
 
   /** Instruction blocks as InstructionPrompt.system() renders them. */
   const MEMORY_HEADER = /^(?:Instructions from|Auto-memory from): (.+)$/m
+  /** MCP.INSTRUCTIONS_HEADING (not imported: the MCP module pulls in the whole runtime). */
+  const MCP_INSTRUCTIONS_HEADING = "# MCP Server Instructions"
   const MCP_PREFIX = "mcp__"
   const SKILL_TOOL = "skill"
 
@@ -117,6 +121,9 @@ export namespace ContextBreakdown {
       return [{ path: match[1].trim(), tokens: estimate(block) }]
     })
     const memoryTokens = memoryFiles.reduce((sum, file) => sum + file.tokens, 0)
+    const mcpInstructionTokens = input.instructions
+      .filter((block) => block.startsWith(MCP_INSTRUCTIONS_HEADING))
+      .reduce((sum, block) => sum + estimate(block), 0)
     const systemTokens = input.system.reduce((sum, block) => sum + estimate(block), 0)
 
     const mcpTools: Snapshot["mcpTools"] = []
@@ -149,8 +156,9 @@ export namespace ContextBreakdown {
         system_tools: systemTools.reduce((sum, item) => sum + item.tokens, 0),
         memory_files: memoryTokens,
         skills: skillTokens,
-        system_prompt: Math.max(0, systemTokens - memoryTokens),
+        system_prompt: Math.max(0, systemTokens - memoryTokens - mcpInstructionTokens),
         mcp_tools: mcpTools.reduce((sum, item) => sum + item.tokens, 0),
+        mcp_instructions: mcpInstructionTokens,
       },
     })
   }
@@ -164,7 +172,15 @@ export namespace ContextBreakdown {
     const used = Object.values(parts).reduce((sum, tokens) => sum + tokens, 0)
     const window = input.contextWindow
     const buffer = window > 0 ? Math.min(input.autoCompactBuffer, Math.max(0, window - used)) : 0
-    const order: Measured[] = ["messages", "system_tools", "memory_files", "skills", "system_prompt", "mcp_tools"]
+    const order: Measured[] = [
+      "messages",
+      "system_tools",
+      "memory_files",
+      "skills",
+      "system_prompt",
+      "mcp_tools",
+      "mcp_instructions",
+    ]
     const categories: Category[] = order
       .filter((id) => parts[id] > 0 || id === "messages")
       .map((id) => ({ id, name: NAMES[id], tokens: parts[id] }))
@@ -180,7 +196,15 @@ export namespace ContextBreakdown {
   }
 
   function partsOf(snapshot: Snapshot): Record<Measured, number> {
-    const parts = { messages: 0, system_tools: 0, memory_files: 0, skills: 0, system_prompt: 0, mcp_tools: 0 }
+    const parts = {
+      messages: 0,
+      system_tools: 0,
+      memory_files: 0,
+      skills: 0,
+      system_prompt: 0,
+      mcp_tools: 0,
+      mcp_instructions: 0,
+    }
     for (const category of snapshot.categories) {
       if (category.id in parts) parts[category.id as Measured] = category.tokens
     }
@@ -247,6 +271,7 @@ export namespace ContextBreakdown {
         skills: 0,
         system_prompt: 0,
         mcp_tools: 0,
+        mcp_instructions: 0,
       },
     })
   }

@@ -6,8 +6,8 @@
  *
  * Normal sessions (Code mode, gizzi CLI, chat without a bot): unchanged —
  * provider/agent header first ("You are Allternit Shell…"), then environment,
- * instruction files, workspace identity, bot-chat persona, scratchpad, and
- * the caller's "+" appended instructions last.
+ * instruction files, workspace identity, MCP server instructions, bot-chat
+ * persona, scratchpad, and the caller's "+" appended instructions last.
  *
  * Bot turns (see runtime/bots/bot-turn.ts): the bot's persona (the caller's
  * "+" text, composed by allternit-api) leads, no instruction files or
@@ -27,6 +27,8 @@ export interface TurnSystemInput {
   instructions: Lazy
   /** Workspace identity (.gizzi / ~/.gizzi). Never called for bot turns. */
   workspace: Lazy
+  /** Connected MCP servers' own instructions (MCP.instructionsPrompt). Never called for bot turns. */
+  mcpInstructions?: Lazy
   /** Local gizzi bot canonical-chat persona, if any. */
   botChat?: string
   scratchpad?: string
@@ -47,6 +49,7 @@ export async function composeTurnSystem(input: TurnSystemInput): Promise<string[
     ...(await input.environment()),
     ...(await input.instructions()),
     ...(await input.workspace()),
+    ...(input.mcpInstructions ? await input.mcpInstructions() : []),
     ...(input.botChat ? [input.botChat] : []),
     ...(input.scratchpad ? [input.scratchpad] : []),
     ...appended,

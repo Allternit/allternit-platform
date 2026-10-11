@@ -3,6 +3,9 @@ import { ContextBreakdown } from "@/runtime/session/context-breakdown"
 
 const memory = "Instructions from: /repo/AGENTS.md\n" + "a".repeat(4_000)
 const autoMemory = "Auto-memory from: /home/me/.gizzi/MEMORY.md\n" + "b".repeat(400)
+const mcpInstructions =
+  "# MCP Server Instructions\n\nThe following MCP servers have provided instructions for how to use their tools and resources:\n\n## github\n" +
+  "i".repeat(1_600)
 
 function base(overrides: Partial<ContextBreakdown.BuildInput> = {}): ContextBreakdown.BuildInput {
   return {
@@ -11,8 +14,8 @@ function base(overrides: Partial<ContextBreakdown.BuildInput> = {}): ContextBrea
     providerID: "anthropic",
     modelID: "claude",
     contextWindow: 100_000,
-    system: ["You are gizzi.\n" + "s".repeat(2_000) + "\n" + memory + "\n" + autoMemory],
-    instructions: ["Environment: linux", memory, autoMemory],
+    system: ["You are gizzi.\n" + "s".repeat(2_000) + "\n" + memory + "\n" + autoMemory + "\n" + mcpInstructions],
+    instructions: ["Environment: linux", memory, autoMemory, mcpInstructions],
     tools: {
       read: { description: "r".repeat(400) },
       skill: { description: "k".repeat(800) },
@@ -41,7 +44,8 @@ describe("context breakdown", () => {
     expect(snapshot.systemTools.map((tool) => tool.name)).toEqual(["read"])
     expect(tokens(snapshot, "skills")).toBeGreaterThan(0)
     expect(tokens(snapshot, "memory_files")).toBe(snapshot.memoryFiles.reduce((sum, file) => sum + file.tokens, 0))
-    // memory files are counted once — not again inside the system prompt
+    expect(tokens(snapshot, "mcp_instructions")).toBeGreaterThan(400)
+    // memory files and MCP instructions are counted once — not again inside the system prompt
     expect(tokens(snapshot, "system_prompt")).toBeLessThan(1_000)
     expect(tokens(snapshot, "autocompact_buffer")).toBe(20_000)
     const total = snapshot.categories.reduce((sum, category) => sum + category.tokens, 0)
@@ -65,6 +69,7 @@ describe("context breakdown", () => {
     expect(reconciled.usedTokens).toBe(snapshot.usedTokens + 5_000)
     expect(tokens(reconciled, "messages")).toBe(tokens(snapshot, "messages")! + 5_000)
     expect(tokens(reconciled, "system_tools")).toBe(tokens(snapshot, "system_tools"))
+    expect(tokens(reconciled, "mcp_instructions")).toBe(tokens(snapshot, "mcp_instructions"))
     expect(tokens(reconciled, "autocompact_buffer")).toBe(13_000)
     expect(reconciled.autoCompactEnabled).toBe(true)
   })
