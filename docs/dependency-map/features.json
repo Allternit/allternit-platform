@@ -104,6 +104,10 @@
         {
           "on": "2026-09-28",
           "note": "Bot templates shipped and the old Bot Hub was removed (ai #209, #210)."
+        },
+        {
+          "on": "2026-10-11",
+          "note": "Bot home adds a selectable banner color, the main-bot recipient on launch, a shared scheduled-task creation form, and a workspace file editor with reviewable chat proposals. Saved workspace files apply from the next message. Desktop Inbox uses the local Factory API."
         }
       ],
       "evidence": [
