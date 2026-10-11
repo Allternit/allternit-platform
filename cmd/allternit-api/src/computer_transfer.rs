@@ -17,10 +17,26 @@ use axum::{
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use serde::Deserialize;
 use serde_json::json;
-use std::{process::Stdio, sync::Arc};
+use sha2::{Digest, Sha256};
+use std::{
+    collections::HashMap,
+    process::Stdio,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
 use tokio::io::AsyncWriteExt;
 const CLIP_LIMIT: usize = 256 * 1024;
 const FILE_LIMIT: usize = 25 * 1024 * 1024;
+const CHUNK_LIMIT: usize = 1024 * 1024;
+struct PartialUpload {
+    original_name: String,
+    name: String,
+    size: usize,
+    bytes: Vec<u8>,
+    touched: Instant,
+}
+static UPLOADS: once_cell::sync::Lazy<Mutex<HashMap<String, PartialUpload>>> =
+    once_cell::sync::Lazy::new(|| Mutex::new(HashMap::new()));
 fn failure(status: StatusCode, message: impl Into<String>) -> Response {
     (status, Json(json!({"message":message.into()}))).into_response()
 }
@@ -88,7 +104,9 @@ async fn clipboard(target: &Target, text: Option<&str>) -> Result<String, String
     let linux = if write {
         // xclip keeps a background owner alive. Close its capture pipes so
         // the driver can finish the transfer while that owner retains text.
-        format!("printf %s '{encoded}' | base64 -d | xclip -selection clipboard -in >/dev/null 2>&1")
+        format!(
+            "printf %s '{encoded}' | base64 -d | xclip -selection clipboard -in >/dev/null 2>&1"
+        )
     } else {
         "xclip -selection clipboard -out".into()
     };
@@ -211,6 +229,81 @@ async fn put_clipboard(
 #[derive(Deserialize)]
 struct Upload {
     name: String,
+    upload: Option<String>,
+    offset: Option<usize>,
+    size: Option<usize>,
+}
+enum Chunk {
+    Pending(usize),
+    Complete(String, Vec<u8>),
+}
+fn receive_chunk(
+    pending: &mut HashMap<String, PartialUpload>,
+    user: &str,
+    computer: &str,
+    query: &Upload,
+    body: &[u8],
+) -> Result<Chunk, String> {
+    let upload = query.upload.as_deref().ok_or("Missing upload id")?;
+    uuid::Uuid::parse_str(upload).map_err(|_| "Invalid upload id")?;
+    let size = query.size.ok_or("Missing file size")?;
+    let offset = query.offset.ok_or("Missing chunk offset")?;
+    let end = offset.checked_add(body.len()).ok_or("Invalid chunk size")?;
+    if size > FILE_LIMIT || body.len() > CHUNK_LIMIT || end > size {
+        return Err("Invalid file or chunk size".into());
+    }
+    // Account and computer are part of the namespace. Partial bytes remain
+    // private in memory: at most four 25 MB uploads, expired on subsequent use.
+    pending.retain(|_, upload| upload.touched.elapsed() < Duration::from_secs(600));
+    let key = hex::encode(Sha256::digest(format!("{user}\0{computer}\0{upload}")));
+    if !pending.contains_key(&key) {
+        if offset != 0 {
+            return Err("Upload expired or offset is incorrect. Start again.".into());
+        }
+        if pending.len() >= 4 {
+            return Err("Other uploads are in progress. Try again shortly.".into());
+        }
+        pending.insert(
+            key.clone(),
+            PartialUpload {
+                original_name: query.name.clone(),
+                name: file_name(&query.name)?,
+                size,
+                bytes: Vec::new(),
+                touched: Instant::now(),
+            },
+        );
+    }
+    let current = pending.get_mut(&key).unwrap();
+    if current.size != size || current.original_name != query.name || current.bytes.len() != offset
+    {
+        return Err("Chunk does not match this upload. Start again.".into());
+    }
+    current.bytes.extend_from_slice(body);
+    current.touched = Instant::now();
+    if end == size {
+        let complete = pending.remove(&key).unwrap();
+        Ok(Chunk::Complete(complete.name, complete.bytes))
+    } else {
+        Ok(Chunk::Pending(end))
+    }
+}
+async fn upload_capabilities(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    match controlled(&state, &user, &id, &headers).await {
+        Ok(Target::Browser { .. }) => failure(
+            StatusCode::BAD_REQUEST,
+            "File transfer needs a desktop computer.",
+        ),
+        Ok(_) => {
+            Json(json!({"max_file_bytes":FILE_LIMIT,"chunk_bytes":CHUNK_LIMIT})).into_response()
+        }
+        Err(r) => r,
+    }
 }
 fn file_name(name: &str) -> Result<String, String> {
     let name = name.trim();
@@ -240,7 +333,7 @@ async fn upload(
     if body.len() > FILE_LIMIT {
         return failure(StatusCode::PAYLOAD_TOO_LARGE, "Files are limited to 25 MB.");
     }
-    let name = match file_name(&query.name) {
+    let mut name = match file_name(&query.name) {
         Ok(n) => n,
         Err(e) => return failure(StatusCode::BAD_REQUEST, e),
     };
@@ -248,6 +341,34 @@ async fn upload(
         Ok(t) => t,
         Err(r) => return r,
     };
+    if matches!(target, Target::Browser { .. }) {
+        return failure(
+            StatusCode::BAD_REQUEST,
+            "File transfer needs a desktop computer.",
+        );
+    }
+    let body = if query.upload.is_some() {
+        let chunk = receive_chunk(
+            &mut UPLOADS.lock().unwrap_or_else(|p| p.into_inner()),
+            &user.user_id,
+            &id,
+            &query,
+            &body,
+        );
+        match chunk {
+            Ok(Chunk::Pending(next)) => {
+                return Json(json!({"complete":false,"next_offset":next})).into_response()
+            }
+            Ok(Chunk::Complete(saved_name, bytes)) => {
+                name = saved_name;
+                Bytes::from(bytes)
+            }
+            Err(e) => return failure(StatusCode::CONFLICT, e),
+        }
+    } else {
+        body
+    };
+    let size = body.len();
     let result: Result<String, String> = async {
         match target {
             Target::ThisDevice => {
@@ -285,7 +406,8 @@ async fn upload(
     }
     .await;
     match result {
-        Ok(path) => Json(json!({"success":true,"path":path})).into_response(),
+        Ok(path) => Json(json!({"success":true,"complete":true,"next_offset":size,"path":path}))
+            .into_response(),
         Err(e) => failure(StatusCode::SERVICE_UNAVAILABLE, e),
     }
 }
@@ -297,7 +419,9 @@ pub fn router() -> Router<Arc<AppState>> {
         )
         .route(
             "/computers/:id/transfer/file",
-            post(upload).layer(DefaultBodyLimit::max(FILE_LIMIT)),
+            post(upload)
+                .get(upload_capabilities)
+                .layer(DefaultBodyLimit::max(FILE_LIMIT)),
         )
 }
 #[cfg(test)]
@@ -309,5 +433,36 @@ mod tests {
             assert!(file_name(name).is_err());
         }
         assert!(file_name("Report.pdf").unwrap().ends_with("-Report.pdf"));
+    }
+    #[test]
+    fn chunks_are_ordered_private_and_bounded() {
+        let mut pending = HashMap::new();
+        let mut query = Upload {
+            name: "Report.pdf".into(),
+            upload: Some(uuid::Uuid::new_v4().to_string()),
+            offset: Some(0),
+            size: Some(6),
+        };
+        assert!(matches!(
+            receive_chunk(&mut pending, "owner", "computer", &query, b"abc").unwrap(),
+            Chunk::Pending(3)
+        ));
+        query.offset = Some(3);
+        assert!(receive_chunk(&mut pending, "other", "computer", &query, b"def").is_err());
+        assert!(receive_chunk(&mut pending, "owner", "other-computer", &query, b"def").is_err());
+        query.offset = Some(2);
+        assert!(receive_chunk(&mut pending, "owner", "computer", &query, b"def").is_err());
+        query.offset = Some(3);
+        match receive_chunk(&mut pending, "owner", "computer", &query, b"def").unwrap() {
+            Chunk::Complete(name, bytes) => {
+                assert!(name.ends_with("-Report.pdf"));
+                assert_eq!(bytes, b"abcdef");
+            }
+            _ => panic!("expected completed upload"),
+        }
+        assert!(pending.is_empty());
+        query.offset = Some(0);
+        query.size = Some(FILE_LIMIT + 1);
+        assert!(receive_chunk(&mut pending, "owner", "computer", &query, b"abc").is_err());
     }
 }

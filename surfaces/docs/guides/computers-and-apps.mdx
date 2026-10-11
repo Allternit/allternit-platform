@@ -82,6 +82,9 @@ All routes below use the existing authenticated computer visibility rules:
 | `GET /api/v1/computers/:id/history/:step/snapshot` | Recorded redacted PNG, private/no-store; validates step UUID |
 | `GET /api/v1/computers/:id/clipboard` | UTF-8 clipboard text, capped at 256 KB |
 | `PUT /api/v1/computers/:id/clipboard` | Explicit human clipboard write `{text}` |
-| `POST /api/v1/computers/:id/transfer/file?name=…` | Raw file bytes, up to 25 MB; returns safe unique destination path |
+| `GET /api/v1/computers/:id/transfer/file` | Requires control; returns supported file and chunk limits |
+| `POST /api/v1/computers/:id/transfer/file?name=…&upload=…&offset=…&size=…` | Sequential chunks up to 1 MB, 25 MB per file; final acknowledgement returns the safe unique destination path |
 
 Clipboard and file transfer require this user's active control lease on this device, or this user's active bot desktop take-over. Watching access alone cannot transfer data. Step recording hooks into both direct computer tool calls and structured subtask steps; it never bypasses action policy, lease or approvals.
+
+File uploads use 1 MB chunks so they fit through the phone runtime relay. The runtime checks ownership and active control on every chunk and isolates partial uploads by user, computer, and upload ID. Up to four partial uploads are retained in memory; entries older than ten minutes are pruned on the next upload. No destination file is written until all bytes arrive in order.
