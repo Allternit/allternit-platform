@@ -86,6 +86,8 @@ export class AaiHost {
   private disabled = new Set<string>();
   private lastCall = new Map<string, number>();
   private history = new Map<string, number[]>();
+  /** Vendor adapters whose aai module failed to load at boot: id -> why (shown by GET /aai/providers). */
+  private loadErrors = new Map<string, string>();
 
   constructor(disabledIds: Iterable<string> = []) {
     for (const d of disabledIds) this.disabled.add(d);
@@ -99,6 +101,8 @@ export class AaiHost {
     this.router.register(guarded);
     return this;
   }
+
+  recordLoadError(id: string, error: string): void { this.loadErrors.set(id, error); }
 
   isDisabled(id: string): boolean { return this.disabled.has(id); }
   setDisabled(id: string, disabled: boolean): void { if (disabled) this.disabled.add(id); else this.disabled.delete(id); }
@@ -134,6 +138,9 @@ export class AaiHost {
         else error = m.error.humanMessage;
       } catch (e) { error = (e as Error).message; }
       out.push({ adapterId, disabled: this.disabled.has(adapterId), ...(r.pacing ? { pacing: r.pacing } : {}), manifest, ...(error ? { error } : {}) });
+    }
+    for (const [adapterId, error] of this.loadErrors) {
+      if (!this.regs.has(adapterId)) out.push({ adapterId, disabled: this.disabled.has(adapterId), manifest: null, error: `failed to load: ${error}` });
     }
     return out;
   }
@@ -247,14 +254,22 @@ export async function registerVendorAdapters(
   for (const id of readdirSync(adaptersDir).sort()) {
     const file = ["aai.js", "aai.ts"].map((n) => join(adaptersDir, id, n)).find((f) => existsSync(f));
     if (!file) continue;
-    const mod = (await import(pathToFileURL(file).href)) as {
-      createAaiRegistration?: (env: NodeJS.ProcessEnv, ctx: VendorContext) => AaiRegistration;
-    };
-    if (typeof mod.createAaiRegistration !== "function") {
-      throw new Error(`adapter ${id}: aai module has no createAaiRegistration()`);
+    // Each adapter loads on its own: one whose import or factory throws is recorded (GET /aai/providers shows it
+    // with an `error`) and skipped, so it never stops the adapters after it from registering.
+    try {
+      const mod = (await import(pathToFileURL(file).href)) as {
+        createAaiRegistration?: (env: NodeJS.ProcessEnv, ctx: VendorContext) => AaiRegistration;
+      };
+      if (typeof mod.createAaiRegistration !== "function") {
+        throw new Error("aai module has no createAaiRegistration()");
+      }
+      host.register(mod.createAaiRegistration(env, ctx));
+      loaded.push(id);
+    } catch (e) {
+      const msg = (e as Error)?.message ?? String(e);
+      console.error(`[aai] adapter ${id} failed to load:`, e);
+      host.recordLoadError(id, msg);
     }
-    host.register(mod.createAaiRegistration(env, ctx));
-    loaded.push(id);
   }
   return loaded;
 }

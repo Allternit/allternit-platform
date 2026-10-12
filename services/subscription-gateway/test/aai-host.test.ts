@@ -1,4 +1,7 @@
 // AAI host: /aai/call dispatch, error envelope, auth, cursor passthrough, kill switch, pacing.
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import request from "supertest";
 import { MemoryProvider } from "@allternit/agent-gateway";
@@ -130,6 +133,32 @@ describe("vendor adapter registration", () => {
     const host = new AaiHost();
     const ids = await registerVendorAdapters(host, defaultAdaptersDir(), {});
     expect(ids).toContain("grok-bot");
+  });
+
+  it("one broken adapter is recorded and skipped; the rest still register", async () => {
+    const { AaiHost, registerVendorAdapters } = await import("../src/aai/registry.js");
+    const root = mkdtempSync(join(tmpdir(), "aai-adapters-"));
+    try {
+      writeFileSync(join(root, "package.json"), JSON.stringify({ type: "module" }));
+      const add = (id: string, src: string) => { mkdirSync(join(root, id)); writeFileSync(join(root, id, "aai.js"), src); };
+      add("a-broken", `throw new Error("boom at import");`);
+      add("b-noexport", `export const nothing = 1;`);
+      add("c-good", `export function createAaiRegistration() { return { provider: {
+        adapterId: "c-good",
+        list: async () => ({ ok: true, value: [{ agentId: "g", displayName: "G", vendor: "good", state: "READY" }] }),
+        capabilities: async () => ({ ok: false, error: { code: "UNSUPPORTED", retryable: false, humanMessage: "n/a" } }),
+      } }; }`);
+      const host = new AaiHost();
+      const ids = await registerVendorAdapters(host, root, {});
+      expect(ids).toEqual(["c-good"]);
+      const providers = await host.providers();
+      const by = Object.fromEntries(providers.map((p) => [p.adapterId, p]));
+      expect(by["a-broken"].error).toMatch(/boom at import/);
+      expect(by["b-noexport"].error).toMatch(/createAaiRegistration/);
+      expect(by["a-broken"].manifest).toBeNull();
+      expect(by["c-good"]).toBeDefined();
+      expect(by["c-good"].error ?? "").not.toMatch(/failed to load/);
+    } finally { rmSync(root, { recursive: true, force: true }); }
   });
 });
 
