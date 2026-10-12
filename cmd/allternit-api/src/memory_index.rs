@@ -39,7 +39,7 @@ use crate::llm_gateway::embeddings::generate_local_embedding;
 pub const HASH_MODEL: &str = "local-hash-384";
 pub const HASH_DIM: usize = 384;
 pub const DEFAULT_EMBED_URL: &str = "http://127.0.0.1:7719";
-pub const DEFAULT_EMBED_MODEL: &str = "nomic-ai/modernbert-embed-base";
+pub const DEFAULT_EMBED_MODEL: &str = "google/embeddinggemma-2";
 /// Most recent embedding rows scanned per (scope, model) in vector search.
 pub const VECTOR_SCAN_CAP: usize = 20_000;
 /// Above this many vectors per (scope, model) vector search uses HNSW.

@@ -7,6 +7,7 @@
 export {
   BrainService,
   KeywordEmbedding,
+  createAllternitEmbedder,
   createOpenAIEmbedder,
   type MemoryQuery,
   type MemoryChunk,

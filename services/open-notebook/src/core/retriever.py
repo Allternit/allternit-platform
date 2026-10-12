@@ -95,7 +95,7 @@ class Retriever:
                 )
 
     async def search(self, query: str, notebook_id: str, limit: int = 10) -> List[Dict[str, Any]]:
-        query_embedding = (await embedder.embed([query]))[0]
+        query_embedding = (await embedder.embed([query], "query"))[0]
 
         # Try Qdrant first
         if QDRANT_AVAILABLE and self._qdrant and self._dim:
@@ -152,6 +152,10 @@ class Retriever:
         scores = []
         for chunk in chunks:
             chunk_vec = np.array(chunk["embedding"])
+            # Chunks embedded by an older model (e.g. 384-dim MiniLM) live in
+            # another vector space: skip them until the source is re-ingested.
+            if chunk_vec.shape != query_vec.shape:
+                continue
             norm = np.linalg.norm(query_vec) * np.linalg.norm(chunk_vec)
             similarity = np.dot(query_vec, chunk_vec) / norm if norm > 0 else 0.0
             scores.append({
