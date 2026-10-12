@@ -20,6 +20,7 @@ pub mod decisions;
 pub mod effects; // WP-C3a/C3b effect connectors
 pub mod executor;
 pub mod guard;
+pub mod memory_context; // Agency Descent: memory in the context step
 pub mod safety;
 pub mod store;
 /// WP-X1: task types beyond BUG_FIX (graphs, completion contracts, eval sets).

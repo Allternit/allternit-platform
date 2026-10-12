@@ -26,6 +26,8 @@ use std::collections::HashSet;
 pub const TASK_WAIT_REASON: &str = "task_wait";
 const GATE_PRIMITIVE: &str = "ver.check_acceptance_evidence";
 const MAX_STEPS: usize = 64;
+/// Where the context step's recalled memory waits for the S2/S3 prompts.
+const MEMORY_KEY: &str = "memory:recall";
 const SYSTEM: &str = "You are one step of a verified agent run. Answer with the requested content only.";
 
 /// Dev/conformance script (scripted executor only), read from
@@ -285,6 +287,10 @@ impl Exec<'_> {
                         else if node.outputs.iter().any(|o| o == "candidate:step") { crate::agency_api::effects::campaign::STEP_HINT } else { "" }; // WP-C3b
                     format!("Goal: {goal}\n\nContext:\n{input}\n\nProduce: {}{hint}", node.extensions.as_ref().and_then(|e| e.get("x-title")).and_then(Value::as_str).unwrap_or("the step's output"))
                 };
+                let prompt = match out.get(MEMORY_KEY).filter(|_| node.node_kind != "VERIFY") {
+                    Some(m) => format!("{prompt}\n\nRelevant memory (from the user's memory; use it when it applies):\n{m}"),
+                    None => prompt,
+                };
                 match self.generate(&plan, &cur, &prompt, &script) {
                     Ok(text) => {
                         let pass = node.node_kind != "VERIFY" || scripted() || text.trim_start().to_ascii_uppercase().starts_with("PASS");
@@ -295,6 +301,15 @@ impl Exec<'_> {
                     Err(StepErr::Fail(e)) => { tracing::info!(run_id = %self.run_id, node = %cur, error = %e, "generative step failed"); false }
                 }
             } else {
+                // Agency Descent: the context step recalls the owner's memory for the S2/S3 steps.
+                if node.primitive_id == "ctx.compile_model_context" && !s_fail && !unmet {
+                    if let Some(rec) = self.recall_memory(goal) {
+                        if !rec.text.is_empty() {
+                            out.insert(MEMORY_KEY.into(), rec.text);
+                        }
+                        proof = json!({ "memory_hits": rec.ids });
+                    }
+                }
                 // Deterministic S0 (COMPUTE / VERIFY / CONTROL).
                 let pass = !s_fail && !unmet && match node.primitive_id.as_str() {
                     "ver.check_artifact_existence" => node.inputs.iter().all(|i| out.get(i).is_some_and(|v| !v.trim().is_empty()))
@@ -351,6 +366,18 @@ impl Exec<'_> {
             }
         }
         Err(StepErr::Fail(anyhow!("step cap reached")))
+    }
+
+    /// The run owner's memory for `goal` (`memory_context`); None when off or failing.
+    fn recall_memory(&self, goal: &str) -> Option<crate::agency_api::memory_context::Recall> {
+        if !crate::agency_api::memory_context::enabled() {
+            return None;
+        }
+        let owner = self.h.block_on(self.s.load_run(&self.run_id)).ok().flatten()?.owner;
+        match self.h.block_on(crate::agency_api::memory_context::recall(&self.st.db, &owner, goal)) {
+            Ok(r) => Some(r),
+            Err(e) => { tracing::info!(run_id = %self.run_id, error = %e, "agency memory recall failed"); None }
+        }
     }
 
     fn criteria_patch(&self, evidence: &[String], status: &str) -> Result<Value> {
