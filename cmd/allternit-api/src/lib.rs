@@ -70,6 +70,7 @@ pub mod agent_gateway_routes;
 pub mod thread_routes;
 pub mod bot_routing;
 pub mod gateway_routing;
+pub mod gateway_connect;
 pub mod gateway_runner;
 pub mod gateway_vendor_host;
 #[cfg(test)]
@@ -83,6 +84,7 @@ pub mod discord_gateway;
 pub mod channel_discord_app;
 pub mod channel_gateway;
 pub mod openui_text;
+pub mod card_meta;
 pub mod channel_phone;
 pub mod phone_outbound;
 pub mod phone_sync;

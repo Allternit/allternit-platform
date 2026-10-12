@@ -1,0 +1,389 @@
+{
+  "Answer": {
+    "params": [
+      "title",
+      "children",
+      "actions"
+    ],
+    "required": []
+  },
+  "Section": {
+    "params": [
+      "title",
+      "children"
+    ],
+    "required": [
+      "title",
+      "children"
+    ]
+  },
+  "Row": {
+    "params": [
+      "children"
+    ],
+    "required": [
+      "children"
+    ]
+  },
+  "Text": {
+    "params": [
+      "content",
+      "tone"
+    ],
+    "required": [
+      "content"
+    ]
+  },
+  "Metric": {
+    "params": [
+      "label",
+      "value",
+      "format",
+      "unit",
+      "note"
+    ],
+    "required": [
+      "label",
+      "value"
+    ]
+  },
+  "Table": {
+    "params": [
+      "headers",
+      "rows"
+    ],
+    "required": [
+      "headers",
+      "rows"
+    ]
+  },
+  "BarChart": {
+    "params": [
+      "labels",
+      "values",
+      "format",
+      "unit"
+    ],
+    "required": [
+      "labels",
+      "values"
+    ]
+  },
+  "Steps": {
+    "params": [
+      "items"
+    ],
+    "required": [
+      "items"
+    ]
+  },
+  "Compare": {
+    "params": [
+      "columns"
+    ],
+    "required": [
+      "columns"
+    ]
+  },
+  "Callout": {
+    "params": [
+      "content",
+      "tone"
+    ],
+    "required": [
+      "content"
+    ]
+  },
+  "Slider": {
+    "params": [
+      "label",
+      "value",
+      "min",
+      "max",
+      "step",
+      "format",
+      "unit"
+    ],
+    "required": [
+      "label",
+      "value",
+      "min",
+      "max"
+    ]
+  },
+  "NumberField": {
+    "params": [
+      "label",
+      "value",
+      "step",
+      "format",
+      "unit",
+      "min",
+      "max"
+    ],
+    "required": [
+      "label",
+      "value"
+    ]
+  },
+  "Select": {
+    "params": [
+      "label",
+      "value",
+      "options"
+    ],
+    "required": [
+      "label",
+      "value",
+      "options"
+    ]
+  },
+  "Toggle": {
+    "params": [
+      "label",
+      "value"
+    ],
+    "required": [
+      "label",
+      "value"
+    ]
+  },
+  "Button": {
+    "params": [
+      "label",
+      "action",
+      "variant"
+    ],
+    "required": [
+      "label"
+    ]
+  },
+  "Choice": {
+    "params": [
+      "question",
+      "options"
+    ],
+    "required": [
+      "question",
+      "options"
+    ]
+  },
+  "Stack": {
+    "params": [
+      "children",
+      "direction",
+      "gap"
+    ],
+    "required": [
+      "children"
+    ]
+  },
+  "Grid": {
+    "params": [
+      "children",
+      "columns",
+      "gap"
+    ],
+    "required": [
+      "children"
+    ]
+  },
+  "Panel": {
+    "params": [
+      "title",
+      "children"
+    ],
+    "required": [
+      "children"
+    ]
+  },
+  "Divider": {
+    "params": [],
+    "required": []
+  },
+  "Tabs": {
+    "params": [
+      "tabs"
+    ],
+    "required": [
+      "tabs"
+    ]
+  },
+  "Tab": {
+    "params": [
+      "title",
+      "children"
+    ],
+    "required": [
+      "title",
+      "children"
+    ]
+  },
+  "Collapsible": {
+    "params": [
+      "title",
+      "children",
+      "open"
+    ],
+    "required": [
+      "title",
+      "children"
+    ]
+  },
+  "Badge": {
+    "params": [
+      "label",
+      "tone"
+    ],
+    "required": [
+      "label"
+    ]
+  },
+  "KeyValue": {
+    "params": [
+      "items",
+      "format",
+      "unit"
+    ],
+    "required": [
+      "items"
+    ]
+  },
+  "List": {
+    "params": [
+      "items"
+    ],
+    "required": [
+      "items"
+    ]
+  },
+  "Quote": {
+    "params": [
+      "content",
+      "cite"
+    ],
+    "required": [
+      "content"
+    ]
+  },
+  "Code": {
+    "params": [
+      "content",
+      "language"
+    ],
+    "required": [
+      "content"
+    ]
+  },
+  "Timeline": {
+    "params": [
+      "items"
+    ],
+    "required": [
+      "items"
+    ]
+  },
+  "Image": {
+    "params": [
+      "src",
+      "alt",
+      "caption",
+      "ratio"
+    ],
+    "required": [
+      "src",
+      "alt"
+    ]
+  },
+  "Link": {
+    "params": [
+      "label",
+      "url"
+    ],
+    "required": [
+      "label",
+      "url"
+    ]
+  },
+  "Progress": {
+    "params": [
+      "label",
+      "value",
+      "max",
+      "format",
+      "unit"
+    ],
+    "required": [
+      "label",
+      "value"
+    ]
+  },
+  "LineChart": {
+    "params": [
+      "labels",
+      "values",
+      "series",
+      "format",
+      "unit"
+    ],
+    "required": [
+      "labels"
+    ]
+  },
+  "AreaChart": {
+    "params": [
+      "labels",
+      "values",
+      "series",
+      "format",
+      "unit"
+    ],
+    "required": [
+      "labels"
+    ]
+  },
+  "PieChart": {
+    "params": [
+      "labels",
+      "values",
+      "format",
+      "unit"
+    ],
+    "required": [
+      "labels",
+      "values"
+    ]
+  },
+  "TextField": {
+    "params": [
+      "label",
+      "value",
+      "placeholder"
+    ],
+    "required": [
+      "label",
+      "value"
+    ]
+  },
+  "DateField": {
+    "params": [
+      "label",
+      "value"
+    ],
+    "required": [
+      "label",
+      "value"
+    ]
+  },
+  "Checklist": {
+    "params": [
+      "label",
+      "items",
+      "value"
+    ],
+    "required": [
+      "items",
+      "value"
+    ]
+  }
+}
