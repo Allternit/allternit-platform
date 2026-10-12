@@ -1240,3 +1240,5 @@ Cross-compiled gizzi-code-win32-x64 from macOS (`bun build --target=win32-x64` �
 - 2026-10-11 Codex: [Composer mascot footing and shared template animation](summaries/2026-10-11-1840-bot-animation-codex-mascot-footing.md) — UI #521–#523; 54 targeted tests, TypeScript/docs/map clean. Rail/header/picker share the real sheet engine, hover/focus and reduced-motion behavior. Final artifact and apply status in animation-completion handoff; owner Designer editing session preserved.
 
 - 2026-10-11 Codex — [Project banner and compact customization](summaries/2026-10-11-1900-project-banner-codex-layout.md).
+
+- 2026-10-12 Claude — [Gateway one-step connect: subscriptions to bots in one call](summaries/2026-10-12-1050-practical-galileo-claude-gateway-one-step-connect.md) — platform #1513, ai #534. POST /gateway/connect for 11 products + Quick connect panel; container-verified against a stand-in vendor, no live vendor sessions.

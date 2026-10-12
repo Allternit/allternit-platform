@@ -6,6 +6,32 @@
 
 Read [README.md](README.md) first for what the gateway is, and [GLOSSARY.md](GLOSSARY.md) for terms.
 
+## The short way: one call per product
+
+`POST /api/v1/gateway/connect {product}` does steps 5's whole walk for you: it finds or creates the provider account, opens the vendor's sign-in window when one is needed, discovers the vendor's agents (your default chat, GPTs, Projects, Gems, Grok bots, dots), checks the vendor is really up, and creates one READY Allternit bot per agent. Call it again after you sign in; it picks up where it stopped and never duplicates anything.
+
+```bash
+# one machine: the API talks to a gateway on the same box, no Sessions computer needed
+export ALLTERNIT_LOCAL_SUBS_GATEWAY=1 ALLTERNIT_LOCAL_SUBS_GATEWAY_STATE_DIR=$SUBS_GATEWAY_STATE_DIR   # before cargo run -p allternit-api
+
+api $API/gateway/connect                                   # every product and your state for it
+api -X POST $API/gateway/connect -d '{"product":"chatgpt"}'
+# {"status":"needs_sign_in","message":"A ChatGPT window is open on the machine running your gateway. Sign in there, then call connect again.",...}
+api -X POST $API/gateway/connect -d '{"product":"chatgpt"}'
+# {"status":"ready","message":"ChatGPT is connected. 3 bots are ready.","bots":[{"botId":"…","name":"ChatGPT","state":"READY"},{"name":"Code Reviewer (GPT)",…}]}
+```
+
+| `product` | Signs in with | Extra fields |
+|---|---|---|
+| `chatgpt`, `claude`, `gemini`, `copilot`, `kimi` | the vendor's website, in a login window the gateway opens | |
+| `chatgpt-dots` | a ChatGPT window the adapter owns (gateway needs `SUBS_GATEWAY_DOTS_CONSENT=1`) | |
+| `grok-bot` | the Grok Bot app, relaunched with `--remote-debugging-port=9231` | |
+| `claude-managed-agents` | an API key (gateway needs `SUBS_GATEWAY_CLAUDE_MA_ENVIRONMENT_ID`) | `apiKey` |
+| `openclaw`, `hermes` | your local server | |
+| `muse` | a WhatsApp Business number | `agentAddress`, plus `channelAccountId` or `accessToken, phoneNumberId, appSecret` |
+
+`status` is one of `ready`, `needs_sign_in`, `needs_key`, `needs_setup` (with `action.steps`) or `blocked` (the vendor shows a verification check: clear it yourself). Pass `agents: [externalAgentId, ...]` to make bots for only some of the discovered agents. The account reaches CONNECTED and bindings READY only after discovery and `agent.health` answered; the login itself is always done by you in a plain browser window. The numbered steps below are the same chain by hand.
+
 ## Two paths, and a constraint
 
 ```
@@ -15,7 +41,7 @@ curl -> subscription-gateway       web / curl -> allternit-api -> Sessions compu
 ```
 
 - **Path A** runs on your machine with one process. It proves an adapter and the AAI contract. Grok Bot was verified live this way.
-- **Path B** is the real product flow: bindings, threads, ledger, approvals, the web UI. **allternit-api only reaches the gateway through a bound Sessions computer** (`PUT /api/v1/subscriptions/binding`). The bind is refused for "the desktop you work on" (`not_a_sessions_computer` in `subscription_routes.rs`) and for a bot's computer. So Path B needs a separate running computer that hosts the gateway. Whether Grok Bot's desktop app can be driven from there is unverified. For a first look, do Path A, then do the Path B steps against a Sessions computer or read them as reference.
+- **Path B** is the real product flow: bindings, threads, ledger, approvals, the web UI. **allternit-api reaches the gateway through a bound Sessions computer** (`PUT /api/v1/subscriptions/binding`), or, with `ALLTERNIT_LOCAL_SUBS_GATEWAY=1` (+ `ALLTERNIT_LOCAL_SUBS_GATEWAY_STATE_DIR`, `_PORT`), through a gateway on the same machine. The bind is refused for "the desktop you work on" (`not_a_sessions_computer` in `subscription_routes.rs`) and for a bot's computer. So Path B needs a separate running computer that hosts the gateway. Whether Grok Bot's desktop app can be driven from there is unverified. For a first look, do Path A, then do the Path B steps against a Sessions computer or read them as reference.
 
 ## 1. Start the subscription gateway
 
