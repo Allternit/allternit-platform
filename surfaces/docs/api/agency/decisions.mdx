@@ -96,12 +96,13 @@ When no backend answers and `allow_abstain` is false, the response is `503` with
 
 ## Backends and escalation
 
-The router walks the chain in order (default `head,local,vendor,typesafe,oracle`, set with `ALLTERNIT_DECISIONS_CHAIN`). It stops at the first answer at or over the kind's threshold; a later answer replaces an earlier one. Backends that are not configured are left out; backends that cannot see images are skipped for a decision that carries one.
+The router walks the chain in order (default `head,local,open,vendor,typesafe,oracle`, set with `ALLTERNIT_DECISIONS_CHAIN`). It stops at the first answer at or over the kind's threshold; a later answer replaces an earlier one. Backends that are not configured are left out; backends that cannot see images are skipped for a decision that carries one.
 
 | Backend | What it is | On by default |
 |---|---|---|
 | `local` | The owned scorer sidecar: one-pass option scoring (ported from open-jev, MIT). MLX on Apple silicon; llama.cpp on Windows, Linux, Intel Macs and cloud hosts. Default model Qwen3.5-4B (Apache-2.0); `ALLTERNIT_DECISIONS_MODEL=gemma-3-4b` switches to Gemma 3 4B (set `HF_TOKEN` if your mirror is gated). Text only. | Yes, wherever Allternit Desktop runs it (`ALLTERNIT_DECISIONS_LOCAL_URL`) |
 | `head` | The slot for the decision kind's live flywheel heads (see [The flywheel](#the-flywheel)). Empty until a head earns promotion; a head that has no answer passes the decision on. Text only. | Yes, but empty until a head is live |
+| `open` | A self-hosted open-weight decision model over the Jev/SystemOne wire format (`POST /v1/systemone`, one `choice` question, the options as criteria): Liquid d1-3B (the decision sidecar's `systemone` engine, or llama-server), Cloudflare Clef / Clef-flash (SGLang), vLLM-SR d3. Text only. Not metered and not vendor-gated: it is ours. Model: `ALLTERNIT_DECISIONS_OPEN_MODEL` (default `LiquidAI/d1-3B`); optional bearer token `ALLTERNIT_DECISIONS_OPEN_TOKEN`. | No: needs `ALLTERNIT_DECISIONS_OPEN_URL` |
 | `vendor` | Adapter for a hosted vendor decisions API (its public beta `POST /v1/decisions`: one `choice` question, the options as choices, text and image input). Metered by the vendor. | No: needs `ALLTERNIT_DECISIONS_VENDOR_KEY` **and** the project enabled |
 | `typesafe` | TypeSafe Jev adapter (`POST /v1/systemone`, one `choice` question, the options as criteria). Text only. Metered by the vendor. | No: needs `ALLTERNIT_DECISIONS_TYPESAFE_KEY` **and** the project enabled |
 | `oracle` | The planner model through gizzi, like every other model call. Sees images. The escalation path and the source of labels. Model: `ALLTERNIT_DECISIONS_ORACLE_MODEL=provider/model`, else your default model. | Yes (`ALLTERNIT_DECISIONS_ORACLE=0` turns it off) |
@@ -119,6 +120,23 @@ Both vendor backends are off by default and gated twice: the key has to be confi
 To compare backends on the same decisions, run `domains/decision-runtime/bench/compare_backends.py`. It sends each case once per backend through `/v1/decisions` (same adapters as production) and prints a latency and accuracy table. It refuses metered backends unless `--allow-metered` is passed.
 
 Thresholds per kind: `default` 0.6, `verify` 0.8, `safety` 0.9, `escalate` 0.7. Override with a JSON object in `ALLTERNIT_DECISIONS_THRESHOLDS`, for example `{"default": 0.5, "element": 0.55}`.
+
+### Native decision models (`systemone` engine)
+
+The sidecar can also run a native decision model instead of option scoring on a chat model: `python -m allternit_decisions --engine systemone` (model preset `d1-3b`, Liquid d1-3B at a pinned revision, LFM Open License v1.0). It answers `/v1/score` as usual and also serves `POST /v1/systemone`, so the same process can back both `local` and `open`. It needs `transformers>=5.14`, `torch`, `torchvision` and `pillow` (installed on first use) and about 6 GB of weights. Liquid reports 8 ms per decision on an RTX 4090 and 30 ms on an M5 Pro; on a 4-core cloud CPU in float32 it measured about 6.5 s, so give it a GPU or Apple silicon in production.
+
+## Training data (opt-in)
+
+Decisions can become training data for the flywheel's trained heads, but only for organizations that opt in.
+
+- `GET /v1/decisions/training` shows your scope (your organization, or you without one), whether it opted in, and how many examples are stored and labelled.
+- `PUT /v1/decisions/training` `{"opted_in": true}` opts in. Organization admins only. `{"opted_in": false}` opts out and **deletes** the scope's stored examples.
+- While opted in, each decision stores its context, question and options, DLP-redacted, next to the answer that served it. Labels come from outcomes (`PATCH /v1/decisions/:id` with a `label`, or the served choice on `success`; a `failure` marks it wrong) or, until one arrives, from a confident answer of a teacher backend (`oracle`, `open`, `vendor`, `typesafe`).
+- `GET /v1/decisions/datasets/:kind` exports the labelled examples as JSONL in the Jev/SystemOne shape (`state`, `questions`, `answers`), ready for a decision fine-tune. `?scope=mine` (default, organization admins) exports your scope; `?scope=all` pools every opted-in scope with no scope or owner ids in the rows (decisions admins, `ALLTERNIT_DECISIONS_ADMINS`). Trained heads are shared across opted-in organizations.
+
+## Descent metrics
+
+`GET /v1/descent?days=30` reports whether work is moving down the tiers, over your decisions in the window: per decision kind and in total, how many each tier answered (`head`, `local`, `open`, `vendor`, `oracle`), the `cheap_share` (head + local + open), the `oracle_share`, the `escalation_rate`, the mean latency and the oracle's spend in USD. `daily` gives the cheap share per day; it should rise as heads are trained and promoted.
 
 ### The local scorer
 
@@ -140,7 +158,7 @@ PATCH /v1/decisions/{id}
 | `label` | string | The option id that was right, when known (from the oracle, a person or a verifier). |
 | `detail` | string | Up to 4000 bytes. |
 
-Returns the stored decision. `GET /v1/decisions/{id}` returns it too. The store keeps the context's sha256, never the context itself, plus the options, choice, probabilities, backend, latency, attempts and outcome. These rows are the training data for the trained heads, and an outcome also feeds the flywheel below.
+Returns the stored decision. `GET /v1/decisions/{id}` returns it too. The store keeps the context's sha256, never the context itself, plus the options, choice, probabilities, backend, latency, attempts and outcome. The context text is kept only for organizations that opted in to [training data](#training-data-opt-in), DLP-redacted, and an outcome relabels that example and feeds the flywheel below.
 
 ## The flywheel
 

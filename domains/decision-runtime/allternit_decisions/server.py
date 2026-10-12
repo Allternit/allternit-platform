@@ -4,6 +4,9 @@
     POST /prepare    start installing/downloading/loading now
     POST /v1/score   {"context", "options": [text], "kind", "question"}
                      -> {"probs": [...], "timing": {...}, "engine", "model"}
+    POST /v1/systemone  (engine "systemone" only) a Jev/SystemOne request
+                     {"state", "questions": {name: {type, instructions, criteria}}}
+                     -> {"model", "answers": {name: answer}, "usage"}
 
 allternit-api's Decision Runtime (`POST /v1/decisions`) is the only intended
 caller; it maps option ids, applies thresholds and escalates. When a launch
@@ -64,6 +67,8 @@ def make_handler(rt: Runtime, token: str | None) -> type[BaseHTTPRequestHandler]
             if self.path == "/prepare":
                 rt.ensure_started()
                 return self._send(200, rt.health())
+            if self.path == "/v1/systemone":
+                return self._systemone(raw)
             if self.path != "/v1/score":
                 return self._send(404, {"error": "not found"})
             try:
@@ -87,6 +92,28 @@ def make_handler(rt: Runtime, token: str | None) -> type[BaseHTTPRequestHandler]
                 log.exception("score failed")
                 return self._send(500, {"error": f"{type(e).__name__}: {e}"})
             self._send(200, {**out, "engine": rt.engine, "model": rt.model})
+
+        def _systemone(self, raw: bytes) -> None:
+            if rt.engine != "systemone":
+                return self._send(404, {"error": "this sidecar's engine does not serve /v1/systemone"})
+            try:
+                req = json.loads(raw)
+                questions = req["questions"]
+                if not isinstance(questions, dict) or not questions:
+                    raise ValueError("questions must be a non-empty object")
+            except (ValueError, KeyError, TypeError) as e:
+                return self._send(400, {"error": f"bad request: {e}"})
+            if rt.status != "ready":
+                rt.ensure_started()
+                return self._send(503, {**rt.health(), "error": rt.error or "not ready"})
+            try:
+                out = rt.scorer.system_one(req.get("state"), questions)
+            except (ValueError, KeyError) as e:
+                return self._send(400, {"error": str(e)})
+            except Exception as e:  # noqa: BLE001
+                log.exception("systemone failed")
+                return self._send(500, {"error": f"{type(e).__name__}: {e}"})
+            self._send(200, {"model": rt.model, **out})
 
     return Handler
 

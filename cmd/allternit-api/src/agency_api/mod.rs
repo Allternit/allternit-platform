@@ -206,6 +206,11 @@ pub fn agency_router() -> Router<Arc<AppState>> {
         .route("/v1/decisions/:decision_id", get(decisions::get_decision).patch(decisions::patch_decision))
         // Decision flywheel (E5): heads, their metrics and state; manual moves for decisions admins.
         .route("/v1/decisions/heads", get(decisions::flywheel::list_heads))
+        // Decision harvest (Agency Descent): per-org opt-in and labelled JSONL datasets.
+        .route("/v1/decisions/training", get(decisions::harvest::get_training).put(decisions::harvest::put_training))
+        .route("/v1/decisions/datasets/:kind", get(decisions::harvest::get_dataset))
+        // Agency Descent: tier mix, escalations and oracle spend over time.
+        .route("/v1/descent", get(decisions::descent::get_descent))
         .route("/v1/decisions/heads/:head/:kind", axum::routing::put(decisions::flywheel::put_head))
         .route("/v1/capabilities", get(|| async { Json(page(catalog::capabilities())) }))
         .route("/v1/agents", get(|| async { Json(page(vec![catalog::agent_object()])) }))

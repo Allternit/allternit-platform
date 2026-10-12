@@ -12,7 +12,9 @@
 //! A decision is never authorization: policy runs first, always.
 
 pub mod backends;
+pub mod descent;
 pub mod flywheel;
+pub mod harvest;
 pub mod store;
 pub mod vendors;
 
@@ -246,6 +248,7 @@ pub fn record_outcome(st: &AppState, user: &AuthUser, id: &str, status: &str, la
     let detail: Option<String> = detail.map(|d| d.chars().take(4000).collect());
     match store::set_outcome(&st.db, id, &user.user_id, status, label, detail.as_deref(), &super::store::now()) {
         Ok(Some(_)) => {
+            relabel(&st.db, id, status, label);
             learn(&st.db, id, &user.user_id);
             Ok(())
         }
@@ -351,6 +354,23 @@ fn finish(
             if let Err(e) = flywheel::record_key(&st.db, &shadow) {
                 tracing::warn!("decision flywheel key: {e}");
             }
+            // Opt-in harvest: training examples for the flywheel's trained heads.
+            let example = harvest::Example {
+                decision_id: &id,
+                scope: &harvest::scope_of(user),
+                kind,
+                created_at: &created_at,
+                context,
+                question: q.question,
+                options: &options,
+                backend,
+                choice: choice.as_deref(),
+                confidence: r.confidence,
+                threshold: thr,
+            };
+            if let Err(e) = harvest::record(&st.db, &example) {
+                tracing::warn!("decision harvest: {e}");
+            }
             let db = st.db.clone();
             off_path(move || {
                 if let Err(e) = flywheel::record_shadow(&db, &shadow) {
@@ -385,6 +405,14 @@ fn off_path(f: impl FnOnce() + Send + 'static) {
             h.spawn_blocking(f);
         }
         Err(_) => f(),
+    }
+}
+
+/// An outcome landed: relabel the decision's harvested example, if any.
+fn relabel(db: &crate::db::DbHandle, id: &str, status: &str, label: Option<&str>) {
+    let res = db.connect().and_then(|c| harvest::on_outcome(&c, id, status, label, &super::store::now()));
+    if let Err(e) = res {
+        tracing::warn!("decision harvest outcome: {e}");
     }
 }
 
@@ -433,6 +461,7 @@ pub async fn patch_decision(
     }
     match store::set_outcome(&st.db, &id, &user.user_id, &o.status, o.label.as_deref(), o.detail.as_deref(), &super::store::now()) {
         Ok(Some(v)) => {
+            relabel(&st.db, &id, &o.status, o.label.as_deref());
             learn(&st.db, &id, &user.user_id);
             Ok(Json(v).into_response())
         }
