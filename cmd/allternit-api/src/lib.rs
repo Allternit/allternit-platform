@@ -70,6 +70,7 @@ pub mod agent_gateway_routes;
 pub mod thread_routes;
 pub mod bot_routing;
 pub mod gateway_routing;
+pub mod gateway_connect;
 pub mod gateway_runner;
 pub mod gateway_vendor_host;
 #[cfg(test)]

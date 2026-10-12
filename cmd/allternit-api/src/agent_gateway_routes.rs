@@ -132,6 +132,13 @@ pub fn parity_of(gaps: &[(String, String)]) -> &'static str {
 pub struct ApiErr(StatusCode, Value);
 
 impl ApiErr {
+    /// The error text, for callers outside this module.
+    pub(crate) fn message(&self) -> String {
+        self.1["error"].as_str().map(str::to_string).unwrap_or_else(|| self.1.to_string())
+    }
+}
+
+impl ApiErr {
     pub(crate) fn new(s: StatusCode, m: impl Into<String>) -> Self {
         ApiErr(s, json!({ "error": m.into() }))
     }
@@ -355,7 +362,9 @@ pub fn agent_gateway_router() -> Router<Arc<AppState>> {
         .route("/bots/:bot_id/vendor-memory", get(vendor_memory_h))
         .route("/bots/:bot_id/vendor-memory/:record_id/promote", post(promote_memory_h))
         // Vendor accounts on a cloud computer (V221): move host, sign in there, check.
-        .merge(crate::gateway_vendor_host::routes());
+        .merge(crate::gateway_vendor_host::routes())
+        // One-step connect: subscription/key/endpoint/channel in, ready bots out.
+        .merge(crate::gateway_connect::routes());
     Router::new().nest("/gateway", g)
 }
 
@@ -377,7 +386,7 @@ struct CreateAccount {
     expires_at: Option<String>,
 }
 
-const AUTH_TYPES: &[&str] =
+pub(crate) const AUTH_TYPES: &[&str] =
     &["oauth", "browser_session", "api_key", "desktop_session", "local_endpoint", "channel_oauth", "mcp_plugin"];
 
 async fn create_account(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Json(b): Json<CreateAccount>) -> Response {

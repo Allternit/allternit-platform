@@ -945,6 +945,19 @@ fn persist_agent(
     Ok(id)
 }
 
+/// `POST /agents` for in-process callers (the gateway's one-step connect):
+/// the same validation, row and side effects, from a JSON body.
+pub(crate) async fn create_agent_json(state: Arc<AppState>, user: AuthUser, body: serde_json::Value) -> (StatusCode, serde_json::Value) {
+    let body: CreateAgentBody = match serde_json::from_value(body) {
+        Ok(b) => b,
+        Err(e) => return (StatusCode::BAD_REQUEST, json!({ "error": e.to_string() })),
+    };
+    let resp = create_agent(State(state), Extension(user), HeaderMap::new(), Json(body)).await.into_response();
+    let status = resp.status();
+    let bytes = axum::body::to_bytes(resp.into_body(), 4 * 1024 * 1024).await.unwrap_or_default();
+    (status, serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null))
+}
+
 async fn create_agent(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
