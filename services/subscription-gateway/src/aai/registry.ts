@@ -21,6 +21,7 @@ import { aaiOperationSchema, botExecutionBindingSchema, type AAIOperation, type 
 import type { Config } from "../config.js";
 import type { Db } from "../store/db.js";
 import { AaiContextStore } from "./context-store.js";
+import { TurnQueue, type TurnQueueOptions } from "./turn-queue.js";
 
 export interface AaiPacing {
   /** Minimum gap between context.open / context.message calls to the vendor. */
@@ -101,9 +102,21 @@ export class AaiHost {
   /** Contexts opened or restored by this process: `${adapterId}\u0000${contextId}`. */
   private liveContexts = new Set<string>();
 
-  constructor(disabledIds: Iterable<string> = [], opts: { contexts?: AaiContextStore } = {}) {
+  /** Per-account FIFO for UI-bridge turns (see queueGate). */
+  readonly turns: TurnQueue;
+  /** How often a turn holding the account re-tries a provider that still answers CONTEXT_BUSY (its reply streams on). */
+  private busyRetryMs: number;
+  private manifestCache = new Map<string, AgentCapabilityManifest>();
+  /** Queue status notices not yet read, per `${adapterId}\u0000${contextId}` (delivered once, by agent.events). */
+  private notices = new Map<string, Array<Record<string, unknown>>>();
+  /** Messages in flight by adapter/binding/context/correlationId. */
+  private inflight = new Map<string, Promise<AaiResult<unknown>>>();
+
+  constructor(disabledIds: Iterable<string> = [], opts: { contexts?: AaiContextStore; queue?: TurnQueueOptions & { busyRetryMs?: number } } = {}) {
     for (const d of disabledIds) this.disabled.add(d);
     this.contexts = opts.contexts;
+    this.turns = new TurnQueue(opts.queue);
+    this.busyRetryMs = opts.queue?.busyRetryMs ?? 1000;
   }
 
   register(reg: AaiRegistration): this {
@@ -189,6 +202,59 @@ export class AaiHost {
     return runConformance(r.provider, fixtures); // raw provider: harness must not consume pacing/kill-switch
   }
 
+  private async manifestOf(adapterId: string, agentId: string): Promise<AgentCapabilityManifest | undefined> {
+    const key = `${adapterId}\u0000${agentId}`;
+    const hit = this.manifestCache.get(key);
+    if (hit) return hit;
+    const reg = this.regs.get(adapterId);
+    const m = reg ? await reg.provider.capabilities(agentId).catch(() => undefined) : undefined;
+    if (m?.ok) this.manifestCache.set(key, m.value);
+    return m?.ok ? m.value : undefined;
+  }
+
+  /**
+   * Website/desktop subscriptions (manifest lane `ui_bridge`) drive one signed-in window or tab per account, so turns
+   * on the same account take turns: up to `context.maxParallel` run, the rest wait in arrival order (TurnQueue) and
+   * report "queued … (position N)" as an `agent.activity.started` event on their context. Opens wait too on lanes
+   * whose one conversation surface is shared (isolation `shared`: opening drives the app). The account is the adapter:
+   * each of these adapters drives the one signed-in app/login on this computer. undefined = not queued.
+   */
+  private async queueGate(adapterId: string | undefined, op: AAIOperation, binding: BotExecutionBinding, i: any): Promise<{ account: string; release?: () => void; deadline: number; error?: AaiResult<never> } | undefined> {
+    if (!adapterId || !this.regs.has(adapterId) || this.disabled.has(adapterId)) return undefined;
+    if (op !== "agent.context.message" && op !== "agent.context.open") return undefined;
+    if (op === "agent.context.open" && i.adoptContextId) return undefined;
+    const contextId = op === "agent.context.message" && typeof i.contextId === "string" ? i.contextId : undefined;
+    const agentId = binding.externalAgentId ?? i.agentId ?? (contextId ? this.contexts?.get(adapterId, contextId)?.agentId : undefined) ?? binding.botId;
+    const m = await this.manifestOf(adapterId, agentId);
+    if (!m || m.lane !== "ui_bridge") return undefined;
+    if (op === "agent.context.open" && m.context.isolation !== "shared") return undefined;
+    const account = adapterId;
+    const label = `your ${vendorName(m.vendor)} ${m.runtime.localRequired ? "app" : "tab"}`;
+    const corr = typeof i.correlationId === "string" ? i.correlationId : "";
+    const deadline = Date.now() + this.turns.maxWaitMs;
+    const r = await this.turns.acquire(account, m.context.maxParallel || 1, {
+      contextId, label,
+      onPosition: contextId ? (pos) => this.notice(adapterId, contextId, agentId, m.vendor, corr, pos, label) : undefined,
+    });
+    return r.ok ? { account, release: r.value, deadline } : { account, deadline, error: r };
+  }
+
+  private notice(adapterId: string, contextId: string, agentId: string, vendor: string, corr: string, position: number, label: string): void {
+    const key = `${adapterId}\u0000${contextId}`;
+    const list = this.notices.get(key) ?? [];
+    const queued = position > 0;
+    list.push({
+      type: "agent.activity.started", botId: agentId, threadId: contextId, generationId: "1", source: "allternit", vendor, adapter: adapterId,
+      lane: "ui_bridge", remoteContextId: contextId, remoteEventId: `${contextId}#queue:${corr}:${position}`, correlationId: corr, causationId: corr,
+      guarantee: "exact", at: new Date().toISOString(),
+      payload: {
+        activityId: `queue:${corr}`, kind: "queued", label: queued ? "Queued" : "Starting", state: queued ? "queued" : "started", position,
+        detail: queued ? `queued: waiting for ${label} (position ${position})` : `starting: ${label} is free`,
+      },
+    });
+    this.notices.set(key, list);
+  }
+
   /**
    * A context this process has not seen but the store has (the gateway restarted since it opened): restore it into a
    * provider that persists its contexts, let a provider that revives its own (manifest `context.resume`) handle it, and
@@ -265,7 +331,13 @@ export class AaiHost {
       "agent.context.close": () => p.contextClose(i),
       "agent.events": async () => {
         const r = await p.events(i);
-        return r.ok ? { ok: true, value: { events: r.value.events.map(wireEvent), cursor: r.value.nextCursor } } : r;
+        if (!r.ok) return r;
+        const events = r.value.events.map(wireEvent);
+        // Queue notices ride at the reader's current position (they never move the provider's cursor).
+        const key = `${adapterId}\u0000${i.contextId}`;
+        const pending = this.notices.get(key);
+        if (pending) { this.notices.delete(key); for (const n of pending) events.push(wireEvent({ cursor: r.value.nextCursor, event: n })); }
+        return { ok: true, value: { events, cursor: r.value.nextCursor } };
       },
       "agent.tasks": () => p.tasks(i),
       "agent.memory": () => p.memory(i),
@@ -278,13 +350,46 @@ export class AaiHost {
     };
     const fn = dispatch[parsed.data];
     if (!fn) return fail("UNSUPPORTED", `AAI op ${op} has no host dispatch`, { retryable: false });
+    // Cancel of a turn that is only waiting: take it out of line without touching the vendor (a Stop click there
+    // would stop whichever reply is running, maybe another thread's).
+    if (parsed.data === "agent.context.cancel" && adapterId && typeof i.contextId === "string") {
+      const dropped = this.turns.cancel(adapterId, i.contextId);
+      if (dropped && !this.turns.isRunning(adapterId, i.contextId)) return { ok: true, value: { confirmed: true } };
+    }
+    // A replayed message (same correlationId) joins the first one's run instead of taking a second place in line.
+    const replayKey = parsed.data === "agent.context.message" ? `${adapterId}\u0000${binding.id}\u0000${i.contextId}\u0000${i.correlationId}` : undefined;
+    const first = replayKey ? this.inflight.get(replayKey) : undefined;
+    if (first) return first;
+    const run = this.run(parsed.data, adapterId, binding, i, fn);
+    if (replayKey) { this.inflight.set(replayKey, run); void run.finally(() => this.inflight.delete(replayKey)); }
+    return run;
+  }
+
+  private async run(op: AAIOperation, adapterId: string | undefined, binding: BotExecutionBinding, i: any, fn: () => Promise<AaiResult<unknown>>): Promise<AaiResult<unknown>> {
+    const gate = await this.queueGate(adapterId, op, binding, i);
+    if (gate?.error) return gate.error;
     let r: AaiResult<unknown>;
-    try { r = await fn(); }
+    try {
+      r = await fn();
+      // Holding the account, a provider can still be busy finishing the previous reply (it streams on past its
+      // turn's deadline): keep this turn's place and retry until the queue wait runs out.
+      while (gate && !r.ok && r.error.code === "CONTEXT_BUSY" && Date.now() + this.busyRetryMs < gate.deadline) {
+        await new Promise((res) => setTimeout(res, this.busyRetryMs));
+        r = await fn();
+      }
+    }
     catch (e) { return fail("UNKNOWN", `host error: ${(e as Error).message}`, { retryable: false }); }
-    if (CONTEXT_OPS.has(parsed.data)) this.remember(adapterId, parsed.data, binding, i, r);
+    finally { gate?.release?.(); }
+    if (CONTEXT_OPS.has(op)) this.remember(adapterId, op, binding, i, r);
     return r;
   }
 }
+
+const VENDOR_NAMES: Record<string, string> = {
+  grok: "Grok", xai: "Grok", openai: "ChatGPT", chatgpt: "ChatGPT", anthropic: "Claude", claude: "Claude",
+  kimi: "Kimi", moonshot: "Kimi", google: "Gemini", gemini: "Gemini", copilot: "Copilot", microsoft: "Copilot", github: "Copilot",
+};
+const vendorName = (v: string) => VENDOR_NAMES[v.toLowerCase()] ?? (v ? v[0].toUpperCase() + v.slice(1) : "vendor");
 
 export { botExecutionBindingSchema };
 
@@ -354,7 +459,10 @@ export function createAaiHost(
   ctx: VendorContext = {},
   db?: Db
 ): AaiHost {
-  const host = new AaiHost(config.aai.disabled, { contexts: db ? new AaiContextStore(db) : undefined });
+  const host = new AaiHost(config.aai.disabled, {
+    contexts: db ? new AaiContextStore(db) : undefined,
+    queue: { maxWaitMs: config.aai.queueWaitMs, maxQueued: config.aai.queueMax },
+  });
   const token = env.SUBS_GATEWAY_AAI_LOOPBACK_TOKEN;
   host.register({
     provider: new LoopbackProvider({
