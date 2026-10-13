@@ -219,5 +219,5 @@ pub fn router() -> Router<Arc<AppState>> {
 /// The same routes under `/api/v1/kernel/*` (what the UI's `runtimeApiUrl`
 /// reaches through the paired-runtime relay). Mount this next to [`router`].
 pub fn api_router() -> Router<Arc<AppState>> {
-    routes("/api/v1/kernel").merge(Router::new().nest("/api", crate::agency_api::kernel_alias_router()))
+    routes("/api/v1/kernel").merge(Router::new().nest("/api", crate::agency_api::kernel_api_alias_router()))
 }

@@ -489,3 +489,13 @@ async fn turn_route_answers_class_plan_and_cost_per_call_type() {
     assert_eq!(call(&t, "POST", "/v1/kernel/turn-route", &u, Some(json!({ "entries": [] }))).await.0, 422);
     assert_eq!(call(&t, "POST", "/v1/kernel/turn-route", &u, Some(json!({ "entries": entries, "scope": "org:other" }))).await.0, 403);
 }
+
+/// main.rs merges these three routers into one; a duplicate path panics at
+/// startup (it did once: the decision aliases also landed at the root).
+#[test]
+fn agency_and_kernel_routers_merge_without_overlap() {
+    let _merged: Router<Arc<AppState>> = Router::new()
+        .merge(crate::agency_api::agency_router())
+        .merge(router())
+        .merge(api_router());
+}
