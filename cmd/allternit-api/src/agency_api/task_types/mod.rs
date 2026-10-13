@@ -18,8 +18,13 @@
 //! and [`catalog_contract`] / [`criteria`] from `catalog` (small hooks marked
 //! "WP-X1 hook"). WP-X2: `executor::generic` drives these graphs for real,
 //! behind the [`ENABLE_ENV`] per-type enable list.
+//!
+//! B1: `cognitive_role: "S1"` nodes are live decisions ([`s1`]): a typed
+//! choice through the Decision Runtime, journaled per (run, node), with an
+//! S2 twin (`x-twin_of`) on the ESCALATE edge for abstentions.
 
 pub mod runner;
+pub mod s1; // B1: live S1 decision nodes
 #[cfg(test)]
 mod exec_tests;
 

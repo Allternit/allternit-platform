@@ -207,7 +207,8 @@ pub async fn route(chain: &[Box<dyn DecisionBackend>], q: &Query<'_>, thr: f64, 
     let Some((name, a)) = best else {
         return Routed { choice: None, probs: vec![], confidence: 0.0, abstained: true, escalated, backend: None, attempts };
     };
-    let top = (0..a.probs.len()).max_by(|&i, &j| a.probs[i].total_cmp(&a.probs[j]));
+    // Argmax, never a sample; a tie goes to the earlier option (deterministic).
+    let top = (0..a.probs.len()).rev().max_by(|&i, &j| a.probs[i].total_cmp(&a.probs[j]));
     let confidence = if a.abstain { 0.0 } else { top.map(|i| a.probs[i]).unwrap_or(0.0) };
     let abstained = a.abstain || (q.allow_abstain && confidence < thr);
     Routed {
@@ -232,9 +233,9 @@ pub async fn create_decision(
 }
 
 /// In-process entry for hosts inside allternit-api (computer use's
-/// `run_subtask`): the same validation, routing and store as
+/// `run_subtask`, the agency driver's S1 nodes): the same validation, routing and store as
 /// `POST /v1/decisions`, without the HTTP hop. `body` is the request JSON.
-pub async fn decide_value(st: &Arc<AppState>, user: &AuthUser, body: Value) -> Result<Value, String> {
+pub async fn decide_value(st: &AppState, user: &AuthUser, body: Value) -> Result<Value, String> {
     let rid = RequestId(super::store::new_id("req"));
     let d: DecisionIn = serde_json::from_value(body).map_err(|e| format!("invalid decision request: {e}"))?;
     decide(st, user, &rid, &d).await.map_err(|e| e.body["error"]["message"].as_str().unwrap_or("decision failed").to_string())
@@ -257,7 +258,7 @@ pub fn record_outcome(st: &AppState, user: &AuthUser, id: &str, status: &str, la
     }
 }
 
-async fn decide(st: &Arc<AppState>, user: &AuthUser, rid: &RequestId, d: &DecisionIn) -> Result<Value, ApiError> {
+async fn decide(st: &AppState, user: &AuthUser, rid: &RequestId, d: &DecisionIn) -> Result<Value, ApiError> {
     let started = Instant::now();
     validate(d, rid)?;
     let (context, image) = match &d.context {
@@ -297,7 +298,7 @@ async fn decide(st: &Arc<AppState>, user: &AuthUser, rid: &RequestId, d: &Decisi
 
 #[allow(clippy::too_many_arguments)]
 fn finish(
-    st: &Arc<AppState>,
+    st: &AppState,
     user: &AuthUser,
     rid: &RequestId,
     d: &DecisionIn,
