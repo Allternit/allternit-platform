@@ -20,6 +20,7 @@ The endpoints are served by allternit-api's Agency API alpha (`cmd/allternit-api
 - An effect whose request changed under an override (for example a document with new content) is answered with the recorded result and reported as an `EFFECT_REQUEST` divergence. Nothing is executed.
 - Before a result is stored the server asserts that the kernel replay and the graph walk both performed zero live effects. If not, the replay fails closed with `ERR_REPLAY_LIVE_EFFECT` and no result is kept.
 - Live model calls an override needs (cognition only, tools off) go through gizzi-code and land on the usage ledger with `surface: replay` and `source: replay`, attributed to the source run.
+- Those live calls count against the same daily spending caps as runs (`ALLTERNIT_AGENCY_DAILY_BUDGET` globally and `ALLTERNIT_AGENCY_ORG_DAILY_BUDGET` per org, run spend plus replay spend). The caps are checked before the walk and before every call; when one is reached the replay fails closed with `ERR_BUDGET_CAP_REACHED` (`429`, family `BUDGET`) and no partial result is kept. Replay spend also counts toward the caps that admit runs. [Evals](/api/agency/evals) replay through the same path.
 
 ## Endpoints
 

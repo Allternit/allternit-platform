@@ -458,12 +458,50 @@ pub struct Live {
     pub pool: allternit_factory_engine::kernel::router::StaticModelPool,
     pub cfg: allternit_factory_engine::kernel::router::RouterConfig,
     pub ledger: crate::usage_ledger::LedgerCtx,
+    /// The org's daily spending caps, checked before every call (fail closed).
+    pub caps: SpendGate,
+}
+
+/// The daily caps (`guard`) for replay and eval live calls: the same global
+/// and per-org caps runs use, counting run spend plus replay spend. Checked
+/// before every live call; a reached cap (or unreadable spend) refuses the
+/// call and marks the gate `tripped`, which fails the whole replay closed.
+pub struct SpendGate {
+    pub store: crate::agency_api::store::AgencyStore,
+    pub db: DbHandle,
+    pub org: String,
+    pub limits: crate::agency_api::guard::Limits,
+    pub tripped: std::sync::Mutex<Option<String>>,
+}
+
+impl SpendGate {
+    pub fn new(store: crate::agency_api::store::AgencyStore, db: DbHandle, org: &str, limits: crate::agency_api::guard::Limits) -> Self {
+        Self { store, db, org: org.to_string(), limits, tripped: std::sync::Mutex::new(None) }
+    }
+
+    /// `Err(why)` when a daily cap is reached or spend cannot be read.
+    pub async fn admit(&self) -> Result<(), String> {
+        let why = match self.store.daily_spend_all(&self.db, &self.org).await {
+            Ok((g, o)) => match self.limits.daily_reached(&g, &o) {
+                None => return Ok(()),
+                Some((scope, dim)) => format!("the {scope} daily {dim} cap is reached; replay and eval model calls stop"),
+            },
+            Err(e) => format!("daily spend unreadable ({e}); replay and eval model calls stop"),
+        };
+        *self.tripped.lock().unwrap_or_else(|p| p.into_inner()) = Some(why.clone());
+        Err(why)
+    }
+
+    pub fn tripped(&self) -> Option<String> {
+        self.tripped.lock().unwrap_or_else(|p| p.into_inner()).clone()
+    }
 }
 
 #[async_trait]
 impl Cognition for Live {
     async fn generate(&self, node: &GraphNode, prompt: &str) -> Result<Gen, String> {
         use allternit_factory_engine::kernel::router::{BudgetLedger, Router};
+        self.caps.admit().await?;
         let ledger = BudgetLedger { remaining_cost_units: 1.0e9, remaining_wall_ms: None };
         let plan = Router::new(&self.pool, &self.cfg).route(node, &ledger).map_err(|e| format!("route {}: {e}", node.node_id))?;
         let entry = self.pool.entries.iter().find(|e| e.backend_id == plan.backend_id);

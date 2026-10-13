@@ -36,7 +36,7 @@ mod tests;
 use super::decisions::{acceptance, flywheel};
 use super::store::{new_id, now, RunRecord, EV_REPLAY_BATCH_STATE, EV_REPLAY_STATE};
 use super::task_types::{self, TaskType};
-use super::{executor, owned, store, ApiError, ApiResult, RequestId};
+use super::{executor, guard, owned, store, ApiError, ApiResult, RequestId};
 use crate::auth::AuthUser;
 use crate::AppState;
 use allternit_factory_engine::kernel::graph::ComputeGraph;
@@ -54,7 +54,7 @@ pub const MAX_BATCH_RUNS: usize = 50;
 const DEFAULT_BATCH_LIMIT: usize = 20;
 const MAX_HEAD_OVERRIDES: usize = 16;
 /// Runs a batch selector picks from: finished, not cancelled.
-const FINISHED: &[&str] = &["completed", "partial", "failed"];
+pub(crate) const FINISHED: &[&str] = &["completed", "partial", "failed"];
 
 // ── overrides ───────────────────────────────────────────────────────────────
 
@@ -121,24 +121,25 @@ pub struct Fail {
 }
 
 impl Fail {
-    fn new(status: u16, code: &'static str, message: impl Into<String>) -> Self {
+    pub(crate) fn new(status: u16, code: &'static str, message: impl Into<String>) -> Self {
         Self { status, code, message: message.into(), param: None }
     }
-    fn input(param: &str, message: impl Into<String>) -> Self {
+    pub(crate) fn input(param: &str, message: impl Into<String>) -> Self {
         Self { status: 400, code: "ERR_INPUT_INVALID", message: message.into(), param: Some(param.into()) }
     }
-    fn unsupported(param: &str, message: impl Into<String>) -> Self {
+    pub(crate) fn unsupported(param: &str, message: impl Into<String>) -> Self {
         Self { status: 400, code: "ERR_INPUT_UNSUPPORTED", message: message.into(), param: Some(param.into()) }
     }
-    fn api(self, rid: &RequestId) -> ApiError {
+    pub(crate) fn api(self, rid: &RequestId) -> ApiError {
         let family = match self.status {
             400 => "INPUT",
             422 | 409 => "STATE",
+            429 => "BUDGET",
             _ => "SYSTEM",
         };
         ApiError::new(self.status, family, self.code, self.message, rid).param(self.param)
     }
-    fn json(&self) -> Value {
+    pub(crate) fn json(&self) -> Value {
         json!({ "code": self.code, "message": self.message, "param": self.param })
     }
 }
@@ -244,7 +245,7 @@ pub fn parse_overrides(v: Option<&Value>) -> Result<Overrides, Fail> {
 }
 
 /// Reject anything but `effects: recorded_only` (absent = recorded_only).
-fn check_effects(obj: &Map<String, Value>) -> Result<(), Fail> {
+pub(crate) fn check_effects(obj: &Map<String, Value>) -> Result<(), Fail> {
     match obj.get("effects") {
         None => Ok(()),
         Some(e) if e == "recorded_only" => Ok(()),
@@ -465,18 +466,32 @@ async fn walk_run(st: &Arc<AppState>, src: &RunRecord, ov: &Overrides) -> Result
     }
     let org = ir["org_id"].as_str().map(str::to_string);
     let ledger = crate::usage_ledger::LedgerCtx::surface("replay").run(run_id, None).tenant(org.as_deref(), Some(&src.owner));
-    Ok(sim::simulate(&cfg, &rec, &sim::Live { pool, cfg: rcfg, ledger }).await)
+    // Replay and eval live calls count against the same daily caps as runs
+    // (global and per org), checked before the walk and before every call.
+    let caps = sim::SpendGate::new(store(st), st.db.clone(), org.as_deref().unwrap_or_default(), guard::Limits::from_env().tightened(&ir["rules"]));
+    caps.admit().await.map_err(cap_reached)?;
+    let live = sim::Live { pool, cfg: rcfg, ledger, caps };
+    let out = sim::simulate(&cfg, &rec, &live).await;
+    // Fail closed: a cap reached mid-walk discards the partial result.
+    match live.caps.tripped() {
+        Some(why) => Err(cap_reached(why)),
+        None => Ok(out),
+    }
+}
+
+fn cap_reached(why: String) -> Fail {
+    Fail::new(429, "ERR_BUDGET_CAP_REACHED", why)
 }
 
 // ── handlers ────────────────────────────────────────────────────────────────
 
-fn replay_object(id: &str, src: &str, ov: &Overrides, batch_id: Option<&str>) -> Value {
+pub(crate) fn replay_object(id: &str, src: &str, ov: &Overrides, batch_id: Option<&str>) -> Value {
     json!({ "id": id, "object": "replay", "source_run_id": src, "effects": "recorded_only", "overrides": ov.echo(), "batch_id": batch_id,
             "status": "running", "verdict": null, "created_at": now(), "finished_at": null,
             "results_url": format!("/v1/replays/{id}/results"), "error": null })
 }
 
-fn settle(mut r: Value, out: Result<&Outcome, &Fail>) -> Value {
+pub(crate) fn settle(mut r: Value, out: Result<&Outcome, &Fail>) -> Value {
     r["finished_at"] = json!(now());
     match out {
         Ok(o) => {
@@ -501,7 +516,7 @@ fn without_results(r: &Value) -> Value {
 }
 
 /// Live model calls make a replay slow: run it in the background.
-fn runs_live(ov: &Overrides) -> bool {
+pub(crate) fn runs_live(ov: &Overrides) -> bool {
     ov.cognition() && !executor::scripted()
 }
 

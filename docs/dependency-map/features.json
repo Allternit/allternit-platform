@@ -1068,10 +1068,17 @@
         {
           "on": "2026-10-12",
           "note": "Training data is opt-in per organization; trained decision heads are shared across opted-in organizations; open-weight baselines instead of paid decision vendors; cloud test first. No GPU: trained heads train and run on CPU."
+        },
+        {
+          "on": "2026-10-13",
+          "note": "C2 + C5: a deterministic trace monitor checks every terminal run (no sampling) and stores findings (GET /v1/runs/:id/findings); an optional trace.error decision, labelled by the deterministic verdict, lets a head learn it later. Evals are trajectory graders over recorded-only replays or the scripted runner (/v1/evals/*), with regression cases promoted from runs and a manual CI gate (scripts/agency-eval-gate.mjs, 2 pp drop / any high-stakes failure). Replay and eval live model calls count against the same daily spend caps as runs."
         }
       ],
       "evidence": [
         "allternit/surfaces/docs/api/agency/decisions.mdx",
+        "allternit/surfaces/docs/api/agency/evals.mdx",
+        "allternit/cmd/allternit-api/src/agency_api/monitor.rs",
+        "allternit/cmd/allternit-api/src/agency_api/evals/mod.rs",
         "allternit-ai/src/views/settings/agent-rules/DescentTab.tsx",
         "allternit-ai/src/views/settings/agent-rules/DecisionTrainingCard.tsx"
       ]

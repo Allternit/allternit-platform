@@ -19,8 +19,12 @@ pub mod compiler;
 pub mod decisions;
 pub mod effects; // WP-C3a/C3b effect connectors
 pub mod executor;
+/// C5: eval harness (trajectory graders, suites, regression gate) built on replay.
+pub mod evals;
 pub mod guard;
 pub mod memory_context; // Agency Descent: memory in the context step
+/// C2: trace monitor over every terminal run (`/v1/runs/:id/findings`).
+pub mod monitor;
 /// B4: replays with overrides (decision heads, model class, graph) and batches.
 pub mod replays;
 pub mod safety;
@@ -185,6 +189,7 @@ pub fn agency_router() -> Router<Arc<AppState>> {
         .route("/v1/runs/:run_id/receipts/verification", get(run_receipts_verify))
         .route("/v1/receipts/:receipt_id", get(get_receipt))
         .route("/v1/runs/:run_id/graph", get(run_graph))
+        .route("/v1/runs/:run_id/findings", get(run_findings))
         .route("/v1/attention", get(list_attention))
         .route("/v1/attention/:attention_id", get(get_attention))
         .route("/v1/attention/:attention_id/responses", post(respond_attention))
@@ -205,6 +210,12 @@ pub fn agency_router() -> Router<Arc<AppState>> {
         .route("/v1/replays/batch/:batch_id", get(replays::get_batch))
         .route("/v1/replays/:replay_id", get(replays::get_replay))
         .route("/v1/replays/:replay_id/results", get(replays::get_replay_results))
+        // C5: eval suites, eval runs over replay / the scripted runner, regression cases from runs.
+        .route("/v1/evals/suites", post(evals::create_suite).get(evals::list_suites))
+        .route("/v1/evals/suites/:suite_id", get(evals::get_suite))
+        .route("/v1/evals/runs", post(evals::create_eval_run))
+        .route("/v1/evals/runs/:eval_run_id", get(evals::get_eval_run))
+        .route("/v1/evals/cases/from-run/:run_id", post(evals::case_from_run))
         // Decision Runtime (E1): typed decisions; /v1/systemone is the compatibility alias.
         .route("/v1/decisions", post(decisions::create_decision))
         .route("/v1/systemone", post(decisions::create_decision))
@@ -296,6 +307,7 @@ async fn create_run(
     let req: Value = serde_json::from_slice(&body)
         .map_err(|e| ApiError::new(400, "INPUT", "ERR_INPUT_INVALID", format!("invalid JSON: {e}"), &rid))?;
     executor::resume_inflight_once(&st);
+    monitor::install(&st);
     let s = store(&st);
     let _g = s.lock().await;
     if let Some(prev) = s.find_by_idempotency(&user.user_id, &key).await.map_err(|e| ApiError::internal(e, &rid))? {
@@ -665,7 +677,7 @@ fn resolve_attention_linked<'a>(
     // day, or an operator raised it); an approval cannot override it.
     let cap_org = org.clone();
     let cap_lifted = if att["reason"] == guard::CAP_REASON && kind == "approval" {
-        let (g, o) = s.daily_spend(&cap_org).await.map_err(|e| ApiError::internal(e, rid))?;
+        let (g, o) = s.daily_spend_all(&st.db, &cap_org).await.map_err(|e| ApiError::internal(e, rid))?;
         if guard::Limits::from_env().daily_reached(&g, &o).is_some() {
             return Err(ApiError::new(409, "STATE", "ERR_BUDGET_CAP_REACHED", "the daily budget cap is still reached", rid));
         }
@@ -887,8 +899,33 @@ async fn run_graph(
         "node_id": n.get("node_id").unwrap_or(&n["id"]), "primitive_id": n["primitive_id"],
         "role": n.get("cognitive_role").unwrap_or(&n["role"]), "kind": n.get("node_kind").cloned().unwrap_or(json!("task")), "lifecycle": "DECLARE"
     })).collect();
+    // C2: trace-monitor summary (counts only; the findings are on their own endpoint).
+    let findings = monitor::stored(&store(&st), &run_id, &rec.owner).await.ok().flatten().map(|f| monitor::summary_of(&f));
     Ok(Json(json!({ "object": "graph", "graph_id": ir["dag_id"], "version": 1, "template_id": ir["template"]["id"],
-                    "template_source": ir["template"]["source"], "nodes": nodes, "edges": ir["edges"] })).into_response())
+                    "template_source": ir["template"]["source"], "nodes": nodes, "edges": ir["edges"], "findings": findings })).into_response())
+}
+
+/// C2: the trace monitor's findings for a terminal run (owner only). Runs the
+/// deterministic checks on demand when the monitor has not stored any yet.
+async fn run_findings(
+    State(st): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Extension(rid): Extension<RequestId>,
+    Path(run_id): Path<String>,
+) -> ApiResult {
+    monitor::install(&st);
+    let s = store(&st);
+    let rec = owned(s.load_run(&run_id).await.map_err(|e| ApiError::internal(e, &rid))?, &user, &rid)?;
+    if !TERMINAL.contains(&rec.run["status"].as_str().unwrap_or_default()) {
+        return Err(ApiError::new(409, "STATE", "ERR_RUN_NOT_FINISHED", format!("run is {}; findings are computed when it ends",
+            rec.run["status"].as_str().unwrap_or("unknown")), &rid));
+    }
+    if let Some(f) = monitor::stored(&s, &run_id, &rec.owner).await.map_err(|e| ApiError::internal(e, &rid))? {
+        return Ok(Json(f).into_response());
+    }
+    let f = monitor::monitor_run(&st, &run_id, false).await.map_err(|e| ApiError::internal(e, &rid))?
+        .ok_or_else(|| ApiError::not_found("run", &rid))?;
+    Ok(Json(f).into_response())
 }
 
 // ── artifacts & receipts ────────────────────────────────────────────────────

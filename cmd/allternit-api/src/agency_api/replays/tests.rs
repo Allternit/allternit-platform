@@ -445,3 +445,51 @@ fn seed_e2e_decisions(db: &DbHandle, run: &str) {
     put(format!("{run}_d3"), Some(run), "ctxSelf", "a", Some(("success", None)));
     put(format!("{run}_d4"), Some(run), "ctxK", "b", None);
 }
+
+// ── C5: replay and eval live calls count against the daily caps ─────────────
+
+fn replay_usage(db: &DbHandle, org: &str, tokens: i64, micro_usd: i64) {
+    db.connect().unwrap().execute(
+        "INSERT INTO llm_usage_events (id, tenant_id, prompt_tokens, completion_tokens, cost_microdollars, status, source, surface)
+         VALUES (?1, ?2, ?3, 0, ?4, 'ok', 'replay', 'replay')",
+        rusqlite::params![uuid::Uuid::new_v4().to_string(), org, tokens, micro_usd],
+    ).unwrap();
+}
+
+#[tokio::test]
+async fn replay_live_calls_count_against_the_org_daily_caps() {
+    let t = setup().await;
+    let s = AgencyStore::new(t.st.rails.ledger.clone());
+    let org = "org_cap";
+    let limits = guard::Limits::from_lookup(|k| match k {
+        guard::DAILY_ENV => Some("off".into()),
+        guard::ORG_DAILY_ENV => Some("usd=1".into()),
+        _ => None,
+    });
+    let gate = sim::SpendGate::new(s.clone(), t.st.db.clone(), org, limits.clone());
+    assert!(gate.admit().await.is_ok(), "nothing spent yet");
+    // Replay spend of another org and of other sources does not count for this org.
+    replay_usage(&t.st.db, "org_other", 10, 5_000_000);
+    t.st.db.connect().unwrap().execute(
+        "INSERT INTO llm_usage_events (id, tenant_id, cost_microdollars, status, source) VALUES ('x-gw', ?1, 9000000, 'ok', 'gateway')", [org]).unwrap();
+    assert!(gate.admit().await.is_ok());
+    let (g, o) = s.daily_spend_all(&t.st.db, org).await.unwrap();
+    assert_eq!((g.tokens, o.tokens), (10, 0));
+    assert!((g.usd - 5.0).abs() < 1e-9 && o.usd == 0.0);
+    // This org's replay calls reach the cap: the next call is refused and the gate trips (fail closed).
+    replay_usage(&t.st.db, org, 100, 600_000);
+    replay_usage(&t.st.db, org, 100, 400_000);
+    let (_, o) = s.daily_spend_all(&t.st.db, org).await.unwrap();
+    assert_eq!(o.tokens, 200);
+    let why = gate.admit().await.unwrap_err();
+    assert!(why.contains("org daily usd cap"), "{why}");
+    assert_eq!(gate.tripped().as_deref(), Some(why.as_str()));
+    // The same spend now also blocks runs of the org (the executor and the
+    // cap-lift check read daily_spend_all).
+    assert_eq!(limits.daily_reached(&guard::Spend::default(), &o), Some(("org", "usd")));
+    // Yesterday's replay spend does not count.
+    let fresh = sim::SpendGate::new(s.clone(), t.st.db.clone(), "org_old", limits);
+    t.st.db.connect().unwrap().execute(
+        "INSERT INTO llm_usage_events (id, tenant_id, cost_microdollars, status, source, created_at) VALUES ('x-old', 'org_old', 9000000, 'ok', 'replay', '2000-01-01 00:00:00')", []).unwrap();
+    assert!(fresh.admit().await.is_ok());
+}
