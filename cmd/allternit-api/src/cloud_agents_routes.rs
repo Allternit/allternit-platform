@@ -20,6 +20,11 @@
 //!    gating stamps `requires_approval` on stored `tool_calls` events (see
 //!    `beta_session_routes::append_event`).
 //!
+//! Runs (`input` at create, `user.message` events) are executed by the
+//! node's in-process `session_worker`, which appends `agent_message` →
+//! `agent.message`, `tool_calls` → `agent.tool_use`, and the terminal
+//! `turn.completed`/`turn.failed` + `session.idle` events.
+//!
 //! Completions/Responses (`agents_v1_routes`) are a separate Layer A surface
 //! and are untouched here. There is deliberately no public `/runtimes`
 //! resource and no `OpenAI-Beta` header requirement.
@@ -444,6 +449,7 @@ fn translate_event(
             ),
         ],
         "user_interrupt" => vec![base("user.interrupt", data, event_id.to_string())],
+        "agent_message" => vec![base("agent.message", data, event_id.to_string())],
         "tool_calls" => vec![base("agent.tool_use", data, event_id.to_string())],
         "turn_completed" => vec![base("turn.completed", data, event_id.to_string())],
         "turn_failed" => vec![base("turn.failed", data, event_id.to_string())],

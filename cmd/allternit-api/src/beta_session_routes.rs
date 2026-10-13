@@ -6,20 +6,27 @@
 //!
 //! `POST /beta/sessions/:id/run` accepts the playground's prompt payload
 //! (`{messages, tools?}`) and enqueues it on the node's `/beta/work` queue
-//! (see `beta_work_routes`) as a task tied to the session — execution is
-//! performed by a polling worker, not inline. The node itself does not run
-//! an LLM loop here; when no worker is connected the task stays `queued`
-//! and the response says so. A `run_requested` event is appended to the
-//! session so the SSE/WebSocket event streams and `events/list` reflect it.
+//! (see `beta_work_routes`) as a task tied to the session; the handler
+//! returns at once with the `queued` task. Execution is asynchronous: the
+//! node's in-process `session_worker` (on by default, off with
+//! `ALLTERNIT_SESSION_WORKER=0`) leases the task, drives a Gizzi session
+//! with the session agent's model, system prompt and tool permissions, and
+//! appends `agent_message` / `tool_calls` events followed by
+//! `turn_completed` or `turn_failed` and `session_idle`. With the worker
+//! off, an external worker must lease the task through `/beta/work/queue`,
+//! otherwise it stays `queued`; the response's `executor` field says which
+//! applies. A `run_requested` event is appended to the session so the
+//! SSE/WebSocket event streams and `events/list` reflect it.
 //!
 //! Permission-mode enforcement (Phase 2, G5): enforcement is
 //! payload-and-flag based, with the boundary explicitly at two points:
 //!
-//! * External workers receive the session's `effective_permissions` map
-//!   (agent per-tool permissions merged with the session permission mode,
-//!   computed at session create) in the leased work payload — the worker
-//!   enforces it in its own process; the API cannot gate what it cannot
-//!   see.
+//! * Workers receive the session's `effective_permissions` map (agent
+//!   per-tool permissions merged with the session permission mode,
+//!   computed at session create) in the leased work payload. External
+//!   workers enforce it in their own process; the in-process
+//!   `session_worker` passes it to Gizzi as the turn's tool allowlist and
+//!   ask-list (the same `bot` marker bot turns use).
 //! * In-process gating happens here, at event-write time: a `tool_calls`
 //!   event whose calls require approval (effective permission `ask`) is
 //!   stored with `requires_approval: true` and a pending request is
@@ -53,6 +60,9 @@ const APPENDABLE_RUN_EVENT_TYPES: &[&str] = &[
     "content_block_delta",
     "tool_calls",
     "refusal",
+    // A complete assistant message for one turn (`{"task_id"?, "content"}`);
+    // the public surface translates it to `agent.message`.
+    "agent_message",
 ];
 
 const RESOURCE_KINDS: &[&str] = &["github_token", "vault_credential", "api_key"];
@@ -270,10 +280,10 @@ struct ResourceRow {
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
-struct UsageDelta {
-    tokens: u64,
-    turns: u64,
-    tool_calls: u64,
+pub(crate) struct UsageDelta {
+    pub(crate) tokens: u64,
+    pub(crate) turns: u64,
+    pub(crate) tool_calls: u64,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -562,6 +572,181 @@ async fn archive_session(
     Ok(Json(json!({"archived": true})))
 }
 
+/// Append one run event (`APPENDABLE_RUN_EVENT_TYPES`) to an active
+/// session: budget accounting (`context_warning` / `budget_exceeded`),
+/// in-process `tool_calls` permission gating, and the insert, in one
+/// transaction. Returns `(accepted, event)`; `accepted == false` means the
+/// usage would exceed the session budget and `event` is the
+/// `budget_exceeded` event. `QueryReturnedNoRows` = no active session.
+pub(crate) fn append_run_event_tx(
+    conn: &mut rusqlite::Connection,
+    session_id: &str,
+    user_id: &str,
+    event_type: &str,
+    data: Value,
+    usage: UsageDelta,
+    approval_store: &crate::permission_policy::ApprovalStore,
+) -> rusqlite::Result<(bool, Value)> {
+    let tx = conn.transaction()?;
+    let (budget, session_metadata) = tx.query_row(
+        "SELECT max_tokens, max_turns, max_tool_calls, context_window, truncation_strategy,
+         tokens_used, turns_used, tool_calls_used, metadata
+         FROM beta_sessions WHERE id = ?1 AND user_id = ?2 AND status = 'active'",
+        params![session_id, user_id],
+        |row| {
+            let budget = BudgetState {
+                max_tokens: row.get(0)?, max_turns: row.get(1)?, max_tool_calls: row.get(2)?,
+                context_window: row.get(3)?, truncation_strategy: row.get(4)?,
+                tokens_used: row.get(5)?, turns_used: row.get(6)?, tool_calls_used: row.get(7)?,
+            };
+            Ok((budget, row.get::<_, Option<String>>(8)?))
+        },
+    )?;
+    let projected = UsageDelta {
+        tokens: budget.tokens_used.saturating_add(usage.tokens),
+        turns: budget.turns_used.saturating_add(usage.turns),
+        tool_calls: budget.tool_calls_used.saturating_add(usage.tool_calls),
+    };
+    if let Some(warning) = context_warning_state(budget, projected) {
+        insert_event(
+            &tx,
+            session_id,
+            "context_warning",
+            &json!({
+                "threshold": warning.threshold, "usage": projected,
+                "context_window": budget.context_window,
+                "truncation_strategy": budget.truncation_strategy,
+            }),
+        )?;
+    }
+    if let Some(resource) = exceeded_budget(budget, usage) {
+        let event = insert_event(
+            &tx,
+            session_id,
+            "budget_exceeded",
+            &json!({
+                "resource": resource, "usage": usage, "budget": budget_json(budget)
+            }),
+        )?;
+        tx.commit()?;
+        return Ok((false, event));
+    }
+    tx.execute(
+        "UPDATE beta_sessions SET tokens_used = tokens_used + ?1, turns_used = turns_used + ?2,
+         tool_calls_used = tool_calls_used + ?3, updated_at = CURRENT_TIMESTAMP WHERE id = ?4",
+        params![usage.tokens, usage.turns, usage.tool_calls, session_id],
+    )?;
+    let mut data = data;
+    if event_type == "tool_calls" {
+        // In-process gating: calls whose effective permission is
+        // `ask` are flagged and enqueued in the shared approval
+        // store (see the module doc's enforcement boundary).
+        if let Some(raw) = session_metadata {
+            if let Ok(metadata) = serde_json::from_str::<Value>(&raw) {
+                if let Some(perms) = metadata.get("effective_permissions") {
+                    gate_tool_calls_by_permission(&mut data, perms, approval_store, user_id);
+                }
+            }
+        }
+    }
+    let event = insert_event(&tx, session_id, event_type, &data)?;
+    tx.commit()?;
+    Ok((true, event))
+}
+
+/// [`append_run_event_tx`] plus webhook delivery of the stored event (and
+/// `session.over_budget` when the append was rejected). Shared by
+/// `POST /beta/sessions/:id/events` and the in-process `session_worker`.
+pub(crate) async fn append_run_event(
+    state: Arc<AppState>,
+    user_id: String,
+    organization_id: Option<String>,
+    session_id: String,
+    event_type: String,
+    data: Value,
+    usage: UsageDelta,
+) -> Result<(bool, Value), ApiError> {
+    let db = state.db.clone();
+    let approval_store = state.approval_store.clone();
+    let id = session_id.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        let mut conn = db.connect()?;
+        append_run_event_tx(
+            &mut conn,
+            &id,
+            &user_id,
+            &event_type,
+            data,
+            usage,
+            &approval_store,
+        )
+    })
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?
+    .map_err(|e| {
+        if matches!(e, rusqlite::Error::QueryReturnedNoRows) {
+            ApiError::NotFound("active session not found".into())
+        } else {
+            ApiError::DbError(e.to_string())
+        }
+    })?;
+    webhook_subscription_routes::deliver_session_event(
+        state.clone(),
+        organization_id.as_deref(),
+        &session_id,
+        &result.1,
+    )
+    .await;
+    if !result.0 {
+        // The append was rejected because the projected usage exceeds the
+        // session budget — result.1 is the budget_exceeded event.
+        webhook_subscription_routes::deliver_registered_event(
+            state.clone(),
+            organization_id.as_deref(),
+            webhook_subscription_routes::events::SESSION_OVER_BUDGET,
+            json!({"session_id": session_id, "event": result.1}),
+        )
+        .await;
+    }
+    Ok(result)
+}
+
+/// The budget resource (`tokens` / `turns` / `tool_calls`) that is already
+/// exhausted for one more turn on this session, if any. The in-process
+/// worker checks this before starting a run so an over-budget session does
+/// not reach the model at all.
+pub(crate) fn run_budget_exhausted(
+    conn: &rusqlite::Connection,
+    session_id: &str,
+) -> rusqlite::Result<Option<&'static str>> {
+    let budget = conn.query_row(
+        "SELECT max_tokens, max_turns, max_tool_calls, context_window, truncation_strategy,
+         tokens_used, turns_used, tool_calls_used FROM beta_sessions WHERE id = ?1",
+        params![session_id],
+        |row| {
+            Ok(BudgetState {
+                max_tokens: row.get(0)?, max_turns: row.get(1)?, max_tool_calls: row.get(2)?,
+                context_window: row.get(3)?, truncation_strategy: row.get(4)?,
+                tokens_used: row.get(5)?, turns_used: row.get(6)?, tool_calls_used: row.get(7)?,
+            })
+        },
+    )?;
+    if budget.max_tokens.is_some_and(|limit| budget.tokens_used >= limit) {
+        return Ok(Some("tokens"));
+    }
+    if budget.max_tool_calls.is_some_and(|limit| budget.tool_calls_used >= limit) {
+        return Ok(Some("tool_calls"));
+    }
+    Ok(exceeded_budget(
+        budget,
+        UsageDelta {
+            tokens: 0,
+            turns: 1,
+            tool_calls: 0,
+        },
+    ))
+}
+
 async fn append_event(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
@@ -573,111 +758,17 @@ async fn append_event(
             "unsupported or reserved event type".into(),
         ));
     }
-    let db = state.db.clone();
-    let session_id = id.clone();
-    let approval_store = state.approval_store.clone();
-    let result =
-        tokio::task::spawn_blocking(move || {
-            let mut conn = db.connect()?;
-            let tx = conn.transaction()?;
-            let (budget, session_metadata) = tx.query_row(
-            "SELECT max_tokens, max_turns, max_tool_calls, context_window, truncation_strategy,
-             tokens_used, turns_used, tool_calls_used, metadata
-             FROM beta_sessions WHERE id = ?1 AND user_id = ?2 AND status = 'active'",
-            params![session_id, user.user_id],
-            |row| {
-                let budget = BudgetState {
-                    max_tokens: row.get(0)?, max_turns: row.get(1)?, max_tool_calls: row.get(2)?,
-                    context_window: row.get(3)?, truncation_strategy: row.get(4)?,
-                    tokens_used: row.get(5)?, turns_used: row.get(6)?, tool_calls_used: row.get(7)?,
-                };
-                Ok((budget, row.get::<_, Option<String>>(8)?))
-            },
-        )?;
-            let projected = UsageDelta {
-                tokens: budget.tokens_used.saturating_add(body.usage.tokens),
-                turns: budget.turns_used.saturating_add(body.usage.turns),
-                tool_calls: budget.tool_calls_used.saturating_add(body.usage.tool_calls),
-            };
-            if let Some(warning) = context_warning_state(budget, projected) {
-                insert_event(
-                    &tx,
-                    &session_id,
-                    "context_warning",
-                    &json!({
-                        "threshold": warning.threshold, "usage": projected,
-                        "context_window": budget.context_window,
-                        "truncation_strategy": budget.truncation_strategy,
-                    }),
-                )?;
-            }
-            if let Some(resource) = exceeded_budget(budget, body.usage) {
-                let event = insert_event(
-                    &tx,
-                    &session_id,
-                    "budget_exceeded",
-                    &json!({
-                        "resource": resource, "usage": body.usage, "budget": budget_json(budget)
-                    }),
-                )?;
-                tx.commit()?;
-                return Ok((false, event));
-            }
-            tx.execute(
-            "UPDATE beta_sessions SET tokens_used = tokens_used + ?1, turns_used = turns_used + ?2,
-             tool_calls_used = tool_calls_used + ?3, updated_at = CURRENT_TIMESTAMP WHERE id = ?4",
-            params![body.usage.tokens, body.usage.turns, body.usage.tool_calls, session_id],
-        )?;
-            let mut data = body.data.clone();
-            if body.event_type == "tool_calls" {
-                // In-process gating: calls whose effective permission is
-                // `ask` are flagged and enqueued in the shared approval
-                // store (see the module doc's enforcement boundary).
-                if let Some(raw) = session_metadata {
-                    if let Ok(metadata) = serde_json::from_str::<Value>(&raw) {
-                        if let Some(perms) = metadata.get("effective_permissions") {
-                            gate_tool_calls_by_permission(
-                                &mut data,
-                                perms,
-                                &approval_store,
-                                &user.user_id,
-                            );
-                        }
-                    }
-                }
-            }
-            let event = insert_event(&tx, &session_id, &body.event_type, &data)?;
-            tx.commit()?;
-            Ok::<_, rusqlite::Error>((true, event))
-        })
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
-        .map_err(|e| {
-            if matches!(e, rusqlite::Error::QueryReturnedNoRows) {
-                ApiError::NotFound("active session not found".into())
-            } else {
-                ApiError::DbError(e.to_string())
-            }
-        })?;
-    webhook_subscription_routes::deliver_session_event(
-        state.clone(),
-        user.organization_id.as_deref(),
-        &id,
-        &result.1,
+    let (accepted, event) = append_run_event(
+        state,
+        user.user_id,
+        user.organization_id,
+        id,
+        body.event_type,
+        body.data,
+        body.usage,
     )
-    .await;
-    if !result.0 {
-        // The append was rejected because the projected usage exceeds the
-        // session budget — result.1 is the budget_exceeded event.
-        webhook_subscription_routes::deliver_registered_event(
-            state.clone(),
-            user.organization_id.as_deref(),
-            webhook_subscription_routes::events::SESSION_OVER_BUDGET,
-            json!({"session_id": id, "event": result.1}),
-        )
-        .await;
-    }
-    Ok(Json(json!({"accepted": result.0, "event": result.1})))
+    .await?;
+    Ok(Json(json!({"accepted": accepted, "event": event})))
 }
 
 async fn interrupt_session(
@@ -777,7 +868,9 @@ fn validate_run_body(body: &RunSessionBody) -> Result<(), ApiError> {
 /// `POST /beta/sessions/:id/run` — enqueue the prompt payload on the node's
 /// `/beta/work` queue as a session-tied task (see the module doc for the
 /// execution model and its limits). The response carries the queued task as
-/// `run`, matching the `{"run": …}` shape of `beta_deployment_routes`.
+/// `run`, matching the `{"run": …}` shape of `beta_deployment_routes`, and
+/// `executor`: `in_process` when this node's session worker will execute
+/// it, `external` when it waits for an external `/beta/work` worker.
 async fn run_session(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,
@@ -835,7 +928,11 @@ async fn run_session(
         &event,
     )
     .await;
-    Ok(Json(json!({"run": task, "session_id": id})))
+    Ok(Json(json!({
+        "run": task,
+        "session_id": id,
+        "executor": crate::session_worker::executor_label(),
+    })))
 }
 
 #[derive(Debug, Deserialize)]
