@@ -11,6 +11,7 @@
 //! The host re-checks that the chosen option is still valid before acting.
 //! A decision is never authorization: policy runs first, always.
 
+pub mod acceptance;
 pub mod backends;
 pub mod descent;
 pub mod flywheel;
@@ -474,3 +475,5 @@ pub async fn patch_decision(
 mod tests;
 #[cfg(test)]
 mod flywheel_tests;
+#[cfg(test)]
+mod acceptance_tests;

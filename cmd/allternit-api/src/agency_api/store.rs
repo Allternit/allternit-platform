@@ -23,6 +23,7 @@ pub const EV_RUN_STATE: &str = "agency.run.state";
 pub const EV_RUN_EVENT: &str = "agency.event";
 pub const EV_CAMPAIGN_STATE: &str = "agency.campaign.state";
 pub const EV_REPLAY_STATE: &str = "agency.replay.state";
+pub const EV_REPLAY_BATCH_STATE: &str = "agency.replay_batch.state";
 
 static WRITE_LOCK: Mutex<()> = Mutex::const_new(());
 
@@ -87,7 +88,7 @@ impl Inner {
                 let id = p["run_id"].as_str().unwrap_or_default().to_string();
                 self.events.entry(id).or_default().push(p["event"].clone());
             }
-            EV_CAMPAIGN_STATE | EV_REPLAY_STATE => {
+            EV_CAMPAIGN_STATE | EV_REPLAY_STATE | EV_REPLAY_BATCH_STATE => {
                 let key = (ty.to_string(), p["id"].as_str().unwrap_or_default().to_string(), p["owner"].as_str().unwrap_or_default().to_string());
                 self.objects.insert(key, (p["object"].clone(), self.tick));
             }
