@@ -11,7 +11,9 @@
 //!   state for it (account, bots).
 //! * `POST /gateway/connect {product, ...}` — idempotent. Each call moves the
 //!   connection as far as it can and answers with `status`:
-//!   `ready` (bots listed), `needs_sign_in` (a login window was opened on the
+//!   `ready` (bots listed), `needs_consent` (a website/app product: show
+//!   `action.terms` and call again with `acceptTerms: true`; recorded once per
+//!   account in `connection_audit`), `needs_sign_in` (a login window was opened on the
 //!   gateway's machine; sign in, then call again), `needs_key`,
 //!   `needs_setup` (the vendor app or gateway isn't reachable; `action.steps`
 //!   says what to do), or `blocked` (the vendor shows a verification check).
@@ -278,6 +280,37 @@ pub(crate) struct ConnectBody {
     app_secret: Option<String>,
     /// `muse`: the number the vendor answers on.
     agent_address: Option<String>,
+    /// The person read `terms` and agrees to Allternit driving the vendor's
+    /// website or app with their own login (UI-bridge products only).
+    accept_terms: Option<bool>,
+}
+
+/// Whether Allternit drives the vendor's own website or app for this product,
+/// which needs the person's informed OK first.
+fn needs_consent(p: &Product) -> bool {
+    p.lane == "ui_bridge"
+}
+
+/// What the person agrees to before a UI-bridge product connects.
+fn terms(p: &Product) -> String {
+    // chatgpt-dots drives ChatGPT in a browser window by default; Grok Bot is a desktop app.
+    let surface = if p.id == "grok-bot" { "app" } else { "website" };
+    format!(
+        "Allternit will use the {name} {surface} for you, signed in as you, the way you would by hand. \
+         {name} has no official API for this, so it may break when {name} changes, it runs one conversation at a time, \
+         and {name}'s terms may not allow automated use: your {name} account could be limited. \
+         Your password never passes through Allternit, and you can disconnect at any time.",
+        name = p.name
+    )
+}
+
+fn terms_accepted(conn: &rusqlite::Connection, owner: &str, aid: &str) -> rusqlite::Result<bool> {
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM connection_audit WHERE owner = ?1 AND account_binding_id = ?2 AND event = 'terms_accepted'",
+        params![owner, aid],
+        |r| r.get(0),
+    )?;
+    Ok(n > 0)
 }
 
 // ---------------------------------------------------------------- catalog
@@ -300,6 +333,7 @@ async fn catalog_h(State(state): State<Arc<AppState>>, Extension(user): Extensio
                 "offers": p.offers,
                 "signIn": sign_in_name(p.sign_in),
                 "verifiedLive": p.verified_live,
+                "terms": needs_consent(p).then(|| terms(p)),
                 "account": acct.map(|a| json!({ "id": s(&a, "id"), "state": s(&a, "state") })),
                 "bots": bots,
             }));
@@ -370,6 +404,22 @@ pub(crate) async fn connect(state: &Arc<AppState>, user: &AuthUser, p: &Product,
             None => create_account(&conn, &owner, p).map_err(dberr)?,
         }
     };
+    // 1b. UI-bridge products: the person's informed OK, once per account.
+    if needs_consent(p) {
+        let conn = db.connect().map_err(dberr)?;
+        if !terms_accepted(&conn, &owner, &aid).map_err(dberr)? {
+            if b.accept_terms == Some(true) {
+                audit(&conn, &owner, &aid, "terms_accepted", None, None, json!({ "product": p.id, "lane": p.lane, "terms": terms(p) }));
+            } else {
+                let o = Outcome::new(
+                    "needs_consent",
+                    format!("Before connecting {}, read this and agree to it.", p.name),
+                    Some(json!({ "kind": "consent", "terms": terms(p) })),
+                );
+                return respond(state, &owner, p, &aid, o, vec![]);
+            }
+        }
+    }
     if let Some(early) = store_credential(state, &owner, p, &aid, b)? {
         return respond(state, &owner, p, &aid, early, vec![]);
     }
@@ -819,6 +869,20 @@ mod tests {
                 assert_eq!(a, p.adapter, "{}", p.id);
             }
         }
+    }
+
+    #[test]
+    fn website_and_app_products_need_consent_and_api_products_do_not() {
+        for id in ["chatgpt", "chatgpt-dots", "claude", "gemini", "copilot", "kimi", "grok-bot"] {
+            let p = product(id).unwrap();
+            assert!(needs_consent(p), "{id}");
+            assert!(terms(p).contains(p.name), "{id}");
+        }
+        for id in ["claude-managed-agents", "openclaw", "hermes", "muse"] {
+            assert!(!needs_consent(product(id).unwrap()), "{id}");
+        }
+        assert!(terms(product("grok-bot").unwrap()).contains("Grok Bot app"));
+        assert!(terms(product("chatgpt").unwrap()).contains("ChatGPT website"));
     }
 
     #[test]

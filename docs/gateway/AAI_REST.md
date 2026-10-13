@@ -35,8 +35,8 @@ SDKs: TypeScript [`@allternit/aai-sdk`](../../platform/packages/aai-sdk/README.m
 
 | Method | Path | Body | Response | Errors |
 |---|---|---|---|---|
-| GET | `/gateway/connect` | | `{products:[{product,name,offers,signIn,verifiedLive,account?,bots[]}]}` | |
-| POST | `/gateway/connect` | `product`; optional `apiKey` (claude-managed-agents), `agents[]` (externalAgentIds to make bots for; default all), `channelAccountId`, `accessToken`, `phoneNumberId`, `appSecret`, `agentAddress` (muse) | `{product,status,message,action?,verifiedLive,account:{id,state},agents[],bots:[{botId,name,externalAgentId,state}]}`; `status` ∈ `ready, needs_sign_in, needs_key, needs_setup, blocked` | 400 unknown product |
+| GET | `/gateway/connect` | | `{products:[{product,name,offers,signIn,verifiedLive,terms?,account?,bots[]}]}` | |
+| POST | `/gateway/connect` | `product`; optional `acceptTerms` (website/app products, after showing `action.terms`; recorded once per account), `apiKey` (claude-managed-agents), `agents[]` (externalAgentIds to make bots for; default all), `channelAccountId`, `accessToken`, `phoneNumberId`, `appSecret`, `agentAddress` (muse) | `{product,status,message,action?,verifiedLive,account:{id,state},agents[],bots:[{botId,name,externalAgentId,state}]}`; `status` ∈ `ready, needs_consent, needs_sign_in, needs_key, needs_setup, blocked` | 400 unknown product |
 
 Idempotent: a second call reuses the account, login and bots. Source: `cmd/allternit-api/src/gateway_connect.rs`.
 
@@ -78,6 +78,7 @@ Idempotent: a second call reuses the account, login and bots. Source: `cmd/allte
 | POST | `/threads/:id/gateway/sync` | | `{events: n}` | 404, 503 |
 | GET | `/threads/:id/approvals?state=` | | `{approvals}` | 404 |
 | POST | `/gateway/approvals/:id/respond` | `decision` (approve or deny), `actor?: {type:"user"}` | `{approvalId, state}` | 400, 403 `HUMAN_REQUIRED`, 404, 409 `ALREADY_RESOLVED`, 503 |
+| POST | `/threads/:id/gateway/tool-result` | `toolUseId, result, isError?` — answers a vendor agent's custom tool call (`agent.tool.called` with `custom: true`; the thread shows `needs_you` while it waits). Sent as `agent.context.message` with `toolResult` | `{sent: true, events: n}` | 400, 404, 409 `NOT_VENDOR_BOUND` / `CONTEXT_LOST`, 503 |
 
 Also on `thread_routes.rs` (not wrapped by the SDKs yet): `/threads` (GET, POST), `/threads/:id` (GET, PATCH), `/threads/by-session/:session_id`, `/threads/:id/resolve`, `/threads/:id/usage`, `/threads/:id/handoff`, `/threads/:id/deps`.
 

@@ -30,7 +30,7 @@ api -X POST $API/gateway/connect -d '{"product":"chatgpt"}'
 | `openclaw`, `hermes` | your local server | |
 | `muse` | a WhatsApp Business number | `agentAddress`, plus `channelAccountId` or `accessToken, phoneNumberId, appSecret` |
 
-`status` is one of `ready`, `needs_sign_in`, `needs_key`, `needs_setup` (with `action.steps`) or `blocked` (the vendor shows a verification check: clear it yourself). Pass `agents: [externalAgentId, ...]` to make bots for only some of the discovered agents. The account reaches CONNECTED and bindings READY only after discovery and `agent.health` answered; the login itself is always done by you in a plain browser window. The numbered steps below are the same chain by hand.
+`status` is one of `ready`, `needs_consent` (website and app products: show `action.terms`, then call again with `"acceptTerms": true`; asked once per account), `needs_sign_in`, `needs_key`, `needs_setup` (with `action.steps`) or `blocked` (the vendor shows a verification check: clear it yourself). Pass `agents: [externalAgentId, ...]` to make bots for only some of the discovered agents. The account reaches CONNECTED and bindings READY only after discovery and `agent.health` answered; the login itself is always done by you in a plain browser window. The numbered steps below are the same chain by hand.
 
 ## Two paths, and a constraint
 
