@@ -53,7 +53,15 @@ export interface OpenContextInput {
   adoptContextId?: string;
 }
 export interface OpenContextResult { contextId: string; isolation: ContextIsolation; guarantee: Guarantee; resumed: boolean }
-export interface MessageInput { contextId: string; correlationId: string; text: string }
+export interface MessageInput {
+  contextId: string; correlationId: string; text: string;
+  /**
+   * Optional. When set, this message answers a vendor custom tool call that the agent is waiting on (an
+   * `agent.tool.called` event with `payload.custom === true` and the same `toolUseId`) instead of starting a new
+   * user turn; `text` is the tool's result content. Providers without custom tools ignore or reject it.
+   */
+  toolResult?: { toolUseId: string; isError?: boolean };
+}
 export interface MessageResult { messageId: string; correlationId: string; reply?: string; guarantee: Guarantee }
 export interface SteerInput { contextId: string; text: string }
 export interface CancelResult { confirmed: boolean }
