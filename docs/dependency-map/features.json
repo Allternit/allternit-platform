@@ -1048,6 +1048,29 @@
         "allternit/cmd/gizzi-code/test/session/session-tasks.test.ts",
         "allternit/cmd/gizzi-code/test/session/background-shell.test.ts"
       ]
+    },
+    {
+      "id": "feature:local-vendor-bots",
+      "label": "Local vendor bot adapters",
+      "product": "product:digital-twin",
+      "status": "building",
+      "description": "Authenticated OpenMausBot, Codync and Hivekeep adapters with vendor branding. Source-based checks pass; live accounts and remaining catalog connectors are pending.",
+      "touches": [
+        "allternit/services/subscription-gateway",
+        "allternit-ai/src/components/gateway",
+        "allternit-ai/src/lib/gateway",
+        "allternit-ai/src/views/agent-view"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-13",
+          "note": "Catalog identification is separate from implemented connections. Native adapters match vendor requests and refuse unsupported control capabilities."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/local-vendor-bots.mdx",
+        "allternit/services/subscription-gateway/adapters/hivekeep/provider.ts"
+      ]
     }
   ],
   "journeys": [

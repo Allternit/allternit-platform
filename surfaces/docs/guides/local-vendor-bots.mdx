@@ -1,0 +1,36 @@
+---
+title: Local vendor bot connections
+description: Connect OpenMausBot, Codync, or Hivekeep through the vendor runtime on your Sessions computer.
+---
+
+OpenMausBot, Codync, and Hivekeep use authenticated APIs on your connected Sessions computer. They connect to the vendor's existing agents, rather than selecting a model from Brains. These new adapters have source-based transport tests; live vendor-account verification is pending.
+
+## Before connecting
+
+Run the vendor app on the same computer as the subscription gateway. In Settings → Connections, choose the vendor, review permissions, and enter its own credential. Credentials are stored encrypted. Never paste credentials into a chat or support report.
+
+On Desktop, the website phone layout, and the PWA, the same connection flow uses your connected computer. A cloud-only runtime cannot reach an app on your laptop's loopback address. If the adapter is unavailable on your chosen runtime, finish Sessions setup first.
+
+| Vendor | Credential | Conversation | Limitations |
+| --- | --- | --- | --- |
+| OpenMausBot | Token from a paired vendor client | Existing bot thread, guarded sends requiring approval mode Ask | Shared conversation; no cancellation, memory editing, or computer control |
+| Codync | Local host token | Existing bot conversation; bot must use Ask | Shared conversation; one-time approvals only; no atomic permission-mode guard or scoped cancellation |
+| Hivekeep | API client key with isolated conversation access | New isolated API conversation | Completed replies only; review approvals in Hivekeep; no streaming or cancellation |
+
+## Use your bot
+
+After the credential check succeeds, pick an agent returned by that vendor instance. Allternit retains its vendor identity and uses the normal bot chat flow. Replies are matched to the accepted vendor request or turn. An accepted message alone is never shown as a completed response.
+
+OpenMausBot and Codync can forward explicit human approval decisions. Hivekeep's external API does not expose approval controls; respond in Hivekeep. Closing an Allternit connection does not stop a shared vendor bot.
+
+## When a request fails
+
+An uncertain send or a wait timeout can mean the vendor received your message. Check its conversation before sending a new message. Retrying the same send ID within the running gateway reuses the prior result. Gateway restarts do not restore these in-memory send records or contexts.
+
+Authentication failures require reconnecting with the correct credential or restoring its scope. Schema changes fail explicitly instead of interpreting an unrelated reply as your bot's answer.
+
+## Other project cards
+
+The project catalog covers the 33 projects from the supplied tier list. A catalog card and logo are identification, not proof of a connector. Projects without an implemented adapter stay in the evaluation catalog and cannot be selected as connected accounts.
+
+Vendor setup references: [OpenMausBot](https://github.com/milind-soni/OpenMausBot), [Codync](https://github.com/leepokai/Codync), and [Hivekeep external API](https://github.com/MarlBurroW/hivekeep/blob/7d023c952e46861070683825ff545daf981910f0/external-api.md).

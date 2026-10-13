@@ -119,6 +119,24 @@
       "label": "cloud computer guest (in-VM agent)",
       "kind": "module",
       "path": "allternit/cmd/allternit-computer-cloud/guest"
+    },
+    {
+      "id": "external:openmausbot-local-api",
+      "label": "openmausbot authenticated local API",
+      "kind": "external",
+      "path": "allternit/services/subscription-gateway/adapters/openmausbot/provider.ts"
+    },
+    {
+      "id": "external:codync-local-api",
+      "label": "codync authenticated local API",
+      "kind": "external",
+      "path": "allternit/services/subscription-gateway/adapters/codync/provider.ts"
+    },
+    {
+      "id": "external:hivekeep-local-api",
+      "label": "hivekeep authenticated local API",
+      "kind": "external",
+      "path": "allternit/services/subscription-gateway/adapters/hivekeep/provider.ts"
     }
   ],
   "edges": [
@@ -440,6 +458,33 @@
         "allternit-ai/src/components/computers/ComputerTransferControls.tsx",
         "allternit/cmd/allternit-api/src/computer_history.rs",
         "allternit/cmd/allternit-api/src/computer_transfer.rs"
+      ]
+    },
+    {
+      "source": "allternit/services/subscription-gateway",
+      "target": "external:openmausbot-local-api",
+      "kind": "authenticated loopback HTTP; request-matched native bot replies",
+      "evidence": [
+        "allternit/services/subscription-gateway/adapters/openmausbot/provider.ts",
+        "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
+      ]
+    },
+    {
+      "source": "allternit/services/subscription-gateway",
+      "target": "external:codync-local-api",
+      "kind": "authenticated loopback HTTP; request-matched native bot replies",
+      "evidence": [
+        "allternit/services/subscription-gateway/adapters/codync/provider.ts",
+        "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
+      ]
+    },
+    {
+      "source": "allternit/services/subscription-gateway",
+      "target": "external:hivekeep-local-api",
+      "kind": "authenticated loopback HTTP; request-matched native bot replies",
+      "evidence": [
+        "allternit/services/subscription-gateway/adapters/hivekeep/provider.ts",
+        "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
       ]
     }
   ]
