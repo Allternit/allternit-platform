@@ -182,7 +182,7 @@ Returns the stored decision. `GET /v1/decisions/{id}` returns it too. The store 
 A **head** is a tiny, fast decider registered for a decision kind. It earns its place on live traffic:
 
 1. **Shadow.** Every decision of the kind runs each registered head after the answer is stored, off the latency path. The head's choice is kept next to the served choice and, once you report it, the outcome.
-2. **Promotion.** When a head's accuracy against outcomes reaches the kind's bar over a minimum number of labelled answers, and its confidence is not higher than its accuracy, it goes **live**: it is tried first in the chain (the `head` slot). If it has no answer, or answers under the threshold, the decision escalates as usual.
+2. **Promotion.** When a head's accuracy against outcomes reaches the kind's bar over a minimum number of labelled answers, and its confidence is not higher than its accuracy, it goes **live**: it is tried first in the chain (the `head` slot). If it has no answer, or answers under the threshold, the decision escalates as usual. When a [replay set](#replay-evidence) exists for the kind, the head must also pass it.
 3. **Demotion.** When a live head's accuracy drops under a lower bar, it goes back to shadow. Metrics count only answers since the last change of state, so every state has to be earned again.
 
 Every change of state, automatic or by hand, is audited with the metrics that caused it. Outcomes count as follows: `success` confirms `label` (or the served choice); `failure` with a different `label` names the right option, otherwise it rules out the served choice; `error` and `skipped` do not count.
@@ -196,10 +196,30 @@ Every change of state, automatic or by hand, is audited with the metrics that ca
 | `window` | 1000 | Most recent answers the metrics look at. |
 | `max_overconfidence` | 0.05 | Mean confidence may exceed accuracy by at most this much. |
 | `auto_promote` | `true` (`false` for `safety`) | A `safety` head never goes live by itself. |
+| `replay_epsilon` | 0.01 | With replay evidence, the head's accuracy may trail the served baseline by at most this. |
+| `replay_k` | 5 | Samples per decision for pass@k on nondeterministic heads. |
 
 Override per kind with JSON in `ALLTERNIT_DECISIONS_FLYWHEEL`, for example `{"default": {"min_samples": 300}, "element": {"promote_at": 0.98}}`.
 
 The first head is **`head.lookup`**: an exact-match lookup over your own past outcomes. Same kind, same context, same question and the same options in the same order: it answers with the option that succeeded there before (one success gives 0.67, five give 0.86; failures count against it). It reads one indexed row and answers in well under 10 ms. It never sees images, it learns from the first outcome of each decision only, and it is per account. With no traffic it stays in shadow.
+
+### Replay evidence
+
+Before a head goes live you can test it against past runs: a [batch replay](/api/agency/replays#batch-replays) with `overrides.decision_heads` re-decides the labelled decisions of recent finished runs with the head (as it stands now, minus each decision's own outcome) and compares it with what was served on the same decisions. A batch run by a decisions admin is stored as the kind's **replay evidence**. When a kind has replay evidence, promotion from shadow to live additionally requires the latest evidence to pass:
+
+- the replay set has labelled decisions;
+- accuracy ≥ baseline − `replay_epsilon`, where the baseline is the served choice and the head's accuracy is the system's with the head live (its confident answer, otherwise the chain's served answer);
+- and the head is cheaper **or** faster than the baseline (lower mean cost, or lower mean latency).
+
+The evidence also reports pass@1 and pass@k (`replay_k`). A nondeterministic head is sampled k times per decision; a deterministic head (every registered head today, including `head.lookup`) is sampled once, so its pass@k equals its pass@1. The promotion's audit entry carries the evidence id (`metrics.replay_evidence_id`) and the checks it passed. A kind with no replay evidence is promoted on the live bar alone, as before; demotion is unchanged.
+
+### Run the acceptance check
+
+```http
+POST /v1/decisions/heads/{head}/{kind}/acceptance
+```
+
+Decisions admins only. Runs the promotion check for one head and kind without changing anything, and says why it passes or fails: `passed`, `reason`, `live_bar` (met or not, and why), the live `metrics` and `bar`, and `replay` (the latest evidence with each check: `labelled`, `accuracy`, `cost_or_latency`, plus `pass_at_1` / `pass_at_k`), or `null` when the kind has no replay set.
 
 ### List heads
 

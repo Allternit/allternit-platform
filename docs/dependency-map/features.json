@@ -1052,6 +1052,31 @@
       ]
     },
     {
+      "id": "feature:agency-descent",
+      "label": "Agency Descent (decision flywheel)",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Agency work moves down the tiers as it repeats: open-weight and trained decision heads, opt-in training data (per-org consent, DLP-redacted, shared heads), the Descent dashboard (tier mix, cheap share, escalations, oracle spend) and memory recall in Agency runs.",
+      "touches": [
+        "allternit-ai/src/views/settings",
+        "allternit-ai/src/lib/agent-rules",
+        "allternit/cmd/allternit-api/src/kernel_ui",
+        "allternit/cmd/allternit-api/src/agency_api",
+        "allternit/domains/decision-runtime"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-12",
+          "note": "Training data is opt-in per organization; trained decision heads are shared across opted-in organizations; open-weight baselines instead of paid decision vendors; cloud test first. No GPU: trained heads train and run on CPU."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/api/agency/decisions.mdx",
+        "allternit-ai/src/views/settings/agent-rules/DescentTab.tsx",
+        "allternit-ai/src/views/settings/agent-rules/DecisionTrainingCard.tsx"
+      ]
+    },
+    {
       "id": "feature:background-tasks",
       "label": "Background tasks pane",
       "product": "product:ai-allternit",

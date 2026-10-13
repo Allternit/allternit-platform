@@ -29,11 +29,11 @@ use crate::agency_api::task_types::{self, evidence_of, s1, TaskType};
 use std::collections::HashSet;
 
 pub const TASK_WAIT_REASON: &str = "task_wait";
-const GATE_PRIMITIVE: &str = "ver.check_acceptance_evidence";
-const MAX_STEPS: usize = 64;
+pub(crate) const GATE_PRIMITIVE: &str = "ver.check_acceptance_evidence";
+pub(crate) const MAX_STEPS: usize = 64;
 /// Where the context step's recalled memory waits for the S2/S3 prompts.
 const MEMORY_KEY: &str = "memory:recall";
-const SYSTEM: &str = "You are one step of a verified agent run. Answer with the requested content only.";
+pub(crate) const SYSTEM: &str = "You are one step of a verified agent run. Answer with the requested content only.";
 
 /// Dev/conformance script (scripted executor only), read from
 /// `<runs dir>/<run_id>/scripted.json`: nodes that fail, criteria whose
@@ -55,7 +55,34 @@ struct Script {
     decide: HashMap<String, String>,
 }
 
-fn next(g: &ComputeGraph, from: &str, kind: &str) -> Option<String> {
+/// The prompt of a generative (S2/S3) node; replays build the same one.
+pub(crate) fn prompt_for(node: &allternit_factory_engine::kernel::graph::GraphNode, goal: &str, input: &str, memory: Option<&str>) -> String {
+    let prompt = if node.node_kind == "VERIFY" {
+        format!("Goal: {goal}\n\nResult:\n{input}\n\nDoes the result meet the goal? First line: PASS or FAIL, then one sentence.")
+    } else {
+        let hint = if node.outputs.iter().any(|o| o == "candidate:action") { crate::agency_api::effects::computer::ACTION_HINT }
+            else if node.outputs.iter().any(|o| o == "candidate:step") { crate::agency_api::effects::campaign::STEP_HINT } else { "" }; // WP-C3b
+        format!("Goal: {goal}\n\nContext:\n{input}\n\nProduce: {}{hint}", node.extensions.as_ref().and_then(|e| e.get("x-title")).and_then(Value::as_str).unwrap_or("the step's output"))
+    };
+    match memory.filter(|_| node.node_kind != "VERIFY") {
+        Some(m) => format!("{prompt}\n\nRelevant memory (from the user's memory; use it when it applies):\n{m}"),
+        None => prompt,
+    }
+}
+
+/// The content an effect node writes: the first candidate output, else its input.
+pub(crate) fn effect_content(out: &HashMap<String, String>, input: &str) -> String {
+    out.get("candidate:draft").or_else(|| out.get("candidate:response")).or_else(|| out.get("candidate:reply"))
+        .or_else(|| out.get("candidate:action")).or_else(|| out.get("candidate:step")).cloned().unwrap_or_else(|| input.to_string())
+}
+
+/// The arguments an effect node's journal row is hashed over (`effect_with`).
+pub(crate) fn effect_args(node: &str, write_set: &[String], content: &str) -> Value {
+    let digest = allternit_factory_engine::receipts::jcs::sha256_tagged(content.as_bytes());
+    json!({ "write_set": write_set, "content_digest": digest, "effect_class": "MUTATE", "node_id": node, "fence": FENCE })
+}
+
+pub(crate) fn next(g: &ComputeGraph, from: &str, kind: &str) -> Option<String> {
     s1::next(g, from, kind)
 }
 
@@ -337,8 +364,7 @@ impl Exec<'_> {
                 if !authorized || unmet {
                     false // no effect without a policy authorization (N13)
                 } else {
-                    let content = out.get("candidate:draft").or_else(|| out.get("candidate:response")).or_else(|| out.get("candidate:reply"))
-                        .or_else(|| out.get("candidate:action")).or_else(|| out.get("candidate:step")).cloned().unwrap_or_else(|| input.clone());
+                    let content = effect_content(&out, &input);
                     match self.apply_effect(&cur, &node.primitive_id, &node.write_set, &content, &script) {
                         Ok(r) => {
                             if node.primitive_id == "mut.create_file" { doc = Some((write_set[0].clone(), content)); }
@@ -376,17 +402,7 @@ impl Exec<'_> {
                     Err(e) => { tracing::warn!(run_id = %self.run_id, node = %cur, error = %e, "unusable S1 spec; escalating"); false }
                 }
             } else if role == "S2" || role == "S3" {
-                let prompt = if node.node_kind == "VERIFY" {
-                    format!("Goal: {goal}\n\nResult:\n{input}\n\nDoes the result meet the goal? First line: PASS or FAIL, then one sentence.")
-                } else {
-                    let hint = if node.outputs.iter().any(|o| o == "candidate:action") { crate::agency_api::effects::computer::ACTION_HINT }
-                        else if node.outputs.iter().any(|o| o == "candidate:step") { crate::agency_api::effects::campaign::STEP_HINT } else { "" }; // WP-C3b
-                    format!("Goal: {goal}\n\nContext:\n{input}\n\nProduce: {}{hint}", node.extensions.as_ref().and_then(|e| e.get("x-title")).and_then(Value::as_str).unwrap_or("the step's output"))
-                };
-                let prompt = match out.get(MEMORY_KEY).filter(|_| node.node_kind != "VERIFY") {
-                    Some(m) => format!("{prompt}\n\nRelevant memory (from the user's memory; use it when it applies):\n{m}"),
-                    None => prompt,
-                };
+                let prompt = prompt_for(&node, goal, &input, out.get(MEMORY_KEY).map(String::as_str));
                 match self.generate(&plan, &cur, &prompt, &script) {
                     Ok(text) => {
                         let pass = node.node_kind != "VERIFY" || scripted() || text.trim_start().to_ascii_uppercase().starts_with("PASS");

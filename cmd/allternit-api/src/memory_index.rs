@@ -479,19 +479,34 @@ pub fn chunk_text(text: &str) -> Vec<String> {
 }
 
 fn insert_chunks(conn: &Connection, scope: &str, source_type: &str, source_id: &str, text: &str) -> rusqlite::Result<usize> {
+    Ok(insert_chunks_with_ids(conn, scope, source_type, source_id, text)?.len())
+}
+
+/// Chunk `text` into the index for `source_id` and return the written
+/// (chunk id, chunk text) pairs, so a caller can embed them right away.
+pub fn insert_chunks_with_ids(
+    conn: &Connection,
+    scope: &str,
+    source_type: &str,
+    source_id: &str,
+    text: &str,
+) -> rusqlite::Result<Vec<(String, String)>> {
     let chunks = chunk_text(text);
-    for (i, c) in chunks.iter().enumerate() {
+    let mut out = Vec::with_capacity(chunks.len());
+    for (i, c) in chunks.into_iter().enumerate() {
+        let id = format!("chk_{}", uuid::Uuid::new_v4().simple());
         conn.execute(
             "INSERT INTO memory_index_chunks (id, scope, source_type, source_id, chunk_index, text)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![format!("chk_{}", uuid::Uuid::new_v4().simple()), scope, source_type, source_id, i as i64, c],
+            params![id, scope, source_type, source_id, i as i64, c],
         )?;
+        out.push((id, c));
     }
     conn.execute(
         "INSERT OR REPLACE INTO memory_index_sources (source_type, source_id, chunk_count) VALUES (?1, ?2, ?3)",
-        params![source_type, source_id, chunks.len() as i64],
+        params![source_type, source_id, out.len() as i64],
     )?;
-    Ok(chunks.len())
+    Ok(out)
 }
 
 /// Chunk memory documents not yet in the index. Returns chunks written.

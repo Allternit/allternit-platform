@@ -21,6 +21,8 @@ pub mod effects; // WP-C3a/C3b effect connectors
 pub mod executor;
 pub mod guard;
 pub mod memory_context; // Agency Descent: memory in the context step
+/// B4: replays with overrides (decision heads, model class, graph) and batches.
+pub mod replays;
 pub mod safety;
 pub mod store;
 /// WP-X1: task types beyond BUG_FIX (graphs, completion contracts, eval sets).
@@ -54,7 +56,7 @@ use serde_json::{json, Value};
 use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
-use store::{new_id, now, AgencyStore, RunRecord, EV_CAMPAIGN_STATE, EV_REPLAY_STATE, TERMINAL};
+use store::{new_id, now, AgencyStore, RunRecord, EV_CAMPAIGN_STATE, TERMINAL};
 
 /// Dated API versions this server serves; the first is the default.
 pub const SUPPORTED_VERSIONS: &[&str] = &["2026-09-29"];
@@ -198,9 +200,11 @@ pub fn agency_router() -> Router<Arc<AppState>> {
         .route("/v1/campaigns/:campaign_id/pause", post(pause_campaign))
         .route("/v1/campaigns/:campaign_id/resume", post(resume_campaign))
         .route("/v1/campaigns/:campaign_id/cancel", post(cancel_campaign))
-        .route("/v1/replays", post(create_replay))
-        .route("/v1/replays/:replay_id", get(get_replay))
-        .route("/v1/replays/:replay_id/results", get(get_replay_results))
+        .route("/v1/replays", post(replays::create_replay))
+        .route("/v1/replays/batch", post(replays::create_batch))
+        .route("/v1/replays/batch/:batch_id", get(replays::get_batch))
+        .route("/v1/replays/:replay_id", get(replays::get_replay))
+        .route("/v1/replays/:replay_id/results", get(replays::get_replay_results))
         // Decision Runtime (E1): typed decisions; /v1/systemone is the compatibility alias.
         .route("/v1/decisions", post(decisions::create_decision))
         .route("/v1/systemone", post(decisions::create_decision))
@@ -213,6 +217,8 @@ pub fn agency_router() -> Router<Arc<AppState>> {
         // Agency Descent: tier mix, escalations and oracle spend over time.
         .route("/v1/descent", get(decisions::descent::get_descent))
         .route("/v1/decisions/heads/:head/:kind", axum::routing::put(decisions::flywheel::put_head))
+        // B5: run the promotion acceptance check (live bar + replay evidence) for one head and kind.
+        .route("/v1/decisions/heads/:head/:kind/acceptance", post(decisions::acceptance::check_head))
         .route("/v1/capabilities", get(|| async { Json(page(catalog::capabilities())) }))
         .route("/v1/agents", get(|| async { Json(page(vec![catalog::agent_object()])) }))
         .route("/v1/authority-profiles", get(|| async { Json(page(catalog::authority_profiles())) }))
@@ -223,11 +229,18 @@ pub fn agency_router() -> Router<Arc<AppState>> {
 /// Read aliases for the Kernel UI: the paired-runtime relay only forwards
 /// `/api/v1/*`, and `/api/v1/runs` belongs to Cowork, so runs are read at
 /// `/v1/kernel/runs/{id}[/events]` (nested under `/api` in `main.rs`). Same
-/// handlers, auth and version layer as `/v1/runs/{id}[/events]`.
+/// handlers, auth and version layer as `/v1/runs/{id}[/events]`. The Kernel
+/// UI's flywheel views (training opt-in, Descent) read the decision routes
+/// the same way: `/api/v1/decisions/{training,heads,datasets/:kind}` and
+/// `/api/v1/descent`.
 pub fn kernel_alias_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/v1/kernel/runs/:run_id", get(get_run))
         .route("/v1/kernel/runs/:run_id/events", get(run_events))
+        .route("/v1/decisions/training", get(decisions::harvest::get_training).put(decisions::harvest::put_training))
+        .route("/v1/decisions/datasets/:kind", get(decisions::harvest::get_dataset))
+        .route("/v1/decisions/heads", get(decisions::flywheel::list_heads))
+        .route("/v1/descent", get(decisions::descent::get_descent))
         .layer(axum::middleware::from_fn(version_layer))
 }
 
@@ -1045,84 +1058,4 @@ async fn campaign_control(
     Ok(Json(c).into_response())
 }
 
-// ── replays (recorded_only) ─────────────────────────────────────────────────
-
-async fn create_replay(
-    State(st): State<Arc<AppState>>,
-    Extension(user): Extension<AuthUser>,
-    Extension(rid): Extension<RequestId>,
-    Json(body): Json<Value>,
-) -> ApiResult {
-    let obj = body.as_object().ok_or_else(|| ApiError::new(400, "INPUT", "ERR_INPUT_INVALID", "body must be an object", &rid))?;
-    if let Some(k) = obj.keys().find(|k| !matches!(k.as_str(), "source_run_id" | "effects" | "overrides")) {
-        return Err(ApiError::new(400, "INPUT", "ERR_INPUT_UNSUPPORTED", format!("unknown field `{k}`"), &rid).param(Some(k.clone())));
-    }
-    if obj.get("effects").is_some_and(|e| e != "recorded_only") {
-        return Err(ApiError::new(400, "INPUT", "ERR_INPUT_UNSUPPORTED", "effects must be recorded_only", &rid).param(Some("effects".into())));
-    }
-    if obj.get("overrides").is_some_and(|o| o.as_object().is_some_and(|o| !o.is_empty())) {
-        return Err(ApiError::new(400, "INPUT", "ERR_INPUT_UNSUPPORTED", "replay overrides are not available in the alpha", &rid).param(Some("overrides".into())));
-    }
-    let src = obj.get("source_run_id").and_then(Value::as_str).unwrap_or_default().to_string();
-    owned(store(&st).load_run(&src).await.map_err(|e| ApiError::internal(e, &rid))?, &user, &rid)?;
-    let cs = st.rails.receipts.chain_store().map_err(|e| ApiError::internal(e, &rid))?;
-    let cassette = allternit_factory_engine::replay::record_cassette(&cs, &src, None, 0)
-        .ok()
-        .filter(|c| !c.entries.is_empty())
-        .ok_or_else(|| ApiError::new(422, "STATE", "ERR_REPLAY_UNRECORDED", "source run has no recorded receipts to replay", &rid))?;
-    let id = new_id("rpl");
-    let total = cassette.entries.len();
-    let report = allternit_factory_engine::replay::replay_report(&cs, cassette, None, &id).map_err(|e| ApiError::internal(e, &rid))?;
-    use allternit_factory_engine::replay::Verdict;
-    let verdict = match report.verdict {
-        Verdict::Identical => "equivalent",
-        Verdict::ExpectedDivergence => "diverged_expected",
-        Verdict::UnexpectedDivergence => "diverged_unexpected",
-    };
-    let report = serde_json::to_value(report).unwrap_or(Value::Null);
-    let divergences: Vec<Value> = report["divergences"].as_array().cloned().unwrap_or_default().into_iter().map(|d| {
-        let expected = d["expected"].as_bool().unwrap_or(false);
-        json!({ "step_ref": format!("{}#{}", d["node_id"].as_str().unwrap_or_default(), d["seq"]),
-                "kind": if expected { "expected" } else { "unexpected" }, "type": d["kind"],
-                "source_receipt_id": d["source_receipt_id"], "replay_receipt_id": d["replay_receipt_id"] })
-    }).collect();
-    let results = json!({ "object": "replay_results", "replay_id": id, "verdict": verdict, "decisions_total": total,
-                          "decisions_matched": total.saturating_sub(divergences.len()), "divergences": divergences,
-                          "has_more": false, "next_cursor": null });
-    let ts = now();
-    let replay = json!({ "id": id, "object": "replay", "source_run_id": src, "effects": "recorded_only",
-                         "status": "completed", "verdict": verdict, "created_at": ts, "finished_at": ts,
-                         "results_url": format!("/v1/replays/{id}/results"), "error": null, "results": results });
-    store(&st).save_object(EV_REPLAY_STATE, &id, &user.user_id, &replay).await.map_err(|e| ApiError::internal(e, &rid))?;
-    Ok((StatusCode::ACCEPTED, Json(without_results(&replay))).into_response())
-}
-
-fn without_results(r: &Value) -> Value {
-    let mut r = r.clone();
-    if let Some(o) = r.as_object_mut() {
-        o.remove("results");
-    }
-    r
-}
-
-async fn get_replay(
-    State(st): State<Arc<AppState>>,
-    Extension(user): Extension<AuthUser>,
-    Extension(rid): Extension<RequestId>,
-    Path(id): Path<String>,
-) -> ApiResult {
-    let r = store(&st).load_object(EV_REPLAY_STATE, &id, &user.user_id).await.map_err(|e| ApiError::internal(e, &rid))?
-        .ok_or_else(|| ApiError::not_found("replay", &rid))?;
-    Ok(Json(without_results(&r)).into_response())
-}
-
-async fn get_replay_results(
-    State(st): State<Arc<AppState>>,
-    Extension(user): Extension<AuthUser>,
-    Extension(rid): Extension<RequestId>,
-    Path(id): Path<String>,
-) -> ApiResult {
-    let r = store(&st).load_object(EV_REPLAY_STATE, &id, &user.user_id).await.map_err(|e| ApiError::internal(e, &rid))?
-        .ok_or_else(|| ApiError::not_found("replay", &rid))?;
-    Ok(Json(r["results"].clone()).into_response())
-}
+// ── replays: see `replays` (overrides, batch, recorded_only) ──
