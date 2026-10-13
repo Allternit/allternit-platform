@@ -572,10 +572,10 @@ Findings live on this endpoint, not on the Run object: a finished run's snapshot
 | `effect_content_divergence` | high | Task-type runs: re-walking the run's own graph over its recording (no model, no effect), an effect asked for content that the recorded model output feeding it does not give. |
 | `effect_outcome_unresolved` | high | An effect was prepared and never committed or failed. |
 | `repeated_steps` | medium (high at 2x) | A step ran 4 or more times, or the same tool ran 3 or more times with identical arguments. |
-| `escalation_storm` | medium (high at 2x) | 3 or more attention requests, or 3 or more S3 escalations, in one run. |
+| `escalation_storm` | medium (high at 2x) | 3 or more attention requests, 3 or more S3 escalations, or S1 decision nodes escalating (abstaining to their S2/S3 twin) on at least half of their decisions (2 or more), in one run. |
 | `budget_near_exhaustion` | medium; high when exhausted | A budget dimension reached 90% of its limit, or spend was halted. |
 | `unanswered_attention` | high on a completed run, else medium | Attention requests were still open when the run ended. |
-| `low_confidence_decision_served` | medium | A decision of the run was served with a confidence below its kind's threshold. |
+| `low_confidence_decision_served` | medium | A decision of the run was served with a confidence below its kind's threshold, including an S1 decision node that acted on such an answer (read from the run's journaled S1 answers, so scripted runs are covered too). |
 
 Findings of severity `high` or `critical` are also written to the Factory ledger as `agency.trace.finding` events scoped to the run, for operators and alerting. They do not open attention items: an attention request on a finished run has no resolution path.
 
@@ -623,7 +623,7 @@ curl https://api.allternit.com/v1/runs/run_01JB2K4Y7MQ8/findings \
       "evidence": { "event_seqs": [14], "receipt_ids": [], "journal_keys": [], "decision_ids": [], "attention_ids": ["att_01JB2K6C"], "nodes": [] }
     }
   ],
-  "signals": { "events": 31, "receipts": 6, "progress": 12, "attention_requested": 1, "verifications": 1, "effects": 1, "model_outputs": 3, "decisions": 0, "divergences": 0 },
+  "signals": { "events": 31, "receipts": 6, "progress": 12, "attention_requested": 1, "verifications": 1, "effects": 1, "s1_decisions": 1, "model_outputs": 3, "decisions": 0, "divergences": 0 },
   "decision": null
 }
 ```

@@ -16,7 +16,7 @@ fn receipt(id: &str, body: Value) -> Value {
 }
 
 fn row(key: &str, node: &str, tool: &str, status: &str, args: &str) -> JournalRow {
-    JournalRow { key: key.into(), node: node.into(), tool: tool.into(), status: status.into(), args_hash: args.into() }
+    JournalRow { key: key.into(), node: node.into(), tool: tool.into(), status: status.into(), args_hash: args.into(), result: None }
 }
 
 /// A clean, verified task-type run: policy allow, then the effect, then a passing verifier.
@@ -42,6 +42,7 @@ fn clean() -> Trace {
         ],
         journal: vec![row("k_gen", "R04", "model.generate", "committed", ""), row("k_eff", "R07", "tool.write_file", "committed", "sha256:a")],
         decisions: vec![DecisionRow { id: "dec_ok".into(), kind: "element".into(), choice: Some("a".into()), confidence: 0.95, abstained: false, backend: "head".into() }],
+        s1_kinds: [("G05".to_string(), "verify".to_string())].into_iter().collect(),
         divergences: vec![],
     }
 }
@@ -175,6 +176,39 @@ fn monitor_loops_storms_budget_attention_decisions_divergence() {
     let mut t = clean();
     t.journal.push(row("k_prep", "R07", "tool.write_file", "prepared", "sha256:b"));
     assert_eq!(check_effect_unresolved(&t).unwrap().evidence.journal_keys, vec!["k_prep".to_string()]);
+}
+
+fn s1(key: &str, node: &str, choice: Option<&str>, confidence: f64) -> JournalRow {
+    let v = json!({ "decision_id": format!("dec_{key}"), "choice": choice, "confidence": confidence, "abstained": choice.is_none(), "backend": "local" });
+    JournalRow { result: Some(v.to_string()), ..row(key, node, S1_TOOL, "committed", "") }
+}
+
+#[test]
+fn monitor_s1_decision_nodes_low_confidence_and_escalations() {
+    // A served S1 answer above its kind's threshold (verify: 0.8) is fine; under it is a finding.
+    let mut t = clean();
+    t.journal.push(s1("a", "G05", Some("pass"), 0.85));
+    assert!(check_low_confidence(&t).is_none());
+    assert!(check_escalation_storm(&t).is_none());
+    t.journal.push(s1("b", "G05", Some("pass"), 0.7));
+    let f = check_low_confidence(&t).expect("acted under the verify threshold");
+    assert_eq!((f.evidence.nodes.clone(), f.evidence.journal_keys.clone(), f.evidence.decision_ids.clone()),
+        (vec!["G05".to_string()], vec!["b".to_string()], vec!["dec_b".to_string()]));
+    // The same decision found in the decisions table is reported once.
+    t.decisions.push(DecisionRow { id: "dec_b".into(), kind: "verify".into(), choice: Some("pass".into()), confidence: 0.7, abstained: false, backend: "local".into() });
+    assert_eq!(check_low_confidence(&t).unwrap().evidence.decision_ids, vec!["dec_b".to_string()]);
+    // S1 nodes escalating (abstaining) on most of their decisions are an escalation storm.
+    let mut t = clean();
+    t.journal.push(s1("c", "G05", Some("pass"), 0.95));
+    t.journal.push(s1("d", "X01", None, 0.2));
+    t.journal.push(s1("e", "X02", None, 0.3));
+    let f = check_escalation_storm(&t).expect("2 of 3 S1 decisions escalated");
+    assert_eq!(f.evidence.nodes, vec!["X01".to_string(), "X02".to_string()]);
+    assert!(f.detail.contains("2 of 3 S1"), "{}", f.detail);
+    assert_eq!(signals(&t)["s1_decisions"], 3);
+    assert_eq!(signals(&t)["effects"], 1, "S1 answers and model outputs are not effects");
+    // S1 answers are not mutating effects either.
+    assert!(check_effect_without_policy(&t).is_none());
 }
 
 #[test]

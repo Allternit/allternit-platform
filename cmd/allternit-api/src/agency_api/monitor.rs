@@ -46,6 +46,10 @@ pub const ENABLE_ENV: &str = "ALLTERNIT_AGENCY_TRACE_MONITOR";
 pub const DECISION_ENV: &str = "ALLTERNIT_AGENCY_TRACE_DECISION";
 pub const DECISION_KIND: &str = "trace.error";
 
+/// The journal tool of a B1 S1 decision node's answer.
+pub const S1_TOOL: &str = "decision.decide";
+/// S1 answers that escalate as a fraction of all S1 answers at which the run is an escalation storm.
+pub const S1_ESCALATION_SHARE: f64 = 0.5;
 /// Effects that need a preceding policy allow (they mutate the declared resources).
 pub const MUTATING_TOOLS: &[&str] = &["tool.write_file", "tool.execute", "tool.fs_write"];
 /// A step run this many times or more is a loop.
@@ -156,6 +160,8 @@ pub struct JournalRow {
     pub tool: String,
     pub status: String,
     pub args_hash: String,
+    /// The journaled value (S1 answers, model outputs); effects' results are not read.
+    pub result: Option<String>,
 }
 
 /// One stored decision of the run.
@@ -178,6 +184,8 @@ pub struct Trace {
     pub receipts: Vec<Value>,
     pub journal: Vec<JournalRow>,
     pub decisions: Vec<DecisionRow>,
+    /// B1 S1 decision nodes of the run's graph: node id -> decision kind.
+    pub s1_kinds: HashMap<String, String>,
     /// Divergences of the recorded re-walk (task-type runs): `EFFECT_REQUEST`
     /// means an effect asked for other content than its recorded inputs give.
     pub divergences: Vec<Value>,
@@ -196,6 +204,40 @@ fn receipt_events<'a>(t: &'a Trace, ty: &'a str) -> impl Iterator<Item = &'a Val
 }
 
 // ── the checks ──────────────────────────────────────────────────────────────
+
+/// One journaled S1 answer (`decision.decide`, B1 decision nodes).
+#[derive(Debug, Clone, PartialEq)]
+pub struct S1Answer {
+    pub key: String,
+    pub node: String,
+    pub kind: String,
+    pub decision_id: Option<String>,
+    pub choice: Option<String>,
+    pub confidence: f64,
+    pub abstained: bool,
+    pub backend: String,
+}
+
+/// Journal kinds that record values (model output, S1 answers, checkpoints), not effects.
+pub const VALUE_KINDS: &[&str] = &["model.generate", S1_TOOL, "checkpoint"];
+
+pub fn is_effect(tool: &str) -> bool {
+    !VALUE_KINDS.contains(&tool)
+}
+
+/// The run's S1 answers, in journal order.
+pub fn s1_answers(t: &Trace) -> Vec<S1Answer> {
+    t.journal.iter().filter(|r| r.tool == S1_TOOL && r.status == "committed").filter_map(|r| {
+        let v: Value = serde_json::from_str(r.result.as_deref()?).ok()?;
+        Some(S1Answer {
+            key: r.key.clone(), node: r.node.clone(),
+            kind: t.s1_kinds.get(&r.node).cloned().unwrap_or_else(|| "default".into()),
+            decision_id: v["decision_id"].as_str().map(String::from), choice: v["choice"].as_str().map(String::from),
+            confidence: v["confidence"].as_f64().unwrap_or(0.0), abstained: v["abstained"] == true,
+            backend: v["backend"].as_str().unwrap_or_default().to_string(),
+        })
+    }).collect()
+}
 
 /// A committed mutating effect needs a policy allow earlier in the trail. A
 /// policy receipt the chain says is a deny does not count; one the monitor
@@ -358,18 +400,25 @@ pub fn check_repeated_steps(t: &Trace) -> Option<Finding> {
 pub fn check_escalation_storm(t: &Trace) -> Option<Finding> {
     let att: Vec<&Value> = t.events.iter().filter(|e| e["type"] == "attention.requested").collect();
     let s3: Vec<&Value> = t.events.iter().filter(|e| e["type"] == "run.progress" && e["data"]["cognitive_role"] == "S3").collect();
-    let n = att.len().max(s3.len());
-    if n < STORM {
+    // B1: S1 decision nodes that abstained (escalated to their S2/S3 twin).
+    let s1 = s1_answers(t);
+    let s1_up: Vec<&S1Answer> = s1.iter().filter(|a| a.abstained).collect();
+    let s1_storm = s1_up.len() >= 2 && s1_up.len() as f64 >= S1_ESCALATION_SHARE * s1.len() as f64;
+    let n = att.len().max(s3.len()).max(s1_up.len());
+    if n < STORM && !s1_storm {
         return None;
     }
     let mut ev = Evidence::default();
     ev.event_seqs.extend(att.iter().map(|e| seq(e)).chain(s3.iter().map(|e| seq(e))));
     ev.attention_ids.extend(att.iter().filter_map(|e| e["data"]["attention"]["id"].as_str().map(String::from)));
     ev.nodes.extend(s3.iter().filter_map(|e| e["data"]["step"].as_str().map(String::from)));
+    ev.nodes.extend(s1_up.iter().map(|a| a.node.clone()));
+    ev.journal_keys.extend(s1_up.iter().map(|a| a.key.clone()));
+    ev.decision_ids.extend(s1_up.iter().filter_map(|a| a.decision_id.clone()));
     Some(Finding {
         check: "escalation_storm",
         severity: if n >= 2 * STORM { Severity::High } else { Severity::Medium },
-        detail: format!("{} attention request(s) and {} S3 escalation(s) in one run", att.len(), s3.len()),
+        detail: format!("{} attention request(s), {} S3 escalation(s) and {} of {} S1 decision(s) escalated in one run", att.len(), s3.len(), s1_up.len(), s1.len()),
         evidence: ev,
     })
 }
@@ -418,12 +467,22 @@ pub fn check_low_confidence(t: &Trace) -> Option<Finding> {
     let low: Vec<&DecisionRow> = t.decisions.iter()
         .filter(|d| d.kind != DECISION_KIND && d.choice.is_some() && !d.abstained && d.confidence < decisions::threshold(&d.kind))
         .collect();
-    (!low.is_empty()).then(|| Finding {
-        check: "low_confidence_decision_served",
-        severity: Severity::Medium,
-        detail: low.iter().map(|d| format!("{} ({}) served at confidence {:.2} < {:.2} by {}", d.id, d.kind, d.confidence, decisions::threshold(&d.kind), d.backend)).collect::<Vec<_>>().join("; "),
-        evidence: Evidence { decision_ids: low.iter().map(|d| d.id.clone()).collect(), ..Default::default() },
-    })
+    // B1: S1 decision nodes that acted on an answer under their kind's
+    // threshold (as journaled: what the run actually acted on).
+    let s1: Vec<S1Answer> = s1_answers(t).into_iter()
+        .filter(|a| a.choice.is_some() && !a.abstained && a.confidence < decisions::threshold(&a.kind))
+        .filter(|a| !a.decision_id.as_ref().is_some_and(|id| low.iter().any(|d| &d.id == id)))
+        .collect();
+    if low.is_empty() && s1.is_empty() {
+        return None;
+    }
+    let mut why: Vec<String> = low.iter().map(|d| format!("{} ({}) served at confidence {:.2} < {:.2} by {}", d.id, d.kind, d.confidence, decisions::threshold(&d.kind), d.backend)).collect();
+    why.extend(s1.iter().map(|a| format!("S1 node {} ({}) acted at confidence {:.2} < {:.2} by {}", a.node, a.kind, a.confidence, decisions::threshold(&a.kind), a.backend)));
+    let mut ev = Evidence { decision_ids: low.iter().map(|d| d.id.clone()).collect(), ..Default::default() };
+    ev.decision_ids.extend(s1.iter().filter_map(|a| a.decision_id.clone()));
+    ev.journal_keys.extend(s1.iter().map(|a| a.key.clone()));
+    ev.nodes.extend(s1.iter().map(|a| a.node.clone()));
+    Some(Finding { check: "low_confidence_decision_served", severity: Severity::Medium, detail: why.join("; "), evidence: ev })
 }
 
 /// Every deterministic check over `t`, most severe first (stable within a severity).
@@ -451,7 +510,8 @@ pub fn signals(t: &Trace) -> Value {
     json!({
         "events": t.events.len(), "receipts": t.receipts.len(), "progress": count("run.progress"),
         "attention_requested": count("attention.requested"), "verifications": count("verification.completed"),
-        "effects": t.journal.iter().filter(|r| r.tool != "model.generate").count(),
+        "effects": t.journal.iter().filter(|r| is_effect(&r.tool)).count(),
+        "s1_decisions": s1_answers(t).len(),
         "model_outputs": t.journal.iter().filter(|r| r.tool == "model.generate").count(),
         "decisions": t.decisions.len(), "divergences": t.divergences.len(),
     })
@@ -482,8 +542,9 @@ pub fn summary_of(stored: &Value) -> Value {
 
 pub fn load_journal(db: &DbHandle, run_id: &str) -> anyhow::Result<Vec<JournalRow>> {
     let c = db.connect()?;
-    let mut q = c.prepare("SELECT idempotency_key, COALESCE(node_id, ''), tool, status, args_hash FROM agency_effect_journal WHERE run_id = ?1 ORDER BY created_at, rowid")?;
-    let rows = q.query_map(params![run_id], |r| Ok(JournalRow { key: r.get(0)?, node: r.get(1)?, tool: r.get(2)?, status: r.get(3)?, args_hash: r.get(4)? }))?;
+    let mut q = c.prepare("SELECT idempotency_key, COALESCE(node_id, ''), tool, status, args_hash, CASE WHEN tool = ?2 THEN result END
+         FROM agency_effect_journal WHERE run_id = ?1 ORDER BY created_at, rowid")?;
+    let rows = q.query_map(params![run_id, S1_TOOL], |r| Ok(JournalRow { key: r.get(0)?, node: r.get(1)?, tool: r.get(2)?, status: r.get(3)?, args_hash: r.get(4)?, result: r.get(5)? }))?;
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
@@ -520,9 +581,21 @@ async fn recorded_walk(db: &DbHandle, rec: &RunRecord, events: &[Value]) -> Vec<
     let Ok(recording) = sim::Recording::load(db, rec, events, Some(graph.clone())) else { return vec![] };
     let cfg = sim::SimConfig {
         graph: &graph, policy: &policy, goal: ir["goal"].as_str().unwrap_or_default(), write_set: &write_set,
-        regen_all: false, tainted_from_start: false, scripted: executor::scripted(),
+        regen_all: false, tainted_from_start: false, scripted: executor::scripted(), regenerate: false,
+        heads: &[], db: Some(db), owner: &rec.owner, run_id: rec.run["id"].as_str().unwrap_or_default(),
     };
     sim::simulate(&cfg, &recording, &NoModel).await.divergences
+}
+
+/// S1 decision nodes of a task-type run's graph and their decision kinds.
+fn s1_kinds(rec: &RunRecord) -> HashMap<String, String> {
+    let ir = &rec.task_ir;
+    let Some(t) = ir["task_type"].as_str().and_then(task_types::get) else { return HashMap::new() };
+    let write_set: Vec<String> = ir["wih_policy"]["write_set"].as_array().map(|a| a.iter().filter_map(Value::as_str).map(String::from).collect()).unwrap_or_default();
+    let Ok(g) = task_types::instantiate(t, ir["wih_policy"]["task_id"].as_str().unwrap_or_default(), &write_set) else { return HashMap::new() };
+    g.nodes.iter().filter(|n| task_types::s1::is_s1(n))
+        .map(|n| (n.node_id.clone(), task_types::s1::spec(n).ok().and_then(|s| s.kind).unwrap_or_else(|| "default".into())))
+        .collect()
 }
 
 /// Load the trace of `rec`. Missing parts (an unreadable chain) load empty.
@@ -533,7 +606,8 @@ pub async fn load_trace(st: &AppState, s: &AgencyStore, rec: &RunRecord) -> anyh
     let journal = load_journal(&st.db, run_id)?;
     let decisions = load_decisions(&st.db, &rec.owner, run_id).unwrap_or_default();
     let divergences = recorded_walk(&st.db, rec, &events).await;
-    Ok(Trace { run: rec.run.clone(), attention: rec.attention.clone(), events, receipts, journal, decisions, divergences })
+    let s1_kinds = s1_kinds(rec);
+    Ok(Trace { run: rec.run.clone(), attention: rec.attention.clone(), events, receipts, journal, decisions, s1_kinds, divergences })
 }
 
 // ── the optional trace.error decision ───────────────────────────────────────

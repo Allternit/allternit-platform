@@ -3,12 +3,33 @@
   "description": "Pass-rate baseline for scripts/agency-eval-gate.mjs. Update it in the same PR that changes an eval set, a committed suite or the behaviour they grade (run the gate with --write-baseline).",
   "max_drop_pp": 2.0,
   "suites": {
-    "task_types.GENERAL_TASK": { "pass_rate": 1.0, "graded": 5 },
-    "task_types.THREAD_WORK": { "pass_rate": 1.0, "graded": 5 },
-    "task_types.COMPUTER_USE": { "pass_rate": 1.0, "graded": 4 },
-    "task_types.RESEARCH_DOC": { "pass_rate": 1.0, "graded": 4 },
-    "task_types.TEMPLATE": { "pass_rate": 1.0, "graded": 4 },
-    "task_types.CAMPAIGN": { "pass_rate": 1.0, "graded": 4 },
-    "core": { "pass_rate": 1.0, "graded": 6 }
+    "task_types.GENERAL_TASK": {
+      "pass_rate": 1.0,
+      "graded": 7
+    },
+    "task_types.THREAD_WORK": {
+      "pass_rate": 1.0,
+      "graded": 6
+    },
+    "task_types.COMPUTER_USE": {
+      "pass_rate": 1.0,
+      "graded": 4
+    },
+    "task_types.RESEARCH_DOC": {
+      "pass_rate": 1.0,
+      "graded": 4
+    },
+    "task_types.TEMPLATE": {
+      "pass_rate": 1.0,
+      "graded": 4
+    },
+    "task_types.CAMPAIGN": {
+      "pass_rate": 1.0,
+      "graded": 4
+    },
+    "core": {
+      "pass_rate": 1.0,
+      "graded": 7
+    }
   }
 }

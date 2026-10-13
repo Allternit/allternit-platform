@@ -308,7 +308,7 @@ pub fn run_trajectory(rec: &RunRecord, events: &[Value], journal: &[monitor::Jou
         Step { node: d["step"].as_str().unwrap_or_default().to_string(), primitive: d["primitive_id"].as_str().unwrap_or_default().to_string(),
                ok: d["outcome"] == "committed" }
     }).collect();
-    let effects = journal.iter().filter(|r| r.tool != "model.generate")
+    let effects = journal.iter().filter(|r| monitor::is_effect(&r.tool))
         .map(|r| Effect { node: r.node.clone(), tool: r.tool.clone(), committed: r.status == "committed" }).collect();
     let last_verify = events.iter().rev().find(|e| e["type"] == "verification.completed");
     let u = &rec.run["budget_usage"];

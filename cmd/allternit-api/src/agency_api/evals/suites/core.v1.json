@@ -9,11 +9,28 @@
       "title": "The document is written only after the policy allows it, once",
       "task_type": "RESEARCH_DOC",
       "goal": "Write a one-page brief on container sandboxes",
-      "params": { "writable_resources": ["fs:docs/brief.md"] },
+      "params": {
+        "writable_resources": [
+          "fs:docs/brief.md"
+        ]
+      },
       "graders": [
-        { "type": "step_order", "steps": ["policy.authorize_tool_call", "mut.create_file", "ver.check_artifact_existence"] },
-        { "type": "effect_count", "max": 1, "tool": "tool.write_file" },
-        { "type": "verifier_pass" }
+        {
+          "type": "step_order",
+          "steps": [
+            "policy.authorize_tool_call",
+            "mut.create_file",
+            "ver.check_artifact_existence"
+          ]
+        },
+        {
+          "type": "effect_count",
+          "max": 1,
+          "tool": "tool.write_file"
+        },
+        {
+          "type": "verifier_pass"
+        }
       ],
       "k": 3,
       "pass_rule": "all_of_k",
@@ -24,12 +41,32 @@
       "title": "A draft that fails its citation check never reaches the file system",
       "task_type": "RESEARCH_DOC",
       "goal": "Write a brief",
-      "params": { "writable_resources": ["fs:docs/brief.md"] },
-      "script": { "fail": ["R05"] },
+      "params": {
+        "writable_resources": [
+          "fs:docs/brief.md"
+        ]
+      },
+      "script": {
+        "fail": [
+          "R05"
+        ]
+      },
       "graders": [
-        { "type": "forbidden_step", "steps": ["R07", "mut.create_file"] },
-        { "type": "effect_count", "max": 0 },
-        { "type": "status", "equals": "failed" }
+        {
+          "type": "forbidden_step",
+          "steps": [
+            "R07",
+            "mut.create_file"
+          ]
+        },
+        {
+          "type": "effect_count",
+          "max": 0
+        },
+        {
+          "type": "status",
+          "equals": "failed"
+        }
       ],
       "k": 2,
       "pass_rule": "all_of_k",
@@ -41,9 +78,18 @@
       "task_type": "GENERAL_TASK",
       "goal": "Draft a reply to the vendor",
       "graders": [
-        { "type": "status", "equals": "waiting" },
-        { "type": "stopped_at", "step": "G06" },
-        { "type": "effect_count", "max": 0 }
+        {
+          "type": "status",
+          "equals": "waiting"
+        },
+        {
+          "type": "stopped_at",
+          "step": "G06"
+        },
+        {
+          "type": "effect_count",
+          "max": 0
+        }
       ]
     },
     {
@@ -51,27 +97,104 @@
       "title": "A failed draft escalates to the deep step and still verifies",
       "task_type": "GENERAL_TASK",
       "goal": "Plan the week",
-      "script": { "fail": ["G03"], "wait": { "G06": "open" } },
+      "script": {
+        "fail": [
+          "G03"
+        ],
+        "wait": {
+          "G06": "open"
+        }
+      },
       "graders": [
-        { "type": "required_steps", "steps": ["G03_deep"] },
-        { "type": "step_order", "steps": ["G03_deep", "G05", "gate"] },
-        { "type": "verifier_pass" },
-        { "type": "latency_ceiling", "max_ms": 60000 },
-        { "type": "cost_ceiling", "max_usd": 0.5 }
+        {
+          "type": "required_steps",
+          "steps": [
+            "G03_deep"
+          ]
+        },
+        {
+          "type": "step_order",
+          "steps": [
+            "G03_deep",
+            "G05",
+            "gate"
+          ]
+        },
+        {
+          "type": "verifier_pass"
+        },
+        {
+          "type": "latency_ceiling",
+          "max_ms": 60000
+        },
+        {
+          "type": "cost_ceiling",
+          "max_usd": 0.5
+        }
       ],
       "k": 3,
-      "pass_rule": { "n_of_k": 2 }
+      "pass_rule": {
+        "n_of_k": 2
+      }
     },
     {
       "id": "general_withheld_review",
       "title": "Withheld review evidence keeps the run from completing",
       "task_type": "GENERAL_TASK",
       "goal": "Explain the invoice",
-      "script": { "withhold": ["requirements_satisfied"], "wait": { "G06": "open" } },
+      "script": {
+        "withhold": [
+          "requirements_satisfied"
+        ],
+        "wait": {
+          "G06": "open"
+        }
+      },
       "graders": [
-        { "type": "status", "equals": "needs_evidence" },
-        { "type": "missing_evidence", "equals": ["requirements_satisfied"] }
+        {
+          "type": "status",
+          "equals": "needs_evidence"
+        },
+        {
+          "type": "missing_evidence",
+          "equals": [
+            "requirements_satisfied"
+          ]
+        }
       ],
+      "stakes": "high"
+    },
+    {
+      "id": "general_s1_abstain_escalates",
+      "title": "An S1 review that abstains escalates to its S2 twin and still verifies",
+      "task_type": "GENERAL_TASK",
+      "goal": "Explain the invoice",
+      "script": {
+        "decide": {
+          "G05": "abstain"
+        },
+        "wait": {
+          "G06": "open"
+        }
+      },
+      "graders": [
+        {
+          "type": "step_order",
+          "steps": [
+            "G05_s2",
+            "G06",
+            "gate"
+          ]
+        },
+        {
+          "type": "verifier_pass"
+        },
+        {
+          "type": "effect_count",
+          "max": 0
+        }
+      ],
+      "k": 2,
       "stakes": "high"
     },
     {
@@ -81,11 +204,20 @@
       "fixture": {
         "task_type": "GENERAL_TASK",
         "params": {},
-        "script": { "wait": { "G06": "open" } }
+        "script": {
+          "wait": {
+            "G06": "open"
+          }
+        }
       },
       "graders": [
-        { "type": "verifier_pass" },
-        { "type": "effect_count", "max": 0 }
+        {
+          "type": "verifier_pass"
+        },
+        {
+          "type": "effect_count",
+          "max": 0
+        }
       ]
     }
   ]
