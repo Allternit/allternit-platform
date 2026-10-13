@@ -248,7 +248,7 @@ async fn decisions_embed_head_refuses_another_embedding_model() {
     let (ctx, texts) = ("tools for kalomi work", ["kit for kalomi work", "box for nerupu work"]);
     let ids = ["o0", "o1"];
     let input = |v: Option<&Vectors>| {
-        EmbedHead.predict(&conn, &HeadInput { owner: "u", kind: "pick", key: "k", ids: &ids, context: ctx, question: None, texts: &texts, vectors: v }).unwrap()
+        EmbedHead.predict(&conn, &HeadInput { owner: "u", kind: "pick", key: "k", ids: &ids, context: ctx, question: None, texts: &texts, vectors: v, decision_id: None, pin: None }).unwrap()
     };
     let same = embed_head::embed_decision(&hash, ctx, None, &texts).await.unwrap();
     let a = input(Some(&same)).expect("hash vectors on a hash-trained head");
@@ -285,7 +285,7 @@ fn decisions_rules_compile_only_when_clean() {
     let route = route_options();
     let texts: Vec<&str> = route.iter().map(|o| o.1.as_str()).collect();
     let a = RulesHead
-        .predict(&conn, &HeadInput { owner: "u", kind: "route", key: "k", ids: &ids, context: "Somebody made an unauthorized purchase", question: None, texts: &texts, vectors: None })
+        .predict(&conn, &HeadInput { owner: "u", kind: "route", key: "k", ids: &ids, context: "Somebody made an unauthorized purchase", question: None, texts: &texts, vectors: None, decision_id: None, pin: None })
         .unwrap()
         .unwrap();
     assert_eq!(ids[a.choice], "fraud");
@@ -497,9 +497,124 @@ async fn decisions_live_embed_head() {
         let conn = db.connect().unwrap();
         let t = std::time::Instant::now();
         let a = EmbedHead
-            .predict(&conn, &HeadInput { owner: "u", kind, key: "k", ids: &ids, context: ctx, question: q.as_deref(), texts: &texts, vectors: Some(&v) })
+            .predict(&conn, &HeadInput { owner: "u", kind, key: "k", ids: &ids, context: ctx, question: q.as_deref(), texts: &texts, vectors: Some(&v), decision_id: None, pin: None })
             .unwrap()
             .unwrap();
         eprintln!("LIVE {kind}: embed {embed_ms:.1} ms, predict {:.3} ms, choice {} (label {label})", t.elapsed().as_secs_f64() * 1000.0, ids[a.choice]);
     }
+}
+
+// ── replays with trained-head overrides ─────────────────────────────────────
+
+/// A stored decision of run `run` (as `finish` stores it) with its harvested
+/// example (the text a trained head re-decides from), served `served`,
+/// with `right` as its outcome label.
+fn run_decision(db: &DbHandle, id: &str, run: &str, kind: &str, ctx: &str, opts: &[(String, String)], served: &str, right: &str) {
+    let options = json!(opts.iter().map(|(i, t)| json!({ "id": i, "text": t })).collect::<Vec<_>>());
+    store::insert(db, &store::Row {
+        id, owner: "u", created_at: &super::super::store::now(), kind, session_id: Some(run), task: None, context_hash: "h",
+        has_image: false, options: &options, choice: Some(served), probs: &json!({}), confidence: 0.9, abstained: false,
+        backend: "oracle", latency_ms: 900.0, attempts: &json!([{ "backend": "oracle", "detail": { "cost_usd": 0.002 } }]),
+    })
+    .unwrap();
+    let s = Shadow {
+        decision_id: id.into(), owner: "u".into(), kind: kind.into(), key: format!("key-{id}"),
+        ids: opts.iter().map(|o| o.0.clone()).collect(), has_image: false, context: ctx.into(), question: None,
+        texts: opts.iter().map(|o| o.1.clone()).collect(), vectors: None,
+    };
+    flywheel::record_key(db, &s).unwrap();
+    db.connect()
+        .unwrap()
+        .execute(
+            "INSERT OR REPLACE INTO decision_examples (decision_id, scope, kind, created_at, context, question, options_json, teacher_backend,
+                teacher_choice, teacher_confidence) VALUES (?1, 'org:run', ?2, 't', ?3, NULL, ?4, 'oracle', ?5, 0.9)",
+            params![id, kind, ctx, options.to_string(), served],
+        )
+        .unwrap();
+    store::set_outcome(db, id, "u", "failure", Some(right), None, &super::super::store::now()).unwrap().unwrap();
+}
+
+#[test]
+fn decisions_replay_with_a_rules_override_flips_a_decision() {
+    use crate::agency_api::replays::{decide, parse_overrides, resolve_versions};
+    let db = DbHandle::new_memory().unwrap();
+    seed(&db, "route", &route_dataset(200, 11));
+    let conn = db.connect().unwrap();
+    training::compile_rules(&conn, "route", "adm", 10_000, &CompileBar::default()).unwrap();
+    // The run served billing for a fraud ticket; the next decision of the run
+    // is one the rules were compiled from (leave-one-out: no answer).
+    run_decision(&db, "run_q_d1", "run_q", "route", "Someone made an unauthorized purchase on my card", &route_options(), "billing", "fraud");
+    let artifact = training::load(&conn, &training::latest(&conn, rules_head::NAME, "route").unwrap().unwrap().0).unwrap();
+    let i = (0..200).find(|i| artifact.trained_on(&format!("route-{i}"))).unwrap();
+    assert!(!artifact.trained_on("run_q_d1"));
+    let (ctx, _, opts, label) = route_dataset(200, 11).swap_remove(i);
+    run_decision(&db, &format!("route-{i}"), "run_q", "route", &ctx, &opts, &label, &label);
+
+    // Overrides: a pinned version that exists, the newest by default, a missing one refused.
+    let mut ov = parse_overrides(Some(&json!({ "decision_heads": { "route": { "head": "head.rules", "version": 1 } } }))).unwrap();
+    resolve_versions(&conn, &mut ov).unwrap();
+    assert_eq!((ov.heads[0].pin, ov.heads[0].version.as_str()), (Some(1), "1"));
+    assert_eq!(ov.echo()["decision_heads"]["route"], json!({ "head": "head.rules", "version": "1" }));
+    let mut latest = parse_overrides(Some(&json!({ "decision_heads": { "route": "head.rules" } }))).unwrap();
+    resolve_versions(&conn, &mut latest).unwrap();
+    assert_eq!(latest.heads[0].pin, Some(1));
+    let mut missing = parse_overrides(Some(&json!({ "decision_heads": { "route": { "head": "head.rules", "version": "7" } } }))).unwrap();
+    assert_eq!(resolve_versions(&conn, &mut missing).unwrap_err().status, 400);
+    assert!(parse_overrides(Some(&json!({ "decision_heads": { "route": { "head": "head.rules", "version": "x" } } }))).is_err());
+
+    let h = &ov.heads[0];
+    let mut recorded = decide::load(&conn, "u", "run_q").unwrap();
+    assert_eq!(recorded.len(), 2);
+    recorded.sort_by_key(|d| d.id != "run_q_d1");
+    assert!(recorded[0].context.is_some() && recorded[0].texts.len() == 3);
+    let r = decide::redecide_with(&conn, "u", &recorded[0], h.head, h.pin, 3).unwrap();
+    assert_eq!(r.samples.len(), 1, "deterministic: one sample");
+    let (v, row) = decide::compare_with(&recorded[0], h.head, &h.version, &r);
+    assert_eq!((v["candidate"]["choice"].as_str(), v["effective_choice"].as_str()), (Some("fraud"), Some("fraud")), "{v}");
+    assert_eq!((v["correct"].as_bool(), v["served_correct"].as_bool(), v["candidate"]["version"].as_str()), (Some(true), Some(false), Some("1")));
+    assert!(row.confident && row.cost_usd == 0.0);
+    // A decision the version was compiled from: left out, the served choice stands.
+    let r = decide::redecide_with(&conn, "u", &recorded[1], h.head, h.pin, 1).unwrap();
+    assert_eq!(r.samples, vec![None]);
+    // Without its harvested text, a trained head has no answer.
+    let mut bare = recorded[0].clone();
+    bare.context = None;
+    assert_eq!(decide::redecide_with(&conn, "u", &bare, h.head, h.pin, 1).unwrap().samples, vec![None]);
+    // Nothing written by the replay.
+    let n: i64 = conn.query_row("SELECT COUNT(*) FROM decision_shadow", [], |r| r.get(0)).unwrap();
+    assert_eq!(n, 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn decisions_replay_with_an_embed_override_embeds_before_redeciding() {
+    use crate::agency_api::replays::{decide, parse_overrides, resolve_versions};
+    let db = DbHandle::new_memory().unwrap();
+    seed(&db, "pick", &pick_dataset(120, 9));
+    let client = EmbedClient::new(Some(bow_server().await), DEFAULT_EMBED_MODEL);
+    training::train_embed(&db, &client, "pick", "adm", 10_000).await.unwrap();
+    training::train_embed(&db, &client, "pick", "adm", 10_000).await.unwrap();
+    let opts: Vec<(String, String)> = [("o0", "box for kalomi work"), ("o1", "kit for nerupu work"), ("o2", "tool for sotiva work")]
+        .iter()
+        .map(|(a, b)| (a.to_string(), b.to_string()))
+        .collect();
+    run_decision(&db, "run_e_d1", "run_e", "pick", "please I need help with sotiva today", &opts, "o0", "o2");
+    let conn = db.connect().unwrap();
+    let mut ov = parse_overrides(Some(&json!({ "decision_heads": { "pick": { "head": "head.embed", "version": "1" } } }))).unwrap();
+    resolve_versions(&conn, &mut ov).unwrap();
+    let h = ov.heads[0].clone();
+    assert_eq!(h.version, "1", "pinned below the newest (2)");
+    let mut recorded = decide::load(&conn, "u", "run_e").unwrap();
+    // Before the async embedding step: no vectors, no answer.
+    assert_eq!(decide::redecide_with(&conn, "u", &recorded[0], h.head, h.pin, 1).unwrap().samples, vec![None]);
+    decide::prepare(&mut recorded, &|kind| ov.head_for(kind), &client).await;
+    assert_eq!(recorded[0].vectors.as_ref().map(|v| v.model.as_str()), Some("test/bow-256"));
+    let r = decide::redecide_with(&conn, "u", &recorded[0], h.head, h.pin, 1).unwrap();
+    let (v, _) = decide::compare_with(&recorded[0], h.head, &h.version, &r);
+    assert_eq!(v["candidate"]["choice"], "o2", "{v}");
+    assert_eq!(v["candidate"]["version"], "1");
+    // Hash vectors (embedding server down) never meet a bow-trained version.
+    let mut hashed = recorded.clone();
+    hashed[0].vectors = None;
+    decide::prepare(&mut hashed, &|kind| ov.head_for(kind), &EmbedClient::new(None, DEFAULT_EMBED_MODEL)).await;
+    assert_eq!(decide::redecide_with(&conn, "u", &hashed[0], h.head, h.pin, 1).unwrap().samples, vec![None]);
 }

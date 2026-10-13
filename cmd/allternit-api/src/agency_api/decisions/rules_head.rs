@@ -280,21 +280,28 @@ pub fn compile(items: &[Item], bar: &CompileBar) -> Compiled {
 // ── serving ─────────────────────────────────────────────────────────────────
 
 pub fn latest_rules(conn: &Connection, kind: &str) -> rusqlite::Result<Option<Arc<RuleList>>> {
-    static CACHE: Mutex<Option<HashMap<String, (String, Arc<RuleList>)>>> = Mutex::new(None);
-    let Some((id, _)) = training::latest(conn, NAME, kind)? else { return Ok(None) };
-    if let Some((_, r)) = CACHE.lock().ok().and_then(|c| c.as_ref().and_then(|c| c.get(kind).cloned())).filter(|(cid, _)| *cid == id) {
-        return Ok(Some(r));
+    Ok(rules(conn, kind, None)?.map(|(r, _)| r))
+}
+
+/// A pinned version (`Some(n)`) or the newest, with its training-split ids;
+/// cached by artifact id.
+pub fn rules(conn: &Connection, kind: &str, pin: Option<i64>) -> rusqlite::Result<Option<(Arc<RuleList>, Arc<Vec<u8>>)>> {
+    type Cached = (Arc<RuleList>, Arc<Vec<u8>>);
+    static CACHE: Mutex<Option<HashMap<String, Cached>>> = Mutex::new(None);
+    let Some((id, _)) = training::find(conn, NAME, kind, pin)? else { return Ok(None) };
+    if let Some(hit) = CACHE.lock().ok().and_then(|c| c.as_ref().and_then(|c| c.get(&id).cloned())) {
+        return Ok(Some(hit));
     }
     let a = training::load(conn, &id)?;
     let Some(r) = a.rules_json.as_deref().and_then(|s| serde_json::from_str::<RuleList>(s).ok()) else {
         tracing::warn!(kind, id, "decision head.rules: malformed artifact");
         return Ok(None);
     };
-    let r = Arc::new(r);
+    let hit = (Arc::new(r), Arc::new(a.trained_ids));
     if let Ok(mut c) = CACHE.lock() {
-        c.get_or_insert_with(HashMap::new).insert(kind.to_string(), (id, r.clone()));
+        c.get_or_insert_with(HashMap::new).insert(id, hit.clone());
     }
-    Ok(Some(r))
+    Ok(Some(hit))
 }
 
 pub struct RulesHead;
@@ -309,8 +316,21 @@ impl Head for RulesHead {
     fn ready(&self, conn: &Connection, kind: &str) -> bool {
         training::latest(conn, NAME, kind).ok().flatten().is_some()
     }
+    fn stored_versions(&self) -> bool {
+        true
+    }
+    fn needs_text(&self) -> bool {
+        true
+    }
+    fn current_version(&self, conn: &Connection, kind: &str) -> String {
+        training::latest(conn, NAME, kind).ok().flatten().map(|(_, v)| v.to_string()).unwrap_or_default()
+    }
     fn predict(&self, conn: &Connection, input: &HeadInput<'_>) -> rusqlite::Result<Option<HeadAnswer>> {
-        let Some(rules) = latest_rules(conn, input.kind)? else { return Ok(None) };
+        let Some((rules, trained)) = rules(conn, input.kind, input.pin)? else { return Ok(None) };
+        // Leave-one-out: never credited for a decision it was fit on.
+        if input.decision_id.is_some_and(|id| training::trained_on(&trained, id)) {
+            return Ok(None);
+        }
         let state = super::embed_head::state_text(input.context, input.question);
         let opts: Vec<(&str, &str)> = input.ids.iter().zip(input.texts).map(|(a, b)| (*a, *b)).collect();
         if opts.len() != input.ids.len() {

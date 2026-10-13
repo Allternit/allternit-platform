@@ -7,6 +7,11 @@
 //! * COMPUTE S2/S3 and S2 VERIFY: cognition through gizzi-code (or the
 //!   scripted executor), journaled so a re-drive replays it; a failure follows
 //!   the node's ESCALATE edge to its S3 twin (tier escalation);
+//! * S1 (B1): a live decision through the Decision Runtime in-process
+//!   (`decisions::decide_value`, as the run's owner, project-scoped), journaled
+//!   per (run, node) so a re-drive never decides again; the choice routes the
+//!   walk (`task_types::s1`), an abstention escalates to the S2 twin, and the
+//!   run's verified completion / failure labels the decisions (`record_outcome`);
 //! * VERIFY S0 / POLICY / CONTROL: deterministic, receipt-backed;
 //! * WAIT: parks the run on an attention request; the requester's approval or
 //!   rejection (or an explicit trigger) re-queues it and the gate opens or closes;
@@ -20,15 +25,15 @@
 //! other schemes fail closed outside the scripted executor.
 
 use super::*;
-use crate::agency_api::task_types::{self, evidence_of, TaskType};
+use crate::agency_api::task_types::{self, evidence_of, s1, TaskType};
 use std::collections::HashSet;
 
 pub const TASK_WAIT_REASON: &str = "task_wait";
-const GATE_PRIMITIVE: &str = "ver.check_acceptance_evidence";
-const MAX_STEPS: usize = 64;
+pub(crate) const GATE_PRIMITIVE: &str = "ver.check_acceptance_evidence";
+pub(crate) const MAX_STEPS: usize = 64;
 /// Where the context step's recalled memory waits for the S2/S3 prompts.
 const MEMORY_KEY: &str = "memory:recall";
-const SYSTEM: &str = "You are one step of a verified agent run. Answer with the requested content only.";
+pub(crate) const SYSTEM: &str = "You are one step of a verified agent run. Answer with the requested content only.";
 
 /// Dev/conformance script (scripted executor only), read from
 /// `<runs dir>/<run_id>/scripted.json`: nodes that fail, criteria whose
@@ -45,10 +50,40 @@ struct Script {
     /// WP-C3b: effects go through the real connectors (default: recorded refs).
     #[serde(default)]
     live: bool,
+    /// B1: the option an S1 node picks (`abstain` escalates; default: the first).
+    #[serde(default)]
+    decide: HashMap<String, String>,
 }
 
-fn next(g: &ComputeGraph, from: &str, kind: &str) -> Option<String> {
-    g.edges.iter().find(|e| e.from == from && e.kind() == kind).map(|e| e.to.clone())
+/// The prompt of a generative (S2/S3) node; replays build the same one.
+pub(crate) fn prompt_for(node: &allternit_factory_engine::kernel::graph::GraphNode, goal: &str, input: &str, memory: Option<&str>) -> String {
+    let prompt = if node.node_kind == "VERIFY" {
+        format!("Goal: {goal}\n\nResult:\n{input}\n\nDoes the result meet the goal? First line: PASS or FAIL, then one sentence.")
+    } else {
+        let hint = if node.outputs.iter().any(|o| o == "candidate:action") { crate::agency_api::effects::computer::ACTION_HINT }
+            else if node.outputs.iter().any(|o| o == "candidate:step") { crate::agency_api::effects::campaign::STEP_HINT } else { "" }; // WP-C3b
+        format!("Goal: {goal}\n\nContext:\n{input}\n\nProduce: {}{hint}", node.extensions.as_ref().and_then(|e| e.get("x-title")).and_then(Value::as_str).unwrap_or("the step's output"))
+    };
+    match memory.filter(|_| node.node_kind != "VERIFY") {
+        Some(m) => format!("{prompt}\n\nRelevant memory (from the user's memory; use it when it applies):\n{m}"),
+        None => prompt,
+    }
+}
+
+/// The content an effect node writes: the first candidate output, else its input.
+pub(crate) fn effect_content(out: &HashMap<String, String>, input: &str) -> String {
+    out.get("candidate:draft").or_else(|| out.get("candidate:response")).or_else(|| out.get("candidate:reply"))
+        .or_else(|| out.get("candidate:action")).or_else(|| out.get("candidate:step")).cloned().unwrap_or_else(|| input.to_string())
+}
+
+/// The arguments an effect node's journal row is hashed over (`effect_with`).
+pub(crate) fn effect_args(node: &str, write_set: &[String], content: &str) -> Value {
+    let digest = allternit_factory_engine::receipts::jcs::sha256_tagged(content.as_bytes());
+    json!({ "write_set": write_set, "content_digest": digest, "effect_class": "MUTATE", "node_id": node, "fence": FENCE })
+}
+
+pub(crate) fn next(g: &ComputeGraph, from: &str, kind: &str) -> Option<String> {
+    s1::next(g, from, kind)
 }
 
 impl Exec<'_> {
@@ -97,6 +132,59 @@ impl Exec<'_> {
             return Err(StepErr::Stop);
         }
         Ok(text)
+    }
+
+    /// B1: the run's owner as the decision's user (org-scoped for harvest
+    /// opt-in) and the run's project (vendor backend gating).
+    fn run_user(&self) -> Option<(crate::auth::AuthUser, Option<String>)> {
+        let rec = self.h.block_on(self.s.load_run(&self.run_id)).ok().flatten()?;
+        let org = Some(self.org.clone()).filter(|o| !o.is_empty() && !o.starts_with("user:"));
+        let project = rec.run["metadata"]["project_id"].as_str().map(str::to_string);
+        Some((crate::auth::AuthUser { user_id: rec.owner, email: None, name: None, avatar_url: None, tenant_id: None,
+            organization_id: org, organization_role: None, organization_slug: None }, project))
+    }
+
+    /// B1: one S1 node's answer, decided once per (run, node) and journaled.
+    fn decide(&self, node: &allternit_factory_engine::kernel::graph::GraphNode, spec: &s1::Spec, goal: &str, input: &str, out: &HashMap<String, String>, script: &Script) -> Step<s1::Answer> {
+        let opts = spec.options(out);
+        let nid = node.node_id.as_str();
+        let ask = || -> s1::Answer {
+            match opts.len() {
+                0 => return s1::Answer::abstain("no-options"),
+                1 => return s1::Answer { decision_id: None, choice: Some(opts[0].id.clone()), confidence: 1.0, abstained: false, backend: "single-option".into() },
+                _ => {}
+            }
+            if scripted() {
+                return s1::scripted(&opts, script.decide.get(nid).map(String::as_str), script.fail.contains(nid));
+            }
+            let Some((user, project)) = self.run_user() else { return s1::Answer::abstain("no-owner") };
+            let label = if node.node_kind == "VERIFY" { "Result" } else { "Context" };
+            let input: String = input.chars().take(48 * 1024).collect();
+            let body = json!({ "context": format!("Goal: {goal}\n\n{label}:\n{input}"), "options": opts, "kind": spec.kind(),
+                "question": spec.question, "allow_abstain": true, "backends": spec.backends, "session_id": self.run_id,
+                "task": format!("{}:{nid}", self.run_id), "project": project });
+            let asked = Instant::now();
+            let a = match self.h.block_on(crate::agency_api::decisions::decide_value(self.st, &user, body)) {
+                Ok(v) => s1::Answer::from_decision(&v, spec.min_confidence),
+                Err(e) => { tracing::info!(run_id = %self.run_id, node = %nid, error = %e, "S1 decision failed; escalating"); s1::Answer::abstain("error") }
+            };
+            let ctx = crate::usage_ledger::LedgerCtx::surface("agency").run(&self.run_id, Some(nid)).tenant(Some(&self.org), None);
+            crate::usage_ledger::record(crate::usage_ledger::s1_decision_row(ctx, &a.backend, !a.abstained, asked.elapsed().as_millis() as u64, None));
+            a
+        };
+        match s1::decide_journaled(&self.st.db, &self.run_id, nid, self.epoch, ask)? {
+            Some((a, _replayed)) => Ok(a),
+            None => Err(StepErr::Stop),
+        }
+    }
+
+    /// B1: label the run's S1 decisions with how the run ended (flywheel +
+    /// harvest). Best effort: never fails the run; learning runs off-path.
+    fn label_decisions(&self, decided: &[(String, String)], status: &str) {
+        if decided.is_empty() { return; }
+        let Some((user, _)) = self.run_user() else { return };
+        let _rt = self.h.enter(); // `record_outcome` hands the learning step to the blocking pool
+        s1::label(self.st, &user, &self.run_id, decided, status);
     }
 
     /// The WAIT gate's state from the run's attention items: Some(true) open,
@@ -221,10 +309,20 @@ impl Exec<'_> {
         let mut failed_nodes: Vec<String> = vec![];
         let mut authorized = false;
         let mut doc: Option<(String, String)> = None;
+        let mut decided: Vec<(String, String)> = vec![]; // B1: (decision id, choice) of answered S1 nodes
         let mut cur = self.graph.entry_nodes.first().cloned().unwrap_or_default();
         for _ in 0..MAX_STEPS {
             let node = self.graph.node(&cur).cloned().ok_or_else(|| anyhow!("graph has no node {cur}"))?;
-            let (ran, plan) = self.route_node(&cur)?;
+            // B1: S1 nodes go to the Decision Runtime, not the pool router.
+            let s1_spec = if s1::is_s1(&node) { Some(s1::spec(&node)) } else { None };
+            let (ran, plan) = match &s1_spec {
+                Some(sp) => {
+                    self.admit()?;
+                    (cur.clone(), s1::plan(&node, sp.as_ref().unwrap_or(&s1::Spec::default())))
+                }
+                None => self.route_node(&cur)?,
+            };
+            let (mut branch, mut rejected): (Option<String>, Option<String>) = (None, None);
             let unmet = node.evidence_required.iter().any(|c| !evidence.iter().any(|e| e.starts_with(&format!("{c}:"))));
             let role = node.cognitive_role.clone().unwrap_or_default();
             let input = node.inputs.iter().filter_map(|i| out.get(i)).cloned().collect::<Vec<_>>().join("\n");
@@ -266,8 +364,7 @@ impl Exec<'_> {
                 if !authorized || unmet {
                     false // no effect without a policy authorization (N13)
                 } else {
-                    let content = out.get("candidate:draft").or_else(|| out.get("candidate:response")).or_else(|| out.get("candidate:reply"))
-                        .or_else(|| out.get("candidate:action")).or_else(|| out.get("candidate:step")).cloned().unwrap_or_else(|| input.clone());
+                    let content = effect_content(&out, &input);
                     match self.apply_effect(&cur, &node.primitive_id, &node.write_set, &content, &script) {
                         Ok(r) => {
                             if node.primitive_id == "mut.create_file" { doc = Some((write_set[0].clone(), content)); }
@@ -279,18 +376,33 @@ impl Exec<'_> {
                         Err(StepErr::Fail(e)) => { tracing::info!(run_id = %self.run_id, node = %cur, error = %e, "effect failed"); false }
                     }
                 }
+            } else if let Some(sp) = &s1_spec {
+                match sp {
+                    Ok(sp) => {
+                        let a = self.decide(&node, sp, goal, &input, &out, &script)?;
+                        if let (Some(id), Some(c)) = (&a.decision_id, &a.choice) {
+                            decided.push((id.clone(), c.clone()));
+                        }
+                        proof = json!({ "decision": a });
+                        match s1::route(&self.graph, &cur, sp, &a) {
+                            s1::Route::Commit(target) => {
+                                for o in &node.outputs { out.insert(o.clone(), a.choice.clone().unwrap_or_default()); }
+                                branch = target;
+                                !unmet
+                            }
+                            s1::Route::Escalate => false,
+                            s1::Route::Reject(c) => {
+                                // Its verdict ends the run: an unknown label, so it gets no outcome.
+                                if a.decision_id.is_some() { decided.pop(); }
+                                rejected = Some(c);
+                                false
+                            }
+                        }
+                    }
+                    Err(e) => { tracing::warn!(run_id = %self.run_id, node = %cur, error = %e, "unusable S1 spec; escalating"); false }
+                }
             } else if role == "S2" || role == "S3" {
-                let prompt = if node.node_kind == "VERIFY" {
-                    format!("Goal: {goal}\n\nResult:\n{input}\n\nDoes the result meet the goal? First line: PASS or FAIL, then one sentence.")
-                } else {
-                    let hint = if node.outputs.iter().any(|o| o == "candidate:action") { crate::agency_api::effects::computer::ACTION_HINT }
-                        else if node.outputs.iter().any(|o| o == "candidate:step") { crate::agency_api::effects::campaign::STEP_HINT } else { "" }; // WP-C3b
-                    format!("Goal: {goal}\n\nContext:\n{input}\n\nProduce: {}{hint}", node.extensions.as_ref().and_then(|e| e.get("x-title")).and_then(Value::as_str).unwrap_or("the step's output"))
-                };
-                let prompt = match out.get(MEMORY_KEY).filter(|_| node.node_kind != "VERIFY") {
-                    Some(m) => format!("{prompt}\n\nRelevant memory (from the user's memory; use it when it applies):\n{m}"),
-                    None => prompt,
-                };
+                let prompt = prompt_for(&node, goal, &input, out.get(MEMORY_KEY).map(String::as_str));
                 match self.generate(&plan, &cur, &prompt, &script) {
                     Ok(text) => {
                         let pass = node.node_kind != "VERIFY" || scripted() || text.trim_start().to_ascii_uppercase().starts_with("PASS");
@@ -343,13 +455,22 @@ impl Exec<'_> {
                         evidence.push(format!("{c}:receipt:{rid}"));
                     }
                 }
-                match next(&self.graph, &cur, "NORMAL") {
+                match branch.or_else(|| next(&self.graph, &cur, "NORMAL")) {
                     Some(n) => { cur = n; continue; }
-                    None if self.graph.completion_nodes.contains(&cur) => return self.complete_task(t, &evidence, doc),
+                    None if self.graph.completion_nodes.contains(&cur) => {
+                        let r = self.complete_task(t, &evidence, doc);
+                        if r.is_ok() { self.label_decisions(&decided, "success"); }
+                        return r;
+                    }
                     None => return Err(StepErr::Fail(anyhow!("{cur} has no successor and is not a completion node"))),
                 }
             }
             failed_nodes.push(cur.clone());
+            if let Some(c) = rejected {
+                // A confident S1 verdict outside `pass`: no escalation.
+                self.label_decisions(&decided, "failure");
+                return self.fail_task(t, &evidence, &format!("{cur} decided `{c}`"), false);
+            }
             let is_gate = node.primitive_id == GATE_PRIMITIVE;
             let strategy = node.on_failure.strategy.clone();
             match next(&self.graph, &cur, "FAILURE") {
@@ -360,9 +481,13 @@ impl Exec<'_> {
                     self.close_node(&tr, &tp, true)?;
                     let missing = out.get("missing").cloned().unwrap_or_default();
                     let why = if is_gate { format!("verifier: missing evidence for {missing}") } else { format!("{cur} failed ({strategy}); {target} ran") };
+                    self.label_decisions(&decided, "failure");
                     return self.fail_task(t, &evidence, &why, is_gate);
                 }
-                None => return self.fail_task(t, &evidence, &format!("{cur} failed"), false),
+                None => {
+                    self.label_decisions(&decided, "failure");
+                    return self.fail_task(t, &evidence, &format!("{cur} failed"), false);
+                }
             }
         }
         Err(StepErr::Fail(anyhow!("step cap reached")))

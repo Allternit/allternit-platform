@@ -60,6 +60,12 @@ async fn low_confidence_escalates_and_the_budget_caps_it() {
 }
 
 #[tokio::test]
+async fn ties_go_to_the_earlier_option() {
+    let r = route(&chain(vec![0.5, 0.5], 0)[..1], &q(false, None), 0.6, Duration::from_secs(1)).await;
+    assert_eq!(r.choice, Some(0));
+}
+
+#[tokio::test]
 async fn image_skips_blind_backends() {
     let r = route(&chain(vec![0.9, 0.1], 0), &q(false, Some("data:image/png;base64,AA==")), 0.6, Duration::from_secs(1)).await;
     assert_eq!(r.backend, Some("oracle"));

@@ -63,6 +63,7 @@ pub struct Item {
     pub options: Vec<(String, String)>,
     pub label: usize,
     pub source: String,
+    pub decision_id: String,
     /// sha256 of the content; sort order and split.
     pub hash: [u8; 32],
     /// The decision without its label (the lookup baseline's key).
@@ -87,7 +88,7 @@ pub fn prepare(rows: Vec<Labelled>) -> Vec<Item> {
             let key: [u8; 32] = h.clone().finalize().into();
             h.update([2u8]);
             h.update(r.label.as_bytes());
-            Some(Item { state, options: r.options, label, source: r.source, hash: h.finalize().into(), key })
+            Some(Item { state, options: r.options, label, source: r.source, decision_id: r.decision_id, hash: h.finalize().into(), key })
         })
         .collect();
     items.sort_by(|a, b| a.hash.cmp(&b.hash));
@@ -148,6 +149,36 @@ pub struct Artifact {
     pub embed_dim: Option<usize>,
     pub weights: Option<Vec<u8>>,
     pub rules_json: Option<String>,
+    /// Sorted 8-byte prefixes of sha256(decision id) of the training split.
+    pub trained_ids: Vec<u8>,
+}
+
+impl Artifact {
+    /// Whether the version was fit on this decision (a replay leaves it out).
+    pub fn trained_on(&self, decision_id: &str) -> bool {
+        trained_on(&self.trained_ids, decision_id)
+    }
+}
+
+fn id_prefix(decision_id: &str) -> [u8; 8] {
+    let h = Sha256::digest(decision_id.as_bytes());
+    let mut p = [0u8; 8];
+    p.copy_from_slice(&h[..8]);
+    p
+}
+
+/// The training split's decision ids as a sorted set of 8-byte prefixes.
+pub fn trained_ids_blob<'a>(ids: impl Iterator<Item = &'a str>) -> Vec<u8> {
+    let mut v: Vec<[u8; 8]> = ids.map(id_prefix).collect();
+    v.sort_unstable();
+    v.dedup();
+    v.concat()
+}
+
+pub fn trained_on(blob: &[u8], decision_id: &str) -> bool {
+    let p = id_prefix(decision_id);
+    let chunks: Vec<&[u8]> = blob.chunks_exact(8).collect();
+    chunks.binary_search_by(|c| (*c).cmp(&p[..])).is_ok()
 }
 
 pub struct NewArtifact<'a> {
@@ -161,6 +192,8 @@ pub struct NewArtifact<'a> {
     pub dataset_hash: &'a str,
     pub examples: usize,
     pub actor: &'a str,
+    /// `trained_ids_blob` of the training split.
+    pub trained_ids: &'a [u8],
 }
 
 /// Store a new version and register it in shadow (audited). Returns the version.
@@ -172,8 +205,8 @@ pub fn store(conn: &Connection, a: &NewArtifact<'_>) -> rusqlite::Result<i64> {
     )?;
     conn.execute(
         "INSERT INTO decision_head_models (id, head, kind, version, embed_model, embed_dim, weights, rules_json,
-            metrics_json, dataset_hash, examples, actor, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            metrics_json, dataset_hash, examples, actor, created_at, trained_ids)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         params![
             super::super::store::new_id("dhm"),
             a.head,
@@ -188,6 +221,7 @@ pub fn store(conn: &Connection, a: &NewArtifact<'_>) -> rusqlite::Result<i64> {
             a.examples as i64,
             a.actor,
             super::super::store::now(),
+            a.trained_ids,
         ],
     )?;
     let reason = format!("trained version {version} on {} examples", a.examples);
@@ -197,14 +231,21 @@ pub fn store(conn: &Connection, a: &NewArtifact<'_>) -> rusqlite::Result<i64> {
 
 /// The newest version's id and number.
 pub fn latest(conn: &Connection, head: &str, kind: &str) -> rusqlite::Result<Option<(String, i64)>> {
-    conn.prepare_cached("SELECT id, version FROM decision_head_models WHERE head = ?1 AND kind = ?2 ORDER BY version DESC LIMIT 1")?
-        .query_row(params![head, kind], |r| Ok((r.get(0)?, r.get(1)?)))
-        .optional()
+    find(conn, head, kind, None)
+}
+
+/// A pinned version (`Some(n)`, a replay override) or the newest.
+pub fn find(conn: &Connection, head: &str, kind: &str, version: Option<i64>) -> rusqlite::Result<Option<(String, i64)>> {
+    conn.prepare_cached(
+        "SELECT id, version FROM decision_head_models WHERE head = ?1 AND kind = ?2 AND (?3 IS NULL OR version = ?3) ORDER BY version DESC LIMIT 1",
+    )?
+    .query_row(params![head, kind, version], |r| Ok((r.get(0)?, r.get(1)?)))
+    .optional()
 }
 
 pub fn load(conn: &Connection, id: &str) -> rusqlite::Result<Artifact> {
     conn.query_row(
-        "SELECT id, version, embed_model, embed_dim, weights, rules_json FROM decision_head_models WHERE id = ?1",
+        "SELECT id, version, embed_model, embed_dim, weights, rules_json, trained_ids FROM decision_head_models WHERE id = ?1",
         [id],
         |r| {
             Ok(Artifact {
@@ -214,6 +255,7 @@ pub fn load(conn: &Connection, id: &str) -> rusqlite::Result<Artifact> {
                 embed_dim: r.get::<_, Option<i64>>(3)?.map(|d| d as usize),
                 weights: r.get(4)?,
                 rules_json: r.get(5)?,
+                trained_ids: r.get::<_, Option<Vec<u8>>>(6)?.unwrap_or_default(),
             })
         },
     )
@@ -428,6 +470,7 @@ pub async fn train_embed_with(
             dataset_hash: &dataset_hash(&items),
             examples: items.len(),
             actor,
+            trained_ids: &trained_ids_blob(items.iter().filter(|i| !is_validation(i)).map(|i| i.decision_id.as_str())),
         },
     )?;
     Ok(json!({ "object": "decision_head_version", "head": embed_head::NAME, "kind": kind, "version": version,
@@ -456,6 +499,7 @@ pub fn compile_rules(conn: &Connection, kind: &str, actor: &str, limit: usize, b
             dataset_hash: &dataset_hash(&items),
             examples: items.len(),
             actor,
+            trained_ids: &trained_ids_blob(items.iter().filter(|i| !is_validation(i)).map(|i| i.decision_id.as_str())),
         },
     )?;
     Ok(json!({ "object": "decision_head_version", "head": rules_head::NAME, "kind": kind, "version": version,

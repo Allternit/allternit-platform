@@ -7,14 +7,14 @@ use crate::db::DbHandle;
 use serde_json::json;
 use std::time::{Duration, Instant};
 
-const OWNER: &str = "u_fly";
+pub(super) const OWNER: &str = "u_fly";
 
-fn db() -> DbHandle {
+pub(super) fn db() -> DbHandle {
     DbHandle::new_memory().unwrap()
 }
 
 /// Store one decision the way `finish` does, with its key and shadow pass.
-fn decide(db: &DbHandle, id: &str, kind: &str, ctx: &str, served: Option<&str>) -> String {
+pub(super) fn decide(db: &DbHandle, id: &str, kind: &str, ctx: &str, served: Option<&str>) -> String {
     let ids = ["a", "b", "c"];
     let key = flywheel::key_hash(kind, ctx, None, &ids, &["A", "B", "C"]);
     let opts = json!([{ "id": "a", "text": "A" }, { "id": "b", "text": "B" }, { "id": "c", "text": "C" }]);
@@ -43,7 +43,7 @@ fn decide(db: &DbHandle, id: &str, kind: &str, ctx: &str, served: Option<&str>) 
     key
 }
 
-fn outcome(db: &DbHandle, id: &str, status: &str, label: Option<&str>) {
+pub(super) fn outcome(db: &DbHandle, id: &str, status: &str, label: Option<&str>) {
     store::set_outcome(db, id, OWNER, status, label, None, &super::super::store::now()).unwrap().unwrap();
     flywheel::on_outcome(db, id, OWNER).unwrap();
 }

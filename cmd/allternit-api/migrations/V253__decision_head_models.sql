@@ -18,6 +18,9 @@ CREATE TABLE IF NOT EXISTS decision_head_models (
     examples INTEGER NOT NULL,
     actor TEXT NOT NULL,
     created_at TEXT NOT NULL,
+    -- Sorted 8-byte sha256 prefixes of the training split's decision ids:
+    -- a replay never credits a version for a decision it was fit on.
+    trained_ids BLOB,
     UNIQUE (head, kind, version)
 );
 

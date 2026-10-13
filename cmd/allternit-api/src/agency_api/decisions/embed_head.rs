@@ -254,13 +254,20 @@ pub struct Model {
     pub embed_model: String,
     pub dim: usize,
     pub weights: Vec<f32>,
+    /// `training::trained_ids_blob` of the version's training split.
+    pub trained_ids: Vec<u8>,
 }
 
 /// The latest version for a kind, cached by artifact id.
 pub fn latest_model(conn: &Connection, kind: &str) -> rusqlite::Result<Option<Arc<Model>>> {
+    model(conn, kind, None)
+}
+
+/// A pinned version (`Some(n)`) or the newest, cached by artifact id.
+pub fn model(conn: &Connection, kind: &str, pin: Option<i64>) -> rusqlite::Result<Option<Arc<Model>>> {
     static CACHE: Mutex<Option<HashMap<String, Arc<Model>>>> = Mutex::new(None);
-    let Some((id, _)) = training::latest(conn, NAME, kind)? else { return Ok(None) };
-    if let Some(m) = CACHE.lock().ok().and_then(|c| c.as_ref().and_then(|c| c.get(kind).cloned())).filter(|m| m.id == id) {
+    let Some((id, _)) = training::find(conn, NAME, kind, pin)? else { return Ok(None) };
+    if let Some(m) = CACHE.lock().ok().and_then(|c| c.as_ref().and_then(|c| c.get(&id).cloned())) {
         return Ok(Some(m));
     }
     let a = training::load(conn, &id)?;
@@ -270,9 +277,9 @@ pub fn latest_model(conn: &Connection, kind: &str) -> rusqlite::Result<Option<Ar
         tracing::warn!(kind, id, "decision head.embed: malformed artifact");
         return Ok(None);
     }
-    let m = Arc::new(Model { id, version: a.version, embed_model: a.embed_model.unwrap_or_default(), dim, weights });
+    let m = Arc::new(Model { id: id.clone(), version: a.version, embed_model: a.embed_model.unwrap_or_default(), dim, weights, trained_ids: a.trained_ids });
     if let Ok(mut c) = CACHE.lock() {
-        c.get_or_insert_with(HashMap::new).insert(kind.to_string(), m.clone());
+        c.get_or_insert_with(HashMap::new).insert(id, m.clone());
     }
     Ok(Some(m))
 }
@@ -292,10 +299,23 @@ impl Head for EmbedHead {
     fn embeds(&self) -> bool {
         true
     }
+    fn stored_versions(&self) -> bool {
+        true
+    }
+    fn needs_text(&self) -> bool {
+        true
+    }
+    fn current_version(&self, conn: &Connection, kind: &str) -> String {
+        training::latest(conn, NAME, kind).ok().flatten().map(|(_, v)| v.to_string()).unwrap_or_default()
+    }
     fn predict(&self, conn: &Connection, input: &HeadInput<'_>) -> rusqlite::Result<Option<HeadAnswer>> {
         let Some(v) = input.vectors else { return Ok(None) };
-        let Some(m) = latest_model(conn, input.kind)? else { return Ok(None) };
+        let Some(m) = model(conn, input.kind, input.pin)? else { return Ok(None) };
         if !compatible(&m, v) || v.options.len() != input.ids.len() {
+            return Ok(None);
+        }
+        // Leave-one-out: never credited for a decision it was fit on.
+        if input.decision_id.is_some_and(|id| training::trained_on(&m.trained_ids, id)) {
             return Ok(None);
         }
         let opts: Vec<&[f32]> = v.options.iter().map(Vec::as_slice).collect();
