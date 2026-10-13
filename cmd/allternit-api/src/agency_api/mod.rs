@@ -217,6 +217,7 @@ pub fn agency_router() -> Router<Arc<AppState>> {
         .route("/v1/decisions/heads/train/:kind", post(decisions::training::train_head))
         .route("/v1/decisions/heads/compile/:kind", post(decisions::training::compile_head))
         .route("/v1/decisions/heads/:head/:kind/versions", get(decisions::training::list_versions))
+        .route("/v1/decisions/heads/jobs/:job_id", get(decisions::training::get_job))
         .route("/v1/capabilities", get(|| async { Json(page(catalog::capabilities())) }))
         .route("/v1/agents", get(|| async { Json(page(vec![catalog::agent_object()])) }))
         .route("/v1/authority-profiles", get(|| async { Json(page(catalog::authority_profiles())) }))

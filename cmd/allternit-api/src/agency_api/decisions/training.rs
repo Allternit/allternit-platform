@@ -1,10 +1,16 @@
 //! Trained flywheel heads (Agency Descent B2/B3, C1): datasets, artifacts
 //! and the admin endpoints that build them. CPU only, deterministic.
 //!
-//! - `POST /v1/decisions/heads/train/:kind` fits `head.embed`
-//!   (`embed_head`) on the pooled opted-in dataset (`harvest`).
-//! - `POST /v1/decisions/heads/compile/:kind` compiles `head.rules`
-//!   (`rules_head`), stored only when it is clean.
+//! - `POST /v1/decisions/heads/train/:kind` queues a job that fits
+//!   `head.embed` (`embed_head`) on the pooled opted-in dataset (`harvest`).
+//! - `POST /v1/decisions/heads/compile/:kind` queues a job that compiles
+//!   `head.rules` (`rules_head`), stored only when it is clean.
+//! - Both answer `202` with the job; `GET /v1/decisions/heads/jobs/:id`
+//!   follows it (queued, running, succeeded, failed; texts embedded of the
+//!   total; the version's metrics or the error). One queued or running job
+//!   per (head, kind): `409` otherwise. Jobs run on the runtime (embedding)
+//!   and the blocking pool (fit, compile), not in the request; job state is
+//!   in `decision_head_jobs`, and a job left running by a restart is failed.
 //! - `GET /v1/decisions/heads/:head/:kind/versions` lists the stored versions
 //!   with their metrics (never the weights).
 //!
@@ -269,6 +275,13 @@ pub struct Embedded {
 /// batch that fails (after retries) or comes back from another model fails
 /// the run: one dataset is never embedded by two models.
 pub async fn embed_items(client: &EmbedClient, items: &[Item]) -> Result<Embedded, TrainError> {
+    embed_items_with(client, items, &|_, _| {}).await
+}
+
+/// Progress callback: (texts embedded, texts in total).
+pub type Progress<'a> = &'a (dyn Fn(usize, usize) + Send + Sync);
+
+pub async fn embed_items_with(client: &EmbedClient, items: &[Item], progress: Progress<'_>) -> Result<Embedded, TrainError> {
     let mut index: HashMap<(bool, &str), usize> = HashMap::new();
     let mut texts: [Vec<String>; 2] = [vec![], vec![]];
     // (is_state, text) → row; rows are assigned in item order: deterministic.
@@ -282,6 +295,9 @@ pub async fn embed_items(client: &EmbedClient, items: &[Item]) -> Result<Embedde
             }
         }
     }
+    let total = texts[0].len() + texts[1].len();
+    let mut done = 0usize;
+    progress(0, total);
     let mut model: Option<(String, usize)> = None;
     let mut remote = true;
     let mut by_kind: [Vec<Vec<f32>>; 2] = [vec![], vec![]];
@@ -314,6 +330,8 @@ pub async fn embed_items(client: &EmbedClient, items: &[Item]) -> Result<Embedde
                 _ => {}
             }
             by_kind[k].extend(e.vectors);
+            done += batch.len();
+            progress(done, total);
         }
     }
     let (model, dim) = model.unwrap_or_default();
@@ -373,12 +391,23 @@ pub fn fit_embedded(items: &[Item], e: &Embedded, cfg: &TrainConfig) -> (Vec<f32
 /// Train `head.embed` for `kind` from the pooled opted-in dataset, store the
 /// version and register it in shadow. Returns the stored version's summary.
 pub async fn train_embed(db: &DbHandle, client: &EmbedClient, kind: &str, actor: &str, limit: usize) -> Result<Value, TrainError> {
+    train_embed_with(db, client, kind, actor, limit, &|_, _| {}).await
+}
+
+pub async fn train_embed_with(
+    db: &DbHandle,
+    client: &EmbedClient,
+    kind: &str,
+    actor: &str,
+    limit: usize,
+    progress: Progress<'_>,
+) -> Result<Value, TrainError> {
     let rows = harvest::labelled(&db.connect()?, kind, None, limit)?;
     let items = prepare(rows);
     if items.len() < MIN_EXAMPLES {
         return Err(TrainError(422, format!("{kind} has {} labelled examples; training needs {MIN_EXAMPLES}", items.len())));
     }
-    let embedded = embed_items(client, &items).await?;
+    let embedded = embed_items_with(client, &items, progress).await?;
     let (items, embedded, (w, metrics)) = tokio::task::spawn_blocking(move || {
         let out = fit_embedded(&items, &embedded, &TrainConfig::default());
         (items, embedded, out)
@@ -433,6 +462,155 @@ pub fn compile_rules(conn: &Connection, kind: &str, actor: &str, limit: usize, b
                "state": SHADOW, "dataset_hash": dataset_hash(&items), "metrics": c.metrics, "rules": rules }))
 }
 
+// ── jobs ────────────────────────────────────────────────────────────────────
+
+pub const QUEUED: &str = "queued";
+pub const RUNNING: &str = "running";
+pub const SUCCEEDED: &str = "succeeded";
+pub const FAILED: &str = "failed";
+
+/// Jobs this process owns (queued or running). A queued/running row that is
+/// not here was left by a process that ended: it is failed on the next
+/// enqueue for its (head, kind) and on read.
+fn owned() -> &'static std::sync::Mutex<std::collections::HashSet<String>> {
+    static OWNED: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> = std::sync::OnceLock::new();
+    OWNED.get_or_init(Default::default)
+}
+
+fn is_owned(id: &str) -> bool {
+    owned().lock().map(|o| o.contains(id)).unwrap_or(false)
+}
+
+fn fail_orphans(conn: &Connection, head: &str, kind: &str) -> rusqlite::Result<()> {
+    let active: Vec<String> = conn
+        .prepare("SELECT id FROM decision_head_jobs WHERE head = ?1 AND kind = ?2 AND status IN ('queued', 'running')")?
+        .query_map(params![head, kind], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    for id in active.into_iter().filter(|id| !is_owned(id)) {
+        let now = super::super::store::now();
+        conn.execute(
+            "UPDATE decision_head_jobs SET status = 'failed', error = 'interrupted: the server restarted', finished_at = ?2, updated_at = ?2
+             WHERE id = ?1 AND status IN ('queued', 'running')",
+            params![id, now],
+        )?;
+    }
+    Ok(())
+}
+
+/// Queue a job for `head` (`head.embed` trains, `head.rules` compiles) on
+/// `kind`. One queued or running job per (head, kind): 409 otherwise.
+pub fn enqueue(conn: &Connection, head: &str, kind: &str, actor: &str) -> Result<String, TrainError> {
+    fail_orphans(conn, head, kind)?;
+    let id = super::super::store::new_id("dhj");
+    let now = super::super::store::now();
+    // The partial unique index makes the check and the insert one step.
+    let inserted = conn.execute(
+        "INSERT OR IGNORE INTO decision_head_jobs (id, head, kind, status, actor, created_at, updated_at) VALUES (?1, ?2, ?3, 'queued', ?4, ?5, ?5)",
+        params![id, head, kind, actor, now],
+    )?;
+    if inserted == 0 {
+        return Err(TrainError(409, format!("a {head} job for {kind} is already queued or running")));
+    }
+    if let Ok(mut o) = owned().lock() {
+        o.insert(id.clone());
+    }
+    Ok(id)
+}
+
+fn set_progress(db: &DbHandle, id: &str, done: usize, total: usize) {
+    let res = db.connect().and_then(|c| {
+        c.execute(
+            "UPDATE decision_head_jobs SET progress_done = ?2, progress_total = ?3, updated_at = ?4 WHERE id = ?1",
+            params![id, done as i64, total as i64, super::super::store::now()],
+        )
+    });
+    if let Err(e) = res {
+        tracing::warn!(job = id, "decision head job progress: {e}");
+    }
+}
+
+fn finish(db: &DbHandle, id: &str, out: &Result<Value, TrainError>) {
+    let now = super::super::store::now();
+    let (status, result, error) = match out {
+        Ok(v) => (SUCCEEDED, Some(v.to_string()), None),
+        Err(e) => (FAILED, None, Some(e.1.clone())),
+    };
+    let res = db.connect().and_then(|c| {
+        c.execute(
+            "UPDATE decision_head_jobs SET status = ?2, result_json = ?3, error = ?4, finished_at = ?5, updated_at = ?5 WHERE id = ?1",
+            params![id, status, result, error, now],
+        )
+    });
+    if let Err(e) = res {
+        tracing::warn!(job = id, "decision head job finish: {e}");
+    }
+    if let Ok(mut o) = owned().lock() {
+        o.remove(id);
+    }
+    tracing::info!(job = id, status, "decision head job done");
+}
+
+/// Run a queued job to the end on the runtime, independent of the request
+/// that queued it: embedding is async, the fit and the compile run on the
+/// blocking pool.
+pub fn spawn(db: DbHandle, client: &'static EmbedClient, id: String, head: String, kind: String, actor: String, limit: usize) {
+    tokio::spawn(async move {
+        let now = super::super::store::now();
+        if let Err(e) = db.connect().and_then(|c| {
+            c.execute("UPDATE decision_head_jobs SET status = 'running', started_at = ?2, updated_at = ?2 WHERE id = ?1", params![id, now])
+        }) {
+            tracing::warn!(job = id, "decision head job start: {e}");
+        }
+        let out = if head == rules_head::NAME {
+            let (db2, kind2, actor2) = (db.clone(), kind.clone(), actor.clone());
+            tokio::task::spawn_blocking(move || compile_rules(&db2.connect()?, &kind2, &actor2, limit, &CompileBar::default()))
+                .await
+                .unwrap_or_else(|e| Err(TrainError(500, e.to_string())))
+        } else {
+            let (pdb, pid) = (db.clone(), id.clone());
+            let progress = move |done: usize, total: usize| set_progress(&pdb, &pid, done, total);
+            train_embed_with(&db, client, &kind, &actor, limit, &progress).await
+        };
+        finish(&db, &id, &out);
+    });
+}
+
+pub fn job(conn: &Connection, id: &str) -> rusqlite::Result<Option<Value>> {
+    let row = conn
+        .query_row(
+            "SELECT head, kind, status, progress_done, progress_total, result_json, error, actor, created_at, started_at, finished_at
+             FROM decision_head_jobs WHERE id = ?1",
+            [id],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, i64>(3)?,
+                    r.get::<_, i64>(4)?,
+                    r.get::<_, Option<String>>(5)?,
+                    r.get::<_, Option<String>>(6)?,
+                    r.get::<_, String>(7)?,
+                    r.get::<_, String>(8)?,
+                    r.get::<_, Option<String>>(9)?,
+                    r.get::<_, Option<String>>(10)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((head, kind, status, done, total, result, error, actor, created, started, finished)) = row else { return Ok(None) };
+    if (status == QUEUED || status == RUNNING) && !is_owned(id) {
+        fail_orphans(conn, &head, &kind)?;
+        return job(conn, id);
+    }
+    Ok(Some(json!({
+        "object": "decision_head_job", "id": id, "head": head, "kind": kind, "status": status,
+        "progress": { "done": done, "total": total, "unit": "texts embedded" },
+        "result": result.and_then(|r| serde_json::from_str::<Value>(&r).ok()), "error": error,
+        "actor": actor, "created_at": created, "started_at": started, "finished_at": finished,
+    })))
+}
+
 // ── HTTP ────────────────────────────────────────────────────────────────────
 
 #[derive(serde::Deserialize, Default)]
@@ -441,10 +619,15 @@ pub struct TrainQuery {
     limit: Option<usize>,
 }
 
-fn admin_and_kind(user: &AuthUser, kind: &str, rid: &RequestId) -> Result<(), ApiError> {
+fn admin(user: &AuthUser, rid: &RequestId) -> Result<(), ApiError> {
     if !flywheel::is_flywheel_admin(&user.user_id) {
         return Err(ApiError::new(403, "PERMISSION", "ERR_PERMISSION_DENIED", "only a decisions admin can train a head", rid));
     }
+    Ok(())
+}
+
+fn admin_and_kind(user: &AuthUser, kind: &str, rid: &RequestId) -> Result<(), ApiError> {
+    admin(user, rid)?;
     if kind.is_empty() || kind.len() > 64 || !kind.chars().all(|c| c.is_ascii_alphanumeric() || "_.-".contains(c)) {
         return Err(ApiError::new(400, "INPUT", "ERR_INPUT_INVALID", "kind must be 1-64 characters of [A-Za-z0-9_.-]", rid).param(Some("kind".into())));
     }
@@ -454,9 +637,21 @@ fn admin_and_kind(user: &AuthUser, kind: &str, rid: &RequestId) -> Result<(), Ap
 fn train_error(e: TrainError, rid: &RequestId) -> ApiError {
     match e.0 {
         500 => ApiError::internal(e.1, rid),
+        409 => ApiError::new(409, "CONFLICT", "ERR_CONFLICT", e.1, rid),
         422 => ApiError::new(422, "INPUT", "ERR_TRAINING_REJECTED", e.1, rid),
         s => ApiError::new(s, "SYSTEM", "ERR_TRAINING_UNAVAILABLE", e.1, rid),
     }
+}
+
+/// Queue a job and answer 202 with it; the job outlives the request.
+pub fn start(st: &AppState, client: &'static EmbedClient, user: &AuthUser, rid: &RequestId, head: &str, kind: &str, limit: Option<usize>) -> ApiResult {
+    admin_and_kind(user, kind, rid)?;
+    let limit = limit.unwrap_or(DEFAULT_LIMIT).clamp(1, 100_000);
+    let conn = st.db.connect().map_err(|e| ApiError::internal(e, rid))?;
+    let id = enqueue(&conn, head, kind, &user.user_id).map_err(|e| train_error(e, rid))?;
+    spawn(st.db.clone(), client, id.clone(), head.into(), kind.into(), user.user_id.clone(), limit);
+    let v = job(&conn, &id).map_err(|e| ApiError::internal(e, rid))?;
+    Ok((axum::http::StatusCode::ACCEPTED, Json(v)).into_response())
 }
 
 pub async fn train_head(
@@ -466,12 +661,7 @@ pub async fn train_head(
     Path(kind): Path<String>,
     QueryParams(q): QueryParams<TrainQuery>,
 ) -> ApiResult {
-    admin_and_kind(&user, &kind, &rid)?;
-    let limit = q.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, 100_000);
-    train_embed(&st.db, crate::memory_index::global(), &kind, &user.user_id, limit)
-        .await
-        .map(|v| Json(v).into_response())
-        .map_err(|e| train_error(e, &rid))
+    start(&st, crate::memory_index::global(), &user, &rid, embed_head::NAME, &kind, q.limit)
 }
 
 pub async fn compile_head(
@@ -481,14 +671,21 @@ pub async fn compile_head(
     Path(kind): Path<String>,
     QueryParams(q): QueryParams<TrainQuery>,
 ) -> ApiResult {
-    admin_and_kind(&user, &kind, &rid)?;
-    let limit = q.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, 100_000);
-    let (db, actor) = (st.db.clone(), user.user_id.clone());
-    tokio::task::spawn_blocking(move || compile_rules(&db.connect()?, &kind, &actor, limit, &CompileBar::default()))
-        .await
-        .map_err(|e| ApiError::internal(e, &rid))?
-        .map(|v| Json(v).into_response())
-        .map_err(|e| train_error(e, &rid))
+    start(&st, crate::memory_index::global(), &user, &rid, rules_head::NAME, &kind, q.limit)
+}
+
+pub async fn get_job(
+    State(st): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Extension(rid): Extension<RequestId>,
+    Path(id): Path<String>,
+) -> ApiResult {
+    admin(&user, &rid)?;
+    let conn = st.db.connect().map_err(|e| ApiError::internal(e, &rid))?;
+    match job(&conn, &id).map_err(|e| ApiError::internal(e, &rid))? {
+        Some(v) => Ok(Json(v).into_response()),
+        None => Err(ApiError::not_found("decision head job", &rid)),
+    }
 }
 
 pub async fn list_versions(

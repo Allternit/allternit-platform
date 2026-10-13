@@ -128,6 +128,58 @@ async fn bow_server() -> String {
     format!("http://{addr}")
 }
 
+/// Poll a job until it ends (or a minute passes).
+async fn wait_job(db: &DbHandle, id: &str) -> Value {
+    for _ in 0..1200 {
+        let j = training::job(&db.connect().unwrap(), id).unwrap().unwrap();
+        if j["status"] == training::SUCCEEDED || j["status"] == training::FAILED {
+            return j;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("job {id} did not finish");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn decisions_training_runs_as_a_background_job() {
+    let db = DbHandle::new_memory().unwrap();
+    seed(&db, "pick", &pick_dataset(120, 9));
+    let client: &'static EmbedClient = Box::leak(Box::new(EmbedClient::new(Some(bow_server().await), DEFAULT_EMBED_MODEL)));
+    let conn = db.connect().unwrap();
+    // One queued or running job per (head, kind).
+    let id = training::enqueue(&conn, embed_head::NAME, "pick", "adm").unwrap();
+    assert_eq!(training::enqueue(&conn, embed_head::NAME, "pick", "adm").unwrap_err().0, 409);
+    // Another head or kind is independent.
+    let other = training::enqueue(&conn, rules_head::NAME, "pick", "adm").unwrap();
+    training::spawn(db.clone(), client, other.clone(), rules_head::NAME.into(), "pick".into(), "adm".into(), 10_000);
+    training::spawn(db.clone(), client, id.clone(), embed_head::NAME.into(), "pick".into(), "adm".into(), 10_000);
+    let j = wait_job(&db, &id).await;
+    assert_eq!(j["status"], "succeeded", "{j}");
+    assert!(j["progress"]["total"].as_u64().unwrap() > 120);
+    assert_eq!(j["progress"]["done"], j["progress"]["total"]);
+    assert_eq!(j["result"]["version"], 1);
+    assert_eq!(flywheel::current_state(&conn, embed_head::NAME, "pick").as_deref(), Some(SHADOW));
+    // Same weights as an in-request run over the same data: still deterministic.
+    let direct = training::train_embed(&db, client, "pick", "adm", 10_000).await.unwrap();
+    assert_eq!(j["result"]["metrics"]["weights_sha256"], direct["metrics"]["weights_sha256"]);
+    // The semantic kind does not compile: that job fails with the reason.
+    let r = wait_job(&db, &other).await;
+    assert_eq!(r["status"], "failed");
+    assert!(r["error"].as_str().unwrap().contains("does not compile"), "{r}");
+    // Done: a new job for the same (head, kind) may start.
+    assert!(training::enqueue(&conn, embed_head::NAME, "pick", "adm").is_ok());
+
+    // A job left running by a process that ended does not block forever.
+    conn.execute(
+        "INSERT INTO decision_head_jobs (id, head, kind, status, actor, created_at, updated_at) VALUES ('dhj_old', 'head.rules', 'route', 'running', 'a', 't', 't')",
+        [],
+    )
+    .unwrap();
+    assert!(training::enqueue(&conn, rules_head::NAME, "route", "adm").is_ok());
+    let old = training::job(&conn, "dhj_old").unwrap().unwrap();
+    assert_eq!((old["status"].as_str(), old["error"].as_str()), (Some("failed"), Some("interrupted: the server restarted")));
+}
+
 fn f(v: &Value, path: &[&str]) -> f64 {
     path.iter().fold(v, |v, k| &v[*k]).as_f64().unwrap_or_else(|| panic!("{path:?} in {v}"))
 }
@@ -337,11 +389,29 @@ async fn decisions_train_and_compile_endpoints_are_admin_only() {
     assert_eq!(status(r), 403);
     let r = training::compile_head(State(st.clone()), Extension(user("org-admin")), Extension(rid.clone()), Path("route".into()), Query(TrainQuery::default())).await;
     assert_eq!(status(r), 403);
-    // A decisions admin gets through: no data yet, so nothing to train.
+    // A decisions admin gets a queued job (202); with no data it fails.
     let r = training::train_head(State(st.clone()), Extension(user("dec-admin")), Extension(rid.clone()), Path("route".into()), Query(TrainQuery::default())).await;
-    assert_eq!(status(r), 422);
+    let body = |r: axum::response::Response| async move {
+        assert_eq!(r.status().as_u16(), 202);
+        let b = http_body_util::BodyExt::collect(r.into_body()).await.unwrap().to_bytes();
+        serde_json::from_slice::<Value>(&b).unwrap()
+    };
+    let queued = body(r.unwrap_or_else(|_| panic!("train not accepted"))).await;
+    assert_eq!(queued["status"], "queued");
+    let id = queued["id"].as_str().unwrap().to_string();
+    let done = wait_job(&st.db, &id).await;
+    assert_eq!(done["status"], "failed");
+    assert!(done["error"].as_str().unwrap().contains("training needs 20"), "{done}");
     let r = training::compile_head(State(st.clone()), Extension(user("dec-admin")), Extension(rid.clone()), Path("route".into()), Query(TrainQuery::default())).await;
-    assert_eq!(status(r), 422);
+    let cid = body(r.unwrap_or_else(|_| panic!("compile not accepted"))).await["id"].as_str().unwrap().to_string();
+    assert_eq!(wait_job(&st.db, &cid).await["status"], "failed");
+    // Jobs are readable by decisions admins only.
+    let r = training::get_job(State(st.clone()), Extension(user("org-admin")), Extension(rid.clone()), Path(id.clone())).await;
+    assert_eq!(status(r), 403);
+    let r = training::get_job(State(st.clone()), Extension(user("dec-admin")), Extension(rid.clone()), Path(id)).await;
+    assert_eq!(status(r), 200);
+    let r = training::get_job(State(st.clone()), Extension(user("dec-admin")), Extension(rid.clone()), Path("dhj_nope".into())).await;
+    assert_eq!(status(r), 404);
     let r = training::train_head(State(st.clone()), Extension(user("dec-admin")), Extension(rid.clone()), Path("bad kind!".into()), Query(TrainQuery::default())).await;
     assert_eq!(status(r), 400);
     // Versions are readable by anyone signed in (metrics only).

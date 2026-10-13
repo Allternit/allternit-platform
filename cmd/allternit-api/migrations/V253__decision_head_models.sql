@@ -20,3 +20,24 @@ CREATE TABLE IF NOT EXISTS decision_head_models (
     created_at TEXT NOT NULL,
     UNIQUE (head, kind, version)
 );
+
+-- Training jobs: POST .../heads/train|compile/:kind queue one, GET
+-- .../heads/jobs/:id follows it. Progress counts texts embedded of the total.
+-- At most one queued or running job per (head, kind).
+CREATE TABLE IF NOT EXISTS decision_head_jobs (
+    id TEXT PRIMARY KEY,
+    head TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    status TEXT NOT NULL,
+    progress_done INTEGER NOT NULL DEFAULT 0,
+    progress_total INTEGER NOT NULL DEFAULT 0,
+    result_json TEXT,
+    error TEXT,
+    actor TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    finished_at TEXT,
+    updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_decision_head_jobs_active
+    ON decision_head_jobs(head, kind) WHERE status IN ('queued', 'running');
