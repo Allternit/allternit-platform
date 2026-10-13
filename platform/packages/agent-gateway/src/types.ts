@@ -101,3 +101,23 @@ export interface AaiProvider {
   sync(input: { agentId: string }): Promise<AaiResult<SyncResult>>;
   health(input: { agentId?: string }): Promise<AaiResult<HealthResult>>;
 }
+
+// ---- persistence (optional provider extension) ----
+/**
+ * What a host stores to bring a context back after it restarts. `state` is opaque to the host (the provider's own
+ * client-side conversation, event log and cursor); `conversationKeys` names the vendor-side conversation, if any.
+ */
+export interface ContextSnapshot { agentId?: string; conversationKeys?: Record<string, string>; state?: unknown }
+/**
+ * Optional: a provider whose contexts survive a host restart. The host saves `exportContext` after each turn and,
+ * for a context this process has not seen, calls `restoreContext` before the first op on it. Both are synchronous
+ * and never reach the vendor. `restoreContext` returns false when the snapshot cannot be used.
+ */
+export interface PersistentContexts {
+  exportContext(contextId: string): ContextSnapshot | undefined;
+  restoreContext(contextId: string, snapshot: ContextSnapshot): boolean;
+}
+export function isPersistentContexts(p: unknown): p is PersistentContexts {
+  const o = p as Partial<PersistentContexts> | null;
+  return !!o && typeof o.exportContext === "function" && typeof o.restoreContext === "function";
+}

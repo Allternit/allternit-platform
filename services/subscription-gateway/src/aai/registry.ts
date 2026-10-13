@@ -9,6 +9,7 @@ import {
   AaiRouter,
   LoopbackProvider,
   fail,
+  isPersistentContexts,
   runConformance,
   type AaiProvider,
   type AaiResult,
@@ -18,6 +19,8 @@ import {
 } from "@allternit/agent-gateway";
 import { aaiOperationSchema, botExecutionBindingSchema, type AAIOperation, type BotExecutionBinding } from "@allternit/subscription-fabric-contracts";
 import type { Config } from "../config.js";
+import type { Db } from "../store/db.js";
+import { AaiContextStore } from "./context-store.js";
 
 export interface AaiPacing {
   /** Minimum gap between context.open / context.message calls to the vendor. */
@@ -38,6 +41,10 @@ export interface AaiRegistration {
 // Ops that never reach the vendor's account/lane and stay available while the lane is killed.
 const KILL_EXEMPT = new Set<keyof AaiProvider>(["list", "get", "capabilities", "identity", "health", "events", "contextCancel", "contextClose"]);
 const PACED = new Set<keyof AaiProvider>(["contextOpen", "contextMessage"]);
+/** Ops on one context: the host restores a persisted context before them and records their effect after. */
+const CONTEXT_OPS = new Set<AAIOperation>([
+  "agent.context.open", "agent.context.message", "agent.context.steer", "agent.context.cancel", "agent.context.close", "agent.events",
+]);
 
 export interface AaiHostState {
   isDisabled(id: string): boolean;
@@ -89,8 +96,14 @@ export class AaiHost {
   /** Vendor adapters whose aai module failed to load at boot: id -> why (shown by GET /aai/providers). */
   private loadErrors = new Map<string, string>();
 
-  constructor(disabledIds: Iterable<string> = []) {
+  /** Persisted context state (state.db); absent in tests that need no restart story. */
+  readonly contexts?: AaiContextStore;
+  /** Contexts opened or restored by this process: `${adapterId}\u0000${contextId}`. */
+  private liveContexts = new Set<string>();
+
+  constructor(disabledIds: Iterable<string> = [], opts: { contexts?: AaiContextStore } = {}) {
     for (const d of disabledIds) this.disabled.add(d);
+    this.contexts = opts.contexts;
   }
 
   register(reg: AaiRegistration): this {
@@ -176,6 +189,58 @@ export class AaiHost {
     return runConformance(r.provider, fixtures); // raw provider: harness must not consume pacing/kill-switch
   }
 
+  /**
+   * A context this process has not seen but the store has (the gateway restarted since it opened): restore it into a
+   * provider that persists its contexts, let a provider that revives its own (manifest `context.resume`) handle it, and
+   * otherwise answer that it was lost. CONTEXT_NOT_FOUND is the code callers already hand off on (allternit-api starts a
+   * new generation from its checkpoint); `details.reason: "CONTEXT_LOST"` says why. undefined = carry on.
+   */
+  private async revive(adapterId: string | undefined, contextId: unknown): Promise<AaiResult<never> | undefined> {
+    if (!this.contexts || !adapterId || typeof contextId !== "string" || !contextId) return undefined;
+    const key = `${adapterId}\u0000${contextId}`;
+    if (this.liveContexts.has(key)) return undefined;
+    const row = this.contexts.get(adapterId, contextId);
+    const reg = this.regs.get(adapterId);
+    if (!row || !reg) return undefined; // not a context we handed out: the provider decides
+    if (row.closed) return fail("CONTEXT_NOT_FOUND", "This conversation was closed.", { retryable: false, details: { contextId, closed: true } });
+    const p = reg.provider;
+    if (isPersistentContexts(p)) {
+      let restored = false;
+      try { restored = p.restoreContext(contextId, { agentId: row.agentId ?? undefined, conversationKeys: row.conversationKeys ?? undefined, state: row.state ?? undefined }); }
+      catch (e) { console.error(`[aai] ${adapterId} could not restore context ${contextId}:`, e); }
+      if (restored) { this.liveContexts.add(key); return undefined; }
+    } else {
+      const m = await p.capabilities(row.agentId ?? row.binding.externalAgentId ?? row.binding.botId).catch(() => undefined);
+      if (m?.ok && m.value.context.resume) { this.liveContexts.add(key); return undefined; }
+    }
+    return fail("CONTEXT_NOT_FOUND", "This conversation was lost when the gateway restarted and can't be resumed; a new one has to be started.", {
+      retryable: false, details: { contextId, reason: "CONTEXT_LOST", lastCursor: row.lastCursor },
+    });
+  }
+
+  /** Bookkeeping after an op on a context: what the store needs to bring it back after a restart. */
+  private remember(adapterId: string | undefined, op: AAIOperation, binding: BotExecutionBinding, i: any, r: AaiResult<unknown>): void {
+    const store = this.contexts;
+    if (!store || !adapterId) return;
+    const p = this.regs.get(adapterId)?.provider;
+    const snap = (id: string) => { try { return p && isPersistentContexts(p) ? p.exportContext(id) : undefined; } catch { return undefined; } };
+    try {
+      if (op === "agent.context.open" && r.ok) {
+        const id = (r.value as { contextId: string }).contextId;
+        store.opened(adapterId, id, binding, binding.externalAgentId ?? i.agentId ?? binding.botId ?? null, snap(id));
+        this.liveContexts.add(`${adapterId}\u0000${id}`);
+      } else if (op === "agent.context.message" && typeof i.contextId === "string") {
+        const s = snap(i.contextId);
+        if (s) store.saveSnapshot(adapterId, i.contextId, s);
+      } else if (op === "agent.events" && r.ok && typeof i.contextId === "string") {
+        const cursor = (r.value as { cursor?: unknown }).cursor;
+        if (typeof cursor === "string") store.cursor(adapterId, i.contextId, cursor);
+      } else if (op === "agent.context.close" && r.ok && typeof i.contextId === "string") {
+        store.closed(adapterId, i.contextId);
+      }
+    } catch (e) { console.error(`[aai] could not persist ${op} for ${adapterId}:`, e); }
+  }
+
   async call(op: string, binding: BotExecutionBinding, input: Record<string, unknown>): Promise<AaiResult<unknown>> {
     const parsed = aaiOperationSchema.safeParse(op);
     if (!parsed.success) return fail("UNSUPPORTED", `unknown AAI op ${op}`, { retryable: false });
@@ -183,6 +248,11 @@ export class AaiHost {
     const i = input as any;
     // allternit-api names the target agent `externalAgentId` (its binding field); the AAI input is `agentId`.
     if (i.agentId === undefined && typeof i.externalAgentId === "string") i.agentId = i.externalAgentId;
+    const adapterId = binding.adapterId ?? (binding.type === "allternit" ? "allternit-loopback" : undefined);
+    if (CONTEXT_OPS.has(parsed.data)) {
+      const lost = await this.revive(adapterId, parsed.data === "agent.context.open" ? i.adoptContextId : i.contextId);
+      if (lost) return lost;
+    }
     const dispatch: Record<AAIOperation, () => Promise<AaiResult<unknown>>> = {
       "agent.list": () => p.list(),
       "agent.get": () => p.get(i.agentId),
@@ -208,8 +278,11 @@ export class AaiHost {
     };
     const fn = dispatch[parsed.data];
     if (!fn) return fail("UNSUPPORTED", `AAI op ${op} has no host dispatch`, { retryable: false });
-    try { return await fn(); }
+    let r: AaiResult<unknown>;
+    try { r = await fn(); }
     catch (e) { return fail("UNKNOWN", `host error: ${(e as Error).message}`, { retryable: false }); }
+    if (CONTEXT_OPS.has(parsed.data)) this.remember(adapterId, parsed.data, binding, i, r);
+    return r;
   }
 }
 
@@ -278,9 +351,10 @@ export function createAaiHost(
   config: Config,
   env: NodeJS.ProcessEnv = process.env,
   fetchImpl?: typeof fetch,
-  ctx: VendorContext = {}
+  ctx: VendorContext = {},
+  db?: Db
 ): AaiHost {
-  const host = new AaiHost(config.aai.disabled);
+  const host = new AaiHost(config.aai.disabled, { contexts: db ? new AaiContextStore(db) : undefined });
   const token = env.SUBS_GATEWAY_AAI_LOOPBACK_TOKEN;
   host.register({
     provider: new LoopbackProvider({
