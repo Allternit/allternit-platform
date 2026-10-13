@@ -31,6 +31,15 @@ SDKs: TypeScript [`@allternit/aai-sdk`](../../platform/packages/aai-sdk/README.m
 | DELETE | `/gateway/provider-accounts/:id/secret` | | ok | |
 | GET | `/gateway/provider-accounts/:id/agents` | | `{agents:[{externalAgentId,name,description?,avatarUrl?}]}` | 401, 403, 429, 502 |
 
+## One-step connect (`/gateway/connect`)
+
+| Method | Path | Body | Response | Errors |
+|---|---|---|---|---|
+| GET | `/gateway/connect` | | `{products:[{product,name,offers,signIn,verifiedLive,account?,bots[]}]}` | |
+| POST | `/gateway/connect` | `product`; optional `apiKey` (claude-managed-agents), `agents[]` (externalAgentIds to make bots for; default all), `channelAccountId`, `accessToken`, `phoneNumberId`, `appSecret`, `agentAddress` (muse) | `{product,status,message,action?,verifiedLive,account:{id,state},agents[],bots:[{botId,name,externalAgentId,state}]}`; `status` ∈ `ready, needs_sign_in, needs_key, needs_setup, blocked` | 400 unknown product |
+
+Idempotent: a second call reuses the account, login and bots. Source: `cmd/allternit-api/src/gateway_connect.rs`.
+
 ## Execution bindings
 
 | Method | Path | Body | Response | Errors |

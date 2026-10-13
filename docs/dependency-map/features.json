@@ -44,7 +44,7 @@
       "label": "Interactive answers",
       "product": "product:ai-allternit",
       "status": "live",
-      "description": "Assistant replies can include an interactive card written in OpenUI Lang inside an openui code fence: metrics, tables, charts, steps and inputs that recompute on the page; buttons and choices send a follow-up message; Query()/Mutation() read and (with an Allow each time) change data through the user's MCP connectors. The app sends the model manual with every chat turn unless Settings says Text only; channels get the card as readable text.",
+      "description": "Assistant replies can include an interactive card written in OpenUI Lang inside an openui code fence (38 components: layout, metrics, tables, line/area/bar/pie charts, tabs, checklists, inputs that recompute on the page), built up statement by statement while the reply streams; buttons and choices send a follow-up message; Query()/Mutation() read and (with an Allow each time) change data through the user's MCP connectors. When components can't do it, an ```app fence draws a small HTML/JS app inline in the reply, in the MCP sandbox proxy with no network, themed with --viz-* variables and watched by a heartbeat. allternit-api checks each finished reply's cards against the catalog (card_check frame: diagnostics + text fallback) and stores the checks and the user's card state per message (message_card_meta). The app sends the model manual with every chat turn unless Settings says Text only; channels get cards as readable text and apps as one line.",
       "touches": [
         "allternit-ai/src/lib/openui",
         "allternit-ai/src/components/ai-elements",
@@ -58,7 +58,12 @@
         "allternit-ai/src/views/UIForge",
         "allternit/cmd/allternit-api/src/openui_*",
         "allternit/cmd/allternit-api/src/channel_*",
-        "allternit/cmd/allternit-api/src/mcp_*"
+        "allternit/cmd/allternit-api/src/mcp_*",
+        "allternit/cmd/allternit-api/src/card_*",
+        "allternit/cmd/allternit-api/src/v1_*",
+        "allternit-ai/src/lib/apps",
+        "allternit-ai/src/components/chat",
+        "allternit-ai/src/components/artifact"
       ],
       "decisions": [
         {
@@ -76,11 +81,16 @@
         {
           "on": "2026-10-08",
           "note": "Removed the [v:...] pseudo-syntax, AllternitOpenUIRenderer/registry, BlueprintCanvas, the test-only code-compiler and the fake render_walkthrough tool. Design mode previews the reply's card with DESIGN.md tokens; UI Forge is the card playground."
+        },
+        {
+          "on": "2026-10-12",
+          "note": "Parity pass against ChatGPT Intelligent UI: progressive card streaming (complete statements only), per-part error boundaries with text fallback, catalog 16\u219238 with model-nameable design tokens, ```app inline apps through the sandbox proxy (process-isolated, heartbeat watchdog), server-side card checks and per-message card state that follows the user across devices. Model JSX and legacy sandbox parts now run in the inline-app sandbox instead of the page; the A2UI extended renderer and backend client, @allternit/ix, and the json-render and react-jsx-parser deps were removed as dead code."
         }
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/interactive-answers.mdx",
-        "allternit/surfaces/docs/release-notes.mdx"
+        "allternit/surfaces/docs/release-notes.mdx",
+        "allternit/cmd/allternit-api/migrations/V251__message_card_meta.sql"
       ]
     },
     {
@@ -171,6 +181,30 @@
         "allternit/surfaces/docs/guides/messaging-channels.mdx",
         "allternit/surfaces/docs/guides/whatsapp-business.mdx",
         "allternit/cmd/allternit-cloud-api/src/routes/phone.rs"
+      ]
+    },
+    {
+      "id": "feature:vendor-subscription-bots",
+      "label": "Vendor subscriptions as bots",
+      "product": "product:digital-twin",
+      "status": "building",
+      "description": "Connect a subscription or vendor agent you already have (ChatGPT, Claude, Gemini, Copilot, Kimi, Grok Bot, ChatGPT dots, Claude Managed Agents, OpenClaw, Hermes, Meta Muse) in one step; each chat, GPT, Project, Gem or bot there becomes a ready Allternit bot run through the Agent Gateway (AAI).",
+      "touches": [
+        "allternit-ai/src/components/gateway",
+        "allternit-ai/src/lib/gateway",
+        "allternit/cmd/allternit-api/src/gateway_*",
+        "allternit/services/subscription-gateway"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-12",
+          "note": "One-step POST /gateway/connect replaces the manual account/state/discover/bind/READY walk; the step-by-step wizard stays as the advanced path. Only Grok Bot is verified live; the web-subscription and dots lanes are offline-verified only."
+        }
+      ],
+      "evidence": [
+        "allternit/docs/gateway/QUICKSTART.md",
+        "allternit/docs/gateway/AAI_REST.md",
+        "allternit/cmd/allternit-api/src/gateway_connect.rs"
       ]
     },
     {
@@ -739,7 +773,7 @@
       "status": "building",
       "description": "POST /v1/decisions (alias /v1/systemone) in allternit-api's Agency Kernel: one choice over up to 255 caller options, answered by the owned local scorer (one-pass option scoring on MLX or llama.cpp, Qwen3.5-4B), escalating under a per-kind threshold to optional vendor adapters (off by default, per project) and the planner model through gizzi, within a latency budget, with abstain. Every decision and its outcome is stored (V245 decisions). The flywheel (V247) runs registered heads in shadow, promotes/demotes them on outcome accuracy with hysteresis and an audit trail, and serves live heads first (head.lookup: exact-match over past outcomes, <10 ms). GET/PUT /v1/decisions/heads.",
       "touches": [
-        "allternit/cmd/allternit-api/src/agency_api",
+        "allternit/cmd/allternit-api/src/agency_api/decisions",
         "allternit/domains/decision-runtime",
         "allternit/surfaces/allternit-desktop"
       ],
@@ -1018,6 +1052,48 @@
       ]
     },
     {
+      "id": "feature:agency-descent",
+      "label": "Agency Descent (decision flywheel)",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Agency work moves down the tiers as it repeats: open-weight and trained decision heads, opt-in training data (per-org consent, DLP-redacted, shared heads), the Descent dashboard (tier mix, cheap share, escalations, oracle spend) and memory recall in Agency runs.",
+      "touches": [
+        "allternit-ai/src/views/settings",
+        "allternit-ai/src/lib/agent-rules",
+        "allternit/cmd/allternit-api/src/kernel_ui",
+        "allternit/cmd/allternit-api/src/agency_api/decisions",
+        "allternit/cmd/allternit-api/src/agency_api/task_types",
+        "allternit/cmd/allternit-api/src/agency_api/replays",
+        "allternit/cmd/allternit-api/src/agency_api/evals",
+        "allternit/cmd/allternit-api/src/agency_api/harness",
+        "allternit/cmd/allternit-api/src/agency_api/memory_*",
+        "allternit/cmd/allternit-api/src/agency_api/monitor_*",
+        "allternit/domains/decision-runtime"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-12",
+          "note": "Training data is opt-in per organization; trained decision heads are shared across opted-in organizations; open-weight baselines instead of paid decision vendors; cloud test first. No GPU: trained heads train and run on CPU."
+        },
+        {
+          "on": "2026-10-13",
+          "note": "C2 + C5: a deterministic trace monitor checks every terminal run (no sampling) and stores findings (GET /v1/runs/:id/findings); an optional trace.error decision, labelled by the deterministic verdict, lets a head learn it later. Evals are trajectory graders over recorded-only replays or the scripted runner (/v1/evals/*), with regression cases promoted from runs and a manual CI gate (scripts/agency-eval-gate.mjs, 2 pp drop / any high-stakes failure). Replay and eval live model calls count against the same daily spend caps as runs."
+        },
+        {
+          "on": "2026-10-13",
+          "note": "Live S1 decisions in all six Agency graphs (journaled, never re-decided); CPU-trained decision heads (head.embed over EmbeddingGemma 2, head.rules compiled to S0) trained as background jobs on pooled opted-in data; replay overrides and replay-backed acceptance for head promotion; entity pages in memory recall; harness learning (C6): workflow edits proposed by deterministic operators or the planner model, scored on evals + recorded-only replays, accepted by a VERA-style rule and versioned only after human approval, with rollback."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/api/agency/decisions.mdx",
+        "allternit/surfaces/docs/api/agency/evals.mdx",
+        "allternit/cmd/allternit-api/src/agency_api/monitor.rs",
+        "allternit/cmd/allternit-api/src/agency_api/evals/mod.rs",
+        "allternit-ai/src/views/settings/agent-rules/DescentTab.tsx",
+        "allternit-ai/src/views/settings/agent-rules/DecisionTrainingCard.tsx"
+      ]
+    },
+    {
       "id": "feature:background-tasks",
       "label": "Background tasks pane",
       "product": "product:ai-allternit",
@@ -1041,12 +1117,40 @@
         {
           "on": "2026-10-11",
           "note": "cloud-api relays the task routes for ai.allternit.com. A TUI attached to a runtime session mirrors its shells and agents into the task table (ids tui_*, no daemon Bus events, so the pane refreshes every 10s); a surface's Stop settles the row and the TUI stops the task. Background-task restart cleanup now runs once per process and skips tui_* rows."
+        },
+        {
+          "on": "2026-10-12",
+          "note": "Code session pane selector is collapsed into a multi-select Panes menu with open-state checks and running-task count. Six code tool bodies share Browser shell surfaces on desktop, phone and popup. Terminal uses one tab bar with folder/branch context and bare shell chrome."
         }
       ],
       "evidence": [
         "allternit/docs/upstream/background-scenarios.md",
         "allternit/cmd/gizzi-code/test/session/session-tasks.test.ts",
         "allternit/cmd/gizzi-code/test/session/background-shell.test.ts"
+      ]
+    },
+    {
+      "id": "feature:code-file-workflow",
+      "label": "Code session file browser and editor",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Code sessions keep a searchable folder tree beside tabbed file previews and editors, with hover/focus/touch Edit actions, session draft retention, save/error handling, and changed-file navigation into the editor across Desktop and both phone layouts.",
+      "touches": [
+        "allternit-ai/src/views/code",
+        "allternit-ai/src/components/canvas",
+        "allternit-ai/src/lib/agents"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-12",
+          "note": "Eoj requested the functional file workflow from Claude Desktop references, beyond pane colors. Added persistent tree/editor split, file tabs, hover Edit, responsive tree, unsaved-draft protection, file:line opening, grouped changes and full-hunk review. File API requests use current runtime routing and auth. Verified with file-workflow, editor, Changes, pane-manager, terminal, file API and console tests plus desktop/phone/dark layout review. Desktop needs its next build and the PWA needs its separate deployment."
+        }
+      ],
+      "evidence": [
+        "allternit-ai/src/views/code/CodeFilesPane.tsx",
+        "allternit-ai/src/views/code/CodeFilesPane.test.tsx",
+        "allternit-ai/src/views/code/CodeDiffPanel.tsx",
+        "allternit/surfaces/docs/surfaces/native-agent.mdx"
       ]
     },
     {

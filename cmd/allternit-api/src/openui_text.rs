@@ -15,15 +15,23 @@ use std::collections::HashMap;
 /// Shown when a card can't be turned into text.
 pub const CARD_FALLBACK: &str = "(This reply has an interactive card. Open it in Allternit to use it.)";
 
+/// An inline app (```app fence: HTML/JS drawn in the reply) can't be read out at all.
+pub fn app_fallback(title: Option<&str>) -> String {
+    match title.map(str::trim).filter(|t| !t.is_empty()) {
+        Some(t) => format!("(This reply has an interactive app, \"{t}\". Open it in Allternit to use it.)"),
+        None => "(This reply has an interactive app. Open it in Allternit to use it.)".to_string(),
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Style {
     Text,
     Speech,
 }
 
-/// True when `text` holds an ```openui fence.
+/// True when `text` holds an ```openui (or ```app) fence.
 pub fn has_fence(text: &str) -> bool {
-    text.lines().any(is_open_line)
+    text.lines().any(|l| is_open_line(l) || app_open_title(l).is_some())
 }
 
 /// The reply with every ```openui fence replaced by readable text. Text without a fence is returned unchanged.
@@ -45,26 +53,51 @@ fn is_close_line(line: &str) -> bool {
     line.trim() == "```"
 }
 
+/// ```app or ```app title="…": Some(title) for an inline-app fence line.
+fn app_open_title(line: &str) -> Option<Option<String>> {
+    let rest = line.trim().strip_prefix("```app")?;
+    if rest.is_empty() {
+        return Some(None);
+    }
+    if !rest.starts_with(char::is_whitespace) {
+        return None;
+    }
+    let title = rest.trim().strip_prefix("title=\"").and_then(|t| t.split('"').next()).map(str::to_string);
+    Some(title)
+}
+
+enum Fence {
+    Card(String),
+    App(Option<String>),
+}
+
 fn convert(text: &str, style: Style) -> String {
     if !has_fence(text) {
         return text.to_string();
     }
     let mut out = String::with_capacity(text.len());
-    let mut fence: Option<String> = None;
+    let mut fence: Option<Fence> = None;
     for line in text.split_inclusive('\n') {
         match fence.as_mut() {
-            None if is_open_line(line) => fence = Some(String::new()),
-            None => out.push_str(line),
-            Some(_) if is_close_line(line) => {
-                let code = fence.take().unwrap_or_default();
-                push_block(&mut out, &card_text(&code, style));
-            }
-            Some(code) => code.push_str(line),
+            None if is_open_line(line) => fence = Some(Fence::Card(String::new())),
+            None => match app_open_title(line) {
+                Some(title) => fence = Some(Fence::App(title)),
+                None => out.push_str(line),
+            },
+            Some(_) if is_close_line(line) => match fence.take() {
+                Some(Fence::Card(code)) => push_block(&mut out, &card_text(&code, style)),
+                Some(Fence::App(title)) => push_block(&mut out, &app_fallback(title.as_deref())),
+                None => {}
+            },
+            Some(Fence::Card(code)) => code.push_str(line),
+            Some(Fence::App(_)) => {}
         }
     }
-    // An unclosed fence (a cut-off reply) is still a card, not text to show.
-    if let Some(code) = fence {
-        push_block(&mut out, &card_text(&code, style));
+    // An unclosed fence (a cut-off reply) is still a card or an app, not text to show.
+    match fence {
+        Some(Fence::Card(code)) => push_block(&mut out, &card_text(&code, style)),
+        Some(Fence::App(title)) => push_block(&mut out, &app_fallback(title.as_deref())),
+        None => {}
     }
     tidy(&out)
 }
@@ -207,6 +240,7 @@ enum Node {
     Binary(&'static str, Box<Node>, Box<Node>),
     Ternary(Box<Node>, Box<Node>, Box<Node>),
     Member(Box<Node>, String),
+    Index(Box<Node>, Box<Node>),
 }
 
 struct Parser {
@@ -276,13 +310,21 @@ impl Parser {
             return Some(Node::Unary("-", Box::new(self.unary()?)));
         }
         let mut node = self.primary()?;
-        while self.eat(".") {
-            match self.peek().cloned() {
-                Some(Tok::Ident(f)) => {
-                    self.pos += 1;
-                    node = Node::Member(Box::new(node), f);
+        loop {
+            if self.eat(".") {
+                match self.peek().cloned() {
+                    Some(Tok::Ident(f)) => {
+                        self.pos += 1;
+                        node = Node::Member(Box::new(node), f);
+                    }
+                    _ => return None,
                 }
-                _ => return None,
+            } else if self.eat("[") {
+                let index = self.expr()?;
+                self.expect("]")?;
+                node = Node::Index(Box::new(node), Box::new(index));
+            } else {
+                break;
             }
         }
         Some(node)
@@ -550,6 +592,11 @@ impl Program {
                 }
             }
             Node::Member(obj, field) => ev(obj).field(field),
+            Node::Index(obj, index) => match (ev(obj), ev(index)) {
+                (Val::Arr(items), i) => i.num().and_then(|n| items.get(n as usize).cloned()).unwrap_or(Val::Null),
+                (obj @ Val::Obj(_), Val::Str(key)) => obj.field(&key),
+                _ => Val::Null,
+            },
         }
     }
 
@@ -753,13 +800,154 @@ impl Renderer {
         let s = |i: usize| opt_str(&arg(args, i));
         match name {
             // Answer(title?, children): tolerate the title being left out.
-            "Answer" | "Root" | "Card" | "Stack" => {
+            "Answer" | "Root" | "Card" => {
                 if let Some(title) = args.iter().find_map(opt_str) {
                     self.blocks.push(title);
                 }
                 self.children_of(args);
             }
-            "Row" => self.children_of(args),
+            "Row" | "Stack" | "Grid" | "Tabs" => self.children_of(args),
+            "Panel" | "Tab" | "Collapsible" => {
+                if let Some(title) = s(0) {
+                    self.blocks.push(title);
+                }
+                self.children_of(args);
+            }
+            "Divider" => {}
+            "Badge" | "Code" => {
+                if let Some(t) = s(0) {
+                    self.blocks.push(t);
+                }
+            }
+            "Quote" => {
+                if let Some(t) = s(0) {
+                    self.blocks.push(match s(1) {
+                        Some(cite) => format!("\u{201c}{t}\u{201d} \u{2014} {cite}"),
+                        None => format!("\u{201c}{t}\u{201d}"),
+                    });
+                }
+            }
+            "List" => {
+                let lines: Vec<String> = arg(args, 0).items().iter().map(Val::text).filter(|t| !t.is_empty()).map(|t| format!("- {t}")).collect();
+                if !lines.is_empty() {
+                    self.blocks.push(lines.join("\n"));
+                }
+            }
+            "KeyValue" => {
+                let (format, unit) = (s(1), s(2));
+                let lines: Vec<String> = arg(args, 0)
+                    .items()
+                    .iter()
+                    .map(|it| format!("{}: {}", it.field("label").text(), fmt_value(&it.field("value"), format.as_deref(), unit.as_deref())))
+                    .collect();
+                if !lines.is_empty() {
+                    self.blocks.push(lines.join("\n"));
+                }
+            }
+            "Timeline" => {
+                let lines: Vec<String> = arg(args, 0)
+                    .items()
+                    .iter()
+                    .map(|it| {
+                        let detail = it.field("detail").text();
+                        let head = format!("{}: {}", it.field("time").text(), it.field("title").text());
+                        if detail.is_empty() { head } else { format!("{head} \u{2014} {detail}") }
+                    })
+                    .collect();
+                if !lines.is_empty() {
+                    self.blocks.push(lines.join("\n"));
+                }
+            }
+            "Image" => {
+                if let Some(alt) = s(1) {
+                    self.blocks.push(match self.style {
+                        Style::Text => format!("[Image: {alt}]"),
+                        Style::Speech => format!("An image: {alt}."),
+                    });
+                }
+            }
+            "Link" => {
+                if let Some(label) = s(0) {
+                    self.blocks.push(match (self.style, s(1)) {
+                        (Style::Text, Some(url)) if url.starts_with("https://") => format!("{label}: {url}"),
+                        _ => label,
+                    });
+                }
+            }
+            "Progress" => {
+                let label = s(0).unwrap_or_default();
+                let value = arg(args, 1);
+                let max = arg(args, 2);
+                let line = match (value.num(), max.num(), s(3)) {
+                    (Some(v), None, None) => format!("{label}: {}%", fmt_number(v.round(), None)),
+                    (Some(v), Some(m), None) if m != 0.0 => format!("{label}: {}%", fmt_number((v / m * 100.0).round(), None)),
+                    _ => format!("{label}: {} of {}", fmt_value(&value, s(3).as_deref(), s(4).as_deref()), fmt_value(&max, s(3).as_deref(), s(4).as_deref())),
+                };
+                self.blocks.push(line);
+            }
+            "LineChart" | "AreaChart" => {
+                let labels = arg(args, 0).items();
+                let (format, unit) = (s(3), s(4));
+                let point = |values: &[Val]| -> String {
+                    labels
+                        .iter()
+                        .enumerate()
+                        .map(|(i, l)| format!("{} {}", l.text(), fmt_value(values.get(i).unwrap_or(&Val::Null), format.as_deref(), unit.as_deref())))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
+                let series = arg(args, 2).items();
+                let lines: Vec<String> = if series.is_empty() {
+                    vec![point(&arg(args, 1).items())]
+                } else {
+                    series.iter().map(|sr| format!("{}: {}", sr.field("name").text(), point(&sr.field("values").items()))).collect()
+                };
+                let lines: Vec<String> = lines.into_iter().filter(|l| !l.trim().is_empty()).collect();
+                if !lines.is_empty() {
+                    self.blocks.push(lines.join("\n"));
+                }
+            }
+            "PieChart" => {
+                let (labels, values) = (arg(args, 0).items(), arg(args, 1).items());
+                let total: f64 = values.iter().filter_map(Val::num).map(|n| n.max(0.0)).sum();
+                let (format, unit) = (s(2), s(3));
+                let lines: Vec<String> = labels
+                    .iter()
+                    .enumerate()
+                    .map(|(i, l)| {
+                        let v = values.get(i).cloned().unwrap_or(Val::Null);
+                        let pct = match (v.num(), total > 0.0) {
+                            (Some(n), true) => format!(" ({}%)", fmt_number((n.max(0.0) / total * 100.0).round(), None)),
+                            _ => String::new(),
+                        };
+                        format!("{}: {}{pct}", l.text(), fmt_value(&v, format.as_deref(), unit.as_deref()))
+                    })
+                    .collect();
+                if !lines.is_empty() {
+                    self.blocks.push(lines.join("\n"));
+                }
+            }
+            "TextField" | "DateField" => {
+                let label = s(0).unwrap_or_default();
+                let value = arg(args, 1).text();
+                self.blocks.push(format!("{label}: {}", if value.is_empty() { "\u{2014}".to_string() } else { value }));
+            }
+            "Checklist" => {
+                let done: Vec<String> = arg(args, 2).items().iter().map(Val::text).collect();
+                if let Some(label) = s(0) {
+                    self.blocks.push(label);
+                }
+                let lines: Vec<String> = arg(args, 1)
+                    .items()
+                    .iter()
+                    .map(Val::text)
+                    .filter(|t| !t.is_empty())
+                    .map(|t| format!("[{}] {t}", if done.contains(&t) { "x" } else { " " }))
+                    .collect();
+                if !lines.is_empty() {
+                    self.blocks.push(lines.join("\n"));
+                }
+            }
             "Text" => {
                 if let Some(t) = s(0) {
                     self.blocks.push(t);
@@ -899,6 +1087,130 @@ impl Renderer {
     }
 }
 
+// ---------------------------------------------------------------- checking
+
+/// The card component catalog, generated from the app's library
+/// (`allternit-ai` `src/lib/openui/catalog.json`, kept current by its test).
+const CATALOG_JSON: &str = include_str!("openui_catalog.json");
+
+#[derive(serde::Deserialize)]
+struct CatalogEntry {
+    params: Vec<String>,
+    required: Vec<String>,
+}
+
+fn catalog() -> &'static HashMap<String, CatalogEntry> {
+    static CATALOG: std::sync::OnceLock<HashMap<String, CatalogEntry>> = std::sync::OnceLock::new();
+    CATALOG.get_or_init(|| serde_json::from_str(CATALOG_JSON).unwrap_or_default())
+}
+
+/// Calls the runtime provides besides library components.
+const RUNTIME_CALLS: [&str; 3] = ["Query", "Mutation", "Action"];
+
+/// One card found in a reply, checked: what can't be drawn, and the card as text.
+#[derive(Clone, Debug, serde::Serialize, PartialEq)]
+pub struct CardCheck {
+    /// Position of the card among the reply's ```openui fences (0-based).
+    pub index: usize,
+    /// Problems that cost the user part of the card, in words a person can act on.
+    pub diagnostics: Vec<String>,
+    /// The card as plain text, for when it can't be drawn.
+    pub fallback: String,
+    /// The card's OpenUI Lang, as written.
+    #[serde(skip)]
+    pub code: String,
+}
+
+/// Every ```openui fence in a finished reply, checked against the catalog.
+pub fn check_reply(text: &str) -> Vec<CardCheck> {
+    let mut out = Vec::new();
+    let mut fence: Option<String> = None;
+    let mut done = |code: String, out: &mut Vec<CardCheck>| {
+        let index = out.len();
+        out.push(CardCheck { index, diagnostics: check_card(&code), fallback: card_text(&code, Style::Text), code });
+    };
+    for line in text.split_inclusive('\n') {
+        match fence.as_mut() {
+            None if is_open_line(line) => fence = Some(String::new()),
+            None => {}
+            Some(_) if is_close_line(line) => done(fence.take().unwrap_or_default(), &mut out),
+            Some(code) => code.push_str(line),
+        }
+    }
+    if let Some(code) = fence {
+        done(code, &mut out);
+    }
+    out
+}
+
+/// What in one card's OpenUI Lang can't be drawn. Empty when the card is fine.
+pub fn check_card(code: &str) -> Vec<String> {
+    let mut problems = Vec::new();
+    let mut defined: Vec<String> = Vec::new();
+    let mut nodes: Vec<(String, Node)> = Vec::new();
+    for (name, src) in statements(code) {
+        match parse_expr(&src) {
+            Some(node) => {
+                defined.push(name.clone());
+                nodes.push((name, node));
+            }
+            None => problems.push(format!("The line for `{name}` couldn't be read.")),
+        }
+    }
+    if !defined.iter().any(|n| n == "root") {
+        problems.push("The card has no `root = Answer(...)` line.".to_string());
+    }
+    let mut missing: Vec<String> = Vec::new();
+    for (_, node) in &nodes {
+        walk(node, &mut |n| match n {
+            Node::Call(name, args) if name.chars().next().is_some_and(char::is_uppercase) => {
+                if RUNTIME_CALLS.contains(&name.as_str()) {
+                    return;
+                }
+                match catalog().get(name) {
+                    None => problems.push(format!("Unknown component {name}.")),
+                    Some(entry) => {
+                        if args.len() > entry.params.len() {
+                            problems.push(format!("{name} takes at most {} values; {} given.", entry.params.len(), args.len()));
+                        }
+                        let given = args.len().min(entry.params.len());
+                        let lacking: Vec<&str> = entry.params[given..].iter().filter(|p| entry.required.contains(p)).map(String::as_str).collect();
+                        if !lacking.is_empty() {
+                            problems.push(format!("{name} is missing {}.", lacking.join(", ")));
+                        }
+                    }
+                }
+            }
+            Node::Ref(r) if !defined.contains(r) && !missing.contains(r) => missing.push(r.clone()),
+            _ => {}
+        });
+    }
+    if !missing.is_empty() {
+        problems.push(format!("Never defined: {}.", missing.join(", ")));
+    }
+    problems.dedup();
+    problems
+}
+
+fn walk(node: &Node, f: &mut dyn FnMut(&Node)) {
+    f(node);
+    match node {
+        Node::Arr(items) | Node::Call(_, items) | Node::Builtin(_, items) => items.iter().for_each(|n| walk(n, f)),
+        Node::Obj(fields) => fields.iter().for_each(|(_, n)| walk(n, f)),
+        Node::Unary(_, a) | Node::Member(a, _) => walk(a, f),
+        Node::Binary(_, a, b) | Node::Index(a, b) => {
+            walk(a, f);
+            walk(b, f);
+        }
+        Node::Ternary(c, a, b) => {
+            walk(c, f);
+            walk(a, f);
+            walk(b, f);
+        }
+        _ => {}
+    }
+}
+
 // ---------------------------------------------------------------- streaming (voice)
 
 /// Streaming version for speech: text outside a fence passes through as it arrives; a fence
@@ -908,6 +1220,8 @@ pub struct SpokenFilter {
     /// Start of a line that might still become a fence marker.
     pending: String,
     fence: Option<String>,
+    /// Inside an ```app fence (its title, if any): held and replaced by one line.
+    app: Option<Option<String>>,
     /// Part of the current line was already passed on, so it can't open a fence.
     mid_line: bool,
 }
@@ -930,7 +1244,7 @@ impl SpokenFilter {
                     self.line(&line, &mut out);
                 }
                 self.mid_line = false;
-            } else if self.fence.is_none() && (self.mid_line || !could_be_fence_start(&self.pending)) {
+            } else if self.fence.is_none() && self.app.is_none() && (self.mid_line || !could_be_fence_start(&self.pending)) {
                 out.push_str(&std::mem::take(&mut self.pending));
                 self.mid_line = true;
             }
@@ -941,7 +1255,16 @@ impl SpokenFilter {
     fn line(&mut self, line: &str, out: &mut String) {
         match self.fence.as_mut() {
             None if is_open_line(line) => self.fence = Some(String::new()),
-            None => out.push_str(line),
+            None => match app_open_title(line) {
+                Some(title) => self.app = Some(title),
+                None if self.app.is_some() && is_close_line(line) => {
+                    let title = self.app.take().flatten();
+                    out.push_str(&app_fallback(title.as_deref()));
+                    out.push('\n');
+                }
+                None if self.app.is_some() => {}
+                None => out.push_str(line),
+            },
             Some(_) if is_close_line(line) => {
                 let code = self.fence.take().unwrap_or_default();
                 out.push_str(&card_text(&code, Style::Speech));
@@ -956,6 +1279,10 @@ impl SpokenFilter {
         let mut out = String::new();
         let rest = std::mem::take(&mut self.pending);
         let mid_line = std::mem::replace(&mut self.mid_line, false);
+        if let Some(title) = self.app.take() {
+            out.push_str(&app_fallback(title.as_deref()));
+            return out;
+        }
         match self.fence.take() {
             Some(mut code) => {
                 if !is_close_line(&rest) {
@@ -970,10 +1297,10 @@ impl SpokenFilter {
     }
 }
 
-/// True while `partial` (the start of a line) could still turn into "```openui".
+/// True while `partial` (the start of a line) could still turn into "```openui" or "```app".
 fn could_be_fence_start(partial: &str) -> bool {
     let t = partial.trim_start();
-    t.is_empty() || "```openui".starts_with(t) || t.starts_with("```openui")
+    t.is_empty() || "```openui".starts_with(t) || t.starts_with("```openui") || "```app".starts_with(t) || t.starts_with("```app")
 }
 
 #[cfg(test)]
@@ -1064,5 +1391,75 @@ mod tests {
         assert_eq!(f.push("Hello there"), "Hello there");
         assert_eq!(f.push(" ``` code"), " ``` code");
         assert_eq!(f.finish(), "");
+    }
+
+    #[test]
+    fn wider_catalog_reads_as_text() {
+        let src = "```openui\nroot = Answer(\"Trip\", [g, tabs, kv, pr, pie, line, cl, img, q])\n$saved = 300\n$done = [\"Tent\"]\ng = Grid([Panel(\"Hotel\", [Badge(\"Booked\", \"success\")])], 2, \"md\")\ntabs = Tabs([Tab(\"Day 1\", [List([\"Hike\", \"Swim\"])])])\nkv = KeyValue([{\"label\": \"Flights\", \"value\": 420}], \"currency\")\npr = Progress(\"Saved\", $saved, 600)\npie = PieChart([\"Rent\", \"Food\"], [1500, 500])\nline = LineChart([\"Jan\", \"Feb\"], null, [{\"name\": \"Spend\", \"values\": [10, 20]}])\ncl = Checklist(\"Bring\", [\"Tent\", \"Map\"], $done)\nimg = Image(\"https://x.test/a.png\", \"The lake\")\nq = Quote(\"Go early\", \"Ranger\")\n```";
+        let t = to_plain_text(src);
+        assert!(t.contains("Hotel\n\nBooked"), "{t}");
+        assert!(!t.contains("md"), "{t}");
+        assert!(t.contains("Day 1\n\n- Hike\n- Swim"), "{t}");
+        assert!(t.contains("Flights: $420.00"), "{t}");
+        assert!(t.contains("Saved: 50%"), "{t}");
+        assert!(t.contains("Rent: 1,500 (75%)"), "{t}");
+        assert!(t.contains("Spend: Jan 10, Feb 20"), "{t}");
+        assert!(t.contains("[x] Tent\n[ ] Map"), "{t}");
+        assert!(t.contains("[Image: The lake]"), "{t}");
+        assert!(t.contains("\u{201c}Go early\u{201d} \u{2014} Ranger"), "{t}");
+    }
+
+    #[test]
+    fn app_fences_become_one_line() {
+        let src = "Try this:\n```app title=\"Drum Lab\"\n<button>Play</button>\n<script>go()</script>\n```\nHave fun.";
+        let t = to_plain_text(src);
+        assert_eq!(t, "Try this:\n\n(This reply has an interactive app, \"Drum Lab\". Open it in Allternit to use it.)\n\nHave fun.");
+        assert!(has_fence(src));
+        let mut f = SpokenFilter::new();
+        let mut said = String::new();
+        for chunk in ["Try this:\n", "```ap", "p title=\"Drum Lab\"\n<button>", "Play</button>\n```\n", "Have fun."] {
+            said.push_str(&f.push(chunk));
+        }
+        said.push_str(&f.finish());
+        assert!(!said.contains("<button>"), "{said}");
+        assert!(said.contains("Drum Lab"), "{said}");
+        assert!(said.ends_with("Have fun."), "{said}");
+    }
+
+    #[test]
+    fn index_access_evaluates() {
+        let t = to_plain_text("```openui\n$xs = [3, 4]\nroot = Answer(\"T\", [Metric(\"Second\", $xs[1])])\n```");
+        assert!(t.contains("Second: 4"), "{t}");
+    }
+
+    #[test]
+    fn check_finds_what_cannot_be_drawn() {
+        assert!(check_card("root = Answer(\"T\", [Metric(\"Sum\", 2 + 3)])").is_empty());
+        let p = check_card("root = Answer(\"T\", [g, Slider(\"x\", $x), m, missing])\ng = Gauge(3)\nm = Metric(\"a\", 1, \"number\", \"u\", \"n\", \"extra\")\nbad = Text(\"unclosed\" +)");
+        let joined = p.join(" | ");
+        assert!(joined.contains("Unknown component Gauge."), "{joined}");
+        assert!(joined.contains("Slider is missing min, max."), "{joined}");
+        assert!(joined.contains("Metric takes at most 5 values; 6 given."), "{joined}");
+        assert!(joined.contains("Never defined: missing."), "{joined}");
+        assert!(joined.contains("The line for `bad` couldn't be read."), "{joined}");
+        assert!(check_card("t = Text(\"x\")").iter().any(|d| d.contains("no `root")));
+        // Query/Mutation/Action are the runtime's, not unknown components.
+        assert!(check_card("root = Answer(\"D\", [Table([\"A\"], q.rows)])\nq = Query(\"crm__list\", {}, {rows: []})").is_empty());
+    }
+
+    #[test]
+    fn check_reply_covers_every_card_with_fallback_text() {
+        let checks = check_reply("A\n```openui\nroot = Answer(\"One\", [Text(\"x\")])\n```\nB\n```openui\nroot = Answer(\"Two\", [Nope()])\n```");
+        assert_eq!(checks.len(), 2);
+        assert!(checks[0].diagnostics.is_empty());
+        assert!(checks[0].fallback.contains("One"));
+        assert_eq!(checks[1].index, 1);
+        assert_eq!(checks[1].diagnostics, vec!["Unknown component Nope.".to_string()]);
+    }
+
+    #[test]
+    fn catalog_loads() {
+        assert!(catalog().len() >= 38);
+        assert_eq!(catalog()["Slider"].required, vec!["label", "value", "min", "max"]);
     }
 }

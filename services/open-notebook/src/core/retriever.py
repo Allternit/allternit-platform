@@ -3,6 +3,7 @@ import uuid
 from typing import List, Dict, Any, Optional
 from .embedder import embedder
 from .chunker import TextChunk
+from .memory_plane import MemoryPlane, external_id
 from db.surreal_client import db
 
 try:
@@ -13,17 +14,27 @@ except ImportError:
     QDRANT_AVAILABLE = False
 
 
+async def _notebook_owner(notebook_id: str) -> Optional[str]:
+    record = await db.select("notebook", notebook_id)
+    if isinstance(record, list):
+        record = record[0] if record else None
+    return (record or {}).get("owner_id") or None
+
+
 class Retriever:
     """Vector retriever with Qdrant HNSW indexing for fast approximate search.
 
-    Falls back to SurrealDB + numpy cosine if Qdrant is unavailable.
+    Allternit's memory plane (allternit-api, see core/memory_plane.py) is the
+    shared store: chunks are also written there and search asks it first.
+    Locally, falls back to SurrealDB + numpy cosine if Qdrant is unavailable.
     """
 
-    def __init__(self):
+    def __init__(self, plane: Optional[MemoryPlane] = None):
         self._qdrant: Optional[QdrantClient] = None
         self._collection = "notebook_chunks"
         self._use_qdrant = False
         self._dim: Optional[int] = None
+        self.plane = plane or MemoryPlane.from_env(owner_of=_notebook_owner)
 
     async def _init_qdrant(self):
         if self._qdrant is not None:
@@ -67,6 +78,7 @@ class Retriever:
                 "text": chunk.text,
                 "source_id": chunk.source_id,
                 "notebook_id": chunk.notebook_id,
+                "index": chunk.index,
                 "embedding": embedding,
                 "metadata": chunk.metadata or {},
             })
@@ -94,8 +106,21 @@ class Retriever:
                     points=points,
                 )
 
+        # One memory plane: mirror into allternit-api, per notebook.
+        by_notebook: Dict[str, List[TextChunk]] = {}
+        for chunk in chunks:
+            by_notebook.setdefault(chunk.notebook_id, []).append(chunk)
+        for notebook_id, group in by_notebook.items():
+            await self.plane.upsert(notebook_id, group)
+
     async def search(self, query: str, notebook_id: str, limit: int = 10) -> List[Dict[str, Any]]:
-        query_embedding = (await embedder.embed([query]))[0]
+        # The shared memory plane first; local when it is off, down, or has
+        # nothing yet for this notebook (not backfilled).
+        remote = await self.plane.search(query, notebook_id, limit)
+        if remote:
+            return remote
+
+        query_embedding = (await embedder.embed([query], "query"))[0]
 
         # Try Qdrant first
         if QDRANT_AVAILABLE and self._qdrant and self._dim:
@@ -152,6 +177,10 @@ class Retriever:
         scores = []
         for chunk in chunks:
             chunk_vec = np.array(chunk["embedding"])
+            # Chunks embedded by an older model (e.g. 384-dim MiniLM) live in
+            # another vector space: skip them until the source is re-ingested.
+            if chunk_vec.shape != query_vec.shape:
+                continue
             norm = np.linalg.norm(query_vec) * np.linalg.norm(chunk_vec)
             similarity = np.dot(query_vec, chunk_vec) / norm if norm > 0 else 0.0
             scores.append({
@@ -166,6 +195,15 @@ class Retriever:
         return scores[:limit]
 
     async def clear_source(self, source_id: str) -> None:
+        # Chunk indexes are 0..n-1 per source: name them in the plane before
+        # the local rows go.
+        rows = await db.query("SELECT notebook_id FROM chunk WHERE source_id = $source_id", {"source_id": source_id})
+        per_notebook: Dict[str, int] = {}
+        for row in rows or []:
+            if isinstance(row, dict) and row.get("notebook_id"):
+                per_notebook[row["notebook_id"]] = per_notebook.get(row["notebook_id"], 0) + 1
+        for notebook_id, n in per_notebook.items():
+            await self.plane.delete(notebook_id, [external_id(source_id, i) for i in range(n)])
         await db.query("DELETE FROM chunk WHERE source_id = $source_id", {"source_id": source_id})
         if QDRANT_AVAILABLE and self._qdrant:
             try:
@@ -179,6 +217,8 @@ class Retriever:
                 pass
 
     async def clear_notebook(self, notebook_id: str) -> None:
+        await self.plane.delete(notebook_id)
+        self.plane.forget(notebook_id)
         await db.query("DELETE FROM chunk WHERE notebook_id = $notebook_id", {"notebook_id": notebook_id})
         if QDRANT_AVAILABLE and self._qdrant:
             try:

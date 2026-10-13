@@ -7,14 +7,14 @@ use crate::db::DbHandle;
 use serde_json::json;
 use std::time::{Duration, Instant};
 
-const OWNER: &str = "u_fly";
+pub(super) const OWNER: &str = "u_fly";
 
-fn db() -> DbHandle {
+pub(super) fn db() -> DbHandle {
     DbHandle::new_memory().unwrap()
 }
 
 /// Store one decision the way `finish` does, with its key and shadow pass.
-fn decide(db: &DbHandle, id: &str, kind: &str, ctx: &str, served: Option<&str>) -> String {
+pub(super) fn decide(db: &DbHandle, id: &str, kind: &str, ctx: &str, served: Option<&str>) -> String {
     let ids = ["a", "b", "c"];
     let key = flywheel::key_hash(kind, ctx, None, &ids, &["A", "B", "C"]);
     let opts = json!([{ "id": "a", "text": "A" }, { "id": "b", "text": "B" }, { "id": "c", "text": "C" }]);
@@ -37,13 +37,13 @@ fn decide(db: &DbHandle, id: &str, kind: &str, ctx: &str, served: Option<&str>) 
         attempts: &json!([]),
     };
     store::insert(db, &row).unwrap();
-    let s = Shadow { decision_id: id.into(), owner: OWNER.into(), kind: kind.into(), key: key.clone(), ids: ids.iter().map(|s| s.to_string()).collect(), has_image: false };
+    let s = Shadow { decision_id: id.into(), owner: OWNER.into(), kind: kind.into(), key: key.clone(), ids: ids.iter().map(|s| s.to_string()).collect(), has_image: false, context: "c".into(), question: None, texts: vec!["A".into(), "B".into(), "C".into()], vectors: None };
     flywheel::record_key(db, &s).unwrap();
     flywheel::record_shadow(db, &s).unwrap();
     key
 }
 
-fn outcome(db: &DbHandle, id: &str, status: &str, label: Option<&str>) {
+pub(super) fn outcome(db: &DbHandle, id: &str, status: &str, label: Option<&str>) {
     store::set_outcome(db, id, OWNER, status, label, None, &super::super::store::now()).unwrap().unwrap();
     flywheel::on_outcome(db, id, OWNER).unwrap();
 }
@@ -96,7 +96,7 @@ fn decisions_outcome_learned_before_the_shadow_pass_is_not_counted() {
     outcome(&db, "d1", "success", None);
     // A late shadow pass for d1 would see its own outcome: skipped.
     db.connect().unwrap().execute("DELETE FROM decision_shadow", []).unwrap();
-    let s = Shadow { decision_id: "d1".into(), owner: OWNER.into(), kind: "element".into(), key: flywheel::key_hash("element", "ctx", None, &["a", "b", "c"], &["A", "B", "C"]), ids: vec!["a".into(), "b".into(), "c".into()], has_image: false };
+    let s = Shadow { decision_id: "d1".into(), owner: OWNER.into(), kind: "element".into(), key: flywheel::key_hash("element", "ctx", None, &["a", "b", "c"], &["A", "B", "C"]), ids: vec!["a".into(), "b".into(), "c".into()], has_image: false, context: "c".into(), question: None, texts: vec!["A".into(), "B".into(), "C".into()], vectors: None };
     flywheel::record_shadow(&db, &s).unwrap();
     let n: i64 = db.connect().unwrap().query_row("SELECT COUNT(*) FROM decision_shadow", [], |r| r.get(0)).unwrap();
     assert_eq!(n, 0);

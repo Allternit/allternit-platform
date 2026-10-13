@@ -10,6 +10,8 @@
 //! - gizzi-code's own model calls, reported to `POST /usage/ledger`
 //!   (`source = gizzi`, existing user auth, no new auth path);
 //! - S1 decisions (`source = s1`, `tier = S1`, cost 0 but counted);
+//! - Agency replay cognition (`source = replay`, `surface = replay`): live
+//!   model calls a replay override needs, attributed to the source run;
 //! - Agent Gateway vendor turns (`source = vendor`, `lane = vendor`): the
 //!   vendor bills the user's own subscription and reports no usage, so the
 //!   row is cost 0 but counted, keyed by the turn's correlation id.
@@ -29,7 +31,7 @@ use crate::db::DbHandle;
 
 pub const SURFACES: &[&str] = &[
     "chat", "cowork", "code", "browser", "design", "bot", "agency", "template", "memory", "lessons", "s1",
-    "batch", "api", "internal",
+    "batch", "api", "internal", "replay",
 ];
 pub const TIERS: &[&str] = &["S0", "S1", "S2", "S3"];
 pub const LANES: &[&str] = &["api", "subscription-cli", "local", "vendor"];
@@ -298,8 +300,11 @@ pub fn internal_row(
     ctx.surface = ctx.surface.or_else(|| Some("internal".into()));
     ctx.tier = ctx.tier.or_else(|| Some("S2".into()));
     ctx.lane = ctx.lane.or_else(|| Some("api".into()));
+    // Agency replays (`POST /v1/replays` overrides) re-run cognition live:
+    // their calls are tagged `source = replay`, never mixed with run spend.
+    let source = if ctx.surface.as_deref() == Some("replay") { "replay" } else { "internal" };
     LedgerRow {
-        source: "internal",
+        source,
         ctx,
         provider_id: Some(provider_id.to_string()),
         model_id: Some(model_id.to_string()),

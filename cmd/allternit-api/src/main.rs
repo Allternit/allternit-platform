@@ -987,6 +987,7 @@ async fn main() {
             state.clone(),
             allternit_api::placement::passthrough,
         )))
+        .merge(allternit_api::card_meta::card_meta_router())
         .merge(allternit_api::placement::placement_router())
         .merge(beta_session_router())
         .merge(cloud_agents_router())
@@ -1000,6 +1001,8 @@ async fn main() {
         .merge(memory_reconstruction_router())
         .merge(allternit_api::memory_notes_routes::memory_notes_router())
         .merge(allternit_api::memory_consolidation::memory_consolidation_router())
+        .merge(allternit_api::memory_chunks::memory_chunks_router())
+        .merge(allternit_api::memory_entity_pages::memory_entity_pages_router())
         .merge(research_task_router())
         .merge(user_profile_router())
         .merge(canvas_router())

@@ -21,6 +21,7 @@ A **Run** is one durable execution of a goal. It is persisted before the create 
 | `POST` | `/v1/runs/{run_id}/resume` | [Resume a run](#resume-a-run) |
 | `POST` | `/v1/runs/{run_id}/cancel` | [Cancel a run](#cancel-a-run) |
 | `GET` | `/v1/runs/{run_id}/graph` | [Get the compiled graph](#get-the-compiled-graph) |
+| `GET` | `/v1/runs/{run_id}/findings` | [Get trace-monitor findings](#get-trace-monitor-findings) |
 
 Related: [events](/api/agency/events), [attention](/api/agency/attention), [artifacts](/api/agency/artifacts) and [receipts](/api/agency/receipts) of a run.
 
@@ -548,3 +549,84 @@ curl https://api.allternit.com/v1/runs/run_01JB2K4Y7MQ8/graph \
   ]
 }
 ```
+
+When the trace monitor has checked the run, the graph view also carries `findings`: `{ "total", "max_severity", "url" }` (counts only; `null` before the monitor ran). The details are on the findings endpoint below.
+
+## Get trace-monitor findings
+
+```http
+GET /v1/runs/{run_id}/findings
+```
+
+Every run that reaches a terminal state (`completed`, `partial`, `failed`, `cancelled`) is checked by the **trace monitor**, without sampling. It reads the run's event trail, signed receipts, effect journal and decisions and runs deterministic checks; each problem it finds is a named **finding** with a severity and the evidence that shows it. The monitor runs after the terminal event is durable, so it never delays completion, and a monitor failure never affects the run. Only the run's owner can read its findings (`404` for anyone else). A run that has not finished returns `409 ERR_RUN_NOT_FINISHED`. If the monitor has not stored findings for a finished run yet (for example a run that ended before the monitor existed), the endpoint runs the deterministic checks on demand and stores the result.
+
+Findings live on this endpoint, not on the Run object: a finished run's snapshot is not rewritten, and the public event trail still ends at the terminal `run.status_changed` event.
+
+### The checks
+
+| Check | Severity | Fires when |
+|---|---|---|
+| `effect_without_policy_allow` | critical | A committed mutating effect (`tool.write_file`, `tool.execute`, `tool.fs_write`) has no policy-decision receipt that allowed it earlier in the trail. A receipt the chain records as a deny does not count. |
+| `verifier_pass_missing_evidence` | high | A passing verification lists missing evidence, or completion is `verified` while a criterion did not pass. |
+| `completed_without_verification` | high | The run completed and no verification passed (completion is verifier-owned). |
+| `effect_content_divergence` | high | Task-type runs: re-walking the run's own graph over its recording (no model, no effect), an effect asked for content that the recorded model output feeding it does not give. |
+| `effect_outcome_unresolved` | high | An effect was prepared and never committed or failed. |
+| `repeated_steps` | medium (high at 2x) | A step ran 4 or more times, or the same tool ran 3 or more times with identical arguments. |
+| `escalation_storm` | medium (high at 2x) | 3 or more attention requests, 3 or more S3 escalations, or S1 decision nodes escalating (abstaining to their S2/S3 twin) on at least half of their decisions (2 or more), in one run. |
+| `budget_near_exhaustion` | medium; high when exhausted | A budget dimension reached 90% of its limit, or spend was halted. |
+| `unanswered_attention` | high on a completed run, else medium | Attention requests were still open when the run ended. |
+| `low_confidence_decision_served` | medium | A decision of the run was served with a confidence below its kind's threshold, including an S1 decision node that acted on such an answer (read from the run's journaled S1 answers, so scripted runs are covered too). |
+
+Findings of severity `high` or `critical` are also written to the Factory ledger as `agency.trace.finding` events scoped to the run, for operators and alerting. They do not open attention items: an attention request on a finished run has no resolution path.
+
+### The trace.error decision
+
+With `ALLTERNIT_AGENCY_TRACE_DECISION` set on the server, the monitor also asks the [Decision Runtime](/api/agency/decisions) one decision of kind `trace.error` per run: "does this run contain an error?", with the option `none` plus one option per check above. The deterministic verdict (the most severe high or critical finding, else `none`) is recorded as the decision's outcome label, so a learned head can take this question over later. The value is `1` for the configured decision chain or a comma list of backends (for example `head`, which uses learned heads only and calls no model). It is off by default. The on-demand path of this endpoint never calls a decision backend.
+
+### Response
+
+| Field | Description |
+|---|---|
+| `object` | `run_findings` |
+| `run_id` | The run. |
+| `monitor` | Monitor version, `trace-monitor.v1`. |
+| `run_status` | The run's terminal status when it was checked. |
+| `checked_at` | When the checks ran. |
+| `summary` | `total`, `by_severity` (`critical`, `high`, `medium`, `low`, `info`), `max_severity`, `checks_run`. |
+| `data` | The findings, most severe first. Each has `id` (`fnd_…`, stable for the same evidence), `check`, `severity`, `title`, `detail` and `evidence` (`event_seqs`, `receipt_ids`, `journal_keys`, `decision_ids`, `attention_ids`, `nodes`). |
+| `signals` | Counts the checks read (events, receipts, progress steps, effects, model outputs, decisions, divergences). |
+| `decision` | The `trace.error` decision (`decision_id`, `choice`, `confidence`, `label`, `agrees`) or `null`. |
+
+### Example
+
+```bash
+curl https://api.allternit.com/v1/runs/run_01JB2K4Y7MQ8/findings \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY"
+```
+
+```json
+{
+  "object": "run_findings",
+  "run_id": "run_01JB2K4Y7MQ8",
+  "monitor": "trace-monitor.v1",
+  "run_status": "completed",
+  "checked_at": "2026-10-13T09:12:44.120Z",
+  "summary": { "total": 1, "by_severity": { "critical": 0, "high": 1, "medium": 0, "low": 0, "info": 0 }, "max_severity": "high", "checks_run": 10 },
+  "data": [
+    {
+      "id": "fnd_3f9a1c0b7d2e4a61b5c8",
+      "object": "finding",
+      "check": "unanswered_attention",
+      "severity": "high",
+      "title": "Attention requests left unanswered",
+      "detail": "1 attention request(s) still open when the run ended completed",
+      "evidence": { "event_seqs": [14], "receipt_ids": [], "journal_keys": [], "decision_ids": [], "attention_ids": ["att_01JB2K6C"], "nodes": [] }
+    }
+  ],
+  "signals": { "events": 31, "receipts": 6, "progress": 12, "attention_requested": 1, "verifications": 1, "effects": 1, "s1_decisions": 1, "model_outputs": 3, "decisions": 0, "divergences": 0 },
+  "decision": null
+}
+```
+
+A run with findings is a good candidate for an eval case: see [Evals: promote a run](/api/agency/evals#promote-a-run-into-a-regression-case).
+

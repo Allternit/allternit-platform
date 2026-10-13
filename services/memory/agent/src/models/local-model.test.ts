@@ -175,15 +175,15 @@ describe('LocalModelManager provider switch', () => {
     expect(ollamaReqs[0].body.model).toBe(MODEL_PRESETS.ingest.name);
   });
 
-  it('keeps embeddings on Ollama even when MEMORY_LLM_BASE_URL is set', async () => {
+  it('keeps embeddings off the generation endpoint even when MEMORY_LLM_BASE_URL is set', async () => {
     process.env.MEMORY_LLM_BASE_URL = `${baseUrl}/v1`;
 
-    // VectorStore owns the embeddings path and is hardcoded to Ollama at
-    // localhost:11434. If Ollama is running it returns real embeddings; if
-    // not, embed() falls back to [] (its documented failure mode). The
+    // VectorStore owns the embeddings path and talks only to the shared
+    // embedding server (ALLTERNIT_EMBED_URL, here an unreachable port). With
+    // it down, embed() falls back to [] (its documented failure mode). The
     // invariant under test is that embeddings never touch the configured
     // MLX endpoint.
-    const vectorStore = new VectorStore();
+    const vectorStore = new VectorStore(undefined, 'http://127.0.0.1:9');
     const embedding = await vectorStore.embed('test text');
 
     expect(Array.isArray(embedding)).toBe(true);
