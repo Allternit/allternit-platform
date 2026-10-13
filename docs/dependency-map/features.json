@@ -197,6 +197,10 @@
       ],
       "decisions": [
         {
+          "on": "2026-10-13",
+          "note": "Gap closure: website/app products need the person's consent once per account (needs_consent); extra turns on one website/desktop subscription queue in order with a visible status instead of failing; AAI contexts persist across gateway restarts; GET /aai/events/stream (SSE); one broken adapter no longer blocks the rest; Managed Agents streams events and answers custom tools (POST /threads/:id/gateway/tool-result); bots with no allowlist ask before shell, writes and web fetches (GIZZI_BOT_BYPASS_PERMISSIONS=1 restores the old default). Live vendor verification remains an owner-run gate (scripts/e2e/gateway-live-check.sh)."
+        },
+        {
           "on": "2026-10-12",
           "note": "One-step POST /gateway/connect replaces the manual account/state/discover/bind/READY walk; the step-by-step wizard stays as the advanced path. Only Grok Bot is verified live; the web-subscription and dots lanes are offline-verified only."
         }
@@ -204,7 +208,8 @@
       "evidence": [
         "allternit/docs/gateway/QUICKSTART.md",
         "allternit/docs/gateway/AAI_REST.md",
-        "allternit/cmd/allternit-api/src/gateway_connect.rs"
+        "allternit/cmd/allternit-api/src/gateway_connect.rs",
+        "allternit/scripts/e2e/gateway-live-check.sh"
       ]
     },
     {
@@ -622,6 +627,10 @@
         "allternit/surfaces/platform.allternit.com"
       ],
       "decisions": [
+        {
+          "on": "2026-10-13",
+          "note": "Managed sessions now execute: an in-process session worker in allternit-api (session_worker.rs) leases queued /beta/work session and deployment tasks, runs them as Gizzi turns with the agent's model, system prompt and effective permissions, appends tool_calls/agent_message events (budget and approval gating apply), honors interrupt/stop and fails retryably when Gizzi is down. ALLTERNIT_SESSION_WORKER=0 disables it; tasks with a sandbox_image are left for external workers."
+        },
         {
           "on": "2026-10-07",
           "note": "Phases 3 to 5 deployed; P4 channels and twin merged (#1394)."
