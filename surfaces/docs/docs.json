@@ -665,6 +665,8 @@
               "api/agency/receipts",
               "api/agency/campaigns",
               "api/agency/replays",
+              "api/agency/evals",
+              "api/agency/harness",
               "api/agency/decisions",
               "api/agency/catalog",
               "api/agency/errors",

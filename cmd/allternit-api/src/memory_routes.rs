@@ -579,7 +579,7 @@ struct EntityRow {
 
 async fn list_entities(
     State(state): State<Arc<AppState>>,
-    Extension(_user): Extension<AuthUser>,
+    Extension(auth): Extension<AuthUser>,
     headers: HeaderMap,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> impl axum::response::IntoResponse {
@@ -598,6 +598,19 @@ async fn list_entities(
     let agent_id = params.get("agentId").cloned();
     let entity_type = params.get("type").cloned();
     let q = params.get("q").cloned();
+
+    // Entity pages (`memory_entity_pages`) of the authenticated user that
+    // match `q` (the most mentioned when there is no `q`).
+    let pages = {
+        let (db, uid, q) = (state.db.clone(), auth.user_id.clone(), q.clone());
+        tokio::task::spawn_blocking(move || {
+            db.connect().and_then(|c| crate::memory_entity_pages::search_pages(&c, &uid, q.as_deref(), 50))
+        })
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .unwrap_or_default()
+    };
 
     let rows = tokio::task::spawn_blocking(move || {
         let conn = db.connect()?;
@@ -636,14 +649,14 @@ async fn list_entities(
     .await;
 
     match rows {
-        Ok(Ok(data)) => (StatusCode::OK, Json(json!({"entities": data}))),
+        Ok(Ok(data)) => (StatusCode::OK, Json(json!({"entities": data, "pages": pages}))),
         Ok(Err(e)) => {
             tracing::warn!("DB error listing entities: {}", e);
-            (StatusCode::OK, Json(json!({"entities": []})))
+            (StatusCode::OK, Json(json!({"entities": [], "pages": pages})))
         }
         Err(e) => {
             tracing::warn!("DB task panicked: {}", e);
-            (StatusCode::OK, Json(json!({"entities": []})))
+            (StatusCode::OK, Json(json!({"entities": [], "pages": pages})))
         }
     }
 }

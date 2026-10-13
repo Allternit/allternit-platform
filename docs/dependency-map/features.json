@@ -773,7 +773,7 @@
       "status": "building",
       "description": "POST /v1/decisions (alias /v1/systemone) in allternit-api's Agency Kernel: one choice over up to 255 caller options, answered by the owned local scorer (one-pass option scoring on MLX or llama.cpp, Qwen3.5-4B), escalating under a per-kind threshold to optional vendor adapters (off by default, per project) and the planner model through gizzi, within a latency budget, with abstain. Every decision and its outcome is stored (V245 decisions). The flywheel (V247) runs registered heads in shadow, promotes/demotes them on outcome accuracy with hysteresis and an audit trail, and serves live heads first (head.lookup: exact-match over past outcomes, <10 ms). GET/PUT /v1/decisions/heads.",
       "touches": [
-        "allternit/cmd/allternit-api/src/agency_api",
+        "allternit/cmd/allternit-api/src/agency_api/decisions",
         "allternit/domains/decision-runtime",
         "allternit/surfaces/allternit-desktop"
       ],
@@ -1049,6 +1049,48 @@
         "allternit/surfaces/docs/guides/agency-kernel.mdx",
         "allternit-ai/src/views/settings/agent-rules/AgentRulesPanel.tsx",
         "allternit/cmd/allternit-api/src/kernel_ui/agent_rules.rs"
+      ]
+    },
+    {
+      "id": "feature:agency-descent",
+      "label": "Agency Descent (decision flywheel)",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Agency work moves down the tiers as it repeats: open-weight and trained decision heads, opt-in training data (per-org consent, DLP-redacted, shared heads), the Descent dashboard (tier mix, cheap share, escalations, oracle spend) and memory recall in Agency runs.",
+      "touches": [
+        "allternit-ai/src/views/settings",
+        "allternit-ai/src/lib/agent-rules",
+        "allternit/cmd/allternit-api/src/kernel_ui",
+        "allternit/cmd/allternit-api/src/agency_api/decisions",
+        "allternit/cmd/allternit-api/src/agency_api/task_types",
+        "allternit/cmd/allternit-api/src/agency_api/replays",
+        "allternit/cmd/allternit-api/src/agency_api/evals",
+        "allternit/cmd/allternit-api/src/agency_api/harness",
+        "allternit/cmd/allternit-api/src/agency_api/memory_*",
+        "allternit/cmd/allternit-api/src/agency_api/monitor_*",
+        "allternit/domains/decision-runtime"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-12",
+          "note": "Training data is opt-in per organization; trained decision heads are shared across opted-in organizations; open-weight baselines instead of paid decision vendors; cloud test first. No GPU: trained heads train and run on CPU."
+        },
+        {
+          "on": "2026-10-13",
+          "note": "C2 + C5: a deterministic trace monitor checks every terminal run (no sampling) and stores findings (GET /v1/runs/:id/findings); an optional trace.error decision, labelled by the deterministic verdict, lets a head learn it later. Evals are trajectory graders over recorded-only replays or the scripted runner (/v1/evals/*), with regression cases promoted from runs and a manual CI gate (scripts/agency-eval-gate.mjs, 2 pp drop / any high-stakes failure). Replay and eval live model calls count against the same daily spend caps as runs."
+        },
+        {
+          "on": "2026-10-13",
+          "note": "Live S1 decisions in all six Agency graphs (journaled, never re-decided); CPU-trained decision heads (head.embed over EmbeddingGemma 2, head.rules compiled to S0) trained as background jobs on pooled opted-in data; replay overrides and replay-backed acceptance for head promotion; entity pages in memory recall; harness learning (C6): workflow edits proposed by deterministic operators or the planner model, scored on evals + recorded-only replays, accepted by a VERA-style rule and versioned only after human approval, with rollback."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/api/agency/decisions.mdx",
+        "allternit/surfaces/docs/api/agency/evals.mdx",
+        "allternit/cmd/allternit-api/src/agency_api/monitor.rs",
+        "allternit/cmd/allternit-api/src/agency_api/evals/mod.rs",
+        "allternit-ai/src/views/settings/agent-rules/DescentTab.tsx",
+        "allternit-ai/src/views/settings/agent-rules/DecisionTrainingCard.tsx"
       ]
     },
     {

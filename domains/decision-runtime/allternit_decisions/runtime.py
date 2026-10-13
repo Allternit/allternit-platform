@@ -37,8 +37,16 @@ PRESETS: dict[str, dict[str, Any]] = {
         "gguf": ("unsloth/gemma-3-4b-it-GGUF", "gemma-3-4b-it-Q4_K_M.gguf"),
         "license": "gemma",
     },
+    # Native decision model (engine "systemone"): typed questions, calibrated
+    # probabilities, one pass. LFM Open License v1.0 (free under $10M revenue;
+    # check before scaling). Ships its own code, so the revision is pinned.
+    "d1-3b": {
+        "hf": ("LiquidAI/d1-3B", "051bcc464b01b9f92942b364d9586b0ef5912432"),
+        "license": "lfm-open-1.0",
+    },
 }
 DEFAULT_PRESET = "qwen3.5-4b"
+ENGINES = ("mlx", "llamacpp", "systemone")
 
 
 def default_engine() -> str:
@@ -51,9 +59,10 @@ class Runtime:
     def __init__(self, state_dir: Path, engine: str | None = None, model: str | None = None) -> None:
         self.state_dir = state_dir
         self.engine = engine or os.environ.get("ALLTERNIT_DECISIONS_ENGINE") or default_engine()
-        if self.engine not in ("mlx", "llamacpp"):
+        if self.engine not in ENGINES:
             raise ValueError(f"unknown engine {self.engine}")
-        self.model = model or os.environ.get("ALLTERNIT_DECISIONS_MODEL") or DEFAULT_PRESET
+        self.model = model or os.environ.get("ALLTERNIT_DECISIONS_MODEL") or (
+            "d1-3b" if self.engine == "systemone" else DEFAULT_PRESET)
         self.scorer: Any = None
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
@@ -99,6 +108,10 @@ class Runtime:
                 from .engine_mlx import MlxScorer
 
                 scorer = MlxScorer(path)
+            elif self.engine == "systemone":
+                from .engine_systemone import SystemOneScorer
+
+                scorer = SystemOneScorer(path)
             else:
                 from .engine_llamacpp import LlamaCppScorer
 
@@ -134,7 +147,11 @@ class Runtime:
         if os.path.isdir(self.model) or os.path.isfile(self.model):
             return self.model
         preset = PRESETS.get(self.model)
-        if self.engine == "mlx":
+        revision = None
+        if self.engine == "systemone":
+            repo, revision = preset["hf"] if preset and "hf" in preset else (self.model, None)
+            files = None
+        elif self.engine == "mlx":
             repo, files = (preset["mlx"] if preset else self.model), None
         else:
             if preset:
@@ -147,7 +164,7 @@ class Runtime:
         dest = self.state_dir / "models" / repo.replace("/", "--")
         marker = dest / ".complete"
         if not marker.exists():
-            info = HfApi().model_info(repo, files_metadata=True)
+            info = HfApi().model_info(repo, revision=revision, files_metadata=True)
             wanted = [s for s in info.siblings if files is None or s.rfilename in files]
             total = sum(s.size or 0 for s in wanted) or 1
             done = threading.Event()
@@ -161,7 +178,7 @@ class Runtime:
             watcher = threading.Thread(target=watch, daemon=True)
             watcher.start()
             try:
-                snapshot_download(repo, local_dir=str(dest), allow_patterns=files)
+                snapshot_download(repo, revision=revision, local_dir=str(dest), allow_patterns=files)
             finally:
                 done.set()
             marker.write_text(info.sha or "")

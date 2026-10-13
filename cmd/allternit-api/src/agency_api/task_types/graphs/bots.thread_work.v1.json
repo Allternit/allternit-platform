@@ -111,7 +111,7 @@
    "node_id": "T04",
    "primitive_id": "ver.verify_requirements",
    "node_kind": "VERIFY",
-   "cognitive_role": "S2",
+   "cognitive_role": "S1",
    "inputs": [
     "candidate:reply"
    ],
@@ -125,11 +125,29 @@
    "lock_scope": [],
    "evidence_required": [],
    "on_failure": {
-    "strategy": "FAIL"
+    "strategy": "ESCALATE",
+    "target": "T04_s2"
    },
    "extensions": {
     "x-title": "Review reply against the goal",
-    "x-evidence": "requirements_satisfied"
+    "x-evidence": "requirements_satisfied",
+    "x-decision": {
+     "kind": "verify",
+     "question": "Does the result meet the goal?",
+     "options": [
+      {
+       "id": "pass",
+       "text": "The result meets the goal."
+      },
+      {
+       "id": "fail",
+       "text": "The result does not meet the goal."
+      }
+     ],
+     "pass": [
+      "pass"
+     ]
+    }
    },
    "capability_request": {
     "schema_id": "allternit.kernel.CapabilityRequestV1",
@@ -342,6 +360,41 @@
     "trust_requirement": "INTERNAL",
     "budget": {}
    }
+  },
+  {
+   "node_id": "T04_s2",
+   "primitive_id": "ver.verify_requirements",
+   "node_kind": "VERIFY",
+   "cognitive_role": "S2",
+   "inputs": [
+    "candidate:reply"
+   ],
+   "outputs": [
+    "receipt:review"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "Review reply against the goal (escalated)",
+    "x-evidence": "requirements_satisfied",
+    "x-twin_of": "T04"
+   },
+   "capability_request": {
+    "schema_id": "allternit.kernel.CapabilityRequestV1",
+    "schema_version": "1.0.0",
+    "capability": "cap.thread.review",
+    "modality": "TEXT",
+    "latency_class": "NORMAL",
+    "trust_requirement": "INTERNAL",
+    "budget": {}
+   }
   }
  ],
  "edges": [
@@ -403,6 +456,16 @@
   {
    "from": "T03_deep",
    "to": "T04",
+   "edge_kind": "NORMAL"
+  },
+  {
+   "from": "T04",
+   "to": "T04_s2",
+   "edge_kind": "FAILURE"
+  },
+  {
+   "from": "T04_s2",
+   "to": "T05",
    "edge_kind": "NORMAL"
   }
  ],

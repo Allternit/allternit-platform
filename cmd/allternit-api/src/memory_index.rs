@@ -25,6 +25,7 @@
 //! Backfill: [`index_pending`] picks rows whose embedding is missing or from
 //! another model, in batches. It is stateless (progress is the data), so it
 //! resumes after any restart. [`spawn_indexer`] runs it in the background.
+//! Each pass also drains the entity-page queue (`memory_entity_pages`).
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
@@ -39,7 +40,7 @@ use crate::llm_gateway::embeddings::generate_local_embedding;
 pub const HASH_MODEL: &str = "local-hash-384";
 pub const HASH_DIM: usize = 384;
 pub const DEFAULT_EMBED_URL: &str = "http://127.0.0.1:7719";
-pub const DEFAULT_EMBED_MODEL: &str = "nomic-ai/modernbert-embed-base";
+pub const DEFAULT_EMBED_MODEL: &str = "google/embeddinggemma-2";
 /// Most recent embedding rows scanned per (scope, model) in vector search.
 pub const VECTOR_SCAN_CAP: usize = 20_000;
 /// Above this many vectors per (scope, model) vector search uses HNSW.
@@ -479,19 +480,34 @@ pub fn chunk_text(text: &str) -> Vec<String> {
 }
 
 fn insert_chunks(conn: &Connection, scope: &str, source_type: &str, source_id: &str, text: &str) -> rusqlite::Result<usize> {
+    Ok(insert_chunks_with_ids(conn, scope, source_type, source_id, text)?.len())
+}
+
+/// Chunk `text` into the index for `source_id` and return the written
+/// (chunk id, chunk text) pairs, so a caller can embed them right away.
+pub fn insert_chunks_with_ids(
+    conn: &Connection,
+    scope: &str,
+    source_type: &str,
+    source_id: &str,
+    text: &str,
+) -> rusqlite::Result<Vec<(String, String)>> {
     let chunks = chunk_text(text);
-    for (i, c) in chunks.iter().enumerate() {
+    let mut out = Vec::with_capacity(chunks.len());
+    for (i, c) in chunks.into_iter().enumerate() {
+        let id = format!("chk_{}", uuid::Uuid::new_v4().simple());
         conn.execute(
             "INSERT INTO memory_index_chunks (id, scope, source_type, source_id, chunk_index, text)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![format!("chk_{}", uuid::Uuid::new_v4().simple()), scope, source_type, source_id, i as i64, c],
+            params![id, scope, source_type, source_id, i as i64, c],
         )?;
+        out.push((id, c));
     }
     conn.execute(
         "INSERT OR REPLACE INTO memory_index_sources (source_type, source_id, chunk_count) VALUES (?1, ?2, ?3)",
-        params![source_type, source_id, chunks.len() as i64],
+        params![source_type, source_id, out.len() as i64],
     )?;
-    Ok(chunks.len())
+    Ok(out)
 }
 
 /// Chunk memory documents not yet in the index. Returns chunks written.
@@ -619,6 +635,8 @@ pub fn pending_targets(conn: &Connection, model: Option<&str>, batch: usize) -> 
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct IndexReport {
     pub chunked: usize,
+    /// Targets read by the entity-page pass (`memory_entity_pages`).
+    pub entity_targets: usize,
     pub embedded: usize,
     pub model: String,
     pub remote: bool,
@@ -639,7 +657,20 @@ pub async fn index_pending(db: &DbHandle, client: &EmbedClient, batch: usize) ->
     .map_err(|e| e.to_string())?
     .map_err(|e| e.to_string())?;
 
-    let mut report = IndexReport { chunked, ..Default::default() };
+    // Entity pages follow the same cadence; a failure there never blocks embedding.
+    let db2 = db.clone();
+    let entity_targets = match tokio::task::spawn_blocking(move || db2.connect().and_then(|c| crate::memory_entity_pages::run_pass(&c, 256))).await {
+        Ok(Ok(r)) => r.targets,
+        Ok(Err(e)) => {
+            tracing::warn!(error = %e, "entity page pass failed");
+            0
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "entity page pass panicked");
+            0
+        }
+    };
+    let mut report = IndexReport { chunked, entity_targets, ..Default::default() };
     if client.is_enabled() {
         let model = client.preferred_model();
         let db2 = db.clone();
@@ -702,8 +733,8 @@ pub fn spawn_indexer(db: DbHandle) {
             let mut idle = Duration::from_secs(20);
             loop {
                 match index_pending(&db, client, 64).await {
-                    Ok(r) if r.embedded > 0 || r.chunked > 0 => {
-                        tracing::debug!(embedded = r.embedded, chunked = r.chunked, model = %r.model, "memory index pass");
+                    Ok(r) if r.embedded > 0 || r.chunked > 0 || r.entity_targets > 0 => {
+                        tracing::debug!(embedded = r.embedded, chunked = r.chunked, entity_targets = r.entity_targets, model = %r.model, "memory index pass");
                         if !r.remote && client.is_enabled() {
                             idle = Duration::from_secs(300);
                             break;

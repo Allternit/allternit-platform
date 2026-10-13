@@ -12,7 +12,10 @@ dependencies = [
     "pydantic>=2.6.0",
     "pydantic-settings>=2.2.0",
     "python-jose[cryptography]>=3.3.0",
-    "sentence-transformers>=2.5.0",
+    "sentence-transformers>=6.1.0",
+    "transformers>=5.19",
+    "pillow",
+    "torchvision",
     "numpy>=1.26.0",
     "aiofiles>=23.2.0",
     "pymupdf>=1.23.0",
@@ -36,3 +39,6 @@ target-version = ['py311']
 [tool.ruff]
 line-length = 100
 select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
