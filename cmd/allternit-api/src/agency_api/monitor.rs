@@ -582,7 +582,7 @@ async fn recorded_walk(db: &DbHandle, rec: &RunRecord, events: &[Value]) -> Vec<
     let cfg = sim::SimConfig {
         graph: &graph, policy: &policy, goal: ir["goal"].as_str().unwrap_or_default(), write_set: &write_set,
         regen_all: false, tainted_from_start: false, scripted: executor::scripted(), regenerate: false,
-        heads: &[], db: Some(db), owner: &rec.owner, run_id: rec.run["id"].as_str().unwrap_or_default(),
+        heads: &[], vectors: None, db: Some(db), owner: &rec.owner, run_id: rec.run["id"].as_str().unwrap_or_default(),
     };
     sim::simulate(&cfg, &recording, &NoModel).await.divergences
 }
