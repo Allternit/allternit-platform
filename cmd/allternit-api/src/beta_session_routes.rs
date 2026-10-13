@@ -771,6 +771,10 @@ async fn append_event(
     Ok(Json(json!({"accepted": accepted, "event": event})))
 }
 
+/// `POST /beta/sessions/:id/interrupt` — record a `user_interrupt` event.
+/// The in-process `session_worker` watches for it: a run requested before
+/// the interrupt is aborted and ends `cancelled` with `turn_failed` +
+/// `session_idle`.
 async fn interrupt_session(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<AuthUser>,

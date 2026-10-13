@@ -112,7 +112,7 @@ struct StopBody {
     error: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub(crate) struct TaskRow {
     pub(crate) id: String,
     pub(crate) session_id: Option<String>,

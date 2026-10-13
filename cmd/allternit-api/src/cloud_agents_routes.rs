@@ -1177,8 +1177,9 @@ async fn send_cloud_events(
                     Ok::<Value, rusqlite::Error>(event)
                 }
                 "user.interrupt" => {
-                    tx.execute(
-                        "UPDATE beta_work_tasks SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP
+                    let cancelled = tx.execute(
+                        "UPDATE beta_work_tasks SET status = 'cancelled', error = 'interrupted',
+                         lease_worker_id = NULL, lease_expires_at = NULL, updated_at = CURRENT_TIMESTAMP
                          WHERE session_id = ?1 AND user_id = ?2
                          AND status IN ('queued', 'leased', 'running')",
                         params![session_id, user_id],
@@ -1189,6 +1190,17 @@ async fn send_cloud_events(
                         "user_interrupt",
                         &event.data.clone().unwrap_or_else(|| json!({})),
                     )?;
+                    // Close the interrupted turn here: the session worker
+                    // sees the task cancelled and stops without writing
+                    // terminal events of its own.
+                    if cancelled > 0 {
+                        beta::emit_turn_terminal(
+                            &tx,
+                            &session_id,
+                            "failed",
+                            &json!({"error": "interrupted", "code": "interrupted", "retryable": false}),
+                        )?;
+                    }
                     tx.commit()?;
                     Ok::<Value, rusqlite::Error>(event)
                 }
