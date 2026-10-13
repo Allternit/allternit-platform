@@ -1,0 +1,317 @@
+// Shared AAI provider for local agent gateways that speak the OpenAI-compatible HTTP API (OpenClaw, Hermes).
+// Lane local, guarantee exact, mode hosted:
+//   GET  /v1/models              -> agent.list (404 => only the configured agent)
+//   POST /v1/chat/completions    -> messages, streamed as SSE when the server supports it (JSON fallback)
+// Conversation state: chat completions are stateless per request, so each AAI context keeps its own message history
+// client-side and replays it on every turn. Nothing is shared between contexts. Events are our own log of the real
+// stream (one cursor per event). exportContext/restoreContext let the gateway persist that history, the event log and
+// the cursor, so a context survives a gateway restart (see src/aai/context-store.ts).
+import {
+  BaseAaiProvider, fail, ok,
+  type AaiResult, type AgentCapabilityManifest, type AgentDetail, type AgentIdentity, type AgentSummary, type AAIError,
+  type CancelResult, type CursoredEvent, type EventsInput, type EventsResult, type HealthResult, type MessageInput, type MessageResult,
+  type ContextSnapshot, type OpenContextInput, type OpenContextResult, type PersistentContexts,
+} from "@allternit/agent-gateway";
+
+/** What makes one OpenAI-compatible local gateway differ from another. */
+export interface OpenAiCompatSpec {
+  adapterId: string;
+  vendor: string;
+  /** Product name used in messages ("OpenClaw"). */
+  name: string;
+  /** How the user starts it, quoted in the "isn't reachable" hint. */
+  startCommand: string;
+  agentPrefix: string;
+  defaultBaseUrl: string;
+  defaultAgent: string;
+  defaultMaxParallel: number;
+  buildCapabilities(maxParallel: number): AgentCapabilityManifest;
+  summary(model: string): AgentSummary;
+}
+
+export interface OpenAiCompatOptions {
+  baseUrl?: string;
+  /** Optional gateway bearer token (local auth). Never logged. */
+  token?: string;
+  /** Agent/model id used when /v1/models is unavailable. */
+  defaultAgent?: string;
+  maxParallel?: number;
+  replyTimeoutMs?: number;
+  fetch?: typeof fetch;
+}
+
+/** Most recent events kept in a persisted context (older ones are already behind the caller's cursor). */
+const PERSISTED_EVENTS = 500;
+/** Finished turns remembered per persisted context, so a retried correlationId after a restart is not sent twice. */
+const PERSISTED_TURNS = 50;
+
+/** What a context needs to come back after a gateway restart (stored as JSON by the gateway). */
+export interface OpenAiCompatContextState {
+  model: string; history: Msg[]; events: CursoredEvent[]; seq: number; n: number;
+  /** correlationId -> the finished turn's result (most recent PERSISTED_TURNS). */
+  turns?: Record<string, MessageResult>;
+}
+
+type Msg = { role: "system" | "user" | "assistant"; content: string };
+interface Ctx {
+  /** Turns queued or running in this conversation (the busy limit counts conversations with any). */
+  inFlight?: number;
+  id: string; agentId: string; model: string; closed: boolean;
+  history: Msg[]; events: CursoredEvent[]; seq: number; n: number;
+  done: Map<string, Promise<AaiResult<MessageResult>>>; lock: Promise<unknown>; abort?: AbortController; cancelled?: boolean;
+  /** Finished turns by correlationId, in completion order (what exportContext persists). */
+  turns: Map<string, MessageResult>;
+}
+
+const isMsg = (m: unknown): m is Msg => !!m && typeof m === "object" && ["system", "user", "assistant"].includes((m as Msg).role) && typeof (m as Msg).content === "string";
+
+export class OpenAiCompatProvider extends BaseAaiProvider implements PersistentContexts {
+  readonly adapterId: string;
+  private ctxs = new Map<string, Ctx>();
+  private n = 0;
+  private o: Required<Omit<OpenAiCompatOptions, "token">> & { token?: string };
+  private caps: AgentCapabilityManifest;
+
+  constructor(private spec: OpenAiCompatSpec, opts: OpenAiCompatOptions = {}) {
+    super();
+    this.adapterId = spec.adapterId;
+    this.o = {
+      baseUrl: (opts.baseUrl || spec.defaultBaseUrl).replace(/\/+$/, ""),
+      token: opts.token || undefined,
+      defaultAgent: opts.defaultAgent || spec.defaultAgent,
+      maxParallel: opts.maxParallel ?? spec.defaultMaxParallel,
+      replyTimeoutMs: opts.replyTimeoutMs ?? 120_000,
+      fetch: opts.fetch ?? ((...a) => fetch(...a)),
+    };
+    this.caps = spec.buildCapabilities(this.o.maxParallel);
+  }
+
+  private startHint(url: string): string {
+    return `${this.spec.name} isn't reachable at ${url}. Start it (run "${this.spec.startCommand}"), make sure its OpenAI-compatible HTTP endpoint is enabled, then try again.`;
+  }
+  private stripPrefix(agentId: string): string { return agentId.slice(this.spec.agentPrefix.length); }
+
+  // ---------- transport ----------
+  private async http(path: string, init: RequestInit & { signal?: AbortSignal } = {}): Promise<AaiResult<Response>> {
+    const headers: Record<string, string> = { accept: "application/json", ...(init.headers as Record<string, string> | undefined) };
+    if (this.o.token) headers.authorization = `Bearer ${this.o.token}`;
+    let res: Response;
+    try { res = await this.o.fetch(`${this.o.baseUrl}${path}`, { ...init, headers }); }
+    catch (e) {
+      if ((e as Error)?.name === "AbortError") return fail("UNKNOWN", "Request aborted", { details: { aborted: true } });
+      return fail("VENDOR_UNAVAILABLE", this.startHint(this.o.baseUrl), { details: { cause: String((e as { cause?: { code?: string } })?.cause?.code ?? (e as Error)?.message) } });
+    }
+    if (res.ok) return ok(res);
+    void res.body?.cancel().catch(() => undefined);
+    return { ok: false, error: this.mapStatus(res) };
+  }
+  private mapStatus(res: Response): AAIError {
+    const s = res.status;
+    const base = { retryable: false } as const;
+    if (s === 401 || s === 403) {
+      return { code: this.o.token ? "AUTH_REVOKED" : "AUTH_REQUIRED", ...base, vendorCode: String(s),
+        humanMessage: this.o.token ? `${this.spec.name} rejected the gateway token. Update it and reconnect.` : `${this.spec.name} requires a gateway token. Add it in the ${this.spec.name} connection settings.` };
+    }
+    if (s === 429) {
+      const ra = Number(res.headers.get("retry-after"));
+      return { code: "RATE_LIMITED", retryable: true, retryAfterMs: Number.isFinite(ra) && ra > 0 ? Math.round(ra * 1000) : 30_000, vendorCode: "429", humanMessage: `${this.spec.name} (or its model provider) is rate limiting requests. Allternit will wait before retrying.` };
+    }
+    if (s === 404) return { code: "VENDOR_UNAVAILABLE", retryable: true, vendorCode: "404", humanMessage: `${this.startHint(this.o.baseUrl)} (the gateway answered 404, so the chat endpoint is off or this is not ${this.spec.name}).` };
+    if (s >= 500) return { code: "VENDOR_UNAVAILABLE", retryable: true, vendorCode: String(s), humanMessage: `${this.spec.name} returned an error (${s}). Check its logs, then try again.` };
+    return { code: "UNKNOWN", ...base, vendorCode: String(s), humanMessage: `${this.spec.name} returned an unexpected response (${s}).` };
+  }
+
+  // ---------- identity ----------
+  private async models(): Promise<AaiResult<string[]>> {
+    const r = await this.http("/v1/models");
+    if (!r.ok) {
+      // 404 on /v1/models only means the listing endpoint is absent; reachability errors still propagate.
+      if (r.error.vendorCode === "404") return ok([this.o.defaultAgent]);
+      return r;
+    }
+    try {
+      const j = (await r.value.json()) as { data?: Array<{ id?: unknown }> };
+      const ids = (j.data ?? []).map((m) => m.id).filter((x): x is string => typeof x === "string" && x !== "");
+      return ok(ids.length ? ids : [this.o.defaultAgent]);
+    } catch { return ok([this.o.defaultAgent]); }
+  }
+  private async resolve(agentId: string): Promise<AaiResult<AgentSummary>> {
+    if (!agentId.startsWith(this.spec.agentPrefix)) return fail("CONTEXT_NOT_FOUND", `No such agent ${agentId}`);
+    const m = await this.models();
+    if (!m.ok) return m;
+    return m.value.includes(this.stripPrefix(agentId)) ? ok(this.spec.summary(this.stripPrefix(agentId))) : fail("CONTEXT_NOT_FOUND", `No such agent ${agentId}`);
+  }
+  async list(): Promise<AaiResult<AgentSummary[]>> {
+    const m = await this.models();
+    return m.ok ? ok(m.value.map((x) => this.spec.summary(x))) : m;
+  }
+  async get(agentId: string): Promise<AaiResult<AgentDetail>> {
+    const s = await this.resolve(agentId);
+    return s.ok ? ok({ ...s.value, remoteIds: { model: this.stripPrefix(agentId) }, capabilities: this.caps }) : s;
+  }
+  async capabilities(agentId: string): Promise<AaiResult<AgentCapabilityManifest>> {
+    return agentId.startsWith(this.spec.agentPrefix) ? ok(this.caps) : fail("CONTEXT_NOT_FOUND", `No such agent ${agentId}`);
+  }
+  async identity(agentId: string): Promise<AaiResult<AgentIdentity>> {
+    if (!agentId.startsWith(this.spec.agentPrefix)) return fail("CONTEXT_NOT_FOUND", `No such agent ${agentId}`);
+    const s = this.spec.summary(this.stripPrefix(agentId));
+    return ok({ agentId, displayName: s.displayName, vendor: this.spec.vendor, lookPack: this.spec.vendor });
+  }
+  async health(_i: { agentId?: string }): Promise<AaiResult<HealthResult>> {
+    const r = await this.http("/v1/models");
+    if (r.ok) { void r.value.body?.cancel().catch(() => undefined); return ok({ status: "healthy", lane: "local", detail: this.o.baseUrl }); }
+    if (r.error.vendorCode === "404") return ok({ status: "degraded", lane: "local", detail: "gateway reachable, /v1/models not exposed" });
+    return ok({ status: "down", lane: "local", detail: r.error.humanMessage });
+  }
+
+  // ---------- contexts ----------
+  private live(id: string): AaiResult<Ctx> { const c = this.ctxs.get(id); return c && !c.closed ? ok(c) : fail("CONTEXT_NOT_FOUND", "No such conversation"); }
+  private push(c: Ctx, type: "agent.context.opened" | "agent.activity.started" | "agent.message.delta" | "agent.message.completed", correlationId: string, payload: Record<string, unknown>, source: "allternit" | "vendor" = "vendor") {
+    c.seq += 1;
+    c.events.push({ cursor: String(c.seq), event: {
+      type, botId: c.agentId, threadId: c.id, generationId: "1", source, vendor: this.spec.vendor, adapter: this.spec.adapterId, lane: "local",
+      remoteContextId: c.id, remoteEventId: `${c.id}#${c.seq}`, causationId: correlationId, correlationId, guarantee: "exact", at: new Date().toISOString(), payload } });
+  }
+
+  async contextOpen(i: OpenContextInput): Promise<AaiResult<OpenContextResult>> {
+    if (i.adoptContextId) {
+      const c = this.live(i.adoptContextId);
+      return c.ok ? ok({ contextId: c.value.id, isolation: "isolated", guarantee: "exact", resumed: true }) : c;
+    }
+    const agent = await this.resolve(i.agentId); // also proves the gateway is reachable before a context is handed out
+    if (!agent.ok) return agent;
+    const c: Ctx = { id: `oc-${++this.n}-${Math.random().toString(36).slice(2, 8)}`, agentId: i.agentId, model: this.stripPrefix(i.agentId), closed: false, history: [], events: [], seq: 0, n: 0, done: new Map(), lock: Promise.resolve(), turns: new Map() };
+    this.ctxs.set(c.id, c);
+    this.push(c, "agent.context.opened", `open:${c.id}`, { title: i.title ?? null });
+    return ok({ contextId: c.id, isolation: "isolated", guarantee: "exact", resumed: false });
+  }
+
+  contextMessage(i: MessageInput): Promise<AaiResult<MessageResult>> {
+    const c = this.live(i.contextId);
+    if (!c.ok) return Promise.resolve(c);
+    const ctx = c.value;
+    const prior = ctx.done.get(i.correlationId);
+    if (prior) return prior;
+    // The limit is on replies running at once, not on conversations that exist: every thread keeps its
+    // conversation open, so counting open ones locked a person out after their Nth thread.
+    const running = [...this.ctxs.values()].filter((c) => c !== ctx && (c.inFlight ?? 0) > 0).length;
+    if (running >= this.o.maxParallel) {
+      return Promise.resolve(fail("CONTEXT_BUSY", `${this.spec.name} is already answering ${this.o.maxParallel} conversations; try again in a moment.`, { retryAfterMs: 5000 }));
+    }
+    ctx.inFlight = (ctx.inFlight ?? 0) + 1;
+    const p = ctx.lock.then(() => this.run(ctx, i)).finally(() => { ctx.inFlight = (ctx.inFlight ?? 1) - 1; });
+    ctx.done.set(i.correlationId, p);
+    ctx.lock = p.catch(() => undefined);
+    void p.then((r) => { if (!r.ok) ctx.done.delete(i.correlationId); }); // failed sends may be retried with the same id
+    return p;
+  }
+
+  private async run(ctx: Ctx, i: MessageInput): Promise<AaiResult<MessageResult>> {
+    if (ctx.closed) return fail("CONTEXT_NOT_FOUND", "No such conversation");
+    const abort = new AbortController();
+    ctx.abort = abort; ctx.cancelled = false;
+    const timer = setTimeout(() => abort.abort(), this.o.replyTimeoutMs);
+    const messages: Msg[] = [...ctx.history, { role: "user", content: i.text }];
+    this.push(ctx, "agent.activity.started", i.correlationId, { text: i.text }, "allternit");
+    try {
+      const r = await this.http("/v1/chat/completions", {
+        method: "POST", signal: abort.signal, headers: { "content-type": "application/json", accept: "text/event-stream, application/json" },
+        body: JSON.stringify({ model: ctx.model, messages, stream: true }),
+      });
+      if (!r.ok) return ctx.cancelled ? this.cancelled() : r;
+      let reply = "";
+      try {
+        const ct = r.value.headers.get("content-type") ?? "";
+        if (ct.includes("text/event-stream") && r.value.body) {
+          reply = await this.readSse(r.value.body, (d) => { reply += d; this.push(ctx, "agent.message.delta", i.correlationId, { chunk: d }); });
+        } else {
+          const j = (await r.value.json()) as { choices?: Array<{ message?: { content?: unknown } }> };
+          const t = j.choices?.[0]?.message?.content;
+          reply = typeof t === "string" ? t : "";
+          if (reply) this.push(ctx, "agent.message.delta", i.correlationId, { chunk: reply });
+        }
+      } catch (e) {
+        if (ctx.cancelled) return this.cancelled();
+        return fail("VENDOR_UNAVAILABLE", `${this.spec.name} closed the connection mid-reply. ${this.startHint(this.o.baseUrl)}`, { details: { cause: (e as Error)?.message } });
+      }
+      // History is only extended once the turn fully succeeded, so a failed/cancelled send never corrupts the context.
+      ctx.history = [...messages, { role: "assistant", content: reply }];
+      const messageId = `${ctx.id}:m${++ctx.n}`;
+      this.push(ctx, "agent.message.completed", i.correlationId, { reply, messageId });
+      const result: MessageResult = { messageId, correlationId: i.correlationId, reply, guarantee: "exact" };
+      ctx.turns.set(i.correlationId, result);
+      return ok(result);
+    } finally { clearTimeout(timer); if (ctx.abort === abort) ctx.abort = undefined; }
+  }
+  private cancelled(): AaiResult<never> { return fail("UNKNOWN", "The message was cancelled.", { details: { cancelled: true } }); }
+
+  private async readSse(body: ReadableStream<Uint8Array>, onDelta: (d: string) => void): Promise<string> {
+    const reader = body.getReader(), dec = new TextDecoder();
+    let buf = "", out = "", finished = false;
+    const line = (raw: string) => {
+      const l = raw.trim();
+      if (!l.startsWith("data:")) return;
+      const data = l.slice(5).trim();
+      if (data === "[DONE]") { finished = true; return; }
+      try {
+        const j = JSON.parse(data) as { choices?: Array<{ delta?: { content?: unknown } }> };
+        const d = j.choices?.[0]?.delta?.content;
+        if (typeof d === "string" && d) { out += d; onDelta(d); }
+      } catch { /* keep-alive or non-JSON comment */ }
+    };
+    while (!finished) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let idx: number;
+      while ((idx = buf.indexOf("\n")) >= 0) { line(buf.slice(0, idx)); buf = buf.slice(idx + 1); }
+    }
+    if (buf) line(buf);
+    return out;
+  }
+
+  async contextCancel(i: { contextId: string }): Promise<AaiResult<CancelResult>> {
+    const c = this.live(i.contextId);
+    if (!c.ok) return c;
+    if (c.value.abort) { c.value.cancelled = true; c.value.abort.abort(); } // aborting the HTTP request stops the stream
+    return ok({ confirmed: true });
+  }
+  async contextClose(i: { contextId: string }): Promise<AaiResult<{ closed: boolean }>> {
+    const c = this.live(i.contextId);
+    if (!c.ok) return c;
+    c.value.closed = true;
+    c.value.cancelled = true; c.value.abort?.abort();
+    return ok({ closed: true });
+  }
+  async events(i: EventsInput): Promise<AaiResult<EventsResult>> {
+    const c = this.live(i.contextId);
+    if (!c.ok) return c;
+    const after = Number(i.cursor ?? 0);
+    let events = c.value.events.filter((e) => Number(e.cursor) > after);
+    if (i.limit && i.limit > 0) events = events.slice(0, i.limit);
+    return ok({ events, nextCursor: events.length ? events[events.length - 1].cursor : String(after) });
+  }
+
+  // ---------- persistence (the gateway stores this per context; see src/aai/context-store.ts) ----------
+  exportContext(contextId: string): ContextSnapshot | undefined {
+    const c = this.ctxs.get(contextId);
+    if (!c) return undefined;
+    const turns = Object.fromEntries([...c.turns].slice(-PERSISTED_TURNS));
+    const state: OpenAiCompatContextState = { model: c.model, history: c.history, events: c.events.slice(-PERSISTED_EVENTS), seq: c.seq, n: c.n, turns };
+    return { agentId: c.agentId, state };
+  }
+  restoreContext(contextId: string, snapshot: ContextSnapshot): boolean {
+    if (this.ctxs.has(contextId)) return true;
+    const s = snapshot.state as Partial<OpenAiCompatContextState> | undefined;
+    const agentId = snapshot.agentId;
+    if (!s || typeof agentId !== "string" || !agentId.startsWith(this.spec.agentPrefix) || !Array.isArray(s.history) || !s.history.every(isMsg)) return false;
+    const turns = new Map(Object.entries(s.turns ?? {}));
+    const c: Ctx = {
+      id: contextId, agentId, model: typeof s.model === "string" ? s.model : this.stripPrefix(agentId), closed: false,
+      history: s.history, events: Array.isArray(s.events) ? s.events : [], seq: Number(s.seq) || 0, n: Number(s.n) || 0,
+      done: new Map([...turns].map(([k, v]) => [k, Promise.resolve(ok(v))])), lock: Promise.resolve(), turns,
+    };
+    this.ctxs.set(contextId, c);
+    return true;
+  }
+}

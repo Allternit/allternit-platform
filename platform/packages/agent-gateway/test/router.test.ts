@@ -26,6 +26,19 @@ describe("AaiRouter", () => {
     expect(opens.filter((x) => !x.ok && x.error.code === "CONTEXT_BUSY")).toHaveLength(1);
   });
 
+  it("counts conversations running at once, not ones that merely exist", async () => {
+    const r = new AaiRouter().register(new MemoryProvider("mem-agent", 1, { ignoreMaxParallel: true })).bind(binding());
+    const ids: string[] = [];
+    for (let k = 0; k < 3; k++) { const o = await r.contextOpen({ agentId: "mem-agent" }); if (!o.ok) throw new Error(o.error.code); ids.push(o.value.contextId); }
+    const [a, b] = await Promise.all([
+      r.contextMessage({ contextId: ids[0], correlationId: "a", text: "x" }),
+      r.contextMessage({ contextId: ids[1], correlationId: "b", text: "y" }),
+    ]);
+    expect(a.ok).toBe(true);
+    expect(!b.ok && b.error.code).toBe("CONTEXT_BUSY");
+    expect((await r.contextMessage({ contextId: ids[1], correlationId: "b", text: "y" })).ok).toBe(true); // busy was retryable
+  });
+
   it("never auto-resolves an approval without a human actor", async () => {
     const r = new AaiRouter().register(new MemoryProvider("mem-agent", 2, { autoApprove: true })).bind(binding());
     const res = await r.approvals({ op: "respond", approvalId: "appr-1", decision: "approve", actor: { type: "system", id: "coordinator" } });

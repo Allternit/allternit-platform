@@ -80,3 +80,20 @@ Idempotent: a second call reuses the account, login and bots. Source: `cmd/allte
 | POST | `/gateway/approvals/:id/respond` | `decision` (approve or deny), `actor?: {type:"user"}` | `{approvalId, state}` | 400, 403 `HUMAN_REQUIRED`, 404, 409 `ALREADY_RESOLVED`, 503 |
 
 Also on `thread_routes.rs` (not wrapped by the SDKs yet): `/threads` (GET, POST), `/threads/:id` (GET, PATCH), `/threads/by-session/:session_id`, `/threads/:id/resolve`, `/threads/:id/usage`, `/threads/:id/handoff`, `/threads/:id/deps`.
+
+## Subscription gateway AAI host
+
+The subscription gateway (`services/subscription-gateway`, `src/http/routes_aai.ts`) is what allternit-api calls for vendor bots. Its routes are not under `/api/v1`; they take the gateway's own bearer token (`Authorization: Bearer <token>`, scopes as listed). AAI results answer HTTP 200 as `{ok:true,value}` or `{ok:false,error:AAIError}`; only transport problems use other statuses.
+
+| Method | Path | Scope | Body / query | Response |
+|---|---|---|---|---|
+| POST | `/aai/call` | `tasks:submit` | `op, binding, input, credential?` | `{ok,value}` or `{ok:false,error}` |
+| GET | `/aai/events/stream` | `tasks:read` | `contextId` and `adapterId` (or `binding=<BotExecutionBinding JSON>`), `cursor?`; header `Last-Event-ID?` | `text/event-stream` (below); 400 bad query, 503 no host |
+| GET | `/aai/providers` | `tasks:read` | | `{providers:[{adapterId, disabled, pacing?, manifest, error?}]}` |
+| POST | `/aai/conformance/:adapterId` | `tasks:submit` | `?offline=1` for shipped fixtures | conformance report; 404 unknown adapter or no fixtures |
+
+`GET /aai/events/stream` is SSE over `agent.events` for one context. Each event is `event: aai`, `id: <cursor>`, `data: <wire event>` (the same flat event `/aai/call agent.events` returns, including `cursor`). It starts after `Last-Event-ID` when the client sends one (a reconnecting `EventSource` does), else after `?cursor`, else from the start of the context's log. Without `binding`, the binding the context was opened with is used. The gateway polls the provider (every 500 ms), sends a `: hb` comment every 15 s, and stops polling when the client disconnects. A failed read is sent as `event: error` with the `AAIError` as data: a retryable one keeps the stream polling (after `retryAfterMs`), any other ends it.
+
+Contexts survive a gateway restart: the host keeps each context's binding, agent, vendor conversation keys, last cursor and closed flag in `state.db` (`aai_contexts`), plus the provider's own snapshot for providers that keep the conversation client-side (OpenClaw, Hermes), which continue with their history and cursor. A context whose provider cannot resume it (the desktop-app adapters: Grok Bot, ChatGPT dots, Claude desktop) answers `CONTEXT_NOT_FOUND` with `details.reason: "CONTEXT_LOST"`, which allternit-api turns into its lost-context handoff; a closed one answers `CONTEXT_NOT_FOUND` with `details.closed: true`.
+
+Turns on a website or desktop subscription (manifest lane `ui_bridge`: Grok Bot, ChatGPT dots, Claude desktop and the `*-subscription` lanes) take turns per account: up to the lane's `context.maxParallel` run at once and the rest wait in arrival order, without opening another window or tab. While a message waits, `agent.events` on its context carries an `agent.activity.started` event with `payload.kind: "queued"`, `position` and `detail` such as `queued: waiting for your Grok app (position 1)`, then one with `state: "started"` when it begins. `agent.context.cancel` on a waiting message takes it out of line (it answers `details.cancelled`). A full line answers `RATE_LIMITED`; a message that waited too long answers `CONTEXT_BUSY` with `details.queueTimeout`. Limits: `SUBS_GATEWAY_AAI_QUEUE_MAX` (default 8 waiting per account) and `SUBS_GATEWAY_AAI_QUEUE_WAIT_MS` (default 600000).
