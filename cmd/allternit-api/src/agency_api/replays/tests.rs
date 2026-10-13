@@ -128,7 +128,7 @@ fn decision(db: &DbHandle, id: &str, run: Option<&str>, ctx: &str, served: &str,
         options: &opts, choice: Some(served), probs: &json!({}), confidence: 0.9, abstained: false, backend: "oracle",
         latency_ms: latency, attempts: &attempts,
     }).unwrap();
-    let s = flywheel::Shadow { decision_id: id.into(), owner: OWNER.into(), kind: "element".into(), key, ids: ids.iter().map(|x| x.to_string()).collect(), has_image: false };
+    let s = flywheel::Shadow { decision_id: id.into(), owner: OWNER.into(), kind: "element".into(), key, ids: ids.iter().map(|x| x.to_string()).collect(), has_image: false, context: String::new(), question: None, texts: vec![], vectors: None };
     flywheel::record_key(db, &s).unwrap();
     if let Some((status, label)) = outcome {
         dstore::set_outcome(db, id, OWNER, status, label, None, &now()).unwrap();
@@ -240,7 +240,7 @@ async fn walk(rec: &Recording, cog: &dyn Cognition) -> sim::SimOut {
     let (g, ws) = research();
     let policy = task_types::completion_policy(task_types::get("RESEARCH_DOC").unwrap()).unwrap();
     let cfg = SimConfig { graph: &g, policy: &policy, goal: "brief", write_set: &ws, regen_all: true, tainted_from_start: false, scripted: true,
-        regenerate: true, heads: &[], db: None, owner: OWNER, run_id: "run_r" };
+        regenerate: true, heads: &[], db: None, owner: OWNER, run_id: "run_r", vectors: None };
     sim::simulate(&cfg, rec, cog).await
 }
 
@@ -256,7 +256,7 @@ fn verify_decision(db: &DbHandle, id: &str, run: Option<&str>, served: &str, out
         has_image: false, options: &opts, choice: Some(served), probs: &json!({}), confidence: 0.9, abstained: false, backend: "oracle",
         latency_ms: 400.0, attempts: &json!([]),
     }).unwrap();
-    let s = flywheel::Shadow { decision_id: id.into(), owner: OWNER.into(), kind: "verify".into(), key, ids: ids.iter().map(|x| x.to_string()).collect(), has_image: false };
+    let s = flywheel::Shadow { decision_id: id.into(), owner: OWNER.into(), kind: "verify".into(), key, ids: ids.iter().map(|x| x.to_string()).collect(), has_image: false, context: String::new(), question: None, texts: vec![], vectors: None };
     flywheel::record_key(db, &s).unwrap();
     dstore::set_outcome(db, id, OWNER, outcome, None, None, &now()).unwrap();
     flywheel::on_outcome(db, id, OWNER).unwrap();
@@ -280,7 +280,7 @@ fn general_recording() -> (allternit_factory_engine::kernel::graph::ComputeGraph
 async fn walk_general(rec: &Recording, g: &allternit_factory_engine::kernel::graph::ComputeGraph, heads: &[HeadOverride], db: &DbHandle) -> sim::SimOut {
     let policy = task_types::completion_policy(task_types::get("GENERAL_TASK").unwrap()).unwrap();
     let cfg = SimConfig { graph: g, policy: &policy, goal: "g", write_set: &[], regen_all: false, tainted_from_start: false, scripted: false,
-        regenerate: false, heads, db: Some(db), owner: OWNER, run_id: "run_g" };
+        regenerate: false, heads, db: Some(db), owner: OWNER, run_id: "run_g", vectors: None };
     sim::simulate(&cfg, rec, &Fixed("unused")).await
 }
 
@@ -313,7 +313,7 @@ async fn replay_head_override_changes_the_s1_choice_and_the_route() {
     let ids = sim::journaled_decision_ids(&db, "run_g").unwrap();
     assert!(ids.is_empty(), "no journal rows in this unit db");
     let (g, rec) = general_recording();
-    let heads = vec![HeadOverride { kind: "verify".into(), head: flywheel::head_by_name("head.lookup").unwrap() }];
+    let heads = vec![HeadOverride::new("verify", flywheel::head_by_name("head.lookup").unwrap())];
     let o = walk_general(&rec, &g, &heads, &db).await;
     // The head says "fail" at G05: a confident rejection, the run fails there; G06 onwards never run.
     assert_eq!(o.status, "failed", "{}", o.reason);
@@ -326,7 +326,7 @@ async fn replay_head_override_changes_the_s1_choice_and_the_route() {
     assert!(o.divergences.iter().any(|d| d["type"] == "MISSING_NODE" && d["step_ref"] == "G06"));
     assert!(o.divergences.iter().all(|d| d["kind"] == "expected"), "{:?}", o.divergences);
     // A head for another kind leaves the S1 node on its recording.
-    let other = vec![HeadOverride { kind: "element".into(), head: flywheel::head_by_name("head.lookup").unwrap() }];
+    let other = vec![HeadOverride::new("element", flywheel::head_by_name("head.lookup").unwrap())];
     let o = walk_general(&rec, &g, &other, &db).await;
     assert_eq!((o.status, o.divergences.len()), ("completed", 0), "{:?}", o.divergences);
     // Nothing was learned from the replay.
@@ -525,7 +525,7 @@ fn seed_e2e_decisions(db: &DbHandle, run: &str) {
             options: &opts, choice: Some(served), probs: &json!({}), confidence: 0.9, abstained: false, backend: "oracle",
             latency_ms: 500.0, attempts: &json!([{ "backend": "oracle", "detail": { "cost_usd": 0.002 } }]),
         }).unwrap();
-        let s = flywheel::Shadow { decision_id: id.clone(), owner: USER.into(), kind: "element".into(), key, ids: ids.iter().map(|x| x.to_string()).collect(), has_image: false };
+        let s = flywheel::Shadow { decision_id: id.clone(), owner: USER.into(), kind: "element".into(), key, ids: ids.iter().map(|x| x.to_string()).collect(), has_image: false, context: String::new(), question: None, texts: vec![], vectors: None };
         flywheel::record_key(db, &s).unwrap();
         if let Some((status, label)) = outcome {
             dstore::set_outcome(db, &id, USER, status, label, None, &now()).unwrap();

@@ -62,6 +62,17 @@ pub(crate) const FINISHED: &[&str] = &["completed", "partial", "failed"];
 pub struct HeadOverride {
     pub kind: String,
     pub head: &'static dyn flywheel::Head,
+    /// The version replayed: `head.version()`, or a trained head's stored
+    /// version number (set by [`resolve_versions`]).
+    pub version: String,
+    /// A trained head's stored version.
+    pub pin: Option<i64>,
+}
+
+impl HeadOverride {
+    pub fn new(kind: &str, head: &'static dyn flywheel::Head) -> Self {
+        Self { kind: kind.into(), head, version: head.version().into(), pin: None }
+    }
 }
 
 #[derive(Clone)]
@@ -84,7 +95,11 @@ impl Overrides {
     }
 
     pub fn head_for(&self, kind: &str) -> Option<&'static dyn flywheel::Head> {
-        self.heads.iter().find(|h| h.kind == kind).map(|h| h.head)
+        self.override_for(kind).map(|h| h.head)
+    }
+
+    pub fn override_for(&self, kind: &str) -> Option<&HeadOverride> {
+        self.heads.iter().find(|h| h.kind == kind)
     }
 
     /// The normalized overrides, echoed on the replay.
@@ -92,7 +107,7 @@ impl Overrides {
         let mut o = Map::new();
         if !self.heads.is_empty() {
             let heads: Map<String, Value> =
-                self.heads.iter().map(|h| (h.kind.clone(), json!({ "head": h.head.name(), "version": h.head.version() }))).collect();
+                self.heads.iter().map(|h| (h.kind.clone(), json!({ "head": h.head.name(), "version": h.version }))).collect();
             o.insert("decision_heads".into(), Value::Object(heads));
         }
         if let Some(c) = &self.model_class {
@@ -109,6 +124,23 @@ impl Overrides {
         }
         Value::Object(o)
     }
+}
+
+/// Pin each trained head override to a stored version: the one asked for,
+/// or the newest. 422 when the kind has no such version.
+pub fn resolve_versions(conn: &rusqlite::Connection, ov: &mut Overrides) -> Result<(), Fail> {
+    for h in ov.heads.iter_mut().filter(|h| h.head.stored_versions()) {
+        let param = format!("overrides.decision_heads.{}", h.kind);
+        let found = crate::agency_api::decisions::training::find(conn, h.head.name(), &h.kind, h.pin)
+            .map_err(|e| Fail::new(500, "ERR_INTERNAL", e.to_string()))?;
+        let Some((_, v)) = found else {
+            let what = h.pin.map(|n| format!("version {n}")).unwrap_or_else(|| "a trained version".into());
+            return Err(Fail::input(&param, format!("{} has no {what} for kind {}", h.head.name(), h.kind)));
+        };
+        h.pin = Some(v);
+        h.version = v.to_string();
+    }
+    Ok(())
 }
 
 /// A rejected request or a replay that cannot run.
@@ -197,10 +229,21 @@ pub fn parse_overrides(v: Option<&Value>) -> Result<Overrides, Fail> {
             if !head.applies(kind) {
                 return Err(Fail::input(&param, format!("{name} is not registered for kind {kind}")));
             }
+            if head.stored_versions() {
+                // A trained head: a stored version number, checked (and the
+                // newest filled in) by `resolve_versions`.
+                let pin = match version.as_deref().map(str::parse::<i64>) {
+                    None => None,
+                    Some(Ok(n)) if n >= 1 => Some(n),
+                    Some(_) => return Err(Fail::input(&param, format!("{name} versions are numbers (1, 2, ...)"))),
+                };
+                ov.heads.push(HeadOverride { pin, version: pin.map(|n| n.to_string()).unwrap_or_default(), ..HeadOverride::new(kind, head) });
+                continue;
+            }
             if let Some(v) = version.filter(|v| v != head.version()) {
                 return Err(Fail::input(&param, format!("{name} has no version {v} (registered: {})", head.version())));
             }
-            ov.heads.push(HeadOverride { kind: kind.clone(), head });
+            ov.heads.push(HeadOverride::new(kind, head));
         }
     }
     if let Some(c) = obj.get("model_class") {
@@ -329,13 +372,17 @@ pub async fn replay_one(st: &Arc<AppState>, src: &RunRecord, ov: &Overrides, id:
 
     // 2) Cognition, when an override re-runs it, or (B1) when a head
     // override re-decides a decision an S1 node routed on.
-    let recorded = {
+    let mut recorded = {
         let conn = st.db.connect().map_err(|e| Fail::new(500, "ERR_INTERNAL", e.to_string()))?;
         decide::load(&conn, &src.owner, &run_id).map_err(|e| Fail::new(500, "ERR_INTERNAL", e.to_string()))?
     };
+    // An embedding head's vectors, async, before the blocking re-decide.
+    decide::prepare(&mut recorded, &|kind| ov.head_for(kind), crate::memory_index::global()).await;
+    let vectors: std::collections::HashMap<String, flywheel::Vectors> =
+        recorded.iter().filter_map(|d| Some((d.id.clone(), d.vectors.clone()?))).collect();
     let s1_ids = sim::journaled_decision_ids(&st.db, &run_id).map_err(|e| Fail::new(500, "ERR_INTERNAL", e.to_string()))?;
     let s1_redecided = recorded.iter().any(|d| s1_ids.contains(&d.id) && ov.head_for(&d.kind).is_some());
-    let walk = if ov.cognition() || s1_redecided { Some(walk_run(st, src, ov).await?) } else { None };
+    let walk = if ov.cognition() || s1_redecided { Some(walk_run(st, src, ov, &vectors).await?) } else { None };
     let covered = walk.as_ref().map(|w| w.decisions_covered.clone()).unwrap_or_default();
 
     // 3) Decisions.
@@ -343,10 +390,11 @@ pub async fn replay_one(st: &Arc<AppState>, src: &RunRecord, ov: &Overrides, id:
     let mut decisions = Vec::with_capacity(recorded.len());
     let mut rows = Vec::new();
     for d in &recorded {
-        match ov.head_for(&d.kind) {
-            Some(head) => {
-                let r = decide::redecide(&conn, &src.owner, d, head, k_for(k, &d.kind)).map_err(|e| Fail::new(500, "ERR_INTERNAL", e.to_string()))?;
-                let (v, row) = decide::compare(d, head, &r);
+        match ov.override_for(&d.kind) {
+            Some(h) => {
+                let head = h.head;
+                let r = decide::redecide_with(&conn, &src.owner, d, head, h.pin, k_for(k, &d.kind)).map_err(|e| Fail::new(500, "ERR_INTERNAL", e.to_string()))?;
+                let (v, row) = decide::compare_with(d, head, &h.version, &r);
                 // An S1 node's re-decision is reported by the walk, at its node.
                 if v["effective_choice"] != json!(d.served) && !covered.contains(&d.id) {
                     divergences.push(json!({ "step_ref": format!("decision:{}", d.id), "kind": "expected", "type": "DECISION",
@@ -428,7 +476,12 @@ pub async fn replay_one(st: &Arc<AppState>, src: &RunRecord, ov: &Overrides, id:
 
 /// The cognition walk for `model_class` / `graph_version`, and for
 /// `decision_heads` that re-decide an S1 node's decision (recordings only).
-async fn walk_run(st: &Arc<AppState>, src: &RunRecord, ov: &Overrides) -> Result<sim::SimOut, Fail> {
+async fn walk_run(
+    st: &Arc<AppState>,
+    src: &RunRecord,
+    ov: &Overrides,
+    vectors: &std::collections::HashMap<String, flywheel::Vectors>,
+) -> Result<sim::SimOut, Fail> {
     let ir = &src.task_ir;
     let task_type = ir["task_type"].as_str().unwrap_or("BUG_FIX");
     if task_type == "BUG_FIX" {
@@ -456,7 +509,7 @@ async fn walk_run(st: &Arc<AppState>, src: &RunRecord, ov: &Overrides) -> Result
     let cfg = sim::SimConfig {
         graph: &graph, policy: &policy, goal: ir["goal"].as_str().unwrap_or_default(), write_set: &write_set,
         regen_all: ov.model_class.is_some(), tainted_from_start: tainted, scripted, regenerate: ov.cognition(),
-        heads: &ov.heads, db: Some(&st.db), owner: &src.owner, run_id,
+        heads: &ov.heads, db: Some(&st.db), owner: &src.owner, run_id, vectors: Some(vectors),
     };
     if scripted || !ov.cognition() {
         return Ok(sim::simulate(&cfg, &rec, &sim::Scripted).await);
@@ -548,7 +601,11 @@ pub async fn create_replay(
         return Err(ApiError::new(400, "INPUT", "ERR_INPUT_UNSUPPORTED", format!("unknown field `{k}`"), &rid).param(Some(k.clone())));
     }
     check_effects(obj).map_err(|f| f.api(&rid))?;
-    let ov = parse_overrides(obj.get("overrides")).map_err(|f| f.api(&rid))?;
+    let mut ov = parse_overrides(obj.get("overrides")).map_err(|f| f.api(&rid))?;
+    {
+        let conn = st.db.connect().map_err(|e| ApiError::internal(e, &rid))?;
+        resolve_versions(&conn, &mut ov).map_err(|f| f.api(&rid))?;
+    }
     let k = parse_k(obj).map_err(|f| f.api(&rid))?;
     let src_id = obj.get("source_run_id").and_then(Value::as_str).unwrap_or_default().to_string();
     let src = owned(store(&st).load_run(&src_id).await.map_err(|e| ApiError::internal(e, &rid))?, &user, &rid)?;
@@ -713,7 +770,7 @@ pub fn evidence_of_batch(batch_id: &str, owner: &str, ov: &Overrides, runs: usiz
                 id: batch_id.into(),
                 head: h.head.name().into(),
                 kind: h.kind.clone(),
-                head_version: h.head.version().into(),
+                head_version: h.version.clone(),
                 owner: owner.into(),
                 created_at: now(),
                 runs: runs as u64,
@@ -813,7 +870,11 @@ pub async fn create_batch(
         return Err(ApiError::new(400, "INPUT", "ERR_INPUT_UNSUPPORTED", format!("unknown field `{k}`"), &rid).param(Some(k.clone())));
     }
     check_effects(obj).map_err(|f| f.api(&rid))?;
-    let ov = parse_overrides(obj.get("overrides")).map_err(|f| f.api(&rid))?;
+    let mut ov = parse_overrides(obj.get("overrides")).map_err(|f| f.api(&rid))?;
+    {
+        let conn = st.db.connect().map_err(|e| ApiError::internal(e, &rid))?;
+        resolve_versions(&conn, &mut ov).map_err(|f| f.api(&rid))?;
+    }
     let k = parse_k(obj).map_err(|f| f.api(&rid))?;
     let sel = parse_selection(obj).map_err(|f| f.api(&rid))?;
     let s = store(&st);

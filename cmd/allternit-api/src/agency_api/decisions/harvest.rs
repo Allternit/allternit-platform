@@ -237,24 +237,58 @@ pub fn to_record(kind: &str, context: &str, question: Option<&str>, options_json
     })
 }
 
-pub fn export(conn: &Connection, kind: &str, scope: Option<&str>, limit: usize) -> rusqlite::Result<Vec<Value>> {
+type ExampleRow = (String, Option<String>, String, String, Option<String>, String);
+
+/// Labelled rows of one kind, oldest first: context, question, options JSON,
+/// label, label source. `scope: None` pools every opted-in scope.
+fn labelled_rows(conn: &Connection, kind: &str, scope: Option<&str>, limit: usize) -> rusqlite::Result<Vec<ExampleRow>> {
     let mut stmt = conn.prepare(
-        "SELECT e.context, e.question, e.options_json, e.label, e.label_source
+        "SELECT e.context, e.question, e.options_json, e.label, e.label_source, e.decision_id
          FROM decision_examples e JOIN decision_training_optin o ON o.scope = e.scope AND o.opted_in = 1
          WHERE e.kind = ?1 AND e.label IS NOT NULL AND (?2 IS NULL OR e.scope = ?2)
          ORDER BY e.created_at LIMIT ?3",
     )?;
-    let rows = stmt.query_map(params![kind, scope, limit as i64], |r| {
-        Ok(to_record(
-            kind,
-            &r.get::<_, String>(0)?,
-            r.get::<_, Option<String>>(1)?.as_deref(),
-            &r.get::<_, String>(2)?,
-            &r.get::<_, String>(3)?,
-            &r.get::<_, Option<String>>(4)?.unwrap_or_default(),
-        ))
-    })?;
+    let rows = stmt.query_map(params![kind, scope, limit as i64], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)))?;
     rows.collect()
+}
+
+pub fn export(conn: &Connection, kind: &str, scope: Option<&str>, limit: usize) -> rusqlite::Result<Vec<Value>> {
+    Ok(labelled_rows(conn, kind, scope, limit)?
+        .iter()
+        .map(|(context, question, options, label, source, _)| {
+            to_record(kind, context, question.as_deref(), options, label, source.as_deref().unwrap_or_default())
+        })
+        .collect())
+}
+
+/// One labelled example as the trainers read it: the same rows as
+/// [`export`], with the options kept in the order they were offered.
+#[derive(Clone, Debug)]
+pub struct Labelled {
+    pub context: String,
+    pub question: Option<String>,
+    /// (id, text) in offered order.
+    pub options: Vec<(String, String)>,
+    pub label: String,
+    pub source: String,
+    /// The decision it was harvested from (never exported).
+    pub decision_id: String,
+}
+
+/// The rows of [`export`] for training. Rows whose label is not one of their
+/// options are dropped.
+pub fn labelled(conn: &Connection, kind: &str, scope: Option<&str>, limit: usize) -> rusqlite::Result<Vec<Labelled>> {
+    Ok(labelled_rows(conn, kind, scope, limit)?
+        .into_iter()
+        .filter_map(|(context, question, options, label, source, decision_id)| {
+            let options: Vec<(String, String)> = serde_json::from_str::<Vec<Value>>(&options)
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|o| Some((o["id"].as_str()?.to_string(), o["text"].as_str().unwrap_or_default().to_string())))
+                .collect();
+            options.iter().any(|(id, _)| *id == label).then(|| Labelled { context, question, options, label, source: source.unwrap_or_default(), decision_id })
+        })
+        .collect())
 }
 
 pub async fn get_dataset(

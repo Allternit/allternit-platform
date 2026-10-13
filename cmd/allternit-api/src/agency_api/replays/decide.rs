@@ -13,8 +13,17 @@
 //! The candidate's *effective* choice is what the chain would serve with the
 //! head live: its answer when its confidence clears the kind's threshold,
 //! otherwise the recorded served choice (the chain escalates past the head).
+//!
+//! Trained heads (`head.embed`, `head.rules`) re-decide with the stored
+//! version the override pins. They read the decision's text, which only the
+//! harvested example keeps (opted-in scopes, DLP-redacted): without one they
+//! have no answer. `head.embed` gets its vectors from [`prepare`], the async
+//! step before the blocking re-decide. Their leave-one-out: a version never
+//! answers for a decision it was fit on (its training split's ids).
 
-use crate::agency_api::decisions::flywheel::{truth, Head, HeadInput, Truth};
+use crate::agency_api::decisions::embed_head;
+use crate::agency_api::decisions::flywheel::{truth, Head, HeadInput, Truth, Vectors};
+use crate::memory_index::EmbedClient;
 use crate::agency_api::decisions::{acceptance, threshold};
 use rusqlite::{params, Connection};
 use serde_json::{json, Value};
@@ -36,6 +45,13 @@ pub struct Recorded {
     pub has_image: bool,
     pub key: Option<String>,
     pub learned: bool,
+    /// From the harvested example, when there is one.
+    pub context: Option<String>,
+    pub question: Option<String>,
+    /// Option texts, in `ids` order.
+    pub texts: Vec<String>,
+    /// Filled by [`prepare`] for an embedding head.
+    pub vectors: Option<Vectors>,
 }
 
 impl Recorded {
@@ -51,8 +67,8 @@ impl Recorded {
 pub fn load(conn: &Connection, owner: &str, run_id: &str) -> rusqlite::Result<Vec<Recorded>> {
     let mut q = conn.prepare(
         "SELECT d.id, d.kind, d.choice, d.backend, d.outcome_status, d.outcome_label, d.latency_ms, d.attempts_json, d.options_json,
-                d.has_image, k.key_hash, COALESCE(k.learned, 0)
-         FROM decisions d LEFT JOIN decision_keys k ON k.decision_id = d.id
+                d.has_image, k.key_hash, COALESCE(k.learned, 0), e.context, e.question
+         FROM decisions d LEFT JOIN decision_keys k ON k.decision_id = d.id LEFT JOIN decision_examples e ON e.decision_id = d.id
          WHERE d.owner = ?1 AND (d.session_id = ?2 OR d.task = ?2) ORDER BY d.created_at, d.id",
     )?;
     let rows = q.query_map(params![owner, run_id], |r| {
@@ -68,12 +84,30 @@ pub fn load(conn: &Connection, owner: &str, run_id: &str) -> rusqlite::Result<Ve
             latency_ms: r.get(6)?,
             cost_usd: attempts.as_array().map(|a| a.iter().filter_map(|x| x["detail"]["cost_usd"].as_f64()).sum()).unwrap_or(0.0),
             ids: options.as_array().map(|a| a.iter().filter_map(|o| o["id"].as_str().map(String::from)).collect()).unwrap_or_default(),
+            texts: options.as_array().map(|a| a.iter().filter(|o| o["id"].is_string()).map(|o| o["text"].as_str().unwrap_or_default().to_string()).collect()).unwrap_or_default(),
+            context: r.get(12)?,
+            question: r.get(13)?,
+            vectors: None,
             has_image: r.get(9)?,
             key: r.get(10)?,
             learned: r.get(11)?,
         })
     })?;
     rows.collect()
+}
+
+/// Embed the decisions an embedding head will re-decide (async, before the
+/// blocking re-decide). Decisions without text or with an image are skipped.
+pub async fn prepare(ds: &mut [Recorded], head_for: &(dyn Fn(&str) -> Option<&'static dyn Head> + Sync), client: &EmbedClient) {
+    for d in ds.iter_mut() {
+        let embeds = head_for(&d.kind).is_some_and(|h| h.embeds());
+        if !embeds || d.has_image || d.vectors.is_some() {
+            continue;
+        }
+        let Some(ctx) = d.context.clone() else { continue };
+        let texts: Vec<&str> = d.texts.iter().map(String::as_str).collect();
+        d.vectors = embed_head::embed_decision(client, &ctx, d.question.as_deref(), &texts).await;
+    }
 }
 
 /// The candidate's samples for one decision: `(choice index, confidence)`
@@ -85,9 +119,15 @@ pub struct Redecided {
 
 /// Re-decide `d` with `head`, leave-one-out, `n` times (1 for a deterministic head).
 pub fn redecide(conn: &Connection, owner: &str, d: &Recorded, head: &dyn Head, n: u32) -> rusqlite::Result<Redecided> {
+    redecide_with(conn, owner, d, head, None, n)
+}
+
+/// [`redecide`] with a pinned stored version (`pin`) for a trained head.
+pub fn redecide_with(conn: &Connection, owner: &str, d: &Recorded, head: &dyn Head, pin: Option<i64>, n: u32) -> rusqlite::Result<Redecided> {
     let n = if head.deterministic() { 1 } else { n.max(1) };
-    // Heads are blind to images and need the decision's key.
-    let Some(key) = d.key.as_deref().filter(|_| !d.has_image) else {
+    // Heads are blind to images and need the decision's key; trained heads
+    // also need its text.
+    let Some(key) = d.key.as_deref().filter(|_| !d.has_image && (d.context.is_some() || !head.needs_text())) else {
         return Ok(Redecided { samples: vec![None; n as usize], latency_ms: 0.0 });
     };
     conn.execute_batch("SAVEPOINT replay_loo")?;
@@ -106,7 +146,19 @@ pub fn redecide(conn: &Connection, owner: &str, d: &Recorded, head: &dyn Head, n
             }
         }
         let ids: Vec<&str> = d.ids.iter().map(String::as_str).collect();
-        let input = HeadInput { owner, kind: &d.kind, key, ids: &ids };
+        let texts: Vec<&str> = d.texts.iter().map(String::as_str).collect();
+        let input = HeadInput {
+            owner,
+            kind: &d.kind,
+            key,
+            ids: &ids,
+            context: d.context.as_deref().unwrap_or_default(),
+            question: d.question.as_deref(),
+            texts: &texts,
+            vectors: d.vectors.as_ref(),
+            decision_id: Some(&d.id),
+            pin,
+        };
         let mut samples = Vec::with_capacity(n as usize);
         let t = Instant::now();
         for _ in 0..n {
@@ -145,6 +197,11 @@ pub struct Row {
 
 /// Compare one decision with its re-decision: the per-decision record and its row.
 pub fn compare(d: &Recorded, head: &dyn Head, r: &Redecided) -> (Value, Row) {
+    compare_with(d, head, head.version(), r)
+}
+
+/// [`compare`] reporting `version` (a trained head's pinned stored version).
+pub fn compare_with(d: &Recorded, head: &dyn Head, version: &str, r: &Redecided) -> (Value, Row) {
     let thr = threshold(&d.kind);
     let pick = |s: &Option<(usize, f64)>| -> Option<String> {
         match s {
@@ -163,7 +220,7 @@ pub fn compare(d: &Recorded, head: &dyn Head, r: &Redecided) -> (Value, Row) {
     let row = Row {
         kind: d.kind.clone(),
         head: head.name().into(),
-        version: head.version().into(),
+        version: version.into(),
         deterministic: head.deterministic(),
         answered,
         confident,
@@ -189,7 +246,7 @@ pub fn compare(d: &Recorded, head: &dyn Head, r: &Redecided) -> (Value, Row) {
         "served": { "choice": d.served, "backend": d.backend, "latency_ms": d.latency_ms, "cost_usd": d.cost_usd },
         "outcome": d.status.as_ref().map(|s| json!({ "status": s, "label": d.label })),
         "label": right,
-        "candidate": { "head": head.name(), "version": head.version(), "choice": head_choice,
+        "candidate": { "head": head.name(), "version": version, "choice": head_choice,
                        "confidence": first.map(|(_, c)| (c * 10_000.0).round() / 10_000.0), "answered": answered,
                        "confident": confident, "latency_ms": r.latency_ms, "samples": r.samples.len() },
         "effective_choice": effective,

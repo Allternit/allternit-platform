@@ -24,8 +24,11 @@
 //! succeeded there before). It needs no training job and answers from one
 //! indexed SQLite read. With no traffic it stays in shadow.
 //!
-//! Training (datasets, adapters, the decision model) is not here; it runs in
-//! its own track and its heads register through the same `Head` trait.
+//! Trained heads register through the same `Head` trait: `head.embed`
+//! (`embed_head`, a CPU-trained scorer over EmbeddingGemma 2 vectors) and
+//! `head.rules` (`rules_head`, a decision list compiled to tier S0). They are
+//! built by the admin endpoints in `training` and answer only once a version
+//! is stored for the kind (`Head::ready`).
 
 use super::backends::{Answer, DecisionBackend, Query};
 use crate::db::DbHandle;
@@ -47,6 +50,27 @@ pub struct HeadInput<'a> {
     pub kind: &'a str,
     pub key: &'a str,
     pub ids: &'a [&'a str],
+    pub context: &'a str,
+    pub question: Option<&'a str>,
+    /// Option texts, in `ids` order.
+    pub texts: &'a [&'a str],
+    /// Embeddings, computed before `predict` (which is sync on a SQLite
+    /// connection) for heads that `embeds()`; `None` otherwise.
+    pub vectors: Option<&'a Vectors>,
+    /// The stored decision, when there is one (a replay, the shadow pass): a
+    /// trained head does not answer for a decision it was fit on.
+    pub decision_id: Option<&'a str>,
+    /// A stored version to answer with instead of the newest (a replay's
+    /// `{head, version}` override, for heads with `stored_versions()`).
+    pub pin: Option<i64>,
+}
+
+/// A decision's embeddings, all from one model.
+#[derive(Clone, Debug)]
+pub struct Vectors {
+    pub model: String,
+    pub state: Vec<f32>,
+    pub options: Vec<Vec<f32>>,
 }
 
 /// One head's answer: the chosen option's index and one probability per option.
@@ -60,6 +84,15 @@ pub trait Head: Send + Sync {
     fn name(&self) -> &'static str;
     /// The decision kinds it is registered for.
     fn applies(&self, kind: &str) -> bool;
+    /// Whether it can answer for `kind` at all (a trained head: a version
+    /// is stored). Heads that are not ready are not run or registered.
+    fn ready(&self, _conn: &Connection, _kind: &str) -> bool {
+        true
+    }
+    /// Whether it needs `HeadInput::vectors`.
+    fn embeds(&self) -> bool {
+        false
+    }
     /// `None` when it has no answer for this decision.
     fn predict(&self, conn: &Connection, input: &HeadInput<'_>) -> rusqlite::Result<Option<HeadAnswer>>;
     /// The head's version: a replay override may pin it (`{"head", "version"}`).
@@ -70,6 +103,20 @@ pub trait Head: Send + Sync {
     /// times for pass@k; a deterministic one once (pass@k = pass@1).
     fn deterministic(&self) -> bool {
         true
+    }
+    /// Trained heads: versions are stored per kind (`training`), numbered
+    /// 1, 2, ...; `version()` does not name them.
+    fn stored_versions(&self) -> bool {
+        false
+    }
+    /// Needs the decision's text (context, question), which a replay finds
+    /// only in the harvested example.
+    fn needs_text(&self) -> bool {
+        false
+    }
+    /// The version answering for `kind` now (replay evidence must match it).
+    fn current_version(&self, _conn: &Connection, _kind: &str) -> String {
+        self.version().to_string()
     }
 }
 
@@ -111,10 +158,12 @@ pub fn lookup_probs(n: usize, i: usize, s: i64, f: i64) -> Vec<f64> {
 }
 
 static LOOKUP: LookupHead = LookupHead;
+static EMBED: super::embed_head::EmbedHead = super::embed_head::EmbedHead;
+static RULES: super::rules_head::RulesHead = super::rules_head::RulesHead;
 
-/// The registered heads. A trained head from the model track joins here.
+/// The registered heads.
 pub fn heads() -> Vec<&'static dyn Head> {
-    vec![&LOOKUP]
+    vec![&LOOKUP, &RULES, &EMBED]
 }
 
 pub fn head_by_name(name: &str) -> Option<&'static dyn Head> {
@@ -366,7 +415,7 @@ pub fn evaluate(conn: &Connection, kind: &str) -> rusqlite::Result<Vec<(String, 
 
 pub fn evaluate_with(conn: &Connection, kind: &str, b: &Bar) -> rusqlite::Result<Vec<(String, String)>> {
     let mut out = Vec::new();
-    for h in heads().into_iter().filter(|h| h.applies(kind)) {
+    for h in heads().into_iter().filter(|h| h.applies(kind) && h.ready(conn, kind)) {
         let (st, since) = state(conn, h.name(), kind)?;
         let m = metrics(conn, h.name(), kind, &since, b.window)?;
         let Some((to, why)) = next_state(&st, &m, b) else { continue };
@@ -376,6 +425,13 @@ pub fn evaluate_with(conn: &Connection, kind: &str, b: &Bar) -> rusqlite::Result
         let mut why = why;
         if to == LIVE {
             if let Some(ev) = super::acceptance::latest(conn, h.name(), kind)? {
+                // A retrained head's evidence is for an older version: it has
+                // to be replayed again before it can go live.
+                let current = h.current_version(conn, kind);
+                if ev.head_version != current {
+                    tracing::info!(head = h.name(), kind, evidence = %ev.id, "promotion held back: replay evidence is for version {}, not {current}", ev.head_version);
+                    continue;
+                }
                 let v = super::acceptance::judge(&ev, b);
                 if !v.passed {
                     tracing::info!(head = h.name(), kind, evidence = %ev.id, "promotion held back by replay evidence: {}", v.summary());
@@ -415,7 +471,23 @@ impl DecisionBackend for LiveHead {
         true
     }
     async fn decide(&self, q: &Query<'_>) -> Result<Answer, String> {
-        let input = HeadInput { owner: &self.owner, kind: q.kind, key: &self.key, ids: &q.ids };
+        let vectors = if self.head.embeds() {
+            super::embed_head::embed_decision(crate::memory_index::global(), q.context, q.question, &q.texts).await
+        } else {
+            None
+        };
+        let input = HeadInput {
+            owner: &self.owner,
+            kind: q.kind,
+            key: &self.key,
+            ids: &q.ids,
+            context: q.context,
+            question: q.question,
+            texts: &q.texts,
+            vectors: vectors.as_ref(),
+            decision_id: None,
+            pin: None,
+        };
         let predicted = with_head_conn(&self.db, |conn| self.head.predict(conn, &input)).map_err(|e| e.to_string())?;
         match predicted {
             Some(a) => Ok(Answer { probs: a.probs, abstain: false, detail: json!({ "head": self.head.name() }) }),
@@ -470,7 +542,12 @@ pub fn expand(chain: Vec<Box<dyn DecisionBackend>>, db: &DbHandle, owner: &str, 
     let live: Vec<&'static dyn Head> = db
         .connect()
         .ok()
-        .map(|c| heads().into_iter().filter(|h| h.applies(kind) && current_state(&c, h.name(), kind).as_deref() == Some(LIVE)).collect())
+        .map(|c| {
+            heads()
+                .into_iter()
+                .filter(|h| h.applies(kind) && current_state(&c, h.name(), kind).as_deref() == Some(LIVE) && h.ready(&c, kind))
+                .collect()
+        })
         .unwrap_or_default();
     let mut out: Vec<Box<dyn DecisionBackend>> = Vec::with_capacity(chain.len() + live.len());
     for b in chain {
@@ -495,6 +572,33 @@ pub struct Shadow {
     pub key: String,
     pub ids: Vec<String>,
     pub has_image: bool,
+    /// Held in memory for the shadow pass only, never stored here.
+    pub context: String,
+    pub question: Option<String>,
+    pub texts: Vec<String>,
+    /// Filled by [`prepare_shadow`] when an embedding head will run.
+    pub vectors: Option<Vectors>,
+}
+
+/// Before the (blocking) shadow pass: embed the decision when a ready,
+/// non-retired head needs vectors. Async, so the embedding call never ties
+/// up a blocking thread or a SQLite connection.
+pub async fn prepare_shadow(db: &DbHandle, s: &mut Shadow) {
+    if s.has_image {
+        return;
+    }
+    let needed = db
+        .connect()
+        .map(|c| {
+            heads().into_iter().any(|h| {
+                h.embeds() && h.applies(&s.kind) && h.ready(&c, &s.kind) && current_state(&c, h.name(), &s.kind).as_deref() != Some(RETIRED)
+            })
+        })
+        .unwrap_or(false);
+    if needed {
+        let texts: Vec<&str> = s.texts.iter().map(String::as_str).collect();
+        s.vectors = super::embed_head::embed_decision(crate::memory_index::global(), &s.context, s.question.as_deref(), &texts).await;
+    }
 }
 
 /// Run every registered, non-retired head for the decision's kind and record
@@ -521,8 +625,20 @@ pub fn record_shadow(db: &DbHandle, s: &Shadow) -> rusqlite::Result<()> {
         return Ok(());
     }
     let ids: Vec<&str> = s.ids.iter().map(String::as_str).collect();
-    let input = HeadInput { owner: &s.owner, kind: &s.kind, key: &s.key, ids: &ids };
-    for h in heads().into_iter().filter(|h| h.applies(&s.kind)) {
+    let texts: Vec<&str> = s.texts.iter().map(String::as_str).collect();
+    let input = HeadInput {
+        owner: &s.owner,
+        kind: &s.kind,
+        key: &s.key,
+        ids: &ids,
+        context: &s.context,
+        question: s.question.as_deref(),
+        texts: &texts,
+        vectors: s.vectors.as_ref(),
+        decision_id: Some(&s.decision_id),
+        pin: None,
+    };
+    for h in heads().into_iter().filter(|h| h.applies(&s.kind) && h.ready(&conn, &s.kind)) {
         let (st, _) = state(&conn, h.name(), &s.kind)?;
         if st == RETIRED {
             continue;
@@ -623,7 +739,7 @@ pub fn list(conn: &Connection) -> rusqlite::Result<Value> {
         data.push(json!({
             "object": "decision_head", "head": head, "kind": kind, "state": st, "state_since": since, "updated_at": updated,
             "metrics": m, "bar": b, "next": next_state(&st, &m, &b).map(|(to, why)| json!({ "state": to, "reason": why })),
-            "audit": audit,
+            "audit": audit, "model": super::training::latest_summary(conn, &head, &kind)?,
         }));
     }
     Ok(json!({ "object": "list", "data": data, "registered": heads().iter().map(|h| h.name()).collect::<Vec<_>>() }))

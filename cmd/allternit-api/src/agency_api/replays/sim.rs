@@ -190,6 +190,8 @@ pub struct SimConfig<'a> {
     pub db: Option<&'a DbHandle>,
     pub owner: &'a str,
     pub run_id: &'a str,
+    /// Embeddings of the run's decisions for an embedding head (by decision id).
+    pub vectors: Option<&'a std::collections::HashMap<String, crate::agency_api::decisions::flywheel::Vectors>>,
 }
 
 #[derive(Debug, Default)]
@@ -230,11 +232,12 @@ pub fn journaled_decision_ids(db: &DbHandle, run_id: &str) -> anyhow::Result<Has
 
 /// Re-decide the recorded decision `id` with `head` (leave-one-out, nothing
 /// written): the comparison record and the chain's effective choice.
-fn redecide_one(cfg: &SimConfig<'_>, head: &dyn crate::agency_api::decisions::flywheel::Head, id: &str) -> Option<(Value, Option<String>)> {
+fn redecide_one(cfg: &SimConfig<'_>, h: &super::HeadOverride, id: &str) -> Option<(Value, Option<String>)> {
     let conn = cfg.db?.connect().ok()?;
-    let d = super::decide::load(&conn, cfg.owner, cfg.run_id).ok()?.into_iter().find(|d| d.id == id)?;
-    let r = super::decide::redecide(&conn, cfg.owner, &d, head, 1).ok()?;
-    let (v, _) = super::decide::compare(&d, head, &r);
+    let mut d = super::decide::load(&conn, cfg.owner, cfg.run_id).ok()?.into_iter().find(|d| d.id == id)?;
+    d.vectors = cfg.vectors.and_then(|m| m.get(id).cloned());
+    let r = super::decide::redecide_with(&conn, cfg.owner, &d, h.head, h.pin, 1).ok()?;
+    let (v, _) = super::decide::compare_with(&d, h.head, &h.version, &r);
     let eff = v["effective_choice"].as_str().map(str::to_string);
     Some((v, eff))
 }
@@ -361,7 +364,7 @@ pub async fn simulate(cfg: &SimConfig<'_>, rec: &Recording, cog: &dyn Cognition)
                         Some(mut a) => {
                             let head = cfg.heads.iter().find(|h| h.kind == sp.kind());
                             if let (Some(h), Some(id)) = (head, a.decision_id.clone()) {
-                                if let Some((v, eff)) = redecide_one(cfg, h.head, &id) {
+                                if let Some((v, eff)) = redecide_one(cfg, h, &id) {
                                     o.decisions_covered.insert(id.clone());
                                     row["via"] = json!("candidate_head");
                                     row["candidate"] = v;

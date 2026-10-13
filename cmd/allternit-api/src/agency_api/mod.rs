@@ -228,6 +228,11 @@ pub fn agency_router() -> Router<Arc<AppState>> {
         // Agency Descent: tier mix, escalations and oracle spend over time.
         .route("/v1/descent", get(decisions::descent::get_descent))
         .route("/v1/decisions/heads/:head/:kind", axum::routing::put(decisions::flywheel::put_head))
+        // Trained heads (Agency Descent B2/C1): CPU-trained head.embed, compiled head.rules; decisions admins.
+        .route("/v1/decisions/heads/train/:kind", post(decisions::training::train_head))
+        .route("/v1/decisions/heads/compile/:kind", post(decisions::training::compile_head))
+        .route("/v1/decisions/heads/:head/:kind/versions", get(decisions::training::list_versions))
+        .route("/v1/decisions/heads/jobs/:job_id", get(decisions::training::get_job))
         // B5: run the promotion acceptance check (live bar + replay evidence) for one head and kind.
         .route("/v1/decisions/heads/:head/:kind/acceptance", post(decisions::acceptance::check_head))
         .route("/v1/capabilities", get(|| async { Json(page(catalog::capabilities())) }))
