@@ -13,9 +13,12 @@
 
 pub mod backends;
 pub mod descent;
+pub mod embed_head;
 pub mod flywheel;
 pub mod harvest;
+pub mod rules_head;
 pub mod store;
+pub mod training;
 pub mod vendors;
 
 use super::{ApiError, ApiResult, RequestId};
@@ -350,6 +353,10 @@ fn finish(
                 key,
                 ids: q.ids.iter().map(|s| s.to_string()).collect(),
                 has_image,
+                context: context.to_string(),
+                question: q.question.map(str::to_string),
+                texts: q.texts.iter().map(|s| s.to_string()).collect(),
+                vectors: None,
             };
             if let Err(e) = flywheel::record_key(&st.db, &shadow) {
                 tracing::warn!("decision flywheel key: {e}");
@@ -371,12 +378,7 @@ fn finish(
             if let Err(e) = harvest::record(&st.db, &example) {
                 tracing::warn!("decision harvest: {e}");
             }
-            let db = st.db.clone();
-            off_path(move || {
-                if let Err(e) = flywheel::record_shadow(&db, &shadow) {
-                    tracing::warn!("decision flywheel shadow: {e}");
-                }
-            });
+            shadow_pass(st.db.clone(), shadow);
         }
     }
     json!({
@@ -405,6 +407,25 @@ fn off_path(f: impl FnOnce() + Send + 'static) {
             h.spawn_blocking(f);
         }
         Err(_) => f(),
+    }
+}
+
+/// The heads' shadow pass, off the latency path: embed first (async) when an
+/// embedding head will run, then the SQLite work on the blocking pool.
+fn shadow_pass(db: crate::db::DbHandle, mut shadow: flywheel::Shadow) {
+    let record = |db: &crate::db::DbHandle, shadow: &flywheel::Shadow| {
+        if let Err(e) = flywheel::record_shadow(db, shadow) {
+            tracing::warn!("decision flywheel shadow: {e}");
+        }
+    };
+    match tokio::runtime::Handle::try_current() {
+        Ok(h) => {
+            h.spawn(async move {
+                flywheel::prepare_shadow(&db, &mut shadow).await;
+                let _ = tokio::task::spawn_blocking(move || record(&db, &shadow)).await;
+            });
+        }
+        Err(_) => record(&db, &shadow),
     }
 }
 
@@ -474,3 +495,5 @@ pub async fn patch_decision(
 mod tests;
 #[cfg(test)]
 mod flywheel_tests;
+#[cfg(test)]
+mod training_tests;

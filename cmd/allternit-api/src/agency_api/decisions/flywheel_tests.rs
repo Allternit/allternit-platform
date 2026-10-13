@@ -37,7 +37,7 @@ fn decide(db: &DbHandle, id: &str, kind: &str, ctx: &str, served: Option<&str>) 
         attempts: &json!([]),
     };
     store::insert(db, &row).unwrap();
-    let s = Shadow { decision_id: id.into(), owner: OWNER.into(), kind: kind.into(), key: key.clone(), ids: ids.iter().map(|s| s.to_string()).collect(), has_image: false };
+    let s = Shadow { decision_id: id.into(), owner: OWNER.into(), kind: kind.into(), key: key.clone(), ids: ids.iter().map(|s| s.to_string()).collect(), has_image: false, context: "c".into(), question: None, texts: vec!["A".into(), "B".into(), "C".into()], vectors: None };
     flywheel::record_key(db, &s).unwrap();
     flywheel::record_shadow(db, &s).unwrap();
     key
@@ -96,7 +96,7 @@ fn decisions_outcome_learned_before_the_shadow_pass_is_not_counted() {
     outcome(&db, "d1", "success", None);
     // A late shadow pass for d1 would see its own outcome: skipped.
     db.connect().unwrap().execute("DELETE FROM decision_shadow", []).unwrap();
-    let s = Shadow { decision_id: "d1".into(), owner: OWNER.into(), kind: "element".into(), key: flywheel::key_hash("element", "ctx", None, &["a", "b", "c"], &["A", "B", "C"]), ids: vec!["a".into(), "b".into(), "c".into()], has_image: false };
+    let s = Shadow { decision_id: "d1".into(), owner: OWNER.into(), kind: "element".into(), key: flywheel::key_hash("element", "ctx", None, &["a", "b", "c"], &["A", "B", "C"]), ids: vec!["a".into(), "b".into(), "c".into()], has_image: false, context: "c".into(), question: None, texts: vec!["A".into(), "B".into(), "C".into()], vectors: None };
     flywheel::record_shadow(&db, &s).unwrap();
     let n: i64 = db.connect().unwrap().query_row("SELECT COUNT(*) FROM decision_shadow", [], |r| r.get(0)).unwrap();
     assert_eq!(n, 0);

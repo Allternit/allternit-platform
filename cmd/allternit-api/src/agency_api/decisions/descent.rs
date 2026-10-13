@@ -1,9 +1,10 @@
 //! `GET /v1/descent`: is work moving down the tiers? (Agency Descent, Phase 1)
 //!
 //! Over the caller's decisions in a window, per decision kind: how many were
-//! answered by each tier (`head` trained/lookup heads, `local` scorer,
-//! `open` open-weight decision model, `vendor`, `oracle` planner model), the
-//! cheap share (head + local + open), how often the router escalated, the
+//! answered by each tier (`rules` compiled S0 decision lists, `head`
+//! trained/lookup heads, `local` scorer, `open` open-weight decision model,
+//! `vendor`, `oracle` planner model), the cheap share (rules + head + local +
+//! open), how often the router escalated, the
 //! mean latency and the oracle's spend. `daily` shows the cheap share per
 //! day, the number that should rise as heads are trained and promoted.
 
@@ -21,12 +22,14 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-pub const TIERS: &[&str] = &["head", "local", "open", "vendor", "oracle", "none"];
-const CHEAP: &[&str] = &["head", "local", "open"];
+pub const TIERS: &[&str] = &["rules", "head", "local", "open", "vendor", "oracle", "none"];
+const CHEAP: &[&str] = &["rules", "head", "local", "open"];
 
 /// The tier a serving backend belongs to.
 pub fn tier(backend: &str) -> &'static str {
     match backend {
+        // S0: a compiled decision list, no model call at all.
+        "head.rules" => "rules",
         b if b.starts_with("head") => "head",
         "local" => "local",
         "open" => "open",
@@ -157,19 +160,22 @@ mod tests {
         // Day 2: heads and the open model take over.
         add("4", "u", "2026-10-02", "route", "head.lookup", one("head.lookup"));
         add("5", "u", "2026-10-02", "route", "open", json!([{ "backend": "head.lookup", "skipped": "x" }, { "backend": "open" }]));
+        add("8", "u", "2026-10-02", "route", "head.rules", one("head.rules"));
         // Another owner, and an old row, stay out.
         add("6", "other", "2026-10-02", "route", "oracle", one("oracle"));
         add("7", "u", "2026-09-01", "route", "oracle", one("oracle"));
 
         let r = report(&conn, "u", "2026-09-30T00:00:00.000Z").unwrap();
-        assert_eq!(r["total"]["decisions"], 5);
+        assert_eq!(r["total"]["decisions"], 6);
         assert_eq!(r["total"]["tiers"]["oracle"], 2);
         assert_eq!(r["total"]["tiers"]["head"], 1);
-        assert_eq!(r["total"]["cheap_share"], 0.6);
-        assert_eq!(r["total"]["escalation_rate"], 0.2);
+        assert_eq!(r["total"]["tiers"]["rules"], 1);
+        assert_eq!(tier("head.embed"), "head");
+        assert_eq!(r["total"]["cheap_share"], 0.6667);
+        assert_eq!(r["total"]["escalation_rate"], 0.1667);
         assert_eq!(r["total"]["oracle_cost_usd"], 0.005);
         let route = r["kinds"].as_array().unwrap().iter().find(|k| k["kind"] == "route").unwrap();
-        assert_eq!((route["decisions"].as_u64(), route["oracle_share"].as_f64()), (Some(4), Some(0.5)));
+        assert_eq!((route["decisions"].as_u64(), route["oracle_share"].as_f64()), (Some(5), Some(0.4)));
         let daily: Vec<(String, f64)> = r["daily"].as_array().unwrap().iter()
             .map(|d| (d["date"].as_str().unwrap().to_string(), d["cheap_share"].as_f64().unwrap())).collect();
         assert_eq!(daily, vec![("2026-10-01".into(), 0.3333), ("2026-10-02".into(), 1.0)]);
