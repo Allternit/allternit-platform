@@ -218,7 +218,8 @@ fn research() -> (allternit_factory_engine::kernel::graph::ComputeGraph, Vec<Str
 fn research_recording(text: &str, with_effect: bool) -> Recording {
     let (g, ws) = research();
     let mut r = Recording { graph: Some(g.clone()), tokens: 40, cost_usd: 0.004, duration_ms: 1000, ..Default::default() };
-    for n in ["R01", "R04", "R09"] {
+    // R09 (the review) is an S1 decision (B1): the scripted rule answers it, no generation.
+    for n in ["R01", "R04"] {
         r.outputs.insert(n.into(), text.into());
     }
     // R07 writes its input (the document; the POLICY node adds no output), as the driver does.
@@ -230,7 +231,7 @@ fn research_recording(text: &str, with_effect: bool) -> Recording {
     }
     for n in ["R00", "R01", "R02", "R03", "R04", "R05", "R06", "R07", "R08", "R09", "gate", "persist"] {
         r.path.push(n.into());
-        r.progress.insert(n.into(), sim::NodeRun { outcome: "committed".into(), tokens: if ["R01", "R04", "R09"].contains(&n) { 10 } else { 0 }, duration_ms: 100 });
+        r.progress.insert(n.into(), sim::NodeRun { outcome: "committed".into(), tokens: if ["R01", "R04"].contains(&n) { 10 } else { 0 }, duration_ms: 100 });
     }
     r
 }
@@ -238,8 +239,99 @@ fn research_recording(text: &str, with_effect: bool) -> Recording {
 async fn walk(rec: &Recording, cog: &dyn Cognition) -> sim::SimOut {
     let (g, ws) = research();
     let policy = task_types::completion_policy(task_types::get("RESEARCH_DOC").unwrap()).unwrap();
-    let cfg = SimConfig { graph: &g, policy: &policy, goal: "brief", write_set: &ws, regen_all: true, tainted_from_start: false, scripted: true };
+    let cfg = SimConfig { graph: &g, policy: &policy, goal: "brief", write_set: &ws, regen_all: true, tainted_from_start: false, scripted: true,
+        regenerate: true, heads: &[], db: None, owner: OWNER, run_id: "run_r" };
     sim::simulate(&cfg, rec, cog).await
+}
+
+// ── S1 decision nodes (B1) ──────────────────────────────────────────────────
+
+/// A stored `verify` decision over G05's options (pass, fail) on one context.
+fn verify_decision(db: &DbHandle, id: &str, run: Option<&str>, served: &str, outcome: &str) {
+    let ids = ["pass", "fail"];
+    let key = flywheel::key_hash("verify", "ctxV", None, &ids, &["P", "F"]);
+    let opts = json!([{ "id": "pass", "text": "P" }, { "id": "fail", "text": "F" }]);
+    dstore::insert(db, &dstore::Row {
+        id, owner: OWNER, created_at: &now(), kind: "verify", session_id: run, task: run.map(|r| format!("{r}:G05")).as_deref(), context_hash: "ctxV",
+        has_image: false, options: &opts, choice: Some(served), probs: &json!({}), confidence: 0.9, abstained: false, backend: "oracle",
+        latency_ms: 400.0, attempts: &json!([]),
+    }).unwrap();
+    let s = flywheel::Shadow { decision_id: id.into(), owner: OWNER.into(), kind: "verify".into(), key, ids: ids.iter().map(|x| x.to_string()).collect(), has_image: false };
+    flywheel::record_key(db, &s).unwrap();
+    dstore::set_outcome(db, id, OWNER, outcome, None, None, &now()).unwrap();
+    flywheel::on_outcome(db, id, OWNER).unwrap();
+}
+
+/// A completed GENERAL_TASK recording whose G05 (S1) served `pass` as decision `dec_g05`.
+fn general_recording() -> (allternit_factory_engine::kernel::graph::ComputeGraph, Recording) {
+    let g = task_types::instantiate(task_types::get("GENERAL_TASK").unwrap(), "task.x", &[]).unwrap();
+    let mut r = Recording { graph: Some(g.clone()), ..Default::default() };
+    r.outputs.insert("G03".into(), "the response".into());
+    r.decisions.insert("G05".into(), crate::agency_api::task_types::s1::Answer {
+        decision_id: Some("dec_g05".into()), choice: Some("pass".into()), confidence: 0.9, abstained: false, backend: "oracle".into() });
+    r.waits.insert("G06".into(), true);
+    for n in ["G00", "G01", "G02", "G03", "G04", "G05", "G06", "gate", "persist"] {
+        r.path.push(n.into());
+        r.progress.insert(n.into(), sim::NodeRun { outcome: "committed".into(), tokens: 0, duration_ms: 10 });
+    }
+    (g, r)
+}
+
+async fn walk_general(rec: &Recording, g: &allternit_factory_engine::kernel::graph::ComputeGraph, heads: &[HeadOverride], db: &DbHandle) -> sim::SimOut {
+    let policy = task_types::completion_policy(task_types::get("GENERAL_TASK").unwrap()).unwrap();
+    let cfg = SimConfig { graph: g, policy: &policy, goal: "g", write_set: &[], regen_all: false, tainted_from_start: false, scripted: false,
+        regenerate: false, heads, db: Some(db), owner: OWNER, run_id: "run_g" };
+    sim::simulate(&cfg, rec, &Fixed("unused")).await
+}
+
+#[tokio::test]
+async fn replay_walk_serves_the_journaled_s1_decision() {
+    let db = DbHandle::new_memory().unwrap();
+    let (g, rec) = general_recording();
+    let o = walk_general(&rec, &g, &[], &db).await;
+    assert_eq!((o.status, o.verifier), ("completed", Some(true)), "{}", o.reason);
+    assert!(o.divergences.is_empty(), "{:?}", o.divergences);
+    let g05 = o.nodes.iter().find(|n| n["node_id"] == "G05").unwrap();
+    assert_eq!((g05["via"].as_str(), g05["decision"]["choice"].as_str()), (Some("recorded"), Some("pass")), "{g05}");
+    assert_eq!(o.live.calls, 0, "nothing re-generated, nothing decided live");
+    // Without a recorded decision a live (non-scripted) replay refuses the node: it never decides.
+    let mut bare = general_recording().1;
+    bare.decisions.clear();
+    let o = walk_general(&bare, &g, &[], &db).await;
+    assert_eq!(o.status, "stopped");
+    assert!(o.divergences.iter().any(|d| d["type"] == "UNRECORDED" && d["step_ref"] == "G05"), "{:?}", o.divergences);
+}
+
+#[tokio::test]
+async fn replay_head_override_changes_the_s1_choice_and_the_route() {
+    let db = DbHandle::new_memory().unwrap();
+    // History: "fail" was right five times on this context; the run served "pass" and the run failed.
+    for i in 0..5 {
+        verify_decision(&db, &format!("hv{i}"), None, "fail", "success");
+    }
+    verify_decision(&db, "dec_g05", Some("run_g"), "pass", "failure");
+    let ids = sim::journaled_decision_ids(&db, "run_g").unwrap();
+    assert!(ids.is_empty(), "no journal rows in this unit db");
+    let (g, rec) = general_recording();
+    let heads = vec![HeadOverride { kind: "verify".into(), head: flywheel::head_by_name("head.lookup").unwrap() }];
+    let o = walk_general(&rec, &g, &heads, &db).await;
+    // The head says "fail" at G05: a confident rejection, the run fails there; G06 onwards never run.
+    assert_eq!(o.status, "failed", "{}", o.reason);
+    assert_eq!(o.reason, "G05 decided `fail`");
+    assert!(o.decisions_covered.contains("dec_g05"));
+    let g05 = o.nodes.iter().find(|n| n["node_id"] == "G05").unwrap();
+    assert_eq!((g05["via"].as_str(), g05["decision"]["choice"].as_str(), g05["outcome"].as_str()), (Some("candidate_head"), Some("fail"), Some("failed")), "{g05}");
+    let dec = o.divergences.iter().find(|d| d["type"] == "DECISION").expect("a DECISION divergence");
+    assert_eq!((dec["step_ref"].as_str(), dec["kind"].as_str()), (Some("G05"), Some("expected")));
+    assert!(o.divergences.iter().any(|d| d["type"] == "MISSING_NODE" && d["step_ref"] == "G06"));
+    assert!(o.divergences.iter().all(|d| d["kind"] == "expected"), "{:?}", o.divergences);
+    // A head for another kind leaves the S1 node on its recording.
+    let other = vec![HeadOverride { kind: "element".into(), head: flywheel::head_by_name("head.lookup").unwrap() }];
+    let o = walk_general(&rec, &g, &other, &db).await;
+    assert_eq!((o.status, o.divergences.len()), ("completed", 0), "{:?}", o.divergences);
+    // Nothing was learned from the replay.
+    let n: i64 = db.connect().unwrap().query_row("SELECT COUNT(*) FROM decision_shadow", [], |r| r.get(0)).unwrap();
+    assert_eq!(n, 0);
 }
 
 #[tokio::test]
@@ -248,8 +340,8 @@ async fn replay_walk_same_output_is_equivalent_and_serves_recorded_effects() {
     let o = walk(&rec, &Fixed("same text")).await;
     assert_eq!((o.status, o.verifier), ("completed", Some(true)), "{}", o.reason);
     assert!(o.divergences.is_empty(), "{:?}", o.divergences);
-    assert_eq!((o.live_effects, o.effects_served, o.live.calls, o.live.tokens), (0, 1, 3, 21));
-    assert_eq!((o.source_regenerated.tokens, o.source_regenerated.calls), (30, 3));
+    assert_eq!((o.live_effects, o.effects_served, o.live.calls, o.live.tokens), (0, 1, 2, 14));
+    assert_eq!((o.source_regenerated.tokens, o.source_regenerated.calls), (20, 2));
     let r07 = o.nodes.iter().find(|n| n["node_id"] == "R07").unwrap();
     assert_eq!((r07["via"].as_str(), r07["effect"]["request_matches"].as_bool()), (Some("recorded"), Some(true)));
     assert!(o.nodes.iter().filter(|n| n["cognitive_role"] == "S2").all(|n| n["via"] == "live" && n["output_matches"] == true));
@@ -373,6 +465,9 @@ async fn replay_overrides_end_to_end_recorded_only() {
     let res = results(&t, r["id"].as_str().unwrap()).await;
     let via = |id: &str| res["nodes"].as_array().unwrap().iter().find(|n| n["node_id"] == id).map(|n| n["via"].clone());
     assert_eq!((via("G03"), via("G05")), (Some(json!("live")), Some(json!("recorded"))), "{}", res["nodes"]);
+    // B1: G05 is an S1 node; the replay served the run's journaled decision.
+    let g05 = res["nodes"].as_array().unwrap().iter().find(|n| n["node_id"] == "G05").unwrap();
+    assert_eq!(g05["decision"]["choice"], "pass", "{g05}");
     assert_eq!(res["metrics"]["run"]["verifier"]["replay"], "pass");
     assert_ne!(res["verdict"], "diverged_unexpected", "{}", res["divergences"]);
 

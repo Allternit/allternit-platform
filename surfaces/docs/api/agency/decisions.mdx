@@ -134,6 +134,23 @@ Decisions can become training data for the flywheel's trained heads, but only fo
 - While opted in, each decision stores its context, question and options, DLP-redacted, next to the answer that served it. Labels come from outcomes (`PATCH /v1/decisions/:id` with a `label`, or the served choice on `success`; a `failure` marks it wrong) or, until one arrives, from a confident answer of a teacher backend (`oracle`, `open`, `vendor`, `typesafe`).
 - `GET /v1/decisions/datasets/:kind` exports the labelled examples as JSONL in the Jev/SystemOne shape (`state`, `questions`, `answers`), ready for a decision fine-tune. `?scope=mine` (default, organization admins) exports your scope; `?scope=all` pools every opted-in scope with no scope or owner ids in the rows (decisions admins, `ALLTERNIT_DECISIONS_ADMINS`). Trained heads are shared across opted-in organizations.
 
+## Decisions inside agency runs
+
+Agency task types (`GENERAL_TASK`, `THREAD_WORK`, `COMPUTER_USE`, `RESEARCH_DOC`, `TEMPLATE`, `CAMPAIGN`) run a compute graph whose steps sit on tiers: S0 deterministic, S1 decisions, S2 generation, S3 deep solving. A step with `cognitive_role: "S1"` is a live decision: the run calls the Decision Runtime in-process as the run's owner, scoped to the run's `metadata.project_id` for vendor gating, with `session_id` set to the run id and `task` to `<run id>:<node id>`, so the decision shows in `GET /v1/decisions/:id`, `/v1/descent` and, for opted-in organizations, the harvested training data.
+
+The step's decision is declared in the node's `extensions["x-decision"]`:
+
+```json
+{ "kind": "verify", "question": "Does the result meet the goal?",
+  "options": [{ "id": "pass", "text": "The result meets the goal." },
+              { "id": "fail", "text": "The result does not meet the goal." }],
+  "pass": ["pass"] }
+```
+
+`options_from` takes the options from an earlier step's output instead (a JSON array, or one per line). `min_confidence` raises the bar above the kind's threshold, and `backends` overrides the chain. The chosen option id is written to the step's outputs. `routes` maps an option id to a step the node has an edge to. A routed choice goes to that step. Otherwise a choice in `pass` (default: any option) continues along the normal edge, and any other choice fails the run. An abstention, an answer under the threshold, or no backend answering fails the step over to its ESCALATE edge. In the shipped graphs that edge leads to an S2 twin of the step (`x-twin_of`). Every shipped task type's "review against the goal" step is an S1 `verify` decision.
+
+Runs are deterministic. The runtime takes the argmax over option probabilities and never samples, and a tie goes to the earlier option. The answer is journaled per run and step before the run acts on it, so a re-drive or replay serves the journaled answer and never asks again. When the run completes with verified evidence, its decisions get the `success` outcome with the chosen option as the label. When verification fails, they get `failure`. A decision whose own choice failed the run gets no outcome, because whether that choice was right is unknown. This labelling is best effort. Under the scripted executor (`ALLTERNIT_AGENCY_COGNITION=scripted`), `scripted.json` can name the option per step (`"decide": {"G05": "fail"}`, or `"abstain"`). Without one, the first option is chosen.
+
 ## Descent metrics
 
 `GET /v1/descent?days=30` reports whether work is moving down the tiers, over your decisions in the window: per decision kind and in total, how many each tier answered (`head`, `local`, `open`, `vendor`, `oracle`), the `cheap_share` (head + local + open), the `oracle_share`, the `escalation_rate`, the mean latency and the oracle's spend in USD. `daily` gives the cheap share per day; it should rise as heads are trained and promoted.

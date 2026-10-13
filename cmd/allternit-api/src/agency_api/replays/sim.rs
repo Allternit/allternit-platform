@@ -10,10 +10,18 @@
 //! executed; an effect whose request changed (new content) is answered with
 //! the recorded result and reported as a divergence. Nothing in this module
 //! can reach a connector, the workspace or the receipt chain.
+//!
+//! B1: an S1 node is answered with its journaled decision
+//! (`<run>:<node>:decision.decide:1`), never decided live. Under a
+//! `decision_heads` override for the node's kind, the recorded decision is
+//! re-decided with the candidate head (`decide`, leave-one-out, nothing
+//! written) and the walk follows the effective choice through the node's
+//! routes / pass / escalation exactly as the driver would; a changed choice
+//! is a DECISION divergence.
 
 use crate::agency_api::executor::generic::{self, effect_args, effect_content, prompt_for, GATE_PRIMITIVE, MAX_STEPS, TASK_WAIT_REASON};
 use crate::agency_api::store::RunRecord;
-use crate::agency_api::task_types::evidence_of;
+use crate::agency_api::task_types::{evidence_of, s1};
 use crate::db::DbHandle;
 use allternit_factory_engine::judge::completion::{missing_evidence, CompletionPolicy};
 use allternit_factory_engine::kernel::graph::{ComputeGraph, GraphNode};
@@ -44,6 +52,8 @@ pub struct RecordedEffect {
 pub struct Recording {
     /// Node → journaled model output (`model.generate`).
     pub outputs: HashMap<String, String>,
+    /// S1 node → its journaled decision (`decision.decide`).
+    pub decisions: HashMap<String, s1::Answer>,
     /// Node → its last effect journal row.
     pub effects: HashMap<String, RecordedEffect>,
     /// WAIT node → the person's answer (true = approved).
@@ -80,6 +90,10 @@ impl Recording {
                 let text = result.as_deref().and_then(|s| serde_json::from_str::<Value>(s).ok()).and_then(|v| v.as_str().map(String::from));
                 if let Some(t) = text {
                     r.outputs.insert(node, t);
+                }
+            } else if tool == "decision.decide" && status == "committed" {
+                if let Some(a) = result.as_deref().and_then(|s| serde_json::from_str::<s1::Answer>(s).ok()) {
+                    r.decisions.insert(node, a);
                 }
             } else if EFFECT_TOOLS.contains(&tool.as_str()) {
                 r.effects.insert(node, RecordedEffect { status, result, args_hash });
@@ -167,6 +181,15 @@ pub struct SimConfig<'a> {
     pub tainted_from_start: bool,
     /// The scripted executor's VERIFY rule (every scripted review passes).
     pub scripted: bool,
+    /// Generation is allowed at all (`model_class` / `graph_version`); a
+    /// `decision_heads`-only walk serves recordings and refuses the rest.
+    pub regenerate: bool,
+    /// B1: candidate heads for S1 nodes, re-deciding the run's recorded
+    /// decisions (owner `owner`, run `run_id`) from `db`.
+    pub heads: &'a [super::HeadOverride],
+    pub db: Option<&'a DbHandle>,
+    pub owner: &'a str,
+    pub run_id: &'a str,
 }
 
 #[derive(Debug, Default)]
@@ -186,6 +209,34 @@ pub struct SimOut {
     pub live_effects: u64,
     pub effects_served: u64,
     pub effects_refused: u64,
+    /// Recorded decisions this walk re-decided at their S1 node (their
+    /// DECISION divergence, if any, is reported here, by node).
+    pub decisions_covered: HashSet<String>,
+}
+
+/// The decision ids journaled by a run's S1 nodes.
+pub fn journaled_decision_ids(db: &DbHandle, run_id: &str) -> anyhow::Result<HashSet<String>> {
+    let conn = db.connect()?;
+    let mut q = conn.prepare("SELECT result FROM agency_effect_journal WHERE run_id = ?1 AND tool = 'decision.decide' AND status = 'committed'")?;
+    let rows = q.query_map(params![run_id], |x| x.get::<_, Option<String>>(0))?;
+    let mut ids = HashSet::new();
+    for r in rows {
+        if let Some(a) = r?.as_deref().and_then(|s| serde_json::from_str::<s1::Answer>(s).ok()) {
+            ids.extend(a.decision_id);
+        }
+    }
+    Ok(ids)
+}
+
+/// Re-decide the recorded decision `id` with `head` (leave-one-out, nothing
+/// written): the comparison record and the chain's effective choice.
+fn redecide_one(cfg: &SimConfig<'_>, head: &dyn crate::agency_api::decisions::flywheel::Head, id: &str) -> Option<(Value, Option<String>)> {
+    let conn = cfg.db?.connect().ok()?;
+    let d = super::decide::load(&conn, cfg.owner, cfg.run_id).ok()?.into_iter().find(|d| d.id == id)?;
+    let r = super::decide::redecide(&conn, cfg.owner, &d, head, 1).ok()?;
+    let (v, _) = super::decide::compare(&d, head, &r);
+    let eff = v["effective_choice"].as_str().map(str::to_string);
+    Some((v, eff))
 }
 
 fn divergence(node: &str, ty: &str, expected: bool, description: String) -> Value {
@@ -226,6 +277,7 @@ pub async fn simulate(cfg: &SimConfig<'_>, rec: &Recording, cog: &dyn Cognition)
             "source": src.map(|s| json!({ "outcome": s.outcome, "tokens": s.tokens, "duration_ms": s.duration_ms })),
             "via": "deterministic", "tokens": 0, "latency_ms": 0.0, "cost_usd": 0.0, "output_matches": null });
         let mut refused: Option<(String, String)> = None; // (type, why): nothing ran
+        let (mut branch, mut rejected): (Option<String>, Option<String>) = (None, None);
         let ok: bool = if node.primitive_id == GATE_PRIMITIVE && !node.evidence_required.is_empty() {
             let missing = missing_evidence(cfg.policy, &evidence);
             out.insert("missing".into(), missing.join(", "));
@@ -282,8 +334,66 @@ pub async fn simulate(cfg: &SimConfig<'_>, rec: &Recording, cog: &dyn Cognition)
                     }
                 }
             }
+        } else if s1::is_s1(&node) {
+            match s1::spec(&node) {
+                Err(e) => {
+                    row["error"] = json!(e.to_string());
+                    false
+                }
+                Ok(sp) => {
+                    let answer = match rec.decisions.get(&cur) {
+                        Some(a) => {
+                            row["via"] = json!("recorded");
+                            Some(a.clone())
+                        }
+                        // The scripted executor's rule: the first option.
+                        None if cfg.scripted => {
+                            row["via"] = json!("scripted");
+                            Some(s1::scripted(&sp.options(&out), None, false))
+                        }
+                        None => None,
+                    };
+                    match answer {
+                        None => {
+                            refused = Some(("UNRECORDED".into(), format!("no recorded decision for {cur}; a replay never decides live")));
+                            false
+                        }
+                        Some(mut a) => {
+                            let head = cfg.heads.iter().find(|h| h.kind == sp.kind());
+                            if let (Some(h), Some(id)) = (head, a.decision_id.clone()) {
+                                if let Some((v, eff)) = redecide_one(cfg, h.head, &id) {
+                                    o.decisions_covered.insert(id.clone());
+                                    row["via"] = json!("candidate_head");
+                                    row["candidate"] = v;
+                                    if eff != a.choice {
+                                        o.divergences.push(divergence(&cur, "DECISION", true, format!(
+                                            "{} chose {} at {cur} where {} was served", h.head.name(), json!(eff), json!(a.choice))));
+                                        tainted = true;
+                                        a = s1::Answer { abstained: eff.is_none(), choice: eff, backend: h.head.name().into(), ..a };
+                                    }
+                                }
+                            }
+                            row["decision"] = json!({ "decision_id": a.decision_id, "choice": a.choice, "abstained": a.abstained });
+                            match s1::route(g, &cur, &sp, &a) {
+                                s1::Route::Commit(t) => {
+                                    for x in &node.outputs {
+                                        out.insert(x.clone(), a.choice.clone().unwrap_or_default());
+                                    }
+                                    branch = t;
+                                    !unmet
+                                }
+                                s1::Route::Escalate => false,
+                                s1::Route::Reject(c) => {
+                                    rejected = Some(c);
+                                    false
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         } else if role == "S2" || role == "S3" {
-            let regen = cfg.regen_all || !rec.compatible(&node) || !rec.outputs.contains_key(&cur) && src.is_none();
+            let regen = cfg.regenerate && (cfg.regen_all || !rec.compatible(&node) || !rec.outputs.contains_key(&cur) && src.is_none());
             let text: Option<Result<String, String>> = if regen {
                 let prompt = prompt_for(&node, cfg.goal, &input, None);
                 row["via"] = json!("live");
@@ -385,11 +495,17 @@ pub async fn simulate(cfg: &SimConfig<'_>, rec: &Recording, cog: &dyn Cognition)
             o.reason = why;
             break 'walk;
         }
+        if let Some(c) = rejected {
+            // A confident S1 verdict outside `pass`: the run fails on it, no escalation.
+            o.status = "failed";
+            o.reason = format!("{cur} decided `{c}`");
+            break;
+        }
         if ok {
             if let Some(c) = evidence_of(&node) {
                 evidence.push(format!("{c}:replay:{cur}"));
             }
-            match generic::next(g, &cur, "NORMAL") {
+            match branch.take().or_else(|| generic::next(g, &cur, "NORMAL")) {
                 Some(n) => {
                     cur = n;
                     continue;
