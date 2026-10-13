@@ -43,6 +43,7 @@ export interface GatewayDeps {
   loginBrowser?: LoginBrowser; // login mode — POST /v1/accounts/:id/login
   accountsOptions?: AccountsRouterOptions; // login watcher poll + cookie reader (tests)
   aai?: AaiHost; // AAI host — POST /aai/call (one AaiRouter per process)
+  aaiStream?: { pollMs?: number; heartbeatMs?: number }; // GET /aai/events/stream timing (tests)
   allowedOrigins?: string[]; // default: empty — every Origin is rejected
   version?: string;
 }
