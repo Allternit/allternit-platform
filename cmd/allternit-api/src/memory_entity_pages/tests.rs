@@ -309,3 +309,22 @@ async fn routes_scope_to_the_authenticated_user() {
     let (_, v) = call("bob", "/memory/entities?q=falcon".into()).await;
     assert_eq!(v["pages"].as_array().unwrap().len(), 0);
 }
+
+#[test]
+fn queue_triggers_never_break_an_upsert_or_replace() {
+    // An outer UPSERT / OR REPLACE overrides a trigger's own conflict policy;
+    // the queue triggers must not raise on a target that is already queued.
+    let db = test_db();
+    let conn = db.connect().unwrap();
+    fact(&conn, "f1", "alice", "Project Falcon ships in June.");
+    conn.execute(
+        "INSERT INTO memory_facts (id, user_id, fact, confidence) VALUES ('f1', 'alice', 'Project Falcon ships in July.', 0.9)
+         ON CONFLICT(id) DO UPDATE SET fact = excluded.fact, valid_until = NULL",
+        [],
+    )
+    .unwrap();
+    conn.execute("INSERT OR REPLACE INTO memory_notes (id, user_id, note_type, title, content) VALUES ('n1', 'alice', 'general', 'Falcon', 'x')", []).unwrap();
+    conn.execute("INSERT OR REPLACE INTO memory_notes (id, user_id, note_type, title, content) VALUES ('n1', 'alice', 'general', 'Falcon', 'y')", []).unwrap();
+    let queued: i64 = conn.query_row("SELECT COUNT(*) FROM memory_entity_queue WHERE user_id = 'alice'", [], |r| r.get(0)).unwrap();
+    assert_eq!(queued, 2);
+}

@@ -76,60 +76,88 @@ CREATE TABLE IF NOT EXISTS memory_entity_pages (
 );
 CREATE INDEX IF NOT EXISTS idx_memory_entity_pages_user ON memory_entity_pages(user_id, target_count DESC);
 
+-- No conflict clause (OR IGNORE) inside these triggers: an outer UPSERT or
+-- OR REPLACE statement overrides a trigger's conflict policy, so a duplicate
+-- queue row would abort the caller's write. NOT EXISTS never conflicts.
 CREATE TRIGGER IF NOT EXISTS memory_entity_fact_ai AFTER INSERT ON memory_facts BEGIN
-    INSERT OR IGNORE INTO memory_entity_queue (user_id, target_type, target_id) VALUES (new.user_id, 'fact', new.id);
+    INSERT INTO memory_entity_queue (user_id, target_type, target_id)
+    SELECT s.u, 'fact', s.i FROM (SELECT new.user_id AS u, new.id AS i) s
+    WHERE NOT EXISTS (SELECT 1 FROM memory_entity_queue e WHERE e.user_id = s.u AND e.target_type = 'fact' AND e.target_id = s.i);
 END;
 CREATE TRIGGER IF NOT EXISTS memory_entity_fact_au AFTER UPDATE OF fact, valid_until, user_id ON memory_facts BEGIN
-    INSERT OR IGNORE INTO memory_entity_queue (user_id, target_type, target_id) VALUES (old.user_id, 'fact', old.id);
-    INSERT OR IGNORE INTO memory_entity_queue (user_id, target_type, target_id) VALUES (new.user_id, 'fact', new.id);
+    INSERT INTO memory_entity_queue (user_id, target_type, target_id)
+    SELECT s.u, 'fact', s.i FROM (SELECT old.user_id AS u, old.id AS i UNION SELECT new.user_id AS u, new.id AS i) s
+    WHERE NOT EXISTS (SELECT 1 FROM memory_entity_queue e WHERE e.user_id = s.u AND e.target_type = 'fact' AND e.target_id = s.i);
 END;
 CREATE TRIGGER IF NOT EXISTS memory_entity_fact_ad AFTER DELETE ON memory_facts BEGIN
-    INSERT OR IGNORE INTO memory_entity_queue (user_id, target_type, target_id) VALUES (old.user_id, 'fact', old.id);
+    INSERT INTO memory_entity_queue (user_id, target_type, target_id)
+    SELECT s.u, 'fact', s.i FROM (SELECT old.user_id AS u, old.id AS i) s
+    WHERE NOT EXISTS (SELECT 1 FROM memory_entity_queue e WHERE e.user_id = s.u AND e.target_type = 'fact' AND e.target_id = s.i);
 END;
 
 CREATE TRIGGER IF NOT EXISTS memory_entity_obs_ai AFTER INSERT ON memory_observations BEGIN
-    INSERT OR IGNORE INTO memory_entity_queue (user_id, target_type, target_id) VALUES (new.user_id, 'observation', new.id);
+    INSERT INTO memory_entity_queue (user_id, target_type, target_id)
+    SELECT s.u, 'observation', s.i FROM (SELECT new.user_id AS u, new.id AS i) s
+    WHERE NOT EXISTS (SELECT 1 FROM memory_entity_queue e WHERE e.user_id = s.u AND e.target_type = 'observation' AND e.target_id = s.i);
 END;
 CREATE TRIGGER IF NOT EXISTS memory_entity_obs_au AFTER UPDATE OF content, user_id ON memory_observations BEGIN
-    INSERT OR IGNORE INTO memory_entity_queue (user_id, target_type, target_id) VALUES (old.user_id, 'observation', old.id);
-    INSERT OR IGNORE INTO memory_entity_queue (user_id, target_type, target_id) VALUES (new.user_id, 'observation', new.id);
+    INSERT INTO memory_entity_queue (user_id, target_type, target_id)
+    SELECT s.u, 'observation', s.i FROM (SELECT old.user_id AS u, old.id AS i UNION SELECT new.user_id AS u, new.id AS i) s
+    WHERE NOT EXISTS (SELECT 1 FROM memory_entity_queue e WHERE e.user_id = s.u AND e.target_type = 'observation' AND e.target_id = s.i);
 END;
 CREATE TRIGGER IF NOT EXISTS memory_entity_obs_ad AFTER DELETE ON memory_observations BEGIN
-    INSERT OR IGNORE INTO memory_entity_queue (user_id, target_type, target_id) VALUES (old.user_id, 'observation', old.id);
+    INSERT INTO memory_entity_queue (user_id, target_type, target_id)
+    SELECT s.u, 'observation', s.i FROM (SELECT old.user_id AS u, old.id AS i) s
+    WHERE NOT EXISTS (SELECT 1 FROM memory_entity_queue e WHERE e.user_id = s.u AND e.target_type = 'observation' AND e.target_id = s.i);
 END;
 
 CREATE TRIGGER IF NOT EXISTS memory_entity_doc_ai AFTER INSERT ON memory_documents BEGIN
-    INSERT OR IGNORE INTO memory_entity_queue (user_id, target_type, target_id) VALUES (new.user_id, 'document', new.id);
+    INSERT INTO memory_entity_queue (user_id, target_type, target_id)
+    SELECT s.u, 'document', s.i FROM (SELECT new.user_id AS u, new.id AS i) s
+    WHERE NOT EXISTS (SELECT 1 FROM memory_entity_queue e WHERE e.user_id = s.u AND e.target_type = 'document' AND e.target_id = s.i);
 END;
 CREATE TRIGGER IF NOT EXISTS memory_entity_doc_au AFTER UPDATE OF title, content, user_id ON memory_documents BEGIN
-    INSERT OR IGNORE INTO memory_entity_queue (user_id, target_type, target_id) VALUES (old.user_id, 'document', old.id);
-    INSERT OR IGNORE INTO memory_entity_queue (user_id, target_type, target_id) VALUES (new.user_id, 'document', new.id);
+    INSERT INTO memory_entity_queue (user_id, target_type, target_id)
+    SELECT s.u, 'document', s.i FROM (SELECT old.user_id AS u, old.id AS i UNION SELECT new.user_id AS u, new.id AS i) s
+    WHERE NOT EXISTS (SELECT 1 FROM memory_entity_queue e WHERE e.user_id = s.u AND e.target_type = 'document' AND e.target_id = s.i);
 END;
 CREATE TRIGGER IF NOT EXISTS memory_entity_doc_ad AFTER DELETE ON memory_documents BEGIN
-    INSERT OR IGNORE INTO memory_entity_queue (user_id, target_type, target_id) VALUES (old.user_id, 'document', old.id);
+    INSERT INTO memory_entity_queue (user_id, target_type, target_id)
+    SELECT s.u, 'document', s.i FROM (SELECT old.user_id AS u, old.id AS i) s
+    WHERE NOT EXISTS (SELECT 1 FROM memory_entity_queue e WHERE e.user_id = s.u AND e.target_type = 'document' AND e.target_id = s.i);
 END;
 
 CREATE TRIGGER IF NOT EXISTS memory_entity_note_ai AFTER INSERT ON memory_notes BEGIN
-    INSERT OR IGNORE INTO memory_entity_queue (user_id, target_type, target_id) VALUES (new.user_id, 'note', new.id);
+    INSERT INTO memory_entity_queue (user_id, target_type, target_id)
+    SELECT s.u, 'note', s.i FROM (SELECT new.user_id AS u, new.id AS i) s
+    WHERE NOT EXISTS (SELECT 1 FROM memory_entity_queue e WHERE e.user_id = s.u AND e.target_type = 'note' AND e.target_id = s.i);
 END;
 CREATE TRIGGER IF NOT EXISTS memory_entity_note_au AFTER UPDATE OF title, content, user_id ON memory_notes BEGIN
-    INSERT OR IGNORE INTO memory_entity_queue (user_id, target_type, target_id) VALUES (old.user_id, 'note', old.id);
-    INSERT OR IGNORE INTO memory_entity_queue (user_id, target_type, target_id) VALUES (new.user_id, 'note', new.id);
+    INSERT INTO memory_entity_queue (user_id, target_type, target_id)
+    SELECT s.u, 'note', s.i FROM (SELECT old.user_id AS u, old.id AS i UNION SELECT new.user_id AS u, new.id AS i) s
+    WHERE NOT EXISTS (SELECT 1 FROM memory_entity_queue e WHERE e.user_id = s.u AND e.target_type = 'note' AND e.target_id = s.i);
 END;
 CREATE TRIGGER IF NOT EXISTS memory_entity_note_ad AFTER DELETE ON memory_notes BEGIN
-    INSERT OR IGNORE INTO memory_entity_queue (user_id, target_type, target_id) VALUES (old.user_id, 'note', old.id);
+    INSERT INTO memory_entity_queue (user_id, target_type, target_id)
+    SELECT s.u, 'note', s.i FROM (SELECT old.user_id AS u, old.id AS i) s
+    WHERE NOT EXISTS (SELECT 1 FROM memory_entity_queue e WHERE e.user_id = s.u AND e.target_type = 'note' AND e.target_id = s.i);
 END;
 
 -- memory_entities rows seed names, types and aliases.
 CREATE TRIGGER IF NOT EXISTS memory_entity_seed_ai AFTER INSERT ON memory_entities BEGIN
-    INSERT OR IGNORE INTO memory_entity_queue (user_id, target_type, target_id) VALUES (new.user_id, 'entity', new.id);
+    INSERT INTO memory_entity_queue (user_id, target_type, target_id)
+    SELECT s.u, 'entity', s.i FROM (SELECT new.user_id AS u, new.id AS i) s
+    WHERE NOT EXISTS (SELECT 1 FROM memory_entity_queue e WHERE e.user_id = s.u AND e.target_type = 'entity' AND e.target_id = s.i);
 END;
 CREATE TRIGGER IF NOT EXISTS memory_entity_seed_au AFTER UPDATE ON memory_entities BEGIN
-    INSERT OR IGNORE INTO memory_entity_queue (user_id, target_type, target_id) VALUES (old.user_id, 'entity', old.id);
-    INSERT OR IGNORE INTO memory_entity_queue (user_id, target_type, target_id) VALUES (new.user_id, 'entity', new.id);
+    INSERT INTO memory_entity_queue (user_id, target_type, target_id)
+    SELECT s.u, 'entity', s.i FROM (SELECT old.user_id AS u, old.id AS i UNION SELECT new.user_id AS u, new.id AS i) s
+    WHERE NOT EXISTS (SELECT 1 FROM memory_entity_queue e WHERE e.user_id = s.u AND e.target_type = 'entity' AND e.target_id = s.i);
 END;
 CREATE TRIGGER IF NOT EXISTS memory_entity_seed_ad AFTER DELETE ON memory_entities BEGIN
-    INSERT OR IGNORE INTO memory_entity_queue (user_id, target_type, target_id) VALUES (old.user_id, 'entity', old.id);
+    INSERT INTO memory_entity_queue (user_id, target_type, target_id)
+    SELECT s.u, 'entity', s.i FROM (SELECT old.user_id AS u, old.id AS i) s
+    WHERE NOT EXISTS (SELECT 1 FROM memory_entity_queue e WHERE e.user_id = s.u AND e.target_type = 'entity' AND e.target_id = s.i);
 END;
 
 -- Backfill: everything that exists now is read once.
