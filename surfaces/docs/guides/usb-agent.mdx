@@ -1,0 +1,92 @@
+---
+title: An iPhone for your bot (Allternit USB Agent)
+description: Plug a small Allternit USB Agent into an iPhone so your bot can see its screen and tap, swipe and type on it. Nothing is installed on the phone, and the bot can only act while you have the board armed.
+---
+
+The **Allternit USB Agent** is a small ESP32-S3 board. Plug it into an iPhone's USB-C port and your bot can see the screen and tap, swipe, type and open apps, much as you would with a mouse and keyboard. Nothing gets installed on the phone. You don't need a jailbreak, a Mac-only iPhone Mirroring session or an Apple developer account.
+
+- **Hands:** the board acts as a USB mouse and keyboard. iOS AssistiveTouch shows the mouse as a round pointer.
+- **Eyes:** the iPhone mirrors its screen to your computer with AirPlay.
+- **You stay in charge:** the board does nothing until you press its button (armed, light on). Press it again, or choose **Stop** in Allternit, and the bot loses control immediately.
+
+Connecting an iPhone works only in **Allternit Desktop on macOS or Linux**, because your computer receives the AirPlay mirror. Once the iPhone is connected, your bot can use it from any of your devices. On ai.allternit.com and the m.allternit.com phone app, Settings → Computers → Phones says where to connect one. For Android phones, see [A phone for your bot (Android)](/guides/phone-for-your-bot).
+
+## What you need
+
+- **An ESP32-S3 board with native USB** and the USB Agent firmware. The tested board is the Seeed Studio XIAO ESP32S3 (the plain one, not Sense or Plus). Its BOOT button is the arm button and its small light shows when it's armed.
+- **An iPhone with USB-C**, on the same Wi-Fi as your computer. Lightning iPhones need Apple's Lightning to USB 3 Camera Adapter. A USB-C hub with power pass-through keeps the phone charging while the board is in.
+- **UxPlay** on your computer to receive the screen: `brew install uxplay` on macOS, or `sudo apt install uxplay` on Debian and Ubuntu.
+- **Allternit Desktop** on macOS or Linux.
+
+### Flash the firmware
+
+Developers with the Allternit platform source: plug the board into your computer and run `hardware/usb-agent/flash.sh`. It needs `arduino-cli` and the ESP32 core; the script's header lists the install commands.
+
+## Connect an iPhone
+
+Open **Settings → Computers → Phones → Connect an iPhone**.
+
+1. **Set up the USB Agent.** Plug the board into your **computer** with a data cable, choose it, and enter your Wi-Fi name and password (the board uses 2.4 GHz Wi-Fi). Desktop writes these and a new private key to the board over USB. The board restarts, disarmed. If macOS asks whether Allternit and `uxplay` may accept incoming network connections, choose **Allow**: the board and the iPhone connect to your computer over Wi-Fi.
+2. **Plug it into the iPhone.** On the iPhone, open **Settings → Accessibility → Touch → AssistiveTouch** and turn it on. A round pointer appears. Desktop shows when the board has joined.
+3. **Mirror the screen.** On the iPhone, open **Control Center → Screen Mirroring** and choose **Allternit**. The first time, the iPhone asks for a four-digit code, which Desktop shows. After that, the iPhone remembers this computer.
+4. **Arm and calibrate.** Press the board's button (its light turns on). Unlock the iPhone and go to a home screen, then choose **Calibrate**. Desktop moves the pointer, finds it on the mirrored screen and works out how far it travels.
+5. **Try it:** choose **Try it: go home**.
+
+Keep **Auto-Lock** off while the bot works (**Settings → Display & Brightness → Auto-Lock → Never**). AirPlay mirroring stops when the phone locks.
+
+## In Settings
+
+Each iPhone shows a status that tells you what's missing:
+
+| Status | What to do |
+| --- | --- |
+| USB Agent not on Wi-Fi | Check the board has power and that your Wi-Fi is up. |
+| Plug the USB Agent into the iPhone | The board is online but not connected to a phone. |
+| Unlock the iPhone | The phone is locked or asleep. |
+| Start Screen Mirroring to this computer | Control Center → Screen Mirroring → Allternit. |
+| Calibrate the pointer | Choose **Calibrate**. Calibrate again if you change AssistiveTouch's tracking speed. |
+| Disarmed | Press the board's button to let your bot use the phone. |
+| Ready | Your bot can use the phone. |
+
+- **View** shows the iPhone's screen.
+- **Stop** disarms the board straight away. It lets go of everything and refuses input until you press its button again.
+- **Forget** removes the board and its key from this computer. To use it again, set it up again over USB.
+
+## What your bot can do
+
+The tools are the same as for Android, so a bot doesn't need to know which kind of phone it has.
+
+| Tool | On an iPhone |
+| --- | --- |
+| `phone.devices` | Lists iPhones with a `usb:` serial, next to Android phones. |
+| `phone.screenshot` | The mirrored screen as a JPEG, with its width and height. |
+| `phone.tap`, `phone.swipe` | Tap or swipe at pixel coordinates from the latest screenshot. The result includes `screenChanged`, so the bot can tell when a tap missed. |
+| `phone.type`, `phone.key` | Type printable ASCII (US keyboard), or press keys and shortcuts such as `enter` and `cmd+space`. |
+| `phone.home`, `phone.back` | Go to the home screen, or swipe back. |
+| `phone.open_app` | Opens an app by name through Spotlight. |
+| `phone.task`, `phone.sms.send`, `phone.call.dial` | Not available on an iPhone. Plain-English tasks use ARTEMIS, which is Android-only. Use your [Allternit number](/guides/messaging-channels) for texts and calls. |
+
+When a command gets no answer, the result is `uncertain`, never success. The bot is told to look at the screen before it tries again.
+
+## Safety
+
+- **Only your computer can drive your board.** Desktop and the board each prove they hold the board's key before any command is sent. Every command is signed and numbered, so it can't be replayed. The key is set over USB, so setup needs the board in your hand.
+- **Arming is physical.** The board starts disarmed. Only its button arms it; Allternit can disarm it but never arm it.
+- **It lets go when nobody is driving.** If the Wi-Fi link drops, or nothing arrives from Desktop for 10 seconds, the board releases every key and button. It disarms itself after 30 minutes without use, or one minute without your computer.
+- **Only your phone can feed the screen.** Your computer accepts AirPlay only from a phone that entered its code, so nobody else on the Wi-Fi can show the bot a fake screen.
+- **The board can't tell what a tap means.** A tap can open a payment sheet as easily as a settings page, and the board has no way to tell them apart. Keep it disarmed when you aren't using it, and watch **View** when the bot does anything that matters.
+- iOS doesn't mirror some screens, such as passcode entry, Apple Pay and DRM video, so the bot can't see them.
+
+## Limits
+
+- Same network only. Desktop listens for boards on port 7300.
+- One iPhone per board. Each board gets its own AirPlay receiver: **Allternit**, then **Allternit 2**, and so on.
+- Portrait apps. Taps in landscape apps may land in the wrong place.
+- Typing is ASCII only.
+
+## For developers
+
+- **Desktop code:** `surfaces/allternit-desktop/src/main/phone-usb-agent.ts` (manager and tools), `phone-usb-agent-link.ts` (the authenticated TCP link on port 7300, advertised over mDNS as `_allternit-usba._tcp`), `phone-usb-agent-protocol.ts` (USBA/1, with `ReferenceBoard` mirroring the firmware), `phone-usb-agent-pointer.ts` (calibration and aiming), `phone-usb-agent-vision.ts`, `phone-usb-agent-provision.ts` (USB serial setup) and `phone-airplay.ts` (UxPlay, run as its own process).
+- **Firmware, protocol and safety model:** `hardware/usb-agent/README.md`.
+- **Storage:** board keys are sealed with the OS keychain in `<userData>/phone/usb-agents.json`; calibration is stored per board next to them.
+- **Credits:** adapted from [esp32-iphone-agent](https://github.com/onehumanbeing/esp32-iphone-agent) (MIT); see `hardware/usb-agent/NOTICE`. UxPlay is GPL-3.0 and isn't bundled.

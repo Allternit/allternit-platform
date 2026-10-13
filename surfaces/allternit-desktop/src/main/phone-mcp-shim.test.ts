@@ -53,6 +53,34 @@ describe('phone MCP shim', () => {
     expect(JSON.parse(byId(4).result.content[0].text).error).toBe('approval_denied');
   });
 
+  it('returns an iPhone (USB Agent) JPEG screenshot as an image with its size', async () => {
+    const adb = (async () => ({ stdout: '', stderr: '', code: 0 })) as unknown as AdbCall;
+    adb.binary = async () => Buffer.alloc(0);
+    const runner = new PhoneToolRunner({
+      adb,
+      gate: { request: async () => 'denied' },
+      rates: { load: () => [], save: () => {} },
+      artemis: () => null,
+      onlineSerials: () => [],
+      usb: () => ({
+        has: (s) => s === 'usb:usba-00aa11bb22cc',
+        serials: () => ['usb:usba-00aa11bb22cc'],
+        call: async () => ({ ok: true, mimeType: 'image/jpeg', dataBase64: '/9j/AA==', width: 1206, height: 2622 }),
+      }),
+    });
+    const gw = await startPhoneGateway({ token: 't0ken', runner });
+    cleanups.push(gw.close);
+    const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'shim-')), 'gw.json');
+    fs.writeFileSync(file, JSON.stringify({ url: gw.url, token: 't0ken' }));
+    const replies = await rpc(file, [
+      { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} },
+      { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'phone.screenshot', arguments: {} } },
+    ]);
+    const content = replies.find((r) => r.id === 2).result.content;
+    expect(content[0]).toEqual({ type: 'image', data: '/9j/AA==', mimeType: 'image/jpeg' });
+    expect(content[1].text).toMatch(/1206x2622/);
+  });
+
   it('says Desktop is not running when the gateway file is missing', async () => {
     const replies = await rpc('/nonexistent/gw.json', [{ jsonrpc: '2.0', id: 1, method: 'tools/list' }]);
     expect(replies[0].error.message).toMatch(/not running/);

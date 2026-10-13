@@ -3,6 +3,7 @@
 import { BrowserWindow, type IpcMainInvokeEvent } from 'electron';
 import { phoneService } from './phone-service.js';
 import type { PhoneDeviceManager } from './phone-device-manager.js';
+import type { UsbAgentManager } from './phone-usb-agent.js';
 
 type Guarded = (channel: string, fn: (event: IpcMainInvokeEvent, ...args: any[]) => unknown) => void;
 
@@ -20,8 +21,48 @@ function wire(manager: PhoneDeviceManager): void {
   manager.on('pairing', (status) => broadcast('phone:pairing', status));
 }
 
+let usbWired = false;
+function wireUsb(usb: UsbAgentManager): void {
+  if (usbWired) return;
+  usbWired = true;
+  usb.on('devices', () => broadcast('phone:usb-devices', usb.list()));
+}
+
+/** The USB Agent lane runs on macOS and Linux (UxPlay and the serial setup are Unix-only). */
+const USB_SUPPORTED = process.platform === 'darwin' || process.platform === 'linux';
+
+async function usbSnapshot() {
+  if (!USB_SUPPORTED) return { supported: false as const };
+  try {
+    const usb = await phoneService.ensureUsbReady();
+    wireUsb(usb);
+    return {
+      supported: true as const,
+      ready: true as const,
+      uxplay: usb.airplayAvailable(),
+      airplayPin: usb.airplayPin(),
+      boards: usb.list(),
+    };
+  } catch (error) {
+    return { supported: true as const, ready: false as const, error: error instanceof Error ? error.message : String(error), boards: [] };
+  }
+}
+
+async function usb(): Promise<UsbAgentManager> {
+  const m = await phoneService.ensureUsbReady();
+  wireUsb(m);
+  return m;
+}
+
+const errorResult = (error: unknown) => ({ ok: false as const, message: error instanceof Error ? error.message : String(error) });
+
 async function snapshot() {
   const art = phoneService.getArtemis()?.status() ?? null;
+  // Opening Settings shouldn't download adb for someone with no Android phone;
+  // pairing (phone:pair-*) brings the lane up when they add one.
+  if (!phoneService.androidInUse()) {
+    return { ready: true as const, phones: [], pairing: { phase: 'idle' as const }, scrcpy: phoneService.scrcpyInstalled(), artemis: art };
+  }
   let manager: PhoneDeviceManager | null = null;
   try {
     manager = await phoneService.ensureReady();
@@ -50,6 +91,30 @@ export function registerPhoneIpc(handle: Guarded): void {
   handle('phone:scrcpy-stop', async (_e, serial: unknown) => (await phoneService.ensureReady()).stopScrcpy(String(serial)));
   handle('phone:try-open-app', (_e, serial: unknown, app: unknown) => phoneService.tryOpenApp(String(serial), String(app)));
   handle('phone:screenshot', (_e, serial: unknown) => phoneService.tryScreenshot(String(serial)));
+  handle('phone:home', (_e, serial: unknown) => phoneService.tryHome(String(serial)));
+
+  // iPhone over an Allternit USB Agent
+  handle('phone:usb-status', () => usbSnapshot());
+  handle('phone:usb-ports', async () => (USB_SUPPORTED ? (await usb()).serialPorts() : []));
+  handle('phone:usb-identify', async (_e, port: unknown) => {
+    try {
+      return { ok: true as const, ...(await (await usb()).identify(String(port))) };
+    } catch (error) {
+      return errorResult(error);
+    }
+  });
+  handle('phone:usb-setup', async (_e, port: unknown, ssid: unknown, password: unknown, name: unknown) => {
+    try {
+      const board = await (await usb()).setUp(String(port), { ssid: String(ssid ?? ''), password: String(password ?? '') }, String(name ?? ''));
+      return { ok: true as const, board };
+    } catch (error) {
+      return errorResult(error);
+    }
+  });
+  handle('phone:usb-calibrate', async (_e, boardId: unknown) => (await usb()).calibrate(String(boardId)));
+  handle('phone:usb-stop', async (_e, boardId: unknown) => (await usb()).stop(String(boardId)));
+  handle('phone:usb-forget', async (_e, boardId: unknown) => (await usb()).forget(String(boardId)));
+
   handle('phone:artemis-install', async () => {
     await phoneService.ensureReady();
     return phoneService.getArtemis()?.install();

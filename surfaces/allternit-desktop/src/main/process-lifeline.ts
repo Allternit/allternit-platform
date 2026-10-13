@@ -63,11 +63,14 @@ export function spawnSidecar(
     ? ['/bin/sh', ['-c', [command, ...args].join(' ')]]
     : [command, [...args]];
   const [stdin, stdout, stderr] = normalizeStdio(options.stdio);
+  // fd 3 is always the lifeline; callers that need more pipes (e.g. a frame
+  // pipe on fd 4) pass them from index 4 on, and the command inherits them.
+  const extra = Array.isArray(options.stdio) ? options.stdio.slice(4) : [];
 
   const proc = spawn('/bin/sh', ['-c', LIFELINE_SHIM, 'allternit-lifeline', target, ...targetArgs], {
     ...options,
     shell: false,
-    stdio: [stdin, stdout, stderr, 'pipe'],
+    stdio: [stdin, stdout, stderr, 'pipe', ...extra],
     // Always its own process group: the watcher's group kill depends on it.
     detached: true,
   });

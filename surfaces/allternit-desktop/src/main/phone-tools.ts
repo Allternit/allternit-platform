@@ -1,6 +1,8 @@
 /**
- * Bot-facing phone tools (Lane 2a): screenshot, tap, type, swipe, open_app,
- * task, sms.send, call.dial.
+ * Bot-facing phone tools: screenshot, tap, type, swipe, home, back, key,
+ * open_app, task, sms.send, call.dial. Android phones (Lane 2a) run them over
+ * adb; iPhones on an Allternit USB Agent (phone-usb-agent.ts) run the same
+ * names through the board, so a bot uses one set of tools for both.
  *
  * Everything here is transport-agnostic: the adb runner, approval gate, rate
  * store and ARTEMIS client are injected, so the argument validation and the
@@ -49,6 +51,13 @@ export interface ArtemisClient {
   runTask(serial: string, task: string, model: 'Flash' | 'Pro'): Promise<unknown>;
 }
 
+/** iPhones on a USB Agent. Serials start with "usb:". */
+export interface UsbPhoneBackend {
+  has(serial: string): boolean;
+  serials(): string[];
+  call(name: string, serial: string, args: Record<string, unknown>): Promise<ToolResult>;
+}
+
 export interface PhoneToolDeps {
   adb: AdbCall;
   gate: ApprovalGate;
@@ -60,6 +69,8 @@ export interface PhoneToolDeps {
   onlineSerials: () => string[];
   /** The phone's default SMS subscription id, or null when it can't be read. */
   defaultSmsSubscription?: (serial: string) => Promise<number | null>;
+  /** iPhones on a USB Agent, when that lane is running. */
+  usb?: () => UsbPhoneBackend | null;
 }
 
 // ── Result shapes ───────────────────────────────────────────────────────────
@@ -75,7 +86,15 @@ export type ToolErrorCode =
   | 'blocked_number'
   | 'unknown_app'
   | 'artemis_unavailable'
-  | 'adb_failed';
+  | 'adb_failed'
+  // USB Agent (iPhone) states
+  | 'unsupported'
+  | 'disarmed'
+  | 'device_locked'
+  | 'no_screen'
+  | 'not_calibrated'
+  | 'calibration_failed'
+  | 'uncertain';
 
 export type ToolResult =
   | { ok: true; [key: string]: unknown }
@@ -90,22 +109,22 @@ const fail = (error: ToolErrorCode, message: string, extra: { retryAfterSec?: nu
 
 // ── Tool catalogue (what the MCP shim advertises) ───────────────────────────
 
-const serialProp = { type: 'string', description: 'Phone serial from phone.devices. Optional when exactly one phone is online.' };
+const serialProp = { type: 'string', description: 'Phone serial from phone.devices (iPhones on a USB Agent start with "usb:"). Optional when exactly one phone is online.' };
 
 export const PHONE_TOOLS = [
   {
     name: 'phone.devices',
-    description: 'List paired phones with model, Android version, battery, SIMs and connection state.',
+    description: 'List connected phones: Android phones (adb) and iPhones on an Allternit USB Agent (serial "usb:…").',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
     name: 'phone.screenshot',
-    description: 'Take a screenshot of the phone. Returns a base64 PNG.',
+    description: 'Take a screenshot of the phone. Returns a base64 image (PNG on Android, JPEG of the AirPlay mirror on iPhone) with its width and height. Tap coordinates are pixels of this image.',
     inputSchema: { type: 'object', properties: { serial: serialProp }, additionalProperties: false },
   },
   {
     name: 'phone.tap',
-    description: 'Tap at pixel coordinates (from the screenshot).',
+    description: 'Tap at pixel coordinates from the latest screenshot. On iPhone the result says whether the screen changed; take a new screenshot before the next tap.',
     inputSchema: {
       type: 'object',
       properties: { serial: serialProp, x: { type: 'integer', minimum: 0 }, y: { type: 'integer', minimum: 0 } },
@@ -141,8 +160,28 @@ export const PHONE_TOOLS = [
     },
   },
   {
+    name: 'phone.home',
+    description: 'Go to the home screen.',
+    inputSchema: { type: 'object', properties: { serial: serialProp }, additionalProperties: false },
+  },
+  {
+    name: 'phone.back',
+    description: 'Go back (Android back button; on iPhone, the swipe from the left edge).',
+    inputSchema: { type: 'object', properties: { serial: serialProp }, additionalProperties: false },
+  },
+  {
+    name: 'phone.key',
+    description: 'Press a key or shortcut: enter, esc, tab, backspace, space, up/down/left/right, or a combo like cmd+space (iPhone hardware-keyboard shortcuts).',
+    inputSchema: {
+      type: 'object',
+      properties: { serial: serialProp, combo: { type: 'string', maxLength: 40 } },
+      required: ['combo'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'phone.open_app',
-    description: 'Open an app by Android package name (com.android.settings) or common name (settings, chrome, camera…).',
+    description: 'Open an app. Android: package name (com.android.settings) or common name (settings, chrome, camera…). iPhone: the app name as shown on the home screen (Spotlight).',
     inputSchema: {
       type: 'object',
       properties: { serial: serialProp, app: { type: 'string', maxLength: 128 } },
@@ -249,6 +288,18 @@ const APP_ALIASES: Record<string, string> = {
   youtube: 'com.google.android.youtube',
 };
 
+const ANDROID_KEYS: Record<string, string> = {
+  enter: 'KEYCODE_ENTER',
+  esc: 'KEYCODE_ESCAPE',
+  tab: 'KEYCODE_TAB',
+  backspace: 'KEYCODE_DEL',
+  space: 'KEYCODE_SPACE',
+  up: 'KEYCODE_DPAD_UP',
+  down: 'KEYCODE_DPAD_DOWN',
+  left: 'KEYCODE_DPAD_LEFT',
+  right: 'KEYCODE_DPAD_RIGHT',
+};
+
 const PACKAGE_RE = /^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$/;
 
 export function resolveApp(app: unknown): string | null {
@@ -329,13 +380,23 @@ export class PhoneToolRunner {
 
   async call(name: string, args: unknown): Promise<ToolResult> {
     const a = (args && typeof args === 'object' ? args : {}) as Record<string, unknown>;
-    if (name === 'phone.devices') return { ok: true, serials: this.deps.onlineSerials() };
+    const usb = this.deps.usb?.() ?? null;
+    if (name === 'phone.devices') {
+      const android = this.deps.onlineSerials();
+      const iphones = usb?.serials() ?? [];
+      return {
+        ok: true,
+        serials: [...android, ...iphones],
+        devices: [...android.map((serial) => ({ serial, platform: 'android' })), ...iphones.map((serial) => ({ serial, platform: 'ios', via: 'usb-agent' }))],
+      };
+    }
 
     const known = PHONE_TOOLS.some((t) => t.name === name);
     if (!known) return fail('unknown_tool', `No phone tool named ${name}.`);
 
-    const serial = this.resolveSerial(a.serial);
+    const serial = this.resolveSerial(a.serial, usb);
     if (typeof serial !== 'string') return serial;
+    if (usb?.has(serial)) return usb.call(name, serial, a);
 
     try {
       switch (name) {
@@ -347,6 +408,12 @@ export class PhoneToolRunner {
           return await this.type(serial, a);
         case 'phone.swipe':
           return await this.swipe(serial, a);
+        case 'phone.home':
+          return (await this.sh(serial, ['shell', 'input', 'keyevent', 'KEYCODE_HOME'])) ?? { ok: true };
+        case 'phone.back':
+          return (await this.sh(serial, ['shell', 'input', 'keyevent', 'KEYCODE_BACK'])) ?? { ok: true };
+        case 'phone.key':
+          return await this.key(serial, a);
         case 'phone.open_app':
           return await this.openApp(serial, a);
         case 'phone.task':
@@ -363,8 +430,8 @@ export class PhoneToolRunner {
     }
   }
 
-  private resolveSerial(raw: unknown): string | ToolResult {
-    const online = this.deps.onlineSerials();
+  private resolveSerial(raw: unknown, usb: UsbPhoneBackend | null): string | ToolResult {
+    const online = [...this.deps.onlineSerials(), ...(usb?.serials() ?? [])];
     if (raw !== undefined) {
       if (typeof raw !== 'string' || !raw) return fail('invalid_args', 'serial must be a non-empty string.');
       if (!online.includes(raw)) return fail('device_offline', `Phone ${raw} is not connected.`);
@@ -428,6 +495,12 @@ export class PhoneToolRunner {
       if (!coords.every((c) => isInt(c))) return fail('invalid_args', 'Give x1,y1,x2,y2 as non-negative integers, or a direction.');
     }
     return (await this.sh(serial, ['shell', 'input', 'swipe', ...coords.map(String), String(duration)])) ?? { ok: true };
+  }
+
+  private async key(serial: string, a: Record<string, unknown>): Promise<ToolResult> {
+    const code = typeof a.combo === 'string' ? ANDROID_KEYS[a.combo.toLowerCase()] : undefined;
+    if (!code) return fail('invalid_args', `On Android, combo is one of: ${Object.keys(ANDROID_KEYS).join(', ')}.`);
+    return (await this.sh(serial, ['shell', 'input', 'keyevent', code])) ?? { ok: true };
   }
 
   private async openApp(serial: string, a: Record<string, unknown>): Promise<ToolResult> {

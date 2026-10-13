@@ -1152,6 +1152,44 @@
         "allternit-ai/src/views/code/CodeDiffPanel.tsx",
         "allternit/surfaces/docs/surfaces/native-agent.mdx"
       ]
+    },
+    {
+      "id": "feature:bot-phones",
+      "label": "Bots operate real phones",
+      "product": "product:computer-use",
+      "status": "live",
+      "description": "A bot sees and operates a real phone through one set of phone.* tools: a spare Android over Wi-Fi (adb + Google ARTEMIS), or an iPhone with an Allternit USB Agent (USB mouse/keyboard board + AirPlay mirror). Connected in Desktop; usable from every surface.",
+      "touches": [
+        "allternit/surfaces/allternit-desktop",
+        "allternit/hardware/usb-agent",
+        "allternit-ai/src/components/computers",
+        "allternit-ai/src/lib"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-02",
+          "note": "Lane 2a: Android over Wi-Fi with QR wireless-debugging pairing, adb downloaded and SHA-verified (never bundled), ARTEMIS sidecar for plain-English tasks; texts and calls need a native approval, are rate limited and block emergency numbers (#1197)."
+        },
+        {
+          "on": "2026-10-13",
+          "note": "Old services/android-bridge connector retired: it needed a harness that exists only on one machine and its send_sms had no approval or rate limit (#1517)."
+        },
+        {
+          "on": "2026-10-13",
+          "note": "Allternit USB Agent (Eoj named it): iPhone with no app, no Mac Mirroring and no developer account. ESP32-S3 USB HID board + UxPlay AirPlay receiver (GPL-3.0, separate process, PIN-protected) + calibration and closed-loop aiming adapted from esp32-iphone-agent (MIT). USBA/1: mutual HMAC handshake, per-connection session key, signed sequenced commands, boots disarmed, only the button arms it, lease and auto-disarm; key set only over USB. Same phone.* tools; phone.home/back/key added for both platforms. Not yet checked with a real board on Eoj's iPhone 17 Pro."
+        },
+        {
+          "on": "2026-10-13",
+          "note": "Opening Settings no longer downloads adb for people with no Android phone; the tool gateway starts on its own for iPhone-only users."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/phone-for-your-bot.mdx",
+        "allternit/surfaces/docs/guides/usb-agent.mdx",
+        "allternit/hardware/usb-agent/README.md",
+        "allternit/surfaces/allternit-desktop/src/main/phone-tools.ts",
+        "allternit/surfaces/allternit-desktop/src/main/phone-usb-agent.ts"
+      ]
     }
   ],
   "journeys": [
