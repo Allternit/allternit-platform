@@ -367,7 +367,6 @@
               "tools/voice-calls",
               "tools/phone-number-sync",
               "surfaces/voice",
-              "tools/android-bridge",
               "tools/office-cli",
               "tools/office-engine",
               "tools/open-connector",

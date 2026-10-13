@@ -58,7 +58,6 @@ export const executorModules: Record<string, () => Promise<ExecutorModule>> = {
   amplemarket: (): Promise<ExecutorModule> => import("./amplemarket/executors.ts"),
   amplitude: (): Promise<ExecutorModule> => import("./amplitude/executors.ts"),
   anchor_browser: (): Promise<ExecutorModule> => import("./anchor_browser/executors.ts"),
-  android_bridge: (): Promise<ExecutorModule> => import("./android_bridge/executors.ts"),
   anrok: (): Promise<ExecutorModule> => import("./anrok/executors.ts"),
   anthropic: (): Promise<ExecutorModule> => import("./anthropic/executors.ts"),
   anthropic_admin: (): Promise<ExecutorModule> => import("./anthropic_admin/executors.ts"),
@@ -1724,14 +1723,6 @@ export const executableActionIds: Record<string, string[]> = {
     "anchor_browser.get_billing_info",
     "anchor_browser.get_project_metadata",
     "anchor_browser.start_browser_session",
-  ],
-  android_bridge: [
-    "android_bridge.list_messages",
-    "android_bridge.press_key",
-    "android_bridge.screenshot",
-    "android_bridge.send_sms",
-    "android_bridge.tap",
-    "android_bridge.type",
   ],
   anrok: [
     "anrok.get_customer",
