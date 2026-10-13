@@ -201,7 +201,7 @@ export async function boot(deps: BootDeps = {}): Promise<RunningGateway> {
           return best ? { health: best.session_health, remainingPct: best.usage?.remaining_pct ?? null, resetsAt: best.usage?.resets_at ?? null, agents: best.agents ?? null } : null;
         },
       },
-    }),
+    }, db),
     db,
     config,
     keychain,

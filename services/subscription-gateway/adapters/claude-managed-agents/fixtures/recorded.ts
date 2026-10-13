@@ -18,6 +18,10 @@ export const ev = {
   confirmation: (id: string, t: number, toolUseId: string, result: "allow" | "deny"): MaEvent => ({ id, type: "user.tool_confirmation", tool_use_id: toolUseId, result, processed_at: at(t) }),
   idle: (id: string, t: number, stop: "end_turn" | "requires_action", eventIds: string[] = []): MaEvent => ({
     id, type: "session.status_idle", stop_reason: stop === "requires_action" ? { type: "requires_action", event_ids: eventIds } : { type: "end_turn" }, processed_at: at(t) }),
+  customToolUse: (id: string, t: number, name: string, input: Record<string, unknown>): MaEvent => ({ id, type: "agent.custom_tool_use", name, input, processed_at: at(t) }),
+  // processed on receipt: echoed with processed_at already set (client-patterns #2)
+  customToolResult: (id: string, t: number, toolUseId: string, result: string, isError = false): MaEvent => ({
+    id, type: "user.custom_tool_result", custom_tool_use_id: toolUseId, content: text(result), is_error: isError, processed_at: at(t) }),
   terminated: (id: string, t: number): MaEvent => ({ id, type: "session.status_terminated", processed_at: at(t) }),
   error: (id: string, t: number): MaEvent => ({ id, type: "session.error", error: { type: "unknown_error", message: "boom" }, processed_at: at(t) }),
   span: (id: string, t: number): MaEvent => ({ id, type: "span.model_request_end", is_error: false, model_usage: { input_tokens: 3571, output_tokens: 727, cache_creation_input_tokens: 0, cache_read_input_tokens: 6656 }, processed_at: at(t) }),
@@ -39,6 +43,12 @@ export const RECORDED_APPROVAL_PAUSE: MaEvent[] = [
 export const RECORDED_APPROVAL_RESOLVED: MaEvent[] = [
   ...RECORDED_APPROVAL_PAUSE, ev.confirmation("sevt_a5", 5, "sevt_a3", "allow"), ev.toolResult("sevt_a6", 6, "sevt_a3"),
   ev.agentMessage("sevt_a7", 7, "Removed build/."), ev.idle("sevt_a8", 8, "end_turn"),
+];
+
+/** A turn that pauses on a custom tool: custom_tool_use -> idle(requires_action) until user.custom_tool_result. */
+export const RECORDED_CUSTOM_TOOL_PAUSE: MaEvent[] = [
+  ev.userMessage("sevt_c1", 1, "Where is order 1234?"), ev.running("sevt_c2", 2),
+  ev.customToolUse("sevt_c3", 3, "lookup_order", { order: "1234" }), ev.idle("sevt_c4", 4, "requires_action", ["sevt_c3"]),
 ];
 
 /** Session that ended (completion or error): error then terminated. */
