@@ -9,7 +9,7 @@ description: 'Re-run a finished run from its recording, with recorded effects on
 
 A **replay** re-runs a finished run at the decision and tool boundary, using the run's trace, receipts and recording (its cassette). It answers whether the system makes the same decisions given the same recorded world. For the concepts see [Replay](/architecture/replay).
 
-The replay engine is on main inside the kernel (internal only: cassette recording from the receipt chain, recorded-only replay and divergence reports), but this public endpoint is not served. Replay is one of the five conditions of the alpha gate: a run must survive restart, resume, verify, replay and receipt-backed completion before alpha opens.
+The endpoints are served by allternit-api's Agency API alpha (`cmd/allternit-api/src/agency_api/replays/`) on top of the kernel's replay engine (cassette recording from the receipt chain, recorded-only replay, divergence reports). Replays with overrides let you test a change (a candidate decision head, another model class, another task graph) against real past runs before it goes live. Replay is one of the five conditions of the alpha gate: a run must survive restart, resume, verify, replay and receipt-backed completion before alpha opens.
 
 ## Replays never cause effects
 
@@ -17,6 +17,9 @@ The replay engine is on main inside the kernel (internal only: cassette recordin
 
 - Every external effect is served from the recorded, content-addressed result.
 - A call with no recording fails that node with `ERR_REPLAY_UNRECORDED`. It is never executed live.
+- An effect whose request changed under an override (for example a document with new content) is answered with the recorded result and reported as an `EFFECT_REQUEST` divergence. Nothing is executed.
+- Before a result is stored the server asserts that the kernel replay and the graph walk both performed zero live effects. If not, the replay fails closed with `ERR_REPLAY_LIVE_EFFECT` and no result is kept.
+- Live model calls an override needs (cognition only, tools off) go through gizzi-code and land on the usage ledger with `surface: replay` and `source: replay`, attributed to the source run.
 
 ## Endpoints
 
@@ -25,6 +28,8 @@ The replay engine is on main inside the kernel (internal only: cassette recordin
 | `POST` | `/v1/replays` | [Create a replay](#create-a-replay) |
 | `GET` | `/v1/replays/{replay_id}` | [Get a replay](#get-a-replay) |
 | `GET` | `/v1/replays/{replay_id}/results` | [Get replay results](#get-replay-results) |
+| `POST` | `/v1/replays/batch` | [Create a batch replay](#batch-replays) |
+| `GET` | `/v1/replays/batch/{batch_id}` | [Get a batch replay](#batch-replays) |
 
 ## The Replay object
 
@@ -69,7 +74,21 @@ POST /v1/replays
 
 {{fields:ReplayRequest}}
 
-`overrides` selects what to vary. Anything not overridden is taken from the source run's recording. `overrides.completion` is a [CompletionCriteria](/api/agency/schemas#completioncriteria), `overrides.models` is a [ModelConstraints](/api/agency/schemas#modelconstraints) and `overrides.runtime` is a [RuntimeHints](/api/agency/schemas#runtimehints). No other override keys are accepted.
+`overrides` selects what to vary. Anything not overridden is taken from the source run's recording. The alpha accepts three keys; any other key (including the contract's `completion`, `models` and `runtime`) is rejected with `400 ERR_INPUT_UNSUPPORTED` and `param: "overrides.<key>"`.
+
+| Override | Value | What the replay does |
+|---|---|---|
+| `decision_heads` | `{kind: head}` or `{kind: {"head": ..., "version": ...}}`, 1-16 kinds | Re-decides the run's recorded decisions of each kind with the candidate head and compares its choice with the served choice and the outcome label. |
+| `model_class` | `mc.local`, `mc.remote` or a sub-class (`mc.local.<x>`) | Re-runs the S2/S3 cognition of the run's task graph in that model class. Every effect stays recorded. |
+| `graph_version` | a registered graph id (`"general.task.v1"`), `{"graph_id": ...}`, or `{"graph": <ComputeGraphIRV1>}` | Walks the run's goal through another task-type graph, recorded effects only. Nodes the source graph also had (same primitive, role, inputs, outputs and title) are answered from the recording; changed or new generative nodes are re-generated. |
+
+The top-level `k` (1-50) sets pass@k sampling for nondeterministic heads (default: the kind's `replay_k`, 5).
+
+**Decisions of a run** are the decisions you made with `session_id` (or `task`) set to the run id. A candidate head re-decides each one as the head stands now **minus that decision's own outcome** (leave-one-out), so it gets no credit for remembering the answer it is tested on. Its *effective* choice is what the chain would serve with the head live: its answer when its confidence clears the kind's threshold, otherwise the recorded served choice. A replay never teaches a head: no shadow rows, no lookup updates.
+
+**Cognition replays** (`model_class`, `graph_version`) re-walk task-type graphs; for `BUG_FIX` runs only `decision_heads` is available in the alpha (`422 ERR_REPLAY_UNSUPPORTED`). A graph that cannot bind the run's declared write set fails with `422 ERR_REPLAY_GRAPH_INVALID`; a model class with no available generative model with `422 ERR_REPLAY_MODEL_CLASS`. WAIT gates are answered from the run's recorded answers (an unrecorded one stops the replay; nobody is asked). The user's recalled memory is not part of the recording, so re-generated prompts carry no memory section.
+
+Replays that need live model calls run in the background: the response says `status: "running"`; poll the replay. Other replays complete before the response.
 
 A source run records a cassette when `runtime.record_cassette` is `true`, which is the default.
 
@@ -89,7 +108,7 @@ curl -X POST https://api.allternit.com/v1/replays \
   -d '{"source_run_id": "run_01JB2K4Y7MQ8"}'
 ```
 
-Replay with a stricter completion contract and a local-only model constraint:
+Re-run the cognition in the local model class and test a candidate head on the run's decisions:
 
 ```bash
 curl -X POST https://api.allternit.com/v1/replays \
@@ -100,8 +119,8 @@ curl -X POST https://api.allternit.com/v1/replays \
     "source_run_id": "run_01JB2K4Y7MQ8",
     "effects": "recorded_only",
     "overrides": {
-      "completion": {"require": ["tests_pass", "no_new_regressions", "lint_clean"]},
-      "models": {"locality": "local_only"}
+      "model_class": "mc.local",
+      "decision_heads": {"element": "head.lookup"}
     }
   }'
 ```
@@ -116,8 +135,13 @@ Location: /v1/replays/rpl_01JB2N5C8W
   "id": "rpl_01JB2N5C8W",
   "object": "replay",
   "source_run_id": "run_01JB2K4Y7MQ8",
-  "status": "queued",
+  "status": "running",
   "effects": "recorded_only",
+  "overrides": {
+    "decision_heads": {"element": {"head": "head.lookup", "version": "1"}},
+    "model_class": "mc.local"
+  },
+  "batch_id": null,
   "verdict": null,
   "created_at": "2026-09-29T19:00:00Z",
   "finished_at": null,
@@ -168,7 +192,13 @@ curl https://api.allternit.com/v1/replays/rpl_01JB2N5C8W \
 GET /v1/replays/{replay_id}/results
 ```
 
-The divergence report. It is available when the replay's status is `completed`; before that the endpoint returns `409`.
+The divergence report and the comparison. It is available when the replay's status is `completed`; before that the endpoint returns `409 ERR_REPLAY_NOT_FINISHED`.
+
+- `divergences`: what differed. Receipt-chain divergences from the kernel replay (always `unexpected`: the recording itself does not check out), plus, with overrides, `DECISION` (the candidate's effective choice differs from the served one), `OUTPUT` (a re-generated node produced different text), `EFFECT_REQUEST`, `OUTCOME` (a node committed or failed unlike the source), `EXTRA_NODE`, `MISSING_NODE` and `UNRECORDED`. A divergence is `expected` when the overrides explain it (it comes after a changed output or graph), `unexpected` otherwise. The `verdict` is `equivalent` with no divergences, `diverged_expected` when all are expected, `diverged_unexpected` otherwise.
+- `nodes`: per node of the replayed path, `via` (`recorded`, `live`, `deterministic` or `refused`), `outcome`, the `source` node's outcome, tokens and duration, `tokens` / `latency_ms` / `cost_usd` of a live re-generation, `output_matches`, and for effect nodes `effect.served: "recorded"` and `effect.request_matches`.
+- `decisions`: per recorded decision, the `served` choice (backend, latency, cost), the outcome `label`, the `candidate` (head, version, choice, confidence, answered, confident), the `effective_choice`, `agrees_with_served`, `correct` and `served_correct`.
+- `metrics.decisions`: `replayed`, `answered`, `coverage`, `agreement_with_served`, `labelled`, `accuracy` (with the head live), `head_accuracy` (where it answered), `baseline_accuracy` (served), mean `cost_usd` / `baseline_cost_usd` and `latency_ms` / `baseline_latency_ms`, `pass_at_1`, `pass_at_k`, `k`, `deterministic`, and the same per kind under `by_kind`. A decision is labelled when its outcome names the right option.
+- `metrics.run`: `verifier` (`source` and `replay`: `pass` or `fail` at the completion gate), the replayed run's `status`, `tokens`, `cost_usd` and `latency_ms` as `source` (the whole run), `source_regenerated` (what the source spent on the nodes the replay re-generated; cost is estimated pro rata by tokens), `live` (what the replay spent) and `replay` (source − regenerated + live), and `live_model_calls`.
 
 ### Parameters
 
@@ -195,19 +225,67 @@ curl https://api.allternit.com/v1/replays/rpl_01JB2N5C8W/results \
   "verdict": "diverged_expected",
   "decisions_total": 22,
   "decisions_matched": 21,
-  "completion_matched": false,
+  "completion_matched": true,
   "divergences": [
     {
-      "step_ref": "n14",
+      "step_ref": "decision:dec_01JB2K9",
       "kind": "expected",
-      "description": "Added criterion lint_clean was evaluated; the source run did not require it.",
+      "type": "DECISION",
+      "description": "head.lookup chose \"b\" where \"a\" was served",
       "source_receipt_id": null,
-      "replay_receipt_id": "rcpt_01JB2N6D02"
+      "replay_receipt_id": null
     }
   ],
+  "nodes": [
+    {"node_id": "G03", "via": "live", "outcome": "committed", "match": true, "output_matches": true, "tokens": 412, "latency_ms": 1830.4,
+     "source": {"outcome": "committed", "tokens": 1290, "duration_ms": 4120}}
+  ],
+  "decisions": [
+    {"decision_id": "dec_01JB2K9", "kind": "element", "label": "b", "effective_choice": "b", "agrees_with_served": false,
+     "correct": true, "served_correct": false,
+     "served": {"choice": "a", "backend": "oracle", "latency_ms": 820.0, "cost_usd": 0.002},
+     "candidate": {"head": "head.lookup", "version": "1", "choice": "b", "confidence": 0.8, "answered": true, "confident": true, "latency_ms": 0.4, "samples": 1}}
+  ],
+  "metrics": {
+    "decisions": {"replayed": 4, "labelled": 3, "accuracy": 1.0, "baseline_accuracy": 0.6667, "agreement_with_served": 0.75,
+                  "cost_usd": 0.001, "baseline_cost_usd": 0.002, "latency_ms": 450.2, "baseline_latency_ms": 650.0,
+                  "pass_at_1": 1.0, "pass_at_k": 1.0, "k": 5, "deterministic": true, "by_kind": {"element": {"head": "head.lookup"}}},
+    "run": {"verifier": {"source": "pass", "replay": "pass"}, "tokens": {"source": 3100, "source_regenerated": 2400, "live": 900, "replay": 1600},
+            "live_model_calls": 3}
+  },
   "has_more": false,
   "next_cursor": null
 }
+```
+
+## Batch replays
+
+```http
+POST /v1/replays/batch
+GET /v1/replays/batch/{batch_id}
+```
+
+Replay up to 50 of your finished runs (`completed`, `partial` or `failed`) with the same overrides and read aggregate metrics: an eval set built from real trajectories. Name the runs, or select the most recent ones:
+
+| Field | Meaning |
+|---|---|
+| `runs` | 1-50 run ids. Runs that are not yours or not finished are listed under `skipped`. |
+| `selector` | `{task_type, since, limit}`: your most recent finished runs of a task type created at or after `since` (RFC 3339), newest first, `limit` 1-50 (default 20). Give `runs` or `selector`, not both. |
+| `overrides`, `effects`, `k` | As for a single replay. |
+
+Each run gets its own replay (readable at `/v1/replays/{replay_id}`, with `batch_id` set). The batch object (`rpb_…`) carries `replays` (id, source run, verdict, verifier per run), `skipped` (with the reason, including runs with no recording), the worst `verdict`, and `metrics`:
+
+- `metrics.runs`: `requested`, `replayed`, `skipped`, `verdicts` per kind, `verifier` (`source_pass_rate`, `replay_pass_rate`, `pass_at_1` = the replayed runs' verifier pass rate, `agreement` with the source), and summed `tokens`, `cost_usd`, `latency_ms` (`source`, `source_regenerated`, `live`) and `live_model_calls`;
+- `metrics.decisions`: the decision metrics above over every re-decided decision of the batch, with `by_kind`.
+
+A batch with `decision_heads` run by a decisions admin is stored as the kind's **replay evidence**, which the flywheel reads before it promotes that head ([Decisions: replay evidence](/api/agency/decisions#replay-evidence)); `evidence` lists the stored rows with the acceptance verdict. Other users' batches report the same metrics but are not evidence (`evidence_note` says so).
+
+```bash
+curl -X POST https://api.allternit.com/v1/replays/batch \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"selector": {"task_type": "GENERAL_TASK", "limit": 20},
+       "overrides": {"decision_heads": {"element": "head.lookup"}}}'
 ```
 
 ## Polling pattern

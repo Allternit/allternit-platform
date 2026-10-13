@@ -13,6 +13,9 @@
 //!   the last transition, so each state has to be re-earned (hysteresis).
 //!   Every transition, automatic or manual, is written to
 //!   `decision_head_audit`.
+//! - When the kind has **replay evidence** (a decisions admin's batch replay
+//!   with `overrides.decision_heads`), promotion also has to pass the replay
+//!   acceptance rule (`acceptance`); the evidence id lands in the audit row.
 //! - A **live** head is tried first in the chain (the `head` slot of
 //!   `ALLTERNIT_DECISIONS_CHAIN`); a miss or low confidence escalates as usual.
 //!
@@ -59,6 +62,15 @@ pub trait Head: Send + Sync {
     fn applies(&self, kind: &str) -> bool;
     /// `None` when it has no answer for this decision.
     fn predict(&self, conn: &Connection, input: &HeadInput<'_>) -> rusqlite::Result<Option<HeadAnswer>>;
+    /// The head's version: a replay override may pin it (`{"head", "version"}`).
+    fn version(&self) -> &'static str {
+        "1"
+    }
+    /// Same input, same answer. Replays sample a nondeterministic head `k`
+    /// times for pass@k; a deterministic one once (pass@k = pass@1).
+    fn deterministic(&self) -> bool {
+        true
+    }
 }
 
 /// Exact-match lookup over past outcomes.
@@ -105,7 +117,7 @@ pub fn heads() -> Vec<&'static dyn Head> {
     vec![&LOOKUP]
 }
 
-fn head_by_name(name: &str) -> Option<&'static dyn Head> {
+pub fn head_by_name(name: &str) -> Option<&'static dyn Head> {
     heads().into_iter().find(|h| h.name() == name)
 }
 
@@ -148,11 +160,16 @@ pub struct Bar {
     pub max_overconfidence: f64,
     /// Off for kinds a head must never take over by itself (`safety`).
     pub auto_promote: bool,
+    /// Replay acceptance (`acceptance`): with replay evidence for the kind,
+    /// the candidate's accuracy may trail the served baseline by at most this.
+    pub replay_epsilon: f64,
+    /// Samples per decision for pass@k on nondeterministic heads.
+    pub replay_k: u32,
 }
 
 impl Default for Bar {
     fn default() -> Self {
-        Self { min_samples: 200, promote_at: 0.97, demote_at: 0.93, min_demote_samples: 50, window: 1000, max_overconfidence: 0.05, auto_promote: true }
+        Self { min_samples: 200, promote_at: 0.97, demote_at: 0.93, min_demote_samples: 50, window: 1000, max_overconfidence: 0.05, auto_promote: true, replay_epsilon: 0.01, replay_k: 5 }
     }
 }
 
@@ -176,6 +193,8 @@ pub fn bar(kind: &str) -> Bar {
     b.min_samples = b.min_samples.max(1);
     b.window = b.window.max(b.min_samples).max(b.min_demote_samples);
     b.demote_at = b.demote_at.min(b.promote_at);
+    b.replay_epsilon = b.replay_epsilon.clamp(0.0, 1.0);
+    b.replay_k = b.replay_k.clamp(1, 50);
     b
 }
 
@@ -314,7 +333,18 @@ pub fn current_state(conn: &Connection, head: &str, kind: &str) -> Option<String
 }
 
 pub fn transition(conn: &Connection, head: &str, kind: &str, to: &str, reason: &str, actor: &str, m: &Metrics) -> rusqlite::Result<()> {
+    transition_with(conn, head, kind, to, reason, actor, m, None)
+}
+
+/// [`transition`] with extra audit detail merged into `metrics_json` (the
+/// replay acceptance: `replay_evidence_id` and the checks it passed).
+#[allow(clippy::too_many_arguments)]
+pub fn transition_with(conn: &Connection, head: &str, kind: &str, to: &str, reason: &str, actor: &str, m: &Metrics, extra: Option<Value>) -> rusqlite::Result<()> {
     let (from, _) = state(conn, head, kind)?;
+    let mut audit = serde_json::to_value(m).unwrap_or_else(|_| json!({}));
+    if let (Some(a), Some(Value::Object(x))) = (audit.as_object_mut(), extra) {
+        a.extend(x);
+    }
     let now = super::super::store::now();
     conn.execute(
         "UPDATE decision_heads SET state = ?3, state_since = ?4, updated_at = ?4 WHERE head = ?1 AND kind = ?2",
@@ -323,7 +353,7 @@ pub fn transition(conn: &Connection, head: &str, kind: &str, to: &str, reason: &
     conn.execute(
         "INSERT INTO decision_head_audit (id, head, kind, from_state, to_state, reason, actor, metrics_json, at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-        params![super::super::store::new_id("hda"), head, kind, from, to, reason, actor, serde_json::to_string(m).unwrap_or_default(), now],
+        params![super::super::store::new_id("hda"), head, kind, from, to, reason, actor, audit.to_string(), now],
     )?;
     tracing::info!(head, kind, from = %from, to, reason, actor, "decision head transition");
     Ok(())
@@ -339,10 +369,24 @@ pub fn evaluate_with(conn: &Connection, kind: &str, b: &Bar) -> rusqlite::Result
     for h in heads().into_iter().filter(|h| h.applies(kind)) {
         let (st, since) = state(conn, h.name(), kind)?;
         let m = metrics(conn, h.name(), kind, &since, b.window)?;
-        if let Some((to, why)) = next_state(&st, &m, b) {
-            transition(conn, h.name(), kind, to, &why, "flywheel", &m)?;
-            out.push((h.name().to_string(), to.to_string()));
+        let Some((to, why)) = next_state(&st, &m, b) else { continue };
+        // B5: going live also needs the latest batch replay for the kind to
+        // pass, when a replay set exists (no evidence: the live bar alone).
+        let mut extra = None;
+        let mut why = why;
+        if to == LIVE {
+            if let Some(ev) = super::acceptance::latest(conn, h.name(), kind)? {
+                let v = super::acceptance::judge(&ev, b);
+                if !v.passed {
+                    tracing::info!(head = h.name(), kind, evidence = %ev.id, "promotion held back by replay evidence: {}", v.summary());
+                    continue;
+                }
+                why = format!("{why}; replay {}: {}", ev.id, v.summary());
+                extra = Some(json!({ "replay_evidence_id": ev.id, "acceptance": v }));
+            }
         }
+        transition_with(conn, h.name(), kind, to, &why, "flywheel", &m, extra)?;
+        out.push((h.name().to_string(), to.to_string()));
     }
     Ok(out)
 }

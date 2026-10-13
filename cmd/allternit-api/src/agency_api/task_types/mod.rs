@@ -117,17 +117,22 @@ pub fn graph(t: &TaskType) -> Result<ComputeGraph> {
 /// a writing graph has none, or a resource has the wrong scheme. Policy still
 /// has to authorize the actual effect at the graph's POLICY node.
 pub fn instantiate(t: &TaskType, task_id: &str, writable: &[String]) -> Result<ComputeGraph> {
+    bind(graph(t)?, t.id, t.write_scheme, task_id, writable)
+}
+
+/// Bind a graph to a task id and its declared writable resources, then
+/// validate it (shared by [`instantiate`] and replays of candidate graphs).
+pub fn bind(mut g: ComputeGraph, label: &str, write_scheme: Option<&str>, task_id: &str, writable: &[String]) -> Result<ComputeGraph> {
     if task_id.is_empty() {
-        bail!("{} requires a task id", t.id);
+        bail!("{label} requires a task id");
     }
-    let mut g = graph(t)?;
     g.task_id = Some(task_id.to_owned());
-    match t.write_scheme {
-        None if !writable.is_empty() => bail!("{} never writes; declare no writable resources", t.id),
+    match write_scheme {
+        None if !writable.is_empty() => bail!("{label} never writes; declare no writable resources"),
         None => {}
         Some(scheme) => {
             if writable.is_empty() {
-                bail!("{} requires declared writable resources", t.id);
+                bail!("{label} requires declared writable resources");
             }
             for r in writable {
                 let ok = match r.split_once(':') {
@@ -135,7 +140,7 @@ pub fn instantiate(t: &TaskType, task_id: &str, writable: &[String]) -> Result<C
                     None => false,
                 };
                 if !ok {
-                    bail!("{} writable resources must be `{}:<ref>` refs (got `{r}`)", t.id, if scheme.is_empty() { "<scheme>" } else { scheme });
+                    bail!("{label} writable resources must be `{}:<ref>` refs (got `{r}`)", if scheme.is_empty() { "<scheme>" } else { scheme });
                 }
             }
             for n in g.nodes.iter_mut().filter(|n| binds_write_set(n)) {
@@ -146,7 +151,7 @@ pub fn instantiate(t: &TaskType, task_id: &str, writable: &[String]) -> Result<C
     }
     let errors = graph::validate(&g, PrimitiveRegistry::global());
     if !errors.is_empty() {
-        bail!("invalid {} graph: {errors:?}", t.id);
+        bail!("invalid {label} graph: {errors:?}");
     }
     Ok(g)
 }
