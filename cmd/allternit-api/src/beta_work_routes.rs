@@ -21,6 +21,11 @@
 //! `beta_sessions` and `beta_deployments` — a self-hosted worker polls with
 //! the owning user's own API credentials.
 //!
+//! The node also runs an in-process worker (`session_worker`) that drains
+//! session- and deployment-tied tasks without a `sandbox_image` through the
+//! same lease/heartbeat/ack/stop functions below (no HTTP hop). Tasks that
+//! carry a `sandbox_image` are left for external sandbox workers.
+//!
 //! Permission-mode enforcement (Phase 2): when a leased task is tied to a
 //! session, the session's `effective_permissions` map (built at session
 //! create, see `cloud_agents_routes`) is injected into the leased task's
@@ -51,7 +56,7 @@ use crate::{auth::AuthUser, beta_session_routes, error::ApiError, AppState};
 
 /// How long a lease is held before it is eligible for another worker to
 /// reclaim (i.e. the worker crashed or stalled without heartbeating).
-const LEASE_SECONDS: i64 = 60;
+pub(crate) const LEASE_SECONDS: i64 = 60;
 
 fn empty_object() -> Value {
     json!({})
@@ -107,21 +112,21 @@ struct StopBody {
     error: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub(crate) struct TaskRow {
-    id: String,
-    session_id: Option<String>,
-    deployment_id: Option<String>,
-    status: String,
-    payload: Value,
-    sandbox_image: Option<String>,
-    env: Value,
-    lease_worker_id: Option<String>,
-    lease_expires_at: Option<String>,
-    result: Option<Value>,
-    error: Option<String>,
-    created_at: String,
-    updated_at: String,
+    pub(crate) id: String,
+    pub(crate) session_id: Option<String>,
+    pub(crate) deployment_id: Option<String>,
+    pub(crate) status: String,
+    pub(crate) payload: Value,
+    pub(crate) sandbox_image: Option<String>,
+    pub(crate) env: Value,
+    pub(crate) lease_worker_id: Option<String>,
+    pub(crate) lease_expires_at: Option<String>,
+    pub(crate) result: Option<Value>,
+    pub(crate) error: Option<String>,
+    pub(crate) created_at: String,
+    pub(crate) updated_at: String,
 }
 
 pub(crate) const TASK_SELECT: &str = "SELECT id, session_id, deployment_id, status, payload, sandbox_image,
@@ -237,82 +242,235 @@ async fn list_tasks(
     Ok(Json(json!({"tasks": rows})))
 }
 
-async fn lease_task(
-    State(state): State<Arc<AppState>>,
-    Extension(user): Extension<AuthUser>,
-    Query(query): Query<LeaseQuery>,
-) -> Result<Json<Value>, ApiError> {
-    let db = state.db.clone();
-    let user_id = user.user_id;
-    let worker_id = query.worker_id;
-    let now = Utc::now();
+/// Which tasks a lease may claim.
+pub(crate) enum LeaseScope<'a> {
+    /// `GET /beta/work/queue`: any task owned by this user.
+    User(&'a str),
+    /// The in-process session worker (`session_worker`): tasks of any user
+    /// that are tied to a session or a deployment and carry no
+    /// `sandbox_image` (sandbox jobs stay with external sandbox workers).
+    InProcess,
+}
+
+/// Lease the oldest available task for `worker_id`: a `queued` task, or a
+/// `leased`/`running` task whose lease expired (crash recovery). The claim
+/// is conditional on the row still being available, so two concurrent
+/// leasers never both win the same task. Injects the session's
+/// `effective_permissions` and `memory_context` into the returned payload.
+/// Shared by the HTTP route and the in-process session worker.
+pub(crate) fn lease_next_task(
+    conn: &mut rusqlite::Connection,
+    scope: LeaseScope<'_>,
+    worker_id: &str,
+    now: chrono::DateTime<Utc>,
+) -> rusqlite::Result<Option<TaskRow>> {
     let lease_expires_at = now + Duration::seconds(LEASE_SECONDS);
-    let task = tokio::task::spawn_blocking(move || {
-        let mut conn = db.connect()?;
-        let tx = conn.transaction()?;
-        let candidate = tx
+    let now = now.to_rfc3339();
+    let tx = conn.transaction()?;
+    let available = "(status = 'queued'
+                        OR (status IN ('leased', 'running') AND lease_expires_at < ?1))";
+    let candidate = match scope {
+        LeaseScope::User(user_id) => tx
             .query_row(
-                "SELECT id FROM beta_work_tasks
-                 WHERE user_id = ?1
-                   AND (status = 'queued'
-                        OR (status IN ('leased', 'running') AND lease_expires_at < ?2))
-                 ORDER BY created_at ASC LIMIT 1",
-                params![user_id, now.to_rfc3339()],
-                |row| row.get::<_, String>(0),
+                &format!(
+                    "SELECT id, user_id FROM beta_work_tasks
+                     WHERE user_id = ?2 AND {available}
+                     ORDER BY created_at ASC LIMIT 1"
+                ),
+                params![now, user_id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?,
+        LeaseScope::InProcess => tx
+            .query_row(
+                &format!(
+                    "SELECT id, user_id FROM beta_work_tasks
+                     WHERE sandbox_image IS NULL
+                       AND (session_id IS NOT NULL OR deployment_id IS NOT NULL)
+                       AND {available}
+                     ORDER BY created_at ASC LIMIT 1"
+                ),
+                params![now],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?,
+    };
+    let Some((id, user_id)) = candidate else {
+        return Ok(None);
+    };
+    let claimed = tx.execute(
+        &format!(
+            "UPDATE beta_work_tasks SET status = 'leased', lease_worker_id = ?2,
+             lease_expires_at = ?3, updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?4 AND {available}"
+        ),
+        params![now, worker_id, lease_expires_at.to_rfc3339(), id],
+    )?;
+    if claimed == 0 {
+        return Ok(None);
+    }
+    let mut task = tx.query_row(&format!("{TASK_SELECT} WHERE id = ?1"), params![id], read_task)?;
+    // Ship the session's effective permission map and memory context to
+    // the worker as optional payload fields (absent for tasks without a
+    // session or a pre-Phase-2/4 session, so older workers are
+    // unaffected). Workers consume both: they enforce the permission map
+    // and inject memory_context into the agent's context.
+    if let Some(ref session_id) = task.session_id {
+        let metadata: Option<String> = tx
+            .query_row(
+                "SELECT metadata FROM beta_sessions WHERE id = ?1",
+                params![session_id],
+                |row| row.get(0),
             )
             .optional()?;
-        let Some(id) = candidate else {
-            return Ok::<Option<TaskRow>, rusqlite::Error>(None);
-        };
-        tx.execute(
-            "UPDATE beta_work_tasks SET status = 'leased', lease_worker_id = ?1,
-             lease_expires_at = ?2, updated_at = CURRENT_TIMESTAMP WHERE id = ?3",
-            params![worker_id, lease_expires_at.to_rfc3339(), id],
-        )?;
-        let mut task = tx.query_row(&format!("{TASK_SELECT} WHERE id = ?1"), params![id], read_task)?;
-        // Ship the session's effective permission map and memory context to
-        // the worker as optional payload fields (absent for tasks without a
-        // session or a pre-Phase-2/4 session, so older workers are
-        // unaffected). Workers consume both: they enforce the permission map
-        // and inject memory_context into the agent's context.
-        if let Some(ref session_id) = task.session_id {
-            let metadata: Option<String> = tx
-                .query_row(
-                    "SELECT metadata FROM beta_sessions WHERE id = ?1",
-                    params![session_id],
-                    |row| row.get(0),
-                )
-                .optional()?;
-            if let Some(metadata) = metadata {
-                if let Ok(metadata) = serde_json::from_str::<Value>(&metadata) {
-                    if let Some(perms) = metadata.get("effective_permissions") {
-                        if let Some(payload) = task.payload.as_object_mut() {
-                            payload.insert("effective_permissions".to_string(), perms.clone());
-                        }
+        if let Some(metadata) = metadata {
+            if let Ok(metadata) = serde_json::from_str::<Value>(&metadata) {
+                if let Some(perms) = metadata.get("effective_permissions") {
+                    if let Some(payload) = task.payload.as_object_mut() {
+                        payload.insert("effective_permissions".to_string(), perms.clone());
                     }
-                    if let Some(store_ids) = metadata.get("memory_store_ids").and_then(Value::as_array) {
-                        let store_ids: Vec<String> = store_ids
-                            .iter()
-                            .filter_map(Value::as_str)
-                            .map(str::to_string)
-                            .collect();
-                        if !store_ids.is_empty() {
-                            if let Ok(memory_context) =
-                                crate::beta_memory_store_routes::build_memory_context(
-                                    &tx, &user_id, &store_ids,
-                                )
-                            {
-                                if let Some(payload) = task.payload.as_object_mut() {
-                                    payload.insert("memory_context".to_string(), memory_context);
-                                }
+                }
+                if let Some(store_ids) = metadata.get("memory_store_ids").and_then(Value::as_array) {
+                    let store_ids: Vec<String> = store_ids
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect();
+                    if !store_ids.is_empty() {
+                        if let Ok(memory_context) =
+                            crate::beta_memory_store_routes::build_memory_context(
+                                &tx, &user_id, &store_ids,
+                            )
+                        {
+                            if let Some(payload) = task.payload.as_object_mut() {
+                                payload.insert("memory_context".to_string(), memory_context);
                             }
                         }
                     }
                 }
             }
         }
-        tx.commit()?;
-        Ok(Some(task))
+    }
+    tx.commit()?;
+    Ok(Some(task))
+}
+
+/// Renew `worker_id`'s lease on task `id` and mark it `running`. Returns
+/// `None` when the worker holds no active lease (expired and re-leased,
+/// stopped, or finished). `user_id` scopes the task to its owner for the
+/// HTTP route; the in-process worker passes `None`.
+pub(crate) fn heartbeat_task_tx(
+    conn: &rusqlite::Connection,
+    id: &str,
+    user_id: Option<&str>,
+    worker_id: &str,
+) -> rusqlite::Result<Option<TaskRow>> {
+    let lease_expires_at = Utc::now() + Duration::seconds(LEASE_SECONDS);
+    let updated = conn.execute(
+        "UPDATE beta_work_tasks SET status = 'running', lease_expires_at = ?1,
+         updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?2 AND lease_worker_id = ?3 AND status IN ('leased', 'running')
+           AND (?4 IS NULL OR user_id = ?4)",
+        params![lease_expires_at.to_rfc3339(), id, worker_id, user_id],
+    )?;
+    if updated == 0 {
+        return Ok(None);
+    }
+    conn.query_row(&format!("{TASK_SELECT} WHERE id = ?1"), params![id], read_task)
+        .map(Some)
+}
+
+/// Complete task `id` as `succeeded` for the worker holding its lease and
+/// append the session's `turn_completed` + `session_idle` events. Returns
+/// `None` when the worker holds no active lease.
+pub(crate) fn ack_task_tx(
+    conn: &mut rusqlite::Connection,
+    id: &str,
+    user_id: Option<&str>,
+    worker_id: &str,
+    result: Option<Value>,
+) -> rusqlite::Result<Option<TaskRow>> {
+    let result_json = result.clone().unwrap_or_else(|| json!({}));
+    let tx = conn.transaction()?;
+    let updated = tx.execute(
+        "UPDATE beta_work_tasks SET status = 'succeeded', result = ?1, lease_worker_id = NULL,
+         lease_expires_at = NULL, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?2 AND lease_worker_id = ?3 AND status IN ('leased', 'running')
+           AND (?4 IS NULL OR user_id = ?4)",
+        params![result.map(|v| v.to_string()), id, worker_id, user_id],
+    )?;
+    if updated == 0 {
+        return Ok(None);
+    }
+    let task = tx.query_row(&format!("{TASK_SELECT} WHERE id = ?1"), params![id], read_task)?;
+    if let Some(ref session_id) = task.session_id {
+        beta_session_routes::emit_turn_terminal(
+            &tx,
+            session_id,
+            "completed",
+            &json!({"task_id": task.id, "result": result_json}),
+        )?;
+    }
+    tx.commit()?;
+    Ok(Some(task))
+}
+
+/// End a non-terminal task as `status` (`cancelled` or `failed`), release
+/// its lease, and append the session's `turn_failed` + `session_idle`
+/// events (data `{"task_id", "error"}` plus `detail`'s fields). With
+/// `worker_id`, only that lease holder may end it. Returns rows affected.
+pub(crate) fn stop_task_tx(
+    conn: &mut rusqlite::Connection,
+    id: &str,
+    user_id: Option<&str>,
+    worker_id: Option<&str>,
+    status: &str,
+    error: Option<&str>,
+    detail: Value,
+) -> rusqlite::Result<usize> {
+    let tx = conn.transaction()?;
+    let affected = tx.execute(
+        "UPDATE beta_work_tasks SET status = ?1, error = ?2, lease_worker_id = NULL,
+         lease_expires_at = NULL, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?3 AND (?4 IS NULL OR user_id = ?4)
+           AND (?5 IS NULL OR lease_worker_id = ?5)
+           AND status NOT IN ('succeeded', 'failed', 'cancelled')",
+        params![status, error, id, user_id, worker_id],
+    )?;
+    if affected > 0 {
+        let session_id: Option<String> = tx.query_row(
+            "SELECT session_id FROM beta_work_tasks WHERE id = ?1",
+            params![id],
+            |row| row.get(0),
+        )?;
+        if let Some(session_id) = session_id {
+            let mut data = json!({"task_id": id, "error": error});
+            if let (Some(data), Some(detail)) = (data.as_object_mut(), detail.as_object()) {
+                for (key, value) in detail {
+                    data.insert(key.clone(), value.clone());
+                }
+            }
+            beta_session_routes::emit_turn_terminal(&tx, &session_id, "failed", &data)?;
+        }
+    }
+    tx.commit()?;
+    Ok(affected)
+}
+
+async fn lease_task(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Query(query): Query<LeaseQuery>,
+) -> Result<Json<Value>, ApiError> {
+    let db = state.db.clone();
+    let task = tokio::task::spawn_blocking(move || {
+        let mut conn = db.connect()?;
+        lease_next_task(
+            &mut conn,
+            LeaseScope::User(&user.user_id),
+            &query.worker_id,
+            Utc::now(),
+        )
     })
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?
@@ -320,31 +478,8 @@ async fn lease_task(
     Ok(Json(json!({"task": task})))
 }
 
-async fn load_leased_task(
-    db: crate::db::DbHandle,
-    user_id: String,
-    id: String,
-    worker_id: String,
-) -> Result<(), ApiError> {
-    let owns_lease = tokio::task::spawn_blocking(move || {
-        let conn = db.connect()?;
-        conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM beta_work_tasks
-             WHERE id = ?1 AND user_id = ?2 AND lease_worker_id = ?3
-               AND status IN ('leased', 'running'))",
-            params![id, user_id, worker_id],
-            |row| row.get::<_, bool>(0),
-        )
-    })
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?
-    .map_err(ApiError::from)?;
-    if !owns_lease {
-        return Err(ApiError::NotFound(
-            "no active lease for this task and worker".into(),
-        ));
-    }
-    Ok(())
+fn no_active_lease() -> ApiError {
+    ApiError::NotFound("no active lease for this task and worker".into())
 }
 
 async fn heartbeat_task(
@@ -353,27 +488,15 @@ async fn heartbeat_task(
     Path(id): Path<String>,
     Json(body): Json<HeartbeatBody>,
 ) -> Result<Json<Value>, ApiError> {
-    load_leased_task(
-        state.db.clone(),
-        user.user_id.clone(),
-        id.clone(),
-        body.worker_id.clone(),
-    )
-    .await?;
     let db = state.db.clone();
-    let lease_expires_at = Utc::now() + Duration::seconds(LEASE_SECONDS);
     let task = tokio::task::spawn_blocking(move || {
         let conn = db.connect()?;
-        conn.execute(
-            "UPDATE beta_work_tasks SET status = 'running', lease_expires_at = ?1,
-             updated_at = CURRENT_TIMESTAMP WHERE id = ?2 AND lease_worker_id = ?3",
-            params![lease_expires_at.to_rfc3339(), id, body.worker_id],
-        )?;
-        conn.query_row(&format!("{TASK_SELECT} WHERE id = ?1"), params![id], read_task)
+        heartbeat_task_tx(&conn, &id, Some(&user.user_id), &body.worker_id)
     })
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?
-    .map_err(|e: rusqlite::Error| ApiError::DbError(e.to_string()))?;
+    .map_err(|e: rusqlite::Error| ApiError::DbError(e.to_string()))?
+    .ok_or_else(no_active_lease)?;
     Ok(Json(json!({"task": task})))
 }
 
@@ -383,41 +506,15 @@ async fn ack_task(
     Path(id): Path<String>,
     Json(body): Json<AckBody>,
 ) -> Result<Json<Value>, ApiError> {
-    load_leased_task(
-        state.db.clone(),
-        user.user_id.clone(),
-        id.clone(),
-        body.worker_id.clone(),
-    )
-    .await?;
     let db = state.db.clone();
-    let result_json = body.result.clone().unwrap_or_else(|| json!({}));
     let task = tokio::task::spawn_blocking(move || {
         let mut conn = db.connect()?;
-        let tx = conn.transaction()?;
-        let updated = tx.execute(
-            "UPDATE beta_work_tasks SET status = 'succeeded', result = ?1, lease_worker_id = NULL,
-             lease_expires_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?2 AND lease_worker_id = ?3",
-            params![body.result.map(|v| v.to_string()), id, body.worker_id],
-        )?;
-        if updated == 0 {
-            return Err(rusqlite::Error::QueryReturnedNoRows);
-        }
-        let task = tx.query_row(&format!("{TASK_SELECT} WHERE id = ?1"), params![id], read_task)?;
-        if let Some(ref session_id) = task.session_id {
-            beta_session_routes::emit_turn_terminal(
-                &tx,
-                session_id,
-                "completed",
-                &json!({"task_id": task.id, "result": result_json}),
-            )?;
-        }
-        tx.commit()?;
-        Ok(task)
+        ack_task_tx(&mut conn, &id, Some(&user.user_id), &body.worker_id, body.result)
     })
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?
-    .map_err(|e: rusqlite::Error| ApiError::DbError(e.to_string()))?;
+    .map_err(|e: rusqlite::Error| ApiError::DbError(e.to_string()))?
+    .ok_or_else(no_active_lease)?;
     Ok(Json(json!({"task": task})))
 }
 
@@ -428,36 +525,17 @@ async fn stop_task(
     Json(body): Json<StopBody>,
 ) -> Result<Json<Value>, ApiError> {
     let db = state.db.clone();
-    let user_id = user.user_id;
-    let error_msg = body.error.clone();
     let affected = tokio::task::spawn_blocking(move || {
         let mut conn = db.connect()?;
-        let tx = conn.transaction()?;
-        let affected = tx.execute(
-            "UPDATE beta_work_tasks SET status = 'cancelled', error = ?1, lease_worker_id = NULL,
-             lease_expires_at = NULL, updated_at = CURRENT_TIMESTAMP
-             WHERE id = ?2 AND user_id = ?3
-               AND (?4 IS NULL OR lease_worker_id = ?4)
-               AND status NOT IN ('succeeded', 'failed', 'cancelled')",
-            params![error_msg, id, user_id, body.worker_id],
-        )?;
-        if affected > 0 {
-            let session_id: Option<String> = tx.query_row(
-                "SELECT session_id FROM beta_work_tasks WHERE id = ?1",
-                params![id],
-                |row| row.get(0),
-            )?;
-            if let Some(session_id) = session_id {
-                beta_session_routes::emit_turn_terminal(
-                    &tx,
-                    &session_id,
-                    "failed",
-                    &json!({"task_id": id, "error": error_msg}),
-                )?;
-            }
-        }
-        tx.commit()?;
-        Ok::<_, rusqlite::Error>(affected)
+        stop_task_tx(
+            &mut conn,
+            &id,
+            Some(&user.user_id),
+            body.worker_id.as_deref(),
+            "cancelled",
+            body.error.as_deref(),
+            json!({}),
+        )
     })
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?
