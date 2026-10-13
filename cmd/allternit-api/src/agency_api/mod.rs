@@ -22,6 +22,7 @@ pub mod executor;
 /// C5: eval harness (trajectory graders, suites, regression gate) built on replay.
 pub mod evals;
 pub mod guard;
+pub mod harness; // C6: harness learning
 pub mod memory_context; // Agency Descent: memory in the context step
 /// C2: trace monitor over every terminal run (`/v1/runs/:id/findings`).
 pub mod monitor;
@@ -216,6 +217,15 @@ pub fn agency_router() -> Router<Arc<AppState>> {
         .route("/v1/evals/runs", post(evals::create_eval_run))
         .route("/v1/evals/runs/:eval_run_id", get(evals::get_eval_run))
         .route("/v1/evals/cases/from-run/:run_id", post(evals::case_from_run))
+        // C6: harness learning (decisions admins)
+        .route("/v1/harness/proposals", post(harness::create_proposals).get(harness::list_proposals))
+        .route("/v1/harness/proposals/:proposal_id", get(harness::get_proposal))
+        .route("/v1/harness/proposals/:proposal_id/approve", post(harness::approve_proposal))
+        .route("/v1/harness/proposals/:proposal_id/reject", post(harness::reject_proposal))
+        .route("/v1/harness/searches/:search_id", get(harness::get_search))
+        .route("/v1/harness/versions/:task_type", get(harness::get_versions))
+        .route("/v1/harness/versions/:task_type/rollback", post(harness::rollback))
+        .route("/v1/harness/audit", get(harness::list_audit))
         // Decision Runtime (E1): typed decisions; /v1/systemone is the compatibility alias.
         .route("/v1/decisions", post(decisions::create_decision))
         .route("/v1/systemone", post(decisions::create_decision))
@@ -347,6 +357,8 @@ async fn create_run(
         "metadata": compiled.metadata, "resolved": resolved, "effect_receipt_ids": [],
     });
     let mut task_ir = compiled.task_ir.clone();
+    // C6: new runs use the task type's active (approved) harness graph version.
+    harness::pin_active_version(&s, &mut task_ir).await.map_err(|e| ApiError::internal(e, &rid))?;
     task_ir["request_hash"] = json!(request_hash(&req));
     let org = guard::org_of(&user);
     task_ir["org_id"] = json!(org);

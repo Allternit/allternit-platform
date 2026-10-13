@@ -29,6 +29,14 @@ pub const EV_FINDINGS_STATE: &str = "agency.run_findings.state";
 /// C5: eval suites and eval runs.
 pub const EV_EVAL_SUITE_STATE: &str = "agency.eval_suite.state";
 pub const EV_EVAL_RUN_STATE: &str = "agency.eval_run.state";
+/// C6: harness learning. Searches, proposals, the per-task-type graph
+/// version registry and the audit trail (all owned by [`SYSTEM_OWNER`]).
+pub const EV_HARNESS_SEARCH_STATE: &str = "agency.harness_search.state";
+pub const EV_HARNESS_PROPOSAL_STATE: &str = "agency.harness_proposal.state";
+pub const EV_HARNESS_VERSIONS_STATE: &str = "agency.harness_versions.state";
+pub const EV_HARNESS_AUDIT_STATE: &str = "agency.harness_audit.state";
+/// Owner of server-wide objects (harness versions apply to every user's runs).
+pub const SYSTEM_OWNER: &str = "system";
 
 static WRITE_LOCK: Mutex<()> = Mutex::const_new(());
 
@@ -93,7 +101,8 @@ impl Inner {
                 let id = p["run_id"].as_str().unwrap_or_default().to_string();
                 self.events.entry(id).or_default().push(p["event"].clone());
             }
-            EV_CAMPAIGN_STATE | EV_REPLAY_STATE | EV_REPLAY_BATCH_STATE | EV_FINDINGS_STATE | EV_EVAL_SUITE_STATE | EV_EVAL_RUN_STATE => {
+            EV_CAMPAIGN_STATE | EV_REPLAY_STATE | EV_REPLAY_BATCH_STATE | EV_FINDINGS_STATE | EV_EVAL_SUITE_STATE | EV_EVAL_RUN_STATE
+            | EV_HARNESS_SEARCH_STATE | EV_HARNESS_PROPOSAL_STATE | EV_HARNESS_VERSIONS_STATE | EV_HARNESS_AUDIT_STATE => {
                 let key = (ty.to_string(), p["id"].as_str().unwrap_or_default().to_string(), p["owner"].as_str().unwrap_or_default().to_string());
                 self.objects.insert(key, (p["object"].clone(), self.tick));
             }

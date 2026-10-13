@@ -437,7 +437,7 @@ async fn walk_run(st: &Arc<AppState>, src: &RunRecord, ov: &Overrides) -> Result
     let t = task_types::require(task_type).map_err(|e| Fail::new(422, "ERR_REPLAY_UNSUPPORTED", e.to_string()))?;
     let task_id = ir["wih_policy"]["task_id"].as_str().unwrap_or_default().to_string();
     let write_set: Vec<String> = ir["wih_policy"]["write_set"].as_array().map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default();
-    let source_graph = task_types::instantiate(t, &task_id, &write_set).ok();
+    let source_graph = task_types::instantiate_for_ir(t, ir, &task_id, &write_set).ok();
     let bad_graph = |e: anyhow::Error| Fail::new(422, "ERR_REPLAY_GRAPH_INVALID", format!("the override graph cannot run this run's goal: {e}"));
     let graph = match &ov.graph {
         None => source_graph.clone().ok_or_else(|| Fail::new(422, "ERR_REPLAY_UNSUPPORTED", "the source run's graph cannot be rebuilt"))?,

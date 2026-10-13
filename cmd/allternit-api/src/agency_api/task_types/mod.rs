@@ -125,6 +125,29 @@ pub fn instantiate(t: &TaskType, task_id: &str, writable: &[String]) -> Result<C
     bind(graph(t)?, t.id, t.write_scheme, task_id, writable)
 }
 
+/// C6: the TaskIR key a run's pinned harness graph version lives under
+/// (`{task_type, graph_id, version, graph}`; absent = the shipped graph).
+pub const GRAPH_VERSION_KEY: &str = "graph_version";
+
+/// The unbound graph a run was compiled with: its pinned harness version
+/// (C6), else the shipped one.
+pub fn graph_for_ir(t: &TaskType, ir: &Value) -> Result<ComputeGraph> {
+    match ir.get(GRAPH_VERSION_KEY).map(|v| &v["graph"]).filter(|g| g.is_object()) {
+        Some(g) => Ok(ComputeGraph::from_json(&g.to_string())?),
+        None => graph(t),
+    }
+}
+
+/// [`instantiate`] for a compiled run: pinned harness version, else shipped.
+pub fn instantiate_for_ir(t: &TaskType, ir: &Value, task_id: &str, writable: &[String]) -> Result<ComputeGraph> {
+    bind(graph_for_ir(t, ir)?, t.id, t.write_scheme, task_id, writable)
+}
+
+/// The graph as the compiled TaskIR carries it (`nodes`, `edges`, `wih_policy`).
+pub fn template_graph_of(g: &ComputeGraph, writable: &[String], graph_id: &str, task_id: &str) -> Result<TemplateGraph> {
+    to_template_graph(g, writable, graph_id, task_id)
+}
+
 /// Bind a graph to a task id and its declared writable resources, then
 /// validate it (shared by [`instantiate`] and replays of candidate graphs).
 pub fn bind(mut g: ComputeGraph, label: &str, write_scheme: Option<&str>, task_id: &str, writable: &[String]) -> Result<ComputeGraph> {

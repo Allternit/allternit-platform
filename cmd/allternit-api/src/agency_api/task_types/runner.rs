@@ -119,10 +119,18 @@ pub fn run_scripted(task_type: &str, goal: &str, params: &Value, script: &Script
         Ok(g) => g,
         Err(e) => return Outcome::new(Status::Refused, e.to_string()),
     };
+    let _ = goal; // the scripted executor's outputs don't depend on the goal text
+    run_graph(t, &g, script)
+}
+
+/// C6: walk an already instantiated graph of `t` (a shipped graph, an
+/// approved harness version or a candidate) under `script`.
+pub fn run_graph(t: &super::TaskType, g: &ComputeGraph, script: &Script) -> Outcome {
     let Some(policy) = super::completion_policy(t) else {
         return Outcome::new(Status::Refused, format!("{} has no completion contract", t.id));
     };
-    let _ = goal; // the scripted executor's outputs don't depend on the goal text
+    let task_id = g.task_id.clone().unwrap_or_default();
+    let g = g.clone();
 
     let pool = scripted_pool(&g);
     let cfg = RouterConfig::default();

@@ -577,7 +577,7 @@ async fn recorded_walk(db: &DbHandle, rec: &RunRecord, events: &[Value]) -> Vec<
     let Some(t) = ir["task_type"].as_str().filter(|t| *t != "BUG_FIX").and_then(task_types::get) else { return vec![] };
     let task_id = ir["wih_policy"]["task_id"].as_str().unwrap_or_default();
     let write_set: Vec<String> = ir["wih_policy"]["write_set"].as_array().map(|a| a.iter().filter_map(Value::as_str).map(String::from).collect()).unwrap_or_default();
-    let (Ok(graph), Some(policy)) = (task_types::instantiate(t, task_id, &write_set), task_types::completion_policy(t)) else { return vec![] };
+    let (Ok(graph), Some(policy)) = (task_types::instantiate_for_ir(t, ir, task_id, &write_set), task_types::completion_policy(t)) else { return vec![] };
     let Ok(recording) = sim::Recording::load(db, rec, events, Some(graph.clone())) else { return vec![] };
     let cfg = sim::SimConfig {
         graph: &graph, policy: &policy, goal: ir["goal"].as_str().unwrap_or_default(), write_set: &write_set,
@@ -592,7 +592,7 @@ fn s1_kinds(rec: &RunRecord) -> HashMap<String, String> {
     let ir = &rec.task_ir;
     let Some(t) = ir["task_type"].as_str().and_then(task_types::get) else { return HashMap::new() };
     let write_set: Vec<String> = ir["wih_policy"]["write_set"].as_array().map(|a| a.iter().filter_map(Value::as_str).map(String::from).collect()).unwrap_or_default();
-    let Ok(g) = task_types::instantiate(t, ir["wih_policy"]["task_id"].as_str().unwrap_or_default(), &write_set) else { return HashMap::new() };
+    let Ok(g) = task_types::instantiate_for_ir(t, ir, ir["wih_policy"]["task_id"].as_str().unwrap_or_default(), &write_set) else { return HashMap::new() };
     g.nodes.iter().filter(|n| task_types::s1::is_s1(n))
         .map(|n| (n.node_id.clone(), task_types::s1::spec(n).ok().and_then(|s| s.kind).unwrap_or_else(|| "default".into())))
         .collect()

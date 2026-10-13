@@ -43,6 +43,7 @@ use axum::{
     response::IntoResponse,
     Extension, Json,
 };
+use allternit_factory_engine::kernel::graph::ComputeGraph;
 use graders::{Effect, Step, Trajectory};
 use serde_json::{json, Map, Value};
 use std::sync::Arc;
@@ -281,10 +282,32 @@ pub fn shipped_suite(raw: &str) -> Suite {
 
 /// Walk a fixture with the scripted runner.
 pub fn scripted_trajectory(f: &Fixture) -> Trajectory {
+    scripted_trajectory_on(f, None)
+}
+
+/// C6: walk a fixture through `graph` (an unbound ComputeGraphIRV1 of the
+/// fixture's task type: a harness version or candidate), else the shipped
+/// graph. A graph that cannot be bound for the fixture is `refused`.
+pub fn scripted_trajectory_on(f: &Fixture, graph: Option<&Value>) -> Trajectory {
     let script: runner::Script = serde_json::from_value(f.script.clone()).unwrap_or_default();
-    let out = runner::run_scripted(&f.task_type, &f.goal, &f.params, &script);
     let writable: Vec<String> = f.params["writable_resources"].as_array().map(|a| a.iter().filter_map(Value::as_str).map(String::from).collect()).unwrap_or_default();
-    let graph = task_types::get(&f.task_type).and_then(|t| task_types::instantiate(t, &format!("task.{}.eval", t.id.to_ascii_lowercase()), &writable).ok());
+    let (out, graph) = match (graph, task_types::get(&f.task_type)) {
+        (Some(gv), Some(t)) => {
+            let task_id = format!("task.{}.eval", t.id.to_ascii_lowercase());
+            let bound = ComputeGraph::from_json(&gv.to_string()).map_err(anyhow::Error::from)
+                .and_then(|g| task_types::bind(g, t.id, t.write_scheme, &task_id, &writable));
+            match bound {
+                Ok(g) => (runner::run_graph(t, &g, &script), Some(g)),
+                Err(e) => (runner::Outcome { status: runner::Status::Refused, reason: e.to_string(), visited: vec![], stopped_at: None,
+                    evidence: vec![], missing: vec![], plans: vec![] }, None),
+            }
+        }
+        _ => {
+            let out = runner::run_scripted(&f.task_type, &f.goal, &f.params, &script);
+            let graph = task_types::get(&f.task_type).and_then(|t| task_types::instantiate(t, &format!("task.{}.eval", t.id.to_ascii_lowercase()), &writable).ok());
+            (out, graph)
+        }
+    };
     let node = |id: &str| graph.as_ref().and_then(|g| g.node(id).cloned());
     let steps: Vec<Step> = out.visited.iter().map(|(n, ok)| Step { node: n.clone(), primitive: node(n).map(|x| x.primitive_id).unwrap_or_default(), ok: *ok }).collect();
     let effects = out.visited.iter().filter_map(|(n, ok)| {
@@ -369,7 +392,7 @@ fn run_texts(st: &AppState, run_id: &str, events: &[Value]) -> Vec<String> {
     texts
 }
 
-async fn source_trajectory(st: &AppState, rec: &RunRecord) -> Trajectory {
+pub(crate) async fn source_trajectory(st: &AppState, rec: &RunRecord) -> Trajectory {
     let run_id = rec.run["id"].as_str().unwrap_or_default();
     let events = store(st).events(run_id).await.unwrap_or_default();
     let journal = monitor::load_journal(&st.db, run_id).unwrap_or_default();
@@ -385,11 +408,11 @@ pub enum Ctx<'a> {
     Online { st: &'a Arc<AppState>, user: &'a AuthUser, admin: bool, overrides: &'a Value },
 }
 
-fn attempt_json(i: u32, pass: bool, grades: &[graders::Grade]) -> Value {
+pub(crate) fn attempt_json(i: u32, pass: bool, grades: &[graders::Grade]) -> Value {
     json!({ "attempt": i + 1, "pass": pass, "grades": grades.iter().map(|g| g.json()).collect::<Vec<_>>() })
 }
 
-fn graders_of(case: &Case) -> Vec<Box<dyn graders::Grader>> {
+pub(crate) fn graders_of(case: &Case) -> Vec<Box<dyn graders::Grader>> {
     case.graders.iter().filter_map(|g| graders::parse(g).ok()).collect()
 }
 
