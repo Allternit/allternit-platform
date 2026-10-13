@@ -42,6 +42,10 @@ Then set it up from Desktop: **Settings → Computers → Phones → Connect an 
 | A command whose answer never arrives is reported `uncertain`, never ok | `phone-usb-agent-link.ts` |
 | Texts and calls aren't offered over the USB Agent | `phone-usb-agent.ts` |
 
+**Known limit:** the Wi-Fi password and the board key sit in the board's flash (NVS) without encryption. Someone who takes the board and reads its flash can recover both. ESP32 flash encryption closes that, but turning it on burns eFuses, which can't be undone, so it's left to whoever builds production boards. If a board is lost, choose **Forget** in Desktop (its key stops working) and change your Wi-Fi password.
+
+Pressing the button disarms the board at once, including in the middle of a swipe or a long text.
+
 The board can't tell what a tap *means*. A pointer can open a payment sheet as easily as a settings page. Keep the board disarmed when it isn't working for you, and watch the live view when the bot does anything that matters.
 
 ## Protocol (USBA/1)

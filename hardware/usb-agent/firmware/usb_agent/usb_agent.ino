@@ -197,8 +197,24 @@ bool usbReady() {
 
 // ── input commands ──────────────────────────────────────────────────────────
 
-void movePaced(long dx, long dy) {
+// The arm button is read inside long commands too, so pressing it stops a
+// swipe or a long text part-way, not only between commands.
+bool buttonDown() {
+  return digitalRead(ARM_BUTTON_PIN) == LOW;
+}
+
+bool disarmedByHeldPress = false;
+
+bool stoppedByButton() {
+  if (!buttonDown()) return false;
+  setArmed(false);
+  disarmedByHeldPress = true;  // serviceButton() sees the same press next; don't re-arm on it
+  return true;
+}
+
+bool movePaced(long dx, long dy) {
   while (dx || dy) {
+    if (stoppedByButton()) return false;
     int sx = constrain(dx, -STEP, STEP), sy = constrain(dy, -STEP, STEP);
     mouse.move(sx, sy);
     dx -= sx;
@@ -206,6 +222,7 @@ void movePaced(long dx, long dy) {
     delay(STEP_MS);
     esp_task_wdt_reset();
   }
+  return true;
 }
 
 uint8_t keyCode(const String &k) {
@@ -270,6 +287,7 @@ String run(const String &command) {
 
   if (op == "home") {
     for (int i = 0; i < HOME_REPORTS; i++) {
+      if (stoppedByButton()) return "err disarmed";
       mouse.move(-127, -127);
       delay(2);
     }
@@ -284,7 +302,7 @@ String run(const String &command) {
     if (sp2 < 0 || !parseLong(arg.substring(0, sp2), &a) || !parseLong(arg.substring(sp2 + 1), &b)) return "err bad numbers";
     if (op == "move") {
       if (labs(a) > MOVE_LIMIT || labs(b) > MOVE_LIMIT) return "err out of bounds";
-      movePaced(a, b);
+      if (!movePaced(a, b)) return "err disarmed";
     } else {
       if (labs(a) > 50 || labs(b) > 50) return "err out of bounds";
       mouse.move(0, 0, a, b);
@@ -297,6 +315,7 @@ String run(const String &command) {
     if (!fromHex(arg, buf, TYPE_LIMIT, &n) || n == 0) return "err bad text";
     for (size_t i = 0; i < n; i++) if (buf[i] < 0x20 || buf[i] > 0x7e) return "err bad text";
     for (size_t i = 0; i < n; i++) {
+      if (stoppedByButton()) return "err disarmed";
       keyboard.write(buf[i]);
       esp_task_wdt_reset();
     }
@@ -364,14 +383,24 @@ void onLinkLine(const String &line) {
   sendState(false);
 }
 
-// Finds Desktop: mDNS first (its IP may have changed), then the address from setup.
+// Finds Desktop: the address from setup first (fast), then mDNS in case the
+// computer's IP changed. The mDNS query blocks for a while, so it runs at most
+// every 15 s and the button stays responsive in between.
 bool connectDesktop() {
+  if (deskLink.connect(cfg.host.c_str(), cfg.port, 500)) return true;
+  static uint32_t lastQuery = 0;
+  if (lastQuery && millis() - lastQuery < 15000) return false;
+  lastQuery = millis();
   int n = MDNS.queryService("allternit-usba", "tcp");
   for (int i = 0; i < n; i++) {
     if (MDNS.txt(i, "id") != cfg.desk) continue;
-    if (deskLink.connect(MDNS.address(i), MDNS.port(i), 1000)) return true;
+    if (deskLink.connect(MDNS.address(i), MDNS.port(i), 500)) {
+      cfg.host = MDNS.address(i).toString();  // remember for next time (not persisted)
+      cfg.port = MDNS.port(i);
+      return true;
+    }
   }
-  return deskLink.connect(cfg.host.c_str(), cfg.port, 1000);
+  return false;
 }
 
 const char *resetReason() {
@@ -484,8 +513,9 @@ void onSerialLine(String line) {
   if (!line.startsWith("set ")) return provReply("err unknown");
   line = line.substring(4);
   int sp = line.indexOf(' ');
-  if (sp < 0) return provReply("err missing value");
-  String k = line.substring(0, sp), v = line.substring(sp + 1);
+  String k = sp < 0 ? line : line.substring(0, sp);
+  String v = sp < 0 ? "" : line.substring(sp + 1);  // "set pass" alone = open network
+  if (v.length() == 0 && k != "pass") return provReply("err missing value");
   uint8_t buf[64];
   size_t n;
   if (k == "ssid" || k == "pass") {
@@ -534,6 +564,7 @@ void serviceButton() {
   static uint32_t changedAt = 0;
   static bool handled = false;
   bool level = digitalRead(ARM_BUTTON_PIN);
+  if (level == HIGH) disarmedByHeldPress = false;  // that press is over, seen here or not
   if (level != lastLevel) {
     lastLevel = level;
     changedAt = millis();
@@ -541,7 +572,11 @@ void serviceButton() {
   }
   if (level == LOW && !handled && millis() - changedAt > 40) {  // pressed and debounced
     handled = true;
-    setArmed(!armed);
+    if (disarmedByHeldPress) {
+      disarmedByHeldPress = false;  // this press already disarmed mid-command
+    } else {
+      setArmed(!armed);
+    }
     sendState(true);
   }
 }
