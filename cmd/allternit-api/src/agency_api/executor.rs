@@ -1370,7 +1370,7 @@ fn drive(h: &Handle, st: &AppState, s: &AgencyStore, run_id: &str, limits: &Limi
     let kernel_type = if task_type == "BUG_FIX" { None } else { Some(super::task_types::require(&task_type)?) };
     let graph = match kernel_type {
         None => bug_fix::instantiate(&task_id, &write_set)?,
-        Some(t) => super::task_types::instantiate(t, &task_id, &write_set)?,
+        Some(t) => super::task_types::instantiate_for_ir(t, &ir, &task_id, &write_set)?,
     };
     let models = ir["models"].clone();
     let raw_pool = if scripted() {

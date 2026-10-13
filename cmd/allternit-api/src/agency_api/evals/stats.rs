@@ -56,6 +56,25 @@ pub fn bootstrap_ci95(outcomes: &[bool], seed: u64, resamples: usize) -> Option<
     Some((round4(lo), round4(hi)))
 }
 
+/// C6: paired percentile bootstrap 95% interval of the pass-rate delta
+/// (candidate minus baseline) over the same cases: resample case indices
+/// with replacement, take the mean of `cand[i] - base[i]`. `None` for no
+/// pairs or unequal lengths.
+pub fn paired_delta_ci95(base: &[bool], cand: &[bool], seed: u64, resamples: usize) -> Option<(f64, f64)> {
+    let n = base.len();
+    if n == 0 || cand.len() != n {
+        return None;
+    }
+    let d: Vec<f64> = base.iter().zip(cand).map(|(b, c)| *c as u8 as f64 - *b as u8 as f64).collect();
+    let b = resamples.clamp(100, MAX_RESAMPLES);
+    let mut rng = SplitMix64::new(seed);
+    let mut means: Vec<f64> = (0..b).map(|_| (0..n).map(|_| d[rng.below(n)]).sum::<f64>() / n as f64).collect();
+    means.sort_by(|a, b| a.total_cmp(b));
+    let lo = means[((0.025 * b as f64).floor() as usize).min(b - 1)];
+    let hi = means[((0.975 * b as f64).ceil() as usize).saturating_sub(1).min(b - 1)];
+    Some((round4(lo), round4(hi)))
+}
+
 pub fn round4(x: f64) -> f64 {
     (x * 10_000.0).round() / 10_000.0
 }
