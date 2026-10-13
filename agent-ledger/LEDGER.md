@@ -1242,3 +1242,4 @@ Cross-compiled gizzi-code-win32-x64 from macOS (`bun build --target=win32-x64` �
 - 2026-10-11 Codex — [Project banner and compact customization](summaries/2026-10-11-1900-project-banner-codex-layout.md).
 
 - 2026-10-12 Claude — [Gateway one-step connect: subscriptions to bots in one call](summaries/2026-10-12-1050-practical-galileo-claude-gateway-one-step-connect.md) — platform #1513, ai #534. POST /gateway/connect for 11 products + Quick connect panel; container-verified against a stand-in vendor, no live vendor sessions.
+- 2026-10-13 Claude — [Vendor-bot gap closure](summaries/2026-10-13-2330-practical-galileo-claude-vendor-bot-gap-closure.md) — consent + tool results, gateway persistence/SSE/queue/isolation, Managed Agents streaming + custom tools, session worker, safer bot default; live vendor runs remain owner-gated.
