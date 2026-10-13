@@ -1075,12 +1075,40 @@
         {
           "on": "2026-10-11",
           "note": "cloud-api relays the task routes for ai.allternit.com. A TUI attached to a runtime session mirrors its shells and agents into the task table (ids tui_*, no daemon Bus events, so the pane refreshes every 10s); a surface's Stop settles the row and the TUI stops the task. Background-task restart cleanup now runs once per process and skips tui_* rows."
+        },
+        {
+          "on": "2026-10-12",
+          "note": "Code session pane selector is collapsed into a multi-select Panes menu with open-state checks and running-task count. Six code tool bodies share Browser shell surfaces on desktop, phone and popup. Terminal uses one tab bar with folder/branch context and bare shell chrome."
         }
       ],
       "evidence": [
         "allternit/docs/upstream/background-scenarios.md",
         "allternit/cmd/gizzi-code/test/session/session-tasks.test.ts",
         "allternit/cmd/gizzi-code/test/session/background-shell.test.ts"
+      ]
+    },
+    {
+      "id": "feature:code-file-workflow",
+      "label": "Code session file browser and editor",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Code sessions keep a searchable folder tree beside tabbed file previews and editors, with hover/focus/touch Edit actions, session draft retention, save/error handling, and changed-file navigation into the editor across Desktop and both phone layouts.",
+      "touches": [
+        "allternit-ai/src/views/code",
+        "allternit-ai/src/components/canvas",
+        "allternit-ai/src/lib/agents"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-12",
+          "note": "Eoj requested the functional file workflow from Claude Desktop references, beyond pane colors. Added persistent tree/editor split, file tabs, hover Edit, responsive tree, unsaved-draft protection, file:line opening, grouped changes and full-hunk review. File API requests use current runtime routing and auth. Verified with file-workflow, editor, Changes, pane-manager, terminal, file API and console tests plus desktop/phone/dark layout review. Desktop needs its next build and the PWA needs its separate deployment."
+        }
+      ],
+      "evidence": [
+        "allternit-ai/src/views/code/CodeFilesPane.tsx",
+        "allternit-ai/src/views/code/CodeFilesPane.test.tsx",
+        "allternit-ai/src/views/code/CodeDiffPanel.tsx",
+        "allternit/surfaces/docs/surfaces/native-agent.mdx"
       ]
     }
   ],
