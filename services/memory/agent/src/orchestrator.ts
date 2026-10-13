@@ -256,6 +256,17 @@ export class MemoryOrchestrator {
   }
 
   /**
+   * Get one memory by ID
+   */
+  getMemory(memoryId: string) {
+    if (!this.isInitialized) {
+      this.initialize();
+    }
+
+    return this.store.getMemory(memoryId);
+  }
+
+  /**
    * Get recent memories
    */
   getRecent(limit: number = 10) {

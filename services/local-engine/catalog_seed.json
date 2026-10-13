@@ -1,10 +1,12 @@
 [
-  { "repo_id": "bartowski/Llama-3.2-3B-Instruct-GGUF", "source_tag": "newest" },
-  { "repo_id": "bartowski/Llama-3.2-1B-Instruct-GGUF", "source_tag": "newest" },
-  { "repo_id": "bartowski/Qwen2.5-7B-Instruct-GGUF", "source_tag": "newest" },
-  { "repo_id": "bartowski/Qwen2.5-14B-Instruct-GGUF", "source_tag": "newest" },
-  { "repo_id": "bartowski/Mistral-7B-Instruct-v0.3-GGUF", "source_tag": "newest" },
-  { "repo_id": "bartowski/DeepSeek-R1-Distill-Qwen-7B-GGUF", "source_tag": "newest" },
-  { "repo_id": "bartowski/Phi-4-mini-instruct-GGUF", "source_tag": "newest" },
-  { "repo_id": "bartowski/gemma-2-9b-it-GGUF", "source_tag": "newest" }
+  {"repo_id": "bartowski/Llama-3.2-3B-Instruct-GGUF", "source_tag": "newest"},
+  {"repo_id": "bartowski/Llama-3.2-1B-Instruct-GGUF", "source_tag": "newest"},
+  {"repo_id": "bartowski/Qwen2.5-7B-Instruct-GGUF", "source_tag": "newest"},
+  {"repo_id": "bartowski/Qwen2.5-14B-Instruct-GGUF", "source_tag": "newest"},
+  {"repo_id": "bartowski/Mistral-7B-Instruct-v0.3-GGUF", "source_tag": "newest"},
+  {"repo_id": "bartowski/DeepSeek-R1-Distill-Qwen-7B-GGUF", "source_tag": "newest"},
+  {"repo_id": "bartowski/Phi-4-mini-instruct-GGUF", "source_tag": "newest"},
+  {"repo_id": "bartowski/gemma-2-9b-it-GGUF", "source_tag": "newest"},
+  {"repo_id": "unsloth/Qwen3.8-Flash-Next-GGUF", "source_tag": "s2", "model_class": "mc.local.s2", "requirements": {"quantization": "UD-Q2_K_XL", "download_bytes": 78869128864, "total_params_b": 180.0, "active_params_b": 6.0, "min_unified_bytes": 96000000000, "min_vram_bytes": 96000000000, "min_ram_bytes": 96000000000, "offload": {"min_vram_bytes": 12000000000, "min_ram_bytes": 80000000000}, "notes": "MoE: 125B + 51B n-gram embedding + 4B MTP = 180B total, 6B active. UD-Q2_K_XL is 78.9 GB in 3 shards; the smallest quant (UD-IQ1_S) is still 72.5 GB, so 64 GB RAM is not enough. With a CUDA GPU, keep attention/shared layers and KV on 12 GB+ VRAM and offload experts and n-gram embeddings to 80 GB+ RAM (llama.cpp --override-tensor / --n-cpu-moe)."}},
+  {"repo_id": "unsloth/Qwen3.8-27B-GGUF", "source_tag": "s2", "model_class": "mc.local.s2", "requirements": {"quantization": "UD-Q4_K_XL", "download_bytes": 17559178144, "total_params_b": 27.8, "active_params_b": 27.8, "min_unified_bytes": 32000000000, "min_vram_bytes": 24000000000, "min_ram_bytes": 32000000000, "offload": {"min_vram_bytes": 12000000000, "min_ram_bytes": 24000000000}, "notes": "Dense 27.8B, the S2 fallback for machines that cannot hold Flash-Next. UD-Q4_K_XL is 17.6 GB; fully on a 24 GB GPU, or split across 12 GB VRAM + RAM. CPU-only runs but is slow (dense: every token reads all weights)."}}
 ]
