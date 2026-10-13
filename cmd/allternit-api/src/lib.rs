@@ -290,6 +290,7 @@ pub mod memory_drive_text_import;
 #[cfg(test)]
 mod memory_drive_tests;
 pub mod memory_chunks;
+pub mod memory_entity_pages;
 pub mod memory_index;
 pub mod memory_extraction;
 pub mod memory_relations;
