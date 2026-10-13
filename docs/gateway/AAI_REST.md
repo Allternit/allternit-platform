@@ -35,8 +35,8 @@ SDKs: TypeScript [`@allternit/aai-sdk`](../../platform/packages/aai-sdk/README.m
 
 | Method | Path | Body | Response | Errors |
 |---|---|---|---|---|
-| GET | `/gateway/connect` | | `{products:[{product,name,offers,signIn,verifiedLive,account?,bots[]}]}` | |
-| POST | `/gateway/connect` | `product`; optional `apiKey` (claude-managed-agents), `agents[]` (externalAgentIds to make bots for; default all), `channelAccountId`, `accessToken`, `phoneNumberId`, `appSecret`, `agentAddress` (muse) | `{product,status,message,action?,verifiedLive,account:{id,state},agents[],bots:[{botId,name,externalAgentId,state}]}`; `status` ∈ `ready, needs_sign_in, needs_key, needs_setup, blocked` | 400 unknown product |
+| GET | `/gateway/connect` | | `{products:[{product,name,offers,signIn,verifiedLive,terms?,account?,bots[]}]}` | |
+| POST | `/gateway/connect` | `product`; optional `acceptTerms` (website/app products, after showing `action.terms`; recorded once per account), `apiKey` (claude-managed-agents), `agents[]` (externalAgentIds to make bots for; default all), `channelAccountId`, `accessToken`, `phoneNumberId`, `appSecret`, `agentAddress` (muse) | `{product,status,message,action?,verifiedLive,account:{id,state},agents[],bots:[{botId,name,externalAgentId,state}]}`; `status` ∈ `ready, needs_consent, needs_sign_in, needs_key, needs_setup, blocked` | 400 unknown product |
 
 Idempotent: a second call reuses the account, login and bots. Source: `cmd/allternit-api/src/gateway_connect.rs`.
 
