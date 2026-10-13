@@ -326,12 +326,19 @@ pub async fn replay_one(st: &Arc<AppState>, src: &RunRecord, ov: &Overrides, id:
     }).collect();
     let integrity = divergences.len();
 
-    // 2) Cognition, when an override re-runs it.
-    let walk = if ov.cognition() { Some(walk_run(st, src, ov).await?) } else { None };
+    // 2) Cognition, when an override re-runs it, or (B1) when a head
+    // override re-decides a decision an S1 node routed on.
+    let recorded = {
+        let conn = st.db.connect().map_err(|e| Fail::new(500, "ERR_INTERNAL", e.to_string()))?;
+        decide::load(&conn, &src.owner, &run_id).map_err(|e| Fail::new(500, "ERR_INTERNAL", e.to_string()))?
+    };
+    let s1_ids = sim::journaled_decision_ids(&st.db, &run_id).map_err(|e| Fail::new(500, "ERR_INTERNAL", e.to_string()))?;
+    let s1_redecided = recorded.iter().any(|d| s1_ids.contains(&d.id) && ov.head_for(&d.kind).is_some());
+    let walk = if ov.cognition() || s1_redecided { Some(walk_run(st, src, ov).await?) } else { None };
+    let covered = walk.as_ref().map(|w| w.decisions_covered.clone()).unwrap_or_default();
 
     // 3) Decisions.
     let conn = st.db.connect().map_err(|e| Fail::new(500, "ERR_INTERNAL", e.to_string()))?;
-    let recorded = decide::load(&conn, &src.owner, &run_id).map_err(|e| Fail::new(500, "ERR_INTERNAL", e.to_string()))?;
     let mut decisions = Vec::with_capacity(recorded.len());
     let mut rows = Vec::new();
     for d in &recorded {
@@ -339,7 +346,8 @@ pub async fn replay_one(st: &Arc<AppState>, src: &RunRecord, ov: &Overrides, id:
             Some(head) => {
                 let r = decide::redecide(&conn, &src.owner, d, head, k_for(k, &d.kind)).map_err(|e| Fail::new(500, "ERR_INTERNAL", e.to_string()))?;
                 let (v, row) = decide::compare(d, head, &r);
-                if v["effective_choice"] != json!(d.served) {
+                // An S1 node's re-decision is reported by the walk, at its node.
+                if v["effective_choice"] != json!(d.served) && !covered.contains(&d.id) {
                     divergences.push(json!({ "step_ref": format!("decision:{}", d.id), "kind": "expected", "type": "DECISION",
                         "description": format!("{} chose {} where {} was served", head.name(), v["effective_choice"], json!(d.served)),
                         "source_receipt_id": null, "replay_receipt_id": null }));
@@ -417,7 +425,8 @@ pub async fn replay_one(st: &Arc<AppState>, src: &RunRecord, ov: &Overrides, id:
     Ok(Outcome { results, verdict, rows, summary })
 }
 
-/// The cognition walk for `model_class` / `graph_version`.
+/// The cognition walk for `model_class` / `graph_version`, and for
+/// `decision_heads` that re-decide an S1 node's decision (recordings only).
 async fn walk_run(st: &Arc<AppState>, src: &RunRecord, ov: &Overrides) -> Result<sim::SimOut, Fail> {
     let ir = &src.task_ir;
     let task_type = ir["task_type"].as_str().unwrap_or("BUG_FIX");
@@ -445,9 +454,10 @@ async fn walk_run(st: &Arc<AppState>, src: &RunRecord, ov: &Overrides) -> Result
     let scripted = executor::scripted();
     let cfg = sim::SimConfig {
         graph: &graph, policy: &policy, goal: ir["goal"].as_str().unwrap_or_default(), write_set: &write_set,
-        regen_all: ov.model_class.is_some(), tainted_from_start: tainted, scripted,
+        regen_all: ov.model_class.is_some(), tainted_from_start: tainted, scripted, regenerate: ov.cognition(),
+        heads: &ov.heads, db: Some(&st.db), owner: &src.owner, run_id,
     };
-    if scripted {
+    if scripted || !ov.cognition() {
         return Ok(sim::simulate(&cfg, &rec, &sim::Scripted).await);
     }
     let pool = allternit_factory_engine::kernel::router::fetch_model_pool(&executor::gizzi_url(), None)
