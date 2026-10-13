@@ -144,3 +144,43 @@ Change the mode through Runtime Ops or by calling `PUT /api/v1/runtime/execution
 - [Canvas](/surfaces/canvas)
 - [Tool Belt](/tools/tool-belt)
 - [MCP servers](/api/mcp-servers)
+
+## Code session panes
+
+Use **Panes** in the Code session header to open or close Terminal, Changes,
+Browser, Computer, Files, Artifacts, Transcript, and Tasks. A check marks each
+open pane; the menu stays open while you select multiple panes. Escape closes
+it. The header shows the number of open panes and any running tasks.
+
+Each pane can be resized, docked, expanded, or opened in a separate window.
+On phones, the pane menu opens one pane full screen. Code tools use the same
+shell surfaces as Browser and Computer, with light and dark appearance support.
+
+The terminal has independent shell tabs, a folder path and branch context.
+Use **+** for another shell. Switching tabs keeps shells mounted; closing a
+shell tab disposes its session. The final tab stays open. The workspace button
+starts a fresh terminal in the same folder in the console workspace.
+
+### Browse, preview and edit files
+
+The Files pane keeps the folder tree beside your open files. Click a file to
+preview it. Hover over its row and select **Edit**, or use **Edit** in the
+preview toolbar. The same controls appear when a row has keyboard focus;
+on touch screens the Edit button stays visible.
+
+Search the tree, expand or collapse folders, and refresh its listing without
+leaving your editor. Open files appear in tabs. Use arrow keys in the tab bar
+to switch files. Drag the divider to resize the tree, or use the tree toggle
+to hide it. On narrow panes and phones, the tree sits above the editor.
+
+Use **Save** or **Cmd/Ctrl+S** to write your changes. Unsaved edits stay in
+memory when you switch files or close and reopen the pane. Closing an edited
+file offers **Save and close**, **Discard**, and **Cancel**. A failed save keeps
+the file open. Refreshing or leaving the app with unsaved changes prompts you;
+drafts are not stored across an app restart.
+
+The Changes pane has a folder-grouped file list and an **All changes** view.
+Search for a changed file, collapse its diff, or open it directly in the
+editor with its Edit button. The options menu includes **Show files**,
+**Group files by folder**, **Collapse all files**, **Expand all files**,
+**Word wrap**, and **Refresh**. Each expanded file shows all of its diff hunks.
