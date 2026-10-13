@@ -84,7 +84,8 @@ async fn x1_eval_sets_pass_through_the_real_executor() {
             let script = &c["script"];
             std::fs::create_dir_all(runs.path().join(&id)).unwrap();
             std::fs::write(runs.path().join(&id).join("scripted.json"),
-                json!({ "fail": script["fail"].as_array().cloned().unwrap_or_default(), "withhold": script["withhold"].as_array().cloned().unwrap_or_default() }).to_string()).unwrap();
+                json!({ "fail": script["fail"].as_array().cloned().unwrap_or_default(), "withhold": script["withhold"].as_array().cloned().unwrap_or_default(),
+                    "decide": script["decide"].as_object().cloned().unwrap_or_default() }).to_string()).unwrap();
             // Child template runs (C3a connector) count toward the org run rate too.
             let limits = run_limits(&[(guard::ORGS_ENV, "user:u1"), (guard::ORG_RUNS_PER_HOUR_ENV, "1000")]);
             assert!(executor::admit_and_start(t.st.clone(), id.clone(), limits.clone()).await, "{tag}: admitted");

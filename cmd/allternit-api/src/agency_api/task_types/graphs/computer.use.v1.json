@@ -176,7 +176,7 @@
    "node_id": "C06",
    "primitive_id": "ver.verify_requirements",
    "node_kind": "VERIFY",
-   "cognitive_role": "S2",
+   "cognitive_role": "S1",
    "inputs": [
     "receipt:screen_after"
    ],
@@ -190,11 +190,29 @@
    "lock_scope": [],
    "evidence_required": [],
    "on_failure": {
-    "strategy": "FAIL"
+    "strategy": "ESCALATE",
+    "target": "C06_s2"
    },
    "extensions": {
     "x-title": "Review screen against the goal",
-    "x-evidence": "requirements_satisfied"
+    "x-evidence": "requirements_satisfied",
+    "x-decision": {
+     "kind": "verify",
+     "question": "Does the result meet the goal?",
+     "options": [
+      {
+       "id": "pass",
+       "text": "The result meets the goal."
+      },
+      {
+       "id": "fail",
+       "text": "The result does not meet the goal."
+      }
+     ],
+     "pass": [
+      "pass"
+     ]
+    }
    },
    "capability_request": {
     "schema_id": "allternit.kernel.CapabilityRequestV1",
@@ -343,6 +361,41 @@
    "extensions": {
     "x-title": "Undo action"
    }
+  },
+  {
+   "node_id": "C06_s2",
+   "primitive_id": "ver.verify_requirements",
+   "node_kind": "VERIFY",
+   "cognitive_role": "S2",
+   "inputs": [
+    "receipt:screen_after"
+   ],
+   "outputs": [
+    "receipt:review"
+   ],
+   "read_set": [
+    "state.task"
+   ],
+   "write_set": [],
+   "lock_scope": [],
+   "evidence_required": [],
+   "on_failure": {
+    "strategy": "FAIL"
+   },
+   "extensions": {
+    "x-title": "Review screen against the goal (escalated)",
+    "x-evidence": "requirements_satisfied",
+    "x-twin_of": "C06"
+   },
+   "capability_request": {
+    "schema_id": "allternit.kernel.CapabilityRequestV1",
+    "schema_version": "1.0.0",
+    "capability": "cap.computer.review",
+    "modality": "VISION",
+    "latency_class": "NORMAL",
+    "trust_requirement": "INTERNAL",
+    "budget": {}
+   }
   }
  ],
  "edges": [
@@ -405,6 +458,16 @@
    "from": "C04",
    "to": "C04_undo",
    "edge_kind": "FAILURE"
+  },
+  {
+   "from": "C06",
+   "to": "C06_s2",
+   "edge_kind": "FAILURE"
+  },
+  {
+   "from": "C06_s2",
+   "to": "gate",
+   "edge_kind": "NORMAL"
   }
  ],
  "entry_nodes": [
