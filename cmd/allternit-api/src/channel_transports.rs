@@ -1007,6 +1007,18 @@ fn turn_json(t: &AcceptedTurn, state: &str) -> Value {
 /// the queued turns and the first recording error, if any.
 pub async fn accept_events(st: &Arc<AppState>, acct: &Account, tx: Arc<dyn ChannelTransport>, events: Vec<Inbound>, files: crate::channel_attachments::InboundFiles) -> (Vec<AcceptedTurn>, Option<String>) {
     let rt = crate::thread_routes::GizziRuntime { db: st.db.clone() };
+    accept_events_with(st, &rt, acct, tx, events, files).await
+}
+
+/// [`accept_events`] with the thread runtime passed in (tests run without gizzi).
+pub async fn accept_events_with<R: crate::thread_routes::ThreadRuntime>(
+    st: &Arc<AppState>,
+    rt: &R,
+    acct: &Account,
+    tx: Arc<dyn ChannelTransport>,
+    events: Vec<Inbound>,
+    files: crate::channel_attachments::InboundFiles,
+) -> (Vec<AcceptedTurn>, Option<String>) {
     let mut turns = vec![];
     let mut failed = None;
     for mut e in events {
@@ -1082,7 +1094,7 @@ pub async fn accept_events(st: &Arc<AppState>, acct: &Account, tx: Arc<dyn Chann
                 continue;
             }
         }
-        let routed = route_inbound(&st.db, &rt, acct, tx.provider(), &e).await;
+        let routed = route_inbound(&st.db, rt, acct, tx.provider(), &e).await;
         // Files kept for a message that was not recorded (a replay) are dropped, not left behind.
         crate::channel_attachments::discard_kept(tx.provider(), &e.remote_id);
         match routed {
@@ -2213,14 +2225,14 @@ mod tests {
         st.db.connect().unwrap().execute("UPDATE provider_account_bindings SET sender_policy = 'anyone', allowed_senders = '[]' WHERE id = 'acct-1'", []).unwrap();
         let tx = Arc::new(RecordingTelegram::default());
         let e = tg(11, 9001, "hello");
-        let (turns, failed) = accept_events(&st, &acct, tx.clone(), vec![e.clone()], Default::default()).await;
+        let (turns, failed) = accept_events_with(&st, &Rt, &acct, tx.clone(), vec![e.clone()], Default::default()).await;
         assert!(failed.is_none());
         assert_eq!(turns.len(), 1);
         // Durable before any turn ran, and nothing was posted yet.
         assert_eq!(turn_state(&st, &e.remote_id).as_deref(), Some("queued"));
         assert!(tx.posted.lock().unwrap().is_empty());
         // A redelivery of the same update records nothing and queues nothing.
-        let (again, _) = accept_events(&st, &acct, tx.clone(), vec![e.clone()], Default::default()).await;
+        let (again, _) = accept_events_with(&st, &Rt, &acct, tx.clone(), vec![e.clone()], Default::default()).await;
         assert!(again.is_empty());
         // Running the turn posts the answer (here a failure notice: no model in tests) and finishes it.
         run_turns(&st, turns).await;
@@ -2234,7 +2246,7 @@ mod tests {
         st.db.connect().unwrap().execute("UPDATE provider_account_bindings SET sender_policy = 'anyone', allowed_senders = '[]' WHERE id = 'acct-1'", []).unwrap();
         let tx = Arc::new(RecordingTelegram::default());
         let (queued, cut) = (tg(21, 9002, "first"), tg(22, 9003, "second"));
-        let (turns, _) = accept_events(&st, &acct, tx.clone(), vec![queued.clone(), cut.clone()], Default::default()).await;
+        let (turns, _) = accept_events_with(&st, &Rt, &acct, tx.clone(), vec![queued.clone(), cut.clone()], Default::default()).await;
         assert_eq!(turns.len(), 2);
         // The process died: one turn never started, the other was mid-way.
         set_turn_state(&st.db, &turns[1].binding.id, &turns[1].remote_id, &turn_json(&turns[1], "running"));
