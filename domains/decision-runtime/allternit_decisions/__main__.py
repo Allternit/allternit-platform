@@ -24,8 +24,9 @@ def main() -> None:
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=0)
     ap.add_argument("--endpoint-file", help="write http://host:port here once listening")
-    ap.add_argument("--engine", choices=["mlx", "llamacpp"], help="default: mlx on Apple silicon, else llamacpp")
-    ap.add_argument("--model", help="preset (qwen3.5-4b, gemma-3-4b), HF repo id, or local path")
+    ap.add_argument("--engine", choices=["mlx", "llamacpp", "systemone"],
+                    help="default: mlx on Apple silicon, else llamacpp; systemone = native decision models (d1-3B)")
+    ap.add_argument("--model", help="preset (qwen3.5-4b, gemma-3-4b, d1-3b), HF repo id, or local path")
     ap.add_argument("--prepare", action="store_true", help="install, download and load now instead of on first use")
     args = ap.parse_args()
 

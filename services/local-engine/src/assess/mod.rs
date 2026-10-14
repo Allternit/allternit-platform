@@ -161,6 +161,40 @@ impl Assessor {
         }
     }
 
+    /// Assessment from curated requirements (no HF lookup): measured size,
+    /// the memory path `fit` chose, and tok/s from the active parameters.
+    pub fn assess_with_requirements(
+        &self,
+        repo_id: &str,
+        req: &crate::catalog::HardwareRequirements,
+        fit: &crate::catalog::RequirementFit,
+        hardware: &HardwareProfile,
+        context_length: usize,
+    ) -> AssessResponse {
+        let bits = req.bits_per_param();
+        let loaded_bytes = estimate_loaded_bytes(req.download_bytes, 0.0, req.active_params_b, context_length);
+        let mut tok = estimate_tok_per_second(hardware, &self.chips, req.active_params_b, bits);
+        // Weights streamed from system RAM run at CPU-ish speed.
+        if matches!(fit.path, "offload" | "cpu") && !hardware.unified_memory {
+            let cap = self.chips.cpu_fallback_base_tok_per_sec_q4_7b_4k * (7.0 / req.active_params_b.max(0.5)).sqrt().min(3.0) * 1.5;
+            for v in [&mut tok.context_4k, &mut tok.context_8k, &mut tok.context_16k, &mut tok.context_32k] {
+                *v = v.min(cap);
+            }
+        }
+        AssessResponse {
+            repo_id: repo_id.to_string(),
+            fit: fit.fit.clone(),
+            fit_reason: fit.reason.clone(),
+            estimated_download_bytes: req.download_bytes,
+            estimated_loaded_bytes: loaded_bytes,
+            estimated_tok_per_second: tok,
+            recommended_backend: "llama_cpp".to_string(),
+            confidence: "measured".to_string(),
+            quantization_bits: bits,
+            hardware_id: hardware.hardware_id.clone(),
+        }
+    }
+
     async fn fetch_tree(&self, repo_id: &str) -> Option<Vec<TreeFile>> {
         for revision in ["main", "master"] {
             let url = format!(

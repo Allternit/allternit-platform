@@ -103,6 +103,7 @@ pub fn spawn(st: Arc<AppState>, run_id: String) {
 /// Drive a kernel-UI template run (model steps). The caller has checked the
 /// flags and org allowlist; admission here is the run being `waiting`.
 pub(crate) fn spawn_template(st: Arc<AppState>, run_id: String) {
+    super::monitor::install(&st);
     let h = Handle::current();
     tokio::task::spawn_blocking(move || {
         let s = super::store(&st);
@@ -123,6 +124,7 @@ pub(crate) fn start(st: Arc<AppState>, run_id: String) {
 /// Admission: the run must be `waiting`, its org allowlisted, and a global
 /// and per-org concurrency slot free. Returns whether it started.
 pub(crate) async fn admit_and_start(st: Arc<AppState>, run_id: String, limits: Limits) -> bool {
+    super::monitor::install(&st);
     let s = super::store(&st);
     let Ok(Some(rec)) = s.load_run(&run_id).await else { return false };
     if rec.run["status"] != "waiting" || rec.task_ir.get("template_id").is_some() {
@@ -753,7 +755,7 @@ impl Exec<'_> {
         }
         // Daily spending caps (global and per org), before every effect and
         // model call: reached → park with "budget cap reached", spend stops.
-        let (global, org) = self.h.block_on(self.s.daily_spend(&self.org))?;
+        let (global, org) = self.h.block_on(self.s.daily_spend_all(&self.st.db, &self.org))?;
         if let Some((scope, dim)) = self.limits.daily_reached(&global, &org) {
             tracing::info!(run_id = %self.run_id, scope, dim, "agency daily budget cap reached; parking run");
             self.h.block_on(self.s.park_for_cap(&self.run_id, scope, dim))?;
@@ -1368,7 +1370,7 @@ fn drive(h: &Handle, st: &AppState, s: &AgencyStore, run_id: &str, limits: &Limi
     let kernel_type = if task_type == "BUG_FIX" { None } else { Some(super::task_types::require(&task_type)?) };
     let graph = match kernel_type {
         None => bug_fix::instantiate(&task_id, &write_set)?,
-        Some(t) => super::task_types::instantiate(t, &task_id, &write_set)?,
+        Some(t) => super::task_types::instantiate_for_ir(t, &ir, &task_id, &write_set)?,
     };
     let models = ir["models"].clone();
     let raw_pool = if scripted() {

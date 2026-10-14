@@ -140,12 +140,12 @@ describe("error mapping (SDK typed errors)", () => {
 
 describe("events: exact, lossless, replayable", () => {
   it("normalizes a recorded turn; noise events are dropped", () => {
-    expect(RECORDED_TURN.flatMap(normalize).map((d) => d.type)).toEqual([
+    expect(RECORDED_TURN.flatMap((e) => normalize(e)).map((d) => d.type)).toEqual([
       "agent.activity.started", "agent.task.updated", "agent.activity.started", "agent.message.delta", "agent.message.completed", "agent.task.updated"]);
-    expect(RECORDED_TERMINATED.flatMap(normalize).map((d) => d.type)).toEqual(["agent.activity.started", "agent.health.changed", "agent.task.updated"]);
-    const pause = RECORDED_APPROVAL_PAUSE.flatMap(normalize);
+    expect(RECORDED_TERMINATED.flatMap((e) => normalize(e)).map((d) => d.type)).toEqual(["agent.activity.started", "agent.health.changed", "agent.task.updated"]);
+    const pause = RECORDED_APPROVAL_PAUSE.flatMap((e) => normalize(e));
     expect(pause.find((d) => d.type === "agent.approval.requested")?.payload).toMatchObject({ approvalId: "sevt_a3", authority: "vendor" });
-    expect(RECORDED_APPROVAL_RESOLVED.flatMap(normalize).some((d) => d.type === "agent.approval.resolved")).toBe(true);
+    expect(RECORDED_APPROVAL_RESOLVED.flatMap((e) => normalize(e)).some((d) => d.type === "agent.approval.resolved")).toBe(true);
   });
 
   it("re-reading history never duplicates; a restarted provider adopts the session and rebuilds the same log", async () => {

@@ -1,0 +1,160 @@
+---
+title: 'Harness learning'
+description: 'Workflows that improve themselves, with a human in charge: candidate edits to a task type''s graph, evaluated on evals and recorded-only replays, accepted by a strict rule, approved by an admin as a new graph version, and rolled back in one call.'
+---
+
+<Warning>
+**Implementation: ALPHA (server) · Exposure: PREVIEW, not in the v0.3 contract.** These endpoints are served by allternit-api's Agency API alpha (`cmd/allternit-api/src/agency_api/harness/`). Shapes may change.
+</Warning>
+
+A task type runs a **graph** (the steps, their order, which ones are S1 decisions, which ones call a model). Harness learning proposes changes to that graph from what runs actually did, measures every change on [evals](/api/agency/evals) and [replays](/api/agency/replays), and keeps only the changes that are clearly better. Nothing goes live without an admin's approval, and every approved change can be rolled back.
+
+No model is trained here. Candidates come from deterministic **mutation operators** and, optionally, one call to the planner model asked for a JSON patch. The learning is search plus selection under evals.
+
+## Who can use it
+
+Decisions admins only (`ALLTERNIT_DECISIONS_ADMINS`, user ids, comma separated). Everyone else gets `403 ERR_PERMISSION_DENIED`. Proposals, versions and the audit trail are server-wide: an approved version applies to every user's new runs of that task type.
+
+## Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/v1/harness/proposals` | [Propose and evaluate candidates](#propose) for a task type |
+| `GET` | `/v1/harness/proposals` | List proposals (`?status=pending`, `?task_type=`) |
+| `GET` | `/v1/harness/proposals/{proposal_id}` | A proposal with its diff, evidence, metrics and candidate graph |
+| `POST` | `/v1/harness/proposals/{proposal_id}/approve` | [Approve](#approve-reject-roll-back): register the graph as the next version |
+| `POST` | `/v1/harness/proposals/{proposal_id}/reject` | Reject a pending proposal |
+| `GET` | `/v1/harness/searches/{search_id}` | A search (one propose request) and its results |
+| `GET` | `/v1/harness/versions/{task_type}` | The task type's version registry |
+| `POST` | `/v1/harness/versions/{task_type}/rollback` | New runs go back to the previous version |
+| `GET` | `/v1/harness/audit` | The audit trail, newest first (`?task_type=`) |
+
+## Propose
+
+```http
+POST /v1/harness/proposals
+```
+
+| Field | Meaning |
+|---|---|
+| `task_type` | Required. `GENERAL_TASK`, `THREAD_WORK`, `COMPUTER_USE`, `RESEARCH_DOC`, `TEMPLATE` or `CAMPAIGN`. |
+| `k` | Candidates evaluated, 1-8 (default 4). Extra candidates are listed in `not_evaluated`. |
+| `operators` | Mutation operators to use (default all, see below). |
+| `llm` | Also ask the planner model for patches (default `false`). One call at most, behind the daily spending caps. |
+| `suite_ids` | Up to 5 of your eval suites to add (their cases of this task type). |
+| `replay_runs` | Recent finished runs of the task type to replay, 0-30 (default 10). |
+| `acceptance` | Override the [acceptance rule](#acceptance-rule): `min_gain`, `epsilon`, `efficiency_gain`, `high_stakes`. |
+| `seed`, `resamples` | Bootstrap seed and resamples (100-20000, default 2000). |
+| `effects` | `recorded_only`, the only allowed value. |
+
+The server then:
+
+1. **Gathers evidence**: the last 50 finished runs of the type and their [trace-monitor findings](/api/agency/runs#get-trace-monitor-findings) by check and node, your 5 latest eval runs (failed cases of this type), Decision Runtime metrics for the graph's S1 decision kinds over 30 days (decisions, mean confidence, abstain share, share under `min_confidence`, oracle share), and the baseline evaluation's failures and replay divergences by node.
+2. **Generates candidates** from the graph new runs use now (the active version), validates each through the task-type binder and the Factory graph validator plus the [guardrails](#guardrails), and discards invalid ones with the reason (`discarded`). Candidates are ranked by the evidence (for example, raising an S1 node's `min_confidence` ranks higher when the monitor reports low-confidence answers there), deduplicated, and the top `k` are kept.
+3. **Evaluates** the current graph (baseline) and every candidate on the same cases: the task type's shipped eval set and your suites, walked by the scripted runner on the candidate graph (no model, no effect), and recorded-only replays of the recent runs with a `graph_version` inline-candidate override.
+4. **Judges** each candidate by the acceptance rule and stores it as a proposal: `pending` if it passed, `failed_acceptance` if not, both with their reasons.
+
+The search runs in the request (`201`) unless it needs live model calls (the LLM proposer, or replays outside scripted mode); then it is accepted (`202`, `status: running`) and finishes in the background. Read it at `/v1/harness/searches/{search_id}`. A daily spending cap reached during the search fails it with `ERR_BUDGET_CAP_REACHED`.
+
+```bash
+curl -X POST https://api.allternit.com/v1/harness/proposals \
+  -H "Authorization: Bearer $ALLTERNIT_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"task_type": "RESEARCH_DOC", "k": 4, "replay_runs": 20}'
+```
+
+The search (`hsr_…`) carries `base` (the version evaluated against), `evidence`, `baseline` (metrics), `cases` (case keys), `candidates` (one line per evaluated candidate: `proposal_id`, `operator`, `target`, `status`, `passed`, `reasons`, `delta`), `discarded`, `not_evaluated`, `llm` (whether it was used, tokens, cost, candidates kept) and `pending` (the ids of passing proposals).
+
+### Mutation operators
+
+Each operator produces a graph that is valid by construction; it is still validated.
+
+| Operator | Change |
+|---|---|
+| `s2_to_s1` | An S2 (model) verification becomes an S1 pass/fail decision, with the old S2 step as its twin on the ESCALATE edge (abstentions and low confidence still reach it). |
+| `min_confidence_up` | Raise an S1 node's `min_confidence` by 0.1 (default 0.7, range 0.5-0.95): more answers escalate. |
+| `min_confidence_down` | Lower it by 0.1: more answers stay at S1. |
+| `add_verifier` | Insert a deterministic S0 existence check after a model step whose next step is not a verifier. |
+| `reorder_independent` | Swap two adjacent S0 steps that read nothing the other produces. |
+| `remove_redundant` | Drop an S0 step whose outputs no step reads. Whether it was really redundant is what the evals decide. |
+
+### LLM proposer
+
+With `llm: true` the planner model (through gizzi-code, tools off) gets the graph JSON and the evidence and is asked for `{"candidates": [{"rationale", "patch"}]}`, where `patch` is an RFC 6902 JSON Patch (`add`, `remove`, `replace`, `move`, `copy`, `test`; at most 32 operations). Every patch is applied all-or-nothing and validated like an operator's candidate; a patch that fails to apply, does not bind, or breaks a guardrail is discarded with the reason. The call is metered on the usage ledger and checked against the same daily caps as replays and evals. In scripted mode (`ALLTERNIT_AGENCY_COGNITION=scripted`) no model is called and the LLM yields no candidates.
+
+### Guardrails
+
+Every candidate, from an operator or the model, must keep:
+
+- the completion gate (`ver.check_acceptance_evidence`) and its edges, the completion nodes, and every POLICY and WAIT node exactly as they were;
+- for every criterion of the task type's completion contract, a VERIFY, POLICY, WAIT or CONTROL node that produces its evidence;
+- write authority: no node gains a write set, and every writing node still runs after the POLICY nodes that guarded it;
+- at most 4 added nodes.
+
+## Acceptance rule
+
+Baseline and candidate are compared on the cases graded on both sides. A candidate passes only if all hold:
+
+1. **No high-stakes failure.** Default `high_stakes: "no_new"`: a high-stakes case that passed on the baseline must not fail. `"none"`: no high-stakes case may fail at all.
+2. **Better, or as good and cheaper.** Pass rate ≥ baseline + `min_gain` (default 0.05, five points), **or** pass rate ≥ baseline − `epsilon` (default 0.02) **and** cost or latency improves by at least `efficiency_gain` (default 0.10).
+3. **Not a likely regression.** The lower bound of the paired percentile-bootstrap 95% interval of the pass-rate delta is above −`epsilon`.
+
+Cost and latency are measured (USD, milliseconds) when the replayed runs have them, else counted in units over the visited steps (cost: S1 1, S2 10, S3 30; latency: S0 1, S1 2, S2 10, S3 20). The proposal's `acceptance` gives `passed`, `reasons` (one line per rule), `baseline_pass_rate`, `candidate_pass_rate`, `delta`, `delta_ci95`, `cost_change`, `latency_change` (relative, with their basis), `new_high_stakes_failures` and the `rule` used.
+
+## Proposals
+
+A proposal (`hpr_…`) is what an admin reviews: `operator`, `target`, `rationale`, `base` (version and graph id it was evaluated against), `acceptance`, `metrics` (`baseline` and `candidate`: graded, passed, pass rate, cost, latency, failing stop nodes, replay divergences by node), per-case results, the `evidence`, the candidate `graph`, the `patch` (LLM candidates) and a readable `diff`:
+
+```json
+{
+  "summary": [
+    "- node G02",
+    "+ edge G01 -> G03 (NORMAL)",
+    "- edge G01 -> G02 (NORMAL)",
+    "- edge G02 -> G03 (NORMAL)"
+  ],
+  "nodes_added": [], "nodes_removed": ["G02"], "nodes_changed": {},
+  "edges_added": ["G01 -> G03 (NORMAL)"], "edges_removed": ["G01 -> G02 (NORMAL)", "G02 -> G03 (NORMAL)"]
+}
+```
+
+`status` is `pending`, `failed_acceptance`, `approved`, `rejected` or `rolled_back`; `history` lists every transition with who and when.
+
+Pending proposals are an admin-facing list (`GET /v1/harness/proposals?status=pending`), not [attention requests](/api/agency/attention): an attention request belongs to a run and resolves back into it, and a proposal has no run to park or resume.
+
+## Approve, reject, roll back
+
+```http
+POST /v1/harness/proposals/{proposal_id}/approve
+POST /v1/harness/proposals/{proposal_id}/reject
+POST /v1/harness/versions/{task_type}/rollback
+```
+
+All take an optional `{"note": "..."}` (at most 2000 bytes).
+
+- **Approve** a `pending` proposal: the candidate is re-validated and registered as the task type's next graph **version** (`general.task.v2`, `general.task.v3`, …) and becomes active. The shipped graph files are never edited; version 1 is always the shipped graph. A proposal evaluated against a version that is no longer active is refused with `409 ERR_HARNESS_STALE` (propose again); one that is not pending with `409 ERR_HARNESS_NOT_PENDING`.
+- **Reject** a `pending` proposal.
+- **Roll back**: new runs go back to the version that was active before the current one (versions form a stack; rolling back the last approved version returns to the shipped graph). The rolled-back version keeps `rolled_back_at` and its proposal becomes `rolled_back`. With nothing to roll back: `409 ERR_HARNESS_NOTHING_TO_ROLL_BACK`.
+
+The registry (`GET /v1/harness/versions/{task_type}`) shows `active_version`, the `stack`, and every version with its `graph_id`, `proposal_id`, `parent_version`, `approved_by`, `approved_at` and `rolled_back_at`.
+
+### Which version a run uses
+
+A run takes the active version when it is created and keeps it: its TaskIR carries `graph_version` (`task_type`, `graph_id`, `version`, `graph`), and the executor, the trace monitor and replays of that run use that graph. Approving or rolling back changes new runs only; runs in flight finish on the graph they started with. Runs on the shipped graph carry no `graph_version`.
+
+## Audit
+
+Every transition is recorded (`hau_…`): `proposal.created`, `proposal.approved`, `proposal.rejected`, `version.rolled_back`, each with the `actor`, time, task type, proposal id, versions involved and the note.
+
+## Errors
+
+| Code | Status | When |
+|---|---|---|
+| `ERR_PERMISSION_DENIED` | 403 | The caller is not a decisions admin. |
+| `ERR_INPUT_INVALID`, `ERR_INPUT_UNSUPPORTED` | 400 | A bad field (`param` names it), or `effects` other than `recorded_only`. |
+| `ERR_NOT_FOUND` | 404 | Unknown proposal, search, suite or task type. |
+| `ERR_HARNESS_NOT_PENDING` | 409 | Approve or reject of a proposal that is not pending. |
+| `ERR_HARNESS_STALE` | 409 | The proposal was evaluated against another version than the active one. |
+| `ERR_HARNESS_INVALID` | 422 | The candidate no longer validates at approval. |
+| `ERR_HARNESS_NOTHING_TO_ROLL_BACK` | 409 | The task type runs the shipped graph. |
+| `ERR_BUDGET_CAP_REACHED` | 429 | A daily spending cap stops the LLM proposer or a live replay. |

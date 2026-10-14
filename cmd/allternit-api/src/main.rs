@@ -868,6 +868,13 @@ async fn main() {
         shutdown_tx.subscribe(),
     );
 
+    // Managed session worker: executes queued /beta/work session and
+    // deployment runs through Gizzi (ALLTERNIT_SESSION_WORKER=0 disables).
+    allternit_api::session_worker::spawn_session_worker(
+        Arc::clone(&state),
+        shutdown_tx.subscribe(),
+    );
+
     // Desktop capacity monitor and autoscale signaler.
     {
         let period = std::time::Duration::from_secs(
@@ -1021,6 +1028,8 @@ async fn main() {
         .merge(memory_reconstruction_router())
         .merge(allternit_api::memory_notes_routes::memory_notes_router())
         .merge(allternit_api::memory_consolidation::memory_consolidation_router())
+        .merge(allternit_api::memory_chunks::memory_chunks_router())
+        .merge(allternit_api::memory_entity_pages::memory_entity_pages_router())
         .merge(research_task_router())
         .merge(user_profile_router())
         .merge(canvas_router())

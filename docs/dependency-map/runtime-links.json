@@ -119,6 +119,12 @@
       "label": "cloud computer guest (in-VM agent)",
       "kind": "module",
       "path": "allternit/cmd/allternit-computer-cloud/guest"
+    },
+    {
+      "id": "allternit/hardware/usb-agent",
+      "label": "Allternit USB Agent firmware",
+      "kind": "module",
+      "path": "allternit/hardware/usb-agent"
     }
   ],
   "edges": [
@@ -385,7 +391,7 @@
     },
     {
       "source": "allternit/cmd/allternit-api/src/computer_*",
-      "target": "allternit/cmd/allternit-api/src/agency_api",
+      "target": "allternit/cmd/allternit-api/src/agency_api/decisions",
       "kind": "in-process call: run_subtask's typed decisions (decisions::decide_value, kinds element/verify), the safety monitor (kind safety), the Best-of-N judge (kind judge, fast tiers then oracle under the cost cap) and their outcomes (decisions::record_outcome)",
       "evidence": [
         "allternit/cmd/allternit-api/src/computer_subtask.rs",
@@ -397,7 +403,7 @@
       ]
     },
     {
-      "source": "allternit/cmd/allternit-api/src/agency_api",
+      "source": "allternit/cmd/allternit-api/src/agency_api/decisions",
       "target": "allternit/domains/decision-runtime",
       "kind": "HTTP POST /v1/score on loopback (ALLTERNIT_DECISIONS_LOCAL_URL + token)",
       "evidence": [
@@ -440,6 +446,25 @@
         "allternit-ai/src/components/computers/ComputerTransferControls.tsx",
         "allternit/cmd/allternit-api/src/computer_history.rs",
         "allternit/cmd/allternit-api/src/computer_transfer.rs"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/allternit-desktop",
+      "target": "allternit/hardware/usb-agent",
+      "kind": "TCP USBA/1 on port 7300, board dials in over Wi-Fi (found via mDNS _allternit-usba._tcp): mutual HMAC handshake, signed sequenced input commands; USB serial setup (prov: Wi-Fi, desk id, 32-byte key)",
+      "evidence": [
+        "allternit/surfaces/allternit-desktop/src/main/phone-usb-agent-protocol.ts",
+        "allternit/surfaces/allternit-desktop/src/main/phone-usb-agent-provision.ts",
+        "allternit/hardware/usb-agent/firmware/usb_agent/usb_agent.ino"
+      ]
+    },
+    {
+      "source": "allternit-ai/src/components/computers",
+      "target": "allternit/surfaces/allternit-desktop",
+      "kind": "Electron IPC phone:* (Android pairing, screenshots) and phone:usb-* (USB Agent setup, calibrate, stop, forget)",
+      "evidence": [
+        "allternit/surfaces/allternit-desktop/src/preload/index.ts",
+        "allternit-ai/src/lib/phones-bridge.ts"
       ]
     }
   ]

@@ -94,9 +94,10 @@ export const MODEL_PRESETS: Record<string, ModelConfig> = {
     topP: 0.9,
     numPredict: 400,
   },
-  // Embeddings (still using specialized model)
+  // Embeddings: served by the shared EmbeddingGemma 2 endpoint (VectorStore),
+  // not by Ollama.
   embed: {
-    name: 'mxbai-embed-large',
+    name: 'google/embeddinggemma-2',
     temperature: 0,
     topP: 1.0,
     numPredict: 0,

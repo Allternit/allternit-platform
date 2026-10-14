@@ -490,6 +490,33 @@ export const KeywordEmbedding: EmbeddingProvider = {
   },
 }
 
+/**
+ * Allternit embedding provider: the shared EmbeddingGemma 2 server
+ * (tools/system-one-local/laya/serve-embed.sh) that allternit-api's memory
+ * index, the memory agent and open-notebook also use, so gizzi's memories
+ * share one local vector space with the rest of Allternit. Free and local.
+ */
+export function createAllternitEmbedder(
+  url = process.env.ALLTERNIT_EMBED_URL || "http://127.0.0.1:7719",
+  model = process.env.ALLTERNIT_EMBED_MODEL || "google/embeddinggemma-2",
+): EmbeddingProvider {
+  const base = url.replace(/\/+$/, "")
+  return {
+    name: `allternit:${model}`,
+    dimensions: 768,
+    async embed(text: string): Promise<number[]> {
+      const res = await fetch(`${base}/v1/embeddings`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ input: [text], model, input_type: "document" }),
+      })
+      if (!res.ok) throw new Error(`Allternit embed error: ${res.status}`)
+      const data = (await res.json()) as { data: { embedding: number[] }[] }
+      return data.data[0].embedding
+    },
+  }
+}
+
 /** OpenAI embedding provider */
 export function createOpenAIEmbedder(apiKey: string, model = "text-embedding-3-small"): EmbeddingProvider {
   return {

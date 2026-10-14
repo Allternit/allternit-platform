@@ -289,6 +289,8 @@ pub mod memory_drive_cowork;
 pub mod memory_drive_text_import;
 #[cfg(test)]
 mod memory_drive_tests;
+pub mod memory_chunks;
+pub mod memory_entity_pages;
 pub mod memory_index;
 pub mod memory_extraction;
 pub mod memory_relations;
@@ -331,6 +333,7 @@ pub mod skills_routes;
 pub mod skill_catalog_install;
 pub mod server_tool_routes;
 pub mod session_memory_service;
+pub mod session_worker;
 pub mod slack_webhook_routes;
 pub mod ssh_key_routes;
 pub mod ssh_routes;

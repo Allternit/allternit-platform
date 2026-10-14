@@ -203,6 +203,10 @@
       ],
       "decisions": [
         {
+          "on": "2026-10-13",
+          "note": "Gap closure: website/app products need the person's consent once per account (needs_consent); extra turns on one website/desktop subscription queue in order with a visible status instead of failing; AAI contexts persist across gateway restarts; GET /aai/events/stream (SSE); one broken adapter no longer blocks the rest; Managed Agents streams events and answers custom tools (POST /threads/:id/gateway/tool-result); bots with no allowlist ask before shell, writes and web fetches (GIZZI_BOT_BYPASS_PERMISSIONS=1 restores the old default). Live vendor verification remains an owner-run gate (scripts/e2e/gateway-live-check.sh)."
+        },
+        {
           "on": "2026-10-12",
           "note": "One-step POST /gateway/connect replaces the manual account/state/discover/bind/READY walk; the step-by-step wizard stays as the advanced path. Only Grok Bot is verified live; the web-subscription and dots lanes are offline-verified only."
         }
@@ -210,7 +214,8 @@
       "evidence": [
         "allternit/docs/gateway/QUICKSTART.md",
         "allternit/docs/gateway/AAI_REST.md",
-        "allternit/cmd/allternit-api/src/gateway_connect.rs"
+        "allternit/cmd/allternit-api/src/gateway_connect.rs",
+        "allternit/scripts/e2e/gateway-live-check.sh"
       ]
     },
     {
@@ -629,6 +634,10 @@
       ],
       "decisions": [
         {
+          "on": "2026-10-13",
+          "note": "Managed sessions now execute: an in-process session worker in allternit-api (session_worker.rs) leases queued /beta/work session and deployment tasks, runs them as Gizzi turns with the agent's model, system prompt and effective permissions, appends tool_calls/agent_message events (budget and approval gating apply), honors interrupt/stop and fails retryably when Gizzi is down. ALLTERNIT_SESSION_WORKER=0 disables it; tasks with a sandbox_image are left for external workers."
+        },
+        {
           "on": "2026-10-07",
           "note": "Phases 3 to 5 deployed; P4 channels and twin merged (#1394)."
         },
@@ -779,7 +788,7 @@
       "status": "building",
       "description": "POST /v1/decisions (alias /v1/systemone) in allternit-api's Agency Kernel: one choice over up to 255 caller options, answered by the owned local scorer (one-pass option scoring on MLX or llama.cpp, Qwen3.5-4B), escalating under a per-kind threshold to optional vendor adapters (off by default, per project) and the planner model through gizzi, within a latency budget, with abstain. Every decision and its outcome is stored (V245 decisions). The flywheel (V247) runs registered heads in shadow, promotes/demotes them on outcome accuracy with hysteresis and an audit trail, and serves live heads first (head.lookup: exact-match over past outcomes, <10 ms). GET/PUT /v1/decisions/heads.",
       "touches": [
-        "allternit/cmd/allternit-api/src/agency_api",
+        "allternit/cmd/allternit-api/src/agency_api/decisions",
         "allternit/domains/decision-runtime",
         "allternit/surfaces/allternit-desktop"
       ],
@@ -1058,6 +1067,48 @@
       ]
     },
     {
+      "id": "feature:agency-descent",
+      "label": "Agency Descent (decision flywheel)",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Agency work moves down the tiers as it repeats: open-weight and trained decision heads, opt-in training data (per-org consent, DLP-redacted, shared heads), the Descent dashboard (tier mix, cheap share, escalations, oracle spend) and memory recall in Agency runs.",
+      "touches": [
+        "allternit-ai/src/views/settings",
+        "allternit-ai/src/lib/agent-rules",
+        "allternit/cmd/allternit-api/src/kernel_ui",
+        "allternit/cmd/allternit-api/src/agency_api/decisions",
+        "allternit/cmd/allternit-api/src/agency_api/task_types",
+        "allternit/cmd/allternit-api/src/agency_api/replays",
+        "allternit/cmd/allternit-api/src/agency_api/evals",
+        "allternit/cmd/allternit-api/src/agency_api/harness",
+        "allternit/cmd/allternit-api/src/agency_api/memory_*",
+        "allternit/cmd/allternit-api/src/agency_api/monitor_*",
+        "allternit/domains/decision-runtime"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-12",
+          "note": "Training data is opt-in per organization; trained decision heads are shared across opted-in organizations; open-weight baselines instead of paid decision vendors; cloud test first. No GPU: trained heads train and run on CPU."
+        },
+        {
+          "on": "2026-10-13",
+          "note": "C2 + C5: a deterministic trace monitor checks every terminal run (no sampling) and stores findings (GET /v1/runs/:id/findings); an optional trace.error decision, labelled by the deterministic verdict, lets a head learn it later. Evals are trajectory graders over recorded-only replays or the scripted runner (/v1/evals/*), with regression cases promoted from runs and a manual CI gate (scripts/agency-eval-gate.mjs, 2 pp drop / any high-stakes failure). Replay and eval live model calls count against the same daily spend caps as runs."
+        },
+        {
+          "on": "2026-10-13",
+          "note": "Live S1 decisions in all six Agency graphs (journaled, never re-decided); CPU-trained decision heads (head.embed over EmbeddingGemma 2, head.rules compiled to S0) trained as background jobs on pooled opted-in data; replay overrides and replay-backed acceptance for head promotion; entity pages in memory recall; harness learning (C6): workflow edits proposed by deterministic operators or the planner model, scored on evals + recorded-only replays, accepted by a VERA-style rule and versioned only after human approval, with rollback."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/api/agency/decisions.mdx",
+        "allternit/surfaces/docs/api/agency/evals.mdx",
+        "allternit/cmd/allternit-api/src/agency_api/monitor.rs",
+        "allternit/cmd/allternit-api/src/agency_api/evals/mod.rs",
+        "allternit-ai/src/views/settings/agent-rules/DescentTab.tsx",
+        "allternit-ai/src/views/settings/agent-rules/DecisionTrainingCard.tsx"
+      ]
+    },
+    {
       "id": "feature:background-tasks",
       "label": "Background tasks pane",
       "product": "product:ai-allternit",
@@ -1115,6 +1166,48 @@
         "allternit-ai/src/views/code/CodeFilesPane.test.tsx",
         "allternit-ai/src/views/code/CodeDiffPanel.tsx",
         "allternit/surfaces/docs/surfaces/native-agent.mdx"
+      ]
+    },
+    {
+      "id": "feature:bot-phones",
+      "label": "Bots operate real phones",
+      "product": "product:computer-use",
+      "status": "live",
+      "description": "A bot sees and operates a real phone through one set of phone.* tools: a spare Android over Wi-Fi (adb + Google ARTEMIS), or an iPhone with an Allternit USB Agent (USB mouse/keyboard board + AirPlay mirror). Connected in Desktop; usable from every surface.",
+      "touches": [
+        "allternit/surfaces/allternit-desktop",
+        "allternit/hardware/usb-agent",
+        "allternit-ai/src/components/computers",
+        "allternit-ai/src/lib"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-02",
+          "note": "Lane 2a: Android over Wi-Fi with QR wireless-debugging pairing, adb downloaded and SHA-verified (never bundled), ARTEMIS sidecar for plain-English tasks; texts and calls need a native approval, are rate limited and block emergency numbers (#1197)."
+        },
+        {
+          "on": "2026-10-13",
+          "note": "Old services/android-bridge connector retired: it needed a harness that exists only on one machine and its send_sms had no approval or rate limit (#1517)."
+        },
+        {
+          "on": "2026-10-13",
+          "note": "Allternit USB Agent (Eoj named it): iPhone with no app, no Mac Mirroring and no developer account. ESP32-S3 USB HID board + UxPlay AirPlay receiver (GPL-3.0, separate process, PIN-protected) + calibration and closed-loop aiming adapted from esp32-iphone-agent (MIT). USBA/1: mutual HMAC handshake, per-connection session key, signed sequenced commands, boots disarmed, only the button arms it, lease and auto-disarm; key set only over USB. Same phone.* tools; phone.home/back/key added for both platforms. Not yet checked with a real board on Eoj's iPhone 17 Pro."
+        },
+        {
+          "on": "2026-10-13",
+          "note": "Opening Settings no longer downloads adb for people with no Android phone; the tool gateway starts on its own for iPhone-only users."
+        },
+        {
+          "on": "2026-10-14",
+          "note": "One-step setup: Desktop ships the USB Agent firmware (reproducible image + SHA-256 manifest, built by hardware/usb-agent/build-firmware.sh; source public, Eoj OK'd publishing) and Set up flashes it with esptool-js over Web Serial before writing Wi-Fi and the key. Desktop allows serial only for first-party pages and Espressif boards (VID 0x303A), auto-picked. Boards on older firmware show Update available."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/phone-for-your-bot.mdx",
+        "allternit/surfaces/docs/guides/usb-agent.mdx",
+        "allternit/hardware/usb-agent/README.md",
+        "allternit/surfaces/allternit-desktop/src/main/phone-tools.ts",
+        "allternit/surfaces/allternit-desktop/src/main/phone-usb-agent.ts"
       ]
     }
   ],

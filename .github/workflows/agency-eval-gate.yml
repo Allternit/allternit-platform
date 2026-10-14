@@ -1,0 +1,61 @@
+name: Agency eval gate
+
+# C5 regression gate for the Agency kernel: runs the shipped task-type eval
+# sets and the committed eval suites offline (scripted runner: no model, no
+# effect, no secrets) and fails on a pass-rate drop of more than 2 percentage
+# points against cmd/allternit-api/src/agency_api/evals/baseline.v1.json, or on
+# any failed high-stakes (all-of-k) case.
+#
+# Manual only: it needs a debug build of allternit-api, which takes far longer
+# than five minutes on a GitHub-hosted runner, so it is not a required check.
+# The same offline report is also asserted against the baseline by
+# `cargo test -p allternit-api` (agency_api::evals::tests::eval_gate_offline_report),
+# which the deploy workflow's test gate runs before every deploy.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Add swap
+        run: |
+          sudo fallocate -l 12G /swapfile2 && sudo chmod 600 /swapfile2
+          sudo mkswap /swapfile2 && sudo swapon /swapfile2
+
+      - name: Install protobuf compiler
+        timeout-minutes: 10
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-agency-eval-gate-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-agency-eval-gate-
+
+      - name: Gate script self-test
+        run: node --test scripts/agency-eval-gate.test.mjs
+
+      - name: Eval gate
+        env:
+          CARGO_BUILD_JOBS: "2"
+        run: node scripts/agency-eval-gate.mjs

@@ -96,12 +96,13 @@ When no backend answers and `allow_abstain` is false, the response is `503` with
 
 ## Backends and escalation
 
-The router walks the chain in order (default `head,local,vendor,typesafe,oracle`, set with `ALLTERNIT_DECISIONS_CHAIN`). It stops at the first answer at or over the kind's threshold; a later answer replaces an earlier one. Backends that are not configured are left out; backends that cannot see images are skipped for a decision that carries one.
+The router walks the chain in order (default `head,local,open,vendor,typesafe,oracle`, set with `ALLTERNIT_DECISIONS_CHAIN`). It stops at the first answer at or over the kind's threshold; a later answer replaces an earlier one. Backends that are not configured are left out; backends that cannot see images are skipped for a decision that carries one.
 
 | Backend | What it is | On by default |
 |---|---|---|
 | `local` | The owned scorer sidecar: one-pass option scoring (ported from open-jev, MIT). MLX on Apple silicon; llama.cpp on Windows, Linux, Intel Macs and cloud hosts. Default model Qwen3.5-4B (Apache-2.0); `ALLTERNIT_DECISIONS_MODEL=gemma-3-4b` switches to Gemma 3 4B (set `HF_TOKEN` if your mirror is gated). Text only. | Yes, wherever Allternit Desktop runs it (`ALLTERNIT_DECISIONS_LOCAL_URL`) |
 | `head` | The slot for the decision kind's live flywheel heads (see [The flywheel](#the-flywheel)). Empty until a head earns promotion; a head that has no answer passes the decision on. Text only. | Yes, but empty until a head is live |
+| `open` | A self-hosted open-weight decision model over the Jev/SystemOne wire format (`POST /v1/systemone`, one `choice` question, the options as criteria): Liquid d1-3B (the decision sidecar's `systemone` engine, or llama-server), Cloudflare Clef / Clef-flash (SGLang), vLLM-SR d3. Text only. Not metered and not vendor-gated: it is ours. Model: `ALLTERNIT_DECISIONS_OPEN_MODEL` (default `LiquidAI/d1-3B`); optional bearer token `ALLTERNIT_DECISIONS_OPEN_TOKEN`. | No: needs `ALLTERNIT_DECISIONS_OPEN_URL` |
 | `vendor` | Adapter for a hosted vendor decisions API (its public beta `POST /v1/decisions`: one `choice` question, the options as choices, text and image input). Metered by the vendor. | No: needs `ALLTERNIT_DECISIONS_VENDOR_KEY` **and** the project enabled |
 | `typesafe` | TypeSafe Jev adapter (`POST /v1/systemone`, one `choice` question, the options as criteria). Text only. Metered by the vendor. | No: needs `ALLTERNIT_DECISIONS_TYPESAFE_KEY` **and** the project enabled |
 | `oracle` | The planner model through gizzi, like every other model call. Sees images. The escalation path and the source of labels. Model: `ALLTERNIT_DECISIONS_ORACLE_MODEL=provider/model`, else your default model. | Yes (`ALLTERNIT_DECISIONS_ORACLE=0` turns it off) |
@@ -119,6 +120,40 @@ Both vendor backends are off by default and gated twice: the key has to be confi
 To compare backends on the same decisions, run `domains/decision-runtime/bench/compare_backends.py`. It sends each case once per backend through `/v1/decisions` (same adapters as production) and prints a latency and accuracy table. It refuses metered backends unless `--allow-metered` is passed.
 
 Thresholds per kind: `default` 0.6, `verify` 0.8, `safety` 0.9, `escalate` 0.7. Override with a JSON object in `ALLTERNIT_DECISIONS_THRESHOLDS`, for example `{"default": 0.5, "element": 0.55}`.
+
+### Native decision models (`systemone` engine)
+
+The sidecar can also run a native decision model instead of option scoring on a chat model: `python -m allternit_decisions --engine systemone` (model preset `d1-3b`, Liquid d1-3B at a pinned revision, LFM Open License v1.0). It answers `/v1/score` as usual and also serves `POST /v1/systemone`, so the same process can back both `local` and `open`. It needs `transformers>=5.14`, `torch`, `torchvision` and `pillow` (installed on first use) and about 6 GB of weights. Liquid reports 8 ms per decision on an RTX 4090 and 30 ms on an M5 Pro; on a 4-core cloud CPU in float32 it measured about 6.5 s, so give it a GPU or Apple silicon in production.
+
+## Training data (opt-in)
+
+Decisions can become training data for the flywheel's trained heads, but only for organizations that opt in.
+
+- `GET /v1/decisions/training` shows your scope (your organization, or you without one), whether it opted in, and how many examples are stored and labelled.
+- `PUT /v1/decisions/training` `{"opted_in": true}` opts in. Organization admins only. `{"opted_in": false}` opts out and **deletes** the scope's stored examples.
+- While opted in, each decision stores its context, question and options, DLP-redacted, next to the answer that served it. Labels come from outcomes (`PATCH /v1/decisions/:id` with a `label`, or the served choice on `success`; a `failure` marks it wrong) or, until one arrives, from a confident answer of a teacher backend (`oracle`, `open`, `vendor`, `typesafe`).
+- `GET /v1/decisions/datasets/:kind` exports the labelled examples as JSONL in the Jev/SystemOne shape (`state`, `questions`, `answers`), ready for a decision fine-tune. `?scope=mine` (default, organization admins) exports your scope; `?scope=all` pools every opted-in scope with no scope or owner ids in the rows (decisions admins, `ALLTERNIT_DECISIONS_ADMINS`). Trained heads are shared across opted-in organizations.
+
+## Decisions inside agency runs
+
+Agency task types (`GENERAL_TASK`, `THREAD_WORK`, `COMPUTER_USE`, `RESEARCH_DOC`, `TEMPLATE`, `CAMPAIGN`) run a compute graph whose steps sit on tiers: S0 deterministic, S1 decisions, S2 generation, S3 deep solving. A step with `cognitive_role: "S1"` is a live decision: the run calls the Decision Runtime in-process as the run's owner, scoped to the run's `metadata.project_id` for vendor gating, with `session_id` set to the run id and `task` to `<run id>:<node id>`, so the decision shows in `GET /v1/decisions/:id`, `/v1/descent` and, for opted-in organizations, the harvested training data.
+
+The step's decision is declared in the node's `extensions["x-decision"]`:
+
+```json
+{ "kind": "verify", "question": "Does the result meet the goal?",
+  "options": [{ "id": "pass", "text": "The result meets the goal." },
+              { "id": "fail", "text": "The result does not meet the goal." }],
+  "pass": ["pass"] }
+```
+
+`options_from` takes the options from an earlier step's output instead (a JSON array, or one per line). `min_confidence` raises the bar above the kind's threshold, and `backends` overrides the chain. The chosen option id is written to the step's outputs. `routes` maps an option id to a step the node has an edge to. A routed choice goes to that step. Otherwise a choice in `pass` (default: any option) continues along the normal edge, and any other choice fails the run. An abstention, an answer under the threshold, or no backend answering fails the step over to its ESCALATE edge. In the shipped graphs that edge leads to an S2 twin of the step (`x-twin_of`). Every shipped task type's "review against the goal" step is an S1 `verify` decision.
+
+Runs are deterministic. The runtime takes the argmax over option probabilities and never samples, and a tie goes to the earlier option. The answer is journaled per run and step before the run acts on it, so a re-drive or replay serves the journaled answer and never asks again. When the run completes with verified evidence, its decisions get the `success` outcome with the chosen option as the label. When verification fails, they get `failure`. A decision whose own choice failed the run gets no outcome, because whether that choice was right is unknown. This labelling is best effort. Under the scripted executor (`ALLTERNIT_AGENCY_COGNITION=scripted`), `scripted.json` can name the option per step (`"decide": {"G05": "fail"}`, or `"abstain"`). Without one, the first option is chosen.
+
+## Descent metrics
+
+`GET /v1/descent?days=30` reports whether work is moving down the tiers, over your decisions in the window: per decision kind and in total, how many each tier answered (`rules`, `head`, `local`, `open`, `vendor`, `oracle`), the `cheap_share` (rules + head + local + open), the `oracle_share`, the `escalation_rate`, the mean latency and the oracle's spend in USD. `daily` gives the cheap share per day; it should rise as heads are trained and promoted.
 
 ### The local scorer
 
@@ -140,14 +175,14 @@ PATCH /v1/decisions/{id}
 | `label` | string | The option id that was right, when known (from the oracle, a person or a verifier). |
 | `detail` | string | Up to 4000 bytes. |
 
-Returns the stored decision. `GET /v1/decisions/{id}` returns it too. The store keeps the context's sha256, never the context itself, plus the options, choice, probabilities, backend, latency, attempts and outcome. These rows are the training data for the trained heads, and an outcome also feeds the flywheel below.
+Returns the stored decision. `GET /v1/decisions/{id}` returns it too. The store keeps the context's sha256, never the context itself, plus the options, choice, probabilities, backend, latency, attempts and outcome. The context text is kept only for organizations that opted in to [training data](#training-data-opt-in), DLP-redacted, and an outcome relabels that example and feeds the flywheel below.
 
 ## The flywheel
 
 A **head** is a tiny, fast decider registered for a decision kind. It earns its place on live traffic:
 
 1. **Shadow.** Every decision of the kind runs each registered head after the answer is stored, off the latency path. The head's choice is kept next to the served choice and, once you report it, the outcome.
-2. **Promotion.** When a head's accuracy against outcomes reaches the kind's bar over a minimum number of labelled answers, and its confidence is not higher than its accuracy, it goes **live**: it is tried first in the chain (the `head` slot). If it has no answer, or answers under the threshold, the decision escalates as usual.
+2. **Promotion.** When a head's accuracy against outcomes reaches the kind's bar over a minimum number of labelled answers, and its confidence is not higher than its accuracy, it goes **live**: it is tried first in the chain (the `head` slot). If it has no answer, or answers under the threshold, the decision escalates as usual. When a [replay set](#replay-evidence) exists for the kind, the head must also pass it.
 3. **Demotion.** When a live head's accuracy drops under a lower bar, it goes back to shadow. Metrics count only answers since the last change of state, so every state has to be earned again.
 
 Every change of state, automatic or by hand, is audited with the metrics that caused it. Outcomes count as follows: `success` confirms `label` (or the served choice); `failure` with a different `label` names the right option, otherwise it rules out the served choice; `error` and `skipped` do not count.
@@ -161,10 +196,39 @@ Every change of state, automatic or by hand, is audited with the metrics that ca
 | `window` | 1000 | Most recent answers the metrics look at. |
 | `max_overconfidence` | 0.05 | Mean confidence may exceed accuracy by at most this much. |
 | `auto_promote` | `true` (`false` for `safety`) | A `safety` head never goes live by itself. |
+| `replay_epsilon` | 0.01 | With replay evidence, the head's accuracy may trail the served baseline by at most this. |
+| `replay_k` | 5 | Samples per decision for pass@k on nondeterministic heads. |
 
 Override per kind with JSON in `ALLTERNIT_DECISIONS_FLYWHEEL`, for example `{"default": {"min_samples": 300}, "element": {"promote_at": 0.98}}`.
 
 The first head is **`head.lookup`**: an exact-match lookup over your own past outcomes. Same kind, same context, same question and the same options in the same order: it answers with the option that succeeded there before (one success gives 0.67, five give 0.86; failures count against it). It reads one indexed row and answers in well under 10 ms. It never sees images, it learns from the first outcome of each decision only, and it is per account. With no traffic it stays in shadow.
+
+### Trained heads (CPU)
+
+Two more heads are trained from the pooled [training data](#training-data-opt-in) by a decisions admin (`ALLTERNIT_DECISIONS_ADMINS`). Both train and run on CPU, deterministically, in milliseconds; each new version starts in **shadow** (audited) and has to earn promotion like any head, so a retrain sends a live head back to shadow. They only run for kinds that have a stored version.
+
+- **`head.embed`** — `POST /v1/decisions/heads/train/{kind}`. Embeds the state (context + question) and each option with the shared embedding model (EmbeddingGemma 2 at `ALLTERNIT_EMBED_URL`), then fits a pairwise scorer: logistic regression over `[state ⊙ option, |state − option|, cosine]`, a softmax over the decision's options, zero-initialized, fixed epochs, L2, no randomness (the same data gives bit-identical weights; see `weights_sha256`). About 20% of examples, chosen by a hash of their content, are held out; the metrics report validation accuracy against the labels and against baselines on the same split (`head.lookup` exact match, the most frequent label, the untrained cosine choice). A version records the embedding model it was trained on and never scores vectors from another one: while the embedding server is down it trains on (and only then answers with) the hash fallback, which performs worse. Needs at least 20 labelled examples.
+- **`head.rules`** — `POST /v1/decisions/heads/compile/{kind}`. For kinds whose labels follow simple features, compiles a readable decision list (`if` a word is in the state `then` the option with a given id, the one whose id or text has a given word, or the option at a position). It is kept only when it is 100% right on its training split, at most 32 rules, and at least 0.98 right on the validation split over 50+ examples (10+ held out); otherwise the call returns `422` and nothing is stored. It answers with no model call and no embedding: `/v1/descent` counts it as its own tier, `rules` (S0), part of the cheap share.
+
+Both run as a background job and answer `202` with it at once: `GET /v1/decisions/heads/jobs/{id}` (decisions admins) shows its `status` (`queued`, `running`, `succeeded`, `failed`), `progress` (texts embedded of the total), and when it ends the new version with its metrics (`result`) or the reason it failed (`error`, for example too few examples or a rule list that is not clean). Only one job per head and kind can be queued or running; another request gets `409`. A job interrupted by a server restart is marked failed. In a [replay](#replay-evidence), `overrides.decision_heads` can name a trained head with a stored version, `{"head": "head.rules", "version": 2}` (the newest when `version` is left out; an unknown version is refused). It re-decides only decisions with a harvested example, since `decisions` keeps only the context's hash, and never answers for a decision that version was trained on (its leave-one-out). `head.embed` embeds those decisions before re-deciding. Replay evidence is per version: after a retrain, the head has to be replayed again before it can be promoted. `GET /v1/decisions/heads/{head}/{kind}/versions` lists every version (metrics, dataset hash, embedding model, the rules; never the weights), and `GET /v1/decisions/heads` shows each head's latest `model` version.
+
+### Replay evidence
+
+Before a head goes live you can test it against past runs: a [batch replay](/api/agency/replays#batch-replays) with `overrides.decision_heads` re-decides the labelled decisions of recent finished runs with the head (as it stands now, minus each decision's own outcome) and compares it with what was served on the same decisions. A batch run by a decisions admin is stored as the kind's **replay evidence**. When a kind has replay evidence, promotion from shadow to live additionally requires the latest evidence to pass:
+
+- the replay set has labelled decisions;
+- accuracy ≥ baseline − `replay_epsilon`, where the baseline is the served choice and the head's accuracy is the system's with the head live (its confident answer, otherwise the chain's served answer);
+- and the head is cheaper **or** faster than the baseline (lower mean cost, or lower mean latency).
+
+The evidence also reports pass@1 and pass@k (`replay_k`). A nondeterministic head is sampled k times per decision; a deterministic head (every registered head today, including `head.lookup`) is sampled once, so its pass@k equals its pass@1. The promotion's audit entry carries the evidence id (`metrics.replay_evidence_id`) and the checks it passed. A kind with no replay evidence is promoted on the live bar alone, as before; demotion is unchanged.
+
+### Run the acceptance check
+
+```http
+POST /v1/decisions/heads/{head}/{kind}/acceptance
+```
+
+Decisions admins only. Runs the promotion check for one head and kind without changing anything, and says why it passes or fails: `passed`, `reason`, `live_bar` (met or not, and why), the live `metrics` and `bar`, and `replay` (the latest evidence with each check: `labelled`, `accuracy`, `cost_or_latency`, plus `pass_at_1` / `pass_at_k`), or `null` when the kind has no replay set.
 
 ### List heads
 

@@ -2,6 +2,8 @@
 
 Self-hosted sandbox workers poll this endpoint for tasks rather than receiving pushed work. The protocol is intentionally small: lease, heartbeat, acknowledge, or stop.
 
+Session runs (`POST /beta/sessions/:id/run`, `POST /sessions` with `input`, `user.message`) and deployment runs also land on this queue. Unless `ALLTERNIT_SESSION_WORKER=0`, the node's in-process session worker leases and executes every session- or deployment-tied task that has no `sandbox_image`; tasks with a `sandbox_image` are left for external workers.
+
 All routes are nested under `/api/v1/beta/work`.
 
 > Base URL: `http://localhost:8013/api/v1`  

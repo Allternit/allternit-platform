@@ -119,6 +119,17 @@ describe.runIf(posix)('spawnSidecar', () => {
     await exited;
   });
 
+  it('passes extra pipes from fd 4 on through to the command (fd 3 stays the lifeline)', async () => {
+    const child = spawnSidecar('/bin/sh', ['-c', 'echo frame >&4; [ -e /dev/fd/3 ] && echo leaked >&4; exit 0'], {
+      stdio: ['ignore', 'ignore', 'ignore', 'ignore', 'pipe'],
+    });
+    let got = '';
+    (child.stdio[4] as NodeJS.ReadableStream).on('data', (d: Buffer) => (got += d.toString()));
+    await new Promise((r) => child.once('exit', r));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(got).toBe('frame\n');
+  });
+
   it('keeps spawn()\'s native ENOENT for a missing absolute binary', async () => {
     const child = spawnSidecar('/nonexistent/allternit-sidecar', []);
     const err = await new Promise<NodeJS.ErrnoException>((resolve) => child.once('error', resolve));
