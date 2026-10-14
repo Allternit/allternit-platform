@@ -2,7 +2,17 @@
 
 ## Unreleased
 
+## 2.2.4 (2026-10-14)
+
 ### Added
+- Background tasks: `bash` with `run_in_background` runs the command as a
+  durable background task. Its output streams as `background.task.updated`,
+  the exit code settles it, and `task_stop` kills the process tree. Not
+  available while the session runs in a VM. Background subagents use the
+  same task record, so Desktop and the web can show a background-tasks pane.
+- `createAllternitEmbedder`: brain memories can embed through the shared
+  local EmbeddingGemma 2 server (`ALLTERNIT_EMBED_URL`, default
+  `http://127.0.0.1:7719`), the same vector space allternit-api uses.
 - Artifacts v2 model tools for every model: `artifact_create`,
   `artifact_update` and `artifact_read`. They save to the cloud store
   (`/api/v2/artifacts`) when gizzi has a credential; otherwise the result
@@ -10,6 +20,10 @@
   under the same id. CLI agents get them over the session MCP bridge too.
   `GIZZI_DISABLE_ARTIFACT_TOOLS=1` hides them; `GIZZI_ARTIFACTS_OFFLINE=1`
   skips the cloud.
+
+### Changed
+- Bots with no allowlist now ask before running shell commands, writing
+  files or fetching from the web.
 
 ## 2.2.3 (2026-10-07)
 
