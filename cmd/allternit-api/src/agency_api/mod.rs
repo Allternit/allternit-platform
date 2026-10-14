@@ -255,11 +255,19 @@ pub fn agency_router() -> Router<Arc<AppState>> {
 /// Read aliases for the Kernel UI: the paired-runtime relay only forwards
 /// `/api/v1/*`, and `/api/v1/runs` belongs to Cowork, so runs are read at
 /// `/v1/kernel/runs/{id}[/events]` (nested under `/api` in `main.rs`). Same
-/// handlers, auth and version layer as `/v1/runs/{id}[/events]`. The Kernel
-/// UI's flywheel views (training opt-in, Descent) read the decision routes
-/// the same way: `/api/v1/decisions/{training,heads,datasets/:kind}` and
-/// `/api/v1/descent`.
+/// handlers, auth and version layer as `/v1/runs/{id}[/events]`.
 pub fn kernel_alias_router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/v1/kernel/runs/:run_id", get(get_run))
+        .route("/v1/kernel/runs/:run_id/events", get(run_events))
+        .layer(axum::middleware::from_fn(version_layer))
+}
+
+/// [`kernel_alias_router`] plus the decision routes the Kernel UI's flywheel
+/// views read (training opt-in, Descent). Nested under `/api` only, giving
+/// `/api/v1/decisions/{training,heads,datasets/:kind}` and `/api/v1/descent`:
+/// at the root they would collide with [`agency_router`]'s own `/v1/...`.
+pub fn kernel_api_alias_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/v1/kernel/runs/:run_id", get(get_run))
         .route("/v1/kernel/runs/:run_id/events", get(run_events))
