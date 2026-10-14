@@ -433,6 +433,7 @@ async fn send_held(state: &Arc<AppState>, owner: &str, approval_id: &str) -> Val
         Ok(crate::channel_gateway::SendOutcome::Sent { .. }) | Ok(crate::channel_gateway::SendOutcome::Replay { .. }) => json!({ "state": "sent" }),
         Ok(crate::channel_gateway::SendOutcome::Unconfirmed { .. }) => json!({ "state": "unconfirmed" }),
         Ok(crate::channel_gateway::SendOutcome::Rejected(m)) => json!({ "state": "rejected", "error": m }),
+        Ok(crate::channel_gateway::SendOutcome::RateLimited { retry_after_secs, .. }) => json!({ "state": "rate_limited", "retryAfterSecs": retry_after_secs }),
         Ok(_) => json!({ "state": "not_sent" }),
         Err(e) => json!({ "state": "error", "error": e }),
     }

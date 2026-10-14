@@ -180,6 +180,9 @@ impl ChannelTransport for WhatsAppBusinessTransport {
     fn provider(&self) -> &'static str {
         "whatsapp"
     }
+    fn capabilities(&self) -> crate::channel_gateway::Capabilities {
+        crate::channel_gateway::Capabilities { text: true, threads: false, history: false, files_out: false, files_in: false, reactions: true, edits: false, delivery_receipts: true, per_bot_identity: false }
+    }
     fn verify(&self, secret: &str, headers: &HeaderMap, body: &[u8]) -> Result<(), String> {
         WhatsAppTransport { http: self.http.clone(), access_token: None, own_identity: None }.verify(secret, headers, body)
     }
@@ -205,7 +208,9 @@ impl ChannelTransport for WhatsAppBusinessTransport {
                 .map(|id| Receipt { remote_id: id.to_string(), relayed: true })
                 .ok_or_else(|| PostError::Uncertain("the cloud accepted the send but returned no message id".into())),
             409 => Err(PostError::Rejected("outside_24h_window: WhatsApp only allows a template message after 24 hours of silence".into())),
-            503 => Err(PostError::Rejected("whatsapp_not_configured".into())),
+            429 => Err(PostError::rate_limited(&resp.body)),
+            // The cloud's "not set up here" answer is definite; any other 503 may be an outage.
+            503 if crate::channel_transports::not_configured(&resp.body) => Err(PostError::Rejected("whatsapp_not_configured".into())),
             500..=599 => Err(PostError::Uncertain(format!("cloud returned {}", resp.status))),
             s => Err(PostError::Rejected(format!("cloud returned {s}: {}", resp.body))),
         }
