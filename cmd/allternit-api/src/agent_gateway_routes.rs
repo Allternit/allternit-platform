@@ -675,9 +675,19 @@ pub(crate) fn adapter_for_auth(vendor: &str, auth_type: &str) -> Option<&'static
         ("google", "browser_session") => Some("gemini-subscription"),
         ("microsoft", "browser_session") => Some("copilot-subscription"),
         ("hermes", _) => Some("hermes"),
-        _ => None,
+        // Bot-project connectors register under their vendor id, whatever the credential shape.
+        (v, _) => DIRECT_ADAPTER_VENDORS.iter().copied().find(|d| *d == v),
     }
 }
+
+/// Bot-project connectors whose gateway adapter id is the vendor id itself
+/// (services/subscription-gateway/adapters/<id>). Without this, an account for
+/// them reaches the gateway with no adapter and every call is UNSUPPORTED.
+pub(crate) const DIRECT_ADAPTER_VENDORS: &[&str] = &[
+    "openclaw", "openmausbot", "codync", "hivekeep", "invisible-dots", "opendots-copilotkit", "openmuse-copilotkit",
+    "openbot-copilotkit", "ds-bot", "openbot-nightly", "rakazo", "frockbot", "sidemates", "nanomuse", "vellum-assistant",
+    "gawkbot", "opendots-anil", "munder-difflin", "happy", "iris", "poke", "instinct", "flip", "cue", "pally",
+];
 
 /// `agent.list` for an account's vendor adapter, via a transient binding.
 pub(crate) async fn discover_agents(db: &DbHandle, tx: &dyn crate::gateway_runner::AaiTransport, owner: &str, aid: &str) -> Result<Vec<Value>, (StatusCode, String, String)> {
@@ -1904,6 +1914,10 @@ mod tests {
         assert_eq!(adapter_for_auth("kimi", "browser_session"), Some("kimi-subscription"));
         assert_eq!(adapter_for_auth("google", "browser_session"), Some("gemini-subscription"));
         assert_eq!(adapter_for_auth("google", "api_key"), None);
+        assert_eq!(adapter_for_auth("openmausbot", "api_key"), Some("openmausbot"));
+        assert_eq!(adapter_for_auth("poke", "api_key"), Some("poke"));
+        assert_eq!(adapter_for_auth("abacusai", "browser_session"), Some("abacusai-bot-subscription"));
+        assert_eq!(adapter_for_auth("unknown-vendor", "api_key"), None);
         assert_eq!(adapter_for_auth("microsoft", "browser_session"), Some("copilot-subscription"));
         assert_eq!(adapter_for_auth("microsoft", "desktop_session"), None);
         assert_eq!(adapter_for_auth("hermes", "local_endpoint"), Some("hermes"));

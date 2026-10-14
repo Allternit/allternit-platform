@@ -1221,7 +1221,8 @@
         "allternit-ai/src/lib/gateway",
         "allternit-ai/src/views/agent-view",
         "allternit/cmd/allternit-api",
-        "allternit/services/subscription-gateway"
+        "allternit/services/subscription-gateway",
+        "allternit-ai/src/lib/bots"
       ],
       "decisions": [
         {
@@ -1235,6 +1236,10 @@
         {
           "on": "2026-10-14",
           "note": "Eoj: every project should connect. Browser sign-in and Messages routes are used where no API exists; projects that would need a large separate bridge (Noodle's QUIC Hub link) or reverse engineering (Omnibots) are on hold."
+        },
+        {
+          "on": "2026-10-14",
+          "note": "Eoj: all connected bots must talk together in group chats and look like their own product. Vendor members now answer inline in rooms through their connector with the room history (one standing thread per room), never a native model; each connector has its own look pack (brand accent + logo; Messages assistants use an iMessage face). allternit-api routes direct connectors by vendor id (DIRECT_ADAPTER_VENDORS) so account discovery works."
         }
       ],
       "evidence": [
