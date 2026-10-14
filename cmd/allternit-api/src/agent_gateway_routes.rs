@@ -666,6 +666,10 @@ pub(crate) fn adapter_for_auth(vendor: &str, auth_type: &str) -> Option<&'static
         ("openai", "browser_session") => Some("chatgpt-subscription"),
         ("openai", "desktop_session") => Some("chatgpt-dots"),
         ("kimi", "browser_session") => Some("kimi-subscription"),
+        // Gemini Spark and Slashy are their own vendors (not google/Gemini chat), so their browser logins get their own adapters.
+        ("gemini-spark", "browser_session") => Some("gemini-spark-subscription"),
+        ("slashy", "browser_session") => Some("slashy-subscription"),
+        ("abacusai", "browser_session") => Some("abacusai-bot-subscription"),
         // Google/Microsoft browser logins run on their web adapters (the
         // gemini-web / copilot-web pools the accounts sign in through).
         ("google", "browser_session") => Some("gemini-subscription"),

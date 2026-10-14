@@ -388,6 +388,7 @@ export class AaiHost {
 const VENDOR_NAMES: Record<string, string> = {
   grok: "Grok", xai: "Grok", openai: "ChatGPT", chatgpt: "ChatGPT", anthropic: "Claude", claude: "Claude",
   kimi: "Kimi", moonshot: "Kimi", google: "Gemini", gemini: "Gemini", copilot: "Copilot", microsoft: "Copilot", github: "Copilot",
+  abacusai: "Abacus.AI", "abacus-ai": "Abacus.AI", "gemini-spark": "Gemini Spark",
 };
 const vendorName = (v: string) => VENDOR_NAMES[v.toLowerCase()] ?? (v ? v[0].toUpperCase() + v.slice(1) : "vendor");
 
