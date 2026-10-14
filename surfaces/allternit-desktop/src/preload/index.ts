@@ -656,7 +656,7 @@ const permissionGuideAPI = {
   },
 };
 
-// ─── Phones (Lane 2a: Android over Wi-Fi) ─────────────────────────────────────
+// ─── Phones (Android over Wi-Fi; iPhone over an Allternit USB Agent) ─────────────────────────────────────
 
 const phonesAPI = {
   status: (): Promise<unknown> => ipcRenderer.invoke('phone:status'),
@@ -669,6 +669,21 @@ const phonesAPI = {
   tryOpenApp: (serial: string, app: string): Promise<{ ok: boolean; message?: string }> => ipcRenderer.invoke('phone:try-open-app', serial, app),
   screenshot: (serial: string): Promise<{ ok: boolean; dataBase64?: string; message?: string }> => ipcRenderer.invoke('phone:screenshot', serial),
   installArtemis: (): Promise<unknown> => ipcRenderer.invoke('phone:artemis-install'),
+  home: (serial: string): Promise<{ ok: boolean; message?: string }> => ipcRenderer.invoke('phone:home', serial),
+  usbStatus: (): Promise<unknown> => ipcRenderer.invoke('phone:usb-status'),
+  usbPorts: (): Promise<string[]> => ipcRenderer.invoke('phone:usb-ports'),
+  usbIdentify: (port: string): Promise<unknown> => ipcRenderer.invoke('phone:usb-identify', port),
+  usbSetup: (port: string, ssid: string, password: string, name: string): Promise<unknown> =>
+    ipcRenderer.invoke('phone:usb-setup', port, ssid, password, name),
+  usbFirmware: (): Promise<unknown> => ipcRenderer.invoke('phone:usb-firmware'),
+  usbCalibrate: (boardId: string): Promise<{ ok: boolean; message?: string }> => ipcRenderer.invoke('phone:usb-calibrate', boardId),
+  usbStop: (boardId: string): Promise<{ ok: boolean; message?: string }> => ipcRenderer.invoke('phone:usb-stop', boardId),
+  usbForget: (boardId: string): Promise<void> => ipcRenderer.invoke('phone:usb-forget', boardId),
+  onUsbDevices: (handler: (boards: unknown) => void): (() => void) => {
+    const listener = (_: IpcRendererEvent, boards: unknown) => handler(boards);
+    ipcRenderer.on('phone:usb-devices', listener);
+    return () => ipcRenderer.removeListener('phone:usb-devices', listener);
+  },
   onDevices: (handler: (phones: unknown) => void): (() => void) => {
     const listener = (_: IpcRendererEvent, phones: unknown) => handler(phones);
     ipcRenderer.on('phone:devices', listener);

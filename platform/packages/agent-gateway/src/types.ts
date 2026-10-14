@@ -53,7 +53,15 @@ export interface OpenContextInput {
   adoptContextId?: string;
 }
 export interface OpenContextResult { contextId: string; isolation: ContextIsolation; guarantee: Guarantee; resumed: boolean }
-export interface MessageInput { contextId: string; correlationId: string; text: string }
+export interface MessageInput {
+  contextId: string; correlationId: string; text: string;
+  /**
+   * Optional. When set, this message answers a vendor custom tool call that the agent is waiting on (an
+   * `agent.tool.called` event with `payload.custom === true` and the same `toolUseId`) instead of starting a new
+   * user turn; `text` is the tool's result content. Providers without custom tools ignore or reject it.
+   */
+  toolResult?: { toolUseId: string; isError?: boolean };
+}
 export interface MessageResult { messageId: string; correlationId: string; reply?: string; guarantee: Guarantee }
 export interface SteerInput { contextId: string; text: string }
 export interface CancelResult { confirmed: boolean }
@@ -100,4 +108,24 @@ export interface AaiProvider {
   snapshot(input: { agentId: string }): Promise<AaiResult<SnapshotResult>>;
   sync(input: { agentId: string }): Promise<AaiResult<SyncResult>>;
   health(input: { agentId?: string }): Promise<AaiResult<HealthResult>>;
+}
+
+// ---- persistence (optional provider extension) ----
+/**
+ * What a host stores to bring a context back after it restarts. `state` is opaque to the host (the provider's own
+ * client-side conversation, event log and cursor); `conversationKeys` names the vendor-side conversation, if any.
+ */
+export interface ContextSnapshot { agentId?: string; conversationKeys?: Record<string, string>; state?: unknown }
+/**
+ * Optional: a provider whose contexts survive a host restart. The host saves `exportContext` after each turn and,
+ * for a context this process has not seen, calls `restoreContext` before the first op on it. Both are synchronous
+ * and never reach the vendor. `restoreContext` returns false when the snapshot cannot be used.
+ */
+export interface PersistentContexts {
+  exportContext(contextId: string): ContextSnapshot | undefined;
+  restoreContext(contextId: string, snapshot: ContextSnapshot): boolean;
+}
+export function isPersistentContexts(p: unknown): p is PersistentContexts {
+  const o = p as Partial<PersistentContexts> | null;
+  return !!o && typeof o.exportContext === "function" && typeof o.restoreContext === "function";
 }

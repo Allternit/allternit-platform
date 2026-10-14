@@ -333,6 +333,7 @@ pub mod skills_routes;
 pub mod skill_catalog_install;
 pub mod server_tool_routes;
 pub mod session_memory_service;
+pub mod session_worker;
 pub mod slack_webhook_routes;
 pub mod ssh_key_routes;
 pub mod ssh_routes;

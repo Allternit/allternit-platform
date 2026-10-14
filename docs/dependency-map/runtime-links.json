@@ -121,6 +121,12 @@
       "path": "allternit/cmd/allternit-computer-cloud/guest"
     },
     {
+      "id": "allternit/hardware/usb-agent",
+      "label": "Allternit USB Agent firmware",
+      "kind": "module",
+      "path": "allternit/hardware/usb-agent"
+    },
+    {
       "id": "external:openmausbot-local-api",
       "label": "openmausbot authenticated local API",
       "kind": "external",
@@ -482,6 +488,25 @@
         "allternit-ai/src/components/computers/ComputerTransferControls.tsx",
         "allternit/cmd/allternit-api/src/computer_history.rs",
         "allternit/cmd/allternit-api/src/computer_transfer.rs"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/allternit-desktop",
+      "target": "allternit/hardware/usb-agent",
+      "kind": "TCP USBA/1 on port 7300, board dials in over Wi-Fi (found via mDNS _allternit-usba._tcp): mutual HMAC handshake, signed sequenced input commands; USB serial setup (prov: Wi-Fi, desk id, 32-byte key)",
+      "evidence": [
+        "allternit/surfaces/allternit-desktop/src/main/phone-usb-agent-protocol.ts",
+        "allternit/surfaces/allternit-desktop/src/main/phone-usb-agent-provision.ts",
+        "allternit/hardware/usb-agent/firmware/usb_agent/usb_agent.ino"
+      ]
+    },
+    {
+      "source": "allternit-ai/src/components/computers",
+      "target": "allternit/surfaces/allternit-desktop",
+      "kind": "Electron IPC phone:* (Android pairing, screenshots) and phone:usb-* (USB Agent setup, calibrate, stop, forget)",
+      "evidence": [
+        "allternit/surfaces/allternit-desktop/src/preload/index.ts",
+        "allternit-ai/src/lib/phones-bridge.ts"
       ]
     },
     {

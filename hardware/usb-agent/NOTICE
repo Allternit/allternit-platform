@@ -1,0 +1,42 @@
+Allternit USB Agent includes code adapted from esp32-iphone-agent
+(https://github.com/onehumanbeing/esp32-iphone-agent), used under the MIT License:
+
+  - firmware/usb_agent/usb_agent.ino   (from hardware/hid_bridge/hid_bridge.ino: paced pointer
+                                        moves, key combos, USB wake handling, watchdog)
+  - surfaces/allternit-desktop/src/main/phone-usb-agent-pointer.ts   (from server/hidagent/phone.py)
+  - surfaces/allternit-desktop/src/main/phone-usb-agent-vision.ts    (from server/hidagent/vision.py)
+  - surfaces/allternit-desktop/src/main/phone-airplay.ts             (approach of server/hidagent/screen.py)
+
+Allternit added the authenticated USBA/1 protocol, provisioning over USB, the
+arm button, the lease and auto-disarm, and the Desktop integration.
+
+MIT License
+
+Copyright (c) 2026 Henry Yuan
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+The firmware image Desktop ships (surfaces/allternit-desktop/resources/phone/usb-agent)
+is built from firmware/usb_agent with the arduino-esp32 core (LGPL-2.1) and ESP-IDF
+(Apache-2.0). Their source and this firmware's full source are public, so the image
+can be rebuilt and relinked with hardware/usb-agent/build-firmware.sh. Desktop flashes
+it with esptool-js (Apache-2.0, Espressif).
+
+UxPlay (https://github.com/FDH2/UxPlay, GPL-3.0) is NOT included. Allternit
+Desktop starts a separately installed `uxplay` program as its own process.

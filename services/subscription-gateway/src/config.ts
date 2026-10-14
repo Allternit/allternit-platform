@@ -43,7 +43,10 @@ export interface Config {
   // AAI host (/aai/*). disabled = per-adapter kill switch (env SUBS_GATEWAY_AAI_DISABLED, csv of adapterIds);
   // loopback = the Allternit-bot provider reaching allternit-api (base default `${apiBase}/api/v1`,
   // SUBS_GATEWAY_AAI_LOOPBACK_BASE / _BOTS csv; bearer via SUBS_GATEWAY_AAI_LOOPBACK_TOKEN).
-  aai: { disabled: string[]; loopbackBaseUrl: string; loopbackBots: string[] };
+  // queueWaitMs / queueMax: turns on one UI-bridge account (desktop app, subscription tab) run up to the lane's
+  // maxParallel at once and the rest wait in order, at most queueMax of them for at most queueWaitMs
+  // (SUBS_GATEWAY_AAI_QUEUE_WAIT_MS, default 600000; SUBS_GATEWAY_AAI_QUEUE_MAX, default 8).
+  aai: { disabled: string[]; loopbackBaseUrl: string; loopbackBots: string[]; queueWaitMs?: number; queueMax?: number };
   // Close a subscription's Chrome after this many idle minutes (no task in
   // flight for the account); the next task relaunches it. Default 10 (same as the cloud computer image): resident
   // Chromes for every account pinned a Sessions computer at load ~190 and hung
@@ -178,6 +181,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       disabled: csvList(env[`${ENV_PREFIX}AAI_DISABLED`]),
       loopbackBaseUrl: env[`${ENV_PREFIX}AAI_LOOPBACK_BASE`] ?? `${env[`${ENV_PREFIX}API_BASE`] ?? "http://127.0.0.1:18013"}/api/v1`,
       loopbackBots: csvList(env[`${ENV_PREFIX}AAI_LOOPBACK_BOTS`]),
+      queueWaitMs: positiveInt(env[`${ENV_PREFIX}AAI_QUEUE_WAIT_MS`], 600_000, `${ENV_PREFIX}AAI_QUEUE_WAIT_MS`),
+      queueMax: positiveInt(env[`${ENV_PREFIX}AAI_QUEUE_MAX`], 8, `${ENV_PREFIX}AAI_QUEUE_MAX`),
     },
     laneIdleCloseMin: nonNegativeInt(env[`${ENV_PREFIX}LANE_IDLE_MIN`], 10, `${ENV_PREFIX}LANE_IDLE_MIN`),
   };

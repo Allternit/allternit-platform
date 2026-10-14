@@ -912,6 +912,17 @@ fn bridge_event(db: &DbHandle, cx: &Cx, remote: &Value, ev: &Value) -> Result<bo
         return Ok(false);
     }
     match ty {
+        // A vendor agent paused on a custom tool only Allternit can run
+        // (Claude Managed Agents): the thread needs someone to answer it via
+        // POST /threads/:id/gateway/tool-result.
+        "agent.task.updated" if ev["payload"]["kind"] == "needs_attention" => {
+            let tools: Vec<String> = ev["payload"]["customToolCalls"]
+                .as_array()
+                .map(|a| a.iter().filter_map(|c| c["name"].as_str().or_else(|| c.as_str()).map(str::to_string)).collect())
+                .unwrap_or_default();
+            let line = if tools.is_empty() { "The agent is waiting for a tool result".to_string() } else { format!("The agent is waiting for: {}", tools.join(", ")) };
+            set_thread_status(db, &cx.bot_id, &cx.thread_id, "needs_you", &line);
+        }
         "agent.approval.requested" => {
             let rref = ev["payload"]["approvalId"].as_str().or(remote_event).unwrap_or_default();
             let action = ev["payload"]["action"].as_str().or_else(|| ev["payload"]["summary"].as_str()).unwrap_or("vendor approval");
@@ -957,6 +968,38 @@ pub async fn sync_thread(db: &DbHandle, tx: &dyn AaiTransport, owner: &str, thre
     let sid = sid.ok_or_else(|| RunErr::new(404, "NOT_FOUND", "thread not found"))?;
     let Some(cx) = resolve(db, &sid)? else { return Ok(0) };
     let Some(remote) = remote_for(db, &cx.thread_id, cx.generation)?.filter(|r| s(r, "state") == "ACTIVE") else { return Ok(0) };
+    Ok(pull_events(db, tx, &cx, &remote).await?.0)
+}
+
+/// Answer a vendor agent's custom tool call (`agent.tool.called` with
+/// `custom: true`): the result goes back on the thread's open remote context
+/// as `agent.context.message` with `toolResult`, then the vendor's next events
+/// are pulled into the thread.
+pub async fn answer_tool_call(db: &DbHandle, tx: &dyn AaiTransport, owner: &str, thread_id: &str, tool_use_id: &str, result: &str, is_error: bool) -> Result<usize, RunErr> {
+    if tool_use_id.trim().is_empty() {
+        return Err(RunErr::new(400, "BAD_REQUEST", "toolUseId is required"));
+    }
+    let conn = db.connect()?;
+    let sid: Option<String> = conn
+        .query_row(
+            "SELECT s.session_id FROM bot_thread_sessions s JOIN bot_threads t ON t.id = s.thread_id WHERE t.id = ?1 AND t.user_id = ?2 ORDER BY s.generation DESC LIMIT 1",
+            params![thread_id, owner],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let sid = sid.ok_or_else(|| RunErr::new(404, "NOT_FOUND", "thread not found"))?;
+    let cx = resolve(db, &sid)?.ok_or_else(|| RunErr::new(409, "NOT_VENDOR_BOUND", "this thread's bot is not bound to a vendor agent"))?;
+    let remote = remote_for(db, &cx.thread_id, cx.generation)?
+        .filter(|r| s(r, "state") == "ACTIVE")
+        .ok_or_else(|| RunErr::new(409, "CONTEXT_LOST", "the vendor conversation for this thread is not open"))?;
+    let input = json!({
+        "contextId": s(&remote, "externalContextId"),
+        "correlationId": format!("tool-{tool_use_id}"),
+        "text": result,
+        "toolResult": { "toolUseId": tool_use_id, "isError": is_error },
+    });
+    vcall(db, tx, &cx.owner, "agent.context.message", &cx.exec, input).await.map_err(|e| fail(db, &cx, Some(&remote), &e))?;
+    set_thread_status(db, &cx.bot_id, &cx.thread_id, "working", "Tool result sent");
     Ok(pull_events(db, tx, &cx, &remote).await?.0)
 }
 
@@ -1163,6 +1206,26 @@ pub fn gateway_runner_router() -> Router<Arc<AppState>> {
         .route("/threads/:id/approvals", get(list_approvals_h))
         .route("/threads/:id/gateway/sync", post(sync_h))
         .route("/gateway/approvals/:id/respond", post(respond_h))
+        .route("/threads/:id/gateway/tool-result", post(tool_result_h))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ToolResultBody {
+    tool_use_id: String,
+    result: String,
+    #[serde(default)]
+    is_error: bool,
+}
+
+async fn tool_result_h(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(thread_id): Path<String>, Json(b): Json<ToolResultBody>) -> Response {
+    let Some(rt) = RUNTIME.get() else {
+        return RunErr::new(503, "GATEWAY_OFFLINE", "the agent gateway is not connected").into_response();
+    };
+    match answer_tool_call(&state.db, rt.tx.as_ref(), &user.user_id, &thread_id, &b.tool_use_id, &b.result, b.is_error).await {
+        Ok(n) => Json(json!({ "sent": true, "events": n })).into_response(),
+        Err(e) => e.into_response(),
+    }
 }
 
 #[derive(Deserialize)]
@@ -1627,6 +1690,29 @@ mod tests {
         let c = st.db.connect().unwrap();
         let gens: i64 = c.query_row("SELECT MAX(generation) FROM bot_thread_sessions WHERE thread_id='th-vendor'", [], |r| r.get(0)).unwrap();
         assert_eq!(gens, 2);
+    }
+
+    #[tokio::test]
+    async fn a_custom_tool_call_needs_you_until_its_result_is_sent_back() {
+        let st = setup("toolresult").await;
+        let f = Fake::default();
+        f.push(json!({ "type": "agent.tool.called", "remote_event_id": "e1", "payload": { "custom": true, "toolUseId": "tu-1", "name": "lookup_order", "input": { "id": 7 } } }));
+        f.push(json!({ "type": "agent.task.updated", "remote_event_id": "e2", "payload": { "kind": "needs_attention", "reason": "custom_tool_result_required", "customToolCalls": [{ "toolUseId": "tu-1", "name": "lookup_order" }] } }));
+        turn(&st, &f, "s-th-vendor", "where is order 7?", key("k1")).await.unwrap();
+        assert_eq!(thread_status(&st), "needs_you");
+        let line: String = st.db.connect().unwrap().query_row("SELECT status_line FROM bot_threads WHERE id='th-vendor'", [], |r| r.get(0)).unwrap();
+        assert!(line.contains("lookup_order"), "{line}");
+        // Only the owner's thread, only with a tool id.
+        assert_eq!(answer_tool_call(&st.db, &f, "user-b", "th-vendor", "tu-1", "x", false).await.unwrap_err().code, "NOT_FOUND");
+        assert_eq!(answer_tool_call(&st.db, &f, "user-a", "th-vendor", " ", "x", false).await.unwrap_err().code, "BAD_REQUEST");
+        assert_eq!(answer_tool_call(&st.db, &f, "user-a", "th-native", "tu-1", "x", false).await.unwrap_err().code, "NOT_VENDOR_BOUND");
+        f.push(json!({ "type": "agent.message.completed", "remote_event_id": "e3", "payload": { "text": "Order 7 shipped." } }));
+        answer_tool_call(&st.db, &f, "user-a", "th-vendor", "tu-1", "{\"status\":\"shipped\"}", false).await.unwrap();
+        let sent = f.calls.lock().unwrap().iter().rev().find(|(op, _)| op == "agent.context.message").unwrap().1.clone();
+        assert_eq!(sent["toolResult"], json!({ "toolUseId": "tu-1", "isError": false }));
+        assert_eq!(sent["text"], "{\"status\":\"shipped\"}");
+        assert_eq!(sent["contextId"], "ctx-1");
+        assert_ne!(thread_status(&st), "needs_you");
     }
 
     #[tokio::test]

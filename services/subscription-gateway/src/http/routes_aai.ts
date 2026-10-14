@@ -1,4 +1,4 @@
-// POST /aai/call, GET /aai/providers, POST /aai/conformance/:adapterId — AAI v0.1 host.
+// POST /aai/call, GET /aai/events/stream (SSE), GET /aai/providers, POST /aai/conformance/:adapterId — AAI v0.1 host.
 // Auth: the gateway-wide bearer middleware (applied before this router) + scope checks below.
 // Both AAI success and AAI failure answer HTTP 200 ({ok,value} | {ok:false,error}); only transport
 // problems (bad body, unknown adapter) use non-200.
@@ -58,6 +58,61 @@ export function aaiRouter(deps: GatewayDeps): Router {
     const result = await runWithCallScope({ binding: binding.data, credential }, () =>
       host.call(body.op as string, binding.data, (body.input as Record<string, unknown> | undefined) ?? {}));
     res.status(200).json(result);
+  });
+
+  /**
+   * SSE over `agent.events`: `event: aai` / `id: <cursor>` / `data: <wire event>` per event, resuming after the
+   * `Last-Event-ID` header (else `?cursor`). The provider is polled every pollMs; `: hb` heartbeats keep proxies open.
+   * A failed read is sent as `event: error` (`data: AAIError`); a retryable one keeps polling, any other ends the stream.
+   * Binding: `?binding=<json>` (same shape as /aai/call), else the binding the context was opened with, else
+   * `?adapterId` alone.
+   */
+  router.get("/aai/events/stream", requireScope("tasks:read"), async (req: Request, res: Response) => {
+    if (!host) { res.status(503).json({ error: "aai_host_unavailable" }); return; }
+    const q = req.query as Record<string, unknown>;
+    const contextId = typeof q.contextId === "string" ? q.contextId : "";
+    let rawBinding: unknown;
+    if (typeof q.binding === "string") {
+      try { rawBinding = JSON.parse(q.binding); } catch { rawBinding = undefined; }
+    } else if (typeof q.adapterId === "string" && q.adapterId) {
+      rawBinding = host.contexts?.get(q.adapterId, contextId)?.binding ?? { id: "sse", type: "vendor", adapterId: q.adapterId };
+    }
+    const binding = botExecutionBindingSchema.safeParse(normalizeWireBinding(rawBinding));
+    if (!contextId || !binding.success || (typeof q.adapterId === "string" && binding.data.adapterId !== q.adapterId)) {
+      res.status(400).json({ error: "invalid_query", detail: "expected ?contextId and ?adapterId (or ?binding=<BotExecutionBinding json>)" });
+      return;
+    }
+    const lastEventId = req.header("last-event-id");
+    let cursor: string | undefined = lastEventId || (typeof q.cursor === "string" && q.cursor ? q.cursor : undefined);
+    const pollMs = deps.aaiStream?.pollMs ?? 500;
+    const heartbeatMs = deps.aaiStream?.heartbeatMs ?? 15_000;
+
+    res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive", "x-accel-buffering": "no" });
+    res.write(`retry: ${Math.max(1000, pollMs * 2)}\n: connected\n\n`);
+    let closed = false;
+    let timer: NodeJS.Timeout | undefined;
+    const heartbeat = setInterval(() => { if (!closed) res.write(": hb\n\n"); }, heartbeatMs);
+    const stop = () => { if (closed) return; closed = true; clearInterval(heartbeat); if (timer) clearTimeout(timer); res.end(); };
+    req.on("close", stop);
+
+    const poll = async (): Promise<void> => {
+      if (closed) return;
+      const r = await host.call("agent.events", binding.data, { contextId, ...(cursor !== undefined ? { cursor } : {}) });
+      if (closed) return;
+      let wait = pollMs;
+      if (r.ok) {
+        const v = r.value as { events: Array<Record<string, unknown> & { cursor: string }>; cursor?: string };
+        for (const e of v.events) res.write(`id: ${e.cursor}\nevent: aai\ndata: ${JSON.stringify(e)}\n\n`);
+        if (v.events.length) cursor = v.events[v.events.length - 1].cursor;
+        else if (typeof v.cursor === "string" && v.cursor) cursor = v.cursor;
+      } else {
+        res.write(`event: error\ndata: ${JSON.stringify(r.error)}\n\n`);
+        if (!r.error.retryable) { stop(); return; }
+        wait = Math.max(pollMs, r.error.retryAfterMs ?? 0);
+      }
+      timer = setTimeout(() => { void poll(); }, wait);
+    };
+    void poll();
   });
 
   router.get("/aai/providers", requireScope("tasks:read"), async (_req: Request, res: Response) => {

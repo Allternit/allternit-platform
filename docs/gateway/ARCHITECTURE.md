@@ -8,7 +8,7 @@ Spec (source of intent): `Allternit Brain/Research/specs/agent-gateway.md`. Inde
 
 ## 1. Premise
 
-Any vendor's bot can work in Allternit and stay itself. Vendors enter through one interface, AAI. AAI is canonical: REST + SSE, the SDKs, the MCP server and the A2A card are facades over it ([FACADES.md](FACADES.md)). Allternit itself implements AAI: an Allternit Bot is one more AAI provider (`LoopbackProvider`), which is how the conformance harness proves the contract without a vendor.
+Any vendor's bot can work in Allternit and stay itself. Vendors enter through one interface, AAI. AAI is canonical: REST, the SDKs, the MCP server and the A2A card are facades over it ([FACADES.md](FACADES.md)). allternit-api serves AAI events as a paged log (`GET /api/v1/threads/:id/events?after=`, which the SDKs' `streamEvents` polls), not as SSE. The one SSE stream of AAI events is the subscription gateway's own `GET /aai/events/stream`, which polls a provider's `agent.events` ([AAI_REST.md](AAI_REST.md#subscription-gateway-aai-host)). Allternit itself implements AAI: an Allternit Bot is one more AAI provider (`LoopbackProvider`), which is how the conformance harness proves the contract without a vendor.
 
 Rule for this code: nothing new is built where Allternit already had the part. Vendor work reuses `bot_threads`, the bot event ledger (`bot_events`) and `send_bot_turn`.
 
@@ -66,7 +66,7 @@ Mirror mode has an engine (`platform/packages/agent-gateway/src/mirror.ts`) but 
 |---|---|
 | Wire types, schemas, transition tables | `platform/packages/subscription-fabric-contracts/src/{agent,bindings,capability,events,vendor-pack,manifest,thread}.ts` |
 | Provider interface, router, loopback, conformance, Mirror, replay | `platform/packages/agent-gateway/src/{provider,router,loopback,conformance,mirror,replay}.ts` |
-| AAI host (`/aai/*`), kill switch, pacing, adapter loading | `services/subscription-gateway/src/aai/registry.ts`, `src/http/routes_aai.ts`, `src/aai/call-scope.ts` |
+| AAI host (`/aai/*`, incl. the `/aai/events/stream` SSE), kill switch, pacing, adapter loading, persisted contexts | `services/subscription-gateway/src/aai/{registry,context-store,call-scope}.ts`, `src/http/routes_aai.ts`; table `aai_contexts` (migration `0009`) |
 | Vendor adapters | `services/subscription-gateway/adapters/{grok-bot,claude-desktop,claude-managed-agents,chatgpt-dots,openclaw}`; macOS AX helper in `services/subscription-gateway/native/ax-bridge` |
 | Bindings, accounts, packs, gaps routes | `cmd/allternit-api/src/agent_gateway_routes.rs` |
 | Thread runner, event bridge, approvals | `cmd/allternit-api/src/gateway_runner.rs` |

@@ -44,8 +44,11 @@ async function handle(msg) {
     }
     if (msg.method === 'tools/call') {
       const result = await forward('/phone/call', { method: 'POST', body: JSON.stringify({ name: msg.params.name, arguments: msg.params.arguments || {} }) });
-      if (result.ok && result.mimeType === 'image/png') {
-        return send({ id: msg.id, result: { content: [{ type: 'image', data: result.dataBase64, mimeType: 'image/png' }] } });
+      if (result.ok && typeof result.mimeType === 'string' && result.mimeType.startsWith('image/') && result.dataBase64) {
+        // PNG from Android, JPEG of the AirPlay mirror from an iPhone. The size tells the bot the tap coordinate space.
+        const content = [{ type: 'image', data: result.dataBase64, mimeType: result.mimeType }];
+        if (result.width && result.height) content.push({ type: 'text', text: `Screenshot is ${result.width}x${result.height} px; tap coordinates are pixels of this image.` });
+        return send({ id: msg.id, result: { content } });
       }
       return send({ id: msg.id, result: { isError: !result.ok, content: [{ type: 'text', text: JSON.stringify(result) }] } });
     }

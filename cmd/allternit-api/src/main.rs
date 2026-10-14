@@ -848,6 +848,13 @@ async fn main() {
         shutdown_tx.subscribe(),
     );
 
+    // Managed session worker: executes queued /beta/work session and
+    // deployment runs through Gizzi (ALLTERNIT_SESSION_WORKER=0 disables).
+    allternit_api::session_worker::spawn_session_worker(
+        Arc::clone(&state),
+        shutdown_tx.subscribe(),
+    );
+
     // Desktop capacity monitor and autoscale signaler.
     {
         let period = std::time::Duration::from_secs(
