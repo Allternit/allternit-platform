@@ -1190,6 +1190,10 @@
         {
           "on": "2026-10-13",
           "note": "Opening Settings no longer downloads adb for people with no Android phone; the tool gateway starts on its own for iPhone-only users."
+        },
+        {
+          "on": "2026-10-14",
+          "note": "One-step setup: Desktop ships the USB Agent firmware (reproducible image + SHA-256 manifest, built by hardware/usb-agent/build-firmware.sh; source public, Eoj OK'd publishing) and Set up flashes it with esptool-js over Web Serial before writing Wi-Fi and the key. Desktop allows serial only for first-party pages and Espressif boards (VID 0x303A), auto-picked. Boards on older firmware show Update available."
         }
       ],
       "evidence": [

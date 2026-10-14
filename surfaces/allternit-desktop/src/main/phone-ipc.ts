@@ -40,6 +40,13 @@ async function usbSnapshot() {
       supported: true as const,
       ready: true as const,
       uxplay: usb.airplayAvailable(),
+      firmwareVersion: (() => {
+        try {
+          return phoneService.usbFirmware().version;
+        } catch {
+          return null;
+        }
+      })(),
       airplayPin: usb.airplayPin(),
       boards: usb.list(),
     };
@@ -107,6 +114,15 @@ export function registerPhoneIpc(handle: Guarded): void {
     try {
       const board = await (await usb()).setUp(String(port), { ssid: String(ssid ?? ''), password: String(password ?? '') }, String(name ?? ''));
       return { ok: true as const, board };
+    } catch (error) {
+      return errorResult(error);
+    }
+  });
+  // The firmware image for the setup screen to flash (esptool-js over Web Serial, Espressif boards only).
+  handle('phone:usb-firmware', () => {
+    try {
+      const fw = phoneService.usbFirmware();
+      return { ok: true as const, version: fw.version, sha256: fw.sha256, offset: fw.offset, data: fw.data };
     } catch (error) {
       return errorResult(error);
     }

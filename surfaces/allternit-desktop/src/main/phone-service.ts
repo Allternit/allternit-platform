@@ -23,6 +23,7 @@ import { findUxplay } from './phone-airplay.js';
 import { UsbAgentManager, type Sealer, type StoredUsbAgent, type UsbAgentConfig, type UsbAgentStore } from './phone-usb-agent.js';
 import { candidatePorts, lanAddresses, serialPort } from './phone-usb-agent-provision.js';
 import { USBA_MDNS_TYPE } from './phone-usb-agent-protocol.js';
+import { loadFirmware, type BundledFirmware } from './phone-usb-agent-firmware.js';
 import { grayFromBgra, type Gray } from './phone-usb-agent-vision.js';
 import type { Calibration } from './phone-usb-agent-pointer.js';
 import {
@@ -249,6 +250,7 @@ class PhoneService {
         openSerial: serialPort,
         listSerial: () => candidatePorts(),
         lanAddresses: () => lanAddresses(),
+        bundledFirmware: () => this.firmwareVersion(),
       });
     }
     await this.usbAgents.start();
@@ -263,6 +265,27 @@ class PhoneService {
 
   scrcpyInstalled(): boolean {
     return findScrcpy() !== null;
+  }
+
+  private firmware: BundledFirmware | null = null;
+
+  /** The USB Agent firmware image this Desktop ships, verified against its manifest. */
+  usbFirmware(): BundledFirmware {
+    if (!this.firmware) {
+      const dir = app.isPackaged
+        ? path.join(process.resourcesPath, 'phone', 'usb-agent')
+        : path.resolve(app.getAppPath(), 'resources', 'phone', 'usb-agent');
+      this.firmware = loadFirmware(dir);
+    }
+    return this.firmware;
+  }
+
+  private firmwareVersion(): string | null {
+    try {
+      return this.usbFirmware().version;
+    } catch {
+      return null;
+    }
   }
 
   getUsbAgents(): UsbAgentManager | null {

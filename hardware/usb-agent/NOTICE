@@ -32,5 +32,11 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
+The firmware image Desktop ships (surfaces/allternit-desktop/resources/phone/usb-agent)
+is built from firmware/usb_agent with the arduino-esp32 core (LGPL-2.1) and ESP-IDF
+(Apache-2.0). Their source and this firmware's full source are public, so the image
+can be rebuilt and relinked with hardware/usb-agent/build-firmware.sh. Desktop flashes
+it with esptool-js (Apache-2.0, Espressif).
+
 UxPlay (https://github.com/FDH2/UxPlay, GPL-3.0) is NOT included. Allternit
 Desktop starts a separately installed `uxplay` program as its own process.
