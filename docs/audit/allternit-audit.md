@@ -194,7 +194,7 @@ The TUI/CLI exposes a large command set under `cmd/gizzi-code/src/cli/commands/`
 | **VM Executor** | `services/vm-executor/` | Rust VM executor |
 | **ETRID** | `services/etrid/` | Rust ETRID service |
 | **ML** | `services/ml/` | `pattern-service`, `prompt-pack-service` |
-| **Android Bridge** | `services/android-bridge/` | Python bridge |
+| **Android Bridge** | removed 2026-10-13 | Replaced by the Desktop phone lane (ARTEMIS), see `surfaces/docs/guides/bot-phone.mdx` |
 | **Bonsai Local** | `services/bonsai-local/` | Local inference app |
 | **Open Notebook** | `services/open-notebook/` | Python research notebook service |
 | **Runtime** | `services/runtime/adapter/` | Runtime adapter |
