@@ -30,6 +30,7 @@ import { URLS } from './config.js';
 import { dropRuntimeCredentialForGizzi, isGizziProviderListPath } from './relay-gizzi-credential.js';
 import { isDesktopAuthNavigation } from './desktop-auth-url.js';
 import { ClerkTokenBroker } from './clerk-token-broker.js';
+import { cloudAccountMismatch, type CloudReconnectResult } from './cloud-account.js';
 import {
   consumeProvisionedBootstrap,
   provisionedPairingBody,
@@ -57,6 +58,7 @@ const LOCAL_STORAGE_HEADER = 'allternit-local-aes-gcm-v1\n';
  */
 const AUTH_WINDOW_PATH_PREFIX = '/__desktop_auth__';
 const AUTH_SESSION_PARTITION = 'persist:allternit-auth';
+
 
 const AUTH_FILE_MIME_TYPES: Record<string, string> = {
   '.html': 'text/html',
@@ -272,6 +274,7 @@ export class DesktopAuthManager {
     // The renderer asks on every runtime API call; Electron main injects the
     // real credentials, so this must never hold a request up.
     ipcMain.handle('auth:get-clerk-token', () => this.getClerkToken(RENDERER_CLERK_WAIT_MS));
+    ipcMain.handle('auth:reconnect-cloud', () => this.reconnectCloud());
 
     ipcMain.handle('auth:clerk-error', (_event, message: string) => {
       log.warn('[Auth] Clerk renderer error:', message);
@@ -942,6 +945,47 @@ export class DesktopAuthManager {
    */
   async getClerkToken(maxWaitMs = REQUEST_CLERK_WAIT_MS): Promise<string | null> {
     return this.clerkTokens.get(maxWaitMs);
+  }
+
+  /**
+   * Renews the cloud (Clerk) sign-in of the paired device without re-pairing.
+   * Once Clerk's session has ended the hidden refresh can only time out, so
+   * the user signs in again in the visible auth window. Only the account this
+   * device is paired to is accepted.
+   */
+  async reconnectCloud(): Promise<CloudReconnectResult> {
+    if (!this.session) return { ok: false, error: 'This device is not signed in.' };
+    if (this.pendingPairing) return { ok: false, error: 'Sign-in is already in progress.' };
+    // A background refresh may own the (hidden) auth window: end it first, and
+    // wait for the window to close so its close event can't end this sign-in.
+    this.clerkTokenRejecter?.(new Error('Replaced by a visible sign-in'));
+    this.clerkTokenResolver = null;
+    this.clerkTokenRejecter = null;
+    const previous = this.authWindow;
+    if (previous && !previous.isDestroyed()) {
+      await new Promise<void>((resolve) => {
+        previous.once('closed', () => resolve());
+        previous.close();
+      });
+    }
+    this.authWindow = null;
+    try {
+      const clerk = await this.requestClerkSession({ hidden: false });
+      this.closeAuthWindow();
+      const mismatch = cloudAccountMismatch(this.session, clerk.userId);
+      if (mismatch) {
+        await session.fromPartition(AUTH_SESSION_PARTITION).clearStorageData();
+        return { ok: false, error: mismatch };
+      }
+      this.cacheClerkToken(clerk.token);
+      const email = preferredEmail(clerk.email, emailFromJwt(clerk.token));
+      if (email) this.applyAccountEmail(email);
+      log.info('[Auth] Cloud sign-in renewed');
+      return { ok: true };
+    } catch (error) {
+      this.closeAuthWindow();
+      return { ok: false, error: error instanceof Error ? error.message : 'Sign-in failed' };
+    }
   }
 
   private async refreshClerkToken(): Promise<string> {

@@ -350,6 +350,8 @@ const authAPI = {
   signOut: (): Promise<void> => ipcRenderer.invoke('auth:sign-out'),
   hardSignOut: (): Promise<void> => ipcRenderer.invoke('auth:sign-out'),
   getClerkToken: (): Promise<string | null> => ipcRenderer.invoke('auth:get-clerk-token'),
+  /** Sign in to the cloud again (same account) when the Clerk session has ended. */
+  reconnectCloud: (): Promise<{ ok: true } | { ok: false; error: string }> => ipcRenderer.invoke('auth:reconnect-cloud'),
   onSessionUpdated: (handler: (session: { userId: string; userEmail: string }) => void): (() => void) => {
     const listener = (_: IpcRendererEvent, session: { userId: string; userEmail: string }) => handler(session);
     ipcRenderer.on('auth:session-updated', listener);
