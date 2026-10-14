@@ -423,6 +423,9 @@ impl ChannelTransport for SmsTransport {
                 Ok(r) => match r.status {
                     200..=299 => r.body["messageId"].as_str().map(str::to_string).ok_or_else(|| PostError::Uncertain("the cloud accepted the text but returned no messageId".into())),
                     500..=599 => Err(PostError::Uncertain(format!("cloud returned {}", r.status))),
+                    // The cloud's daily texting cap is a 429 too, but waiting a minute won't
+                    // clear it: it's a definite refusal with its own slug, not a throttle.
+                    429 if r.body["error"].as_str() == Some("daily_limit") => Err(PostError::Rejected("cloud returned 429: daily_limit".into())),
                     429 => Err(PostError::rate_limited(&r.body)),
                     s => Err(PostError::Rejected(format!("cloud returned {s}: {}", r.body["error"].as_str().unwrap_or("send refused")))),
                 },
