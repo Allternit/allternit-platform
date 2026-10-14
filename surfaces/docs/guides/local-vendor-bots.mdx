@@ -1,9 +1,9 @@
 ---
 title: Local vendor bot connections
-description: Connect OpenMausBot, Codync, Hivekeep, Invisible Dots, or CopilotKit OpenDots through the vendor runtime on your Sessions computer.
+description: Connect OpenMausBot, Codync, Hivekeep, Invisible Dots, CopilotKit OpenDots, or DS Bot through the vendor runtime on your Sessions computer.
 ---
 
-OpenMausBot, Codync, Hivekeep, Invisible Dots, and CopilotKit OpenDots use authenticated APIs on your connected Sessions computer. They connect to the vendor's existing agents, rather than selecting a model from Brains. These new adapters have source-based transport tests; live vendor-account verification is pending.
+OpenMausBot, Codync, Hivekeep, Invisible Dots, CopilotKit OpenDots, and DS Bot use authenticated APIs on your connected Sessions computer. They connect to the vendor's existing agents, rather than selecting a model from Brains. These adapters follow inspected vendor protocols. The first five have source-based transport tests; DS Bot has static review. Live vendor-account verification is pending.
 
 ## Before connecting
 
@@ -17,6 +17,7 @@ On Desktop, the website phone layout, and the PWA, the same connection flow uses
 | Codync | Local host token | Existing bot conversation; bot must use Ask | Shared conversation; one-time approvals only; no atomic permission-mode guard or scoped cancellation |
 | Invisible Dots | Server API token | Existing Dot conversation, queued delivery supported | Completed matched replies; approvals stay in vendor UI; no shared bot cancellation |
 | OpenDots · CopilotKit | Enforced owner access token; vendor Intelligence connection configured | New isolated vendor thread; official Intelligence SDK and WebSocket transport | Completed current-run replies; approvals stay in OpenDots; no cancellation or computer control |
+| DS Bot | DSH Web launch token; explicit loopback origin configured on the Sessions computer | Existing bot session; select its model in DSH first | Completed caller-matched turns; approval decisions remain in DSH; no cancellation |
 | Hivekeep | API client key with isolated conversation access | New isolated API conversation | Completed replies only; review approvals in Hivekeep; no streaming or cancellation |
 
 ## Use your bot

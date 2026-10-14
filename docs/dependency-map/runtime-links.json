@@ -149,6 +149,12 @@
       "label": "CopilotKit OpenDots authenticated local runtime and Intelligence realtime",
       "kind": "external",
       "path": "allternit/services/subscription-gateway/adapters/opendots-copilotkit/provider.ts"
+    },
+    {
+      "id": "external:ds-bot-dsh",
+      "label": "DS Bot DSH signed-cookie local session RPC",
+      "kind": "external",
+      "path": "allternit/services/subscription-gateway/adapters/ds-bot/provider.ts"
     }
   ],
   "edges": [
@@ -514,6 +520,15 @@
       "kind": "owner-token loopback HTTP and approved Intelligence WebSocket origin; isolated conversation IDs",
       "evidence": [
         "allternit/services/subscription-gateway/adapters/opendots-copilotkit/provider.ts",
+        "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
+      ]
+    },
+    {
+      "source": "allternit/services/subscription-gateway",
+      "target": "external:ds-bot-dsh",
+      "kind": "launch-token exchange and signed-cookie loopback RPC; caller-matched completed turns",
+      "evidence": [
+        "allternit/services/subscription-gateway/adapters/ds-bot/provider.ts",
         "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
       ]
     }
