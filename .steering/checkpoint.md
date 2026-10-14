@@ -1,24 +1,16 @@
 # Steering checkpoint
 
 ## Goal
-Ship full-width project banners and compact customization editor across Desktop/web/phone.
+Unified channel API, Phase 1 audit + Phase 2 Slack slice (Brain spec Research/specs/allternit-unified-channel-api.md; Factory dag_818173). Extend the existing ChannelTransport/channel_gateway; no new gateway, no AgentChat dependency.
 
 ## Just did
-Shared ProjectBanner replaces inset title card and toolbar-only coordinator header. AppearanceEditor moves preview/import/position controls into a left column, bounds body scrolling and retains footer.
+Audit (docs/channels/UNIFIED_CHANNEL_API.md). Fixed cross-owner/cross-connection conversation routing (find_binding_for scoped to owner+account; ensure_binding_on, route_inbound, channel_start, lane, people use it; Slack team lookup scoped to the relayed owner). Added Capabilities per adapter, PostError::RateLimited/SendOutcome::RateLimited (429 + Retry-After, retryable by correlation id), fetch_since default = history_unsupported, delivery_status + GET thread channel/channel-messages routes, startup recover_interrupted_sends. Dev doc channel-gateway-api.mdx + user status section + nav + dependency map.
 
 ## Next
-Complete targeted verification, merge UI/docs, publish all surfaces and reload Desktop.
+cargo test -p allternit-api channel tests; fix failures; report to Eoj. No commit/push/PR/deploy until Eoj says so.
 
 ## Open questions
-None. Other sessions’ shared UI and documentation edits remain untouched.
-
-## Vendor connector continuation — 2026-10-13
-User authorized reuse of this worktree; prior task retained. DAG dag_122853, node n_4731, WIH wih_2875. User now authorizes commit/merge/deploy. Three source-tested native adapters implemented; 36 adapter/host tests and 14 UI tests passed. Live vendor accounts unavailable. Remaining catalog adapters still pending. Frontend paired worktree /private/tmp/project-banner-fix. No all-vendor completion or live certification claimed.
-
-### Saved review checkpoint
-Platform draft PR #1518; paired UI draft PR Allternit/allternit-ai#538. Native adapters: OpenMausBot, Codync, Hivekeep. Source-based 36 backend tests and 33 UI tests pass; targeted adapter and frontend fast typechecks pass. Subscription service no-emit check with bundler resolution passes; NodeNext check hits existing source-package import-extension errors. Docs 0 problems, dependency map valid, release preflight 55/0. Official source-pinned logos for nine projects. Live apps absent on 8799/19222/3000. Waiting for authorized vendor app/account details; remaining connector coverage is unfinished. No production merge or deploy. Git discipline is not PASS: this reused worktree remains on its session branch by design, local main is behind, and unrelated stale branches exist; no other session branch was deleted or reset. Do not mark DAG n_4731 complete.
-
-
+Inbound record-before-ack split (all providers share dispatch_events_with_files) deferred to Phase 3. Live provider tests need authorized test accounts.
 ## Vendor bot coverage — 2026-10-14
 DAG dag_122853 / node n_4731 / WIH wih_2875 remains in progress. Reused backend session/avatar-glass-docs-20261011 and frontend session/project-banner-20261011 per Eoj authorization. Seven native adapters committed/pushed (OpenMausBot, Codync, Hivekeep, Invisible Dots, CopilotKit OpenDots, DS Bot, CopilotKit OpenMuse); all33icons and credential profiles shipped in branch. Backend head1730da9c1a, frontendc8216995. Focused DS/OpenMuse strictchecks pass, OpenMaus/Codync13checks pass, frontendcredential5checks pass, docs links0problems, dependency map valid. No liveaccount certification, merge or deployment yet. Cheap in-process Luna helpers now implement Nightly OpenBot and investigate Rakazo in distinct adapter folders. Remaining connectors unfinished; do notclaimfull33working.
 

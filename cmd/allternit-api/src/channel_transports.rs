@@ -108,8 +108,9 @@ impl HttpSend for ReqwestSend {
         }
         let resp = r.send().await.map_err(|e| e.to_string())?;
         let status = resp.status().as_u16();
+        let retry_after = retry_after_header(resp.headers());
         let body = resp.json::<Value>().await.unwrap_or(Value::Null);
-        Ok(HttpResp { status, body })
+        Ok(HttpResp { status, body: with_retry_after(status, body, retry_after) })
     }
     async fn get_json(&self, url: &str) -> Result<HttpResp, String> {
         let resp = guarded_client(url)?.get(url).timeout(std::time::Duration::from_secs(15)).send().await.map_err(|e| e.to_string())?;
@@ -145,13 +146,40 @@ impl HttpSend for ReqwestSend {
     }
 }
 
+/// A cloud relay's 503 that means "this channel isn't set up here" (definite),
+/// as opposed to an outage (uncertain).
+pub(crate) fn not_configured(body: &Value) -> bool {
+    body.get("error").and_then(Value::as_str).is_some_and(|e| e.ends_with("_not_configured"))
+}
+
+/// A `Retry-After` header in seconds (the HTTP-date form is ignored).
+pub(crate) fn retry_after_header(h: &reqwest::header::HeaderMap) -> Option<u64> {
+    h.get(reqwest::header::RETRY_AFTER).and_then(|v| v.to_str().ok()).and_then(|v| v.trim().parse().ok())
+}
+
+/// HttpResp carries no headers, so a 429's `Retry-After` header rides in the
+/// body as `retryAfter` (unless the body already says how long), where
+/// [`PostError::rate_limited`] reads it.
+pub(crate) fn with_retry_after(status: u16, mut body: Value, secs: Option<u64>) -> Value {
+    if let (429, Some(secs)) = (status, secs) {
+        match &mut body {
+            Value::Object(m) if !m.contains_key("retry_after") && !m.contains_key("retryAfter") && m.get("parameters").and_then(|p| p.get("retry_after")).is_none() => {
+                m.insert("retryAfter".into(), json!(secs));
+            }
+            Value::Null => body = json!({ "retryAfter": secs }),
+            _ => {}
+        }
+    }
+    body
+}
+
 /// Definite vs uncertain outcome of a platform reply.
 fn judge(resp: Result<HttpResp, String>, id_of: impl Fn(&Value) -> Option<String>) -> Result<String, PostError> {
     let r = resp.map_err(PostError::Uncertain)?;
     match r.status {
         200..=299 => id_of(&r.body).ok_or_else(|| PostError::Uncertain("the platform accepted the post but returned no message id".into())),
         500..=599 => Err(PostError::Uncertain(format!("platform returned {}", r.status))),
-        429 => Err(PostError::Rejected("rate limited".into())),
+        429 => Err(PostError::rate_limited(&r.body)),
         s => Err(PostError::Rejected(format!("platform returned {s}: {}", r.body))),
     }
 }
@@ -246,6 +274,9 @@ pub fn teams_normalize(a: &Value) -> Vec<Inbound> {
 impl ChannelTransport for TeamsTransport {
     fn provider(&self) -> &'static str {
         "teams"
+    }
+    fn capabilities(&self) -> crate::channel_gateway::Capabilities {
+        crate::channel_gateway::Capabilities { text: true, threads: false, history: false, files_out: false, files_in: false, reactions: true, edits: true, delivery_receipts: false, per_bot_identity: false }
     }
     /// Teams outgoing webhook: `Authorization: HMAC <base64(HMAC-SHA256(base64decode(securityToken), body))>`.
     fn verify(&self, secret: &str, headers: &HeaderMap, body: &[u8]) -> Result<(), String> {
@@ -343,6 +374,9 @@ impl ChannelTransport for DiscordTransport {
     fn provider(&self) -> &'static str {
         "discord"
     }
+    fn capabilities(&self) -> crate::channel_gateway::Capabilities {
+        crate::channel_gateway::Capabilities { text: true, threads: false, history: false, files_out: false, files_in: false, reactions: true, edits: true, delivery_receipts: false, per_bot_identity: false }
+    }
     /// Discord interactions/webhook events: Ed25519 over `timestamp + body`.
     fn verify(&self, secret: &str, headers: &HeaderMap, body: &[u8]) -> Result<(), String> {
         use ed25519_dalek::{Signature, Verifier, VerifyingKey};
@@ -435,6 +469,9 @@ impl ChannelTransport for WhatsAppTransport {
     fn provider(&self) -> &'static str {
         "whatsapp"
     }
+    fn capabilities(&self) -> crate::channel_gateway::Capabilities {
+        crate::channel_gateway::Capabilities { text: true, threads: false, history: false, files_out: false, files_in: false, reactions: true, edits: false, delivery_receipts: true, per_bot_identity: false }
+    }
     /// `X-Hub-Signature-256: sha256=<hex HMAC-SHA256(appSecret, raw body)>`.
     fn verify(&self, secret: &str, headers: &HeaderMap, body: &[u8]) -> Result<(), String> {
         let given = hdr(headers, "x-hub-signature-256").and_then(|s| s.strip_prefix("sha256=")).ok_or("missing x-hub-signature-256")?;
@@ -517,6 +554,9 @@ pub fn telegram_normalize(u: &Value) -> Vec<Inbound> {
 impl ChannelTransport for TelegramTransport {
     fn provider(&self) -> &'static str {
         "telegram"
+    }
+    fn capabilities(&self) -> crate::channel_gateway::Capabilities {
+        crate::channel_gateway::Capabilities { text: true, threads: false, history: false, files_out: true, files_in: true, reactions: true, edits: true, delivery_receipts: false, per_bot_identity: false }
     }
     /// `setWebhook(secret_token=…)`: Telegram echoes it in `X-Telegram-Bot-Api-Secret-Token`.
     fn verify(&self, secret: &str, headers: &HeaderMap, _body: &[u8]) -> Result<(), String> {
@@ -780,7 +820,7 @@ pub async fn route_inbound<R: crate::thread_routes::ThreadRuntime>(db: &DbHandle
     // Shared Discord app: "@Allternit name", "/name" and replies become "@name".
     let hooked;
     let e = if provider == "discord" { hooked = crate::channel_discord_app::rewrite(db, acct, &bots, e); &hooked } else { e };
-    let mut binding = find_binding(db, provider, &e.conversation).filter(|b| b.owner == acct.owner);
+    let mut binding = find_binding_for(db, &acct.owner, Some(&acct.id), provider, &e.conversation);
     let who = crate::people::sender(db, &acct.owner, provider, e);
     if let (Some(b), Some(s)) = (&binding, &who) {
         // A conversation whose person was split off, or merged away, follows the sender.
@@ -903,8 +943,72 @@ pub async fn dispatch_events(st: &Arc<AppState>, acct: &Account, tx: Arc<dyn Cha
 /// [`dispatch_events`] for a payload that carried files (`channel_attachments::inbound_files`):
 /// each message's files are downloaded and kept in the user's files before it is
 /// recorded, so the thread message shows them as downloads.
+///
+/// Accepts every event (records it, queues its turn), then runs the turns. A
+/// webhook that must answer the platform should use [`accept_and_ack`] instead,
+/// so the answer goes out after the events are recorded but before the turns run.
 pub async fn dispatch_events_with_files(st: &Arc<AppState>, acct: &Account, tx: Arc<dyn ChannelTransport>, events: Vec<Inbound>, files: crate::channel_attachments::InboundFiles) {
+    let (turns, failed) = accept_events(st, acct, tx.clone(), events, files).await;
+    if let Some(err) = failed {
+        warn!(provider = tx.provider(), "channel inbound failed: {err}");
+    }
+    run_turns(st, turns).await;
+}
+
+/// The webhook answer for a batch of inbound events: record them all first,
+/// then answer `200` and run their bot turns in the background. If recording
+/// failed the answer is `500`, so the platform (or the cloud queue) delivers
+/// again; events already recorded are no-ops on the retry, and their turns
+/// still run.
+pub async fn accept_and_ack(st: &Arc<AppState>, acct: &Account, tx: Arc<dyn ChannelTransport>, events: Vec<Inbound>, files: crate::channel_attachments::InboundFiles) -> Response {
+    let (turns, failed) = accept_events(st, acct, tx.clone(), events, files).await;
+    let st2 = st.clone();
+    tokio::spawn(async move { run_turns(&st2, turns).await });
+    match failed {
+        None => Json(json!({ "ok": true })).into_response(),
+        Some(err) => {
+            warn!(provider = tx.provider(), "channel inbound failed; asking for redelivery: {err}");
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "inbound_not_recorded" }))).into_response()
+        }
+    }
+}
+
+/// A bot turn an inbound message started. It is stored on the message's
+/// `channel_message_log` row (`detail_json.turn`) before the platform is
+/// answered, moves queued -> running -> done, and is picked up again by
+/// [`recover_channel_turns`] after a restart.
+#[derive(Clone)]
+pub struct AcceptedTurn {
+    pub binding: BindingRow,
+    pub remote_id: String,
+    pub tx: Arc<dyn ChannelTransport>,
+    pub session: String,
+    pub bot: String,
+    pub text: String,
+    pub speaker: Option<String>,
+    pub person: Option<String>,
+}
+
+fn set_turn_state(db: &DbHandle, binding: &str, remote_id: &str, turn: &Value) {
+    if let Ok(c) = db.connect() {
+        let _ = c.execute(
+            "UPDATE channel_message_log SET detail_json = json_set(detail_json, '$.turn', json(?3)), updated_at = ?4 WHERE binding_id = ?1 AND direction = 'inbound' AND remote_id = ?2",
+            params![binding, remote_id, turn.to_string(), crate::agent_gateway_routes::now()],
+        );
+    }
+}
+
+fn turn_json(t: &AcceptedTurn, state: &str) -> Value {
+    json!({ "state": state, "session": t.session, "bot": t.bot, "text": t.text, "speaker": t.speaker, "person": t.person })
+}
+
+/// Record every event and queue the turns they start. Notices (no bot on,
+/// sender refused, pairing, Factory approval answers) are posted here. Returns
+/// the queued turns and the first recording error, if any.
+pub async fn accept_events(st: &Arc<AppState>, acct: &Account, tx: Arc<dyn ChannelTransport>, events: Vec<Inbound>, files: crate::channel_attachments::InboundFiles) -> (Vec<AcceptedTurn>, Option<String>) {
     let rt = crate::thread_routes::GizziRuntime { db: st.db.clone() };
+    let mut turns = vec![];
+    let mut failed = None;
     for mut e in events {
         if let Some(remote) = files.get(&e.remote_id) {
             let http: Arc<dyn HttpSend> = Arc::new(ReqwestSend);
@@ -983,26 +1087,9 @@ pub async fn dispatch_events_with_files(st: &Arc<AppState>, acct: &Account, tx: 
         crate::channel_attachments::discard_kept(tx.provider(), &e.remote_id);
         match routed {
             Ok(Routed { binding: Some(b), turn: Some((session, bot, text)), speaker, person, .. }) => {
-                let reply = match crate::agent_session_routes::send_bot_turn(&st.db, &session, &bot, &text).await {
-                    Ok(reply) => speaker.as_ref().map(|n| format!("{n}: {reply}")).unwrap_or(reply),
-                    // Say so in the chat: silence reads as "the bot is broken".
-                    Err(err) => {
-                        warn!("channel turn failed: {err}");
-                        failure_notice(speaker.as_deref(), &err.to_string())
-                    }
-                };
-                // The person may have asked for replies elsewhere (pinned channel); a group chat answers in place.
-                let (b, tx) = match person.as_deref().and_then(|p| crate::people::choose_reply(&st.db, &b.owner, p, Some(&b), None)) {
-                    Some(c) if c.binding.id != b.id => match transport_for(st, &c.binding) {
-                        Some(other) => (c.binding, other),
-                        None => (b, tx.clone()),
-                    },
-                    _ => (b, tx.clone()),
-                };
-                let thread = b.external_thread.clone().unwrap_or_default();
-                if let Err(err) = post_reply(&st.db, tx.as_ref(), &b, &thread, &reply).await {
-                    warn!(provider = %b.provider, "channel reply failed: {err}");
-                }
+                let t = AcceptedTurn { binding: b, remote_id: e.remote_id.clone(), tx: tx.clone(), session, bot, text, speaker, person };
+                set_turn_state(&st.db, &t.binding.id, &t.remote_id, &turn_json(&t, "queued"));
+                turns.push(t);
             }
             Ok(Routed { notice: Some(notice), binding, .. }) => {
                 let posted = match &binding {
@@ -1018,9 +1105,140 @@ pub async fn dispatch_events_with_files(st: &Arc<AppState>, acct: &Account, tx: 
                 }
             }
             Ok(_) => {}
-            Err(err) => warn!("channel inbound failed: {err}"),
+            Err(err) => {
+                failed.get_or_insert(err);
+            }
         }
     }
+    (turns, failed)
+}
+
+/// Turns of one bot session run one at a time, in arrival order; other
+/// conversations are not held up.
+static SESSION_LOCKS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, Arc<tokio::sync::Mutex<()>>>>> = std::sync::LazyLock::new(Default::default);
+
+fn session_lock(session: &str) -> Arc<tokio::sync::Mutex<()>> {
+    let mut locks = SESSION_LOCKS.lock().unwrap_or_else(|p| p.into_inner());
+    if locks.len() > 4096 {
+        locks.retain(|_, l| Arc::strong_count(l) > 1);
+    }
+    locks.entry(session.to_string()).or_default().clone()
+}
+
+pub async fn run_turns(st: &Arc<AppState>, turns: Vec<AcceptedTurn>) {
+    for t in turns {
+        run_turn(st, t).await;
+    }
+}
+
+/// Run one accepted turn and post its reply (or a failure notice) back.
+pub async fn run_turn(st: &Arc<AppState>, t: AcceptedTurn) {
+    let lock = session_lock(&t.session);
+    let _held = lock.lock().await;
+    set_turn_state(&st.db, &t.binding.id, &t.remote_id, &turn_json(&t, "running"));
+    let reply = match crate::agent_session_routes::send_bot_turn(&st.db, &t.session, &t.bot, &t.text).await {
+        Ok(reply) => t.speaker.as_ref().map(|n| format!("{n}: {reply}")).unwrap_or(reply),
+        // Say so in the chat: silence reads as "the bot is broken".
+        Err(err) => {
+            warn!("channel turn failed: {err}");
+            failure_notice(t.speaker.as_deref(), &err.to_string())
+        }
+    };
+    // The person may have asked for replies elsewhere (pinned channel); a group chat answers in place.
+    let (b, tx) = match t.person.as_deref().and_then(|p| crate::people::choose_reply(&st.db, &t.binding.owner, p, Some(&t.binding), None)) {
+        Some(c) if c.binding.id != t.binding.id => match transport_for(st, &c.binding) {
+            Some(other) => (c.binding, other),
+            None => (t.binding.clone(), t.tx.clone()),
+        },
+        _ => (t.binding.clone(), t.tx.clone()),
+    };
+    let thread = b.external_thread.clone().unwrap_or_default();
+    if let Err(err) = post_reply(&st.db, tx.as_ref(), &b, &thread, &reply).await {
+        warn!(provider = %b.provider, "channel reply failed: {err}");
+    }
+    set_turn_state(&st.db, &t.binding.id, &t.remote_id, &turn_json(&t, "done"));
+}
+
+/// Confirm `unconfirmed` posts from platform history, for every binding whose
+/// adapter can replay (see `Capabilities::history`). Returns how many it confirmed.
+pub async fn reconcile_unconfirmed(st: &Arc<AppState>) -> usize {
+    let ids: Vec<String> = st
+        .db
+        .connect()
+        .ok()
+        .and_then(|c| {
+            c.prepare("SELECT DISTINCT binding_id FROM channel_message_log WHERE direction = 'outbound' AND state = 'unconfirmed'")
+                .and_then(|mut q| q.query_map([], |r| r.get(0))?.collect())
+                .ok()
+        })
+        .unwrap_or_default();
+    let mut confirmed = 0;
+    for id in ids {
+        let Some(b) = crate::channel_gateway::binding_by_id(&st.db, &id) else { continue };
+        let Some(tx) = transport_for(st, &b) else { continue };
+        if !tx.capabilities().history {
+            continue;
+        }
+        match crate::channel_gateway::reconcile_binding(&st.db, tx.as_ref(), &b).await {
+            Ok(n) => confirmed += n,
+            Err(err) => warn!(provider = %b.provider, "reconciling unconfirmed posts failed: {err}"),
+        }
+    }
+    confirmed
+}
+
+/// Restart recovery for inbound turns. A turn still `queued` never started:
+/// it runs now. A turn still `running` was cut off part-way (it may already
+/// have used tools), so it is not run twice: it becomes `interrupted` and the
+/// chat is told to send the message again. Returns `(requeued, interrupted)`.
+pub async fn recover_channel_turns(st: &Arc<AppState>) -> (usize, usize) {
+    recover_channel_turns_with(st, |b| transport_for(st, b)).await
+}
+
+/// [`recover_channel_turns`] with the transport lookup passed in (tests).
+pub async fn recover_channel_turns_with(st: &Arc<AppState>, resolve: impl Fn(&BindingRow) -> Option<Arc<dyn ChannelTransport>>) -> (usize, usize) {
+    let rows: Vec<(String, String, String)> = match st.db.connect() {
+        Ok(c) => c
+            .prepare(
+                "SELECT binding_id, remote_id, json_extract(detail_json, '$.turn') FROM channel_message_log
+                 WHERE direction = 'inbound' AND json_extract(detail_json, '$.turn.state') IN ('queued', 'running') ORDER BY created_at",
+            )
+            .and_then(|mut q| q.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect())
+            .unwrap_or_default(),
+        Err(_) => return (0, 0),
+    };
+    let (mut requeued, mut interrupted, mut queue) = (0, 0, vec![]);
+    for (binding_id, remote_id, turn) in rows {
+        let turn: Value = serde_json::from_str(&turn).unwrap_or(Value::Null);
+        let Some(b) = crate::channel_gateway::binding_by_id(&st.db, &binding_id) else { continue };
+        let Some(tx) = resolve(&b) else { continue };
+        let t = AcceptedTurn {
+            binding: b,
+            remote_id,
+            tx,
+            session: turn["session"].as_str().unwrap_or_default().to_string(),
+            bot: turn["bot"].as_str().unwrap_or_default().to_string(),
+            text: turn["text"].as_str().unwrap_or_default().to_string(),
+            speaker: turn["speaker"].as_str().map(str::to_string),
+            person: turn["person"].as_str().map(str::to_string),
+        };
+        if t.session.is_empty() || t.bot.is_empty() {
+            continue;
+        }
+        if turn["state"] == "queued" {
+            requeued += 1;
+            queue.push(t);
+            continue;
+        }
+        interrupted += 1;
+        set_turn_state(&st.db, &t.binding.id, &t.remote_id, &turn_json(&t, "interrupted"));
+        let notice = format!("{} was interrupted by a restart before it finished. Send your message again to continue.", t.speaker.as_deref().unwrap_or("The bot"));
+        if let Err(err) = post_reply(&st.db, t.tx.as_ref(), &t.binding, &t.binding.external_thread.clone().unwrap_or_default(), &notice).await {
+            warn!(provider = %t.binding.provider, "interrupted-turn notice failed: {err}");
+        }
+    }
+    run_turns(st, queue).await;
+    (requeued, interrupted)
 }
 
 /// Whether this platform message already has a row in the log (a retry of a delivery we handled).
@@ -1160,9 +1378,8 @@ async fn webhook_h(State(state): State<Arc<AppState>>, Path(provider): Path<Stri
     }
     let events = tx.normalize(&payload);
     let files = crate::channel_attachments::inbound_files(&provider, &payload);
-    let st = state.clone();
-    tokio::spawn(async move { dispatch_events_with_files(&st, &acct, tx, events, files).await });
-    Json(json!({ "ok": true })).into_response()
+    // Recorded before the platform hears back; the turns run after.
+    accept_and_ack(&state, &acct, tx, events, files).await
 }
 
 // ---------------------------------------------------------------- Muse control lane
@@ -1226,11 +1443,11 @@ impl AaiTransport for ChannelLaneTransport {
                 let thread = input["threadId"].as_str().ok_or_else(|| internal("threadId is required".into()))?;
                 let mut e = ev(InboundKind::Message, conversation.clone(), pnid.clone(), String::new(), String::new());
                 e.thread = Some(contact);
-                ensure_binding(db, owner, thread, &provider, &e).map_err(|x| internal(x.to_string()))?;
+                ensure_binding_on(db, owner, thread, &provider, &e, Some(&acct.id)).map_err(|x| internal(x.to_string()))?;
                 Ok(json!({ "contextId": conversation, "guarantee": "best_effort" }))
             }
             "agent.context.message" => {
-                let b = find_binding(db, &provider, &conversation).ok_or_else(|| AaiError::new("CONTEXT_NOT_FOUND", "the channel conversation is not open"))?;
+                let b = find_binding_for(db, owner, Some(&acct.id), &provider, &conversation).ok_or_else(|| AaiError::new("CONTEXT_NOT_FOUND", "the channel conversation is not open"))?;
                 let text = input["text"].as_str().unwrap_or_default().to_string();
                 let corr = input["correlationId"].as_str().map(str::to_string).unwrap_or_else(|| crate::agent_gateway_routes::id("lane"));
                 let r = send(db, tx.as_ref(), owner, &b.thread_id, &SendReq { text, correlation_id: Some(corr), ..Default::default() }).await.map_err(internal)?;
@@ -1245,11 +1462,16 @@ impl AaiTransport for ChannelLaneTransport {
                     SendOutcome::ApprovalRequired { .. } => Err(AaiError::new("APPROVAL_REQUIRED", "posting on this channel needs approval")),
                     SendOutcome::Denied(m) => Err(AaiError::new("CHANNEL_POLICY", m)),
                     SendOutcome::Rejected(m) => Err(AaiError::new("CHANNEL_REJECTED", m)),
+                    SendOutcome::RateLimited { .. } => {
+                        let mut e = AaiError::new("RATE_LIMITED", "the channel is rate limiting posts; nothing was sent");
+                        e.retryable = true;
+                        Err(e)
+                    }
                     SendOutcome::ReadOnly | SendOutcome::NoBinding => Err(AaiError::new("CONTEXT_NOT_FOUND", "the channel conversation is not writable")),
                 }
             }
             "agent.events" => {
-                let b = find_binding(db, &provider, &conversation).ok_or_else(|| AaiError::new("CONTEXT_NOT_FOUND", "the channel conversation is not open"))?;
+                let b = find_binding_for(db, owner, Some(&acct.id), &provider, &conversation).ok_or_else(|| AaiError::new("CONTEXT_NOT_FOUND", "the channel conversation is not open"))?;
                 let after: i64 = input["cursor"].as_str().and_then(|c| c.parse().ok()).unwrap_or(0);
                 let limit = input["limit"].as_i64().unwrap_or(200).clamp(1, 500);
                 let conn = db.connect().map_err(|e| internal(e.to_string()))?;
@@ -1977,6 +2199,57 @@ mod tests {
         }
     }
 
+    fn turn_state(st: &Arc<AppState>, remote_id: &str) -> Option<String> {
+        st.db
+            .connect()
+            .unwrap()
+            .query_row("SELECT json_extract(detail_json, '$.turn.state') FROM channel_message_log WHERE direction = 'inbound' AND remote_id = ?1", params![remote_id], |r| r.get(0))
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn an_inbound_message_is_recorded_with_its_turn_queued_before_the_platform_is_answered() {
+        let (st, acct) = setup("accept", &json!({ "botToken": "t" }).to_string(), "telegram", Some("bot-1")).await;
+        st.db.connect().unwrap().execute("UPDATE provider_account_bindings SET sender_policy = 'anyone', allowed_senders = '[]' WHERE id = 'acct-1'", []).unwrap();
+        let tx = Arc::new(RecordingTelegram::default());
+        let e = tg(11, 9001, "hello");
+        let (turns, failed) = accept_events(&st, &acct, tx.clone(), vec![e.clone()], Default::default()).await;
+        assert!(failed.is_none());
+        assert_eq!(turns.len(), 1);
+        // Durable before any turn ran, and nothing was posted yet.
+        assert_eq!(turn_state(&st, &e.remote_id).as_deref(), Some("queued"));
+        assert!(tx.posted.lock().unwrap().is_empty());
+        // A redelivery of the same update records nothing and queues nothing.
+        let (again, _) = accept_events(&st, &acct, tx.clone(), vec![e.clone()], Default::default()).await;
+        assert!(again.is_empty());
+        // Running the turn posts the answer (here a failure notice: no model in tests) and finishes it.
+        run_turns(&st, turns).await;
+        assert_eq!(turn_state(&st, &e.remote_id).as_deref(), Some("done"));
+        assert_eq!(tx.posted.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn after_a_restart_queued_turns_run_and_cut_off_turns_are_never_run_twice() {
+        let (st, acct) = setup("turns", &json!({ "botToken": "t" }).to_string(), "telegram", Some("bot-1")).await;
+        st.db.connect().unwrap().execute("UPDATE provider_account_bindings SET sender_policy = 'anyone', allowed_senders = '[]' WHERE id = 'acct-1'", []).unwrap();
+        let tx = Arc::new(RecordingTelegram::default());
+        let (queued, cut) = (tg(21, 9002, "first"), tg(22, 9003, "second"));
+        let (turns, _) = accept_events(&st, &acct, tx.clone(), vec![queued.clone(), cut.clone()], Default::default()).await;
+        assert_eq!(turns.len(), 2);
+        // The process died: one turn never started, the other was mid-way.
+        set_turn_state(&st.db, &turns[1].binding.id, &turns[1].remote_id, &turn_json(&turns[1], "running"));
+        drop(turns);
+        let tx2: Arc<dyn ChannelTransport> = tx.clone();
+        assert_eq!(recover_channel_turns_with(&st, |_| Some(tx2.clone())).await, (1, 1));
+        assert_eq!(turn_state(&st, &queued.remote_id).as_deref(), Some("done"));
+        assert_eq!(turn_state(&st, &cut.remote_id).as_deref(), Some("interrupted"));
+        let posted: Vec<String> = tx.posted.lock().unwrap().iter().map(|o| o.text.clone()).collect();
+        assert_eq!(posted.len(), 2);
+        assert!(posted.iter().any(|t| t.contains("interrupted by a restart")), "{posted:?}");
+        // Nothing is left to recover.
+        assert_eq!(recover_channel_turns_with(&st, |_| Some(tx2.clone())).await, (0, 0));
+    }
+
     fn arm_pairing(st: &Arc<AppState>, nonce: &str) {
         st.db.connect().unwrap().execute(
             "UPDATE provider_account_bindings SET pair_nonce = ?1, pair_onboarding_id = 'onb-1' WHERE id = 'acct-1'",
@@ -2071,5 +2344,106 @@ mod tests {
         drop(posts);
         let n: i64 = st.db.connect().unwrap().query_row("SELECT COUNT(*) FROM bot_threads", [], |r| r.get(0)).unwrap();
         assert_eq!(n, 0, "pairing never runs a bot turn");
+    }
+}
+
+/// One contract, every adapter: the same platform answer means the same
+/// outcome everywhere, and what an adapter says it can't do, it refuses
+/// plainly. Each adapter is built ready to post, against a fake platform.
+#[cfg(test)]
+mod contract_tests {
+    use super::*;
+    use crate::channel_gateway::{Capabilities, HISTORY_UNSUPPORTED};
+    use std::sync::Mutex;
+
+    struct Platform(Mutex<Result<HttpResp, String>>);
+    #[async_trait]
+    impl HttpSend for Platform {
+        async fn post_json(&self, _req: HttpReq) -> Result<HttpResp, String> {
+            self.0.lock().unwrap().clone()
+        }
+        async fn post_multipart(&self, _u: &str, _f: Vec<(String, String)>, _ff: &str, _file: &crate::channel_files::ChannelFile) -> Result<HttpResp, String> {
+            self.0.lock().unwrap().clone()
+        }
+    }
+
+    fn adapters(http: Arc<dyn HttpSend>) -> Vec<(&'static str, Arc<dyn ChannelTransport>)> {
+        let cloud = "https://cloud.test".to_string();
+        vec![
+            ("telegram", build_transport("telegram", r#"{"botToken":"1:a","botUsername":"b"}"#, http.clone()).unwrap()),
+            ("whatsapp", build_transport("whatsapp", r#"{"accessToken":"t","phoneNumberId":"p"}"#, http.clone()).unwrap()),
+            ("whatsapp business", Arc::new(crate::channel_whatsapp_app::WhatsAppBusinessTransport { http: http.clone(), cloud_url: cloud.clone(), cloud_token: Some("t".into()), phone_number_id: Some("p".into()) })),
+            ("discord webhook", build_transport("discord", r#"{"webhookUrl":"https://discord.test/api/webhooks/1/x"}"#, http.clone()).unwrap()),
+            (
+                "discord app",
+                Arc::new(crate::channel_discord_app::DiscordAppTransport {
+                    http: http.clone(), db: None, cloud_base: Some(cloud.clone()), cloud_token: Some("t".into()), guild_id: Some("g".into()), public_key: None, relay_secret: None,
+                }),
+            ),
+            ("teams webhook", Arc::new(TeamsTransport { http: http.clone(), auth: None, access_token: Some("t".into()), own_identity: None })),
+            ("teams app", Arc::new(crate::channel_teams_app::TeamsAppCloudTransport { http: http.clone(), base: cloud.clone(), owner: "o".into(), token: Some("t".into()) })),
+            ("slack app", Arc::new(crate::channel_slack_app::SlackAppTransport { http: http.clone(), cloud: Some(cloud.clone()), token: Some("t".into()), team_id: "T1".into(), db: None })),
+            ("sms", Arc::new(crate::channel_phone::build_sms(http.clone(), r#"{"token":"t","numberId":"n"}"#))),
+        ]
+    }
+
+    fn out() -> Outbound {
+        Outbound { workspace: Some("https://smba.test".into()), channel: "C1".into(), thread: Some("+14155550123".into()), text: "hello".into(), identity: None }
+    }
+
+    async fn outcome(answer: Result<HttpResp, String>) -> Vec<(&'static str, Result<Receipt, PostError>)> {
+        let http = Arc::new(Platform(Mutex::new(answer)));
+        let mut v = vec![];
+        for (name, tx) in adapters(http) {
+            v.push((name, tx.post(&out()).await));
+        }
+        v
+    }
+
+    #[tokio::test]
+    async fn a_throttle_is_rate_limited_with_the_wait_on_every_adapter() {
+        for (name, r) in outcome(Ok(HttpResp { status: 429, body: json!({ "retry_after": 2 }) })).await {
+            assert_eq!(r, Err(PostError::RateLimited { retry_after_secs: Some(2), detail: "rate limited".into() }), "{name}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_server_error_or_lost_connection_is_uncertain_on_every_adapter() {
+        for (name, r) in outcome(Ok(HttpResp { status: 503, body: json!({}) })).await {
+            assert!(matches!(r, Err(PostError::Uncertain(_))), "{name}: {r:?}");
+        }
+        for (name, r) in outcome(Err("connection reset".into())).await {
+            assert!(matches!(r, Err(PostError::Uncertain(_))), "{name}: {r:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_refusal_is_a_definite_rejection_on_every_adapter() {
+        for (name, r) in outcome(Ok(HttpResp { status: 400, body: json!({ "error": "bad" }) })).await {
+            assert!(matches!(r, Err(PostError::Rejected(_))), "{name}: {r:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn what_an_adapter_says_it_cannot_do_it_refuses() {
+        let http: Arc<dyn HttpSend> = Arc::new(Platform(Mutex::new(Ok(HttpResp { status: 200, body: json!({}) }))));
+        let file = crate::channel_files::ChannelFile { filename: "a.txt".into(), mime: "text/plain".into(), data: b"hi".to_vec() };
+        for (name, tx) in adapters(http) {
+            let caps: Capabilities = tx.capabilities();
+            assert!(caps.text, "{name}");
+            if !caps.history {
+                assert_eq!(tx.fetch_since("C1", None, None).await.unwrap_err(), HISTORY_UNSUPPORTED, "{name}");
+            }
+            if !caps.files_out {
+                assert_eq!(tx.post_files(&out(), std::slice::from_ref(&file)).await, Err(PostError::Rejected("attachments_unsupported".into())), "{name}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_retry_after_header_is_kept_for_the_rate_limit() {
+        assert_eq!(with_retry_after(429, Value::Null, Some(9)), json!({ "retryAfter": 9 }));
+        assert_eq!(with_retry_after(429, json!({ "retry_after": 1 }), Some(9)), json!({ "retry_after": 1 }));
+        assert_eq!(with_retry_after(200, json!({}), Some(9)), json!({}));
     }
 }

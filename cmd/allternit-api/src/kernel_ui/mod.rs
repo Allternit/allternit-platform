@@ -213,7 +213,8 @@ fn routes(prefix: &str) -> Router<Arc<AppState>> {
 }
 
 pub fn router() -> Router<Arc<AppState>> {
-    routes("/v1/kernel").merge(crate::agency_api::kernel_alias_router())
+    // agency_router already serves /v1/decisions/* and /v1/descent at the root; only the run aliases are new here.
+    routes("/v1/kernel").merge(crate::agency_api::kernel_run_aliases())
 }
 
 /// The same routes under `/api/v1/kernel/*` (what the UI's `runtimeApiUrl`

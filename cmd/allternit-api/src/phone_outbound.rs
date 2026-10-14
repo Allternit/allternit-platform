@@ -215,6 +215,7 @@ pub async fn text_attributed<R: ThreadRuntime>(db: &DbHandle, rt: &R, http: Arc<
         }),
         Ok(SendOutcome::ReadOnly) => Err(OutError::Failed("That conversation is read-only.".into())),
         Ok(SendOutcome::Unconfirmed { .. }) => Err(OutError::Failed("I couldn't confirm the text went out; check the thread before resending.".into())),
+        Ok(SendOutcome::RateLimited { .. }) => Err(OutError::Failed("Texting is rate limited right now; nothing was sent. Try again in a minute.".into())),
         Ok(SendOutcome::Denied(m)) => Err(OutError::Failed(m)),
         Ok(SendOutcome::ApprovalRequired { .. }) => Err(OutError::Failed("That text is waiting for your approval.".into())),
         Ok(other) => Err(OutError::Failed(format!("The text wasn't sent ({other:?})."))),

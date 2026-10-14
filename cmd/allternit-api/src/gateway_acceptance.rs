@@ -255,6 +255,9 @@ impl ChannelTransport for Slack {
     fn provider(&self) -> &'static str {
         "slack"
     }
+    fn capabilities(&self) -> cg::Capabilities {
+        cg::Capabilities { history: true, ..cg::Capabilities::TEXT_ONLY }
+    }
     fn verify(&self, _s: &str, _h: &HeaderMap, _b: &[u8]) -> Result<(), String> {
         Ok(())
     }
