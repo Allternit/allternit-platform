@@ -1209,6 +1209,49 @@
         "allternit/surfaces/allternit-desktop/src/main/phone-tools.ts",
         "allternit/surfaces/allternit-desktop/src/main/phone-usb-agent.ts"
       ]
+    },
+    {
+      "id": "feature:local-vendor-bots",
+      "label": "Local vendor bot adapters",
+      "product": "product:digital-twin",
+      "status": "building",
+      "description": "Connections for 31 of the 33 pictured bot projects: native vendor APIs (OpenMausBot, Codync, Hivekeep, Invisible Dots, CopilotKit OpenDots/OpenMuse/OpenBot, DS Bot, Nightly OpenBot, Rakazo, FrockBot, Sidemates, nanoMuse, Vellum Assistant, Open Dots by Anil, Gawkbot, Munder Difflin, Happy), browser sign-in (Gemini Spark, Slashy, AbacusAI), macOS Messages (Iris, Poke, Instinct, Flip, Cue, Pally), and existing vendors (Grok Bot, OpenAI Dots, Muse, Cadu via Hermes). Noodle and Omnibots are on hold. Live account verification is pending.",
+      "touches": [
+        "allternit-ai/src/components/gateway",
+        "allternit-ai/src/lib/gateway",
+        "allternit-ai/src/views/agent-view",
+        "allternit/cmd/allternit-api",
+        "allternit/services/subscription-gateway"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-13",
+          "note": "Catalog identification is separate from implemented connections. Native adapters match vendor requests and refuse unsupported control capabilities."
+        },
+        {
+          "on": "2026-10-14",
+          "note": "Coverage of all 33 pictured projects is settled: a connector only where the vendor's own source exposes authenticated bot discovery, send and attributable replies. Hosted apps without an API, session-cookie-only, end-to-end-encrypted, keystroke-driven and unauthenticated projects are marked No supported connection instead of being proxied."
+        },
+        {
+          "on": "2026-10-14",
+          "note": "Eoj: every project should connect. Browser sign-in and Messages routes are used where no API exists; projects that would need a large separate bridge (Noodle's QUIC Hub link) or reverse engineering (Omnibots) are on hold."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/local-vendor-bots.mdx",
+        "allternit/services/subscription-gateway/adapters/hivekeep/provider.ts",
+        "allternit/services/subscription-gateway/adapters/invisible-dots/provider.ts",
+        "allternit/services/subscription-gateway/adapters/opendots-copilotkit/provider.ts",
+        "allternit/services/subscription-gateway/adapters/ds-bot/provider.ts",
+        "allternit/services/subscription-gateway/adapters/openmuse-copilotkit/provider.ts",
+        "allternit/services/subscription-gateway/adapters/openbot-nightly/provider.ts",
+        "allternit/services/subscription-gateway/adapters/rakazo/provider.ts",
+        "allternit/services/subscription-gateway/adapters/frockbot/provider.ts",
+        "allternit/services/subscription-gateway/adapters/sidemates/provider.ts",
+        "allternit/services/subscription-gateway/adapters/nanomuse/provider.ts",
+        "allternit/services/subscription-gateway/adapters/vellum-assistant/provider.ts",
+        "allternit-ai/src/lib/gateway/bot-projects.ts"
+      ]
     }
   ],
   "journeys": [

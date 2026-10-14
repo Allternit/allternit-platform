@@ -1,0 +1,70 @@
+---
+title: Local vendor bot connections
+description: Connect 31 bot projects through the vendor's own API, your own browser sign-in, or Messages on your Mac.
+---
+
+The projects in the table below connect through each vendor's own authenticated API or supported inbox. Others connect through your browser sign-in or through Messages; see the sections after the table. Most run on your connected Sessions computer; Rakazo and FrockBot connect to a server origin you configure. They connect to the vendor's existing agents, rather than selecting a model from Brains. Each adapter follows the vendor's source at a pinned commit, noted in its README. OpenMausBot, Codync, Hivekeep, Invisible Dots and CopilotKit OpenDots have source-based transport tests; the others have static checks only. Live vendor-account verification is pending for all of them.
+
+## Before connecting
+
+Run the vendor app on the same computer as the subscription gateway. In Settings → Connections, choose the vendor, review permissions, and enter its own credential. Credentials are stored encrypted. Never paste credentials into a chat or support report.
+
+On Desktop, the website phone layout, and the PWA, the same connection flow uses your connected computer. A cloud-only runtime cannot reach an app on your laptop's loopback address. If the adapter is unavailable on your chosen runtime, finish Sessions setup first.
+
+| Vendor | Credential | Conversation | Limitations |
+| --- | --- | --- | --- |
+| OpenMausBot | Token from a paired vendor client | Existing bot thread, guarded sends requiring approval mode Ask | Shared conversation; no cancellation, memory editing, or computer control |
+| Codync | Local host token | Existing bot conversation; bot must use Ask | Shared conversation; one-time approvals only; no atomic permission-mode guard or scoped cancellation |
+| Invisible Dots | Server API token | Existing Dot conversation, queued delivery supported | Completed matched replies; approvals stay in vendor UI; no shared bot cancellation |
+| OpenDots · CopilotKit | Enforced owner access token; vendor Intelligence connection configured | New isolated vendor thread; official Intelligence SDK and WebSocket transport | Completed current-run replies; approvals stay in OpenDots; no cancellation or computer control |
+| OpenMuse · CopilotKit | Runtime OPENMUSE_ACCESS_KEY; live agent configured | New isolated AG-UI conversation | Current-run replies; history lasts in this gateway process; no resume, approvals or cancellation |
+| DS Bot | DSH Web launch token; explicit loopback origin configured on the Sessions computer | Existing bot session; select its model in DSH first | Completed caller-matched turns; approval decisions remain in DSH; no cancellation |
+| Hivekeep | API client key with isolated conversation access | New isolated API conversation | Completed replies only; review approvals in Hivekeep; no streaming or cancellation |
+| OpenBot · Nightly | Team API session token from the host's local login; loopback port set with `SUBS_GATEWAY_OPENBOT_NIGHTLY_URL` | Existing agent conversation | Completed turn replies; no approvals, cancellation or streaming |
+| Rakazo | JSON `{"token","spaceId"}`: your Better Auth session and selected space; server origin set with `SUBS_GATEWAY_RAKAZO_URL` | The bot's existing shared thread | Replies from the matching run; no context resume, approvals or cancellation |
+| FrockBot | JSON `{"token","userId"}`: deployment `DEBUG_TOKEN` and an admin user ID; opt in with `SUBS_GATEWAY_FROCKBOT_DEBUG_ENABLED=1` | Bots of that admin account | Only for deployments you administer; the token can read other accounts on that deployment, so use a dedicated one |
+| Sidemates | Access token from the Sidemates data folder or a paired device key | The teammate's own thread | Replies matched by run ID; approvals stay in Sidemates; no cancellation |
+| nanoMuse | `server_token` from the nanoMuse data folder; requires `nanomuse serve` | New isolated thread | Final replies only; the phone app is not supported; no cancellation |
+| Vellum Assistant | Short-lived token from pairing a client with the assistant runtime | Conversation per Allternit context | Replies matched to the request; pair again when the token expires; no cancellation |
+| Open Dots by Anil | Your Open Dots `user_id`, with its local execution enabled on the same computer (`LOCAL_EXECUTION_ENABLED=true`); URL set with `SUBS_GATEWAY_OPENDOTS_ANIL_URL` | A new local Claude run per message, no memory between messages | Loopback only; replies from completed runs; Open Dots approvals stay in Open Dots and are not answered here; no cancellation |
+| Gawkbot | Broker token from the Sessions computer; URL set with `SUBS_GATEWAY_GAWKBOT_URL` (default `http://127.0.0.1:7890`) | Direct message with each office bot | Replies attributed to your message ID; terminal session members show as unavailable; no cancellation |
+| Happy | JSON `{"secret"}`: your Happy account's restore secret; server overridable with `SUBS_GATEWAY_HAPPY_URL` | Your active Happy sessions | Messages stay end-to-end encrypted; the gateway encrypts and decrypts with your key; no cancellation |
+| OpenBot · CopilotKit | JSON `{"origin","sessionToken"}`: your OpenBot address and the `better-auth.session_token` from your own sign-in | New thread per conversation | Current-run replies; set `SUBS_GATEWAY_OPENBOT_COPILOTKIT_REALTIME_ORIGIN` if your deployment uses its own realtime gateway; no approvals or cancellation |
+| Munder Difflin | Webhook endpoint ID and secret from Triggers settings, as JSON `{"endpointId","secret"}`; URL set with `SUBS_GATEWAY_MUNDER_DIFFLIN_URL` (default `http://127.0.0.1:3849`) | Work sent to the floor's god orchestrator, one task per message | Replies from the task's result on the board; held messages wait for approval in Munder Difflin; the webhook addresses the floor, not one agent; no cancellation |
+
+## Use your bot
+
+After the credential check succeeds, pick an agent returned by that vendor instance. Allternit retains its vendor identity and uses the normal bot chat flow. Replies are matched to the accepted vendor request or turn. An accepted message alone is never shown as a completed response.
+
+OpenMausBot and Codync can forward explicit human approval decisions. Hivekeep's external API does not expose approval controls. Invisible Dots approvals are not forwarded by this adapter because a conversation message cannot safely claim ownership of a task approval; review them in the vendor app. Closing an Allternit connection does not stop a shared vendor bot.
+
+## When a request fails
+
+An uncertain send or a wait timeout can mean the vendor received your message. Check its conversation before sending a new message. Retrying the same send ID within the running gateway reuses the prior result. Gateway restarts do not restore these in-memory send records or contexts.
+
+Authentication failures require reconnecting with the correct credential or restoring its scope. Schema changes fail explicitly instead of interpreting an unrelated reply as your bot's answer.
+
+## Browser sign-in projects
+
+Gemini Spark, Slashy and AbacusAI Bot have no developer API. Connect them like ChatGPT or Gemini: in Settings → Connections choose the project and sign in to your own account in Allternit's login browser. The gateway then chats in that signed-in web app for you. Gemini Spark needs a Google AI Pro or Ultra plan with Spark (US beta). Their page selectors are first versions and are checked on the first real sign-in.
+
+## Messages projects
+
+Iris, Poke, Instinct, Flip, Cue and Pally are assistants you text. Allternit texts them from your own number through Messages on your Sessions computer, which must be a Mac signed in to Messages:
+
+1. Set `SUBS_GATEWAY_MESSAGES_ENABLED=1` for the gateway.
+2. Give the gateway process Full Disk Access (System Settings → Privacy & Security), so it can read replies from Messages, and allow it to control Messages when macOS asks.
+3. In Settings → Connections choose the assistant and enter JSON `{"handle":"+1…"}` with the number or iMessage address you text it at. Flip's published number is filled in for you.
+
+Replies are the assistant's next texts after yours. If you text the same assistant by hand while Allternit is waiting, that text can be taken as the reply.
+
+## Projects on hold
+
+The project catalog covers the 33 projects from the supplied tier list. Grok Bot, OpenAI Dots and Muse connect through their existing Grok, ChatGPT and Meta vendor entries, and Cadu (a phone client for Hermes) through Hermes. Two projects are on hold and show **On hold** in the catalog:
+
+- **Noodle** talks to outside devices only over its own encrypted Hub link (QUIC), which needs a separate bridge app.
+- **Omnibots** publishes no interface; its Mac app pairs only with your iPhone through an encrypted relay.
+
+A catalog card and logo identify a project; they are not a claim of partnership.
+
+Vendor setup references: [OpenMausBot](https://github.com/milind-soni/OpenMausBot), [Codync](https://github.com/leepokai/Codync), [Hivekeep external API](https://github.com/MarlBurroW/hivekeep/blob/7d023c952e46861070683825ff545daf981910f0/external-api.md), [Nightly OpenBot](https://github.com/nightly-labs/OpenBot), [Rakazo](https://github.com/elie222/rakazo), [Sidemates](https://github.com/PrisacariuRobert/sidemates), [nanoMuse](https://github.com/nano-muse/nanoMuse), [Vellum Assistant](https://github.com/vellum-ai/vellum-assistant), [Open Dots](https://github.com/Anil-matcha/open-dots), [Gawkbot](https://github.com/najmuzzaman-mohammad/gawkbot), [Munder Difflin](https://github.com/HarnessMD/munder-difflin), [Happy](https://happy.engineering/) and [CopilotKit OpenBot](https://github.com/CopilotKit/OpenBot).

@@ -125,6 +125,48 @@
       "label": "Allternit USB Agent firmware",
       "kind": "module",
       "path": "allternit/hardware/usb-agent"
+    },
+    {
+      "id": "external:openmausbot-local-api",
+      "label": "openmausbot authenticated local API",
+      "kind": "external",
+      "path": "allternit/services/subscription-gateway/adapters/openmausbot/provider.ts"
+    },
+    {
+      "id": "external:codync-local-api",
+      "label": "codync authenticated local API",
+      "kind": "external",
+      "path": "allternit/services/subscription-gateway/adapters/codync/provider.ts"
+    },
+    {
+      "id": "external:hivekeep-local-api",
+      "label": "hivekeep authenticated local API",
+      "kind": "external",
+      "path": "allternit/services/subscription-gateway/adapters/hivekeep/provider.ts"
+    },
+    {
+      "id": "external:invisible-dots-local-api",
+      "label": "Invisible Dots authenticated local API",
+      "kind": "external",
+      "path": "allternit/services/subscription-gateway/adapters/invisible-dots/provider.ts"
+    },
+    {
+      "id": "external:opendots-copilotkit-runtime",
+      "label": "CopilotKit OpenDots authenticated local runtime and Intelligence realtime",
+      "kind": "external",
+      "path": "allternit/services/subscription-gateway/adapters/opendots-copilotkit/provider.ts"
+    },
+    {
+      "id": "external:ds-bot-dsh",
+      "label": "DS Bot DSH signed-cookie local session RPC",
+      "kind": "external",
+      "path": "allternit/services/subscription-gateway/adapters/ds-bot/provider.ts"
+    },
+    {
+      "id": "external:openmuse-copilotkit-runtime",
+      "label": "OpenMuse live AG-UI HTTP runtime",
+      "kind": "external",
+      "path": "allternit/services/subscription-gateway/adapters/openmuse-copilotkit/provider.ts"
     }
   ],
   "edges": [
@@ -465,6 +507,69 @@
       "evidence": [
         "allternit/surfaces/allternit-desktop/src/preload/index.ts",
         "allternit-ai/src/lib/phones-bridge.ts"
+      ]
+    },
+    {
+      "source": "allternit/services/subscription-gateway",
+      "target": "external:openmausbot-local-api",
+      "kind": "authenticated loopback HTTP; request-matched native bot replies",
+      "evidence": [
+        "allternit/services/subscription-gateway/adapters/openmausbot/provider.ts",
+        "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
+      ]
+    },
+    {
+      "source": "allternit/services/subscription-gateway",
+      "target": "external:codync-local-api",
+      "kind": "authenticated loopback HTTP; request-matched native bot replies",
+      "evidence": [
+        "allternit/services/subscription-gateway/adapters/codync/provider.ts",
+        "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
+      ]
+    },
+    {
+      "source": "allternit/services/subscription-gateway",
+      "target": "external:hivekeep-local-api",
+      "kind": "authenticated loopback HTTP; request-matched native bot replies",
+      "evidence": [
+        "allternit/services/subscription-gateway/adapters/hivekeep/provider.ts",
+        "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
+      ]
+    },
+    {
+      "source": "allternit/services/subscription-gateway",
+      "target": "external:invisible-dots-local-api",
+      "kind": "authenticated loopback HTTP; accepted message IDs matched to native conversation replies",
+      "evidence": [
+        "allternit/services/subscription-gateway/adapters/invisible-dots/provider.ts",
+        "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
+      ]
+    },
+    {
+      "source": "allternit/services/subscription-gateway",
+      "target": "external:opendots-copilotkit-runtime",
+      "kind": "owner-token loopback HTTP and approved Intelligence WebSocket origin; isolated conversation IDs",
+      "evidence": [
+        "allternit/services/subscription-gateway/adapters/opendots-copilotkit/provider.ts",
+        "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
+      ]
+    },
+    {
+      "source": "allternit/services/subscription-gateway",
+      "target": "external:ds-bot-dsh",
+      "kind": "launch-token exchange and signed-cookie loopback RPC; caller-matched completed turns",
+      "evidence": [
+        "allternit/services/subscription-gateway/adapters/ds-bot/provider.ts",
+        "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
+      ]
+    },
+    {
+      "source": "allternit/services/subscription-gateway",
+      "target": "external:openmuse-copilotkit-runtime",
+      "kind": "access-key session exchange and authenticated loopback AG-UI SSE; own thread/run completion",
+      "evidence": [
+        "allternit/services/subscription-gateway/adapters/openmuse-copilotkit/provider.ts",
+        "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
       ]
     }
   ]

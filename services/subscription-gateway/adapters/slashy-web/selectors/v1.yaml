@@ -1,0 +1,55 @@
+# slashy-web selectors v1 — *** v1-UNVERIFIED GUESSES. The Slashy app surface
+# *** was not readable during this task (slashy.com returned only its name), so
+# *** every strategy below is a generic chat-UI guess, NOT a live observation.
+# *** Replace them after the owner's first login (probe per-key matches first).
+
+composer:
+  critical: true
+  strategies:
+    - { role: textbox, name: /message|ask|prompt/i }
+    - { css: "div[contenteditable=true][role=textbox]" }
+    - { css: "textarea" }
+send_button:
+  critical: true
+  strategies:
+    - { role: button, name: /^send/i }
+    - { css: "button[aria-label*='Send']" }
+stop_button:
+  critical: false
+  strategies:
+    - { role: button, name: /^stop/i }
+response:
+  critical: true
+  strategies:
+    - { css: "[data-role='assistant'] .markdown" }
+    - { css: ".assistant-message" }
+user_turn:
+  critical: false
+  strategies:
+    - { css: "[data-role='user']" }
+streaming:
+  critical: false
+  strategies:
+    - { css: "[aria-busy='true']" }
+logged_in_probe:
+  critical: true
+  strategies:
+    - { css: "[data-testid='user-menu']" }
+    - { role: button, name: /account|profile/i }
+logged_out_probe:
+  critical: false
+  strategies:
+    - { role: button, name: /^(log in|sign in)$/i }
+banner:
+  critical: false
+  strategies:
+    - { role: alert }
+challenge:
+  critical: false
+  strategies:
+    - { css: "iframe[src*='challenges.cloudflare.com']" }
+    - { text: /verify you are human|checking your browser/i }
+account_identity:
+  critical: false
+  strategies:
+    - { css: "[data-testid='user-menu']" }
