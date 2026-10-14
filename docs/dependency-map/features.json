@@ -1215,12 +1215,13 @@
       "label": "Local vendor bot adapters",
       "product": "product:digital-twin",
       "status": "building",
-      "description": "Native adapters for 13 bot projects (OpenMausBot, Codync, Hivekeep, Invisible Dots, CopilotKit OpenDots and OpenMuse, DS Bot, Nightly OpenBot, Rakazo, FrockBot, Sidemates, nanoMuse, Vellum Assistant) with vendor branding. Grok Bot, OpenAI Dots and Muse use existing vendor entries; the other 17 catalog projects show No supported connection with a reason. Live account verification is pending.",
+      "description": "Connections for 31 of the 33 pictured bot projects: native vendor APIs (OpenMausBot, Codync, Hivekeep, Invisible Dots, CopilotKit OpenDots/OpenMuse/OpenBot, DS Bot, Nightly OpenBot, Rakazo, FrockBot, Sidemates, nanoMuse, Vellum Assistant, Open Dots by Anil, Gawkbot, Munder Difflin, Happy), browser sign-in (Gemini Spark, Slashy, AbacusAI), macOS Messages (Iris, Poke, Instinct, Flip, Cue, Pally), and existing vendors (Grok Bot, OpenAI Dots, Muse, Cadu via Hermes). Noodle and Omnibots are on hold. Live account verification is pending.",
       "touches": [
-        "allternit/services/subscription-gateway",
         "allternit-ai/src/components/gateway",
         "allternit-ai/src/lib/gateway",
-        "allternit-ai/src/views/agent-view"
+        "allternit-ai/src/views/agent-view",
+        "allternit/cmd/allternit-api",
+        "allternit/services/subscription-gateway"
       ],
       "decisions": [
         {
@@ -1230,6 +1231,10 @@
         {
           "on": "2026-10-14",
           "note": "Coverage of all 33 pictured projects is settled: a connector only where the vendor's own source exposes authenticated bot discovery, send and attributable replies. Hosted apps without an API, session-cookie-only, end-to-end-encrypted, keystroke-driven and unauthenticated projects are marked No supported connection instead of being proxied."
+        },
+        {
+          "on": "2026-10-14",
+          "note": "Eoj: every project should connect. Browser sign-in and Messages routes are used where no API exists; projects that would need a large separate bridge (Noodle's QUIC Hub link) or reverse engineering (Omnibots) are on hold."
         }
       ],
       "evidence": [
