@@ -155,6 +155,12 @@
       "label": "DS Bot DSH signed-cookie local session RPC",
       "kind": "external",
       "path": "allternit/services/subscription-gateway/adapters/ds-bot/provider.ts"
+    },
+    {
+      "id": "external:openmuse-copilotkit-runtime",
+      "label": "OpenMuse live AG-UI HTTP runtime",
+      "kind": "external",
+      "path": "allternit/services/subscription-gateway/adapters/openmuse-copilotkit/provider.ts"
     }
   ],
   "edges": [
@@ -529,6 +535,15 @@
       "kind": "launch-token exchange and signed-cookie loopback RPC; caller-matched completed turns",
       "evidence": [
         "allternit/services/subscription-gateway/adapters/ds-bot/provider.ts",
+        "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
+      ]
+    },
+    {
+      "source": "allternit/services/subscription-gateway",
+      "target": "external:openmuse-copilotkit-runtime",
+      "kind": "access-key session exchange and authenticated loopback AG-UI SSE; own thread/run completion",
+      "evidence": [
+        "allternit/services/subscription-gateway/adapters/openmuse-copilotkit/provider.ts",
         "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
       ]
     }

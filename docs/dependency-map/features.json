@@ -1158,7 +1158,7 @@
       "label": "Local vendor bot adapters",
       "product": "product:digital-twin",
       "status": "building",
-      "description": "Authenticated OpenMausBot, Codync, Hivekeep, Invisible Dots CopilotKit OpenDots and DS Bot adapters with vendor branding. All 33 catalog projects have icons. Live accounts and remaining connectors are pending.",
+      "description": "Authenticated OpenMausBot, Codync, Hivekeep, Invisible Dots CopilotKit OpenDots DS Bot and CopilotKit OpenMuse adapters with vendor branding. All 33 catalog projects have icons. Live accounts and remaining connectors are pending.",
       "touches": [
         "allternit/services/subscription-gateway",
         "allternit-ai/src/components/gateway",
@@ -1176,7 +1176,8 @@
         "allternit/services/subscription-gateway/adapters/hivekeep/provider.ts",
         "allternit/services/subscription-gateway/adapters/invisible-dots/provider.ts",
         "allternit/services/subscription-gateway/adapters/opendots-copilotkit/provider.ts",
-        "allternit/services/subscription-gateway/adapters/ds-bot/provider.ts"
+        "allternit/services/subscription-gateway/adapters/ds-bot/provider.ts",
+        "allternit/services/subscription-gateway/adapters/openmuse-copilotkit/provider.ts"
       ]
     }
   ],
