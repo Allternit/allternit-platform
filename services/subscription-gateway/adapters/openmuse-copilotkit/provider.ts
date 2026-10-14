@@ -23,6 +23,7 @@ export class OpenMuseCopilotkitProvider extends BaseAaiProvider {
  private transport:PairedLocalTransport;
  private contexts=new Map<string,Context>();
  private timeoutMs:number;
+ private cachedSession:{owner:string;key:string;token:string;expiresAt:number}|undefined;
 
  constructor(options:{baseUrl?:string;token?:string;fetch?:typeof fetch;replyTimeoutMs?:number}={}) {
   super();
@@ -33,20 +34,26 @@ export class OpenMuseCopilotkitProvider extends BaseAaiProvider {
  private async session():Promise<AaiResult<string>> {
   const key=this.transport.credential();
   if(!key||key.length<24)return fail('AUTH_REQUIRED','Supply the OpenMuse access key (24+ characters) through the sealed account credential.');
+  const owner=this.transport.owner(),cached=this.cachedSession;
+  if(cached&&cached.owner===owner&&cached.key===key&&cached.expiresAt>Date.now())return ok(cached.token);
+  this.cachedSession=undefined;
   try {
    const response=await (this.transport.options.fetch??fetch)(this.transport.base+'/api/session',{method:'POST',redirect:'error',signal:AbortSignal.timeout(15000),headers:{'content-type':'application/json',accept:'application/json'},body:JSON.stringify({accessKey:key})});
    if(!response.ok){void response.body?.cancel();if(response.status===401||response.status===403)return fail('AUTH_REVOKED','OpenMuse refused the access key.');if(response.status===429)return fail('RATE_LIMITED','OpenMuse is rate limiting sign-in.');return fail('VENDOR_UNAVAILABLE',`OpenMuse session exchange returned HTTP ${response.status}.`);}
    const value:unknown=await response.json();
-   if(!isObject(value)||typeof value.token!=='string'||value.mode!=='live')return fail('POLICY_DENIED','OpenMuse must be in live mode to provide its real agent.');
+   if(!isObject(value)||typeof value.token!=='string'||!value.token.trim()||value.mode!=='live')return fail('POLICY_DENIED','OpenMuse must be in live mode to provide its real agent.');
+   this.cachedSession={owner,key,token:value.token,expiresAt:Date.now()+23*60*60*1000};
    return ok(value.token);
   } catch {return fail('VENDOR_UNAVAILABLE','OpenMuse is unreachable or did not complete the session exchange.');}
  }
+
+ private clearSession(token:string) {if(this.cachedSession?.token===token)this.cachedSession=undefined;}
 
  async list() {
   const session=await this.session();if(!session.ok)return session;
   try {
    const response=await (this.transport.options.fetch??fetch)(this.transport.base+'/api/health',{redirect:'error',signal:AbortSignal.timeout(15000),headers:{authorization:`Bearer ${session.value}`,accept:'application/json'}});
-   if(!response.ok){void response.body?.cancel();return fail(response.status===401?'AUTH_REVOKED':'VENDOR_UNAVAILABLE',`OpenMuse health check returned HTTP ${response.status}.`);}
+   if(!response.ok){void response.body?.cancel();if(response.status===401||response.status===403)this.clearSession(session.value);return fail(response.status===401||response.status===403?'AUTH_REVOKED':'VENDOR_UNAVAILABLE',`OpenMuse health check returned HTTP ${response.status}.`);}
    const value:unknown=await response.json();
    if(!isObject(value)||value.mode!=='live'||value.agentConfigured!==true)return fail('POLICY_DENIED','OpenMuse has no configured live agent. Configure a model/provider key or AGENT_BACKEND=agui.');
    return ok([{agentId:'openmuse-copilotkit:default',displayName:'OpenMuse',vendor:'openmuse-copilotkit',state:'ready'}]);
@@ -81,9 +88,9 @@ export class OpenMuseCopilotkitProvider extends BaseAaiProvider {
    let body:unknown;try{body=JSON.parse(String(init.body));}catch{throw Error('Invalid AG-UI request body');}
    if(!isObject(body)||body.threadId!==c.threadId||body.runId!==runId)throw Error('OpenMuse run identity mismatch');
    const response=await fetchImpl(url,{...init,redirect:'error',signal:AbortSignal.any([init.signal??new AbortController().signal,AbortSignal.timeout(this.timeoutMs)])});
-   if(!response.ok)transportFailure=response.status===401||response.status===403?fail('AUTH_REVOKED','OpenMuse rejected its session credential.'):
+   if(!response.ok){if(response.status===401||response.status===403)this.clearSession(session.value);transportFailure=response.status===401||response.status===403?fail('AUTH_REVOKED','OpenMuse rejected its session credential.'):
      response.status===429?fail('RATE_LIMITED','OpenMuse is rate limiting this run.'):
-     fail('VENDOR_UNAVAILABLE',`OpenMuse AG-UI run returned HTTP ${response.status}.`,{retryable:false});
+     fail('VENDOR_UNAVAILABLE',`OpenMuse AG-UI run returned HTTP ${response.status}.`,{retryable:false});}
    return response;
   }});
   const userMessage={id:randomUUID(),role:'user' as const,content:input.text};
