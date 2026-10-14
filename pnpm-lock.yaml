@@ -2623,6 +2623,9 @@ importers:
       '@anthropic-ai/sdk':
         specifier: ^0.95.2
         version: 0.95.2(zod@3.25.76)
+      '@copilotkit/core':
+        specifier: 1.75.0
+        version: 1.75.0(@ag-ui/core@0.0.59)(encoding@0.1.13)(zod@4.3.6)
       better-sqlite3:
         specifier: 13.0.3
         version: 13.0.3
@@ -22463,6 +22466,112 @@ packages:
 
   zwitch@2.0.4:
     resolution: {integrity: sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A==}
+
+  '@ag-ui/a2ui-middleware@0.0.10':
+    resolution:
+      integrity: sha512-2BQFUQ9vJzUAQSR0dNW/ijhyH8KpiRWISSLTP6mIe6ENyQ2cM1/XLG38/Dcb69olcs36gtZADZzAQWcno5H6fA==
+    peerDependencies:
+      '@ag-ui/client': '>=0.0.40'
+      rxjs: 7.8.1
+  '@ag-ui/a2ui-toolkit@0.0.4':
+    resolution:
+      integrity: sha512-9VPmgpCAsFVICk7z23kh+Kp/BwYMxw0D0KGjOiKXhm1MAH+Wid2iC3yKsXso+q7UZZiyhWgeDUSgaAkltyLmGg==
+  '@ag-ui/client@0.0.59':
+    resolution:
+      integrity: sha512-d7++r8sBAq6z9G/D/WKrMznQ1Mdvew14pCqOVATReFIvl06mCi1BPqTwmos3zCDGAIiSgcvxc/8m472rYQgFFQ==
+  '@ag-ui/core@0.0.59':
+    resolution:
+      integrity: sha512-hDgy4ipTqXieT8YG8Mr917Y+FD/f11VK1GefZ5CwTDCuNqS/oTwjJ5l/DZkicThgS8hQW/Y7wPylPBMBJ8BkUg==
+  '@ag-ui/encoder@0.0.59':
+    resolution:
+      integrity: sha512-wQCzBsStyZMm8nzhTdTx1G0B1C8yv5rbzZLnz1ka/l5LcJEsK3KTounU8CR9l+7QtcpOUUDJKd0xAbyI6gNcSw==
+  '@ag-ui/proto@0.0.59':
+    resolution:
+      integrity: sha512-X+uvDaegLEHw5kJu8tv2eSqHH8ouat+JCfFokGV1uuMquY8qCEQSlGsM7xzexwX9fujuxgHOWumg5kJDqa0+RA==
+  '@bufbuild/protobuf@2.16.0':
+    resolution:
+      integrity: sha512-FWa0sPlqYGJgpTs6OxBRcL/AW4JT0OIO+W1ajerluoTVh8CV0B7XM1qsNCRgnkSCkRCgOICKHRQlY17jrsm0+Q==
+  '@copilotkit/core@1.75.0':
+    resolution:
+      integrity: sha512-cHH37QkX8FhMA7PK40234lbc218PI1ULqzgCkgWDhLIRN9l/jZcfmH2UdmIzbs7vbg5W4vaw2V5jzvV8DAi3AA==
+    engines:
+      node: '>=20'
+  '@copilotkit/license-verifier@0.5.0':
+    resolution:
+      integrity: sha512-vrwKtIpYwF0FT9ZoYASH8owa2cGV0dhDvJGaCRaRMStwDxpc6DRdydKkhx8cWZXyBRxEYcq/Vygv4JvevhQQdQ==
+  '@copilotkit/shared@1.75.0':
+    resolution:
+      integrity: sha512-9Va/X3hreSi4BNtKqSqh5uhmwHXefrv2SJ/LjIxcivRBDbmL2gVQY+TpatPxOogNJabspHqy7KoLph4TosS2cg==
+    peerDependencies:
+      '@ag-ui/core': '>=0.0.48'
+  '@lukeed/csprng@1.1.0':
+    resolution:
+      integrity: sha512-Z7C/xXCiGWsg0KuKsHTKJxbWhpI3Vs5GwLfOean7MGyVFGqdRgBbAjOCh6u4bbjPc/8MJ2pZmK/0DLdCbivLDA==
+    engines:
+      node: '>=8'
+  '@lukeed/uuid@2.0.1':
+    resolution:
+      integrity: sha512-qC72D4+CDdjGqJvkFMMEAtancHUQ7/d/tAiHf64z8MopFDmcrtbcJuerDtFceuAfQJ2pDSfCKCtbqoGBNnwg0w==
+    engines:
+      node: '>=8'
+  '@protobuf-ts/protoc@2.11.1':
+    resolution:
+      integrity: sha512-mUZJaV0daGO6HUX90o/atzQ6A7bbN2RSuHtdwo8SSF2Qoe3zHwa4IHyCN1evftTeHfLmdz+45qo47sL+5P8nyg==
+    hasBin: true
+  '@segment/analytics-core@1.8.2':
+    resolution:
+      integrity: sha512-5FDy6l8chpzUfJcNlIcyqYQq4+JTUynlVoCeCUuVz+l+6W0PXg+ljKp34R4yLVCcY5VVZohuW+HH0VLWdwYVAg==
+  '@segment/analytics-generic-utils@1.2.0':
+    resolution:
+      integrity: sha512-DfnW6mW3YQOLlDQQdR89k4EqfHb0g/3XvBXkovH1FstUN93eL1kfW9CsDcVQyH3bAC5ZsFyjA/o/1Q2j0QeoWw==
+  '@segment/analytics-node@2.3.0':
+    resolution:
+      integrity: sha512-fOXLL8uY0uAWw/sTLmezze80hj8YGgXXlAfvSS6TUmivk4D/SP0C0sxnbpFdkUzWg2zT64qWIZj26afEtSnxUA==
+    engines:
+      node: '>=20'
+  '@tanstack/devtools-event-client@0.4.4':
+    resolution:
+      integrity: sha512-6T5Yop/793YI+H+5J8Hsyj4kCih9sl4t3ElLgKioW5hk3ocn+ZdSJ94tT7vL7uabxSugWYBZlOTMPzEw2puvQw==
+    engines:
+      node: '>=18'
+    hasBin: true
+  '@tanstack/pacer@0.20.1':
+    resolution:
+      integrity: sha512-ZNQ1bIL6eUXVKdic0tiImvBVkWrg/IoSK6VIacTrO3d3HAGnd70qFJNJagR/YOJIOw4EKGWnodwpYZkN1pWuVQ==
+    engines:
+      node: '>=18'
+  '@tanstack/store@0.9.3':
+    resolution:
+      integrity: sha512-8reSzl/qGWGGVKhBoxXPMWzATSbZLZFWhwBAFO9NAyp0TxzfBP0mIrGb8CP8KrQTmvzXlR/vFPPUrHTLBGyFyw==
+  clarinet@0.12.6:
+    resolution:
+      integrity: sha512-0FR+TrvLbYHLjhzs9oeIbd3yfZmd4u2DzYQEjUTm2dNfh4Y/9RIRWPjsm3aBtrVEpjKI7+lWa4ouqEXoml84mQ==
+    engines:
+      chrome: '>=16.0.912'
+      firefox: '>=0.8.0'
+      node: '>=0.3.6'
+  dset@3.1.4:
+    resolution:
+      integrity: sha512-2QF/g9/zTaPDc3BjNcVTGoBbXBgYfMTTceLaYcFJ/W9kggFUkhxD/hMEeuLKbugyef9SqAx8cpgwlIP/jinUTA==
+    engines:
+      node: '>=4'
+  fast-json-patch@3.1.1:
+    resolution:
+      integrity: sha512-vf6IHUX2SBcA+5/+4883dsIjpBTqmfBjmYiWK1savxQmFk4JfBMLa7ynTYOs1Rolp/T1betJxHiGD3g1Mn8lUQ==
+  graphql@16.14.2:
+    resolution:
+      integrity: sha512-Chq1s4CY7jmh8gO2qvLIJyfCDIN+EHLFW/9iShnp1z8FjBQMoodWP1kDC36VAMXXIvAjj4ARa7ntfAV2BrjsbA==
+    engines:
+      node: ^12.22.0 || ^14.16.0 || ^16.0.0 || >=17.0.0
+  phoenix@1.8.15:
+    resolution:
+      integrity: sha512-AU2t9smrLcSy7DF1ic3VKDVNmjnhcsOgdeXBiVrR29BgFLmO4EN+tyGx/lRY3naxl7eJtyLrnlBOfJu8gYvXdQ==
+  rxjs@7.8.1:
+    resolution:
+      integrity: sha512-AA3TVj+0A2iuIoQkWEK/tqFjBq2j+6PO6Y0zJcvzLAFhEFIO3HL0vls9hWLncZbAAbK0mar7oZ4V079I/qPMxg==
+  untruncate-json@0.0.1:
+    resolution:
+      integrity: sha512-4W9enDK4X1y1s2S/Rz7ysw6kDuMS3VmRjMFg7GZrNO+98OSe+x5Lh7PKYoVjy3lW/1wmhs6HW0lusnQRHgMarA==
 
 snapshots:
 
@@ -48122,3 +48231,145 @@ snapshots:
       use-sync-external-store: 1.6.0(react@18.3.1)
 
   zwitch@2.0.4: {}
+
+  '@ag-ui/a2ui-middleware@0.0.10(@ag-ui/client@0.0.59)(rxjs@7.8.1)':
+    dependencies:
+      '@ag-ui/a2ui-toolkit': 0.0.4
+      '@ag-ui/client': 0.0.59
+      clarinet: 0.12.6
+      rxjs: 7.8.1
+  '@ag-ui/a2ui-toolkit@0.0.4': {}
+  '@ag-ui/client@0.0.59':
+    dependencies:
+      '@ag-ui/core': 0.0.59
+      '@ag-ui/encoder': 0.0.59
+      '@ag-ui/proto': 0.0.59
+      '@types/uuid': 10.0.0
+      compare-versions: 6.1.1
+      fast-json-patch: 3.1.1
+      rxjs: 7.8.1
+      untruncate-json: 0.0.1
+      uuid: 11.1.0
+      zod: 3.25.76
+  '@ag-ui/core@0.0.59':
+    dependencies:
+      zod: 3.25.76
+  '@ag-ui/encoder@0.0.59':
+    dependencies:
+      '@ag-ui/core': 0.0.59
+      '@ag-ui/proto': 0.0.59
+  '@ag-ui/proto@0.0.59':
+    dependencies:
+      '@ag-ui/core': 0.0.59
+      '@bufbuild/protobuf': 2.16.0
+      '@protobuf-ts/protoc': 2.11.1
+  '@bufbuild/protobuf@2.16.0': {}
+  '@copilotkit/core@1.75.0(@ag-ui/core@0.0.59)(encoding@0.1.13)(zod@4.3.6)':
+    dependencies:
+      '@ag-ui/client': 0.0.59
+      '@copilotkit/shared': 1.75.0(@ag-ui/core@0.0.59)(encoding@0.1.13)
+      '@tanstack/pacer': 0.20.1
+      phoenix: 1.8.15
+      rxjs: 7.8.1
+      zod-to-json-schema: 3.25.1(zod@4.3.6)
+    transitivePeerDependencies:
+      - '@ag-ui/core'
+      - encoding
+      - zod
+  '@copilotkit/license-verifier@0.5.0': {}
+  '@copilotkit/shared@1.75.0(@ag-ui/core@0.0.59)(encoding@0.1.13)':
+    dependencies:
+      '@ag-ui/a2ui-middleware': 0.0.10(@ag-ui/client@0.0.59)(rxjs@7.8.1)
+      '@ag-ui/client': 0.0.59
+      '@ag-ui/core': 0.0.59
+      '@copilotkit/license-verifier': 0.5.0
+      '@segment/analytics-node': 2.3.0(encoding@0.1.13)
+      '@standard-schema/spec': 1.0.0
+      chalk: 4.1.2
+      clarinet: 0.12.6
+      graphql: 16.14.2
+      partial-json: 0.1.7
+      rxjs: 7.8.1
+      uuid: 11.1.0
+      zod: 3.25.76
+      zod-to-json-schema: 3.24.5(zod@3.25.76)
+    transitivePeerDependencies:
+      - encoding
+  '@lukeed/csprng@1.1.0': {}
+  '@lukeed/uuid@2.0.1':
+    dependencies:
+      '@lukeed/csprng': 1.1.0
+  '@protobuf-ts/protoc@2.11.1': {}
+  '@segment/analytics-core@1.8.2':
+    dependencies:
+      '@lukeed/uuid': 2.0.1
+      '@segment/analytics-generic-utils': 1.2.0
+      dset: 3.1.4
+      tslib: 2.8.1
+  '@segment/analytics-generic-utils@1.2.0':
+    dependencies:
+      tslib: 2.8.1
+  '@segment/analytics-node@2.3.0(encoding@0.1.13)':
+    dependencies:
+      '@lukeed/uuid': 2.0.1
+      '@segment/analytics-core': 1.8.2
+      '@segment/analytics-generic-utils': 1.2.0
+      buffer: 6.0.3
+      jose: 5.9.6
+      node-fetch: 2.7.0(encoding@0.1.13)
+      tslib: 2.8.1
+    transitivePeerDependencies:
+      - encoding
+  '@tanstack/devtools-event-client@0.4.4': {}
+  '@tanstack/pacer@0.20.1':
+    dependencies:
+      '@tanstack/devtools-event-client': 0.4.4
+      '@tanstack/store': 0.9.3
+  '@tanstack/store@0.9.3': {}
+  babel-jest@30.4.0(@babel/core@7.29.7):
+    dependencies:
+      '@babel/core': 7.29.7
+      '@jest/transform': 30.4.0
+      '@types/babel__core': 7.20.5
+      babel-plugin-istanbul: 7.0.1
+      babel-preset-jest: 30.4.0(@babel/core@7.29.7)
+      chalk: 4.1.2
+      graceful-fs: 4.2.11
+      slash: 3.0.0
+    transitivePeerDependencies:
+      - supports-color
+    optional: true
+  babel-preset-jest@30.4.0(@babel/core@7.29.7):
+    dependencies:
+      '@babel/core': 7.29.7
+      babel-plugin-jest-hoist: 30.4.0
+      babel-preset-current-node-syntax: 1.2.0(@babel/core@7.29.7)
+    optional: true
+  clarinet@0.12.6: {}
+  dset@3.1.4: {}
+  fast-json-patch@3.1.1: {}
+  graphql@16.14.2: {}
+  phoenix@1.8.15: {}
+  rxjs@7.8.1:
+    dependencies:
+      tslib: 2.8.1
+  ts-jest@29.4.6(@babel/core@7.29.7)(@jest/transform@30.4.0)(@jest/types@30.4.0)(babel-jest@30.4.0(@babel/core@7.29.7))(jest-util@30.4.0)(jest@29.7.0(@types/node@20.19.40)(babel-plugin-macros@3.1.0)(node-notifier@10.0.1)(ts-node@10.9.2(@swc/core@1.16.2)(@types/node@20.19.40)(typescript@5.9.3)))(typescript@5.9.3):
+    dependencies:
+      bs-logger: 0.2.6
+      fast-json-stable-stringify: 2.1.0
+      handlebars: 4.7.8
+      jest: 29.7.0(@types/node@20.19.40)(babel-plugin-macros@3.1.0)(node-notifier@10.0.1)(ts-node@10.9.2(@swc/core@1.16.2)(@types/node@20.19.40)(typescript@5.9.3))
+      json5: 2.2.3
+      lodash.memoize: 4.1.2
+      make-error: 1.3.6
+      semver: 7.7.4
+      type-fest: 4.41.0
+      typescript: 5.9.3
+      yargs-parser: 21.1.1
+    optionalDependencies:
+      '@babel/core': 7.29.7
+      '@jest/transform': 30.4.0
+      '@jest/types': 30.4.0
+      babel-jest: 30.4.0(@babel/core@7.29.7)
+      jest-util: 30.4.0
+  untruncate-json@0.0.1: {}

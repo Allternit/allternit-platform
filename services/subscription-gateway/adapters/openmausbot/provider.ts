@@ -34,6 +34,7 @@ export class OpenMausBotProvider extends BaseAaiProvider {
   private readonly pollMs: number;
   private readonly replyTimeoutMs: number;
   private readonly running = new Set<string>();
+  private readonly sendTexts = new Map<string, string>();
   constructor(options: { baseUrl?: string; token?: string; fetch?: typeof fetch; pollMs?: number; replyTimeoutMs?: number } = {}) {
     super();
     const url = new URL(options.baseUrl ?? 'http://127.0.0.1:8799');
@@ -104,13 +105,15 @@ export class OpenMausBotProvider extends BaseAaiProvider {
   async contextMessage(input: MessageInput) {
     const context = this.live(input.contextId); if (!context.ok) return context;
     if (!validId(input.correlationId) || !input.text.trim()) return fail('LANE_BLOCKED', 'A nonempty message and an idempotent send ID containing letters, digits, underscores or hyphens are required.');
-    const prior = context.value.sends.get(input.correlationId); if (prior) return prior;
+    const sendKey = `${context.value.id}:${input.correlationId}`;
+    const prior = context.value.sends.get(input.correlationId);
+    if (prior) return this.sendTexts.get(sendKey) === input.text ? prior : fail('POLICY_DENIED', 'This send ID already belongs to a different message.');
     const key = `${context.value.owner}:${context.value.bot}`;
     if (this.running.has(key)) return fail('CONTEXT_BUSY', 'This OpenMausBot agent already has an Allternit turn in progress.');
     this.running.add(key);
     const send = this.send(context.value, input).finally(() => this.running.delete(key));
     // Retain failures too: a transport failure might have accepted the mutation upstream.
-    context.value.sends.set(input.correlationId, send);
+    this.sendTexts.set(sendKey, input.text); context.value.sends.set(input.correlationId, send);
     return send;
   }
   private async send(context: Context, input: MessageInput) {
@@ -160,7 +163,8 @@ export class OpenMausBotProvider extends BaseAaiProvider {
         context.value.events.push({ cursor: String(sequence), event: { type, botId: `openmausbot:${context.value.bot}`, threadId: context.value.id, generationId: '1', source: 'vendor', vendor: ADAPTER_ID, adapter: ADAPTER_ID, lane: 'local', remoteContextId: context.value.thread, remoteEventId: `${message.id}:${sequence}`, correlationId: context.value.requests.get(String(message.requestMessageId))!, causationId: String(message.requestMessageId), guarantee: 'best_effort', at: new Date().toISOString(), payload } });
       };
       if (message.text !== previous) {
-        const chunk = message.text.startsWith(previous) ? message.text.slice(previous.length) : message.text;
+        if (!message.text.startsWith(previous)) return fail('ADAPTER_DRIFT', 'The vendor rewrote an already streamed message. Review the native conversation.');
+        const chunk = message.text.slice(previous.length);
         context.value.seen.set(String(message.id), message.text);
         push('agent.message.delta', { chunk, messageId: message.id });
       }

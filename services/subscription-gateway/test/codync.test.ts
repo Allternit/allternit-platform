@@ -53,7 +53,7 @@ describe('Codync native host connector', () => {
     const input = { contextId, correlationId: 'send-1', text: 'Hello' };
     const result = await provider.contextMessage(input);
     expect(result).toMatchObject({ ok: true, value: { reply: 'Codync reply' } });
-    expect(await provider.contextMessage(input)).toEqual(result);
+    expect(await provider.contextMessage(input)).toEqual(result);expect(await provider.contextMessage({...input,text:'Changed'})).toMatchObject({ok:false,error:{code:'POLICY_DENIED'}});
     expect(requests.filter((request) => request.path === '/api/send')).toEqual([{ path: '/api/send', body: { botId: 'bot-1', text: 'Hello', clientNonce: 'send-1' } }]);
     const events = await provider.events({ contextId });
     expect(JSON.stringify(events)).not.toContain('Unrelated reply');

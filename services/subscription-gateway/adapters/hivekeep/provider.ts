@@ -14,7 +14,7 @@ export const CAPABILITIES = agentCapabilityManifestSchema.parse({
 type Reply = AaiResult<{messageId:string;correlationId:string;reply:string;guarantee:'best_effort'}>;
 type Context = {id:string;owner:string;bot:string;remote:string;closed:boolean;busy:boolean;sends:Map<string,Promise<Reply>>;replies:{requestId:string;correlationId:string;reply:string}[]};
 export class HivekeepProvider extends BaseAaiProvider {
- readonly adapterId='hivekeep'; private transport:PairedLocalTransport; private contexts=new Map<string,Context>();
+ readonly adapterId='hivekeep'; private transport:PairedLocalTransport; private contexts=new Map<string,Context>(); private sendTexts=new Map<string,string>();
  private pollMs:number; private timeoutMs:number;
  constructor(options:{baseUrl?:string;token?:string;fetch?:typeof fetch;pollMs?:number;replyTimeoutMs?:number}={}) { super();this.transport=new PairedLocalTransport('Hivekeep',{...options,baseUrl:options.baseUrl??'http://127.0.0.1:3000'});this.pollMs=options.pollMs??500;this.timeoutMs=options.replyTimeoutMs??120000; }
  async list() { const result=await this.transport.json('/api/v1/agents');if(!result.ok)return result;
@@ -31,8 +31,8 @@ export class HivekeepProvider extends BaseAaiProvider {
  const id=randomUUID();this.contexts.set(id,{id,owner:this.transport.owner(),bot:agent.value.remoteIds.botId,remote:result.value.conversationId,closed:false,busy:false,sends:new Map(),replies:[]});
  return ok({contextId:id,isolation:'isolated' as const,guarantee:'best_effort' as const,resumed:false}); }
  async contextMessage(input:MessageInput) {const c=this.live(input.contextId);if(!c.ok)return c;if(!isId(input.correlationId)||!input.text.trim())return fail('LANE_BLOCKED','A nonempty message and stable send ID are required.');
- const prior=c.value.sends.get(input.correlationId);if(prior)return prior;if(c.value.busy)return fail('CONTEXT_BUSY','This Hivekeep conversation has a pending Allternit request.');
- c.value.busy=true;const promise=this.send(c.value,input).finally(()=>{c.value.busy=false;});c.value.sends.set(input.correlationId,promise);return promise; }
+ const sendKey=`${c.value.id}:${input.correlationId}`;const prior=c.value.sends.get(input.correlationId);if(prior)return this.sendTexts.get(sendKey)===input.text?prior:fail('POLICY_DENIED','This send ID already belongs to a different message.');if(c.value.busy)return fail('CONTEXT_BUSY','This Hivekeep conversation has a pending Allternit request.');
+ c.value.busy=true;const promise=this.send(c.value,input).finally(()=>{c.value.busy=false;});this.sendTexts.set(sendKey,input.text);c.value.sends.set(input.correlationId,promise);return promise; }
  private async send(c:Context,input:MessageInput):Promise<Reply> {let result=await this.transport.json(`/api/v1/agents/${c.bot}/messages`,{content:input.text,conversationId:c.remote,mode:'async'});if(!result.ok)return result;
  const requestId=result.value.requestId;if(!isId(requestId)||result.value.conversationId!==c.remote)return fail('ADAPTER_DRIFT','Hivekeep did not confirm the matching isolated request.');
  const deadline=Date.now()+this.timeoutMs;

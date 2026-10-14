@@ -26,6 +26,7 @@ export class CodyncProvider extends BaseAaiProvider {
   private readonly transport: PairedLocalTransport;
   private readonly contexts = new Map<string, Context>();
   private readonly running = new Set<string>();
+  private readonly sendTexts = new Map<string, string>();
   private readonly pollMs: number;
   private readonly replyTimeoutMs: number;
   constructor(options: { baseUrl?: string; token?: string; fetch?: typeof fetch; pollMs?: number; replyTimeoutMs?: number } = {}) {
@@ -102,12 +103,14 @@ export class CodyncProvider extends BaseAaiProvider {
   async contextMessage(input: MessageInput) {
     const context = this.live(input.contextId); if (!context.ok) return context;
     if (!isId(input.correlationId) || !input.text.trim()) return fail('LANE_BLOCKED', 'A nonempty message and a stable send ID are required.');
-    const prior = context.value.sends.get(input.correlationId); if (prior) return prior;
+    const sendKey = `${context.value.id}:${input.correlationId}`;
+    const prior = context.value.sends.get(input.correlationId);
+    if (prior) return this.sendTexts.get(sendKey) === input.text ? prior : fail('POLICY_DENIED', 'This send ID already belongs to a different message.');
     const key = `${context.value.owner}:${context.value.bot}`;
     if (this.running.has(key)) return fail('CONTEXT_BUSY', 'This Codync bot already has an Allternit turn in progress.');
     this.running.add(key);
     const send = this.send(context.value, input).finally(() => this.running.delete(key));
-    context.value.sends.set(input.correlationId, send); return send;
+    this.sendTexts.set(sendKey, input.text); context.value.sends.set(input.correlationId, send); return send;
   }
   private async send(context: Context, input: MessageInput): Promise<Result> {
     const bot = await this.get(`codync:${context.bot}`); if (!bot.ok) return bot;
@@ -153,7 +156,8 @@ export class CodyncProvider extends BaseAaiProvider {
       const data = entry.data as Json;
       if (entry.kind !== 'agent' || typeof data.text !== 'string') continue;
       const previous = context.value.seen.get(String(entry.id)) ?? '';
-      if (data.text !== previous) { this.push(context.value, entry, 'agent.message.delta', { chunk: data.text.startsWith(previous) ? data.text.slice(previous.length) : data.text, messageId: entry.id }); context.value.seen.set(String(entry.id), data.text); }
+      if (!data.text.startsWith(previous)) return fail('ADAPTER_DRIFT', 'The vendor rewrote an already streamed message. Review the native conversation.');
+      if (data.text !== previous) { this.push(context.value, entry, 'agent.message.delta', { chunk: data.text.slice(previous.length), messageId: entry.id }); context.value.seen.set(String(entry.id), data.text); }
       if (data.final === true && !context.value.completed.has(String(entry.id))) { this.push(context.value, entry, 'agent.message.completed', { reply: data.text, messageId: entry.id }); context.value.completed.add(String(entry.id)); }
     }
     const events = context.value.events.slice(after, after + Math.max(1, Math.min(input.limit ?? 100, 500)));

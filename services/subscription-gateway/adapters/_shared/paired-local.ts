@@ -14,9 +14,10 @@ export class PairedLocalTransport {
     this.base = url.origin;
   }
   private scope() { return (globalThis as unknown as Record<symbol, AsyncLocalStorage<Scope> | undefined>)[Symbol.for('allternit.aai.callScope')]?.getStore(); }
+  credential() { return this.scope()?.credential?.apiKey ?? this.options.token; }
   owner() { return this.scope()?.binding?.accountBindingId ?? this.scope()?.binding?.id ?? 'local'; }
   async response(path: string, body?: Json, sse = false): Promise<AaiResult<Response>> {
-    const token = this.scope()?.credential?.apiKey ?? this.options.token;
+    const token = this.credential();
     if (!token) return fail('AUTH_REQUIRED', `Supply the authorized ${this.vendor} host credential to connect.`);
     try {
       const result = await (this.options.fetch ?? fetch)(this.base + path, { method: body ? 'POST' : 'GET', redirect: 'error', signal: AbortSignal.timeout(15_000), headers: { authorization: `Bearer ${token}`, accept: sse ? 'text/event-stream' : 'application/json', ...(body ? { 'content-type': 'application/json' } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });

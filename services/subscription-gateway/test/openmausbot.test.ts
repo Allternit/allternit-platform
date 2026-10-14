@@ -50,7 +50,7 @@ describe('OpenMausBot authenticated vendor transport', () => {
     const input = { contextId, correlationId: 'send-1', text: 'Hello' };
     const first = await provider.contextMessage(input);
     expect(first).toMatchObject({ ok: true, value: { reply: 'Real vendor reply', messageId: 'user-1' } });
-    expect(await provider.contextMessage(input)).toEqual(first);
+    expect(await provider.contextMessage(input)).toEqual(first);expect(await provider.contextMessage({...input,text:'Changed'})).toMatchObject({ok:false,error:{code:'POLICY_DENIED'}});
     const mutations = requests.filter((request) => request.body);
     expect(mutations).toHaveLength(1);
     expect(mutations[0].path).toBe('/api/bots/bot-1/messages/guarded');

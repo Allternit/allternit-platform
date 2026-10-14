@@ -137,6 +137,18 @@
       "label": "hivekeep authenticated local API",
       "kind": "external",
       "path": "allternit/services/subscription-gateway/adapters/hivekeep/provider.ts"
+    },
+    {
+      "id": "external:invisible-dots-local-api",
+      "label": "Invisible Dots authenticated local API",
+      "kind": "external",
+      "path": "allternit/services/subscription-gateway/adapters/invisible-dots/provider.ts"
+    },
+    {
+      "id": "external:opendots-copilotkit-runtime",
+      "label": "CopilotKit OpenDots authenticated local runtime and Intelligence realtime",
+      "kind": "external",
+      "path": "allternit/services/subscription-gateway/adapters/opendots-copilotkit/provider.ts"
     }
   ],
   "edges": [
@@ -484,6 +496,24 @@
       "kind": "authenticated loopback HTTP; request-matched native bot replies",
       "evidence": [
         "allternit/services/subscription-gateway/adapters/hivekeep/provider.ts",
+        "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
+      ]
+    },
+    {
+      "source": "allternit/services/subscription-gateway",
+      "target": "external:invisible-dots-local-api",
+      "kind": "authenticated loopback HTTP; accepted message IDs matched to native conversation replies",
+      "evidence": [
+        "allternit/services/subscription-gateway/adapters/invisible-dots/provider.ts",
+        "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
+      ]
+    },
+    {
+      "source": "allternit/services/subscription-gateway",
+      "target": "external:opendots-copilotkit-runtime",
+      "kind": "owner-token loopback HTTP and approved Intelligence WebSocket origin; isolated conversation IDs",
+      "evidence": [
+        "allternit/services/subscription-gateway/adapters/opendots-copilotkit/provider.ts",
         "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
       ]
     }
