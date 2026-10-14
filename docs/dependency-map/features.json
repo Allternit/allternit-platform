@@ -1209,7 +1209,7 @@
       "label": "Local vendor bot adapters",
       "product": "product:digital-twin",
       "status": "building",
-      "description": "Authenticated OpenMausBot, Codync, Hivekeep, Invisible Dots CopilotKit OpenDots DS Bot and CopilotKit OpenMuse adapters with vendor branding. All 33 catalog projects have icons. Live accounts and remaining connectors are pending.",
+      "description": "Native adapters for 13 bot projects (OpenMausBot, Codync, Hivekeep, Invisible Dots, CopilotKit OpenDots and OpenMuse, DS Bot, Nightly OpenBot, Rakazo, FrockBot, Sidemates, nanoMuse, Vellum Assistant) with vendor branding. Grok Bot, OpenAI Dots and Muse use existing vendor entries; the other 17 catalog projects show No supported connection with a reason. Live account verification is pending.",
       "touches": [
         "allternit/services/subscription-gateway",
         "allternit-ai/src/components/gateway",
@@ -1220,6 +1220,10 @@
         {
           "on": "2026-10-13",
           "note": "Catalog identification is separate from implemented connections. Native adapters match vendor requests and refuse unsupported control capabilities."
+        },
+        {
+          "on": "2026-10-14",
+          "note": "Coverage of all 33 pictured projects is settled: a connector only where the vendor's own source exposes authenticated bot discovery, send and attributable replies. Hosted apps without an API, session-cookie-only, end-to-end-encrypted, keystroke-driven and unauthenticated projects are marked No supported connection instead of being proxied."
         }
       ],
       "evidence": [
@@ -1228,7 +1232,14 @@
         "allternit/services/subscription-gateway/adapters/invisible-dots/provider.ts",
         "allternit/services/subscription-gateway/adapters/opendots-copilotkit/provider.ts",
         "allternit/services/subscription-gateway/adapters/ds-bot/provider.ts",
-        "allternit/services/subscription-gateway/adapters/openmuse-copilotkit/provider.ts"
+        "allternit/services/subscription-gateway/adapters/openmuse-copilotkit/provider.ts",
+        "allternit/services/subscription-gateway/adapters/openbot-nightly/provider.ts",
+        "allternit/services/subscription-gateway/adapters/rakazo/provider.ts",
+        "allternit/services/subscription-gateway/adapters/frockbot/provider.ts",
+        "allternit/services/subscription-gateway/adapters/sidemates/provider.ts",
+        "allternit/services/subscription-gateway/adapters/nanomuse/provider.ts",
+        "allternit/services/subscription-gateway/adapters/vellum-assistant/provider.ts",
+        "allternit-ai/src/lib/gateway/bot-projects.ts"
       ]
     }
   ],
