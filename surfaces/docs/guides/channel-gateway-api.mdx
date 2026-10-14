@@ -1,0 +1,123 @@
+---
+title: Channel gateway API
+description: One contract for every messaging channel. Covers how inbound events are routed, how sends report their outcome, what each provider supports, and what happens after a restart.
+---
+
+Every messaging channel a bot answers on (Slack, Teams, Discord, WhatsApp, Telegram, WhatsApp personal, SMS) sits behind one runtime contract in `allternit-api`. Provider-specific sign-in, webhook formats and connection lifecycles stay inside each provider's adapter. Everything else works the same on every channel: routing, dedupe, policy, approvals, the send outcome and delivery state. Providers still differ in what they can do, and the [capabilities](#capabilities) say how.
+
+This page is for contributors and for clients of the runtime API (`/api/v1/gateway/...`). For connecting channels as a user, see [Messaging channels](/guides/messaging-channels).
+
+## Routes
+
+All routes need the signed-in user. A thread that belongs to someone else answers `404`.
+
+| Method | Path | What it does |
+|---|---|---|
+| `POST` | `/api/v1/gateway/threads/{threadId}/channel-send` | Post to the thread's bound conversation. Body: `{ text, correlationId?, postingIdentityId?, consequential?, allternitApprovalId?, attachments? }` |
+| `GET` | `/api/v1/gateway/threads/{threadId}/channel` | The thread's binding: `{ bindingId, provider, accountId, conversation, readOnly, online, capabilities }` |
+| `GET` | `/api/v1/gateway/threads/{threadId}/channel-messages/{correlationId}` | One send's delivery state: `{ correlationId, provider, state, remoteId, delivery, reason, updatedAt }` |
+
+`online: false` means no transport could be built for the binding (the connection was removed or isn't configured on this runtime). It does not mean the platform is down. `capabilities` is `null` in that case.
+
+Attachments, start-a-conversation and the per-bot connection switches are on [Starting conversations](/guides/starting-conversations) and [Channel events and Connect API](/guides/channel-events-and-connect-api).
+
+## Sending
+
+Always pass a `correlationId` you keep. It makes the send idempotent. Repeating a send with the same id returns that send's state (`"replay": true`) and never posts twice, except for sends that were held or throttled (`awaiting_approval`, `denied`, `drafted`, `rate_limited`). Those are evaluated again.
+
+| HTTP | `state` / `code` | Meaning | Retry with the same `correlationId`? |
+|---|---|---|---|
+| `200` | `sent` | The platform accepted the post. `remoteId` is its message id. | Returns the same result |
+| `202` | `unconfirmed` | Timeout, 5xx or a crash mid-send: the message may or may not exist. | Returns `unconfirmed`. It is never re-posted blindly |
+| `428` | `APPROVAL_REQUIRED` | Channel policy, autonomy or `consequential: true` needs the owner's approval. `approvalId` names it. | Yes, with `allternitApprovalId` once approved |
+| `429` | `RATE_LIMITED` | The platform throttled the post. Nothing was sent. `retryAfterSecs` and the `Retry-After` header are set when the platform said how long. | Yes, after the wait |
+| `403` | `CHANNEL_POLICY` / `READ_ONLY` | The bot may not post here, or the binding is read-only. | No |
+| `404` | `NO_BINDING` | The thread has no channel conversation. | No |
+| `502` | `CHANNEL_REJECTED` | The platform refused the post (for example the channel no longer exists). Nothing was sent. | No: fix the cause first |
+| `503` | `CHANNEL_OFFLINE` | No transport for this binding on this runtime. | After reconnecting |
+
+## Delivery states
+
+`channel-messages/{correlationId}` returns the stored `state`:
+
+| `state` | Meaning |
+|---|---|
+| `pending` | Recorded, post in flight. |
+| `confirmed` | The platform accepted the post, or our own message came back as an echo. **This is not a read receipt.** |
+| `unconfirmed` | The outcome is unknown. An echo of the message or a platform receipt can still move it to `confirmed`. |
+| `failed` | Refused by the platform, or a delivery receipt reported failure. |
+| `rate_limited` | Throttled; nothing was sent. |
+| `awaiting_approval`, `denied`, `drafted` | Held by approval, channel policy or autonomy before anything was posted. |
+
+`delivery` is filled only when the platform sends a receipt (`sent`, `delivered`, `read`, `failed`). Today only WhatsApp does (see `deliveryReceipts` below). Show "Delivered" or "Read" only from `delivery`, never from `state: confirmed`.
+
+### After a restart
+
+A send is recorded as `pending` before the platform call. If the runtime stops before the platform answers, the next start marks every leftover `pending` send `unconfirmed` and adds a `channel.message.pending` event to the thread ("interrupted by a restart; it may not have been delivered"). These sends are not re-posted. On adapters with `history`, the runtime then reads the conversation back from the platform: an `unconfirmed` post whose text is found there as our own message becomes `confirmed`. Only our own messages are taken from that read; it never starts or skips a bot turn.
+
+## Receiving
+
+Every inbound webhook (provider webhooks, and the cloud relays for the shared Slack, Discord and Teams apps and SMS) records its events **before** it answers. The bot turn each message starts is stored with the message (`detail_json.turn`: `queued` → `running` → `done`) and runs after the answer. If recording fails the answer is `500`, so the platform or the cloud queue delivers again; already-recorded events are no-ops on that retry.
+
+- Turns of one bot session run one at a time, in arrival order. Other conversations are not held up.
+- After a restart, a turn still `queued` (it never started) runs. A turn still `running` was cut off part-way and may already have used tools, so it is not run again: it becomes `interrupted` and the chat is told "… was interrupted by a restart before it finished. Send your message again to continue."
+- The Discord gateway websocket has no answer to hold back; it records then runs turns in order, and Discord replays missed events on resume.
+
+## Capabilities
+
+`capabilities` comes from each adapter's code. It describes what Allternit's adapter does, not everything the platform can do.
+
+| Field | Meaning |
+|---|---|
+| `text` | Text messages. |
+| `threads` | Replies stay inside a platform thread. |
+| `history` | Messages missed while disconnected can be replayed. If `false`, there is no replay. That is different from "no new messages". |
+| `filesOut` / `filesIn` | The bot can send files / files people send are kept in the thread. |
+| `reactions` | Reaction changes arrive as thread events. |
+| `edits` | Edits and deletes arrive as thread events. |
+| `deliveryReceipts` | The platform reports delivered/read for our posts. |
+| `perBotIdentity` | Each bot posts under its own name. Otherwise a reply from a bot that isn't the connection's own identity is prefixed `Name: `. |
+
+| Provider (adapter) | threads | history | filesOut | filesIn | reactions | edits | deliveryReceipts | perBotIdentity |
+|---|---|---|---|---|---|---|---|---|
+| Slack, shared Allternit app | ✓ | — ¹ | ✓ | ✓ | ✓ | ✓ | — | ✓ |
+| Slack, legacy own-token install | ✓ | ✓ | — | ✓ | ✓ | ✓ | — | — |
+| Teams, Allternit app | — | — | — | — | ✓ | ✓ | — | ✓ |
+| Teams, outgoing webhook | — | — | — | — | ✓ | ✓ | — | — |
+| Discord, Allternit app | — | — | — | — | ✓ | ✓ | — | ✓ |
+| Discord, webhook | — | — | — | — | ✓ | ✓ | — | — |
+| WhatsApp Business (both adapters) | — | — | — | — | ✓ | — | ✓ | — |
+| Telegram | — | — | ✓ | ✓ | ✓ | ✓ | — | — |
+| WhatsApp personal | — | — | — | — | — | — | — | — |
+| SMS | — | — | ✓ ² | — | — | — | — | — |
+
+¹ The shared Slack app has no replay, but Allternit's cloud queues Slack events while the runtime is offline and delivers them when it comes back (retries with backoff, given up after a fixed window).
+² SMS sends files as links to the owner's cloud storage.
+
+## Routing and isolation
+
+Each external conversation is keyed by provider (for example `telegram:<chat id>`, `slack:<channel>:<thread ts>`). Keys are **not unique across owners or connections**. A Telegram private chat is keyed by the person's user id, so the same person messaging two people's bots, or two bots of one person, produces the same key. The gateway therefore resolves a conversation by owner, connection and key together (`channel_gateway::find_binding_for`). An event that comes in on one connection never joins a conversation bound through another. A conversation bound before connections were recorded joins the first connection it hears from.
+
+Slack events relayed by the cloud are matched to the connection of the owner the relay was signed for. Several people in one Slack workspace can each connect it.
+
+Each inbound event is recorded once (`channel_message_log`, unique per binding, direction and platform id). Replays and platform retries are no-ops. Our own posts that come back as events confirm the matching `pending`/`unconfirmed` send instead of starting a turn. Edits, deletes, reactions and receipts become thread events, never new bot turns.
+
+## System notices
+
+Chat notices that are not bot replies go straight through the adapter and are not logged as sends, because they have no thread or are deliberately kept out of bot routing: "no bot is switched on" (when the chat has no thread yet), sender refusals, Telegram pairing confirmations and Factory approval prompts and answers. A notice in a chat that already has a thread (a bot that isn't switched on, an interrupted turn, a failed turn) is logged like any reply.
+
+## Rate-limit waits
+
+`retryAfterSecs` comes from the platform: Discord's `retry_after` and Telegram's `parameters.retry_after` in the body, and the `Retry-After` header everywhere else (Slack, including through the cloud's shared-app send route, which passes it on as `retryAfter` and `Retry-After`). It is `null` when the platform gave no wait.
+
+A cloud relay's `503 { "error": "<provider>_not_configured" }` is a definite refusal (the channel isn't set up there). Any other `503` is treated as an outage: `unconfirmed`, never re-posted blindly.
+
+## Contract tests
+
+`channel_transports::contract_tests` builds every adapter against a fake platform and checks the same answer gives the same outcome everywhere (429 → rate limited with its wait, 5xx or a lost connection → uncertain, 4xx → rejected), and that an adapter refuses what its capabilities say it can't do (`history_unsupported`, `attachments_unsupported`). A new adapter is added to that list.
+
+## Source
+
+- Contract, bindings, send, recovery: `cmd/allternit-api/src/channel_gateway.rs`
+- Adapters and inbound routing: `channel_transports.rs`, `channel_slack_app.rs`, `channel_teams_app.rs`, `channel_discord_app.rs`, `channel_whatsapp_app.rs`, `channel_whatsapp_personal.rs`, `channel_phone.rs`
+- Tables: `channel_conversation_bindings` (V198), `channel_message_log` (V200)

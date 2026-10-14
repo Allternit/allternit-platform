@@ -466,6 +466,11 @@ async fn main() {
     if stranded > 0 {
         tracing::warn!(stranded, "bot threads were mid-turn at restart; moved to waiting on you");
     }
+    // Channel posts cut off mid-send: mark them unconfirmed (never re-posted blindly).
+    let interrupted = allternit_api::channel_gateway::recover_interrupted_sends(&db);
+    if interrupted > 0 {
+        tracing::warn!(interrupted, "channel posts were mid-send at restart; marked unconfirmed");
+    }
     // On an Allternit cloud computer: pair it as a Factory peer computer and
     // keep its engine's peer port on the mesh (no-op anywhere else).
     allternit_api::cloud_computer_peer::spawn_if_cloud_computer();
@@ -647,6 +652,21 @@ async fn main() {
         tracing::info!(adopted, "people: adopted existing chats");
     }
     allternit_api::discord_gateway::spawn_bound(state.clone());
+    // Channel turns accepted before the restart: queued ones run now, ones cut off mid-turn
+    // are marked interrupted (never run twice); unconfirmed posts are checked against history.
+    {
+        let st = state.clone();
+        tokio::spawn(async move {
+            let (requeued, interrupted) = allternit_api::channel_transports::recover_channel_turns(&st).await;
+            if requeued + interrupted > 0 {
+                tracing::warn!(requeued, interrupted, "channel turns recovered after restart");
+            }
+            let confirmed = allternit_api::channel_transports::reconcile_unconfirmed(&st).await;
+            if confirmed > 0 {
+                tracing::info!(confirmed, "unconfirmed channel posts confirmed from platform history");
+            }
+        });
+    }
     // Keep this runtime's phone numbers in step with the cloud (inert until the runtime is paired).
     allternit_api::phone_sync::spawn(state.clone());
     allternit_api::computer_idle::spawn_idle_sweeper(state.clone(), shutdown_tx.subscribe());

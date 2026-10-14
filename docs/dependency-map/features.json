@@ -175,10 +175,16 @@
         {
           "on": "2026-10-06",
           "note": "Bot email on customer domains runs through mx.allternit.com on the standby server, not the prod VPS."
+        },
+        {
+          "on": "2026-10-13",
+          "note": "Unified channel API = the existing ChannelTransport/channel_gateway, extended (no new gateway, AgentChat reference only): per-adapter capabilities, RateLimited outcome (429 + Retry-After, retryable by correlation id), delivery-status read, restart recovery of pending sends, and conversation lookup scoped to owner + connection (fixes a Telegram/WhatsApp-personal cross-owner routing bug)."
         }
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/messaging-channels.mdx",
+        "allternit/surfaces/docs/guides/channel-gateway-api.mdx",
+        "allternit/docs/channels/UNIFIED_CHANNEL_API.md",
         "allternit/surfaces/docs/guides/whatsapp-business.mdx",
         "allternit/cmd/allternit-cloud-api/src/routes/phone.rs"
       ]

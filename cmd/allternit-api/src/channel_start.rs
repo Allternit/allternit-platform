@@ -469,7 +469,7 @@ fn thread_of_session(db: &DbHandle, session: &str) -> Result<String, StartError>
 /// The thread (and binding) for `dest`: the one already bound to this
 /// conversation, else a new thread on `bot` with a fresh binding.
 async fn thread_for<R: ThreadRuntime>(deps: &Deps<'_, R>, owner: &str, bot: &str, provider: &str, acct: &Account, d: &Dest, text: &str) -> Result<(BindingRow, bool), StartError> {
-    if let Some(b) = find_binding(deps.db, provider, &d.key).filter(|b| b.owner == owner) {
+    if let Some(b) = find_binding_for(deps.db, owner, Some(&acct.id), provider, &d.key) {
         let thread_bot: Option<String> = deps.db.connect().map_err(internal)?.query_row("SELECT bot_id FROM bot_threads WHERE id = ?1", params![b.thread_id], |r| r.get(0)).ok();
         if thread_bot.is_some_and(|t| t != bot) {
             return Err(conflict("conversation_belongs_to_other_bot", format!("Another of your bots already holds this {} conversation.", place(provider))));
@@ -557,6 +557,8 @@ pub async fn start_conversation<R: ThreadRuntime>(deps: &Deps<'_, R>, owner: &st
         SendOutcome::ReadOnly => Err(StartError::new(StatusCode::FORBIDDEN, "read_only", "That conversation is read-only.")),
         SendOutcome::NoBinding => Err(internal("the new conversation has no binding")),
         SendOutcome::Rejected(why) => Err(refusal(provider, &why).with(json!({ "threadId": binding.thread_id }))),
+        SendOutcome::RateLimited { retry_after_secs, .. } => Err(StartError::new(StatusCode::TOO_MANY_REQUESTS, "rate_limited", format!("{} is rate limiting messages; nothing was sent. Try again shortly.", place(provider)))
+            .with(json!({ "threadId": binding.thread_id, "retryAfterSecs": retry_after_secs }))),
     }
 }
 
@@ -589,7 +591,7 @@ async fn start_sms<R: ThreadRuntime>(deps: &Deps<'_, R>, owner: &str, bot: &str,
     }
     let n = crate::phone_outbound::pick_number(deps.db, owner, Some(bot), None).map_err(out_error)?;
     let key = crate::channel_phone::phone_key(&n.e164, &to);
-    let existing = find_binding(deps.db, "sms", &key).is_some_and(|b| b.owner == owner);
+    let existing = find_binding_for(deps.db, owner, None, "sms", &key).is_some();
     let (thread_id, message_id) = crate::phone_outbound::text(deps.db, deps.rt, deps.http.clone(), &n, &to, text).await.map_err(out_error)?;
     let binding = binding_for_thread(deps.db, owner, &thread_id).map(|b| b.id);
     Ok((StatusCode::OK, json!({ "threadId": thread_id, "conversationId": conversation_id(&key), "bindingId": binding, "provider": "sms", "state": "sent", "remoteId": message_id, "existing": existing })))

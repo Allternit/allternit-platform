@@ -142,7 +142,15 @@ impl SlackHttp for ReqwestSlackHttp {
         }
         let resp = req.send().await.map_err(|e| e.to_string())?;
         let status = resp.status().as_u16();
-        let body = resp.json::<Value>().await.unwrap_or(Value::Null);
+        // Slack gives the wait for a 429 only as a header; keep it with the body.
+        let retry_after: Option<u64> = resp.headers().get(reqwest::header::RETRY_AFTER).and_then(|v| v.to_str().ok()).and_then(|v| v.trim().parse().ok());
+        let mut body = resp.json::<Value>().await.unwrap_or(Value::Null);
+        if let (429, Some(secs)) = (status, retry_after) {
+            if !body.is_object() {
+                body = json!({});
+            }
+            body["retryAfter"] = json!(secs);
+        }
         Ok((status, body))
     }
 
@@ -961,7 +969,10 @@ pub async fn send_message_as_team(state: &ApiState, http: &dyn SlackHttp, cfg: &
             }
             Ok(json!({ "ok": true, "ts": ts, "teamId": team_id, "files": files.len() }))
         }
-        (429, _, _) => Err(ApiError::TooManyRequests(resp.get("error").and_then(Value::as_str).unwrap_or("ratelimited").to_string())),
+        (429, _, _) => Err(ApiError::TooManyRequests(match resp.get("retryAfter").and_then(Value::as_u64) {
+            Some(secs) => format!("{}{RETRY_AFTER_MARK}{secs}", resp.get("error").and_then(Value::as_str).unwrap_or("ratelimited")),
+            None => resp.get("error").and_then(Value::as_str).unwrap_or("ratelimited").to_string(),
+        })),
         _ => Err(ApiError::ServiceUnavailable(format!(
             "chat.postMessage failed: {}",
             resp.get("error").and_then(Value::as_str).unwrap_or("unknown")
@@ -1090,11 +1101,30 @@ async fn fetch_file_h(State(state): State<Arc<ApiState>>, headers: HeaderMap, Js
     Ok((StatusCode::CREATED, Json(stored)).into_response())
 }
 
+/// Joins Slack's `Retry-After` onto a rate-limit message, so `send_h` can hand it to the runtime.
+const RETRY_AFTER_MARK: &str = "; retryAfter=";
+
 async fn send_h(State(state): State<Arc<ApiState>>, headers: HeaderMap, Json(body): Json<SendBody>) -> Result<Response, ApiError> {
     let Some(cfg) = app_config() else { return Ok(not_configured()) };
     let user = resolve_user_scoped(&state.db, &headers, "compute").await?;
-    let result = send_message(&state, &ReqwestSlackHttp, &cfg, &user.id, &body).await?;
-    Ok(Json(result).into_response())
+    match send_message(&state, &ReqwestSlackHttp, &cfg, &user.id, &body).await {
+        Ok(result) => Ok(Json(result).into_response()),
+        // Nothing was posted; tell the runtime how long Slack asked it to wait.
+        Err(ApiError::TooManyRequests(msg)) => Ok(rate_limited_response(&msg)),
+        Err(e) => Err(e),
+    }
+}
+
+fn rate_limited_response(msg: &str) -> Response {
+    let (error, secs) = match msg.split_once(RETRY_AFTER_MARK) {
+        Some((e, s)) => (e, s.parse::<u64>().ok()),
+        None => (msg, None),
+    };
+    let mut resp = (StatusCode::TOO_MANY_REQUESTS, Json(json!({ "ok": false, "error": error, "retryAfter": secs }))).into_response();
+    if let Some(v) = secs.and_then(|s| axum::http::HeaderValue::from_str(&s.to_string()).ok()) {
+        resp.headers_mut().insert(axum::http::header::RETRY_AFTER, v);
+    }
+    resp
 }
 
 #[cfg(test)]
@@ -1419,5 +1449,13 @@ mod tests {
         let page = FileHttp(Mutex::default(), (200, b"<!DOCTYPE html><html>".to_vec()));
         assert!(ingest_file(&state, &page, &store, "user-1", &body).await.unwrap_err().to_string().contains("slack_reauthorize_required"));
         assert_eq!(store.0.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_slack_rate_limit_reaches_the_runtime_with_its_wait() {
+        let r = rate_limited_response(&format!("ratelimited{RETRY_AFTER_MARK}7"));
+        assert_eq!(r.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(r.headers().get(axum::http::header::RETRY_AFTER).unwrap(), "7");
+        assert_eq!(rate_limited_response("ratelimited").headers().get(axum::http::header::RETRY_AFTER), None);
     }
 }

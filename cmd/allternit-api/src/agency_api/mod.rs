@@ -260,13 +260,23 @@ pub fn agency_router() -> Router<Arc<AppState>> {
 /// the same way: `/api/v1/decisions/{training,heads,datasets/:kind}` and
 /// `/api/v1/descent`.
 pub fn kernel_alias_router() -> Router<Arc<AppState>> {
+    kernel_run_aliases().merge(
+        Router::new()
+            .route("/v1/decisions/training", get(decisions::harvest::get_training).put(decisions::harvest::put_training))
+            .route("/v1/decisions/datasets/:kind", get(decisions::harvest::get_dataset))
+            .route("/v1/decisions/heads", get(decisions::flywheel::list_heads))
+            .route("/v1/descent", get(decisions::descent::get_descent))
+            .layer(axum::middleware::from_fn(version_layer)),
+    )
+}
+
+/// Only the run aliases, for the root `/v1` mount: [`agency_router`] already
+/// serves the decision and descent routes there, and axum panics at startup on
+/// a second handler for the same path.
+pub fn kernel_run_aliases() -> Router<Arc<AppState>> {
     Router::new()
         .route("/v1/kernel/runs/:run_id", get(get_run))
         .route("/v1/kernel/runs/:run_id/events", get(run_events))
-        .route("/v1/decisions/training", get(decisions::harvest::get_training).put(decisions::harvest::put_training))
-        .route("/v1/decisions/datasets/:kind", get(decisions::harvest::get_dataset))
-        .route("/v1/decisions/heads", get(decisions::flywheel::list_heads))
-        .route("/v1/descent", get(decisions::descent::get_descent))
         .layer(axum::middleware::from_fn(version_layer))
 }
 
