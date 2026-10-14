@@ -66,5 +66,5 @@ Before: the cloud queues Slack/Discord/Teams/SMS events durably, but the runtime
 
 ## Still open
 
-- **Live provider tests.** Every result above is from offline tests with fake platforms. Real-platform runs need authorized test accounts and destinations, and they send real messages.
+- **Live provider tests.** Every result above is from offline tests with fake platforms. The plan for the live runs (accounts, steps per provider, evidence to record) is in `LIVE_TESTS.md`, for a later session.
 - **Rollout.** The runtime change ships with the next Desktop runtime publish; the cloud Slack route deploys with cloud-api on merge; the UI deploys with allternit-ai main (ai.allternit.com) and the separate PWA deploy. Rollback = revert the merge; no schema changed (turn state lives in existing `detail_json`), so old and new builds read the same rows.
