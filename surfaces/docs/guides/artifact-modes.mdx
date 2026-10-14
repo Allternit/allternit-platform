@@ -35,6 +35,20 @@ Images open in the embedded PhotoCraft editor: the layered source (`.pcraft`/PSD
 
 Videos open in the embedded FilmCraft editor: the footage is referenced from Allternit's media storage (never copied into the artifact), the project source (`.fcproj`) is kept in the artifact's runtime storage so edits keep their timeline across sessions, and every save also exports an MP4 that becomes the new artifact version — the export is what previews, shares and downloads play. Generated videos (`media_generate`) and uploaded video files (MP4, MOV, WebM) both land as editable video artifacts. On phones and the m.allternit.com PWA, a video artifact opens as the playable view first, with **Edit video** mounting the full editor for trimming and exports.
 
+## Studio panes
+
+Every tile under **Make something new** on the Artifacts page (and the rail's **+** menu) opens an artifact session: the chat on the left and the artifact's pane on the right. Docs, Sheets, Slides and Design open their editor. **Dashboards**, **Motion**, **Page**, **Build**, **Image**, **Video** and **Deep Research** open a studio pane, which goes through three states:
+
+1. **Before anything is made**, the pane says what the session makes and how it works. Describe what you want in the chat.
+2. **While the agent works on it**, the pane shows a card shaped like the result (an image, a 16:9 clip, a dashboard grid, a browser page, a motion timeline, a report) with a moving fill. Under the card are the agent's current thought, how long it has been working, and its latest tool steps, so a long render never looks stalled. Images and videos use a pixel mosaic that churns until the result arrives; with reduced motion turned on, the fill stays still.
+3. **When the result exists**, it opens in its own artifact window in the pane, using the kind's editor where it has one: dashboard tiles, the motion timeline, PhotoCraft for images, FilmCraft for videos, a live preview for pages and builds. Later turns change that same artifact. A status strip at the bottom of the pane shows the agent's steps while it updates it.
+
+A Dashboard, Motion or Page session is bound to the artifact its agent makes, so reopening the session shows it again and new requests update it instead of making a second one. Dashboards and Motion are plan-gated, the same as their templates in the Output menu.
+
+When an image or video is generated in any chat (`media_generate`), the same rendering card appears inline in the conversation until the file is ready.
+
+On phones (ai.allternit.com and the m.allternit.com app), the chat stays in front. **Open** on the artifact card under the chat opens the pane full screen, and the header's pane menu lists it alongside Browser and the session's outputs.
+
 Bot threads do not offer these three editor-pane modes. Use the workspace artifact session for the editable Office flow. A bot can still produce file deliverables through tools available to its thread; that is a different path from editing an open pane.
 
 ## Inspect and continue

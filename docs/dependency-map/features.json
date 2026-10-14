@@ -882,9 +882,14 @@
         "allternit-ai/src/lib/artifacts",
         "allternit-ai/src/components/settings",
         "allternit-ai/src/views/library",
-        "allternit-ai/src/views/design"
+        "allternit-ai/src/views/design",
+        "allternit-ai/src/views/cowork"
       ],
       "decisions": [
+        {
+          "on": "2026-10-14",
+          "note": "Every Make something new tile opens an artifact session (Eoj: dashboards, motion and page opened no session; the others had no working pane). Kinds without an Office/Design editor (dashboard, motion, page, build, image, video, research) open a studio pane: empty state, then a rendering card shaped like the result (img-fx mosaic for image/video, skeleton + working beam otherwise) with the agent's live thought and tool steps, then the result in its ArtifactWindow with the kind's editor. Dashboard/Motion/Page sessions bind to the artifact their agent makes (artifact_create, then artifact_update). media_generate shows the same card inline in chat. Design canvas drops tldraw's menu/helper/share chrome, shows the style panel only with a selection or drawing tool, and follows the app theme."
+        },
         {
           "on": "2026-10-11",
           "note": "Artifact toolbar and inline mode tabs use the UI font, a single horizontally scrolling row, and neutral glass selection across Desktop, web phone and PWA; reduced transparency and increased contrast get solid selection surfaces."
