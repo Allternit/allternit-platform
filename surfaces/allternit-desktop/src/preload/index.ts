@@ -675,6 +675,7 @@ const phonesAPI = {
   usbIdentify: (port: string): Promise<unknown> => ipcRenderer.invoke('phone:usb-identify', port),
   usbSetup: (port: string, ssid: string, password: string, name: string): Promise<unknown> =>
     ipcRenderer.invoke('phone:usb-setup', port, ssid, password, name),
+  usbFirmware: (): Promise<unknown> => ipcRenderer.invoke('phone:usb-firmware'),
   usbCalibrate: (boardId: string): Promise<{ ok: boolean; message?: string }> => ipcRenderer.invoke('phone:usb-calibrate', boardId),
   usbStop: (boardId: string): Promise<{ ok: boolean; message?: string }> => ipcRenderer.invoke('phone:usb-stop', boardId),
   usbForget: (boardId: string): Promise<void> => ipcRenderer.invoke('phone:usb-forget', boardId),

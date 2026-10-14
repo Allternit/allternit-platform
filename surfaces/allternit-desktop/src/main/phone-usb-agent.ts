@@ -24,6 +24,7 @@ import { UsbAgentLink, type BoardSessionInfo } from './phone-usb-agent-link.js';
 import { USBA_DEFAULT_PORT, newKeyHex, type BoardCommand } from './phone-usb-agent-protocol.js';
 import { BoardError, UsbPointer, type Calibration, type PointerScreen } from './phone-usb-agent-pointer.js';
 import { changed, type Gray } from './phone-usb-agent-vision.js';
+import { compareVersions } from './phone-usb-agent-firmware.js';
 import { provision, readIdentity, validateProvision, type SerialPort } from './phone-usb-agent-provision.js';
 import type { ToolErrorCode, ToolResult } from './phone-tools.js';
 
@@ -89,6 +90,8 @@ export interface UsbAgentInfo {
   mirroring: AirplayState;
   receiverName: string;
   calibrated: boolean;
+  /** The board runs older firmware than this Desktop ships; set it up again to update. */
+  firmwareUpdate: boolean;
 }
 
 export interface UsbAgentDeps {
@@ -106,6 +109,8 @@ export interface UsbAgentDeps {
   lanAddresses: () => string[];
   linkPort?: number;
   now?: () => number;
+  /** Firmware version this Desktop ships, for the update hint. */
+  bundledFirmware?: () => string | null;
 }
 
 interface Board {
@@ -307,6 +312,7 @@ export class UsbAgentManager extends EventEmitter {
       mirroring: b.screen.state(),
       receiverName: b.screen.receiverName(),
       calibrated: b.pointer.calibrated,
+      firmwareUpdate: Boolean(session && compareVersions(session.firmware, this.deps.bundledFirmware?.() ?? null) < 0),
     };
   }
 

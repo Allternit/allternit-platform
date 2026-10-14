@@ -18,14 +18,18 @@ The user guide is `surfaces/docs/guides/usb-agent.mdx`. Desktop code is in `surf
 
 The XIAO's BOOT button is the **arm button** and its user LED shows the armed state. On other boards, set `ARM_BUTTON_PIN`, `ARM_LED_PIN` and `ARM_LED_ACTIVE_LOW` at build time.
 
-## Flash
+## Install
+
+Users don't flash anything by hand. **Settings → Computers → Phones → Connect an iPhone → Set up** installs the firmware Desktop ships (`surfaces/allternit-desktop/resources/phone/usb-agent/`), then writes your Wi-Fi details and a new 32-byte key over USB. Nothing secret is ever compiled into the firmware.
+
+Developers:
 
 ```bash
-hardware/usb-agent/flash.sh            # build + flash the board plugged into this computer
-hardware/usb-agent/flash.sh --build-only
+hardware/usb-agent/flash.sh               # build + flash your own build onto the board plugged into this computer
+hardware/usb-agent/build-firmware.sh      # rebuild the image Desktop ships (run after any firmware change, commit both files)
 ```
 
-Then set it up from Desktop: **Settings → Computers → Phones → Connect an iPhone**. Desktop writes your Wi-Fi details and a new 32-byte key to the board over USB. Nothing secret is ever compiled into the firmware.
+The shipped image is reproducible: building the same source with the same core (recorded in `firmware.json`) gives the same SHA-256. A Desktop test fails if `FIRMWARE_VERSION` in the source and the shipped image don't match.
 
 ## Safety model
 
