@@ -71,6 +71,14 @@ allternit-desktop/
 
 The main process registers many other channels (for example `miniApps:*`); see `src/main/unified-main.ts`.
 
+## Cloud sign-in
+
+Desktop holds two sign-ins. The **device pairing** (a runtime token) keeps the computer linked to your account. The **cloud sign-in** (a Clerk session) is what cloud features such as artifacts use. Desktop renews the cloud sign-in in the background from a hidden sign-in window. When the Clerk session itself has ended, the background renewal can't work, and cloud views show **Sign in to see your artifacts**.
+
+Press **Sign in** there. A sign-in window opens; sign in with the account this device is paired to and the list loads. The device stays paired, so nothing has to be set up again. Signing in with a different account is refused and names the right one.
+
+For developers: the renderer calls `window.allternit.auth.reconnectCloud()` (IPC `auth:reconnect-cloud`, `AuthManager.reconnectCloud` in `src/main/auth-manager.ts`). It returns `{ ok: true }` or `{ ok: false, error }`. The account check is `cloudAccountMismatch` in `src/main/cloud-account.ts`. On the web and in older Desktop builds, `signInToCloud()` (`allternit-ai/src/lib/cloud-sign-in.ts`) falls back to `/sign-in` or the full device sign-in.
+
 ## Allternit Factory views
 
 <Note>
