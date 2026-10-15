@@ -154,6 +154,8 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
       if (mdxPath.endsWith('cli/session.mdx')) continue;
       // Subscription setup and its workflow index must name the supported providers.
       if (mdxPath.endsWith('surfaces/subscriptions.mdx')) continue;
+      // Runtime task visibility and the local vendor catalog describe named CLI integrations.
+      if (['surfaces/native-agent.mdx', 'guides/local-vendor-bots.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // Bot isolation documents provider-specific CLI flags, config paths and login behavior.
       if (mdxPath.endsWith('surfaces/bots.mdx')) continue;
       if (mdxPath.endsWith('guides/subscriptions.mdx')) continue;
