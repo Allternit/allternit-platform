@@ -384,11 +384,11 @@ pub(crate) async fn connected_runtime_ids() -> std::collections::HashSet<String>
 }
 
 /// Live relay connections for a runtime as presence metadata (PWA node
-/// rail). Empty unless multi-connection mode is on.
+/// rail, and the web/phone runtime picker). Reported in single-connection
+/// mode too: "online" only means the row heartbeated in the last 10 minutes,
+/// so without this a browser cannot tell the runtime that will answer a
+/// relayed request from one that will answer runtime_offline.
 pub(crate) async fn relay_connection_presence(runtime_id: &str) -> Vec<serde_json::Value> {
-    if !multi_connection_enabled() {
-        return Vec::new();
-    }
     relay_hub()
         .read()
         .await
