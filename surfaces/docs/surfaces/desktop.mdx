@@ -79,6 +79,8 @@ Press **Sign in** there. A sign-in window opens; sign in with the account this d
 
 For developers: the renderer calls `window.allternit.auth.reconnectCloud()` (IPC `auth:reconnect-cloud`, `AuthManager.reconnectCloud` in `src/main/auth-manager.ts`). It returns `{ ok: true }` or `{ ok: false, error }`. The account check is `cloudAccountMismatch` in `src/main/cloud-account.ts`. On the web and in older Desktop builds, `signInToCloud()` (`allternit-ai/src/lib/cloud-sign-in.ts`) falls back to `/sign-in` or the full device sign-in.
 
+Cloud calls carry only the Clerk bearer (and `X-Allternit-Tenant-Id`). `buildAuthHeaders(targetUrl)` adds the Desktop identity headers (`X-Allternit-User-Id`, `X-Allternit-User-Email`) only for the app's own origin and the loopback runtime: api.allternit.com reads identity from the JWT, and its CORS preflight refuses those headers, which made every direct cloud call fail as if offline. Pass the request URL when calling it for a cloud route.
+
 ## Allternit Factory views
 
 <Note>
