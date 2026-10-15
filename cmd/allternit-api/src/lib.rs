@@ -130,6 +130,7 @@ pub mod brain_routes;
 pub mod canvas_routes;
 pub mod chat_routes;
 pub mod checkpoints_routes;
+pub mod git_routes;
 pub mod cli_provider_detector;
 pub mod cloud_credentials_routes;
 pub mod cloud_agents_routes;

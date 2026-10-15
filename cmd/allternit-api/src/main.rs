@@ -1246,6 +1246,8 @@ async fn main() {
         .nest("/api", allternit_api::group_rooms::router())
         .nest("/api", playground_router())
         .nest("/api", checkpoints_router())
+        // Code mode's Changes pane: POST /api/v1/git/diff.
+        .nest("/api", allternit_api::git_routes::git_router())
         .nest("/api", design_connector_router())
         .nest("/api", allternit_api::mcp_apps::mcp_apps_router())
         // Keys page for the vendor-bot connector: /api/v1/vendor-bots/:id/connector*.
