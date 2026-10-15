@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 2.2.5 (2026-10-14)
+
+### Fixed
+- Claude CLI background jobs now appear in Tasks with live output and provider
+  status. The CLI remains connected after its foreground reply while work runs.
+- Stopping a CLI task targets that task and waits for provider acknowledgement.
+  Lost CLI connections show interrupted work, and bot tool permissions continue
+  to apply to background work.
+
 ## 2.2.4 (2026-10-14)
 
 ### Added
