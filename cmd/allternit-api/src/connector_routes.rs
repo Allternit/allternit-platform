@@ -251,6 +251,83 @@ fn remember_device_identity(token: &str, identity: DeviceIdentity) {
     }
 }
 
+/// How long a device's last successful verification is trusted while the
+/// cloud-api cannot be reached (network/DNS failure, 5xx, 429). A token the
+/// cloud-api *rejects* is never covered by this.
+const DEVICE_TOKEN_OFFLINE_GRACE_SECS: u64 = 7 * 24 * 3600;
+const DEVICE_IDENTITY_FILE: &str = "device-identity-cache.json";
+
+fn token_key(token: &str) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(token.as_bytes()))
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Persist the last successful verification (keyed by the token's SHA-256,
+/// never the token) so a restart during a cloud outage doesn't lock the
+/// owner out of their own local runtime.
+fn persist_device_identity(data_dir: &std::path::Path, token: &str, identity: &DeviceIdentity) {
+    let path = data_dir.join(DEVICE_IDENTITY_FILE);
+    let mut all: serde_json::Map<String, Value> = std::fs::read(&path)
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default();
+    let now = unix_now();
+    all.retain(|_, v| {
+        v.get("verified_at")
+            .and_then(|t| t.as_u64())
+            .is_some_and(|t| now.saturating_sub(t) < DEVICE_TOKEN_OFFLINE_GRACE_SECS)
+    });
+    let orgs: Vec<Value> = identity
+        .organizations
+        .iter()
+        .map(|(id, role)| json!({ "id": id, "role": role }))
+        .collect();
+    all.insert(
+        token_key(token),
+        json!({ "userId": identity.user_id, "email": identity.email, "organizations": orgs, "verified_at": now }),
+    );
+    if let Ok(bytes) = serde_json::to_vec(&Value::Object(all)) {
+        let tmp = path.with_extension("json.tmp");
+        if std::fs::write(&tmp, bytes).is_ok() {
+            let _ = std::fs::rename(&tmp, &path);
+        }
+    }
+}
+
+/// The persisted identity for `token`, if verified within the grace window.
+fn offline_device_identity(data_dir: &std::path::Path, token: &str) -> Option<DeviceIdentity> {
+    let all: serde_json::Map<String, Value> =
+        serde_json::from_slice(&std::fs::read(data_dir.join(DEVICE_IDENTITY_FILE)).ok()?).ok()?;
+    let row = all.get(&token_key(token))?;
+    let verified_at = row.get("verified_at")?.as_u64()?;
+    if unix_now().saturating_sub(verified_at) >= DEVICE_TOKEN_OFFLINE_GRACE_SECS {
+        return None;
+    }
+    let user_id = row.get("userId")?.as_str().filter(|s| !s.is_empty())?.to_string();
+    Some(DeviceIdentity {
+        user_id,
+        email: row.get("email").and_then(|v| v.as_str()).map(str::to_string),
+        organizations: parse_device_organizations(row),
+    })
+}
+
+/// In-memory, then on-disk last-known-good identity: only for "the cloud-api
+/// could not answer", never for a rejection.
+fn fallback_device_identity(state: &AppState, token: &str) -> Option<DeviceIdentity> {
+    cached_device_identity(token).or_else(|| {
+        let identity = offline_device_identity(&state.data_dir, token)?;
+        tracing::warn!("cloud-api unreachable; using this device's last verified identity");
+        Some(identity)
+    })
+}
+
 pub(crate) fn device_token_from_headers(headers: &axum::http::HeaderMap) -> Option<&str> {
     headers
         .get(axum::http::header::AUTHORIZATION)
@@ -299,7 +376,7 @@ pub(crate) async fn verify_runtime_device_token(
     {
         Ok(resp) => resp,
         Err(e) => {
-            if let Some(identity) = cached_device_identity(token) {
+            if let Some(identity) = fallback_device_identity(state, token) {
                 return Ok(identity);
             }
             return Err((
@@ -317,7 +394,7 @@ pub(crate) async fn verify_runtime_device_token(
         // Rate-limit / cloud 5xx is not "this runtime is revoked". Reuse a
         // recent successful verify so chat does not 401-loop.
         if resp.status() == StatusCode::TOO_MANY_REQUESTS || resp.status().is_server_error() {
-            if let Some(identity) = cached_device_identity(token) {
+            if let Some(identity) = fallback_device_identity(state, token) {
                 return Ok(identity);
             }
             return Err((
@@ -371,6 +448,7 @@ pub(crate) async fn verify_runtime_device_token(
         organizations: parse_device_organizations(&body),
     };
     remember_device_identity(token, identity.clone());
+    persist_device_identity(&state.data_dir, token, &identity);
     Ok(identity)
 }
 
@@ -3508,5 +3586,34 @@ mod device_org_role_tests {
         assert_eq!(role_of("org_a"), "admin");
         crate::auth::ensure_user_in_db(&db, &user_for("org_x")).unwrap();
         assert_eq!(role_of("org_x"), "member");
+    }
+}
+
+#[cfg(test)]
+mod offline_identity_tests {
+    use super::*;
+
+    #[test]
+    fn last_verified_identity_survives_restart_and_expires() {
+        let dir = tempfile::tempdir().unwrap();
+        let identity = DeviceIdentity {
+            user_id: "user_1".into(),
+            email: Some("a@b.c".into()),
+            organizations: vec![("org_1".into(), "admin".into())],
+        };
+        assert!(offline_device_identity(dir.path(), "allternit_runtime_x").is_none());
+        persist_device_identity(dir.path(), "allternit_runtime_x", &identity);
+        assert_eq!(offline_device_identity(dir.path(), "allternit_runtime_x"), Some(identity));
+        // Another token is not covered, and the token itself is never stored.
+        assert!(offline_device_identity(dir.path(), "allternit_runtime_y").is_none());
+        let raw = std::fs::read_to_string(dir.path().join(DEVICE_IDENTITY_FILE)).unwrap();
+        assert!(!raw.contains("allternit_runtime_x"));
+        // Past the grace window it no longer counts.
+        let stale = raw.replace(
+            &format!("\"verified_at\":{}", unix_now()),
+            "\"verified_at\":1",
+        );
+        std::fs::write(dir.path().join(DEVICE_IDENTITY_FILE), stale).unwrap();
+        assert!(offline_device_identity(dir.path(), "allternit_runtime_x").is_none());
     }
 }

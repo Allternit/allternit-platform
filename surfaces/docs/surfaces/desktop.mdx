@@ -81,6 +81,8 @@ For developers: the renderer calls `window.allternit.auth.reconnectCloud()` (IPC
 
 Cloud calls carry only the Clerk bearer (and `X-Allternit-Tenant-Id`). `buildAuthHeaders(targetUrl)` adds the Desktop identity headers (`X-Allternit-User-Id`, `X-Allternit-User-Email`) only for the app's own origin and the loopback runtime: api.allternit.com reads identity from the JWT, and its CORS preflight refuses those headers, which made every direct cloud call fail as if offline. Pass the request URL when calling it for a cloud route.
 
+**When the cloud can't be reached.** The local API checks the device token with api.allternit.com (`verify_runtime_device_token` in `cmd/allternit-api/src/connector_routes.rs`). If the cloud can't be reached (no network, DNS failure, a 5xx or 429), it uses this device's last successful check instead, for up to 7 days, so Desktop keeps working on your own files. The last check is kept in `device-identity-cache.json` in the data folder, keyed by a SHA-256 of the token (never the token itself). A token the cloud rejects is refused straight away; the saved check never covers a rejection.
+
 ## Code mode panes
 
 The **Panes** menu at the top right of a Code session lists Terminal, Changes,
