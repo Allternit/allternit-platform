@@ -1,13 +1,13 @@
 {
-  "version": "2.2.4",
+  "version": "2.2.6",
   "description": "AI-powered terminal interface for the Allternit ecosystem",
   "homepage": "https://docs.gizziio.com",
   "license": "Apache-2.0",
   "depends": "ripgrep",
   "architecture": {
     "64bit": {
-      "url": "https://github.com/Allternit/allternit-platform/releases/download/gizzi-code/v2.2.4/gizzi-code-v2.2.4-windows-x64.zip",
-      "hash": "e8dbf8b3e65e90e8b5769bfaf4f6974b636d854681dc1a5f5fe0a972c917079e"
+      "url": "https://github.com/Allternit/allternit-platform/releases/download/gizzi-code/v2.2.6/gizzi-code-v2.2.6-windows-x64.zip",
+      "hash": "d310b069107328f5a63199d8bb2f47601906d809fecf6444387edb17fd2b57ff"
     }
   },
   "bin": "gizzi-code.exe",
