@@ -826,8 +826,8 @@ async fn list_runtime_devices(
         } else {
             device.status.clone()
         };
-        // Live relay connections (multi-connection mode only; empty in
-        // single-connection mode so the flag-off response is unchanged).
+        // Live relay connections: which runtime will actually answer a
+        // relayed request right now.
         let relay_connections =
             crate::routes::runtime_relay::relay_connection_presence(&device.id).await;
         let mut value = serde_json::json!({

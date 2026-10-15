@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, net, safeStorage, session, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, net, powerMonitor, safeStorage, session, shell } from 'electron';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -288,6 +288,11 @@ export class DesktopAuthManager {
 
   async initialize(): Promise<void> {
     log.info('[Auth] Initializing paired runtime identity');
+    // After sleep the relay socket is usually dead without a TCP reset; the
+    // watchdog would notice within ~75s, but the phone is in use right now.
+    powerMonitor?.on?.('resume', () => {
+      if (this.session) this.reconnectRuntimeRelay();
+    });
     this.quarantineLegacyOAuthSession();
     this.runtimeIdentity = this.readIdentityFromDisk();
     this.session = this.runtimeIdentity ? this.toSession(this.runtimeIdentity) : null;
@@ -1238,6 +1243,9 @@ export class DesktopAuthManager {
       return;
     }
     if (!response.ok) throw new Error(`Runtime heartbeat failed (${response.status})`);
+    // The heartbeat is what makes this Mac read "online"; never let it run
+    // without a relay behind it, or every phone request answers offline.
+    if (!this.relaySocket && !this.relayReconnectTimer) this.connectRuntimeRelay();
   }
 
   private persistIdentity(identity: PersistedRuntimeIdentity): void {
@@ -1360,7 +1368,10 @@ export class DesktopAuthManager {
       }
     });
     socket.addEventListener('close', () => {
-      if (this.relaySocket === socket) this.relaySocket = null;
+      // A socket the watchdog or a reconnect already dropped can close late:
+      // its cleanup must not tear down the connection that replaced it.
+      if (this.relaySocket !== socket) return;
+      this.relaySocket = null;
       this.stopRelayWatchdog();
       for (const local of this.relayLocalSockets.values()) local.close(1012, 'Relay disconnected');
       this.relayLocalSockets.clear();
@@ -1387,7 +1398,10 @@ export class DesktopAuthManager {
       }
       if (Date.now() - this.relayLastMessageAt > 75_000) {
         log.warn('[Auth] Runtime relay heartbeat timed out; reconnecting');
-        this.relaySocket.close(4000, 'Relay heartbeat timeout');
+        // terminate(), not close(): a dead connection never answers the close
+        // handshake, and waiting on it leaves the Mac heartbeating "online"
+        // with no relay. Reconnect now instead of on the late close event.
+        this.reconnectRuntimeRelay();
       }
     }, 30_000);
     this.relayWatchdogTimer.unref?.();
@@ -1725,9 +1739,11 @@ export class DesktopAuthManager {
   }
 
   private reconnectRuntimeRelay(): void {
+    this.stopRelayWatchdog();
     if (this.relaySocket) {
-      this.relaySocket.close();
+      const stale = this.relaySocket;
       this.relaySocket = null;
+      try { stale.terminate(); } catch { /* already gone */ }
     }
     for (const socket of this.relayLocalSockets.values()) socket.close(1012, 'Relay reconnecting');
     this.relayLocalSockets.clear();
