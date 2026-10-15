@@ -101,6 +101,18 @@ On a phone, each pane opens full screen from the header's pane menu.
 
 Code: `allternit-ai/src/views/code/pane-manager/` (`switchPane`, `openPane`).
 
+## Replies that stop streaming
+
+A session shows **Working** while its reply streams in. If the stream goes
+quiet for 30 seconds, or you open a session that still says Working, the app
+checks the saved conversation. When the agent's reply is already finished
+there, the session stops showing Working and shows the saved reply. A turn
+that is still running is left alone. This covers a reply stream lost across a
+Desktop restart; the turn itself still runs and saves normally.
+
+Code: `allternit-ai/src/lib/agents/mode-session-store.ts` (`reconcileStream`,
+`serverTurnFinished`).
+
 ## Allternit Factory views
 
 <Note>
