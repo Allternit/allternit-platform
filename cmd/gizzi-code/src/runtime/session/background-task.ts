@@ -170,7 +170,7 @@ export namespace BackgroundTask {
         .update(BackgroundTaskTable)
         .set({
           status,
-          output: fields.output,
+          ...(fields.output !== undefined ? { output: fields.output } : {}),
           error: fields.error,
           time_finished: now,
           time_updated: now,
@@ -203,9 +203,18 @@ export namespace BackgroundTask {
     return settle(id, "failed", { error: error instanceof Error ? error.message : String(error), output })
   }
 
+  /** Provider-owned work reports its outcome without sending another stop request. */
+  export function recordCancellation(id: string, reason: string, output?: string): Promise<Info> {
+    return settle(id, "cancelled", { error: reason, output })
+  }
+
+  export function interrupt(id: string, reason: string, output?: string): Promise<Info> {
+    return settle(id, "interrupted", { error: reason, output })
+  }
+
   export async function cancel(id: string, reason = "Cancelled by user"): Promise<Info> {
     const canceller = state().cancellers[id]
-    if (canceller) await Promise.resolve(canceller()).catch(() => undefined)
+    if (canceller) await Promise.resolve(canceller())
     return settle(id, "cancelled", { error: reason })
   }
 
