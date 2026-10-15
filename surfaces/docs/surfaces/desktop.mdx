@@ -81,6 +81,23 @@ For developers: the renderer calls `window.allternit.auth.reconnectCloud()` (IPC
 
 Cloud calls carry only the Clerk bearer (and `X-Allternit-Tenant-Id`). `buildAuthHeaders(targetUrl)` adds the Desktop identity headers (`X-Allternit-User-Id`, `X-Allternit-User-Email`) only for the app's own origin and the loopback runtime: api.allternit.com reads identity from the JWT, and its CORS preflight refuses those headers, which made every direct cloud call fail as if offline. Pass the request URL when calling it for a cloud route.
 
+## Code mode panes
+
+The **Panes** menu at the top right of a Code session lists Terminal, Changes,
+Browser, Computer, Files, Artifacts, Transcript and Tasks. A new session opens
+with Terminal.
+
+- **Pick a pane** to show it in place of the one you're using. Picking a pane
+  that's already open (checked) closes it.
+- **Open beside** opens a pane as its own card next to the others. Each card
+  docks left, right or bottom, resizes, and can open in a new window from its
+  own menu.
+- Opening a file from the console's Problems tab switches to Files.
+
+On a phone, each pane opens full screen from the header's pane menu.
+
+Code: `allternit-ai/src/views/code/pane-manager/` (`switchPane`, `openPane`).
+
 ## Allternit Factory views
 
 <Note>
