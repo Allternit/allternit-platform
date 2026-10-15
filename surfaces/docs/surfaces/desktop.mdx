@@ -113,6 +113,17 @@ Desktop restart; the turn itself still runs and saves normally.
 Code: `allternit-ai/src/lib/agents/mode-session-store.ts` (`reconcileStream`,
 `serverTurnFinished`).
 
+## Quitting with work in progress
+
+When Desktop quits, it hands work that has **started** (a cowork job that is
+leased or running) to the cloud continuation so it can finish. Idle Cowork
+sessions and queued jobs stay on this computer and are picked up again on
+the next launch; they are not sent to the cloud.
+
+Code: `handoffInFlightToCloud` in `surfaces/allternit-desktop/src/main/unified-main.ts`
+calls `POST /api/v1/fabric/transport/continuation/handoff-all`, which runs
+`handoff_all_in_flight` in `allternit-cowork-runtime/src/sqlite_store.rs`.
+
 ## Allternit Factory views
 
 <Note>
