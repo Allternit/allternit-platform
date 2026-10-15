@@ -314,6 +314,62 @@ describe("CLI-owned background tasks", () => {
     })
   })
 
+  test("the last task may stop before its control acknowledgement and persists before shutdown", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const parent = await Session.create({})
+        const script = path.join(tmp.path, "stop.ts")
+        const persisted = path.join(tmp.path, "persisted")
+        await fs.writeFile(
+          script,
+          `
+          import fs from 'node:fs/promises';
+          const emit = e => console.log(JSON.stringify(e));
+          let started = false, buffer = '';
+          process.stdin.on('data', chunk => {
+            buffer += chunk.toString(); let i;
+            while ((i = buffer.indexOf('\\n')) >= 0) {
+              const line = buffer.slice(0,i); buffer = buffer.slice(i+1);
+              if (!line.trim()) continue;
+              const e = JSON.parse(line);
+              if (e.type === 'control_request') {
+                emit({type:'system',subtype:'task_notification',task_id:'only',status:'stopped'});
+                setTimeout(() => emit({type:'control_response',response:{subtype:'success',request_id:e.request_id}}),100);
+              } else if (!started) {
+                started = true;
+                emit({type:'system',subtype:'task_started',task_id:'only',task_type:'local_bash',description:'last job'});
+                emit({type:'result'});
+              }
+            }
+          });
+          process.stdin.on('end', async () => {
+            await new Promise(r => setTimeout(r,100));
+            await fs.writeFile('persisted','terminal state saved');
+          });
+        `,
+        )
+        const driver = new LocalCliDriver("fixture", "claude-cli")
+        for await (const _ of (driver as any).runStreamJson(
+          { taskId: "stop-last", runtimeId: "fixture", cliName: "claude-cli" },
+          [process.execPath, script],
+          { prompt: "check", promptOnStdin: false, endsWithResult: true, cwd: tmp.path, sessionID: parent.id },
+        )) {
+        }
+        const [row] = await SessionTasks.list(parent.id)
+        await BackgroundTask.cancel(row.id)
+        expect((await BackgroundTask.get(row.id))?.status).toBe("cancelled")
+        for (let i = 0; i < 50; i++) {
+          if (await fs.readFile(persisted, "utf8").catch(() => "")) break
+          await Bun.sleep(20)
+        }
+        expect(await fs.readFile(persisted, "utf8")).toBe("terminal state saved")
+        await Session.remove(parent.id)
+      },
+    })
+  })
+
   test("foreground reply releases promptly; the retained CLI streams completion and targeted stop", async () => {
     await using tmp = await tmpdir({ git: true })
     await Instance.provide({
