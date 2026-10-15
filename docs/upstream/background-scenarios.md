@@ -59,3 +59,11 @@ response. The retained reader must consume both before closing. On shutdown,
 close stdin and allow up to two seconds for the CLI to persist terminal task
 state before terminating its process. The last-task stop regression exercises
 this notification-before-acknowledgement order and an EOF persistence write.
+
+Live provider limitation (Claude CLI 2.1.300): on resume, an orphan-task
+notification plus its automated-message reminder can be coalesced into the
+same user content block as a genuine new request. The model may ignore the
+request as notification input. Observed on both the original conversation and
+fresh task sessions, including after graceful shutdown. Retrying with an
+explicit new request works; lifecycle mirroring and targeted Stop are verified
+independently. Do not claim the bridge fixes this provider prompt behavior.

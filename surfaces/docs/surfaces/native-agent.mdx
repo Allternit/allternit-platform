@@ -179,6 +179,12 @@ stop remains an error; it is not shown as a successful cancellation. If the CLI
 connection disappears without a terminal outcome, its active tasks become
 **interrupted**. A finished chat reply does not imply all background work finished.
 
+With Claude CLI, a resumed conversation can prepend an old task notification
+and its automated-message reminder to the next request. The provider may then
+ignore that request and the app shows **turn produced no model output**. Retry
+with a clear new request, or start a new thread. This is a provider conversation
+limitation; the Tasks pane still shows the task's observed outcome.
+
 ### Browse, preview and edit files
 
 The Files pane keeps the folder tree beside your open files. Click a file to
