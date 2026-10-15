@@ -571,6 +571,15 @@
         "allternit/services/subscription-gateway/adapters/openmuse-copilotkit/provider.ts",
         "allternit/surfaces/docs/guides/local-vendor-bots.mdx"
       ]
+    },
+    {
+      "source": "allternit/cmd/gizzi-code/src/runtime/drivers",
+      "target": "allternit/cmd/gizzi-code/src/runtime/session",
+      "kind": "events",
+      "evidence": [
+        "allternit/cmd/gizzi-code/src/runtime/drivers/local-cli-driver.ts",
+        "allternit/cmd/gizzi-code/src/runtime/session/cli-background-tasks.ts"
+      ]
     }
   ]
 }

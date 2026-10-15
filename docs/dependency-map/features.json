@@ -1127,7 +1127,8 @@
         "allternit/cmd/gizzi-code/src/runtime/server",
         "allternit/cmd/gizzi-code/src/runtime/tools",
         "allternit/cmd/allternit-cloud-api",
-        "allternit/cmd/gizzi-code/src/cli"
+        "allternit/cmd/gizzi-code/src/cli",
+        "allternit/cmd/gizzi-code/src/runtime/drivers"
       ],
       "decisions": [
         {
@@ -1141,12 +1142,17 @@
         {
           "on": "2026-10-12",
           "note": "Code session pane selector is collapsed into a multi-select Panes menu with open-state checks and running-task count. Six code tool bodies share Browser shell surfaces on desktop, phone and popup. Terminal uses one tab bar with folder/branch context and bare shell chrome."
+        },
+        {
+          "on": "2026-10-14",
+          "note": "Claude CLI stream-json task lifecycle now mirrors into the same durable task list. Keep the owning CLI alive after its foreground result while tasks remain; poll bounded task output and forward targeted stop_task controls with acknowledgement. Missing terminal notifications become interrupted, never completed. No API shape or separate Desktop/phone implementation."
         }
       ],
       "evidence": [
         "allternit/docs/upstream/background-scenarios.md",
         "allternit/cmd/gizzi-code/test/session/session-tasks.test.ts",
-        "allternit/cmd/gizzi-code/test/session/background-shell.test.ts"
+        "allternit/cmd/gizzi-code/test/session/background-shell.test.ts",
+        "allternit/cmd/gizzi-code/test/session/cli-background-tasks.test.ts"
       ]
     },
     {

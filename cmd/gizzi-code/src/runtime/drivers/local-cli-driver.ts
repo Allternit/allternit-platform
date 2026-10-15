@@ -38,6 +38,7 @@ import {
 } from "@agentclientprotocol/sdk"
 import { spawn as nodeSpawn } from "node:child_process"
 import { Readable, Writable } from "node:stream"
+import { CliBackgroundTasks } from "@/runtime/session/cli-background-tasks"
 import { ProcessRegistry } from "@/runtime/process-registry"
 import { acpGateDecision } from "@/runtime/drivers/acp-gate"
 import { PermissionNext } from "@/runtime/tools/guard/permission/next"
@@ -506,11 +507,131 @@ export class LocalCliDriver implements RuntimeDriver {
       // stdin may already be closed by the agent.
     }
 
+    let retained = false
+    const lines = readLines(proc.stdout)
+    const stops = new Map<
+      string,
+      { resolve: () => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }
+    >()
+    let requestSeq = 0
+    const background =
+      this.cliName === "claude-cli" && options.sessionID
+        ? new CliBackgroundTasks(
+            options.sessionID,
+            (taskID) =>
+              new Promise<void>((resolve, reject) => {
+                const requestID = `gizzi-stop-${++requestSeq}`
+                const timer = setTimeout(() => {
+                  stops.delete(requestID)
+                  reject(new Error("CLI did not acknowledge stopping the task"))
+                }, 5000)
+                stops.set(requestID, { resolve, reject, timer })
+                Promise.resolve()
+                  .then(() =>
+                    stdin.write(
+                      JSON.stringify({
+                        type: "control_request",
+                        request_id: requestID,
+                        request: { subtype: "stop_task", task_id: taskID },
+                      }) + "\n",
+                    ),
+                  )
+                  .catch((error) => {
+                    clearTimeout(timer)
+                    stops.delete(requestID)
+                    reject(error)
+                  })
+              }),
+          )
+        : undefined
+    const observe = async (evt: Record<string, any>) => {
+      if (!evt || typeof evt !== "object") return
+      if (evt.type === "control_request") {
+        const requestId = String(evt.request_id ?? "")
+        const input = evt.request?.input as Record<string, unknown> | undefined
+        if (requestId && options.bot && evt.request?.subtype === "can_use_tool") {
+          // A restricted bot's CLI asks before any tool outside its
+          // allowlist (--permission-prompt-tool stdio): refuse it, or
+          // route it to the app's approval flow.
+          const toolName = String(evt.request?.tool_name ?? "")
+          const verdict = await botToolVerdict(options.bot, toolName, input, options.sessionID, options.bridgeName)
+          log.info("bot tool decision", {
+            taskId: handle.taskId,
+            bot: options.bot.id,
+            tool: toolName,
+            allow: verdict.allow,
+          })
+          if (verdict.allow) writeControlResponse(stdin, requestId, input)
+          else writeControlDeny(stdin, requestId, "message" in verdict ? verdict.message : `${toolName} was refused.`)
+          return
+        }
+        if (requestId) {
+          writeControlResponse(stdin, requestId, input)
+        }
+        return
+      }
+      if (evt.type === "control_response") {
+        const response = evt.response ?? {}
+        const pending = stops.get(response.request_id)
+        if (pending) {
+          clearTimeout(pending.timer)
+          stops.delete(response.request_id)
+          if (response.subtype === "success") pending.resolve()
+          else pending.reject(new Error(String(response.error ?? "CLI refused to stop the task")))
+        }
+      }
+      await background?.observe(evt)
+    }
+    const cleanup = async () => {
+      for (const pending of stops.values()) {
+        clearTimeout(pending.timer)
+        pending.reject(new Error("CLI connection closed"))
+      }
+      stops.clear()
+      try {
+        await background?.close()
+      } finally {
+        try {
+          await stdin.end()
+        } catch {
+          /* already closed */
+        }
+        terminateProcessTree(proc)
+        await lines.return(undefined).catch(() => undefined)
+      }
+    }
+    const retainBackground = () => {
+      retained = true
+      // Finish the foreground turn promptly, but keep the owning CLI alive
+      // and continue consuming lifecycle/control messages until its tasks end.
+      void (async () => {
+        try {
+          while (background?.active) {
+            const item = await lines.next()
+            if (item.done) break
+            let evt: Record<string, any>
+            try {
+              evt = JSON.parse(item.value)
+            } catch {
+              continue
+            }
+            await observe(evt)
+          }
+        } catch (error) {
+          log.warn("CLI background stream closed", { error })
+        } finally {
+          await cleanup()
+        }
+      })().catch((error) => log.warn("CLI background cleanup failed", { error }))
+    }
     let finished = false
     const blocks = new StreamJsonBlocks()
 
     try {
-      for await (const line of readLines(proc.stdout)) {
+      while (true) {
+        const item = await lines.next()
+        if (item.done) break
+        const line = item.value
         if (this.abortedTasks.has(handle.taskId)) {
           this.abortedTasks.delete(handle.taskId)
           const ev = { type: "status", status: "cancelled" } as AgentEvent
@@ -521,9 +642,12 @@ export class LocalCliDriver implements RuntimeDriver {
 
         if (!line.trim()) continue
 
+        let evt: StreamJsonEvent
+        try { evt = JSON.parse(line) as StreamJsonEvent } catch { continue }
+        // Storage/bridge failures must fail the turn, not masquerade as
+        // malformed JSON and silently drop task visibility again.
+        await observe(evt)
         try {
-          const evt = JSON.parse(line) as StreamJsonEvent
-
           const vendorId = vendorSessionIdFromEvent(this.cliName, evt)
           if (vendorId && vendorId !== lastVendorId) {
             lastVendorId = vendorId
@@ -602,25 +726,7 @@ export class LocalCliDriver implements RuntimeDriver {
             continue
           }
 
-          if (evt.type === "control_request") {
-            const requestId = String(evt.request_id ?? "")
-            const input = evt.request?.input as Record<string, unknown> | undefined
-            if (requestId && options.bot && evt.request?.subtype === "can_use_tool") {
-              // A restricted bot's CLI asks before any tool outside its
-              // allowlist (--permission-prompt-tool stdio): refuse it, or
-              // route it to the app's approval flow.
-              const toolName = String(evt.request?.tool_name ?? "")
-              const verdict = await botToolVerdict(options.bot, toolName, input, options.sessionID, options.bridgeName)
-              log.info("bot tool decision", { taskId: handle.taskId, bot: options.bot.id, tool: toolName, allow: verdict.allow })
-              if (verdict.allow) writeControlResponse(stdin, requestId, input)
-              else writeControlDeny(stdin, requestId, "message" in verdict ? verdict.message : `${toolName} was refused.`)
-              continue
-            }
-            if (requestId) {
-              writeControlResponse(stdin, requestId, input)
-            }
-            continue
-          }
+          if (evt.type === "control_request") continue
 
           if (evt.type === "result") {
             finished = true
@@ -634,6 +740,7 @@ export class LocalCliDriver implements RuntimeDriver {
                 totalTokens: (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0),
               },
             } as AgentEvent
+            if (background?.active) retainBackground()
             yield finishEv
             await this.logEvent(handle.taskId, finishEv)
             break
@@ -679,12 +786,7 @@ export class LocalCliDriver implements RuntimeDriver {
       yield finishEv
       await this.logEvent(handle.taskId, finishEv)
     } finally {
-      try {
-        await stdin.end()
-      } catch {
-        // stdin may already be closed when the process died.
-      }
-      terminateProcessTree(proc)
+      if (!retained) await cleanup()
       this.resetCurrentTask()
     }
   }
