@@ -93,6 +93,9 @@ with Terminal.
   docks left, right or bottom, resizes, and can open in a new window from its
   own menu.
 - Opening a file from the console's Problems tab switches to Files.
+- **Changes** shows the session folder's uncommitted work: changed files and
+  new (untracked) files, with line counts. It reads `POST /api/v1/git/diff` on
+  the local API (`cmd/allternit-api/src/git_routes.rs`).
 
 On a phone, each pane opens full screen from the header's pane menu.
 
