@@ -514,7 +514,7 @@ export class LocalCliDriver implements RuntimeDriver {
       { resolve: () => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }
     >()
     let requestSeq = 0
-    const background =
+    const background: CliBackgroundTasks | undefined =
       this.cliName === "claude-cli" && options.sessionID
         ? new CliBackgroundTasks(
             options.sessionID,
@@ -524,6 +524,7 @@ export class LocalCliDriver implements RuntimeDriver {
                 const timer = setTimeout(() => {
                   stops.delete(requestID)
                   reject(new Error("CLI did not acknowledge stopping the task"))
+                  if (!background?.active) terminateProcessTree(proc)
                 }, 5000)
                 stops.set(requestID, { resolve, reject, timer })
                 Promise.resolve()
@@ -596,6 +597,16 @@ export class LocalCliDriver implements RuntimeDriver {
         } catch {
           /* already closed */
         }
+        // Let the vendor persist its terminal task state before ending its
+        // process; killing immediately can replay a stale stopped task on resume.
+        if (retained) {
+          let timer: ReturnType<typeof setTimeout> | undefined
+          try {
+            await Promise.race([proc.exited, new Promise<void>((resolve) => { timer = setTimeout(resolve, 2000) })])
+          } finally {
+            if (timer) clearTimeout(timer)
+          }
+        }
         terminateProcessTree(proc)
         await lines.return(undefined).catch(() => undefined)
       }
@@ -606,7 +617,7 @@ export class LocalCliDriver implements RuntimeDriver {
       // and continue consuming lifecycle/control messages until its tasks end.
       void (async () => {
         try {
-          while (background?.active) {
+          while (background?.active || stops.size > 0) {
             const item = await lines.next()
             if (item.done) break
             let evt: Record<string, any>

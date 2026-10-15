@@ -53,3 +53,9 @@ Regression: `cmd/gizzi-code/test/session/cli-background-tasks.test.ts` exercises
 real subprocess/stdio, durable storage, the shared list, live file output,
 foreground/background lifetime separation, targeted stop, rejected stop,
 terminal idempotence, unknown statuses, owner scoping and crash interruption.
+
+CLI stop ordering: a provider may emit task-stopped before its stop control
+response. The retained reader must consume both before closing. On shutdown,
+close stdin and allow up to two seconds for the CLI to persist terminal task
+state before terminating its process. The last-task stop regression exercises
+this notification-before-acknowledgement order and an EOF persistence write.

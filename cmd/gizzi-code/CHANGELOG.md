@@ -2,7 +2,13 @@
 
 ## Unreleased
 
-## 2.2.5 (2026-10-14)
+## 2.2.6 (2026-10-14)
+
+### Fixed
+- Wait for the CLI stop acknowledgement even when its task-stopped notification
+  arrives first. Give the CLI time to persist final task state before shutdown.
+
+## 2.2.5 (2026-10-14, release cancelled before publication)
 
 ### Fixed
 - Claude CLI background jobs now appear in Tasks with live output and provider
