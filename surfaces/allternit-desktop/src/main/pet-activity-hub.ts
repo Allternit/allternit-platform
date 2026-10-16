@@ -25,6 +25,12 @@ export class PetActivityHub {
     else this.sources.set(source, { state, until: ttlMs ? now + ttlMs : undefined });
   }
 
+  /** One source's live state (idle when it has none or it expired). */
+  get(source: string, now = Date.now()): PetState {
+    const s = this.sources.get(source);
+    return s && (s.until === undefined || s.until > now) ? s.state : 'idle';
+  }
+
   clear(source: string): void {
     this.sources.delete(source);
   }

@@ -168,6 +168,39 @@ describe('desktop pet activity', () => {
     } finally { vi.useRealTimers(); }
   });
 
+  it('a terminal reply does not badge the pet (it is not waiting in the app)', async () => {
+    const { main, pet, manager } = await setup();
+    main.visible = false;
+    manager.reportActivity('hook:claude', 'waving', 2400);
+    expect(lastActivity(pet)).toMatchObject({ state: 'waving', unread: false });
+  });
+
+  it('shows speech bubbles above the pet, escaped and click-through, and hides them on time', async () => {
+    vi.useFakeTimers();
+    try {
+      const { main, pet, manager, report } = await setup();
+      expect(manager.showBubble('<b>Tests</b> pass', 3000)).toBe(true);
+      const bubble = mocks.windows.find(w => w.options.focusable === false)!;
+      const url = decodeURIComponent(bubble.loadURL.mock.calls.at(-1)[0]);
+      expect(url).toContain('&lt;b&gt;Tests&lt;/b&gt; pass');
+      expect(url).toContain("default-src 'none'");
+      expect(bubble.options.webPreferences.javascript).toBe(false);
+      await vi.waitFor(() => expect(bubble.visible).toBe(true));
+      expect(bubble.bounds.y + bubble.bounds.height).toBeLessThanOrEqual(pet.bounds.y + 6);
+      vi.advanceTimersByTime(3100);
+      expect(bubble.visible).toBe(false);
+      // The app's own events speak too: needing an answer, and a reply that finished while you were away.
+      main.visible = false;
+      report('waiting');
+      expect(decodeURIComponent(bubble.loadURL.mock.calls.at(-1)[0])).toContain('Needs your answer');
+      report('review'); report('waving');
+      expect(decodeURIComponent(bubble.loadURL.mock.calls.at(-1)[0])).toContain('Reply ready');
+      // Never while the pet is hidden.
+      pet.visible = false;
+      expect(manager.showBubble('hi')).toBe(false);
+    } finally { vi.useRealTimers(); }
+  });
+
   it('toggles the main window', async () => {
     const showMain = vi.fn();
     const { main, pet } = await setup({ showMain });

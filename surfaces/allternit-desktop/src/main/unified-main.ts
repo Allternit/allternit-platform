@@ -23,6 +23,7 @@ import log from 'electron-log';
 import { updateElectronApp } from 'update-electron-app';
 import fixPath from 'fix-path';
 import { installDesktopCompanion } from './desktop-companion.js';
+import { startPetHookServer, type PetHookServer } from './pet-hook-server.js';
 import { isPairingLink, pairingCodeFromUrl } from './pairing-link.js';
 import { approvePairing, describePairingRequest } from './pairing-approval.js';
 import { backendManager } from './backend-manager.js';
@@ -799,6 +800,23 @@ const desktopCompanion = installDesktopCompanion({
     return true;
   },
 });
+
+// Terminal agents (gizzi, Claude Code, Codex, scripts) drive the same pet through a loopback hook port.
+let petHookServer: PetHookServer | null = null;
+app.whenReady().then(async () => {
+  try {
+    petHookServer = await startPetHookServer({
+      port: PORTS.PET_HOOK,
+      dir: app.getPath('userData'),
+      report: (client, state, ttlMs) => { desktopCompanion.reportActivity(`hook:${client}`, state, ttlMs); },
+      bubble: (_client, text, ttlMs) => { desktopCompanion.showBubble(text, ttlMs); },
+    });
+    log.info(`[Main] desktop pet hook on ${petHookServer.url}`);
+  } catch (err) {
+    log.warn('[Main] desktop pet hook port not started', err);
+  }
+});
+app.on('will-quit', () => { void petHookServer?.close(); });
 
 /**
  * Bring the main window up, recreating it if it was closed. With the desktop
