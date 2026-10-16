@@ -1280,13 +1280,14 @@
       "label": "Desktop pets and animated avatars (Petdex standard)",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "Bot avatars play Petdex-standard sprite sheets (8 columns of 192x208, 11 rows: idle, running-right/left, waving, jumping, failed, waiting, running, review, sleep, special). Characters without real frames hop. One pet-activity signal (lib/agents/pet-activity.ts) follows every session store and bot/vendor thread. In-app avatars (rail, headers, surface mascot, A:// orb) react to it. The Desktop pet window gets that state over IPC from the main window and plays it (walk rows while roaming), with a mail badge for replies that finished while you were away; click opens quick chat, double-click shows or hides the app. Later steps: a loopback hook port for terminal agents, with speech bubbles.",
+      "description": "Bot avatars play Petdex-standard sprite sheets (8 columns of 192x208, 11 rows: idle, running-right/left, waving, jumping, failed, waiting, running, review, sleep, special). Characters without real frames hop. One pet-activity signal (lib/agents/pet-activity.ts) follows every session store and bot/vendor thread. In-app avatars (rail, headers, surface mascot, A:// orb) react to it. The Desktop pet window gets that state over IPC from the main window and plays it (walk rows while roaming), with a mail badge for replies that finished while you were away; click opens quick chat, double-click shows or hides the app. Terminal agents drive the same pet through a token-guarded loopback hook port (127.0.0.1:7787; gizzi built in, a hook script for Claude Code and Codex), and the pet shows speech bubbles in a click-through window above it. Later step: character builder v2 side views.",
       "touches": [
         "allternit-ai/src/lib/agents",
         "allternit-ai/src/views/bots",
         "allternit-ai/src/pages",
         "allternit-ai/src/components/desktop-companion",
-        "allternit/surfaces/allternit-desktop"
+        "allternit/surfaces/allternit-desktop",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/pet"
       ],
       "evidence": [
         "allternit-ai/src/views/bots/AnimatedBotSprite.tsx",
@@ -1295,7 +1296,9 @@
         "allternit-ai/src/lib/agents/pet-activity.ts",
         "allternit-ai/src/views/bots/ActiveAgentMascot.tsx",
         "allternit-ai/src/pages/DesktopCompanionPage.tsx",
-        "allternit/surfaces/allternit-desktop/src/main/pet-activity-hub.ts"
+        "allternit/surfaces/allternit-desktop/src/main/pet-activity-hub.ts",
+        "allternit/surfaces/allternit-desktop/src/main/pet-hook-server.ts",
+        "allternit/cmd/gizzi-code/src/cli/ui/ink-app/pet/desktopPetHook.ts"
       ],
       "decisions": [
         {

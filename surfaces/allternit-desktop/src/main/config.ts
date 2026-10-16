@@ -40,6 +40,11 @@ export const PORTS = {
    * it through ALLTERNIT_FACTORY_URL.
    */
   FACTORY: 3018,
+  /**
+   * Desktop pet hook port (pet-hook-server.ts): terminal agents report activity
+   * and speech bubbles here. Token-guarded; falls back to a free port when busy.
+   */
+  PET_HOOK: 7787,
 } as const;
 
 export const HOSTS = {
