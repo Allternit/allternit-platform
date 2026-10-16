@@ -117,15 +117,7 @@ fn md_files(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
-/// Keep a provenance label inside the characters `validate_source` accepts.
-fn label(scheme: &str, rest: &str) -> String {
-    let clean: String = rest
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || "._~/@=+-".contains(c) { c } else { '-' })
-        .take(400)
-        .collect();
-    format!("{scheme}:{clean}")
-}
+use text_import::provenance_label as label;
 
 fn name_of(p: &Path) -> String {
     p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()

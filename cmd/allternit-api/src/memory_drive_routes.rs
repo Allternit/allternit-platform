@@ -38,6 +38,8 @@ pub fn memory_drive_router() -> Router<Arc<AppState>> {
         .route("/memory/drive/import", post(import))
         .route("/memory/drive/import-text", post(import_text))
         .route("/memory/drive/import-agents", get(list_agent_imports).post(import_agents))
+        .route("/memory/drive/find-memories", get(find_memories_info).post(find_memories))
+        .route("/memory/drive/import-chats", post(import_chats))
         .route("/memory/drive/purge", post(purge))
         .route("/memory/drive/peers", get(list_peers))
         .route("/memory/drive/peers/:peer_id", axum::routing::put(save_peer))
@@ -695,6 +697,102 @@ async fn save_peer(State(state): State<Arc<AppState>>, Extension(user): Extensio
             params![d.id, peer_id, name, b.local_revision, b.peer_revision, err, synced],
         )?;
         Ok(json!({ "saved": true }))
+    })
+    .await
+}
+
+/// The model that reads exported chats, and the request limits.
+async fn find_memories_info(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>) -> Response {
+    use crate::memory_drive_chat_import as chats;
+    run(state, user, move |ctx| {
+        open(ctx, None, false)?;
+        let (provider, model) = crate::memory_extraction::extraction_model();
+        Ok(json!({
+            "model": format!("{provider}/{model}"),
+            "max_conversations": chats::MAX_CONVERSATIONS,
+            "max_conversation_chars": chats::MAX_CONVERSATION_CHARS,
+            "max_batch_chars": chats::MAX_BATCH_CHARS,
+        }))
+    })
+    .await
+}
+
+#[derive(Deserialize)]
+struct FindMemoriesBody {
+    from: String,
+    conversations: Vec<crate::memory_drive_chat_import::Conversation>,
+}
+
+fn find_memories_slots() -> &'static tokio::sync::Semaphore {
+    static SLOTS: std::sync::OnceLock<tokio::sync::Semaphore> = std::sync::OnceLock::new();
+    SLOTS.get_or_init(|| tokio::sync::Semaphore::new(2))
+}
+
+/// Read a few exported conversations with the memory model and return the
+/// facts found, each tied to its conversation. Saves nothing.
+async fn find_memories(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Json(b): Json<FindMemoriesBody>) -> Response {
+    use crate::memory_drive_chat_import as chats;
+    if user.user_id.is_empty() {
+        return err(StatusCode::UNAUTHORIZED, "Sign in to use your memory drive.");
+    }
+    if let Err(e) = crate::memory_drive_text_import::scheme(&b.from).and_then(|_| chats::validate(&b.conversations)) {
+        return error(e);
+    }
+    let owner = user.user_id.clone();
+    let (db, fallback) = (state.db.clone(), state.config.brains_dir());
+    let provisioned = tokio::task::spawn_blocking({
+        let (db, owner) = (db.clone(), owner.clone());
+        move || {
+            let root = crate::memory_drive_writer::root_or(&db, &fallback)?;
+            scopes::open(&db, &root, &owner, &DriveRef::personal(&owner), true)
+        }
+    })
+    .await;
+    match provisioned {
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => return error(e),
+        Err(_) => return err(StatusCode::INTERNAL_SERVER_ERROR, "Memory request failed. Retry later."),
+    }
+    let _slot = find_memories_slots().acquire().await;
+    let model = crate::memory_extraction::extraction_model();
+    let reply = crate::usage_ledger::scope(
+        crate::usage_ledger::LedgerCtx::surface("memory").tenant(None, Some(&owner)),
+        crate::gizzi_completion::complete_ephemeral_structured(
+            &chats::build_prompt(&b.conversations),
+            Some(chats::SYSTEM_PROMPT),
+            Some(&model),
+            &chats::reply_schema(),
+        ),
+    )
+    .await;
+    match reply.as_deref().and_then(|r| chats::parse_reply(r, &b.conversations)) {
+        Some(memories) => Json(json!({ "memories": memories })).into_response(),
+        None => err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "The memory model didn't answer. Check that a model is set up on the computer that holds your drive, then try again.",
+        ),
+    }
+}
+
+#[derive(Deserialize)]
+struct ChatImportBody {
+    from: String,
+    found: Vec<crate::memory_drive_chat_import::Found>,
+    #[serde(default)]
+    apply: bool,
+    selected: Option<Vec<String>>,
+}
+
+/// Preview or import facts found in exported chats. Dry run unless `apply`.
+async fn import_chats(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Json(b): Json<ChatImportBody>) -> Response {
+    use crate::memory_drive_chat_import as chats;
+    run(state, user, move |ctx| {
+        open(ctx, None, b.apply)?;
+        if !b.apply {
+            return Ok(json!({ "dry_run": true, "plan": chats::plan(&ctx.0.db, &ctx.1.user_id, &b.from, b.found)? }));
+        }
+        let (revision, imported) = chats::apply(&ctx.0.db, &ctx.1.user_id, &b.from, b.found, b.selected.as_deref())?;
+        Ok(json!({ "dry_run": false, "revision": revision, "imported": imported }))
     })
     .await
 }
