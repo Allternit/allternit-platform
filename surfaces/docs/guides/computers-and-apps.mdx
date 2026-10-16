@@ -44,6 +44,16 @@ The overlay plays `computer.action` events from the computer's events channel in
 - On this Mac, the ACI engine's own `cursor.moved` run-stream events (model frame, with `coordinate.contract`) drive the same overlay without a round trip.
 - Motion comes from Cua's MIT `@trycua/cursor-motion` player, vendored in allternit-ai at `src/vendor/cua-cursor-motion/` with the upstream commit in its README.
 
+## Which computer your phone and the web use
+
+m.allternit.com, ai.allternit.com and other cloud surfaces send each request to one of your computers, called your default node. It's picked this way:
+
+1. **Your pinned computer**, if it's online. When an Allternit cloud computer first pairs, it's pinned for you automatically, unless you already have a pin. This keeps your phone on the always-on computer instead of switching to your laptop whenever the laptop is awake.
+2. Otherwise, a computer with a live connection to Allternit.
+3. Otherwise, the computer seen most recently.
+
+A computer counts as online if it checked in within the last 10 minutes and its credential hasn't expired. If your pinned computer is offline, requests go to the next one on the list rather than failing. The pin is stored per account in `user_node_preferences` (surface `*`). The resolver lives in `cmd/allternit-cloud-api/src/services/node_resolution.rs`.
+
 ## Restore points and backups for your cloud computer
 
 Settings → Computers (and the Computers tab on your phone) has a **Restore points and backups** section for each Allternit cloud computer on your account.
