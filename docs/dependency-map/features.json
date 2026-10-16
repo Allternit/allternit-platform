@@ -614,11 +614,17 @@
         {
           "on": "2026-10-11",
           "note": "Floating mode controls, shell rail tabs and the Chat/Cowork toggle share glass selection, Allternit slash details and accessible interaction motion across Desktop, web and PWA."
+        },
+        {
+          "on": "2026-10-15",
+          "note": "Phone drawer reorganized around the desktop mode wheel (Home · Bots · Code · ACI, from src/shell/mode-buttons.ts): it shows only the active mode's rail and recents, with the A://TERNIT wordmark (gizzi code lockup in Code). Code, Bots, ACI, Tasks and Customize rows left the drawer; Inbox and Phones became icons; Customize moved into phone Settings; PhoneBotDrawer merged into PhoneDrawer."
         }
       ],
       "evidence": [
         "allternit/surfaces/docs/surfaces/mobile.mdx",
-        "allternit-ai/src/fabric-session/phone/PhoneShell.tsx"
+        "allternit-ai/src/fabric-session/phone/PhoneShell.tsx",
+        "allternit-ai/src/fabric-session/phone/PhoneDrawer.tsx",
+        "allternit-ai/src/fabric-session/phone/PhoneModeWheel.tsx"
       ]
     },
     {
