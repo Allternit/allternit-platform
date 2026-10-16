@@ -191,8 +191,9 @@ export namespace Skill {
       for (const brand of [".claude", ".agents", ".openclaw", ".allternit"]) {
         await scanRoot({ path: path.join(Global.Path.home, brand, "skills"), source: "user", label: brand })
       }
+      // Project ".allternit/skills" is where the Skill Builder and skill import write.
       for await (const found of Filesystem.up({
-        targets: [".claude", ".agents", ".openclaw"],
+        targets: [".claude", ".agents", ".openclaw", ".allternit"],
         start: Instance.directory,
         stop: Instance.worktree,
       })) {
