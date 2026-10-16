@@ -211,6 +211,34 @@ drive's history, like any delete.
 
 Incognito chats are never remembered, from any surface.
 
+## Your ledger
+
+Your memories are one part of what you build in Allternit. **Your ledger**, also in Settings →
+Memory, keeps the rest as plain files with history, next to your memories:
+
+| Folder | What's in it |
+| --- | --- |
+| `bots/` | Each bot's settings, plus its workspace files (`SOUL.md` and the rest) |
+| `agents/` | Agents that aren't bots |
+| `bot-templates/` | Bot and team templates you made |
+| `routines/` | Routines and scheduled messages |
+| `workflows/` | Workflows, with their steps |
+| `tasks/` | Open tasks |
+| `skills/` | Installed skills (`SKILL.md` folders) and skill recipes |
+| `projects/` | Projects and their instructions |
+| `schedules/` | Scheduled tasks, loops and scheduled runs |
+| `connected-apps.json` | Which apps and accounts are connected. Only the account, never its sign-in |
+
+Allternit saves the ledger every hour, and only when something changed. Select **Save now** to
+save it right away, **Browse files** to read any file, or **Download (.zip)** to keep a copy.
+**Changes** lists each save and which files it changed.
+
+Passwords, keys and sign-in tokens are never written to the ledger. Values stored under names like
+`api_key` or `password` are replaced, links to private git repositories lose their password, and
+a file that still looks like it holds a key is left out and listed in the ledger's `README.md`.
+
+Today the ledger is a copy. Changing a file in it doesn't change the bot or routine itself yet.
+
 ## Use it from other agents
 
 Select **Clone this drive** to get the drive's address and create a token:
