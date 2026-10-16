@@ -9,6 +9,7 @@ import {
   ENGINE_BIN,
   ENGINE_MISSING_FACT,
   FactoryEngineError,
+  engineStderrFact,
   engineVersion,
   locateEngine,
   passThrough,
@@ -365,3 +366,16 @@ describe("gizzi doctor: Factory home move", () => {
     expect(c.message).toContain("/fh")
   })
 })
+
+describe("engineStderrFact", () => {
+  test("prefers the error: line over clap's trailing --help hint", () => {
+    const stderr =
+      "\x1b[31merror:\x1b[0m the following required arguments were not provided:\n  --dag <DAG_ID>\n\nFor more information, try '--help'.\n"
+    expect(engineStderrFact(stderr)).toBe("the following required arguments were not provided:")
+  })
+  test("falls back to the last line", () => {
+    expect(engineStderrFact("starting\nengine stopped\n")).toBe("engine stopped")
+    expect(engineStderrFact("")).toBeUndefined()
+  })
+})
+
