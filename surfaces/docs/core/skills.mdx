@@ -20,7 +20,21 @@ my-skill/
 
 ## Loading skills
 
-Skills are loaded automatically from `~/.allternit/skills/` and from the workspace `.allternit/skills/` directory. Activate a skill for a session with:
+Skills load automatically from these folders. A skill is any folder in them that holds a `SKILL.md`.
+
+| Folder | Where | Notes |
+| --- | --- | --- |
+| `~/.allternit/skills/` | Your computer | Skills the Allternit app installs or you add in Customize → Skills. |
+| `~/.claude/skills/`, `~/.agents/skills/`, `~/.openclaw/skills/` | Your computer | Skills you already use with other agents load as they are. |
+| `.allternit/skills/`, `.claude/skills/`, `.agents/skills/`, `.openclaw/skills/` | Your project, from the session folder up to the repository root | The Skill Builder and skill import write to `.allternit/skills/`. |
+| `.gizzi/skill/` or `.gizzi/skills/` | `~/.gizzi/` or your project | Gizzi's own skill folders. |
+| Any folder listed in `skills.paths` | Your Gizzi config | `~/` paths and project-relative paths both work. |
+
+Set `GIZZI_DISABLE_EXTERNAL_SKILLS=1` to load only Allternit's built-in skills and the Gizzi folders.
+
+Bots see built-in skills, skills in `~/.allternit/skills/`, and skills from your Gizzi config. They don't see your personal `~/.claude`, `~/.agents`, `~/.openclaw` or `~/.codex` skills, or project-folder skills.
+
+Activate a skill for a session with:
 
 ```bash
 gizzi --skill my-skill "do the thing"
