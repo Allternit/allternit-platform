@@ -99,32 +99,6 @@ const enginesAPI = {
   },
 };
 
-// ─── Bonsai local image companion ─────────────────────────────────────────────
-
-export interface BonsaiStatus {
-  installed: boolean;
-  running: boolean;
-  installing: boolean;
-  url: string;
-  revisions?: { source?: string; model?: string; mlxWheel?: string };
-  installDir: string;
-  error?: string;
-}
-
-const bonsaiAPI = {
-  getStatus: (): Promise<BonsaiStatus> => ipcRenderer.invoke('bonsai:get-status'),
-  install: (): Promise<void> => ipcRenderer.invoke('bonsai:install'),
-  cancelInstall: (): Promise<boolean> => ipcRenderer.invoke('bonsai:cancel-install'),
-  start: (): Promise<void> => ipcRenderer.invoke('bonsai:start'),
-  stop: (): Promise<boolean> => ipcRenderer.invoke('bonsai:stop'),
-  remove: (): Promise<void> => ipcRenderer.invoke('bonsai:remove'),
-  onProgress: (handler: (progress: { stage: string; message: string }) => void): (() => void) => {
-    const listener = (_: IpcRendererEvent, p: { stage: string; message: string }) => handler(p);
-    ipcRenderer.on('bonsai:progress', listener);
-    return () => ipcRenderer.removeListener('bonsai:progress', listener);
-  },
-};
-
 // ─── System One (S1) + Laya ───────────────────────────────────────────────────
 // Settings → Models & tiers reads install state from here (Q28/Q29).
 
@@ -987,7 +961,6 @@ const allternitDesktopAPI = {
   connection: connectionAPI,
   backend: backendAPI,
   engines: enginesAPI,
-  bonsai: bonsaiAPI,
   systemOne: systemOneAPI,
   vm: vmAPI,
   window: windowAPI,

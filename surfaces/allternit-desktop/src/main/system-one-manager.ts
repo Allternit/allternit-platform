@@ -18,7 +18,7 @@
  * explicitly. Otherwise allternit-api sends "auto" and the S1 server uses Laya
  * while it is healthy (#1113), so a Laya that turns healthy later needs no restart.
  *
- * Mirrors bonsai-companion-manager.ts; dependencies are injectable for tests.
+ * Dependencies are injectable for tests.
  */
 
 import { app, BrowserWindow } from 'electron';

@@ -11,7 +11,7 @@ export function getAPIProvider(): APIProvider {
 }
 
 export function getModelProvider(model: string): ModelProvider {
-  if (model.startsWith('ollama/') || model.includes('llama') || model.includes('mistral') || model.includes('bonsai')) return 'ollama'
+  if (model.startsWith('ollama/') || model.includes('llama') || model.includes('mistral')) return 'ollama'
   if (model.includes('claude')) return 'allternit'
   if (model.includes('gpt')) return 'openai'
   return 'allternit'
