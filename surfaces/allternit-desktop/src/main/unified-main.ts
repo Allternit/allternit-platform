@@ -789,6 +789,7 @@ const desktopCompanion = installDesktopCompanion({
   origin: () => activePlatformUrl,
   main: () => mainWindow,
   preload: join(__dirname, '../preload/index.js'),
+  showMain: () => showOrReopenMainWindow(),
   openHud: (agentId) => openHudForCompanion(agentId),
   closeHud: () => hideHudWindow(),
   moveHudWithPet: (dx, dy) => {

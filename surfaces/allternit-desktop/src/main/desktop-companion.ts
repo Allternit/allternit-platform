@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, Menu, screen, type IpcMainEvent, type IpcM
 import Store from 'electron-store';
 import { watch } from 'node:fs';
 import path from 'node:path';
+import { PetActivityHub, isPetState, pickRoamTarget, roamStep, type PetState } from './pet-activity-hub.js';
 
 export interface CompanionState {
   enabled: boolean;
@@ -9,10 +10,19 @@ export interface CompanionState {
   agentId: string | null;
   panel: 'chat' | 'settings';
   position?: { x: number; y: number };
+  /** Walk along its row while nothing is happening (Petdex-style roaming). */
+  roam: boolean;
 }
 
-export function installDesktopCompanion(options: { origin: () => string; main: () => BrowserWindow | null; preload: string; openHud?: (agentId: string | null) => void; closeHud?: () => void; moveHudWithPet?: (dx: number, dy: number) => boolean }) {
-  const settings = new Store<CompanionState>({ name: 'desktop-companion', defaults: { enabled: true, size: 80, agentId: null, panel: 'chat' } });
+/** Sent to the pet window on every change: what to play, the unread badge, and which way it is walking. */
+export interface CompanionActivity {
+  state: PetState;
+  unread: boolean;
+  moving: 'left' | 'right' | null;
+}
+
+export function installDesktopCompanion(options: { origin: () => string; main: () => BrowserWindow | null; preload: string; showMain?: () => void; openHud?: (agentId: string | null) => void; closeHud?: () => void; moveHudWithPet?: (dx: number, dy: number) => boolean }) {
+  const settings = new Store<CompanionState>({ name: 'desktop-companion', defaults: { enabled: true, size: 80, agentId: null, panel: 'chat', roam: true } });
   let pet: BrowserWindow | null = null;
   let chat: BrowserWindow | null = null;
   const ready = new WeakSet<BrowserWindow>();
@@ -27,6 +37,85 @@ export function installDesktopCompanion(options: { origin: () => string; main: (
   const broadcast = () => {
     for (const win of [pet, chat, options.main()]) if (win && !win.isDestroyed()) win.webContents.send('companion:state', state());
   };
+
+  // ─── Activity: what the pet plays, the unread badge, roaming ──────────────
+  const hub = new PetActivityHub();
+  let activity: CompanionActivity = { state: 'idle', unread: false, moving: null };
+  // Unknown until the pet page says it can play walk rows (sends its motion preference); older pages never roam.
+  let reducedMotion: boolean | null = null;
+  let expiryTimer: ReturnType<typeof setTimeout> | undefined;
+  const mainAway = () => {
+    const main = options.main();
+    return !main || main.isDestroyed() || !main.isVisible() || !main.isFocused();
+  };
+  function sendActivity(patch: Partial<CompanionActivity>) {
+    const next = { ...activity, ...patch };
+    if (next.state === activity.state && next.unread === activity.unread && next.moving === activity.moving) return;
+    activity = next;
+    if (pet && !pet.isDestroyed()) pet.webContents.send('companion:activity', activity);
+  }
+  function refreshActivity() {
+    clearTimeout(expiryTimer);
+    const next = hub.current();
+    // A turn that finished while you were in another app leaves a badge on the pet.
+    const unread = activity.unread || (next === 'waving' && activity.state !== 'waving' && mainAway());
+    sendActivity({ state: next, unread });
+    const expiry = hub.nextExpiry();
+    if (expiry !== undefined) expiryTimer = setTimeout(refreshActivity, Math.max(0, expiry - Date.now()) + 5);
+    if (next !== 'idle') stopRoam(true); else scheduleRoam();
+  }
+  /** Report a source's pet state (the app window now; terminal agents through the hook port later). */
+  function reportActivity(source: string, value: unknown, ttlMs?: number) {
+    if (!isPetState(value)) return false;
+    hub.set(source, value, ttlMs);
+    refreshActivity();
+    return true;
+  }
+  const clearUnread = () => sendActivity({ unread: false });
+
+  let roamTimer: ReturnType<typeof setTimeout> | undefined;
+  let walkTimer: ReturnType<typeof setInterval> | undefined;
+  const canRoam = () => state().enabled && state().roam !== false && reducedMotion === false && activity.state === 'idle'
+    && !!pet && !pet.isDestroyed() && pet.isVisible() && ready.has(pet) && !drag && !attachedHudBounds
+    && !(chat && !chat.isDestroyed() && chat.isVisible());
+  function stopRoam(save = false) {
+    clearTimeout(roamTimer); roamTimer = undefined;
+    if (walkTimer) {
+      clearInterval(walkTimer); walkTimer = undefined;
+      if (save && pet && !pet.isDestroyed()) { const b = pet.getBounds(); settings.set('position', { x: b.x, y: b.y }); }
+    }
+    sendActivity({ moving: null });
+  }
+  function scheduleRoam() {
+    if (roamTimer || walkTimer || !canRoam()) return;
+    roamTimer = setTimeout(() => { roamTimer = undefined; walk(); }, 6000 + Math.random() * 12000);
+  }
+  function walk() {
+    if (!canRoam() || !pet) return;
+    const start = pet.getBounds();
+    const area = screen.getDisplayMatching(start).workArea;
+    const target = pickRoamTarget(area, start.width, start.x);
+    if (target === start.x) { scheduleRoam(); return; }
+    let x = start.x;
+    let last = Date.now();
+    sendActivity({ moving: target > x ? 'right' : 'left' });
+    walkTimer = setInterval(() => {
+      if (!canRoam() || !pet) { stopRoam(true); return; }
+      const now = Date.now();
+      x = roamStep(x, target, now - last);
+      last = now;
+      pet.setPosition(Math.round(x), pet.getBounds().y);
+      if (x === target) { stopRoam(true); scheduleRoam(); }
+    }, 33);
+  }
+  app.on('browser-window-focus', (_event, win) => { if (win === options.main()) clearUnread(); });
+  function toggleMain() {
+    clearUnread();
+    const main = options.main();
+    if (main && !main.isDestroyed() && main.isVisible() && main.isFocused()) { main.hide(); return; }
+    if (options.showMain) options.showMain();
+    else if (main && !main.isDestroyed()) { main.show(); main.focus(); }
+  }
   // The gizzi terminal pet wears the same bot: it rewrites this settings file
   // when the user picks a bot in its HUD. Follow those external writes so
   // both pets match (electron-store re-reads the file on each access). Any
@@ -72,6 +161,7 @@ export function installDesktopCompanion(options: { origin: () => string; main: (
   }
   function attachPetToHud(bounds: Electron.Rectangle) {
     attachedHudBounds = { ...bounds };
+    stopRoam();
     if (!pet || pet.isDestroyed() || !state().enabled) return;
     const nextSize = clamp(Math.round(bounds.width * 0.12), 48, 160);
     if (state().size !== nextSize) settings.set('size', nextSize);
@@ -88,6 +178,7 @@ export function installDesktopCompanion(options: { origin: () => string; main: (
   function detachPetFromHud() {
     attachedHudBounds = null;
     if (pet && !pet.isDestroyed()) pet.setBounds(petBounds());
+    scheduleRoam();
   }
   function makeWindow(kind: 'pet' | 'chat') {
     const win = new BrowserWindow({
@@ -115,7 +206,7 @@ export function installDesktopCompanion(options: { origin: () => string; main: (
             return;
           }
           ready.add(win);
-          if (kind === 'pet' && state().enabled) win.showInactive();
+          if (kind === 'pet' && state().enabled) { win.showInactive(); win.webContents.send('companion:activity', activity); scheduleRoam(); }
           if (kind === 'chat') { placeChat(); win.show(); win.focus(); broadcast(); }
         })
         .catch(error => { console.error('[desktop-companion] renderer validation failed', error); if (!win.isDestroyed()) win.hide(); });
@@ -130,6 +221,8 @@ export function installDesktopCompanion(options: { origin: () => string; main: (
   }
   function showPanel(panel: 'chat' | 'settings' = 'chat') {
     settings.set('panel', panel);
+    if (panel === 'chat') clearUnread();
+    stopRoam(true);
     ensurePet();
     if (panel === 'chat' && options.openHud) {
       chat?.hide();
@@ -147,9 +240,11 @@ export function installDesktopCompanion(options: { origin: () => string; main: (
     if (typeof patch.enabled === 'boolean') settings.set('enabled', patch.enabled);
     if (typeof patch.size === 'number' && Number.isFinite(patch.size)) settings.set('size', clamp(Math.round(patch.size), 48, 160));
     if (patch.agentId === null || typeof patch.agentId === 'string' && patch.agentId.length <= 200) { settings.set('agentId', patch.agentId); lastAgentId = patch.agentId; }
+    if (typeof patch.roam === 'boolean') settings.set('roam', patch.roam);
     if (state().enabled) { ensurePet(); if (geometryChanged) { if (attachedHudBounds) attachPetToHud(attachedHudBounds); else pet?.setBounds(petBounds()); } if (pet && ready.has(pet)) pet.showInactive(); }
     else { pet?.hide(); if (state().panel !== 'settings') chat?.hide(); }
     placeChat(); broadcast();
+    if (canRoam()) scheduleRoam(); else stopRoam(true);
     return state();
   }
   function reset() { settings.delete('position'); if (attachedHudBounds) attachPetToHud(attachedHudBounds); else pet?.setBounds(petBounds(true)); placeChat(); broadcast(); return state(); }
@@ -160,12 +255,26 @@ export function installDesktopCompanion(options: { origin: () => string; main: (
   handle('companion:update', (_event, patch) => update(patch && typeof patch === 'object' ? patch : {}));
   handle('companion:reset', () => reset());
   handle('companion:open', (_event, panel) => showPanel(panel === 'settings' ? 'settings' : 'chat'));
-  handle('companion:close', () => { chat?.hide(); options.closeHud?.(); });
+  handle('companion:close', () => { chat?.hide(); options.closeHud?.(); scheduleRoam(); });
+  handle('companion:activity-get', () => activity);
+  handle('companion:toggle-main', () => toggleMain());
+  // Only the app window reports activity: it owns the pet-activity signal.
+  ipcMain.on('companion:activity', (event, value: unknown) => {
+    const main = options.main();
+    if (!main || main.isDestroyed() || event.sender !== main.webContents || !owned(event)) return;
+    reportActivity('app', value);
+  });
+  ipcMain.on('companion:motion-pref', (event, reduced: unknown) => {
+    if (!pet || event.sender !== pet.webContents || !owned(event)) return;
+    reducedMotion = reduced === true;
+    if (reducedMotion) stopRoam(true); else scheduleRoam();
+  });
   handle('companion:menu', () => {
     Menu.buildFromTemplate([
       { label: 'Quick chat', click: () => showPanel() },
       { label: 'Pet, size and visibility…', click: () => showPanel('settings') },
       { label: 'Reset position', click: () => reset() },
+      { label: 'Walk around when idle', type: 'checkbox', checked: state().roam !== false, click: () => update({ roam: state().roam === false }) },
       { type: 'separator' },
       { label: 'Hide desktop pet', click: () => update({ enabled: false }) },
     ]).popup({ window: pet ?? undefined });
@@ -173,7 +282,7 @@ export function installDesktopCompanion(options: { origin: () => string; main: (
   ipcMain.on('companion:drag', (event, phase: string) => {
     if (!pet || event.sender !== pet.webContents || !owned(event)) return;
     const cursor = screen.getCursorScreenPoint();
-    if (phase === 'start') { const b = pet.getBounds(); drag = { x: cursor.x, y: cursor.y, lastX: cursor.x, lastY: cursor.y, left: b.x, top: b.y }; }
+    if (phase === 'start') { stopRoam(); const b = pet.getBounds(); drag = { x: cursor.x, y: cursor.y, lastX: cursor.x, lastY: cursor.y, left: b.x, top: b.y }; }
     if (phase === 'move' && drag) {
       const movedHud = options.moveHudWithPet?.(cursor.x - drag.lastX, cursor.y - drag.lastY);
       drag.lastX = cursor.x; drag.lastY = cursor.y;
@@ -185,6 +294,7 @@ export function installDesktopCompanion(options: { origin: () => string; main: (
       settings.set('position', { x: b.x, y: b.y });
       if (!options.moveHudWithPet?.(0, 0)) pet.setBounds(petBounds());
       placeChat();
+      scheduleRoam();
     }
   });
   ipcMain.on('companion:height', (event, height: number) => {
@@ -197,6 +307,6 @@ export function installDesktopCompanion(options: { origin: () => string; main: (
   app.whenReady().then(() => {
     screen.on('display-removed', repair); screen.on('display-metrics-changed', repair);
   });
-  app.on('before-quit', () => { quitting = true; });
-  return { start: () => { if (state().enabled) ensurePet(); }, show: () => update({ enabled: true }), settings: () => showPanel('settings'), reset, attachPetToHud, detachPetFromHud };
+  app.on('before-quit', () => { quitting = true; stopRoam(true); clearTimeout(expiryTimer); });
+  return { reportActivity, activity: () => activity, start: () => { if (state().enabled) ensurePet(); }, show: () => update({ enabled: true }), settings: () => showPanel('settings'), reset, attachPetToHud, detachPetFromHud };
 }
