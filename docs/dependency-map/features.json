@@ -1424,6 +1424,36 @@
           "note": "Agent-network Phase 1 WP1 (SPEC-agent-network-phase1-2026-10-16): alerts move from a client poller to the runtime; routine.failed is pushed only as attention.opened. Eoj: SMS for critical alerts is opt-in, off by default (not built yet)."
         }
       ]
+    },
+    {
+      "id": "feature:sign-in-screen",
+      "label": "Sign-in screen",
+      "product": "product:ai-allternit",
+      "status": "live",
+      "description": "The sign-in and sign-up pages on the web, the Desktop first-run, terminal login and the phone/PWA sign-in screen, with the sign-in stage (an auto-looping preview of the four real views: Home, Bots, Code, ACI) beside the real Clerk sign-in rail.",
+      "touches": [
+        "allternit-ai/src/components/auth",
+        "allternit-ai/src/pages/SignInPage.tsx",
+        "allternit-ai/src/pages/SignUpPage.tsx",
+        "allternit-ai/src/pages/TerminalClerkPage.tsx",
+        "allternit-ai/src/components/onboarding/OnboardingFlow.tsx",
+        "allternit-ai/src/fabric-session/App.tsx",
+        "surface:ai",
+        "surface:pwa",
+        "surface:desktop"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-16",
+          "note": "AuthPreview replaced by the approved sign-in stage (the earlier SignInShowcase, ai #573, was superseded before merging): SignInStage loops the four real views (Home, Bots, Code, ACI) with the A://TERNIT lockup beside SignInRail, Clerk styled with variant=\"stage\"; phone puts the stage on top. Desktop shell keeps Continue in browser."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/surfaces/sign-in.mdx",
+        "allternit-ai/src/components/auth/sign-in-stage/SignInStage.tsx",
+        "allternit-ai/src/components/auth/sign-in-stage/SignInLayout.tsx",
+        "allternit-ai/src/lib/platform-auth-client.tsx"
+      ]
     }
   ],
   "journeys": [

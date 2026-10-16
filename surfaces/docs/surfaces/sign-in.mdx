@@ -1,0 +1,43 @@
+---
+title: Sign-in screen
+description: What people see before they sign in to Allternit on the web, in Desktop and on the phone, and how the animated showcase works
+---
+
+## What you see
+
+Every place you sign in to Allternit shows the same short animated story next to the sign-in form:
+
+| Where | Page |
+| --- | --- |
+| ai.allternit.com on a computer | `/sign-in` and `/sign-up`, showcase on the left, form on the right |
+| Allternit Desktop | The first-run screen and `/sign-in` inside the app |
+| Terminal login (`gizzi login`) | The browser page the CLI opens |
+| ai.allternit.com on a phone and the m.allternit.com app | Showcase at the top, sign-in form below it |
+
+The story has three slides:
+
+1. **Talk it through.** A listening microphone, a running clock, and a transcript card that fills in word by word.
+2. **Unbox a team of bots.** A box opens, four bots (Research, Inbox, Code, Sales) jump out with confetti, then their role tags appear.
+3. **Hand off the busywork.** A run card counts up the finished steps, fills its progress bar, ticks each step, and shows the finished work.
+
+Slides change every 5.6 seconds. Swipe left or right on a phone, or press the ticks under the picture to jump to a slide. The slides stop changing while your mouse is over them or a tick has keyboard focus, and while the tab is in the background.
+
+If your device asks for reduced motion, each slide appears already finished and the slides only change when you swipe or press a tick.
+
+On the phone and in the m.allternit.com app the showcase follows your light or dark theme. The web sign-in pages are always light.
+
+## For developers
+
+The showcase is one component, `SignInShowcase` in `allternit-ai/src/components/auth/SignInShowcase.tsx`, with its styles in `sign-in-showcase.css` next to it. It replaced the older `AuthPreview` card.
+
+```tsx
+<SignInShowcase variant="wide" />                 // web and Desktop sign-in pages
+<SignInShowcase variant="wide" tone="auto" />     // Desktop first-run (OnboardingFlow)
+<SignInShowcase variant="phone" tone="auto" />    // phone sign-in (fabric-session App.tsx)
+```
+
+- `variant` sets the size. Each scene is drawn on a 320 × 300 canvas and scaled: 1.3× for `wide`, 1× for `phone`. A container query brings `wide` down to 1× under 460 px and both down to 0.92× under 340 px.
+- `tone="auto"` reads `html[data-theme="dark"]`. `tone="light"` (the default) keeps the light colours.
+- Each slide is remounted when it comes on screen, so its framer-motion delays play from the start. A scene's `still` prop renders the finished state for reduced motion.
+- The sign-in form itself (`PlatformSignIn`, Clerk) is not part of the showcase and does not move.
+- Tests: `SignInShowcase.test.tsx` covers the ticks, auto-advance and swipe.
