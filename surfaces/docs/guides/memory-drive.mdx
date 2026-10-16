@@ -104,18 +104,45 @@ like a password) before anything changes. **Import** saves it all as one change.
 Running it again does nothing. Your old memories stay visible for 30 days after the
 import and are then hidden. They are not deleted.
 
-## Bring memories from ChatGPT or Claude
+## Bring memories from another assistant
 
-Open **Bring memories from another assistant** in Settings → Memory, pick **ChatGPT**,
-**Claude** or **Another assistant or a list**, and paste what it remembers about you, or
-upload a `.txt`, `.md` or `.json` file. One memory per line; bullets and numbering are fine.
+Open **Bring memories from another assistant** in Settings → Memory and pick where they're
+coming from: **ChatGPT**, **Claude**, **Gemini**, **Grok**, **Copilot**, **Perplexity**,
+**Meta AI**, **Kimi**, **Le Chat** or **Something else**.
+
+1. Select **Copy prompt** and send the prompt in a new chat with that assistant. It asks the
+   assistant to list everything it knows about you, one fact per line.
+2. Paste its answer into the box, or upload a `.txt`, `.md` or `.json` file.
+3. Select **Preview**. Untick anything you don't want, then select **Import**.
+
+You can also paste a saved-memory list directly:
 
 - **ChatGPT:** Settings → Personalization → Memory → Manage. Copy the list.
 - **Claude:** Settings → Memory. Copy what it remembers.
 
 Preview shows what will be added and what is skipped (duplicates, things already remembered,
-anything that looks like a password). **Import** saves it as one change in
-`imports/chatgpt.md`, `imports/claude.md` or `imports/other.md`.
+anything that looks like a password). **Import** saves the memories you ticked as one change in
+`imports/`, one file per assistant (for example `imports/gemini.md`).
+
+Some assistants, such as OpenAI's Dots, Grok Bot and Meta's Muse agent, don't let you see or
+export their memory. Asking them with the prompt is the only way, and only works where the
+assistant answers it.
+
+## Bring memories from agents on your computer
+
+If you use **Claude Code**, **Codex**, **Hermes** or **OpenClaw** on the computer that holds your
+drive, **Bring memories from agents on your computer** lists the ones it found and how many
+memories each has. Select **Preview** next to one, untick anything you don't want, and select
+**Import**. Allternit reads only those agents' memory and instruction files:
+
+- **Claude Code:** your `CLAUDE.md` and each project's saved memories.
+- **Codex:** your `AGENTS.md` and Codex memories.
+- **Hermes:** `USER.md` and `MEMORY.md`, for every profile.
+- **OpenClaw:** `USER.md` and `MEMORY.md` in its workspace.
+
+Each memory keeps the file it came from as its source. One import takes up to 500; if there are
+more, preview again after importing to bring in the rest. Cursor no longer keeps memories, so
+there is nothing to import from it.
 
 ## Use it from other agents
 

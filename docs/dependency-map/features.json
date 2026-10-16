@@ -279,6 +279,7 @@
       "description": "Agent memory as a drive: notes, retrieval and nightly consolidation shared by bots, the workspace and gizzi.",
       "touches": [
         "allternit-ai/src/components/memory",
+        "allternit-ai/src/views/settings/memory-drive",
         "allternit/cmd/allternit-api/src/memory_*",
         "allternit/cmd/allternit-api/src/memory_retrieve",
         "allternit/cmd/allternit-api/src/memory_consolidation",
@@ -293,6 +294,10 @@
         {
           "on": "2026-10-06",
           "note": "Computer sync runs inside the Desktop app, two-way, with no main copy."
+        },
+        {
+          "on": "2026-10-16",
+          "note": "Eoj: Memory Drive keeps its name and grows into the user's ledger: import any company's memory, capture from every channel, hold every asset, store where the user wants (plan dag_952346). Phase 1 adds the export-prompt import for 10 assistants and import from Claude Code, Codex, Hermes and OpenClaw files."
         }
       ],
       "evidence": [

@@ -16,6 +16,8 @@ implements the published format and includes none of its code). The kernel's
 | --- | --- |
 | `memory_drive.rs` | Storage core: bare repo init, snapshot/tree/file/history/diff, the entry format, path/size/secret validation, batch commits published with `update-ref` compare-and-swap, `validate_push`. |
 | `memory_drive_service.rs` | Registry (`memory_drives`, one row per drive, pointing at a `brains` row), provisioning, the index projection, import. |
+| `memory_drive_text_import.rs` | Imports from other assistants (pasted lists, the export prompt's answer) and the shared checks every import runs. |
+| `memory_drive_agent_import.rs` | Imports from Claude Code, Codex, Hermes and OpenClaw memory files on the computer. |
 | `memory_drive_writer.rs` | The one writer for personal memory. Every kernel write path calls `commit_facts`. |
 | `memory_drive_transport.rs` | The pre-receive hook (the API binary run as `allternit-api memory-drive-pre-receive`). |
 | `memory_drive_scopes.rs` | Shared drives, the permission matrix, mounts, the questions board, the cowork mirror. |
