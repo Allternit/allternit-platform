@@ -315,6 +315,7 @@ pub mod platform_static;
 pub mod playground_routes;
 pub mod pricing;
 pub mod provider_routes;
+pub mod cli_tools;
 pub mod queue_routes;
 pub mod rails;
 pub mod remote_control_routes;

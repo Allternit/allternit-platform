@@ -138,6 +138,10 @@ use tokio::sync::RwLock;
 
 #[tokio::main]
 async fn main() {
+    // CLI brains installed by the Factory harness (one-click Install) live in
+    // its managed bin; put it first on PATH so they, and the private Node they
+    // may need, resolve here and in every child process.
+    allternit_factory_engine::registry::prepend_harness_bin_to_path();
     // Git pre-receive hook mode for Memory Drive pushes: validate and exit
     // before any config, database or secret is loaded.
     if std::env::args().nth(1).as_deref() == Some(allternit_api::memory_drive_transport::HOOK_ARG) {

@@ -72,7 +72,7 @@ impl PaneError {
     }
 }
 
-fn factory_bin() -> PathBuf {
+pub(crate) fn factory_bin() -> PathBuf {
     if let Some(bin) = std::env::var_os("ALLTERNIT_FACTORY_BIN").filter(|v| !v.is_empty()) {
         return PathBuf::from(bin);
     }

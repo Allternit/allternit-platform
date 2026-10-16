@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { currentCliPath, knownInstallPaths, SUBPROCESS_PROVIDERS } from "../../src/runtime/providers/discovery/subprocess"
+import { currentCliPath, harnessBinDir, knownInstallPaths, prependHarnessBin, SUBPROCESS_PROVIDERS } from "../../src/runtime/providers/discovery/subprocess"
 import type { Provider } from "../../src/runtime/providers/provider"
 import { cliModel, stripProviderPrefix } from "../../src/runtime/providers/cli-model"
 
@@ -40,6 +40,26 @@ describe("CLI discovery off PATH", () => {
       expect(candidates).toContain(path.join(home, ".local", "bin", spec.bin))
       expect(candidates).toContain(`/opt/homebrew/bin/${spec.bin}`)
     }
+  })
+})
+
+describe("CLIs from Allternit's one-click Install (Factory harness)", () => {
+  test("the harness bin follows the Factory home, the legacy dir, and the override", () => {
+    const home = mkdtempSync(path.join(os.tmpdir(), "gizzi-home-"))
+    expect(harnessBinDir({ HOME: home }, home)).toBe(path.join(home, ".allternit", "factory", "harness", "bin"))
+    mkdirSync(path.join(home, ".ao", "harness"), { recursive: true })
+    expect(harnessBinDir({ HOME: home }, home)).toBe(path.join(home, ".ao", "harness", "bin"))
+    expect(harnessBinDir({ HOME: home, ALLTERNIT_FACTORY_HARNESS_HOME: "/x/h" }, home)).toBe(path.join("/x/h", "bin"))
+  })
+
+  test("installed CLIs are looked for in the harness bin, and it goes first on PATH once", () => {
+    const home = "/Users/someone"
+    const bin = path.join(home, ".allternit", "factory", "harness", "bin")
+    expect(knownInstallPaths({ id: "codex-cli", bin: "codex" }, home)).toContain(path.join(bin, "codex"))
+    const env: NodeJS.ProcessEnv = { HOME: home, PATH: "/usr/bin" }
+    prependHarnessBin(env)
+    prependHarnessBin(env)
+    expect(env.PATH).toBe([bin, "/usr/bin"].join(path.delimiter))
   })
 })
 

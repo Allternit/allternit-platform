@@ -590,7 +590,10 @@ pub(crate) fn run(args: &[String]) -> std::io::Result<i32> {
         .unwrap_or_default();
 
     let manifest = load_manifest()?;
-    if !exists(&manifest.source.skills_dir) {
+    // Only the sync side copies from the source skills dir. `install` runs on
+    // machines that never have it (customer Macs, cloud computers), where this
+    // check used to fail every install.
+    if command != "install" && !exists(&manifest.source.skills_dir) {
         eprintln!("Source skills dir not found: {}", manifest.source.skills_dir);
         return Ok(1);
     }
