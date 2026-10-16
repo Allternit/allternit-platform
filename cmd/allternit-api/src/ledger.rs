@@ -386,6 +386,10 @@ pub fn spawn(db: DbHandle) {
                     if let Err(e) = snapshot(&db, &owner, "Update ledger") {
                         tracing::debug!("ledger snapshot skipped: {e}");
                     }
+                    // Then refresh any copies the owner keeps elsewhere.
+                    if let Err(e) = crate::memory_copies::run(&db, &owner) {
+                        tracing::debug!("memory copies skipped: {e}");
+                    }
                 }
             })
             .await;

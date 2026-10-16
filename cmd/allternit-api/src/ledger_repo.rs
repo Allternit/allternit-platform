@@ -40,6 +40,7 @@ pub struct Commit {
 
 pub struct LedgerRepo {
     repo: PathBuf,
+    branch: String,
 }
 
 /// Paths are relative, `/`-separated, without `..`, empty or hidden-git parts.
@@ -54,7 +55,7 @@ pub fn valid_path(path: &str) -> bool {
 impl LedgerRepo {
     /// Open (creating if needed) the ledger repo at `repo`.
     pub fn open(repo: PathBuf) -> Result<Self> {
-        let r = LedgerRepo { repo };
+        let r = LedgerRepo { repo, branch: BRANCH.to_string() };
         if !r.repo.join("HEAD").exists() {
             std::fs::create_dir_all(&r.repo)?;
             r.git(&["init", "--bare", "--quiet"], None, None)?;
@@ -63,11 +64,20 @@ impl LedgerRepo {
         Ok(r)
     }
 
+    /// An existing bare repo (e.g. a Memory Drive) read on `branch`.
+    pub fn existing(repo: PathBuf, branch: &str) -> Self {
+        LedgerRepo { repo, branch: format!("refs/heads/{branch}") }
+    }
+
     pub fn path(&self) -> &Path {
         &self.repo
     }
 
     fn git(&self, args: &[&str], input: Option<&[u8]>, index: Option<&Path>) -> Result<Vec<u8>> {
+        self.git_env(args, input, index, &[])
+    }
+
+    fn git_env(&self, args: &[&str], input: Option<&[u8]>, index: Option<&Path>, env: &[(String, String)]) -> Result<Vec<u8>> {
         let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
         let mut cmd = Command::new("git");
         cmd.env_clear()
@@ -97,6 +107,9 @@ impl LedgerRepo {
         if let Some(index) = index {
             cmd.env("GIT_INDEX_FILE", index);
         }
+        for (k, v) in env {
+            cmd.env(k, v);
+        }
         let mut child = cmd.spawn()?;
         let mut stdout = child.stdout.take().expect("piped stdout");
         let mut stderr = child.stderr.take().expect("piped stderr");
@@ -115,7 +128,8 @@ impl LedgerRepo {
         let out = out_reader.join().map_err(|_| LedgerRepoError::Git(args[0].into(), "reader".into()))??;
         let err = err_reader.join().map_err(|_| LedgerRepoError::Git(args[0].into(), "reader".into()))??;
         if !status.success() {
-            return Err(LedgerRepoError::Git(args[0].into(), String::from_utf8_lossy(&err).trim().chars().take(300).collect()));
+            let op = args.iter().find(|a| !a.starts_with('-') && !a.contains('=')).unwrap_or(&args[0]);
+            return Err(LedgerRepoError::Git((*op).into(), String::from_utf8_lossy(&err).trim().chars().take(300).collect()));
         }
         Ok(out)
     }
@@ -125,7 +139,7 @@ impl LedgerRepo {
     }
 
     pub fn head(&self) -> Option<String> {
-        self.text(&["rev-parse", "--verify", "--quiet", BRANCH]).ok().filter(|s| !s.is_empty())
+        self.text(&["rev-parse", "--verify", "--quiet", &self.branch]).ok().filter(|s| !s.is_empty())
     }
 
     /// Replace the whole tree with `files` in one commit. Returns the new
@@ -158,7 +172,7 @@ impl LedgerRepo {
             args.push(p);
         }
         let commit = self.text(&args)?;
-        let mut update = vec!["update-ref", BRANCH, commit.as_str()];
+        let mut update = vec!["update-ref", self.branch.as_str(), commit.as_str()];
         if let Some(p) = &parent {
             update.push(p);
         }
@@ -200,7 +214,7 @@ impl LedgerRepo {
         if self.head().is_none() {
             return Ok(vec![]);
         }
-        let out = self.text(&["log", &format!("-n{}", limit.clamp(1, 200)), "--format=%H%x1f%cI%x1f%s", BRANCH])?;
+        let out = self.text(&["log", &format!("-n{}", limit.clamp(1, 200)), "--format=%H%x1f%cI%x1f%s", &self.branch])?;
         Ok(out
             .lines()
             .filter_map(|l| {
@@ -214,6 +228,33 @@ impl LedgerRepo {
     pub fn changed(&self, revision: &str) -> Result<Vec<String>> {
         let out = self.text(&["diff-tree", "--root", "--no-commit-id", "-r", "--name-only", revision])?;
         Ok(out.lines().map(str::to_string).collect())
+    }
+
+    /// Every file at the latest revision.
+    pub fn all_files(&self) -> Result<BTreeMap<String, Vec<u8>>> {
+        let mut out = BTreeMap::new();
+        for f in self.files(None)? {
+            if let Some(bytes) = self.read(&f.path, None)? {
+                out.insert(f.path, bytes);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Push the branch to `url` as `remote_branch`, replacing what's there
+    /// (history can be rewritten by "delete forever"). `env` carries auth.
+    pub fn push(&self, url: &str, remote_branch: &str, env: &[(String, String)]) -> Result<()> {
+        if self.head().is_none() {
+            return Ok(());
+        }
+        let refspec = format!("+{}:refs/heads/{remote_branch}", self.branch);
+        self.git_env(
+            &["-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=60", "push", "--quiet", "--no-verify", url, &refspec],
+            None,
+            None,
+            env,
+        )
+        .map(|_| ())
     }
 
     /// The tree at `revision` (or the latest) as a zip, under a `ledger/` folder.
