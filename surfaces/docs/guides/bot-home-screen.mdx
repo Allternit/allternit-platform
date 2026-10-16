@@ -1,0 +1,56 @@
+---
+title: Bots on your Home Screen
+description: Save a bot to your phone's Home Screen as its own icon that opens straight into its chat.
+---
+
+Any bot can sit on your phone's Home Screen as its own icon, with the bot's avatar and name. Tapping the icon opens that bot's chat, the same screen you get when you tap the bot in the Bots list. It works on iPhone and Android from the browser. You don't need an app store.
+
+## Add a bot
+
+Open the bot's **⋯** menu (on Bot Home or in the Bots rail) and choose **Add to Home Screen**. The steps you see depend on where you are.
+
+**On a computer (Allternit Desktop or ai.allternit.com):** a QR code appears. Scan it with your phone's camera. The page that opens shows the last steps on the phone. You can also copy the link and send it to yourself.
+
+**On an iPhone, in Safari:**
+
+1. If you aren't already on the bot's own page, tap **Open &lt;bot&gt;'s page**. Your browser adds the page you're on, so this step makes sure you add the bot and not Allternit.
+2. Tap **Share** in the toolbar.
+3. Choose **Add to Home Screen** (scroll the list if you don't see it), then tap **Add**.
+
+Chrome, Firefox and Edge on iPhone also have **Add to Home Screen** in their Share menu.
+
+**On Android, in Chrome:** open the bot's page, then tap **Add &lt;bot&gt; to Home screen**. If that button doesn't show, tap **⋮** then **Add to Home screen** or **Install app**.
+
+**Inside the Allternit app on your phone:** the app has no Share button. Tap **Copy link**, open your browser, paste the link and go, then follow the steps above.
+
+## What the icon does
+
+- It shows the bot's avatar and name. On Android the icon is the Allternit icon with the bot's name.
+- Tapping it opens the bot's chat full screen, like an app. From there the whole Allternit app is available: back to Bot Home, other bots, chats, and Settings.
+- Each bot you add gets its own icon. Add as many as you like.
+- The first time you open a new icon you may need to sign in. Phones keep each Home Screen icon separate from the browser. After that it stays signed in.
+- If you rename the bot, the icon keeps its old name until you add it again. Remove the old icon the way you remove any app: press and hold it, then choose **Remove**.
+- An icon only opens the bot for the account it's signed in to. If someone else uses your link, it opens nothing for them, and they see "That bot isn't on this account."
+
+## The bot's link
+
+Every bot has a link of the form `https://m.allternit.com/b/<bot id>?n=<name>`. The name only labels the icon. The bot that opens is chosen by the id and the signed-in account. Adding `&guide=1` opens the Add to Home Screen steps on arrival (the QR code uses it).
+
+## How it works
+
+For developers working in `allternit-ai`:
+
+| Piece | Where |
+| --- | --- |
+| Link format, parsing, page-head swap | `src/lib/bots/bot-home-link.ts` |
+| Guide (QR on Desktop, steps on phones) | `src/views/bots/BotHomeScreenGuide.tsx`, opened from `BotActionsMenu.tsx` |
+| Opening the bot on `/b/<id>` | `src/fabric-session/phone/BotHomeLinkHost.tsx`, mounted in `PhoneShell` (ai.allternit.com phone layout and m.allternit.com) |
+| Avatar as the Apple touch icon | `src/views/bots/BotHomeScreenIcon.tsx` (renders the avatar off screen to a 180×180 PNG on white) |
+| Page and manifest on m.allternit.com | Pages Functions `fabric-session-pwa-functions/b/[id].js` and `b/[id]/manifest.webmanifest.js` |
+| Site security headers | `fabric-session-pwa-functions/_site-headers.js`, used by `_headers` and by Functions that return HTML |
+
+- `/b/<id>` is served by a Pages Function. It returns the PWA shell with the title, `apple-mobile-web-app-title` and `<link rel="manifest">` pointed at the bot. The bot's manifest has its own `id` (`/b/<id>`) and `start_url`, so each bot installs as a separate app.
+- The phone shell opens the bot with the same calls a Bots-list tap uses (`openBotChatImmediately` then `useStartBotSession`). In a browser it also swaps the Apple touch icon for the rendered avatar. When the person leaves the bot, the page head and the address go back to the app's own, so adding the app later adds Allternit.
+- `/b/<id>` with an id the account doesn't have shows a toast and goes to `/`.
+- The PWA service worker never stores a `/b/<id>` page as the offline app shell (it would carry that bot's name). Offline, bot pages fall back to the shell and the app names the page itself.
+- The m.allternit.com deploy is a separate step from merging `allternit-ai`. See the deploy runbook.

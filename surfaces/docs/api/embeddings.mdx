@@ -14,8 +14,8 @@ Without a configured provider the endpoint refuses: `501 allternit.not_configure
 The gateway proxies to the OpenAI-compatible backend named by `ALLTERNIT_GATEWAY_EMBED_URL` (full base URL, including `/v1`). When unset or empty, the endpoint returns `501 allternit.not_configured`.
 
 ```bash
-# Serve real embeddings from a local MLX sidecar (google/embeddinggemma-2):
-ALLTERNIT_GATEWAY_EMBED_URL=http://127.0.0.1:8080/v1
+# Any OpenAI-compatible embeddings backend you operate (self-hosted or cloud):
+ALLTERNIT_GATEWAY_EMBED_URL=https://embeddings.internal.example/v1
 ```
 
 The end-user `user` field is accepted for attribution but is not forwarded to the provider.

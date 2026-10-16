@@ -1345,7 +1345,7 @@
       "label": "Gateway /v1/embeddings proxies to a configured provider",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "POST /v1/embeddings on the LLM gateway no longer stops at fake-or-501: when ALLTERNIT_GATEWAY_EMBED_URL names an OpenAI-compatible backend (e.g. the local Bonsai 2 stack at http://127.0.0.1:8080/v1 serving google/embeddinggemma-2), validated requests are proxied transparently and status, body, model id, and usage all come from the provider. Unset keeps the safe 501 allternit.not_configured; the hash-fake path stays fenced behind ALLTERNIT_GATEWAY_ALLOW_FAKE_PROVIDERS=1. The end-user `user` field is accepted but never forwarded upstream.",
+      "description": "POST /v1/embeddings on the LLM gateway no longer stops at fake-or-501: when ALLTERNIT_GATEWAY_EMBED_URL names an OpenAI-compatible backend the operator runs (self-hosted or cloud), validated requests are proxied transparently and status, body, model id, and usage all come from the provider. Unset keeps the safe 501 allternit.not_configured; the hash-fake path stays fenced behind ALLTERNIT_GATEWAY_ALLOW_FAKE_PROVIDERS=1. The end-user `user` field is accepted but never forwarded upstream.",
       "touches": [
         "allternit/cmd/allternit-api"
       ],
@@ -1356,7 +1356,7 @@
       "decisions": [
         {
           "on": "2026-10-16",
-          "note": "Eoj: embeddings must route through the gateway API like chat does — the local Bonsai 2 stack (embeddinggemma-2 on :8083 behind the :8080 proxy) is the first real backend. Gateway-specific env (ALLTERNIT_GATEWAY_EMBED_URL) instead of memory_index's ALLTERNIT_EMBED_URL so the public surface stays 501-unconfigured by default and never silently points at the :7719 sidecar."
+          "note": "Eoj: embeddings must route through the gateway API like chat does. Gateway-specific env (ALLTERNIT_GATEWAY_EMBED_URL) instead of memory_index's ALLTERNIT_EMBED_URL so the public surface stays 501-unconfigured by default and never silently points at a sidecar."
         }
       ]
     }
