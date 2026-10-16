@@ -67,12 +67,10 @@ pub(crate) enum AcceptState {
 
 /// One managed dir for everything P7 installs (spec binding 3).
 pub(crate) fn managed_root() -> PathBuf {
-    if let Some(root) = std::env::var_os("ALLTERNIT_FACTORY_HARNESS_HOME").filter(|v| !v.is_empty()) {
-        return PathBuf::from(root);
-    }
-    // An install made before the Factory stays where it is (its venvs bake in
-    // absolute paths); new installs go under the Factory home.
-    crate::factory_host::factory_path("harness", Some(crate::factory_host::home_path(".ao/harness"))) // old-names: keep (installs made before the Factory)
+    // One definition, shared with allternit-api and gizzi (which put its bin
+    // on PATH): `$ALLTERNIT_FACTORY_HARNESS_HOME`, the Factory home, or the
+    // pre-Factory `~/.ao/harness`.
+    allternit_factory_engine::registry::harness_root()
 }
 
 pub(crate) fn managed_bin_dir() -> PathBuf {
@@ -178,11 +176,111 @@ fn path_env_with(root: &Path) -> io::Result<std::ffi::OsString> {
     std::env::join_paths(paths).map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))
 }
 
+/// Node used for npm-method tools when the machine has no `npm` of its own
+/// (most customer Macs, a fresh VPS). Same pin as the cloud image setup.
+const PRIVATE_NODE_VERSION: &str = "22.20.0";
+
+fn on_path(bin: &str, path: &std::ffi::OsStr) -> bool {
+    std::env::split_paths(path).any(|dir| {
+        let candidate = dir.join(bin);
+        std::fs::metadata(&candidate).map(|m| m.is_file()).unwrap_or(false)
+    })
+}
+
+/// nodejs.org's name for this machine (`darwin-arm64`, `linux-x64`, ...).
+fn node_platform() -> Option<String> {
+    let os = match std::env::consts::OS {
+        "macos" => "darwin",
+        "linux" => "linux",
+        _ => return None,
+    };
+    let arch = match std::env::consts::ARCH {
+        "aarch64" => "arm64",
+        "x86_64" => "x64",
+        _ => return None,
+    };
+    Some(format!("{os}-{arch}"))
+}
+
+fn sha256_of(file: &Path) -> io::Result<String> {
+    // macOS ships shasum, Linux ships sha256sum.
+    let output = Command::new("shasum")
+        .args(["-a", "256"])
+        .arg(file)
+        .output()
+        .or_else(|_| Command::new("sha256sum").arg(file).output())?;
+    if !output.status.success() {
+        return Err(io::Error::other("could not hash the Node download"));
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .next()
+        .map(str::to_string)
+        .ok_or_else(|| io::Error::other("empty hash output"))
+}
+
+/// Make `npm` available for an npm-method install: the machine's own if it
+/// has one, else a private Node in `<root>/node-v…`, downloaded from
+/// nodejs.org, checked against its published SHASUMS256, and linked into
+/// `<root>/bin` (which is first on PATH for the install and, via allternit-api
+/// and gizzi, for running the tool).
+fn ensure_npm(root: &Path) -> io::Result<()> {
+    if on_path("npm", &path_env_with(root)?) {
+        return Ok(());
+    }
+    let platform = node_platform().ok_or_else(|| {
+        io::Error::other("npm is not installed and there is no Node build for this machine; install Node.js, then retry")
+    })?;
+    let name = format!("node-v{PRIVATE_NODE_VERSION}-{platform}");
+    let dir = root.join(&name);
+    if !dir.join("bin").join("npm").exists() {
+        println!("   npm not found — installing a private Node {PRIVATE_NODE_VERSION} for Allternit's tools");
+        let tmp = root.join(".node-download");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp)?;
+        let base = format!("https://nodejs.org/dist/v{PRIVATE_NODE_VERSION}");
+        let tarball = tmp.join(format!("{name}.tar.gz"));
+        let sums = tmp.join("SHASUMS256.txt");
+        run_logged(
+            Command::new("curl").args(["-fsSL", "--retry", "3", "-o"]).arg(&tarball).arg(format!("{base}/{name}.tar.gz")),
+            "download Node",
+        )?;
+        run_logged(
+            Command::new("curl").args(["-fsSL", "--retry", "3", "-o"]).arg(&sums).arg(format!("{base}/SHASUMS256.txt")),
+            "download Node checksums",
+        )?;
+        let want = std::fs::read_to_string(&sums)?
+            .lines()
+            .find(|line| line.ends_with(&format!("  {name}.tar.gz")))
+            .and_then(|line| line.split_whitespace().next())
+            .map(str::to_string)
+            .ok_or_else(|| io::Error::other(format!("{name}.tar.gz is not in Node's SHASUMS256.txt")))?;
+        let got = sha256_of(&tarball)?;
+        if got != want {
+            let _ = std::fs::remove_dir_all(&tmp);
+            return Err(io::Error::other(format!("Node download failed its checksum (got {got}, want {want})")));
+        }
+        run_logged(Command::new("tar").arg("-xzf").arg(&tarball).arg("-C").arg(root), "unpack Node")?;
+        let _ = std::fs::remove_dir_all(&tmp);
+        println!("   private Node ready: {}", dir.display());
+    }
+    let bin = root.join("bin");
+    std::fs::create_dir_all(&bin)?;
+    for tool in ["node", "npm", "npx"] {
+        let link = bin.join(tool);
+        let _ = std::fs::remove_file(&link);
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(dir.join("bin").join(tool), &link)?;
+    }
+    Ok(())
+}
+
 pub(crate) struct SystemBackend;
 
 impl InstallBackend for SystemBackend {
     fn npm_global(&self, root: &Path, _tool: &str, install_args: &[String]) -> io::Result<()> {
         std::fs::create_dir_all(root)?;
+        ensure_npm(root)?;
         let mut cmd = Command::new("npm");
         cmd.args(["install", "-g", "--prefix"])
             .arg(root)

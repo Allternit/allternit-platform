@@ -19,6 +19,30 @@ import type { DiscoveredProvider, DiscoveredModel } from "./index"
 
 const execFileAsync = promisify(execFile)
 
+/**
+ * The Factory harness's managed bin (Allternit's one-click Install puts CLIs
+ * and, on machines without npm, a private Node there). Mirrors
+ * `harness_root()` in factory/engine/src/agents/registry.rs.
+ */
+export function harnessBinDir(env: NodeJS.ProcessEnv = process.env, home = env.HOME || os.homedir()): string {
+  if (env.ALLTERNIT_FACTORY_HARNESS_HOME) return path.join(env.ALLTERNIT_FACTORY_HARNESS_HOME, "bin")
+  const factoryHome = env.ALLTERNIT_FACTORY_HOME || path.join(home, ".allternit", "factory")
+  const current = path.join(factoryHome, "harness")
+  const legacy = path.join(home, ".ao", "harness")
+  return path.join(!existsSync(current) && existsSync(legacy) ? legacy : current, "bin")
+}
+
+/** Put the harness bin first on PATH (idempotent) so installed CLIs, and
+ *  the Node their npm shims run on, resolve here and in spawned CLIs. */
+export function prependHarnessBin(env: NodeJS.ProcessEnv = process.env): void {
+  const bin = harnessBinDir(env)
+  const parts = (env.PATH ?? "").split(path.delimiter).filter(Boolean)
+  if (parts.includes(bin)) return
+  env.PATH = [bin, ...parts].join(path.delimiter)
+}
+
+prependHarnessBin()
+
 export function parseCodexModels(stdout: string): DiscoveredModel[] {
   const catalog = JSON.parse(stdout) as { models?: Array<{ slug?: string; display_name?: string; context_window?: number }> }
   return (catalog.models ?? []).filter((model) => model.slug).map((model) => ({
@@ -239,6 +263,8 @@ export function knownInstallPaths(spec: Pick<SubprocessSpec, "id" | "bin">, home
       path.join(home, "Applications", "Codex.app", "Contents", "MacOS", "Codex"),
     )
   }
+  // Allternit's one-click Install (Factory harness managed bin).
+  candidates.push(path.join(harnessBinDir({ ...process.env, HOME: home }, home), spec.bin))
   // CLIs whose installers use their own bin dir.
   const ownDir: Record<string, string> = { "kimi-cli": ".kimi-code", grok: ".grok", opencode: ".opencode" }
   if (ownDir[spec.id]) candidates.push(path.join(home, ownDir[spec.id], "bin", spec.bin))

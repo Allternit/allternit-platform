@@ -1304,6 +1304,31 @@
           "note": "Eoj approved the full-size code-drawn Gizzi YouTube rig sheets (\"yes they are right\"). PR 2 ships them plus Gemini, Muse and Muse Wonder as Petdex v2 sheets, swapped in place at the same URLs so saved bots upgrade."
         }
       ]
+    },
+    {
+      "id": "feature:cli-brain-install-signin",
+      "label": "One-click install and sign-in for CLI brains",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Settings \u2192 Subscriptions installs CLI brains (Claude Code, Codex, Grok, \u2026) on the active computer with the Factory's pinned, licence-gated installer (private Node when the machine has none), then signs in with a link and code shown on any device, so a cloud computer can run them while the user's Mac is off.",
+      "touches": [
+        "allternit-ai/src/components/settings/BrainsPanel.tsx",
+        "allternit-ai/src/components/settings/CliConnectFlow.tsx",
+        "allternit-ai/src/lib/cli-connect.ts",
+        "allternit-ai/src/components/chat/ConnectAccountPane.tsx",
+        "allternit-ai/src/components/chat/ProviderGallery.tsx",
+        "allternit/cmd/allternit-api/src/cli_tools.rs",
+        "allternit/cmd/allternit-api/src/provider_routes.rs",
+        "allternit/factory/pane/src/ao/harness",
+        "allternit/factory/engine/src/agents/registry.rs",
+        "allternit/cmd/gizzi-code/src/runtime/providers/discovery/subprocess.ts"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-16",
+          "note": "Eoj: build plan step D (Install \u2192 Sign in \u2192 Connected for any computer) so his always-on cloud computer can run CLI brains. Reuses the Factory harness installer, not a second manifest; sign-in captures the CLI's own link/code instead of opening a browser nobody sees."
+        }
+      ]
     }
   ],
   "journeys": [
