@@ -55,6 +55,9 @@ const PROVIDERS: &[ProviderDisclosure] = &[
     ProviderDisclosure { provider: "chatgpt", name: "ChatGPT", company: "OpenAI" },
     ProviderDisclosure { provider: "claude", name: "Claude", company: "Anthropic" },
     ProviderDisclosure { provider: "kimi", name: "Kimi", company: "Moonshot AI" },
+    // Best effort (ui_bridge lane, not yet verified against the live services).
+    ProviderDisclosure { provider: "gemini", name: "Gemini", company: "Google" },
+    ProviderDisclosure { provider: "copilot", name: "Copilot", company: "Microsoft" },
 ];
 
 pub(crate) fn provider_disclosure(provider: &str) -> Option<&'static ProviderDisclosure> {
@@ -1642,7 +1645,9 @@ mod tests {
         let (_, body) = send(&app, "GET", "/subscriptions/disclosure", &[], Value::Null).await;
         assert_eq!(body["version"], DISCLOSURE_VERSION);
         let providers = body["providers"].as_array().unwrap();
-        assert_eq!(providers.len(), 3);
+        assert_eq!(providers.len(), PROVIDERS.len());
+        let ids: Vec<&str> = providers.iter().map(|p| p["provider"].as_str().unwrap()).collect();
+        assert_eq!(ids, vec!["chatgpt", "claude", "kimi", "gemini", "copilot"]);
         for p in providers {
             assert_eq!(p["acknowledged"], false);
             let text = p["text"].as_str().unwrap();
