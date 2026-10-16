@@ -208,6 +208,22 @@ file workflow and unsaved-change handling.
 - [Agent Preferences API](/api/agent-preferences)
 - [Desktop](/surfaces/desktop)
 
+## Phone drawer and modes
+
+On ai.allternit.com on a phone and in the m.allternit.com app, the menu (tap **☰** or swipe from the left edge) is the desktop rail, organized the same way as on Desktop.
+
+- **Mode wheel.** The button at the top left shows the mode you're in. Tap it to see the other modes and pick one: **Home**, **Bots**, **Code** or **ACI**, the same four modes as the desktop mode wheel. Switching modes keeps the menu open on that mode's rail. Bots shows the same unread count as on Desktop.
+- **Wordmark.** Home, Bots and ACI show the A://TERNIT wordmark. Code shows the gizzi code wordmark.
+- **One mode's rail at a time:**
+  - **Home:** New chat, Projects, Artifacts and Automation Tasks, then your recent chats and Cowork tasks (marked with a cloud). Cowork is the Chat/Cowork switch in the composer, as on Desktop.
+  - **Code:** New Thread, Projects, Artifacts and Automation Tasks, then your recent code threads.
+  - **ACI:** New Session, MCP Apps, ACI Extensions, Computers and Teach, then your recent agent runs.
+  - **Bots:** the desktop Bots rail, with Home, projects, bots, threads and group chats.
+- **Inbox** is the tray icon at the top right of the menu. **Phones** is the icon beside your name at the bottom.
+- **Settings** opens from your name at the bottom. **Customize** (skills, connectors, plugins) is the first row in Settings.
+
+Developer notes: the mode list is shared with Desktop through `src/shell/mode-buttons.ts`. The phone keeps the active mode in `usePhoneNav().mode`. Opening a mode's own section (Chats, Bots, Code or ACI) sets the mode. Shared sections (Projects, Artifacts, Automation Tasks, Settings) keep the current mode. `setMode` switches modes from the wheel.
+
 ## Navigation appearance
 
 Mode controls and shell rail tabs share the desktop glass selection style. The Chat/Cowork control uses the same glass highlight on ai.allternit.com and the installed PWA. Touch targets keep their phone sizing, and motion and transparency follow system accessibility preferences.
