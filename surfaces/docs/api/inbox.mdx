@@ -38,14 +38,16 @@ Newest first. `kind` is `email_draft`, `approval`, `held_send`, `thread`, `misse
 
 ## Act
 
-All three are `POST /api/v1/inbox/:id/<action>`; `:id` is URL-encoded (`approval%3Aap1`). A missing, already handled or foreign item answers `404 {"error", "code":"NOT_FOUND"}`.
+Every action is `POST /api/v1/inbox/:id/<action>`; `:id` is URL-encoded (`approval%3Aap1`). A missing, already handled or foreign item answers `404 {"error", "code":"NOT_FOUND"}`.
 
 - `approve` with an optional `{"decision":"deny"}` (default `approve`; anything else is `400 BAD_DECISION`).
   - `email_draft`: approves or rejects the held mail (`decide_outbound_for_thread`). `200 {"id","result":{"state":"sent"|"rejected"}}`; `502 EMAIL_DECISION_FAILED` when mailflare can't action it.
   - `approval`: answers the gateway approval as the signed-in person (`respond_approval`). `200 {"id","result":{"approvalId","state":"approved"|"denied"}}`.
   - `held_send`: same, and on approve the held text is posted through the channel gateway under the same correlation id: `result.send.state` is `sent`, `unconfirmed`, `rejected`, `channel_offline`, `no_binding`, `not_sent` or `error`.
   - any other kind: `400 {"code":"NOT_APPROVABLE"}`.
-- `dismiss`: `200 {"id","state":"dismissed"}`.
+- `dismiss`: `200 {"id","state":"dismissed"}`. On an `attention` item it also resolves the item as `dismissed`.
+- `retry` (`attention` items only): runs the item's retry now. For a routine that is the same path as **Run now**, and the item resolves as `retried`. `400 {"code":"ATTENTION_ERROR"}` when the item is not an attention item or has no retry, `404 NOT_FOUND` when it is already fixed.
+- `resolve` (`attention` items only): closes the item as fixed. `200 {"id","state":"resolved"}`.
 - `snooze` with optional `{"minutes":60}` (1 to 20160): `200 {"id","state":"snoozed","until":"<RFC 3339>"}`.
 
 A dismissed or snoozed item reappears when its `at` moves past the time it was handled (a newer message, a thread asking again), or when a snooze runs out.

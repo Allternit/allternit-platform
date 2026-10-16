@@ -279,12 +279,12 @@
       "description": "Agent memory as a drive: notes, retrieval and nightly consolidation shared by bots, the workspace and gizzi.",
       "touches": [
         "allternit-ai/src/components/memory",
-        "allternit-ai/src/views/settings/memory-drive",
         "allternit/cmd/allternit-api/src/memory_*",
         "allternit/cmd/allternit-api/src/memory_retrieve",
         "allternit/cmd/allternit-api/src/memory_consolidation",
         "allternit/cmd/allternit-api/src/memory_relations",
-        "allternit/services/memory"
+        "allternit/services/memory",
+        "allternit-ai/src/views/settings"
       ],
       "decisions": [
         {
@@ -1372,6 +1372,31 @@
           "on": "2026-10-16",
           "note": "Eoj: build plan step D (Install \u2192 Sign in \u2192 Connected for any computer) so his always-on cloud computer can run CLI brains. Reuses the Factory harness installer, not a second manifest; sign-in captures the CLI's own link/code instead of opening a browser nobody sees."
         }
+      ]
+    },
+    {
+      "id": "feature:attention-alerts",
+      "label": "Attention alerts (no silent failures)",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Server-owned alerts: every failed, missed or bot-less routine (and later a down lane, a loop guard hold or a held send) opens one attention item, pushes it, re-notifies until fixed and shows in the needs-you inbox with Retry and Dismiss.",
+      "touches": [
+        "allternit/cmd/allternit-api",
+        "allternit/cmd/allternit-cloud-api",
+        "allternit-ai/src/components/inbox",
+        "allternit-ai/src/lib/inbox"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-16",
+          "note": "Agent-network Phase 1 WP1 (SPEC-agent-network-phase1-2026-10-16): alerts move from a client poller to the runtime; routine.failed is pushed only as attention.opened. Eoj: SMS for critical alerts is opt-in, off by default (not built yet)."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/needs-you-inbox.mdx",
+        "allternit/surfaces/docs/guides/bot-routines.mdx",
+        "allternit/surfaces/docs/api/inbox.mdx",
+        "allternit/cmd/allternit-api/src/netops/alerts.rs"
       ]
     }
   ],

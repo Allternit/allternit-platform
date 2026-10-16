@@ -1054,13 +1054,14 @@ async fn create_routine(
     let now = chrono::Utc::now().to_rfc3339();
 
     let execution_domain = normalize_execution_domain(req.execution_domain.clone());
-    // Local routines run as a bot's turn (routine_local_scheduler); without a
-    // bot every run used to fail silently. Refuse them up front.
+    // Every routine runs as a bot's turn (local: routine_local_scheduler; cloud and
+    // hybrid: the cron daemon posts it to the bot), and a run with no bot used to fail
+    // silently. Refuse it up front.
     let agent_id = {
         let conn = state.db.connect().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         check_agent(&conn, req.agent_id.as_deref())?
     };
-    if agent_id.is_none() && !uses_cloud_scheduler(&execution_domain) {
+    if agent_id.is_none() {
         return Err(RoutineApiError::new(StatusCode::BAD_REQUEST, "agent_required", AGENT_REQUIRED_MESSAGE));
     }
 

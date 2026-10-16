@@ -57,6 +57,7 @@ const DATA_KEYS: &[&str] = &[
     "itemId", "kind", "severity", "actionUrl",
     "loginId", "health", "previous", "label",
     "taskId", "capability", "detail", "threadId",
+    "attentionId", "botName",
 ];
 
 // ---------------------------------------------------------------- owner ledger
@@ -431,6 +432,9 @@ mod tests {
             ("run.blocked", json!({}), None),
             ("routine.completed", json!({}), Some("agent.run.completed")),
             ("routine.failed", json!({}), None),
+            ("routine.paused", json!({}), None),
+            ("attention.opened", json!({}), Some("attention.opened")),
+            ("attention.resolved", json!({}), Some("attention.resolved")),
             ("vendor.ticket.created", json!({ "ticketId": "T-1" }), Some("vendor.ticket.created")),
             ("vendor.ticket.result", json!({}), None),
             ("inbox.changed", json!({}), None),
@@ -448,7 +452,7 @@ mod tests {
             assert_eq!(got, *want, "{ty} {payload}");
         }
         // The registry names this runtime emits are all in the agreed list.
-        let registry = ["approval.requested", "approval.resolved", "agent.run.completed", "thread.needs_user", "message.received", "call.ended", "inbox.item.created", "vendor.ticket.created", "subscription.login_needed", "subscription.signed_in", "usage.threshold"];
+        let registry = ["approval.requested", "approval.resolved", "agent.run.completed", "thread.needs_user", "message.received", "call.ended", "inbox.item.created", "vendor.ticket.created", "subscription.login_needed", "subscription.signed_in", "usage.threshold", "attention.opened", "attention.resolved"];
         for (_, _, want) in table {
             if let Some(w) = want {
                 assert!(registry.contains(w), "{w}");

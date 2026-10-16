@@ -26,7 +26,7 @@ Clerk session or a `compute`-scoped API key.
 }
 ```
 
-One row per event type a person can be notified about, in [event registry](/guides/mcp-events#events) order: `approval.requested`, `approval.resolved`, `agent.run.completed`, `thread.needs_user`, `message.received`, `call.ended`, `inbox.item.created`, `vendor.ticket.created`, `subscription.login_needed`, `subscription.signed_in`, `usage.threshold`. `title` and `description` come from the registry (the same titles as `GET /api/v1/events/catalog`), so a client renders switches without its own copy. `default` is what `enabled` is when the person hasn't changed it. `pushConfigured: false` means the server has no VAPID keys, so nothing is sent whatever the switches say.
+One row per event type a person can be notified about, in [event registry](/guides/mcp-events#events) order: `approval.requested`, `approval.resolved`, `agent.run.completed`, `thread.needs_user`, `message.received`, `call.ended`, `inbox.item.created`, `vendor.ticket.created`, `subscription.login_needed`, `subscription.signed_in`, `usage.threshold`, `attention.opened`, `attention.resolved`. `title` and `description` come from the registry (the same titles as `GET /api/v1/events/catalog`), so a client renders switches without its own copy. `default` is what `enabled` is when the person hasn't changed it. `pushConfigured: false` means the server has no VAPID keys, so nothing is sent whatever the switches say.
 
 ### `PUT /api/v1/notifications/preferences`
 
@@ -40,7 +40,7 @@ One row per event type a person can be notified about, in [event registry](/guid
 
 | On | Off |
 |---|---|
-| `approval.requested`, `thread.needs_user`, `message.received`, `call.ended`, `subscription.login_needed`, `usage.threshold` | `agent.run.completed`, `approval.resolved`, `inbox.item.created`, `vendor.ticket.created`, `subscription.signed_in` |
+| `approval.requested`, `thread.needs_user`, `message.received`, `call.ended`, `subscription.login_needed`, `usage.threshold`, `attention.opened` | `agent.run.completed`, `approval.resolved`, `attention.resolved`, `inbox.item.created`, `vendor.ticket.created`, `subscription.signed_in` |
 
 `message.received` and `call.ended` default on because the app already pushed messages and missed calls before the sink existed.
 
@@ -73,6 +73,7 @@ The payload is the [Web Push](/api/web-push#what-gets-pushed) JSON with `type: "
 | `vendor.ticket.created` | `New ticket for <bot>` | A vendor bot has work waiting. | `ticket-<id>` |
 | `subscription.login_needed` | `Sign in to <Provider> again` | `Your <Provider> subscription (<label>) signed out. …` | `login-<loginId>` |
 | `subscription.signed_in` | `<Provider> is signed in again` | `… is working again.` | `login-<loginId>` (replaces the above) |
+| `attention.opened` | Something needs fixing | the item's summary, for example `Morning briefing failed: the bot is signed out.` | `attention-<attentionId>` (a re-notify replaces the earlier one) |
 | `usage.threshold` | `You've used 80% of your monthly cloud budget` / `You've used all of …` | `$81.50 of $100.00 so far this month.` | `usage-<meter>-<period>` |
 
 `<bot>` is the forwarded `botName`, or "Your bot". `approval.requested` with `source: "gizzi-permission"` (a coding-session permission ask) is never pushed here: the gizzi remote-control lane (`services/remote-control-push`) already notifies for it.

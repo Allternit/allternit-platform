@@ -1470,6 +1470,7 @@ async fn main() {
     let mut app = combined.with_state(state.clone());
     // Automation Tasks routines with execution_domain = 'local' run here.
     allternit_api::routine_local_scheduler::spawn(state.clone());
+    allternit_api::netops::spawn(state.clone());
     // gizzi enforces bots' spend limits; bring its copy up to date (P8.1).
     allternit_api::spend_limits::spawn_sync(state.clone());
     // Bots' saved memory is tidied weekly on their own model (P7.4).
