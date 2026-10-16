@@ -24,7 +24,9 @@ const MAX_UNTRACKED_BYTES: u64 = 256 * 1024;
 const MAX_UNTRACKED_FILES: usize = 200;
 
 pub fn git_router() -> Router<Arc<AppState>> {
-    Router::new().route("/v1/git/diff", post(git_diff))
+    Router::new()
+        .route("/v1/git/diff", post(git_diff))
+        .route("/v1/git/discard", post(git_discard))
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -197,6 +199,118 @@ pub async fn diff_for(req: GitDiffRequest) -> Result<serde_json::Value, (StatusC
     Ok(json!({ "files": files, "totalAdditions": total_add, "totalDeletions": total_del, "root": root }))
 }
 
+/// `POST /api/v1/git/discard` — undo uncommitted work in one file.
+/// Body: `{ path, file, patch?, untracked? }`. `file` is relative to the
+/// repository root (as `/git/diff` reports it).
+/// - with `patch` (that file's diff header plus one hunk): only that hunk is
+///   reversed in the working tree (`git apply -R`), after a `--check`;
+/// - without: a tracked file goes back to its staged/committed content
+///   (`git checkout -- file`); an untracked file is deleted, but only when the
+///   caller says `untracked: true` and git confirms it is untracked.
+#[derive(Debug, Default, Deserialize)]
+pub struct GitDiscardRequest {
+    #[serde(default)]
+    pub path: Option<String>,
+    pub file: String,
+    #[serde(default)]
+    pub patch: Option<String>,
+    #[serde(default)]
+    pub untracked: bool,
+}
+
+/// A repo-relative path we may hand to git: no absolute paths, no `..`.
+fn safe_rel(file: &str) -> bool {
+    !file.is_empty()
+        && !file.starts_with('/')
+        && !file.starts_with('-')
+        && !file.contains('\0')
+        && !Path::new(file).components().any(|c| matches!(c, std::path::Component::ParentDir))
+}
+
+async fn git_stdin(dir: &Path, args: &[&str], input: &str) -> Result<(), String> {
+    use tokio::io::AsyncWriteExt;
+    let mut child = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to run git: {e}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(input.as_bytes()).await.map_err(|e| e.to_string())?;
+    }
+    let out = child.wait_with_output().await.map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}
+
+pub async fn discard(req: GitDiscardRequest) -> Result<serde_json::Value, (StatusCode, String)> {
+    let dir = PathBuf::from(req.path.as_deref().filter(|p| !p.trim().is_empty()).unwrap_or("."));
+    if !dir.is_dir() {
+        return Err((StatusCode::BAD_REQUEST, format!("not a folder: {}", dir.display())));
+    }
+    if !safe_rel(&req.file) {
+        return Err((StatusCode::BAD_REQUEST, format!("invalid file: {}", req.file)));
+    }
+    let root = git(&dir, &["rev-parse", "--show-toplevel"])
+        .await
+        .map_err(|_| (StatusCode::UNPROCESSABLE_ENTITY, "not a git repository".to_string()))?;
+    let root = PathBuf::from(root.trim());
+
+    if let Some(patch) = req.patch.as_deref().filter(|p| !p.trim().is_empty()) {
+        // The patch must touch exactly this file.
+        let header = patch.lines().next().unwrap_or_default();
+        if !header.starts_with("diff --git ") || !header.ends_with(&format!(" b/{}", req.file)) {
+            return Err((StatusCode::BAD_REQUEST, "patch does not match the file".to_string()));
+        }
+        let mut body = patch.to_string();
+        if !body.ends_with('\n') {
+            body.push('\n');
+        }
+        git_stdin(&root, &["apply", "-R", "--check", "--recount", "-"], &body)
+            .await
+            .map_err(|e| (StatusCode::CONFLICT, format!("that change no longer matches the file: {e}")))?;
+        git_stdin(&root, &["apply", "-R", "--recount", "-"], &body)
+            .await
+            .map_err(|e| (StatusCode::CONFLICT, e))?;
+        return Ok(json!({ "ok": true, "file": req.file, "undone": "hunk" }));
+    }
+
+    let tracked = git(&root, &["ls-files", "--error-unmatch", "--", &req.file]).await.is_ok();
+    if tracked {
+        git(&root, &["checkout", "--", &req.file]).await.map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+        return Ok(json!({ "ok": true, "file": req.file, "undone": "file" }));
+    }
+    if !req.untracked {
+        return Err((StatusCode::BAD_REQUEST, "file is not tracked; pass untracked: true to delete it".to_string()));
+    }
+    let listed = git(&root, &["ls-files", "--others", "--exclude-standard", "--", &req.file])
+        .await
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    if listed.lines().next() != Some(req.file.as_str()) {
+        return Err((StatusCode::BAD_REQUEST, "not an untracked file".to_string()));
+    }
+    let full = root.join(&req.file);
+    if !full.is_file() {
+        return Err((StatusCode::BAD_REQUEST, "only files can be deleted".to_string()));
+    }
+    std::fs::remove_file(&full).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(json!({ "ok": true, "file": req.file, "undone": "deleted" }))
+}
+
+async fn git_discard(Json(req): Json<GitDiscardRequest>) -> axum::response::Response {
+    match discard(req).await {
+        Ok(body) => Json(body).into_response(),
+        Err((status, message)) => err(status, message),
+    }
+}
+
 async fn git_diff(Json(req): Json<GitDiffRequest>) -> axum::response::Response {
     match diff_for(req).await {
         Ok(body) => Json(body).into_response(),
@@ -207,6 +321,46 @@ async fn git_diff(Json(req): Json<GitDiffRequest>) -> axum::response::Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn discards_one_hunk_a_whole_file_and_untracked_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let d = tmp.path();
+        sh(d, &["init", "-q"]);
+        let original: String = (1..=30).map(|n| format!("line {n}\n")).collect();
+        std::fs::write(d.join("a.txt"), &original).unwrap();
+        sh(d, &["add", "."]);
+        sh(d, &["commit", "-qm", "init"]);
+        let edited = original.replace("line 2\n", "LINE 2\n").replace("line 28\n", "LINE 28\n");
+        std::fs::write(d.join("a.txt"), &edited).unwrap();
+        let path = Some(d.display().to_string());
+
+        // Undo only the second hunk.
+        let out = diff_for(GitDiffRequest { path: path.clone(), ..Default::default() }).await.unwrap();
+        let diff = out["files"][0]["diff"].as_str().unwrap().to_string();
+        let first_hunk = diff.find("\n@@").unwrap() + 1;
+        let second_hunk = diff[first_hunk + 2..].find("\n@@").unwrap() + first_hunk + 3;
+        let patch = format!("{}{}", &diff[..first_hunk], &diff[second_hunk..]);
+        discard(GitDiscardRequest { path: path.clone(), file: "a.txt".into(), patch: Some(patch), untracked: false }).await.unwrap();
+        let now = std::fs::read_to_string(d.join("a.txt")).unwrap();
+        assert!(now.contains("LINE 2\n") && now.contains("line 28\n"));
+
+        // A stale patch is refused.
+        let stale = format!("{}{}", &diff[..first_hunk], &diff[second_hunk..]);
+        let e = discard(GitDiscardRequest { path: path.clone(), file: "a.txt".into(), patch: Some(stale), untracked: false }).await.unwrap_err();
+        assert_eq!(e.0, StatusCode::CONFLICT);
+
+        // Whole file back to committed.
+        discard(GitDiscardRequest { path: path.clone(), file: "a.txt".into(), ..Default::default() }).await.unwrap();
+        assert_eq!(std::fs::read_to_string(d.join("a.txt")).unwrap(), original);
+
+        // Untracked: needs the explicit flag; paths can't escape the repo.
+        std::fs::write(d.join("new.md"), "hi\n").unwrap();
+        assert!(discard(GitDiscardRequest { path: path.clone(), file: "new.md".into(), ..Default::default() }).await.is_err());
+        assert!(discard(GitDiscardRequest { path: path.clone(), file: "../x".into(), untracked: true, ..Default::default() }).await.is_err());
+        discard(GitDiscardRequest { path: path.clone(), file: "new.md".into(), untracked: true, ..Default::default() }).await.unwrap();
+        assert!(!d.join("new.md").exists());
+    }
 
     fn sh(dir: &Path, args: &[&str]) {
         let ok = std::process::Command::new("git")

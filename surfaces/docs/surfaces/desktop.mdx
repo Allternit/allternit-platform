@@ -98,6 +98,16 @@ with Terminal.
 - **Changes** shows the session folder's uncommitted work: changed files and
   new (untracked) files, with line counts. It reads `POST /api/v1/git/diff` on
   the local API (`cmd/allternit-api/src/git_routes.rs`).
+  - **Edit** (pencil) turns that file's diff into an editor in place. Save
+    with ⌘S or **Save** and the diff comes back updated. **Open beside** opens
+    it in the Files pane instead.
+  - **Undo** on a block of changes puts just that block back. **Undo all
+    changes** on a file puts the whole file back to its last saved-in-git
+    version; for a new file it deletes the file, after you confirm.
+  - Both use `POST /api/v1/git/discard` (`{ path, file, patch?, untracked? }`):
+    with `patch` it reverses one hunk after `git apply -R --check`; without it
+    runs `git checkout -- file`, or deletes an untracked file only when
+    `untracked: true`.
 
 On a phone, each pane opens full screen from the header's pane menu.
 
