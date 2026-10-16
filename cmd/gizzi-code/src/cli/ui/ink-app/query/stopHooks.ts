@@ -53,6 +53,7 @@ const jobClassifierModule = feature('TEMPLATES')
 import type { QuerySource } from '../constants/querySource.js'
 import { executeAutoDream } from '../services/autoDream/autoDream.js'
 import { commitMemoryDriveEdits } from '../services/memoryDrive/commit.js'
+import { captureUserTurn } from '../services/memoryDrive/capture.js'
 import { executePromptSuggestion } from '../services/PromptSuggestion/promptSuggestion.js'
 import { isBareMode, isEnvDefinedFalsy } from '../utils/envUtils.js'
 import {
@@ -157,6 +158,7 @@ export async function* handleStopHooks(
     if (!toolUseContext.agentId) {
       // Memory Drive: commit + sync any memory lines the agent edited this turn.
       void commitMemoryDriveEdits('Save memory edits from gizzi')
+      void captureUserTurn(messagesForQuery)
       void executeAutoDream(stopHookContext, toolUseContext.appendSystemMessage)
     }
   }

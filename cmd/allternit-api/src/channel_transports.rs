@@ -1066,8 +1066,10 @@ pub async fn accept_events_with<R: crate::thread_routes::ThreadRuntime>(
         }
         // Who may make the bot act (audit S16): a sender the account's policy
         // doesn't allow is refused before anything is recorded or run.
+        let mut from_owner = false;
         if !e.own {
             let rule = st.db.connect().map(|c| crate::channel_auth::account_rule(&c, &acct.id, tx.provider())).unwrap_or_default();
+            from_owner = e.kind == InboundKind::Message && rule.is_owner(e.user.as_deref());
             if !rule.allows(e.user.as_deref()) {
                 if let Ok(c) = st.db.connect() {
                     crate::channel_auth::record_rejection(
@@ -1099,6 +1101,12 @@ pub async fn accept_events_with<R: crate::thread_routes::ThreadRuntime>(
         crate::channel_attachments::discard_kept(tx.provider(), &e.remote_id);
         match routed {
             Ok(Routed { binding: Some(b), turn: Some((session, bot, text)), speaker, person, .. }) => {
+                // The owner's own words grow their Memory Drive (Settings → Memory → Sources).
+                if from_owner {
+                    if let Some(said) = e.text.as_deref() {
+                        crate::memory_capture::owner_channel_turn(&st.db, &acct.owner, &crate::memory_capture::channel_label(tx.provider(), &e.channel), said);
+                    }
+                }
                 let t = AcceptedTurn { binding: b, remote_id: e.remote_id.clone(), tx: tx.clone(), session, bot, text, speaker, person };
                 set_turn_state(&st.db, &t.binding.id, &t.remote_id, &turn_json(&t, "queued"));
                 turns.push(t);

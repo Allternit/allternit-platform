@@ -1070,13 +1070,16 @@ async fn receive_inbound_email(
     // Who may email the bot (audit S16): a sender the email channel's policy
     // doesn't allow is acknowledged, not delivered, and audited. No reply is
     // sent, so a forged From can't turn the bot into a bounce relay.
+    let from_owner;
     {
         let conn = match state.db.connect() {
             Ok(conn) => conn,
             Err(e) => return internal(e).into_response(),
         };
         let sender = crate::channel_auth::email_address(from);
-        let allowed = crate::channel_auth::email_rule(&conn, &agent_id).map(|(rule, _)| rule.allows(Some(&sender))).unwrap_or(false);
+        let rule = crate::channel_auth::email_rule(&conn, &agent_id);
+        let allowed = rule.as_ref().map(|(rule, _)| rule.allows(Some(&sender))).unwrap_or(false);
+        from_owner = rule.as_ref().map(|(rule, _)| rule.is_owner(Some(&sender))).unwrap_or(false);
         if !allowed {
             crate::channel_auth::record_rejection(
                 &conn,
@@ -1134,9 +1137,13 @@ async fn receive_inbound_email(
         let from_s = from.to_string();
         let subject_s = subject.unwrap_or("(no subject)").to_string();
         let body_s = text_body.or(snippet).unwrap_or("(no body)").to_string();
+        let owner_s = relayed.owner.clone();
         tokio::spawn(async move {
             let stripped = crate::agent_email_reply::strip_quoted_history(&body_s);
             let turn_body = if stripped.is_empty() { body_s.clone() } else { stripped };
+            if from_owner {
+                crate::memory_capture::owner_channel_turn(&db, &owner_s, &crate::memory_capture::channel_label("email", &crate::thread_routes::conversation_subject(&subject_s)), &turn_body);
+            }
             let rt = crate::thread_routes::GizziRuntime { db: db.clone() };
             let key = format!("email:{}:{}", from_s.to_lowercase(), crate::thread_routes::conversation_subject(&subject_s));
             let text = format!("[email from {from_s}] Subject: {subject_s}\n\n{turn_body}");

@@ -40,6 +40,9 @@ pub fn memory_drive_router() -> Router<Arc<AppState>> {
         .route("/memory/drive/import-agents", get(list_agent_imports).post(import_agents))
         .route("/memory/drive/find-memories", get(find_memories_info).post(find_memories))
         .route("/memory/drive/import-chats", post(import_chats))
+        .route("/memory/drive/capture", get(get_capture).put(put_capture))
+        .route("/memory/drive/capture/turn", post(capture_turn))
+        .route("/memory/drive/forget-source", post(forget_source))
         .route("/memory/drive/purge", post(purge))
         .route("/memory/drive/peers", get(list_peers))
         .route("/memory/drive/peers/:peer_id", axum::routing::put(save_peer))
@@ -793,6 +796,90 @@ async fn import_chats(State(state): State<Arc<AppState>>, Extension(user): Exten
         }
         let (revision, imported) = chats::apply(&ctx.0.db, &ctx.1.user_id, &b.from, b.found, b.selected.as_deref())?;
         Ok(json!({ "dry_run": false, "revision": revision, "imported": imported }))
+    })
+    .await
+}
+
+/// Where memories come from: the capture switches and how many memories each
+/// labelled source added to the personal drive.
+async fn get_capture(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>) -> Response {
+    run(state, user, move |ctx| {
+        open(ctx, None, false)?;
+        let conn = ctx.0.db.connect()?;
+        Ok(json!({
+            "settings": crate::memory_capture::settings(&conn, &ctx.1.user_id),
+            "counts": crate::memory_capture::counts(&conn, &ctx.1.user_id)?,
+            "agents": crate::memory_drive_agent_import::home().map(|h| crate::memory_drive_agent_import::detect(&h)).unwrap_or_default(),
+        }))
+    })
+    .await
+}
+
+#[derive(Deserialize)]
+struct CaptureBody {
+    channels: Option<bool>,
+    gizzi: Option<bool>,
+    agent_folders: Option<bool>,
+}
+
+/// Change capture switches. Turning on agent folders imports what's new right away.
+async fn put_capture(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Json(b): Json<CaptureBody>) -> Response {
+    run(state, user, move |ctx| {
+        open(ctx, None, true)?;
+        let conn = ctx.0.db.connect()?;
+        let before = crate::memory_capture::settings(&conn, &ctx.1.user_id);
+        let after = crate::memory_capture::Settings {
+            channels: b.channels.unwrap_or(before.channels),
+            gizzi: b.gizzi.unwrap_or(before.gizzi),
+            agent_folders: b.agent_folders.unwrap_or(before.agent_folders),
+        };
+        crate::memory_capture::save(&conn, &ctx.1.user_id, &after)?;
+        drop(conn);
+        let imported = match (before.agent_folders, after.agent_folders, crate::memory_drive_agent_import::home()) {
+            (false, true, Some(home)) => crate::memory_capture::sync_agent_folders(&ctx.0.db, &ctx.1.user_id, &home),
+            _ => 0,
+        };
+        Ok(json!({ "settings": after, "imported": imported }))
+    })
+    .await
+}
+
+#[derive(Deserialize)]
+struct CaptureTurnBody {
+    /// Only "gizzi" today; channels are captured where they arrive.
+    source: String,
+    /// Provenance label, e.g. `gizzi:session/abc`.
+    label: String,
+    text: String,
+}
+
+/// Record a turn the person typed somewhere Allternit doesn't see directly
+/// (the Gizzi CLI), so the nightly Dream can learn from it. No extraction:
+/// Gizzi saves memories itself.
+async fn capture_turn(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Json(b): Json<CaptureTurnBody>) -> Response {
+    run(state, user, move |ctx| {
+        if b.source != "gizzi" || !b.label.starts_with("gizzi:") {
+            return Err(ServiceError::Provenance("source must be gizzi with a gizzi: label".into()));
+        }
+        open(ctx, None, true)?;
+        let id = crate::memory_capture::record_turn(&ctx.0.db, &ctx.1.user_id, crate::memory_capture::Source::Gizzi, &b.label, &b.text)?;
+        Ok(json!({ "recorded": id.is_some() }))
+    })
+    .await
+}
+
+#[derive(Deserialize)]
+struct ForgetSourceBody {
+    scheme: String,
+}
+
+/// Remove every memory that came from one source (as one change; the lines
+/// stay in the drive's history).
+async fn forget_source(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Json(b): Json<ForgetSourceBody>) -> Response {
+    run(state, user, move |ctx| {
+        open(ctx, None, true)?;
+        let (revision, removed) = crate::memory_capture::forget_source(&ctx.0.db, &ctx.1.user_id, &b.scheme)?;
+        Ok(json!({ "revision": revision, "removed": removed, "more": removed >= crate::memory_capture::MAX_FORGET }))
     })
     .await
 }

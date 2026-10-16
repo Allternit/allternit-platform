@@ -1501,6 +1501,7 @@ async fn main() {
     allternit_api::memory_consolidation::spawn(state.clone());
     // Memory Drive nightly Dream (one commit + report per drive per night).
     allternit_api::memory_dream::spawn(state.clone());
+    allternit_api::memory_capture::spawn(state.db.clone());
 
     // Mount cowork scheduler routes if scheduler is active. These routes
     // create/update/delete schedules and self-gate nothing, so they must be

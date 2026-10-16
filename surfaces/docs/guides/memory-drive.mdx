@@ -187,6 +187,30 @@ Each memory keeps the file it came from as its source. One import takes up to 50
 more, preview again after importing to bring in the rest. Cursor no longer keeps memories, so
 there is nothing to import from it.
 
+## Where your memories come from
+
+Besides your chats in Allternit, **Where your memories come from** in Settings → Memory lists the
+other places that add to your drive. Each has its own switch:
+
+- **Your messages to your bots** (on by default). What you send your bots on Telegram, WhatsApp,
+  Discord, Slack, Teams, text messages and email. Only messages from you count. Allternit knows
+  they're yours because you verified that account or phone number, or because it's your
+  account's email address. What other people send your bots never becomes your memory. Each
+  memory cites the chat it came from, such as `telegram:chat/…`.
+- **Gizzi in the terminal** (on by default). What you type in Gizzi, so the nightly Dream can
+  learn from it. Gizzi saves memories itself as well.
+- **Keep importing from agents on your computer** (off until you turn it on). Every few hours,
+  Allternit imports new memories from Claude Code, Codex, Hermes and OpenClaw on the computer that
+  holds your drive. Anything already in your drive is skipped. Turning it on imports what's there
+  right away.
+
+Below the switches, **Memories by source** shows how many memories each source added: an
+assistant you imported from, an agent on your computer, or a channel. To take a source back out,
+select **Forget** next to it and confirm. Its memories are removed in one change and stay in the
+drive's history, like any delete.
+
+Incognito chats are never remembered, from any surface.
+
 ## Use it from other agents
 
 Select **Clone this drive** to get the drive's address and create a token:
