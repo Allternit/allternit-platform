@@ -617,7 +617,7 @@
         },
         {
           "on": "2026-10-15",
-          "note": "Phone drawer reorganized around the desktop mode wheel (Home · Bots · Code · ACI, from src/shell/mode-buttons.ts): it shows only the active mode's rail and recents, with the A://TERNIT wordmark (gizzi code lockup in Code). Code, Bots, ACI, Tasks and Customize rows left the drawer; Inbox and Phones became icons; Customize moved into phone Settings; PhoneBotDrawer merged into PhoneDrawer."
+          "note": "Phone drawer reorganized around the desktop mode wheel (Home \u00b7 Bots \u00b7 Code \u00b7 ACI, from src/shell/mode-buttons.ts): it shows only the active mode's rail and recents, with the A://TERNIT wordmark (gizzi code lockup in Code). Code, Bots, ACI, Tasks and Customize rows left the drawer; Inbox and Phones became icons; Customize moved into phone Settings; PhoneBotDrawer merged into PhoneDrawer."
         }
       ],
       "evidence": [
@@ -1290,12 +1290,17 @@
       ],
       "evidence": [
         "allternit-ai/src/views/bots/AnimatedBotSprite.tsx",
-        "allternit/surfaces/allternit-desktop/src/main/desktop-companion.ts"
+        "allternit/surfaces/allternit-desktop/src/main/desktop-companion.ts",
+        "allternit-ai/scripts/avatar-cast/pet-sheet-pack.py"
       ],
       "decisions": [
         {
           "on": "2026-10-15",
           "note": "Eoj approved the desktop pet plan (8 PRs) after seeing Hermes Agent + Petdex. Sheets adopt the Petdex standard. Avatars without real frames hop (free approach). Muse in Gizzi Brawl is Jolly. Hook port 127.0.0.1:7787, not shared with anything else. Plan: agent-ledger/summaries/2026-10-15-2245-claude-desktop-pets-petdex.md."
+        },
+        {
+          "on": "2026-10-16",
+          "note": "Eoj approved the full-size code-drawn Gizzi YouTube rig sheets (\"yes they are right\"). PR 2 ships them plus Gemini, Muse and Muse Wonder as Petdex v2 sheets, swapped in place at the same URLs so saved bots upgrade."
         }
       ]
     }
