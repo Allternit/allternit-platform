@@ -1280,7 +1280,7 @@
       "label": "Desktop pets and animated avatars (Petdex standard)",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "Bot avatars play Petdex-standard sprite sheets (8 columns of 192x208, 11 rows: idle, running-right/left, waving, jumping, failed, waiting, running, review, sleep, special). Characters without real frames hop. Later steps: one pet-activity signal from agent turns, in-app reactions, the floating Desktop pet (roam, badge, bubbles) and a loopback hook port for terminal agents.",
+      "description": "Bot avatars play Petdex-standard sprite sheets (8 columns of 192x208, 11 rows: idle, running-right/left, waving, jumping, failed, waiting, running, review, sleep, special). Characters without real frames hop. One pet-activity signal (lib/agents/pet-activity.ts) follows every session store and bot/vendor thread. Later steps: in-app reactions, the floating Desktop pet (roam, badge, bubbles) and a loopback hook port for terminal agents.",
       "touches": [
         "allternit-ai/src/lib/agents",
         "allternit-ai/src/views/bots",
@@ -1291,7 +1291,8 @@
       "evidence": [
         "allternit-ai/src/views/bots/AnimatedBotSprite.tsx",
         "allternit/surfaces/allternit-desktop/src/main/desktop-companion.ts",
-        "allternit-ai/scripts/avatar-cast/pet-sheet-pack.py"
+        "allternit-ai/scripts/avatar-cast/pet-sheet-pack.py",
+        "allternit-ai/src/lib/agents/pet-activity.ts"
       ],
       "decisions": [
         {
