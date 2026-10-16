@@ -127,9 +127,9 @@ Old rows stay visible for 30 days after the import and are then hidden. They are
 ### `POST /memory/drive/import-text`
 
 Imports memories from another assistant. Body `{ text, from, apply?, selected? }`, where `from` is
-`chatgpt`, `claude`, `gemini`, `grok`, `copilot`, `perplexity`, `meta`, `kimi`, `mistral` or `other`.
+`chatgpt`, `claude`, `gemini`, `grok`, `copilot`, `perplexity`, `meta`, `kimi`, `mistral`, `mem0` or `other`.
 `text` is plain lines, bullets, a numbered list (code fences are ignored), or JSON (an array of
-strings, or objects with `content`, `memory` or `text`), up to 500 items and 512 KB.
+strings, or objects with `content`, `memory` or `text`, also inside `memories`, `results`, `items` or `data`, which covers Mem0's export), up to 500 items and 512 KB.
 
 - Dry run: `{ dry_run: true, plan: { from, path, entries: [text], skipped: [{ text, reason }], remaining } }`.
 - `apply: true`: one commit to `path` (for example `imports/gemini.md`), returns `{ dry_run: false, revision, imported }`.

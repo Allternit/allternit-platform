@@ -57,6 +57,7 @@ const ASSISTANTS: &[Assistant] = &[
     Assistant { id: "meta", source: "meta-ai:memory-import", path: "imports/meta-ai.md", name: "Meta AI" },
     Assistant { id: "kimi", source: "kimi:memory-import", path: "imports/kimi.md", name: "Kimi" },
     Assistant { id: "mistral", source: "le-chat:memory-import", path: "imports/le-chat.md", name: "Le Chat" },
+    Assistant { id: "mem0", source: "mem0:memory-import", path: "imports/mem0.md", name: "Mem0" },
     Assistant { id: "other", source: "import:pasted", path: "imports/other.md", name: "another assistant" },
 ];
 
@@ -98,7 +99,7 @@ fn json_items(v: &serde_json::Value, out: &mut Vec<String>) {
         serde_json::Value::Object(o) => {
             if let Some(t) = ["content", "memory", "text", "value"].iter().find_map(|k| o.get(*k).and_then(|x| x.as_str())) {
                 out.push(t.to_string());
-            } else if let Some(list) = ["memories", "items", "data"].iter().find_map(|k| o.get(*k)) {
+            } else if let Some(list) = ["memories", "results", "items", "data"].iter().find_map(|k| o.get(*k)) {
                 json_items(list, out);
             }
         }
@@ -246,6 +247,8 @@ mod tests {
         assert_eq!(split("- Likes tea\n* Lives in Saint Paul\n1. Uses Rust\n# Heading\n\n• Has a dog"), vec!["Likes tea", "Lives in Saint Paul", "Uses Rust", "Has a dog"]);
         assert_eq!(split(r#"["A","B"]"#), vec!["A", "B"]);
         assert_eq!(split(r#"{"memories":[{"content":"A"},{"memory":"B"}]}"#), vec!["A", "B"]);
+        // Mem0's list and export shape.
+        assert_eq!(split(r#"{"results":[{"id":"1","memory":"Likes tea","user_id":"u"}]}"#), vec!["Likes tea"]);
     }
 
     #[test]
