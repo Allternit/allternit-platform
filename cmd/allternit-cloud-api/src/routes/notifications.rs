@@ -84,6 +84,9 @@ pub const DEFAULTS: &[(&str, bool)] = &[
     ("subscription.login_needed", true),
     ("subscription.signed_in", false),
     ("usage.threshold", true),
+    // A failed or missed routine, a bot with no one to run it: the server pushes it and sends it again until it is fixed.
+    ("attention.opened", true),
+    ("attention.resolved", false),
 ];
 
 /// Only look at events stored this recently (the sink polls every few seconds).
@@ -395,6 +398,22 @@ pub fn message_for(event: &str, data: &Value) -> Option<PushMessage> {
             msg.tag = format!("login-{login}");
             msg.url = "/".into();
         }
+        "attention.opened" | "attention.resolved" => {
+            let id = s(data, &["attention_id", "attentionId"]).unwrap_or("attention");
+            let summary = s(data, &["summary"]).map(|t| clip(t, 200));
+            if event == "attention.opened" {
+                let critical = s(data, &["severity"]) == Some("critical");
+                msg.high_urgency = critical;
+                msg.title = if critical { "Needs fixing now".into() } else { "Something needs fixing".into() };
+                msg.body = summary.unwrap_or_else(|| "Open Allternit to see what happened.".into());
+            } else {
+                msg.title = "Fixed".into();
+                msg.body = summary.unwrap_or_else(|| "A problem was fixed.".into());
+            }
+            // Opened, re-sent and resolved all share one tag, so the notification is replaced, not stacked.
+            msg.tag = format!("attention-{id}");
+            msg.url = s(data, &["action_url", "actionUrl"]).filter(|u| u.starts_with('/')).unwrap_or("/").to_string();
+        }
         "usage.threshold" => {
             let meter = s(data, &["meter"]).unwrap_or("usage");
             let period = s(data, &["period"]).unwrap_or("");
@@ -634,6 +653,12 @@ mod tests {
         assert_eq!((m.tag.as_str(), m.url.as_str()), ("login-l1", "/"));
         let back = message_for("subscription.signed_in", &json!({ "provider": "chatgpt", "loginId": "l1" })).unwrap();
         assert_eq!(back.tag, m.tag, "signed in replaces sign-in needed");
+
+        let m = message_for("attention.opened", &json!({ "attentionId": "routine_failed:r1", "severity": "warn", "summary": "Morning briefing failed: the bot is signed out.", "actionUrl": "/?bot=b1" })).unwrap();
+        assert_eq!((m.title.as_str(), m.body.as_str(), m.tag.as_str(), m.url.as_str()), ("Something needs fixing", "Morning briefing failed: the bot is signed out.", "attention-routine_failed:r1", "/?bot=b1"));
+        let m = message_for("attention.opened", &json!({ "attention_id": "x", "severity": "critical", "summary": "s", "action_url": "https://evil.example" })).unwrap();
+        assert_eq!((m.title.as_str(), m.url.as_str()), ("Needs fixing now", "/"));
+        assert!(default_enabled("attention.opened") && !default_enabled("attention.resolved"));
 
         let m = message_for("usage.threshold", &json!({ "meter": "cloud_spend", "percent": 80.0, "used": 81.5, "limit": 100.0, "period": "2026-10" })).unwrap();
         assert_eq!((m.title.as_str(), m.body.as_str(), m.tag.as_str()), ("You've used 80% of your monthly cloud budget", "$81.50 of $100.00 so far this month.", "usage-cloud_spend-2026-10"));

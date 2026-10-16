@@ -62,6 +62,12 @@ pub enum Kind {
     SubscriptionSignedIn,
     /// A Subscriptions task stopped for the person (`needs_user`).
     SubscriptionTaskNeedsUser,
+    /// A routine run failed or its routine auto-paused. Not pushed on its own: the
+    /// push goes through `attention.opened` so one failure is announced once.
+    RoutineFailed,
+    /// `netops::alerts` opened an attention item (something needs fixing).
+    AttentionOpened,
+    AttentionResolved,
 }
 
 impl Kind {
@@ -91,6 +97,9 @@ impl Kind {
             Kind::VendorTicketCreated => Some("vendor.ticket.created"),
             Kind::SubscriptionLoginNeeded => Some("subscription.login_needed"),
             Kind::SubscriptionSignedIn => Some("subscription.signed_in"),
+            Kind::RoutineFailed => None,
+            Kind::AttentionOpened => Some("attention.opened"),
+            Kind::AttentionResolved => Some("attention.resolved"),
         }
     }
 }
@@ -120,6 +129,9 @@ pub fn classify(event_type: &str, payload: &Value) -> Option<Kind> {
         "subscription.login_needed" => Some(Kind::SubscriptionLoginNeeded),
         "subscription.signed_in" => Some(Kind::SubscriptionSignedIn),
         "subscription.task.needs_user" => Some(Kind::SubscriptionTaskNeedsUser),
+        "routine.failed" | "routine.paused" => Some(Kind::RoutineFailed),
+        "attention.opened" => Some(Kind::AttentionOpened),
+        "attention.resolved" => Some(Kind::AttentionResolved),
         _ => None,
     }
 }
