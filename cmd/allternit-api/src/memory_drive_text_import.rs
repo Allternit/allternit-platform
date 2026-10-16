@@ -60,6 +60,26 @@ const ASSISTANTS: &[Assistant] = &[
     Assistant { id: "other", source: "import:pasted", path: "imports/other.md", name: "another assistant" },
 ];
 
+/// Keep a provenance label inside the characters `validate_source` accepts.
+pub fn provenance_label(scheme: &str, rest: &str) -> String {
+    let clean: String = rest
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || "._~/@=+-".contains(c) { c } else { '-' })
+        .take(400)
+        .collect();
+    format!("{scheme}:{clean}")
+}
+
+/// The scheme memories from `from` carry (`chatgpt`, `meta-ai`, `import`, …).
+pub fn scheme(from: &str) -> Result<&'static str> {
+    assistant(from).map(|a| a.source.split(':').next().unwrap_or("import"))
+}
+
+/// Display name of an assistant, for commit messages.
+pub fn display_name(from: &str) -> Result<&'static str> {
+    assistant(from).map(|a| a.name)
+}
+
 fn assistant(from: &str) -> Result<&'static Assistant> {
     ASSISTANTS.iter().find(|a| a.id == from).ok_or_else(|| {
         let ids = ASSISTANTS.iter().map(|a| a.id).collect::<Vec<_>>().join(", ");

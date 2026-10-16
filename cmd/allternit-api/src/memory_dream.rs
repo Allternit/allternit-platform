@@ -487,7 +487,11 @@ fn parse_plan(raw: &str) -> Option<Plan> {
         .or_else(|| trimmed.strip_prefix("```"))
         .map(|s| s.trim_end_matches("```").trim())
         .unwrap_or(trimmed);
-    serde_json::from_str(body).ok()
+    serde_json::from_str(body).ok().or_else(|| {
+        // A plain-text reply may wrap the JSON in a sentence or two.
+        let (start, end) = (raw.find('{')?, raw.rfind('}')?);
+        serde_json::from_str(raw.get(start..=end)?).ok()
+    })
 }
 
 /// Run (or re-run) the Dream for `date`. Idempotent per drive and date.
@@ -877,6 +881,7 @@ mod tests {
     fn malformed_model_output_is_rejected() {
         assert!(parse_plan("not json").is_none());
         assert!(parse_plan("```json\n{\"merges\":[],\"contradictions\":[],\"lessons\":[],\"prune\":[],\"twin_proposals\":[]}\n```").is_some());
+        assert!(parse_plan("Here is the plan:\n{\"merges\":[],\"contradictions\":[],\"lessons\":[],\"prune\":[],\"twin_proposals\":[]}\nDone.").is_some());
     }
 
     fn snap(es: &[(&str, &str)]) -> Snapshot {

@@ -163,6 +163,28 @@ keeps the file it came from as its source, for example `claude-code:memory/<proj
 One run takes up to 500 items, newest files first; `plan.remaining` says how many are left for
 the next run. The commit goes to `imports/<source>.md`.
 
+### `GET /memory/drive/find-memories`
+
+The model that reads exported chats and the request limits:
+`{ model: "provider/model", max_conversations, max_conversation_chars, max_batch_chars }`
+(today 20 conversations, 8,000 characters each, 80,000 per request). The model is
+`ALLTERNIT_MEMORY_MODEL`, else `ALLTERNIT_GEN_SMALL_MODEL`, else the built-in small default, the same
+one that saves memories from chats. Older computers answer 404.
+
+### `POST /memory/drive/find-memories`
+
+Body `{ from, conversations: [{ id, title?, date?, text }] }`, where `text` is the person's own
+messages from one conversation. The app reads the export (ChatGPT or Claude `conversations.json`,
+Gemini's Takeout `MyActivity`, the Grok archive) in the browser and sends only this. Returns
+`{ memories: [{ text, conversation }] }` and saves nothing. Requests run two at a time per computer;
+when the model doesn't answer, the reply is `503`.
+
+### `POST /memory/drive/import-chats`
+
+Body `{ from, found: [{ text, conversation }], apply?, selected? }` (up to 5,000 facts). Same plan and
+result shapes as `import-text` and the same checks. Each line's source is
+`<assistant>:conversation/<id>`; the commit goes to `imports/<assistant>-chats.md`.
+
 ### `POST /memory/drive/purge`
 
 Permanently removes entries from the drive and its whole history.
