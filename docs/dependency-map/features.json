@@ -628,6 +628,34 @@
       ]
     },
     {
+      "id": "feature:bot-home-screen",
+      "label": "Bots on the Home Screen",
+      "product": "product:allternit-mobile-pwa",
+      "status": "building",
+      "description": "Save a bot to an iPhone or Android Home Screen as its own icon (avatar + name) that opens the bot's chat: m.allternit.com/b/<id> page and per-bot manifest (Pages Functions), the Add to Home Screen guide in the bot's menu (QR code on Desktop).",
+      "touches": [
+        "allternit-ai/src/fabric-session",
+        "allternit-ai/src/views",
+        "allternit-ai/src/lib",
+        "surface:pwa",
+        "surface:ai",
+        "surface:desktop"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-16",
+          "note": "Eoj: no App Store app, so no real iOS widget. Bots go on the Home Screen as their own web-app icons with a guide that walks the person through it; tapping the icon opens the bot's existing chat screen, not a new landing page."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/bot-home-screen.mdx",
+        "allternit-ai/src/fabric-session/phone/BotHomeLinkHost.tsx",
+        "allternit-ai/src/views/bots/BotHomeScreenGuide.tsx",
+        "allternit-ai/src/lib/bots/bot-home-link.ts",
+        "allternit-ai/fabric-session-pwa-functions/b/[id].js"
+      ]
+    },
+    {
       "id": "feature:platform-api",
       "label": "Platform API v1",
       "product": "product:platform-api",
