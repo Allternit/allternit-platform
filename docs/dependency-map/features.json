@@ -1280,7 +1280,7 @@
       "label": "Desktop pets and animated avatars (Petdex standard)",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "Bot avatars play Petdex-standard sprite sheets (8 columns of 192x208, 11 rows: idle, running-right/left, waving, jumping, failed, waiting, running, review, sleep, special). Characters without real frames hop. One pet-activity signal (lib/agents/pet-activity.ts) follows every session store and bot/vendor thread. In-app avatars (rail, headers, surface mascot, A:// orb) react to it. The Desktop pet window gets that state over IPC with an unread badge and idle roaming. Later steps: the pet page (bubbles, badge, click/double-click) and a loopback hook port for terminal agents.",
+      "description": "Bot avatars play Petdex-standard sprite sheets (8 columns of 192x208, 11 rows: idle, running-right/left, waving, jumping, failed, waiting, running, review, sleep, special). Characters without real frames hop. One pet-activity signal (lib/agents/pet-activity.ts) follows every session store and bot/vendor thread. In-app avatars (rail, headers, surface mascot, A:// orb) react to it. The Desktop pet window gets that state over IPC from the main window and plays it (walk rows while roaming), with a mail badge for replies that finished while you were away; click opens quick chat, double-click shows or hides the app. Later steps: a loopback hook port for terminal agents, with speech bubbles.",
       "touches": [
         "allternit-ai/src/lib/agents",
         "allternit-ai/src/views/bots",
@@ -1294,6 +1294,7 @@
         "allternit-ai/scripts/avatar-cast/pet-sheet-pack.py",
         "allternit-ai/src/lib/agents/pet-activity.ts",
         "allternit-ai/src/views/bots/ActiveAgentMascot.tsx",
+        "allternit-ai/src/pages/DesktopCompanionPage.tsx",
         "allternit/surfaces/allternit-desktop/src/main/pet-activity-hub.ts"
       ],
       "decisions": [
@@ -1314,16 +1315,18 @@
       "status": "building",
       "description": "Settings \u2192 Subscriptions installs CLI brains (Claude Code, Codex, Grok, \u2026) on the active computer with the Factory's pinned, licence-gated installer (private Node when the machine has none), then signs in with a link and code shown on any device, so a cloud computer can run them while the user's Mac is off.",
       "touches": [
-        "allternit-ai/src/components/settings/BrainsPanel.tsx",
-        "allternit-ai/src/components/settings/CliConnectFlow.tsx",
-        "allternit-ai/src/lib/cli-connect.ts",
-        "allternit-ai/src/components/chat/ConnectAccountPane.tsx",
-        "allternit-ai/src/components/chat/ProviderGallery.tsx",
+        "allternit-ai/src/components/settings",
+        "allternit-ai/src/lib",
+        "allternit-ai/src/components/chat",
+        "allternit/cmd/allternit-api",
+        "allternit/factory/pane",
+        "allternit/factory/engine",
+        "allternit/cmd/gizzi-code/src/runtime/providers"
+      ],
+      "evidence": [
         "allternit/cmd/allternit-api/src/cli_tools.rs",
-        "allternit/cmd/allternit-api/src/provider_routes.rs",
-        "allternit/factory/pane/src/ao/harness",
-        "allternit/factory/engine/src/agents/registry.rs",
-        "allternit/cmd/gizzi-code/src/runtime/providers/discovery/subprocess.ts"
+        "allternit-ai/src/lib/cli-connect.ts",
+        "allternit-ai/src/components/settings/CliConnectFlow.tsx"
       ],
       "decisions": [
         {
