@@ -1060,7 +1060,7 @@ console.log('[preload] Allternit Desktop preload loaded.');
 // Small, purpose-specific bridge for the independent desktop companion windows.
 contextBridge.exposeInMainWorld('allternitCompanion', {
   getState: () => ipcRenderer.invoke('companion:get'),
-  update: (patch: { enabled?: boolean; size?: number; agentId?: string | null }) => ipcRenderer.invoke('companion:update', patch),
+  update: (patch: { enabled?: boolean; size?: number; agentId?: string | null; roam?: boolean }) => ipcRenderer.invoke('companion:update', patch),
   resetPosition: () => ipcRenderer.invoke('companion:reset'),
   open: (panel: 'chat' | 'settings' = 'chat') => ipcRenderer.invoke('companion:open', panel),
   close: () => ipcRenderer.invoke('companion:close'),
@@ -1073,4 +1073,17 @@ contextBridge.exposeInMainWorld('allternitCompanion', {
     ipcRenderer.on('companion:state', listener);
     return () => ipcRenderer.removeListener('companion:state', listener);
   },
+  // Desktop pet activity. The app window reports its pet state; the pet window
+  // plays it, shows the unread badge and walks when roaming.
+  activity: {
+    report: (state: string) => ipcRenderer.send('companion:activity', state),
+    get: () => ipcRenderer.invoke('companion:activity-get'),
+    on: (callback: (activity: unknown) => void) => {
+      const listener = (_event: IpcRendererEvent, activity: unknown) => callback(activity);
+      ipcRenderer.on('companion:activity', listener);
+      return () => ipcRenderer.removeListener('companion:activity', listener);
+    },
+    setReducedMotion: (reduced: boolean) => ipcRenderer.send('companion:motion-pref', reduced),
+  },
+  toggleMain: () => ipcRenderer.invoke('companion:toggle-main'),
 });
