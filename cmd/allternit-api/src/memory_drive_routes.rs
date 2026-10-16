@@ -37,6 +37,7 @@ pub fn memory_drive_router() -> Router<Arc<AppState>> {
         .route("/memory/drive/health", get(health))
         .route("/memory/drive/import", post(import))
         .route("/memory/drive/import-text", post(import_text))
+        .route("/memory/drive/import-agents", get(list_agent_imports).post(import_agents))
         .route("/memory/drive/purge", post(purge))
         .route("/memory/drive/peers", get(list_peers))
         .route("/memory/drive/peers/:peer_id", axum::routing::put(save_peer))
@@ -556,6 +557,8 @@ struct TextImportBody {
     from: String,
     #[serde(default)]
     apply: bool,
+    /// Import only these previewed memories. All of them when absent.
+    selected: Option<Vec<String>>,
 }
 
 /// Import memories pasted or uploaded from another assistant. Dry run
@@ -570,7 +573,47 @@ async fn import_text(State(state): State<Arc<AppState>>, Extension(user): Extens
             let plan = crate::memory_drive_text_import::plan(&ctx.0.db, &ctx.1.user_id, &b.text, &b.from)?;
             return Ok(json!({ "dry_run": true, "plan": plan }));
         }
-        let (revision, imported) = crate::memory_drive_text_import::apply(&ctx.0.db, &ctx.1.user_id, &b.text, &b.from)?;
+        let (revision, imported) =
+            crate::memory_drive_text_import::apply(&ctx.0.db, &ctx.1.user_id, &b.text, &b.from, b.selected.as_deref())?;
+        Ok(json!({ "dry_run": false, "revision": revision, "imported": imported }))
+    })
+    .await
+}
+
+fn agent_import_home() -> Result<std::path::PathBuf, ServiceError> {
+    crate::memory_drive_agent_import::home().ok_or_else(|| ServiceError::Provenance("This computer has no home folder to read.".into()))
+}
+
+/// Agents on this computer (Claude Code, Codex, Hermes, OpenClaw) whose
+/// memory files can be imported, with counts.
+async fn list_agent_imports(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>) -> Response {
+    run(state, user, move |ctx| {
+        open(ctx, None, false)?;
+        Ok(json!({ "sources": crate::memory_drive_agent_import::detect(&agent_import_home()?) }))
+    })
+    .await
+}
+
+#[derive(Deserialize)]
+struct AgentImportBody {
+    source: String,
+    #[serde(default)]
+    apply: bool,
+    selected: Option<Vec<String>>,
+}
+
+/// Import another agent's memory files from this computer. Dry run unless
+/// `apply` is true; apply is one commit.
+async fn import_agents(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Json(b): Json<AgentImportBody>) -> Response {
+    run(state, user, move |ctx| {
+        open(ctx, None, b.apply)?;
+        let home = agent_import_home()?;
+        if !b.apply {
+            let plan = crate::memory_drive_agent_import::plan(&ctx.0.db, &ctx.1.user_id, &home, &b.source)?;
+            return Ok(json!({ "dry_run": true, "plan": plan }));
+        }
+        let (revision, imported) =
+            crate::memory_drive_agent_import::apply(&ctx.0.db, &ctx.1.user_id, &home, &b.source, b.selected.as_deref())?;
         Ok(json!({ "dry_run": false, "revision": revision, "imported": imported }))
     })
     .await

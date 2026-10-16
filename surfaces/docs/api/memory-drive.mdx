@@ -126,12 +126,42 @@ Old rows stay visible for 30 days after the import and are then hidden. They are
 
 ### `POST /memory/drive/import-text`
 
-Imports memories from another assistant. Body `{ text, from: "chatgpt" | "claude" | "other", apply? }`.
-`text` is plain lines, bullets, a numbered list, or JSON (an array of strings, or objects
-with `content`, `memory` or `text`), up to 500 items and 512 KB.
+Imports memories from another assistant. Body `{ text, from, apply?, selected? }`, where `from` is
+`chatgpt`, `claude`, `gemini`, `grok`, `copilot`, `perplexity`, `meta`, `kimi`, `mistral` or `other`.
+`text` is plain lines, bullets, a numbered list (code fences are ignored), or JSON (an array of
+strings, or objects with `content`, `memory` or `text`), up to 500 items and 512 KB.
 
-- Dry run: `{ dry_run: true, plan: { from, path, entries: [text], skipped: [{ text, reason }] } }`.
-- `apply: true`: one commit to `imports/<from>.md`, returns `{ dry_run: false, revision, imported }`.
+- Dry run: `{ dry_run: true, plan: { from, path, entries: [text], skipped: [{ text, reason }], remaining } }`.
+- `apply: true`: one commit to `path` (for example `imports/gemini.md`), returns `{ dry_run: false, revision, imported }`.
+  `selected: [text]` imports only those previewed entries.
+
+Each line's source is `<assistant>:memory-import` (`meta-ai:` for Meta AI, `le-chat:` for Le Chat).
+Computers older than this change accept only `chatgpt`, `claude` and `other` and answer
+`400 from must be …` for the rest; the app then imports as `other`.
+
+### `GET /memory/drive/import-agents`
+
+Lists agents on the computer that holds the drive whose memory files can be imported:
+`{ sources: [{ id, name, files, items }] }`, where `id` is `claude-code`, `codex`, `hermes` or
+`openclaw`. Only these fixed paths under the home folder are read:
+
+| Agent | Files |
+| --- | --- |
+| Claude Code | `~/.claude/CLAUDE.md`; `~/.claude/projects/*/memory/*.md` except `MEMORY.md` (one memory per file, its `description`) |
+| Codex | `~/.codex/AGENTS.md`; `~/.codex/memories/*.md` and one folder down |
+| Hermes | `~/.hermes/memories/{USER,MEMORY}.md` and `~/.hermes/profiles/*/memories/{USER,MEMORY}.md` (entries split on `§`) |
+| OpenClaw | `~/.openclaw/workspace/{USER,MEMORY}.md` |
+
+Markdown files give one item per bullet or paragraph; headings, tables, code blocks and comments
+are left out. Files over 512 KB and symlinks are skipped. Older computers answer 404.
+
+### `POST /memory/drive/import-agents`
+
+Body `{ source, apply?, selected? }`. Same plan and result shapes as `import-text`. Items run
+through the same checks (too long, looks like a secret, listed twice, already remembered) and each
+keeps the file it came from as its source, for example `claude-code:memory/<project>/<file>.md`.
+One run takes up to 500 items, newest files first; `plan.remaining` says how many are left for
+the next run. The commit goes to `imports/<source>.md`.
 
 ### `POST /memory/drive/purge`
 

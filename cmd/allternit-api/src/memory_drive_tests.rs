@@ -514,7 +514,7 @@ fn import_from_another_assistant_previews_then_commits_once() {
     let reasons: Vec<&str> = plan.skipped.iter().map(|s| s.reason).collect();
     assert_eq!(reasons, vec!["already remembered", "looks like a password or key", "listed twice"]);
     let n = commits(&f.db, "u1");
-    let (_, imported) = crate::memory_drive_text_import::apply(&f.db, "u1", text, "chatgpt").unwrap();
+    let (_, imported) = crate::memory_drive_text_import::apply(&f.db, "u1", text, "chatgpt", None).unwrap();
     assert_eq!(imported, 2);
     assert_eq!(commits(&f.db, "u1"), n + 1);
     assert!(drive_files(&f.db, "u1")["imports/chatgpt.md"].contains("Uses Rust daily [source: chatgpt:memory-import;"));
