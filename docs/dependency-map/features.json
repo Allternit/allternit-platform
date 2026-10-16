@@ -1268,6 +1268,30 @@
         "allternit/services/subscription-gateway/adapters/vellum-assistant/provider.ts",
         "allternit-ai/src/lib/gateway/bot-projects.ts"
       ]
+    },
+    {
+      "id": "feature:desktop-pet",
+      "label": "Desktop pets and animated avatars (Petdex standard)",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Bot avatars play Petdex-standard sprite sheets (8 columns of 192x208, 11 rows: idle, running-right/left, waving, jumping, failed, waiting, running, review, sleep, special). Characters without real frames hop. Later steps: one pet-activity signal from agent turns, in-app reactions, the floating Desktop pet (roam, badge, bubbles) and a loopback hook port for terminal agents.",
+      "touches": [
+        "allternit-ai/src/lib/agents",
+        "allternit-ai/src/views/bots",
+        "allternit-ai/src/pages",
+        "allternit-ai/src/components/desktop-companion",
+        "allternit/surfaces/allternit-desktop"
+      ],
+      "evidence": [
+        "allternit-ai/src/views/bots/AnimatedBotSprite.tsx",
+        "allternit/surfaces/allternit-desktop/src/main/desktop-companion.ts"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-15",
+          "note": "Eoj approved the desktop pet plan (8 PRs) after seeing Hermes Agent + Petdex. Sheets adopt the Petdex standard. Avatars without real frames hop (free approach). Muse in Gizzi Brawl is Jolly. Hook port 127.0.0.1:7787, not shared with anything else. Plan: agent-ledger/summaries/2026-10-15-2245-claude-desktop-pets-petdex.md."
+        }
+      ]
     }
   ],
   "journeys": [
