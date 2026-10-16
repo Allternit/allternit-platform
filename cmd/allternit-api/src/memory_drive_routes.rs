@@ -47,6 +47,8 @@ pub fn memory_drive_router() -> Router<Arc<AppState>> {
         .route("/memory/drive/ledger/file", get(ledger_file))
         .route("/memory/drive/ledger/snapshot", post(ledger_snapshot))
         .route("/memory/drive/ledger/download", get(ledger_download))
+        .route("/memory/drive/copies", get(get_copies).put(put_copies))
+        .route("/memory/drive/copies/run", post(run_copies))
         .route("/memory/drive/purge", post(purge))
         .route("/memory/drive/peers", get(list_peers))
         .route("/memory/drive/peers/:peer_id", axum::routing::put(save_peer))
@@ -96,6 +98,8 @@ fn error(e: ServiceError) -> Response {
             err(StatusCode::INTERNAL_SERVER_ERROR, "Memory storage is unavailable. Retry later.")
         }
         ServiceError::Drive(DriveError::OwnerMismatch) => err(StatusCode::NOT_FOUND, "Memory drive not found."),
+        // These messages are written for people; show them without the error-kind prefix.
+        ServiceError::Provenance(message) => err(StatusCode::BAD_REQUEST, message),
         _ => err(StatusCode::BAD_REQUEST, e.to_string()),
     }
 }
@@ -971,4 +975,68 @@ async fn ledger_download(State(state): State<Arc<AppState>>, Extension(user): Ex
         Ok(Err(e)) => error(e),
         Err(_) => err(StatusCode::INTERNAL_SERVER_ERROR, "Memory request failed. Retry later."),
     }
+}
+
+/// Where copies of the drive and ledger are kept (the token is never returned).
+async fn get_copies(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>) -> Response {
+    run(state, user, move |ctx| {
+        open(ctx, None, false)?;
+        Ok(crate::memory_copies::load(&ctx.0.db.connect()?, &ctx.1.user_id).public())
+    })
+    .await
+}
+
+#[derive(Deserialize)]
+struct CopiesBody {
+    /// A folder path; "" stops the folder copy.
+    folder_path: Option<String>,
+    /// An HTTPS git remote; "" stops the git copy.
+    git_url: Option<String>,
+    /// A new access token; "" removes the saved one; absent keeps it.
+    git_token: Option<String>,
+}
+
+/// Change where copies go, then copy once right away.
+async fn put_copies(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Json(b): Json<CopiesBody>) -> Response {
+    use crate::memory_copies as copies;
+    run(state, user, move |ctx| {
+        open(ctx, None, true)?;
+        let conn = ctx.0.db.connect()?;
+        let mut c = copies::load(&conn, &ctx.1.user_id);
+        if let Some(path) = b.folder_path {
+            c.folder = if path.trim().is_empty() {
+                None
+            } else {
+                let p = copies::check_folder(&path)?;
+                Some(copies::FolderCopy { path: p.to_string_lossy().into_owned(), status: Default::default() })
+            };
+        }
+        if let Some(url) = b.git_url {
+            c.git = if url.trim().is_empty() {
+                None
+            } else {
+                let url = copies::check_remote(&url)?;
+                let token = c.git.as_ref().filter(|g| g.url == url).map(|g| g.token.clone()).unwrap_or_default();
+                Some(copies::GitCopy { url, token, status: Default::default() })
+            };
+        }
+        if let (Some(token), Some(g)) = (b.git_token, c.git.as_mut()) {
+            g.token = copies::seal_token(token.trim())?;
+        }
+        copies::store(&conn, &ctx.1.user_id, &c)?;
+        drop(conn);
+        crate::ledger::snapshot(&ctx.0.db, &ctx.1.user_id, "Save ledger")?;
+        Ok(copies::run(&ctx.0.db, &ctx.1.user_id)?.public())
+    })
+    .await
+}
+
+/// Copy now (it also happens every hour).
+async fn run_copies(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>) -> Response {
+    run(state, user, move |ctx| {
+        open(ctx, None, true)?;
+        crate::ledger::snapshot(&ctx.0.db, &ctx.1.user_id, "Save ledger")?;
+        Ok(crate::memory_copies::run(&ctx.0.db, &ctx.1.user_id)?.public())
+    })
+    .await
 }

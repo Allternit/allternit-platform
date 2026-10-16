@@ -241,6 +241,26 @@ credential-like keys are replaced, `git_remote` loses its userinfo, and any file
 
 Older computers answer 404.
 
+### Copies: `GET/PUT /memory/drive/copies`, `POST /memory/drive/copies/run`
+
+Copies of the drive and ledger kept elsewhere (`memory_copies.rs`), stored per user in
+`runtime_settings` (key `memory_copies`).
+
+- `GET` returns `{ folder: { path, status } | null, git: { url, has_token, status } | null }`, where
+  `status` is `{ last_at, last_error }`. The token is never returned.
+- `PUT` takes `{ folder_path?, git_url?, git_token? }`. `""` stops that copy; an absent field
+  leaves it as it is. The folder must be an existing absolute path. The remote must be HTTPS with
+  no credentials in it. The token is sealed with the platform key, and the request is refused if
+  sealing isn't available. The ledger is saved and both copies run once before the reply.
+- `POST /run` saves the ledger and runs the copies now. They also run after each hourly ledger snapshot.
+
+The folder copy writes `<folder>/Allternit/{memory,ledger}/…` and removes only files listed in its
+`.allternit-copy.json`. It never writes through a symlink. The git copy force-pushes the drive to
+`allternit-memory` and the ledger to `allternit-ledger` (force, because "delete forever" rewrites
+history). The token goes to git as an `http.extraHeader` through `GIT_CONFIG_*` environment
+variables, never on the command line or in the URL. Push errors are reported in plain words and
+never include the token.
+
 ### `POST /memory/drive/purge`
 
 Permanently removes entries from the drive and its whole history.

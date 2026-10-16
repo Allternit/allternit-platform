@@ -239,6 +239,28 @@ a file that still looks like it holds a key is left out and listed in the ledger
 
 Today the ledger is a copy. Changing a file in it doesn't change the bot or routine itself yet.
 
+## Keep a copy where you want
+
+Your Memory Drive and ledger live on the computer that holds your drive (Allternit Desktop, or your
+cloud computer). **Keep a copy where you want** in Settings → Memory adds a copy somewhere you
+choose, updated every hour:
+
+- **A folder on that computer.** Type its full path, such as `/Users/you/Dropbox` or your iCloud
+  Drive folder, and select **Copy here**. Allternit writes an `Allternit` folder inside it, with
+  `memory/` and `ledger/`, and keeps it in step. It only changes or removes files it wrote itself.
+  Edits you make in that copy are replaced on the next copy; change your memories in Allternit.
+- **Your own git repository.** Create an empty private repository (GitHub, GitLab, or any host that
+  takes HTTPS), paste its HTTPS address and an access token that can push to it, then select
+  **Copy to this repository**. Your memories go to the branch `allternit-memory` and your ledger
+  to `allternit-ledger`. The token is stored sealed on that computer and never shown again. Paste
+  a new one to replace it.
+
+Select **Copy now** to copy right away. Each copy shows when it last worked, or what went wrong and
+how to fix it. Select **Stop copying** to stop; copies already made stay where they are.
+
+**Delete forever** removes memories from your drive and its history, but not from copies you
+keep elsewhere. Delete them there yourself, or stop the copy first.
+
 ## Use it from other agents
 
 Select **Clone this drive** to get the drive's address and create a token:
