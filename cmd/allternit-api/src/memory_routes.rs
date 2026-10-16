@@ -996,6 +996,10 @@ async fn record_observation_v2_handler(
         }
     };
 
+    if payload.session_id.as_deref().is_some_and(|s| state.db.is_session_ephemeral(s).unwrap_or(false)) {
+        return (StatusCode::OK, Json(json!({"status": "skipped", "reason": "incognito"})));
+    }
+
     match crate::memory_kernel_service::record_observation(
         &state.db,
         &user.user_id,
@@ -1083,6 +1087,11 @@ async fn retain_turn_v2_handler(
             )
         }
     };
+
+    // Incognito chats are never remembered, whichever surface sends them.
+    if payload.session_id.as_deref().is_some_and(|s| state.db.is_session_ephemeral(s).unwrap_or(false)) {
+        return (StatusCode::OK, Json(json!({"status": "skipped", "reason": "incognito"})));
+    }
 
     // User turns: record now, extract in the background with the model
     // (memory_extraction), so the chat never waits on memory.

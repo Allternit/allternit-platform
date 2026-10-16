@@ -140,13 +140,28 @@ fn session_source(conn: &Connection, owner: &str, fact: &NewFact) -> Result<(Opt
     Ok((None, None))
 }
 
+/// The provenance label an observation was recorded with (e.g.
+/// `telegram:chat/123` for a channel turn), when it is a valid label. Web
+/// turns carry `user`, which is not one.
+fn observation_label(conn: &Connection, owner: &str, obs: &str) -> Result<Option<String>> {
+    let source: Option<String> = conn
+        .query_row("SELECT source FROM memory_observations WHERE id=?1 AND user_id=?2", params![obs, owner], |r| r.get(0))
+        .optional()?
+        .flatten();
+    Ok(source.filter(|s| s.contains(':') && crate::memory_drive::validate_source(s).is_ok()))
+}
+
 fn build_entry(conn: &Connection, owner: &str, fact: &NewFact, today: &str) -> Result<Option<(String, Entry)>> {
     let text = fact.text.split_whitespace().collect::<Vec<_>>().join(" ");
     if text.is_empty() || crate::memory_kernel_service::mentions_secret(&text) {
         return Ok(None);
     }
     let (session_link, session) = session_source(conn, owner, fact)?;
-    let source = fact.source.clone().or(session_link).unwrap_or_else(|| match &fact.observation {
+    let label = match (&fact.source, &session_link, &fact.observation) {
+        (None, None, Some(obs)) => observation_label(conn, owner, obs)?,
+        _ => None,
+    };
+    let source = fact.source.clone().or(session_link).or(label).unwrap_or_else(|| match &fact.observation {
         Some(obs) => format!("allternit:observation/{obs}"),
         None => "/?view=settings&section=memory".to_string(),
     });

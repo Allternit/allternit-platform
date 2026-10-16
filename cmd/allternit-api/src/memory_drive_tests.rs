@@ -549,3 +549,54 @@ fn bots_use_the_questions_board_with_their_owners_access() {
     assert!(scopes::tool_questions(&f.db, "stranger", "b2", "memory_questions", &args(serde_json::json!({ "drive": "team:ws1" }))).is_err());
     assert!(scopes::tool_questions(&f.db, "owner", "b1", "memory_questions", &args(serde_json::json!({ "drive": "personal" }))).is_err());
 }
+
+#[test]
+fn capture_counts_and_forgets_by_source() {
+    let f = fixture();
+    crate::memory_drive_text_import::apply(&f.db, "u1", "- Likes tea\n- Has a dog", "chatgpt", None).unwrap();
+    crate::memory_drive_text_import::apply(&f.db, "u1", "- Runs 5k", "gemini", None).unwrap();
+    let conn = f.db.connect().unwrap();
+    let counts = crate::memory_capture::counts(&conn, "u1").unwrap();
+    assert_eq!(counts.iter().map(|c| (c.scheme.as_str(), c.memories)).collect::<Vec<_>>(), vec![("chatgpt", 2), ("gemini", 1)]);
+
+    let n = commits(&f.db, "u1");
+    let (_, removed) = crate::memory_capture::forget_source(&f.db, "u1", "chatgpt").unwrap();
+    assert_eq!(removed, 2);
+    assert_eq!(commits(&f.db, "u1"), n + 1);
+    let files = drive_files(&f.db, "u1");
+    assert!(!files.get("imports/chatgpt.md").is_some_and(|t| t.contains("Likes tea")));
+    assert!(files["imports/gemini.md"].contains("Runs 5k"));
+    assert_eq!(crate::memory_capture::forget_source(&f.db, "u1", "chatgpt").unwrap().1, 0);
+}
+
+#[test]
+fn capture_switches_gate_recording_and_channel_facts_cite_the_channel() {
+    let f = fixture();
+    let label = crate::memory_capture::channel_label("telegram", "42");
+    let obs = crate::memory_capture::record_turn(&f.db, "u1", crate::memory_capture::Source::Channels, &label, "I moved to Saint Paul").unwrap();
+    let obs = obs.expect("channels are on by default");
+    // A fact extracted from that turn cites the channel, not an internal id.
+    let fact = crate::memory_drive_writer::NewFact { text: "User lives in Saint Paul.".into(), observation: Some(obs), ..Default::default() };
+    crate::memory_drive_writer::commit_facts(&f.db, "u1", &[fact], &[], "Remember from conversation").unwrap();
+    assert!(drive_files(&f.db, "u1").values().any(|t| t.contains("User lives in Saint Paul. [source: telegram:chat/42;")));
+
+    let conn = f.db.connect().unwrap();
+    let mut s = crate::memory_capture::settings(&conn, "u1");
+    s.channels = false;
+    crate::memory_capture::save(&conn, "u1", &s).unwrap();
+    assert_eq!(crate::memory_capture::record_turn(&f.db, "u1", crate::memory_capture::Source::Channels, &label, "More news").unwrap(), None);
+    assert!(crate::memory_capture::record_turn(&f.db, "u1", crate::memory_capture::Source::Gizzi, "gizzi:session/s1", "Use pnpm").unwrap().is_some());
+    assert_eq!(crate::memory_capture::record_turn(&f.db, "u1", crate::memory_capture::Source::Gizzi, "gizzi:session/s1", "/help").unwrap(), None);
+}
+
+#[test]
+fn agent_folder_sync_is_repeatable() {
+    let f = fixture();
+    let home = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(home.path().join(".hermes/memories")).unwrap();
+    std::fs::write(home.path().join(".hermes/memories/USER.md"), "Lives in Saint Paul§Has a dog").unwrap();
+    assert_eq!(crate::memory_capture::sync_agent_folders(&f.db, "u1", home.path()), 2);
+    assert_eq!(crate::memory_capture::sync_agent_folders(&f.db, "u1", home.path()), 0);
+    std::fs::write(home.path().join(".hermes/memories/USER.md"), "Lives in Saint Paul§Has a dog§Plays piano").unwrap();
+    assert_eq!(crate::memory_capture::sync_agent_folders(&f.db, "u1", home.path()), 1);
+}
