@@ -43,6 +43,10 @@ pub fn memory_drive_router() -> Router<Arc<AppState>> {
         .route("/memory/drive/capture", get(get_capture).put(put_capture))
         .route("/memory/drive/capture/turn", post(capture_turn))
         .route("/memory/drive/forget-source", post(forget_source))
+        .route("/memory/drive/ledger", get(ledger_info))
+        .route("/memory/drive/ledger/file", get(ledger_file))
+        .route("/memory/drive/ledger/snapshot", post(ledger_snapshot))
+        .route("/memory/drive/ledger/download", get(ledger_download))
         .route("/memory/drive/purge", post(purge))
         .route("/memory/drive/peers", get(list_peers))
         .route("/memory/drive/peers/:peer_id", axum::routing::put(save_peer))
@@ -882,4 +886,89 @@ async fn forget_source(State(state): State<Arc<AppState>>, Extension(user): Exte
         Ok(json!({ "revision": revision, "removed": removed, "more": removed >= crate::memory_capture::MAX_FORGET }))
     })
     .await
+}
+
+fn ledger_err(e: crate::ledger_repo::LedgerRepoError) -> ServiceError {
+    ServiceError::Provenance(e.to_string())
+}
+
+/// The ledger: its files, recent history and what each change touched.
+async fn ledger_info(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>) -> Response {
+    run(state, user, move |ctx| {
+        open(ctx, None, false)?;
+        let repo = crate::ledger::repo_for(&ctx.0.db, &ctx.1.user_id)?;
+        let history: Vec<Value> = repo
+            .history(20)
+            .map_err(ledger_err)?
+            .into_iter()
+            .map(|c| {
+                let changed = repo.changed(&c.revision).unwrap_or_default();
+                json!({ "revision": c.revision, "timestamp": c.timestamp, "message": c.message, "changed": changed.len(), "paths": changed.into_iter().take(20).collect::<Vec<_>>() })
+            })
+            .collect();
+        Ok(json!({ "revision": repo.head(), "files": repo.files(None).map_err(ledger_err)?, "history": history }))
+    })
+    .await
+}
+
+#[derive(Deserialize)]
+struct LedgerFileQuery {
+    path: String,
+    revision: Option<String>,
+}
+
+async fn ledger_file(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Query(q): Query<LedgerFileQuery>) -> Response {
+    run(state, user, move |ctx| {
+        open(ctx, None, false)?;
+        if let Some(r) = q.revision.as_deref() {
+            crate::memory_drive::validate_oid(r).map_err(|e| ServiceError::Provenance(e.to_string()))?;
+        }
+        let repo = crate::ledger::repo_for(&ctx.0.db, &ctx.1.user_id)?;
+        let bytes = repo.read(&q.path, q.revision.as_deref()).map_err(ledger_err)?.ok_or(ServiceError::NotFound)?;
+        Ok(json!({ "path": q.path, "content": String::from_utf8_lossy(&bytes) }))
+    })
+    .await
+}
+
+/// Save a snapshot now (it also runs every hour).
+async fn ledger_snapshot(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>) -> Response {
+    run(state, user, move |ctx| {
+        open(ctx, None, true)?;
+        let revision = crate::ledger::snapshot(&ctx.0.db, &ctx.1.user_id, "Save ledger")?;
+        Ok(json!({ "changed": revision.is_some(), "revision": revision }))
+    })
+    .await
+}
+
+/// The ledger as a zip (`ledger/…`), latest or at `revision`.
+async fn ledger_download(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Query(q): Query<DriveQuery>) -> Response {
+    if user.user_id.is_empty() {
+        return err(StatusCode::UNAUTHORIZED, "Sign in to use your memory drive.");
+    }
+    let rev = q.revision.clone();
+    let result = tokio::task::spawn_blocking(move || -> service::Result<Option<Vec<u8>>> {
+        if let Some(r) = rev.as_deref() {
+            crate::memory_drive::validate_oid(r).map_err(|e| ServiceError::Provenance(e.to_string()))?;
+        }
+        let repo = crate::ledger::repo_for(&state.db, &user.user_id)?;
+        if repo.head().is_none() {
+            crate::ledger::snapshot(&state.db, &user.user_id, "Save ledger")?;
+        }
+        repo.zip(rev.as_deref()).map_err(ledger_err)
+    })
+    .await;
+    match result {
+        Ok(Ok(Some(bytes))) => (
+            StatusCode::OK,
+            [
+                (axum::http::header::CONTENT_TYPE, "application/zip"),
+                (axum::http::header::CONTENT_DISPOSITION, "attachment; filename=\"allternit-ledger.zip\""),
+            ],
+            bytes,
+        )
+            .into_response(),
+        Ok(Ok(None)) => err(StatusCode::NOT_FOUND, "Your ledger is empty."),
+        Ok(Err(e)) => error(e),
+        Err(_) => err(StatusCode::INTERNAL_SERVER_ERROR, "Memory request failed. Retry later."),
+    }
 }

@@ -206,7 +206,8 @@ fn folder_sync_owners(conn: &Connection) -> rusqlite::Result<Vec<String>> {
 pub fn spawn(db: DbHandle) {
     let db = Arc::new(db);
     tokio::spawn(async move {
-        let mut tick = tokio::time::interval(FOLDER_SYNC_EVERY);
+        // Not at boot: start a few minutes after the app is up.
+        let mut tick = tokio::time::interval_at(tokio::time::Instant::now() + std::time::Duration::from_secs(5 * 60), FOLDER_SYNC_EVERY);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tick.tick().await;
