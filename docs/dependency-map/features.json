@@ -279,12 +279,12 @@
       "description": "Agent memory as a drive: notes, retrieval and nightly consolidation shared by bots, the workspace and gizzi.",
       "touches": [
         "allternit-ai/src/components/memory",
-        "allternit-ai/src/views/settings/memory-drive",
         "allternit/cmd/allternit-api/src/memory_*",
         "allternit/cmd/allternit-api/src/memory_retrieve",
         "allternit/cmd/allternit-api/src/memory_consolidation",
         "allternit/cmd/allternit-api/src/memory_relations",
-        "allternit/services/memory"
+        "allternit/services/memory",
+        "allternit-ai/src/views/settings"
       ],
       "decisions": [
         {
@@ -1381,12 +1381,8 @@
       "status": "building",
       "description": "Server-owned alerts: every failed, missed or bot-less routine (and later a down lane, a loop guard hold or a held send) opens one attention item, pushes it, re-notifies until fixed and shows in the needs-you inbox with Retry and Dismiss.",
       "touches": [
-        "allternit/cmd/allternit-api/src/netops",
-        "allternit/cmd/allternit-api/src/routine_local_scheduler.rs",
-        "allternit/cmd/allternit-api/src/inbox_needs.rs",
-        "allternit/cmd/allternit-api/src/events_feed.rs",
-        "allternit/cmd/allternit-api/src/runtime_events.rs",
-        "allternit/cmd/allternit-cloud-api/src/routes/notifications.rs",
+        "allternit/cmd/allternit-api",
+        "allternit/cmd/allternit-cloud-api",
         "allternit-ai/src/components/inbox",
         "allternit-ai/src/lib/inbox"
       ],
