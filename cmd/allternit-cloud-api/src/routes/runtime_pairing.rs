@@ -737,6 +737,23 @@ async fn exchange_pairing(
         // Post-commit: consume the one-time code, flip to running, open the
         // metering interval (services::provisioning).
         crate::services::activate_registered_device(&state.db, provisioned_instance_id).await?;
+        // The always-on computer becomes the default node unless the user
+        // already pinned one, so phone and web stop flipping between it and
+        // a laptop by heartbeat timing. Best-effort: pairing must not fail on it.
+        if let Err(error) = sqlx::query(
+            r#"
+            INSERT INTO user_node_preferences (user_id, surface, node_id)
+            VALUES ($1, '*', $2)
+            ON CONFLICT (user_id, surface) DO NOTHING
+            "#,
+        )
+        .bind(&user_id)
+        .bind(&runtime_id)
+        .execute(&state.db)
+        .await
+        {
+            tracing::warn!(%error, %runtime_id, "could not pin the cloud computer as the default node");
+        }
         // A paid computer's first pairing: "your cloud computer is ready".
         crate::services::customer_emails::spawn_computer_ready(
             state.db.clone(),
