@@ -52,4 +52,5 @@ For developers working in `allternit-ai`:
 - `/b/<id>` is served by a Pages Function. It returns the PWA shell with the title, `apple-mobile-web-app-title` and `<link rel="manifest">` pointed at the bot. The bot's manifest has its own `id` (`/b/<id>`) and `start_url`, so each bot installs as a separate app.
 - The phone shell opens the bot with the same calls a Bots-list tap uses (`openBotChatImmediately` then `useStartBotSession`). In a browser it also swaps the Apple touch icon for the rendered avatar. When the person leaves the bot, the page head and the address go back to the app's own, so adding the app later adds Allternit.
 - `/b/<id>` with an id the account doesn't have shows a toast and goes to `/`.
+- The PWA service worker never stores a `/b/<id>` page as the offline app shell (it would carry that bot's name). Offline, bot pages fall back to the shell and the app names the page itself.
 - The m.allternit.com deploy is a separate step from merging `allternit-ai`. See the deploy runbook.
