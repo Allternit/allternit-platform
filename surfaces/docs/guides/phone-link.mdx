@@ -11,18 +11,28 @@ Phone Link is being built and isn't in the app yet. The setup screens arrive in 
 
 ## Android
 
-You need Allternit Desktop, a USB cable, and the phone on the same Wi-Fi as your computer.
+You need Allternit Desktop, a USB cable, and the phone on the same Wi-Fi as your computer. Sign in to the AI apps on your phone first: Allternit uses them as you're signed in.
 
 1. On the phone, turn on **Developer options**: Settings › About phone › tap **Build number** seven times.
 2. Turn on **USB debugging** in Settings › Developer options.
-3. Plug the phone into your computer and start Phone Link. When the phone asks **Allow USB debugging?**, tap **Allow**.
+3. Plug the phone into your computer and start Phone Link. When the phone asks **Allow USB debugging?**, tap **Allow**. If it shows a **Use USB for** menu, pick **No data transfer**; the choice doesn't matter.
 4. Allternit lists the AI apps it finds on the phone, then switches the connection to Wi-Fi. When it says **Connected**, you can unplug the cable.
 
 If the phone restarts, plug it in again to reconnect over Wi-Fi.
 
 ## iPhone
 
-iPhone setup will be one cable session with your Mac. You'll tap **Trust**, sign in with your own Apple ID in Allternit Desktop, turn on Developer Mode, and trust the developer certificate. After that it works over Wi-Fi. You do **not** need to put the iPhone in DFU or recovery mode. If you'd rather use hardware, the [Allternit USB Agent](/guides/usb-agent) already works.
+You need Allternit Desktop on a Mac and a cable, once. After setup the iPhone works over Wi-Fi.
+
+1. **Plug the iPhone into your Mac.** A normal plug-in: not DFU or recovery mode.
+2. **Unlock it and tap Trust**, then enter your passcode.
+3. **Sign in with your Apple ID** in Allternit Desktop. A free Apple ID works. It's used only to sign the Allternit helper for your own phone, and it stays in your Mac's Keychain.
+4. **Turn on Developer Mode.** Allternit makes the switch appear: Settings › Privacy & Security › **Developer Mode** › On › **Restart**.
+5. **After the restart, unlock the phone.** A popup asks **Turn on Developer Mode?** Tap **Turn On** and enter your passcode. This is the step people miss; without it Developer Mode stays off.
+6. **Trust the helper:** Settings › General › VPN & Device Management › your Apple ID › **Trust**.
+7. Allternit installs the helper. When it says **Connected**, you can unplug the cable.
+
+If you'd rather use hardware, the [Allternit USB Agent](/guides/usb-agent) also works.
 
 ## For developers
 
