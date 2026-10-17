@@ -185,6 +185,18 @@
       "label": "anisette v3 server (anisette.allternit.com, not hosted yet)",
       "kind": "external",
       "path": "allternit/cmd/allternit-sideload/README.md"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/phone_ws.rs",
+      "label": "phone stream relay",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/phone_ws.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-cloud-api/src/routes/registered_phones.rs",
+      "label": "registered phones",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-cloud-api/src/routes/registered_phones.rs"
     }
   ],
   "edges": [
@@ -521,9 +533,12 @@
     {
       "source": "allternit-ai/src/components/computers",
       "target": "allternit/surfaces/allternit-desktop",
-      "kind": "Electron IPC phone:* (Android pairing, screenshots) and phone:usb-* (USB Agent setup, calibrate, stop, forget)",
+      "kind": "Electron IPC phone:* (Android pairing, screenshots, in-app live view: phone:stream-* pushes Annex-B H.264 chunks + phone:stream-{start,stop,status,input,display-power}) and phone:usb-* (USB Agent setup, calibrate, stop, forget)",
       "evidence": [
         "allternit/surfaces/allternit-desktop/src/preload/index.ts",
+        "allternit/surfaces/allternit-desktop/src/main/phone-ipc.ts",
+        "allternit/surfaces/allternit-desktop/src/main/phone-scrcpy.ts",
+        "allternit/surfaces/allternit-desktop/src/main/phone-stream.ts",
         "allternit-ai/src/lib/phones-bridge.ts"
       ]
     },
@@ -622,6 +637,23 @@
       "kind": "HTTPS + WebSocket anisette v3 (provisioning, headers)",
       "evidence": [
         "allternit/cmd/allternit-sideload/src/main.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api/src/phone_ws.rs",
+      "target": "allternit/cmd/allternit-cloud-api/src/routes/registered_phones.rs",
+      "kind": "authenticated HTTP (runtime device bearer): upsert + list registered phones by account; identity + last_seen only, never stream data",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/phone_ws.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/registered_phones.rs"
+      ]
+    },
+    {
+      "source": "surface:ai",
+      "target": "allternit/cmd/allternit-api/src/phone_ws.rs",
+      "kind": "authenticated HTTP + public token-gated websocket (/api/v1/phones, /api/v1/phones/:serial/ws-token, /ws/phones/:serial/stream)",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/phone_ws.rs"
       ]
     }
   ]
