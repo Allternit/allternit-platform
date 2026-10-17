@@ -1487,6 +1487,26 @@
         "allternit/surfaces/docs/architecture/first-run-setup.mdx",
         "allternit/surfaces/docs/api/onboarding.mdx"
       ]
+    },
+    {
+      "id": "feature:platform-console-onboarding",
+      "label": "Console sign-in and developer setup",
+      "product": "product:cloud-console",
+      "status": "building",
+      "description": "platform.allternit.com sign-in/sign-up with the looping API/Models/Compute/Runs previews, and the first-run setup for new accounts (organization, where workloads run, API key, first call, plan) ending in a connected view of the account.",
+      "touches": [
+        "allternit/surfaces/platform.allternit.com"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-16",
+          "note": "Approved prototype Platform.dc.html ported to React. Setup is offered only to sure-new accounts (no setup record, no org, both key lists empty); any unknown falls back to the Dashboard. 'Where it runs' is an account preference (Clerk unsafeMetadata), not routing; Run it uses the new gateway key against /v1/chat/completions like the Playground."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/surfaces/platform-console-onboarding.mdx",
+        "allternit/surfaces/platform.allternit.com/src/lib/__tests__/platform-setup.test.ts"
+      ]
     }
   ],
   "journeys": [
@@ -1807,6 +1827,28 @@
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/first-run-setup.mdx"
+      ]
+    },
+    {
+      "id": "journey:platform-first-run",
+      "label": "New developer: sign in to first API call",
+      "description": "From the console sign-in to a created org, a gateway key and a real first call.",
+      "steps": [
+        {
+          "at": "allternit/surfaces/platform.allternit.com",
+          "says": "Clerk sign-in (GitHub, Google, email) beside the looping console previews."
+        },
+        {
+          "at": "allternit/surfaces/platform.allternit.com",
+          "says": "On /, a sure-new account (no setup record, no org, no keys) is sent to /setup once."
+        },
+        {
+          "at": "allternit/surfaces/platform.allternit.com",
+          "says": "Creates the Clerk org and sandbox project, a gateway key shown once, runs one real /v1/chat/completions call, picks a plan, then shows the connected view and opens the Dashboard."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/surfaces/platform-console-onboarding.mdx"
       ]
     }
   ]

@@ -1,0 +1,55 @@
+---
+title: Console sign-in and setup
+description: The platform.allternit.com sign-in page and the developer first-run setup that follows it
+---
+
+<Note>
+**Status:** Implementation IMPLEMENTED × Exposure PUBLIC (ships with the next `allternit-platform` Pages deploy).
+</Note>
+
+## For developers signing in
+
+**Sign-in and sign-up** (`/sign-in`, `/sign-up`). The left side loops four short previews of the console: the API (a curl call and its response), Models (how a request is routed to your hardware, Allternit-managed compute or a cloud supplier), Compute and Runs (a run that waits for an approval). Use the arrows, the ticks, or click the preview to move on. The previews are illustrations, not your data. The right side is the normal sign-in: GitHub, Google or email. Below 1024 px wide the preview sits above the sign-in card.
+
+**First-run setup** (`/setup`). A new account goes here once after it signs in. Gizzi and A:// walk through five steps, and the graph on the left fills in as you answer:
+
+| Step | What happens | What is saved |
+|---|---|---|
+| 1 Organization | Personal or Team, plus a name | A real organization is created and made active. A sandbox project named `default` is created when the Platform API is enabled. |
+| 2 Where it runs | Your hardware, Allternit-managed compute, cloud suppliers (pick any) | A preference on your account. It does not change routing. Routing rules live in **Gateway → Routing policy**. |
+| 3 API key | Gateway API key (calls `/v1/chat/completions`) or scoped key (read, compute) | A real key. The full key is shown once with **Copy**, then only its prefix. |
+| 4 First call | curl, Python or TypeScript snippet for `https://api.allternit.com/v1/chat/completions` | **Run it** sends one real request with your new gateway key and shows the status and reply the API returned. Scoped keys can't call `/v1`, so the button is not offered for them. |
+| 5 Plan | Free tier (default), the paid plans from Billing, or Contact sales | A paid choice opens Billing checkout after setup. Nothing is charged before checkout. |
+
+After step 5 you see your platform: organization, projects, keys, plan, models, where workloads run, runs, schedules, webhooks, batches and SDKs. Counts come from your account. Tap a node to see what it is, or **Open** to go to its page. **Open Console** goes to the Dashboard.
+
+Every step has **Skip**, and **Skip setup** in the header leaves at once. Setup does not come back after you finish or skip it.
+
+## For contributors
+
+Source: `surfaces/platform.allternit.com`.
+
+| Piece | File |
+|---|---|
+| Sign-in / sign-up frame | `src/components/AuthPageShell.tsx`, `src/pages/SignInPage.tsx`, `src/pages/SignUpPage.tsx` |
+| Looping previews | `src/components/onboarding/ConsoleShowcase.tsx` |
+| Setup page and connected view | `src/pages/SetupPage.tsx`, `src/components/onboarding/GraphCanvas.tsx` |
+| Who gets setup | `src/lib/use-first-run-setup.ts`, `shouldOfferSetup` in `src/lib/platform-setup.ts` |
+| Account counts for the connected view | `src/components/onboarding/usePlatformSnapshot.ts` |
+| Styles and motion | `src/styles/onboarding.css` (classes `ob-*`, theme tokens follow `html[data-theme]`) |
+
+**Who is sent to setup.** `/` redirects to `/setup` only when all of these hold: no setup record (Clerk `unsafeMetadata.platformSetup` or this browser's copy), no organization membership, and both key lists (`GET /api/v1/gateway/keys`, `GET /api/v1/api-keys`) loaded and empty. Any failed request, or a 2.5 s budget, falls back to the Dashboard, and setup is offered at most once per browser session. Existing users are never routed into it.
+
+**APIs used.** Clerk `createOrganization` + `setActive` (or `POST /api/v1/me/organization` on no-Clerk builds), `GET/POST /api/v1/platform/projects`, `POST /api/v1/gateway/keys`, `POST /api/v1/api-keys`, `GET /v1/models`, `POST /v1/chat/completions` (with the new `ak-` key, as the Playground does), `GET /api/v1/billing/plans`, `GET /api/v1/billing/subscription`, and the list routes for devices, hosted runtimes, runs, schedules and webhooks. The full key lives only in page state; it is never logged or stored.
+
+**Saved state.** `unsafeMetadata.platformSetup = { status: "completed" | "skipped", at, places, plan }` and `unsafeMetadata.platformPreferences.places`.
+
+**Motion.** Scenes dwell 4.6 s; the next one slides in over 450 ms and the old one leaves over 320 ms. With reduced motion there is no autoplay, travel, bursts or packets, and the choice-pick block ripple is off.
+
+On phones (≤ 640 px) **Skip setup** sits in the rail next to Gizzi + A:// instead of the header.
+
+**Tests.** `pnpm test` (Vitest, `src/lib/__tests__/platform-setup.test.ts`) and `pnpm typecheck`.
+
+On localhost the production Clerk key does not render the sign-in card. Use a development Clerk key, or `VITE_DEV_AUTH_BYPASS=1` without a key to open `/setup` signed in as a mock user.
+
+See also [Platform](/surfaces/platform) and the [Platform API quickstart](/api/platform/quickstart).
