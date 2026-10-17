@@ -11,10 +11,10 @@ Without a configured provider the endpoint refuses: `501 allternit.not_configure
 
 ## Provider configuration
 
-The gateway proxies to the OpenAI-compatible backend named by `ALLTERNIT_GATEWAY_EMBED_URL` (full base URL, including `/v1`). When unset or empty, the endpoint returns `501 allternit.not_configured`.
+The gateway proxies to the embeddings backend named by `ALLTERNIT_GATEWAY_EMBED_URL` — the full base URL of a compatible embeddings API, including `/v1`. When unset or empty, the endpoint returns `501 allternit.not_configured`.
 
 ```bash
-# Any OpenAI-compatible embeddings backend you operate (self-hosted or cloud):
+# Any compatible embeddings backend you operate (self-hosted or cloud):
 ALLTERNIT_GATEWAY_EMBED_URL=https://embeddings.internal.example/v1
 ```
 
