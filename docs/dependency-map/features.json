@@ -1340,7 +1340,9 @@
         "allternit/surfaces/allternit-desktop/src/main/pet-hook-server.ts",
         "allternit/cmd/gizzi-code/src/cli/ui/ink-app/pet/desktopPetHook.ts",
         "allternit-ai/src/lib/bots/character-builder/recipe.ts",
-        "allternit-ai/src/views/bots/PortraitPetMotion.tsx"
+        "allternit-ai/src/views/bots/PortraitPetMotion.tsx",
+        "allternit-ai/public/avatar-packs/gizzi-brawl",
+        "allternit-ai/public/avatar-packs/dot-friends"
       ],
       "decisions": [
         {
@@ -1350,6 +1352,10 @@
         {
           "on": "2026-10-16",
           "note": "Eoj approved the full-size code-drawn Gizzi YouTube rig sheets (\"yes they are right\"). PR 2 ships them plus Gemini, Muse and Muse Wonder as Petdex v2 sheets, swapped in place at the same URLs so saved bots upgrade."
+        },
+        {
+          "on": "2026-10-16",
+          "note": "Phase 3: every Gizzi Brawl fighter and Super form redrawn as a Petdex v2 sheet and swapped in at the same URLs; Super Codex, Super Grok and Gizzi Lightning added to the pack. Eoj asked for ChatGPT-dots-style characters in Dot Friends \"like theirs but our own\" so users recognise them: Bleu, Lily, Sunny, Rosie added with v2 sheets."
         }
       ]
     },
