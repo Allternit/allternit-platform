@@ -1,0 +1,132 @@
+{
+ "formatVersion": 1,
+ "bundleId": "com.moonshot.kimichat",
+ "capturedAt": 0,
+ "root": {
+  "role": "AXApplication",
+  "title": "Kimi",
+  "path": [],
+  "children": [
+   {
+    "role": "AXWindow",
+    "title": "Kimi",
+    "path": [
+     0
+    ],
+    "children": [
+     {
+      "role": "AXWebArea",
+      "title": "Kimi",
+      "path": [
+       0,
+       0
+      ],
+      "children": [
+       {
+        "role": "AXGroup",
+        "description": "History",
+        "path": [
+         0,
+         0,
+         0
+        ],
+        "children": [
+         {
+          "role": "AXButton",
+          "title": "New Chat",
+          "actions": [
+           "AXPress"
+          ],
+          "path": [
+           0,
+           0,
+           0,
+           0
+          ]
+         }
+        ]
+       },
+       {
+        "role": "AXGroup",
+        "subrole": "AXApplicationAlert",
+        "path": [
+         0,
+         0,
+         1
+        ],
+        "children": [
+         {
+          "role": "AXStaticText",
+          "value": "You've reached your usage limit. Try again in 2 hours.",
+          "path": [
+           0,
+           0,
+           1,
+           0
+          ]
+         }
+        ]
+       },
+       {
+        "role": "AXPopUpButton",
+        "description": "Model",
+        "value": "",
+        "actions": [
+         "AXPress"
+        ],
+        "path": [
+         0,
+         0,
+         2
+        ]
+       },
+       {
+        "role": "AXGroup",
+        "description": "Conversation",
+        "path": [
+         0,
+         0,
+         3
+        ]
+       },
+       {
+        "role": "AXButton",
+        "title": "Upload",
+        "actions": [
+         "AXPress"
+        ],
+        "path": [
+         0,
+         0,
+         4
+        ]
+       },
+       {
+        "role": "AXTextArea",
+        "description": "Ask Anything",
+        "value": "",
+        "path": [
+         0,
+         0,
+         5
+        ]
+       },
+       {
+        "role": "AXButton",
+        "title": "Send",
+        "actions": [
+         "AXPress"
+        ],
+        "path": [
+         0,
+         0,
+         6
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+}
