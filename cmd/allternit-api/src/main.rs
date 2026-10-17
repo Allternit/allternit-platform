@@ -584,7 +584,7 @@ async fn main() {
         desktop_host_provisioner,
         bot_desktop_sessions: Arc::new(RwLock::new(HashMap::new())),
         computer_guest_tokens: Arc::new(RwLock::new(HashMap::new())),
-        phone_link: Arc::new(allternit_api::phone_ws::PhoneLinkRegistry::new_http()),
+        phone_link: allternit_api::phone_ws::PhoneLinkRegistry::new_http(),
         rails,
         vm_sessions: new_vm_session_store(),
         cowork_scheduler,
