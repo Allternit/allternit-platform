@@ -250,7 +250,15 @@ export class PhoneDeviceManager extends EventEmitter {
     if (run !== this.pairingRun) return;
     this.setPairing({ phase: 'connecting' });
 
-    const connected = await this.connectHost(host, null);
+    // The phone's _adb-tls-connect advertisement can take a second or two to
+    // reach this host's mDNS after the pair; a single attempt fails with
+    // "Paired, but could not connect" on a healthy network. Retry briefly.
+    let connected: string | null = null;
+    for (let attempt = 0; attempt < 4 && run === this.pairingRun; attempt += 1) {
+      connected = await this.connectHost(host, null);
+      if (connected) break;
+      await this.sleep(1_500);
+    }
     if (!connected) throw new Error('Paired, but could not connect. Make sure Wireless debugging is still on.');
     const row = await this.waitForOnline(connected);
     if (!row) throw new Error('Paired and connected, but the phone did not authorize this computer.');
