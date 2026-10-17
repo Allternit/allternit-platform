@@ -227,6 +227,27 @@ pub fn spawn(db: DbHandle) {
     });
 }
 
+/// Channels where the owner has a verified identity (the `verify <code>`
+/// pairing, or a Telegram bot paired to its owner). Capture needs one.
+pub fn verified_channels(conn: &Connection, owner: &str) -> Vec<String> {
+    let mut out: Vec<String> = conn
+        .prepare("SELECT DISTINCT channel FROM factory_owner_identities WHERE owner = ?1")
+        .and_then(|mut s| s.query_map([owner], |r| r.get::<_, String>(0)).map(|it| it.filter_map(|r| r.ok()).collect()))
+        .unwrap_or_default();
+    let telegram: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM provider_account_bindings WHERE owner = ?1 AND vendor = 'telegram' AND COALESCE(tg_owner_user_id, '') <> '')",
+            [owner],
+            |r| r.get(0),
+        )
+        .unwrap_or(false);
+    if telegram && !out.iter().any(|c| c == "telegram") {
+        out.push("telegram".into());
+    }
+    out.sort();
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -262,5 +283,21 @@ mod tests {
         for bad in ["", "allternit", "a b", "x:y", &"a".repeat(40)] {
             assert!(forget_source(&db, "u1", bad).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn verified_channels_come_from_pairing_or_a_telegram_owner() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE factory_owner_identities (account_id TEXT, channel TEXT, owner TEXT, identity TEXT, verified_at TEXT);
+             CREATE TABLE provider_account_bindings (id TEXT, owner TEXT, vendor TEXT, tg_owner_user_id TEXT);
+             INSERT INTO provider_account_bindings VALUES ('b1','u1','telegram',NULL), ('b2','u1','sms',NULL);",
+        )
+        .unwrap();
+        assert!(verified_channels(&conn, "u1").is_empty());
+        conn.execute("INSERT INTO factory_owner_identities VALUES ('b2','sms','u1','+16515550100','2026-10-17')", []).unwrap();
+        conn.execute("UPDATE provider_account_bindings SET tg_owner_user_id='42' WHERE id='b1'", []).unwrap();
+        assert_eq!(verified_channels(&conn, "u1"), vec!["sms", "telegram"]);
+        assert!(verified_channels(&conn, "u2").is_empty());
     }
 }
