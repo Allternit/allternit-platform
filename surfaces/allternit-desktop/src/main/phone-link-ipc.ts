@@ -1,16 +1,66 @@
 /** IPC for Phone Link setup (phone-link.ts). All channels are trusted-sender guarded by the caller. */
 
-import { BrowserWindow, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, type IpcMainInvokeEvent } from 'electron';
 import log from 'electron-log';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { IctrlClient, ictrlStoreKey, type SecretStore } from './ictrl-client.js';
 import { PhoneLinkManager } from './phone-link.js';
+import { fileLinkStore, type IosDriverDeps } from './phone-link-ios.js';
 import type { PhoneLinkPlatform } from './phone-link-types.js';
+import { createGoIosExec, createGoIosSpawn, ensureDdi, ensureGoIos, GoIos } from './phone-goios.js';
+import { ensureRunnerArtifacts, LocalIdentitySigner, SideloadSigner, type RunnerSigner } from './phone-ios-runner.js';
+import { readPairRecord, startLoopbackForward } from './phone-usbmux.js';
 import { phoneService } from './phone-service.js';
+import { deleteSecret, readSecret, writeSecret } from './secure-store.js';
+
+const secrets: SecretStore = { get: readSecret, set: writeSecret, delete: deleteSecret };
+
+/**
+ * Developer machines (unpackaged, or ALLTERNIT_PHONE_LINK_LOCAL_SIGNING=1)
+ * sign with their own Xcode identity; shipped builds use the Apple ID sidecar.
+ */
+function pickSigner(): RunnerSigner {
+  if (!app.isPackaged || process.env.ALLTERNIT_PHONE_LINK_LOCAL_SIGNING === '1') return new LocalIdentitySigner();
+  const bin = path.join(process.resourcesPath, 'bin', 'allternit-sideload');
+  return new SideloadSigner({
+    binary: fs.existsSync(bin) ? bin : null,
+    // Allternit-hosted anisette v3 server; ships together with the sidecar (not hosted yet).
+    anisetteUrl: process.env.ALLTERNIT_ANISETTE_URL ?? 'https://anisette.allternit.com',
+  });
+}
+
+async function iosDeps(): Promise<IosDriverDeps> {
+  const dataDir = path.join(app.getPath('userData'), 'phone');
+  const bin = await ensureGoIos(dataDir);
+  // go-ios keeps its tunnel identity (selfIdentity.plist) here; default would be the cwd.
+  const tunnelDir = path.join(dataDir, 'go-ios', 'tunnel-identity');
+  fs.mkdirSync(tunnelDir, { recursive: true, mode: 0o700 });
+  const goios = new GoIos(createGoIosExec(bin), createGoIosSpawn(bin, tunnelDir), tunnelDir);
+  return {
+    goios,
+    artifacts: () => ensureRunnerArtifacts(dataDir),
+    signer: pickSigner(),
+    ictrl: (udid, host) => new IctrlClient({ host, secrets, storeKey: ictrlStoreKey(udid), logger: (m) => log.info(m) }),
+    forward: (udid, port) => startLoopbackForward(udid, port),
+    ddiDir: async () => {
+      const dir = path.join(dataDir, 'ddi');
+      await ensureDdi(dir);
+      return dir;
+    },
+    readPairRecord: (udid) => readPairRecord(udid),
+    store: fileLinkStore(path.join(dataDir, 'phone-link-ios.json')),
+    workDir: path.join(dataDir, 'ictrl-work'),
+    logger: (m) => log.info(m),
+  };
+}
 
 type Guarded = (channel: string, fn: (event: IpcMainInvokeEvent, ...args: any[]) => unknown) => void;
 
 export function registerPhoneLinkIpc(handleGuarded: Guarded): PhoneLinkManager {
   const manager = new PhoneLinkManager({
     adb: () => phoneService.ensureAdbCall(),
+    ios: iosDeps,
     logger: (message) => log.info(message),
   });
   manager.on('status', (status) => {

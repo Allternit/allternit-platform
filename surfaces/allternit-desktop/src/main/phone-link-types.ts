@@ -33,9 +33,11 @@ export type PhoneLinkState =
   | 'ready_wifi'
   | 'error';
 
-/** States the phone can't report back; the UI shows "I've done it" → continue(). */
+/**
+ * States the phone can't report back; the UI shows "I've done it" → continue().
+ * iPhone Developer Mode is polled (go-ios devmode get), so it isn't one.
+ */
 export const PHONE_LINK_MANUAL_STATES: readonly PhoneLinkState[] = [
-  'developer_mode',
   'trust_certificate',
   'usb_debugging',
 ];
