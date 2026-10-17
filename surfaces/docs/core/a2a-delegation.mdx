@@ -186,6 +186,18 @@ Common outcomes:
 | Swarm agent | `true` | `swarm:<id>` | Swarm run was created. |
 | Regular agent | `true` | agent ID | No routing needed; caller can run directly. |
 
+## Hop receipts, trace and the loop guard (runtime)
+
+When another agent or a connected vendor bot messages one of your bots through the runtime's A2A endpoint or the vendor connector's `ask_bot` tool, the message is recorded as a **hop**:
+
+- **Trace.** A2A reads `message.metadata.traceparent`; the connector reads `params._meta.traceparent`. The hop continues that W3C trace, or starts a new one, and shows up in the thread's **Timeline**.
+- **Idempotency.** A2A uses `message.messageId` and the connector uses the JSON-RPC request id as the key. Sending the same one again returns the earlier result (`replayed: true`) and does not run the bot twice.
+- **Receipt.** The result carries `receipt` (`stored → delivered → read → answered`, or `failed`).
+- **Trust.** The text is labelled `stranger` for A2A callers and `vendor_bot` for your own connected vendor bots (team trust).
+- **Loop guard.** At most 12 messages per bot pair per 10 minutes and 8 hops deep; over that the call returns HTTP 429 / `LOOP_GUARD` and a loop guard item opens in your attention list.
+
+See [Bot threads](/guides/bot-threads#timeline).
+
 ## Integration with the rest of the platform
 
 A2A Delegation sits between the chat surface and the agent execution backends:

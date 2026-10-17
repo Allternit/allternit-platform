@@ -28,8 +28,9 @@ import z from "zod/v4"
 import { Tool } from "@/runtime/tools/builtins/tool"
 import { BotStoreError, listBots, type Bot } from "@/runtime/bots/bot-store"
 import { findBotByCanonicalSession, isCanonicalBotSession } from "@/runtime/bots/canonical-chat"
-import { appendBotInbox } from "@/runtime/bots/bot-inbox"
-import { fetchAppRoster, isAppBotSession, routeToAppBot } from "@/runtime/bots/app-bot-routing"
+import { createHash, randomBytes } from "node:crypto"
+import { appendBotInbox, checkInboxGuard, INBOX_PAIR_LIMIT } from "@/runtime/bots/bot-inbox"
+import { AppRoutingError, fetchAppRoster, isAppBotSession, routeToAppBot } from "@/runtime/bots/app-bot-routing"
 
 /**
  * The single gating predicate (D5): message_agent is offered only when the
@@ -42,6 +43,18 @@ export async function isMessageAgentSession(sessionID: string): Promise<boolean>
   if (!sessionID) return false
   if (await isCanonicalBotSession(sessionID)) return true
   return isAppBotSession(sessionID)
+}
+
+/** One trace per session (stable trace id from the session id, fresh span per call). */
+export function traceparentFor(sessionID: string): string {
+  const trace = createHash("sha256").update(`trace:${sessionID}`).digest("hex").slice(0, 32)
+  return `00-${trace}-${randomBytes(8).toString("hex")}-01`
+}
+
+/** Same session + same tool call = same key, so a retried call is a replay, not a second send. */
+export function idempotencyKeyFor(sessionID: string, callID?: string): string | undefined {
+  if (!callID) return undefined
+  return createHash("sha256").update(`${sessionID}\0${callID}`).digest("hex")
 }
 
 /** Targets that ask for the roster instead of sending a message. */
@@ -110,7 +123,7 @@ export const MessageAgentTool = Tool.define("message_agent", {
       .describe("Plain-text task or message for the target bot (omit only with target \"list\")"),
   }),
   async execute(params, ctx) {
-    if (!(await isCanonicalBotSession(ctx.sessionID))) return executeForAppBot(params, ctx.sessionID)
+    if (!(await isCanonicalBotSession(ctx.sessionID))) return executeForAppBot(params, ctx.sessionID, ctx.callID)
 
     // The sender is the bot whose canonical session is running this turn.
     // Gating guarantees this resolves; when it does not, fail closed with a
@@ -136,6 +149,19 @@ export const MessageAgentTool = Tool.define("message_agent", {
     const text = (params.message ?? "").trim()
     if (!text) throw new BotStoreError("message_agent: message must not be empty")
 
+    const guard = await checkInboxGuard(target.name, sender.name)
+    if (guard.held) {
+      return {
+        title: `Held: ${target.name}`,
+        output: `Held: ${sender.name} has already sent ${target.name} ${INBOX_PAIR_LIMIT} messages in the last 10 minutes. It may be a loop; check in with your user before sending more.`,
+        metadata: {
+          target: target.name,
+          from: sender.name,
+          delivered: false,
+          receipt: { state: "held", reason: "pair_limit" },
+        },
+      }
+    }
     await appendBotInbox(target.name, {
       from: sender.name,
       fromSessionId: ctx.sessionID,
@@ -146,13 +172,13 @@ export const MessageAgentTool = Tool.define("message_agent", {
     return {
       title: `Messaged ${target.name}`,
       output: `delivered to ${target.name}'s inbox; the reply arrives as a background completion`,
-      metadata: { target: target.name, from: sender.name, delivered: true },
+      metadata: { target: target.name, from: sender.name, delivered: true, receipt: { state: "stored" } },
     }
   },
 })
 
 /** message_agent for a bot made in the Allternit app (allternit-api roster + threads). */
-async function executeForAppBot(params: { target: string; message?: string }, sessionID: string) {
+async function executeForAppBot(params: { target: string; message?: string }, sessionID: string, callID?: string) {
   const roster = await fetchAppRoster(sessionID)
   if (!roster) {
     throw new BotStoreError("message_agent: this chat isn't one of your bots' chats — the tool is unavailable here")
@@ -167,11 +193,30 @@ async function executeForAppBot(params: { target: string; message?: string }, se
     }
   }
   if (!message) throw new BotStoreError("message_agent: message must not be empty")
-  const result = await routeToAppBot(sessionID, params.target, message).catch((error: Error) => {
+  const result = await routeToAppBot(sessionID, params.target, message, 90, {
+    traceparent: traceparentFor(sessionID),
+    idempotencyKey: idempotencyKeyFor(sessionID, callID),
+  }).catch((error: Error) => {
+    // The API's loop guard answers 429 with its one-sentence refusal.
+    if (error instanceof AppRoutingError && error.status === 429) return error
     throw new BotStoreError(`message_agent: ${error.message}`)
   })
+  if (result instanceof AppRoutingError) {
+    return {
+      title: "Held: loop guard",
+      output: result.message,
+      metadata: { target: params.target, from, delivered: false, status: "held", receipt: { state: "held", reason: "loop_guard" } },
+    }
+  }
   const name = result.bot.name
-  const base = { target: name, botId: result.bot.id, threadId: result.threadId, from, status: result.status }
+  const base = {
+    target: name,
+    botId: result.bot.id,
+    threadId: result.threadId,
+    from,
+    status: result.status,
+    receipt: result.receipt,
+  }
   if (result.status === "done") {
     return {
       title: `Handed to ${name}`,

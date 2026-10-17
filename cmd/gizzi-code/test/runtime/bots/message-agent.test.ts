@@ -263,3 +263,46 @@ describe("inbox pickup (turn-start injection)", () => {
     expect(existsSync(inboxPath("bob"))).toBe(false)
   })
 })
+
+describe("hop receipts and the loop guard", () => {
+  test("traceparent is a valid W3C header with a stable trace per session", async () => {
+    const { traceparentFor, idempotencyKeyFor } = await import("../../../src/runtime/tools/builtins/message-agent")
+    const a = traceparentFor("ses_x")
+    const b = traceparentFor("ses_x")
+    expect(a).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/)
+    expect(a.split("-")[1]).toBe(b.split("-")[1])
+    expect(idempotencyKeyFor("ses_x", "call_1")).toBe(idempotencyKeyFor("ses_x", "call_1"))
+    expect(idempotencyKeyFor("ses_x", "call_1")).not.toBe(idempotencyKeyFor("ses_x", "call_2"))
+    expect(idempotencyKeyFor("ses_x")).toBeUndefined()
+  })
+
+  test("the app-bot path sends the header and key; the store-bot path holds the 13th message", async () => {
+    const { routeToAppBot } = await import("../../../src/runtime/bots/app-bot-routing")
+    const seen: { headers?: Record<string, string>; body?: any }[] = []
+    const realFetch = globalThis.fetch
+    process.env.ALLTERNIT_INTERNAL_SERVICE_TOKEN = "t"
+    globalThis.fetch = (async (_u: any, init: any) => {
+      seen.push({ headers: init.headers, body: JSON.parse(init.body) })
+      return new Response(JSON.stringify({ status: "done", threadId: "th", bot: { id: "b", name: "B" }, receipt: { state: "answered", hopId: "hop_1" } }))
+    }) as any
+    try {
+      const out = await routeToAppBot("ses", "B", "hi", 5, { traceparent: "00-" + "a".repeat(32) + "-" + "b".repeat(16) + "-01", idempotencyKey: "k" })
+      expect(out.receipt?.state).toBe("answered")
+      expect(seen[0]!.headers!.traceparent).toContain("a".repeat(32))
+      expect(seen[0]!.body.idempotencyKey).toBe("k")
+    } finally {
+      globalThis.fetch = realFetch
+      delete process.env.ALLTERNIT_INTERNAL_SERVICE_TOKEN
+    }
+
+    const sessionID = await seedPair()
+    for (let i = 0; i < 12; i++) {
+      const r = await executeMessageAgent({ target: "bob", message: `m${i}` }, sessionID)
+      expect(r.metadata.receipt.state).toBe("stored")
+    }
+    const held = await executeMessageAgent({ target: "bob", message: "m13" }, sessionID)
+    expect(held.metadata.delivered).toBe(false)
+    expect(held.metadata.receipt).toEqual({ state: "held", reason: "pair_limit" })
+    expect(held.output).toStartWith("Held:")
+  })
+})
