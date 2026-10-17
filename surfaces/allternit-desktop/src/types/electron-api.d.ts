@@ -374,27 +374,6 @@ export interface FeatureFlagsAPI {
   onChanged(handler: (key: string, value: unknown) => void): () => void;
 }
 
-export type SiwcState =
-  | 'disabled' | 'signed_out' | 'signing_in' | 'signed_in'
-  | 'plan_usage_disabled' | 'needs_reauth' | 'error';
-
-/** Sign in with ChatGPT status. Never contains tokens. */
-export interface SiwcStatus {
-  enabled: boolean;
-  state: SiwcState;
-  email?: string;
-  expiresAt?: string;
-  detail?: string;
-}
-
-export interface SiwcAPI {
-  status(): Promise<SiwcStatus>;
-  signIn(opts?: { enablePlanUsage?: boolean }): Promise<{ ok: true; status: SiwcStatus } | { ok: false; error: string; status: SiwcStatus }>;
-  cancel(): Promise<SiwcStatus>;
-  signOut(): Promise<SiwcStatus & { revocationConfirmed: boolean }>;
-  onStatusChanged(handler: (status: SiwcStatus) => void): () => void;
-}
-
 export interface PersistedStateAPI {
   get(key: string): Promise<unknown>;
   set(key: string, value: unknown): Promise<boolean>;
@@ -652,7 +631,6 @@ export interface AllternitDesktopAPI {
   permissionGuide: PermissionGuideAPI;
   phones: PhonesAPI;
   featureFlags: FeatureFlagsAPI;
-  siwc: SiwcAPI;
   findInPage: FindInPageAPI;
   locale: LocaleAPI;
   menuBar: MenuBarAPI;
