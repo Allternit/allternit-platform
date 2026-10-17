@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Seed Viewer</title>
+<!--
+  Self-contained generative art viewer. No dependencies, works from file://.
+
+  To make your own piece, edit only the block marked SYSTEM below:
+    PARAMS   -> sliders are generated from this list
+    PALETTES -> 3-5 colours each; first colour is the background
+    draw(g)  -> paints one image. Use ONLY g.rand / g.noise for randomness,
+                and express sizes in units of g.u (1/1000 of the short side),
+                so the same seed gives the same picture at any resolution.
+
+  URL hash (for scripts and sharing):
+    #seed=42&grid=3&ui=0&size=900&p.density=0.6&palette=1
+  Hooks for headless rendering:
+    window.renderStill(seed, size) -> PNG data URL (square, size px)
+    window.ART.ready === true once the first render is done
+-->
+<style>
+  :root {
+    --bg: #f4f3ef; --panel: #ffffff; --text: #1d1d21; --muted: #64646c;
+    --border: #dddbd4; --accent: #2f5bd3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #121214; --panel: #1b1b1e; --text: #ececf0; --muted: #a2a2aa;
+      --border: #2e2e33; --accent: #8aa6ff;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #121214; --panel: #1b1b1e; --text: #ececf0; --muted: #a2a2aa;
+    --border: #2e2e33; --accent: #8aa6ff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 13px/1.4 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    display: grid; grid-template-columns: 1fr 280px; min-height: 100vh;
+  }
+  body.noui { grid-template-columns: 1fr; }
+  body.noui aside { display: none; }
+  main { display: grid; place-items: center; padding: 16px; min-width: 0; }
+  #stage { max-width: 100%; max-height: calc(100vh - 32px); height: auto; box-shadow: 0 1px 6px rgba(0,0,0,.18); cursor: default; }
+  body.grid #stage { cursor: pointer; }
+  body.noui main { padding: 0; }
+  body.noui #stage { box-shadow: none; max-height: 100vh; }
+  aside { background: var(--panel); border-left: 1px solid var(--border); padding: 16px; overflow-y: auto; }
+  h1 { font-size: 14px; margin: 0 0 12px; letter-spacing: .02em; }
+  fieldset { border: 0; padding: 0; margin: 0 0 16px; }
+  legend { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-bottom: 6px; }
+  .row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+  input[type=text], select { flex: 1; min-width: 0; font: inherit; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); }
+  button { font: inherit; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  label.slider { display: block; margin-bottom: 10px; }
+  label.slider span { display: flex; justify-content: space-between; color: var(--muted); }
+  label.slider output { color: var(--text); font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .swatches { display: flex; gap: 4px; margin-top: 6px; }
+  .swatches i { width: 20px; height: 20px; border-radius: 4px; border: 1px solid var(--border); }
+  .hint { color: var(--muted); font-size: 12px; }
+  @media (max-width: 720px) {
+    body { grid-template-columns: 1fr; }
+    aside { border-left: 0; border-top: 1px solid var(--border); }
+    #stage { max-height: none; }
+  }
+</style>
+</head>
+<body>
+<main><canvas id="stage" width="900" height="900" aria-label="Generated artwork"></canvas></main>
+<aside>
+  <h1>Seed Viewer</h1>
+  <fieldset>
+    <legend>Seed</legend>
+    <div class="row">
+      <button id="prev" aria-label="Previous seed">&larr;</button>
+      <input id="seed" type="text" aria-label="Seed" spellcheck="false">
+      <button id="next" aria-label="Next seed">&rarr;</button>
+    </div>
+    <div class="row"><button id="rand">Random</button><button id="gridBtn">Seed grid</button></div>
+  </fieldset>
+  <fieldset>
+    <legend>Palette</legend>
+    <select id="palette" aria-label="Palette"></select>
+    <div class="swatches" id="swatches"></div>
+  </fieldset>
+  <fieldset id="params"><legend>Parameters</legend></fieldset>
+  <fieldset>
+    <legend>Export</legend>
+    <div class="row">
+      <select id="exportSize" aria-label="Export size">
+        <option value="2000">2000 px</option><option value="4000" selected>4000 px</option><option value="6000">6000 px</option>
+      </select>
+      <button id="export" class="primary">PNG</button>
+    </div>
+    <button id="copy">Copy settings link</button>
+    <p class="hint">Keys: &larr; &rarr; seed, R random, G grid, S save.</p>
+  </fieldset>
+</aside>
+
+<script>
+/* ======================================================================
+   SYSTEM: edit from here ...
+   Example: a seeded flow field. Particles follow angles taken from
+   layered noise; start points cluster around a focal point with a quiet
+   band of negative space; strokes are thin and translucent so density,
+   not outline, builds the forms.
+   ====================================================================== */
+const TITLE = 'Flow field';
+
+const PARAMS = [
+  { key: 'density',    label: 'Density',        min: 0.1, max: 1.5, step: 0.05, value: 0.7 },
+  { key: 'scale',      label: 'Noise scale',    min: 0.5, max: 6,   step: 0.1,  value: 2.2 },
+  { key: 'turbulence', label: 'Turbulence',     min: 0,   max: 1,   step: 0.01, value: 0.35 },
+  { key: 'length',     label: 'Stroke length',  min: 20,  max: 400, step: 5,    value: 160 },
+  { key: 'weight',     label: 'Line weight',    min: 0.3, max: 4,   step: 0.1,  value: 1.1 },
+  { key: 'focus',      label: 'Focal pull',     min: 0,   max: 1,   step: 0.01, value: 0.6 },
+  { key: 'margin',     label: 'Margin',         min: 0,   max: 0.2, step: 0.005, value: 0.07 },
+];
+
+// First colour is the background. Keep 3-5 colours with clear value contrast.
+const PALETTES = [
+  { name: 'Ink on bone',   colors: ['#efe9dc', '#1f2430', '#3d5a80', '#c8553d', '#e0b04a'] },
+  { name: 'Night harbour', colors: ['#0f1620', '#e8e3d3', '#4f8a8b', '#f2a65a', '#7d5ba6'] },
+  { name: 'Moss and rust', colors: ['#e6e2d0', '#2e3b2c', '#6b8f5e', '#b5562b', '#d9c38a'] },
+  { name: 'Graphite',      colors: ['#f2f2ef', '#111111', '#555555', '#9a9a9a', '#d23c2a'] },
+];
+
+function draw(g) {
+  const { ctx, W, H, u, rand, noise, P, colors } = g;
+  const [bg, ...inks] = colors;
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+
+  // Composition: focal point near a third, a band of negative space opposite it.
+  const fx = W * (rand() < 0.5 ? 0.33 : 0.67) + (rand() - 0.5) * W * 0.1;
+  const fy = H * (rand() < 0.5 ? 0.38 : 0.62) + (rand() - 0.5) * H * 0.1;
+  const quietAngle = rand() * Math.PI;           // orientation of the empty band
+  const qx = Math.cos(quietAngle), qy = Math.sin(quietAngle);
+  const m = P.margin * Math.min(W, H);
+  const field = (x, y) => {
+    const sx = x / Math.min(W, H) * P.scale, sy = y / Math.min(W, H) * P.scale;
+    let a = noise(sx, sy) * Math.PI * 2;
+    a += noise(sx * 4 + 17.3, sy * 4 - 5.1) * Math.PI * 2 * P.turbulence;
+    return a;
+  };
+  // Ink weights: one dominant colour, the rest as accents.
+  const weights = inks.map((_, i) => (i === 0 ? 5 : i === inks.length - 1 ? 0.6 : 1.5));
+  const pickInk = () => {
+    let t = rand() * weights.reduce((s, w) => s + w, 0);
+    for (let i = 0; i < inks.length; i++) { t -= weights[i]; if (t <= 0) return inks[i]; }
+    return inks[0];
+  };
+
+  const count = Math.round(2500 * P.density);
+  const maxR = Math.hypot(W, H) * 0.6;
+  ctx.lineCap = 'round';
+  for (let n = 0; n < count; n++) {
+    // Rejection-sample a start point: more likely near the focal point, unlikely in the quiet band.
+    let x, y, tries = 0;
+    do {
+      x = m + rand() * (W - 2 * m); y = m + rand() * (H - 2 * m);
+      const d = Math.hypot(x - fx, y - fy) / maxR;
+      const band = Math.abs((x - W / 2) * qx + (y - H / 2) * qy) / Math.min(W, H);
+      const keep = Math.pow(1 - Math.min(1, d * 1.8), 1 + 3 * P.focus) * (band < 0.11 ? 0.03 : 1);
+      if (rand() < keep) break;
+    } while (++tries < 40);
+    const ink = pickInk();
+    const big = rand() < 0.04;
+    ctx.strokeStyle = ink;
+    ctx.globalAlpha = big ? 0.85 : 0.18 + rand() * 0.35;
+    ctx.lineWidth = u * P.weight * (big ? 3 : 0.6 + rand());
+    ctx.beginPath(); ctx.moveTo(x, y);
+    const steps = Math.round(P.length * (0.4 + rand() * 0.8));
+    const stepLen = u * 2.2;
+    for (let s = 0; s < steps; s++) {
+      const a = field(x, y);
+      x += Math.cos(a) * stepLen; y += Math.sin(a) * stepLen;
+      if (x < m || y < m || x > W - m || y > H - m) break;
+      ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
+/* ======================================================================
+   ... to here. Everything below is the viewer and rarely needs changes.
+   ====================================================================== */
+
+// ---- seeded randomness ------------------------------------------------
+function hashSeed(str) {               // string -> 4 x 32-bit state (cyrb128-style mix)
+  let h1 = 1779033703, h2 = 3144134277, h3 = 1013904242, h4 = 2773480762;
+  for (let i = 0; i < str.length; i++) {
+    const k = str.charCodeAt(i);
+    h1 = h2 ^ Math.imul(h1 ^ k, 597399067); h2 = h3 ^ Math.imul(h2 ^ k, 2869860233);
+    h3 = h4 ^ Math.imul(h3 ^ k, 951274213); h4 = h1 ^ Math.imul(h4 ^ k, 2716044179);
+  }
+  h1 = Math.imul(h3 ^ (h1 >>> 18), 597399067); h2 = Math.imul(h4 ^ (h2 >>> 22), 2869860233);
+  h3 = Math.imul(h1 ^ (h3 >>> 17), 951274213); h4 = Math.imul(h2 ^ (h4 >>> 19), 2716044179);
+  return [(h1 ^ h2 ^ h3 ^ h4) >>> 0, (h2 ^ h1) >>> 0, (h3 ^ h1) >>> 0, (h4 ^ h1) >>> 0];
+}
+function makeRand(seed) {              // sfc32: fast, good quality, deterministic
+  let [a, b, c, d] = hashSeed(String(seed));
+  const r = () => {
+    a >>>= 0; b >>>= 0; c >>>= 0; d >>>= 0;
+    let t = (a + b) | 0; a = b ^ (b >>> 9); b = (c + (c << 3)) | 0;
+    c = (c << 21) | (c >>> 11); d = (d + 1) | 0; t = (t + d) | 0; c = (c + t) | 0;
+    return (t >>> 0) / 4294967296;
+  };
+  for (let i = 0; i < 12; i++) r();
+  return r;
+}
+function makeNoise(rand) {             // seeded 2D gradient noise, output roughly -1..1
+  const p = new Uint8Array(512), perm = [...Array(256).keys()];
+  for (let i = 255; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [perm[i], perm[j]] = [perm[j], perm[i]]; }
+  for (let i = 0; i < 512; i++) p[i] = perm[i & 255];
+  const grad = (h, x, y) => { const a = (h / 256) * Math.PI * 2; return Math.cos(a) * x + Math.sin(a) * y; };
+  const fade = t => t * t * t * (t * (t * 6 - 15) + 10);
+  return (x, y) => {
+    const X = Math.floor(x) & 255, Y = Math.floor(y) & 255;
+    x -= Math.floor(x); y -= Math.floor(y);
+    const u = fade(x), v = fade(y);
+    const aa = p[p[X] + Y], ab = p[p[X] + Y + 1], ba = p[p[X + 1] + Y], bb = p[p[X + 1] + Y + 1];
+    const l1 = grad(aa, x, y) + u * (grad(ba, x - 1, y) - grad(aa, x, y));
+    const l2 = grad(ab, x, y - 1) + u * (grad(bb, x - 1, y - 1) - grad(ab, x, y - 1));
+    return (l1 + v * (l2 - l1)) * 1.4;
+  };
+}
+
+// ---- state ------------------------------------------------------------
+const state = {
+  seed: '1', palette: 0, grid: 0, size: 900, ui: true,
+  P: Object.fromEntries(PARAMS.map(p => [p.key, p.value])),
+};
+function readHash() {
+  const h = new URLSearchParams(location.hash.slice(1));
+  if (h.has('seed')) state.seed = h.get('seed');
+  if (h.has('palette')) state.palette = Math.max(0, Math.min(PALETTES.length - 1, +h.get('palette') || 0));
+  if (h.has('grid')) state.grid = Math.max(0, Math.min(6, +h.get('grid') || 0));
+  if (h.has('size')) state.size = Math.max(200, Math.min(4000, +h.get('size') || 900));
+  if (h.get('ui') === '0') state.ui = false;
+  for (const p of PARAMS) if (h.has('p.' + p.key)) state.P[p.key] = +h.get('p.' + p.key);
+}
+function writeHash() {
+  const h = new URLSearchParams({ seed: state.seed, palette: state.palette });
+  if (state.grid) h.set('grid', state.grid);
+  for (const p of PARAMS) if (state.P[p.key] !== p.value) h.set('p.' + p.key, state.P[p.key]);
+  history.replaceState(null, '', '#' + h.toString());
+}
+
+// ---- rendering --------------------------------------------------------
+function paint(ctx, W, H, seed) {
+  const rand = makeRand(seed);
+  const noise = makeNoise(makeRand(seed + ':noise'));
+  ctx.save();
+  draw({ ctx, W, H, u: Math.min(W, H) / 1000, rand, noise, P: { ...state.P }, colors: PALETTES[state.palette].colors, seed });
+  ctx.restore();
+}
+const stage = document.getElementById('stage');
+function seedAt(i) {                   // grid neighbours: numeric seeds count up, text seeds get a suffix
+  const n = Number(state.seed);
+  return Number.isInteger(n) ? String(n + i) : (i ? `${state.seed}-${i}` : state.seed);
+}
+function render() {
+  const S = state.size;
+  stage.width = S; stage.height = S;
+  const ctx = stage.getContext('2d');
+  document.body.classList.toggle('grid', !!state.grid);
+  if (!state.grid) { paint(ctx, S, S, state.seed); }
+  else {
+    const n = state.grid, gap = Math.round(S * 0.012), cell = (S - gap * (n + 1)) / n;
+    ctx.fillStyle = '#d8d6cf'; ctx.fillRect(0, 0, S, S);
+    for (let i = 0; i < n * n; i++) {
+      const x = gap + (i % n) * (cell + gap), y = gap + Math.floor(i / n) * (cell + gap);
+      const off = document.createElement('canvas'); off.width = off.height = Math.round(cell);
+      paint(off.getContext('2d'), off.width, off.height, seedAt(i));
+      ctx.drawImage(off, x, y, cell, cell);
+      const label = 'seed ' + seedAt(i), fs = Math.max(10, Math.round(cell * 0.05));
+      ctx.font = `${fs}px ui-monospace, Menlo, monospace`;
+      const tw = ctx.measureText(label).width;
+      ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillRect(x, y + cell - fs * 1.6, tw + fs, fs * 1.6);
+      ctx.fillStyle = '#fff'; ctx.fillText(label, x + fs / 2, y + cell - fs * 0.45);
+    }
+  }
+  writeHash();
+  syncUI();
+  window.ART.ready = true;
+}
+window.ART = { ready: false, state, PARAMS, PALETTES, render };
+window.renderStill = (seed = state.seed, size = 4000) => {
+  const c = document.createElement('canvas'); c.width = c.height = size;
+  paint(c.getContext('2d'), size, size, String(seed));
+  return c.toDataURL('image/png');
+};
+
+// ---- UI ---------------------------------------------------------------
+const $ = id => document.getElementById(id);
+let renderQueued = false;
+const queue = () => { if (!renderQueued) { renderQueued = true; requestAnimationFrame(() => { renderQueued = false; render(); }); } };
+function buildUI() {
+  document.title = `${TITLE} · Seed Viewer`;
+  $('palette').innerHTML = PALETTES.map((p, i) => `<option value="${i}">${p.name}</option>`).join('');
+  const box = $('params');
+  for (const p of PARAMS) {
+    const l = document.createElement('label'); l.className = 'slider';
+    l.innerHTML = `<span>${p.label}<output id="o_${p.key}"></output></span>
+      <input type="range" id="p_${p.key}" min="${p.min}" max="${p.max}" step="${p.step}">`;
+    box.appendChild(l);
+    l.querySelector('input').addEventListener('input', e => { state.P[p.key] = +e.target.value; queue(); });
+  }
+  $('seed').addEventListener('change', e => { state.seed = e.target.value.trim() || '1'; queue(); });
+  $('prev').onclick = () => step(-1);
+  $('next').onclick = () => step(1);
+  $('rand').onclick = () => { state.seed = String(Math.floor(Math.random() * 1e6)); queue(); };
+  $('gridBtn').onclick = () => { state.grid = state.grid ? 0 : 3; queue(); };
+  $('palette').onchange = e => { state.palette = +e.target.value; queue(); };
+  $('export').onclick = exportPNG;
+  $('copy').onclick = () => navigator.clipboard?.writeText(location.href);
+  stage.addEventListener('click', e => {           // in grid mode, click a cell to open that seed
+    if (!state.grid) return;
+    const r = stage.getBoundingClientRect(), n = state.grid;
+    const i = Math.floor((e.clientY - r.top) / r.height * n) * n + Math.floor((e.clientX - r.left) / r.width * n);
+    state.seed = seedAt(i); state.grid = 0; queue();
+  });
+  addEventListener('keydown', e => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+    if (e.key === 'ArrowLeft') step(-1);
+    else if (e.key === 'ArrowRight') step(1);
+    else if (e.key === 'r') $('rand').click();
+    else if (e.key === 'g') $('gridBtn').click();
+    else if (e.key === 's') exportPNG();
+  });
+}
+function step(d) {
+  const n = Number(state.seed);
+  state.seed = Number.isInteger(n) ? String(n + d * (state.grid ? state.grid * state.grid : 1)) : state.seed + (d > 0 ? '+' : '-');
+  queue();
+}
+function syncUI() {
+  document.body.classList.toggle('noui', !state.ui);
+  $('seed').value = state.seed;
+  $('palette').value = state.palette;
+  $('swatches').innerHTML = PALETTES[state.palette].colors.map(c => `<i style="background:${c}" title="${c}"></i>`).join('');
+  $('gridBtn').textContent = state.grid ? 'Single view' : 'Seed grid';
+  for (const p of PARAMS) { $('p_' + p.key).value = state.P[p.key]; $('o_' + p.key).textContent = state.P[p.key]; }
+}
+function exportPNG() {
+  const size = +$('exportSize').value;
+  const a = document.createElement('a');
+  a.href = window.renderStill(state.seed, size);
+  a.download = `${TITLE.toLowerCase().replace(/\W+/g, '-')}-seed-${state.seed}-${size}.png`;
+  a.click();
+}
+
+readHash();
+buildUI();
+render();
+addEventListener('hashchange', () => { readHash(); queue(); });
+</script>
+</body>
+</html>

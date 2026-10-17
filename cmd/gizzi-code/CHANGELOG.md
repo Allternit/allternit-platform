@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added
+- Built-in craft skills for visual work, available to every model: `motion-reel`
+  (motion-graphics videos with a synced score), `brush-film` (hand-painted
+  animated shorts in p5.brush), `film-studio` (review contract for video work),
+  `ui-motion` (product UI motion with a frame-strip check), `visual-design`
+  (UI design with a desktop and phone screenshot review) and `generative-art`
+  (seeded generative art with a parameter viewer). They are brand-neutral and
+  carry their own scripts and templates, which are extracted to
+  `skills-builtin/` in the data directory on first load. A user or project
+  skill with the same name still overrides them.
+
 ## 2.2.6 (2026-10-14)
 
 ### Fixed

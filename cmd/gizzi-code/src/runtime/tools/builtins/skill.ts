@@ -83,11 +83,13 @@ export const SkillTool = Tool.define("skill", async (ctx) => {
         metadata: {},
       })
 
-      const dir = skill.builtin ? skill.location : path.dirname(skill.location)
-      const base = skill.builtin ? skill.location : pathToFileURL(dir).href
+      // Text-only built-ins live at builtin://<name>; craft built-ins are extracted to disk.
+      const virtual = skill.location.startsWith("builtin://")
+      const dir = virtual ? skill.location : path.dirname(skill.location)
+      const base = virtual ? skill.location : pathToFileURL(dir).href
 
       const limit = 10
-      const files = skill.builtin ? "" : await iife(async () => {
+      const files = virtual ? "" : await iife(async () => {
         const arr = []
         for await (const file of Ripgrep.files({
           cwd: dir,
