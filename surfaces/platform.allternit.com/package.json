@@ -3,12 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Allternit Platform Cloud Console — orgs, billing, compute, API keys, docs",
+  "description": "Allternit Platform Cloud Console \u2014 orgs, billing, compute, API keys, docs",
   "scripts": {
     "dev": "vite --port 3016 --strictPort",
     "build": "NODE_OPTIONS=--max-old-space-size=8192 vite build && node scripts/postbuild.mjs",
     "preview": "vite preview --port 3016 --strictPort",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@clerk/clerk-react": "^5.30.0",

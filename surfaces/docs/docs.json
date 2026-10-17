@@ -453,6 +453,7 @@
               "surfaces/desktop",
               "surfaces/sign-in",
               "surfaces/platform",
+              "surfaces/platform-console-onboarding",
               "surfaces/agent-studio",
               "surfaces/agent-hub",
               "surfaces/bots",
