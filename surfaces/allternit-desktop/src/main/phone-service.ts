@@ -26,6 +26,12 @@ import { USBA_MDNS_TYPE } from './phone-usb-agent-protocol.js';
 import { loadFirmware, type BundledFirmware } from './phone-usb-agent-firmware.js';
 import { grayFromBgra, type Gray } from './phone-usb-agent-vision.js';
 import type { Calibration } from './phone-usb-agent-pointer.js';
+import { IctrlClient, type SecretStore } from './ictrl-client.js';
+import { fileLinkStore } from './phone-link-ios.js';
+import { PhoneLinkBackend, linkedPhoneSource, probeLinkedPhone, type LinkedPhone } from './phone-link-backend.js';
+import { PhoneLinkHealthMonitor } from './phone-link-health.js';
+import type { PhoneLinkDevice } from './phone-link-types.js';
+import { readSecret, writeSecret, deleteSecret } from './secure-store.js';
 import {
   PhoneToolRunner,
   type AdbCall,
@@ -148,6 +154,7 @@ class PhoneService {
   private usbAgents: UsbAgentManager | null = null;
   private artemis: ArtemisManager | null = null;
   private runner: PhoneToolRunner | null = null;
+  private linkedBackend: PhoneLinkBackend | null = null;
   private gatewayReady: Promise<void> | null = null;
   private gatewayClose: (() => void) | null = null;
   private gatewayFile = path.join(os.homedir(), '.allternit', 'phone-gateway.json');
@@ -180,6 +187,37 @@ class PhoneService {
     return this.adbReady;
   }
 
+  /**
+   * Phone-Linked phones: one iCTRL lane over both link stores. Pure file
+   * reads + HTTP clients — no adb download, no processes, so an iPhone-only
+   * user pays nothing. Built once; the LAN-scanning host resolver lands on a
+   * sibling branch (the seam is PhoneLinkBackendDeps.resolveHost).
+   */
+  private ensureLinkedBackend(): PhoneLinkBackend {
+    if (!this.linkedBackend) {
+      const dir = this.dir();
+      const secrets: SecretStore = { get: readSecret, set: writeSecret, delete: deleteSecret };
+      const source = linkedPhoneSource({
+        iosStore: fileLinkStore(path.join(dir, 'phone-link-ios.json')),
+        androidFile: path.join(dir, 'phone-link-android.json'),
+      });
+      const client = (phone: LinkedPhone, host: string) =>
+        new IctrlClient({ host, secrets, storeKey: phone.storeKey, logger: (m) => log.info(m) });
+      const health = new PhoneLinkHealthMonitor({
+        phones: source,
+        probe: (phone) => probeLinkedPhone(phone, client),
+        logger: (m) => log.info(m),
+      });
+      this.linkedBackend = new PhoneLinkBackend({ phones: source, client, health, logger: (m) => log.info(m) });
+    }
+    return this.linkedBackend;
+  }
+
+  /** Linked phones with health, for phone-link:devices (Settings → Computers → Phones). */
+  linkedDevices(): Promise<PhoneLinkDevice[]> {
+    return this.ensureLinkedBackend().linkedDevices();
+  }
+
   /** The tool runner, loopback gateway and MCP shim that every bot reaches phones through. */
   private ensureGateway(): Promise<void> {
     if (this.gatewayReady) return this.gatewayReady;
@@ -195,6 +233,7 @@ class PhoneService {
         onlineSerials: () => this.manager?.onlineSerials() ?? [],
         defaultSmsSubscription: (serial) => this.manager?.defaultSmsSubscription(serial) ?? Promise.resolve(null),
         usb: () => this.usbAgents,
+        links: () => this.ensureLinkedBackend(),
       });
       this.runner = runner;
       const token = newGatewayToken();

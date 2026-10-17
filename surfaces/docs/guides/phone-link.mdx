@@ -49,6 +49,33 @@ Keep the iPhone and the Mac on the same Wi-Fi network (not a guest network that 
 
 If a step stops with an error, Allternit says what happened and offers **Try again** when retrying can help. If you'd rather use hardware, the [Allternit USB Agent](/guides/usb-agent) also works with an iPhone.
 
+## What bots can do on a linked phone
+
+Once a phone is linked, bots reach it with the same `phone.*` tools as any other phone, through Allternit Desktop's tool gateway. Its serial in `phone.devices` starts with `link:`.
+
+- **See and touch:** `phone.screenshot`, `phone.tap`, `phone.swipe`, `phone.type`, `phone.home`. Tap coordinates follow the latest screenshot; the screenshot's `coordinate_space` says which space taps use.
+- **Read the screen:** `phone.read_ui` (one line per element: class, label, id, bounds), `phone.screen_text` (just the text) and `phone.find_and_tap` (find an element and tap its centre) work on linked phones and on Android phones over adb. An iPhone on a USB Agent can't read the screen as text — there the bot works from `phone.screenshot`.
+- **Open apps:** `phone.open_app` takes the app name (chatgpt, claude, gemini, kimi, copilot, grok, perplexity — the AI apps Phone Link looks for) or a package/bundle id.
+- **iPhone has no Back button.** `phone.back` works on Android; on a linked iPhone the bot gets a plain "use the app's back control" instead.
+- **Texts and calls stay on the adb lane for now.** `phone.sms.send` and `phone.call.dial` need an Android phone over adb with its on-screen approval; they are not available on linked phones. The same goes for hardware keys (`phone.key`) and plain-English tasks (`phone.task`).
+
+## Phone health
+
+Settings → Computers → Phones shows each linked phone's state, and `phone.devices` reports it to bots:
+
+| State | What it means | What you do |
+|---|---|---|
+| `HEALTHY` | The phone answers and accepts this computer's key. | Nothing. |
+| `DEVICE_LOCKED` | The phone answers but is locked. | Unlock your phone. |
+| `PAIRING_INVALID` | The phone no longer accepts this computer's key (revoked, app reinstalled). | Pair this phone again in Settings › Computers › Phones. |
+| `TRANSPORT_OFFLINE` | Nothing answers at the phone's saved address. Desktop retries on its own. | Usually nothing; on iPhone this can mean the phone restarted. |
+| `HELPER_NOT_RESPONDING` | The phone answers but its helper doesn't complete calls. Desktop retries on its own. | Open the Allternit helper on your phone if it stays stuck. |
+| `DEVELOPER_IMAGE_REMOUNT_REQUIRED` | The iPhone restarted and its developer image needs remounting. | Plug your iPhone into this computer and open Allternit. |
+| `SIGNATURE_RENEWAL_REQUIRED` | The iPhone helper's free-Apple-ID signature expired or runs out within 24 hours. | Plug in your iPhone to renew it (setup re-signs; about once a week). |
+| `UNKNOWN` | Not enough evidence to classify. | Nothing; it re-checks itself. |
+
+Remounting and signature renewal are always manual states — they only appear on evidence, never from a guess, and Desktop never marks them as fixing themselves.
+
 ## For developers
 
 Desktop main runs the setup as a state machine (`surfaces/allternit-desktop/src/main/phone-link.ts`). The renderer API is `window.allternit.phoneLink`; types are in `phone-link-types.ts`.

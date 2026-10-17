@@ -69,6 +69,7 @@ export function registerPhoneLinkIpc(handleGuarded: Guarded): PhoneLinkManager {
     }
   });
   handleGuarded('phone-link:status', () => manager.status());
+  handleGuarded('phone-link:devices', () => phoneService.linkedDevices());
   handleGuarded('phone-link:start', (_event, opts?: { platform?: PhoneLinkPlatform }) => {
     const platform = opts?.platform;
     if (platform !== 'ios' && platform !== 'android') throw new Error('platform must be ios or android');

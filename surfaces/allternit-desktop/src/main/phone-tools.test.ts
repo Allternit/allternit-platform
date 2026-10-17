@@ -227,3 +227,180 @@ describe('helpers', () => {
     expect(args).toContain(`'hi '\\''there'\\'''`);
   });
 });
+
+describe('screen reading over adb (uiautomator dump)', () => {
+  // A dump shaped like `uiautomator dump /dev/tty` prints it: nested nodes,
+  // entities, text OR content-desc, bounds as [x1,y1][x2,y2].
+  const DUMP = `<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+<hierarchy rotation="0">
+  <node index="0" text="" resource-id="" class="android.widget.FrameLayout" package="com.openai.chat" content-desc="" clickable="false" bounds="[0,0][1080,2400]">
+    <node index="0" text="Say &quot;hi&quot;" resource-id="com.openai.chat:id/title" class="android.widget.TextView" content-desc="" clickable="false" bounds="[24,96][1056,180]" />
+    <node index="1" text="" resource-id="com.openai.chat:id/login" class="android.widget.Button" package="com.openai.chat" content-desc="Sign in" clickable="true" bounds="[24,836][336,884]" />
+  </node>
+</hierarchy>`;
+
+  function dumpAdb(xml: string | Error) {
+    const calls: string[][] = [];
+    const adb = (async (args: string[]) => {
+      calls.push(args);
+      return { stdout: '', stderr: '', code: 0 };
+    }) as AdbCall;
+    adb.binary = async (args: string[]) => {
+      calls.push(args);
+      if (xml instanceof Error) throw xml;
+      return Buffer.from(xml, 'utf8');
+    };
+    return { adb, calls };
+  }
+
+  function dumpRunner(xml: string | Error) {
+    const { adb, calls } = dumpAdb(xml);
+    const r = new PhoneToolRunner({
+      adb,
+      gate: { request: async () => 'denied' },
+      rates: { load: () => [], save: () => {} },
+      artemis: () => null,
+      onlineSerials: () => ['10.0.0.7:5555'],
+    });
+    return { r, calls };
+  }
+
+  it('phone.read_ui turns the dump into the shared text form', async () => {
+    const { r, calls } = dumpRunner(DUMP);
+    const res = await r.call('phone.read_ui', {});
+    expect(res).toEqual({
+      ok: true,
+      text: [
+        'android.widget.FrameLayout {{0, 0}, {1080, 2400}}',
+        'android.widget.TextView "Say "hi"" [com.openai.chat:id/title] {{24, 96}, {1032, 84}}',
+        'android.widget.Button "Sign in" [com.openai.chat:id/login] {{24, 836}, {312, 48}}',
+      ].join('\n'),
+    });
+    expect(calls[0]).toEqual(['exec-out', 'uiautomator', 'dump', '/dev/tty']);
+  });
+
+  it('phone.read_ui filters by label and type and caps max_elements', async () => {
+    const { r } = dumpRunner(DUMP);
+    expect(await r.call('phone.read_ui', { filter: { label: 'sign' } })).toEqual({
+      ok: true,
+      text: 'android.widget.Button "Sign in" [com.openai.chat:id/login] {{24, 836}, {312, 48}}',
+    });
+    expect(await r.call('phone.read_ui', { filter: { type: 'textview' } })).toMatchObject({ ok: true });
+    expect(((await r.call('phone.read_ui', { filter: { type: 'textview' } })) as unknown as { text: string }).text).not.toContain('Button');
+    expect(await r.call('phone.read_ui', { max_elements: 1 })).toEqual({
+      ok: true,
+      text: 'android.widget.FrameLayout {{0, 0}, {1080, 2400}}',
+    });
+    expect(await r.call('phone.read_ui', { filter: 'oops' })).toMatchObject({ error: 'invalid_args' });
+    expect(await r.call('phone.read_ui', { max_elements: 0 })).toMatchObject({ error: 'invalid_args' });
+    expect(await r.call('phone.read_ui', { visible_only: 'yes' })).toMatchObject({ ok: true }); // no-op on adb, accepted for parity
+  });
+
+  it('phone.screen_text joins the readable labels', async () => {
+    const { r } = dumpRunner(DUMP);
+    expect(await r.call('phone.screen_text', {})).toEqual({ ok: true, text: 'Say "hi"\nSign in' });
+  });
+
+  it('phone.find_and_tap taps the element centre, or reports not_found', async () => {
+    const { r, calls } = dumpRunner(DUMP);
+    expect(await r.call('phone.find_and_tap', { element_id: 'login' })).toMatchObject({ ok: true });
+    expect(calls.at(-1)).toEqual(['shell', 'input', 'tap', '180', '860']);
+    // match narrows by label; content-desc counts as the label.
+    expect(await r.call('phone.find_and_tap', { element_id: 'login', match: 'log in' })).toMatchObject({ ok: false, error: 'not_found' });
+    expect(await r.call('phone.find_and_tap', { element_id: 'login', match: 'sign' })).toMatchObject({ ok: true });
+    expect(await r.call('phone.find_and_tap', { element_id: 'nope' })).toMatchObject({ ok: false, error: 'not_found' });
+    expect(await r.call('phone.find_and_tap', {})).toMatchObject({ error: 'invalid_args' });
+    // Full resource-id also matches.
+    expect(await r.call('phone.find_and_tap', { element_id: 'com.openai.chat:id/title' })).toMatchObject({ ok: true });
+  });
+
+  it('a failed dump is adb_failed, not a crash', async () => {
+    const { r } = dumpRunner(new Error('device offline'));
+    expect(await r.call('phone.read_ui', {})).toMatchObject({ ok: false, error: 'adb_failed' });
+    const empty = dumpRunner('');
+    expect(await empty.r.call('phone.read_ui', {})).toMatchObject({ ok: false, error: 'adb_failed' });
+  });
+});
+
+describe('Phone-Linked phones in the runner', () => {
+  function linksBackend(serials: string[]) {
+    const calls: { name: string; serial: string; args: Record<string, unknown> }[] = [];
+    return {
+      calls,
+      backend: {
+        has: (s: string) => serials.includes(s),
+        serials: () => serials,
+        call: async (name: string, serial: string, args: Record<string, unknown>): Promise<import('./phone-tools.js').ToolResult> => {
+          calls.push({ name, serial, args });
+          return { ok: true, via: 'phone-link' };
+        },
+        linkedDevices: async () =>
+          serials.map((serial) => ({
+            serial,
+            platform: 'ios' as const,
+            via: 'phone-link' as const,
+            route: 'iphone-app-ictrl' as const,
+            name: 'iPhone 15',
+            health: { state: 'HEALTHY' as const, checkedAt: '2026-10-17T00:00:00.000Z', recovery: 'automatic' as const },
+          })),
+      },
+    };
+  }
+
+  function linkedRunner(serials: string[], online: string[] = []) {
+    const { adb, calls } = makeAdb();
+    const links = linksBackend(serials);
+    const r = new PhoneToolRunner({
+      adb,
+      gate: { request: async () => 'denied' },
+      rates: { load: () => [], save: () => {} },
+      artemis: () => null,
+      onlineSerials: () => online,
+      links: () => links.backend,
+    });
+    return { r, links, adbCalls: calls };
+  }
+
+  it('routes calls to the links lane by link: serial, defaulting to the only online phone', async () => {
+    const { r, links, adbCalls } = linkedRunner(['link:dev-1']);
+    const res = await r.call('phone.tap', { x: 10, y: 20 });
+    expect(res).toMatchObject({ ok: true, via: 'phone-link' });
+    expect(links.calls).toEqual([{ name: 'phone.tap', serial: 'link:dev-1', args: { x: 10, y: 20 } }]);
+    expect(adbCalls).toHaveLength(0);
+
+    expect(await r.call('phone.tap', { serial: 'link:dev-1', x: 1, y: 2 })).toMatchObject({ ok: true });
+    expect(await r.call('phone.tap', { serial: 'zzz', x: 1, y: 2 })).toMatchObject({ ok: false, error: 'device_offline' });
+  });
+
+  it('treats a linked phone whose health is not online as offline', async () => {
+    const { r } = linkedRunner([]); // monitor says TRANSPORT_OFFLINE → serials() is empty
+    expect(await r.call('phone.tap', { serial: 'link:dev-1', x: 1, y: 2 })).toMatchObject({ ok: false, error: 'device_offline' });
+    expect(await r.call('phone.tap', { x: 1, y: 2 })).toMatchObject({ ok: false, error: 'device_offline' });
+  });
+
+  it('phone.devices merges Android, USB Agent and linked phones with health', async () => {
+    const { r } = linkedRunner(['link:dev-1'], ['10.0.0.7:5555']);
+    const res = await r.call('phone.devices', {});
+    expect(res).toEqual({
+      ok: true,
+      serials: ['10.0.0.7:5555', 'link:dev-1'],
+      devices: [
+        { serial: '10.0.0.7:5555', platform: 'android' },
+        {
+          serial: 'link:dev-1',
+          platform: 'ios',
+          via: 'phone-link',
+          route: 'iphone-app-ictrl',
+          name: 'iPhone 15',
+          health: { state: 'HEALTHY', checkedAt: '2026-10-17T00:00:00.000Z', recovery: 'automatic' },
+        },
+      ],
+    });
+  });
+
+  it('mixes lanes: linked + adb phones need an explicit serial', async () => {
+    const { r } = linkedRunner(['link:dev-1'], ['10.0.0.7:5555']);
+    expect(await r.call('phone.tap', { x: 1, y: 2 })).toMatchObject({ ok: false, error: 'device_required' });
+    expect(await r.call('phone.tap', { serial: '10.0.0.7:5555', x: 1, y: 2 })).toEqual({ ok: true });
+  });
+});

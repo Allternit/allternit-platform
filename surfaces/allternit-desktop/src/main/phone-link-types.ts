@@ -72,9 +72,47 @@ export interface PhoneLinkStatus {
   error?: PhoneLinkError;
 }
 
+/**
+ * Health of a linked phone, from evidence only (phone-link-health.ts).
+ * `recovery` says whether Desktop can fix it on its own ('automatic') or the
+ * user must act ('manual'); `action` is the one-line instruction when manual.
+ */
+export type PhoneLinkHealthState =
+  | 'HEALTHY'
+  | 'TRANSPORT_OFFLINE'
+  | 'PAIRING_INVALID'
+  | 'DEVICE_LOCKED'
+  | 'HELPER_NOT_RESPONDING'
+  | 'DEVELOPER_IMAGE_REMOUNT_REQUIRED'
+  | 'SIGNATURE_RENEWAL_REQUIRED'
+  | 'UNKNOWN';
+
+export interface PhoneLinkHealth {
+  state: PhoneLinkHealthState;
+  /** ISO timestamp of the check. */
+  checkedAt: string;
+  /** What we saw, for the UI tooltip. */
+  detail?: string;
+  recovery: 'automatic' | 'manual';
+  /** One short sentence telling the user what to do (manual states). */
+  action?: string;
+}
+
+/** A linked phone as the UI's device list shows it (phone-link:devices). */
+export interface PhoneLinkDevice {
+  deviceId: string;
+  platform: PhoneLinkPlatform;
+  name?: string;
+  route: 'iphone-app-ictrl' | 'android-app';
+  health: PhoneLinkHealth;
+  apps?: PhoneLinkApp[];
+}
+
 /** `window.allternit.phoneLink` */
 export interface PhoneLinkAPI {
   status(): Promise<PhoneLinkStatus>;
+  /** Linked phones with per-phone health, for Settings → Computers → Phones. */
+  devices(): Promise<PhoneLinkDevice[]>;
   onStatusChanged(handler: (status: PhoneLinkStatus) => void): () => void;
   start(opts: { platform: PhoneLinkPlatform }): Promise<PhoneLinkStatus>;
   cancel(): Promise<PhoneLinkStatus>;
