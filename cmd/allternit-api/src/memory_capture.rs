@@ -95,7 +95,17 @@ pub fn record_turn(db: &DbHandle, owner: &str, source: Source, label: &str, text
     }
     crate::memory_drive::validate_source(label).map_err(|e| ServiceError::Provenance(e.to_string()))?;
     let Some(text) = clean_turn(text) else { return Ok(None) };
-    if !settings(&db.connect()?, owner).allows(source) {
+    let conn = db.connect()?;
+    if !settings(&conn, owner).allows(source) {
+        return Ok(None);
+    }
+    // A redelivered message (webhook retry, replay) is captured once.
+    let repeat: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM memory_observations WHERE user_id = ?1 AND source = ?2 AND content = ?3 AND timestamp >= datetime('now', '-10 minutes'))",
+        params![owner, label, text],
+        |r| r.get(0),
+    )?;
+    if repeat {
         return Ok(None);
     }
     crate::memory_kernel_service::record_observation(db, owner, None, None, "turn_user", &text, Some(label))

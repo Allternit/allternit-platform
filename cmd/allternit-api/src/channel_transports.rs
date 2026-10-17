@@ -1099,7 +1099,9 @@ pub async fn accept_events_with<R: crate::thread_routes::ThreadRuntime>(
         let routed = route_inbound(&st.db, rt, acct, tx.provider(), &e).await;
         // The owner's own words grow their Memory Drive (Settings → Memory →
         // Sources), whether or not a bot answers in this chat; never on a replay.
-        if from_owner && routed.as_ref().is_ok_and(|r| r.recorded == Recorded::New) {
+        // (A connection with no bot records nothing, so it counts too; capture
+        // itself drops a repeat of the same message.)
+        if from_owner && routed.as_ref().is_ok_and(|r| r.recorded == Recorded::New || r.binding.is_none()) {
             if let Some(said) = e.text.as_deref() {
                 crate::memory_capture::owner_channel_turn(&st.db, &acct.owner, &crate::memory_capture::channel_label(tx.provider(), &e.channel), said);
             }
