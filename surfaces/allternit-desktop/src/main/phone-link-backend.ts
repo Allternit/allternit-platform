@@ -331,8 +331,8 @@ function pageSourceParams(a: Record<string, unknown>): { params: Record<string, 
 function textOf(value: unknown): string {
   if (typeof value === 'string') return value;
   const v = (value ?? {}) as { source?: unknown; text?: unknown; items?: unknown };
-  // page_source → { source }; screen_text → { items: [{ label | text, center_x, center_y }] }
-  if (typeof v.source === 'string') return v.source;
+  // screen_text → { items: [{ label | text, center_x, center_y }] } (Android also sends source: 'tree');
+  // page_source → { source }
   if (Array.isArray(v.items)) {
     return v.items
       .map((item) => {
@@ -343,6 +343,7 @@ function textOf(value: unknown): string {
       .filter(Boolean)
       .join('\n');
   }
+  if (typeof v.source === 'string') return v.source;
   if (typeof v.text === 'string') return v.text;
   return JSON.stringify(value ?? {});
 }

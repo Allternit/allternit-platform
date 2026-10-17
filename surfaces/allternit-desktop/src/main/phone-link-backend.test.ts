@@ -401,7 +401,8 @@ describe('screen text shapes', () => {
   it('read_ui returns the tree from page_source.source; screen_text lists text with centres', async () => {
     const client = fakeClient({
       page_source: () => ({ format: 'text', source: "StaticText, value: 'Allternit iphone tree works', {{16, 229}, {361, 24}}", truncated: false }),
-      screen_text: () => ({ count: 2, items: [{ label: 'Menu', center_x: 38, center_y: 81 }, { text: 'Log in', center_x: 622, center_y: 139 }] }),
+      // Android's screen_text also carries source: 'tree' — the items are the text.
+      screen_text: () => ({ count: 2, source: 'tree', items: [{ label: 'Menu', center_x: 38, center_y: 81 }, { text: 'Log in', center_x: 622, center_y: 139 }] }),
     });
     const b = backend(client);
     expect(await b.call('phone.read_ui', 'link:dev-1', {})).toEqual({ ok: true, text: "StaticText, value: 'Allternit iphone tree works', {{16, 229}, {361, 24}}" });
