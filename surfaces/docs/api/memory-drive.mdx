@@ -239,6 +239,14 @@ credential-like keys are replaced, `git_remote` loses its userinfo, and any file
 - `POST /memory/drive/ledger/snapshot`: `{ changed, revision }`.
 - `GET /memory/drive/ledger/download?revision=`: `application/zip` with everything under `ledger/`.
 
+- `POST /memory/drive/ledger/restore`: body `{ files: { "<ledger path>": "<text>" }, apply? }` (up to
+  5,000 files, 40 MB). Returns `{ dry_run, plan: { items: [{ kind, path, name, action, reason, needs,
+  paused }], files_added, files_kept, reconnect: [{ connector, account }] } }`, where `action` is `add`,
+  `already_here` or `skip`. `ledger_restore.rs` keeps each record's id. It writes only the columns the
+  table has here, with `user_id` set to the caller. It drops `[left out…]` values and lists them in
+  `needs`. It pauses routines, scheduled messages, schedules, loops and scheduled runs. It adds bot
+  workspace files and skill folders without overwriting anything. Applying saves a ledger snapshot.
+
 Older computers answer 404.
 
 ### Copies: `GET/PUT /memory/drive/copies`, `POST /memory/drive/copies/run`
