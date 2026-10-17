@@ -11,6 +11,7 @@ import com.allternit.phonelink.core.AutoStart
 import com.allternit.phonelink.core.DeviceOps
 import com.allternit.phonelink.core.EncryptedFileSessionStore
 import com.allternit.phonelink.core.HttpServer
+import com.allternit.phonelink.core.MeshKeyBox
 import com.allternit.phonelink.core.PhoneServer
 import com.allternit.phonelink.core.RpcDispatcher
 import com.allternit.phonelink.core.ServerConfig
@@ -43,6 +44,8 @@ object ServerController {
 
     @Volatile var ops: DeviceOps? = null; private set
     @Volatile var lastError: String? = null; private set
+    private lateinit var meshKeyBox: MeshKeyBox
+    private lateinit var meshManager: MeshManager
     private val listeners = CopyOnWriteArraySet<() -> Unit>()
     private val scheduler = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "phonelink-ctl").apply { isDaemon = true } }
 
@@ -66,10 +69,27 @@ object ServerController {
             hooks = hooks,
             ownPackage = app.packageName,
         )
-        val phoneServer = PhoneServer(auth, dispatcher, config = { settings.serverConfig() }, log = ::log)
+        meshKeyBox = MeshKeyBox(kv, KeystoreSealer())
+        val phoneServer = PhoneServer(auth, dispatcher, config = { meshAwareConfig() }, log = ::log)
         http = HttpServer(phoneServer::handle, log = ::log)
+        meshManager = MeshManager(
+            app = app,
+            meshDir = File(app.filesDir, "mesh"),
+            keyBox = meshKeyBox,
+            serverPort = { settings.port },
+            meshControlUrl = { settings.meshControlUrl },
+            deviceId = { settings.deviceId },
+            handler = phoneServer::handle,
+            onChanged = { notifyChanged() },
+            schedule = { d, t -> scheduler.schedule(t, d, TimeUnit.MILLISECONDS) },
+            log = ::log,
+        )
         initialized = true
     }
+
+    /** ServerConfig plus the live mesh facts, for /whoami and device_info. */
+    private fun meshAwareConfig(): ServerConfig =
+        settings.serverConfig().copy(meshState = meshManager.state(), meshHost = meshManager.host())
 
     // ── State ───────────────────────────────────────────────────────────────
 
@@ -119,13 +139,29 @@ object ServerController {
             log(lastError!!)
             false
         }
+        if (ok) meshManager.start()
         notifyChanged()
         return ok
     }
 
+    /** Seal and persist a mesh pre-auth key from a PROVISION broadcast. Never logged. */
+    fun storeMeshAuthKey(authKey: String) {
+        init(app)
+        meshKeyBox.store(authKey)
+    }
+
+    /** (Re)start the mesh join if provisioned with a mesh control URL. Idempotent. */
+    fun syncMesh() {
+        if (initialized) meshManager.start()
+    }
+
+    fun meshState(): String = if (initialized) meshManager.state() else "stopped"
+    fun meshHost(): String? = if (initialized) meshManager.host() else null
+
     @Synchronized
     fun restartServer() {
         http.stop()
+        meshManager.stop()
         startServer()
     }
 
@@ -134,6 +170,7 @@ object ServerController {
     fun stopServer(byUser: Boolean) {
         if (byUser) settings.userStopped = true
         http.stop()
+        meshManager.stop()
         log("server stopped (byUser=$byUser)")
         notifyChanged()
     }
@@ -155,7 +192,7 @@ object ServerController {
     }
 
     private val hooks = object : ServerHooks {
-        override fun config(): ServerConfig = settings.serverConfig()
+        override fun config(): ServerConfig = meshAwareConfig()
 
         override fun applyConfig(allowRemote: Boolean?, port: Int?, deviceName: String?) {
             deviceName?.let { settings.deviceName = it }
@@ -203,6 +240,7 @@ object ServerController {
         if (!http.isRunning) return lastError ?: "Stopped"
         val where = if (settings.allowRemote) (lanAddresses().firstOrNull() ?: "this phone") else "127.0.0.1 (cable only)"
         val n = auth.activeSessions.size
-        return "Listening on $where:${settings.port} · $n paired"
+        val mesh = meshHost()?.let { " · mesh $it" } ?: ""
+        return "Listening on $where:${settings.port} · $n paired$mesh"
     }
 }

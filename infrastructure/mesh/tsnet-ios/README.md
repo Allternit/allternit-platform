@@ -2,10 +2,39 @@
 
 Feasibility spike proving that `tailscale.com/tsnet` (userspace WireGuard
 tailnet node) can be cross-compiled into an iOS-consumable
-`Mesh.xcframework` with gomobile, and linked from Swift.
+`Mesh.xcframework` with gomobile, and linked from Swift. The same package
+also builds an Android `Mesh.aar` (2026-10-17, for the Phone Link app).
 
 **Result: positive.** tsnet v1.102.0 binds and links cleanly with gomobile
 on Go 1.26.5 / Xcode 16.2. No c-archive fallback needed.
+
+## Android build (`build-android.sh`)
+
+```sh
+export PATH="$PATH:$HOME/go/bin"
+export ANDROID_HOME=<sdk with ndk;27.2.12479018>   # gomobile finds the NDK here
+export JAVA_HOME=<jdk 17+>                          # gomobile runs javac on the stubs
+./build-android.sh
+```
+
+Runs `gomobile bind -target=android -androidapi 26 -ldflags=-w -o Mesh.aar .`,
+removing any previous output first. Output `Mesh.aar` is **not committed**;
+consumers copy it to `surfaces/allternit-mobile/android/app/libs/`.
+
+Verified toolchain (2026-10-17, darwin/arm64):
+
+| Component | Version |
+|---|---|
+| Go | 1.26.5 (Homebrew, darwin/arm64) |
+| tailscale.com | v1.102.0 |
+| gomobile + gobind | v0.0.0-20260709172247-6129f5bee9d5 (`~/go/bin`) |
+| Android NDK | 27.2.12479018 (installed via `sdkmanager "ndk;27.2.12479018"`) |
+| JDK (javac for the Java stubs) | OpenJDK 17.0.20.1 (Homebrew openjdk@17) |
+| androidapi | 26 |
+
+Output: `Mesh.aar` 33 MB compressed — `libgojni.so` 22.5–25.1 MB per ABI
+(armeabi-v7a, arm64-v8a, x86, x86_64), Java classes `mesh.Mesh` /
+`mesh.Node`. First build takes a few minutes; incremental rebuilds are fast.
 
 ## Contents
 
@@ -59,6 +88,9 @@ ip   := node.MeshIP()                        // "100.x.y.z" once up, "" otherwis
 body, err := node.Get("http://100.x.y.z/")   // through the tailnet
 port, err := node.StartProxy("100.x.y.z", 4096) // loopback proxy → 127.0.0.1:port
 err  = node.StopProxy()
+st   := node.State()                         // "stopped"|"starting"|"needs_login"|"running"|"error:…"
+err  = node.ServeLocal(8200, 8080)           // tailnet :8200 → 127.0.0.1:8080 (inbound serving)
+err  = node.StopServe()
 err  = node.Close()
 ```
 

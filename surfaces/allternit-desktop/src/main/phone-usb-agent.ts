@@ -383,6 +383,10 @@ export class UsbAgentManager extends EventEmitter {
         }
         case 'phone.task':
           return fail('unsupported', 'Plain-English tasks run through ARTEMIS, which is Android-only. On an iPhone, look with phone.screenshot and act with phone.tap / phone.swipe / phone.type.');
+        case 'phone.read_ui':
+        case 'phone.screen_text':
+        case 'phone.find_and_tap':
+          return fail('unsupported', 'Reading the screen as text needs the Phone Link helper or an Android phone. On a USB-Agent iPhone, use phone.screenshot and tap from what you see.');
         case 'phone.sms.send':
         case 'phone.call.dial':
           return fail('unsupported', 'Texts and calls aren’t available through the USB Agent. Use the Allternit phone number, or an Android phone.');

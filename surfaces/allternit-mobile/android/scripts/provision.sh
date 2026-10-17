@@ -2,14 +2,15 @@
 # One-time cable setup of Allternit Phone Link on an Android phone (Android 8+;
 # written against Android 14). Mirrors what Allternit Desktop runs over adb.
 #
-#   scripts/provision.sh [-s SERIAL] [--apk path/to/app-debug.apk] [--name "Joe's moto"] [--local-only] [--port 8200] [--forward 52100]
+#   scripts/provision.sh [-s SERIAL] [--apk path/to/app-debug.apk] [--name "Joe's moto"] [--local-only] [--port 8200] [--forward 52100] \
+#     [--mesh-url https://headscale.example:8444] [--mesh-key <preauth-key>]
 #
 # Every command here is allowed for the adb `shell` user; see README "Provisioning".
 set -euo pipefail
 
 PKG=com.allternit.phonelink
 SERVICE="$PKG/.PhoneLinkAccessibilityService"
-SERIAL="" APK="" NAME="" REMOTE=true PORT=8200 FORWARD=""
+SERIAL="" APK="" NAME="" REMOTE=true PORT=8200 FORWARD="" MESH_URL="" MESH_KEY=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -s) SERIAL="$2"; shift 2 ;;
@@ -18,6 +19,8 @@ while [[ $# -gt 0 ]]; do
     --local-only) REMOTE=false; shift ;;
     --port) PORT="$2"; shift 2 ;;
     --forward) FORWARD="$2"; shift 2 ;;
+    --mesh-url) MESH_URL="$2"; shift 2 ;;
+    --mesh-key) MESH_KEY="$2"; shift 2 ;;
     *) echo "unknown arg $1" >&2; exit 2 ;;
   esac
 done
@@ -53,6 +56,11 @@ sh am start-foreground-service -n "$PKG/.PhoneLinkService"
 EXTRA=(--ez arm_pairing true --ez allow_remote_access "$REMOTE" --ei listen_port "$PORT")
 # adb shell re-joins arguments into one command line: single-quote the name for the phone's shell.
 if [[ -n "$NAME" ]]; then Q="$(printf '%s' "$NAME" | sed "s/'/'\\\\''/g")"; EXTRA+=(--es device_name "'$Q'"); fi
+# Mesh join (optional): the phone embeds a userspace tsnet node and serves the same
+# server on the tailnet at <meshIP>:8200. The pre-auth key is sealed on the phone,
+# used once, and dropped after the first successful join.
+if [[ -n "$MESH_URL" ]]; then Q="$(printf '%s' "$MESH_URL" | sed "s/'/'\\\\''/g")"; EXTRA+=(--es mesh_control_url "'$Q'"); fi
+if [[ -n "$MESH_KEY" ]]; then Q="$(printf '%s' "$MESH_KEY" | sed "s/'/'\\\\''/g")"; EXTRA+=(--es mesh_auth_key "'$Q'"); fi
 sh am broadcast -a com.allternit.phonelink.PROVISION -n "$PKG/.ProvisionReceiver" "${EXTRA[@]}"
 
 # 7. Optional: forward a local port to the phone's loopback server for the first pairing.

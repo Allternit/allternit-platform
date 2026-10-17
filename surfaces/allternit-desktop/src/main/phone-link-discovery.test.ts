@@ -98,3 +98,14 @@ describe('findPhoneHost', () => {
     expect(probed.every((h) => h.endsWith(':8200'))).toBe(true);
   });
 });
+
+describe('scanLan', () => {
+  it('records every device id that answers, first host wins', async () => {
+    const { scanLan } = await import('./phone-link-discovery.js');
+    const found = await scanLan({
+      lanInterfaces: () => [{ address: '10.0.0.5', netmask: '255.255.255.0' }],
+      fetchWhoami: async (h: string) => ({ '10.0.0.11:8200': { device_id: 'a' }, '10.0.0.252:8200': { device_id: 'b' } } as Record<string, { device_id: string }>)[h] ?? null,
+    });
+    expect(Object.fromEntries(found)).toEqual({ a: '10.0.0.11:8200', b: '10.0.0.252:8200' });
+  });
+});

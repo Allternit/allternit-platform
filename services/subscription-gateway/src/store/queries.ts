@@ -476,6 +476,25 @@ export function deleteAccount(db: Db, accountId: string): void {
 
 // A task still in flight on this account: pinned by routing or route
 // decision, or with an attempt on it. Terminal tasks don't count.
+// A task that is using the account's page right now (not merely queued or
+// waiting on its owner). Memory Drive reads skip such an account; a stale
+// queued task must never block them.
+export function accountHasLiveTasks(db: Db, accountId: string): boolean {
+  const row = db
+    .prepare(
+      `SELECT 1 FROM tasks t
+       WHERE t.status IN ('routing', 'waiting_worker', 'running', 'streaming', 'provider_running')
+         AND (
+           json_extract(t.routing, '$.account_id') = ?
+           OR json_extract(t.route_decision, '$.primary.account_id') = ?
+           OR EXISTS (SELECT 1 FROM task_attempts a WHERE a.task_id = t.task_id AND a.account_id = ?)
+         )
+       LIMIT 1`
+    )
+    .get(accountId, accountId, accountId);
+  return row !== undefined;
+}
+
 export function accountHasActiveTasks(db: Db, accountId: string): boolean {
   const row = db
     .prepare(

@@ -3,6 +3,8 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- The mesh refreshes its interface list when the default network changes. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -69,6 +71,15 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Local server that lets the user's own paired computer operate apps on this phone through the accessibility service; the user starts and stops it." />
         </service>
+
+        <!-- Runs the gomobile tsnet node in a private process so a Go panic
+             there can never take down the phone server. Same-uid binding
+             only (exported=false); the main process supplies start inputs in
+             the bind Intent and receives reports on a Messenger. -->
+        <service
+            android:name=".MeshService"
+            android:exported="false"
+            android:process=":mesh" />
 
         <receiver
             android:name=".BootReceiver"

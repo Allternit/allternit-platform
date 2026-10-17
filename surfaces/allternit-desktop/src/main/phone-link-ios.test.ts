@@ -1,4 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+// This file covers the flow with the mesh switch OFF (phone-link-mesh.test.ts
+// covers it ON). The switch is read when the module loads, so set it first.
+vi.hoisted(() => {
+  process.env.ALLTERNIT_PHONE_LINK_MESH = '0';
+});
 import { PhoneLinkManager } from './phone-link.js';
 import type { PhoneLinkStatus } from './phone-link-types.js';
 import { iosVendorApps, pickLanHost, type GoIosLike, type IctrlLike, type IosDriverDeps, type IosLinkRecord } from './phone-link-ios.js';
@@ -299,6 +305,39 @@ describe('iPhone Phone Link', () => {
     expect(w.signRequests).toHaveLength(0);
     expect(w.installed).toHaveLength(0);
     expect(w.runtests).toHaveLength(0);
+  });
+
+  it('mesh deps present but the switch off: no enrollment, no mesh config call, unchanged record', async () => {
+    const w = world();
+    let enrolls = 0;
+    let schemaFetches = 0;
+    const d = deps(w, appleIdSigner(w), {
+      mesh: {
+        enroll: async () => {
+          enrolls++;
+          return { controlUrl: 'https://ctl.example:8444', authKey: 'secret-key' };
+        },
+      },
+      fetchSchema: async () => {
+        schemaFetches++;
+        return { methods: [{ name: 'config', params: [{ name: 'mesh_control_url' }] }] };
+      },
+    });
+    const manager = new PhoneLinkManager({ platform: 'darwin', sleep: instant, ios: async () => d });
+    manager.start('ios');
+    await waitFor(manager, 'apple_id');
+    manager.submitAppleId({ appleId: 'eoj@example.com', password: 'right' });
+    await waitFor(manager, 'two_factor');
+    manager.submitTwoFactor('123456');
+    await waitFor(manager, 'trust_certificate');
+    manager.continue();
+    const ready = await waitFor(manager, 'ready_wifi');
+    expect(ready.detail).toBe(LAN);
+    expect(enrolls).toBe(0);
+    expect(schemaFetches).toBe(0);
+    expect(w.calls.filter((c) => c.method === 'config' && c.params && 'mesh_control_url' in c.params)).toHaveLength(0);
+    expect(w.saved.at(-1)).not.toHaveProperty('meshHost');
+    expect(w.saved.at(-1)).not.toHaveProperty('meshPending');
   });
 
   it('after a phone restart, remounts and relaunches over the cable and finds the new address', async () => {

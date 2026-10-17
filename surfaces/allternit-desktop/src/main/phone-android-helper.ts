@@ -23,8 +23,11 @@ export const DEFAULT_ANDROID_HELPER_BASE_URL = 'https://runtime.allternit.com/ph
  */
 export const PINNED_ANDROID_MANIFESTS: Record<string, string> = {
   '0.1.0': '85436afac9016a3a1707c9f42e4348482a66fdb93da744d460bd15f4c2ffa7ec',
+  // 0.2.1: joins the mesh (own :mesh process), 16 MB. (0.2.0 was never pinned:
+  // a failed upload left a cached 404 on its APK URL for 4 h.)
+  '0.2.1': 'b177cbe831009d7ea907b7a86456cfe23511e2fe413eb3777553221cc2b44287',
 };
-export const ANDROID_HELPER_VERSION: string | null = '0.1.0';
+export const ANDROID_HELPER_VERSION: string | null = '0.2.1';
 
 export interface AndroidHelperManifest {
   version: string;

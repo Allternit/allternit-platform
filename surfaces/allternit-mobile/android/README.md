@@ -18,14 +18,21 @@ app/src/main/java/com/allternit/phonelink/
     UiTree.kt                   page_source text/structured forms, filters, find_element matching
     DeviceOps.kt                interface the accessibility service implements
     Provisioning.kt             settings, PROVISION extras, one-shot pairing grant, auto-start rule
+    MeshKeyBox.kt               sealed-at-rest storage for the mesh pre-auth key
+    MeshController.kt           the join engine (runs inside the :mesh process)
+    MeshSupervisor.kt           main-process mesh state + crash backoff (pure JVM)
+    MeshMessages.kt             string codec for the main↔mesh-process payloads (pure JVM)
     EncryptedFileSessionStore.kt sessions sealed with a BlobSealer
     Schema.kt                   GET /schema and GET /skill
   PhoneLinkAccessibilityService.kt  DeviceOps on the real device (gestures, tree, screenshot)
   PhoneLinkService.kt           foreground service + "Allternit can use your phone's apps · Stop"
   ServerController.kt           process-wide owner of the server
+  MeshManager.kt                main-process owner of the mesh: binds :mesh, hosts the viaMesh listener
+  MeshService.kt                runs the gomobile node in the private :mesh process
   Receivers.kt                  BootReceiver, ProvisionReceiver (DUMP-protected), StopReceiver
   PairingNotifier.kt            Allow/Deny notification (60 s), PairingActionReceiver
   KeystoreSealer.kt             Android Keystore AES-256-GCM
+  GomobileMeshNode.kt           MeshNodeApi backed by the gomobile tsnet AAR
   MainActivity.kt               status screen (sessions, Stop/Start, Revoke) + TWA design note
 scripts/provision.sh            the adb setup sequence below
 scripts/conformance.sh          live run of ictrl_rpc.py against a phone
@@ -34,6 +41,16 @@ scripts/conformance.sh          live run of ictrl_rpc.py against a phone
 ## Build and test
 
 You need JDK 17 and Android SDK 35 (platform `android-35`, build-tools 35.x). The wrapper jar is not committed. Generate it once with any Gradle 8.x: `gradle wrapper --gradle-version 8.10.2`.
+
+**Prerequisite — the mesh AAR.** The app embeds the gomobile-bound tsnet node from `infrastructure/mesh/tsnet-ios`. Build it first and copy the result to `app/libs/` (gitignored):
+
+```sh
+cd infrastructure/mesh/tsnet-ios
+./build-android.sh          # needs ANDROID_HOME with ndk;27.2.12479018
+cp Mesh.aar ../../../surfaces/allternit-mobile/android/app/libs/
+```
+
+Then:
 
 ```sh
 cd surfaces/allternit-mobile/android
@@ -45,7 +62,9 @@ export ANDROID_HOME=$HOME/Library/Android/sdk     # or write sdk.dir in local.pr
 
 Toolchain: AGP 8.7.3, Kotlin 2.0.21, Gradle 8.10.2, minSdk 26, target/compileSdk 35.
 
-The app has no runtime dependencies beyond the Kotlin stdlib. Tests use JUnit 4.13.2 (EPL-1.0, test only) and `org.json:json:20240303` (public domain, test only, because android.jar ships only stubs of org.json). Everything else is in-tree. NanoHTTPD was not needed, and the X25519 code is written from RFC 7748 rather than vendored.
+The app has no runtime dependencies beyond the Kotlin stdlib and the mesh AAR (tsnet/userspace WireGuard, built in-tree). Tests use JUnit 4.13.2 (EPL-1.0, test only) and `org.json:json:20240303` (public domain, test only, because android.jar ships only stubs of org.json). Everything else is in-tree. NanoHTTPD was not needed, and the X25519 code is written from RFC 7748 rather than vendored.
+
+**APK size.** The universal debug APK is ~91 MB with the mesh included; `libgojni.so` (the Go runtime + tsnet) is 94 MB uncompressed across the four ABIs (23.5 MB arm64). A single-ABI release build pays roughly one ABI's worth (~20 MB compressed). `stripDebugDebugSymbols` cannot strip gomobile's `libgojni.so`.
 
 The unit tests cover:
 - the envelope against golden values produced by `ictrl_rpc.py`;
@@ -53,8 +72,10 @@ The unit tests cover:
 - the pairing wrap;
 - replay, ±120 s skew, forged tags and idle expiry;
 - pairing approve, deny, timeout, busy, cooldown and the armed grant;
+- the armed grant and plaintext pairing being refused to mesh-forwarded (viaMesh) connections;
 - every RPC method against a fake device, including the lock-screen and protected-screen guards;
-- provisioning extras and the auto-start rule;
+- provisioning extras (including the mesh extras validation) and the auto-start rule;
+- the mesh key box (sealed at rest, dropped only after a successful join) and MeshController (join, drop, failure keeps the key, viaMesh marking);
 - the encrypted session store;
 - a full socket run of whoami, pair, sealed RPC, replay and skew.
 
@@ -88,6 +109,25 @@ python3 ictrl_rpc.py --host 127.0.0.1:52100 pair --name "$(hostname)"   # or Des
 ```
 
 You can check the result with `adb shell dumpsys accessibility | grep -A3 "Bound services"`. It should list `com.allternit.phonelink/.PhoneLinkAccessibilityService`.
+
+## Away from home: the mesh
+
+On the same Wi-Fi the phone is reachable at its LAN address. Away from that Wi-Fi, the phone can instead join the customer's private Allternit mesh (a Headscale tailnet): provisioning passes two optional extras, and the app embeds a userspace WireGuard node (`tsnet` via gomobile — no OS VPN slot, so it cannot collide with an always-on VPN) that serves the same iCTRL server on the tailnet at `<meshIP>:8200`.
+
+```sh
+adb shell am broadcast -a com.allternit.phonelink.PROVISION -n $PKG/.ProvisionReceiver \
+    --ez arm_pairing true --ez allow_remote_access true \
+    --es mesh_control_url "'https://mail.news.allternit.com:8444'" \
+    --es mesh_auth_key "'<preauth-key from Desktop>'"
+# or: scripts/provision.sh --mesh-url https://... --mesh-key <key>
+```
+
+- `mesh_control_url` (https only) and `mesh_auth_key` are optional. The key is a single-use Headscale pre-auth key from `POST /api/v1/mesh/enroll`; Desktop passing it at cable setup is the next step (until then, provision by hand).
+- The key is sealed with the Keystore sealer on arrival and never logged. It is passed to the mesh process only while one is stored, and dropped once the mesh reports `running`; from then on tsnet re-authenticates with the node key in the app's private `files/mesh` dir. A failed join keeps the sealed key.
+- The node runs in the app's **private `:mesh` process**, hosted by `MeshService` (`exported=false`, never started directly). While the phone server runs, the main process binds it with `BIND_AUTO_CREATE|BIND_IMPORTANT` — it shares the foreground service's priority — and unbinds on stop. Inputs travel in the bind Intent, reports (`{state, meshIp}`) come back on a Messenger (no AIDL). The main process keeps the last report for `device_info` and the unauthenticated `/whoami` (`mesh_state` `stopped`/`starting`/`running`/`needs_login`/`error:…`, `mesh_host` `<100.x>:8200` or null) and shows the mesh host in the notification once joined.
+- **Crash isolation is the point.** The node is Go (gomobile); a Go panic aborts its whole process, and that already happened once — it took the phone server down with it and Android only restarted the service 30 minutes later. Now a panic can cost only the mesh: the main process reports `mesh_state = "error:mesh process stopped"`, re-binds with backoff (5 s, 15 s, 30 s, 60 s, then every 5 min), and the phone server and accessibility service keep running throughout.
+- Network changes (Wi-Fi ↔ cellular, new Wi-Fi) are handled by tsnet/magicsock; the `:mesh` process re-reads the interface list itself (Android denies Go the netlink dump) — there is no app-level reconnect loop beyond the join/backoff retries.
+- The mesh path lands on a dedicated internal loopback listener **in the main process** (127.0.0.1, server port + 10000) whose requests are marked `viaMesh`. That marking is load-bearing: the bridge forwards tailnet connections from 127.0.0.1, and without it a mesh peer could consume the one-shot armed pairing grant or use plaintext pairing. Mesh-forwarded requests are treated as remote — sealed envelopes required, approval or an existing session needed, armed grant refused. The existing server settings (`allow_remote_access`, `listen_port`) are untouched: the mesh reaches the same server through loopback.
 
 ### Which commands the shell user may run on Android 14
 

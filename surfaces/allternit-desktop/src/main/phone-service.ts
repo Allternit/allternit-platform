@@ -41,6 +41,17 @@ import { USBA_MDNS_TYPE } from './phone-usb-agent-protocol.js';
 import { loadFirmware, type BundledFirmware } from './phone-usb-agent-firmware.js';
 import { grayFromBgra, type Gray } from './phone-usb-agent-vision.js';
 import type { Calibration } from './phone-usb-agent-pointer.js';
+import { IctrlClient, type SecretStore } from './ictrl-client.js';
+import { fileLinkStore } from './phone-link-ios.js';
+import { hasLinkedPhones } from './phone-link-stores.js';
+import { PhoneLinkBackend, cachedHostResolver, linkedPhoneSource, probeLinkedPhone, rememberLinkedHost, type LinkedPhone } from './phone-link-backend.js';
+import { fileAndroidLinkStore } from './phone-link-android.js';
+import { nodeDiscoveryDeps } from './phone-link-discovery.js';
+import { PHONE_LINK_MESH_ENABLED } from './phone-link-mesh.js';
+import { meshManager } from './mesh-manager.js';
+import { PhoneLinkHealthMonitor } from './phone-link-health.js';
+import type { PhoneLinkDevice } from './phone-link-types.js';
+import { readSecret, writeSecret, deleteSecret } from './secure-store.js';
 import {
   PhoneToolRunner,
   type AdbCall,
@@ -174,6 +185,7 @@ class PhoneService {
   private usbAgents: UsbAgentManager | null = null;
   private artemis: ArtemisManager | null = null;
   private runner: PhoneToolRunner | null = null;
+  private linkedBackend: PhoneLinkBackend | null = null;
   private gatewayReady: Promise<void> | null = null;
   private gatewayClose: (() => void) | null = null;
   private gatewayFile = path.join(os.homedir(), '.allternit', 'phone-gateway.json');
@@ -206,6 +218,54 @@ class PhoneService {
     return this.adbReady;
   }
 
+  /**
+   * Phone-Linked phones: one iCTRL lane over both link stores. Pure file
+   * reads + HTTP clients — no adb download, no processes, so an iPhone-only
+   * user pays nothing. Built once. A phone whose saved address went stale is
+   * found again by a LAN scan for its device id (cachedHostResolver), with a
+   * mesh fallback behind the development switch (PHONE_LINK_MESH_ENABLED).
+   */
+  private ensureLinkedBackend(): PhoneLinkBackend {
+    if (!this.linkedBackend) {
+      const dir = this.dir();
+      const secrets: SecretStore = { get: readSecret, set: writeSecret, delete: deleteSecret };
+      const stores = {
+        iosStore: fileLinkStore(path.join(dir, 'phone-link-ios.json')),
+        androidStore: fileAndroidLinkStore(path.join(dir, 'phone-link-android.json')),
+      };
+      const source = linkedPhoneSource(stores);
+      // SECURITY: phones go on the mesh only behind the development switch;
+      // without meshProxy the resolver never dials a mesh address.
+      const resolveHost = cachedHostResolver({
+        discovery: nodeDiscoveryDeps,
+        remember: rememberLinkedHost(stores),
+        ...(PHONE_LINK_MESH_ENABLED
+          ? {
+              meshProxy: async (meshHost: string) => {
+                const url = await meshManager.proxyFor(`http://${meshHost}`);
+                // The lane speaks to a loopback host, not a URL.
+                return url.replace(/^https?:\/\//, '').replace(/\/$/, '');
+              },
+            }
+          : {}),
+      });
+      const client = (phone: LinkedPhone, host: string) =>
+        new IctrlClient({ host, secrets, storeKey: phone.storeKey, logger: (m) => log.info(m) });
+      const health = new PhoneLinkHealthMonitor({
+        phones: source,
+        probe: (phone) => probeLinkedPhone(phone, client, resolveHost),
+        logger: (m) => log.info(m),
+      });
+      this.linkedBackend = new PhoneLinkBackend({ phones: source, client, resolveHost, health, logger: (m) => log.info(m) });
+    }
+    return this.linkedBackend;
+  }
+
+  /** Linked phones with health, for phone-link:devices (Settings → Computers → Phones). */
+  linkedDevices(): Promise<PhoneLinkDevice[]> {
+    return this.ensureLinkedBackend().linkedDevices();
+  }
+
   /** The tool runner, loopback gateway and MCP shim that every bot reaches phones through. */
   private ensureGateway(): Promise<void> {
     if (this.gatewayReady) return this.gatewayReady;
@@ -223,6 +283,7 @@ class PhoneService {
         defaultSmsSubscription: (serial) => this.manager?.defaultSmsSubscription(serial) ?? Promise.resolve(null),
         usb: () => this.usbAgents,
         activity: (serial, delta) => this.manager?.noteAgentActivity(serial, delta),
+        links: () => this.ensureLinkedBackend(),
       });
       this.runner = runner;
       const token = newGatewayToken();
@@ -583,9 +644,23 @@ class PhoneService {
     return this.usbAgents;
   }
 
+  /**
+   * Bots reach Phone-Linked phones through the gateway + MCP shim. Called at
+   * launch when a linked phone exists and when Phone Link setup finishes, so
+   * the phone tools are there without an adb phone or USB Agent. No adb
+   * download, no processes beyond the gateway.
+   */
+  async startForLinkedPhones(): Promise<void> {
+    await this.ensureGateway().catch((error) => log.warn('[Phone] gateway for linked phones could not start:', error));
+  }
+
   /** Called at launch: only brings a lane up if something was ever paired on it (zero cost for everyone else). */
   async initIfPaired(): Promise<void> {
     const dir = path.join(app.getPath('userData'), 'phone');
+    // Phone-Linked phones (iPhone helper, Android app) are reached through the
+    // same gateway + MCP shim; without this, bots had no phone tools after a
+    // restart until an adb phone or USB Agent woke the gateway.
+    if (hasLinkedPhones(dir)) await this.startForLinkedPhones();
     if (readJson<StoredPhone[]>(path.join(dir, 'phones.json'), []).length > 0) {
       await this.ensureReady().catch((error) => log.warn('[Phone] could not start:', error));
     }

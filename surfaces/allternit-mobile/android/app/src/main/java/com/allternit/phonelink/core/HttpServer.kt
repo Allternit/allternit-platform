@@ -22,10 +22,21 @@ class HttpRequest(
     val headers: Map<String, String>,
     val body: ByteArray?,
     val remote: InetAddress?,
+    /**
+     * True when the connection reached this server through the mesh bridge
+     * (the dedicated internal loopback listener the mesh forwards to). Such
+     * connections still have a loopback remote address, but they must NOT be
+     * treated as local: the one-shot armed pairing grant is adb-only.
+     */
+    val viaMesh: Boolean = false,
 ) {
     val isLoopback: Boolean get() = remote?.isLoopbackAddress == true ||
         // ::ffff:127.x.x.x arrives as an Inet4Address on the JVM already; keep the check for odd stacks.
         (remote?.hostAddress?.startsWith("::ffff:127.") == true)
+
+    /** Same request, marked as arriving through the mesh bridge. */
+    fun markViaMesh(): HttpRequest =
+        HttpRequest(method, path, query, headers, body, remote, viaMesh = true)
 }
 
 class HttpResponse(
@@ -53,6 +64,8 @@ class HttpServer(
     private val handler: (HttpRequest) -> HttpResponse,
     private val maxThreads: Int = 8,
     private val log: (String) -> Unit = {},
+    /** When true, every request served is marked [HttpRequest.viaMesh]. */
+    private val viaMesh: Boolean = false,
 ) {
     companion object {
         const val MAX_HEADER_BYTES = 32 * 1024
@@ -110,7 +123,8 @@ class HttpServer(
                 val req = readRequest(s.getInputStream(), s.inetAddress)
                 val resp = when (req) {
                     is ReadResult.Ok -> try {
-                        handler(req.request)
+                        val request = if (viaMesh) req.request.markViaMesh() else req.request
+                        handler(request)
                     } catch (e: Exception) {
                         log("handler error: ${e.javaClass.simpleName}: ${e.message}")
                         HttpResponse.text(500, "Internal Server Error")

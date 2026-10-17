@@ -1312,6 +1312,17 @@
         {
           "on": "2026-10-17",
           "note": "In-app linked-Android live view (Phase 1): scrcpy-server pinned to v5.0.1 with a recorded SHA-256, downloaded on first use from the official release (never bundled); phone-scrcpy.ts implements the v5 wire protocol (dummy byte, 64-byte device name, h264 codec id, 12-byte session packets for rotation/size, 12-byte frame headers stripped before IPC), one shared PhoneStreamManager session per serial exposed to the renderer over phone:stream-* IPC with Annex-B H.264 chunks as structured-clone Buffers; input (touch/key/text/scroll/back/home/app_switch/power) and SET_DISPLAY_POWER encoded per control_msg.c. Agent-takeover banner: PhoneInfo.agentBusy fed by tool-runner and ARTEMIS activity counters. Streams start only on renderer request; the external scrcpy window stays a secondary action."
+        },
+        {
+          "note": "Bots reach Phone-Linked phones through one iCTRL lane in PhoneToolRunner (link: serials) with read_ui/find_and_tap/screen_text on every lane and per-phone health; remount and signature renewal are manual states."
+        },
+        {
+          "on": "2026-10-17",
+          "note": "Phone Link helpers join the customer's Headscale mesh with embedded userspace tsnet (no OS VPN slot); keys come from /api/v1/mesh/enroll (Desktop passing them at cable setup is the next step); relays are our own DERP. tsnet log uploads to Tailscale are switched off in every Allternit mesh node (phones and the gizzi mesh-node sidecar). Live 2026-10-17: moto controlled from France over the mesh on LTE with Wi-Fi off."
+        },
+        {
+          "on": "2026-10-17",
+          "note": "iPhone Phone Link helper 1.98.12-allternit.2 (published + pinned) joins the user's mesh via sealed config; only local clients may use the one-shot pairing grant. Live 2026-10-17: iPhone on a phone hotspot (different network, no cable, helper started on the phone) driven from France over the mesh: ChatGPT opened, read_ui 208 lines, plaintext pairing over the mesh refused (403). Production mesh isolates customers (autogroup:self) since the same day. Android 0.2.1 runs the mesh in its own process."
         }
       ],
       "evidence": [

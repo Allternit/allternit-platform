@@ -29,8 +29,8 @@ use crate::errors::{ErrorCode, Failure};
 use crate::protocol::{parse_request, Event, Request};
 use crate::signer::{Emit, Signer};
 
-/// Allternit-hosted anisette v3 server. Not live yet: the orchestrator decides
-/// hosting (README "Anisette"). isideload's own default is a third party's
+/// Allternit-hosted anisette v3 server (live since 2026-10-17; README
+/// "Anisette"). isideload's own default is a third party's
 /// (`isideload::anisette::remote_v3::DEFAULT_ANISETTE_V3_URL`).
 pub const DEFAULT_ANISETTE_URL: &str = "https://anisette.allternit.com";
 pub const ANISETTE_URL_ENV: &str = "ALLTERNIT_ANISETTE_URL";

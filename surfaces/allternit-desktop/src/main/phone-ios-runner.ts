@@ -37,8 +37,11 @@ export const DEFAULT_RUNNER_BASE_URL = 'https://runtime.allternit.com/phone-link
  */
 export const PINNED_RUNNER_MANIFESTS: Record<string, string> = {
   '1.98.12-allternit.1': '02fc92eec1769db97afba4cdea78e158c1c48bc18c2b69958ecc2e9b5934ffcf',
+  // .2: joins the user's mesh (config mesh_control_url / mesh_auth_key); only
+  // local clients may use the one-shot pairing grant. Live 2026-10-17.
+  '1.98.12-allternit.2': '97dd791451a01e88afc7d738173388857edc22fdc2f8a0fcd5a821208bcba053',
 };
-export const RUNNER_VERSION: string | null = '1.98.12-allternit.1';
+export const RUNNER_VERSION: string | null = '1.98.12-allternit.2';
 
 export interface RunnerPackage {
   file: string;
