@@ -167,6 +167,36 @@
       "label": "OpenMuse live AG-UI HTTP runtime",
       "kind": "external",
       "path": "allternit/services/subscription-gateway/adapters/openmuse-copilotkit/provider.ts"
+    },
+    {
+      "id": "allternit/cmd/allternit-sideload",
+      "label": "allternit-sideload (Phone Link Apple ID signer)",
+      "kind": "crate",
+      "path": "allternit/cmd/allternit-sideload"
+    },
+    {
+      "id": "external:apple-developer-services",
+      "label": "Apple ID sign-in (GrandSlam) + developer services",
+      "kind": "external",
+      "path": "allternit/cmd/allternit-sideload/src/signer.rs"
+    },
+    {
+      "id": "external:anisette-v3",
+      "label": "anisette v3 server (anisette.allternit.com, not hosted yet)",
+      "kind": "external",
+      "path": "allternit/cmd/allternit-sideload/README.md"
+    },
+    {
+      "id": "allternit/cmd/allternit-api/src/phone_ws.rs",
+      "label": "phone stream relay",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-api/src/phone_ws.rs"
+    },
+    {
+      "id": "allternit/cmd/allternit-cloud-api/src/routes/registered_phones.rs",
+      "label": "registered phones",
+      "kind": "module",
+      "path": "allternit/cmd/allternit-cloud-api/src/routes/registered_phones.rs"
     }
   ],
   "edges": [
@@ -582,6 +612,48 @@
       "evidence": [
         "allternit/cmd/gizzi-code/src/runtime/drivers/local-cli-driver.ts",
         "allternit/cmd/gizzi-code/src/runtime/session/cli-background-tasks.ts"
+      ]
+    },
+    {
+      "source": "allternit/surfaces/allternit-desktop",
+      "target": "allternit/cmd/allternit-sideload",
+      "kind": "sidecar (optional; JSON lines over stdio, signs the iPhone helper with the user's Apple ID)",
+      "evidence": [
+        "allternit/surfaces/allternit-desktop/src/main/phone-ios-runner.ts",
+        "allternit/surfaces/allternit-desktop/scripts/prepare-sideload.cjs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-sideload",
+      "target": "external:apple-developer-services",
+      "kind": "HTTPS (isideload): Apple ID login + 2FA, certificates, App IDs, devices, profiles",
+      "evidence": [
+        "allternit/cmd/allternit-sideload/src/signer.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-sideload",
+      "target": "external:anisette-v3",
+      "kind": "HTTPS + WebSocket anisette v3 (provisioning, headers)",
+      "evidence": [
+        "allternit/cmd/allternit-sideload/src/main.rs"
+      ]
+    },
+    {
+      "source": "allternit/cmd/allternit-api/src/phone_ws.rs",
+      "target": "allternit/cmd/allternit-cloud-api/src/routes/registered_phones.rs",
+      "kind": "authenticated HTTP (runtime device bearer): upsert + list registered phones by account; identity + last_seen only, never stream data",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/phone_ws.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/registered_phones.rs"
+      ]
+    },
+    {
+      "source": "surface:ai",
+      "target": "allternit/cmd/allternit-api/src/phone_ws.rs",
+      "kind": "authenticated HTTP + public token-gated websocket (/api/v1/phones, /api/v1/phones/:serial/ws-token, /ws/phones/:serial/stream)",
+      "evidence": [
+        "allternit/cmd/allternit-api/src/phone_ws.rs"
       ]
     }
   ]

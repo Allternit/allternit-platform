@@ -188,7 +188,7 @@ result shapes as `import-text` and the same checks. Each line's source is
 ### `GET /memory/drive/capture`
 
 The capture switches and per-source counts:
-`{ settings: { channels, gizzi, agent_folders }, counts: [{ scheme, memories }], agents: [{ id, name, files, items }], verified_channels: [channel] }`. `verified_channels` lists the channels with a verified owner identity, which channel capture needs.
+`{ settings: { channels, gizzi, agent_folders, vendors }, counts: [{ scheme, memories }], agents: [{ id, name, files, items }], verified_channels: [channel], vendor_reads: [...] }`. `verified_channels` lists the channels with a verified owner identity, which channel capture needs.
 Switches are stored per user in `runtime_settings` (key `memory_capture`); all three are on by
 default. `agent_folders` on by default applies only to the owner the computer is paired as, so a
 shared server's home folder never reaches anyone's drive. `counts` groups personal-drive entries by the part
@@ -196,10 +196,34 @@ of `source:` before the colon. Session links and `allternit:` ids aren't listed.
 
 ### `PUT /memory/drive/capture`
 
-Body: any of `{ channels, gizzi, agent_folders }`. Returns `{ settings, imported }`. Turning
+Body: any of `{ channels, gizzi, agent_folders, vendors }`. Returns `{ settings, imported }`. Turning
 `agent_folders` on runs one agent-folder import right away. The API also runs it 5 minutes after
 start and then every 6 hours for every owner who has it on (`memory_capture::spawn`). Turn it off
 and use `forget-source` with the agent's scheme to prune what it added.
+
+### `POST /memory/drive/vendors/run`
+
+Reads every eligible assistant login of the caller now (`vendor_memory::run_owner`) and returns
+`{ reads: [{ account_id, provider, name, status, memories_added, chats_read, chat_memories_added, detail, at }] }`.
+`status` is `read`, `busy`, `needs_you`, `not_supported`, `no_model` or `failed`. The same run happens
+10 minutes after start and then every 6 hours for every owner with a Sessions computer
+(`subscription_sync::sync_owners`), when the `vendors` capture switch is on (default) and only for
+providers whose Subscriptions disclosure the owner acknowledged. `GET /capture` returns the last
+results as `vendor_reads`.
+
+Each login read goes through the gateway's read-only routes:
+
+| Gateway route | Returns | Imported as |
+|---|---|---|
+| `GET v1/accounts/:id/memory` | `{ available, memories: [{ text, updated_at }], instructions: [{ label, text }] }` | `text_import::sync_from_login`: `imports/<assistant>.md`, source `<scheme>:memory`, commit `Read memory from <Name>` |
+| `GET v1/accounts/:id/threads?limit=50` | `[{ id, title, updated_at }]`, newest first | Only threads whose `updated_at` changed since the cursor (`runtime_settings` key `vendor_memory_cursor:<account>`), up to 20 |
+| `GET v1/accounts/:id/threads/:tid` | `{ id, title, updated_at, messages: [{ role, text }] }` | The `user` messages (latest 8,000 characters) go to the chat-import model; `chat_import::sync_from_login` writes `imports/<assistant>-chats.md`, source `<scheme>:conversation/<tid>`, commit `Read chats from <Name>` |
+
+The gateway answers `409 busy` while the login has a task, `409 not_ready` with `session_health`
+when it isn't signed in or shows a check, and `501` when the adapter has no reader. Both imports use
+`check_auto`, so a line the owner removed never comes back. If the model doesn't answer, the chats
+stay unread and are tried next run. Every read is a `vendor` row in `/activity`; `not_supported`
+logins are not logged.
 
 ### `POST /memory/drive/capture/turn`
 

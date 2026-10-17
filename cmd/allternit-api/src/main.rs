@@ -584,6 +584,7 @@ async fn main() {
         desktop_host_provisioner,
         bot_desktop_sessions: Arc::new(RwLock::new(HashMap::new())),
         computer_guest_tokens: Arc::new(RwLock::new(HashMap::new())),
+        phone_link: allternit_api::phone_ws::PhoneLinkRegistry::new_http(),
         rails,
         vm_sessions: new_vm_session_store(),
         cowork_scheduler,
@@ -1130,6 +1131,9 @@ async fn main() {
         .merge(allternit_api::factory_peer_proxy::router())
         .merge(allternit_api::computer_groups::router())
         .merge(allternit_api::computer_ws::computer_api_router())
+        // Phones 2.0 phone stream relay: list registered phones + mint the
+        // phone-stream ws token (Clerk/desktop-auth'd, like the computers).
+        .merge(allternit_api::phone_ws::phone_api_router())
         .merge(allternit_api::subscription_routes::router())
         .merge(allternit_api::computer_embed::api_router())
         .merge(allternit_api::bot_group_routes::router())
@@ -1221,6 +1225,14 @@ async fn main() {
         .nest(
             "/ws/computers",
             allternit_api::computer_ws::computer_ws_router(),
+        )
+        // Phones 2.0: the desktop-attached phone-link session socket. Behind
+        // the auth middleware like /ws/computers/* — the Desktop's
+        // `x-allternit-desktop-access-token` credential resolves to the
+        // account the phones register under.
+        .nest(
+            "/ws/phone-link",
+            allternit_api::phone_ws::phone_link_router(),
         )
         .nest(
             "/mcp",
@@ -1424,6 +1436,13 @@ async fn main() {
             "/ws/computers",
             allternit_api::computer_ws::computer_vnc_public_router(),
         )
+        // Phones 2.0: public phone-stream route (like the computer VNC
+        // route) — the HMAC phone-stream token IS the credential; the route
+        // is mounted OUTSIDE the auth middleware.
+        .nest(
+            "/ws/phones",
+            allternit_api::phone_ws::phone_stream_public_router(),
+        )
         // Cross-machine bot peer fabric (BOT_TEAMMATES_SPEC Phase 3): mounts
         // on the public router because inbound peer traffic carries a peer
         // key, not a Clerk JWT — every handler self-gates (desktop token /
@@ -1503,6 +1522,9 @@ async fn main() {
     // Memory Drive nightly Dream (one commit + report per drive per night).
     allternit_api::memory_dream::spawn(state.clone());
     allternit_api::memory_capture::spawn(state.db.clone());
+    // Memory Drive: read saved memories and new chats from the person's own
+    // assistant logins on their Sessions computer (read-only, every 6 h).
+    allternit_api::vendor_memory::spawn(state.clone());
     allternit_api::ledger::spawn(state.db.clone());
 
     // Mount cowork scheduler routes if scheduler is active. These routes

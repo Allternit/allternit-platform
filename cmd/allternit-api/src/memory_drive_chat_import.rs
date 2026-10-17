@@ -158,6 +158,18 @@ pub fn apply(db: &DbHandle, owner: &str, from: &str, found: Vec<Found>, selected
     text_import::commit(db, owner, c.entries, selected, &path, &format!("Import memories from {name} chats"))
 }
 
+/// The vendor sync's import of facts found in the person's past chats on
+/// their own login: never brings back a line the person removed.
+pub fn sync_from_login(db: &DbHandle, owner: &str, from: &str, found: Vec<Found>) -> Result<(Option<String>, usize)> {
+    let path = chats_path(from)?;
+    let c = text_import::check_auto(db, owner, candidates(from, found)?)?;
+    if c.entries.is_empty() {
+        return Ok((None, 0));
+    }
+    let name = text_import::display_name(from)?;
+    text_import::commit(db, owner, c.entries, None, &path, &format!("Read chats from {name}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

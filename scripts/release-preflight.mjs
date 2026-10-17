@@ -324,6 +324,12 @@ function checkPackagingDryRun(jobs) {
   // It replaced allternit-mux.
   bins.push({ name: 'allternit-factory', optional: false, flag: null, darwinOnly: true });
   bins.push({ name: 'lume', optional: false, flag: null, darwinOnly: true });
+  // Phone Link's Apple ID signer (cmd/allternit-sideload, staged by
+  // prepare-sideload.cjs). ADVISORY ONLY for now: iPhone setup also needs the
+  // Allternit anisette server, which isn't hosted yet, and Desktop degrades
+  // cleanly without the binary (phone-link-ipc.ts passes binary: null). Make it
+  // `advisory: false, optional: false` once anisette.allternit.com is live.
+  bins.push({ name: 'allternit-sideload', optional: true, advisory: true, flag: null, darwinOnly: true });
 
   // Platform jobs = jobs that invoke electron-builder. Jobs that invoke it
   // via an npm script (build:electron / dist / pack) run the
@@ -347,6 +353,11 @@ function checkPackagingDryRun(jobs) {
       const optedOut = bin.optional && bin.flag && new RegExp(`${bin.flag}:\\s*["']1["']`).test(text);
       if (produced) {
         pass(`packaging: ${jobName} produces resources/bin/${bin.name}`);
+      } else if (bin.advisory) {
+        pass(
+          `packaging: ${jobName} does not build ${bin.name} itself (advisory only, not required yet; ` +
+            `prepare-sideload.cjs builds or skips it without failing)`
+        );
       } else if (optedOut) {
         pass(`packaging: ${jobName} opts out of ${bin.name} via ${bin.flag}`);
       } else if (!gated) {

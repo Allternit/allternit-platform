@@ -125,6 +125,26 @@ assistant asks for a check mid-way, open it on your Sessions computer, finish th
 again. Gemini and Copilot logins are best effort: their connections aren't verified against the live
 services yet, so if one doesn't answer, use the prompt below instead.
 
+### Keep it current by itself
+
+With **Keep memories from your assistant logins** on (under **Where your memories come from**,
+on by default), Allternit reads your signed-in logins every few hours without asking the assistant
+anything:
+
+- **Saved memories and custom instructions**, copied word for word from the assistant's own
+  settings. They land in `imports/<assistant>.md` with the source `<assistant>:memory`.
+- **New chats** since the last read, up to 20 each time. Only your own messages are read, by the
+  same model as a chat-history import, and what's worth keeping lands in
+  `imports/<assistant>-chats.md`, citing the chat it came from.
+
+It only reads: it never types, clicks or sends a message, and it waits when that login is busy with
+a chat. Only logins whose notice you accepted in **Settings → Subscriptions** are read. A memory you
+removed is never brought back. **Read my logins now** runs it right away, and the list under the
+switch shows what each login's last read found, or why it couldn't read (for example, a
+verification check to clear on your Sessions computer). Each read is also a row in **Activity**.
+Today ChatGPT and Claude can be read this way. Kimi, Gemini and Copilot show "can't read yet" until
+they can.
+
 ## Bring memories from another assistant
 
 Open **Bring memories from another assistant** in Settings → Memory and pick where they're
@@ -232,7 +252,7 @@ In a chat, the turn shows what Memory Drive did, the same way it shows searches 
 - When Gizzi or an agent uses its own memory tools, those calls read the same way.
 
 Under **Activity**, Memory Drive lists everything that touched your memory, newest first:
-saves, uses in chats, removals, imports, reads from your other assistants, and Dream steps. Use
+saves, uses in chats, removals, imports, reads from your assistant logins, and Dream steps. Use
 the buttons above the list to show one kind. Select a row to see the memories in it. Activity
 keeps 90 days of rows and never includes incognito chats.
 

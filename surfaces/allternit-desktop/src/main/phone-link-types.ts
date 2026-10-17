@@ -5,7 +5,8 @@
  * Phone Link connects the AI apps already signed in on the user's own phone
  * so bots can use them (SPEC-signed-in-apps-routing-2026-10-16). iPhone: a
  * one-time cable setup installs our iCTRL-based runner, then it works over
- * Wi-Fi. Android: USB debugging, then wireless debugging.
+ * Wi-Fi. Android: USB debugging, then the Phone Link app installs over the
+ * same cable and takes over Wi-Fi itself.
  *
  * Credentials typed into the UI (Apple ID, 2FA code) cross IPC once, go to
  * the signing step in main, and are never stored in plain text or logged.
@@ -33,9 +34,11 @@ export type PhoneLinkState =
   | 'ready_wifi'
   | 'error';
 
-/** States the phone can't report back; the UI shows "I've done it" → continue(). */
+/**
+ * States the phone can't report back; the UI shows "I've done it" → continue().
+ * iPhone Developer Mode is polled (go-ios devmode get), so it isn't one.
+ */
 export const PHONE_LINK_MANUAL_STATES: readonly PhoneLinkState[] = [
-  'developer_mode',
   'trust_certificate',
   'usb_debugging',
 ];

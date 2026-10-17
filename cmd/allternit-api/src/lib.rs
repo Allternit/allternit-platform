@@ -149,6 +149,7 @@ pub mod computer_idle;
 pub mod computer_screens;
 pub mod computer_audit;
 pub mod computer_ws;
+pub mod phone_ws;
 pub mod computer_replay;
 pub mod computer_history;
 pub mod computer_transfer;
@@ -293,6 +294,7 @@ pub mod memory_drive_agent_import;
 pub mod memory_drive_chat_import;
 pub mod memory_capture;
 pub mod memory_activity;
+pub mod vendor_memory;
 pub mod ledger;
 pub mod ledger_repo;
 pub mod ledger_restore;
@@ -428,7 +430,27 @@ pub mod test_helpers {
             company: config::CompanyConfig::default(),
             user: config::UserConfig::default(),
         };
-        app_state_with_config_and_os(temp, config, vm_driver, os_control_plane).await
+        app_state_with_config_and_os(temp, config, vm_driver, os_control_plane, None).await
+    }
+
+    /// Like [`app_state`], with a stubbed phone directory — for phone relay
+    /// route tests that must not touch the network.
+    pub async fn app_state_with_phone_directory(
+        temp: &Path,
+        directory: Arc<dyn crate::phone_ws::PhoneDirectory>,
+    ) -> Arc<AppState> {
+        let config = AppConfig {
+            company: config::CompanyConfig::default(),
+            user: config::UserConfig::default(),
+        };
+        app_state_with_config_and_os(
+            temp,
+            config,
+            None,
+            None,
+            Some(crate::phone_ws::PhoneLinkRegistry::new(directory)),
+        )
+        .await
     }
 
     /// Like `app_state`, with an explicit config — for tests that exercise
@@ -437,7 +459,7 @@ pub mod test_helpers {
         temp: &Path,
         config: AppConfig,
     ) -> Arc<AppState> {
-        app_state_with_config_and_os(temp, config, None, None).await
+        app_state_with_config_and_os(temp, config, None, None, None).await
     }
 
     /// Serialize tests that mutate the process-wide
@@ -496,6 +518,7 @@ pub mod test_helpers {
         config: AppConfig,
         vm_driver: Option<Arc<dyn allternit_driver_interface::ExecutionDriver>>,
         os_control_plane: Option<crate::fabric::os_client::OsControlPlaneClient>,
+        phone_link: Option<Arc<crate::phone_ws::PhoneLinkRegistry>>,
     ) -> Arc<AppState> {
         let db = db::DbHandle::new(temp.join("test.db")).expect("test db");
         let auth_config = auth::AuthConfig::from_app_config(&config);
@@ -530,6 +553,8 @@ pub mod test_helpers {
             desktop_host_provisioner: None,
             bot_desktop_sessions: Arc::new(RwLock::new(HashMap::new())),
             computer_guest_tokens: Arc::new(RwLock::new(HashMap::new())),
+            phone_link: phone_link
+                .unwrap_or_else(crate::phone_ws::PhoneLinkRegistry::new_http),
             rails,
             vm_sessions: vm_session_routes::new_vm_session_store(),
             cowork_scheduler: None,
@@ -634,6 +659,12 @@ pub struct AppState {
     /// In-memory only; a stale bridge is re-bootstrapped on connection
     /// refusal.
     pub computer_guest_tokens: Arc<RwLock<HashMap<String, String>>>,
+
+    /// Phones 2.0 phone-link relay: in-memory registry of the desktop-attached
+    /// phone sessions for THIS instance plus the cloud `registered_phones`
+    /// directory client. Persistence lives only in cloud PG (identity +
+    /// last_seen); no stream data is ever persisted or logged.
+    pub phone_link: Arc<crate::phone_ws::PhoneLinkRegistry>,
 
     /// Rails service state (Ledger, Gate, Leases, etc.)
     pub rails: RailsState,
