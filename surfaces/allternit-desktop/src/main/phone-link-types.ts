@@ -44,10 +44,16 @@ export const PHONE_LINK_MANUAL_STATES: readonly PhoneLinkState[] = [
 ];
 
 export interface PhoneLinkApp {
-  /** 'chatgpt' | 'claude' | 'kimi' | 'gemini' | 'copilot' | 'grok' | … */
+  /** Phone app catalog id: 'chatgpt', 'claude', 'notion', 'telegram', … (phone-app-catalog.json). */
   vendor: string;
   /** null = installed, sign-in not checked yet. */
   signedIn: boolean | null;
+  /** Display name from the catalog. */
+  name?: string;
+  /** Catalog category (the connector catalog's category when the app has a connector). */
+  category?: string;
+  /** Subscription gateway provider id when the app is a gateway vendor ('google' for Gemini). */
+  provider?: string;
 }
 
 export interface PhoneLinkError {
@@ -112,7 +118,7 @@ export interface PhoneLinkDevice {
 /** `window.allternit.phoneLink` */
 export interface PhoneLinkAPI {
   status(): Promise<PhoneLinkStatus>;
-  /** Linked phones with per-phone health, for Settings → Computers → Phones. */
+  /** Linked phones with per-phone health, for Settings → Subscriptions › Linked phones. */
   devices(): Promise<PhoneLinkDevice[]>;
   onStatusChanged(handler: (status: PhoneLinkStatus) => void): () => void;
   start(opts: { platform: PhoneLinkPlatform }): Promise<PhoneLinkStatus>;

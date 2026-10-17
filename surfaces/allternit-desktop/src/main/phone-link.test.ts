@@ -20,10 +20,11 @@ describe('parsers', () => {
   });
 
   it('finds installed vendor apps only', () => {
-    const apps = installedVendorApps('package:com.openai.chatgpt\npackage:com.android.chrome\npackage:ai.x.grok\n');
+    const apps = installedVendorApps('package:com.openai.chatgpt\npackage:com.android.chrome\npackage:ai.x.grok\npackage:org.telegram.messenger\n');
     expect(apps).toEqual([
-      { vendor: 'chatgpt', signedIn: null },
-      { vendor: 'grok', signedIn: null },
+      { vendor: 'chatgpt', signedIn: null, name: 'ChatGPT', category: 'AI chat', provider: 'chatgpt' },
+      { vendor: 'grok', signedIn: null, name: 'Grok', category: 'AI chat' },
+      { vendor: 'telegram', signedIn: null, name: 'Telegram', category: 'Communication' },
     ]);
   });
 

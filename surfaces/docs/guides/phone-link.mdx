@@ -1,21 +1,30 @@
 ---
 title: Use the AI apps on your phone (Phone Link)
-description: Connect the ChatGPT, Claude, Gemini, Kimi, Copilot, Grok or Perplexity apps already signed in on your phone, so your bots can use your own subscriptions through them.
+description: Link your phone so your bots can use the apps already signed in on it, from ChatGPT, Claude and Gemini to Slack, Notion and Telegram, without handing Allternit a password.
 ---
 
-**Phone Link** lets your bots use the AI apps you already pay for and are already signed in to on your own phone. Allternit never asks for or stores your ChatGPT, Claude or other AI passwords. The bot uses the app the way you would, on your device.
+**Phone Link** lets your bots use the apps you already pay for and are already signed in to on your own phone. It is the main way to connect an app in Allternit; a browser sign-in on a Sessions computer is the fallback. Allternit never asks for or stores your ChatGPT, Claude or other passwords. The bot uses the app the way you would, on your device.
 
 ## Where to start it
 
 Phone Link runs in **Allternit Desktop**, because the first setup needs a cable between your phone and your computer. Open it from any of these:
 
-- **Settings → Subscriptions → Use apps on your phone → Set up Phone Link**
-- **Settings → Computers → Phones → Link your phone's AI apps**
+- **Settings → Subscriptions → Link a phone** (the button at the top)
 - During first-run setup, at **Your AI**, under **Use the apps on your devices**: pick **Apps on your phone**
 
 On ai.allternit.com, the phone layout and the m.allternit.com app, the same buttons open a screen that tells you to set up from Allternit Desktop. Once the phone is linked, your bots can use it from any of your devices.
 
-**Before you start:** sign in to the AI apps on your phone first. Allternit uses them as you're signed in.
+Settings → Computers → Phones keeps the Android cable tools and the USB Agent, with a line that points here.
+
+**Before you start:** sign in to the apps on your phone first. Allternit uses them as you're signed in.
+
+## Which apps show up
+
+Settings → Subscriptions › **Apps and channels** has one row per app, built from what your phones report: each app found on a linked phone, plus each browser sign-in on your Sessions computer. A row says how bots reach that app: **On your phone** (one line per phone, with its state), **In a browser** (your sign-ins), and **Routes** with the one bots use now and a pin.
+
+Phone Link looks for the apps in Allternit's phone app catalog: the AI apps (ChatGPT, Claude, Gemini, Grok, Kimi, Copilot, Perplexity), Telegram, and the most useful apps that also have a [connector](/guides/connectors), such as Slack, Discord, WhatsApp, Instagram, X, Gmail, Notion, Google Drive, Asana, HubSpot, Shopify and Spotify — about a hundred in all, grouped the way the connector directory groups them. An app you install after setup shows up within about ten minutes on Android. On an iPhone, plug it in once (or run setup again) after installing an app: iOS doesn't list installed apps over Wi-Fi.
+
+A linked app means your bots can open and work the app on your phone. A chat with ChatGPT, Claude or another AI app goes through the phone only when that app's route passes all its checks for the app version on your phone; until then the row says what is missing, for example **Not available: sending attachments**, and bots use the next route.
 
 Setup shows one step at a time: what to do, why, and a button when the phone can't report the step itself. You can cancel at any point, and closing the window stops a setup that's still running. When it finishes, you see the phone's name, its OS, and each AI app it found with **Signed in**, **Not signed in** or **Not checked yet**.
 
@@ -58,19 +67,19 @@ Once a phone is linked, bots reach it with the same `phone.*` tools as any other
 
 - **See and touch:** `phone.screenshot`, `phone.tap`, `phone.swipe`, `phone.type`, `phone.home`. Tap coordinates follow the latest screenshot; the screenshot's `coordinate_space` says which space taps use.
 - **Read the screen:** `phone.read_ui` (one line per element: class, label, id, bounds), `phone.screen_text` (just the text) and `phone.find_and_tap` (find an element and tap its centre) work on linked phones and on Android phones over adb. An iPhone on a USB Agent can't read the screen as text — there the bot works from `phone.screenshot`.
-- **Open apps:** `phone.open_app` takes the app name (chatgpt, claude, gemini, kimi, copilot, grok, perplexity — the AI apps Phone Link looks for) or a package/bundle id.
+- **Open apps:** `phone.open_app` takes a catalog id (`chatgpt`, `google_drive`), an app name (`Google Drive`) or a package/bundle id.
 - **iPhone has no Back button.** `phone.back` works on Android; on a linked iPhone the bot gets a plain "use the app's back control" instead.
 - **Texts and calls stay on the adb lane for now.** `phone.sms.send` and `phone.call.dial` need an Android phone over adb with its on-screen approval; they are not available on linked phones. The same goes for hardware keys (`phone.key`) and plain-English tasks (`phone.task`).
 
 ## Phone health
 
-Settings → Computers → Phones shows each linked phone's state, and `phone.devices` reports it to bots:
+Settings → Subscriptions › Linked phones shows each linked phone's state, the app rows under Apps and channels repeat it per app, and `phone.devices` reports it to bots:
 
 | State | What it means | What you do |
 |---|---|---|
 | `HEALTHY` | The phone answers and accepts this computer's key. | Nothing. |
 | `DEVICE_LOCKED` | The phone answers but is locked. | Unlock your phone. |
-| `PAIRING_INVALID` | The phone no longer accepts this computer's key (revoked, app reinstalled). | Pair this phone again in Settings › Computers › Phones. |
+| `PAIRING_INVALID` | The phone no longer accepts this computer's key (revoked, app reinstalled). | Pair this phone again in Settings › Subscriptions › Linked phones. |
 | `TRANSPORT_OFFLINE` | Nothing answers at the phone's saved address. Desktop retries on its own. | Usually nothing; on iPhone this can mean the phone restarted. |
 | `HELPER_NOT_RESPONDING` | The phone answers but its helper doesn't complete calls. Desktop retries on its own. | Open the Allternit helper on your phone if it stays stuck. |
 | `DEVELOPER_IMAGE_REMOUNT_REQUIRED` | The iPhone restarted and its developer image needs remounting. | Plug your iPhone into this computer — Allternit remounts and restarts the helper by itself. No Mac at hand: on the iPhone, open iCTRL › Mount without a Mac, then Start Server. |
@@ -100,6 +109,13 @@ Desktop main runs the setup as a state machine (`surfaces/allternit-desktop/src/
 | `submitAppleId()`, `submitTwoFactor()` | iPhone signing; credentials go to main once and are not stored in plain text or logged |
 
 The renderer side lives in allternit-ai `src/components/phone-link/`: `PhoneLinkSetup` (dialog on Desktop and web, bottom sheet on the phone layout and PWA), the compact `PhoneLinkPanel` used inline in onboarding, and `usePhoneLink()`. Types mirror the contract in `src/lib/phone-link-bridge.ts`; per-state copy is in `phoneLinkCopy.ts`, with the backend `instruction` and `detail` shown underneath when they say something different. Where `window.allternit.phoneLink` is missing (web, phone, PWA, Desktop builds from before Phone Link) the UI shows "Set up from Allternit Desktop". Apple ID and 2FA values are cleared from component state before the call and never logged. Unmounting the setup while it's running calls `cancel()`. Onboarding counts Phone Link as done only at `ready_wifi`. Preview with a mocked bridge: run vite and open `/preview-phone-link.html?platform=ios&state=apple_id`.
+
+### Phone app catalog
+
+The apps Phone Link looks for are data, not code: `surfaces/allternit-desktop/src/main/phone-app-catalog.json`, read by `phone-app-catalog.ts`. Each entry has an `id`, `name` and `category`, its iPhone bundle ids (`ios`) and Android packages (`android`), and where it applies the subscription gateway's `provider` id (`google` for Gemini, `microsoft` for Copilot), the MCP `connector` id from `cmd/allternit-api/assets/open-design/connectors.json` (its `category` is that connector's category) or a messaging `channel`. Installed apps come back in `phone.devices` and `PhoneLinkStatus.apps` as `{ vendor, signedIn, name, category, provider? }`, so the Subscriptions screen names and groups them without a list of its own; a gateway vendor's phone app shares its row with that vendor's logins.
+
+- **Adding an app:** add the entry, then run `node scripts/verify-phone-app-catalog.mjs --only <id>` in `surfaces/allternit-desktop` to check the ids against the App Store and Google Play. `phone-app-catalog.test.ts` fails on a duplicate id or store id, a connector id that isn't in the connector catalog, a category that differs from the connector's, or a provider the gateway doesn't know.
+- **Detection:** the cable-time list (go-ios on iPhone, the helper's `list_apps` on Android) is saved per phone. While a phone is healthy, Desktop re-reads it at most every ten minutes in the background (`APPS_REFRESH_MS`): Android's list replaces the saved one; an iPhone's wireless list can be partial, so it only adds apps. When an iPhone can't list its apps at all, Desktop finds AI chat apps by launching them (`IOS_PROBE_BUNDLES`) and never probes the rest of the catalog.
 
 States: `idle`, `not_supported`; iPhone `needs_cable` → `trust_prompt` → `apple_id` → `two_factor` → `developer_mode` → `waiting_for_reboot` → `installing` → `trust_certificate` (the certificate only appears in Settings after the install); Android `usb_debugging` → `installing` → `pairing`; then `ready_wifi`, or `error` with `{ code, message, retryable }`. Each status carries a one-line `instruction` for the user. Once ready, `apps` lists the vendor apps found on the phone.
 

@@ -445,10 +445,11 @@ describe('iPhone Phone Link', () => {
 });
 
 describe('helpers', () => {
-  it('maps installed bundle ids to vendors', () => {
-    expect(iosVendorApps(['com.anthropic.claude', 'com.microsoft.officemobile', 'x'])).toEqual([
-      { vendor: 'claude', signedIn: null },
-      { vendor: 'copilot', signedIn: null },
+  it('maps installed bundle ids to catalog apps, named, in catalog order', () => {
+    expect(iosVendorApps(['com.burbn.instagram', 'com.anthropic.claude', 'com.microsoft.officemobile', 'x'])).toEqual([
+      { vendor: 'claude', signedIn: null, name: 'Claude', category: 'AI chat', provider: 'claude' },
+      { vendor: 'copilot', signedIn: null, name: 'Copilot', category: 'AI chat', provider: 'microsoft' },
+      { vendor: 'instagram', signedIn: null, name: 'Instagram', category: 'Social' },
     ]);
   });
 

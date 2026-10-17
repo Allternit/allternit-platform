@@ -1269,6 +1269,8 @@
       "status": "live",
       "description": "A bot sees and operates a real phone through one set of phone.* tools: a spare Android over Wi-Fi (adb + Google ARTEMIS), or an iPhone with an Allternit USB Agent (USB mouse/keyboard board + AirPlay mirror). Connected in Desktop; usable from every surface.",
       "touches": [
+        "allternit-ai/src/views/settings",
+        "allternit-ai/src/components/subscriptions",
         "allternit/surfaces/allternit-desktop",
         "allternit/hardware/usb-agent",
         "allternit-ai/src/components/computers",
@@ -1320,7 +1322,12 @@
           "note": "In-app linked-Android live view (Phase 1): scrcpy-server pinned to v5.0.1 with a recorded SHA-256, downloaded on first use from the official release (never bundled); phone-scrcpy.ts implements the v5 wire protocol (dummy byte, 64-byte device name, h264 codec id, 12-byte session packets for rotation/size, 12-byte frame headers stripped before IPC), one shared PhoneStreamManager session per serial exposed to the renderer over phone:stream-* IPC with Annex-B H.264 chunks as structured-clone Buffers; input (touch/key/text/scroll/back/home/app_switch/power) and SET_DISPLAY_POWER encoded per control_msg.c. Agent-takeover banner: PhoneInfo.agentBusy fed by tool-runner and ARTEMIS activity counters. Streams start only on renderer request; the external scrcpy window stays a secondary action."
         },
         {
+          "on": "2026-10-17",
           "note": "Bots reach Phone-Linked phones through one iCTRL lane in PhoneToolRunner (link: serials) with read_ui/find_and_tap/screen_text on every lane and per-phone health; remount and signature renewal are manual states."
+        },
+        {
+          "on": "2026-10-17",
+          "note": "Phone first (Eoj): Phone Link is the main way to connect an app; browser sign-ins are the fallback. Settings → Subscriptions opens with Link a phone and Linked phones (moved from Computers → Phones, which keeps a pointer plus the Android cable tools and the USB Agent), then Apps and channels: one row per app built only from live data (phone.devices apps + gateway accounts/providers + routes), never a UI list. The apps Phone Link looks for are data: surfaces/allternit-desktop/src/main/phone-app-catalog.json, 101 apps (the gateway's AI vendors with their provider ids, Telegram, and apps that have a connector, keyed by the connector id with its category), every store id checked against the App Store lookup API and Google Play (scripts/verify-phone-app-catalog.mjs). Desktop re-reads a healthy phone's apps every 10 min (Android replaces, iPhone only adds) and only ever probes AI chat apps by launching them. Connector detail pages say which linked phones have the app. No 'coming soon' rows."
         },
         {
           "on": "2026-10-17",
@@ -1332,6 +1339,8 @@
         }
       ],
       "evidence": [
+        "allternit/surfaces/allternit-desktop/src/main/phone-app-catalog.json",
+        "allternit/surfaces/docs/guides/connectors.mdx",
         "allternit/surfaces/docs/guides/phone-for-your-bot.mdx",
         "allternit/surfaces/docs/guides/usb-agent.mdx",
         "allternit/surfaces/docs/guides/phone-link.mdx",

@@ -28,6 +28,7 @@ import type { PhoneLinkApp, PhoneLinkStatus } from './phone-link-types.js';
 import { ICTRL_PORT, ictrlStoreKey, type IctrlLike, type IctrlWhoami } from './ictrl-client.js';
 import { AndroidHelperUnavailableError, type AndroidHelper } from './phone-android-helper.js';
 import { findPhoneHost, nodeDiscoveryDeps, type DiscoveryDeps } from './phone-link-discovery.js';
+import { ANDROID_APP_PACKAGES, catalogPhoneApps } from './phone-app-catalog.js';
 import {
   MESH_PENDING_DETAIL,
   PHONE_LINK_MESH_ENABLED,
@@ -36,16 +37,8 @@ import {
   type PhoneLinkMeshDep,
 } from './phone-link-mesh.js';
 
-/** Package ids of the vendor apps Phone Link looks for. */
-export const ANDROID_VENDOR_PACKAGES: Record<string, string> = {
-  chatgpt: 'com.openai.chatgpt',
-  claude: 'com.anthropic.claude',
-  gemini: 'com.google.android.apps.bard',
-  kimi: 'com.moonshot.kimichat',
-  copilot: 'com.microsoft.copilot',
-  grok: 'ai.x.grok',
-  perplexity: 'ai.perplexity.app.android',
-};
+/** Catalog id → Android packages (phone-app-catalog.json). */
+export const ANDROID_VENDOR_PACKAGES = ANDROID_APP_PACKAGES;
 
 export const PHONE_LINK_PACKAGE = 'com.allternit.phonelink';
 const ACCESSIBILITY_SERVICE = `${PHONE_LINK_PACKAGE}/.PhoneLinkAccessibilityService`;
@@ -89,10 +82,7 @@ export function parsePackageVersionCode(stdout: string): number | null {
 }
 
 export function androidVendorApps(packages: Iterable<string>): PhoneLinkApp[] {
-  const installed = new Set(packages);
-  return Object.entries(ANDROID_VENDOR_PACKAGES)
-    .filter(([, pkg]) => installed.has(pkg))
-    .map(([vendor]) => ({ vendor, signedIn: null }));
+  return catalogPhoneApps(packages, 'android');
 }
 
 export function installedVendorApps(packagesStdout: string): PhoneLinkApp[] {
