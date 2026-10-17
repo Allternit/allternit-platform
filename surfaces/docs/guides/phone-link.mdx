@@ -77,6 +77,14 @@ Settings → Computers → Phones shows each linked phone's state, and `phone.de
 
 Remounting and signature renewal are always manual states — they only appear on evidence, never from a guess, and Desktop never marks them as fixing themselves.
 
+## Away from home
+
+During cable setup your phone also joins your private Allternit network, the same one your computers use. After that your bots reach the phone wherever it is: home Wi-Fi, another Wi-Fi network, or cellular. Nothing on the phone is opened to the internet, and other people's devices can't reach it. Everything sent to it stays encrypted with the key from pairing.
+
+This works for Android phones now. iPhone support follows in the next helper update.
+
+If away-from-home setup can't finish (for example, you're not signed in to Allternit), the phone still works on your Wi-Fi. Plug it in and run setup again to finish.
+
 ## For developers
 
 Desktop main runs the setup as a state machine (`surfaces/allternit-desktop/src/main/phone-link.ts`, with the platform drivers in `phone-link-ios.ts` and `phone-link-android.ts`). The renderer API is `window.allternit.phoneLink`; types are in `phone-link-types.ts`.
@@ -119,9 +127,9 @@ States: `idle`, `not_supported`; iPhone `needs_cable` → `trust_prompt` → `ap
 
 ### Mesh (development switch)
 
-Linked phones can also join the user's Allternit mesh (a Headscale tailnet) so the lane reaches them when they're off the home Wi-Fi — **off by default**. The production mesh policy still lets every node reach every other node across customers, so until that is fixed nothing here runs for real users: everything sits behind `PHONE_LINK_MESH_ENABLED` (`src/main/phone-link-mesh.ts` in Desktop main, `false`; development builds set `ALLTERNIT_PHONE_LINK_MESH=1`). With the switch off, setup and the tool lane behave exactly as without this feature.
+Linked phones also join the user's Allternit mesh (a Headscale tailnet) so the lane reaches them when they're off the home Wi-Fi. `PHONE_LINK_MESH_ENABLED` (`src/main/phone-link-mesh.ts`) is on by default; `ALLTERNIT_PHONE_LINK_MESH=0` turns it off, and then setup and the tool lane behave exactly as without this feature. The production policy isolates customers (`autogroup:self`, live since 2026-10-17), so only the user's own devices can reach their phone.
 
-With the switch on, cable setup additionally enrolls the phone on the mesh. Android: after the Wi-Fi check succeeds, `AndroidDriver` mints a single-use pre-auth key (`MeshManager.enrollForGizzi`, needs the signed-in device token) and re-sends the `PROVISION` broadcast with `--ez arm_pairing false --es mesh_control_url <url> --es mesh_auth_key '<key>'` (single-quoted for the phone shell; the key is never logged or stored), then polls the LAN `/whoami` up to 60 s for `mesh_state: 'running'` with a `mesh_host`. iPhone: after cable pairing, `IosDriver` asks the runner's `GET /schema` whether `config` lists a `mesh_control_url` param (feature-detect — older runners don't have it and are skipped), sends one sealed `config { mesh_control_url, mesh_auth_key }`, and polls `/whoami` the same way. A failure to join — not signed in, enroll error, timeout — never fails setup: the phone finishes `ready_wifi` with `meshPending: true` and the detail "Connected on this Wi-Fi. Away-from-home access will finish setting up next time this phone connects." The join succeeded saves `meshHost` (`<100.x>:8200`) on the link record.
+With the switch on, cable setup additionally enrolls the phone on the mesh. Android: after the Wi-Fi check succeeds, `AndroidDriver` mints a single-use pre-auth key (`MeshManager.enrollForGizzi`, needs the signed-in device token) and re-sends the `PROVISION` broadcast with `--ez arm_pairing false --es mesh_control_url <url> --es mesh_auth_key '<key>'` (single-quoted for the phone shell; the key is never logged or stored), then polls the LAN `/whoami` up to 60 s for `mesh_state: 'running'` with a `mesh_host`. iPhone: after cable pairing, `IosDriver` asks the runner's `GET /schema` whether `config` lists a `mesh_control_url` param (feature-detect — older runners don't have it and are skipped), sends one sealed `config { mesh_control_url, mesh_auth_key }`, and polls `/whoami` the same way. A failure to join — not signed in, enroll error, timeout — never fails setup: the phone finishes `ready_wifi` with `meshPending: true` and the detail "Connected on this Wi-Fi. To use it away from home too, plug it in and run setup again." The join succeeded saves `meshHost` (`<100.x>:8200`) on the link record.
 
 The lane (`cachedHostResolver` in `phone-link-backend.ts`) then resolves a phone saved-host → LAN scan → mesh, in that order; the mesh proxy (`MeshManager.proxyFor` → `127.0.0.1:<port>` sidecar) is accepted only when its `/whoami` reports the phone's own `device_id`, and `phone.devices` entries gain `path: 'lan' | 'mesh'` saying which transport answered. `phone-service.ts` only wires `meshProxy` when the switch is on.
 

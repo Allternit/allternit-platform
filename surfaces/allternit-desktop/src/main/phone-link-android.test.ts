@@ -1,4 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+// This file covers the flow with the mesh switch OFF (phone-link-mesh.test.ts
+// covers it ON). The switch is read when the module loads, so set it first.
+vi.hoisted(() => {
+  process.env.ALLTERNIT_PHONE_LINK_MESH = '0';
+});
 import { PhoneLinkManager } from './phone-link.js';
 import type { PhoneLinkStatus } from './phone-link-types.js';
 import type { AdbCall, AdbResult } from './phone-tools.js';

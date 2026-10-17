@@ -1,21 +1,12 @@
 /**
- * Phone Link × the Allternit mesh — DEVELOPMENT SWITCH, off by default.
+ * Phone Link × the Allternit mesh. On by default since 2026-10-17, when the
+ * production Headscale policy went to per-customer isolation
+ * (autogroup:self; verified live: another account's node can't reach a
+ * customer's phone). ALLTERNIT_PHONE_LINK_MESH=0 turns it off.
  *
- * SECURITY: the production mesh policy currently lets every node reach every
- * other node across customers. Until that is fixed, phones must NOT be put on
- * the mesh for real users. Everything mesh-related in Phone Link sits behind
- * PHONE_LINK_MESH_ENABLED (default false; development builds override with
- * ALLTERNIT_PHONE_LINK_MESH=1). With the switch off, setup and the tool lane
- * behave exactly as they did before this module existed.
- *
- * With the switch on, cable setup additionally enrolls the phone on the
- * owner's tailnet (a single-use pre-auth key from MeshManager's
- * POST /api/v1/mesh/enroll) and the host resolver falls back to the phone's
- * mesh address — via a loopback mesh-node sidecar — when the LAN can't reach
- * it, so the phone works when it is off the home Wi-Fi.
- *
- * The mesh auth key is a secret: it crosses adb/the runner exactly once and
- * is never written to a log line, a status detail, or a link-store record.
+ * Cable setup enrolls the phone on the user's mesh, and the tool lane falls
+ * back to it when the phone isn't on the computer's LAN, so the phone works
+ * on other Wi-Fi and on cellular.
  */
 
 /**
@@ -23,7 +14,7 @@
  * tests that need the on-path set ALLTERNIT_PHONE_LINK_MESH=1 via
  * `vi.hoisted` before importing the drivers.
  */
-export const PHONE_LINK_MESH_ENABLED = process.env.ALLTERNIT_PHONE_LINK_MESH === '1';
+export const PHONE_LINK_MESH_ENABLED = process.env.ALLTERNIT_PHONE_LINK_MESH !== '0';
 
 /**
  * Mesh credentials source handed to the setup drivers (built from
@@ -38,7 +29,7 @@ export interface PhoneLinkMeshDep {
 
 /** The one plain sentence setup shows when the mesh join didn't finish. */
 export const MESH_PENDING_DETAIL =
-  'Connected on this Wi-Fi. Away-from-home access will finish setting up next time this phone connects.';
+  'Connected on this Wi-Fi. To use it away from home too, plug it in and run setup again.';
 
 /** How long setup waits for the phone to report mesh_state 'running' (join measured < 10 s live). */
 export const MESH_JOIN_TIMEOUT_MS = 60_000;
