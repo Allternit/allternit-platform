@@ -106,6 +106,48 @@ gizzi skills create-skill \
 - **Agents** created without `--path` are written to `.gizzi/agent/` in the current project, or to the global Gizzi Code config directory when global scope is selected interactively.
 - **Skills** created without `--path` are written to `./.gizzi/skills/`.
 
+## Where skills are loaded from
+
+Gizzi Code builds one skill catalog per session. When two skills share a name, the higher source wins and the other is kept as shadowed (`gizzi debug skill` lists the winners).
+
+| Priority | Source | Locations |
+|----------|--------|-----------|
+| Highest | Project | `.claude/skills`, `.agents/skills`, `.openclaw/skills`, `.allternit/skills` in the project and its parent folders |
+| | User | `~/.claude/skills`, `~/.agents/skills`, `~/.openclaw/skills`, `~/.allternit/skills` |
+| | Configured | Extra skill paths and remote skills from your config |
+| Lowest | Built-in | Shipped inside Gizzi Code |
+
+To change how a built-in skill behaves, put a skill with the same name in a user or project folder. Yours is used, and the built-in stays available as shadowed. Set `GIZZI_DISABLE_BUILTIN_SKILLS=1` to turn every built-in skill off.
+
+## Built-in skills
+
+Workflow skills:
+
+| Skill | Use |
+|-------|-----|
+| `agent-orchestrator` | Delegate work to other CLI agents and review what they produce |
+| `steer-parallel-agent` | Steer an agent session that is already running |
+| `artifacts` | Make or change an Allternit artifact |
+| `import-from-claude-codex` | Preview and import instructions, skills and MCP servers from Claude Code and Codex |
+| `skill-inventory` | Review skill sources and collisions |
+
+Craft skills for visual work. Each one carries its own scripts and templates, so any model on Gizzi Code works the same way: build in code, render frames, look at them, fix, then export.
+
+| Skill | Makes |
+|-------|-------|
+| `motion-reel` | Motion-graphics videos: promos, logo reveals, kinetic type, with a beat-synced synthesized score |
+| `brush-film` | Hand-painted animated shorts drawn in code with p5.brush |
+| `film-studio` | The review and packaging contract over any video job: brief, style guide, shot list, scored contact-sheet review |
+| `ui-motion` | Product UI motion (transitions, panels, toasts), with a frame-strip tool to check it frame by frame |
+| `visual-design` | Distinctive, finished web and app UI, with a desktop and phone screenshot review loop |
+| `generative-art` | Seeded generative art with a parameter viewer and PNG export |
+
+The craft skills are brand-neutral. They start from your own brand material (colors, logo, voice) or ask for it.
+
+The first time a session loads the catalog, the craft skills' files are extracted to `skills-builtin/<skill>/<version>/` inside Gizzi Code's data directory (`~/.local/share/gizzi-code` on macOS and Linux). A new Gizzi Code release with changed files extracts to a new folder. The old folder is left in place, so projects that link to it keep working.
+
+What they need on your machine: Node.js, Google Chrome or Chromium (set `CHROME` to use another browser), and ffmpeg for video export. `motion-reel` also needs Python 3 with NumPy for the score. Each skill installs its own npm packages (for example `playwright-core` or `p5.brush`) into the project on first use.
+
 ## Common flags
 
 ### `gizzi skills create`
