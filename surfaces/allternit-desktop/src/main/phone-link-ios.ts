@@ -37,6 +37,14 @@ import type { IctrlLike } from './ictrl-client.js';
 import type { GoIos, LongRunning } from './phone-goios.js';
 import { findPhoneHost, nodeDiscoveryDeps } from './phone-link-discovery.js';
 import {
+  MESH_JOIN_TIMEOUT_MS,
+  MESH_PENDING_DETAIL,
+  PHONE_LINK_MESH_ENABLED,
+  meshHostOf,
+  schemaSupportsMeshConfig,
+  type PhoneLinkMeshDep,
+} from './phone-link-mesh.js';
+import {
   RunnerUnavailableError,
   SigningError,
   type AppleIdCredentials,
@@ -81,6 +89,10 @@ export interface IosLinkRecord {
   testToRun: string;
   expiresAt?: string;
   lanHost?: string;
+  /** `<100.x>:8200` on the user's mesh, saved once the runner reports the join running. */
+  meshHost?: string;
+  /** The mesh join didn't finish during setup; a later cable setup retries it. Never a failure. */
+  meshPending?: boolean;
   /** Vendor apps found last time, so a Wi-Fi-only reconnect doesn't open every app to check. */
   apps?: PhoneLinkApp[];
   linkedAt: string;
@@ -134,6 +146,15 @@ export interface IosDriverDeps {
   store: IosLinkStore;
   /** Finds the phone on the LAN by device id after its address changed (defaults to a subnet scan). */
   discover?: (deviceId: string, lastHost: string | undefined) => Promise<string | null>;
+  /**
+   * Mesh credentials source for the away-from-home path. Only used when
+   * PHONE_LINK_MESH_ENABLED is on and the runner's /schema lists
+   * `mesh_control_url` as a config param; every failure is non-fatal. The
+   * auth key it returns is never logged or stored.
+   */
+  mesh?: PhoneLinkMeshDep;
+  /** Unauthenticated `GET http://host/schema` on the runner (null on error); feature-detects mesh support. */
+  fetchSchema?: (host: string) => Promise<unknown | null>;
   workDir: string;
   clientName?: string;
   now?: () => number;
@@ -356,6 +377,13 @@ export class IosDriver implements PhoneLinkDriver {
       }
     }
 
+    // 7½. Away-from-home (development switch): when the runner's /schema
+    // lists mesh_control_url as a config param, hand it the mesh credentials
+    // and wait for the join. Never fails setup.
+    const mesh = await this.tryMeshJoin(ctx, usb);
+    if (mesh.meshHost) record.meshHost = mesh.meshHost;
+    if (mesh.meshPending) record.meshPending = true;
+
     // 8. Leave the no-Mac remount option on the phone, then move to Wi-Fi.
     await this.leavePairingFile(udid, record.hostBundleId);
     this.set(ctx, 'installing', 'Moving the connection to Wi-Fi…', { progress: 0.9 });
@@ -532,6 +560,54 @@ export class IosDriver implements PhoneLinkDriver {
   }
 
   /**
+   * Away-from-home mesh join (development switch; see phone-link-mesh.ts).
+   * Ask the runner whether it supports the mesh — GET /schema must list
+   * `mesh_control_url` as a config param (the runner gains it in a parallel
+   * change; until then every runner answers "no" and setup is untouched).
+   * When it does, send the credentials as one sealed `config` call and poll
+   * /whoami for the mesh address (60 s budget). Resolves `{ meshHost }` on
+   * success, `{ meshPending: true }` when the join couldn't finish, and `{}`
+   * when the runner doesn't support the mesh at all. Never throws.
+   */
+  private async tryMeshJoin(ctx: DriverContext, usb: IctrlLike): Promise<{ meshHost?: string; meshPending?: boolean }> {
+    if (!PHONE_LINK_MESH_ENABLED || !this.deps.mesh) return {};
+    let schema: unknown = null;
+    try {
+      schema = this.deps.fetchSchema ? await this.deps.fetchSchema(usb.host) : null;
+    } catch {
+      schema = null;
+    }
+    if (!schemaSupportsMeshConfig(schema)) return {};
+    let enrollment: { controlUrl: string; authKey: string };
+    try {
+      enrollment = await this.deps.mesh.enroll();
+    } catch {
+      this.log('mesh enrollment unavailable; the phone stays LAN-only for now');
+      return { meshPending: true };
+    }
+    try {
+      await usb.call('config', { mesh_control_url: enrollment.controlUrl, mesh_auth_key: enrollment.authKey });
+      this.check(ctx);
+      const deadline = this.now() + MESH_JOIN_TIMEOUT_MS;
+      while (this.now() < deadline) {
+        this.check(ctx);
+        const meshHost = meshHostOf(await usb.whoami().catch(() => null));
+        if (meshHost) {
+          this.log(`mesh join running at ${meshHost}`);
+          return { meshHost };
+        }
+        await ctx.sleep(2000);
+      }
+      this.log('mesh join did not report running in time; setup continues without it');
+      return { meshPending: true };
+    } catch (error) {
+      if (error instanceof SetupStop) throw error;
+      this.log('mesh setup failed; the phone stays LAN-only for now');
+      return { meshPending: true };
+    }
+  }
+
+  /**
    * Remote Access on, relaunch the runner outside the cable's test session,
    * then drop our tunnel and forward and make sure it still answers.
    */
@@ -612,7 +688,10 @@ export class IosDriver implements PhoneLinkDriver {
     }
     this.deps.store.save({ ...record, lanHost, apps });
     this.base = { ...this.base, apps };
-    this.set(ctx, 'ready_wifi', 'Connected over Wi-Fi. You can unplug the cable.', { detail: lanHost, apps });
+    this.set(ctx, 'ready_wifi', 'Connected over Wi-Fi. You can unplug the cable.', {
+      detail: record.meshPending ? MESH_PENDING_DETAIL : lanHost,
+      apps,
+    });
   }
 }
 

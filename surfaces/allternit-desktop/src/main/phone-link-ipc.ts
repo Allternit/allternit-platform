@@ -14,9 +14,35 @@ import { ensureRunnerArtifacts, LocalIdentitySigner, SideloadSigner, type Runner
 import { ensureAndroidHelper } from './phone-android-helper.js';
 import { readPairRecord, startLoopbackForward } from './phone-usbmux.js';
 import { phoneService } from './phone-service.js';
+import { meshManager } from './mesh-manager.js';
 import { deleteSecret, readSecret, writeSecret } from './secure-store.js';
 
 const secrets: SecretStore = { get: readSecret, set: writeSecret, delete: deleteSecret };
+
+/**
+ * Mesh credentials for Phone Link setup, built on MeshManager
+ * (phone-link-mesh.ts). Rejects when Desktop isn't signed in to an Allternit
+ * account; the drivers treat that as non-fatal. The single-use auth key is
+ * passed straight to the phone and never logged.
+ */
+const meshDep = {
+  enroll: async () => {
+    const enrollment = await meshManager.enrollForGizzi();
+    if (!enrollment) throw new Error('Desktop is not signed in to an Allternit account.');
+    return enrollment;
+  },
+};
+
+/** GET /schema on an iCTRL runner; null when it doesn't answer or has none. */
+async function fetchRunnerSchema(host: string): Promise<unknown | null> {
+  try {
+    const res = await fetch(`http://${host}/schema`, { signal: AbortSignal.timeout(5000) });
+    if (res.status !== 200) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Developer machines (unpackaged, or ALLTERNIT_PHONE_LINK_LOCAL_SIGNING=1)
@@ -52,6 +78,8 @@ async function iosDeps(): Promise<IosDriverDeps> {
     },
     readPairRecord: (udid) => readPairRecord(udid),
     store: fileLinkStore(path.join(dataDir, 'phone-link-ios.json')),
+    mesh: meshDep,
+    fetchSchema: fetchRunnerSchema,
     workDir: path.join(dataDir, 'ictrl-work'),
     logger: (m) => log.info(m),
   };
@@ -65,6 +93,7 @@ async function androidDeps(): Promise<AndroidDriverDeps> {
     dataDir,
     ictrl: (storeKey, host) => new IctrlClient({ host, secrets, storeKey, logger: (m) => log.info(m) }),
     store: fileAndroidLinkStore(path.join(dataDir, 'phone-link-android.json')),
+    mesh: meshDep,
     logger: (m) => log.info(m),
   };
 }

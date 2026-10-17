@@ -40,6 +40,8 @@ export interface LinkedPhoneDeviceInfo {
   health: PhoneLinkHealth;
   deviceId: string;
   apps?: PhoneLinkApp[];
+  /** Which transport last reached the phone ('lan' or 'mesh'), when known. */
+  path?: 'lan' | 'mesh';
 }
 
 export const LINK_SERIAL_PREFIX = 'link:';
@@ -49,12 +51,21 @@ const fail = (error: ToolErrorCode, message: string): ToolResult => ({ ok: false
 const COORD_MAX = 20_000;
 const isInt = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= COORD_MAX;
 
+/**
+ * Where a linked phone answers now. `lastPath` reports which transport the
+ * most recent resolution used ('lan' or 'mesh'); resolvers that never check
+ * the mesh simply don't carry it.
+ */
+export type HostResolver = ((phone: LinkedPhone) => Promise<string | null>) & {
+  lastPath?: (deviceId: string) => 'lan' | 'mesh' | undefined;
+};
+
 export interface PhoneLinkBackendDeps {
   phones: LinkedPhoneSource;
   /** Client for this phone's key (secret store entry per phone) at `host`. */
   client: (phone: LinkedPhone, host: string) => IctrlLike;
   /** Where the helper answers; default is the phone's saved lanHost. The LAN-scanning findPhoneHost lands on a sibling branch — this is its seam. */
-  resolveHost?: (phone: LinkedPhone) => Promise<string | null>;
+  resolveHost?: HostResolver;
   health?: PhoneLinkHealthMonitor;
   now?: () => number;
   logger?: (message: string) => void;
@@ -90,6 +101,7 @@ export class PhoneLinkBackend implements UsbPhoneBackend {
   async linkedDevices(): Promise<LinkedPhoneDeviceInfo[]> {
     const phones = this.deps.phones();
     if (this.deps.health) await this.deps.health.refreshStale(phones.map((p) => p.deviceId));
+    const pathOf = this.deps.resolveHost?.lastPath;
     return phones.map((p) => ({
       serial: LINK_SERIAL_PREFIX + p.deviceId,
       deviceId: p.deviceId,
@@ -104,6 +116,7 @@ export class PhoneLinkBackend implements UsbPhoneBackend {
         detail: 'Health has not been checked yet.',
       },
       apps: p.apps,
+      ...(pathOf?.(p.deviceId) ? { path: pathOf(p.deviceId)! } : {}),
     }));
   }
 
@@ -382,6 +395,7 @@ export function linkedPhoneSource(deps: { iosStore: IosLinkStore; androidStore: 
       platform: 'ios' as const,
       name: r.deviceName,
       lanHost: r.lanHost,
+      meshHost: r.meshHost,
       storeKey: ictrlStoreKey(r.udid),
       expiresAt: r.expiresAt,
       apps: r.apps,
@@ -391,6 +405,7 @@ export function linkedPhoneSource(deps: { iosStore: IosLinkStore; androidStore: 
       platform: 'android' as const,
       name: r.deviceName,
       lanHost: r.lanHost,
+      meshHost: r.meshHost,
       storeKey: ictrlStoreKey(`android:${r.deviceId}`),
       apps: r.apps,
     })),
@@ -401,16 +416,30 @@ export function linkedPhoneSource(deps: { iosStore: IosLinkStore; androidStore: 
  * Where a linked phone answers now. Phones change address (measured: an
  * iPhone between sessions, an Android phone after a reboot), so a stale
  * saved host falls back to a LAN scan for the device id; a new address is
- * written back to its link store. Answers are cached briefly so a burst of
- * tool calls doesn't re-probe every time.
+ * written back to its link store. Order: saved LAN host → shared LAN scan →
+ * mesh (only when the record has a meshHost and a meshProxy is wired). The
+ * mesh proxy is accepted only when its /whoami reports this phone's device
+ * id — a shared sidecar could be proxying a different phone. Answers are
+ * cached briefly so a burst of tool calls doesn't re-probe every time.
+ *
+ * Returns a HostResolver: callable as today, plus `lastPath(deviceId)` for
+ * phone.devices' `path: 'lan' | 'mesh'` field. The mesh proxy's ephemeral
+ * loopback address is never written back to the link store.
  */
 export function cachedHostResolver(deps: {
   discovery: DiscoveryDeps;
   remember: (phone: LinkedPhone, host: string) => void;
+  /**
+   * Bridge a saved mesh address (`<100.x>:8200`) to a local loopback host
+   * (`127.0.0.1:<port>`) via the mesh-node sidecar. Production wires
+   * MeshManager.proxyFor; tests fake it. Omit to disable the mesh fallback.
+   */
+  meshProxy?: (meshHost: string) => Promise<string | null>;
   ttlMs?: number;
   now?: () => number;
-}): (phone: LinkedPhone) => Promise<string | null> {
-  const cache = new Map<string, { host: string; at: number }>();
+}): HostResolver {
+  const cache = new Map<string, { host: string; at: number; path: 'lan' | 'mesh' }>();
+  const paths = new Map<string, 'lan' | 'mesh'>();
   const now = deps.now ?? Date.now;
   const ttl = deps.ttlMs ?? 60_000;
   // One LAN scan at a time, shared by every phone that needs it (and reused for the ttl).
@@ -419,23 +448,38 @@ export function cachedHostResolver(deps: {
     if (!scan || now() - scan.at >= ttl) scan = { at: now(), result: scanLan(deps.discovery) };
     return scan.result;
   };
-  return async (phone) => {
+  const resolve = async (phone: LinkedPhone): Promise<string | null> => {
     const hit = cache.get(phone.deviceId);
     if (hit && now() - hit.at < ttl) return hit.host;
     let host: string | null = null;
+    let path: 'lan' | 'mesh' = 'lan';
     if (phone.lanHost) {
       const who = await deps.discovery.fetchWhoami(phone.lanHost, 1500).catch(() => null);
       if (who?.device_id === phone.deviceId) host = phone.lanHost;
     }
     if (!host) host = (await sharedScan()).get(phone.deviceId) ?? null;
+    if (!host && phone.meshHost && deps.meshProxy) {
+      const proxy = await deps.meshProxy(phone.meshHost).catch(() => null);
+      if (proxy) {
+        const who = await deps.discovery.fetchWhoami(proxy, 3000).catch(() => null);
+        if (who?.device_id === phone.deviceId) {
+          host = proxy;
+          path = 'mesh';
+        }
+      }
+    }
     if (!host) {
       cache.delete(phone.deviceId);
+      paths.delete(phone.deviceId);
       return null;
     }
-    cache.set(phone.deviceId, { host, at: now() });
-    if (host !== phone.lanHost) deps.remember(phone, host);
+    cache.set(phone.deviceId, { host, at: now(), path });
+    paths.set(phone.deviceId, path);
+    if (path === 'lan' && host !== phone.lanHost) deps.remember(phone, host);
     return host;
   };
+  resolve.lastPath = (deviceId: string) => paths.get(deviceId);
+  return resolve;
 }
 
 /** Writes a phone's new address back to the store it came from. */
