@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Page } from "playwright";
 import { captureEvidence, pruneEvidence, setEvidenceSink } from "../adapters/_shared/evidence.js";
-import { getEvidence, insertEvidence, latestEvidenceId } from "../src/http/routes_evidence.js";
+import { getEvidence, insertEvidence, latestEvidenceId, screenshotPath } from "../src/http/routes_evidence.js";
 import { openDatabase, type Db } from "../src/store/db.js";
 import { cleanupDir, tmpStateDir } from "./helpers.js";
 
@@ -48,5 +48,14 @@ describe("ui_bridge failure evidence", () => {
     expect(pruneEvidence(dir)).toBe(1);
     setEvidenceSink(null);
     expect(await captureEvidence(fakePage, {})).toBeNull();
+  });
+
+  it("serves only plain files under the evidence dir, never a traversal path", () => {
+    const dir = process.env.ALLTERNIT_EVIDENCE_DIR!;
+    expect(screenshotPath({ screenshot_file: "../../etc/passwd" }, dir)).toBeNull();
+    expect(screenshotPath({ screenshot_file: "/etc/passwd" }, dir)).toBeNull();
+    expect(screenshotPath({ screenshot_file: ".." }, dir)).toBeNull();
+    expect(screenshotPath({ screenshot_file: "gone.png" }, dir)).toBeNull();
+    expect(screenshotPath({ screenshot_file: null }, dir)).toBeNull();
   });
 });
