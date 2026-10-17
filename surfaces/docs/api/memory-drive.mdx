@@ -188,16 +188,42 @@ result shapes as `import-text` and the same checks. Each line's source is
 ### `GET /memory/drive/capture`
 
 The capture switches and per-source counts:
-`{ settings: { channels, gizzi, agent_folders }, counts: [{ scheme, memories }], agents: [{ id, name, files, items }], verified_channels: [channel] }`. `verified_channels` lists the channels with a verified owner identity, which channel capture needs.
-Switches are stored per user in `runtime_settings` (key `memory_capture`); the defaults are
-`channels` and `gizzi` on, `agent_folders` off. `counts` groups personal-drive entries by the part
+`{ settings: { channels, gizzi, agent_folders, vendors }, counts: [{ scheme, memories }], agents: [{ id, name, files, items }], verified_channels: [channel], vendor_reads: [...] }`. `verified_channels` lists the channels with a verified owner identity, which channel capture needs.
+Switches are stored per user in `runtime_settings` (key `memory_capture`); all three are on by
+default. `agent_folders` on by default applies only to the owner the computer is paired as, so a
+shared server's home folder never reaches anyone's drive. `counts` groups personal-drive entries by the part
 of `source:` before the colon. Session links and `allternit:` ids aren't listed. Older computers answer 404.
 
 ### `PUT /memory/drive/capture`
 
-Body: any of `{ channels, gizzi, agent_folders }`. Returns `{ settings, imported }`. Turning
-`agent_folders` on runs one agent-folder import right away. After that the API repeats it every
-6 hours for every owner who has it on (`memory_capture::spawn`).
+Body: any of `{ channels, gizzi, agent_folders, vendors }`. Returns `{ settings, imported }`. Turning
+`agent_folders` on runs one agent-folder import right away. The API also runs it 5 minutes after
+start and then every 6 hours for every owner who has it on (`memory_capture::spawn`). Turn it off
+and use `forget-source` with the agent's scheme to prune what it added.
+
+### `POST /memory/drive/vendors/run`
+
+Reads every eligible assistant login of the caller now (`vendor_memory::run_owner`) and returns
+`{ reads: [{ account_id, provider, name, status, memories_added, chats_read, chat_memories_added, detail, at }] }`.
+`status` is `read`, `busy`, `needs_you`, `not_supported`, `no_model` or `failed`. The same run happens
+10 minutes after start and then every 6 hours for every owner with a Sessions computer
+(`subscription_sync::sync_owners`), when the `vendors` capture switch is on (default) and only for
+providers whose Subscriptions disclosure the owner acknowledged. `GET /capture` returns the last
+results as `vendor_reads`.
+
+Each login read goes through the gateway's read-only routes:
+
+| Gateway route | Returns | Imported as |
+|---|---|---|
+| `GET v1/accounts/:id/memory` | `{ available, memories: [{ text, updated_at }], instructions: [{ label, text }] }` | `text_import::sync_from_login`: `imports/<assistant>.md`, source `<scheme>:memory`, commit `Read memory from <Name>` |
+| `GET v1/accounts/:id/threads?limit=50` | `[{ id, title, updated_at }]`, newest first | Only threads whose `updated_at` changed since the cursor (`runtime_settings` key `vendor_memory_cursor:<account>`), up to 20 |
+| `GET v1/accounts/:id/threads/:tid` | `{ id, title, updated_at, messages: [{ role, text }] }` | The `user` messages (latest 8,000 characters) go to the chat-import model; `chat_import::sync_from_login` writes `imports/<assistant>-chats.md`, source `<scheme>:conversation/<tid>`, commit `Read chats from <Name>` |
+
+The gateway answers `409 busy` while the login has a task, `409 not_ready` with `session_health`
+when it isn't signed in or shows a check, and `501` when the adapter has no reader. Both imports use
+`check_auto`, so a line the owner removed never comes back. If the model doesn't answer, the chats
+stay unread and are tried next run. Every read is a `vendor` row in `/activity`; `not_supported`
+logins are not logged.
 
 ### `POST /memory/drive/capture/turn`
 
@@ -220,6 +246,39 @@ Returns `{ revision, removed, more }`.
 
 Incognito sessions are refused by `/memory/v2/retain` and `/memory/v2/observation`, which answer
 `{ status: "skipped", reason: "incognito" }`.
+
+Automatic imports (agent folder syncs, `memory_capture::sync_agent_folders`) use
+`text_import::check_auto`: besides the usual checks they skip any text the owner deleted or
+forgot (a retired `memory_facts` row with the same text), so a forget sticks. A person's own
+import uses `check` and can bring a forgotten line back.
+
+### `GET /memory/drive/activity`
+
+What touched the owner's memory, from `memory_activity` (V266, `src/memory_activity.rs`).
+Query: `after` (follow new rows, oldest first), `before` (page back, newest first), `session`,
+`run` (a Dream id), `kind` and `limit` (default 50, at most 200). Returns
+`{ items: [{ id, at, kind, title, detail, source, session, run }], cursor }`.
+
+| `kind` | Written by |
+|---|---|
+| `saved` | Every drive commit that adds lines (`memory_drive_writer::commit_facts`), and agents reporting `memory_write` saves |
+| `recalled` | `POST /memory/v2/recall` with a `session_id` that returned facts, and agents reporting `memory_recall` |
+| `forgot` | Commits that only remove lines, `forget-source`, agents reporting deletes |
+| `imported` | Imports and syncs (commit messages `Import memory from …` / `Sync memory from …`) |
+| `dream` | Each Dream step: `detail.step` is `gather`, `plan`, `check`, `done` or `undo`; `run` is the Dream id |
+| `vendor` | Reads of the owner's own vendor logins |
+
+`detail.items` holds up to 20 `{ text, source }` previews (240 characters each) and
+`detail.total` the full count. A row is tied to a `session` only when every added line came from
+that chat (`/?session=<id>` sources). Rows for incognito sessions are never written. Rows older
+than 90 days are dropped. The drive's git history stays the full record. Older computers answer 404.
+
+### `POST /memory/drive/activity`
+
+An agent working on the owner's own drive reports what it did. Body
+`{ kind: "saved" | "recalled" | "forgot", title, items?: [{ text, source }], source?, session? }`
+(at most 50 items; `source` must be a `scheme:value` label). Gizzi's `memory_recall` and
+`memory_write` tools call it with `source: gizzi:session/<id>` (best effort, never blocking the tool).
 
 ### Ledger: `GET /memory/drive/ledger`, `GET /ledger/file`, `POST /ledger/snapshot`, `GET /ledger/download`
 
@@ -276,7 +335,18 @@ Copies of the drive and ledger kept elsewhere (`memory_copies.rs`), stored per u
 - `POST /run` saves the ledger and runs the copies now. They also run after each hourly ledger snapshot.
 
 The folder copy writes `<folder>/Allternit/{memory,ledger}/…` and removes only files listed in its
-`.allternit-copy.json`. It never writes through a symlink. The git copy force-pushes the drive to
+`.allternit-copy.json` (path → content hash). It never writes through a symlink.
+
+**Two-way.** Before writing, a run compares the copy with what it last wrote. For a folder that's the
+manifest hashes; for git it's the commits it last pushed (`last_memory`, `last_ledger`), against a
+fetch of the two branches. Changed, added and deleted files go through `memory_copies::apply_inbound`:
+- ledger files through `ledger_edit::edit` / `delete`;
+- memory files as one checked `memory_drive_scopes::apply_for` batch.
+
+A path that also changed in Allternit since the last copy is a conflict. Allternit's version stays; the
+copy's version is written as `<path>.conflict-<time>` in the folder, or its commit is pushed to
+`allternit-conflicts/<branch>-<time>`. `status` reports `applied`, `conflicts` and `failed`.
+Re-saving the same remote keeps `last_*`, so remote edits are never overwritten unseen. The git copy force-pushes the drive to
 `allternit-memory` and the ledger to `allternit-ledger` (force, because "delete forever" rewrites
 history). The token goes to git as an `http.extraHeader` through `GIT_CONFIG_*` environment
 variables, never on the command line or in the URL. Push errors are reported in plain words and

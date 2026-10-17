@@ -3,7 +3,8 @@
 // chat.create / chat.continue only; model_class is not applied yet (the
 // account's default model answers). Selectors are v1-unverified (see
 // selectors/v1.yaml).
-import type { AccountObservation } from "@allternit/subscription-fabric-contracts";
+import type { AccountObservation, VendorMemory, VendorThreadSummary, VendorThreadText } from "@allternit/subscription-fabric-contracts";
+import { claudeMemory, claudeThreads, claudeThreadText } from "../_shared/vendor-memory.js";
 import type { DeclarativeChatConfig, SdkSelectorResolver } from "@allternit/subscription-adapter-sdk";
 import type { Page } from "playwright";
 import { readFileSync } from "node:fs";
@@ -109,6 +110,58 @@ export class ClaudeWebAdapter extends WebChatAdapter {
   // email and numbers leave the page, never a token. Usage is the active org's
   // (lastActiveOrg cookie, else the first chat org) tightest window: whichever
   // of the 5-hour / 7-day limits is most used.
+  // ── Memory Drive reads ────────────────────────────────────────────────
+  // claude.ai's own same-origin endpoints, in the page with the page's own
+  // session (the conversation endpoint is the one lastAssistant uses, live
+  // 2026-09-30). Read-only: nothing is typed, clicked or sent, and the page
+  // isn't navigated.
+
+  private async claudeGet(paths: string[]): Promise<{ ok: boolean; body: unknown }[]> {
+    const page = this.attachedPage();
+    if (!page) throw new Error("memory read called before attach()");
+    await page.evaluate("globalThis.__name ??= (fn) => fn");
+    return page.evaluate(async (list: string[]) => {
+      const cookieOrg = /(?:^|;\s*)lastActiveOrg=([^;]+)/.exec(document.cookie)?.[1];
+      let org = cookieOrg ? decodeURIComponent(cookieOrg) : null;
+      if (!org) {
+        const r = await fetch("/api/organizations", { credentials: "include" }).catch(() => null);
+        const orgs = r && r.ok ? ((await r.json()) as { uuid?: string; capabilities?: string[] }[]) : [];
+        org = orgs.find((o) => o.capabilities?.includes("chat"))?.uuid ?? null;
+      }
+      const out: { ok: boolean; body: unknown }[] = [];
+      for (const p of list) {
+        if (p.includes("{org}") && !org) {
+          out.push({ ok: false, body: null });
+          continue;
+        }
+        try {
+          const r = await fetch(p.replace("{org}", org ?? ""), { credentials: "include" });
+          out.push({ ok: r.ok, body: r.ok ? await r.json() : null });
+        } catch {
+          out.push({ ok: false, body: null });
+        }
+      }
+      return out;
+    }, paths);
+  }
+
+  async readMemory(_signal: AbortSignal): Promise<VendorMemory> {
+    const [memory, profile] = await this.claudeGet(["/api/organizations/{org}/memory", "/api/account_profile"]);
+    return claudeMemory({ memory, profile });
+  }
+
+  async listThreads(opts: { limit: number }, _signal: AbortSignal): Promise<VendorThreadSummary[]> {
+    const limit = Math.max(1, Math.min(100, opts.limit));
+    const [list] = await this.claudeGet([`/api/organizations/{org}/chat_conversations?limit=${limit}`]);
+    return list.ok ? claudeThreads(list.body) : [];
+  }
+
+  async readThreadText(id: string, _signal: AbortSignal): Promise<VendorThreadText | null> {
+    if (!/^[0-9a-f-]{36}$/.test(id)) return null;
+    const [conv] = await this.claudeGet([`/api/organizations/{org}/chat_conversations/${id}?tree=True&rendering_mode=messages`]);
+    return conv.ok ? claudeThreadText(id, conv.body) : null;
+  }
+
   async readAccount(_signal: AbortSignal): Promise<AccountObservation> {
     const page = this.attachedPage();
     if (!page) throw new Error("readAccount called before attach()");

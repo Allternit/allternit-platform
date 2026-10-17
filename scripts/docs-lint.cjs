@@ -154,6 +154,8 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
       if (mdxPath.endsWith('cli/session.mdx')) continue;
       // Subscription setup and its workflow index must name the supported providers.
       if (mdxPath.endsWith('surfaces/subscriptions.mdx')) continue;
+      // Always-on bots explains fallback brains with real provider/model ids.
+      if (mdxPath.endsWith('guides/always-on-bots.mdx')) continue;
       // First-run setup and the sign-in screen name the subscription brains and vendor bots people can connect.
       if (['guides/first-run-setup.mdx', 'architecture/first-run-setup.mdx', 'surfaces/sign-in.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // The bot setup picker names the vendor bots it connects and quotes their on-screen labels.

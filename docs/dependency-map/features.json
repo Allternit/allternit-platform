@@ -295,7 +295,10 @@
         "allternit/cmd/allternit-api/src/memory_consolidation",
         "allternit/cmd/allternit-api/src/memory_relations",
         "allternit/services/memory",
-        "allternit-ai/src/views/settings"
+        "allternit-ai/src/views/settings",
+        "allternit-ai/src/views/cowork",
+        "allternit-ai/src/components/ai-elements",
+        "allternit/services/subscription-gateway"
       ],
       "decisions": [
         {
@@ -309,6 +312,14 @@
         {
           "on": "2026-10-16",
           "note": "Eoj: Memory Drive keeps its name and grows into the user's ledger: import any company's memory, capture from every channel, hold every asset, store where the user wants (plan dag_952346). Phase 1 adds the export-prompt import for 10 assistants and import from Claude Code, Codex, Hermes and OpenClaw files."
+        },
+        {
+          "on": "2026-10-17",
+          "note": "Eoj: agent folders on by default (off switch, Forget prunes and a forget sticks). Every memory action is visible: Searched/Saved to Memory Drive rows in the chat thought stream, a Memory Drive Activity log (memory_activity, V266) and live Dream steps. Next: vendor memory pages and past chats read automatically from signed-in logins."
+        },
+        {
+          "on": "2026-10-17",
+          "note": "Eoj: reading vendor memory is automatic once Memory Drive is on. vendor_memory reads each signed-in login (disclosure acknowledged, vendors switch on by default) every 6 h through the gateway's read-only routes: saved memories and instructions word for word, plus new chats distilled from the person's own messages. It never sends. ChatGPT and Claude first."
         }
       ],
       "evidence": [
@@ -338,11 +349,21 @@
         {
           "on": "2026-10-02",
           "note": "Cloud Voice priced at $0.08 per minute, with 100 minutes in Plus."
+        },
+        {
+          "on": "2026-10-16",
+          "note": "Voice Stage redesign shipped: output-audio-driven melting A-block mark (speaking state), typewriter captions with screen-reader twins, bot avatar as stage speaker in bot chats, docked-bar live transcript, 28 named voices with one-shot previews, first-run intro sheet. Design doc: allternit-ai docs/VOICE_STAGE_DESIGN.md."
         }
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/voice.mdx",
-        "allternit/surfaces/docs/api/voice-tickets.mdx"
+        "allternit/surfaces/docs/api/voice-tickets.mdx",
+        "allternit/surfaces/docs/surfaces/voice.mdx",
+        "allternit-ai/src/components/voice/VoiceBotAvatar.tsx",
+        "allternit-ai/src/components/voice/useTypewriter.ts",
+        "allternit-ai/src/components/voice/useVoiceLevelChannel.ts",
+        "allternit-ai/src/components/voice/VoiceIntroSheet.tsx",
+        "allternit-ai/src/lib/voice/preview.ts"
       ]
     },
     {
@@ -1283,6 +1304,10 @@
         {
           "on": "2026-10-16",
           "note": "iPhone helper signing with the user's own Apple ID, no Xcode: allternit-sideload sidecar (Rust over isideload 0.4.6, MIT), JSON lines over stdio with Desktop's SideloadSigner. Password only on stdin and zeroized; Apple session, signing key and anisette identity in the macOS Keychain (com.allternit.sideload) so re-signs skip password and 2FA. Stable per-team ids com.allternit.phonelink.<team> reuse App IDs; the runner's .xctest takes the runner's id (isideload's extension handling bypassed via its lower-level APIs; upstream PR drafted). Its own cargo workspace (russh 0.60.3 vs isideload aes-gcm conflict). OPTIONAL in packaging until anisette.allternit.com is hosted; hosting, licence review (apple-codesign-quick is LGPL-2.1) and Apple ToS are open."
+        },
+        {
+          "on": "2026-10-17",
+          "note": "Android Phone Link setup installs the Phone Link app over the cable (accessibility service, iCTRL protocol on :8200, starts on boot) instead of wireless debugging; linked phones are found again by device id when their Wi-Fi address changes."
         },
         {
           "on": "2026-10-17",

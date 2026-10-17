@@ -500,6 +500,15 @@ fn parse_plan(raw: &str) -> Option<Plan> {
 }
 
 /// Run (or re-run) the Dream for `date`. Idempotent per drive and date.
+/// One Dream step in Memory Drive → Activity, shown live in the Dreams list.
+fn step(conn: &Connection, owner: &str, run: &str, title: String, extra: Value) {
+    crate::memory_activity::record(
+        conn,
+        owner,
+        crate::memory_activity::Activity { kind: "dream", title, extra: Some(extra), run: Some(run.to_string()), ..Default::default() },
+    );
+}
+
 pub async fn run(db: DbHandle, owner: String, date: chrono::NaiveDate, complete: Complete) -> Result<Option<DreamRow>> {
     let date_s = date.format("%Y-%m-%d").to_string();
     let (drive, id, base, shown, turns) = {
@@ -523,16 +532,26 @@ pub async fn run(db: DbHandle, owner: String, date: chrono::NaiveDate, complete:
     let Some(drive) = drive else {
         return Ok(None);
     };
+    step(
+        &db.connect()?,
+        &owner,
+        &id,
+        format!("Reading {} memories and {} recent messages", shown.len(), turns.len()),
+        json!({ "step": "gather", "memories": shown.len(), "turns": turns.len() }),
+    );
     if shown.is_empty() && turns.is_empty() {
         let conn = db.connect()?;
+        step(&conn, &owner, &id, "Nothing to review".into(), json!({ "step": "done", "status": "no_changes" }));
         finish(&conn, &id, "no_changes", None, Some(&format!("# Dream {date_s}\n\nNo memories or recent conversations to review.\n")), &Summary::default(), None)?;
         return Ok(get(&conn, &owner, &id)?);
     }
+    step(&db.connect()?, &owner, &id, "Asking the model what to merge, learn and prune".into(), json!({ "step": "plan" }));
     let raw = complete(prompt(&date_s, &shown, &turns)).await;
     let conn = db.connect()?;
     let Some(plan) = raw.as_deref().and_then(parse_plan) else {
         // Memory is untouched; the next sweep retries (bounded).
         let msg = if raw.is_none() { "The model did not answer. Memory was not changed." } else { "The model's answer was not usable. Memory was not changed." };
+        step(&conn, &owner, &id, msg.into(), json!({ "step": "done", "status": "failed" }));
         finish(&conn, &id, "failed", None, None, &Summary::default(), Some(msg))?;
         return Ok(get(&conn, &owner, &id)?);
     };
@@ -551,6 +570,23 @@ fn apply_plan(db: &DbHandle, owner: &str, drive: &DriveRecord, id: &str, base: &
     let session_ok = |s: &str| service::session_is_owned(&conn, owner, s).unwrap_or(false);
     let checked = check(plan, shown, turns, date, &session_ok);
     let report = report_markdown(&date_s, &checked);
+    let sm = &checked.summary;
+    step(
+        &conn,
+        owner,
+        id,
+        format!("Checked the plan against your memories: {} changes kept, {} dropped", checked.ops.len(), sm.skipped),
+        json!({ "step": "check", "kept": checked.ops.len(), "skipped": sm.skipped }),
+    );
+    let done = |status: &str, title: String| {
+        step(
+            &conn,
+            owner,
+            id,
+            title,
+            json!({ "step": "done", "status": status, "merged": sm.merged, "resolved": sm.resolved, "lessons": sm.lessons, "pruned": sm.pruned, "proposals": sm.proposals }),
+        )
+    };
     // Twin facts are only ever proposed for the owner's review.
     for p in &checked.proposals {
         let body = crate::twin_persona::MemoryBody {
@@ -569,6 +605,7 @@ fn apply_plan(db: &DbHandle, owner: &str, drive: &DriveRecord, id: &str, base: &
     }
     if checked.ops.is_empty() {
         finish(&conn, id, "no_changes", None, Some(&report), &checked.summary, None)?;
+        done("no_changes", "No changes needed".into());
         return Ok(());
     }
     let message = format!("Dream {date_s}");
@@ -579,6 +616,10 @@ fn apply_plan(db: &DbHandle, owner: &str, drive: &DriveRecord, id: &str, base: &
             Ok(r) => {
                 conn.execute("UPDATE memory_dreams SET base_revision=?2 WHERE id=?1", params![id, expected])?;
                 finish(&conn, id, "applied", Some(&r.revision), Some(&report), &checked.summary, None)?;
+                done(
+                    "applied",
+                    format!("Saved: {} merged, {} resolved, {} lessons, {} pruned", sm.merged, sm.resolved, sm.lessons, sm.pruned),
+                );
                 return Ok(());
             }
             Err(ServiceError::Drive(DriveError::Conflict { .. })) if attempt < 2 => {
@@ -599,16 +640,19 @@ fn apply_plan(db: &DbHandle, owner: &str, drive: &DriveRecord, id: &str, base: &
                 expected = head;
                 if ops.is_empty() {
                     finish(&conn, id, "no_changes", None, Some(&report), &checked.summary, None)?;
+                    done("no_changes", "Your memory changed meanwhile; nothing left to apply".into());
                     return Ok(());
                 }
             }
             Err(e) => {
                 finish(&conn, id, "failed", None, None, &checked.summary, Some(&format!("Memory was not changed: {e}")))?;
+                done("failed", format!("Memory was not changed: {e}"));
                 return Ok(());
             }
         }
     }
     finish(&conn, id, "failed", None, None, &checked.summary, Some("Memory kept changing during the Dream; it will retry."))?;
+    done("failed", "Memory kept changing during the Dream; it will retry".into());
     Ok(())
 }
 
@@ -712,6 +756,7 @@ pub fn undo(db: &DbHandle, owner: &str, dream_id: &str) -> std::result::Result<D
                     "UPDATE memory_dreams SET status='undone',undo_revision=?2,updated_at=CURRENT_TIMESTAMP WHERE id=?1",
                     params![dream_id, revision],
                 )?;
+                step(&conn, owner, dream_id, format!("Undid the Dream of {}", dream.date), json!({ "step": "undo", "status": "undone" }));
                 return Ok(get(&conn, owner, dream_id)?.ok_or(UndoError::Service(ServiceError::NotFound))?);
             }
             Err(ServiceError::Drive(DriveError::Conflict { .. })) => continue,

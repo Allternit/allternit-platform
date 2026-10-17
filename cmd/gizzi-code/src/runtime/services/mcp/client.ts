@@ -43,7 +43,7 @@ import {
   TelemetrySafeError_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
 } from '../../../shared/utils/errors.js'
 import { getMCPUserAgent } from '../../../shared/utils/http.js'
-import { applyPins } from './pins.js'
+import { applyPinsViaRuntime } from './pins.js'
 import { maybeNotifyIDEConnected } from '../../../utils/ide.js'
 import { maybeResizeAndDownsampleImageBuffer } from '../../../utils/imageResizer.js'
 import { logMCPDebug, logMCPError } from '../../../shared/utils/log.js'
@@ -1790,7 +1790,7 @@ export const fetchToolsForClient = memoizeWithLRU(
       // Tool pinning: a new tool, or one whose name/description/inputSchema/
       // annotations changed since it was approved, stays out of the list until
       // re-approved. The first listing of a server is pinned as-is.
-      const pins = applyPins(client.name, visibleTools)
+      const pins = await applyPinsViaRuntime(client.name, visibleTools)
       if (pins.held.length > 0) {
         logMCPError(
           client.name,

@@ -1503,6 +1503,9 @@ async fn main() {
     // Memory Drive nightly Dream (one commit + report per drive per night).
     allternit_api::memory_dream::spawn(state.clone());
     allternit_api::memory_capture::spawn(state.db.clone());
+    // Memory Drive: read saved memories and new chats from the person's own
+    // assistant logins on their Sessions computer (read-only, every 6 h).
+    allternit_api::vendor_memory::spawn(state.clone());
     allternit_api::ledger::spawn(state.db.clone());
 
     // Mount cowork scheduler routes if scheduler is active. These routes

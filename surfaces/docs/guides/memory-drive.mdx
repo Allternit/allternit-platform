@@ -76,6 +76,10 @@ changes and keeps anything you or your agents wrote since. If you edited a line 
 Dream also changed, undo tells you which files to fix by hand. You can turn Dreaming
 off in the same place.
 
+When you select **Run now**, each step shows as it happens: reading your memories and recent
+messages, asking the model what to merge, learn and prune, checking that plan against your
+memories, and saving. Select **Steps** on any past Dream to see the same list.
+
 ## Shared drives
 
 Next to your own drive you can open drives for a **team** (workspace), a **project**,
@@ -120,6 +124,26 @@ needs a check can't be tapped until you fix it in **Settings → Subscriptions**
 assistant asks for a check mid-way, open it on your Sessions computer, finish the check, and tap
 again. Gemini and Copilot logins are best effort: their connections aren't verified against the live
 services yet, so if one doesn't answer, use the prompt below instead.
+
+### Keep it current by itself
+
+With **Keep memories from your assistant logins** on (under **Where your memories come from**,
+on by default), Allternit reads your signed-in logins every few hours without asking the assistant
+anything:
+
+- **Saved memories and custom instructions**, copied word for word from the assistant's own
+  settings. They land in `imports/<assistant>.md` with the source `<assistant>:memory`.
+- **New chats** since the last read, up to 20 each time. Only your own messages are read, by the
+  same model as a chat-history import, and what's worth keeping lands in
+  `imports/<assistant>-chats.md`, citing the chat it came from.
+
+It only reads: it never types, clicks or sends a message, and it waits when that login is busy with
+a chat. Only logins whose notice you accepted in **Settings → Subscriptions** are read. A memory you
+removed is never brought back. **Read my logins now** runs it right away, and the list under the
+switch shows what each login's last read found, or why it couldn't read (for example, a
+verification check to clear on your Sessions computer). Each read is also a row in **Activity**.
+Today ChatGPT and Claude can be read this way. Kimi, Gemini and Copilot show "can't read yet" until
+they can.
 
 ## Bring memories from another assistant
 
@@ -196,7 +220,8 @@ other places that add to your drive. Each has its own switch:
 - **Your messages to your bots** (on by default). What you send your bots on Telegram, WhatsApp,
   Discord, Slack, Teams, text messages and email. Only messages from you count. Allternit knows
   they're yours because you verified that account or phone number, or because it's your
-  account's email address. What other people send your bots never becomes your memory. Each
+  account's email address. It works whether or not a bot answers in that chat. What other people
+  send your bots never becomes your memory. Each
   memory cites the chat it came from, such as `telegram:chat/…`.
 
   To verify an account, open **Settings → Notifications → Factory approvals on your channels**,
@@ -205,10 +230,10 @@ other places that add to your drive. Each has its own switch:
   captured.
 - **Gizzi in the terminal** (on by default). What you type in Gizzi, so the nightly Dream can
   learn from it. Gizzi saves memories itself as well.
-- **Keep importing from agents on your computer** (off until you turn it on). Every few hours,
-  Allternit imports new memories from Claude Code, Codex, Hermes and OpenClaw on the computer that
-  holds your drive. Anything already in your drive is skipped. Turning it on imports what's there
-  right away.
+- **Keep importing from agents on your computer** (on by default). A few minutes after Allternit
+  starts, and then every few hours, it imports new memories from Claude Code, Codex, Hermes and
+  OpenClaw on the computer that holds your drive. Anything already in your drive is skipped. To
+  stop, turn the switch off; to prune what it added, use **Forget** below.
 
 Below the switches, **Memories by source** shows how many memories each source added: an
 assistant you imported from, an agent on your computer, or a channel. To take a source back out,
@@ -216,6 +241,20 @@ select **Forget** next to it and confirm. Its memories are removed in one change
 drive's history, like any delete.
 
 Incognito chats are never remembered, from any surface.
+
+## See what touched your memory
+
+In a chat, the turn shows what Memory Drive did, the same way it shows searches and commands:
+
+- **Searched Memory Drive** lists the memories the reply used.
+- **Saved to Memory Drive** lists what was remembered from the turn, with where it came from.
+  Saving finishes a few seconds after the reply, so this row can appear just after it.
+- When Gizzi or an agent uses its own memory tools, those calls read the same way.
+
+Under **Activity**, Memory Drive lists everything that touched your memory, newest first:
+saves, uses in chats, removals, imports, reads from your assistant logins, and Dream steps. Use
+the buttons above the list to show one kind. Select a row to see the memories in it. Activity
+keeps 90 days of rows and never includes incognito chats.
 
 ## Your ledger
 
@@ -264,7 +303,7 @@ it's created with a new id, and routines and schedules start paused. To **remove
 select **Delete** and confirm. Bots and agents are archived, other things are deleted, and either way
 the earlier file stays in the ledger's history. A skill's `SKILL.md` can't be deleted here; uninstall
 skills in Customize → Skills.
-Copies in a folder or your own repository are one-way: changes made there are replaced on the next copy.
+Changes made in a folder or repository copy come back too (see **Keep a copy where you want**).
 
 ### Restore from a ledger
 
@@ -291,15 +330,25 @@ choose, updated every hour:
 - **A folder on that computer.** Type its full path, such as `/Users/you/Dropbox` or your iCloud
   Drive folder, and select **Copy here**. Allternit writes an `Allternit` folder inside it, with
   `memory/` and `ledger/`, and keeps it in step. It only changes or removes files it wrote itself.
-  Edits you make in that copy are replaced on the next copy; change your memories in Allternit.
 - **Your own git repository.** Create an empty private repository (GitHub, GitLab, or any host that
   takes HTTPS), paste its HTTPS address and an access token that can push to it, then select
   **Copy to this repository**. Your memories go to the branch `allternit-memory` and your ledger
   to `allternit-ledger`. The token is stored sealed on that computer and never shown again. Paste
   a new one to replace it.
 
-Select **Copy now** to copy right away. Each copy shows when it last worked, or what went wrong and
-how to fix it. Select **Stop copying** to stop; copies already made stay where they are.
+**Changes you make in a copy come back.** Edit, add or delete a file in the folder, or commit to the
+`allternit-memory` or `allternit-ledger` branch, and the next copy brings the change into Allternit.
+It goes through the same rules as editing in Allternit: memory lines are checked, ledger files change
+the real bot or routine, new files create things (paused for routines and schedules), and deleted
+files delete them.
+
+If a file changed **in both places** since the last copy, Allternit keeps its version and saves yours
+beside it: as `….conflict-<time>` in the folder, or on a branch named `allternit-conflicts/…` in your
+repository. Nothing is lost.
+
+Select **Copy now** to copy right away. Each copy shows when it last worked, how many changes it
+brought in, any conflicts, and anything it couldn't bring in and why. Select **Stop copying** to
+stop; copies already made stay where they are.
 
 **Delete forever** removes memories from your drive and its history, but not from copies you
 keep elsewhere. Delete them there yourself, or stop the copy first.

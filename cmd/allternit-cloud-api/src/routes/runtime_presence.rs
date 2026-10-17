@@ -76,9 +76,11 @@ async fn heartbeat(State(state): State<Arc<ApiState>>, headers: HeaderMap, body:
         return (StatusCode::BAD_REQUEST, Json(json!({ "error": "bad_body" }))).into_response();
     };
     let failover = parsed["failoverRuntimeId"].as_str().filter(|s| !s.is_empty() && s.len() <= 128);
+    let per_bot = clean_failovers(&parsed);
     let result = async {
         record_heartbeat(&state.db, &runtime_id, clean_due(&parsed)).await?;
         set_failover_runtime(&state.db, &runtime_id, failover).await?;
+        set_bot_failovers(&state.db, &runtime_id, &per_bot).await?;
         take_finished_failovers(&state.db, &runtime_id).await
     }
     .await;
@@ -109,6 +111,60 @@ pub async fn record_heartbeat(db: &PgPool, runtime_id: &str, next_due: Value) ->
     resolve_all(db, runtime_id).await
 }
 
+/// The per-bot failovers a heartbeat reports: `[{botId, failoverRuntimeId}]`,
+/// one per always-on bot, bounded and de-duplicated by bot.
+pub fn clean_failovers(parsed: &Value) -> Value {
+    let mut seen = HashSet::new();
+    let list: Vec<Value> = parsed["failovers"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|f| {
+                    let bot = f["botId"].as_str().filter(|s| !s.is_empty() && s.len() <= 128)?;
+                    let to = f["failoverRuntimeId"].as_str().filter(|s| !s.is_empty() && s.len() <= 128)?;
+                    let accounts: Vec<Value> = f["accounts"]
+                        .as_array()
+                        .map(|a| a.iter().filter_map(|x| x.as_str()).filter(|x| !x.is_empty() && x.len() <= 256).take(32).map(Value::from).collect())
+                        .unwrap_or_default();
+                    seen.insert(bot.to_string()).then(|| json!({ "botId": bot, "failoverRuntimeId": to, "accounts": accounts }))
+                })
+                .take(64)
+                .collect()
+        })
+        .unwrap_or_default();
+    Value::Array(list)
+}
+
+/// Store the per-bot failover computers this runtime reported (replaces the list).
+pub async fn set_bot_failovers(db: &PgPool, runtime_id: &str, list: &Value) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE runtime_devices SET bot_failovers = $2 WHERE id = $1")
+        .bind(runtime_id)
+        .bind(list)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+/// The always-on bot whose channel connection `account` (a route's label) is,
+/// among the reported per-bot failovers: an address with no bot of its own
+/// follows the default bot of its connection.
+pub fn bot_for_account(list: &Value, account: &str) -> Option<String> {
+    list.as_array()?
+        .iter()
+        .find(|f| f["accounts"].as_array().is_some_and(|a| a.iter().any(|x| x.as_str() == Some(account))))
+        .and_then(|f| f["botId"].as_str())
+        .map(str::to_string)
+}
+
+/// The failover computer for `bot` among the reported per-bot failovers.
+pub fn failover_for_bot(list: &Value, bot: &str) -> Option<String> {
+    list.as_array()?
+        .iter()
+        .find(|f| f["botId"].as_str() == Some(bot))
+        .and_then(|f| f["failoverRuntimeId"].as_str())
+        .map(str::to_string)
+}
+
 /// The cloud computer this runtime's always-on bots fail over to (`None` = none).
 pub async fn set_failover_runtime(db: &PgPool, runtime_id: &str, to: Option<&str>) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE runtime_devices SET failover_runtime_id = $2 WHERE id = $1")
@@ -122,16 +178,16 @@ pub async fn set_failover_runtime(db: &PgPool, runtime_id: &str, to: Option<&str
 /// Finished failovers the runtime has not been told about yet, for it to write
 /// to its bots' threads (`bot.failover`) and `bot_failovers`. Each is returned once.
 pub async fn take_finished_failovers(db: &PgPool, runtime_id: &str) -> Result<Value, sqlx::Error> {
-    let rows: Vec<(String, String, String, DateTime<Utc>, Option<DateTime<Utc>>)> = sqlx::query_as(
+    let rows: Vec<(String, String, String, DateTime<Utc>, Option<DateTime<Utc>>, Option<String>)> = sqlx::query_as(
         "UPDATE runtime_failovers SET reported_at = now() WHERE from_runtime = $1 AND ended_at IS NOT NULL AND reported_at IS NULL \
-         RETURNING id, to_runtime, reason, started_at, ended_at",
+         RETURNING id, to_runtime, reason, started_at, ended_at, bot_id",
     )
     .bind(runtime_id)
     .fetch_all(db)
     .await?;
     Ok(Value::Array(
         rows.into_iter()
-            .map(|(id, to, reason, started, ended)| json!({ "id": id, "from": runtime_id, "to": to, "reason": reason, "startedAt": started, "endedAt": ended }))
+            .map(|(id, to, reason, started, ended, bot)| json!({ "id": id, "from": runtime_id, "to": to, "reason": reason, "startedAt": started, "endedAt": ended, "botId": bot }))
             .collect(),
     ))
 }
@@ -146,18 +202,35 @@ pub fn pick_runtime(home: &str, online: bool, failover: Option<&str>, failover_w
     }
 }
 
-/// The runtime a channel message for `home` is delivered to. Opens (once) the
-/// `runtime_failovers` row when it switches; [`record_heartbeat`] closes it.
-pub async fn delivery_runtime(db: &PgPool, user_id: &str, home: &str, connected: &HashSet<String>, now: DateTime<Utc>) -> Result<String, sqlx::Error> {
-    let row: Option<(Option<DateTime<Utc>>, Option<String>)> = sqlx::query_as(
-        "SELECT last_heartbeat_at, failover_runtime_id FROM runtime_devices WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL",
+/// The runtime a channel message for `home` is delivered to. `bot` is the bot
+/// the route belongs to: only an always-on bot with a failover computer fails
+/// over, a message for any other bot (or an unassigned route) stays queued for
+/// home. Opens (once) the `runtime_failovers` row when it switches;
+/// [`record_heartbeat`] closes it.
+pub async fn delivery_runtime(db: &PgPool, user_id: &str, home: &str, bot: Option<&str>, account: Option<&str>, connected: &HashSet<String>, now: DateTime<Utc>) -> Result<String, sqlx::Error> {
+    let row: Option<(Option<DateTime<Utc>>, Option<String>, Value)> = sqlx::query_as(
+        "SELECT last_heartbeat_at, failover_runtime_id, bot_failovers FROM runtime_devices WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL",
     )
     .bind(home)
     .bind(user_id)
     .fetch_optional(db)
     .await?;
     // Never beat = not a runtime that reports presence: keep today's behaviour.
-    let Some((Some(beat), Some(to))) = row else { return Ok(home.to_string()) };
+    let Some((Some(beat), legacy, per_bot)) = row else { return Ok(home.to_string()) };
+    // A route made before routes carried a bot follows its connection's default
+    // bot (the runtime reports which connections each always-on bot answers by
+    // default); with no per-bot list at all, the legacy single failover applies
+    // (a runtime that has not updated).
+    let account_bot = match bot {
+        Some(_) => None,
+        None => account.and_then(|a| bot_for_account(&per_bot, a)),
+    };
+    let bot = bot.or(account_bot.as_deref());
+    let to = match bot {
+        Some(b) => failover_for_bot(&per_bot, b),
+        None => legacy.filter(|_| per_bot.as_array().is_none_or(|a| a.is_empty())),
+    };
+    let Some(to) = to else { return Ok(home.to_string()) };
     let online = is_online(connected.contains(home), Some(beat), now);
     if online {
         return Ok(home.to_string());
@@ -166,12 +239,13 @@ pub async fn delivery_runtime(db: &PgPool, user_id: &str, home: &str, connected:
     let target = pick_runtime(home, online, Some(&to), wakeable);
     if target != home {
         let opened = sqlx::query(
-            "INSERT INTO runtime_failovers (id, user_id, from_runtime, to_runtime) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING",
+            "INSERT INTO runtime_failovers (id, user_id, from_runtime, to_runtime, bot_id) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING",
         )
         .bind(format!("fo_{}", uuid::Uuid::new_v4().simple()))
         .bind(user_id)
         .bind(home)
         .bind(&target)
+        .bind(bot)
         .execute(db)
         .await?;
         if opened.rows_affected() > 0 {
@@ -439,7 +513,6 @@ mod tests {
         assert_eq!(open, 0);
     }
 
-    #[tokio::test]
     #[test]
     fn failover_only_while_home_is_offline_and_target_is_a_cloud_computer() {
         assert_eq!(pick_runtime("mac", false, Some("cloud"), true), "cloud");
@@ -452,19 +525,26 @@ mod tests {
     async fn failover_opens_once_and_closes_when_home_beats_again() {
         let db = schema().await;
         sqlx::raw_sql(&include_str!("../../migrations_pg/091_runtime_failover.sql").replace("public.", "")).execute(&db).await.unwrap();
+        sqlx::raw_sql(&include_str!("../../migrations_pg/092_per_bot_failover.sql").replace("public.", "")).execute(&db).await.unwrap();
         sqlx::query("CREATE TABLE IF NOT EXISTS provisioned_instances (device_id text, status text)").execute(&db).await.unwrap();
         seed_runtime_device(&db, "cloud1", "u1").await;
         sqlx::query("INSERT INTO provisioned_instances VALUES ('cloud1','stopped')").execute(&db).await.unwrap();
         let now = Utc::now();
         sqlx::query("UPDATE runtime_devices SET last_heartbeat_at = $1 WHERE id = 'rt1'").bind(now - Duration::minutes(30)).execute(&db).await.unwrap();
-        set_failover_runtime(&db, "rt1", Some("cloud1")).await.unwrap();
+        set_bot_failovers(&db, "rt1", &json!([{ "botId": "b1", "failoverRuntimeId": "cloud1", "accounts": ["tg-acct-1"] }])).await.unwrap();
         let none = HashSet::new();
-        assert_eq!(delivery_runtime(&db, "u1", "rt1", &none, now).await.unwrap(), "cloud1");
-        assert_eq!(delivery_runtime(&db, "u1", "rt1", &none, now).await.unwrap(), "cloud1");
+        // Per bot: a bot that is not always-on (not in the list) and an unassigned route stay queued for home.
+        assert_eq!(delivery_runtime(&db, "u1", "rt1", Some("other"), None, &none, now).await.unwrap(), "rt1");
+        assert_eq!(delivery_runtime(&db, "u1", "rt1", None, None, &none, now).await.unwrap(), "rt1");
+        assert_eq!(delivery_runtime(&db, "u1", "rt1", Some("b1"), None, &none, now).await.unwrap(), "cloud1");
+        assert_eq!(delivery_runtime(&db, "u1", "rt1", Some("b1"), None, &none, now).await.unwrap(), "cloud1");
+        // An address made before routes carried a bot follows its connection's default bot.
+        assert_eq!(delivery_runtime(&db, "u1", "rt1", None, Some("tg-acct-1"), &none, now).await.unwrap(), "cloud1");
+        assert_eq!(delivery_runtime(&db, "u1", "rt1", None, Some("other-acct"), &none, now).await.unwrap(), "rt1");
         let open: i64 = sqlx::query_scalar("SELECT count(*) FROM runtime_failovers WHERE ended_at IS NULL").fetch_one(&db).await.unwrap();
         assert_eq!(open, 1);
         record_heartbeat(&db, "rt1", json!([])).await.unwrap();
-        assert_eq!(delivery_runtime(&db, "u1", "rt1", &none, now).await.unwrap(), "rt1", "switched back");
+        assert_eq!(delivery_runtime(&db, "u1", "rt1", Some("b1"), None, &none, now).await.unwrap(), "rt1", "switched back");
         let told = take_finished_failovers(&db, "rt1").await.unwrap();
         assert_eq!(told.as_array().unwrap().len(), 1);
         assert_eq!(take_finished_failovers(&db, "rt1").await.unwrap().as_array().unwrap().len(), 0, "reported once");

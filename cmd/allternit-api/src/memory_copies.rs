@@ -31,6 +31,16 @@ const SEALED_PREFIX: &str = "enc:v1:";
 pub struct Status {
     pub last_at: Option<String>,
     pub last_error: Option<String>,
+    /// Changes made in the copy that the last run brought into Allternit.
+    #[serde(default)]
+    pub applied: Vec<String>,
+    /// Paths changed in both places since the previous copy: Allternit's
+    /// version was kept and the copy's version saved beside it.
+    #[serde(default)]
+    pub conflicts: Vec<String>,
+    /// Changes from the copy that couldn't be applied, with the reason.
+    #[serde(default)]
+    pub failed: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -40,7 +50,7 @@ pub struct FolderCopy {
     pub status: Status,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct GitCopy {
     /// `https://host/owner/repo.git`, never with credentials in it.
     pub url: String,
@@ -49,6 +59,11 @@ pub struct GitCopy {
     pub token: String,
     #[serde(default)]
     pub status: Status,
+    /// The commits last pushed, so the next run can tell what changed in the remote.
+    #[serde(default)]
+    pub last_memory: Option<String>,
+    #[serde(default)]
+    pub last_ledger: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -149,13 +164,30 @@ fn now() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
 
+fn sha(bytes: &[u8]) -> String {
+    use sha2::Digest as _;
+    hex::encode(sha2::Sha256::digest(bytes))
+}
+
+/// What the previous copy wrote: path → content hash. Copies made before
+/// two-way sync stored only paths; those come back with no hashes.
+pub fn read_manifest(base: &Path) -> (BTreeSet<String>, BTreeMap<String, String>) {
+    let raw = std::fs::read(base.join(MANIFEST)).ok();
+    if let Some(map) = raw.as_deref().and_then(|b| serde_json::from_slice::<BTreeMap<String, String>>(b).ok()) {
+        return (map.keys().cloned().collect(), map);
+    }
+    let paths: BTreeSet<String> = raw.as_deref().and_then(|b| serde_json::from_slice(b).ok()).unwrap_or_default();
+    (paths, BTreeMap::new())
+}
+
 /// Mirror `files` into `dir`, removing only files the previous copy wrote.
 pub fn write_folder(root: &Path, sections: &[(&str, BTreeMap<String, Vec<u8>>)]) -> std::io::Result<usize> {
     let base = root.join(SUBFOLDER);
     std::fs::create_dir_all(&base)?;
     let manifest_path = base.join(MANIFEST);
-    let previous: BTreeSet<String> = std::fs::read(&manifest_path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+    let (previous, _) = read_manifest(&base);
     let mut written = BTreeSet::new();
+    let mut hashes: BTreeMap<String, String> = BTreeMap::new();
     for (section, files) in sections {
         for (path, bytes) in files {
             if !crate::ledger_repo::valid_path(path) {
@@ -173,6 +205,7 @@ pub fn write_folder(root: &Path, sections: &[(&str, BTreeMap<String, Vec<u8>>)])
             if std::fs::read(&target).ok().as_deref() != Some(bytes.as_slice()) {
                 std::fs::write(&target, bytes)?;
             }
+            hashes.insert(rel.clone(), sha(bytes));
             written.insert(rel);
         }
     }
@@ -186,10 +219,143 @@ pub fn write_folder(root: &Path, sections: &[(&str, BTreeMap<String, Vec<u8>>)])
     }
     std::fs::write(
         base.join("README.md"),
-        "# Allternit\n\nA copy of your Allternit Memory Drive (`memory/`) and ledger (`ledger/`), kept up to date by Allternit.\nChanges you make here are replaced on the next copy; edit your memories in Allternit.\n",
+        "# Allternit\n\nA copy of your Allternit Memory Drive (`memory/`) and ledger (`ledger/`), kept in step by Allternit.\nChanges you make here come back into Allternit on the next copy. If something changed in both places, Allternit keeps its version and saves yours beside it as `….conflict-<time>`.\n",
     )?;
-    std::fs::write(&manifest_path, serde_json::to_vec_pretty(&written).unwrap_or_default())?;
+    std::fs::write(&manifest_path, serde_json::to_vec_pretty(&hashes).unwrap_or_default())?;
     Ok(written.len())
+}
+
+/// One change found in a copy, keyed `memory/<path>` or `ledger/<path>`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Change {
+    Set(Vec<u8>),
+    Delete,
+}
+
+/// What a run brought in from a copy.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct Inbound {
+    pub applied: Vec<String>,
+    pub conflicts: Vec<String>,
+    pub failed: Vec<String>,
+}
+
+/// Apply changes made in a copy. `base` is what the previous copy held
+/// (path → hash); `current` is what Allternit holds now. A path Allternit
+/// also changed since then is a conflict: Allternit wins, `on_conflict`
+/// keeps the copy's version.
+pub fn apply_inbound(
+    db: &DbHandle,
+    owner: &str,
+    memory: &LedgerRepo,
+    ledger: &LedgerRepo,
+    changes: BTreeMap<String, Change>,
+    base: &BTreeMap<String, String>,
+    current: &BTreeMap<String, Vec<u8>>,
+    mut on_conflict: impl FnMut(&str, &Change),
+) -> Inbound {
+    let mut out = Inbound::default();
+    let mut memory_ops: Vec<(String, crate::memory_drive::Operation)> = Vec::new();
+    let skills = crate::ledger::skill_dirs().into_iter().next();
+    for (key, change) in changes {
+        let Some((section, rel)) = key.split_once('/') else { continue };
+        if !crate::ledger_repo::valid_path(rel) || rel.contains(".conflict-") || matches!(rel, "README.md" | "connected-apps.json") {
+            continue;
+        }
+        let now_hash = current.get(&key).map(|b| sha(b));
+        // Same content on both sides: nothing to do.
+        if let Change::Set(bytes) = &change {
+            if now_hash.as_deref() == Some(sha(bytes).as_str()) {
+                continue;
+            }
+        }
+        if now_hash.as_ref() != base.get(&key) {
+            out.conflicts.push(key.clone());
+            on_conflict(&key, &change);
+            continue;
+        }
+        match (section, &change) {
+            ("ledger", Change::Set(bytes)) => {
+                let text = String::from_utf8_lossy(bytes).to_string();
+                let res = db.connect().map_err(ServiceError::from).and_then(|c| {
+                    crate::ledger_edit::edit(&c, owner, ledger, rel, &text, skills.as_deref(), crate::agent_workspace_paths::workspace_dir_for)
+                });
+                match res {
+                    Ok(_) => out.applied.push(key.clone()),
+                    Err(e) => out.failed.push(format!("{key}: {e}")),
+                }
+            }
+            ("ledger", Change::Delete) => {
+                let res = db.connect().map_err(ServiceError::from).and_then(|c| {
+                    crate::ledger_edit::delete(&c, owner, ledger, rel, skills.as_deref(), crate::agent_workspace_paths::workspace_dir_for)
+                });
+                match res {
+                    Ok(_) => out.applied.push(key.clone()),
+                    Err(e) => out.failed.push(format!("{key}: {e}")),
+                }
+            }
+            ("memory", Change::Set(bytes)) => memory_ops.push((
+                key.clone(),
+                crate::memory_drive::Operation::SetFile { path: rel.to_string(), content: String::from_utf8_lossy(bytes).to_string() },
+            )),
+            ("memory", Change::Delete) => memory_ops.push((key.clone(), crate::memory_drive::Operation::DeleteFile { path: rel.to_string() })),
+            _ => {}
+        }
+    }
+    if !memory_ops.is_empty() {
+        let keys: Vec<String> = memory_ops.iter().map(|(k, _)| k.clone()).collect();
+        let ops: Vec<_> = memory_ops.into_iter().map(|(_, o)| o).collect();
+        let res = crate::memory_drive_writer::ensure(db, owner).and_then(|d| d.ok_or(ServiceError::NotFound)).and_then(|drive| {
+            let expected = memory.head().unwrap_or_default();
+            crate::memory_drive_scopes::apply_for(db, owner, &drive, &expected, &ops, "Changes from your copy")
+        });
+        match res {
+            Ok(_) => out.applied.extend(keys),
+            Err(e) => out.failed.extend(keys.into_iter().map(|k| format!("{k}: {}", e.to_string().replace("invalid memory provenance: ", "")))),
+        }
+    }
+    let _ = ledger;
+    out
+}
+
+fn stamp() -> String {
+    chrono::Utc::now().format("%Y%m%d-%H%M").to_string()
+}
+
+/// Changes made in a folder copy since Allternit last wrote it.
+pub fn folder_changes(base_dir: &Path, written: &BTreeSet<String>, hashes: &BTreeMap<String, String>) -> BTreeMap<String, Change> {
+    let mut out = BTreeMap::new();
+    if hashes.is_empty() {
+        return out; // a copy made before two-way sync: nothing to compare against yet
+    }
+    let mut seen = BTreeSet::new();
+    for section in ["memory", "ledger"] {
+        let mut stack = vec![(base_dir.join(section), section.to_string())];
+        while let Some((dir, rel)) = stack.pop() {
+            let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+            for e in rd.flatten() {
+                let name = e.file_name().to_string_lossy().to_string();
+                if name.starts_with('.') || name.contains(".conflict-") {
+                    continue;
+                }
+                let Ok(meta) = std::fs::symlink_metadata(e.path()) else { continue };
+                let path = format!("{rel}/{name}");
+                if meta.is_dir() {
+                    stack.push((e.path(), path));
+                } else if meta.is_file() && meta.len() <= 1024 * 1024 {
+                    seen.insert(path.clone());
+                    let Ok(bytes) = std::fs::read(e.path()) else { continue };
+                    if hashes.get(&path) != Some(&sha(&bytes)) {
+                        out.insert(path, Change::Set(bytes));
+                    }
+                }
+            }
+        }
+    }
+    for gone in written.difference(&seen) {
+        out.insert(gone.clone(), Change::Delete);
+    }
+    out
 }
 
 fn repos(db: &DbHandle, owner: &str) -> Result<(LedgerRepo, LedgerRepo)> {
@@ -206,28 +372,96 @@ pub fn run(db: &DbHandle, owner: &str) -> Result<Copies> {
         return Ok(copies);
     }
     let (memory, ledger) = repos(db, owner)?;
+    let current_all = |memory: &LedgerRepo, ledger: &LedgerRepo| -> Result<BTreeMap<String, Vec<u8>>> {
+        let mut all = BTreeMap::new();
+        for (section, repo) in [("memory", memory), ("ledger", ledger)] {
+            for (p, b) in repo.all_files().map_err(|e| bad(&e.to_string()))? {
+                all.insert(format!("{section}/{p}"), b);
+            }
+        }
+        Ok(all)
+    };
     if let Some(f) = copies.folder.as_mut() {
         let outcome = check_folder(&f.path).and_then(|root| {
+            let base_dir = root.join(SUBFOLDER);
+            let (written, hashes) = read_manifest(&base_dir);
+            let changes = folder_changes(&base_dir, &written, &hashes);
+            let inbound = if changes.is_empty() {
+                Inbound::default()
+            } else {
+                let current = current_all(&memory, &ledger)?;
+                let st = stamp();
+                let r = apply_inbound(db, owner, &memory, &ledger, changes, &hashes, &current, |key, change| {
+                    if let Change::Set(bytes) = change {
+                        let _ = std::fs::write(base_dir.join(format!("{key}.conflict-{st}")), bytes);
+                    }
+                });
+                crate::ledger::snapshot(db, owner, "Changes from your folder copy")?;
+                r
+            };
             let mem = memory.all_files().map_err(|e| bad(&e.to_string()))?;
             let led = ledger.all_files().map_err(|e| bad(&e.to_string()))?;
-            write_folder(&root, &[("memory", mem), ("ledger", led)]).map_err(|e| bad(&format!("Couldn't write to that folder: {e}")))
+            write_folder(&root, &[("memory", mem), ("ledger", led)]).map_err(|e| bad(&format!("Couldn't write to that folder: {e}")))?;
+            Ok(inbound)
         });
         f.status = match outcome {
-            Ok(_) => Status { last_at: Some(now()), last_error: None },
-            Err(e) => Status { last_at: f.status.last_at.clone(), last_error: Some(e.to_string().replace("invalid memory provenance: ", "")) },
+            Ok(i) => Status { last_at: Some(now()), last_error: None, applied: i.applied, conflicts: i.conflicts, failed: i.failed },
+            Err(e) => Status { last_at: f.status.last_at.clone(), last_error: Some(e.to_string().replace("invalid memory provenance: ", "")), ..Default::default() },
         };
     }
     if let Some(g) = copies.git.as_mut() {
         let token = crate::token_crypto::open(&g.token);
         let env = auth_env(&g.url, &token);
+        // First bring in what changed on the remote since the last push.
+        let mut inbound = Inbound::default();
+        let mut pulled = false;
+        for (section, repo, branch, last) in [("memory", &memory, "allternit-memory", g.last_memory.clone()), ("ledger", &ledger, "allternit-ledger", g.last_ledger.clone())] {
+            let Some(last) = last.filter(|l| repo.has_commit(l)) else { continue };
+            let Ok(Some(remote)) = repo.fetch(&g.url, branch, &env) else { continue };
+            if remote == last || !repo.has_commit(&remote) {
+                continue;
+            }
+            let Ok(diff) = repo.diff_names(&last, &remote) else { continue };
+            let mut changes = BTreeMap::new();
+            let mut base = BTreeMap::new();
+            for (status, path) in diff {
+                let key = format!("{section}/{path}");
+                if let Ok(Some(b)) = repo.read(&path, Some(&last)) {
+                    base.insert(key.clone(), sha(&b));
+                }
+                let change = if status == 'D' { Change::Delete } else { repo.read(&path, Some(&remote)).ok().flatten().map(Change::Set).unwrap_or(Change::Delete) };
+                changes.insert(key, change);
+            }
+            let current = match current_all(&memory, &ledger) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            let mut conflicted = false;
+            let r = apply_inbound(db, owner, &memory, &ledger, changes, &base, &current, |_, _| conflicted = true);
+            if conflicted {
+                // Keep the remote's version on its own branch.
+                let _ = repo.push_commit(&g.url, &remote, &format!("allternit-conflicts/{branch}-{}", stamp()), &env);
+            }
+            inbound.applied.extend(r.applied);
+            inbound.conflicts.extend(r.conflicts);
+            inbound.failed.extend(r.failed);
+            pulled = true;
+        }
+        if pulled {
+            let _ = crate::ledger::snapshot(db, owner, "Changes from your git copy");
+        }
         let outcome = memory.push(&g.url, "allternit-memory", &env).and_then(|_| ledger.push(&g.url, "allternit-ledger", &env));
+        if outcome.is_ok() {
+            g.last_memory = memory.head();
+            g.last_ledger = ledger.head();
+        }
         g.status = match outcome {
-            Ok(()) => Status { last_at: Some(now()), last_error: None },
+            Ok(()) => Status { last_at: Some(now()), last_error: None, applied: inbound.applied, conflicts: inbound.conflicts, failed: inbound.failed },
             Err(e) => {
                 // Never echo anything that could carry the token.
                 let raw = e.to_string();
                 let raw = if !token.is_empty() && raw.contains(&token) { String::new() } else { raw };
-                Status { last_at: g.status.last_at.clone(), last_error: Some(push_error(&raw)) }
+                Status { last_at: g.status.last_at.clone(), last_error: Some(push_error(&raw)), ..Default::default() }
             }
         };
     }
@@ -276,7 +510,7 @@ mod tests {
         assert_eq!(env[1], ("GIT_CONFIG_KEY_0".into(), "http.extraHeader".into()));
         assert!(env[2].1.starts_with("Authorization: Basic "));
         assert!(!env[2].1.contains("ghp_secret"));
-        let public = Copies { folder: None, git: Some(GitCopy { url: "https://x/y.git".into(), token: "enc:v1:abc".into(), status: Status::default() }) }.public();
+        let public = Copies { folder: None, git: Some(GitCopy { url: "https://x/y.git".into(), token: "enc:v1:abc".into(), ..Default::default() }) }.public();
         assert_eq!(public["git"]["has_token"], true);
         assert!(!public.to_string().contains("enc:v1"));
     }
