@@ -51,6 +51,8 @@ export interface HealthEvidence {
 
 export const SIGNATURE_WARNING_MS = 24 * 3600_000;
 const RESTART_DETAIL = 'The iPhone may have restarted; its developer image then needs remounting.';
+const REMOUNT_DETAIL =
+  'The phone is connected but has no developer image mounted. Or on the iPhone: open iCTRL › Mount without a Mac, then Start Server.';
 
 function signatureAction(expiresAt: string): string {
   const date = new Date(expiresAt).toLocaleDateString('en-US', {
@@ -84,7 +86,7 @@ export function classifyHealth(ev: HealthEvidence, now: number): PhoneLinkHealth
       state: 'DEVELOPER_IMAGE_REMOUNT_REQUIRED',
       recovery: 'manual',
       action: 'Plug your iPhone into this computer and open Allternit',
-      detail: 'The phone is connected but has no developer image mounted.',
+      detail: REMOUNT_DETAIL,
     };
   }
 

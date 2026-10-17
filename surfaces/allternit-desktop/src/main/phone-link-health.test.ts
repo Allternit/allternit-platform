@@ -73,13 +73,13 @@ describe('classifyHealth', () => {
     expect(classifyHealth(ev({ expiresAt: new Date(NOW + 25 * 3600_000).toISOString() }), NOW)).toMatchObject({ state: 'HEALTHY' });
   });
 
-  it('DEVELOPER_IMAGE_REMOUNT_REQUIRED only on evidence, and always manual', () => {
+  it('DEVELOPER_IMAGE_REMOUNT_REQUIRED only on evidence, always manual, with the phone-side alternative', () => {
     expect(classifyHealth(ev({ remountRequired: true }), NOW)).toEqual({
       state: 'DEVELOPER_IMAGE_REMOUNT_REQUIRED',
       checkedAt: ISO,
       recovery: 'manual',
       action: 'Plug your iPhone into this computer and open Allternit',
-      detail: 'The phone is connected but has no developer image mounted.',
+      detail: 'The phone is connected but has no developer image mounted. Or on the iPhone: open iCTRL › Mount without a Mac, then Start Server.',
     });
     // Without the probe it stays TRANSPORT_OFFLINE.
     expect(classifyHealth(ev({ whoami: null }), NOW)).toMatchObject({ state: 'TRANSPORT_OFFLINE' });

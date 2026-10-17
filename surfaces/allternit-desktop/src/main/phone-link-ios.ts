@@ -22,9 +22,18 @@
  *
  * After a phone restart the Developer Disk Image is gone and the runner can't
  * start until it's remounted: Desktop does that when the phone is plugged in
- * (or visible to usbmuxd over Wi-Fi sync), and the iCTRL host app can do it
- * on the phone (Settings › Mount without a Mac), for which setup leaves the
- * Mac's pairing record in that app's container.
+ * (phone-ios-recovery.ts watches usbmuxd and runs reconnectIos with zero
+ * clicks), and the iCTRL host app can do it on the phone (Settings › Mount
+ * without a Mac), for which setup leaves the Mac's pairing record in that
+ * app's container.
+ *
+ * Renewal: a free Apple ID signature lasts 7 days (`IosLinkRecord.expiresAt`).
+ * phone-ios-recovery.ts re-signs with the Keychain-saved Apple session (empty
+ * password) and reinstalls once less than 48 h remain — only while the phone
+ * is on the cable: go-ios v1.3.2's tunnel manager never opens a tunnel to a
+ * Wi-Fi (network) device (ios/tunnel/tunnel_api.go shouldSkipDevice skips
+ * ConnectionType "Network", issues #596/#532), and both the developer-image
+ * mount and `ios launch` go through that tunnel on iOS 17+.
  */
 
 import * as fs from 'node:fs';
@@ -88,6 +97,12 @@ export interface IosLinkRecord {
   xctestConfig: string;
   testToRun: string;
   expiresAt?: string;
+  /**
+   * The Apple ID the helper was signed with (the email only — never the
+   * password or Apple's session). The automatic renewal passes it to the
+   * signer with an empty password so the Keychain-saved session is reused.
+   */
+  appleId?: string;
   lanHost?: string;
   /** `<100.x>:8200` on the user's mesh, saved once the runner reports the join running. */
   meshHost?: string;
@@ -169,6 +184,35 @@ type Base = Omit<PhoneLinkStatus, 'platform' | 'state' | 'instruction'>;
 
 class SetupStop extends Error {}
 
+/**
+ * Leave the Mac's pairing record in the iCTRL host app's container so the
+ * phone itself can remount the developer image without a Mac (iCTRL app ›
+ * Mount without a Mac). Best-effort — only the no-Mac path needs it, so
+ * every failure is a log line, never an error. `log` receives plain
+ * messages; pairing material is never logged.
+ */
+export async function leavePairingFile(deps: IosDriverDeps, udid: string, hostBundleId: string, log: (message: string) => void): Promise<void> {
+  if (!deps.readPairRecord) return;
+  try {
+    const record = await deps.readPairRecord(udid);
+    if (!record) {
+      log('no pairing record for this iPhone on this Mac yet; Mount without a Mac stays unavailable');
+      return;
+    }
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'allternit-pair-'));
+    const file = path.join(tmp, 'pairingFile.plist');
+    try {
+      fs.writeFileSync(file, record, { mode: 0o600 });
+      await deps.goios.pushToApp(udid, hostBundleId, file, PAIRING_FILE_REMOTE);
+      log('pairing file left in the iCTRL app for Mount without a Mac');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  } catch (error) {
+    log(`pairing file not left on the phone: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 export class IosDriver implements PhoneLinkDriver {
   private continueWaiter: (() => void) | null = null;
   private appleIdWaiter: ((creds: AppleIdCredentials) => void) | null = null;
@@ -177,6 +221,8 @@ export class IosDriver implements PhoneLinkDriver {
   private session: LongRunning | null = null;
   private fwd: { port: number; close(): Promise<void> } | null = null;
   private base: Base = {};
+  /** Apple ID whose sign succeeded last, persisted on the link record for the automatic renewal. */
+  private signedAppleId: string | null = null;
 
   constructor(private readonly deps: IosDriverDeps) {}
 
@@ -324,6 +370,7 @@ export class IosDriver implements PhoneLinkDriver {
       xctestConfig: artifacts!.manifest.runner.xctestConfig,
       testToRun: artifacts!.manifest.runner.testToRun,
       expiresAt: signed?.expiresAt ?? known?.expiresAt,
+      appleId: this.signedAppleId ?? known?.appleId,
       linkedAt: new Date(this.now()).toISOString(),
     };
     await this.prepareDevice(ctx, udid, 0.05);
@@ -344,7 +391,7 @@ export class IosDriver implements PhoneLinkDriver {
         // Linked before, but the helper was deleted: sign and install again.
         if (signed) this.fail(ctx, 'install_failed', 'The helper isn\'t on your iPhone. Try again.', launched.error, true);
         signed = await this.signRunner(ctx, udid, artifacts!);
-        Object.assign(record, { runnerBundleId: signed.runnerBundleId, hostBundleId: signed.hostBundleId, expiresAt: signed.expiresAt });
+        Object.assign(record, { runnerBundleId: signed.runnerBundleId, hostBundleId: signed.hostBundleId, expiresAt: signed.expiresAt, ...(this.signedAppleId ? { appleId: this.signedAppleId } : {}) });
         await install(signed);
         continue;
       }
@@ -422,7 +469,7 @@ export class IosDriver implements PhoneLinkDriver {
         this.set(ctx, 'installing', 'Preparing the helper…', { progress: 0.02 });
       }
       try {
-        return await signer.sign({
+        const signed = await signer.sign({
           udid,
           deviceName: this.base.deviceName ?? 'iPhone',
           artifacts,
@@ -436,6 +483,8 @@ export class IosDriver implements PhoneLinkDriver {
             });
           },
         });
+        if (credentials?.appleId) this.signedAppleId = credentials.appleId;
+        return signed;
       } catch (error) {
         this.check(ctx);
         if (error instanceof SetupStop) throw error;
@@ -541,22 +590,7 @@ export class IosDriver implements PhoneLinkDriver {
   }
 
   private async leavePairingFile(udid: string, hostBundleId: string): Promise<void> {
-    if (!this.deps.readPairRecord) return;
-    try {
-      const record = await this.deps.readPairRecord(udid);
-      if (!record) return;
-      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'allternit-pair-'));
-      const file = path.join(tmp, 'pairingFile.plist');
-      try {
-        fs.writeFileSync(file, record, { mode: 0o600 });
-        await this.deps.goios.pushToApp(udid, hostBundleId, file, PAIRING_FILE_REMOTE);
-      } finally {
-        fs.rmSync(tmp, { recursive: true, force: true });
-      }
-    } catch (error) {
-      // Optional: only the no-Mac remount needs it.
-      this.log(`pairing file not left on the phone: ${error instanceof Error ? error.message : String(error)}`);
-    }
+    await leavePairingFile(this.deps, udid, hostBundleId, (message) => this.log(message));
   }
 
   /**
@@ -708,29 +742,36 @@ export function pickLanHost(config: { address?: string; ipv4_interfaces?: { name
  * Needs the phone visible to usbmuxd: on the cable, or over Wi-Fi sync.
  * The phone's address may have changed, so it's read back from the runner
  * through the 127.0.0.1 forward. Returns the LAN host once it answers.
+ *
+ * With `forceCable` the LAN probes are skipped and the cable path (tunnel →
+ * image auto → launch → confirm) always runs — the renewal uses it after a
+ * reinstall, because installing the helper kills the running one.
  */
 export async function reconnectIos(
   deps: IosDriverDeps,
   udid: string,
   sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+  opts: { forceCable?: boolean } = {},
 ): Promise<string | null> {
   const record = deps.store.load(udid);
   if (!record) return null;
   const probe = async (host?: string) => (host ? deps.ictrl(udid, host).call('device_info', {}, 5000).then(() => host, () => null) : null);
-  const direct = await probe(record.lanHost);
-  if (direct) return direct;
-  // The Wi-Fi address may have changed since we linked (DHCP). Ask the LAN
-  // who has this phone's device id before falling back to the cable.
-  if (record.deviceId) {
-    try {
-      const discover = deps.discover ?? ((deviceId: string, lastHost: string | undefined) => findPhoneHost(deviceId, lastHost, nodeDiscoveryDeps));
-      const found = await discover(record.deviceId, record.lanHost);
-      if (found && (await probe(found))) {
-        deps.store.save({ ...record, lanHost: found });
-        return found;
+  if (!opts.forceCable) {
+    const direct = await probe(record.lanHost);
+    if (direct) return direct;
+    // The Wi-Fi address may have changed since we linked (DHCP). Ask the LAN
+    // who has this phone's device id before falling back to the cable.
+    if (record.deviceId) {
+      try {
+        const discover = deps.discover ?? ((deviceId: string, lastHost: string | undefined) => findPhoneHost(deviceId, lastHost, nodeDiscoveryDeps));
+        const found = await discover(record.deviceId, record.lanHost);
+        if (found && (await probe(found))) {
+          deps.store.save({ ...record, lanHost: found });
+          return found;
+        }
+      } catch (error) {
+        deps.logger?.(`[phone-link ios] discovery failed: ${error instanceof Error ? error.message : String(error)}`);
       }
-    } catch (error) {
-      deps.logger?.(`[phone-link ios] discovery failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
   if (!(await deps.goios.list()).includes(udid)) return null;
@@ -741,6 +782,9 @@ export async function reconnectIos(
     await deps.goios.imageAuto(udid, await deps.ddiDir());
     const launched = await deps.goios.launch(udid, record.runnerBundleId, { killExisting: true });
     if (!launched.ok) return null;
+    // The phone is right here on the cable: refresh the pairing file the
+    // phone-side "Mount without a Mac" flow reads from the host app.
+    await leavePairingFile(deps, udid, record.hostBundleId, (message) => deps.logger?.(`[phone-link ios] ${message}`));
     fwd = await deps.forward(udid, ICTRL_PORT);
     const usb = deps.ictrl(udid, `127.0.0.1:${fwd.port}`);
     for (let i = 0; i < 20; i++) {

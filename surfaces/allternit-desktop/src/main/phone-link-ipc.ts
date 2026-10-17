@@ -10,7 +10,7 @@ import { fileAndroidLinkStore, type AndroidDriverDeps } from './phone-link-andro
 import { fileLinkStore, type IosDriverDeps } from './phone-link-ios.js';
 import type { PhoneLinkPlatform } from './phone-link-types.js';
 import { createGoIosExec, createGoIosSpawn, ensureDdi, ensureGoIos, GoIos } from './phone-goios.js';
-import { ensureRunnerArtifacts, LocalIdentitySigner, SideloadSigner, type RunnerSigner } from './phone-ios-runner.js';
+import { ensureRunnerArtifacts, pickSigner } from './phone-ios-runner.js';
 import { ensureAndroidHelper } from './phone-android-helper.js';
 import { readPairRecord, startLoopbackForward } from './phone-usbmux.js';
 import { phoneService } from './phone-service.js';
@@ -44,20 +44,6 @@ async function fetchRunnerSchema(host: string): Promise<unknown | null> {
   }
 }
 
-/**
- * Developer machines (unpackaged, or ALLTERNIT_PHONE_LINK_LOCAL_SIGNING=1)
- * sign with their own Xcode identity; shipped builds use the Apple ID sidecar.
- */
-function pickSigner(): RunnerSigner {
-  if (!app.isPackaged || process.env.ALLTERNIT_PHONE_LINK_LOCAL_SIGNING === '1') return new LocalIdentitySigner();
-  const bin = path.join(process.resourcesPath, 'bin', 'allternit-sideload');
-  return new SideloadSigner({
-    binary: fs.existsSync(bin) ? bin : null,
-    // Allternit-hosted anisette v3 server (anisette.allternit.com, live since 2026-10-17).
-    anisetteUrl: process.env.ALLTERNIT_ANISETTE_URL ?? 'https://anisette.allternit.com',
-  });
-}
-
 async function iosDeps(): Promise<IosDriverDeps> {
   const dataDir = path.join(app.getPath('userData'), 'phone');
   const bin = await ensureGoIos(dataDir);
@@ -68,7 +54,7 @@ async function iosDeps(): Promise<IosDriverDeps> {
   return {
     goios,
     artifacts: () => ensureRunnerArtifacts(dataDir),
-    signer: pickSigner(),
+    signer: pickSigner(app.isPackaged),
     ictrl: (udid, host) => new IctrlClient({ host, secrets, storeKey: ictrlStoreKey(udid), logger: (m) => log.info(m) }),
     forward: (udid, port) => startLoopbackForward(udid, port),
     ddiDir: async () => {
