@@ -28,11 +28,14 @@ import type {
   SessionHealth,
   SubscriptionAdapter,
   TaskAttempt,
+  VendorMemory,
+  VendorThreadSummary,
+  VendorThreadText,
 } from "@allternit/subscription-fabric-contracts";
 import type { AdapterRegistry, LoadedAdapter } from "../adapters/registry.js";
 import type { EventLog } from "../events/log.js";
 import type { Db } from "../store/db.js";
-import { accountHasActiveTasks, getAccount, upsertAccount } from "../store/queries.js";
+import { accountHasActiveTasks, accountHasLiveTasks, getAccount, upsertAccount } from "../store/queries.js";
 import { workerKeyId, type WorkerKey, type WorkerSupervisor } from "./supervisor.js";
 
 export type LaneKey = WorkerKey;
@@ -49,6 +52,11 @@ export interface LaneRuntime {
   // adapters that can't observe them leave the account's fields as they were).
   readAccount?(): Promise<AccountObservation>;
   readPlan?(): Promise<string | null>;
+  // Memory Drive reads (read-only, non-spending); absent when the adapter
+  // has none.
+  readMemory?(): Promise<VendorMemory>;
+  listThreads?(opts: { limit: number }): Promise<VendorThreadSummary[]>;
+  readThreadText?(id: string): Promise<VendorThreadText | null>;
   close(): Promise<void>;
   // False once the browser behind this runtime is gone (crashed, killed, or
   // its window closed). Optional so fakes without a browser stay alive.
@@ -365,6 +373,25 @@ export class WorkerPool {
     return runtime;
   }
 
+  /**
+   * Run one read-only Memory Drive read on the account's ready page. Waits
+   * for nothing: an account whose page a task is using answers `busy` (a
+   * read must never disturb a running chat; queued or needs-you tasks don't
+   * count), one that isn't signed in answers its health.
+   */
+  async readForMemory<T>(lane: LaneKey, read: (runtime: LaneRuntime) => Promise<T> | null): Promise<
+    { ok: true; value: T } | { ok: false; reason: "busy" | "not_supported" | "not_ready"; health?: SessionHealth | null }
+  > {
+    if (accountHasLiveTasks(this.deps.db, lane.account_id)) return { ok: false, reason: "busy" };
+    const runtime = await this.activate(lane);
+    const health = this.healthFor(lane);
+    if (health !== "ready") return { ok: false, reason: "not_ready", health };
+    if (accountHasLiveTasks(this.deps.db, lane.account_id)) return { ok: false, reason: "busy" };
+    const pending = read(runtime);
+    if (!pending) return { ok: false, reason: "not_supported" };
+    return { ok: true, value: await pending };
+  }
+
   /** Refresh public account identity on a resident ready page; no navigation or send. */
   async refreshAccount(lane: LaneKey): Promise<void> {
     const resident = this.lanes.get(workerKeyId(lane));
@@ -568,6 +595,9 @@ export function createPlaywrightLauncher(deps: PlaywrightLauncherDeps): Launcher
           ? { readAccount: () => adapter.readAccount!(new AbortController().signal) }
           : {}),
         ...(adapter.readPlan ? { readPlan: () => adapter.readPlan!(new AbortController().signal) } : {}),
+        ...(adapter.readMemory ? { readMemory: () => adapter.readMemory!(new AbortController().signal) } : {}),
+        ...(adapter.listThreads ? { listThreads: (o: { limit: number }) => adapter.listThreads!(o, new AbortController().signal) } : {}),
+        ...(adapter.readThreadText ? { readThreadText: (id: string) => adapter.readThreadText!(id, new AbortController().signal) } : {}),
         async probe(): Promise<ProbeResult> {
           const resolver = makeResolver(lease);
           await settleForProbe(

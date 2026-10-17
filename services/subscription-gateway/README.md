@@ -57,3 +57,17 @@ At boot, `adapters/*/manifest.yaml` are loaded, validated against the
 contracts `AdapterManifest` schema (invalid manifest = boot failure), and
 exposed as the live `GET /v1/capabilities` view. Override the directory with
 `SUBS_GATEWAY_ADAPTERS_DIR` (tests).
+
+## Memory Drive reads
+
+`GET /v1/accounts/:id/memory`, `GET /v1/accounts/:id/threads?limit=N` (1–100) and
+`GET /v1/accounts/:id/threads/:threadId` (scope `accounts:manage`) let allternit-api keep the
+owner's Memory Drive current (`cmd/allternit-api/src/vendor_memory.rs`). They call the adapter's
+optional `readMemory`, `listThreads` and `readThreadText` (contracts `SubscriptionAdapter`) through
+`WorkerPool.readForMemory`. These are read-only and non-spending: they never type, click or send,
+never navigate the page, and answer `409 busy` while the account has an active task. A login that
+isn't ready answers `409 not_ready` with its `session_health`. An adapter without a reader answers
+`501`. ChatGPT and Claude implement them with the provider's own same-origin JSON, called inside the
+signed-in page (`adapters/_shared/vendor-memory.ts` turns it into plain text; the bearer never
+leaves the page).
+

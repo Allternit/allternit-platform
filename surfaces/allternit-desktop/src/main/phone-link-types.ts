@@ -5,7 +5,8 @@
  * Phone Link connects the AI apps already signed in on the user's own phone
  * so bots can use them (SPEC-signed-in-apps-routing-2026-10-16). iPhone: a
  * one-time cable setup installs our iCTRL-based runner, then it works over
- * Wi-Fi. Android: USB debugging, then wireless debugging.
+ * Wi-Fi. Android: USB debugging, then the Phone Link app installs over the
+ * same cable and takes over Wi-Fi itself.
  *
  * Credentials typed into the UI (Apple ID, 2FA code) cross IPC once, go to
  * the signing step in main, and are never stored in plain text or logged.
@@ -33,9 +34,11 @@ export type PhoneLinkState =
   | 'ready_wifi'
   | 'error';
 
-/** States the phone can't report back; the UI shows "I've done it" → continue(). */
+/**
+ * States the phone can't report back; the UI shows "I've done it" → continue().
+ * iPhone Developer Mode is polled (go-ios devmode get), so it isn't one.
+ */
 export const PHONE_LINK_MANUAL_STATES: readonly PhoneLinkState[] = [
-  'developer_mode',
   'trust_certificate',
   'usb_debugging',
 ];
@@ -70,9 +73,47 @@ export interface PhoneLinkStatus {
   error?: PhoneLinkError;
 }
 
+/**
+ * Health of a linked phone, from evidence only (phone-link-health.ts).
+ * `recovery` says whether Desktop can fix it on its own ('automatic') or the
+ * user must act ('manual'); `action` is the one-line instruction when manual.
+ */
+export type PhoneLinkHealthState =
+  | 'HEALTHY'
+  | 'TRANSPORT_OFFLINE'
+  | 'PAIRING_INVALID'
+  | 'DEVICE_LOCKED'
+  | 'HELPER_NOT_RESPONDING'
+  | 'DEVELOPER_IMAGE_REMOUNT_REQUIRED'
+  | 'SIGNATURE_RENEWAL_REQUIRED'
+  | 'UNKNOWN';
+
+export interface PhoneLinkHealth {
+  state: PhoneLinkHealthState;
+  /** ISO timestamp of the check. */
+  checkedAt: string;
+  /** What we saw, for the UI tooltip. */
+  detail?: string;
+  recovery: 'automatic' | 'manual';
+  /** One short sentence telling the user what to do (manual states). */
+  action?: string;
+}
+
+/** A linked phone as the UI's device list shows it (phone-link:devices). */
+export interface PhoneLinkDevice {
+  deviceId: string;
+  platform: PhoneLinkPlatform;
+  name?: string;
+  route: 'iphone-app-ictrl' | 'android-app';
+  health: PhoneLinkHealth;
+  apps?: PhoneLinkApp[];
+}
+
 /** `window.allternit.phoneLink` */
 export interface PhoneLinkAPI {
   status(): Promise<PhoneLinkStatus>;
+  /** Linked phones with per-phone health, for Settings → Computers → Phones. */
+  devices(): Promise<PhoneLinkDevice[]>;
   onStatusChanged(handler: (status: PhoneLinkStatus) => void): () => void;
   start(opts: { platform: PhoneLinkPlatform }): Promise<PhoneLinkStatus>;
   cancel(): Promise<PhoneLinkStatus>;

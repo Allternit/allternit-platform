@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openDatabase, runMigrations, type Db } from "../src/store/db.js";
 import {
+  accountHasActiveTasks,
+  accountHasLiveTasks,
   appendEvent,
   getAccount,
   getTask,
@@ -110,7 +112,9 @@ describe("migrations", () => {
     const versions = db
       .prepare("SELECT version FROM migrations ORDER BY version")
       .all() as { version: number }[];
-    expect(versions).toEqual([{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }]);
+    // One row per migration file, in order (counted, so a new migration doesn't break this test).
+    const files = readdirSync(MIGRATIONS_DIR).filter((f) => /^\d{4}_.*\.sql$/.test(f)).length;
+    expect(versions).toEqual(Array.from({ length: files }, (_, i) => ({ version: i + 1 })));
     // a task inserted before re-running migrations survives
     insertTask(db, sampleTask());
     runMigrations(db, MIGRATIONS_DIR);
@@ -275,5 +279,21 @@ describe("account queries", () => {
     expect(after.session_health).toBe("degraded");
     expect(after.enabled).toBe(false);
     expect(getAccount(db, "missing")).toBeNull();
+  });
+});
+
+describe("live vs active tasks", () => {
+  it("a queued or needs-you task is active but not live; a running one is both", () => {
+    const db = freshDb();
+    runMigrations(db, MIGRATIONS_DIR);
+    const routing = { mode: "force" as const, provider: "chatgpt", account_id: "acc-1", allow_fallback: false, allow_metered: false, allow_thread_migration: false };
+    insertTask(db, sampleTask({ routing } as Partial<Task>));
+    expect(accountHasActiveTasks(db, "acc-1")).toBe(true);
+    expect(accountHasLiveTasks(db, "acc-1")).toBe(false);
+    db.prepare("UPDATE tasks SET status = 'needs_user'").run();
+    expect(accountHasLiveTasks(db, "acc-1")).toBe(false);
+    db.prepare("UPDATE tasks SET status = 'streaming'").run();
+    expect(accountHasLiveTasks(db, "acc-1")).toBe(true);
+    expect(accountHasLiveTasks(db, "acc-2")).toBe(false);
   });
 });

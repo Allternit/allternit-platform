@@ -8,14 +8,21 @@
  */
 
 import { EventEmitter } from 'node:events';
-import type { AdbCall } from './phone-tools.js';
-import type { PhoneLinkApp, PhoneLinkPlatform, PhoneLinkStatus } from './phone-link-types.js';
+import type { PhoneLinkPlatform, PhoneLinkStatus } from './phone-link-types.js';
+import { IosDriver, type IosDriverDeps } from './phone-link-ios.js';
+import { AndroidDriver, type AndroidDriverDeps } from './phone-link-android.js';
+
+// Android pieces live in phone-link-android.ts (re-exported for importers).
+export { ANDROID_VENDOR_PACKAGES, installedVendorApps, parseAdbDevices, parseWlanIp } from './phone-link-android.js';
+export type { AdbDeviceLine, AndroidDriverDeps } from './phone-link-android.js';
 
 export interface PhoneLinkDriver {
   run(ctx: DriverContext): Promise<void>;
   continue?(): void;
   submitAppleId?(creds: { appleId: string; password: string }): void;
   submitTwoFactor?(code: string): void;
+  /** Stop child processes / forwards the run started (cancel, retry, quit). */
+  dispose?(): void;
 }
 
 export interface DriverContext {
@@ -28,8 +35,10 @@ export interface DriverContext {
 
 export interface PhoneLinkDeps {
   platform?: NodeJS.Platform;
-  /** Lazily resolved so adb is only downloaded when Android setup starts. */
-  adb?: () => Promise<AdbCall>;
+  /** Lazily resolved so adb and the helper APK are only fetched when Android setup starts. */
+  android?: () => Promise<AndroidDriverDeps>;
+  /** Lazily resolved so go-ios and the runner are only fetched when iPhone setup starts. */
+  ios?: () => Promise<IosDriverDeps>;
   sleep?: (ms: number) => Promise<void>;
   logger?: (message: string) => void;
 }
@@ -62,7 +71,7 @@ export class PhoneLinkManager extends EventEmitter {
         instruction: 'iPhone setup needs Allternit Desktop on a Mac.',
       });
     }
-    const driver = platform === 'android' ? new AndroidDriver(this.deps) : new IosDriver();
+    const driver = platform === 'android' ? new LazyAndroidDriver(this.deps.android) : new LazyIosDriver(this.deps.ios);
     this.driver = driver;
     let cancel!: () => void;
     const cancelled = new Promise<void>((resolve) => (cancel = resolve));
@@ -118,6 +127,7 @@ export class PhoneLinkManager extends EventEmitter {
   }
 
   private stop(): void {
+    this.driver?.dispose?.();
     this.cancelRun?.();
     this.cancelRun = null;
     this.driver = null;
@@ -134,137 +144,96 @@ export class PhoneLinkManager extends EventEmitter {
 
 // ─── Android ──────────────────────────────────────────────────────────────────
 
-/** Package ids of the vendor apps Phone Link looks for. */
-export const ANDROID_VENDOR_PACKAGES: Record<string, string> = {
-  chatgpt: 'com.openai.chatgpt',
-  claude: 'com.anthropic.claude',
-  gemini: 'com.google.android.apps.bard',
-  kimi: 'com.moonshot.kimichat',
-  copilot: 'com.microsoft.copilot',
-  grok: 'ai.x.grok',
-  perplexity: 'ai.perplexity.app.android',
-};
+/** Resolves adb + the helper APK on start, then hands over to AndroidDriver (phone-link-android.ts). */
+class LazyAndroidDriver implements PhoneLinkDriver {
+  private inner: AndroidDriver | null = null;
+  private disposed = false;
 
-const POLL_MS = 1500;
-const WIFI_PORT = 5555;
-
-export interface AdbDeviceLine {
-  serial: string;
-  state: string;
-  model?: string;
-}
-
-export function parseAdbDevices(stdout: string): AdbDeviceLine[] {
-  return stdout
-    .split('\n')
-    .slice(1)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const [serial, state, ...rest] = line.split(/\s+/);
-      const model = rest.find((part) => part.startsWith('model:'))?.slice('model:'.length).replace(/_/g, ' ');
-      return { serial, state, model };
-    });
-}
-
-export function installedVendorApps(packagesStdout: string): PhoneLinkApp[] {
-  const installed = new Set(
-    packagesStdout.split('\n').map((line) => line.trim().replace(/^package:/, '')).filter(Boolean),
-  );
-  return Object.entries(ANDROID_VENDOR_PACKAGES)
-    .filter(([, pkg]) => installed.has(pkg))
-    .map(([vendor]) => ({ vendor, signedIn: null }));
-}
-
-/** First IPv4 on wlan0 from `ip -f inet addr show wlan0`. */
-export function parseWlanIp(stdout: string): string | null {
-  return /inet (\d+\.\d+\.\d+\.\d+)\//.exec(stdout)?.[1] ?? null;
-}
-
-class AndroidDriver implements PhoneLinkDriver {
-  constructor(private readonly deps: PhoneLinkDeps) {}
+  constructor(private readonly load?: () => Promise<AndroidDriverDeps>) {}
 
   async run(ctx: DriverContext): Promise<void> {
-    if (!this.deps.adb) throw new Error('adb is not available in this build');
+    if (!this.load) {
+      ctx.set({
+        state: 'error',
+        instruction: 'Android setup isn\'t ready in this version yet.',
+        error: { code: 'android_not_ready', message: 'Android Phone Link is not wired in this build.', retryable: false },
+      });
+      return;
+    }
     ctx.set({ state: 'usb_debugging', instruction: 'Getting Android tools ready…' });
-    const adb = await this.deps.adb();
-
-    // 1. A USB-connected phone that allowed this computer.
-    let usb: AdbDeviceLine | undefined;
-    for (;;) {
+    let deps: AndroidDriverDeps;
+    try {
+      deps = await this.load();
+    } catch (error) {
       if (ctx.isCancelled()) return;
-      const devices = parseAdbDevices((await adb(['devices', '-l'])).stdout).filter((d) => !d.serial.includes(':'));
-      usb = devices.find((d) => d.state === 'device');
-      if (usb) break;
-      const unauthorized = devices.some((d) => d.state === 'unauthorized');
-      ctx.set({
-        state: 'usb_debugging',
-        instruction: unauthorized
-          ? 'On your phone, tap Allow on "Allow USB debugging?".'
-          : 'Plug your phone in with a cable and turn on USB debugging in Developer options.',
-        detail: unauthorized
-          ? undefined
-          : 'Settings › About phone › tap Build number 7 times, then Settings › Developer options › USB debugging.',
-      });
-      await ctx.sleep(POLL_MS);
-    }
-
-    const serial = usb.serial;
-    const prop = async (name: string) => (await adb(['shell', 'getprop', name], { serial })).stdout.trim();
-    const deviceName = usb.model ?? (await prop('ro.product.model'));
-    const osVersion = `Android ${await prop('ro.build.version.release')}`;
-    const apps = installedVendorApps((await adb(['shell', 'pm', 'list', 'packages'], { serial })).stdout);
-
-    // 2. Move to Wi-Fi so the cable can come out.
-    ctx.set({ state: 'pairing', instruction: 'Connecting over Wi-Fi. Keep the phone on the same Wi-Fi as this computer.', deviceName, osVersion, apps });
-    const ip = parseWlanIp((await adb(['shell', 'ip', '-f', 'inet', 'addr', 'show', 'wlan0'], { serial })).stdout);
-    if (!ip) {
       ctx.set({
         state: 'error',
-        instruction: 'Turn on Wi-Fi on your phone, then try again.',
-        deviceName,
-        osVersion,
-        apps,
-        error: { code: 'no_wifi', message: 'The phone has no Wi-Fi address.', retryable: true },
+        instruction: 'Couldn\'t get the Android tools. Check your connection and try again.',
+        error: { code: 'tools_unavailable', message: error instanceof Error ? error.message : String(error), retryable: true },
       });
       return;
     }
-    await adb(['tcpip', String(WIFI_PORT)], { serial });
-    await ctx.sleep(1500);
-    const target = `${ip}:${WIFI_PORT}`;
-    const connected = await adb(['connect', target]);
-    if (ctx.isCancelled()) return;
-    if (!/connected to/.test(connected.stdout)) {
-      ctx.set({
-        state: 'error',
-        instruction: 'Couldn\'t reach the phone over Wi-Fi. Check both are on the same network, then try again.',
-        deviceName,
-        osVersion,
-        apps,
-        error: { code: 'wifi_connect_failed', message: connected.stdout.trim() || connected.stderr.trim(), retryable: true },
-      });
-      return;
-    }
-    ctx.set({
-      state: 'ready_wifi',
-      instruction: 'Connected. You can unplug the cable.',
-      detail: target,
-      deviceName,
-      osVersion,
-      apps,
-    });
+    if (ctx.isCancelled() || this.disposed) return;
+    this.inner = new AndroidDriver(deps);
+    await this.inner.run(ctx);
+  }
+
+  dispose(): void {
+    this.disposed = true;
+    this.inner?.dispose();
   }
 }
 
 // ─── iPhone ───────────────────────────────────────────────────────────────────
 
-/** The cable setup (signing + runner install over idevice) is being built; see SPEC §6. */
-class IosDriver implements PhoneLinkDriver {
+/** Resolves go-ios, the runner and the signer on start, then hands over to IosDriver (phone-link-ios.ts). */
+class LazyIosDriver implements PhoneLinkDriver {
+  private inner: IosDriver | null = null;
+  private disposed = false;
+
+  constructor(private readonly load?: () => Promise<IosDriverDeps>) {}
+
   async run(ctx: DriverContext): Promise<void> {
-    ctx.set({
-      state: 'error',
-      instruction: 'iPhone setup isn\'t ready in this version yet.',
-      error: { code: 'ios_not_ready', message: 'iPhone Phone Link is still being built.', retryable: false },
-    });
+    if (!this.load) {
+      ctx.set({
+        state: 'error',
+        instruction: 'iPhone setup isn\'t ready in this version yet.',
+        error: { code: 'ios_not_ready', message: 'iPhone Phone Link is not wired in this build.', retryable: false },
+      });
+      return;
+    }
+    ctx.set({ state: 'needs_cable', instruction: 'Getting iPhone tools ready…' });
+    let deps: IosDriverDeps;
+    try {
+      deps = await this.load();
+    } catch (error) {
+      if (ctx.isCancelled()) return;
+      ctx.set({
+        state: 'error',
+        instruction: 'Couldn\'t download the iPhone tools. Check your connection and try again.',
+        error: { code: 'tools_unavailable', message: error instanceof Error ? error.message : String(error), retryable: true },
+      });
+      return;
+    }
+    if (ctx.isCancelled() || this.disposed) return;
+    this.inner = new IosDriver(deps);
+    await this.inner.run(ctx);
+  }
+
+  continue(): void {
+    this.inner?.continue();
+  }
+
+  submitAppleId(creds: { appleId: string; password: string }): void {
+    this.inner?.submitAppleId(creds);
+  }
+
+  submitTwoFactor(code: string): void {
+    this.inner?.submitTwoFactor(code);
+  }
+
+  dispose(): void {
+    this.disposed = true;
+    this.inner?.dispose();
   }
 }
