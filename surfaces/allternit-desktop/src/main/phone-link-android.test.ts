@@ -1,4 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+// This file covers the flow with the mesh switch OFF (phone-link-mesh.test.ts
+// covers it ON). The switch is read when the module loads, so set it first.
+vi.hoisted(() => {
+  process.env.ALLTERNIT_PHONE_LINK_MESH = '0';
+});
 import { PhoneLinkManager } from './phone-link.js';
 import type { PhoneLinkStatus } from './phone-link-types.js';
 import type { AdbCall, AdbResult } from './phone-tools.js';
@@ -264,6 +270,27 @@ describe('Android Phone Link', () => {
     expect(w.paired).toHaveLength(2);
     expect(w.paired[1].storeKey).toBe(w.paired[0].storeKey);
     expect(w.saved).toHaveLength(2);
+  });
+
+  it('mesh dep present but the switch off: no enrollment, no mesh broadcast, unchanged flow', async () => {
+    const w = world();
+    let enrolls = 0;
+    const d = deps(w, {
+      mesh: {
+        enroll: async () => {
+          enrolls++;
+          return { controlUrl: 'https://ctl.example:8444', authKey: 'secret-key' };
+        },
+      },
+    });
+    const manager = new PhoneLinkManager({ sleep: instant, android: async () => d });
+    manager.start('android');
+    const ready = await waitFor(manager, 'ready_wifi');
+    expect(ready.detail).toBe('10.0.0.7:8200');
+    expect(enrolls).toBe(0);
+    expect(w.ran.some((c) => c.includes('mesh_control_url'))).toBe(false);
+    expect(w.saved.at(-1)).not.toHaveProperty('meshHost');
+    expect(w.saved.at(-1)).not.toHaveProperty('meshPending');
   });
 
   it('reports install failures as retryable', async () => {

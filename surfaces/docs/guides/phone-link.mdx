@@ -77,6 +77,14 @@ Settings → Computers → Phones shows each linked phone's state, and `phone.de
 
 Remounting and signature renewal are always manual states — they only appear on evidence, never from a guess, and Desktop never marks them as fixing themselves.
 
+## Away from home
+
+During cable setup your phone also joins your private Allternit network, the same one your computers use. After that your bots reach the phone wherever it is: home Wi-Fi, another Wi-Fi network, or cellular. Nothing on the phone is opened to the internet, and other people's devices can't reach it. Everything sent to it stays encrypted with the key from pairing.
+
+This works for Android phones now. iPhone support follows in the next helper update.
+
+If away-from-home setup can't finish (for example, you're not signed in to Allternit), the phone still works on your Wi-Fi. Plug it in and run setup again to finish.
+
 ## For developers
 
 Desktop main runs the setup as a state machine (`surfaces/allternit-desktop/src/main/phone-link.ts`, with the platform drivers in `phone-link-ios.ts` and `phone-link-android.ts`). The renderer API is `window.allternit.phoneLink`; types are in `phone-link-types.ts`.
@@ -116,5 +124,13 @@ States: `idle`, `not_supported`; iPhone `needs_cable` → `trust_prompt` → `ap
 - **Pairing** (`ictrl-client.ts`): iCTRL protocol v1. X25519 pairing, then each JSON-RPC call sealed with HMAC-SHA256 (PRF-CTR encryption, encrypt-then-MAC, ±120 s timestamps, nonce replay cache on the phone). A skewed Mac clock is corrected once from the phone's `server_ts`. The key is stored only through `secure-store.ts` (Keychain-backed), one entry per phone UDID. Desktop's own `runtest` launch is the only place `ICTRL_ALLOW_AUTH_ONCE=1` is set, so that first pairing needs no tap on the phone.
 - **Wi-Fi**: a runner started by `runtest` lives in an XCTest session carried by the USB tunnel and dies when the cable is pulled, and go-ios can't carry that tunnel over Wi-Fi. So after pairing, Desktop turns on the runner's Remote Access (`config {allow_remote_access: true}`, persisted on the phone), ends the cable session, relaunches the runner as a plain app (`ios launch`, the same as tapping its icon), then closes its own tunnel and forward and checks the runner still answers at `<phone-ip>:8200` before reporting `ready_wifi`. If it doesn't, setup ends with `wifi_unreachable` (retryable).
 - **Reconnect** (`reconnectIos`): a later start for a linked phone (state in `userData/phone/phone-link-ios.json`, no secrets) tries the saved LAN address first; if the address changed (DHCP), the phone is found on the LAN by its device id (`findPhoneHost`, same as Android); if the phone restarted, it remounts the disk image, relaunches the runner and reads its new address over the cable. Setup also leaves the Mac's pairing record in the iCTRL host app's container so the phone can remount without a Mac (iCTRL app › Settings › Mount without a Mac).
+
+### Mesh (development switch)
+
+Linked phones also join the user's Allternit mesh (a Headscale tailnet) so the lane reaches them when they're off the home Wi-Fi. `PHONE_LINK_MESH_ENABLED` (`src/main/phone-link-mesh.ts`) is on by default; `ALLTERNIT_PHONE_LINK_MESH=0` turns it off, and then setup and the tool lane behave exactly as without this feature. The production policy isolates customers (`autogroup:self`, live since 2026-10-17), so only the user's own devices can reach their phone.
+
+With the switch on, cable setup additionally enrolls the phone on the mesh. Android: after the Wi-Fi check succeeds, `AndroidDriver` mints a single-use pre-auth key (`MeshManager.enrollForGizzi`, needs the signed-in device token) and re-sends the `PROVISION` broadcast with `--ez arm_pairing false --es mesh_control_url <url> --es mesh_auth_key '<key>'` (single-quoted for the phone shell; the key is never logged or stored), then polls the LAN `/whoami` up to 60 s for `mesh_state: 'running'` with a `mesh_host`. iPhone: after cable pairing, `IosDriver` asks the runner's `GET /schema` whether `config` lists a `mesh_control_url` param (feature-detect — older runners don't have it and are skipped), sends one sealed `config { mesh_control_url, mesh_auth_key }`, and polls `/whoami` the same way. A failure to join — not signed in, enroll error, timeout — never fails setup: the phone finishes `ready_wifi` with `meshPending: true` and the detail "Connected on this Wi-Fi. To use it away from home too, plug it in and run setup again." The join succeeded saves `meshHost` (`<100.x>:8200`) on the link record.
+
+The lane (`cachedHostResolver` in `phone-link-backend.ts`) then resolves a phone saved-host → LAN scan → mesh, in that order; the mesh proxy (`MeshManager.proxyFor` → `127.0.0.1:<port>` sidecar) is accepted only when its `/whoami` reports the phone's own `device_id`, and `phone.devices` entries gain `path: 'lan' | 'mesh'` saying which transport answered. `phone-service.ts` only wires `meshProxy` when the switch is on.
 
 Errors use stable codes. iPhone: `ios_too_old`, `runner_unavailable`, `runner_download_failed`, `tools_unavailable`, `bad_credentials` and `password_required` (both ask again), `anisette_unavailable`, `app_id_limit`, `certificate_limit`, `device_limit`, `no_identity`, `signer_unavailable`, `signing_failed`, `tunnel_failed`, `ddi_unavailable`, `ddi_mount_failed`, `install_failed`, `launch_failed`, `runner_start_failed`, `pair_failed`, `wifi_setup_failed`, `no_wifi`, `wifi_unreachable`. Android: `helper_unavailable` (not retryable), `tools_unavailable`, `install_failed`, `provision_failed`, `accessibility_blocked`, `pair_failed`, `no_wifi`, `wifi_unreachable`.
