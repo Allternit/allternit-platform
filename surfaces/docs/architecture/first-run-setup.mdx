@@ -52,3 +52,7 @@ Every result card and tile tag is computed from what happened:
 ## Seeing it locally
 
 Run the Vite dev server, clear `allternit-onboarding-storage` and `allternit-platform-mode` from localStorage, and load `/shell`. Abort `/api/onboarding/config` to force the local-store path. For the phone shell, start Vite with `VITE_DEV_AUTH_BYPASS=1` and use phone emulation on `/`.
+
+## Your own server on web and phone
+
+`ServerPairPanel` (`src/components/onboarding/setup/ServerPairPanel.tsx`) handles **Your own server** wherever the local runtime API is off (hosted web, phone layout, PWA). It snapshots `listPairedComputers()`, calls `createPairingCode()` (cloud `POST /api/v1/computers/pairing-codes`), shows the command, and polls the paired list every 4 s until a new computer id appears (outcome `paired`), the code expires (`error`), or the request fails (`error`). Desktop keeps the SSH and backend-URL forms. `NEXT_PUBLIC_ALLTERNIT_RUNTIME_API` stays off on the hosted build: it would also enable budget, prewarm, replay and runtime-settings calls that only a paired runtime can answer.
