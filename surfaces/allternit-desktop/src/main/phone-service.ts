@@ -30,6 +30,7 @@ import {
   type PhoneStreamStatus,
 } from './phone-scrcpy.js';
 import { PhoneStreamManager } from './phone-stream.js';
+import { PhoneUserComms, type CallStateName, type CommsResult, type PhoneAppInfo, type PhoneSmsMessage, type PhoneSmsThread } from './phone-user-comms.js';
 import { UsbAgentManager, type Sealer, type StoredUsbAgent, type UsbAgentConfig, type UsbAgentStore } from './phone-usb-agent.js';
 import { candidatePorts, lanAddresses, serialPort } from './phone-usb-agent-provision.js';
 import { USBA_MDNS_TYPE } from './phone-usb-agent-protocol.js';
@@ -156,6 +157,7 @@ class PhoneService {
   private manager: PhoneDeviceManager | null = null;
   private managerReady: Promise<PhoneDeviceManager> | null = null;
   private streams: PhoneStreamManager | null = null;
+  private comms: PhoneUserComms | null = null;
   private scrcpyServerReady: Promise<string> | null = null;
   private usbAgents: UsbAgentManager | null = null;
   private artemis: ArtemisManager | null = null;
@@ -315,6 +317,83 @@ class PhoneService {
 
   setStreamDisplayPower(serial: string, on: boolean): { ok: boolean; message?: string } {
     return this.streams?.setDisplayPower(serial, on) ?? { ok: false, message: 'The stream is not live.' };
+  }
+
+  // ── User comms (Phones 2.0 Phase 3): texts and calls through the phone's   ──
+  // ── own SIM. The bridge methods take no serial — this lane is "my phone":  ──
+  // ── main resolves the linked, online phone. The bot tool lane keeps its    ──
+  // ── own approval-gated path; these methods have no dialog (the user acts). ──
+
+  async ensureComms(): Promise<PhoneUserComms> {
+    await this.ensureReady();
+    if (!this.comms) {
+      const lazy = (async (args: string[], opts?: { serial?: string; timeoutMs?: number }) => (await this.ensureAdbCall())(args, opts)) as AdbCall;
+      lazy.binary = async (args, opts) => (await this.ensureAdbCall()).binary(args, opts);
+      this.comms = new PhoneUserComms({
+        adb: lazy,
+        rates: fileRateStore(path.join(this.dir(), 'rates.json')),
+        onlineSerials: () => this.manager?.onlineSerials() ?? [],
+        log: (message) => log.info('[PhoneComms]', message),
+      });
+    }
+    return this.comms;
+  }
+
+  /** The phone the user comms lane acts on; `ok:false` when nothing is connected. */
+  private async commsTarget(): Promise<{ serial: string } | { ok: false; message: string }> {
+    const manager = await this.ensureReady();
+    const online = manager.onlineSerials();
+    if (online.length === 0) return { ok: false as const, message: 'No phone is connected.' };
+    return { serial: online[0] };
+  }
+
+  smsList(): Promise<CommsResult<{ threads: PhoneSmsThread[] }>> {
+    return this.commsWith(async (serial, comms) => comms.smsList(serial));
+  }
+
+  smsMessages(address: string, opts?: { afterTimestamp?: number }): Promise<CommsResult<{ messages: PhoneSmsMessage[] }>> {
+    return this.commsWith(async (serial, comms) => comms.smsMessages(serial, address, opts));
+  }
+
+  smsSendUser(to: string, text: string): Promise<CommsResult<{ status: 'submitted'; emergency?: true }>> {
+    const body = String(text ?? '');
+    if (!body.trim()) return Promise.resolve({ ok: false as const, message: 'Empty message.' });
+    if (body.length > 1600) return Promise.resolve({ ok: false as const, message: 'Message is too long (1600 characters max).' });
+    return this.commsWith(async (serial, comms) => comms.smsSendUser(serial, to, body));
+  }
+
+  callDialUser(number: string, opts?: { confirmEmergency?: boolean }): Promise<CommsResult<{ status: 'dialing'; emergency?: true }>> {
+    return this.commsWith(async (serial, comms) => comms.callDialUser(serial, number, opts));
+  }
+
+  callEnd(): Promise<CommsResult<{}>> {
+    return this.commsWith(async (serial, comms) => comms.callEnd(serial));
+  }
+
+  /** The bridge shape has no `ok` — a failure or no phone reads as idle. */
+  async callState(): Promise<{ state: CallStateName; number?: string }> {
+    const target = await this.commsTarget();
+    if ('ok' in target) return { state: 'idle' };
+    const result = await (await this.ensureComms()).callState(target.serial);
+    return result.ok ? { state: result.state, ...(result.number !== undefined ? { number: result.number } : {}) } : { state: 'idle' };
+  }
+
+  /** The PhoneViewport apps sheet inventory (per serial, unlike the comms lane). */
+  async listApps(serial: string): Promise<CommsResult<{ apps: PhoneAppInfo[] }>> {
+    const manager = await this.ensureReady();
+    const phone = manager.list().find((p) => p.serial === serial);
+    if (!phone || phone.state !== 'online') return { ok: false as const, message: 'That phone is not connected.' };
+    return (await this.ensureComms()).listApps(serial);
+  }
+
+  getComms(): PhoneUserComms | null {
+    return this.comms;
+  }
+
+  private async commsWith<T>(fn: (serial: string, comms: PhoneUserComms) => Promise<CommsResult<T>>): Promise<CommsResult<T>> {
+    const target = await this.commsTarget();
+    if ('ok' in target) return target;
+    return fn(target.serial, await this.ensureComms());
   }
 
   getStreamManager(): PhoneStreamManager | null {

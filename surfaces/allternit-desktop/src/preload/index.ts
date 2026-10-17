@@ -747,6 +747,26 @@ const phonesAPI = {
     ipcRenderer.invoke('phone:stream-input', serial, events),
   setStreamDisplayPower: (serial: string, on: boolean): Promise<{ ok: boolean; message?: string }> =>
     ipcRenderer.invoke('phone:stream-display-power', serial, on),
+  // User comms (Phones 2.0 Phase 3): texts/calls through the phone's own SIM.
+  // No serial — main resolves the user's linked phone.
+  smsList: (): Promise<unknown> => ipcRenderer.invoke('phone:comms-sms-list'),
+  smsMessages: (address: string, afterTimestamp?: number): Promise<unknown> =>
+    ipcRenderer.invoke('phone:comms-sms-messages', address, afterTimestamp),
+  smsSendUser: (to: string, text: string): Promise<unknown> => ipcRenderer.invoke('phone:comms-sms-send', to, text),
+  callDialUser: (number: string, opts?: { confirmEmergency?: boolean }): Promise<unknown> =>
+    ipcRenderer.invoke('phone:comms-call-dial', number, opts),
+  callEnd: (): Promise<unknown> => ipcRenderer.invoke('phone:comms-call-end'),
+  callState: (): Promise<unknown> => ipcRenderer.invoke('phone:comms-call-state'),
+  listApps: (serial: string): Promise<unknown> => ipcRenderer.invoke('phone:comms-list-apps', serial),
+  onCommsEvent: (cb: (ev: unknown) => void): (() => void) => {
+    const listener = (_: IpcRendererEvent, ev: unknown) => cb(ev);
+    ipcRenderer.on('phone:comms-event', listener);
+    void ipcRenderer.invoke('phone:comms-subscribe');
+    return () => {
+      ipcRenderer.removeListener('phone:comms-event', listener);
+      void ipcRenderer.invoke('phone:comms-unsubscribe');
+    };
+  },
   tryOpenApp: (serial: string, app: string): Promise<{ ok: boolean; message?: string }> => ipcRenderer.invoke('phone:try-open-app', serial, app),
   screenshot: (serial: string): Promise<{ ok: boolean; dataBase64?: string; message?: string }> => ipcRenderer.invoke('phone:screenshot', serial),
   installArtemis: (): Promise<unknown> => ipcRenderer.invoke('phone:artemis-install'),

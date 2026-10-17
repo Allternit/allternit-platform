@@ -612,6 +612,16 @@ export interface PhonesAPI {
   onStreamEnd(serial: string, cb: (info: { reason: string }) => void): () => void;
   sendStreamInput(serial: string, events: PhoneInputEvent[]): Promise<{ ok: boolean; message?: string }>;
   setStreamDisplayPower(serial: string, on: boolean): Promise<{ ok: boolean; message?: string }>;
+  // User comms (Phones 2.0 Phase 3): texts/calls through the phone's own SIM.
+  // No serial — main resolves the user's linked phone.
+  smsList(): Promise<PhoneSmsListResult>;
+  smsMessages(address: string, afterTimestamp?: number): Promise<PhoneSmsMessagesResult>;
+  smsSendUser(to: string, text: string): Promise<PhoneSmsSendResult>;
+  callDialUser(number: string, opts?: { confirmEmergency?: boolean }): Promise<PhoneDialResult>;
+  callEnd(): Promise<{ ok: boolean; message?: string }>;
+  callState(): Promise<{ state: 'idle' | 'dialing' | 'active'; number?: string }>;
+  listApps(serial: string): Promise<PhoneListAppsResult>;
+  onCommsEvent(cb: (ev: PhoneCommsEvent) => void): () => void;
   tryOpenApp(serial: string, app: string): Promise<{ ok: boolean; message?: string }>;
   screenshot(serial: string): Promise<{ ok: boolean; dataBase64?: string; message?: string }>;
   installArtemis(): Promise<unknown>;
@@ -631,6 +641,34 @@ export interface PhoneStreamMeta {
   height: number;
   codec: 'h264';
 }
+
+// User comms (Phones 2.0 Phase 3) — shapes mirrored from phone-user-comms.ts.
+export interface PhoneSmsThread {
+  address: string;
+  displayName?: string;
+  lastSnippet: string;
+  lastTimestamp: number;
+  unreadCount?: number;
+}
+
+export interface PhoneSmsMessage {
+  id: string;
+  direction: 'in' | 'out';
+  body: string;
+  timestamp: number;
+}
+
+export interface PhoneAppInfo {
+  pkg: string;
+  versionName?: string;
+}
+
+export type PhoneSmsListResult = { ok: true; threads: PhoneSmsThread[] } | { ok: false; message: string };
+export type PhoneSmsMessagesResult = { ok: true; messages: PhoneSmsMessage[] } | { ok: false; message: string };
+export type PhoneSmsSendResult = { ok: true; status: 'submitted'; emergency?: true } | { ok: false; message: string };
+export type PhoneDialResult = { ok: true; status: 'dialing'; emergency?: true } | { ok: false; message: string };
+export type PhoneListAppsResult = { ok: true; apps: PhoneAppInfo[] } | { ok: false; message: string };
+export type PhoneCommsEvent = { type: 'sms'; address: string };
 
 export type PhoneStreamStatus =
   | { state: 'idle' }

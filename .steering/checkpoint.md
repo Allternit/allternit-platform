@@ -13,6 +13,7 @@ Linked phone gets a computer-equivalent in-app viewport (scrcpy-over-WS, no VNC)
 
 ## Open questions
 - DAG bookkeeping: `gizzi workspace node add` runs clean from the worktree but `node list` shows (none) — DAG CLI surface unclear; plan id dag_391310 recorded here as source of truth fallback.
+- Claude lane: ATTEMPTED via Factory (team phones-2, bot home). Two human dialogs auto-cleared by pre-seeding ~/.claude.json (`hasTrustDialogAccepted`, `hasClaudeMdExternalIncludesApproved` for the workdir), but `gizzi orchestration send/drain` cannot submit into the current Claude Code TUI — paste lands in the input box, Enter never submits, verify fails, message queues forever (depth 2 observed). Real Factory engine bug: pane paste path vs Claude Code's bracketed-paste/submit. Filed here; needs its own fix session (repro: any claude terminal bot + send). Lane swapped to a Kimi agent on the same worktree/task file.
 - Desktop release: our branch touches surfaces/allternit-desktop → `node scripts/release-preflight.mjs` must be 26/0 before merge (release-lock commandment).
 - PWA deploy stays manual-wrangler + Eoj go-ahead; ai.com auto-deploys on main merge (that merge IS the deploy — gated on Gate 2 passing on all three surfaces first).
 - Steering commit-gate may intercept session commits; if it blocks, PRs wait for Eoj instead of force-overriding.

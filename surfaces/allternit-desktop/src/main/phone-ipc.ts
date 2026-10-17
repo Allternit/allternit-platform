@@ -136,6 +136,55 @@ function unsubscribeStream(sender: WebContents, serial: string): void {
   dropStreamConsumer(serial);
 }
 
+// ── User comms events ───────────────────────────────────────────────────────
+//
+// Global (not per serial): CommsEvent is `{ type: 'sms', address }` and the UI
+// filters. The sms watcher in PhoneUserComms only polls while it has
+// subscribers, so the main-side listener attaches on first subscriber and
+// detaches when the last one leaves.
+
+const commsSubs: WebContents[] = [];
+let commsUnsub: (() => void) | null = null;
+
+function pushComms(ev: unknown): void {
+  for (const sender of commsSubs) {
+    if (!sender.isDestroyed()) sender.send('phone:comms-event', ev);
+  }
+}
+
+function subscribeComms(sender: WebContents): void {
+  if (commsSubs.includes(sender)) return;
+  commsSubs.push(sender);
+  if (!commsUnsub) {
+    phoneService
+      .ensureComms()
+      .then((comms) => {
+        if (commsSubs.length === 0) return; // everyone left while adb came up
+        commsUnsub = comms.onCommsEvent(pushComms);
+      })
+      .catch(() => {
+        commsUnsub = null; // a later subscribe retries
+      });
+  }
+  sender.once('destroyed', () => unsubscribeComms(sender));
+}
+
+function unsubscribeComms(sender: WebContents): void {
+  const i = commsSubs.indexOf(sender);
+  if (i >= 0) commsSubs.splice(i, 1);
+  if (commsSubs.length === 0) {
+    commsUnsub?.();
+    commsUnsub = null;
+  }
+}
+
+/** Renderer-supplied dial options: only confirmEmergency survives. */
+function sanitizeDialOpts(raw: unknown): { confirmEmergency?: boolean } | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const confirmEmergency = (raw as Record<string, unknown>).confirmEmergency;
+  return confirmEmergency === undefined ? undefined : { confirmEmergency: Boolean(confirmEmergency) };
+}
+
 /** Renderer-supplied options are coerced and clamped; unknown fields are dropped. */
 function sanitizeStreamOpts(raw: unknown): { maxSize?: number; videoBitrate?: number; maxFps?: number } {
   const opts: { maxSize?: number; videoBitrate?: number; maxFps?: number } = {};
@@ -161,9 +210,8 @@ async function snapshot() {
   if (!phoneService.androidInUse()) {
     return { ready: true as const, phones: [], pairing: { phase: 'idle' as const }, scrcpy: phoneService.scrcpyInstalled(), artemis: art };
   }
-  let manager: PhoneDeviceManager | null = null;
   try {
-    manager = await phoneService.ensureReady();
+    const manager = await phoneService.ensureReady();
     wire(manager);
     return { ready: true as const, phones: manager.list(), pairing: manager.pairingStatus(), scrcpy: manager.scrcpyAvailable(), artemis: art };
   } catch (error) {
@@ -200,6 +248,19 @@ export function registerPhoneIpc(handle: Guarded): void {
   handle('phone:stream-display-power', (_e, serial: unknown, on: unknown) => phoneService.setStreamDisplayPower(String(serial ?? ''), Boolean(on)));
   handle('phone:stream-subscribe', (e, serial: unknown) => subscribeStream(e.sender, String(serial ?? '')));
   handle('phone:stream-unsubscribe', (e, serial: unknown) => unsubscribeStream(e.sender, String(serial ?? '')));
+
+  // User comms (Phones 2.0 Phase 3): texts/calls through the linked phone's
+  // own SIM. No serial on the bridge — the service resolves the user's phone.
+  handle('phone:comms-sms-list', () => phoneService.smsList());
+  handle('phone:comms-sms-messages', (_e, address: unknown, after: unknown) =>
+    phoneService.smsMessages(String(address ?? ''), typeof after === 'number' && Number.isFinite(after) ? { afterTimestamp: after } : undefined));
+  handle('phone:comms-sms-send', (_e, to: unknown, text: unknown) => phoneService.smsSendUser(String(to ?? ''), String(text ?? '')));
+  handle('phone:comms-call-dial', (_e, number: unknown, opts: unknown) => phoneService.callDialUser(String(number ?? ''), sanitizeDialOpts(opts)));
+  handle('phone:comms-call-end', () => phoneService.callEnd());
+  handle('phone:comms-call-state', () => phoneService.callState());
+  handle('phone:comms-list-apps', (_e, serial: unknown) => phoneService.listApps(String(serial ?? '')));
+  handle('phone:comms-subscribe', (e) => subscribeComms(e.sender));
+  handle('phone:comms-unsubscribe', (e) => unsubscribeComms(e.sender));
 
   // iPhone over an Allternit USB Agent
   handle('phone:usb-status', () => usbSnapshot());
