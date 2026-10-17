@@ -6,7 +6,7 @@ import org.json.JSONObject
 /** Method catalogue served at GET /schema, plus the GET /skill manual. */
 object Schema {
     const val PROTOCOL_VERSION = 1
-    const val SERVER_VERSION = "0.1.0-android"
+    const val SERVER_VERSION = "0.2.1-android"
     const val PLATFORM = "android"
 
     /** Feature tags (a subset of iCTRL's, plus android-only ones). */

@@ -72,6 +72,15 @@
                 android:value="Local server that lets the user's own paired computer operate apps on this phone through the accessibility service; the user starts and stops it." />
         </service>
 
+        <!-- Runs the gomobile tsnet node in a private process so a Go panic
+             there can never take down the phone server. Same-uid binding
+             only (exported=false); the main process supplies start inputs in
+             the bind Intent and receives reports on a Messenger. -->
+        <service
+            android:name=".MeshService"
+            android:exported="false"
+            android:process=":mesh" />
+
         <receiver
             android:name=".BootReceiver"
             android:exported="true">

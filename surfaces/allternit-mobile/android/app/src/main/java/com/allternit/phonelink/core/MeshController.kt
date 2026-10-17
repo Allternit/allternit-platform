@@ -1,7 +1,6 @@
 package com.allternit.phonelink.core
 
 import java.io.File
-import java.net.InetAddress
 
 /**
  * The seam between this app and the gomobile-bound tsnet node (package `mesh`
@@ -19,30 +18,29 @@ interface MeshNodeApi {
     fun refreshInterfaces() {}
 }
 
-/**
- * Owns the phone's embedded tailnet node. When the app is provisioned with a
- * mesh control URL, the node joins the customer's Headscale mesh and serves
- * the phone's iCTRL server on the tailnet at [TAILNET_SERVE_PORT]: a mesh
- * peer dialing `<meshIP>:8200` is bridged by tsnet onto a dedicated INTERNAL
- * loopback listener (not the app's public port), which marks every such
- * request `viaMesh`. That marking is a security property: mesh-forwarded
- * connections arrive from 127.0.0.1, and without it they could consume the
- * one-shot armed pairing grant that is reserved for adb-over-cable.
- *
- * Lifecycle mirrors the HTTP server: start with [start] (called from the
- * server's start path, which the foreground service and boot receiver both
- * funnel into), stop with [stop]. Network changes (Wi-Fi to cellular) are
- * handled inside tsnet/magicsock; there is no app-level reconnect loop.
- */
 /** Backoff between failed joins: quick at first (boot races Wi-Fi), then every 5 minutes. */
 internal val RETRY_DELAYS_MS = longArrayOf(5_000, 15_000, 30_000, 60_000, 120_000, 300_000)
 
+/**
+ * Runs the phone's embedded tailnet node — from inside the `:mesh` process
+ * (MeshService binds it), so a Go panic there can cost only the mesh, never
+ * the phone server in the main process. Given the start [MeshStartParams] at
+ * construction, it joins the customer's Headscale mesh and bridges the
+ * tailnet's :[TAILNET_SERVE_PORT] onto the main process's internal loopback
+ * listener, which marks every such request `viaMesh` (that listener, and
+ * every rule about it, lives in the main process — this class holds no HTTP
+ * server and no key material). Every state change goes out through
+ * [onReport] as a [MeshReport].
+ *
+ * Lifecycle: start with [start] (idempotent), stop with [stop]. Network
+ * changes (Wi-Fi to cellular) are handled inside tsnet/magicsock via
+ * [onNetworkChanged]; there is no app-level reconnect loop beyond the join
+ * retry backoff above.
+ */
 class MeshController(
-    private val settings: AppSettings,
-    private val keyBox: MeshKeyBox,
-    private val meshDir: File,
-    private val handler: (HttpRequest) -> HttpResponse,
+    private val params: MeshStartParams,
     private val nodeFactory: (hostname: String) -> MeshNodeApi,
+    private val onReport: (MeshReport) -> Unit = {},
     private val log: (String) -> Unit = {},
 ) {
     companion object {
@@ -52,34 +50,18 @@ class MeshController(
 
     private val lock = Any()
     private var node: MeshNodeApi? = null
-    private var meshHttp: HttpServer? = null
-    private var internalPort = 0
 
     @Volatile private var starting = false
-    @Volatile private var lastError: String? = null
     /** Bumped by stop(): a join that finishes afterwards must not publish its node. */
     @Volatile private var generation = 0L
-
-    /** The loopback port the mesh bridge targets; dedicated so it can be marked viaMesh. */
-    fun internalServePort(): Int =
-        if (settings.port + 10000 <= 65535) settings.port + 10000 else settings.port - 40000
-
-    fun state(): String = synchronized(lock) {
-        node?.state() ?: lastError?.let { "error:$it" } ?: if (starting) "starting" else "stopped"
-    }
-
-    /** `<meshIP>:8200` while the node is up, else null. */
-    fun host(): String? = synchronized(lock) {
-        node?.meshIp()?.takeIf { it.isNotEmpty() }?.let { "$it:$TAILNET_SERVE_PORT" }
-    }
 
     /** Idempotent. Spawns [runJoin] off the caller's thread (Start blocks for up to 60 s in Go). */
     @Synchronized
     fun start() {
         if (node != null || starting) return
-        if (settings.meshControlUrl == null) return
         starting = true
         val g = ++generation
+        onReport(MeshReport("starting", null))
         Thread({
             try { runJoin(g) } finally { if (g == generation) starting = false }
         }, "phonelink-mesh").apply { isDaemon = true }.start()
@@ -94,7 +76,8 @@ class MeshController(
         val n = synchronized(lock) { node }
         if (n != null) {
             try { n.refreshInterfaces() } catch (e: Exception) { log("mesh interface refresh failed: ${e.message}") }
-        } else if (lastError != null) {
+            reportCurrent()
+        } else {
             start()
         }
     }
@@ -103,14 +86,10 @@ class MeshController(
     fun stop() {
         starting = false
         generation++
-        lastError = null
         synchronized(lock) {
             val n = node
             node = null
-            val h = meshHttp
-            meshHttp = null
             try { n?.close() } catch (e: Exception) { log("mesh close failed: ${e.message}") }
-            h?.stop()
         }
     }
 
@@ -130,41 +109,36 @@ class MeshController(
     /** One join attempt; true when the node is up (or this generation was superseded). */
     private fun joinOnce(generationAtStart: Long): Boolean {
         var n: MeshNodeApi? = null
-        var http: HttpServer? = null
         try {
-            val port = internalServePort()
-            http = HttpServer(handler, viaMesh = true, log = log)
-            http.start(InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1)), port)
-            internalPort = http.localPort
-
-            n = nodeFactory("phone-" + settings.deviceId.take(8))
+            n = nodeFactory(params.hostname)
             n.refreshInterfaces()
-            // First join uses the sealed pre-auth key; later joins pass "" and
-            // tsnet re-authenticates with the node key already in meshDir.
-            n.start(settings.meshControlUrl!!, keyBox.read().orEmpty(), meshDir)
-            n.serveLocal(TAILNET_SERVE_PORT, internalPort)
-            // The join succeeded: the pre-auth key is single-use, drop it.
-            keyBox.clear()
+            n.start(params.controlUrl, params.authKey, File(params.meshStateDir))
+            n.serveLocal(TAILNET_SERVE_PORT, params.internalPort)
             synchronized(lock) {
                 if (generationAtStart != generation) {
                     try { n.close() } catch (_: Exception) {}
-                    http.stop()
                     return true
                 }
                 node = n
-                meshHttp = http
-                lastError = null
             }
-            log("mesh joined, serving tailnet :$TAILNET_SERVE_PORT -> 127.0.0.1:$internalPort")
+            log("mesh joined, serving tailnet :$TAILNET_SERVE_PORT -> 127.0.0.1:${params.internalPort}")
+            reportCurrent()
             return true
         } catch (e: Exception) {
-            // Keep the sealed key: the join did not succeed, so it is still needed.
+            // The main process keeps the sealed key until a `running` report arrives.
             val why = (e.message ?: e.javaClass.simpleName).take(120)
-            lastError = why
             log("mesh join failed: ${e.javaClass.simpleName}: $why")
+            onReport(MeshReport("error:$why", null))
             try { n?.close() } catch (_: Exception) {}
-            http?.stop()
             return false
         }
+    }
+
+    /** The node's current state + mesh address, as a report (network changes, post-join). */
+    fun reportCurrent() {
+        val n = synchronized(lock) { node } ?: return
+        val ip = try { n.meshIp() } catch (e: Exception) { "" }
+        val st = try { n.state() } catch (e: Exception) { "error:${(e.message ?: e.javaClass.simpleName).take(120)}" }
+        onReport(MeshReport(st, ip.takeIf { it.isNotEmpty() }))
     }
 }
