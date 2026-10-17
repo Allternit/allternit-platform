@@ -259,7 +259,11 @@ stored. Allternit refuses keys and passwords typed into the ledger, so set those
 settings. Runtime details such as the next run time are worked out by Allternit, not read from
 the file. Each save is recorded in **Changes**.
 
-Making new things and deleting things through the ledger isn't supported yet; do those in Allternit.
+To **make something new**, open one like it and select **Duplicate**. Change the copy and select **Save**:
+it's created with a new id, and routines and schedules start paused. To **remove something**,
+select **Delete** and confirm. Bots and agents are archived, other things are deleted, and either way
+the earlier file stays in the ledger's history. A skill's `SKILL.md` can't be deleted here; uninstall
+skills in Customize → Skills.
 Copies in a folder or your own repository are one-way: changes made there are replaced on the next copy.
 
 ### Restore from a ledger

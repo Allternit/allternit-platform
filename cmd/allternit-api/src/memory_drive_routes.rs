@@ -44,7 +44,7 @@ pub fn memory_drive_router() -> Router<Arc<AppState>> {
         .route("/memory/drive/capture/turn", post(capture_turn))
         .route("/memory/drive/forget-source", post(forget_source))
         .route("/memory/drive/ledger", get(ledger_info))
-        .route("/memory/drive/ledger/file", get(ledger_file).put(ledger_edit))
+        .route("/memory/drive/ledger/file", get(ledger_file).put(ledger_edit).delete(ledger_delete))
         .route("/memory/drive/ledger/snapshot", post(ledger_snapshot))
         .route("/memory/drive/ledger/download", get(ledger_download))
         .route("/memory/drive/copies", get(get_copies).put(put_copies))
@@ -1095,3 +1095,28 @@ async fn ledger_edit(State(state): State<Arc<AppState>>, Extension(user): Extens
     .await
 }
 
+
+#[derive(Deserialize)]
+struct LedgerDeleteQuery {
+    path: String,
+}
+
+/// Delete what a ledger file describes (bots are archived), then record it.
+async fn ledger_delete(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Query(q): Query<LedgerDeleteQuery>) -> Response {
+    run(state, user, move |ctx| {
+        open(ctx, None, true)?;
+        let repo = crate::ledger::repo_for(&ctx.0.db, &ctx.1.user_id)?;
+        let skills = crate::ledger::skill_dirs().into_iter().next();
+        let summary = crate::ledger_edit::delete(
+            &ctx.0.db.connect()?,
+            &ctx.1.user_id,
+            &repo,
+            &q.path,
+            skills.as_deref(),
+            crate::agent_workspace_paths::workspace_dir_for,
+        )?;
+        let revision = crate::ledger::snapshot(&ctx.0.db, &ctx.1.user_id, &format!("Delete {}", q.path))?;
+        Ok(json!({ "summary": summary, "revision": revision }))
+    })
+    .await
+}

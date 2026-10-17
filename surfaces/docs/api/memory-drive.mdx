@@ -242,7 +242,13 @@ credential-like keys are replaced, `git_remote` loses its userinfo, and any file
     the kind's dropped columns. `[left out…]` values keep the stored value, including nested JSON.
     A credential-keyed value typed into the file is refused.
   - **Bot workspace files** and **files of installed skills** are written to disk after a secret check.
-  - `README.md` and `connected-apps.json` are read-only. New paths are refused.
+  - `README.md` and `connected-apps.json` are read-only.
+  - **A record path not yet in the ledger creates the thing.** It gets a new id (or the given one if
+    unused), with credentials refused and `[left out]` values dropped. Scheduled kinds start paused.
+    A missing required field answers `Add "<field>"`.
+- `DELETE /memory/drive/ledger/file?path=`: bots and agents are archived (`archived_at`), other records
+  are deleted, and workspace and skill files are removed (not `SKILL.md`). Then it snapshots. Returns
+  `{ summary, revision }`.
 - `POST /memory/drive/ledger/snapshot`: `{ changed, revision }`.
 - `GET /memory/drive/ledger/download?revision=`: `application/zip` with everything under `ledger/`.
 

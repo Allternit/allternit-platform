@@ -82,7 +82,7 @@ struct Record<'a> {
 }
 
 /// Remove left-out values (anywhere), noting where they were.
-fn strip_left_out(v: &mut Value, at: &str, needs: &mut Vec<String>) {
+pub(crate) fn strip_left_out(v: &mut Value, at: &str, needs: &mut Vec<String>) {
     match v {
         Value::Object(o) => {
             let gone: Vec<String> = o.iter().filter(|(_, x)| x.as_str().is_some_and(|s| s.starts_with(LEFT_OUT_PREFIX))).map(|(k, _)| k.clone()).collect();
@@ -160,6 +160,16 @@ fn insert(conn: &Connection, owner: &str, rec: &Record<'_>) -> rusqlite::Result<
     }
     let sql = format!("INSERT INTO {} ({}) VALUES ({})", rec.target.table, names.join(", "), values.join(", "));
     conn.execute(&sql, params_from_iter(params)).map(|_| ())
+}
+
+/// Insert a new record into `table` for `owner`, paused where that kind runs
+/// on a schedule (the same rules a restore uses). Shared with ledger edits
+/// that create a new thing.
+pub(crate) fn insert_new(conn: &Connection, owner: &str, table: &'static str, row: &Map<String, Value>) -> rusqlite::Result<()> {
+    static AGENTS: Target = Target { dir: "bots/", table: "agents", pause: &[], label: "bot" };
+    let target = TARGETS.iter().find(|t| t.table == table).unwrap_or(&AGENTS);
+    let target = if target.table == table { target } else { return Err(rusqlite::Error::InvalidQuery) };
+    insert(conn, owner, &Record { target, path: String::new(), row: row.clone(), needs: vec![] })
 }
 
 /// A relative path inside the ledger, safe to join under a folder.
