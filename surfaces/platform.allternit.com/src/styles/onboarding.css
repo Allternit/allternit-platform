@@ -18,8 +18,8 @@
   --ob-ok-bg:#E8F5EE;--ob-ok-fg:#17724A;--ob-warn-bg:#FDF0EB;--ob-warn-fg:#9A4426;--ob-warn-bg2:#FFF8F5;
   --ob-blue-bg:#EEF3FD;--ob-blue-fg:#2F5FC4;--ob-dash:#C9C9CF;--ob-line2:#D4D4D8;--ob-hover-line:#A1A1AA;
   --ob-str:#B4532F;--ob-shadow:rgba(20,20,19,.10);
-  --sans:var(--font-sans);--mono:"SF Mono",ui-monospace,Menlo,monospace;
-  font-family:var(--sans);color:var(--ink);
+  --sans:var(--font-sans);--mono:var(--font-mono);
+  font-family:var(--font-sans);color:var(--ink);
 }
 html[data-theme="dark"] .ob{
   --ink:#ECECEE;--sub:#A1A1AA;--mut:#71717A;--line:rgba(255,255,255,.10);--fill:rgba(255,255,255,.06);--fill2:rgba(255,255,255,.10);
@@ -31,7 +31,7 @@ html[data-theme="dark"] .ob{
 }
 .ob *{box-sizing:border-box}
 .ob button{font-family:inherit;cursor:pointer}
-.ob code{font-family:var(--mono)}
+.ob code{font-family:var(--font-mono)}
 .ob svg.ob-ic{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;display:block}
 <style>
 body{margin:0}
@@ -162,7 +162,7 @@ body{margin:0}
 .ob-search{height:30px;border-radius:8px;border:1px solid var(--line);display:flex;align-items:center;padding:0 10px;font-size:12px;color:var(--mut);margin-bottom:6px}
 .ob-trow{display:grid;grid-template-columns:1.6fr 1fr 1.2fr 1fr;height:24px;align-items:center;padding:0 6px;border-radius:6px;font-size:12px;color:var(--sub)}
 .ob-trow.h{font:600 10px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--mut)}
-.ob-trow .m{font-family:var(--mono);color:var(--ink);font-size:11.5px}
+.ob-trow .m{font-family:var(--font-mono);color:var(--ink);font-size:11.5px}
 .ob-trow.on{background:var(--ob-warn-bg);color:var(--ink)}
 
 /* Compute scene */
@@ -460,7 +460,7 @@ body{margin:0}
 .ob-legal a{text-decoration:underline;text-underline-offset:2px}
 .ob-lbl{color:var(--ink)}
 .ob-in{background:var(--ob-card)}
-.ob-select{height:34px;margin:0;font-size:12.5px;font-family:var(--mono);padding:0 10px;min-width:0;flex:1}
+.ob-select{height:34px;margin:0;font-size:12.5px;font-family:var(--font-mono);padding:0 10px;min-width:0;flex:1}
 
 /* setup */
 .ob-setup{flex:none;height:calc(100vh - 65px);min-height:560px;grid-template-rows:minmax(0,1fr)}
