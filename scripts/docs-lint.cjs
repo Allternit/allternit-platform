@@ -156,6 +156,8 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
       if (mdxPath.endsWith('surfaces/subscriptions.mdx')) continue;
       // First-run setup and the sign-in screen name the subscription brains and vendor bots people can connect.
       if (['guides/first-run-setup.mdx', 'architecture/first-run-setup.mdx', 'surfaces/sign-in.mdx'].some((p) => mdxPath.endsWith(p))) continue;
+      // The bot setup picker names the vendor bots it connects and quotes their on-screen labels.
+      if (['guides/bot-setup-picker.mdx', 'architecture/bot-setup-picker.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // Runtime task visibility and the local vendor catalog describe named CLI integrations.
       if (['surfaces/native-agent.mdx', 'guides/local-vendor-bots.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // Bot isolation documents provider-specific CLI flags, config paths and login behavior.

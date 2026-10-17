@@ -11,7 +11,8 @@ First-run setup lives in `allternit-ai/src/components/onboarding/`. One implemen
 | --- | --- |
 | `OnboardingFlow.tsx` | The real setup logic, reused as panels: `InfraStep` (variants `local`, `server`, `full`), `PurchaseVPSPanel`, `ModesStep` (prop `focus` per brain row, `phone`), and `completeFirstRun()` (workspace init, `setupApi.saveConfig({ onboardingComplete: true, wizard })`, onboarding store, Desktop bridge). Exports `OnboardingFlow` (desktop) and `PhoneOnboardingFlow`. |
 | `setup/FirstRunSetup.tsx` | The shell: graph field, Gizzi + A:// rail, tiles, result cards, ripple, connected view. Derives the cloud-computer, phone-computer and brain outcomes. |
-| `setup/setupModel.ts` | Pure step machine (`setupReducer`), step order (`setupStepOrder`, Main bot slot), progress blocks, result cards, haptic rule (`firesHaptic`), `brainForProvider`. |
+| `setup/setupModel.ts` | Pure step machine (`setupReducer`), step order (`setupStepOrder`, Main bot step), progress blocks, result cards (`mainBotCard`), haptic rule (`firesHaptic`), `brainForProvider`. |
+| `setup/MainBotStep.tsx` | Step 4: the bot setup picker (`components/bots/look`) inside the setup — stage in the studio, panel in the rail; phone uses `BotSetupPhone`. |
 | `setup/setupSignals.ts` | Live signals behind tile tags: local backend probe, cloud computer + plan, provider auth + Allternit Cloud catalog, Subscription Fabric status, settled runtimes. |
 | `setup/connectedInventory.ts` | `loadInventory()` (each source independent) and the pure `buildConnectedGraph()`. |
 | `setup/inventorySources.ts` | The real sources for the connected view. |
@@ -41,9 +42,9 @@ Every result card and tile tag is computed from what happened:
 
 `loadInventory()` reads provider auth, the cloud catalog, runtimes (`useRuntimes`, settled after 6 s), cloud computers, bots (`listAgents` + `findMainBot`), messaging channels (`gatewayApi.listAccounts`, `channel_oauth`), Memory Drive mounts, bot projects, MCP connectors and Subscription Fabric logins. Runtime-backed sources are marked unavailable without making the call when no computer is reachable. `buildConnectedGraph()` marks nodes `new` (this session), `conn`, `inc` (included) or `avail`, caps side groups at four, and always includes a Main bot node.
 
-## Main bot step (slot)
+## Main bot step
 
-`setupStepOrder({ mainBot: true })` inserts a `mainbot` step between Your AI and Connected; `MAIN_BOT_STEP_ENABLED` is false until its design lands. The real step will reuse `src/views/bots/rail/main-bot.ts` (`setUpPrimaryBot`, `setMainBot`) and the disclosure copy from `PrimaryBotSetupDialog`; `SessionFacts.mainBotId` marks the main bot node as set up in this session.
+`MAIN_BOT_STEP_ENABLED` is on: the order is where → style → ai → mainbot → connected (30 progress blocks: 6 · 12 · 18 · 24 · 30). `MainBotStep` drives the shared picker hook `useBotSetup({ context: 'onboarding' })` from `src/components/bots/look/` (see [Bot setup picker](/architecture/bot-setup-picker)). Only a real result is stored: the picker reports a `MainBotOutcome` (`{ type: 'mainbot', outcome }`), which prints Gizzi's card through `mainBotCard` and fills `SessionFacts.mainBotId`, so the connected view marks the Main bot node **set up just now**. Edit (or a new pick) clears it. The step is optional: Skip and Next both move on, and nothing is created until **Set up &lt;Name&gt;** succeeds.
 
 ## Tests
 
