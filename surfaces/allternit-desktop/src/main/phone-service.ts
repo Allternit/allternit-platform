@@ -164,8 +164,8 @@ class PhoneService {
     return this.dataDir;
   }
 
-  /** adb, downloaded on first use. */
-  private ensureAdbCall(): Promise<AdbCall> {
+  /** adb, downloaded on first use. Also used by Phone Link setup. */
+  ensureAdbCall(): Promise<AdbCall> {
     if (!this.adbReady) {
       this.adbReady = (async () => {
         this.adbPath = await ensureAdb(this.dir());

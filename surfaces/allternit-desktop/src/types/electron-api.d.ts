@@ -630,6 +630,7 @@ export interface AllternitDesktopAPI {
   tunnel: TunnelAPI;
   permissionGuide: PermissionGuideAPI;
   phones: PhonesAPI;
+  phoneLink: import('../main/phone-link-types').PhoneLinkAPI;
   featureFlags: FeatureFlagsAPI;
   findInPage: FindInPageAPI;
   locale: LocaleAPI;
