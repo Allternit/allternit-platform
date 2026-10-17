@@ -922,9 +922,14 @@
         "allternit-ai/src/components/settings",
         "allternit-ai/src/views/library",
         "allternit-ai/src/views/design",
-        "allternit-ai/src/views/cowork"
+        "allternit-ai/src/views/cowork",
+        "allternit-ai/src/components/artifact-share"
       ],
       "decisions": [
+        {
+          "on": "2026-10-16",
+          "note": "Eoj approved the share reference and preview: a compact owner/access-avatar pill with a dark Share action, and a rounded sharing panel with inline role pickers, people list and copy confirmation. Shared styling covers the v2 artifact window on Desktop, web phone and PWA plus the legacy Cowork private/org pane. Access avatars use saved grants, separate from live presence. Existing owner/policy rules and phone/PWA read-only sharing remain; no new public access is enabled."
+        },
         {
           "on": "2026-10-14",
           "note": "Every Make something new tile opens an artifact session (Eoj: dashboards, motion and page opened no session; the others had no working pane). Kinds without an Office/Design editor (dashboard, motion, page, build, image, video, research) open a studio pane: empty state, then a rendering card shaped like the result (img-fx mosaic for image/video, skeleton + working beam otherwise) with the agent's live thought and tool steps, then the result in its ArtifactWindow with the kind's editor. Dashboard/Motion/Page sessions bind to the artifact their agent makes (artifact_create, then artifact_update). media_generate shows the same card inline in chat. Design canvas drops tldraw's menu/helper/share chrome, shows the style panel only with a selection or drawing tool, and follows the app theme."
@@ -965,7 +970,8 @@
         "allternit/surfaces/docs/guides/artifact-apps.mdx",
         "allternit/surfaces/docs/api/artifact-runtime.mdx",
         "allternit/surfaces/docs/guides/artifact-editors.mdx",
-        "allternit/surfaces/docs/guides/artifact-collaboration.mdx"
+        "allternit/surfaces/docs/guides/artifact-collaboration.mdx",
+        "allternit/surfaces/docs/reference/artifact-share-ui.mdx"
       ]
     },
     {

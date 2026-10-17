@@ -3,7 +3,7 @@ title: Lane status
 description: "See which paths your bots talk through (vendor subscriptions and channels) are working, and get told when one goes down."
 ---
 
-A bot's words travel over a **lane**: a vendor subscription it answers with (Claude, ChatGPT, Kimi…) or a channel it posts to (Slack, SMS…). When a lane breaks, the bot goes quiet. **Settings → Status** shows every lane and whether it works right now, so you find out before a customer does.
+A bot's words travel over a **lane**: a connected model subscription it answers with or a channel it posts to, such as Slack or SMS. When a lane breaks, the bot may be unable to reply. **Settings → Status** shows each tracked lane and its current health.
 
 ## The Status panel
 
@@ -13,13 +13,13 @@ Each row has:
 
 - A colour and a word: **Working** (green), **Slow** (amber) or **Down** (red). The word is always shown, never colour alone.
 - Since when, for anything that isn't working.
-- The reason in plain words, for example "Claude: it needs signing in again".
+- The affected subscription and the reason in plain words, such as needing to sign in again.
 - The bots it affects.
 - **Fix**, which opens Settings → Subscriptions (vendor lanes) or Settings → Connected apps (channels).
 
 Lanes that need a look are listed first. **Check again** asks for a fresh reading; otherwise the panel refreshes every minute while it is open. If your runtime can't be reached, the panel says so and keeps showing the last result.
 
-A bot whose subscription lane is down also says **Brain offline: Claude needs a check** on its line in the Bots list, in place of its last message.
+A bot whose subscription lane is down also shows **Brain offline**, followed by the affected subscription and reason, on its line in the Bots list in place of its last message.
 
 ## What is checked
 
