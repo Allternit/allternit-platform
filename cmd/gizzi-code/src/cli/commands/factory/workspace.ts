@@ -30,17 +30,41 @@ export const WorkspaceCommand = cmd({
       )
       .command(
         engineGroup(P, "plan", "plans", [
-          { command: "new", describe: "plan work into nodes", mutation: true },
+          {
+            command: "new [text]",
+            describe: "plan work into nodes (prints the new dag_id and root node_id)",
+            mutation: true,
+            options: {
+              template: { type: "string", describe: "a template id or path instead of [text]" },
+              param: { type: "array", describe: "a template param <name>=<value> (repeatable)" },
+            },
+          },
           { command: "refine", describe: "refine a plan", mutation: true },
         ]),
       )
       .command(
         engineGroup(P, "node", "nodes (each with its own folder)", [
-          { command: "add", describe: "add a node", mutation: true },
+          {
+            command: "add",
+            describe: "add a node under a parent (--dag --parent --title)",
+            mutation: true,
+            options: {
+              dag: { type: "string", describe: "the DAG (from `plan new`)" },
+              parent: { type: "string", describe: "the parent node id" },
+              title: { type: "string", describe: "the node's title" },
+              kind: { type: "string", describe: "node kind (default: task)" },
+              description: { type: "string", describe: "the node's prompt" },
+              executor: { type: "string", describe: "bot:<slug> or ao:<harness> (what `drive` spawns)" },
+            },
+          },
           {
             command: "list",
-            describe: "list nodes",
-            options: { mine: { type: "boolean", describe: "only nodes this bot owns" } },
+            describe: "list open nodes (ready, claimed, waiting)",
+            options: {
+              dag: { type: "string", describe: "only this DAG" },
+              ready: { type: "boolean", describe: "only nodes ready to claim" },
+              mine: { type: "boolean", describe: "only nodes this bot owns" },
+            },
           },
           {
             command: "claim <node>",

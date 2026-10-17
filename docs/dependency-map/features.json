@@ -281,6 +281,10 @@
         {
           "on": "2026-10-07",
           "note": "Remote bots are mirrored over the peer port instead of a Mesh pane endpoint, so the other computer's pane shell is not exposed."
+        },
+        {
+          "on": "2026-10-17",
+          "note": "Sends to Claude Code bots no longer queue forever: a collapsed paste ([Pasted text #N], Codex [Pasted Content]) counts as landed, a failed paste is cleared line by line, and the idle probe retries. Spawn records folder trust for Claude Code and Kimi. Plain `workspace node list` shows every open node."
         }
       ],
       "evidence": [
@@ -1320,6 +1324,7 @@
           "note": "In-app linked-Android live view (Phase 1): scrcpy-server pinned to v5.0.1 with a recorded SHA-256, downloaded on first use from the official release (never bundled); phone-scrcpy.ts implements the v5 wire protocol (dummy byte, 64-byte device name, h264 codec id, 12-byte session packets for rotation/size, 12-byte frame headers stripped before IPC), one shared PhoneStreamManager session per serial exposed to the renderer over phone:stream-* IPC with Annex-B H.264 chunks as structured-clone Buffers; input (touch/key/text/scroll/back/home/app_switch/power) and SET_DISPLAY_POWER encoded per control_msg.c. Agent-takeover banner: PhoneInfo.agentBusy fed by tool-runner and ARTEMIS activity counters. Streams start only on renderer request; the external scrcpy window stays a secondary action."
         },
         {
+          "on": "2026-10-17",
           "note": "Bots reach Phone-Linked phones through one iCTRL lane in PhoneToolRunner (link: serials) with read_ui/find_and_tap/screen_text on every lane and per-phone health; remount and signature renewal are manual states."
         },
         {

@@ -28,12 +28,17 @@ gizzi workspace campaign finish <campaign>
 A node is one unit of work in the plan's DAG. It has a status (`new`, `ready`, `working`, `checking`, `needs_you`, `done`, `failed` or `blocked`), an assignee (`bot@team`), the nodes blocking it, and a proof count.
 
 ```bash
-gizzi workspace node add
+gizzi workspace plan new "Ship the phone viewport"        # prints dag_id and the root node_id
+gizzi workspace node add --dag <dag> --parent <node> --title "Wire the relay"
+gizzi workspace node list                 # every open node: ready, claimed or waiting
+gizzi workspace node list --ready         # only nodes ready to claim
 gizzi workspace node list --mine
 gizzi workspace node claim <node>
 gizzi workspace node handoff <dag>/<node> --to checker@product-build --note "build passes; please review"
 gizzi workspace node close <node>
 ```
+
+`node list` shows every open node with its state: `ready` (nothing blocks it), `claimed` (someone holds it) or `waiting` (blocked by another node or a wait-gate). Done, failed, cancelled and closed nodes are left out. Add `--dag <dag>` for one plan.
 
 A claim is a **WIH** (work identity handle) pickup through the Gate. The bot gets a context pack, works inside a lease, and closes the pickup with evidence. A bot never marks a node done by itself: the judge decides.
 

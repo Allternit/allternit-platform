@@ -47,6 +47,10 @@ Each field reports one of `delivered`, `guidance`, `partial` or `unavailable`, s
 
 Delivery keeps a git workdir clean. Claude Code's Gate hook rides on the spawn's own `--settings` file (outside the workdir), so the repo's `.claude/settings.json` is never edited. Every file delivery creates inside a git checkout (`CLAUDE.local.md`, `.allternit/bot/`, a skills folder) is added to that repo's local `info/exclude`, so a pane never leaves files for a commit to pick up. A file git already tracks is changed in place only for harnesses with no other way in, and the delivery notes say so.
 
+### Folder trust at spawn
+
+Claude Code and Kimi stop on a "trust this folder" prompt the first time they open a folder. Claude Code also asks once about external `CLAUDE.md` includes. Nobody watches a pane at spawn, so the bot sat idle and every send queued behind the dialog. The engine now records that trust before the pane starts, for the workdir you passed to `agents up` (and its real path, if it is a symlink). For Claude Code it sets `hasTrustDialogAccepted` and `hasClaudeMdExternalIncludesApproved` on that folder in `~/.claude.json`. For Kimi it writes `~/.kimi-code/workspace-trust/wd_<folder>_<hash>`. The stores are replaced atomically. A store that is missing or can't be parsed is left alone, never recreated.
+
 ### When a pane can't open its folder (macOS)
 
 On macOS the pane host runs under Allternit Desktop, so it needs Desktop's permission for protected folders (Desktop, Documents, Downloads). If a bot's workdir is in one of them and the permission is off, the agent exits right away with `getcwd: Operation not permitted`. `gizzi agents up` then fails with `needs_person` and says what to do: allow Allternit Desktop under **System Settings → Privacy & Security → Files and Folders** (or Full Disk Access), or use a workdir outside those folders.
