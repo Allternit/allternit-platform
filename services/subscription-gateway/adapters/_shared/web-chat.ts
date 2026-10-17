@@ -11,6 +11,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { load as yamlLoad } from "js-yaml";
+import { captureEvidence } from "./evidence.js";
 import type { Page } from "playwright";
 import {
   adapterManifestSchema,
@@ -24,6 +25,7 @@ import {
 } from "@allternit/subscription-fabric-contracts";
 import {
   DeclarativeChatAdapter,
+  SelectorNotFoundError,
   createResolver,
   threadIdFromUrl,
   type DeclarativeChatConfig,
@@ -124,7 +126,15 @@ export class WebChatAdapter extends DeclarativeChatAdapter {
         await this.openFreshChat(ctx, task);
       }
       await this.dismissAnnouncements(ctx);
-      yield* super.execute(task, ctx);
+      for await (const ev of super.execute(task, ctx)) {
+        // A drift the SDK reports as an event (the prompt didn't land): attach what the page looked like.
+        if (ev.t === "error" && ev.error.class === "provider_ui_changed" && !ev.error.evidence_ref) {
+          const ref = await this.evidence(task, ctx, null, ev.error.detail);
+          yield ref ? { ...ev, error: { ...ev.error, evidence_ref: ref } } : ev;
+        } else {
+          yield ev;
+        }
+      }
     } catch (err) {
       if (isProfileLockError(err)) {
         yield {
@@ -133,8 +143,32 @@ export class WebChatAdapter extends DeclarativeChatAdapter {
         };
         return;
       }
+      // A step threw (a selector matched nothing, the page changed): keep proof of what the page showed.
+      const detail = err instanceof Error ? err.message : String(err);
+      const key = err instanceof SelectorNotFoundError ? err.key : null;
+      const ref = await this.evidence(task, ctx, key, detail);
+      if (ref || key) {
+        yield {
+          t: "error",
+          error: {
+            class: key ? "provider_ui_changed" : "provider_error",
+            scope: key ? "adapter" : "task",
+            retryable: true,
+            fallback_eligible: true,
+            cooldown_s: null,
+            user_action: null,
+            detail,
+            evidence_ref: ref,
+          },
+        };
+        return;
+      }
       throw err;
     }
+  }
+
+  private async evidence(task: Task, ctx: ExecutionContext, selectorKey: string | null, detail: string | null): Promise<string | null> {
+    return captureEvidence(sdkPage(ctx.page), { taskId: task.task_id, adapterId: this.manifest.adapter_id, selectorKey, detail });
   }
 
   protected async openFreshChat(ctx: ExecutionContext, task?: Task): Promise<void> {
