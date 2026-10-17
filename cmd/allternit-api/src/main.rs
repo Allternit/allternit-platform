@@ -112,7 +112,6 @@ use allternit_api::stream::stream_router;
 use allternit_api::swarm_routes::swarm_router;
 use allternit_api::task_routes;
 use allternit_api::team_skill_routes::team_skill_router;
-#[cfg(unix)]
 use allternit_api::terminal_routes::{terminal_router, TerminalSessionStore};
 use allternit_api::permission_policy::ApprovalStore;
 use allternit_api::tool_routes;
@@ -596,7 +595,6 @@ async fn main() {
         office_cli_watches: Arc::new(RwLock::new(HashMap::new())),
         office_cli_mcp_sessions: Arc::new(RwLock::new(HashMap::new())),
         design_skill_cache,
-        #[cfg(unix)]
         terminal_sessions: TerminalSessionStore::new(),
         mcp_dispatcher: allternit_api::mcp_dispatcher::McpDispatcher::new(),
         approval_store: Arc::new(ApprovalStore::new()),
@@ -1481,10 +1479,9 @@ async fn main() {
         public = public.merge(fallback_router());
     }
 
-    // Combine protected + public; terminal routes are Unix-only (mux
-    // communicates over a UDS) and must be nested before `with_state`.
+    // Combine protected + public; terminal routes (501 on Windows, no pane
+    // engine socket there) must be nested before `with_state`.
     let combined = protected.merge(public);
-    #[cfg(unix)]
     let combined = combined.nest("/terminal", terminal_router());
     let mut app = combined.with_state(state.clone());
     // Automation Tasks routines with execution_domain = 'local' run here.

@@ -7,7 +7,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use axum::{extract::FromRef, http::StatusCode, response::IntoResponse, Json, Router};
+use axum::{http::StatusCode, response::IntoResponse, Json, Router};
 use serde_json::json;
 
 use crate::AppState;
@@ -35,12 +35,6 @@ pub struct TerminalSessionStore;
 impl TerminalSessionStore {
     pub fn new() -> Self {
         Self
-    }
-}
-
-impl FromRef<Arc<AppState>> for TerminalSessionStore {
-    fn from_ref(state: &Arc<AppState>) -> Self {
-        state.terminal_sessions.clone()
     }
 }
 

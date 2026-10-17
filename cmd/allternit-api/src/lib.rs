@@ -399,7 +399,6 @@ use rails::RailsState;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-#[cfg(unix)]
 use terminal_routes::TerminalSessionStore;
 use tokio::sync::RwLock;
 use vm_session_routes::VmSessionStore;
@@ -570,7 +569,6 @@ pub mod test_helpers {
             office_cli_watches: Arc::new(RwLock::new(HashMap::new())),
             office_cli_mcp_sessions: Arc::new(RwLock::new(HashMap::new())),
             design_skill_cache: DesignSkillCache::new(),
-            #[cfg(unix)]
             terminal_sessions: TerminalSessionStore::new(),
             mcp_dispatcher: crate::mcp_dispatcher::McpDispatcher::new(),
             approval_store: Arc::new(permission_policy::ApprovalStore::new()),
@@ -693,8 +691,8 @@ pub struct AppState {
     pub office_cli_mcp_sessions: OfficeCliMcpState,
     /// Daemon-side Open Design skill cache with hot-reload semantics.
     pub design_skill_cache: DesignSkillCache,
-    /// Code Mode terminals on the Factory pane engine. Unix-only (pane engine UDS).
-    #[cfg(unix)]
+    /// Code Mode terminals on the Factory pane engine (a placeholder on
+    /// Windows, where the routes answer 501).
     pub terminal_sessions: TerminalSessionStore,
     /// Attached MCP servers reachable through the server-side MCP dispatcher.
     pub mcp_dispatcher: crate::mcp_dispatcher::McpDispatcher,
