@@ -295,7 +295,9 @@
         "allternit/cmd/allternit-api/src/memory_consolidation",
         "allternit/cmd/allternit-api/src/memory_relations",
         "allternit/services/memory",
-        "allternit-ai/src/views/settings"
+        "allternit-ai/src/views/settings",
+        "allternit-ai/src/views/cowork",
+        "allternit-ai/src/components/ai-elements"
       ],
       "decisions": [
         {
@@ -309,6 +311,10 @@
         {
           "on": "2026-10-16",
           "note": "Eoj: Memory Drive keeps its name and grows into the user's ledger: import any company's memory, capture from every channel, hold every asset, store where the user wants (plan dag_952346). Phase 1 adds the export-prompt import for 10 assistants and import from Claude Code, Codex, Hermes and OpenClaw files."
+        },
+        {
+          "on": "2026-10-17",
+          "note": "Eoj: agent folders on by default (off switch, Forget prunes and a forget sticks). Every memory action is visible: Searched/Saved to Memory Drive rows in the chat thought stream, a Memory Drive Activity log (memory_activity, V266) and live Dream steps. Next: vendor memory pages and past chats read automatically from signed-in logins."
         }
       ],
       "evidence": [

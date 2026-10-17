@@ -142,6 +142,17 @@ pub struct Checked {
 /// too long, looks like a secret, repeats, is already remembered, or carries
 /// `[key: …]` metadata.
 pub fn check(db: &DbHandle, owner: &str, items: Vec<Candidate>) -> Result<Checked> {
+    check_with(db, owner, items, false)
+}
+
+/// [`check`] for imports that run by themselves (agent folder and vendor
+/// syncs): also skip anything the person deleted or forgot, so a sync never
+/// brings it back. A person's own import may bring it back on purpose.
+pub fn check_auto(db: &DbHandle, owner: &str, items: Vec<Candidate>) -> Result<Checked> {
+    check_with(db, owner, items, true)
+}
+
+fn check_with(db: &DbHandle, owner: &str, items: Vec<Candidate>, skip_removed: bool) -> Result<Checked> {
     static META: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     let meta = META.get_or_init(|| regex::Regex::new(r" \[[A-Za-z_][A-Za-z0-9_-]*:").expect("constant regex"));
     let conn = db.connect()?;
@@ -170,6 +181,14 @@ pub fn check(db: &DbHandle, owner: &str, items: Vec<Candidate>) -> Result<Checke
             |r| r.get::<_, bool>(0),
         )? {
             Some("already remembered")
+        } else if skip_removed
+            && conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM memory_facts WHERE user_id=?1 AND lower(fact)=?2 AND valid_until IS NOT NULL)",
+                rusqlite::params![owner, t.to_lowercase()],
+                |r| r.get::<_, bool>(0),
+            )?
+        {
+            Some("you removed it before")
         } else if meta.is_match(&t) {
             Some("contains [key: …] text")
         } else {

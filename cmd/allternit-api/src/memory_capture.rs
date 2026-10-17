@@ -7,9 +7,11 @@
 //!   goes through the same model extraction a web chat turn does.
 //! - **gizzi**: Gizzi CLI turns, recorded so the nightly Dream sees them
 //!   (Gizzi already saves memories itself, so no second extraction here).
-//! - **agent_folders**: off until turned on. Re-imports Claude Code, Codex,
+//! - **agent_folders**: on unless turned off. Re-imports Claude Code, Codex,
 //!   Hermes and OpenClaw memory files on this computer every few hours;
-//!   memories already in the drive are skipped.
+//!   memories already in the drive are skipped. Only the person this computer
+//!   is paired as gets them (or someone who turned it on here), so a shared
+//!   server's home folder never lands in anyone's drive.
 //!
 //! Switches live in `runtime_settings` under `memory_capture`. Every captured
 //! memory keeps its source, so [`forget_source`] can take a source back out.
@@ -35,10 +37,10 @@ pub struct Settings {
 }
 
 impl Default for Settings {
-    /// On for places the person connected inside Allternit; reading other
-    /// agents' files stays off until they turn it on.
+    /// Everything on. Each one can be turned off, and its memories pruned
+    /// with [`forget_source`].
     fn default() -> Self {
-        Settings { channels: true, gizzi: true, agent_folders: false }
+        Settings { channels: true, gizzi: true, agent_folders: true }
     }
 }
 
@@ -190,7 +192,7 @@ pub fn forget_source(db: &DbHandle, owner: &str, scheme: &str) -> Result<(Option
 pub fn sync_agent_folders(db: &DbHandle, owner: &str, home: &std::path::Path) -> usize {
     crate::memory_drive_agent_import::detect(home)
         .into_iter()
-        .map(|a| match crate::memory_drive_agent_import::apply(db, owner, home, a.id, None) {
+        .map(|a| match crate::memory_drive_agent_import::sync(db, owner, home, a.id) {
             Ok((_, n)) => n,
             Err(ServiceError::Provenance(_)) => 0, // nothing new
             Err(e) => {
@@ -201,14 +203,24 @@ pub fn sync_agent_folders(db: &DbHandle, owner: &str, home: &std::path::Path) ->
         .sum()
 }
 
-fn folder_sync_owners(conn: &Connection) -> rusqlite::Result<Vec<String>> {
+/// Who gets this computer's agent folders: the owner it's paired as (on by
+/// default, unless they turned it off) plus anyone who turned it on here.
+fn folder_sync_owners(conn: &Connection, local_owner: Option<String>) -> rusqlite::Result<Vec<String>> {
     let mut stmt = conn.prepare("SELECT user_id, value FROM runtime_settings WHERE key = ?1")?;
     let rows = stmt.query_map(params![KEY], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
-    Ok(rows
+    let mut owners: Vec<String> = rows
         .filter_map(|r| r.ok())
         .filter(|(_, v)| serde_json::from_str::<Settings>(v).map(|s| s.agent_folders).unwrap_or(false))
         .map(|(u, _)| u)
-        .collect())
+        .collect();
+    if let Some(local) = local_owner {
+        if settings(conn, &local).agent_folders {
+            owners.push(local);
+        }
+    }
+    owners.sort();
+    owners.dedup();
+    Ok(owners)
 }
 
 /// Every few hours, re-import agent folders for owners who turned that on.
@@ -224,7 +236,8 @@ pub fn spawn(db: DbHandle) {
             let Some(home) = crate::memory_drive_agent_import::home() else { continue };
             let db = db.clone();
             let _ = tokio::task::spawn_blocking(move || {
-                let owners = db.connect().ok().and_then(|c| folder_sync_owners(&c).ok()).unwrap_or_default();
+                let local = crate::relay_auth::process_secret().paired_owner();
+                let owners = db.connect().ok().and_then(|c| folder_sync_owners(&c, local).ok()).unwrap_or_default();
                 for owner in owners {
                     let n = sync_agent_folders(&db, &owner, &home);
                     if n > 0 {
@@ -282,9 +295,9 @@ mod tests {
 
     #[test]
     fn settings_default_and_partial_json() {
-        assert_eq!(Settings::default(), Settings { channels: true, gizzi: true, agent_folders: false });
-        let s: Settings = serde_json::from_str(r#"{"agent_folders":true}"#).unwrap();
-        assert_eq!(s, Settings { channels: true, gizzi: true, agent_folders: true });
+        assert_eq!(Settings::default(), Settings { channels: true, gizzi: true, agent_folders: true });
+        let s: Settings = serde_json::from_str(r#"{"agent_folders":false}"#).unwrap();
+        assert_eq!(s, Settings { channels: true, gizzi: true, agent_folders: false });
     }
 
     #[test]

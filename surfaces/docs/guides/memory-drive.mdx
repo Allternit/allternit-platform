@@ -76,6 +76,10 @@ changes and keeps anything you or your agents wrote since. If you edited a line 
 Dream also changed, undo tells you which files to fix by hand. You can turn Dreaming
 off in the same place.
 
+When you select **Run now**, each step shows as it happens: reading your memories and recent
+messages, asking the model what to merge, learn and prune, checking that plan against your
+memories, and saving. Select **Steps** on any past Dream to see the same list.
+
 ## Shared drives
 
 Next to your own drive you can open drives for a **team** (workspace), a **project**,
@@ -206,10 +210,10 @@ other places that add to your drive. Each has its own switch:
   captured.
 - **Gizzi in the terminal** (on by default). What you type in Gizzi, so the nightly Dream can
   learn from it. Gizzi saves memories itself as well.
-- **Keep importing from agents on your computer** (off until you turn it on). Every few hours,
-  Allternit imports new memories from Claude Code, Codex, Hermes and OpenClaw on the computer that
-  holds your drive. Anything already in your drive is skipped. Turning it on imports what's there
-  right away.
+- **Keep importing from agents on your computer** (on by default). A few minutes after Allternit
+  starts, and then every few hours, it imports new memories from Claude Code, Codex, Hermes and
+  OpenClaw on the computer that holds your drive. Anything already in your drive is skipped. To
+  stop, turn the switch off; to prune what it added, use **Forget** below.
 
 Below the switches, **Memories by source** shows how many memories each source added: an
 assistant you imported from, an agent on your computer, or a channel. To take a source back out,
@@ -217,6 +221,20 @@ select **Forget** next to it and confirm. Its memories are removed in one change
 drive's history, like any delete.
 
 Incognito chats are never remembered, from any surface.
+
+## See what touched your memory
+
+In a chat, the turn shows what Memory Drive did, the same way it shows searches and commands:
+
+- **Searched Memory Drive** lists the memories the reply used.
+- **Saved to Memory Drive** lists what was remembered from the turn, with where it came from.
+  Saving finishes a few seconds after the reply, so this row can appear just after it.
+- When Gizzi or an agent uses its own memory tools, those calls read the same way.
+
+Under **Activity**, Memory Drive lists everything that touched your memory, newest first:
+saves, uses in chats, removals, imports, reads from your other assistants, and Dream steps. Use
+the buttons above the list to show one kind. Select a row to see the memories in it. Activity
+keeps 90 days of rows and never includes incognito chats.
 
 ## Your ledger
 

@@ -1045,6 +1045,29 @@ async fn recall_v2_handler(
     .await
     {
         Ok((results, recall_id, query_vec)) => {
+            // Memory Drive → Activity and the chat turn show what was used.
+            let used: Vec<(String, String)> = results
+                .iter()
+                .filter(|r| r.item_type != "observation")
+                .map(|r| (r.content.clone(), r.metadata.get("source").and_then(|v| v.as_str()).unwrap_or_default().to_string()))
+                .collect();
+            if let (false, Some(session)) = (used.is_empty(), payload.session_id.clone()) {
+                let (db, owner) = (state.db.clone(), user.user_id.clone());
+                let n = used.len();
+                tokio::task::spawn_blocking(move || {
+                    crate::memory_activity::record_db(
+                        &db,
+                        &owner,
+                        crate::memory_activity::Activity {
+                            kind: "recalled",
+                            title: format!("Used {n} {} from Memory Drive", if n == 1 { "memory" } else { "memories" }),
+                            items: used,
+                            session: Some(session),
+                            ..Default::default()
+                        },
+                    )
+                });
+            }
             // M1 retrieve path in SHADOW (WP-M1c): the caller gets the
             // incumbent's set; the S1 pipeline's would-be set is logged
             // against `recall_id` in the background.
