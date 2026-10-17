@@ -31,6 +31,9 @@ import {
 } from './phone-scrcpy.js';
 import { PhoneStreamManager } from './phone-stream.js';
 import { PhoneUserComms, type CallStateName, type CommsResult, type PhoneAppInfo, type PhoneSmsMessage, type PhoneSmsThread } from './phone-user-comms.js';
+import { PhoneLinkCloudClient, type StreamControlAck, type StreamControlFrame } from './phone-link-cloud.js';
+import { authManager } from './auth-manager.js';
+import { URLS } from './config.js';
 import { UsbAgentManager, type Sealer, type StoredUsbAgent, type UsbAgentConfig, type UsbAgentStore } from './phone-usb-agent.js';
 import { candidatePorts, lanAddresses, serialPort } from './phone-usb-agent-provision.js';
 import { USBA_MDNS_TYPE } from './phone-usb-agent-protocol.js';
@@ -158,6 +161,7 @@ class PhoneService {
   private managerReady: Promise<PhoneDeviceManager> | null = null;
   private streams: PhoneStreamManager | null = null;
   private comms: PhoneUserComms | null = null;
+  private linkCloud: PhoneLinkCloudClient | null = null;
   private scrcpyServerReady: Promise<string> | null = null;
   private usbAgents: UsbAgentManager | null = null;
   private artemis: ArtemisManager | null = null;
@@ -248,6 +252,8 @@ class PhoneService {
           for (const serial of this.streams?.activeSerials() ?? []) {
             if (!online.has(serial)) this.streams?.deviceDisconnected(serial);
           }
+          this.linkCloud?.notePhonesChanged();
+          this.maybeStartLinkCloud();
         });
         this.manager = manager;
         this.streams = new PhoneStreamManager({
@@ -263,6 +269,25 @@ class PhoneService {
               opts,
             ),
         });
+        this.linkCloud = new PhoneLinkCloudClient({
+          // Both relay legs must terminate at the same api the web app talks
+          // to (cloud transport uses the same base). In dev, point Desktop at
+          // the local api with ALLTERNIT_CLOUD_API_URL=http://127.0.0.1:18013.
+          apiUrl: () => (process.env.ALLTERNIT_CLOUD_API_URL || URLS.CLOUD_API).replace(/\/$/, ''),
+          getSession: async () => {
+            const session = authManager.getSessionSnapshot();
+            return session ? { accessToken: session.accessToken, userId: session.userId, runtimeId: session.runtimeId } : null;
+          },
+          phones: () =>
+            (this.manager?.list() ?? []).map((p) => ({
+              serial: p.serial,
+              model: p.model ?? '',
+              name: p.name || p.model || 'Linked phone',
+            })),
+          onStreamControl: (frame) => this.handleRelayStreamControl(frame),
+          log: (message) => log.info(message),
+        });
+        this.maybeStartLinkCloud();
         return manager;
       })();
       this.managerReady.catch(() => {
@@ -400,6 +425,29 @@ class PhoneService {
     return this.streams;
   }
 
+  // ── Cloud relay (Phones 2.0 Phase 2): the persistent session that lets     ──
+  // ── signed-in surfaces reach this phone through allternit-api.             ──
+
+  /** The session connects only once a phone is paired; it idles otherwise. */
+  private maybeStartLinkCloud(): void {
+    if (!this.linkCloud) return;
+    if ((this.manager?.list().length ?? 0) > 0) this.linkCloud.start();
+  }
+
+  /**
+   * Relay → Desktop stream control. Starts/stops the local scrcpy stream;
+   * RELAY-RECONCILE: forwarding meta/chunks/end back to the relay socket uses
+   * the exact envelopes from phone_ws.rs — wire the stream consumer here when
+   * the relay lane's notes land (video frames need a per-serial mux decision).
+   */
+  private async handleRelayStreamControl(frame: StreamControlFrame): Promise<StreamControlAck> {
+    if (frame.type === 'start-stream') {
+      return this.startStream(frame.serial, frame.opts);
+    }
+    await this.stopStream(frame.serial);
+    return { ok: true };
+  }
+
   /** iPhone lane: the USB Agent link, its mDNS advert and the AirPlay receivers. No adb involved. */
   async ensureUsbReady(): Promise<UsbAgentManager> {
     await this.ensureGateway();
@@ -506,6 +554,7 @@ class PhoneService {
   }
 
   shutdown(): void {
+    this.linkCloud?.stop();
     this.streams?.stopAll();
     this.manager?.stopAll();
     this.usbAgents?.stopAll();
