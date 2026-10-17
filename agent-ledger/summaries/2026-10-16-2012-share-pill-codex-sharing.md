@@ -49,6 +49,10 @@ feature-map and mobile docs. Those edits were left intact. The task used
 isolated worktrees, integrated newer main there, and only its own branches
 are eligible for cleanup. Shared-checkout synchronization is not claimed.
 
+Docs CI also surfaced a newly merged, unrelated lane-status guide missing from
+navigation and using wording rejected by the docs linter. Added its navigation
+entry and made the examples provider-neutral without changing the lint rules.
+
 Factory tracking: `dag_463985/n_2224`, claimed as `wih_238`.
 
 Signed: Codex, 2026-10-16.
