@@ -237,6 +237,10 @@ pub async fn call<R: ThreadRuntime>(db: &DbHandle, rt: &R, http: Arc<dyn HttpSen
     let act = crate::autonomy::Action { owner: &n.owner, bot_id: &n.bot_id, channel: "call", persons: vec![to.to_string()], action: "call", amount_cents: 0 };
     let aut = crate::autonomy::evaluate(db, &act, false);
     let corr = format!("call:{to}");
+    if let Some(crate::autonomy::Eval { verdict: crate::autonomy::Verdict::Block { reason }, .. }) = &aut {
+        crate::autonomy::record(db, &act, aut.as_ref().map(|e| e.level.as_str()).unwrap_or("default"), "blocked", reason);
+        return Err(OutError::Failed(reason.clone()));
+    }
     let mut consume: Option<String> = None;
     if let Some(e) = aut.as_ref().filter(|e| e.held()) {
         let reason = match &e.verdict {

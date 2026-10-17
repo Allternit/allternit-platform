@@ -586,6 +586,53 @@ fn bot_name(db: &DbHandle, bot_id: &str) -> String {
 }
 
 /// Create a thread; generation 1 adopts `session_id` or gets a new session.
+/// Tools that write or send. A tainted thread (or a bot below `act_within_scope`) gets these
+/// set to `ask`, so a hijacked model can only propose an action; the proposal becomes an
+/// approval card. A `read_only` bot gets `deny`.
+const WRITE_SEND_TOOLS: [&str; 9] = ["bash", "write", "edit", "send_agent_email", "message_agent", "channel_*", "phone_*", "send_text", "send_email"];
+
+/// The gizzi permission ruleset for a thread session: the bot's channel rules, then the
+/// envelope and taint restrictions.
+pub fn session_rules(db: &DbHandle, bot_id: &str, channel: &str, tainted: bool) -> Option<Value> {
+    let mut rules: Vec<Value> = crate::channel_tools::channel_rules(db, bot_id, channel).and_then(|v| v.as_array().cloned()).unwrap_or_default();
+    let envelope = crate::autonomy::envelope_of(db, bot_id);
+    let action = match envelope.as_str() {
+        "read_only" => Some("deny"),
+        "draft" | "act_after_approval" => Some("ask"),
+        _ => tainted.then_some("ask"),
+    };
+    if let Some(action) = action {
+        for tool in WRITE_SEND_TOOLS {
+            rules.push(json!({ "permission": tool, "action": action, "pattern": "*" }));
+        }
+    }
+    (!rules.is_empty()).then(|| Value::Array(rules))
+}
+
+/// Re-apply the thread session's tool rules (call it when the trust floor drops).
+pub async fn enforce_envelope(db: &DbHandle, thread_id: &str) {
+    let row = db.connect().ok().and_then(|c| {
+        let floor = crate::netops::provenance::trust_floor(&c, thread_id);
+        c.query_row("SELECT bot_id, current_session_id, created_by FROM bot_threads WHERE id = ?1", params![thread_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?, r.get::<_, String>(2)?)))
+            .ok()
+            .map(|(b, s, ch)| (b, s, ch, floor))
+    });
+    let Some((bot, Some(session), channel, floor)) = row else { return };
+    if let Some(rules) = session_rules(db, &bot, &channel, floor.is_some_and(|f| f.tainted())) {
+        if let Err(e) = crate::agent_session_routes::restrict_session(&session, rules).await {
+            tracing::warn!(error = %e, thread_id, "couldn't tighten the thread's tool rules");
+        }
+    }
+}
+
+/// [`enforce_envelope`] from sync code, when a runtime is running.
+pub fn enforce_envelope_bg(db: &DbHandle, thread_id: &str) {
+    if let Ok(h) = tokio::runtime::Handle::try_current() {
+        let (db, t) = (db.clone(), thread_id.to_string());
+        h.spawn(async move { enforce_envelope(&db, &t).await });
+    }
+}
+
 pub async fn create<R: ThreadRuntime>(db: &DbHandle, rt: &R, user_id: &str, body: CreateThreadBody) -> Result<ThreadView, String> {
     if body.title.trim().is_empty() {
         return Err("title is required".into());
@@ -602,9 +649,9 @@ pub async fn create<R: ThreadRuntime>(db: &DbHandle, rt: &R, user_id: &str, body
         Some(s) => s,
         None => rt.create_session(&body.bot_id, &bot_name(db, &body.bot_id), body.title.trim(), false, &id).await?,
     };
-    // P8.3: the bot's tool rules for the channel this thread came from.
+    // P8.3: the bot's tool rules for the channel this thread came from, plus the bot's envelope.
     let channel = body.created_by.as_deref().unwrap_or("user");
-    if let Some(rules) = crate::channel_tools::channel_rules(db, &body.bot_id, channel) {
+    if let Some(rules) = session_rules(db, &body.bot_id, channel, false) {
         if let Err(e) = rt.restrict(&session_id, rules).await {
             tracing::warn!(error = %e, channel, "couldn't apply the channel's tool rules");
         }
@@ -657,6 +704,16 @@ pub async fn create<R: ThreadRuntime>(db: &DbHandle, rt: &R, user_id: &str, body
             )
             .map_err(|e| e.to_string())?;
         }
+    }
+    // Provenance: a thread made by the owner or by a bot/coordinator on the team starts trusted.
+    // Threads from outside channels are labelled by their ingress (channel, email).
+    let ingress = match channel {
+        "bot" | "coordinator" => Some(crate::netops::provenance::Trust::Team),
+        "user" | "routine" => Some(crate::netops::provenance::Trust::Owner),
+        _ => None,
+    };
+    if let (Some(trust), Ok(conn)) = (ingress, db.connect()) {
+        crate::netops::provenance::label(&conn, &id, trust, "thread", channel, body.objective.as_deref().unwrap_or(body.title.as_str()));
     }
     if !body.incognito {
         ledger(

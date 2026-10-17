@@ -438,6 +438,19 @@ pub fn record_inbound(db: &DbHandle, b: &BindingRow, ev: &Inbound) -> Result<Rec
             }
         }
     }
+    // Provenance: who sent it. The owner's own handle is `owner`, a person the twin knows is
+    // `contact`, anyone else is a `stranger`. The scanner flags and down-ranks; the floor drops.
+    if ev.kind == InboundKind::Message {
+        if let Some(text) = ev.text.as_deref().filter(|t| !t.is_empty()) {
+            let who = ev.user.as_deref().unwrap_or("");
+            let trust = crate::netops::provenance::sender_trust(&conn, &b.owner, who);
+            let before = crate::netops::provenance::trust_floor(&conn, &b.thread_id);
+            let label = crate::netops::provenance::label(&conn, &b.thread_id, trust, &b.provider, who, text);
+            if label.trust.tainted() && !before.is_some_and(|f| f.tainted()) {
+                crate::thread_routes::enforce_envelope_bg(db, &b.thread_id);
+            }
+        }
+    }
     if let Some(bot) = bot_of_thread(db, &b.thread_id) {
         led(
             db,
@@ -646,7 +659,12 @@ pub async fn send(db: &DbHandle, tx: &dyn ChannelTransport, owner: &str, thread_
     }
     // Autonomy: the owner's level for this bot x channel x person (draft / ask / tell / limits).
     let act = crate::autonomy::Action { owner, bot_id: &bot_id, channel: &b.provider, persons: binding_persons(&b), action: "message", amount_cents: 0 };
-    let aut = crate::autonomy::evaluate(db, &act, false);
+    let aut = crate::autonomy::evaluate_ctx(db, &act, false, &crate::autonomy::Ctx { thread_id: Some(thread_id), text, destination: "" });
+    if let Some(crate::autonomy::Eval { verdict: crate::autonomy::Verdict::Block { reason }, .. }) = &aut {
+        log_unposted(&conn, db, owner, &b, &bot_id, thread_id, &corr, text, "denied", "failed", reason);
+        crate::autonomy::record(db, &act, aut.as_ref().map(|e| e.level.as_str()).unwrap_or("default"), "blocked", reason);
+        return Ok(SendOutcome::Denied(reason.clone()));
+    }
     if let Some(crate::autonomy::Eval { verdict: crate::autonomy::Verdict::Draft { reason }, .. }) = &aut {
         log_unposted(&conn, db, owner, &b, &bot_id, thread_id, &corr, text, "drafted", "pending", reason);
         crate::autonomy::finish(db, &act, aut.as_ref(), "drafted", &corr, text, reason, Some(thread_id), json!({ "correlationId": corr, "text": text }));
@@ -683,7 +701,7 @@ pub async fn send(db: &DbHandle, tx: &dyn ChannelTransport, owner: &str, thread_
                 Some(a) => a,
                 None => {
                     let cx = Cx { owner: owner.into(), thread_id: thread_id.into(), bot_id: bot_id.clone(), generation, session_id, exec: json!({ "vendor": b.provider }) };
-                    let made = create_approval(db, &cx, "allternit", &format!("post to {}", b.provider), None, json!({ "text": text, "channel": b.channel }), Some(&corr)).map_err(|e| e.message)?;
+                    let made = create_approval(db, &cx, "allternit", &format!("post to {}", b.provider), None, json!({ "text": text, "channel": b.channel, "provenance": crate::netops::provenance::latest_tainted(&conn, thread_id) }), Some(&corr)).map_err(|e| e.message)?;
                     if let Some(why) = &aut_hold {
                         crate::autonomy::finish(db, &act, aut.as_ref(), "held", &corr, text, why, Some(thread_id), json!({ "correlationId": corr, "approvalId": made, "text": text }));
                     }

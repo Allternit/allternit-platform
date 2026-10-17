@@ -1021,7 +1021,7 @@ pub(crate) fn create_approval(db: &DbHandle, cx: &Cx, authority: &str, action: &
     )?;
     // The approval card the app already renders; the authority rides along so
     // the card can show the vendor badge.
-    let card = json!({ "type": "gateway_approval", "approvalId": aid, "authority": authority, "threadId": cx.thread_id, "action": action, "vendor": s(&cx.exec, "vendor") });
+    let card = json!({ "type": "gateway_approval", "approvalId": aid, "authority": authority, "threadId": cx.thread_id, "action": action, "vendor": s(&cx.exec, "vendor"), "provenance": detail.get("provenance") });
     let _ = conn.execute(
         "INSERT OR IGNORE INTO cowork_approvals (id, user_id, content, source, dismissed) VALUES (?1, ?2, ?3, ?4, 0)",
         params![aid, cx.owner, card.to_string(), format!("gateway:{authority}")],
@@ -1033,7 +1033,7 @@ pub(crate) fn create_approval(db: &DbHandle, cx: &Cx, authority: &str, action: &
         Some(&cx.session_id),
         "approval.requested",
         ("system", "gateway"),
-        json!({ "approvalId": aid, "authority": authority, "action": action, "remoteRef": remote_ref }),
+        json!({ "approvalId": aid, "authority": authority, "action": action, "remoteRef": remote_ref, "provenance": detail.get("provenance") }),
         None,
     );
     set_thread_status(db, &cx.bot_id, &cx.thread_id, "needs_you", &format!("Approval needed ({authority}): {action}"));
