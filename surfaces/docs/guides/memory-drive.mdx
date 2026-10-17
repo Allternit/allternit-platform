@@ -196,7 +196,8 @@ other places that add to your drive. Each has its own switch:
 - **Your messages to your bots** (on by default). What you send your bots on Telegram, WhatsApp,
   Discord, Slack, Teams, text messages and email. Only messages from you count. Allternit knows
   they're yours because you verified that account or phone number, or because it's your
-  account's email address. What other people send your bots never becomes your memory. Each
+  account's email address. It works whether or not a bot answers in that chat. What other people
+  send your bots never becomes your memory. Each
   memory cites the chat it came from, such as `telegram:chat/…`.
 
   To verify an account, open **Settings → Notifications → Factory approvals on your channels**,
@@ -264,7 +265,7 @@ it's created with a new id, and routines and schedules start paused. To **remove
 select **Delete** and confirm. Bots and agents are archived, other things are deleted, and either way
 the earlier file stays in the ledger's history. A skill's `SKILL.md` can't be deleted here; uninstall
 skills in Customize → Skills.
-Copies in a folder or your own repository are one-way: changes made there are replaced on the next copy.
+Changes made in a folder or repository copy come back too (see **Keep a copy where you want**).
 
 ### Restore from a ledger
 
@@ -291,15 +292,25 @@ choose, updated every hour:
 - **A folder on that computer.** Type its full path, such as `/Users/you/Dropbox` or your iCloud
   Drive folder, and select **Copy here**. Allternit writes an `Allternit` folder inside it, with
   `memory/` and `ledger/`, and keeps it in step. It only changes or removes files it wrote itself.
-  Edits you make in that copy are replaced on the next copy; change your memories in Allternit.
 - **Your own git repository.** Create an empty private repository (GitHub, GitLab, or any host that
   takes HTTPS), paste its HTTPS address and an access token that can push to it, then select
   **Copy to this repository**. Your memories go to the branch `allternit-memory` and your ledger
   to `allternit-ledger`. The token is stored sealed on that computer and never shown again. Paste
   a new one to replace it.
 
-Select **Copy now** to copy right away. Each copy shows when it last worked, or what went wrong and
-how to fix it. Select **Stop copying** to stop; copies already made stay where they are.
+**Changes you make in a copy come back.** Edit, add or delete a file in the folder, or commit to the
+`allternit-memory` or `allternit-ledger` branch, and the next copy brings the change into Allternit.
+It goes through the same rules as editing in Allternit: memory lines are checked, ledger files change
+the real bot or routine, new files create things (paused for routines and schedules), and deleted
+files delete them.
+
+If a file changed **in both places** since the last copy, Allternit keeps its version and saves yours
+beside it: as `….conflict-<time>` in the folder, or on a branch named `allternit-conflicts/…` in your
+repository. Nothing is lost.
+
+Select **Copy now** to copy right away. Each copy shows when it last worked, how many changes it
+brought in, any conflicts, and anything it couldn't bring in and why. Select **Stop copying** to
+stop; copies already made stay where they are.
 
 **Delete forever** removes memories from your drive and its history, but not from copies you
 keep elsewhere. Delete them there yourself, or stop the copy first.

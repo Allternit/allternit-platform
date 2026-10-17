@@ -276,7 +276,18 @@ Copies of the drive and ledger kept elsewhere (`memory_copies.rs`), stored per u
 - `POST /run` saves the ledger and runs the copies now. They also run after each hourly ledger snapshot.
 
 The folder copy writes `<folder>/Allternit/{memory,ledger}/…` and removes only files listed in its
-`.allternit-copy.json`. It never writes through a symlink. The git copy force-pushes the drive to
+`.allternit-copy.json` (path → content hash). It never writes through a symlink.
+
+**Two-way.** Before writing, a run compares the copy with what it last wrote. For a folder that's the
+manifest hashes; for git it's the commits it last pushed (`last_memory`, `last_ledger`), against a
+fetch of the two branches. Changed, added and deleted files go through `memory_copies::apply_inbound`:
+- ledger files through `ledger_edit::edit` / `delete`;
+- memory files as one checked `memory_drive_scopes::apply_for` batch.
+
+A path that also changed in Allternit since the last copy is a conflict. Allternit's version stays; the
+copy's version is written as `<path>.conflict-<time>` in the folder, or its commit is pushed to
+`allternit-conflicts/<branch>-<time>`. `status` reports `applied`, `conflicts` and `failed`.
+Re-saving the same remote keeps `last_*`, so remote edits are never overwritten unseen. The git copy force-pushes the drive to
 `allternit-memory` and the ledger to `allternit-ledger` (force, because "delete forever" rewrites
 history). The token goes to git as an `http.extraHeader` through `GIT_CONFIG_*` environment
 variables, never on the command line or in the URL. Push errors are reported in plain words and
