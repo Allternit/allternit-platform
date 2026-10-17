@@ -102,3 +102,16 @@ All routes below use the existing authenticated computer visibility rules:
 Clipboard and file transfer require this user's active control lease on this device, or this user's active bot desktop take-over. Watching access alone cannot transfer data. Step recording hooks into both direct computer tool calls and structured subtask steps; it never bypasses action policy, lease or approvals.
 
 File uploads use 1 MB chunks so they fit through the phone runtime relay. The runtime checks ownership and active control on every chunk and isolates partial uploads by user, computer, and upload ID. Up to four partial uploads are retained in memory; entries older than ten minutes are pruned on the next upload. No destination file is written until all bytes arrive in order.
+
+## Online, asleep or offline
+
+Settings → Computers shows each paired computer as **Online**, **Asleep** or **Offline**, when it was last seen, and the next routine it is due to run. The same list appears in Settings on the phone layout and the installed phone app.
+
+Your computer tells the cloud it is awake every minute. If it goes quiet, Allternit keeps watching for you, because the cloud is awake when your Mac is not:
+
+- A routine came due more than 10 minutes ago and your computer didn't run it. You get an alert such as "Morning briefing didn't run: your computer is asleep."
+- Texts or other channel messages have waited more than 10 minutes for your computer. You get "3 texts are waiting for your computer."
+- A message could not be delivered for 24 hours and was dropped. This is a critical alert, never a silent drop.
+
+Each alert closes by itself when your computer comes back. If the status can't be loaded, the list shows the computer's last known status instead of guessing.
+

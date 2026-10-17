@@ -681,6 +681,13 @@ pub(crate) async fn deliver_route(state: &Arc<ApiState>, route_id: &str) -> Resu
         let give_up = is_dead(status, attempts, Utc::now() - received_at > chrono::Duration::hours(GIVE_UP_AFTER_HOURS));
         if give_up {
             tracing::warn!(route_id = %route.id, queue_id = id, provider = %route.provider, ?status, attempts, error = ?error, "channel event dead: not delivered to the runtime");
+            // Not a silent drop: tell the owner (critical attention item, resolved when the runtime is back).
+            if let Err(e) = super::runtime_presence::open_alert(
+                &state.db, &route.user_id, &route.runtime_id, "queue_gave_up", "critical",
+                "A message couldn't be delivered to your computer after 24 hours and was dropped.",
+            ).await {
+                tracing::warn!(route_id = %route.id, "couldn't raise the give-up alert: {e}");
+            }
         }
         sqlx::query(
             "UPDATE channel_inbound_queue
