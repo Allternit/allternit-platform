@@ -7,6 +7,7 @@ import { botExecutionBindingSchema } from "@allternit/subscription-fabric-contra
 import { requireScope, type GatewayDeps } from "./server.js";
 import { parseCredential, runWithCallScope } from "../aai/call-scope.js";
 import { defaultAdaptersDir } from "../adapters/registry.js";
+import { isRouteId, routesForAdapterManifest, routesForAgentManifest, type RouteId } from "../routes/registry.js";
 
 /**
  * Which adapter serves a vendor when a binding names none. Accounts and wizard bindings carry the vendor
@@ -120,6 +121,15 @@ export function aaiRouter(deps: GatewayDeps): Router {
     res.json({ providers: await host.providers() });
   });
 
+  /**
+   * §3 conformance, extended per route: after the suite runs, its report is
+   * mapped onto the capability-contract items and recorded per
+   * (vendor, route, appVersion) for every route the adapter implements
+   * (or only ?route=<id> when given). YAML-manifest adapters contribute
+   * provider/version/routes from the registry; AAI-only adapters from the
+   * provider's own capability manifest (version "0.0.0" until adapters
+   * ship versioned manifests).
+   */
   router.post("/aai/conformance/:adapterId", requireScope("tasks:submit"), async (req: Request, res: Response) => {
     if (!host) { res.status(503).json({ error: "aai_host_unavailable" }); return; }
     // `?offline=1`: run against the adapter's shipped offline fixtures (no vendor needed).
@@ -127,6 +137,31 @@ export function aaiRouter(deps: GatewayDeps): Router {
     const report = offline ? await host.offlineConformance(req.params.adapterId, defaultAdaptersDir()) : await host.conformance(req.params.adapterId);
     if (report === null) { res.status(404).json({ error: "no_offline_fixtures" }); return; }
     if (!report) { res.status(404).json({ error: "unknown_adapter" }); return; }
+    const director = deps.routeDirector;
+    if (director) {
+      const yamlManifest = deps.adapterRegistry?.byId(req.params.adapterId)?.manifest;
+      const agentManifest = yamlManifest ? null : await host.providerManifest(req.params.adapterId);
+      const vendor = yamlManifest?.provider ?? agentManifest?.vendor ?? null;
+      const appVersion = yamlManifest?.adapter_version ?? "0.0.0";
+      let routes: RouteId[] = yamlManifest
+        ? routesForAdapterManifest(yamlManifest)
+        : agentManifest
+          ? routesForAgentManifest(agentManifest)
+          : [];
+      const routeQuery = typeof req.query.route === "string" ? req.query.route : undefined;
+      if (routeQuery !== undefined) {
+        if (!isRouteId(routeQuery) || !routes.includes(routeQuery)) {
+          res.status(400).json({ error: "route_not_implemented", adapter: req.params.adapterId, route: routeQuery, implements: routes });
+          return;
+        }
+        routes = [routeQuery];
+      }
+      if (vendor) {
+        for (const route of routes) {
+          director.recordConformance(vendor, route, appVersion, report);
+        }
+      }
+    }
     res.json(report);
   });
 

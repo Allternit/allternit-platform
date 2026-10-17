@@ -209,6 +209,10 @@
       ],
       "decisions": [
         {
+          "on": "2026-10-17",
+          "note": "Deterministic route router for signed-in apps (spec P0 + the Settings API): six routes in a fixed order (android-app -> iphone-app-ictrl -> desktop-app-cdp -> desktop-app-ax -> web -> iphone-app-usb-agent), selected by a pure function of (vendor, eligible routes, order, override) and logged with its reason. A route is eligible only when signed in, online, and every capability-contract item (§3, 7 items) passed the /aai/conformance suite for the CURRENT app version — results stored per (vendor, route, app_version); an app update re-arms ineligibility until the suite re-runs. The chosen route is written into the vendor's binding; the AAI host consults the router only at turn start, so failover is strictly between-turn and a streaming turn never switches; no eligible route answers the typed NO_ROUTE (\"phone offline, no other signed-in route\") — never a weaker fallback. desktop-app-cdp applies only while the shipped app accepts its debug flag unmodified (launch-time probe per app version; never patch/re-sign/inject a vendor binary — otherwise desktop-app-ax or the phone). Settings API: GET /v1/routes + PUT /v1/routes/:vendor/override (400 unless eligible). Phone routes register now but their adapters are a follow-up task: eligible stays false with the failing items until conformance passes — never assumed. Gateway-local: services/subscription-gateway/src/routes/* (registry, contract, select, store, director), migration 0012, test/routes-router.test.ts."
+        },
+        {
           "on": "2026-10-13",
           "note": "Gap closure: website/app products need the person's consent once per account (needs_consent); extra turns on one website/desktop subscription queue in order with a visible status instead of failing; AAI contexts persist across gateway restarts; GET /aai/events/stream (SSE); one broken adapter no longer blocks the rest; Managed Agents streams events and answers custom tools (POST /threads/:id/gateway/tool-result); bots with no allowlist ask before shell, writes and web fetches (GIZZI_BOT_BYPASS_PERMISSIONS=1 restores the old default). Live vendor verification remains an owner-run gate (scripts/e2e/gateway-live-check.sh)."
         },
@@ -226,7 +230,9 @@
         "allternit/docs/gateway/AAI_REST.md",
         "allternit/cmd/allternit-api/src/gateway_connect.rs",
         "allternit/scripts/e2e/gateway-live-check.sh",
-        "allternit/surfaces/docs/guides/bot-setup-picker.mdx"
+        "allternit/surfaces/docs/guides/bot-setup-picker.mdx",
+        "allternit/services/subscription-gateway/src/routes/director.ts",
+        "allternit/surfaces/docs/api/subscription-gateway.mdx"
       ]
     },
     {
