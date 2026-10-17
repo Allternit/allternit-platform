@@ -1,0 +1,83 @@
+---
+title: Sign-in screen
+description: What people see before they sign in to Allternit on the web, in Desktop and on the phone, and how the sign-in stage and rail are built
+---
+
+## What you see
+
+Every place you sign in to Allternit shows the same screen: on the left, a stage that plays through the four main Allternit views; on the right, the sign-in form.
+
+| Where | Page |
+| --- | --- |
+| ai.allternit.com on a computer | `/sign-in` and `/sign-up`: stage on the left, sign-in on the right. On narrower windows the stage sits above the form. |
+| Allternit Desktop | `/sign-in` inside the app, with **Continue in browser**. The first-run welcome screen shows the same stage. |
+| Terminal login (`gizzi login`) | `/terminal/clerk`, the browser page the CLI opens |
+| ai.allternit.com on a phone and the m.allternit.com app | Stage on top, sign-in below it |
+
+### The stage
+
+The stage loops four scenes. Each one is a picture of a real Allternit view as it looks on a new account, and each builds itself when it comes on screen:
+
+1. **Home.** "What's on your mind?", the starter chips and the composer (Chat · Cowork). A request types itself and is sent; Gizzi replies with a plan and a draft document lands beside it. Caption: *Ask once. Gizzi gets to work.*
+2. **Bots.** "What should the team work on?" Gizzi, Drop, Pixel, a ChatGPT dot, Grok and Muse join, each starts a thread, and a "6 threads started" notice appears. Caption: *Your team, assembled.*
+3. **Code.** GIZZI CODE, "Ready to ship something?" A folder is picked, the task is typed, then the session shows the reads, the edit with its diff and "Tests passed". Caption: *Code with the proof attached.*
+4. **ACI.** Allternit Explorer. The computer agent turns on, a calendar opens, Gizzi's cursor books a slot and a "Booked" card appears. Caption: *Agents with a real computer.*
+
+Above the stage, the A://TERNIT lockup shows the view's name (BOTS, CODE, ACI) and a counter (`01 / 04`). Below it are four ticks; the current tick fills while that scene is on screen.
+
+- A scene stays for 4.6 seconds, then the next one slides in from the right.
+- Click anywhere on the stage, use the arrows next to the counter, press a tick, use the left and right arrow keys, or swipe sideways on a phone to move yourself.
+- The stage waits while your mouse is over it, while one of its buttons has keyboard focus, and while the tab is in the background. It carries on from where it paused.
+- With reduced motion turned on, each scene appears finished, nothing slides, and the stage only moves when you ask it to.
+- Screen readers hear the scene's headline and line when you move the stage; the automatic changes are not announced.
+
+The scenes are drawn in the page. They never load your data or call any service, so the screen is safe to show signed out.
+
+### The sign-in form
+
+- The heading is **Sign in to Allternit** (**Create your Allternit account** on `/sign-up`), with one line saying that Gizzi and A:// set up your workspace with you after you sign in.
+- The buttons and fields are the real sign-in service (Clerk). It shows the providers the account system has turned on, then email.
+- Under the form: **New here? Create an account** (or **Already have an account? Sign in**), the four setup steps that follow a first sign-in (Where it runs, Style, Your AI, Everything connected), and the Terms and Privacy Policy links.
+- In Allternit Desktop the form is one button, **Continue in browser**. Your browser opens the sign-in page, and when you finish you come back to the app. If the browser cannot be opened, the error shows under the button.
+- If a build has no sign-in configured, the form says so instead of showing broken buttons.
+
+The screen follows your light or dark theme. The scenes on the stage stay light because they are pictures of the app.
+
+## For developers
+
+The code lives in `allternit-ai/src/components/auth/sign-in-stage/`. It replaced the older `AuthPreview` card.
+
+| File | What it is |
+| --- | --- |
+| `SignInStage.tsx` | The looping stage: state, timer, pause rules, swipe, keyboard, ticks, captions |
+| `scenes.tsx` | The four scenes (`HomeScene`, `BotsScene`, `CodeScene`, `AciScene`) and `STAGE_AVATARS` |
+| `block-type.tsx` | `BlockMark` (the A-block mark) and `PixelWord` (A://TERNIT block type from the brand `block-type/glyphs.json`) |
+| `SignInLayout.tsx` | `SignInLayout` (stage + rail page) and `SignInRail` (heading, form slot, link, steps, legal) |
+| `sign-in-stage.css` | All styles and keyframes, with the motion beat sheet at the top |
+| `usePageScroll.ts` | Lets the sign-in pages scroll as a normal document |
+
+```tsx
+// /sign-in, /sign-up, /terminal/clerk
+<SignInLayout title="Sign in to Allternit" lead="…" alt={<>New here? <a href={signUpUrl}>Create an account</a></>} steps desktopShell={isDesktopShell()} below={<SiteFooter />}>
+  <PlatformSignIn variant="stage" forceRedirectUrl={redirectUrl} signUpUrl={signUpUrl} />
+</SignInLayout>
+
+// phone sign-in (fabric-session App.tsx SignInScreen)
+<SignInStage variant="phone" tone="auto" />
+<SignInRail title="Sign in to Allternit" compact>
+  <PlatformSignIn variant="stage" routing="virtual" … />
+</SignInRail>
+
+// Desktop first-run welcome (OnboardingFlow)
+<SignInStage variant="wide" tone="auto" maxScale={1} className="w-full" />
+```
+
+- **Scaling.** Each scene is laid out on a 694 × 470 canvas and scaled with one CSS variable (`--ast-k`). `wide` scales to the stage's width, up to `maxScale` (1.2). With `fitHeight` (used by `SignInLayout` above 960 px) it also shrinks to fit the window height. `phone` scales to the full width.
+- **Layout.** `SignInLayout` puts the stage and rail side by side above 960 px, stacks them below that, and switches the stage to `phone` and the rail to `compact` below 600 px. In Desktop it leaves room for the window buttons.
+- **Theme.** `tone="auto"` reads `html[data-theme="dark"]`. The rail's colours are CSS variables, and the Clerk form reads the same variables, so it follows the theme too.
+- **Motion.** Each scene piece carries an animation class (`ast-a` pop, `ast-f` fade, `ast-r` rise, `ast-l` slide, `ast-g` grow, `ast-tilt`, `ast-press`, `ast-ring`, `ast-bst` burst) and a start time in `--d`. The animations run while a slide has the `on` class; the leaving slide keeps it so it doesn't rebuild while it slides out. The un-animated state of every piece is the finished scene, which is what reduced motion shows.
+- **Clerk styling.** `PlatformSignIn` and `PlatformSignUp` take `variant="stage"`, which uses `stageClerkAppearance` in `lib/platform-auth-client.tsx` (block social buttons, 44 px buttons and fields, Clerk's header and "Don't have an account?" link hidden). `ClerkProvider` localizes the email label to "Email" with the placeholder `you@company.com`, and multi-provider buttons to "Continue with …". The default `card` variant is unchanged for other callers.
+- **Desktop.** Inside the desktop shell both `PlatformSignIn` and `PlatformSignUp` (stage variant) render **Continue in browser**, which calls `window.allternit.auth.startLogin()`.
+- **Terminal login.** `/terminal/clerk` uses Clerk's virtual routing. Path routing only renders at `/sign-in`, so the form used to mount empty on this page.
+- **Avatars.** The Bots scene uses the real files in `public/avatar-packs/`: `gizzi-youtube/gizzi.png`, `gizzi-youtube/drop.png`, `dot-friends/pixel.webp`, `dot-friends/nimbus.webp` (the ChatGPT dot), `gizzi-brawl/grok.webp` and `gizzi-brawl/muse.webp`. The small activity marks are the real `AllternitOrb`; the lockup is `AProtocolWordmark`.
+- **Tests.** `SignInStage.test.tsx` covers the loop, ticks, prev/next, stage click, arrow keys, swipe, pausing (hover, keyboard focus, hidden tab), reduced motion, announcements and the avatar files. `SignInRail.test.tsx` covers the rail and the Clerk, Desktop and unavailable variants of the form.
