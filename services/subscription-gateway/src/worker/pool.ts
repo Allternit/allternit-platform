@@ -35,7 +35,7 @@ import type {
 import type { AdapterRegistry, LoadedAdapter } from "../adapters/registry.js";
 import type { EventLog } from "../events/log.js";
 import type { Db } from "../store/db.js";
-import { accountHasActiveTasks, getAccount, upsertAccount } from "../store/queries.js";
+import { accountHasActiveTasks, accountHasLiveTasks, getAccount, upsertAccount } from "../store/queries.js";
 import { workerKeyId, type WorkerKey, type WorkerSupervisor } from "./supervisor.js";
 
 export type LaneKey = WorkerKey;
@@ -375,17 +375,18 @@ export class WorkerPool {
 
   /**
    * Run one read-only Memory Drive read on the account's ready page. Waits
-   * for nothing: an account mid-task answers `busy` (a read must never
-   * disturb a running chat), one that isn't signed in answers its health.
+   * for nothing: an account whose page a task is using answers `busy` (a
+   * read must never disturb a running chat; queued or needs-you tasks don't
+   * count), one that isn't signed in answers its health.
    */
   async readForMemory<T>(lane: LaneKey, read: (runtime: LaneRuntime) => Promise<T> | null): Promise<
     { ok: true; value: T } | { ok: false; reason: "busy" | "not_supported" | "not_ready"; health?: SessionHealth | null }
   > {
-    if (accountHasActiveTasks(this.deps.db, lane.account_id)) return { ok: false, reason: "busy" };
+    if (accountHasLiveTasks(this.deps.db, lane.account_id)) return { ok: false, reason: "busy" };
     const runtime = await this.activate(lane);
     const health = this.healthFor(lane);
     if (health !== "ready") return { ok: false, reason: "not_ready", health };
-    if (accountHasActiveTasks(this.deps.db, lane.account_id)) return { ok: false, reason: "busy" };
+    if (accountHasLiveTasks(this.deps.db, lane.account_id)) return { ok: false, reason: "busy" };
     const pending = read(runtime);
     if (!pending) return { ok: false, reason: "not_supported" };
     return { ok: true, value: await pending };
