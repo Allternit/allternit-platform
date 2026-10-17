@@ -97,7 +97,8 @@ class MeshService : Service() {
         val target = replyTo ?: return
         try {
             val msg = Message.obtain(null, MeshMessages.MSG_REPORT)
-            msg.obj = MeshMessages.encodeReport(report)
+            // A String in msg.obj can't be marshalled across processes; a Bundle can.
+            msg.data = android.os.Bundle().apply { putString(MeshMessages.KEY_REPORT, MeshMessages.encodeReport(report)) }
             target.send(msg)
         } catch (e: Exception) {
             // The main process went away (phone server stopped, app updated);

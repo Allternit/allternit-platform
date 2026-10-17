@@ -192,7 +192,7 @@ class MeshManager(
 
     private fun onMeshMessage(msg: Message) {
         if (msg.what != MeshMessages.MSG_REPORT) return
-        val report = (msg.obj as? String)?.let { MeshMessages.decodeReport(it) } ?: return
+        val report = msg.data?.getString(MeshMessages.KEY_REPORT)?.let { MeshMessages.decodeReport(it) } ?: return
         val dropKey = supervisor.onReport(report)
         if (dropKey) {
             // The pre-auth key is single-use: the mesh is running, so drop it.

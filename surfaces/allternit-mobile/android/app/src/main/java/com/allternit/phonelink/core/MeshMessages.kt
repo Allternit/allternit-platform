@@ -33,6 +33,8 @@ object MeshMessages {
     const val EXTRA_REPLY = "com.allternit.phonelink.MESH_REPLY"
     /** Mesh → main: [android.os.Message.obj] is [encodeReport]'d [MeshReport]. */
     const val MSG_REPORT = 1
+    /** Bundle key for the encoded report. Message.obj can't cross processes unless it's Parcelable. */
+    const val KEY_REPORT = "report"
 
     fun encodeStart(p: MeshStartParams): String = listOf(
         "controlUrl" to p.controlUrl,
