@@ -28,6 +28,13 @@ import type { PhoneLinkApp, PhoneLinkStatus } from './phone-link-types.js';
 import { ICTRL_PORT, ictrlStoreKey, type IctrlLike, type IctrlWhoami } from './ictrl-client.js';
 import { AndroidHelperUnavailableError, type AndroidHelper } from './phone-android-helper.js';
 import { findPhoneHost, nodeDiscoveryDeps, type DiscoveryDeps } from './phone-link-discovery.js';
+import {
+  MESH_PENDING_DETAIL,
+  PHONE_LINK_MESH_ENABLED,
+  pollMeshHost,
+  shellQuote,
+  type PhoneLinkMeshDep,
+} from './phone-link-mesh.js';
 
 /** Package ids of the vendor apps Phone Link looks for. */
 export const ANDROID_VENDOR_PACKAGES: Record<string, string> = {
@@ -109,6 +116,10 @@ export interface AndroidLinkRecord {
   deviceName?: string;
   osVersion?: string;
   lanHost?: string;
+  /** `<100.x>:8200` on the user's mesh, saved once the phone reports the join running. */
+  meshHost?: string;
+  /** The mesh join didn't finish during setup; a later setup retries it. Never a failure. */
+  meshPending?: boolean;
   /** Vendor apps found last time. */
   apps?: PhoneLinkApp[];
   pairedAt: string;
@@ -152,6 +163,12 @@ export interface AndroidDriverDeps {
   ictrl: (storeKey: string, host: string) => IctrlLike;
   /** Subnet scan used to find the phone after its address changed. */
   discovery?: DiscoveryDeps;
+  /**
+   * Mesh credentials source for the away-from-home path. Only used when
+   * PHONE_LINK_MESH_ENABLED is on; every failure is non-fatal. The auth key
+   * it returns is never logged or stored.
+   */
+  mesh?: PhoneLinkMeshDep;
   store: AndroidLinkStore;
   clientName?: string;
   now?: () => number;
@@ -343,25 +360,90 @@ export class AndroidDriver implements PhoneLinkDriver {
         this.fail(ctx, 'wifi_unreachable', 'Your phone and this computer need to be on the same Wi-Fi. Connect both, then try again.', `no answer from ${ip}:${ICTRL_PORT} with the paired key`, true);
       }
 
+      // 5½. Away-from-home (development switch): hand the app its mesh
+      // credentials and wait for the join. Never fails setup — a phone that
+      // missed the mesh is still a working LAN phone.
+      const lanHost = `${ip}:${ICTRL_PORT}`;
+      const mesh = await this.tryMeshJoin(ctx, adb, serial, lanHost);
+
       // 6. Which AI apps are on the phone.
       const listed = await lan.call<{ apps?: { package?: string; bundle_id?: string }[] }>('list_apps', {}, 10_000).catch(() => null);
       const apps = androidVendorApps((listed?.apps ?? []).map((app) => app.package ?? app.bundle_id ?? '').filter(Boolean));
 
       // 7. Remember the phone, then the cable can come out.
-      const lanHost = `${ip}:${ICTRL_PORT}`;
       this.deps.store.save({
         deviceId,
         serial,
         deviceName,
         osVersion,
         lanHost,
+        ...(mesh.meshHost || mesh.meshPending ? mesh : {}),
         apps,
         pairedAt: new Date(this.now()).toISOString(),
         helperVersion: helper.manifest?.version,
       });
-      this.set(ctx, 'ready_wifi', 'Connected. You can unplug the cable.', { detail: lanHost, apps, progress: undefined });
+      this.set(ctx, 'ready_wifi', 'Connected. You can unplug the cable.', {
+        detail: mesh.meshPending ? MESH_PENDING_DETAIL : lanHost,
+        apps,
+        progress: undefined,
+      });
     } finally {
       await this.removeForward();
+    }
+  }
+
+  /**
+   * Re-provision the app with the two mesh extras and poll its LAN /whoami
+   * for `mesh_state: 'running'` + a mesh_host (60 s budget; the live join
+   * took < 10 s). Resolves `{ meshHost }` on success and `{ meshPending: true }`
+   * on any failure — not signed in, enroll error, broadcast error, timeout —
+   * so setup always finishes ready_wifi. The auth key goes to the phone
+   * shell and nowhere else: never a log line, never a status field.
+   */
+  private async tryMeshJoin(
+    ctx: DriverContext,
+    adb: AdbCall,
+    serial: string,
+    lanHost: string,
+  ): Promise<{ meshHost?: string; meshPending?: boolean }> {
+    if (!PHONE_LINK_MESH_ENABLED || !this.deps.mesh) return {};
+    let enrollment: { controlUrl: string; authKey: string };
+    try {
+      enrollment = await this.deps.mesh.enroll();
+    } catch {
+      this.log('mesh enrollment unavailable; the phone stays LAN-only for now');
+      return { meshPending: true };
+    }
+    try {
+      // arm_pairing stays off: the phone is already paired, and a stray
+      // armed grant on a mesh-reachable phone is exactly what the app's
+      // viaMesh rules refuse. Re-provisioning keeps the stored mesh settings.
+      await adb(
+        [
+          'shell', 'am', 'broadcast', '-a', PROVISION_ACTION, '-n', `${PHONE_LINK_PACKAGE}/.ProvisionReceiver`,
+          '--ez', 'arm_pairing', 'false', '--ez', 'allow_remote_access', 'true', '--ei', 'listen_port', String(ICTRL_PORT),
+          '--es', 'mesh_control_url', shellQuote(enrollment.controlUrl),
+          '--es', 'mesh_auth_key', shellQuote(enrollment.authKey),
+        ],
+        { serial },
+      );
+      this.check(ctx);
+      const fetchWhoami = (this.deps.discovery ?? nodeDiscoveryDeps).fetchWhoami;
+      const meshHost = await pollMeshHost(fetchWhoami, lanHost, {
+        check: () => this.check(ctx),
+        sleep: (ms) => ctx.sleep(ms),
+        now: () => this.now(),
+      });
+      if (!meshHost) {
+        this.log('mesh join did not report running in time; setup continues without it');
+        return { meshPending: true };
+      }
+      this.log(`mesh join running at ${meshHost}`);
+      return { meshHost };
+    } catch (error) {
+      if (error instanceof SetupStop) throw error;
+      this.log('mesh setup failed; the phone stays LAN-only for now');
+      return { meshPending: true };
     }
   }
 }

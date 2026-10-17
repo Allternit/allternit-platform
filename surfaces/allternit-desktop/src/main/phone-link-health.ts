@@ -27,6 +27,8 @@ export interface LinkedPhone {
   platform: 'ios' | 'android';
   name?: string;
   lanHost?: string;
+  /** `<100.x>:8200` on the user's mesh, saved by setup once the phone's join is running. */
+  meshHost?: string;
   /** Secret-store entry holding this phone's iCTRL key record. */
   storeKey: string;
   /** iOS only: when the free-Apple-ID signature lapses (ISO string). */

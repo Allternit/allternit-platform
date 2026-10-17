@@ -266,6 +266,27 @@ describe('Android Phone Link', () => {
     expect(w.saved).toHaveLength(2);
   });
 
+  it('mesh dep present but the switch off: no enrollment, no mesh broadcast, unchanged flow', async () => {
+    const w = world();
+    let enrolls = 0;
+    const d = deps(w, {
+      mesh: {
+        enroll: async () => {
+          enrolls++;
+          return { controlUrl: 'https://ctl.example:8444', authKey: 'secret-key' };
+        },
+      },
+    });
+    const manager = new PhoneLinkManager({ sleep: instant, android: async () => d });
+    manager.start('android');
+    const ready = await waitFor(manager, 'ready_wifi');
+    expect(ready.detail).toBe('10.0.0.7:8200');
+    expect(enrolls).toBe(0);
+    expect(w.ran.some((c) => c.includes('mesh_control_url'))).toBe(false);
+    expect(w.saved.at(-1)).not.toHaveProperty('meshHost');
+    expect(w.saved.at(-1)).not.toHaveProperty('meshPending');
+  });
+
   it('reports install failures as retryable', async () => {
     const w = world({ installShouldFail: true });
     const status = await waitFor(start(w), 'error');

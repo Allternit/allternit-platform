@@ -31,6 +31,8 @@ import { fileLinkStore } from './phone-link-ios.js';
 import { PhoneLinkBackend, cachedHostResolver, linkedPhoneSource, probeLinkedPhone, rememberLinkedHost, type LinkedPhone } from './phone-link-backend.js';
 import { fileAndroidLinkStore } from './phone-link-android.js';
 import { nodeDiscoveryDeps } from './phone-link-discovery.js';
+import { PHONE_LINK_MESH_ENABLED } from './phone-link-mesh.js';
+import { meshManager } from './mesh-manager.js';
 import { PhoneLinkHealthMonitor } from './phone-link-health.js';
 import type { PhoneLinkDevice } from './phone-link-types.js';
 import { readSecret, writeSecret, deleteSecret } from './secure-store.js';
@@ -193,7 +195,8 @@ class PhoneService {
    * Phone-Linked phones: one iCTRL lane over both link stores. Pure file
    * reads + HTTP clients — no adb download, no processes, so an iPhone-only
    * user pays nothing. Built once. A phone whose saved address went stale is
-   * found again by a LAN scan for its device id (cachedHostResolver).
+   * found again by a LAN scan for its device id (cachedHostResolver), with a
+   * mesh fallback behind the development switch (PHONE_LINK_MESH_ENABLED).
    */
   private ensureLinkedBackend(): PhoneLinkBackend {
     if (!this.linkedBackend) {
@@ -204,7 +207,21 @@ class PhoneService {
         androidStore: fileAndroidLinkStore(path.join(dir, 'phone-link-android.json')),
       };
       const source = linkedPhoneSource(stores);
-      const resolveHost = cachedHostResolver({ discovery: nodeDiscoveryDeps, remember: rememberLinkedHost(stores) });
+      // SECURITY: phones go on the mesh only behind the development switch;
+      // without meshProxy the resolver never dials a mesh address.
+      const resolveHost = cachedHostResolver({
+        discovery: nodeDiscoveryDeps,
+        remember: rememberLinkedHost(stores),
+        ...(PHONE_LINK_MESH_ENABLED
+          ? {
+              meshProxy: async (meshHost: string) => {
+                const url = await meshManager.proxyFor(`http://${meshHost}`);
+                // The lane speaks to a loopback host, not a URL.
+                return url.replace(/^https?:\/\//, '').replace(/\/$/, '');
+              },
+            }
+          : {}),
+      });
       const client = (phone: LinkedPhone, host: string) =>
         new IctrlClient({ host, secrets, storeKey: phone.storeKey, logger: (m) => log.info(m) });
       const health = new PhoneLinkHealthMonitor({

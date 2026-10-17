@@ -156,8 +156,13 @@ export interface IctrlKeyRecord {
 export interface IctrlWhoami {
   device_id: string;
   name?: string;
+  platform?: string;
   protocol_version?: number;
   server_version?: string;
+  /** Mesh join state, on helpers that support it (`stopped|starting|running|needs_login|error:<reason>`). */
+  mesh_state?: string;
+  /** `<100.x>:8200` while the mesh join is running, else null. */
+  mesh_host?: string | null;
 }
 
 /** The parts of IctrlClient the phone-link drivers use (faked in tests). */
