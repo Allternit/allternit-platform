@@ -3,7 +3,6 @@ title: "Talk to your bots"
 description: "Voice in any session on Allternit Desktop, ai.allternit.com and the Allternit phone app: quick voice, full-screen voice, where voice runs, and listening in on phone calls."
 ---
 
-
 You can talk to a bot instead of typing, in any session. What you say becomes a normal message in the thread, so the bot's tools, approvals and memory work exactly as they do when you type. The bot's reply is read aloud while it appears on screen.
 
 Voice works the same on Allternit Desktop, on ai.allternit.com, and in the Allternit phone app (m.allternit.com).
@@ -12,6 +11,8 @@ Voice works the same on Allternit Desktop, on ai.allternit.com, and in the Allte
 
 1. In a session, with the message box empty, press the **voice** button (the waveform) next to Send.
 2. The message box turns into the voice bar. Start talking.
+
+The first time you start voice — from the voice button, a bot's **Talk** button, or full-screen — a short sheet explains what voice mode is: where it runs, that the microphone is needed, that Allternit Cloud voice uses plan minutes, and that you can talk any time to interrupt. It shows once; **Choose where voice runs** opens Settings › Voice from it.
 
 The bar shows:
 
@@ -55,9 +56,13 @@ On-device voice runs in Allternit Desktop. In a web browser or the phone app, vo
 
 The first time you use on-device voice, Allternit Desktop downloads a voice pack (about 100 MB for the Light pack). This screen shows each pack's size, whether it's installed, and download progress. **Get Accurate pack** downloads a larger pack that understands speech better. If the voice engine isn't installed yet, the screen says so.
 
+### Voice in your browser
+
+On the web app and the phone app, **This device** runs the voice engine inside the browser tab. The first time, it downloads the voice models once (about 420 MB: about 45 MB for listening and 378 MB for the voice), checks them against published checksums and keeps them in your browser, so later sessions start quickly and work offline. **Remove downloaded models** frees the space. Your audio stays in the tab. **Automatic** only uses it when the models are already downloaded and your computer keeps up, and never on phones unless you choose **This device**; otherwise Allternit Cloud does the talking. The in-browser voice engine includes GPL-3.0 code (espeak-ng); its source is at https://github.com/Allternit/allternit-tts.
+
 ### Voice
 
-Pick how your bots sound. Press the play button next to a voice to hear a sample. Custom voices will need the speaker's recorded, written permission on file; they aren't available yet.
+Pick how your bots sound. Voices have plain names that say how they sound — Gentle, Crisp, Calm, Warm — with the engine's voice id in small type under each. Press a voice's **Preview** button to hear one short sentence through the voice engine on this device; on the web the first preview downloads the voice models first (this happens once). Only one preview plays at a time. Custom voices (made from a recording with the speaker's recorded, written permission) run on Allternit Cloud and can't be previewed here yet.
 
 ### Listening
 
@@ -66,7 +71,7 @@ Pick how your bots sound. Press the play button next to a voice to hear a sample
 
 ### Cloud Voice this month
 
-Plus includes 100 Cloud Voice minutes a month, then $0.08 a minute. See your usage under **Settings › Usage**.
+Plus includes 100 Cloud Voice minutes a month, then $0.08 a minute. This card shows how many you've used this calendar month (UTC). The Free plan doesn't include Cloud Voice; use voice on this device instead.
 
 ## Privacy
 
@@ -108,4 +113,3 @@ Allternit says at the start of every call that the caller is talking to an AI, a
 - [Voice engine (developer guide)](/surfaces/voice)
 - [Calls and texts in threads](/guides/calls-and-texts)
 - [Messaging channels](/guides/messaging-channels)
-
