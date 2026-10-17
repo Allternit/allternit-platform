@@ -41,8 +41,12 @@ import { USBA_MDNS_TYPE } from './phone-usb-agent-protocol.js';
 import { loadFirmware, type BundledFirmware } from './phone-usb-agent-firmware.js';
 import { grayFromBgra, type Gray } from './phone-usb-agent-vision.js';
 import type { Calibration } from './phone-usb-agent-pointer.js';
-import { IctrlClient, type SecretStore } from './ictrl-client.js';
+import { IctrlClient, ictrlStoreKey, type SecretStore } from './ictrl-client.js';
 import { fileLinkStore } from './phone-link-ios.js';
+import { IosRecoveryScheduler, type IosRecoveryDeps } from './phone-ios-recovery.js';
+import { createGoIosExec, createGoIosSpawn, ensureDdi, ensureGoIos, GoIos } from './phone-goios.js';
+import { ensureRunnerArtifacts, pickSigner } from './phone-ios-runner.js';
+import { readPairRecord, startLoopbackForward } from './phone-usbmux.js';
 import { hasLinkedPhones } from './phone-link-stores.js';
 import { PhoneLinkBackend, cachedHostResolver, linkedPhoneSource, probeLinkedPhone, rememberLinkedHost, type LinkedPhone } from './phone-link-backend.js';
 import { fileAndroidLinkStore } from './phone-link-android.js';
@@ -186,6 +190,8 @@ class PhoneService {
   private artemis: ArtemisManager | null = null;
   private runner: PhoneToolRunner | null = null;
   private linkedBackend: PhoneLinkBackend | null = null;
+  private linkedHealth: PhoneLinkHealthMonitor | null = null;
+  private iosRecovery: IosRecoveryScheduler | null = null;
   private gatewayReady: Promise<void> | null = null;
   private gatewayClose: (() => void) | null = null;
   private gatewayFile = path.join(os.homedir(), '.allternit', 'phone-gateway.json');
@@ -256,9 +262,69 @@ class PhoneService {
         probe: (phone) => probeLinkedPhone(phone, client, resolveHost),
         logger: (m) => log.info(m),
       });
+      this.linkedHealth = health;
       this.linkedBackend = new PhoneLinkBackend({ phones: source, client, resolveHost, health, logger: (m) => log.info(m) });
     }
     return this.linkedBackend;
+  }
+
+  /**
+   * The iPhone recovery pass (phone-ios-recovery.ts): re-signs a linked
+   * helper before the free-Apple-ID signature lapses, and remounts the
+   * developer image + relaunches the helper when a restarted iPhone comes
+   * back on the cable — zero clicks. Started at launch; each pass costs one
+   * small JSON read when no iPhone is linked, so it stays free for everyone
+   * else, and go-ios/the runner artifacts are only resolved after a link
+   * record exists.
+   */
+  private ensureIosRecovery(): void {
+    if (this.iosRecovery || process.platform !== 'darwin') return;
+    const dir = this.dir();
+    const store = fileLinkStore(path.join(dir, 'phone-link-ios.json'));
+    let built: Promise<IosRecoveryDeps | null> | null = null;
+    const deps = () => {
+      if (store.all().length === 0) return Promise.resolve(null); // no linked iPhone: never touch go-ios
+      built ??= (async (): Promise<IosRecoveryDeps | null> => {
+        try {
+          const bin = await ensureGoIos(dir);
+          // go-ios keeps its tunnel identity (selfIdentity.plist) here; default would be the cwd.
+          const tunnelDir = path.join(dir, 'go-ios', 'tunnel-identity');
+          fs.mkdirSync(tunnelDir, { recursive: true, mode: 0o700 });
+          const goios = new GoIos(createGoIosExec(bin), createGoIosSpawn(bin, tunnelDir), tunnelDir);
+          const secrets: SecretStore = { get: readSecret, set: writeSecret, delete: deleteSecret };
+          return {
+            goios,
+            artifacts: () => ensureRunnerArtifacts(dir),
+            signer: pickSigner(app.isPackaged),
+            ictrl: (udid, host) => new IctrlClient({ host, secrets, storeKey: ictrlStoreKey(udid), logger: (m) => log.info(m) }),
+            forward: (udid, port) => startLoopbackForward(udid, port),
+            ddiDir: async () => {
+              const ddi = path.join(dir, 'ddi');
+              await ensureDdi(ddi);
+              return ddi;
+            },
+            readPairRecord: (udid) => readPairRecord(udid),
+            store,
+            workDir: path.join(dir, 'ictrl-work'),
+            onRecovered: (udid, kind) => {
+              // Health is evidence-based: a recovered phone is re-probed now,
+              // so SIGNATURE_RENEWAL_REQUIRED / DEVELOPER_IMAGE_REMOUNT_REQUIRED
+              // clear as soon as the helper truly answers again.
+              const deviceId = store.load(udid)?.deviceId ?? udid;
+              log.info(`[Phone] iPhone recovery (${kind}) succeeded for ${store.load(udid)?.deviceName ?? udid}; refreshing health`);
+              void this.linkedHealth?.check(deviceId).catch(() => {});
+            },
+            logger: (m) => log.info(m),
+          };
+        } catch (error) {
+          log.warn('[Phone] iPhone recovery tooling unavailable:', error);
+          return null;
+        }
+      })();
+      return built;
+    };
+    this.iosRecovery = new IosRecoveryScheduler({ deps, logger: (m) => log.info(m) });
+    this.iosRecovery.start();
   }
 
   /** Linked phones with health, for phone-link:devices (Settings → Computers → Phones). */
@@ -656,6 +722,7 @@ class PhoneService {
 
   /** Called at launch: only brings a lane up if something was ever paired on it (zero cost for everyone else). */
   async initIfPaired(): Promise<void> {
+    this.ensureIosRecovery();
     const dir = path.join(app.getPath('userData'), 'phone');
     // Phone-Linked phones (iPhone helper, Android app) are reached through the
     // same gateway + MCP shim; without this, bots had no phone tools after a
@@ -707,6 +774,7 @@ class PhoneService {
   }
 
   shutdown(): void {
+    this.iosRecovery?.stop();
     if (this.linkSyncTimer) clearInterval(this.linkSyncTimer);
     this.linkSyncTimer = null;
     for (const [serial, socket] of this.linkSockets) {

@@ -50,6 +50,7 @@ interface World {
   key: boolean;
   installed: string[];
   launches: string[];
+  pushes: { bundleId: string; remote: string }[];
   runtests: RunTestOptions[];
   tunnels: ReturnType<typeof proc>[];
   forwardClosed: number;
@@ -71,6 +72,7 @@ function world(over: Partial<World> = {}): World {
     key: false,
     installed: [],
     launches: [],
+    pushes: [],
     runtests: [],
     tunnels: [],
     forwardClosed: 0,
@@ -124,7 +126,9 @@ function fakeGoIos(w: World): GoIosLike {
       return { ok: true };
     },
     kill: async () => {},
-    pushToApp: async () => {},
+    pushToApp: async (_u, bundleId, _local, remote) => {
+      w.pushes.push({ bundleId, remote });
+    },
     runtest: (opts) => {
       w.runtests.push(opts);
       w.cableSession = true;
@@ -172,6 +176,7 @@ function deps(w: World, signer: RunnerSigner, extra: Partial<IosDriverDeps> = {}
     ictrl: fakeIctrl(w),
     forward: async () => ({ port: 50123, close: async () => void w.forwardClosed++ }),
     ddiDir: async () => '/data/ddi',
+    readPairRecord: async () => Buffer.from('plist'),
     store: {
       load: (u) => records.get(u) ?? null,
       all: () => [...records.values()],
@@ -281,7 +286,9 @@ describe('iPhone Phone Link', () => {
     expect(w.launches.at(-1)).toBe(ARTIFACTS.manifest.runner.bundleId);
     expect(w.tunnels.every((t) => t.stopped)).toBe(true);
     expect(w.forwardClosed).toBe(1);
-    expect(w.saved.at(-1)).toMatchObject({ udid: 'U', lanHost: LAN, runnerBundleId: ARTIFACTS.manifest.runner.bundleId });
+    expect(w.saved.at(-1)).toMatchObject({ udid: 'U', lanHost: LAN, runnerBundleId: ARTIFACTS.manifest.runner.bundleId, appleId: 'eoj@example.com' });
+    // Setup leaves the pairing file for the phone-side Mount-without-a-Mac flow.
+    expect(w.pushes).toEqual([{ bundleId: ARTIFACTS.manifest.host.bundleId, remote: 'Library/Application Support/Pairing/pairingFile.plist' }]);
   });
 
   it('reconnects a linked phone over Wi-Fi with no cable, no signing, no install', async () => {
