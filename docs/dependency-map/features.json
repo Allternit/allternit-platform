@@ -1234,6 +1234,9 @@
         "allternit/surfaces/allternit-desktop",
         "allternit/hardware/usb-agent",
         "allternit-ai/src/components/computers",
+        "allternit-ai/src/components/phone-link",
+        "allternit-ai/src/components/onboarding",
+        "allternit-ai/src/views/settings",
         "allternit-ai/src/lib"
       ],
       "decisions": [
@@ -1260,11 +1263,17 @@
         {
           "on": "2026-10-16",
           "note": "Phone Link (SPEC-signed-in-apps-routing): bots use the AI apps already signed in on the user's own phone instead of vendor tokens (Sign in with ChatGPT removed, #1584). Desktop main state machine phone-link.ts + window.allternit.phoneLink IPC; Android USB to Wi-Fi in main, iPhone via an iCTRL fork set up over the cable is next. UI owned by the setup-flow track (onboarding 'Your AI' step + PhoneLinkSetup window)."
+        },
+        {
+          "on": "2026-10-16",
+          "note": "Phone Link setup UI (ai, PhoneLinkSetup / PhoneLinkPanel / usePhoneLink): one screen per backend state with Eoj's per-state copy, Apple ID and 2FA forms that clear after submit and never log, a highlighted 'Turn on Developer Mode?' popup callout after the restart, and a result card listing each app's sign-in state. iPhone has no 'Coming soon': an unfinished backend step is a plain error. Opened from Settings > Subscriptions, Settings > Computers > Phones and onboarding Your AI ('Use the apps on your devices'; done only at ready_wifi). Web, phone layout and PWA show 'Set up from Allternit Desktop'."
         }
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/phone-for-your-bot.mdx",
         "allternit/surfaces/docs/guides/usb-agent.mdx",
+        "allternit/surfaces/docs/guides/phone-link.mdx",
+        "allternit-ai/src/components/phone-link/PhoneLinkSetup.tsx",
         "allternit/hardware/usb-agent/README.md",
         "allternit/surfaces/allternit-desktop/src/main/phone-tools.ts",
         "allternit/surfaces/allternit-desktop/src/main/phone-usb-agent.ts"
