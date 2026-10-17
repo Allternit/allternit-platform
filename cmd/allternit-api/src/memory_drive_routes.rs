@@ -1020,8 +1020,16 @@ async fn put_copies(State(state): State<Arc<AppState>>, Extension(user): Extensi
                 None
             } else {
                 let url = copies::check_remote(&url)?;
-                let token = c.git.as_ref().filter(|g| g.url == url).map(|g| g.token.clone()).unwrap_or_default();
-                Some(copies::GitCopy { url, token, status: Default::default() })
+                // Same repository: keep the token and what was last pushed, so
+                // changes made there since still come back instead of being overwritten.
+                let same = c.git.as_ref().filter(|g| g.url == url);
+                Some(copies::GitCopy {
+                    url: url.clone(),
+                    token: same.map(|g| g.token.clone()).unwrap_or_default(),
+                    last_memory: same.and_then(|g| g.last_memory.clone()),
+                    last_ledger: same.and_then(|g| g.last_ledger.clone()),
+                    ..Default::default()
+                })
             };
         }
         if let (Some(token), Some(g)) = (b.git_token, c.git.as_mut()) {

@@ -1097,16 +1097,17 @@ pub async fn accept_events_with<R: crate::thread_routes::ThreadRuntime>(
             }
         }
         let routed = route_inbound(&st.db, rt, acct, tx.provider(), &e).await;
+        // The owner's own words grow their Memory Drive (Settings → Memory →
+        // Sources), whether or not a bot answers in this chat; never on a replay.
+        if from_owner && routed.as_ref().is_ok_and(|r| r.recorded == Recorded::New) {
+            if let Some(said) = e.text.as_deref() {
+                crate::memory_capture::owner_channel_turn(&st.db, &acct.owner, &crate::memory_capture::channel_label(tx.provider(), &e.channel), said);
+            }
+        }
         // Files kept for a message that was not recorded (a replay) are dropped, not left behind.
         crate::channel_attachments::discard_kept(tx.provider(), &e.remote_id);
         match routed {
             Ok(Routed { binding: Some(b), turn: Some((session, bot, text)), speaker, person, .. }) => {
-                // The owner's own words grow their Memory Drive (Settings → Memory → Sources).
-                if from_owner {
-                    if let Some(said) = e.text.as_deref() {
-                        crate::memory_capture::owner_channel_turn(&st.db, &acct.owner, &crate::memory_capture::channel_label(tx.provider(), &e.channel), said);
-                    }
-                }
                 let t = AcceptedTurn { binding: b, remote_id: e.remote_id.clone(), tx: tx.clone(), session, bot, text, speaker, person };
                 set_turn_state(&st.db, &t.binding.id, &t.remote_id, &turn_json(&t, "queued"));
                 turns.push(t);
@@ -2225,6 +2226,29 @@ mod tests {
             .unwrap()
             .query_row("SELECT json_extract(detail_json, '$.turn.state') FROM channel_message_log WHERE direction = 'inbound' AND remote_id = ?1", params![remote_id], |r| r.get(0))
             .unwrap()
+    }
+
+    #[tokio::test]
+    async fn the_owners_messages_are_captured_even_without_a_bot_and_others_never_are() {
+        let (st, acct) = setup("capture", &json!({ "botToken": "t" }).to_string(), "telegram", None).await;
+        let conn = st.db.connect().unwrap();
+        conn.execute("UPDATE provider_account_bindings SET sender_policy = 'anyone', allowed_senders = '[]' WHERE id = 'acct-1'", []).unwrap();
+        conn.execute(
+            "INSERT INTO factory_owner_identities (account_id, channel, owner, identity, verified_at) VALUES ('acct-1', 'telegram', ?1, '9001', '2026-10-17')",
+            params![acct.owner],
+        )
+        .unwrap();
+        let tx = Arc::new(RecordingTelegram::default());
+        let captured = |st: &Arc<AppState>| -> Vec<(String, String)> {
+            let c = st.db.connect().unwrap();
+            let mut q = c.prepare("SELECT source, content FROM memory_observations WHERE source LIKE 'telegram:%' ORDER BY timestamp").unwrap();
+            q.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(|r| r.unwrap()).collect()
+        };
+        let mine = tg(21, 9001, "My favorite test color is teal");
+        accept_events_with(&st, &Rt, &acct, tx.clone(), vec![mine.clone()], Default::default()).await;
+        accept_events_with(&st, &Rt, &acct, tx.clone(), vec![mine], Default::default()).await; // replay
+        accept_events_with(&st, &Rt, &acct, tx.clone(), vec![tg(22, 9002, "I am someone else")], Default::default()).await;
+        assert_eq!(captured(&st), vec![("telegram:chat/9001".to_string(), "My favorite test color is teal".to_string())]);
     }
 
     #[tokio::test]

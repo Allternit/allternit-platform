@@ -600,3 +600,75 @@ fn agent_folder_sync_is_repeatable() {
     std::fs::write(home.path().join(".hermes/memories/USER.md"), "Lives in Saint Paul§Has a dog§Plays piano").unwrap();
     assert_eq!(crate::memory_capture::sync_agent_folders(&f.db, "u1", home.path()), 1);
 }
+
+/// Two-way copies: a change made in the folder or the git remote comes back
+/// into Allternit; a change made in both places keeps Allternit's version and
+/// saves the copy's beside it.
+#[test]
+fn copies_bring_changes_back_and_keep_conflicts() {
+    let f = fixture();
+    let skills = tempfile::tempdir().unwrap();
+    std::env::set_var("ALLTERNIT_LEDGER_SKILLS_DIR", skills.path());
+    crate::memory_drive_text_import::apply(&f.db, "u1", "- Likes tea", "chatgpt", None).unwrap();
+    let conn = f.db.connect().unwrap();
+    conn.execute(
+        "INSERT INTO routines (id,user_id,name,status,schedule_type,schedule_expression,config) VALUES ('rt_1','u1','Daily','paused','cron','0 9 * * *','{\"prompt\":\"Brief me\"}')",
+        [],
+    )
+    .unwrap();
+    crate::ledger::snapshot(&f.db, "u1", "Save").unwrap();
+
+    // ── folder ──
+    let folder = tempfile::tempdir().unwrap();
+    let mut c = crate::memory_copies::Copies::default();
+    c.folder = Some(crate::memory_copies::FolderCopy { path: folder.path().to_string_lossy().into(), status: Default::default() });
+    crate::memory_copies::store(&conn, "u1", &c).unwrap();
+    crate::memory_copies::run(&f.db, "u1").unwrap();
+    let base = folder.path().join("Allternit");
+    let rt_path = std::fs::read_dir(base.join("ledger/routines")).unwrap().flatten().next().unwrap().path();
+    let mut rt: serde_json::Value = serde_json::from_slice(&std::fs::read(&rt_path).unwrap()).unwrap();
+    rt["status"] = "active".into();
+    std::fs::write(&rt_path, serde_json::to_vec_pretty(&rt).unwrap()).unwrap();
+    let out = crate::memory_copies::run(&f.db, "u1").unwrap();
+    let st = out.folder.unwrap().status;
+    assert_eq!(st.applied.len(), 1, "{st:?}");
+    assert!(st.conflicts.is_empty() && st.failed.is_empty(), "{st:?}");
+    assert_eq!(conn.query_row("SELECT status FROM routines WHERE id='rt_1'", [], |r| r.get::<_, String>(0)).unwrap(), "active");
+
+    // Changed in both places: Allternit wins, the folder's version is kept beside it.
+    conn.execute("UPDATE routines SET name='Daily brief' WHERE id='rt_1'", []).unwrap();
+    crate::ledger::snapshot(&f.db, "u1", "Rename").unwrap();
+    let rt_path = std::fs::read_dir(base.join("ledger/routines")).unwrap().flatten().map(|e| e.path()).find(|p| !p.to_string_lossy().contains(".conflict-")).unwrap();
+    let mut rt: serde_json::Value = serde_json::from_slice(&std::fs::read(&rt_path).unwrap()).unwrap();
+    rt["status"] = "paused".into();
+    std::fs::write(&rt_path, serde_json::to_vec_pretty(&rt).unwrap()).unwrap();
+    let st = crate::memory_copies::run(&f.db, "u1").unwrap().folder.unwrap().status;
+    assert_eq!(st.conflicts.len(), 1, "{st:?}");
+    assert_eq!(conn.query_row("SELECT status FROM routines WHERE id='rt_1'", [], |r| r.get::<_, String>(0)).unwrap(), "active");
+    let conflict_files: Vec<_> = std::fs::read_dir(base.join("ledger/routines")).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().contains(".conflict-")).collect();
+    assert_eq!(conflict_files.len(), 1);
+
+    // ── git (a local bare repo stands in for the HTTPS remote) ──
+    let remote = tempfile::tempdir().unwrap();
+    let remote_git = remote.path().join("r.git");
+    std::process::Command::new("git").args(["init", "--bare", "--quiet"]).arg(&remote_git).status().unwrap();
+    let mut c = crate::memory_copies::load(&conn, "u1");
+    c.folder = None;
+    c.git = Some(crate::memory_copies::GitCopy { url: remote_git.to_string_lossy().into(), ..Default::default() });
+    crate::memory_copies::store(&conn, "u1", &c).unwrap();
+    crate::memory_copies::run(&f.db, "u1").unwrap();
+    // Someone edits the ledger branch on the remote.
+    let work = remote.path().join("work");
+    let git = |args: &[&str]| assert!(std::process::Command::new("git").current_dir(&work).args(args).status().unwrap().success(), "{args:?}");
+    std::process::Command::new("git").args(["clone", "--quiet", "-b", "allternit-ledger"]).arg(&remote_git).arg(&work).status().unwrap();
+    let rel = std::fs::read_dir(work.join("routines")).unwrap().flatten().next().unwrap().path();
+    let mut rt: serde_json::Value = serde_json::from_slice(&std::fs::read(&rel).unwrap()).unwrap();
+    rt["schedule_expression"] = "0 7 * * *".into();
+    std::fs::write(&rel, serde_json::to_vec_pretty(&rt).unwrap()).unwrap();
+    git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "Earlier"]);
+    git(&["push", "-q", "origin", "allternit-ledger"]);
+    let st = crate::memory_copies::run(&f.db, "u1").unwrap().git.unwrap().status;
+    assert_eq!(st.applied.len(), 1, "{st:?}");
+    assert_eq!(conn.query_row("SELECT schedule_expression FROM routines WHERE id='rt_1'", [], |r| r.get::<_, String>(0)).unwrap(), "0 7 * * *");
+    std::env::remove_var("ALLTERNIT_LEDGER_SKILLS_DIR");
+}
