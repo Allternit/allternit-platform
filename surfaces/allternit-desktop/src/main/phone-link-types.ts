@@ -23,8 +23,9 @@ export type PhoneLinkState =
   | 'two_factor'
   | 'developer_mode'
   | 'waiting_for_reboot'
-  | 'trust_certificate'
   | 'installing'
+  // After installing: the certificate only shows in Settings once the helper is on the phone.
+  | 'trust_certificate'
   // Android
   | 'usb_debugging'
   | 'pairing'
