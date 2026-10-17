@@ -44,9 +44,27 @@ function alreadyStaged() {
   }
 }
 
+/** Where cargo actually puts this crate's output (a parent .cargo/config can move it to the repo root). */
+function cargoMetadataTarget() {
+  const r = spawnSync('cargo', ['metadata', '--format-version', '1', '--no-deps', '--manifest-path', path.join(crateDir, 'Cargo.toml')], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+  });
+  try {
+    return r.status === 0 ? JSON.parse(r.stdout).target_directory : null;
+  } catch {
+    return null;
+  }
+}
+
 function findBuilt() {
-  // CARGO_TARGET_DIR first, then the crate's own target/ (its own workspace).
-  for (const candidate of cargoBinaryCandidates(crateDir, name, { releaseOnly: true })) {
+  // cargo's own answer first, then CARGO_TARGET_DIR, then the crate's target/.
+  const fromMetadata = cargoMetadataTarget();
+  const candidates = [
+    ...(fromMetadata ? [path.join(fromMetadata, 'release', name)] : []),
+    ...cargoBinaryCandidates(crateDir, name, { releaseOnly: true }),
+  ];
+  for (const candidate of candidates) {
     if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
   }
   return null;
