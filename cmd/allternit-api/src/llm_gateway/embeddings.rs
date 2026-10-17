@@ -3,28 +3,34 @@
 //! `POST /v1/embeddings` — generate vector embeddings for one or more input
 //! texts. Mounted under `/v1` by the LLM gateway router.
 //!
-//! When a configured embeddings provider is available, requests are proxied
-//! to it. Otherwise, a deterministic hash-based embedding is generated
-//! locally for development and testing.
+//! When `ALLTERNIT_GATEWAY_EMBED_URL` names an OpenAI-compatible embeddings
+//! backend (full base URL including `/v1`), requests are validated and
+//! proxied to it transparently — status, body, model id, and usage all come
+//! from the provider. Unset (the default) keeps the endpoint in its safe
+//! unconfigured state.
 //!
-//! Dev escape hatch: the local fake embedding is only returned when
-//! `ALLTERNIT_GATEWAY_ALLOW_FAKE_PROVIDERS=1` is set (dev machines, tests).
-//! Without it — the default — the endpoint returns HTTP 501 with code
-//! `allternit.not_configured`, because silently billing for hash-based fake
-//! embeddings on a production surface is never acceptable.
+//! Dev escape hatch: without a configured provider, a deterministic
+//! hash-based embedding is generated locally for development and testing,
+//! but ONLY when `ALLTERNIT_GATEWAY_ALLOW_FAKE_PROVIDERS=1` is set (dev
+//! machines, tests). Without either configuration the endpoint returns
+//! HTTP 501 with code `allternit.not_configured`, because silently billing
+//! for hash-based fake embeddings on a production surface is never
+//! acceptable.
 
 use axum::{
+    body::Body,
     extract::{Extension, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     Json,
 };
+use base64::{engine::general_purpose, Engine as _};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
-use base64::{engine::general_purpose, Engine as _};
+use std::time::Duration;
 
 use crate::AppState;
 
@@ -33,8 +39,33 @@ use super::{
     translate::{error_code, OpenAiErrorResponse},
 };
 
+/// Env var naming the OpenAI-compatible embeddings backend the gateway
+/// proxies to, e.g. `http://127.0.0.1:8080/v1`. Unset or empty keeps the
+/// endpoint unconfigured (501), matching the historical default.
+const EMBED_PROVIDER_URL_ENV: &str = "ALLTERNIT_GATEWAY_EMBED_URL";
+
+/// Upstream embeddings calls get a generous but bounded timeout: embedding
+/// batches are compute-bound on the backend and can take tens of seconds.
+const EMBED_PROVIDER_TIMEOUT: Duration = Duration::from_secs(60);
+
 /// Env var that re-enables fake provider output (dev only). See module header.
 const ALLOW_FAKE_PROVIDERS_ENV: &str = "ALLTERNIT_GATEWAY_ALLOW_FAKE_PROVIDERS";
+
+/// Resolve the configured embeddings backend, if any. Trailing slashes are
+/// trimmed so `upstream_embeddings_url` can append cleanly. `env_value` is
+/// injected so tests stay deterministic without touching process-wide
+/// environment.
+fn resolve_provider_url(env_value: Option<&str>) -> Option<String> {
+    env_value
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(|v| v.trim_end_matches('/').to_string())
+}
+
+/// `{base}/embeddings` for an OpenAI-compatible base URL.
+fn upstream_embeddings_url(base: &str) -> String {
+    format!("{}/embeddings", base.trim_end_matches('/'))
+}
 
 /// Gatekeeper for the no-provider fallback: returns `Some(501
 /// allternit.not_configured)` unless the fake-provider escape hatch is set.
@@ -70,7 +101,7 @@ pub struct CreateEmbeddingsRequest {
 }
 
 /// Input can be a single string or an array of strings.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum EmbeddingInput {
     Single(String),
@@ -161,6 +192,78 @@ fn estimate_tokens(text: &str) -> u64 {
     (text.len() as u64 + 3) / 4
 }
 
+// ─── Provider proxy ─────────────────────────────────────────────────────────
+
+/// Forward a validated embeddings request to the configured
+/// OpenAI-compatible backend and pass its response through transparently —
+/// status code and body (data, model id, usage) are the provider's own.
+///
+/// The `user` field is deliberately not forwarded: end-user identifiers
+/// stay on this gateway.
+async fn proxy_embeddings(provider_base: &str, body: &CreateEmbeddingsRequest) -> Response {
+    let client = match reqwest::Client::builder()
+        .timeout(EMBED_PROVIDER_TIMEOUT)
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return OpenAiErrorResponse::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("embeddings provider client init failed: {e}"),
+                "internal_error",
+                None,
+                Some(error_code::INTERNAL_ERROR),
+            )
+            .into_response();
+        }
+    };
+
+    let mut payload = json!({
+        "model": body.model,
+        "input": body.input,
+    });
+    if let Some(fmt) = &body.encoding_format {
+        payload["encoding_format"] = json!(fmt);
+    }
+    if let Some(d) = body.dimensions {
+        payload["dimensions"] = json!(d);
+    }
+
+    let resp = match client
+        .post(upstream_embeddings_url(provider_base))
+        .json(&payload)
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(error = %e, provider = %provider_base, "embeddings provider unreachable");
+            return OpenAiErrorResponse::upstream(
+                format!("embeddings provider unreachable: {e}"),
+                "provider_connection_error",
+            )
+            .into_response();
+        }
+    };
+
+    let status = resp.status();
+    match resp.text().await {
+        Ok(text) => Response::builder()
+            .status(status)
+            .header("content-type", "application/json")
+            .body(Body::from(text))
+            .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()),
+        Err(e) => {
+            tracing::warn!(error = %e, provider = %provider_base, "embeddings provider returned an unreadable body");
+            OpenAiErrorResponse::upstream(
+                format!("embeddings provider returned an unreadable response: {e}"),
+                "provider_response_error",
+            )
+            .into_response()
+        }
+    }
+}
+
 // ─── Handlers ───────────────────────────────────────────────────────────────
 
 /// `POST /v1/embeddings` — generate embeddings for the given input texts.
@@ -170,12 +273,6 @@ pub async fn create_embeddings(
     Json(body): Json<CreateEmbeddingsRequest>,
 ) -> Response {
     let inputs = body.input.as_strings();
-
-    if let Some(err) =
-        fake_provider_gate(std::env::var(ALLOW_FAKE_PROVIDERS_ENV).ok().as_deref(), "embeddings")
-    {
-        return err.into_response();
-    }
 
     if inputs.is_empty() {
         return OpenAiErrorResponse::invalid_request(
@@ -222,6 +319,22 @@ pub async fn create_embeddings(
         .into_response();
     }
 
+    // Configured provider wins: validated request is proxied transparently.
+    if let Some(provider_base) =
+        resolve_provider_url(std::env::var(EMBED_PROVIDER_URL_ENV).ok().as_deref())
+    {
+        return proxy_embeddings(&provider_base, &body).await;
+    }
+
+    // No provider: refuse on production surfaces unless the dev escape
+    // hatch is explicitly set.
+    if let Some(err) = fake_provider_gate(
+        std::env::var(ALLOW_FAKE_PROVIDERS_ENV).ok().as_deref(),
+        "embeddings",
+    ) {
+        return err.into_response();
+    }
+
     let mut total_tokens: u64 = 0;
     let data: Vec<EmbeddingData> = inputs
         .iter()
@@ -232,10 +345,7 @@ pub async fn create_embeddings(
 
             if encoding_format == "base64" {
                 // Convert f32 vec to base64-encoded bytes.
-                let bytes: Vec<u8> = embedding
-                    .iter()
-                    .flat_map(|v| v.to_le_bytes())
-                    .collect();
+                let bytes: Vec<u8> = embedding.iter().flat_map(|v| v.to_le_bytes()).collect();
                 let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
                 EmbeddingData {
                     object: "embedding",
@@ -252,15 +362,18 @@ pub async fn create_embeddings(
         })
         .collect();
 
-    (StatusCode::OK, Json(json!({
-        "object": "list",
-        "data": data,
-        "model": body.model,
-        "usage": {
-            "prompt_tokens": total_tokens,
-            "total_tokens": total_tokens,
-        },
-    })))
+    (
+        StatusCode::OK,
+        Json(json!({
+            "object": "list",
+            "data": data,
+            "model": body.model,
+            "usage": {
+                "prompt_tokens": total_tokens,
+                "total_tokens": total_tokens,
+            },
+        })),
+    )
         .into_response()
 }
 
@@ -310,7 +423,9 @@ mod tests {
         assert_eq!(err.status, StatusCode::NOT_IMPLEMENTED);
         assert_eq!(err.error.code.as_deref(), Some(error_code::NOT_CONFIGURED));
         assert!(
-            err.error.message.contains("no embeddings provider configured"),
+            err.error
+                .message
+                .contains("no embeddings provider configured"),
             "detail must name the provider kind: {}",
             err.error.message
         );
@@ -326,5 +441,36 @@ mod tests {
         // Only the exact value "1" opts in; anything else stays fenced.
         assert!(fake_provider_gate(Some("true"), "embeddings").is_some());
         assert!(fake_provider_gate(Some(""), "embeddings").is_some());
+    }
+
+    #[test]
+    fn provider_url_unset_or_blank_means_unconfigured() {
+        assert_eq!(resolve_provider_url(None), None);
+        assert_eq!(resolve_provider_url(Some("")), None);
+        assert_eq!(resolve_provider_url(Some("   ")), None);
+    }
+
+    #[test]
+    fn provider_url_is_trimmed_of_trailing_slashes() {
+        assert_eq!(
+            resolve_provider_url(Some("http://127.0.0.1:8080/v1")).as_deref(),
+            Some("http://127.0.0.1:8080/v1")
+        );
+        assert_eq!(
+            resolve_provider_url(Some("http://127.0.0.1:8080/v1/")).as_deref(),
+            Some("http://127.0.0.1:8080/v1")
+        );
+    }
+
+    #[test]
+    fn upstream_url_appends_embeddings_endpoint() {
+        assert_eq!(
+            upstream_embeddings_url("http://127.0.0.1:8080/v1"),
+            "http://127.0.0.1:8080/v1/embeddings"
+        );
+        assert_eq!(
+            upstream_embeddings_url("http://127.0.0.1:8080/v1/"),
+            "http://127.0.0.1:8080/v1/embeddings"
+        );
     }
 }

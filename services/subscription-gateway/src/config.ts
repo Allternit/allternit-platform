@@ -52,6 +52,9 @@ export interface Config {
   // Chromes for every account pinned a Sessions computer at load ~190 and hung
   // the gateway (2026-10-04). 0 keeps Chrome resident. Env: SUBS_GATEWAY_LANE_IDLE_MIN.
   laneIdleCloseMin: number;
+  // Lane health canary (free, non-spending probe of resident lanes) every N seconds; 0 turns it off.
+  // Env: SUBS_GATEWAY_CANARY_SEC. Default 180.
+  canaryIntervalSec: number;
 }
 
 const ENV_PREFIX = "SUBS_GATEWAY_";
@@ -185,5 +188,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       queueMax: positiveInt(env[`${ENV_PREFIX}AAI_QUEUE_MAX`], 8, `${ENV_PREFIX}AAI_QUEUE_MAX`),
     },
     laneIdleCloseMin: nonNegativeInt(env[`${ENV_PREFIX}LANE_IDLE_MIN`], 10, `${ENV_PREFIX}LANE_IDLE_MIN`),
+    canaryIntervalSec: nonNegativeInt(env[`${ENV_PREFIX}CANARY_SEC`], 180, `${ENV_PREFIX}CANARY_SEC`),
   };
 }

@@ -184,6 +184,8 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
       // A project's own model key is set per provider (`PUT /v1/model_keys/anthropic`); the
       // conversations billing note and the SDK examples have to name that provider id.
       if (['api/platform/conversations.mdx', 'api/platform/sdks/python.mdx', 'api/platform/sdks/typescript.mdx'].some((p) => mdxPath.endsWith(p))) continue;
+      // Skills load from each CLI's real config directories; the page has to name those paths.
+      if (mdxPath.endsWith('core/skills.mdx')) continue;
       // The computer toolset absorbs each model family's native computer-use tool and the hosted
       // driver plugs into those SDKs, so these pages have to name the providers and SDK classes.
       if (['api/platform/hosted-computers.mdx', 'tools/computer-toolset.mdx', 'tools/computer-use.mdx', 'core/computer-use-engine.mdx'].some((p) => mdxPath.endsWith(p))) continue;

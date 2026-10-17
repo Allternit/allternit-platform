@@ -85,4 +85,8 @@ paths = [
   # removed from source in this branch and revoked in production on deploy.
   # TODO: drop this entry after the backdoor deploy lands and history is BFG'd.
   '''^\.steering/checkpoint\.md$''',
+
+  # memory-drive ledger test: the string API_TOKEN=abcdef123456 is a fixture
+  # feeding the assigns_secret() canary, not a credential
+  '''^cmd/allternit-api/src/ledger\.rs$''',
 ]
