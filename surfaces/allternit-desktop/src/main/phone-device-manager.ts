@@ -109,6 +109,8 @@ export interface PhoneManagerDeps {
 const POLL_MS = 5_000;
 const MAX_BACKOFF_MS = 60_000;
 export const QR_PAIRING_TIMEOUT_MS = 120_000;
+/** `adb connect` tries right after a pair, 1.5 s apart: mDNS can lag the pair by a second or two. */
+export const POST_PAIR_CONNECT_ATTEMPTS = 4;
 
 interface Record_ {
   stored: StoredPhone;
@@ -237,7 +239,7 @@ export class PhoneDeviceManager extends EventEmitter {
     try {
       await this.pairAndConnect(run, hp.host, hp.port, code);
     } catch (error) {
-      this.setPairing({ phase: 'failed', error: error instanceof Error ? error.message : String(error) });
+      if (run === this.pairingRun) this.setPairing({ phase: 'failed', error: error instanceof Error ? error.message : String(error) });
     }
     return this.pairingStatus();
   }
@@ -254,11 +256,14 @@ export class PhoneDeviceManager extends EventEmitter {
     // reach this host's mDNS after the pair; a single attempt fails with
     // "Paired, but could not connect" on a healthy network. Retry briefly.
     let connected: string | null = null;
-    for (let attempt = 0; attempt < 4 && run === this.pairingRun; attempt += 1) {
+    for (let attempt = 0; attempt < POST_PAIR_CONNECT_ATTEMPTS; attempt += 1) {
+      if (attempt > 0) await this.sleep(1_500);
+      if (run !== this.pairingRun) break;
       connected = await this.connectHost(host, null);
       if (connected) break;
-      await this.sleep(1_500);
     }
+    // Cancelled (or superseded) while retrying: leave the newer status alone.
+    if (run !== this.pairingRun) return;
     if (!connected) throw new Error('Paired, but could not connect. Make sure Wireless debugging is still on.');
     const row = await this.waitForOnline(connected);
     if (!row) throw new Error('Paired and connected, but the phone did not authorize this computer.');

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   nextPhoneState,
   PhoneDeviceManager,
+  POST_PAIR_CONNECT_ATTEMPTS,
   type PhoneConnState,
   type PhoneStore,
   type StoredPhone,
@@ -42,6 +43,10 @@ function fakePhone() {
     authorized: true,
     reachable: true,
     battery: 77,
+    // mDNS lag: after a successful pair, the next N `mdns services` calls
+    // don't list the connect service yet (what a real phone does for ~1–2 s).
+    paired: false,
+    hideConnectAfterPair: 0,
   };
   const calls: string[][] = [];
   const adb = (async (args: string[]) => {
@@ -50,12 +55,15 @@ function fakePhone() {
     const [cmd] = args;
     if (cmd === 'mdns') {
       const lines = ['List of discovered mdns services'];
-      if (phone.reachable) lines.push(`adb-R5CT	_adb-tls-connect._tcp	${phone.host}:${phone.connectPort}`);
+      const lagging = phone.paired && phone.hideConnectAfterPair > 0;
+      if (lagging) phone.hideConnectAfterPair -= 1;
+      if (phone.reachable && !lagging) lines.push(`adb-R5CT	_adb-tls-connect._tcp	${phone.host}:${phone.connectPort}`);
       if (phone.pairingName) lines.push(`${phone.pairingName}	_adb-tls-pairing._tcp	${phone.host}:${phone.pairPort}`);
       return out(lines.join('\n'));
     }
     if (cmd === 'pair') {
-      return args[2] === phone.pairingCode ? out('Successfully paired to x [guid=adb-R5CT]') : out('Failed: Wrong password');
+      phone.paired = args[2] === phone.pairingCode;
+      return phone.paired ? out('Successfully paired to x [guid=adb-R5CT]') : out('Failed: Wrong password');
     }
     if (cmd === 'connect') {
       if (!phone.reachable) return out('failed to connect to ' + args[1]);
@@ -151,6 +159,54 @@ describe('pairing', () => {
     expect(wrong.phase).toBe('failed');
     expect(wrong.error).toMatch(/rejected/);
     expect(calls.some((c) => c[0] === 'connect')).toBe(false);
+    expect(manager.list()).toHaveLength(0);
+  });
+
+  it('retries the post-pair connect while the connect advertisement lags mDNS (#1632)', async () => {
+    const { manager, phone, calls } = makeManager();
+    phone.hideConnectAfterPair = 2;
+    const status = await manager.pairWithCode('192.168.1.20:37123', '123456');
+    expect(status.phase).toBe('done');
+    expect(manager.list()[0].state).toBe('online');
+    const afterPair = calls.slice(calls.findIndex((c) => c[0] === 'pair') + 1);
+    expect(afterPair.filter((c) => c[0] === 'mdns')).toHaveLength(3);
+    expect(afterPair.filter((c) => c[0] === 'connect')).toEqual([['connect', '192.168.1.20:41234']]);
+  });
+
+  it('QR pairing also survives the mDNS lag', async () => {
+    const { manager, phone } = makeManager();
+    phone.hideConnectAfterPair = POST_PAIR_CONNECT_ATTEMPTS - 1;
+    const qr = manager.startQrPairing();
+    phone.pairingName = qr.name;
+    phone.pairingCode = qr.code;
+    await vi.waitFor(() => expect(manager.pairingStatus().phase).toBe('done'));
+    expect(manager.list()).toHaveLength(1);
+  });
+
+  it('gives up after a bounded number of connect attempts, without a trailing wait', async () => {
+    const { phone, adb, calls } = fakePhone();
+    const sleeps: number[] = [];
+    const manager = new PhoneDeviceManager({ adb, store: memoryStore(), spawnScrcpy: null, now: () => 0, sleep: async (ms) => { sleeps.push(ms); } });
+    phone.hideConnectAfterPair = 99;
+    const status = await manager.pairWithCode('192.168.1.20:37123', '123456');
+    expect(status.phase).toBe('failed');
+    expect(status.error).toMatch(/could not connect/);
+    const afterPair = calls.slice(calls.findIndex((c) => c[0] === 'pair') + 1);
+    expect(afterPair.filter((c) => c[0] === 'mdns')).toHaveLength(POST_PAIR_CONNECT_ATTEMPTS);
+    expect(afterPair.some((c) => c[0] === 'connect')).toBe(false);
+    expect(sleeps).toEqual(Array(POST_PAIR_CONNECT_ATTEMPTS - 1).fill(1_500));
+    expect(manager.list()).toHaveLength(0);
+  });
+
+  it('cancelling during the connect retries stops them and leaves the status idle', async () => {
+    const { phone, adb, calls } = fakePhone();
+    phone.hideConnectAfterPair = 99;
+    let manager!: PhoneDeviceManager;
+    manager = new PhoneDeviceManager({ adb, store: memoryStore(), spawnScrcpy: null, now: () => 0, sleep: async () => { manager.cancelPairing(); } });
+    const status = await manager.pairWithCode('192.168.1.20:37123', '123456');
+    expect(status.phase).toBe('idle');
+    const afterPair = calls.slice(calls.findIndex((c) => c[0] === 'pair') + 1);
+    expect(afterPair.filter((c) => c[0] === 'mdns')).toHaveLength(1);
     expect(manager.list()).toHaveLength(0);
   });
 
