@@ -27,7 +27,7 @@ function pickSigner(): RunnerSigner {
   const bin = path.join(process.resourcesPath, 'bin', 'allternit-sideload');
   return new SideloadSigner({
     binary: fs.existsSync(bin) ? bin : null,
-    // Allternit-hosted anisette v3 server; ships together with the sidecar (not hosted yet).
+    // Allternit-hosted anisette v3 server (anisette.allternit.com, live since 2026-10-17).
     anisetteUrl: process.env.ALLTERNIT_ANISETTE_URL ?? 'https://anisette.allternit.com',
   });
 }

@@ -7,11 +7,11 @@
  * (cmd/allternit-sideload/Cargo.toml explains why), so it builds with
  * --manifest-path, not -p.
  *
- * OPTIONAL for now: iPhone setup also needs the Allternit anisette server,
- * which isn't hosted yet, so a missing or failed build only warns and Desktop
- * packages without it (Phone Link then says iPhone setup isn't available).
- * Set ALLTERNIT_REQUIRE_SIDELOAD=1 to make a failure fatal, or
- * ALLTERNIT_SKIP_SIDELOAD=1 to skip the build entirely.
+ * REQUIRED on macOS: without it every user's iPhone setup ends with
+ * signer_unavailable. Its anisette server (anisette.allternit.com) is live
+ * since 2026-10-17. A failed build stops packaging. ALLTERNIT_SKIP_SIDELOAD=1
+ * skips it on purpose (dev builds only; Phone Link then says iPhone setup
+ * isn't available).
  *
  * If a release job already lipo'd/copied the binary here, this is a no-op.
  * macOS only: the iPhone flow (go-ios, Keychain session) is macOS-first.
@@ -30,7 +30,7 @@ const { cargoBinaryCandidates } = require('./cargo-target.cjs');
 const resourcesBin = path.join(desktopDir, 'resources', 'bin');
 const name = 'allternit-sideload';
 const dest = path.join(resourcesBin, name);
-const required = process.env.ALLTERNIT_REQUIRE_SIDELOAD === '1';
+const required = process.env.ALLTERNIT_REQUIRE_SIDELOAD !== '0';
 
 function log(message) {
   process.stdout.write(`[prepare-sideload] ${message}\n`);
@@ -44,9 +44,27 @@ function alreadyStaged() {
   }
 }
 
+/** Where cargo actually puts this crate's output (a parent .cargo/config can move it to the repo root). */
+function cargoMetadataTarget() {
+  const r = spawnSync('cargo', ['metadata', '--format-version', '1', '--no-deps', '--manifest-path', path.join(crateDir, 'Cargo.toml')], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+  });
+  try {
+    return r.status === 0 ? JSON.parse(r.stdout).target_directory : null;
+  } catch {
+    return null;
+  }
+}
+
 function findBuilt() {
-  // CARGO_TARGET_DIR first, then the crate's own target/ (its own workspace).
-  for (const candidate of cargoBinaryCandidates(crateDir, name, { releaseOnly: true })) {
+  // cargo's own answer first, then CARGO_TARGET_DIR, then the crate's target/.
+  const fromMetadata = cargoMetadataTarget();
+  const candidates = [
+    ...(fromMetadata ? [path.join(fromMetadata, 'release', name)] : []),
+    ...cargoBinaryCandidates(crateDir, name, { releaseOnly: true }),
+  ];
+  for (const candidate of candidates) {
     if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
   }
   return null;
@@ -100,6 +118,6 @@ try {
   }
   process.stderr.write(
     `[prepare-sideload] WARNING: ${err.message}. Packaging continues without it (optional sidecar); ` +
-      'Phone Link iPhone setup will say it is unavailable. Set ALLTERNIT_REQUIRE_SIDELOAD=1 to fail instead.\n'
+      'Phone Link iPhone setup will say it is unavailable (ALLTERNIT_REQUIRE_SIDELOAD=0 was set).\n'
   );
 }
