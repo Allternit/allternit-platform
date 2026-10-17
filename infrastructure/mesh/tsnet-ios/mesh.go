@@ -30,6 +30,12 @@ type Node struct {
 	hostname string
 	srv      *tsnet.Server
 	proxy    *nodeProxy
+	srvLn    net.Listener
+	srvPort  int
+
+	// listen is the seam tests override to serve without a tailnet. When nil,
+	// ServeLocal listens through the node's tsnet server.
+	listen func(network, addr string) (net.Listener, error)
 }
 
 // nodeProxy is the loopback TCP proxy started by StartProxy: it accepts on
@@ -133,6 +139,129 @@ func (n *Node) Get(url string) (string, error) {
 		return "", err
 	}
 	return string(body), nil
+}
+
+// State returns the node's coarse lifecycle state: "stopped", "starting",
+// "needs_login" (the auth key was rejected or expired), "running", or
+// "error:<short reason>". It never blocks for long; safe to poll from UI.
+func (n *Node) State() string {
+	n.mu.Lock()
+	srv := n.srv
+	n.mu.Unlock()
+	if srv == nil {
+		return "stopped"
+	}
+	lc, err := srv.LocalClient()
+	if err != nil {
+		return "error:" + shortReason(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	st, err := lc.Status(ctx)
+	if err != nil {
+		return "error:" + shortReason(err)
+	}
+	switch st.BackendState {
+	case "Running":
+		return "running"
+	case "NeedsLogin", "NeedsMachineAuth":
+		return "needs_login"
+	case "Starting":
+		return "starting"
+	case "Stopped", "NoState":
+		return "stopped"
+	default:
+		return "error:unexpected state " + string(st.BackendState)
+	}
+}
+
+// shortReason flattens an error to a single short line for State().
+func shortReason(err error) string {
+	s := err.Error()
+	if i := len(s); i > 120 {
+		s = s[:120]
+	}
+	return s
+}
+
+// ServeLocal listens on the tailnet at :port and forwards every accepted
+// connection to 127.0.0.1:localPort, bridging bytes both ways. It is how a
+// mesh peer reaches this device's loopback-only server: the peer dials
+// <meshIP>:port and lands on the local service, so nothing on the device has
+// to bind a public or LAN interface.
+//
+// ServeLocal is idempotent: calling it again with the same port is a no-op.
+// Calling it with a different port while serving returns an error; use
+// StopServe first. Serving stops on StopServe or Close.
+func (n *Node) ServeLocal(port int, localPort int) error {
+	if port <= 0 || port > 65535 {
+		return fmt.Errorf("mesh: invalid serve port %d", port)
+	}
+	if localPort <= 0 || localPort > 65535 {
+		return fmt.Errorf("mesh: invalid local port %d", localPort)
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.srv == nil && n.listen == nil {
+		return errors.New("mesh: node not started")
+	}
+	if n.srvLn != nil {
+		if n.srvPort == port {
+			return nil
+		}
+		return fmt.Errorf("mesh: already serving port %d", n.srvPort)
+	}
+	listen := n.listen
+	if listen == nil {
+		srv := n.srv
+		listen = func(network, addr string) (net.Listener, error) {
+			return srv.Listen(network, addr)
+		}
+	}
+	ln, err := listen("tcp", fmt.Sprintf(":%d", port))
+	if err != nil {
+		return err
+	}
+	n.srvLn = ln
+	n.srvPort = port
+	go n.serveLocal(ln, localPort)
+	return nil
+}
+
+// serveLocal accepts until the listener is closed and bridges each connection
+// to the fixed loopback target.
+func (n *Node) serveLocal(ln net.Listener, localPort int) {
+	target := net.JoinHostPort("127.0.0.1", strconv.Itoa(localPort))
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			return // listener closed
+		}
+		go func(c net.Conn) {
+			upstream, err := net.DialTimeout("tcp", target, 15*time.Second)
+			if err != nil {
+				c.Close()
+				return
+			}
+			proxyConns(c, upstream)
+		}(conn)
+	}
+}
+
+// StopServe stops the tailnet listener started by ServeLocal, if any.
+func (n *Node) StopServe() error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.stopServeLocked()
+	return nil
+}
+
+func (n *Node) stopServeLocked() {
+	if n.srvLn != nil {
+		n.srvLn.Close()
+		n.srvLn = nil
+		n.srvPort = 0
+	}
 }
 
 // StartProxy starts a loopback TCP proxy that forwards connections from
@@ -260,6 +389,7 @@ func (n *Node) Close() error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.stopProxyLocked()
+	n.stopServeLocked()
 	if n.srv == nil {
 		return nil
 	}

@@ -30,6 +30,12 @@ You need Allternit Desktop, a USB cable, and the phone on the same Wi-Fi as your
 
 If the phone restarts, plug it in again to reconnect over Wi-Fi.
 
+## Away from home
+
+Once Phone Link is set up, the phone can also join **your private Allternit network** (the same mesh your computers use). Desktop turns this on during cable setup: the phone gets a single-use enrollment key, joins over an encrypted connection it manages itself — it is not a VPN on the phone, uses no extra battery-heavy tunnel, and **nothing on the phone is opened to the internet**.
+
+With the mesh on, your bots reach the phone the same way on **any network**: home Wi-Fi, a café's Wi-Fi, or cellular. Reachability shows as the phone's `mesh_state`/`mesh_host` in device info, and Desktop prefers the mesh address when the phone is off the local Wi-Fi. Every request is still end-to-end sealed exactly as on Wi-Fi; the mesh only carries already-encrypted traffic.
+
 ## iPhone
 
 You need Allternit Desktop on a Mac and a cable. It's one cable session, then it works over Wi-Fi. You do **not** need to put the iPhone in DFU or recovery mode.

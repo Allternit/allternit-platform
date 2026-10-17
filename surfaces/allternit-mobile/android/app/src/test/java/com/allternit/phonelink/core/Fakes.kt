@@ -78,6 +78,20 @@ class FakeHooks(var cfg: ServerConfig = ServerConfig("dev-1234", "Test phone", t
     override fun scheduleStop() { stopScheduled = true }
 }
 
+/** Software AES-GCM standing in for the Keystore-backed sealer in unit tests. */
+class AesGcmTestSealer : BlobSealer {
+    private val key = javax.crypto.KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()
+    override fun seal(plain: ByteArray): ByteArray {
+        val c = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding"); c.init(javax.crypto.Cipher.ENCRYPT_MODE, key)
+        return c.iv + c.doFinal(plain)
+    }
+    override fun open(sealed: ByteArray): ByteArray {
+        val c = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+        c.init(javax.crypto.Cipher.DECRYPT_MODE, key, javax.crypto.spec.GCMParameterSpec(128, sealed.copyOfRange(0, 12)))
+        return c.doFinal(sealed, 12, sealed.size - 12)
+    }
+}
+
 /** Approver that answers immediately (or never, for timeout tests). */
 class ScriptedApprover(var answer: Boolean?) : PairApprover {
     val requests = ArrayList<String>()

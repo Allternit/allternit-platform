@@ -56,6 +56,35 @@ class ProvisioningTest {
         assertTrue(ProvisionCommand.parse(mapOf("device_name" to "x".repeat(64))).isFailure)
     }
 
+    @Test fun meshExtrasAreOptionalAndValidated() {
+        val none = ProvisionCommand.parse(emptyMap()).getOrThrow()
+        assertEquals(null, none.meshControlUrl)
+        assertEquals(null, none.meshAuthKey)
+
+        val full = ProvisionCommand.parse(mapOf(
+            "mesh_control_url" to "https://mail.news.allternit.com:8444",
+            "mesh_auth_key" to "abcdef0123",
+        )).getOrThrow()
+        assertEquals("https://mail.news.allternit.com:8444", full.meshControlUrl)
+        assertEquals("abcdef0123", full.meshAuthKey)
+
+        // https only: the pre-auth key must never travel in the clear.
+        for (bad in listOf("http://mail.news.allternit.com:8444", "ftp://x", "gopher://x", "mailto:a@b")) {
+            assertTrue("$bad must be rejected", ProvisionCommand.parse(mapOf("mesh_control_url" to bad)).isFailure)
+        }
+        assertTrue(ProvisionCommand.parse(mapOf("mesh_control_url" to "  ")).isFailure)
+        assertTrue(ProvisionCommand.parse(mapOf("mesh_auth_key" to "   ")).isFailure)
+        assertTrue(ProvisionCommand.parse(mapOf("mesh_auth_key" to "k".repeat(4097))).isFailure)
+    }
+
+    @Test fun meshControlUrlPersistsThroughApplyTo() {
+        val cmd = ProvisionCommand.parse(mapOf("mesh_control_url" to "https://hs.example:8444")).getOrThrow()
+        cmd.applyTo(settings, now)
+        assertEquals("https://hs.example:8444", settings.meshControlUrl)
+        // The auth key itself is NOT stored by applyTo; the receiver seals it via MeshKeyBox.
+        assertFalse(settings.serverConfig().toString().contains("secret"))
+    }
+
     @Test fun userStopSurvivesRebootUntilReprovisioned() {
         ProvisionCommand.parse(emptyMap()).getOrThrow().applyTo(settings, now)
         settings.userStopped = true

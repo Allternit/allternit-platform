@@ -1,5 +1,12 @@
 # Headscale ops runbook
 
+> **STATUS: LEGACY (2026-10-17).** Production moved to the mail VPS
+> (`https://mail.news.allternit.com:8444`, config at `/etc/headscale/config.yaml`
+> on that host, gRPC admin local to it). This runbook describes the Fly.io app
+> `allternit-headscale`, which is kept for reference/revival but is **not**
+> what the platform enrolls against. Do not run these commands against
+> production; nothing here deploys automatically.
+
 App: `allternit-headscale` on Fly.io (region `lax`). Server URL:
 `https://allternit-headscale.fly.dev`. Pinned image: `headscale/headscale:0.29.2`
 (config schema verified against the v0.29.2 `config-example.yaml`).

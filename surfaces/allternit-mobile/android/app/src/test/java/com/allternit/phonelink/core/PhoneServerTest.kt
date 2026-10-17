@@ -21,6 +21,7 @@ import java.util.Base64
  */
 class PhoneServerTest {
     private lateinit var http: HttpServer
+    private lateinit var server: PhoneServer
     private lateinit var auth: AuthManager
     private var armed = true
     private var base = ""
@@ -30,7 +31,7 @@ class PhoneServerTest {
         auth.approver = ScriptedApprover(false)
         val hooks = FakeHooks()
         val dispatcher = RpcDispatcher({ FakeDeviceOps() }, { FakeDeviceOps.INFO }, auth, hooks, "com.allternit.phonelink")
-        val server = PhoneServer(auth, dispatcher, { hooks.config() })
+        server = PhoneServer(auth, dispatcher, { hooks.config() })
         http = HttpServer(server::handle)
         http.start(InetAddress.getByName("127.0.0.1"), 0)
         base = "http://127.0.0.1:${http.localPort}"
@@ -84,6 +85,8 @@ class PhoneServerTest {
         val o = JSONObject(r.body)
         assertEquals("dev-1234", o.getString("device_id"))
         assertEquals(1, o.getInt("protocol_version"))
+        assertEquals("stopped", o.getString("mesh_state"))
+        assertTrue(o.isNull("mesh_host"))
         assertEquals("dev-1234", r.headers[PhoneServer.DEVICE_HEADER])
         assertNull(r.headers["Access-Control-Allow-Origin"])
         assertEquals("*", request("GET", "/schema").headers["Access-Control-Allow-Origin"])
@@ -110,6 +113,52 @@ class PhoneServerTest {
         val r = request("POST", "/pair", JSONObject().put("client_name", "again").put("pub", Base64.getEncoder().encodeToString(pub)).toString())
         assertEquals(403, r.status)
         assertEquals("pair_denied", JSONObject(r.body).getJSONObject("error").getString("code"))
+    }
+
+    /**
+     * Security: the mesh bridge forwards tailnet connections to a dedicated
+     * internal loopback listener whose requests are marked viaMesh. They must
+     * not consume the one-shot armed pairing grant even though their remote
+     * address is 127.0.0.1 — that grant is reserved for adb-over-cable.
+     */
+    @Test fun armedGrantIsNotConsumableThroughTheMesh() {
+        val meshHttp = HttpServer(server::handle, viaMesh = true)
+        meshHttp.start(InetAddress.getByName("127.0.0.1"), 0)
+        try {
+            val meshBase = "http://127.0.0.1:${meshHttp.localPort}"
+            fun meshRequest(method: String, path: String, body: String? = null): Resp {
+                val c = URL(meshBase + path).openConnection() as HttpURLConnection
+                c.requestMethod = method
+                c.connectTimeout = 5000
+                c.readTimeout = 10000
+                if (body != null) {
+                    c.doOutput = true
+                    c.setRequestProperty("Content-Type", "application/json")
+                    c.outputStream.use { it.write(body.toByteArray()) }
+                }
+                val status = c.responseCode
+                val text = (if (status >= 400) c.errorStream else c.inputStream)?.use { String(it.readBytes()) } ?: ""
+                return Resp(status, text, emptyMap())
+            }
+
+            // 1. Plain pairing (key returned in the clear) is USB-only, mesh included.
+            val plain = meshRequest("POST", "/pair", JSONObject().put("client_name", "mesh-peer").put("plain", true).toString())
+            assertEquals(403, plain.status)
+            assertEquals("plain_forbidden", JSONObject(plain.body).getJSONObject("error").getString("code"))
+
+            // 2. The armed grant is NOT consumed by a mesh-forwarded pair: the
+            //    scripted approver denies, and pairing fails.
+            val pub = X25519.publicKey(X25519.generatePrivateKey())
+            val denied = meshRequest("POST", "/pair", JSONObject().put("client_name", "mesh-peer").put("pub", Base64.getEncoder().encodeToString(pub)).toString())
+            assertEquals(403, denied.status)
+            assertEquals("pair_denied", JSONObject(denied.body).getJSONObject("error").getString("code"))
+
+            // 3. The grant is still armed for the real loopback (adb forward): pairing succeeds.
+            val key = pair()
+            assertEquals("pixels", rpc(key, "device_info").second!!.getJSONObject("result").getString("coordinate_space"))
+        } finally {
+            meshHttp.stop()
+        }
     }
 
     @Test fun plainPairWorksOverLoopback() {

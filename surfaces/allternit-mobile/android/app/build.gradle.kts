@@ -43,6 +43,11 @@ android {
 dependencies {
     // No runtime dependencies beyond the Kotlin stdlib: the HTTP server, the
     // envelope crypto and X25519 are in-tree (see README "Dependencies").
+    // The mesh node is the gomobile-bound tsnet wrapper from
+    // infrastructure/mesh/tsnet-ios — build it first:
+    //   infrastructure/mesh/tsnet-ios/build-android.sh   (output: Mesh.aar,
+    //   copied to app/libs/, gitignored, ~33 MB with 4 ABIs)
+    implementation(files("libs/Mesh.aar"))
     testImplementation("junit:junit:4.13.2")
     // Real org.json for JVM tests (android.jar only ships stubs). Public domain
     // since 20231013.
