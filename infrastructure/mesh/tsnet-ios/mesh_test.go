@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	"tailscale.com/envknob"
 )
 
 // serveTestNode returns a Node whose listen seam binds loopback, so ServeLocal
@@ -175,4 +177,10 @@ func currentServeListener(t *testing.T, n *Node) net.Listener {
 		t.Fatal("node is not serving")
 	}
 	return n.srvLn
+}
+
+func TestNoLogUploadsToTailscale(t *testing.T) {
+	if !envknob.NoLogsNoSupport() {
+		t.Fatal("package init must switch tsnet's log uploads off")
+	}
 }

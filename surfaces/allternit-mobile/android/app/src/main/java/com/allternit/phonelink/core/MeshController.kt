@@ -15,6 +15,8 @@ interface MeshNodeApi {
     fun state(): String
     fun meshIp(): String
     fun close()
+    /** Re-read the device's interfaces (Android denies Go the netlink dump; see GomobileMeshNode). */
+    fun refreshInterfaces() {}
 }
 
 /**
@@ -32,6 +34,9 @@ interface MeshNodeApi {
  * funnel into), stop with [stop]. Network changes (Wi-Fi to cellular) are
  * handled inside tsnet/magicsock; there is no app-level reconnect loop.
  */
+/** Backoff between failed joins: quick at first (boot races Wi-Fi), then every 5 minutes. */
+internal val RETRY_DELAYS_MS = longArrayOf(5_000, 15_000, 30_000, 60_000, 120_000, 300_000)
+
 class MeshController(
     private val settings: AppSettings,
     private val keyBox: MeshKeyBox,
@@ -75,7 +80,23 @@ class MeshController(
         if (settings.meshControlUrl == null) return
         starting = true
         val g = ++generation
-        Thread({ runJoin(g) }, "phonelink-mesh").apply { isDaemon = true }.start()
+        Thread({
+            try { runJoin(g) } finally { if (g == generation) starting = false }
+        }, "phonelink-mesh").apply { isDaemon = true }.start()
+    }
+
+    /**
+     * The default network changed (Wi-Fi joined or lost, cellular took over).
+     * tsnet re-reads interfaces through the hook; a join that failed earlier
+     * (e.g. no network yet at boot) is retried now instead of waiting.
+     */
+    fun onNetworkChanged() {
+        val n = synchronized(lock) { node }
+        if (n != null) {
+            try { n.refreshInterfaces() } catch (e: Exception) { log("mesh interface refresh failed: ${e.message}") }
+        } else if (lastError != null) {
+            start()
+        }
     }
 
     @Synchronized
@@ -93,7 +114,21 @@ class MeshController(
         }
     }
 
+    /** Joins, and while this generation is current retries a failed join with backoff. */
     private fun runJoin(generationAtStart: Long) {
+        var attempt = 0
+        while (true) {
+            if (joinOnce(generationAtStart)) return
+            if (generationAtStart != generation) return
+            val delayMs = RETRY_DELAYS_MS[minOf(attempt++, RETRY_DELAYS_MS.size - 1)]
+            log("mesh join retry in ${delayMs / 1000} s")
+            try { Thread.sleep(delayMs) } catch (_: InterruptedException) { return }
+            if (generationAtStart != generation) return
+        }
+    }
+
+    /** One join attempt; true when the node is up (or this generation was superseded). */
+    private fun joinOnce(generationAtStart: Long): Boolean {
         var n: MeshNodeApi? = null
         var http: HttpServer? = null
         try {
@@ -103,6 +138,7 @@ class MeshController(
             internalPort = http.localPort
 
             n = nodeFactory("phone-" + settings.deviceId.take(8))
+            n.refreshInterfaces()
             // First join uses the sealed pre-auth key; later joins pass "" and
             // tsnet re-authenticates with the node key already in meshDir.
             n.start(settings.meshControlUrl!!, keyBox.read().orEmpty(), meshDir)
@@ -113,13 +149,14 @@ class MeshController(
                 if (generationAtStart != generation) {
                     try { n.close() } catch (_: Exception) {}
                     http.stop()
-                    return
+                    return true
                 }
                 node = n
                 meshHttp = http
                 lastError = null
             }
             log("mesh joined, serving tailnet :$TAILNET_SERVE_PORT -> 127.0.0.1:$internalPort")
+            return true
         } catch (e: Exception) {
             // Keep the sealed key: the join did not succeed, so it is still needed.
             val why = (e.message ?: e.javaClass.simpleName).take(120)
@@ -127,8 +164,7 @@ class MeshController(
             log("mesh join failed: ${e.javaClass.simpleName}: $why")
             try { n?.close() } catch (_: Exception) {}
             http?.stop()
-        } finally {
-            starting = false
+            return false
         }
     }
 }

@@ -12,6 +12,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
@@ -68,6 +70,16 @@ func (n *Node) Start(controlURL, authKey, dataDir string) error {
 	}
 	if dataDir == "" {
 		return errors.New("mesh: dataDir is required")
+	}
+	// tsnet still keeps local log state. On Android none of the places it
+	// looks for is writable and it panics ("no safe place found to store log
+	// state"), taking the whole app down; give it a directory inside dataDir.
+	if os.Getenv("TS_LOGS_DIR") == "" {
+		logsDir := filepath.Join(dataDir, "logs")
+		if err := os.MkdirAll(logsDir, 0o700); err != nil {
+			return fmt.Errorf("mesh: logs dir: %w", err)
+		}
+		os.Setenv("TS_LOGS_DIR", logsDir)
 	}
 	srv := &tsnet.Server{
 		Dir:        dataDir,

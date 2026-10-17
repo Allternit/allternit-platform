@@ -15,9 +15,10 @@ OUT="Mesh.aar"
 rm -rf "$OUT"
 
 gomobile bind \
-  -target=android \
+  -target=android/arm64,android/arm \
   -androidapi 26 \
-  -ldflags=-w \
+  -ldflags="-s -w" \
+  -trimpath \
   -o "$OUT" \
   .
 

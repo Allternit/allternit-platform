@@ -138,6 +138,9 @@ class MeshControllerTest {
         val c = newController(fake)
         c.start()
         assertTrue(fake.started.await(10, TimeUnit.SECONDS))
+        // serveLocal runs right after start returns, on the join thread.
+        val deadline = System.currentTimeMillis() + 5_000
+        while (fake.serveLocalArgs == null && System.currentTimeMillis() < deadline) Thread.sleep(10)
         val internal = fake.serveLocalArgs!!.second
         java.net.Socket("127.0.0.1", internal).use { s ->
             s.getOutputStream().write("GET / HTTP/1.1\r\nHost: x\r\n\r\n".toByteArray())

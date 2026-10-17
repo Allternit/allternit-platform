@@ -1,6 +1,9 @@
 package com.allternit.phonelink
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.LinkProperties
+import android.net.Network
 import android.os.Build
 import android.util.DisplayMetrics
 import android.util.Log
@@ -81,6 +84,12 @@ object ServerController {
             nodeFactory = { GomobileMeshNode(it) },
             log = ::log,
         )
+        // Wi-Fi joined or lost, cellular took over: refresh the mesh's view of the interfaces.
+        app.getSystemService(ConnectivityManager::class.java)?.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) = meshController.onNetworkChanged()
+            override fun onLost(network: Network) = meshController.onNetworkChanged()
+            override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) = meshController.onNetworkChanged()
+        })
         initialized = true
     }
 
@@ -189,7 +198,7 @@ object ServerController {
     }
 
     private val hooks = object : ServerHooks {
-        override fun config(): ServerConfig = settings.serverConfig()
+        override fun config(): ServerConfig = meshAwareConfig()
 
         override fun applyConfig(allowRemote: Boolean?, port: Int?, deviceName: String?) {
             deviceName?.let { settings.deviceName = it }
