@@ -107,6 +107,8 @@ export function registerPhoneLinkIpc(handleGuarded: Guarded): PhoneLinkManager {
     logger: (message) => log.info(message),
   });
   manager.on('status', (status) => {
+    // A phone just finished setup: make sure bots get the phone tools now.
+    if (status.state === 'ready_wifi') void phoneService.startForLinkedPhones();
     for (const win of BrowserWindow.getAllWindows()) {
       if (!win.isDestroyed()) win.webContents.send('phone-link:status-changed', status);
     }
