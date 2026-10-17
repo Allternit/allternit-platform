@@ -1,0 +1,48 @@
+---
+title: First-run setup
+description: Set up your workspace with Gizzi and A:// the first time you open Allternit, on Desktop, ai.allternit.com and your phone.
+---
+
+The first time you open Allternit with a new account, Gizzi and A:// set up your workspace with you, one question at a time. On Desktop and ai.allternit.com the left side shows **Your workspace**, a graph that builds as you answer; the right side is the setup rail. On a phone the graph sits on top and the rail below it.
+
+There are three questions and then a view of everything that is connected. You can go back, skip any question, and change every answer later in Settings.
+
+## 1. Where it runs
+
+Choose where your agents run:
+
+- **This Mac / This PC** (Desktop): Allternit looks for its engine on this computer. The tile says **Detected** only when it actually finds one. When you pick it, setup pairs the computer to your account and the result card says **Paired**. If the engine is not running, the card says so and offers the Desktop download.
+- **Allternit Cloud computer**: an always-on computer that keeps working when yours sleeps. Setup checks your plan and your account's cloud computer and reports what it finds: its size and status when you have one, or that it comes with a paid plan. If you need a plan, **Open Allternit** at the end takes you to Settings → Billing.
+- **Your own server**: connect a machine with a backend URL, over SSH, rent a VPS, or control a remote desktop. The same connection forms as Settings → Computers open inside the rail.
+
+On a phone, **Your computer** lists the computers paired to your account and lets you pick the one your phone uses. A server is paired from Allternit Desktop.
+
+## 2. Style
+
+Pick **Light**, **Dark** or **System**. The change applies at once and is saved on this device; change it any time in Settings → Appearance.
+
+## 3. Your AI
+
+Pick the brain Gizzi uses by default.
+
+- **Use your subscription**: ChatGPT, Claude or Kimi through your own plan. Connect runs the same flow as Settings → Subscriptions inside the rail: you sign in on the vendor's own page on your Sessions computer, and you read and accept the provider-terms disclosure before the subscription becomes your default. The tile says **Connected** only when the login is ready. Without a Sessions computer, or while the sign-in is still pending, setup says so instead.
+- **Allternit Cloud**: models hosted by Allternit. Pick one from the live catalog.
+- **Claude, ChatGPT, Gemini**: connect with an API key, a key Allternit already holds for you, or (on Desktop) the vendor's command-line sign-in.
+- **Local model** (Desktop): use a model already on this computer or download one.
+- **More brains**: Qwen, Kimi, Z.ai and command-line tools found on this computer.
+
+On a phone, local models and command-line sign-ins are added from Allternit Desktop; the phone says so on those rows.
+
+## What Gizzi reports
+
+After each choice A:// prints a short result card with what really happened, for example `▸ Where it runs  This Mac  PAIRED`. Finished steps stack above the next question as a log. A choice that is not finished yet shows **Chosen**, **Waiting** or the error, never a success it did not have.
+
+## Everything connected
+
+The last screen is a map of everything your account can reach right now: brains (including connected subscriptions), computers and your phone, your main bot and other bots, messaging channels, Memory Drive, Projects and connectors. Things you set up just now are highlighted; things already connected are solid; the rest are marked **Available** so you know what you can add. Hover or tap a node to read about it. When a computer is not reachable (for example on the web with no computer online), the parts that live on a computer say so.
+
+Select **Open Allternit** to finish. Setup is recorded for your account, so it does not run again on your other devices.
+
+## Run it again
+
+Setup runs for an account that has not finished it. To change an answer later, use Settings: Computers, Appearance, Models, and Subscriptions.
