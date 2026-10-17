@@ -182,9 +182,11 @@ own software on a Mac or iPhone. isideload gets them from a remote **anisette
 v3** server.
 
 - **Default here:** `https://anisette.allternit.com`, the constant
-  `DEFAULT_ANISETTE_URL` in `src/main.rs`. **That server is not hosted yet**.
-  Until it is, signing fails with `anisette_unavailable`, which is why the
-  sidecar is optional in packaging.
+  `DEFAULT_ANISETTE_URL` in `src/main.rs`. It runs on allternit-standby
+  (`dadoum/anisette-v3-server`, image pinned by digest, behind nginx with TLS),
+  live since 2026-10-17; the sidecar is required in macOS packaging. Checked
+  that day: a made-up Apple ID got past anisette and Apple answered
+  `bad_credentials`.
 - **Override order:** the request's `anisette_url`, then `--anisette-url URL`,
   then `$ALLTERNIT_ANISETTE_URL`, then the default. Desktop passes
   `ALLTERNIT_ANISETTE_URL` from its own environment through the request,

@@ -146,7 +146,9 @@ mkdir -p "$REPO"
 tar -xzf "$SUBSFAB/gateway.tar.gz" -C "$REPO"
 cd "$REPO"
 echo "== pnpm install (gateway + workspace deps)"
-pnpm install --filter subscription-gateway... --reporter=append-only
+# CI=true: a lockfile/workspace layout change makes pnpm want to rebuild
+# node_modules, which it refuses without a TTY (this runs under nohup).
+CI=true pnpm install --filter subscription-gateway... --reporter=append-only
 
 # 7. Boot the gateway (file keychain — D3/D15 Sessions-machine store). DISPLAY
 #    puts the adapter's Chrome and the login Chrome on the streamed desktop.
