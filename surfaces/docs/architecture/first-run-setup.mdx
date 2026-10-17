@@ -1,0 +1,54 @@
+---
+title: First-run setup (developer)
+description: How the Gizzi + A:// first-run setup is built, what it reads, how it is gated on each surface, and how to extend it.
+---
+
+First-run setup lives in `allternit-ai/src/components/onboarding/`. One implementation ships to Desktop, ai.allternit.com (desktop and phone layouts) and the m.allternit.com PWA. The user guide is [First-run setup](/guides/first-run-setup).
+
+## Files
+
+| File | Role |
+| --- | --- |
+| `OnboardingFlow.tsx` | The real setup logic, reused as panels: `InfraStep` (variants `local`, `server`, `full`), `PurchaseVPSPanel`, `ModesStep` (prop `focus` per brain row, `phone`), and `completeFirstRun()` (workspace init, `setupApi.saveConfig({ onboardingComplete: true, wizard })`, onboarding store, Desktop bridge). Exports `OnboardingFlow` (desktop) and `PhoneOnboardingFlow`. |
+| `setup/FirstRunSetup.tsx` | The shell: graph field, Gizzi + A:// rail, tiles, result cards, ripple, connected view. Derives the cloud-computer, phone-computer and brain outcomes. |
+| `setup/setupModel.ts` | Pure step machine (`setupReducer`), step order (`setupStepOrder`, Main bot slot), progress blocks, result cards, haptic rule (`firesHaptic`), `brainForProvider`. |
+| `setup/setupSignals.ts` | Live signals behind tile tags: local backend probe, cloud computer + plan, provider auth + Allternit Cloud catalog, Subscription Fabric status, settled runtimes. |
+| `setup/connectedInventory.ts` | `loadInventory()` (each source independent) and the pure `buildConnectedGraph()`. |
+| `setup/inventorySources.ts` | The real sources for the connected view. |
+| `setup/ConnectedView.tsx`, `SetupGraph.tsx`, `SetupArt.tsx`, `setup.css` | Presentation, ported from the approved prototype. |
+| `fabric-session/phone/PhoneFirstRun.tsx` | Phone gate (`decidePhoneSetup`) and phone theme handling. |
+
+## Gating
+
+- **Desktop and ai.allternit.com desktop layout**: `OnboardingGate` in `ShellApp.tsx` asks `setupApi.getConfig()`; `shouldRunWizard()` is `!onboardingComplete`. On failure it keeps the local store state. `OnboardingPortal` renders `OnboardingFlow` full screen.
+- **Phone shell** (ai.allternit.com phone layout and the PWA): `PhoneFirstRunGate` wraps `PhoneShell` in `SignedInPhone`. It follows the server flag when the config call answers. When it cannot answer (no computer online to relay it), it runs setup only for an account with no paired computer and no local record, and gives up after 8 seconds, so an existing user is never held on a splash.
+- Completing setup on any surface saves `onboardingComplete` for the account; the other surfaces skip it after that.
+
+## Honest outcomes
+
+Every result card and tile tag is computed from what happened:
+
+- **This computer**: tile says Detected only after `probeLocalBackend()` finds an Allternit `/health` JSON response. Pairing uses `runtimeBackendApi.registerManualBackend` only when `NEXT_PUBLIC_ALLTERNIT_RUNTIME_API` is on; otherwise it relies on the Desktop's account runtime id (`window.allternit.auth.getSession().runtimeId`). A browser tab that finds a local engine but cannot pair it says so.
+- **Cloud computer**: `listCloudComputers()` and `getHostedEntitlement()`; specs come from the instance. No plan read → error, not "needs a plan".
+- **Brains**: connected only when `data.defaultProvider` belongs to the chosen row. Allternit Cloud uses `fetchCloudModelCatalog()`.
+- **Subscription brains** (`subs-chatgpt`, `subs-claude`, `subs-kimi`): status from `getSubscriptionStatus()` and `listFabricAccounts()`; ready means enabled and `session_health` ready or degraded. The rail runs `SubscriptionConnect` inline; a ready login becomes the default only after `ensureSubscriptionDisclosure()` resolves true. States reported: checking, no Sessions computer, computer offline, sign-in pending, error, ready.
+
+## Haptic ripple
+
+`firesHaptic(action)` is true only for `choose`. The block-square ripple is keyed by the reducer's `ripple` counter and starts at the picked tile (`rippleOriginFrom`). On the phone a choice also calls `vibrateSend()`. Reduced motion hides the ripple and every loop; state changes stay.
+
+## Connected view
+
+`loadInventory()` reads provider auth, the cloud catalog, runtimes (`useRuntimes`, settled after 6 s), cloud computers, bots (`listAgents` + `findMainBot`), messaging channels (`gatewayApi.listAccounts`, `channel_oauth`), Memory Drive mounts, bot projects, MCP connectors and Subscription Fabric logins. Runtime-backed sources are marked unavailable without making the call when no computer is reachable. `buildConnectedGraph()` marks nodes `new` (this session), `conn`, `inc` (included) or `avail`, caps side groups at four, and always includes a Main bot node.
+
+## Main bot step (slot)
+
+`setupStepOrder({ mainBot: true })` inserts a `mainbot` step between Your AI and Connected; `MAIN_BOT_STEP_ENABLED` is false until its design lands. The real step will reuse `src/views/bots/rail/main-bot.ts` (`setUpPrimaryBot`, `setMainBot`) and the disclosure copy from `PrimaryBotSetupDialog`; `SessionFacts.mainBotId` marks the main bot node as set up in this session.
+
+## Tests
+
+`setup/setupModel.test.ts`, `setup/connectedInventory.test.ts`, `setup/FirstRunSetup.test.tsx` and `fabric-session/phone/PhoneFirstRun.test.tsx` cover the step machine, result cards, the haptic rule, subscription honesty, connected-view mapping, the phone gate and completion.
+
+## Seeing it locally
+
+Run the Vite dev server, clear `allternit-onboarding-storage` and `allternit-platform-mode` from localStorage, and load `/shell`. Abort `/api/onboarding/config` to force the local-store path. For the phone shell, start Vite with `VITE_DEV_AUTH_BYPASS=1` and use phone emulation on `/`.
