@@ -9,7 +9,7 @@ A **routine** is work a bot does on a schedule: a morning briefing, a weekly rep
 
 A routine runs as one of your bots, so every create form asks which bot runs it. The bot whose screen you are on is selected by default, otherwise your main bot (the one with the crown at the top of the Bots rail). You can pick any other bot from the list.
 
-If you have no bots yet, the forms tell you to create one first. The API refuses a local routine with no bot (`agent_required`); see [Automation API](/api/automation#routines-and-bots).
+If you have no bots yet, the forms tell you to create one first. The API refuses a routine with no bot (`agent_required`), whether it runs on your computer or in the cloud; see [Automation API](/api/automation#routines-and-bots).
 
 ## The Routines tab
 
@@ -28,11 +28,22 @@ The tab is the same on Desktop, on ai.allternit.com (including the phone layout)
 
 ## When a routine fails
 
-You are told in three places:
+Every failed run is recorded and reported, whether or not the routine has a bot, and whether or not an Allternit window is open. You are told in four places:
 
-1. **A notice at the top of the bot's Routines tab** that names the routine and the error.
-2. **The bot's status line in the rail** and the **Inbox → Needs attention** list show the problem, with the attention badge, until the routine works again.
-3. **A notification** pops up once for each new failure, with **Open routines** to go straight to the tab. It does not come back after you reload.
+1. **A push notification** ("Something needs fixing") from your Allternit API, even with every window closed. If you have not fixed it, it is sent again an hour later and then every day at 9:00. Turn it off under Settings → Notifications → **Something needs fixing**.
+2. **Inbox → Needs fixing** lists the failure with a **Retry** button (it runs the routine now) and **Dismiss**. The next run that works closes it for you.
+3. **A notice at the top of the bot's Routines tab** that names the routine and the error.
+4. **The bot's status line in the rail** shows the problem, with the attention badge, until the routine works again.
+
+Each run in the history also says why it did not work: it timed out, the routine had no bot, a subscription needs sign-in, you ran out of quota, the model returned an error, or Allternit restarted mid-run.
+
+### Timeouts
+
+A run that takes longer than the routine's time limit is cut off and fails with the reason "timed out". The limit is 30 minutes unless the routine sets its own. A hung run no longer blocks the routine for hours.
+
+### Missed runs
+
+If your computer was off or asleep when a run was due, the routine runs once when Allternit is back, and the history shows a **Skipped** row for each run that was missed (up to 30 per gap). You get a "Something needs fixing" message saying how many runs were missed, or how late the run started. A run counts as missed when it starts more than 5 minutes late, or more than a tenth of its interval late if that is longer. The message closes when a later run starts on time.
 
 ### Automatic pause after 3 failures
 
@@ -40,7 +51,7 @@ After **3 failed runs in a row**, the routine pauses itself so it stops failing 
 
 ## Routines that need a bot
 
-Routines made before bots were required may have no bot. They never run. They are listed under **Needs a bot** on the Routines tab, and your main bot shows "routines need a bot" in the rail and Inbox.
+Routines made before bots were required may have no bot. They never run. They are listed under **Needs a bot** on the Routines tab, and your main bot shows "routines need a bot" in the rail and Inbox. Each one also sends a "Something needs fixing" message once, and stays in the Inbox (as **Needs fixing** items) until you assign a bot or dismiss it.
 
 For each one, choose **Assign to *main bot*** or pick another bot from **Another bot…**. The routine starts on its normal schedule from then on.
 

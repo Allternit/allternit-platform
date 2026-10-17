@@ -1470,6 +1470,7 @@ async fn main() {
     let mut app = combined.with_state(state.clone());
     // Automation Tasks routines with execution_domain = 'local' run here.
     allternit_api::routine_local_scheduler::spawn(state.clone());
+    allternit_api::netops::spawn(state.clone());
     // gizzi enforces bots' spend limits; bring its copy up to date (P8.1).
     allternit_api::spend_limits::spawn_sync(state.clone());
     // Bots' saved memory is tidied weekly on their own model (P7.4).
@@ -1501,6 +1502,8 @@ async fn main() {
     allternit_api::memory_consolidation::spawn(state.clone());
     // Memory Drive nightly Dream (one commit + report per drive per night).
     allternit_api::memory_dream::spawn(state.clone());
+    allternit_api::memory_capture::spawn(state.db.clone());
+    allternit_api::ledger::spawn(state.db.clone());
 
     // Mount cowork scheduler routes if scheduler is active. These routes
     // create/update/delete schedules and self-gate nothing, so they must be

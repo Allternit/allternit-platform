@@ -534,6 +534,10 @@ pub(crate) async fn call_aai_tool(state: &Arc<AppState>, user_id: &str, name: &s
                 consequential: a["consequential"].as_bool().unwrap_or(false),
                 allternit_approval_id: a["allternit_approval_id"].as_str().map(str::to_string),
                 via: "mcp",
+                traceparent: a["traceparent"].as_str().map(str::to_string),
+                idempotency_key: a["correlation_id"].as_str().map(|k| crate::netops::hops::derive_key(&["mcp", user_id, k])),
+                from_kind: "vendor_bot",
+                from_id: "mcp",
             },
         )
         .await

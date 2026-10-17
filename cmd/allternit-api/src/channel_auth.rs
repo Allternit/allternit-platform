@@ -40,6 +40,12 @@ impl Rule {
         Rule { anyone: policy == POLICY_ANYONE, allowed: parse_list(allowed_json), owner_ids: vec![] }
     }
 
+    /// Whether `sender` is the account's verified owner (not just allowed).
+    pub fn is_owner(&self, sender: Option<&str>) -> bool {
+        let Some(s) = sender.map(normalize).filter(|s| !s.is_empty()) else { return false };
+        self.owner_ids.iter().any(|id| normalize(id) == s)
+    }
+
     /// Whether `sender` may make the bot act.
     pub fn allows(&self, sender: Option<&str>) -> bool {
         if self.anyone {

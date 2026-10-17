@@ -17,6 +17,7 @@ Each kind of event has its own switch. These are on until you turn them off:
 | **Ended calls** | "Missed call from Sam", or "Call ended" after your bot finishes a call for you | The bot phone |
 | **AI subscription needs sign-in** | "Sign in to (subscription name) again" | Allternit |
 | **Usage alerts** | "You've used 80% of your monthly cloud budget" | Allternit |
+| **Something needs fixing** | "Something needs fixing: \"Morning briefing\" failed: …", or a routine that was missed or has no bot | The bot, or Allternit |
 
 These are off until you turn them on:
 
@@ -28,7 +29,9 @@ These are off until you turn them on:
 | **AI subscription signed in again** | "(subscription name) is signed in again". It replaces the sign-in notification |
 | **New vendor tickets** | "New ticket for your vendor bot" |
 
-**Routine failures** show inside the app while it is open: a notification with **Open routines**, the bot's status line in the rail, and Inbox → Needs attention. They are not sent as phone or browser push notifications. See [Bot routines](/guides/bot-routines#when-a-routine-fails).
+**Something needs fixing** is sent by your Allternit API itself, not by an open window, so it reaches you with every window closed. A routine that fails, a routine that was missed because your computer was off or asleep, a routine with no bot, and a run whose result could not be saved each open one problem. Opening the same problem again does not send a second message. Until it is fixed you get the message again an hour later, then every day at 9:00 in your computer's time zone. A problem that needs you right away (a routine flagged critical, or one that paused itself) says "Needs fixing now". Once the next run works, the problem closes and the reminders stop. Every problem is also in the Inbox (as **Needs fixing** items); see [The Needs you inbox](/guides/needs-you-inbox) and [Bot routines](/guides/bot-routines#when-a-routine-fails).
+
+Text messages for critical problems are not available yet.
 
 Incoming calls always ring a device that has notifications on. To stop rings on a device, turn notifications off on it.
 

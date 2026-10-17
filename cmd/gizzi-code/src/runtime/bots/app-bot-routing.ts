@@ -43,6 +43,16 @@ export interface AppRouteResult {
   reply?: string
   error?: string
   note?: string
+  /** Delivery receipt: stored → delivered → read → answered, or failed. */
+  receipt?: HopReceipt
+  /** True when a replayed idempotency key returned the earlier result. */
+  replayed?: boolean
+}
+
+export interface HopReceipt {
+  state: "stored" | "delivered" | "read" | "answered" | "failed" | "held"
+  hopId?: string
+  reason?: string | null
 }
 
 export class AppRoutingError extends Error {
@@ -67,12 +77,12 @@ async function headers(): Promise<Record<string, string> | undefined> {
   }
 }
 
-async function post<T>(path: string, body: unknown, timeoutMs: number): Promise<T> {
+async function post<T>(path: string, body: unknown, timeoutMs: number, extra?: Record<string, string>): Promise<T> {
   const h = await headers()
   if (!h) throw new AppRoutingError(401, "This runtime isn't connected to your Allternit account.")
   const response = await fetch(`${platformApiBase()}/api/v1${path}`, {
     method: "POST",
-    headers: h,
+    headers: extra ? { ...h, ...extra } : h,
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(timeoutMs),
   })
@@ -106,11 +116,13 @@ export async function routeToAppBot(
   target: string,
   message: string,
   waitSeconds = 90,
+  hop: { traceparent?: string; idempotencyKey?: string } = {},
 ): Promise<AppRouteResult> {
   return post<AppRouteResult>(
     "/bot-routing/message",
-    { sessionId: sessionID, target, message, waitSeconds },
+    { sessionId: sessionID, target, message, waitSeconds, idempotencyKey: hop.idempotencyKey },
     (waitSeconds + 30) * 1000,
+    hop.traceparent ? { traceparent: hop.traceparent } : undefined,
   )
 }
 

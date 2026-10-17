@@ -283,7 +283,8 @@
         "allternit/cmd/allternit-api/src/memory_retrieve",
         "allternit/cmd/allternit-api/src/memory_consolidation",
         "allternit/cmd/allternit-api/src/memory_relations",
-        "allternit/services/memory"
+        "allternit/services/memory",
+        "allternit-ai/src/views/settings"
       ],
       "decisions": [
         {
@@ -293,6 +294,10 @@
         {
           "on": "2026-10-06",
           "note": "Computer sync runs inside the Desktop app, two-way, with no main copy."
+        },
+        {
+          "on": "2026-10-16",
+          "note": "Eoj: Memory Drive keeps its name and grows into the user's ledger: import any company's memory, capture from every channel, hold every asset, store where the user wants (plan dag_952346). Phase 1 adds the export-prompt import for 10 assistants and import from Claude Code, Codex, Hermes and OpenClaw files."
         }
       ],
       "evidence": [
@@ -625,6 +630,34 @@
         "allternit-ai/src/fabric-session/phone/PhoneShell.tsx",
         "allternit-ai/src/fabric-session/phone/PhoneDrawer.tsx",
         "allternit-ai/src/fabric-session/phone/PhoneModeWheel.tsx"
+      ]
+    },
+    {
+      "id": "feature:bot-home-screen",
+      "label": "Bots on the Home Screen",
+      "product": "product:allternit-mobile-pwa",
+      "status": "building",
+      "description": "Save a bot to an iPhone or Android Home Screen as its own icon (avatar + name) that opens the bot's chat: m.allternit.com/b/<id> page and per-bot manifest (Pages Functions), the Add to Home Screen guide in the bot's menu (QR code on Desktop).",
+      "touches": [
+        "allternit-ai/src/fabric-session",
+        "allternit-ai/src/views",
+        "allternit-ai/src/lib",
+        "surface:pwa",
+        "surface:ai",
+        "surface:desktop"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-16",
+          "note": "Eoj: no App Store app, so no real iOS widget. Bots go on the Home Screen as their own web-app icons with a guide that walks the person through it; tapping the icon opens the bot's existing chat screen, not a new landing page."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/bot-home-screen.mdx",
+        "allternit-ai/src/fabric-session/phone/BotHomeLinkHost.tsx",
+        "allternit-ai/src/views/bots/BotHomeScreenGuide.tsx",
+        "allternit-ai/src/lib/bots/bot-home-link.ts",
+        "allternit-ai/fabric-session-pwa-functions/b/[id].js"
       ]
     },
     {
@@ -1280,7 +1313,7 @@
       "label": "Desktop pets and animated avatars (Petdex standard)",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "Bot avatars play Petdex-standard sprite sheets (8 columns of 192x208, 11 rows: idle, running-right/left, waving, jumping, failed, waiting, running, review, sleep, special). Characters without real frames hop. One pet-activity signal (lib/agents/pet-activity.ts) follows every session store and bot/vendor thread. In-app avatars (rail, headers, surface mascot, A:// orb) react to it. The Desktop pet window gets that state over IPC from the main window and plays it (walk rows while roaming), with a mail badge for replies that finished while you were away; click opens quick chat, double-click shows or hides the app. Terminal agents drive the same pet through a token-guarded loopback hook port (127.0.0.1:7787; gizzi built in, a hook script for Claude Code and Codex), and the pet shows speech bubbles in a click-through window above it. The free character builder renders Petdex v2 sheets with walk rows turned toward the direction of travel.",
+      "description": "Bot avatars play Petdex-standard sprite sheets (8 columns of 192x208, 11 rows: idle, running-right/left, waving, jumping, failed, waiting, running, review, sleep, special). Characters without real frames hop, rock, slump and spin in code (PortraitPetMotion). One pet-activity signal (lib/agents/pet-activity.ts) follows every session store and bot/vendor thread. In-app avatars (rail, headers, surface mascot, A:// orb) react to it. The Desktop pet window gets that state over IPC from the main window and plays it (walk rows while roaming), with a mail badge for replies that finished while you were away; click opens quick chat, double-click shows or hides the app. Terminal agents drive the same pet through a token-guarded loopback hook port (127.0.0.1:7787; gizzi built in, a hook script for Claude Code and Codex), and the pet shows speech bubbles in a click-through window above it. The free character builder renders Petdex v2 sheets with walk rows turned toward the direction of travel.",
       "touches": [
         "allternit-ai/src/lib/agents",
         "allternit-ai/src/views/bots",
@@ -1300,7 +1333,8 @@
         "allternit/surfaces/allternit-desktop/src/main/pet-activity-hub.ts",
         "allternit/surfaces/allternit-desktop/src/main/pet-hook-server.ts",
         "allternit/cmd/gizzi-code/src/cli/ui/ink-app/pet/desktopPetHook.ts",
-        "allternit-ai/src/lib/bots/character-builder/recipe.ts"
+        "allternit-ai/src/lib/bots/character-builder/recipe.ts",
+        "allternit-ai/src/views/bots/PortraitPetMotion.tsx"
       ],
       "decisions": [
         {
@@ -1357,6 +1391,31 @@
         {
           "on": "2026-10-16",
           "note": "Eoj: embeddings must route through the gateway API like chat does. Gateway-specific env (ALLTERNIT_GATEWAY_EMBED_URL) instead of memory_index's ALLTERNIT_EMBED_URL so the public surface stays 501-unconfigured by default and never silently points at a sidecar."
+        }
+      ]
+    },
+    {
+      "id": "feature:attention-alerts",
+      "label": "Attention alerts (no silent failures)",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Server-owned alerts: every failed, missed or bot-less routine (and later a down lane, a loop guard hold or a held send) opens one attention item, pushes it, re-notifies until fixed and shows in the needs-you inbox with Retry and Dismiss.",
+      "touches": [
+        "allternit/cmd/allternit-api",
+        "allternit/cmd/allternit-cloud-api",
+        "allternit-ai/src/components/inbox",
+        "allternit-ai/src/lib/inbox"
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/needs-you-inbox.mdx",
+        "allternit/surfaces/docs/guides/bot-routines.mdx",
+        "allternit/surfaces/docs/api/inbox.mdx",
+        "allternit/cmd/allternit-api/src/netops/alerts.rs"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-16",
+          "note": "Agent-network Phase 1 WP1 (SPEC-agent-network-phase1-2026-10-16): alerts move from a client poller to the runtime; routine.failed is pushed only as attention.opened. Eoj: SMS for critical alerts is opt-in, off by default (not built yet)."
         }
       ]
     }

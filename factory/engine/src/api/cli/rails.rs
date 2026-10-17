@@ -551,11 +551,16 @@ enum WihCmd {
         dag_id: Option<String>,
     },
     Pickup {
+        /// `<node>` or `<dag>/<node>`.
         node_id: String,
+        /// The node's DAG. Optional: found from the node id when it names
+        /// exactly one node across all DAGs.
         #[arg(long = "dag")]
-        dag_id: String,
+        dag_id: Option<String>,
+        /// Who claims it. Defaults to the calling bot
+        /// (`$ALLTERNIT_FACTORY_BOT@$ALLTERNIT_FACTORY_TEAM`), else the caller.
         #[arg(long = "agent")]
-        agent_id: String,
+        agent_id: Option<String>,
         #[arg(long)]
         role: Option<String>,
         #[arg(long)]
@@ -1092,6 +1097,29 @@ where
                 role,
                 fresh,
             } => {
+                let events = ledger.query(LedgerQuery::default()).await?;
+                let (dag_id, node_id) = match resolve_pickup_dag(&events, dag_id, &node_id) {
+                    Ok(pair) => pair,
+                    Err(fact) => {
+                        eprintln!("error: {fact}");
+                        std::process::exit(64);
+                    }
+                };
+                let agent_id = agent_id.filter(|a| !a.trim().is_empty()).unwrap_or_else(default_pickup_agent);
+                // Claiming a node you already hold is a no-op that reports the
+                // WIH you have, not an error.
+                if let Some(wih_id) = active_wih_nodes(&events).get(&node_id) {
+                    let holder = project_wih(&events, wih_id).and_then(|w| w.agent_id);
+                    if holder.as_deref() == Some(agent_id.as_str()) {
+                        println!("wih_id: {wih_id}");
+                        return Ok(());
+                    }
+                    eprintln!(
+                        "refused: {dag_id}/{node_id} is already claimed by {} ({wih_id}); hand it off with `gizzi workspace node handoff {dag_id}/{node_id} --to {agent_id}`",
+                        holder.unwrap_or_else(|| "another agent".into())
+                    );
+                    std::process::exit(1);
+                }
                 let gate = stores.gate().await?;
                 let pickup = gate
                     .wih_pickup_detailed(
@@ -3565,6 +3593,47 @@ fn active_wih_nodes(events: &[AllternitEvent]) -> HashMap<String, String> {
         }
     }
     active
+}
+
+/// `wih pickup`'s DAG: `--dag`, else a `<dag>/<node>` node argument, else the
+/// one DAG whose projection contains the node. Errors name what to pass.
+fn resolve_pickup_dag(
+    events: &[AllternitEvent],
+    dag_flag: Option<String>,
+    node_arg: &str,
+) -> std::result::Result<(String, String), String> {
+    let (dag_from_arg, node_id) = match node_arg.split_once('/') {
+        Some((d, n)) if !d.is_empty() && !n.is_empty() => (Some(d.to_string()), n.to_string()),
+        _ => (None, node_arg.to_string()),
+    };
+    if let Some(dag) = dag_flag.filter(|d| !d.trim().is_empty()).or(dag_from_arg) {
+        return Ok((dag, node_id));
+    }
+    let owners: Vec<String> = collect_dag_ids(events)
+        .into_iter()
+        .filter(|dag_id| project_dag(&events_for_dag(events, dag_id), dag_id).nodes.contains_key(&node_id))
+        .collect();
+    match owners.as_slice() {
+        [one] => Ok((one.clone(), node_id)),
+        [] => Err(format!(
+            "node {node_id} is in no DAG this workspace knows; check the id with `gizzi workspace node list`, or pass `<dag>/<node>`"
+        )),
+        many => Err(format!(
+            "node {node_id} is in more than one DAG ({}); pass `<dag>/{node_id}` or `--dag <dag>`",
+            many.join(", ")
+        )),
+    }
+}
+
+/// Default claimant: the calling Factory bot (`<bot>@<team>`), else the
+/// person or agent running the command.
+fn default_pickup_agent() -> String {
+    let env = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
+    match (env("ALLTERNIT_FACTORY_BOT"), env("ALLTERNIT_FACTORY_TEAM")) {
+        (Some(bot), Some(team)) => format!("{bot}@{team}"),
+        (Some(bot), None) => bot,
+        _ => crate::agents::spawn::caller_identity(None),
+    }
 }
 
 fn matches_trace(

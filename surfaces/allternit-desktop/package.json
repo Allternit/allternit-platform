@@ -361,6 +361,11 @@
       "extendInfo": {
         "NSAppleEventsUsageDescription": "Allternit uses automation to carry out computer-use actions you approve.",
         "NSMicrophoneUsageDescription": "Allternit uses the microphone for voice calls and on-device dictation.",
+        "NSDesktopFolderUsageDescription": "Allternit opens projects and runs your agents in folders you choose on the Desktop.",
+        "NSDocumentsFolderUsageDescription": "Allternit opens projects and runs your agents in folders you choose in Documents.",
+        "NSDownloadsFolderUsageDescription": "Allternit reads files you choose from Downloads.",
+        "NSRemovableVolumesUsageDescription": "Allternit opens projects you choose on external drives.",
+        "NSNetworkVolumesUsageDescription": "Allternit opens projects you choose on network drives.",
         "NSSpeechRecognitionUsageDescription": "Allternit uses speech recognition to transcribe your voice during calls."
       }
     },

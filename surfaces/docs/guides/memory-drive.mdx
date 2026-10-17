@@ -104,18 +104,163 @@ like a password) before anything changes. **Import** saves it all as one change.
 Running it again does nothing. Your old memories stay visible for 30 days after the
 import and are then hidden. They are not deleted.
 
-## Bring memories from ChatGPT or Claude
+## Bring your memory from your logins in one tap
 
-Open **Bring memories from another assistant** in Settings → Memory, pick **ChatGPT**,
-**Claude** or **Another assistant or a list**, and paste what it remembers about you, or
-upload a `.txt`, `.md` or `.json` file. One memory per line; bullets and numbering are fine.
+If you've connected ChatGPT, Claude, Kimi, Gemini or Copilot in **Settings → Subscriptions**, the quickest way to
+bring your memory over is **Bring your memory from your logins**. It lists each connected login.
+
+1. Select **Bring my memory from ChatGPT** (or Claude, Kimi, Gemini or Copilot).
+2. Allternit opens a new, regular chat in that account on your Sessions computer and asks it to
+   list everything it knows about you. Your saved memories and custom instructions there apply,
+   because it's your own account. It usually takes under a minute.
+3. The answer opens in the preview. Untick anything you don't want, then select **Import**.
+
+The chat stays in that account's history like any other chat. A login that's signed out or
+needs a check can't be tapped until you fix it in **Settings → Subscriptions**; if the
+assistant asks for a check mid-way, open it on your Sessions computer, finish the check, and tap
+again. Gemini and Copilot logins are best effort: their connections aren't verified against the live
+services yet, so if one doesn't answer, use the prompt below instead.
+
+## Bring memories from another assistant
+
+Open **Bring memories from another assistant** in Settings → Memory and pick where they're
+coming from: **ChatGPT**, **Claude**, **Gemini**, **Grok**, **Copilot**, **Perplexity**,
+**Meta AI**, **Kimi**, **Le Chat**, **Mem0** or **Something else**.
+
+1. Select **Copy prompt** and send the prompt in a new chat with that assistant. It asks the
+   assistant to list everything it knows about you, one fact per line.
+2. Paste its answer into the box, or upload a `.txt`, `.md` or `.json` file.
+3. Select **Preview**. Untick anything you don't want, then select **Import**.
+
+For **Mem0**, export your memories as JSON from Mem0 and upload the file.
+
+You can also paste a saved-memory list directly:
 
 - **ChatGPT:** Settings → Personalization → Memory → Manage. Copy the list.
 - **Claude:** Settings → Memory. Copy what it remembers.
 
 Preview shows what will be added and what is skipped (duplicates, things already remembered,
-anything that looks like a password). **Import** saves it as one change in
-`imports/chatgpt.md`, `imports/claude.md` or `imports/other.md`.
+anything that looks like a password). **Import** saves the memories you ticked as one change in
+`imports/`, one file per assistant (for example `imports/gemini.md`).
+
+Some assistants, such as OpenAI's Dots, Grok Bot and Meta's Muse agent, don't let you see or
+export their memory. Asking them with the prompt is the only way, and only works where the
+assistant answers it.
+
+## Bring memories from your chat history
+
+If you've used ChatGPT, Claude, Gemini or Grok for a while, your chats say a lot about you. Get the
+chat export from that assistant, then upload it in **Bring memories from your chat history**:
+
+- **ChatGPT:** Settings → Data controls → Export data. ChatGPT emails you a ZIP.
+- **Claude:** Settings → Privacy → Export data. Claude emails you a ZIP.
+- **Gemini:** takeout.google.com → My Activity → Gemini Apps. Google emails you a ZIP.
+- **Grok:** accounts.x.ai → Data → Download your data.
+
+Upload the ZIP as it came, or the conversations file inside it. The file is opened on the device
+you're using, and only your side of each chat is sent to the computer that holds your drive. The
+assistant's replies and any images stay out.
+
+Choose how many conversations to read (the newest 50, the newest 200, or all of them), then select
+**Find memories**. The memory model on that computer reads them a few at a time and suggests
+memories, and the page shows its progress. Keep the page open until it finishes, or select
+**Stop** to keep what it found so far. Bigger histories take longer and use more of that model.
+
+Select **Review**, untick anything you don't want, and select **Import**. Each memory cites the
+conversation it came from, and they're saved in one change to a file such as
+`imports/chatgpt-chats.md`. Nothing is saved before you choose Import.
+
+Large exports work best on a computer; a phone may not have the memory to open them.
+
+## Bring memories from agents on your computer
+
+If you use **Claude Code**, **Codex**, **Hermes** or **OpenClaw** on the computer that holds your
+drive, **Bring memories from agents on your computer** lists the ones it found and how many
+memories each has. Select **Preview** next to one, untick anything you don't want, and select
+**Import**. Allternit reads only those agents' memory and instruction files:
+
+- **Claude Code:** your `CLAUDE.md` and each project's saved memories.
+- **Codex:** your `AGENTS.md` and Codex memories.
+- **Hermes:** `USER.md` and `MEMORY.md`, for every profile.
+- **OpenClaw:** `USER.md` and `MEMORY.md` in its workspace.
+
+Each memory keeps the file it came from as its source. One import takes up to 500; if there are
+more, preview again after importing to bring in the rest. Cursor no longer keeps memories, so
+there is nothing to import from it.
+
+## Where your memories come from
+
+Besides your chats in Allternit, **Where your memories come from** in Settings → Memory lists the
+other places that add to your drive. Each has its own switch:
+
+- **Your messages to your bots** (on by default). What you send your bots on Telegram, WhatsApp,
+  Discord, Slack, Teams, text messages and email. Only messages from you count. Allternit knows
+  they're yours because you verified that account or phone number, or because it's your
+  account's email address. What other people send your bots never becomes your memory. Each
+  memory cites the chat it came from, such as `telegram:chat/…`.
+- **Gizzi in the terminal** (on by default). What you type in Gizzi, so the nightly Dream can
+  learn from it. Gizzi saves memories itself as well.
+- **Keep importing from agents on your computer** (off until you turn it on). Every few hours,
+  Allternit imports new memories from Claude Code, Codex, Hermes and OpenClaw on the computer that
+  holds your drive. Anything already in your drive is skipped. Turning it on imports what's there
+  right away.
+
+Below the switches, **Memories by source** shows how many memories each source added: an
+assistant you imported from, an agent on your computer, or a channel. To take a source back out,
+select **Forget** next to it and confirm. Its memories are removed in one change and stay in the
+drive's history, like any delete.
+
+Incognito chats are never remembered, from any surface.
+
+## Your ledger
+
+Your memories are one part of what you build in Allternit. **Your ledger**, also in Settings →
+Memory, keeps the rest as plain files with history, next to your memories:
+
+| Folder | What's in it |
+| --- | --- |
+| `bots/` | Each bot's settings, plus its workspace files (`SOUL.md` and the rest) |
+| `agents/` | Agents that aren't bots |
+| `bot-templates/` | Bot and team templates you made |
+| `routines/` | Routines and scheduled messages |
+| `workflows/` | Workflows, with their steps |
+| `tasks/` | Open tasks |
+| `skills/` | Installed skills (`SKILL.md` folders) and skill recipes |
+| `projects/` | Projects and their instructions |
+| `schedules/` | Scheduled tasks, loops and scheduled runs |
+| `connected-apps.json` | Which apps and accounts are connected. Only the account, never its sign-in |
+
+Allternit saves the ledger every hour, and only when something changed. Select **Save now** to
+save it right away, **Browse files** to read any file, or **Download (.zip)** to keep a copy.
+**Changes** lists each save and which files it changed.
+
+Passwords, keys and sign-in tokens are never written to the ledger. Values stored under names like
+`api_key` or `password` are replaced, links to private git repositories lose their password, and
+a file that still looks like it holds a key is left out and listed in the ledger's `README.md`.
+
+Today the ledger is a copy. Changing a file in it doesn't change the bot or routine itself yet.
+
+## Keep a copy where you want
+
+Your Memory Drive and ledger live on the computer that holds your drive (Allternit Desktop, or your
+cloud computer). **Keep a copy where you want** in Settings → Memory adds a copy somewhere you
+choose, updated every hour:
+
+- **A folder on that computer.** Type its full path, such as `/Users/you/Dropbox` or your iCloud
+  Drive folder, and select **Copy here**. Allternit writes an `Allternit` folder inside it, with
+  `memory/` and `ledger/`, and keeps it in step. It only changes or removes files it wrote itself.
+  Edits you make in that copy are replaced on the next copy; change your memories in Allternit.
+- **Your own git repository.** Create an empty private repository (GitHub, GitLab, or any host that
+  takes HTTPS), paste its HTTPS address and an access token that can push to it, then select
+  **Copy to this repository**. Your memories go to the branch `allternit-memory` and your ledger
+  to `allternit-ledger`. The token is stored sealed on that computer and never shown again. Paste
+  a new one to replace it.
+
+Select **Copy now** to copy right away. Each copy shows when it last worked, or what went wrong and
+how to fix it. Select **Stop copying** to stop; copies already made stay where they are.
+
+**Delete forever** removes memories from your drive and its history, but not from copies you
+keep elsewhere. Delete them there yourself, or stop the copy first.
 
 ## Use it from other agents
 

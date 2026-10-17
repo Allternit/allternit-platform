@@ -42,7 +42,15 @@ export const WorkspaceCommand = cmd({
             describe: "list nodes",
             options: { mine: { type: "boolean", describe: "only nodes this bot owns" } },
           },
-          { command: "claim <node>", describe: "claim a node", mutation: true },
+          {
+            command: "claim <node>",
+            describe: "claim a node (<node> or <dag>/<node>); defaults to you as the owner",
+            mutation: true,
+            options: {
+              dag: { type: "string", describe: "the node's DAG, when the node id alone is ambiguous" },
+              agent: { type: "string", describe: "who claims it (default: this bot, else you)" },
+            },
+          },
           {
             command: "handoff <node>",
             describe: "hand a claimed node (<dag>/<node>) to another agent, with a note",
