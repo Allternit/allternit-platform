@@ -19,12 +19,16 @@ app/src/main/java/com/allternit/phonelink/
     DeviceOps.kt                interface the accessibility service implements
     Provisioning.kt             settings, PROVISION extras, one-shot pairing grant, auto-start rule
     MeshKeyBox.kt               sealed-at-rest storage for the mesh pre-auth key
-    MeshController.kt           owns the embedded tsnet node and the mesh-side forwarder
+    MeshController.kt           the join engine (runs inside the :mesh process)
+    MeshSupervisor.kt           main-process mesh state + crash backoff (pure JVM)
+    MeshMessages.kt             string codec for the main↔mesh-process payloads (pure JVM)
     EncryptedFileSessionStore.kt sessions sealed with a BlobSealer
     Schema.kt                   GET /schema and GET /skill
   PhoneLinkAccessibilityService.kt  DeviceOps on the real device (gestures, tree, screenshot)
   PhoneLinkService.kt           foreground service + "Allternit can use your phone's apps · Stop"
   ServerController.kt           process-wide owner of the server
+  MeshManager.kt                main-process owner of the mesh: binds :mesh, hosts the viaMesh listener
+  MeshService.kt                runs the gomobile node in the private :mesh process
   Receivers.kt                  BootReceiver, ProvisionReceiver (DUMP-protected), StopReceiver
   PairingNotifier.kt            Allow/Deny notification (60 s), PairingActionReceiver
   KeystoreSealer.kt             Android Keystore AES-256-GCM
@@ -119,10 +123,11 @@ adb shell am broadcast -a com.allternit.phonelink.PROVISION -n $PKG/.ProvisionRe
 ```
 
 - `mesh_control_url` (https only) and `mesh_auth_key` are optional. The key is a single-use Headscale pre-auth key from `POST /api/v1/mesh/enroll`; Desktop passing it at cable setup is the next step (until then, provision by hand).
-- The key is sealed with the Keystore sealer on arrival, never logged, and dropped after the first successful join; from then on tsnet re-authenticates with the node key in the app's private `files/mesh` dir. A failed join keeps the sealed key.
-- The node starts and stops with the foreground service and rejoins after reboot like the server. `device_info` and the unauthenticated `/whoami` report `mesh_state` (`stopped`/`starting`/`needs_login`/`running`/`error:…`) and `mesh_host` (`<100.x>:8200` or null). The notification shows the mesh host once joined.
-- Network changes (Wi-Fi ↔ cellular, new Wi-Fi) are handled by tsnet/magicsock — there is no app-level reconnect loop.
-- The mesh path lands on a dedicated internal loopback listener whose requests are marked `viaMesh`. That marking is load-bearing: the bridge forwards tailnet connections from 127.0.0.1, and without it a mesh peer could consume the one-shot armed pairing grant or use plaintext pairing. Mesh-forwarded requests are treated as remote — sealed envelopes required, approval or an existing session needed, armed grant refused. The existing server settings (`allow_remote_access`, `listen_port`) are untouched: the mesh reaches the same server through loopback.
+- The key is sealed with the Keystore sealer on arrival and never logged. It is passed to the mesh process only while one is stored, and dropped once the mesh reports `running`; from then on tsnet re-authenticates with the node key in the app's private `files/mesh` dir. A failed join keeps the sealed key.
+- The node runs in the app's **private `:mesh` process**, hosted by `MeshService` (`exported=false`, never started directly). While the phone server runs, the main process binds it with `BIND_AUTO_CREATE|BIND_IMPORTANT` — it shares the foreground service's priority — and unbinds on stop. Inputs travel in the bind Intent, reports (`{state, meshIp}`) come back on a Messenger (no AIDL). The main process keeps the last report for `device_info` and the unauthenticated `/whoami` (`mesh_state` `stopped`/`starting`/`running`/`needs_login`/`error:…`, `mesh_host` `<100.x>:8200` or null) and shows the mesh host in the notification once joined.
+- **Crash isolation is the point.** The node is Go (gomobile); a Go panic aborts its whole process, and that already happened once — it took the phone server down with it and Android only restarted the service 30 minutes later. Now a panic can cost only the mesh: the main process reports `mesh_state = "error:mesh process stopped"`, re-binds with backoff (5 s, 15 s, 30 s, 60 s, then every 5 min), and the phone server and accessibility service keep running throughout.
+- Network changes (Wi-Fi ↔ cellular, new Wi-Fi) are handled by tsnet/magicsock; the `:mesh` process re-reads the interface list itself (Android denies Go the netlink dump) — there is no app-level reconnect loop beyond the join/backoff retries.
+- The mesh path lands on a dedicated internal loopback listener **in the main process** (127.0.0.1, server port + 10000) whose requests are marked `viaMesh`. That marking is load-bearing: the bridge forwards tailnet connections from 127.0.0.1, and without it a mesh peer could consume the one-shot armed pairing grant or use plaintext pairing. Mesh-forwarded requests are treated as remote — sealed envelopes required, approval or an existing session needed, armed grant refused. The existing server settings (`allow_remote_access`, `listen_port`) are untouched: the mesh reaches the same server through loopback.
 
 ### Which commands the shell user may run on Android 14
 
