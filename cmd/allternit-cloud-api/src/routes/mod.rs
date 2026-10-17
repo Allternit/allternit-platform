@@ -39,6 +39,7 @@ pub mod mcp_events;
 pub mod mcp_event_callbacks;
 pub mod allternit_events;
 pub mod runtime_events;
+pub mod runtime_presence;
 pub mod mesh;
 pub mod channel_inbound;
 pub mod phone;
