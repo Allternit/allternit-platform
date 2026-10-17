@@ -1308,6 +1308,10 @@
         {
           "on": "2026-10-17",
           "note": "Android Phone Link setup installs the Phone Link app over the cable (accessibility service, iCTRL protocol on :8200, starts on boot) instead of wireless debugging; linked phones are found again by device id when their Wi-Fi address changes."
+        },
+        {
+          "on": "2026-10-17",
+          "note": "Bots reach Phone-Linked phones through one iCTRL lane in PhoneToolRunner (link: serials) with read_ui/find_and_tap/screen_text on every lane and per-phone health; remount and signature renewal are manual states."
         }
       ],
       "evidence": [
