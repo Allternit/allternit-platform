@@ -48,7 +48,6 @@ import {
   buildBotPhoneWindowUrl,
   BOT_PHONE_WINDOW_SIZE,
 } from './bot-computer-window.js';
-import { bonsaiCompanion } from './bonsai-companion-manager.js';
 import { systemOne } from './system-one-manager.js';
 import { gizziManager } from './gizzi-manager.js';
 import { connectorSidecarManager } from './connector-sidecar-manager.js';
@@ -1447,11 +1446,6 @@ async function initializeBundledMode(): Promise<void> {
       pushServiceState();
     }
 
-    // Bonsai companion follows the app lifecycle: auto-start when installed.
-    bonsaiCompanion.getStatus()
-      .then((status) => (status.installed && !status.running ? bonsaiCompanion.start() : undefined))
-      .catch((err) => log.warn('[Bonsai] auto-start skipped:', err));
-
     updateSplash('Connecting to platform…', 80);
 
     // Step 3 — Platform URL
@@ -2741,7 +2735,6 @@ async function shutdownAllServices(): Promise<void> {
   meshManager.stop().catch(() => {}); // best-effort mesh sidecar shutdown
   notebookManager.stop();
   voiceManager.stop();
-  bonsaiCompanion.stop();
   systemOne.stop();
   computerUseDriverManager.stop();
   decisionRuntimeManager.stop();
@@ -2831,14 +2824,6 @@ ipcMain.handle('decision-runtime:get-status', () => decisionRuntimeManager.getSt
 
 // Phones (Lane 2a): Android over Wi-Fi, no cable — see phone-device-manager.ts
 registerPhoneIpc(handleGuarded);
-
-// Bonsai local image companion (install / lifecycle / removal)
-ipcMain.handle('bonsai:get-status', () => bonsaiCompanion.getStatus());
-handleGuarded('bonsai:install', () => bonsaiCompanion.install());
-handleGuarded('bonsai:cancel-install', () => bonsaiCompanion.cancelInstall());
-handleGuarded('bonsai:start', () => bonsaiCompanion.start());
-handleGuarded('bonsai:stop', () => { bonsaiCompanion.stop(); return true; });
-handleGuarded('bonsai:remove', () => bonsaiCompanion.remove());
 
 // System One (S1) + Laya (install / repair / lifecycle / checkpoint swap)
 ipcMain.handle('system-one:get-status', () => systemOne.getStatus());

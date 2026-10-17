@@ -52,7 +52,7 @@ export function isUsageLedgerEnabled(env: NodeJS.ProcessEnv = process.env): bool
 export function laneFor(providerID: string): 'api' | 'subscription-cli' | 'local' {
   const p = providerID.toLowerCase()
   if (p.startsWith('subs-')) return 'subscription-cli'
-  if (['ollama', 'lmstudio', 'llama.cpp', 'llamacpp', 'local', 'bonsai'].some((l) => p === l || p.startsWith(`${l}-`))) return 'local'
+  if (['ollama', 'lmstudio', 'llama.cpp', 'llamacpp', 'local'].some((l) => p === l || p.startsWith(`${l}-`))) return 'local'
   return 'api'
 }
 

@@ -51,26 +51,6 @@ export interface BackendAPI {
   onDownloadProgress(handler: (progress: { stage: string; percent: number }) => void): () => void;
 }
 
-export interface BonsaiStatus {
-  installed: boolean;
-  running: boolean;
-  installing: boolean;
-  url: string;
-  revisions?: { source?: string; model?: string; mlxWheel?: string };
-  installDir: string;
-  error?: string;
-}
-
-export interface BonsaiAPI {
-  getStatus(): Promise<BonsaiStatus>;
-  install(): Promise<void>;
-  cancelInstall(): Promise<boolean>;
-  start(): Promise<void>;
-  stop(): Promise<boolean>;
-  remove(): Promise<void>;
-  onProgress(handler: (progress: { stage: string; message: string }) => void): () => void;
-}
-
 export type S1Backend = 'laya_bundled' | 'system_one_local' | 'auto';
 
 export interface LayaCheckpoint {
@@ -654,7 +634,6 @@ export interface AllternitDesktopAPI {
   sdk: { getBackendUrl(): Promise<string> };
   connection: ConnectionAPI;
   backend: BackendAPI;
-  bonsai: BonsaiAPI;
   systemOne: SystemOneAPI;
   vm: VmSetupAPI;
   window: WindowAPI;
