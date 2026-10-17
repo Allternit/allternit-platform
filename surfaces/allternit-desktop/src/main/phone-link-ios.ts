@@ -32,8 +32,10 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import type { DriverContext, PhoneLinkDriver } from './phone-link.js';
 import type { PhoneLinkApp, PhoneLinkStatus } from './phone-link-types.js';
-import { ICTRL_PORT, IctrlError, type IctrlWhoami } from './ictrl-client.js';
+import { ICTRL_PORT, IctrlError } from './ictrl-client.js';
+import type { IctrlLike } from './ictrl-client.js';
 import type { GoIos, LongRunning } from './phone-goios.js';
+import { findPhoneHost, nodeDiscoveryDeps } from './phone-link-discovery.js';
 import {
   RunnerUnavailableError,
   SigningError,
@@ -111,15 +113,7 @@ export function fileLinkStore(file: string): IosLinkStore {
 }
 
 /** The parts of IctrlClient the driver uses (faked in tests). */
-export interface IctrlLike {
-  readonly host: string;
-  hasKey(): boolean;
-  forget(): void;
-  whoami(): Promise<IctrlWhoami | null>;
-  pair(clientName: string, meta?: { deviceId?: string; deviceName?: string }): Promise<unknown>;
-  call<T = Record<string, unknown>>(method: string, params?: Record<string, unknown>, timeoutMs?: number): Promise<T>;
-  withHost(host: string): IctrlLike;
-}
+export type { IctrlLike } from './ictrl-client.js';
 
 export type GoIosLike = Pick<
   GoIos,
@@ -138,6 +132,8 @@ export interface IosDriverDeps {
   ddiDir: () => Promise<string>;
   readPairRecord?: (udid: string) => Promise<Buffer | null>;
   store: IosLinkStore;
+  /** Finds the phone on the LAN by device id after its address changed (defaults to a subnet scan). */
+  discover?: (deviceId: string, lastHost: string | undefined) => Promise<string | null>;
   workDir: string;
   clientName?: string;
   now?: () => number;
@@ -644,6 +640,20 @@ export async function reconnectIos(
   const probe = async (host?: string) => (host ? deps.ictrl(udid, host).call('device_info', {}, 5000).then(() => host, () => null) : null);
   const direct = await probe(record.lanHost);
   if (direct) return direct;
+  // The Wi-Fi address may have changed since we linked (DHCP). Ask the LAN
+  // who has this phone's device id before falling back to the cable.
+  if (record.deviceId) {
+    try {
+      const discover = deps.discover ?? ((deviceId: string, lastHost: string | undefined) => findPhoneHost(deviceId, lastHost, nodeDiscoveryDeps));
+      const found = await discover(record.deviceId, record.lanHost);
+      if (found && (await probe(found))) {
+        deps.store.save({ ...record, lanHost: found });
+        return found;
+      }
+    } catch (error) {
+      deps.logger?.(`[phone-link ios] discovery failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
   if (!(await deps.goios.list()).includes(udid)) return null;
   const tunnel = deps.goios.tunnelStart(udid);
   let fwd: { port: number; close(): Promise<void> } | null = null;

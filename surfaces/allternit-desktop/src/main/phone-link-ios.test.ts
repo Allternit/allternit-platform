@@ -40,6 +40,7 @@ interface World {
   runnerStandalone: boolean;
   cableSession: boolean;
   lanDiesWithoutCable: boolean;
+  lanDeadHosts: string[];
   key: boolean;
   installed: string[];
   launches: string[];
@@ -60,6 +61,7 @@ function world(over: Partial<World> = {}): World {
     runnerStandalone: false,
     cableSession: false,
     lanDiesWithoutCable: false,
+    lanDeadHosts: [],
     key: false,
     installed: [],
     launches: [],
@@ -145,7 +147,7 @@ function fakeIctrl(w: World): (udid: string, host: string) => IctrlLike {
       if (!w.key) throw new IctrlError('no_key', 'no key');
       const viaCable = host.startsWith('127.0.0.1');
       const tunnelUp = w.tunnels.some((t) => !t.stopped);
-      const lanUp = w.runnerStandalone && (!w.lanDiesWithoutCable || tunnelUp);
+      const lanUp = w.runnerStandalone && (!w.lanDiesWithoutCable || tunnelUp) && !w.lanDeadHosts.includes(host);
       if (viaCable ? !(w.cableSession || w.runnerStandalone) : !lanUp) throw new IctrlError('unreachable', 'unreachable');
       if (method === 'config') return { allow_remote_access: true, address: LAN, listen_port: 8200 } as T;
       return {} as T;
@@ -319,6 +321,38 @@ describe('iPhone Phone Link', () => {
     expect(w.launches).toEqual([ARTIFACTS.manifest.runner.bundleId]);
     expect(w.tunnels.every((t) => t.stopped)).toBe(true);
     expect(w.signRequests).toHaveLength(0);
+  });
+
+  it('finds the phone on the LAN by device id when its address changed, before reaching for the cable', async () => {
+    const w = world({ phonePresent: [true], trusted: [true], key: true, runnerStandalone: true, lanDeadHosts: ['192.168.1.99:8200'] });
+    const d = deps(w, appleIdSigner(w), {
+      discover: async (deviceId: string, lastHost: string | undefined) => {
+        expect(deviceId).toBe('dev-1');
+        expect(lastHost).toBe('192.168.1.99:8200');
+        return LAN;
+      },
+    });
+    d.store.save({
+      udid: 'U',
+      deviceId: 'dev-1',
+      runnerBundleId: ARTIFACTS.manifest.runner.bundleId,
+      hostBundleId: ARTIFACTS.manifest.host.bundleId,
+      xctestConfig: 'iCTRLUITests.xctest',
+      testToRun: 't',
+      expiresAt: new Date(Date.now() + 5 * 86400_000).toISOString(),
+      lanHost: '192.168.1.99:8200',
+      linkedAt: new Date().toISOString(),
+    });
+    const manager = new PhoneLinkManager({ platform: 'darwin', sleep: instant, ios: async () => d });
+    manager.start('ios');
+    const ready = await waitFor(manager, 'ready_wifi');
+    expect(ready.detail).toBe(LAN);
+    // No cable session, no relaunch: discovery answered first.
+    expect(w.launches).toHaveLength(0);
+    expect(w.tunnels).toHaveLength(0);
+    expect(w.runtests).toHaveLength(0);
+    expect(w.signRequests).toHaveLength(0);
+    expect(d.store.load('U')?.lanHost).toBe(LAN);
   });
 
   it('fails retryably when the runner dies with the cable session', async () => {
