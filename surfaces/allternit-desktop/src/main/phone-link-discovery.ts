@@ -119,3 +119,36 @@ export async function findPhoneHost(
   await Promise.all(workers);
   return found;
 }
+
+/**
+ * One pass over every LAN subnet, recording which device id answers where.
+ * Several linked phones can be looked up from one scan instead of one each.
+ */
+export async function scanLan(
+  deps: DiscoveryDeps,
+  opts: { port?: number; concurrency?: number; timeoutMs?: number } = {},
+): Promise<Map<string, string>> {
+  const port = opts.port ?? DISCOVERY_PORT;
+  const timeoutMs = opts.timeoutMs ?? TIMEOUT_MS;
+  const own = new Set(deps.lanInterfaces().map((i) => i.address));
+  const targets: string[] = [];
+  const seen = new Set<string>();
+  for (const iface of deps.lanInterfaces()) {
+    for (const host of subnetHosts(iface.address, iface.netmask)) {
+      if (own.has(host) || seen.has(host)) continue;
+      seen.add(host);
+      targets.push(`${host}:${port}`);
+    }
+  }
+  const found = new Map<string, string>();
+  let next = 0;
+  const workers = Array.from({ length: Math.max(1, Math.min(opts.concurrency ?? CONCURRENCY, targets.length)) }, async () => {
+    while (next < targets.length) {
+      const host = targets[next++];
+      const who = await deps.fetchWhoami(host, timeoutMs).catch(() => null);
+      if (typeof who?.device_id === 'string' && !found.has(who.device_id)) found.set(who.device_id, host);
+    }
+  });
+  await Promise.all(workers);
+  return found;
+}

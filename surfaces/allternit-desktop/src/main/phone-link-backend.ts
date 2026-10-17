@@ -15,10 +15,10 @@
  * and applied to taps (iPhone: a 3× JPEG of a 393-pt-wide screen divides by 3).
  */
 
-import * as fs from 'node:fs';
 import { IctrlError, ictrlStoreKey } from './ictrl-client.js';
-import { IOS_VENDOR_BUNDLES, fileLinkStore, type IctrlLike, type IosLinkStore } from './phone-link-ios.js';
-import { ANDROID_VENDOR_PACKAGES } from './phone-link.js';
+import { IOS_VENDOR_BUNDLES, type IctrlLike, type IosLinkStore } from './phone-link-ios.js';
+import { ANDROID_VENDOR_PACKAGES, type AndroidLinkStore } from './phone-link-android.js';
+import { scanLan, type DiscoveryDeps } from './phone-link-discovery.js';
 import { PACKAGE_RE, resolveApp, type ToolErrorCode, type ToolResult, type UsbPhoneBackend } from './phone-tools.js';
 import {
   PhoneLinkHealthMonitor,
@@ -62,7 +62,6 @@ export interface PhoneLinkBackendDeps {
 
 export class PhoneLinkBackend implements UsbPhoneBackend {
   /** image pixels per phone point, learned from a screenshot (deviceId → scale). */
-  private readonly scales = new Map<string, number>();
   /** Latest screenshot's pixel size per phone (for direction swipes). */
   private readonly screens = new Map<string, { width: number; height: number }>();
 
@@ -180,7 +179,7 @@ export class PhoneLinkBackend implements UsbPhoneBackend {
         .catch(() => false);
       if (locked) return fail('device_locked', 'Unlock your phone and try again.');
     }
-    return fail('adb_failed', error instanceof Error ? error.message : String(error));
+    return fail('phone_failed', error instanceof Error ? error.message : String(error));
   }
 
   private async simple(phone: LinkedPhone, method: string): Promise<ToolResult> {
@@ -188,58 +187,35 @@ export class PhoneLinkBackend implements UsbPhoneBackend {
     return res.ok ? { ok: true } : res.result;
   }
 
+  /**
+   * The image is requested in the phone's own tap coordinates (points on
+   * iPhone via scale 1, pixels on Android), so screenshot, read_ui frames and
+   * tap/swipe all share one coordinate space and nothing is converted.
+   */
   private async screenshot(phone: LinkedPhone): Promise<ToolResult> {
-    const res = await this.invoke<Record<string, unknown>>(phone, 'screenshot', { format: 'jpeg' }, 20_000);
+    const params = phone.platform === 'ios' ? { format: 'jpeg', scale: 1 } : { format: 'jpeg' };
+    const res = await this.invoke<Record<string, unknown>>(phone, 'screenshot', params, 20_000);
     if (!res.ok) return res.result;
     const shot = res.value;
-    const b64 = [shot.image, shot.image_base64, shot.data].find((v): v is string => typeof v === 'string' && v.length > 0);
-    if (!b64) return fail('adb_failed', 'The phone returned a screenshot without image data.');
+    const b64 = typeof shot.data === 'string' && shot.data.length > 0 ? shot.data : null;
+    if (!b64) return fail('phone_failed', 'The phone returned a screenshot without image data.');
     const jpeg = Buffer.from(b64, 'base64');
-    if (jpeg.length < 4 || jpeg[0] !== 0xff || jpeg[1] !== 0xd8) return fail('adb_failed', 'The phone did not return a JPEG screenshot.');
     const size = jpegSize(jpeg);
-    if (size) this.screens.set(phone.deviceId, size);
-
-    // Learn the pixel↔point scale: the helper reports its screenshot size in
-    // its own tap space (points on iOS); the JPEG itself is pixels.
-    const space = shot.coordinate_space === 'points' || shot.coordinate_space === 'pixels' ? shot.coordinate_space : phone.platform === 'ios' ? 'points' : 'pixels';
-    const reportedW = typeof shot.width === 'number' ? shot.width : undefined;
-    const reportedH = typeof shot.height === 'number' ? shot.height : undefined;
-    if (space === 'points' && size && reportedW && reportedH) {
-      const sx = size.width / reportedW;
-      const sy = size.height / reportedH;
-      if (Math.abs(sx - sy) < 0.01 && Math.abs(sx - 1) > 0.01) {
-        this.scales.set(phone.deviceId, sx);
-      } else {
-        this.scales.delete(phone.deviceId);
-      }
-    } else {
-      this.scales.delete(phone.deviceId);
-    }
-
-    // Taps use the image's pixels whenever we can convert to the phone's
-    // space; without a scale factor they pass through in the phone's space.
-    const coordinateSpace = space === 'points' && !this.scales.has(phone.deviceId) ? 'points' : 'pixels';
+    if (!size) return fail('phone_failed', 'The phone did not return a JPEG screenshot.');
+    this.screens.set(phone.deviceId, size);
     return {
       ok: true,
       mimeType: 'image/jpeg',
       dataBase64: jpeg.toString('base64'),
-      width: size?.width ?? reportedW ?? 0,
-      height: size?.height ?? reportedH ?? 0,
-      coordinate_space: coordinateSpace,
-      note: coordinateSpace === 'points' ? 'Tap coordinates are points, matching this image.' : 'Tap coordinates are pixels of this image.',
+      width: size.width,
+      height: size.height,
+      note: 'Tap coordinates are pixels of this image; phone.read_ui frames use the same coordinates.',
     };
-  }
-
-  /** Bot-space (screenshot pixels) → phone space (points when a scale is known). */
-  private toPhoneCoords(phone: LinkedPhone, x: number, y: number): [number, number] {
-    const scale = this.scales.get(phone.deviceId);
-    return scale ? [Math.round(x / scale), Math.round(y / scale)] : [x, y];
   }
 
   private async tap(phone: LinkedPhone, a: Record<string, unknown>): Promise<ToolResult> {
     if (!isInt(a.x) || !isInt(a.y)) return fail('invalid_args', 'x and y must be non-negative integers.');
-    const [x, y] = this.toPhoneCoords(phone, a.x, a.y);
-    const res = await this.invoke(phone, 'tap', { x, y });
+    const res = await this.invoke(phone, 'tap', { x: a.x, y: a.y });
     return res.ok ? { ok: true } : res.result;
   }
 
@@ -248,30 +224,18 @@ export class PhoneLinkBackend implements UsbPhoneBackend {
     if (!Number.isInteger(duration) || (duration as number) < 50 || (duration as number) > 5000) {
       return fail('invalid_args', 'durationMs must be 50–5000.');
     }
-    let coords: number[];
     if (a.direction !== undefined) {
-      const screen = this.screens.get(phone.deviceId);
-      if (!screen) return fail('adb_failed', 'Take a screenshot before swiping by direction.');
-      const [w, h] = [screen.width, screen.height];
-      const [cx, cy] = [Math.floor(w / 2), Math.floor(h / 2)];
-      const dx = Math.floor(w / 3);
-      const dy = Math.floor(h / 3);
-      const map: Record<string, number[]> = {
-        up: [cx, cy + dy, cx, cy - dy],
-        down: [cx, cy - dy, cx, cy + dy],
-        left: [cx + dx, cy, cx - dx, cy],
-        right: [cx - dx, cy, cx + dx, cy],
-      };
-      const picked = typeof a.direction === 'string' ? map[a.direction] : undefined;
-      if (!picked) return fail('invalid_args', 'direction must be up, down, left or right.');
-      coords = picked;
-    } else {
-      coords = [a.x1, a.y1, a.x2, a.y2] as number[];
-      if (!coords.every((c) => isInt(c))) return fail('invalid_args', 'Give x1,y1,x2,y2 as non-negative integers, or a direction.');
+      if (a.direction !== 'up' && a.direction !== 'down' && a.direction !== 'left' && a.direction !== 'right') {
+        return fail('invalid_args', 'direction must be up, down, left or right.');
+      }
+      // iCTRL's swipe starts at the screen centre and travels a third of the screen by default.
+      const res = await this.invoke(phone, 'swipe', { direction: a.direction });
+      return res.ok ? { ok: true } : res.result;
     }
-    const [x1, y1] = this.toPhoneCoords(phone, coords[0], coords[1]);
-    const [x2, y2] = this.toPhoneCoords(phone, coords[2], coords[3]);
-    const res = await this.invoke(phone, 'swipe', { x1, y1, x2, y2, duration_ms: duration });
+    const coords = [a.x1, a.y1, a.x2, a.y2];
+    if (!coords.every((c) => isInt(c))) return fail('invalid_args', 'Give x1,y1,x2,y2 as non-negative integers, or a direction.');
+    const [x1, y1, x2, y2] = coords as number[];
+    const res = await this.invoke(phone, 'drag', { from_x: x1, from_y: y1, to_x: x2, to_y: y2, duration: (duration as number) / 1000 });
     return res.ok ? { ok: true } : res.result;
   }
 
@@ -328,11 +292,11 @@ export class PhoneLinkBackend implements UsbPhoneBackend {
   private async findAndTap(phone: LinkedPhone, a: Record<string, unknown>): Promise<ToolResult> {
     if (typeof a.element_id !== 'string' || !a.element_id.trim()) return fail('invalid_args', 'element_id is required, e.g. "sign_in" or "Sign in".');
     if (a.match !== undefined && typeof a.match !== 'string') return fail('invalid_args', 'match must be a string.');
-    const res = await this.invoke(phone, 'find_and_tap', {
+    const res = await this.invoke<{ message?: string; matched?: unknown }>(phone, 'find_and_tap', {
       element_id: a.element_id.trim(),
       ...(typeof a.match === 'string' && a.match ? { match: a.match } : {}),
     });
-    return res.ok ? { ok: true } : res.result;
+    return res.ok ? { ok: true, message: res.value?.message, matched: res.value?.matched } : res.result;
   }
 }
 
@@ -366,7 +330,20 @@ function pageSourceParams(a: Record<string, unknown>): { params: Record<string, 
 /** page_source/screen_text answers: a bare string, a {text}, or JSON. */
 function textOf(value: unknown): string {
   if (typeof value === 'string') return value;
-  if (value && typeof value === 'object' && typeof (value as { text?: unknown }).text === 'string') return (value as { text: string }).text;
+  const v = (value ?? {}) as { source?: unknown; text?: unknown; items?: unknown };
+  // page_source → { source }; screen_text → { items: [{ label | text, center_x, center_y }] }
+  if (typeof v.source === 'string') return v.source;
+  if (Array.isArray(v.items)) {
+    return v.items
+      .map((item) => {
+        const it = item as { label?: unknown; text?: unknown; center_x?: unknown; center_y?: unknown };
+        const text = typeof it.label === 'string' ? it.label : typeof it.text === 'string' ? it.text : '';
+        return text ? `${text} @ (${it.center_x}, ${it.center_y})` : '';
+      })
+      .filter(Boolean)
+      .join('\n');
+  }
+  if (typeof v.text === 'string') return v.text;
   return JSON.stringify(value ?? {});
 }
 
@@ -397,26 +374,9 @@ export function jpegSize(buf: Buffer): { width: number; height: number } | null 
 
 // ── Production source: both link stores ─────────────────────────────────────
 
-/** Android link record (written by the Android Phone Link lane; read defensively). */
-export interface AndroidLinkRecord {
-  deviceId: string;
-  serial?: string;
-  deviceName?: string;
-  osVersion?: string;
-  lanHost?: string;
-  apps?: { vendor: string; signedIn: boolean | null }[];
-  pairedAt?: string;
-  helperVersion?: string;
-}
-
-/**
- * Linked phones from both stores: iOS `phone-link-ios.json` (fileLinkStore)
- * and Android `phone-link-android.json`. A missing or unreadable Android file
- * means no Android phones, never an error.
- */
-export function linkedPhoneSource(deps: { iosStore: IosLinkStore; androidFile: string }): LinkedPhoneSource {
-  return () => {
-    const ios = deps.iosStore.all().map((r) => ({
+export function linkedPhoneSource(deps: { iosStore: IosLinkStore; androidStore: AndroidLinkStore }): LinkedPhoneSource {
+  return () => [
+    ...deps.iosStore.all().map((r) => ({
       deviceId: r.deviceId ?? r.udid,
       platform: 'ios' as const,
       name: r.deviceName,
@@ -424,25 +384,69 @@ export function linkedPhoneSource(deps: { iosStore: IosLinkStore; androidFile: s
       storeKey: ictrlStoreKey(r.udid),
       expiresAt: r.expiresAt,
       apps: r.apps,
-    }));
-    let android: AndroidLinkRecord[] = [];
-    try {
-      const parsed = JSON.parse(fs.readFileSync(deps.androidFile, 'utf8')) as Record<string, AndroidLinkRecord>;
-      android = Object.values(parsed).filter((r) => r && typeof r.deviceId === 'string');
-    } catch {
-      android = [];
+    })),
+    ...deps.androidStore.all().map((r) => ({
+      deviceId: r.deviceId,
+      platform: 'android' as const,
+      name: r.deviceName,
+      lanHost: r.lanHost,
+      storeKey: ictrlStoreKey(`android:${r.deviceId}`),
+      apps: r.apps,
+    })),
+  ];
+}
+
+/**
+ * Where a linked phone answers now. Phones change address (measured: an
+ * iPhone between sessions, an Android phone after a reboot), so a stale
+ * saved host falls back to a LAN scan for the device id; a new address is
+ * written back to its link store. Answers are cached briefly so a burst of
+ * tool calls doesn't re-probe every time.
+ */
+export function cachedHostResolver(deps: {
+  discovery: DiscoveryDeps;
+  remember: (phone: LinkedPhone, host: string) => void;
+  ttlMs?: number;
+  now?: () => number;
+}): (phone: LinkedPhone) => Promise<string | null> {
+  const cache = new Map<string, { host: string; at: number }>();
+  const now = deps.now ?? Date.now;
+  const ttl = deps.ttlMs ?? 60_000;
+  // One LAN scan at a time, shared by every phone that needs it (and reused for the ttl).
+  let scan: { at: number; result: Promise<Map<string, string>> } | null = null;
+  const sharedScan = () => {
+    if (!scan || now() - scan.at >= ttl) scan = { at: now(), result: scanLan(deps.discovery) };
+    return scan.result;
+  };
+  return async (phone) => {
+    const hit = cache.get(phone.deviceId);
+    if (hit && now() - hit.at < ttl) return hit.host;
+    let host: string | null = null;
+    if (phone.lanHost) {
+      const who = await deps.discovery.fetchWhoami(phone.lanHost, 1500).catch(() => null);
+      if (who?.device_id === phone.deviceId) host = phone.lanHost;
     }
-    return [
-      ...ios,
-      ...android.map((r) => ({
-        deviceId: r.deviceId,
-        platform: 'android' as const,
-        name: r.deviceName,
-        lanHost: r.lanHost,
-        storeKey: ictrlStoreKey(`android:${r.deviceId}`),
-        apps: r.apps,
-      })),
-    ];
+    if (!host) host = (await sharedScan()).get(phone.deviceId) ?? null;
+    if (!host) {
+      cache.delete(phone.deviceId);
+      return null;
+    }
+    cache.set(phone.deviceId, { host, at: now() });
+    if (host !== phone.lanHost) deps.remember(phone, host);
+    return host;
+  };
+}
+
+/** Writes a phone's new address back to the store it came from. */
+export function rememberLinkedHost(stores: { iosStore: IosLinkStore; androidStore: AndroidLinkStore }) {
+  return (phone: LinkedPhone, host: string): void => {
+    if (phone.platform === 'android') {
+      const record = stores.androidStore.load(phone.deviceId);
+      if (record) stores.androidStore.save({ ...record, lanHost: host });
+      return;
+    }
+    const record = stores.iosStore.all().find((r) => (r.deviceId ?? r.udid) === phone.deviceId);
+    if (record) stores.iosStore.save({ ...record, lanHost: host });
   };
 }
 

@@ -105,6 +105,8 @@ export type ToolErrorCode =
   | 'unknown_app'
   | 'artemis_unavailable'
   | 'adb_failed'
+  // A Phone-Linked phone answered with an error (iCTRL protocol)
+  | 'phone_failed'
   // USB Agent (iPhone) states
   | 'unsupported'
   | 'disarmed'

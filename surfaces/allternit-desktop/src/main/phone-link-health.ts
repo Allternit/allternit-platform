@@ -149,7 +149,7 @@ export interface PhoneLinkHealthMonitorDeps {
   now?: () => number;
   /** How long a health entry stays fresh (default 30 s). */
   ttlMs?: number;
-  /** Per-phone budget for a parallel refresh (default 3 s). */
+  /** Per-phone budget for a parallel refresh (default 10 s: room for one shared LAN scan when a phone moved). */
   budgetMs?: number;
   logger?: (message: string) => void;
 }
@@ -168,7 +168,7 @@ export class PhoneLinkHealthMonitor {
   constructor(private readonly deps: PhoneLinkHealthMonitorDeps) {
     this.now = deps.now ?? Date.now;
     this.ttlMs = deps.ttlMs ?? 30_000;
-    this.budgetMs = deps.budgetMs ?? 3_000;
+    this.budgetMs = deps.budgetMs ?? 10_000;
   }
 
   /** The cached entry whatever its age, or null when never checked. */

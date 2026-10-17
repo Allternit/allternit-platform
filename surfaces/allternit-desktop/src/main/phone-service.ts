@@ -28,7 +28,9 @@ import { grayFromBgra, type Gray } from './phone-usb-agent-vision.js';
 import type { Calibration } from './phone-usb-agent-pointer.js';
 import { IctrlClient, type SecretStore } from './ictrl-client.js';
 import { fileLinkStore } from './phone-link-ios.js';
-import { PhoneLinkBackend, linkedPhoneSource, probeLinkedPhone, type LinkedPhone } from './phone-link-backend.js';
+import { PhoneLinkBackend, cachedHostResolver, linkedPhoneSource, probeLinkedPhone, rememberLinkedHost, type LinkedPhone } from './phone-link-backend.js';
+import { fileAndroidLinkStore } from './phone-link-android.js';
+import { nodeDiscoveryDeps } from './phone-link-discovery.js';
 import { PhoneLinkHealthMonitor } from './phone-link-health.js';
 import type { PhoneLinkDevice } from './phone-link-types.js';
 import { readSecret, writeSecret, deleteSecret } from './secure-store.js';
@@ -190,25 +192,27 @@ class PhoneService {
   /**
    * Phone-Linked phones: one iCTRL lane over both link stores. Pure file
    * reads + HTTP clients — no adb download, no processes, so an iPhone-only
-   * user pays nothing. Built once; the LAN-scanning host resolver lands on a
-   * sibling branch (the seam is PhoneLinkBackendDeps.resolveHost).
+   * user pays nothing. Built once. A phone whose saved address went stale is
+   * found again by a LAN scan for its device id (cachedHostResolver).
    */
   private ensureLinkedBackend(): PhoneLinkBackend {
     if (!this.linkedBackend) {
       const dir = this.dir();
       const secrets: SecretStore = { get: readSecret, set: writeSecret, delete: deleteSecret };
-      const source = linkedPhoneSource({
+      const stores = {
         iosStore: fileLinkStore(path.join(dir, 'phone-link-ios.json')),
-        androidFile: path.join(dir, 'phone-link-android.json'),
-      });
+        androidStore: fileAndroidLinkStore(path.join(dir, 'phone-link-android.json')),
+      };
+      const source = linkedPhoneSource(stores);
+      const resolveHost = cachedHostResolver({ discovery: nodeDiscoveryDeps, remember: rememberLinkedHost(stores) });
       const client = (phone: LinkedPhone, host: string) =>
         new IctrlClient({ host, secrets, storeKey: phone.storeKey, logger: (m) => log.info(m) });
       const health = new PhoneLinkHealthMonitor({
         phones: source,
-        probe: (phone) => probeLinkedPhone(phone, client),
+        probe: (phone) => probeLinkedPhone(phone, client, resolveHost),
         logger: (m) => log.info(m),
       });
-      this.linkedBackend = new PhoneLinkBackend({ phones: source, client, health, logger: (m) => log.info(m) });
+      this.linkedBackend = new PhoneLinkBackend({ phones: source, client, resolveHost, health, logger: (m) => log.info(m) });
     }
     return this.linkedBackend;
   }

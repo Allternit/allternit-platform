@@ -4,7 +4,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { IctrlError } from './ictrl-client.js';
 import { fileLinkStore } from './phone-link-ios.js';
-import { jpegSize, linkedPhoneSource, PhoneLinkBackend, probeLinkedPhone, LINK_SERIAL_PREFIX } from './phone-link-backend.js';
+import { fileAndroidLinkStore } from './phone-link-android.js';
+import { cachedHostResolver, jpegSize, linkedPhoneSource, PhoneLinkBackend, probeLinkedPhone, rememberLinkedHost, LINK_SERIAL_PREFIX } from './phone-link-backend.js';
 import { PhoneLinkHealthMonitor, type LinkedPhone } from './phone-link-health.js';
 import type { IctrlLike } from './phone-link-ios.js';
 
@@ -74,42 +75,34 @@ describe('jpegSize', () => {
 });
 
 describe('PhoneLinkBackend lane mapping', () => {
-  it('iPhone screenshot: returns JPEG pixels, learns the point scale, reports the tap space', async () => {
+  // Real shapes (iCTRL 1.98.12 on iOS 26.6.2, Phone Link 0.1.0 on Android 14, 2026-10-17).
+  it('asks the iPhone for a scale-1 image so image pixels are tap points', async () => {
     const client = fakeClient({
-      screenshot: () => ({ image: jpeg(1179, 2556).toString('base64'), width: 393, height: 852, coordinate_space: 'points' }),
+      screenshot: () => ({ data: jpeg(393, 852).toString('base64'), format: 'jpeg', pixel_width: 393, pixel_height: 852, point_width: 393, point_height: 852, scale: 1 }),
+      tap: () => ({ message: 'ok' }),
     });
-    const b = backend(client);
-    const res = await b.call('phone.screenshot', 'link:dev-1', {});
-    expect(res).toMatchObject({ ok: true, mimeType: 'image/jpeg', width: 1179, height: 2556, coordinate_space: 'pixels' });
-    expect(client.calls[0]).toEqual({ method: 'screenshot', params: { format: 'jpeg' } });
-    // The image comes back verbatim.
-    expect((res as unknown as { dataBase64: string }).dataBase64).toBe(jpeg(1179, 2556).toString('base64'));
+    const res = await backend(client).call('phone.screenshot', 'link:dev-1', {});
+    expect(client.calls[0]).toEqual({ method: 'screenshot', params: { format: 'jpeg', scale: 1 } });
+    expect(res).toMatchObject({ ok: true, mimeType: 'image/jpeg', width: 393, height: 852 });
+    await backend(client).call('phone.tap', 'link:dev-1', { x: 200, y: 433 });
+    expect(client.calls[1]).toEqual({ method: 'tap', params: { x: 200, y: 433 } });
   });
 
-  it('scales iPhone taps from image pixels to points', async () => {
+  it('Android screenshots are device pixels and taps pass through unchanged', async () => {
     const client = fakeClient({
-      screenshot: () => ({ image: jpeg(1179, 2556).toString('base64'), width: 393, height: 852, coordinate_space: 'points' }),
-      tap: () => ({}),
-      swipe: () => ({}),
-    });
-    const b = backend(client);
-    await b.call('phone.screenshot', 'link:dev-1', {});
-    expect(await b.call('phone.tap', 'link:dev-1', { x: 600, y: 1200 })).toEqual({ ok: true });
-    expect(client.calls.at(-1)).toEqual({ method: 'tap', params: { x: 200, y: 400 } });
-
-    expect(await b.call('phone.swipe', 'link:dev-1', { x1: 0, y1: 2556, x2: 1179, y2: 0, durationMs: 50 })).toEqual({ ok: true });
-    expect(client.calls.at(-1)).toEqual({ method: 'swipe', params: { x1: 0, y1: 852, x2: 393, y2: 0, duration_ms: 50 } });
-  });
-
-  it('Android screenshots are pixels 1:1 and taps pass through', async () => {
-    const client = fakeClient({
-      screenshot: () => ({ image: jpeg(1080, 2400).toString('base64'), width: 1080, height: 2400, coordinate_space: 'pixels' }),
-      tap: () => ({}),
+      screenshot: () => ({ format: 'jpeg', encoding: 'base64', data: jpeg(720, 1600).toString('base64'), pixel_width: 720, pixel_height: 1600 }),
+      tap: () => ({ message: 'ok' }),
     });
     const b = backend(client, [android]);
-    expect(await b.call('phone.screenshot', 'link:dev-2', {})).toMatchObject({ ok: true, width: 1080, height: 2400, coordinate_space: 'pixels' });
-    expect(await b.call('phone.tap', 'link:dev-2', { x: 540, y: 1200 })).toEqual({ ok: true });
-    expect(client.calls.at(-1)).toEqual({ method: 'tap', params: { x: 540, y: 1200 } });
+    expect(await b.call('phone.screenshot', 'link:dev-2', {})).toMatchObject({ ok: true, width: 720, height: 1600 });
+    expect(client.calls[0].params).toEqual({ format: 'jpeg' });
+    await b.call('phone.tap', 'link:dev-2', { x: 402, y: 1453 });
+    expect(client.calls[1].params).toEqual({ x: 402, y: 1453 });
+  });
+
+  it('refuses a screenshot with no image data or not a JPEG', async () => {
+    expect(await backend(fakeClient({ screenshot: () => ({ format: 'jpeg' }) })).call('phone.screenshot', 'link:dev-1', {})).toMatchObject({ ok: false, error: 'phone_failed' });
+    expect(await backend(fakeClient({ screenshot: () => ({ data: Buffer.from('png?').toString('base64') }) })).call('phone.screenshot', 'link:dev-1', {})).toMatchObject({ ok: false, error: 'phone_failed' });
   });
 
   it('validates tap coordinates and typed text before calling the phone', async () => {
@@ -195,18 +188,14 @@ describe('PhoneLinkBackend lane mapping', () => {
     expect(client.calls).toHaveLength(0);
   });
 
-  it('direction swipe needs a screenshot first, then uses the screen centre', async () => {
-    const client = fakeClient({
-      screenshot: () => ({ image: jpeg(1179, 2556).toString('base64'), width: 393, height: 852, coordinate_space: 'points' }),
-      swipe: () => ({}),
-    });
+  it('direction swipes use the helper\'s swipe; endpoint swipes become a drag in seconds', async () => {
+    const client = fakeClient({ swipe: () => ({ message: 'ok' }), drag: () => ({ message: 'ok' }) });
     const b = backend(client);
-    expect(await b.call('phone.swipe', 'link:dev-1', { direction: 'up' })).toMatchObject({ ok: false, error: 'adb_failed' });
-    await b.call('phone.screenshot', 'link:dev-1', {});
     expect(await b.call('phone.swipe', 'link:dev-1', { direction: 'up' })).toEqual({ ok: true });
-    // centre (589, 1278), dy = 852 in image pixels; ÷3 to points.
-    expect(client.calls.at(-1)).toEqual({ method: 'swipe', params: { x1: 196, y1: 710, x2: 196, y2: 142, duration_ms: 300 } });
-    expect(await b.call('phone.swipe', 'link:dev-1', { direction: 'sideways' })).toMatchObject({ error: 'invalid_args' });
+    expect(client.calls[0]).toEqual({ method: 'swipe', params: { direction: 'up' } });
+    expect(await b.call('phone.swipe', 'link:dev-1', { x1: 10, y1: 700, x2: 10, y2: 200, durationMs: 400 })).toEqual({ ok: true });
+    expect(client.calls[1]).toEqual({ method: 'drag', params: { from_x: 10, from_y: 700, to_x: 10, to_y: 200, duration: 0.4 } });
+    expect(await b.call('phone.swipe', 'link:dev-1', { direction: 'sideways' })).toMatchObject({ ok: false, error: 'invalid_args' });
   });
 });
 
@@ -243,14 +232,14 @@ describe('PhoneLinkBackend error mapping', () => {
     });
   });
 
-  it('a failing call while unlocked → adb_failed with the phone\'s message', async () => {
+  it('a failing call while unlocked → phone_failed with the phone\'s message', async () => {
     const b = backend(
       fakeClient({
         tap: () => { throw new IctrlError('rpc_error', 'screen unavailable'); },
         is_locked: () => ({ locked: false }),
       }),
     );
-    expect(await b.call('phone.tap', 'link:dev-1', { x: 1, y: 1 })).toMatchObject({ ok: false, error: 'adb_failed', message: 'screen unavailable' });
+    expect(await b.call('phone.tap', 'link:dev-1', { x: 1, y: 1 })).toMatchObject({ ok: false, error: 'phone_failed', message: 'screen unavailable' });
   });
 
   it('unknown serial and missing host are device_offline, no client touched', async () => {
@@ -327,7 +316,7 @@ describe('linkedPhoneSource', () => {
       linkedAt: '2026-10-17T00:00:00.000Z',
     });
     // No phone-link-android.json yet.
-    let source = linkedPhoneSource({ iosStore, androidFile: path.join(dir, 'phone-link-android.json') });
+    let source = linkedPhoneSource({ iosStore, androidStore: fileAndroidLinkStore(path.join(dir, 'phone-link-android.json')) });
     expect(source()).toEqual([
       {
         deviceId: 'dev-ios',
@@ -355,7 +344,7 @@ describe('linkedPhoneSource', () => {
         },
       }),
     );
-    source = linkedPhoneSource({ iosStore, androidFile: path.join(dir, 'phone-link-android.json') });
+    source = linkedPhoneSource({ iosStore, androidStore: fileAndroidLinkStore(path.join(dir, 'phone-link-android.json')) });
     const phones = source();
     expect(phones).toHaveLength(2);
     expect(phones[1]).toEqual({
@@ -405,5 +394,94 @@ describe('probeLinkedPhone', () => {
 describe('serial format', () => {
   it('link:<deviceId>', () => {
     expect(LINK_SERIAL_PREFIX + 'dev-1').toBe('link:dev-1');
+  });
+});
+
+describe('screen text shapes', () => {
+  it('read_ui returns the tree from page_source.source; screen_text lists text with centres', async () => {
+    const client = fakeClient({
+      page_source: () => ({ format: 'text', source: "StaticText, value: 'Allternit iphone tree works', {{16, 229}, {361, 24}}", truncated: false }),
+      screen_text: () => ({ count: 2, items: [{ label: 'Menu', center_x: 38, center_y: 81 }, { text: 'Log in', center_x: 622, center_y: 139 }] }),
+    });
+    const b = backend(client);
+    expect(await b.call('phone.read_ui', 'link:dev-1', {})).toEqual({ ok: true, text: "StaticText, value: 'Allternit iphone tree works', {{16, 229}, {361, 24}}" });
+    expect(await b.call('phone.screen_text', 'link:dev-1', {})).toEqual({ ok: true, text: 'Menu @ (38, 81)\nLog in @ (622, 139)' });
+  });
+});
+
+describe('cachedHostResolver', () => {
+  const discovery = (answers: Record<string, string>) => ({
+    lanInterfaces: () => [{ address: '10.0.0.5', netmask: '255.255.255.0' }],
+    fetchWhoami: async (host: string) => (answers[host] ? { device_id: answers[host] } : null),
+  });
+
+  it('keeps a saved address that still answers with the right device id', async () => {
+    const remembered: string[] = [];
+    const resolve = cachedHostResolver({ discovery: discovery({ '192.168.1.21:8200': 'dev-2' }), remember: (_p, h) => remembered.push(h) });
+    expect(await resolve(android)).toBe('192.168.1.21:8200');
+    expect(remembered).toEqual([]);
+  });
+
+  it('finds a moved phone by device id and writes the new address back', async () => {
+    const remembered: string[] = [];
+    const resolve = cachedHostResolver({ discovery: discovery({ '10.0.0.11:8200': 'dev-2' }), remember: (_p, h) => remembered.push(h) });
+    expect(await resolve(android)).toBe('10.0.0.11:8200');
+    expect(remembered).toEqual(['10.0.0.11:8200']);
+  });
+
+  it('caches answers for the ttl, then checks again', async () => {
+    let t = 0;
+    let probes = 0;
+    const d = discovery({ '192.168.1.21:8200': 'dev-2' });
+    const resolve = cachedHostResolver({
+      discovery: { ...d, fetchWhoami: async (h: string) => (probes++, d.fetchWhoami(h)) },
+      remember: () => {},
+      ttlMs: 1000,
+      now: () => t,
+    });
+    await resolve(android);
+    await resolve(android);
+    expect(probes).toBe(1);
+    t = 2000;
+    await resolve(android);
+    expect(probes).toBe(2);
+  });
+
+  it('returns null when nothing on the LAN has that device id', async () => {
+    const resolve = cachedHostResolver({ discovery: discovery({ '10.0.0.9:8200': 'someone-else' }), remember: () => {} });
+    expect(await resolve(android)).toBeNull();
+  });
+});
+
+describe('rememberLinkedHost', () => {
+  it('updates the right store for each platform', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pl-remember-'));
+    const iosStore = fileLinkStore(path.join(dir, 'ios.json'));
+    const androidStore = fileAndroidLinkStore(path.join(dir, 'android.json'));
+    iosStore.save({ udid: 'udid-1', deviceId: 'dev-1', lanHost: '10.0.0.90:8200', runnerBundleId: 'r', hostBundleId: 'h', xctestConfig: 'x', testToRun: 't' } as never);
+    androidStore.save({ deviceId: 'dev-2', serial: 'ZY', lanHost: '10.0.0.238:8200', pairedAt: '2026-10-17T00:00:00.000Z' });
+    const remember = rememberLinkedHost({ iosStore, androidStore });
+    remember(iphone, '10.0.0.252:8200');
+    remember(android, '10.0.0.11:8200');
+    expect(iosStore.load('udid-1')?.lanHost).toBe('10.0.0.252:8200');
+    expect(androidStore.load('dev-2')?.lanHost).toBe('10.0.0.11:8200');
+  });
+});
+
+describe('cachedHostResolver shared scan', () => {
+  it('two moved phones are found by one LAN scan', async () => {
+    let probes = 0;
+    const answers: Record<string, string> = { '10.0.0.11:8200': 'dev-2', '10.0.0.252:8200': 'dev-1' };
+    const resolve = cachedHostResolver({
+      discovery: {
+        lanInterfaces: () => [{ address: '10.0.0.5', netmask: '255.255.255.0' }],
+        fetchWhoami: async (h: string) => (probes++, answers[h] ? { device_id: answers[h] } : null),
+      },
+      remember: () => {},
+    });
+    const [a, b] = await Promise.all([resolve({ ...iphone, lanHost: '10.0.0.90:8200' }), resolve({ ...android, lanHost: '10.0.0.238:8200' })]);
+    expect([a, b]).toEqual(['10.0.0.252:8200', '10.0.0.11:8200']);
+    // 2 stale saved hosts + one pass over the /24 (253 hosts, own address skipped).
+    expect(probes).toBe(2 + 253);
   });
 });
