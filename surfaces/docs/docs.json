@@ -108,6 +108,7 @@
               "guides/notifications",
               "guides/messaging-channels",
               "guides/bot-autonomy",
+              "guides/injection-defense",
               "guides/calls-and-texts",
               "guides/voice",
               "guides/mcp-apps-status",
