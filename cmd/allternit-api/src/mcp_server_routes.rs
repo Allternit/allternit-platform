@@ -812,7 +812,7 @@ mod tests {
         assert!(allowed.is_empty());
         assert_eq!(held.iter().map(|h| h["reason"].as_str().unwrap()).collect::<Vec<_>>(), vec!["changed", "new"]);
         let open: i64 = c.query_row("SELECT COUNT(*) FROM attention_items WHERE kind = 'tool_changed' AND resolved_at IS NULL", [], |r| r.get(0)).unwrap();
-        assert_eq!(open, 1);
+        assert_eq!(open, 2, "one item per held tool, each with its own Approve");
 
         approve_pins(&c, "u", "srv", &[t1b.clone(), t2.clone()]);
         let (allowed, held) = check_pins(&c, "u", "srv", &[t1b, t2]);
