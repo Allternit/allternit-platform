@@ -123,11 +123,82 @@ fn fixed(kind: &Kind, col: &str) -> bool {
     matches!(col, "id" | "user_id" | "created_at" | "updated_at") || col == kind.id || kind.drop.contains(&col)
 }
 
+fn id_prefix(table: &str) -> &'static str {
+    match table {
+        "agents" => "ag",
+        "bot_templates" => "tpl",
+        "routines" => "rt",
+        "cowork_routines" => "msg",
+        "workflows" => "wf",
+        "tasks" => "task",
+        "skills" => "sk",
+        "cowork_projects" => "proj",
+        "cowork_scheduled_tasks" => "sched",
+        "loops" => "loop",
+        "beta_deployments" => "dep",
+        _ => "item",
+    }
+}
+
+/// A friendlier NOT NULL message: which field the new thing still needs.
+fn insert_error(e: rusqlite::Error) -> ServiceError {
+    let msg = e.to_string();
+    match msg.split("NOT NULL constraint failed: ").nth(1).and_then(|r| r.split('.').nth(1)) {
+        Some(col) => say(format!("Add \"{}\": a new one needs it.", col.trim())),
+        None => say(format!("Couldn't create it: {msg}")),
+    }
+}
+
+/// A new record file creates the thing. Scheduled kinds start paused.
+/// Returns (summary, the file's path in the ledger from now on).
+fn create_record(conn: &Connection, owner: &str, kind: &Kind, path: &str, content: &str) -> Result<(String, String)> {
+    let mut row: Value = serde_json::from_str(content).map_err(|e| say(format!("That isn't valid JSON: {e}.")))?;
+    if let Some(key) = typed_credential(&row) {
+        return Err(say(format!("Keep keys and passwords out of the ledger ({key}). Set them in Allternit after creating it.")));
+    }
+    let mut ignored = vec![];
+    crate::ledger_restore::strip_left_out(&mut row, "", &mut ignored);
+    let Value::Object(mut row) = row else { return Err(say("A record file must be one JSON object.")) };
+    if let Some(col) = kind.name.filter(|c| *c != kind.id) {
+        if row.get(col).and_then(|v| v.as_str()).map_or(true, |v| v.trim().is_empty()) {
+            return Err(say(format!("Add \"{col}\": a new one needs it.")));
+        }
+    }
+    for col in ["user_id", "created_at", "updated_at"].iter().chain(kind.drop.iter()) {
+        row.remove(*col);
+    }
+    let wanted = row.get(kind.id).and_then(|v| v.as_str()).map(str::to_string);
+    let id = match wanted {
+        Some(id) if !id.is_empty() && crate::ledger_repo::valid_path(&id) && !id.contains('/') => {
+            let taken: bool = conn
+                .query_row(&format!("SELECT EXISTS(SELECT 1 FROM {} WHERE {} = ?1)", kind.table, kind.id), [&id], |r| r.get(0))
+                .map_err(|e| say(e.to_string()))?;
+            if taken {
+                return Err(say("That id is already used. Leave \"id\" out and Allternit picks a new one."));
+            }
+            id
+        }
+        _ => format!("{}_{}", id_prefix(kind.table), uuid::Uuid::new_v4().simple()),
+    };
+    row.insert(kind.id.into(), Value::String(id.clone()));
+    if kind.table == "agents" {
+        row.insert("is_bot".into(), Value::from(i64::from(kind.dir == "bots")));
+    }
+    crate::ledger_restore::insert_new(conn, owner, kind.table, &row).map_err(insert_error)?;
+    let name = ["name", "title"].iter().find_map(|k| row.get(*k).and_then(|v| v.as_str())).unwrap_or("untitled").to_string();
+    let stem = crate::ledger::file_name(&name, &id);
+    let new_path = match kind.dir {
+        "bots" => format!("bots/{stem}/bot.json"),
+        "agents" => format!("agents/{stem}/agent.json"),
+        dir => format!("{dir}/{stem}.json"),
+    };
+    let paused = matches!(kind.table, "routines" | "cowork_routines" | "cowork_scheduled_tasks" | "loops" | "beta_deployments");
+    let _ = path;
+    Ok((format!("Created {name}{}.", if paused { " (paused; set it running when you're ready)" } else { "" }), new_path))
+}
+
 fn edit_record(conn: &Connection, owner: &str, repo: &LedgerRepo, kind: &Kind, path: &str, content: &str) -> Result<String> {
-    let current = repo
-        .read(path, None)
-        .map_err(|e| say(e.to_string()))?
-        .ok_or_else(|| say("That file isn't in your ledger. Make new things in Allternit, then edit them here."))?;
+    let current = repo.read(path, None).map_err(|e| say(e.to_string()))?.ok_or_else(|| say("That file isn't in your ledger."))?;
     let current: Value = serde_json::from_slice(&current).map_err(|_| say("The saved file isn't readable; save the ledger again first."))?;
     let mut edited: Value = serde_json::from_str(content).map_err(|e| say(format!("That isn't valid JSON: {e}.")))?;
     if !edited.is_object() {
@@ -209,7 +280,12 @@ pub fn edit(
         return Err(say("Allternit writes this file. Change connected apps in Settings → Connected apps."));
     }
     if let Some(kind) = kind_for(path) {
-        return edit_record(conn, owner, repo, kind, path, content);
+        let exists = repo.read(path, None).map_err(|e| say(e.to_string()))?.is_some();
+        return if exists {
+            edit_record(conn, owner, repo, kind, path, content)
+        } else {
+            create_record(conn, owner, kind, path, content).map(|(summary, _)| summary)
+        };
     }
     let parts: Vec<&str> = path.splitn(4, '/').collect();
     match parts.as_slice() {
@@ -241,6 +317,68 @@ pub fn edit(
             Ok(format!("Saved {rel} in the {name} skill."))
         }
         _ => Err(say("Only bots, routines, workflows, templates, tasks, projects, schedules, skills and bot files can be edited.")),
+    }
+}
+
+/// Delete what a ledger file describes. Bots and agents are archived (they
+/// can come back); other records are removed; files are deleted. The ledger's
+/// history keeps every earlier version either way.
+pub fn delete(
+    conn: &Connection,
+    owner: &str,
+    repo: &LedgerRepo,
+    path: &str,
+    skills_root: Option<&Path>,
+    bot_workspace: impl Fn(&str) -> PathBuf,
+) -> Result<String> {
+    if !crate::ledger_repo::valid_path(path) {
+        return Err(say("That isn't a ledger path."));
+    }
+    if matches!(path, "README.md" | "connected-apps.json") {
+        return Err(say("Allternit writes this file; it can't be deleted."));
+    }
+    let record_id = |p: &str| -> Result<String> {
+        repo.read(p, None)
+            .map_err(|e| say(e.to_string()))?
+            .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+            .and_then(|v| v.get("id").and_then(|x| x.as_str()).map(str::to_string))
+            .ok_or_else(|| say("That isn't in your ledger."))
+    };
+    if let Some(kind) = kind_for(path) {
+        let id = record_id(path)?;
+        let row = stored_row(conn, kind, owner, &id)?.ok_or_else(|| say("That isn't in this account any more."))?;
+        let name = ["name", "title"].iter().find_map(|k| row.get(*k).and_then(|v| v.as_str())).unwrap_or("it").to_string();
+        if kind.table == "agents" {
+            conn.execute("UPDATE agents SET archived_at = CURRENT_TIMESTAMP WHERE id = ?1 AND user_id = ?2", rusqlite::params![id, owner])?;
+            return Ok(format!("Archived {name}. It's still in the ledger's history."));
+        }
+        conn.execute(&format!("DELETE FROM {} WHERE {} = ?1 AND user_id = ?2", kind.table, kind.id), rusqlite::params![id, owner])?;
+        return Ok(format!("Deleted {name}. It's still in the ledger's history."));
+    }
+    let parts: Vec<&str> = path.splitn(4, '/').collect();
+    let target = match parts.as_slice() {
+        [dir @ ("bots" | "agents"), stem, "workspace", rel] => {
+            let id = record_id(&format!("{dir}/{stem}/{}.json", if *dir == "bots" { "bot" } else { "agent" }))?;
+            if !crate::ledger_repo::valid_path(&id) {
+                return Err(say("That bot isn't in this account any more."));
+            }
+            bot_workspace(&id).join(rel)
+        }
+        ["skills", name, ..] if *name != "recipes" && parts.len() >= 3 => {
+            if path.ends_with("/SKILL.md") {
+                return Err(say("Uninstall skills in Customize → Skills."));
+            }
+            let root = skills_root.ok_or_else(|| say("This computer has no skills folder."))?;
+            root.join(crate::ledger::slug(name)).join(path.splitn(3, '/').nth(2).unwrap_or_default())
+        }
+        _ => return Err(say("That can't be deleted here.")),
+    };
+    match std::fs::symlink_metadata(&target) {
+        Ok(m) if m.is_file() => {
+            std::fs::remove_file(&target).map_err(|e| say(format!("Couldn't delete: {e}")))?;
+            Ok("Deleted. It's still in the ledger's history.".into())
+        }
+        _ => Err(say("That file isn't there any more.")),
     }
 }
 
@@ -316,7 +454,9 @@ mod tests {
         assert!(edit(&conn, "u1", &repo, "bots/matt-ag1/bot.json", "{not json", None, ws).is_err());
         assert!(!edit(&conn, "u1", &repo, "README.md", "x", None, ws).unwrap_err().to_string().contains("connected apps"));
         assert!(edit(&conn, "u1", &repo, "connected-apps.json", "[]", None, ws).unwrap_err().to_string().contains("Connected apps"));
-        assert!(edit(&conn, "u1", &repo, "routines/new.json", "{}", None, ws).is_err());
+        // A new routine without its required fields says which one is missing.
+        let err = edit(&conn, "u1", &repo, "routines/new.json", r#"{"status":"active"}"#, None, ws).unwrap_err().to_string();
+        assert!(err.contains("needs it") || err.contains("Couldn't create"), "{err}");
         assert!(edit(&conn, "u1", &repo, "../x", "x", None, ws).is_err());
         assert!(edit(&conn, "u1", &repo, "bots/matt-ag1/workspace/SOUL.md", "API_TOKEN=abcdef123456", None, ws).is_err());
     }
@@ -331,5 +471,27 @@ mod tests {
         edit(&conn, "u1", &repo, "skills/brand-voice/SKILL.md", "new", Some(&skills), ws).unwrap();
         assert_eq!(std::fs::read_to_string(skills.join("brand-voice/SKILL.md")).unwrap(), "new");
         assert!(edit(&conn, "u1", &repo, "skills/not-installed/SKILL.md", "x", Some(&skills), ws).is_err());
+    }
+
+    #[test]
+    fn new_files_create_things_paused_and_delete_archives_or_removes() {
+        let (conn, tmp, repo) = setup();
+        let ws = |id: &str| tmp.path().join("ws").join(id);
+        let out = edit(&conn, "u1", &repo, "routines/weekly.json", r#"{"name":"Weekly review","status":"active","schedule_expression":"0 9 * * 1","api_key":"[left out: x]"}"#, None, ws).unwrap();
+        assert!(out.starts_with("Created Weekly review (paused"), "{out}");
+        let (id, status, owner): (String, String, String) =
+            conn.query_row("SELECT id, status, user_id FROM routines WHERE name='Weekly review'", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap();
+        assert!(id.starts_with("rt_"));
+        assert_eq!((status.as_str(), owner.as_str()), ("paused", "u1"));
+        assert!(edit(&conn, "u1", &repo, "routines/dup.json", r#"{"id":"rt_2","name":"Steal"}"#, None, ws).is_err(), "an id in use can't be taken");
+        assert!(edit(&conn, "u1", &repo, "bots/new/bot.json", r#"{"name":"New bot","config":{"api_key":"sk-typed123456789"}}"#, None, ws).is_err());
+
+        assert_eq!(delete(&conn, "u1", &repo, "bots/matt-ag1/bot.json", None, ws).unwrap(), "Archived Matt. It's still in the ledger's history.");
+        assert!(conn.query_row("SELECT archived_at FROM agents WHERE id='ag_1'", [], |r| r.get::<_, Option<String>>(0)).unwrap().is_some());
+        delete(&conn, "u1", &repo, "routines/daily-rt1.json", None, ws).unwrap();
+        assert_eq!(conn.query_row("SELECT COUNT(*) FROM routines WHERE id='rt_1'", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
+        assert_eq!(conn.query_row("SELECT COUNT(*) FROM routines WHERE id='rt_2'", [], |r| r.get::<_, i64>(0)).unwrap(), 1, "other accounts untouched");
+        assert!(delete(&conn, "u1", &repo, "README.md", None, ws).is_err());
+        assert!(delete(&conn, "u1", &repo, "skills/brand-voice/SKILL.md", Some(&tmp.path().join("skills")), ws).is_err());
     }
 }

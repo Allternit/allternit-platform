@@ -74,7 +74,7 @@ pub fn slug(s: &str) -> String {
     if out.is_empty() { "untitled".into() } else { out.trim_end_matches('-').to_string() }
 }
 
-fn file_name(name: &str, id: &str) -> String {
+pub(crate) fn file_name(name: &str, id: &str) -> String {
     let short: String = id.chars().filter(|c| c.is_ascii_alphanumeric()).take(8).collect();
     format!("{}-{}", slug(name), if short.is_empty() { "x".into() } else { short })
 }
