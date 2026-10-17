@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Allternit Phone Link</string>
+    <string name="accessibility_label">Allternit Phone Link</string>
+    <string name="accessibility_summary">Lets your paired Allternit Desktop use the apps on this phone.</string>
+    <string name="accessibility_description">Allternit Phone Link reads what is on screen and taps and types for your own paired computer, so Allternit bots can use the apps you are already signed in to (ChatGPT, Claude, Gemini, Grok, Telegram and others). It never acts on the lock screen, in Settings or in this app, and you can stop it any time from its notification.</string>
+</resources>
