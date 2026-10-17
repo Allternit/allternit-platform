@@ -684,21 +684,6 @@ const featureFlagsAPI = {
   },
 };
 
-// ─── Sign in with ChatGPT (feature.siwc) ──────────────────────────────────────
-// Status only — tokens live in main and never cross this bridge.
-
-const siwcAPI = {
-  status: (): Promise<unknown> => ipcRenderer.invoke('siwc:status'),
-  signIn: (opts?: { enablePlanUsage?: boolean }): Promise<unknown> => ipcRenderer.invoke('siwc:signIn', opts),
-  cancel: (): Promise<unknown> => ipcRenderer.invoke('siwc:cancel'),
-  signOut: (): Promise<unknown> => ipcRenderer.invoke('siwc:signOut'),
-  onStatusChanged: (handler: (status: unknown) => void): (() => void) => {
-    const listener = (_: IpcRendererEvent, status: unknown) => handler(status);
-    ipcRenderer.on('siwc:status-changed', listener);
-    return () => ipcRenderer.removeListener('siwc:status-changed', listener);
-  },
-};
-
 // ─── Persisted State ──────────────────────────────────────────────────────────
 
 const stateAPI = {
@@ -980,7 +965,6 @@ const allternitDesktopAPI = {
   permissionGuide: permissionGuideAPI,
   phones: phonesAPI,
   featureFlags: featureFlagsAPI,
-  siwc: siwcAPI,
   findInPage: findInPageAPI,
   locale: localeAPI,
   menuBar: menuBarAPI,
