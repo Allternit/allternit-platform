@@ -29,10 +29,11 @@ import {
   type PhoneStreamOptions,
   type PhoneStreamStatus,
 } from './phone-scrcpy.js';
-import { PhoneStreamManager } from './phone-stream.js';
+import { PhoneStreamManager, type StreamConsumer } from './phone-stream.js';
 import { PhoneUserComms, type CallStateName, type CommsResult, type PhoneAppInfo, type PhoneSmsMessage, type PhoneSmsThread } from './phone-user-comms.js';
-import { PhoneLinkCloudClient, type StreamControlAck, type StreamControlFrame } from './phone-link-cloud.js';
+import { PhoneLinkPhoneSocket } from './phone-link-cloud.js';
 import { authManager } from './auth-manager.js';
+import { backendManager } from './backend-manager.js';
 import { URLS } from './config.js';
 import { UsbAgentManager, type Sealer, type StoredUsbAgent, type UsbAgentConfig, type UsbAgentStore } from './phone-usb-agent.js';
 import { candidatePorts, lanAddresses, serialPort } from './phone-usb-agent-provision.js';
@@ -67,7 +68,11 @@ export function fileStore(file: string): PhoneStore {
   return { load: () => readJson<StoredPhone[]>(file, []), save: (phones) => writeJson(file, phones) };
 }
 
+const LINK_DETACH_GRACE_MS = 30_000;
+const LINK_SYNC_INTERVAL_MS = 60_000;
+
 export function fileRateStore(file: string): RateStore {
+
   return {
     load: (key) => readJson<Record<string, number[]>>(file, {})[key] ?? [],
     save: (key, timestamps) => writeJson(file, { ...readJson<Record<string, number[]>>(file, {}), [key]: timestamps }),
@@ -161,7 +166,10 @@ class PhoneService {
   private managerReady: Promise<PhoneDeviceManager> | null = null;
   private streams: PhoneStreamManager | null = null;
   private comms: PhoneUserComms | null = null;
-  private linkCloud: PhoneLinkCloudClient | null = null;
+  private linkSockets = new Map<string, PhoneLinkPhoneSocket>();
+  private linkConsumers = new Map<string, () => void>();
+  private linkDetachTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private linkSyncTimer: ReturnType<typeof setInterval> | null = null;
   private scrcpyServerReady: Promise<string> | null = null;
   private usbAgents: UsbAgentManager | null = null;
   private artemis: ArtemisManager | null = null;
@@ -252,8 +260,7 @@ class PhoneService {
           for (const serial of this.streams?.activeSerials() ?? []) {
             if (!online.has(serial)) this.streams?.deviceDisconnected(serial);
           }
-          this.linkCloud?.notePhonesChanged();
-          this.maybeStartLinkCloud();
+          this.syncLinkSockets();
         });
         this.manager = manager;
         this.streams = new PhoneStreamManager({
@@ -269,25 +276,9 @@ class PhoneService {
               opts,
             ),
         });
-        this.linkCloud = new PhoneLinkCloudClient({
-          // Both relay legs must terminate at the same api the web app talks
-          // to (cloud transport uses the same base). In dev, point Desktop at
-          // the local api with ALLTERNIT_CLOUD_API_URL=http://127.0.0.1:18013.
-          apiUrl: () => (process.env.ALLTERNIT_CLOUD_API_URL || URLS.CLOUD_API).replace(/\/$/, ''),
-          getSession: async () => {
-            const session = authManager.getSessionSnapshot();
-            return session ? { accessToken: session.accessToken, userId: session.userId, runtimeId: session.runtimeId } : null;
-          },
-          phones: () =>
-            (this.manager?.list() ?? []).map((p) => ({
-              serial: p.serial,
-              model: p.model ?? '',
-              name: p.name || p.model || 'Linked phone',
-            })),
-          onStreamControl: (frame) => this.handleRelayStreamControl(frame),
-          log: (message) => log.info(message),
-        });
-        this.maybeStartLinkCloud();
+        this.linkSyncTimer = setInterval(() => this.syncLinkSockets(), LINK_SYNC_INTERVAL_MS);
+        this.linkSyncTimer.unref?.();
+        this.syncLinkSockets();
         return manager;
       })();
       this.managerReady.catch(() => {
@@ -429,23 +420,110 @@ class PhoneService {
   // ── signed-in surfaces reach this phone through allternit-api.             ──
 
   /** The session connects only once a phone is paired; it idles otherwise. */
-  private maybeStartLinkCloud(): void {
-    if (!this.linkCloud) return;
-    if ((this.manager?.list().length ?? 0) > 0) this.linkCloud.start();
+  // ── Cloud relay (Phones 2.0 Phase 2): one phone-link socket per linked     ──
+  // ── phone, so a viewer never waits behind another phone's stream (the      ──
+  // ── relay streams one serial per socket — see phone_ws.rs). The relay      ──
+  // ── signals viewers with viewer_attached/detached; scrcpy starts on        ──
+  // ── attach and idles off on a grace after the last detach.                 ──
+
+  /** Signed out ⇒ no sockets; the sync timer picks sign-in up within a minute. */
+  private syncLinkSockets(): void {
+    if (!authManager.getSessionSnapshot()) return;
+    const phones = this.manager?.list() ?? [];
+    const seen = new Set<string>();
+    for (const phone of phones) {
+      if (!phone.serial) continue;
+      seen.add(phone.serial);
+      if (!this.linkSockets.has(phone.serial)) {
+        this.linkSockets.set(phone.serial, this.createLinkSocket(phone.serial));
+      }
+      this.linkSockets.get(phone.serial)?.notePhoneChanged();
+    }
+    for (const [serial, socket] of this.linkSockets) {
+      if (seen.has(serial)) continue;
+      socket.stop();
+      this.linkSockets.delete(serial);
+      this.cancelLinkDetach(serial);
+      this.detachLinkConsumer(serial);
+    }
   }
 
-  /**
-   * Relay → Desktop stream control. Starts/stops the local scrcpy stream;
-   * RELAY-RECONCILE: forwarding meta/chunks/end back to the relay socket uses
-   * the exact envelopes from phone_ws.rs — wire the stream consumer here when
-   * the relay lane's notes land (video frames need a per-serial mux decision).
-   */
-  private async handleRelayStreamControl(frame: StreamControlFrame): Promise<StreamControlAck> {
-    if (frame.type === 'start-stream') {
-      return this.startStream(frame.serial, frame.opts);
+  private createLinkSocket(serial: string): PhoneLinkPhoneSocket {
+    const client = new PhoneLinkPhoneSocket({
+      // Both relay legs must terminate at the same api the web app talks to
+      // (the cloud transport uses the same base). In dev, point Desktop at
+      // the local api with ALLTERNIT_CLOUD_API_URL=http://127.0.0.1:18013.
+      apiUrl: () => (process.env.ALLTERNIT_CLOUD_API_URL || URLS.CLOUD_API).replace(/\/$/, ''),
+      // The desktop-access-token credential + the signed-in user's headers —
+      // the api's auth middleware maps them to the account browsers mint
+      // tokens against (auth.rs verify_desktop_access_token + user headers).
+      headers: () => {
+        const base = backendManager.getLocalAuthHeaders();
+        const session = authManager.getSessionSnapshot();
+        const userId = session?.userId ?? 'desktop-local';
+        return {
+          ...base,
+          'x-allternit-user-id': userId,
+          'x-allternit-user-email': session?.userEmail ?? `${userId}@desktop.allternit.local`,
+        };
+      },
+      phone: () => {
+        const p = this.manager?.list().find((entry) => entry.serial === serial);
+        return { serial, model: p?.model ?? '', name: p?.name || p?.model || 'Linked phone' };
+      },
+      onViewerAttached: (s) => this.linkViewerAttached(s),
+      onViewerDetached: (s) => this.linkViewerDetached(s),
+      onInput: (s, events) => this.sendStreamInput(s, events),
+      onDisplayPower: (s, on) => this.setStreamDisplayPower(s, on),
+      log: (message) => log.info(message),
+    });
+    client.start();
+    return client;
+  }
+
+  /** A viewer appeared on the relay: start scrcpy and forward its feed. */
+  private async linkViewerAttached(serial: string): Promise<{ ok: boolean; message?: string }> {
+    this.cancelLinkDetach(serial);
+    const socket = this.linkSockets.get(serial);
+    if (!socket) return { ok: false, message: 'The relay session is gone.' };
+    const started = await this.startStream(serial);
+    if (!started.ok) return started;
+    if (!this.linkConsumers.has(serial)) {
+      const streams = await this.ensureStreams();
+      const consumer: StreamConsumer = {
+        onMeta: (_s, meta) => socket.push({ kind: 'meta', meta }),
+        onChunk: (_s, chunk) => socket.push({ kind: 'chunk', chunk }),
+        onEnd: (_s, info) => {
+          socket.push({ kind: 'end', reason: info.reason });
+          this.detachLinkConsumer(serial);
+        },
+      };
+      this.linkConsumers.set(serial, streams.subscribe(serial, consumer));
     }
-    await this.stopStream(frame.serial);
     return { ok: true };
+  }
+
+  /** Last viewer left: grace before tearing scrcpy down so a quick reconnect is seamless. */
+  private linkViewerDetached(serial: string): void {
+    this.cancelLinkDetach(serial);
+    const timer = setTimeout(() => {
+      this.linkDetachTimers.delete(serial);
+      void this.stopStream(serial);
+      this.detachLinkConsumer(serial);
+    }, LINK_DETACH_GRACE_MS);
+    timer.unref?.();
+    this.linkDetachTimers.set(serial, timer);
+  }
+
+  private cancelLinkDetach(serial: string): void {
+    const timer = this.linkDetachTimers.get(serial);
+    if (timer) clearTimeout(timer);
+    this.linkDetachTimers.delete(serial);
+  }
+
+  private detachLinkConsumer(serial: string): void {
+    this.linkConsumers.get(serial)?.();
+    this.linkConsumers.delete(serial);
   }
 
   /** iPhone lane: the USB Agent link, its mDNS advert and the AirPlay receivers. No adb involved. */
@@ -554,7 +632,14 @@ class PhoneService {
   }
 
   shutdown(): void {
-    this.linkCloud?.stop();
+    if (this.linkSyncTimer) clearInterval(this.linkSyncTimer);
+    this.linkSyncTimer = null;
+    for (const [serial, socket] of this.linkSockets) {
+      socket.stop();
+      this.cancelLinkDetach(serial);
+      this.detachLinkConsumer(serial);
+    }
+    this.linkSockets.clear();
     this.streams?.stopAll();
     this.manager?.stopAll();
     this.usbAgents?.stopAll();

@@ -1,7 +1,7 @@
-/** Tests for the Phone Link cloud session client: lifecycle, hello, backoff, stream-control dispatch. */
+/** Tests for the per-phone Phone Link cloud socket: lifecycle, hello, backoff, viewer control, data plane. */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PhoneLinkCloudClient, SOCKET_OPEN, type PhoneLinkSocket, type PhoneLinkCloudDeps } from './phone-link-cloud.js';
+import { PhoneLinkPhoneSocket, SOCKET_OPEN, type PhoneLinkSocket, type PhoneLinkSocketDeps } from './phone-link-cloud.js';
 
 class FakeSocket implements PhoneLinkSocket {
   sent: (string | Uint8Array)[] = [];
@@ -45,11 +45,11 @@ class FakeSocket implements PhoneLinkSocket {
   }
 }
 
-function jsonSent(socket: FakeSocket): Record<string, unknown>[] {
+function textFrames(socket: FakeSocket): Record<string, unknown>[] {
   return socket.sent.filter((s) => typeof s === 'string').map((s) => JSON.parse(s as string) as Record<string, unknown>);
 }
 
-describe('PhoneLinkCloudClient', () => {
+describe('PhoneLinkPhoneSocket', () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -57,13 +57,16 @@ describe('PhoneLinkCloudClient', () => {
     vi.useRealTimers();
   });
 
-  function makeDeps(overrides: Partial<PhoneLinkCloudDeps> = {}) {
+  function makeDeps(overrides: Partial<PhoneLinkSocketDeps> = {}) {
     const sockets: FakeSocket[] = [];
-    const deps: PhoneLinkCloudDeps = {
+    const deps: PhoneLinkSocketDeps = {
       apiUrl: () => 'http://127.0.0.1:18013',
-      getSession: async () => ({ accessToken: 'tok', userId: 'user-1', runtimeId: 'rt-1' }),
-      phones: () => [{ serial: 'ser1', model: 'Pixel 8', name: 'Pixel' }],
-      onStreamControl: async () => ({ ok: true }),
+      headers: () => ({ 'x-allternit-desktop-access-token': 'tok', 'x-allternit-user-id': 'user-1' }),
+      phone: () => ({ serial: 'ser1', model: 'Pixel 8', name: 'Pixel' }),
+      onViewerAttached: async () => ({ ok: true }),
+      onViewerDetached: () => undefined,
+      onInput: () => ({ ok: true }),
+      onDisplayPower: () => ({ ok: true }),
       retryDelaysMs: [100, 200],
       createSocket: () => {
         const s = new FakeSocket();
@@ -75,41 +78,46 @@ describe('PhoneLinkCloudClient', () => {
     return { deps, sockets };
   }
 
-  it('connects, sends hello with phones, and heartbeats', async () => {
-    const { deps, sockets } = makeDeps();
-    const client = new PhoneLinkCloudClient(deps);
+  it('connects to the phone-link session route and helloes its one phone', async () => {
+    const seen: string[] = [];
+    const { deps, sockets } = makeDeps({
+      createSocket: (url) => {
+        seen.push(url);
+        const s = new FakeSocket();
+        sockets.push(s);
+        return s;
+      },
+    });
+    const client = new PhoneLinkPhoneSocket(deps);
     client.start();
     await vi.advanceTimersByTimeAsync(0);
-    const socket = sockets[0];
-    socket.simulateOpen();
-    const frames = jsonSent(socket);
-    expect(frames[0]).toEqual({ type: 'hello', phones: [{ serial: 'ser1', model: 'Pixel 8', name: 'Pixel' }] });
-    const pingsBefore = jsonSent(socket).filter((f) => f.type === 'ping').length;
-    await vi.advanceTimersByTimeAsync(25_000);
-    expect(jsonSent(socket).filter((f) => f.type === 'ping').length).toBeGreaterThan(pingsBefore);
+    expect(seen[0]).toBe('ws://127.0.0.1:18013/ws/phone-link/session');
+    sockets[0].simulateOpen();
+    expect(textFrames(sockets[0])[0]).toEqual({ type: 'hello', phones: [{ serial: 'ser1', model: 'Pixel 8', name: 'Pixel' }] });
     client.stop();
   });
 
-  it('re-sends hello (debounced) when the phone inventory changes', async () => {
-    let phones = [{ serial: 'ser1', model: 'Pixel 8', name: 'Pixel' }];
-    const { deps, sockets } = makeDeps({ phones: () => phones });
-    const client = new PhoneLinkCloudClient(deps);
+  it('heartbeats, and re-helloes (debounced) after notePhoneChanged', async () => {
+    let name = 'Pixel';
+    const { deps, sockets } = makeDeps({ phone: () => ({ serial: 'ser1', model: 'Pixel 8', name }) });
+    const client = new PhoneLinkPhoneSocket(deps);
     client.start();
     await vi.advanceTimersByTimeAsync(0);
     sockets[0].simulateOpen();
-    expect(jsonSent(sockets[0]).filter((f) => f.type === 'hello')).toHaveLength(1);
-    phones = [...phones, { serial: 'ser2', model: 'Pixel 8', name: 'Pixel 2' }];
-    client.notePhonesChanged();
+    const pingsBefore = textFrames(sockets[0]).filter((f) => f.type === 'ping').length;
+    await vi.advanceTimersByTimeAsync(25_000);
+    expect(textFrames(sockets[0]).filter((f) => f.type === 'ping').length).toBeGreaterThan(pingsBefore);
+    name = 'Pixel (work)';
+    client.notePhoneChanged();
     await vi.advanceTimersByTimeAsync(1_100);
-    const hellos = jsonSent(sockets[0]).filter((f) => f.type === 'hello');
-    expect(hellos).toHaveLength(2);
-    expect((hellos[1].phones as unknown[]).length).toBe(2);
+    const hellos = textFrames(sockets[0]).filter((f) => f.type === 'hello');
+    expect(hellos.at(-1)?.phones).toEqual([{ serial: 'ser1', model: 'Pixel 8', name: 'Pixel (work)' }]);
     client.stop();
   });
 
-  it('reconnects with backoff after a close, and stop() prevents further reconnects', async () => {
+  it('reconnects with backoff after close; stop() prevents reconnects', async () => {
     const { deps, sockets } = makeDeps();
-    const client = new PhoneLinkCloudClient(deps);
+    const client = new PhoneLinkPhoneSocket(deps);
     client.start();
     await vi.advanceTimersByTimeAsync(0);
     sockets[0].simulateOpen();
@@ -117,58 +125,81 @@ describe('PhoneLinkCloudClient', () => {
     await vi.advanceTimersByTimeAsync(150);
     expect(sockets).toHaveLength(2);
     client.stop();
-    sockets[1].simulateOpen();
     sockets[1].close(1_006, 'gone');
     await vi.advanceTimersByTimeAsync(10_000);
-    expect(sockets).toHaveLength(2); // no third socket after stop
+    expect(sockets).toHaveLength(2);
   });
 
-  it('retries slowly while signed out instead of hammering', async () => {
-    const { deps, sockets } = makeDeps({ getSession: async () => null });
-    const client = new PhoneLinkCloudClient(deps);
-    client.start();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(sockets).toHaveLength(0);
-    await vi.advanceTimersByTimeAsync(150);
-    expect(sockets).toHaveLength(0); // first retry also has no session
-    client.stop();
-  });
-
-  it('dispatches start/stop-stream control frames and acks them', async () => {
-    const controls: Record<string, unknown>[] = [];
-    const { deps, sockets } = makeDeps({
-      onStreamControl: async (frame) => {
-        controls.push(frame as unknown as Record<string, unknown>);
-        return { ok: true };
-      },
-    });
-    const client = new PhoneLinkCloudClient(deps);
+  it('startStream failure sends an end frame with the reason', async () => {
+    const { deps, sockets } = makeDeps({ onViewerAttached: async () => ({ ok: false, message: 'That phone is not connected.' }) });
+    const client = new PhoneLinkPhoneSocket(deps);
     client.start();
     await vi.advanceTimersByTimeAsync(0);
     sockets[0].simulateOpen();
-    sockets[0].simulateServerMessage({ type: 'start-stream', serial: 'ser1', opts: { maxSize: 720 }, requestId: 'r1' });
+    sockets[0].simulateServerMessage({ type: 'viewer_attached', serial: 'ser1' });
     await vi.advanceTimersByTimeAsync(0);
-    expect(controls[0]).toMatchObject({ type: 'start-stream', serial: 'ser1', opts: { maxSize: 720 } });
-    await vi.advanceTimersByTimeAsync(0);
-    const ack = jsonSent(sockets[0]).find((f) => f.type === 'ack');
-    expect(ack).toMatchObject({ requestId: 'r1', ok: true });
+    const end = textFrames(sockets[0]).find((f) => f.type === 'end');
+    expect(end).toEqual({ type: 'end', reason: 'That phone is not connected.' });
     client.stop();
   });
 
-  it('sends auth headers with the device token at connect', async () => {
-    const seen: { url: string; headers: Record<string, string> }[] = [];
-    const { deps } = makeDeps({
-      createSocket: (url, headers) => {
-        seen.push({ url, headers });
-        return new FakeSocket();
+  it('forwards input/displayPower to the service hooks and answers ping with pong', async () => {
+    const inputs: unknown[][] = [];
+    let power: boolean | null = null;
+    const { deps, sockets } = makeDeps({
+      onInput: (_s, events) => {
+        inputs.push(events);
+        return { ok: true };
+      },
+      onDisplayPower: (_s, on) => {
+        power = on;
+        return { ok: true };
       },
     });
-    const client = new PhoneLinkCloudClient(deps);
+    const client = new PhoneLinkPhoneSocket(deps);
     client.start();
     await vi.advanceTimersByTimeAsync(0);
-    expect(seen[0].url).toBe('ws://127.0.0.1:18013/ws/phone-link/session');
-    expect(seen[0].headers.authorization).toBe('Bearer tok');
-    expect(seen[0].headers['x-allternit-runtime']).toBe('rt-1');
+    sockets[0].simulateOpen();
+    sockets[0].simulateServerMessage({ type: 'ping' });
+    sockets[0].simulateServerMessage({ type: 'input', serial: 'ser1', events: [{ type: 'home' }] });
+    sockets[0].simulateServerMessage({ type: 'displayPower', serial: 'ser1', on: false });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(textFrames(sockets[0]).some((f) => f.type === 'pong')).toBe(true);
+    expect(inputs).toEqual([[{ type: 'home' }]]);
+    expect(power).toBe(false);
+    client.stop();
+  });
+
+  it('notifies onViewerDetached only when the last viewer leaves', async () => {
+    const detached: string[] = [];
+    const { deps, sockets } = makeDeps({ onViewerDetached: (s) => detached.push(s) });
+    const client = new PhoneLinkPhoneSocket(deps);
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    sockets[0].simulateOpen();
+    sockets[0].simulateServerMessage({ type: 'viewer_attached', serial: 'ser1' });
+    sockets[0].simulateServerMessage({ type: 'viewer_attached', serial: 'ser1' });
+    await vi.advanceTimersByTimeAsync(0);
+    sockets[0].simulateServerMessage({ type: 'viewer_detached', serial: 'ser1' });
+    expect(detached).toEqual([]);
+    sockets[0].simulateServerMessage({ type: 'viewer_detached', serial: 'ser1' });
+    expect(detached).toEqual(['ser1']);
+    client.stop();
+  });
+
+  it('push() writes meta JSON, raw binary chunks, and end JSON', async () => {
+    const { deps, sockets } = makeDeps();
+    const client = new PhoneLinkPhoneSocket(deps);
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    sockets[0].simulateOpen();
+    client.push({ kind: 'meta', meta: { deviceName: 'Pixel', width: 1080, height: 2400, codec: 'h264' } });
+    client.push({ kind: 'chunk', chunk: new Uint8Array([1, 2, 3]) });
+    client.push({ kind: 'end', reason: 'done' });
+    const sent = sockets[0].sent.slice(1); // [0] is the hello
+    expect(sent[0]).toBe(JSON.stringify({ type: 'meta', deviceName: 'Pixel', width: 1080, height: 2400, codec: 'h264' }));
+    expect(sent[1]).toBeInstanceOf(Uint8Array);
+    expect(sent[2]).toBe(JSON.stringify({ type: 'end', reason: 'done' }));
     client.stop();
   });
 });

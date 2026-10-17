@@ -1,21 +1,27 @@
 /**
- * Phone Link cloud session (Phones 2.0, Phase 2): the Desktop-side persistent
- * WebSocket to allternit-api that lets any signed-in surface (ai.allternit.com
- * phone layout, m.allternit.com PWA) reach the linked Android through this
- * Desktop, the same way the browser ⇄ api ⇄ Desktop path works for computers.
+ * Phone Link cloud session (Phones 2.0, Phase 2): the Desktop-side WebSocket
+ * plane that lets any signed-in surface (ai.allternit.com phone layout,
+ * m.allternit.com PWA) view and control a linked Android through this Desktop,
+ * the same shape as the computer lane minus VNC.
  *
- * This module is the transport only: reconnect with backoff, auth on connect,
- * a `hello` carrying the linked-phone inventory, heartbeat, and a message
- * dispatcher. Stream-control frame shapes are marked RELAY-RECONCILE — they
- * must match cmd/allternit-api/src/phone_ws.rs exactly (see
- * docs/PHONES_RELAY_NOTES.md in the relay lane); the video path attaches
- * through PhoneStreamManager consumers in phone-service.ts, never here.
+ * One socket per linked phone (`/ws/phone-link/session`, authed with the
+ * desktop-access-token credential + the signed-in user's headers — see
+ * cmd/allternit-api/src/phone_ws.rs). The relay tells us when a viewer
+ * attaches/detaches; scrcpy starts on attach and idles off on detach. The
+ * data plane is opaque to the relay:
  *
- * Electron-free and Node-testable: the socket factory, clock and session
- * provider are injected.
+ *   Desktop → browser: JSON {type:'meta'|'end'} first/last, binary H.264
+ *     Annex-B access units between (the WebCodecs client in allternit-ai
+ *     decodes; see src/lib/phone-stream).
+ *   Browser → Desktop: JSON {type:'input', events}, {type:'displayPower', on},
+ *     {type:'ping'} (we answer pong).
+ *
+ * Electron-free and Node-testable: socket factory, clock and every service
+ * hook are injected. phone-service.ts owns the lifecycle and the scrcpy
+ * stream wiring.
  */
 
-import type { PhoneStreamOptions } from './phone-scrcpy.js';
+import type { PhoneInputEvent, PhoneStreamMeta } from './phone-scrcpy.js';
 
 export interface LinkedPhoneSummary {
   serial: string;
@@ -23,37 +29,31 @@ export interface LinkedPhoneSummary {
   name: string;
 }
 
-export interface PhoneLinkSessionInfo {
-  accessToken: string;
-  userId: string;
-  runtimeId: string;
+/** The relay's per-socket relay-level notifications (not part of the data plane). */
+interface ViewerAttachedFrame {
+  type: 'viewer_attached';
+  serial: string;
+}
+interface ViewerDetachedFrame {
+  type: 'viewer_detached';
+  serial: string;
 }
 
-/** What the service gives us: linked phones now, and auth when signed in. */
-export interface PhoneLinkCloudDeps {
-  apiUrl: () => string; // http(s) base, no trailing slash — 127.0.0.1:18013 in dev, api.allternit.com in prod
-  getSession: () => Promise<PhoneLinkSessionInfo | null>;
-  phones: () => LinkedPhoneSummary[];
-  /** Called for each stream-control frame from the relay. Return value is sent back as an ack when the frame asks for one. */
-  onStreamControl: (frame: StreamControlFrame) => Promise<StreamControlAck>;
-  log?: (message: string) => void;
-  /** Test hook: override the WebSocket implementation. */
+export interface PhoneLinkSocketDeps {
+  apiUrl: () => string; // http(s) base, no trailing slash — dev points at 18013, prod at the cloud api
+  /** Full auth header set for the connect request (desktop token + signed-in user headers). */
+  headers: () => Record<string, string>;
+  /** This socket's one phone; called at connect and on re-hello. */
+  phone: () => LinkedPhoneSummary;
+  onViewerAttached: (serial: string) => Promise<{ ok: boolean; message?: string }>;
+  onViewerDetached: (serial: string) => void;
+  onInput: (serial: string, events: PhoneInputEvent[]) => { ok: boolean; message?: string };
+  onDisplayPower: (serial: string, on: boolean) => { ok: boolean; message?: string };
   createSocket?: (url: string, headers: Record<string, string>) => PhoneLinkSocket;
+  log?: (message: string) => void;
   now?: () => number;
-  /** Backoff: 1s, 2s, 4s … capped at 30s, jittered. */
   retryDelaysMs?: number[];
 }
-
-/**
- * The relay → Desktop stream-control vocabulary.
- * RELAY-RECONCILE: shapes must mirror phone_ws.rs; the serial must appear on
- * every frame because one session multiplexes every linked phone.
- */
-export type StreamControlFrame =
-  | { type: 'start-stream'; serial: string; opts?: PhoneStreamOptions; requestId?: string }
-  | { type: 'stop-stream'; serial: string; requestId?: string };
-
-export type StreamControlAck = { ok: boolean; message?: string };
 
 /** Minimal socket surface so tests can fake it (ws-style). */
 export interface PhoneLinkSocket {
@@ -69,20 +69,26 @@ export interface PhoneLinkSocket {
 export const SOCKET_OPEN = 1;
 
 const DEFAULT_RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000, 30_000];
-const HEARTBEAT_INTERVAL_MS = 25_000; // server pings at 30s; we ping first
+const HEARTBEAT_INTERVAL_MS = 25_000; // relay pings at 30s; we ping first
 const HELLO_DEBOUNCE_MS = 1_000;
 
-export class PhoneLinkCloudClient {
+/** What the service pushes onto the socket for the viewer (opaque data plane). */
+export type PhoneLinkOutgoing =
+  | { kind: 'meta'; meta: PhoneStreamMeta }
+  | { kind: 'chunk'; chunk: Uint8Array }
+  | { kind: 'end'; reason: string };
+
+export class PhoneLinkPhoneSocket {
   private socket: PhoneLinkSocket | null = null;
   private stopped = false;
   private retryAttempt = 0;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private helloTimer: ReturnType<typeof setTimeout> | null = null;
-  private lastPhonesJson = '';
-  private pendingAcks = new Map<string, (ack: StreamControlAck) => void>();
+  private lastHelloJson = '';
+  private viewers = 0;
 
-  constructor(private readonly deps: PhoneLinkCloudDeps) {}
+  constructor(private readonly deps: PhoneLinkSocketDeps) {}
 
   /** Connect (or schedule the first retry). Idempotent while running. */
   start(): void {
@@ -92,14 +98,12 @@ export class PhoneLinkCloudClient {
     void this.connect();
   }
 
-  /** Permanent shutdown: no reconnect after this. */
+  /** Permanent shutdown: no reconnect, viewer grace cancelled. */
   stop(): void {
     this.stopped = true;
     this.clearTimers();
     this.socket?.close(1_000, 'desktop shutdown');
     this.socket = null;
-    for (const resolve of this.pendingAcks.values()) resolve({ ok: false, message: 'disconnected' });
-    this.pendingAcks.clear();
   }
 
   get running(): boolean {
@@ -110,8 +114,12 @@ export class PhoneLinkCloudClient {
     return this.socket?.readyState() === SOCKET_OPEN;
   }
 
-  /** The service calls this when the linked-phone list changes. */
-  notePhonesChanged(): void {
+  get viewerCount(): number {
+    return this.viewers;
+  }
+
+  /** The service re-helloes when the phone's model/name changes. */
+  notePhoneChanged(): void {
     if (this.helloTimer) return;
     this.helloTimer = setTimeout(() => {
       this.helloTimer = null;
@@ -119,10 +127,20 @@ export class PhoneLinkCloudClient {
     }, HELLO_DEBOUNCE_MS);
   }
 
-  /** RELAY-RECONCILE: how acks ride back (requestId echo vs envelope). */
-  sendAck(requestId: string | undefined, ack: StreamControlAck): void {
-    if (!requestId) return;
-    this.sendJson({ type: 'ack', requestId, ...ack });
+  /** Data plane, service → viewer. */
+  push(out: PhoneLinkOutgoing): void {
+    if (this.socket?.readyState() !== SOCKET_OPEN) return;
+    try {
+      if (out.kind === 'chunk') {
+        this.socket.send(out.chunk);
+      } else if (out.kind === 'meta') {
+        this.socket.send(JSON.stringify({ type: 'meta', ...out.meta }));
+      } else {
+        this.socket.send(JSON.stringify({ type: 'end', reason: out.reason }));
+      }
+    } catch {
+      // The close handler schedules the reconnect.
+    }
   }
 
   private clearTimers(): void {
@@ -136,21 +154,9 @@ export class PhoneLinkCloudClient {
 
   private async connect(): Promise<void> {
     if (this.stopped) return;
-    const session = await this.deps.getSession().catch(() => null);
-    if (!session) {
-      // Signed out (or the auth read failed): retry slowly until signed in.
-      this.scheduleRetry();
-      return;
-    }
     const base = this.deps.apiUrl().replace(/\/$/, '');
-    // RELAY-RECONCILE: the auth header scheme must match phone_ws.rs's
-    // desktop-session gate. The device token is this Desktop's credential
-    // (runtime-device pairing, auth-manager.ts).
-    const headers = {
-      authorization: `Bearer ${session.accessToken}`,
-      'x-allternit-runtime': session.runtimeId,
-    };
     const url = `${base.replace(/^http/, 'ws')}/ws/phone-link/session`;
+    const headers = this.deps.headers();
     let socket: PhoneLinkSocket;
     try {
       socket = this.deps.createSocket ? this.deps.createSocket(url, headers) : defaultSocket(url, headers);
@@ -162,17 +168,15 @@ export class PhoneLinkCloudClient {
     this.socket = socket;
     socket.onOpen(() => {
       this.retryAttempt = 0;
-      this.lastPhonesJson = '';
+      this.lastHelloJson = '';
       this.sendHello();
       this.heartbeatTimer = setInterval(() => this.sendJson({ type: 'ping' }), HEARTBEAT_INTERVAL_MS);
     });
-    socket.onMessage((data) => this.handleMessage(data));
+    socket.onMessage((data) => void this.handleMessage(data));
     socket.onClose((code, reason) => {
       if (this.socket !== socket) return;
       this.socket = null;
       this.clearTimers();
-      for (const resolve of this.pendingAcks.values()) resolve({ ok: false, message: `relay closed (${code})` });
-      this.pendingAcks.clear();
       this.deps.log?.(`[PhoneLinkCloud] closed ${code} ${reason}; reconnecting`);
       this.scheduleRetry();
     });
@@ -193,13 +197,12 @@ export class PhoneLinkCloudClient {
     }, base + jitter);
   }
 
-  /** One hello per connection, and again when the phone inventory changes. */
   private sendHello(): void {
-    const phones = this.deps.phones();
-    const json = JSON.stringify(phones);
-    if (json === this.lastPhonesJson) return;
-    this.lastPhonesJson = json;
-    this.sendJson({ type: 'hello', phones });
+    const phone = this.deps.phone();
+    const json = JSON.stringify([phone]);
+    if (json === this.lastHelloJson) return;
+    this.lastHelloJson = json;
+    this.sendJson({ type: 'hello', phones: [phone] });
   }
 
   private sendJson(frame: Record<string, unknown>): void {
@@ -217,24 +220,44 @@ export class PhoneLinkCloudClient {
     try {
       frame = JSON.parse(text) as Record<string, unknown>;
     } catch {
-      return; // binary frames are not expected desktop-ward in v1
+      return; // binary frames desktop-ward are not expected
     }
-    if (frame.type === 'pong' || frame.type === 'hello-ok') return;
-    if (frame.type === 'ack') {
-      const requestId = typeof frame.requestId === 'string' ? frame.requestId : undefined;
-      const resolve = requestId ? this.pendingAcks.get(requestId) : undefined;
-      if (resolve) {
-        this.pendingAcks.delete(requestId!);
-        resolve({ ok: frame.ok !== false, message: typeof frame.message === 'string' ? frame.message : undefined });
+    const serial = typeof frame.serial === 'string' ? frame.serial : this.deps.phone().serial;
+    switch (frame.type) {
+      case 'pong':
+      case 'hello-ok':
+        return;
+      case 'ping':
+        this.sendJson({ type: 'pong' });
+        return;
+      case 'viewer_attached': {
+        this.viewers += 1;
+        const result = await this.deps.onViewerAttached(serial);
+        if (!result.ok) {
+          // Tell the viewer why nothing is coming (opaque pass-through).
+          this.push({ kind: 'end', reason: result.message ?? 'stream failed to start' });
+        }
+        return;
       }
-      return;
-    }
-    // RELAY-RECONCILE: stream-control dispatch — extend here with the exact
-    // start/stop (and later apps/comms passthrough) shapes from phone_ws.rs.
-    if (frame.type === 'start-stream' || frame.type === 'stop-stream') {
-      const control = frame as unknown as StreamControlFrame & { requestId?: string };
-      const ack = await this.deps.onStreamControl(control);
-      this.sendAck(control.requestId, ack);
+      case 'viewer_detached': {
+        this.viewers = Math.max(0, this.viewers - 1);
+        // The service owns the scrcpy stop (it tracks viewer counts per
+        // serial and grace-timers); we only report that this socket's last
+        // viewer for the serial is gone.
+        if (this.viewers === 0) this.deps.onViewerDetached(serial);
+        return;
+      }
+      case 'input': {
+        const events = Array.isArray(frame.events) ? (frame.events as PhoneInputEvent[]) : [];
+        this.deps.onInput(serial, events);
+        return;
+      }
+      case 'displayPower': {
+        this.deps.onDisplayPower(serial, frame.on !== false);
+        return;
+      }
+      default:
+        return;
     }
   }
 }
