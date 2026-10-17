@@ -258,6 +258,20 @@ pub fn apply(db: &DbHandle, owner: &str, text: &str, from: &str, selected: Optio
     commit(db, owner, c.entries, selected, a.path, &format!("Import memory from {}", a.name))
 }
 
+/// What the vendor sync read from the person's own login (saved memories
+/// and instructions): imported with `<scheme>:memory` as the source, never
+/// bringing back a line the person removed. Returns (revision, imported).
+pub fn sync_from_login(db: &DbHandle, owner: &str, from: &str, lines: &[String]) -> Result<(Option<String>, usize)> {
+    let a = assistant(from)?;
+    let source = format!("{}:memory", scheme(from)?);
+    let items: Vec<Candidate> = lines.iter().take(MAX_ITEMS).map(|t| Candidate { text: t.clone(), source: source.clone() }).collect();
+    let c = check_auto(db, owner, items)?;
+    if c.entries.is_empty() {
+        return Ok((None, 0));
+    }
+    commit(db, owner, c.entries, None, a.path, &format!("Read memory from {}", a.name))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

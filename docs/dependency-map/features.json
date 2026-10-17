@@ -297,7 +297,8 @@
         "allternit/services/memory",
         "allternit-ai/src/views/settings",
         "allternit-ai/src/views/cowork",
-        "allternit-ai/src/components/ai-elements"
+        "allternit-ai/src/components/ai-elements",
+        "allternit/services/subscription-gateway"
       ],
       "decisions": [
         {
@@ -315,6 +316,10 @@
         {
           "on": "2026-10-17",
           "note": "Eoj: agent folders on by default (off switch, Forget prunes and a forget sticks). Every memory action is visible: Searched/Saved to Memory Drive rows in the chat thought stream, a Memory Drive Activity log (memory_activity, V266) and live Dream steps. Next: vendor memory pages and past chats read automatically from signed-in logins."
+        },
+        {
+          "on": "2026-10-17",
+          "note": "Eoj: reading vendor memory is automatic once Memory Drive is on. vendor_memory reads each signed-in login (disclosure acknowledged, vendors switch on by default) every 6 h through the gateway's read-only routes: saved memories and instructions word for word, plus new chats distilled from the person's own messages. It never sends. ChatGPT and Claude first."
         }
       ],
       "evidence": [
