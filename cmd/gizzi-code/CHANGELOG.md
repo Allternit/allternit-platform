@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 2.2.7 (2026-10-16)
+
 ### Added
 - Built-in craft skills for visual work, available to every model: `motion-reel`
   (motion-graphics videos with a synced score), `brush-film` (hand-painted
@@ -12,6 +14,21 @@
   carry their own scripts and templates, which are extracted to
   `skills-builtin/` in the data directory on first load. A user or project
   skill with the same name still overrides them.
+- When signed in, each message you type in the TUI is sent to Memory Drive's
+  capture intake (Settings → Memory → Sources → Gizzi), so Memory Drive can
+  learn from CLI sessions. Turning that source off, being signed out or
+  offline, or an older API all skip it quietly.
+- `message_agent` sends a trace id and an idempotency key with every hand-off,
+  and returns a receipt. A terminal bot's inbox holds further messages from
+  the same sender after a short burst and says why, to stop bot-to-bot loops.
+
+### Fixed
+- Skills in a project's `.allternit/skills` folder (where the Skill Builder
+  and skill import write) now load in sessions.
+
+### Removed
+- The `bonsai-local` local-model driver and its model registry entry. No
+  local model ships with gizzi-code.
 
 ## 2.2.6 (2026-10-14)
 
