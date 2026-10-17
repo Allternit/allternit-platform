@@ -26,7 +26,7 @@ describe('classifyHealth', () => {
     expect(classifyHealth(ev({ call: 'needs_repair' }), NOW)).toMatchObject({
       state: 'PAIRING_INVALID',
       recovery: 'manual',
-      action: 'Pair this phone again in Settings › Computers › Phones.',
+      action: 'Pair this phone again in Settings › Subscriptions › Linked phones.',
     });
   });
 

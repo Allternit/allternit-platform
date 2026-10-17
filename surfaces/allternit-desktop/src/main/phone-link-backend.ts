@@ -18,6 +18,7 @@
 import { IctrlError, ictrlStoreKey } from './ictrl-client.js';
 import { IOS_VENDOR_BUNDLES, type IctrlLike, type IosLinkStore } from './phone-link-ios.js';
 import { ANDROID_VENDOR_PACKAGES, type AndroidLinkStore } from './phone-link-android.js';
+import { catalogApp, catalogAppByName, catalogPhoneApps, nameCatalogApps } from './phone-app-catalog.js';
 import { scanLan, type DiscoveryDeps } from './phone-link-discovery.js';
 import { PACKAGE_RE, resolveApp, type ToolErrorCode, type ToolResult, type UsbPhoneBackend } from './phone-tools.js';
 import {
@@ -67,16 +68,53 @@ export interface PhoneLinkBackendDeps {
   /** Where the helper answers; default is the phone's saved lanHost. The LAN-scanning findPhoneHost lands on a sibling branch — this is its seam. */
   resolveHost?: HostResolver;
   health?: PhoneLinkHealthMonitor;
+  /** Save a phone's re-read app list (phone-app-catalog.json matches). */
+  saveApps?: (phone: LinkedPhone, apps: PhoneLinkApp[]) => void;
   now?: () => number;
   logger?: (message: string) => void;
 }
+
+/** How often a healthy phone's apps are re-read, so an app installed after setup shows up. */
+export const APPS_REFRESH_MS = 10 * 60_000;
 
 export class PhoneLinkBackend implements UsbPhoneBackend {
   /** image pixels per phone point, learned from a screenshot (deviceId → scale). */
   /** Latest screenshot's pixel size per phone (for direction swipes). */
   private readonly screens = new Map<string, { width: number; height: number }>();
+  private readonly appsReadAt = new Map<string, number>();
 
   constructor(private readonly deps: PhoneLinkBackendDeps) {}
+
+  /**
+   * Re-read which catalog apps a healthy phone has, at most every
+   * APPS_REFRESH_MS, without holding up phone.devices. Android's helper lists
+   * every package, so its answer replaces the saved list. The iPhone runner's
+   * list can be partial (iOS 26 lists nothing over Wi-Fi; only apps it has
+   * seen open), so on iPhone new apps are added and none are removed — the
+   * full list comes from the cable at setup.
+   */
+  private refreshApps(phones: LinkedPhone[]): void {
+    const save = this.deps.saveApps;
+    if (!save) return;
+    for (const phone of phones) {
+      if (this.deps.health?.health(phone.deviceId)?.state !== 'HEALTHY') continue;
+      const last = this.appsReadAt.get(phone.deviceId);
+      if (last !== undefined && this.now() - last < APPS_REFRESH_MS) continue;
+      this.appsReadAt.set(phone.deviceId, this.now());
+      void this.invoke<{ apps?: { package?: string; bundle_id?: string }[] }>(phone, 'list_apps', {}, 10_000).then((res) => {
+        if (!res.ok) return;
+        const ids = (res.value?.apps ?? []).map((app) => app.package ?? app.bundle_id ?? '').filter(Boolean);
+        if (ids.length === 0) return;
+        const found = catalogPhoneApps(ids, phone.platform);
+        const next =
+          phone.platform === 'android'
+            ? found
+            : [...(phone.apps ?? []), ...found.filter((app) => !(phone.apps ?? []).some((had) => had.vendor === app.vendor))];
+        const same = next.length === (phone.apps ?? []).length && next.every((app, i) => app.vendor === phone.apps?.[i]?.vendor);
+        if (!same) save(phone, next);
+      });
+    }
+  }
 
   private now(): number {
     return (this.deps.now ?? Date.now)();
@@ -101,6 +139,7 @@ export class PhoneLinkBackend implements UsbPhoneBackend {
   async linkedDevices(): Promise<LinkedPhoneDeviceInfo[]> {
     const phones = this.deps.phones();
     if (this.deps.health) await this.deps.health.refreshStale(phones.map((p) => p.deviceId));
+    this.refreshApps(phones);
     const pathOf = this.deps.resolveHost?.lastPath;
     return phones.map((p) => ({
       serial: LINK_SERIAL_PREFIX + p.deviceId,
@@ -182,7 +221,7 @@ export class PhoneLinkBackend implements UsbPhoneBackend {
         return fail('device_offline', `Can't reach ${phone.name ?? 'the phone'} at ${host}. Check the phone is on the same Wi-Fi as this computer.`);
       }
       if (error.needsRepair) {
-        return fail('pairing_invalid', 'Pair this phone again in Settings › Computers › Phones.');
+        return fail('pairing_invalid', 'Pair this phone again in Settings › Subscriptions › Linked phones.');
       }
       // The helpers refuse screen work while the phone is locked; confirm before blaming the lane.
       const locked = await this.deps
@@ -263,9 +302,12 @@ export class PhoneLinkBackend implements UsbPhoneBackend {
   private appCandidates(phone: LinkedPhone, app: string): string[] {
     if (PACKAGE_RE.test(app)) return [app];
     const key = app.toLowerCase();
-    if (phone.platform === 'ios') return IOS_VENDOR_BUNDLES[key] ?? [];
-    const vendor = ANDROID_VENDOR_PACKAGES[key];
-    if (vendor) return [vendor];
+    // A catalog id ("google_drive") or name ("Google Drive").
+    const entry = catalogApp(key) ?? catalogAppByName(key);
+    const id = entry?.id ?? key;
+    if (phone.platform === 'ios') return [...(IOS_VENDOR_BUNDLES[id] ?? [])];
+    const vendor = ANDROID_VENDOR_PACKAGES[id];
+    if (vendor) return [...vendor];
     const alias = resolveApp(key);
     return alias ? [alias] : [];
   }
@@ -398,7 +440,7 @@ export function linkedPhoneSource(deps: { iosStore: IosLinkStore; androidStore: 
       meshHost: r.meshHost,
       storeKey: ictrlStoreKey(r.udid),
       expiresAt: r.expiresAt,
-      apps: r.apps,
+      apps: r.apps ? nameCatalogApps(r.apps) : r.apps,
     })),
     ...deps.androidStore.all().map((r) => ({
       deviceId: r.deviceId,
@@ -407,7 +449,7 @@ export function linkedPhoneSource(deps: { iosStore: IosLinkStore; androidStore: 
       lanHost: r.lanHost,
       meshHost: r.meshHost,
       storeKey: ictrlStoreKey(`android:${r.deviceId}`),
-      apps: r.apps,
+      apps: r.apps ? nameCatalogApps(r.apps) : r.apps,
     })),
   ];
 }
@@ -483,6 +525,19 @@ export function cachedHostResolver(deps: {
 }
 
 /** Writes a phone's new address back to the store it came from. */
+/** Saves a phone's re-read app list into its link record. */
+export function rememberLinkedApps(stores: { iosStore: IosLinkStore; androidStore: AndroidLinkStore }) {
+  return (phone: LinkedPhone, apps: PhoneLinkApp[]): void => {
+    if (phone.platform === 'android') {
+      const record = stores.androidStore.load(phone.deviceId);
+      if (record) stores.androidStore.save({ ...record, apps });
+      return;
+    }
+    const record = stores.iosStore.all().find((r) => (r.deviceId ?? r.udid) === phone.deviceId);
+    if (record) stores.iosStore.save({ ...record, apps });
+  };
+}
+
 export function rememberLinkedHost(stores: { iosStore: IosLinkStore; androidStore: AndroidLinkStore }) {
   return (phone: LinkedPhone, host: string): void => {
     if (phone.platform === 'android') {

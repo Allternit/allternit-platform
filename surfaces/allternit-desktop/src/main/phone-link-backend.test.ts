@@ -5,7 +5,7 @@ import * as path from 'node:path';
 import { IctrlError } from './ictrl-client.js';
 import { fileLinkStore } from './phone-link-ios.js';
 import { fileAndroidLinkStore } from './phone-link-android.js';
-import { cachedHostResolver, jpegSize, linkedPhoneSource, PhoneLinkBackend, probeLinkedPhone, rememberLinkedHost, LINK_SERIAL_PREFIX } from './phone-link-backend.js';
+import { APPS_REFRESH_MS, cachedHostResolver, jpegSize, linkedPhoneSource, PhoneLinkBackend, probeLinkedPhone, rememberLinkedHost, LINK_SERIAL_PREFIX } from './phone-link-backend.js';
 import { PhoneLinkHealthMonitor, type LinkedPhone } from './phone-link-health.js';
 import type { IctrlLike } from './phone-link-ios.js';
 
@@ -214,7 +214,7 @@ describe('PhoneLinkBackend error mapping', () => {
     expect(await b.call('phone.tap', 'link:dev-1', { x: 1, y: 1 })).toEqual({
       ok: false,
       error: 'pairing_invalid',
-      message: 'Pair this phone again in Settings › Computers › Phones.',
+      message: 'Pair this phone again in Settings › Subscriptions › Linked phones.',
     });
   });
 
@@ -299,6 +299,69 @@ describe('PhoneLinkBackend phones and health', () => {
   });
 });
 
+describe('PhoneLinkBackend app refresh', () => {
+  const healthy = (phones: LinkedPhone[], now: () => number) =>
+    new PhoneLinkHealthMonitor({
+      phones: () => phones,
+      probe: async (p: LinkedPhone) => ({ deviceId: p.deviceId, platform: p.platform, whoami: { deviceId: p.deviceId }, call: 'ok' as const }),
+      now,
+    });
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+
+  it('re-reads an Android phone’s apps in the background and replaces the saved list', async () => {
+    let now = 1_000_000;
+    const phone = { ...android, apps: [{ vendor: 'chatgpt', signedIn: null }] };
+    const client = fakeClient({ list_apps: () => ({ apps: [{ package: 'com.openai.chatgpt' }, { package: 'org.telegram.messenger' }, { package: 'com.android.chrome' }] }) });
+    const saveApps = vi.fn();
+    const b = backend(client, [phone], { health: healthy([phone], () => now), saveApps, now: () => now });
+    await b.linkedDevices();
+    await flush();
+    expect(saveApps).toHaveBeenCalledWith(phone, [
+      { vendor: 'chatgpt', signedIn: null, name: 'ChatGPT', category: 'AI chat', provider: 'chatgpt' },
+      { vendor: 'telegram', signedIn: null, name: 'Telegram', category: 'Communication' },
+    ]);
+    // At most every APPS_REFRESH_MS.
+    await b.linkedDevices();
+    await flush();
+    expect(client.calls.filter((c) => c.method === 'list_apps')).toHaveLength(1);
+    now += APPS_REFRESH_MS;
+    await b.linkedDevices();
+    await flush();
+    expect(client.calls.filter((c) => c.method === 'list_apps')).toHaveLength(2);
+  });
+
+  it('on iPhone only adds apps: a partial or empty list never removes one', async () => {
+    const phone = { ...iphone, apps: [{ vendor: 'claude', signedIn: null, name: 'Claude' }] };
+    const saveApps = vi.fn();
+    const client = fakeClient({ list_apps: () => ({ apps: [{ bundle_id: 'notion.id' }] }) });
+    const b = backend(client, [phone], { health: healthy([phone], () => 1), saveApps, now: () => 1 });
+    await b.linkedDevices();
+    await flush();
+    expect(saveApps.mock.calls[0][1].map((a: { vendor: string }) => a.vendor)).toEqual(['claude', 'notion']);
+
+    const empty = vi.fn();
+    const b2 = backend(fakeClient({ list_apps: () => ({ apps: [] }) }), [phone], { health: healthy([phone], () => 1), saveApps: empty, now: () => 1 });
+    await b2.linkedDevices();
+    await flush();
+    expect(empty).not.toHaveBeenCalled();
+  });
+
+  it('leaves phones that are not healthy alone', async () => {
+    const phone = { ...android };
+    const monitor = new PhoneLinkHealthMonitor({
+      phones: () => [phone],
+      probe: async (p: LinkedPhone) => ({ deviceId: p.deviceId, platform: p.platform, whoami: null, call: 'failed' as const }),
+      now: () => 1,
+    });
+    const client = fakeClient({ list_apps: () => ({ apps: [{ package: 'org.telegram.messenger' }] }) });
+    const saveApps = vi.fn();
+    await backend(client, [phone], { health: monitor, saveApps, now: () => 1 }).linkedDevices();
+    await flush();
+    expect(client.calls.some((c) => c.method === 'list_apps')).toBe(false);
+    expect(saveApps).not.toHaveBeenCalled();
+  });
+});
+
 describe('linkedPhoneSource', () => {
   it('reads both stores; a missing Android file means no Android phones', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'link-src-'));
@@ -353,7 +416,8 @@ describe('linkedPhoneSource', () => {
       name: 'moto g play',
       lanHost: '192.168.1.21:8200',
       storeKey: 'phone-link.ictrl.android:dev-2',
-      apps: [{ vendor: 'chatgpt', signedIn: null }],
+      // A list saved by an older build (vendor id only) is named from the catalog.
+      apps: [{ vendor: 'chatgpt', signedIn: null, name: 'ChatGPT', category: 'AI chat', provider: 'chatgpt' }],
     });
     fs.rmSync(dir, { recursive: true, force: true });
   });
