@@ -34,6 +34,7 @@ import {
   createFirefoxLoginBrowser,
   importFirefoxSessionIfNewer,
 } from "./worker/login_browser.js";
+import { startCanary } from "./worker/canary.js";
 import { startDrain } from "./worker/drain.js";
 import { createWatchScheduler } from "./worker/detach.js";
 import { createActivityTracker } from "./worker/progress.js";
@@ -246,6 +247,8 @@ export async function boot(deps: BootDeps = {}): Promise<RunningGateway> {
     logger,
   });
 
+  const stopCanary = startCanary({ db, pool, intervalMs: config.canaryIntervalSec * 1000, logger });
+
   return {
     config,
     db,
@@ -260,6 +263,7 @@ export async function boot(deps: BootDeps = {}): Promise<RunningGateway> {
     pool,
     async close() {
       stopDrain();
+      stopCanary();
       supervisor.shutdown();
       await pool.shutdown();
       await notifier.drain();

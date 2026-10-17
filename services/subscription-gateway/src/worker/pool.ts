@@ -196,6 +196,41 @@ export class WorkerPool {
     return runtime && runtime.isAlive?.() === false ? null : runtime;
   }
 
+  // Canary: one non-spending re-probe of a lane whose browser is already
+  // resident. Never launches (an idle-closed lane stays closed), never touches
+  // lastUsed (a canary must not keep a browser alive), and skips a lane that
+  // is mid-activation. Returns null when there was nothing to probe.
+  async probeResident(lane: LaneKey): Promise<{ health: SessionHealth; adapter_id: string; adapter_version: string } | null> {
+    const id = workerKeyId(lane);
+    const entry = this.lanes.get(id);
+    if (!entry || this.activations.has(id) || entry.runtime.isAlive?.() === false) return null;
+    let health: SessionHealth;
+    try {
+      health = healthFromProbe(await entry.runtime.probe());
+    } catch {
+      health = "provider_down";
+    }
+    this.persistHealth(lane, health);
+    const previous = entry.health;
+    entry.health = health;
+    if (health === "challenge_presented") this.watchChallenge(lane);
+    if (health === "challenge_presented" && previous !== "challenge_presented") {
+      this.deps.log?.append({
+        task_id: `account:${lane.account_id}`,
+        kind: "needs_user",
+        payload: {
+          account_id: lane.account_id,
+          reason: "challenge",
+          message:
+            "Provider presented a verification interstitial — solve it in the Sessions window; it is never auto-retried",
+        },
+        callers: [],
+      });
+    }
+    const manifest = entry.runtime.adapter.manifest;
+    return { health, adapter_id: manifest.adapter_id, adapter_version: manifest.adapter_version };
+  }
+
   healthFor(lane: LaneKey): SessionHealth | null {
     return this.lanes.get(workerKeyId(lane))?.health ?? null;
   }

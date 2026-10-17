@@ -1113,3 +1113,48 @@ export function recordImageChatUse(
   );
   return db.prepare("SELECT * FROM image_chats WHERE chat_id = ?").get(chatId) as ImageChat;
 }
+
+// ---------------------------------------------------------------------------
+// Lane canaries (0010): one row per non-spending probe of a connected account.
+// ---------------------------------------------------------------------------
+
+export interface CanaryRun {
+  id: string;
+  account_id: string;
+  adapter_id: string;
+  kind: "probe" | "turn";
+  started_at: string;
+  ended_at: string | null;
+  outcome: "pass" | "fail";
+  health: string;
+  latency_ms: number | null;
+  error: string | null;
+  evidence_ref: string | null;
+}
+
+export function insertCanaryRun(db: Db, run: Omit<CanaryRun, "id">): CanaryRun {
+  const row: CanaryRun = { id: randomUUID(), ...run };
+  db.prepare(
+    `INSERT INTO canary_runs (id, account_id, adapter_id, kind, started_at, ended_at, outcome, health, latency_ms, error, evidence_ref)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    row.id, row.account_id, row.adapter_id, row.kind, row.started_at, row.ended_at,
+    row.outcome, row.health, row.latency_ms, row.error, row.evidence_ref
+  );
+  return row;
+}
+
+export function latestCanaryRun(db: Db, accountId: string, outcome?: "pass" | "fail"): CanaryRun | null {
+  const row = db
+    .prepare(
+      `SELECT * FROM canary_runs WHERE account_id = ? ${outcome ? "AND outcome = ?" : ""}
+       ORDER BY started_at DESC LIMIT 1`
+    )
+    .get(...(outcome ? [accountId, outcome] : [accountId])) as CanaryRun | undefined;
+  return row ?? null;
+}
+
+/** Keeps a week of probes; called from the canary tick. */
+export function pruneCanaryRuns(db: Db, olderThanIso: string): void {
+  db.prepare("DELETE FROM canary_runs WHERE started_at < ?").run(olderThanIso);
+}

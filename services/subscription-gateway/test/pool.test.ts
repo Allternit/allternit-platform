@@ -203,6 +203,21 @@ describe("WorkerPool.activate", () => {
     expect((first as FakeRuntime).probeCalls).toBe(2); // probe re-driven on demand
   });
 
+  it("probeResident re-probes a resident lane without launching, and never launches a cold one", async () => {
+    let result = probeResult(true);
+    const h = makePool(async () => result);
+    expect(await h.pool.probeResident(LANE)).toBeNull(); // cold: nothing to probe
+    expect(h.launchCalls).toBe(0);
+    await h.pool.activate(LANE);
+    result = probeResult(false, "challenge");
+    const probed = await h.pool.probeResident(LANE);
+    expect(probed?.health).toBe("challenge_presented");
+    expect(getAccount(db, LANE.account_id)?.session_health).toBe("challenge_presented");
+    expect(h.launchCalls).toBe(1);
+    expect(h.logLines.filter((l) => l.kind === "needs_user")).toHaveLength(1);
+    await h.pool.shutdown();
+  });
+
   it("challenge → challenge_presented + exactly one account-scoped ledger event per transition", async () => {
     const h = makePool(async () => probeResult(false, "challenge"));
     await h.pool.activate(LANE);
