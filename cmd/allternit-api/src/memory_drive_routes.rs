@@ -43,6 +43,7 @@ pub fn memory_drive_router() -> Router<Arc<AppState>> {
         .route("/memory/drive/capture", get(get_capture).put(put_capture))
         .route("/memory/drive/capture/turn", post(capture_turn))
         .route("/memory/drive/forget-source", post(forget_source))
+        .route("/memory/drive/activity", get(list_activity).post(report_activity))
         .route("/memory/drive/ledger", get(ledger_info))
         .route("/memory/drive/ledger/file", get(ledger_file).put(ledger_edit).delete(ledger_delete))
         .route("/memory/drive/ledger/snapshot", post(ledger_snapshot))
@@ -892,6 +893,81 @@ async fn forget_source(State(state): State<Arc<AppState>>, Extension(user): Exte
         open(ctx, None, true)?;
         let (revision, removed) = crate::memory_capture::forget_source(&ctx.0.db, &ctx.1.user_id, &b.scheme)?;
         Ok(json!({ "revision": revision, "removed": removed, "more": removed >= crate::memory_capture::MAX_FORGET }))
+    })
+    .await
+}
+
+#[derive(Deserialize)]
+struct ActivityQuery {
+    after: Option<i64>,
+    before: Option<i64>,
+    session: Option<String>,
+    run: Option<String>,
+    kind: Option<String>,
+    limit: Option<i64>,
+}
+
+/// What touched this person's memory: saves, recalls, forgets, imports,
+/// Dream steps and vendor reads. `after` follows new rows (oldest first);
+/// otherwise newest first, paged with `before`.
+async fn list_activity(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Query(q): Query<ActivityQuery>) -> Response {
+    run(state, user, move |ctx| {
+        open(ctx, None, false)?;
+        let conn = ctx.0.db.connect()?;
+        let f = crate::memory_activity::Filter { after: q.after, before: q.before, session: q.session, run: q.run, kind: q.kind, limit: q.limit };
+        let items = crate::memory_activity::list(&conn, &ctx.1.user_id, &f)?;
+        let cursor = items.iter().map(|r| r.id).max().or(q.after);
+        Ok(json!({ "items": items, "cursor": cursor }))
+    })
+    .await
+}
+
+#[derive(Deserialize)]
+struct ReportActivityBody {
+    kind: String,
+    title: String,
+    #[serde(default)]
+    items: Vec<ReportedItem>,
+    source: Option<String>,
+    session: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ReportedItem {
+    text: String,
+    #[serde(default)]
+    source: String,
+}
+
+/// An agent working on the person's own drive (Gizzi's memory_recall and
+/// memory_write) reports what it did. Only recall, save and forget.
+async fn report_activity(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Json(b): Json<ReportActivityBody>) -> Response {
+    run(state, user, move |ctx| {
+        if !crate::memory_activity::AGENT_KINDS.contains(&b.kind.as_str()) {
+            return Err(ServiceError::Provenance("kind must be saved, recalled or forgot".into()));
+        }
+        if b.title.trim().is_empty() || b.items.len() > 50 {
+            return Err(ServiceError::Provenance("Give a title and at most 50 items.".into()));
+        }
+        if let Some(src) = &b.source {
+            crate::memory_drive::validate_source(src).map_err(|_| ServiceError::Provenance("source must be a scheme:value label".into()))?;
+        }
+        open(ctx, None, false)?;
+        let conn = ctx.0.db.connect()?;
+        let id = crate::memory_activity::record(
+            &conn,
+            &ctx.1.user_id,
+            crate::memory_activity::Activity {
+                kind: crate::memory_activity::AGENT_KINDS.iter().find(|k| **k == b.kind).copied().unwrap_or("recalled"),
+                title: b.title,
+                items: b.items.into_iter().map(|i| (i.text, i.source)).collect(),
+                extra: None,
+                source: b.source,
+                session: b.session.filter(|s| !s.is_empty() && s.len() <= 128),
+                run: None,
+            },
+        );
+        Ok(json!({ "recorded": id.is_some(), "id": id }))
     })
     .await
 }

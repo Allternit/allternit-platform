@@ -601,6 +601,55 @@ fn agent_folder_sync_is_repeatable() {
     assert_eq!(crate::memory_capture::sync_agent_folders(&f.db, "u1", home.path()), 1);
 }
 
+/// Forgetting an agent's memories sticks: the next background sync skips
+/// what was removed, while a person's own import can still bring it back.
+#[test]
+fn forgotten_agent_memories_are_not_synced_back() {
+    let f = fixture();
+    let home = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(home.path().join(".hermes/memories")).unwrap();
+    std::fs::write(home.path().join(".hermes/memories/USER.md"), "Lives in Saint Paul§Has a dog").unwrap();
+    assert_eq!(crate::memory_capture::sync_agent_folders(&f.db, "u1", home.path()), 2);
+    assert_eq!(crate::memory_capture::forget_source(&f.db, "u1", "hermes").unwrap().1, 2);
+    assert_eq!(crate::memory_capture::sync_agent_folders(&f.db, "u1", home.path()), 0);
+    std::fs::write(home.path().join(".hermes/memories/USER.md"), "Lives in Saint Paul§Has a dog§Plays piano").unwrap();
+    assert_eq!(crate::memory_capture::sync_agent_folders(&f.db, "u1", home.path()), 1);
+    let plan = crate::memory_drive_agent_import::plan(&f.db, "u1", home.path(), "hermes").unwrap();
+    assert_eq!(plan.entries.len(), 2, "a manual import offers the forgotten ones again");
+}
+
+/// Every save, import and forget lands in the activity log with its lines;
+/// chat saves carry their session; Dream steps carry the run.
+#[tokio::test]
+async fn activity_log_records_saves_imports_forgets_and_dream_steps() {
+    use crate::memory_activity::{list, Filter};
+    let f = fixture();
+    crate::memory_drive_text_import::apply(&f.db, "u1", "- Likes tea\n- Has a dog", "chatgpt", None).unwrap();
+    crate::memory_capture::forget_source(&f.db, "u1", "chatgpt").unwrap();
+    let sid = "sess-activity";
+    f.db.connect().unwrap().execute("INSERT INTO agent_sessions (id, agent_id, agent_name, runtime_model) VALUES (?1,'a','A','m')", params![sid]).unwrap();
+    let o = obs(&f.db, "u1", Some(sid));
+    kernel::persist_facts(&f.db, "u1", None, &o, &["User moved to Saint Paul.".into()]).unwrap();
+    let conn = f.db.connect().unwrap();
+    let rows = list(&conn, "u1", &Filter::default()).unwrap();
+    let kinds: Vec<&str> = rows.iter().rev().map(|r| r.kind.as_str()).collect();
+    assert_eq!(kinds, vec!["imported", "forgot", "saved"]);
+    assert_eq!(rows[2].title, "Imported 2 memories from ChatGPT");
+    assert_eq!(rows[2].detail["items"][0]["source"].as_str().map(|s| s.starts_with("chatgpt:")), Some(true));
+    assert_eq!(rows[1].title, "Forgot 2 memories from chatgpt");
+    assert!(rows[0].title.starts_with("Saved: User moved to Saint Paul."));
+    assert_eq!(rows[0].session.as_deref(), Some(sid));
+    assert!(list(&conn, "other", &Filter::default()).unwrap().is_empty());
+
+    let complete: crate::memory_dream::Complete = std::sync::Arc::new(|_p| Box::pin(async { None }));
+    let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 7).unwrap();
+    let row = crate::memory_dream::run(f.db.clone(), "u1".into(), today, complete).await.unwrap().unwrap();
+    let steps = list(&conn, "u1", &Filter { run: Some(row.id.clone()), ..Default::default() }).unwrap();
+    let names: Vec<&str> = steps.iter().rev().map(|r| r.detail["step"].as_str().unwrap_or("")).collect();
+    assert_eq!(names, vec!["gather", "plan", "done"]);
+    assert_eq!(steps[0].detail["status"], "failed");
+}
+
 /// Two-way copies: a change made in the folder or the git remote comes back
 /// into Allternit; a change made in both places keeps Allternit's version and
 /// saves the copy's beside it.

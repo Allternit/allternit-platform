@@ -99,6 +99,10 @@ pub struct CommitOutcome {
     /// in the archive the old way.
     pub legacy_retire: Vec<String>,
     pub revision: Option<String>,
+    /// (text, source) of each entry this commit added.
+    pub added: Vec<(String, String)>,
+    /// Drive entries this commit removed.
+    pub removed: usize,
 }
 
 pub fn topic_for(memory_type: Option<&str>) -> &'static str {
@@ -202,6 +206,7 @@ pub fn commit_facts(db: &DbHandle, owner: &str, adds: &[NewFact], retire: &[Stri
         Ok(out) => {
             if out.revision.is_some() {
                 crate::metrics::inc_memory_drive_event("commit");
+                log_commit(db, owner, message, &out);
             }
             Ok(Some(out))
         }
@@ -217,6 +222,7 @@ fn commit_once(db: &DbHandle, owner: &str, drive: &DriveRecord, adds: &[NewFact]
     let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
     let conn = db.connect()?;
     let mut ops = Vec::new();
+    let mut added = Vec::new();
     let mut entry_ids: Vec<Option<String>> = Vec::with_capacity(adds.len());
     let mut seen = BTreeSet::new();
     for fact in adds {
@@ -239,12 +245,14 @@ fn commit_once(db: &DbHandle, owner: &str, drive: &DriveRecord, adds: &[NewFact]
         match build_entry(&conn, owner, fact, &today)? {
             Some((path, entry)) => {
                 entry_ids.push(Some(entry.id.clone()));
+                added.push((entry.text.clone(), entry.source.clone()));
                 ops.push(Operation::UpsertEntry { path, entry });
             }
             None => entry_ids.push(None),
         }
     }
     let mut legacy_retire = Vec::new();
+    let mut removed = 0;
     for fact_id in retire {
         let entry: Option<String> = conn
             .query_row(
@@ -254,7 +262,10 @@ fn commit_once(db: &DbHandle, owner: &str, drive: &DriveRecord, adds: &[NewFact]
             )
             .optional()?;
         match entry {
-            Some(id) => ops.push(Operation::DeleteEntry { id }),
+            Some(id) => {
+                removed += 1;
+                ops.push(Operation::DeleteEntry { id });
+            }
             None => legacy_retire.push(fact_id.clone()),
         }
     }
@@ -291,7 +302,35 @@ fn commit_once(db: &DbHandle, owner: &str, drive: &DriveRecord, adds: &[NewFact]
             None => None,
         });
     }
-    Ok(CommitOutcome { fact_ids, legacy_retire, revision })
+    if revision.is_none() {
+        added.clear();
+        removed = 0;
+    }
+    Ok(CommitOutcome { fact_ids, legacy_retire, revision, added, removed })
+}
+
+/// One activity row per commit, tied to the chat session when every added
+/// line came from the same one.
+fn log_commit(db: &DbHandle, owner: &str, message: &str, out: &CommitOutcome) {
+    let Some((kind, title)) = crate::memory_activity::for_commit(message, &out.added, out.removed) else { return };
+    let sessions: BTreeSet<String> = out.added.iter().filter_map(|(_, s)| crate::memory_activity::session_of(s)).collect();
+    let session = (sessions.len() == 1 && out.added.iter().all(|(_, s)| crate::memory_activity::session_of(s).is_some()))
+        .then(|| sessions.into_iter().next())
+        .flatten();
+    let source = out.added.first().map(|(_, s)| s.clone());
+    crate::memory_activity::record_db(
+        db,
+        owner,
+        crate::memory_activity::Activity {
+            kind,
+            title,
+            items: out.added.clone(),
+            extra: Some(serde_json::json!({ "removed": out.removed, "revision": out.revision, "message": message })),
+            source,
+            session,
+            run: None,
+        },
+    );
 }
 
 /// Rewrite one drive-backed fact's entry in place (same stable id). Returns

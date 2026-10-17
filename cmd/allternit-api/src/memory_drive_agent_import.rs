@@ -295,6 +295,17 @@ pub fn apply(db: &DbHandle, owner: &str, home: &Path, id: &str, selected: Option
     text_import::commit(db, owner, c.entries, selected, a.path, &format!("Import memory from {}", a.name))
 }
 
+/// The background sync's import: like [`apply`], but never brings back a
+/// memory the person deleted or forgot.
+pub fn sync(db: &DbHandle, owner: &str, home: &Path, id: &str) -> Result<(Option<String>, usize)> {
+    let a = agent(id)?;
+    let c = text_import::check_auto(db, owner, candidates(home, id))?;
+    if c.entries.is_empty() {
+        return Ok((None, 0));
+    }
+    text_import::commit(db, owner, c.entries, None, a.path, &format!("Sync memory from {}", a.name))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

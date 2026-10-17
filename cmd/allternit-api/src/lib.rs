@@ -292,6 +292,7 @@ pub mod memory_drive_text_import;
 pub mod memory_drive_agent_import;
 pub mod memory_drive_chat_import;
 pub mod memory_capture;
+pub mod memory_activity;
 pub mod ledger;
 pub mod ledger_repo;
 pub mod ledger_restore;
