@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openDatabase, runMigrations, type Db } from "../src/store/db.js";
 import {
+  accountHasActiveTasks,
+  accountHasLiveTasks,
   appendEvent,
   getAccount,
   getTask,
@@ -277,5 +279,21 @@ describe("account queries", () => {
     expect(after.session_health).toBe("degraded");
     expect(after.enabled).toBe(false);
     expect(getAccount(db, "missing")).toBeNull();
+  });
+});
+
+describe("live vs active tasks", () => {
+  it("a queued or needs-you task is active but not live; a running one is both", () => {
+    const db = freshDb();
+    runMigrations(db, MIGRATIONS_DIR);
+    const routing = { mode: "force" as const, provider: "chatgpt", account_id: "acc-1", allow_fallback: false, allow_metered: false, allow_thread_migration: false };
+    insertTask(db, sampleTask({ routing } as Partial<Task>));
+    expect(accountHasActiveTasks(db, "acc-1")).toBe(true);
+    expect(accountHasLiveTasks(db, "acc-1")).toBe(false);
+    db.prepare("UPDATE tasks SET status = 'needs_user'").run();
+    expect(accountHasLiveTasks(db, "acc-1")).toBe(false);
+    db.prepare("UPDATE tasks SET status = 'streaming'").run();
+    expect(accountHasLiveTasks(db, "acc-1")).toBe(true);
+    expect(accountHasLiveTasks(db, "acc-2")).toBe(false);
   });
 });
