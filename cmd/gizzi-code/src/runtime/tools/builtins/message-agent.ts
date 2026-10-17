@@ -113,6 +113,21 @@ inbox and the reply arrives in this chat as a background message
 
 Do not use it for external email (send_agent_email) or user-facing output.`
 
+/** One metadata shape for every outcome (list, held, delivered, app-bot handoff). */
+type MessageAgentResult = {
+  title: string
+  output: string
+  metadata: {
+    target: string
+    from: string
+    delivered: boolean
+    botId?: string
+    threadId?: string
+    status?: string
+    receipt?: unknown
+  }
+}
+
 export const MessageAgentTool = Tool.define("message_agent", {
   description: DESCRIPTION,
   parameters: z.object({
@@ -122,7 +137,7 @@ export const MessageAgentTool = Tool.define("message_agent", {
       .optional()
       .describe("Plain-text task or message for the target bot (omit only with target \"list\")"),
   }),
-  async execute(params, ctx) {
+  async execute(params, ctx): Promise<MessageAgentResult> {
     if (!(await isCanonicalBotSession(ctx.sessionID))) return executeForAppBot(params, ctx.sessionID, ctx.callID)
 
     // The sender is the bot whose canonical session is running this turn.
@@ -178,7 +193,11 @@ export const MessageAgentTool = Tool.define("message_agent", {
 })
 
 /** message_agent for a bot made in the Allternit app (allternit-api roster + threads). */
-async function executeForAppBot(params: { target: string; message?: string }, sessionID: string, callID?: string) {
+async function executeForAppBot(
+  params: { target: string; message?: string },
+  sessionID: string,
+  callID?: string,
+): Promise<MessageAgentResult> {
   const roster = await fetchAppRoster(sessionID)
   if (!roster) {
     throw new BotStoreError("message_agent: this chat isn't one of your bots' chats — the tool is unavailable here")
