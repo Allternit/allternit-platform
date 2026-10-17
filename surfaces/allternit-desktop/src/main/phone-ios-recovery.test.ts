@@ -9,7 +9,7 @@ import { PhoneLinkHealthMonitor, type LinkedPhone } from './phone-link-health.js
 import { probeLinkedPhone } from './phone-link-backend.js';
 import { SigningError, type RunnerArtifacts, type RunnerSigner, type SignRequest } from './phone-ios-runner.js';
 import type { GoIosLike, IctrlLike, IosDriverDeps, IosLinkRecord } from './phone-link-ios.js';
-import { IosRecoveryScheduler, renewalDue, RESIGN_WINDOW_MS, type IosRecoveryDeps } from './phone-ios-recovery.js';
+import { IosRecoveryScheduler, RENEWAL_RETRY_MS, renewalDue, RESIGN_WINDOW_MS, type IosRecoveryDeps } from './phone-ios-recovery.js';
 
 const instant = () => Promise.resolve();
 const LAN = '192.168.1.20:8200';
@@ -243,6 +243,24 @@ describe('IosRecoveryScheduler — renewal', () => {
     expect(d.store.load('U')).toEqual(before);
     expect(recovered).toHaveLength(0);
     expect(w.logs.some((l) => l.includes('Apple sign-in') && l.includes('expired'))).toBe(true);
+  });
+
+  it('a failing renewal is not retried every pass: one attempt per 6 h per phone', async () => {
+    const w = world({ runnerStandalone: true });
+    const d = deps(w, renewSigner(w, 'password_required'));
+    d.store.save(record());
+    let t = NOW;
+    d.now = () => t;
+    const scheduler = new IosRecoveryScheduler({ deps: async () => d });
+    await scheduler.tick();
+    t += 60_000;
+    await scheduler.tick();
+    t += 5 * 3600_000;
+    await scheduler.tick();
+    expect(w.signRequests).toHaveLength(1);
+    t += RENEWAL_RETRY_MS;
+    await scheduler.tick();
+    expect(w.signRequests).toHaveLength(2);
   });
 
   it('a phone that is not on the cable is left manual and untouched', async () => {

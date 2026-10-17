@@ -44,6 +44,13 @@ export const RESIGN_WINDOW_MS = 48 * 3600_000;
 /** How often the scheduler watches usbmuxd and the renewal window (default 60 s). */
 export const IOS_RECOVERY_INTERVAL_MS = 60_000;
 
+/**
+ * Minimum gap between renewal attempts for one phone. Signing talks to
+ * Apple's sign-in; retrying every pass would hammer it (and can get an Apple
+ * ID rate-limited or locked) when a renewal keeps needing a person.
+ */
+export const RENEWAL_RETRY_MS = 6 * 3600_000;
+
 const brief = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 /** True when the record's signature expiry is known and inside the renewal window. */
@@ -175,6 +182,8 @@ export interface IosRecoverySchedulerOpts {
 export class IosRecoveryScheduler {
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly inFlight = new Set<string>();
+  /** udid → when renewal was last attempted (success or not). */
+  private readonly lastRenewal = new Map<string, number>();
   private chain: Promise<void> = Promise.resolve();
 
   constructor(private readonly opts: IosRecoverySchedulerOpts) {}
@@ -214,11 +223,14 @@ export class IosRecoveryScheduler {
     const now = deps.now?.() ?? Date.now();
     for (const record of records) {
       if (this.inFlight.has(record.udid)) continue; // still being worked on by an earlier pass
-      const renew = renewalDue(record, now);
+      const last = this.lastRenewal.get(record.udid);
+      const renew = renewalDue(record, now) && (last === undefined || now - last >= RENEWAL_RETRY_MS);
       if (!renew && !connected.includes(record.udid)) continue;
       this.inFlight.add(record.udid);
       try {
         if (renew) {
+          // Only a pass that could actually try (phone on the cable) counts as an attempt.
+          if (connected.includes(record.udid)) this.lastRenewal.set(record.udid, now);
           await renewIosSignature(deps, record, connected);
         } else if (!(await helperAnswers(deps, record))) {
           await remountIosHelper(deps, record);
