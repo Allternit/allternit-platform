@@ -656,6 +656,7 @@
               "api/web-push",
               "api/notifications",
               "api/allternit-api",
+              "api/phone-stream-relay",
               "api/authentication",
               "api/endpoints",
               "api/rate-limits",

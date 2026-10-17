@@ -85,11 +85,19 @@ fn normalize(input: RegisteredPhoneInput) -> Result<RegisteredPhoneInput, ApiErr
 }
 
 /// Upsert one phone row for `account_id`, refreshing `last_seen_at`.
+/// Identity fields are normalized here (not just in the handler) so every
+/// write path stores trimmed, capped values.
 pub async fn upsert_phone(
     db: &PgPool,
     account_id: &str,
     phone: &RegisteredPhoneInput,
 ) -> Result<(), sqlx::Error> {
+    let take = |value: &Option<String>| -> Option<String> {
+        value
+            .as_deref()
+            .map(|v| v.trim().chars().take(256).collect::<String>())
+            .filter(|v| !v.is_empty())
+    };
     sqlx::query(
         "INSERT INTO registered_phones (account_id, serial, model, name, last_seen_at)
          VALUES ($1, $2, $3, $4, now())
@@ -97,9 +105,9 @@ pub async fn upsert_phone(
            SET model = EXCLUDED.model, name = EXCLUDED.name, last_seen_at = EXCLUDED.last_seen_at",
     )
     .bind(account_id)
-    .bind(&phone.serial)
-    .bind(&phone.model)
-    .bind(&phone.name)
+    .bind(phone.serial.trim())
+    .bind(take(&phone.model))
+    .bind(take(&phone.name))
     .execute(db)
     .await?;
     Ok(())
