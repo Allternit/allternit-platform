@@ -103,8 +103,21 @@ export function routesForAdapterManifest(manifest: AdapterManifest): RouteId[] {
 // stored per app version) decides which one applies. A remote ui_bridge tab
 // is the web route. official/local lanes are APIs, not app routes — they are
 // not in the §2 table and map to none.
+/**
+ * Phone app adapters drive a linked phone through Allternit Desktop (so they are
+ * localRequired like a desktop app) but serve a phone route. They declare it by
+ * id suffix: "<vendor>-android-app" and "<vendor>-iphone-app".
+ */
+export function phoneRouteForAdapterId(adapterId: string): RouteId | null {
+  if (adapterId.endsWith("-android-app")) return "android-app";
+  if (adapterId.endsWith("-iphone-app")) return "iphone-app-ictrl";
+  return null;
+}
+
 export function routesForAgentManifest(m: AgentCapabilityManifest): RouteId[] {
   if (m.lane !== "ui_bridge") return [];
+  const phone = phoneRouteForAdapterId(m.adapterId);
+  if (phone) return [phone];
   return m.runtime.localRequired ? ["desktop-app-cdp", "desktop-app-ax"] : ["web"];
 }
 

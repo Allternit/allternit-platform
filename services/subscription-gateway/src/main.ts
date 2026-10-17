@@ -27,6 +27,7 @@ import { closeServer, createServer, listenTcp, listenUds } from "./http/server.j
 import { createScheduler } from "./queue/scheduler.js";
 import { FabricRouter } from "./router/resolve.js";
 import type { DispatchDeps } from "./router/dispatch.js";
+import { DesktopPhoneGateway, linkedPhones } from "./phone/gateway.js";
 import { RouteDirector, type VendorLaneInfo } from "./routes/director.js";
 import { routesForAdapterManifest, routesForAgentManifest } from "./routes/registry.js";
 import { WorkerSupervisor } from "./worker/supervisor.js";
@@ -183,9 +184,9 @@ export async function boot(deps: BootDeps = {}): Promise<RunningGateway> {
 
   // §4 route router: deterministic per-vendor route selection over the signed-in
   // apps. Lanes come from the YAML adapter registry plus the AAI host's vendor
-  // manifests; phone devices have no gateway client yet (the phone adapters
-  // are the follow-up task), so phone routes register with no devices — never
-  // eligible until their conformance lands.
+  // manifests (phone adapters map to android-app / iphone-app-ictrl by id);
+  // phone devices come from Allternit Desktop's phone gateway. A phone route is
+  // eligible only once its conformance has passed for the current version.
   const aaiHost = createAaiHost(config, process.env, deps.fetchImpl, {
     subscriptionProfile: async (provider) => {
       const account = preferredReadyAccount(listAccounts(db), provider);
@@ -250,6 +251,12 @@ export async function boot(deps: BootDeps = {}): Promise<RunningGateway> {
         return out;
       },
       };
+    })(),
+    // Phone routes: the linked phones Allternit Desktop reports (phone.devices
+    // over its loopback phone gateway). Empty when Desktop isn't running here.
+    phones: (() => {
+      const gateway = new DesktopPhoneGateway({ file: process.env.SUBS_GATEWAY_PHONE_GATEWAY_FILE });
+      return { linkedDevices: () => linkedPhones(gateway) };
     })(),
     onChoice: (entry) => {
       log.append({
