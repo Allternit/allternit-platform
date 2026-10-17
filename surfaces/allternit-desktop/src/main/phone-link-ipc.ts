@@ -6,10 +6,12 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { IctrlClient, ictrlStoreKey, type SecretStore } from './ictrl-client.js';
 import { PhoneLinkManager } from './phone-link.js';
+import { fileAndroidLinkStore, type AndroidDriverDeps } from './phone-link-android.js';
 import { fileLinkStore, type IosDriverDeps } from './phone-link-ios.js';
 import type { PhoneLinkPlatform } from './phone-link-types.js';
 import { createGoIosExec, createGoIosSpawn, ensureDdi, ensureGoIos, GoIos } from './phone-goios.js';
 import { ensureRunnerArtifacts, LocalIdentitySigner, SideloadSigner, type RunnerSigner } from './phone-ios-runner.js';
+import { ensureAndroidHelper } from './phone-android-helper.js';
 import { readPairRecord, startLoopbackForward } from './phone-usbmux.js';
 import { phoneService } from './phone-service.js';
 import { deleteSecret, readSecret, writeSecret } from './secure-store.js';
@@ -55,11 +57,23 @@ async function iosDeps(): Promise<IosDriverDeps> {
   };
 }
 
+async function androidDeps(): Promise<AndroidDriverDeps> {
+  const dataDir = path.join(app.getPath('userData'), 'phone');
+  return {
+    adb: () => phoneService.ensureAdbCall(),
+    helper: (dir) => ensureAndroidHelper(dir),
+    dataDir,
+    ictrl: (storeKey, host) => new IctrlClient({ host, secrets, storeKey, logger: (m) => log.info(m) }),
+    store: fileAndroidLinkStore(path.join(dataDir, 'phone-link-android.json')),
+    logger: (m) => log.info(m),
+  };
+}
+
 type Guarded = (channel: string, fn: (event: IpcMainInvokeEvent, ...args: any[]) => unknown) => void;
 
 export function registerPhoneLinkIpc(handleGuarded: Guarded): PhoneLinkManager {
   const manager = new PhoneLinkManager({
-    adb: () => phoneService.ensureAdbCall(),
+    android: androidDeps,
     ios: iosDeps,
     logger: (message) => log.info(message),
   });

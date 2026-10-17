@@ -5,7 +5,8 @@
  * Phone Link connects the AI apps already signed in on the user's own phone
  * so bots can use them (SPEC-signed-in-apps-routing-2026-10-16). iPhone: a
  * one-time cable setup installs our iCTRL-based runner, then it works over
- * Wi-Fi. Android: USB debugging, then wireless debugging.
+ * Wi-Fi. Android: USB debugging, then the Phone Link app installs over the
+ * same cable and takes over Wi-Fi itself.
  *
  * Credentials typed into the UI (Apple ID, 2FA code) cross IPC once, go to
  * the signing step in main, and are never stored in plain text or logged.

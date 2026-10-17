@@ -160,6 +160,17 @@ export interface IctrlWhoami {
   server_version?: string;
 }
 
+/** The parts of IctrlClient the phone-link drivers use (faked in tests). */
+export interface IctrlLike {
+  readonly host: string;
+  hasKey(): boolean;
+  forget(): void;
+  whoami(): Promise<IctrlWhoami | null>;
+  pair(clientName: string, meta?: { deviceId?: string; deviceName?: string }): Promise<unknown>;
+  call<T = Record<string, unknown>>(method: string, params?: Record<string, unknown>, timeoutMs?: number): Promise<T>;
+  withHost(host: string): IctrlLike;
+}
+
 export class IctrlError extends Error {
   constructor(
     readonly code: string,
