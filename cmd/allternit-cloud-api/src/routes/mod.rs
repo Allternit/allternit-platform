@@ -56,6 +56,7 @@ pub mod web_push;
 pub mod notifications;
 pub mod channel_onboarding;
 pub mod paired_computers;
+pub mod registered_phones;
 pub mod mirror;
 pub mod model_router;
 pub mod mirror_ws;

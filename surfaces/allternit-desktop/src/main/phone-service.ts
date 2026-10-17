@@ -20,14 +20,34 @@ import { ArtemisManager } from './phone-artemis.js';
 import { PhoneDeviceManager, type PhoneStore, type StoredPhone } from './phone-device-manager.js';
 import { newGatewayToken, startPhoneGateway } from './phone-gateway.js';
 import { findUxplay } from './phone-airplay.js';
+import {
+  ensureScrcpyServer,
+  nodeScrcpyAdb,
+  nodeScrcpyConnect,
+  ScrcpySession,
+  type PhoneInputEvent,
+  type PhoneStreamOptions,
+  type PhoneStreamStatus,
+} from './phone-scrcpy.js';
+import { PhoneStreamManager, type StreamConsumer } from './phone-stream.js';
+import { PhoneUserComms, type CallStateName, type CommsResult, type PhoneAppInfo, type PhoneSmsMessage, type PhoneSmsThread } from './phone-user-comms.js';
+import { PhoneLinkPhoneSocket } from './phone-link-cloud.js';
+import { authManager } from './auth-manager.js';
+import { backendManager } from './backend-manager.js';
+import { URLS } from './config.js';
 import { UsbAgentManager, type Sealer, type StoredUsbAgent, type UsbAgentConfig, type UsbAgentStore } from './phone-usb-agent.js';
 import { candidatePorts, lanAddresses, serialPort } from './phone-usb-agent-provision.js';
 import { USBA_MDNS_TYPE } from './phone-usb-agent-protocol.js';
 import { loadFirmware, type BundledFirmware } from './phone-usb-agent-firmware.js';
 import { grayFromBgra, type Gray } from './phone-usb-agent-vision.js';
 import type { Calibration } from './phone-usb-agent-pointer.js';
-import { IctrlClient, type SecretStore } from './ictrl-client.js';
+import { IctrlClient, ictrlStoreKey, type SecretStore } from './ictrl-client.js';
 import { fileLinkStore } from './phone-link-ios.js';
+import { IosRecoveryScheduler, type IosRecoveryDeps } from './phone-ios-recovery.js';
+import { createGoIosExec, createGoIosSpawn, ensureDdi, ensureGoIos, GoIos } from './phone-goios.js';
+import { ensureRunnerArtifacts, pickSigner } from './phone-ios-runner.js';
+import { readPairRecord, startLoopbackForward } from './phone-usbmux.js';
+import { hasLinkedPhones } from './phone-link-stores.js';
 import { PhoneLinkBackend, cachedHostResolver, linkedPhoneSource, probeLinkedPhone, rememberLinkedHost, type LinkedPhone } from './phone-link-backend.js';
 import { fileAndroidLinkStore } from './phone-link-android.js';
 import { nodeDiscoveryDeps } from './phone-link-discovery.js';
@@ -63,7 +83,11 @@ export function fileStore(file: string): PhoneStore {
   return { load: () => readJson<StoredPhone[]>(file, []), save: (phones) => writeJson(file, phones) };
 }
 
+const LINK_DETACH_GRACE_MS = 30_000;
+const LINK_SYNC_INTERVAL_MS = 60_000;
+
 export function fileRateStore(file: string): RateStore {
+
   return {
     load: (key) => readJson<Record<string, number[]>>(file, {})[key] ?? [],
     save: (key, timestamps) => writeJson(file, { ...readJson<Record<string, number[]>>(file, {}), [key]: timestamps }),
@@ -155,10 +179,19 @@ class PhoneService {
   private adbReady: Promise<AdbCall> | null = null;
   private manager: PhoneDeviceManager | null = null;
   private managerReady: Promise<PhoneDeviceManager> | null = null;
+  private streams: PhoneStreamManager | null = null;
+  private comms: PhoneUserComms | null = null;
+  private linkSockets = new Map<string, PhoneLinkPhoneSocket>();
+  private linkConsumers = new Map<string, () => void>();
+  private linkDetachTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private linkSyncTimer: ReturnType<typeof setInterval> | null = null;
+  private scrcpyServerReady: Promise<string> | null = null;
   private usbAgents: UsbAgentManager | null = null;
   private artemis: ArtemisManager | null = null;
   private runner: PhoneToolRunner | null = null;
   private linkedBackend: PhoneLinkBackend | null = null;
+  private linkedHealth: PhoneLinkHealthMonitor | null = null;
+  private iosRecovery: IosRecoveryScheduler | null = null;
   private gatewayReady: Promise<void> | null = null;
   private gatewayClose: (() => void) | null = null;
   private gatewayFile = path.join(os.homedir(), '.allternit', 'phone-gateway.json');
@@ -229,9 +262,69 @@ class PhoneService {
         probe: (phone) => probeLinkedPhone(phone, client, resolveHost),
         logger: (m) => log.info(m),
       });
+      this.linkedHealth = health;
       this.linkedBackend = new PhoneLinkBackend({ phones: source, client, resolveHost, health, logger: (m) => log.info(m) });
     }
     return this.linkedBackend;
+  }
+
+  /**
+   * The iPhone recovery pass (phone-ios-recovery.ts): re-signs a linked
+   * helper before the free-Apple-ID signature lapses, and remounts the
+   * developer image + relaunches the helper when a restarted iPhone comes
+   * back on the cable — zero clicks. Started at launch; each pass costs one
+   * small JSON read when no iPhone is linked, so it stays free for everyone
+   * else, and go-ios/the runner artifacts are only resolved after a link
+   * record exists.
+   */
+  private ensureIosRecovery(): void {
+    if (this.iosRecovery || process.platform !== 'darwin') return;
+    const dir = this.dir();
+    const store = fileLinkStore(path.join(dir, 'phone-link-ios.json'));
+    let built: Promise<IosRecoveryDeps | null> | null = null;
+    const deps = () => {
+      if (store.all().length === 0) return Promise.resolve(null); // no linked iPhone: never touch go-ios
+      built ??= (async (): Promise<IosRecoveryDeps | null> => {
+        try {
+          const bin = await ensureGoIos(dir);
+          // go-ios keeps its tunnel identity (selfIdentity.plist) here; default would be the cwd.
+          const tunnelDir = path.join(dir, 'go-ios', 'tunnel-identity');
+          fs.mkdirSync(tunnelDir, { recursive: true, mode: 0o700 });
+          const goios = new GoIos(createGoIosExec(bin), createGoIosSpawn(bin, tunnelDir), tunnelDir);
+          const secrets: SecretStore = { get: readSecret, set: writeSecret, delete: deleteSecret };
+          return {
+            goios,
+            artifacts: () => ensureRunnerArtifacts(dir),
+            signer: pickSigner(app.isPackaged),
+            ictrl: (udid, host) => new IctrlClient({ host, secrets, storeKey: ictrlStoreKey(udid), logger: (m) => log.info(m) }),
+            forward: (udid, port) => startLoopbackForward(udid, port),
+            ddiDir: async () => {
+              const ddi = path.join(dir, 'ddi');
+              await ensureDdi(ddi);
+              return ddi;
+            },
+            readPairRecord: (udid) => readPairRecord(udid),
+            store,
+            workDir: path.join(dir, 'ictrl-work'),
+            onRecovered: (udid, kind) => {
+              // Health is evidence-based: a recovered phone is re-probed now,
+              // so SIGNATURE_RENEWAL_REQUIRED / DEVELOPER_IMAGE_REMOUNT_REQUIRED
+              // clear as soon as the helper truly answers again.
+              const deviceId = store.load(udid)?.deviceId ?? udid;
+              log.info(`[Phone] iPhone recovery (${kind}) succeeded for ${store.load(udid)?.deviceName ?? udid}; refreshing health`);
+              void this.linkedHealth?.check(deviceId).catch(() => {});
+            },
+            logger: (m) => log.info(m),
+          };
+        } catch (error) {
+          log.warn('[Phone] iPhone recovery tooling unavailable:', error);
+          return null;
+        }
+      })();
+      return built;
+    };
+    this.iosRecovery = new IosRecoveryScheduler({ deps, logger: (m) => log.info(m) });
+    this.iosRecovery.start();
   }
 
   /** Linked phones with health, for phone-link:devices (Settings → Computers → Phones). */
@@ -245,7 +338,8 @@ class PhoneService {
     this.gatewayReady = (async () => {
       const lazy = (async (args: string[], opts?: { serial?: string; timeoutMs?: number }) => (await this.ensureAdbCall())(args, opts)) as AdbCall;
       lazy.binary = async (args, opts) => (await this.ensureAdbCall()).binary(args, opts);
-      this.artemis = this.artemis ?? new ArtemisManager(this.dir());
+      this.artemis = this.artemis ?? new ArtemisManager(this.dir(), undefined, (serial, running) =>
+        this.manager?.noteAgentActivity(serial, running ? 1 : -1));
       const runner = new PhoneToolRunner({
         adb: lazy,
         gate: dialogGate(),
@@ -254,6 +348,7 @@ class PhoneService {
         onlineSerials: () => this.manager?.onlineSerials() ?? [],
         defaultSmsSubscription: (serial) => this.manager?.defaultSmsSubscription(serial) ?? Promise.resolve(null),
         usb: () => this.usbAgents,
+        activity: (serial, delta) => this.manager?.noteAgentActivity(serial, delta),
         links: () => this.ensureLinkedBackend(),
       });
       this.runner = runner;
@@ -285,7 +380,32 @@ class PhoneService {
             : null,
         });
         manager.start();
+        manager.on('devices', () => {
+          // The reconnect state machine handles re-pairing; a stream on a
+          // phone that just went away simply ends and can be restarted.
+          const online = new Set(manager.onlineSerials());
+          for (const serial of this.streams?.activeSerials() ?? []) {
+            if (!online.has(serial)) this.streams?.deviceDisconnected(serial);
+          }
+          this.syncLinkSockets();
+        });
         this.manager = manager;
+        this.streams = new PhoneStreamManager({
+          createSession: (serial, opts) =>
+            new ScrcpySession(
+              {
+                adb: nodeScrcpyAdb(this.adbPath ?? '', serial),
+                serial,
+                serverPath: this.ensureScrcpyServerPath(),
+                connect: nodeScrcpyConnect,
+                log: (message) => log.info('[PhoneStream]', message),
+              },
+              opts,
+            ),
+        });
+        this.linkSyncTimer = setInterval(() => this.syncLinkSockets(), LINK_SYNC_INTERVAL_MS);
+        this.linkSyncTimer.unref?.();
+        this.syncLinkSockets();
         return manager;
       })();
       this.managerReady.catch(() => {
@@ -293,6 +413,244 @@ class PhoneService {
       });
     }
     return this.managerReady;
+  }
+
+  /** The pinned scrcpy-server binary; one shared download (verified) across sessions. */
+  private ensureScrcpyServerPath(): Promise<string> {
+    if (!this.scrcpyServerReady) {
+      this.scrcpyServerReady = ensureScrcpyServer(this.dir());
+      this.scrcpyServerReady.catch(() => {
+        this.scrcpyServerReady = null; // a failed download may be retried on the next start
+      });
+    }
+    return this.scrcpyServerReady;
+  }
+
+  /** The in-app live view manager (scrcpy-server video + input); created with the Android lane. */
+  async ensureStreams(): Promise<PhoneStreamManager> {
+    await this.ensureReady();
+    return this.streams!;
+  }
+
+  /**
+   * Start a live stream on request only. The phone must be online; the
+   * pinned scrcpy-server is downloaded on first use, not here.
+   */
+  async startStream(serial: string, opts?: PhoneStreamOptions): Promise<{ ok: true } | { ok: false; message: string }> {
+    const manager = await this.ensureReady();
+    const phone = manager.list().find((p) => p.serial === serial);
+    if (!phone || phone.state !== 'online') return { ok: false, message: 'That phone is not connected.' };
+    return this.ensureStreams().then((streams) => streams.start(serial, opts ?? {}));
+  }
+
+  /** Stream controls, safe to call before the Android lane exists (no-op / idle results). */
+  async stopStream(serial: string): Promise<void> {
+    await this.streams?.stop(serial);
+  }
+
+  streamStatus(serial: string): PhoneStreamStatus {
+    return this.streams?.status(serial) ?? { state: 'idle' };
+  }
+
+  sendStreamInput(serial: string, events: unknown): { ok: boolean; message?: string } {
+    if (!Array.isArray(events) || events.length === 0) return { ok: false, message: 'No input events.' };
+    // encodeControlMessage validates every event; invalid ones fail as { ok: false }.
+    return this.streams?.sendInput(serial, events as PhoneInputEvent[]) ?? { ok: false, message: 'The stream is not live.' };
+  }
+
+  setStreamDisplayPower(serial: string, on: boolean): { ok: boolean; message?: string } {
+    return this.streams?.setDisplayPower(serial, on) ?? { ok: false, message: 'The stream is not live.' };
+  }
+
+  // ── User comms (Phones 2.0 Phase 3): texts and calls through the phone's   ──
+  // ── own SIM. The bridge methods take no serial — this lane is "my phone":  ──
+  // ── main resolves the linked, online phone. The bot tool lane keeps its    ──
+  // ── own approval-gated path; these methods have no dialog (the user acts). ──
+
+  async ensureComms(): Promise<PhoneUserComms> {
+    await this.ensureReady();
+    if (!this.comms) {
+      const lazy = (async (args: string[], opts?: { serial?: string; timeoutMs?: number }) => (await this.ensureAdbCall())(args, opts)) as AdbCall;
+      lazy.binary = async (args, opts) => (await this.ensureAdbCall()).binary(args, opts);
+      this.comms = new PhoneUserComms({
+        adb: lazy,
+        rates: fileRateStore(path.join(this.dir(), 'rates.json')),
+        onlineSerials: () => this.manager?.onlineSerials() ?? [],
+        log: (message) => log.info('[PhoneComms]', message),
+      });
+    }
+    return this.comms;
+  }
+
+  /** The phone the user comms lane acts on; `ok:false` when nothing is connected. */
+  private async commsTarget(): Promise<{ serial: string } | { ok: false; message: string }> {
+    const manager = await this.ensureReady();
+    const online = manager.onlineSerials();
+    if (online.length === 0) return { ok: false as const, message: 'No phone is connected.' };
+    return { serial: online[0] };
+  }
+
+  smsList(): Promise<CommsResult<{ threads: PhoneSmsThread[] }>> {
+    return this.commsWith(async (serial, comms) => comms.smsList(serial));
+  }
+
+  smsMessages(address: string, opts?: { afterTimestamp?: number }): Promise<CommsResult<{ messages: PhoneSmsMessage[] }>> {
+    return this.commsWith(async (serial, comms) => comms.smsMessages(serial, address, opts));
+  }
+
+  smsSendUser(to: string, text: string): Promise<CommsResult<{ status: 'submitted'; emergency?: true }>> {
+    const body = String(text ?? '');
+    if (!body.trim()) return Promise.resolve({ ok: false as const, message: 'Empty message.' });
+    if (body.length > 1600) return Promise.resolve({ ok: false as const, message: 'Message is too long (1600 characters max).' });
+    return this.commsWith(async (serial, comms) => comms.smsSendUser(serial, to, body));
+  }
+
+  callDialUser(number: string, opts?: { confirmEmergency?: boolean }): Promise<CommsResult<{ status: 'dialing'; emergency?: true }>> {
+    return this.commsWith(async (serial, comms) => comms.callDialUser(serial, number, opts));
+  }
+
+  callEnd(): Promise<CommsResult<{}>> {
+    return this.commsWith(async (serial, comms) => comms.callEnd(serial));
+  }
+
+  /** The bridge shape has no `ok` — a failure or no phone reads as idle. */
+  async callState(): Promise<{ state: CallStateName; number?: string }> {
+    const target = await this.commsTarget();
+    if ('ok' in target) return { state: 'idle' };
+    const result = await (await this.ensureComms()).callState(target.serial);
+    return result.ok ? { state: result.state, ...(result.number !== undefined ? { number: result.number } : {}) } : { state: 'idle' };
+  }
+
+  /** The PhoneViewport apps sheet inventory (per serial, unlike the comms lane). */
+  async listApps(serial: string): Promise<CommsResult<{ apps: PhoneAppInfo[] }>> {
+    const manager = await this.ensureReady();
+    const phone = manager.list().find((p) => p.serial === serial);
+    if (!phone || phone.state !== 'online') return { ok: false as const, message: 'That phone is not connected.' };
+    return (await this.ensureComms()).listApps(serial);
+  }
+
+  getComms(): PhoneUserComms | null {
+    return this.comms;
+  }
+
+  private async commsWith<T>(fn: (serial: string, comms: PhoneUserComms) => Promise<CommsResult<T>>): Promise<CommsResult<T>> {
+    const target = await this.commsTarget();
+    if ('ok' in target) return target;
+    return fn(target.serial, await this.ensureComms());
+  }
+
+  getStreamManager(): PhoneStreamManager | null {
+    return this.streams;
+  }
+
+  // ── Cloud relay (Phones 2.0 Phase 2): the persistent session that lets     ──
+  // ── signed-in surfaces reach this phone through allternit-api.             ──
+
+  /** The session connects only once a phone is paired; it idles otherwise. */
+  // ── Cloud relay (Phones 2.0 Phase 2): one phone-link socket per linked     ──
+  // ── phone, so a viewer never waits behind another phone's stream (the      ──
+  // ── relay streams one serial per socket — see phone_ws.rs). The relay      ──
+  // ── signals viewers with viewer_attached/detached; scrcpy starts on        ──
+  // ── attach and idles off on a grace after the last detach.                 ──
+
+  /** Signed out ⇒ no sockets; the sync timer picks sign-in up within a minute. */
+  private syncLinkSockets(): void {
+    if (!authManager.getSessionSnapshot()) return;
+    const phones = this.manager?.list() ?? [];
+    const seen = new Set<string>();
+    for (const phone of phones) {
+      if (!phone.serial) continue;
+      seen.add(phone.serial);
+      if (!this.linkSockets.has(phone.serial)) {
+        this.linkSockets.set(phone.serial, this.createLinkSocket(phone.serial));
+      }
+      this.linkSockets.get(phone.serial)?.notePhoneChanged();
+    }
+    for (const [serial, socket] of this.linkSockets) {
+      if (seen.has(serial)) continue;
+      socket.stop();
+      this.linkSockets.delete(serial);
+      this.cancelLinkDetach(serial);
+      this.detachLinkConsumer(serial);
+    }
+  }
+
+  private createLinkSocket(serial: string): PhoneLinkPhoneSocket {
+    const client = new PhoneLinkPhoneSocket({
+      // Both relay legs must terminate at the same api the web app talks to
+      // (the cloud transport uses the same base). In dev, point Desktop at
+      // the local api with ALLTERNIT_CLOUD_API_URL=http://127.0.0.1:18013.
+      apiUrl: () => (process.env.ALLTERNIT_CLOUD_API_URL || URLS.CLOUD_API).replace(/\/$/, ''),
+      // The desktop-access-token credential + the signed-in user's headers —
+      // the api's auth middleware maps them to the account browsers mint
+      // tokens against (auth.rs verify_desktop_access_token + user headers).
+      headers: () => {
+        const base = backendManager.getLocalAuthHeaders();
+        const session = authManager.getSessionSnapshot();
+        const userId = session?.userId ?? 'desktop-local';
+        return {
+          ...base,
+          'x-allternit-user-id': userId,
+          'x-allternit-user-email': session?.userEmail ?? `${userId}@desktop.allternit.local`,
+        };
+      },
+      phone: () => {
+        const p = this.manager?.list().find((entry) => entry.serial === serial);
+        return { serial, model: p?.model ?? '', name: p?.name || p?.model || 'Linked phone' };
+      },
+      onViewerAttached: (s) => this.linkViewerAttached(s),
+      onViewerDetached: (s) => this.linkViewerDetached(s),
+      onInput: (s, events) => this.sendStreamInput(s, events),
+      onDisplayPower: (s, on) => this.setStreamDisplayPower(s, on),
+      log: (message) => log.info(message),
+    });
+    client.start();
+    return client;
+  }
+
+  /** A viewer appeared on the relay: start scrcpy and forward its feed. */
+  private async linkViewerAttached(serial: string): Promise<{ ok: boolean; message?: string }> {
+    this.cancelLinkDetach(serial);
+    const socket = this.linkSockets.get(serial);
+    if (!socket) return { ok: false, message: 'The relay session is gone.' };
+    const started = await this.startStream(serial);
+    if (!started.ok) return started;
+    if (!this.linkConsumers.has(serial)) {
+      const streams = await this.ensureStreams();
+      const consumer: StreamConsumer = {
+        onMeta: (_s, meta) => socket.push({ kind: 'meta', meta }),
+        onChunk: (_s, chunk) => socket.push({ kind: 'chunk', chunk }),
+        onEnd: (_s, info) => {
+          socket.push({ kind: 'end', reason: info.reason });
+          this.detachLinkConsumer(serial);
+        },
+      };
+      this.linkConsumers.set(serial, streams.subscribe(serial, consumer));
+    }
+    return { ok: true };
+  }
+
+  /** Last viewer left: grace before tearing scrcpy down so a quick reconnect is seamless. */
+  private linkViewerDetached(serial: string): void {
+    this.cancelLinkDetach(serial);
+    const timer = setTimeout(() => {
+      this.linkDetachTimers.delete(serial);
+      void this.stopStream(serial);
+      this.detachLinkConsumer(serial);
+    }, LINK_DETACH_GRACE_MS);
+    timer.unref?.();
+    this.linkDetachTimers.set(serial, timer);
+  }
+
+  private cancelLinkDetach(serial: string): void {
+    const timer = this.linkDetachTimers.get(serial);
+    if (timer) clearTimeout(timer);
+    this.linkDetachTimers.delete(serial);
+  }
+
+  private detachLinkConsumer(serial: string): void {
+    this.linkConsumers.get(serial)?.();
+    this.linkConsumers.delete(serial);
   }
 
   /** iPhone lane: the USB Agent link, its mDNS advert and the AirPlay receivers. No adb involved. */
@@ -352,9 +710,24 @@ class PhoneService {
     return this.usbAgents;
   }
 
+  /**
+   * Bots reach Phone-Linked phones through the gateway + MCP shim. Called at
+   * launch when a linked phone exists and when Phone Link setup finishes, so
+   * the phone tools are there without an adb phone or USB Agent. No adb
+   * download, no processes beyond the gateway.
+   */
+  async startForLinkedPhones(): Promise<void> {
+    await this.ensureGateway().catch((error) => log.warn('[Phone] gateway for linked phones could not start:', error));
+  }
+
   /** Called at launch: only brings a lane up if something was ever paired on it (zero cost for everyone else). */
   async initIfPaired(): Promise<void> {
+    this.ensureIosRecovery();
     const dir = path.join(app.getPath('userData'), 'phone');
+    // Phone-Linked phones (iPhone helper, Android app) are reached through the
+    // same gateway + MCP shim; without this, bots had no phone tools after a
+    // restart until an adb phone or USB Agent woke the gateway.
+    if (hasLinkedPhones(dir)) await this.startForLinkedPhones();
     if (readJson<StoredPhone[]>(path.join(dir, 'phones.json'), []).length > 0) {
       await this.ensureReady().catch((error) => log.warn('[Phone] could not start:', error));
     }
@@ -401,6 +774,16 @@ class PhoneService {
   }
 
   shutdown(): void {
+    this.iosRecovery?.stop();
+    if (this.linkSyncTimer) clearInterval(this.linkSyncTimer);
+    this.linkSyncTimer = null;
+    for (const [serial, socket] of this.linkSockets) {
+      socket.stop();
+      this.cancelLinkDetach(serial);
+      this.detachLinkConsumer(serial);
+    }
+    this.linkSockets.clear();
+    this.streams?.stopAll();
     this.manager?.stopAll();
     this.usbAgents?.stopAll();
     this.artemis?.stopAll();

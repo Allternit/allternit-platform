@@ -27,6 +27,9 @@ import { closeServer, createServer, listenTcp, listenUds } from "./http/server.j
 import { createScheduler } from "./queue/scheduler.js";
 import { FabricRouter } from "./router/resolve.js";
 import type { DispatchDeps } from "./router/dispatch.js";
+import { DesktopPhoneGateway, linkedPhones } from "./phone/gateway.js";
+import { RouteDirector, type VendorLaneInfo } from "./routes/director.js";
+import { routesForAdapterManifest, routesForAgentManifest } from "./routes/registry.js";
 import { WorkerSupervisor } from "./worker/supervisor.js";
 import { WorkerPool } from "./worker/pool.js";
 import {
@@ -179,30 +182,123 @@ export async function boot(deps: BootDeps = {}): Promise<RunningGateway> {
       req.end();
     });
 
+  // §4 route router: deterministic per-vendor route selection over the signed-in
+  // apps. Lanes come from the YAML adapter registry plus the AAI host's vendor
+  // manifests (phone adapters map to android-app / iphone-app-ictrl by id);
+  // phone devices come from Allternit Desktop's phone gateway. A phone route is
+  // eligible only once its conformance has passed for the current version.
+  const aaiHost = createAaiHost(config, process.env, deps.fetchImpl, {
+    subscriptionProfile: async (provider) => {
+      const account = preferredReadyAccount(listAccounts(db), provider);
+      if (!account) return null;
+      await pool.deactivate({ provider: account.provider, account_id: account.account_id });
+      return { dir: pool.userDataDirFor(account.profile_ref), account_id: account.account_id };
+    },
+    // Vendor adapters that run their turns as this gateway's own tasks (claude-subscription): the task API over
+    // our UDS with the cli-token, so every rule a /v1/tasks caller meets (initiated_by, routing, mapping) applies.
+    gatewayTasks: {
+      submit: (body) => udsJson("POST", "/v1/tasks", body),
+      get: (taskId) => udsJson("GET", `/v1/tasks/${encodeURIComponent(taskId)}`),
+      cancel: (taskId) => udsJson("POST", `/v1/tasks/${encodeURIComponent(taskId)}/cancel`, {}),
+      // Live task events (reply deltas, reasoning) as the worker logs them; returns unsubscribe.
+      subscribe: (taskId, onEvent) =>
+        hub.subscribe(taskId, createSubscriber((e) => { try { onEvent(e as { kind?: string; payload?: unknown }); } catch { /* adapter's problem */ } return true; })),
+      accountState: async (provider) => {
+        const all = listAccounts(db).filter((a) => a.provider === provider && a.enabled);
+        const best = preferredReadyAccount(all, provider) ?? all.find((a) => a.preferred) ?? all[0];
+        return best ? { health: best.session_health, remainingPct: best.usage?.remaining_pct ?? null, resetsAt: best.usage?.resets_at ?? null, agents: best.agents ?? null } : null;
+      },
+    },
+  }, db);
+
+  const routeDirector = new RouteDirector({
+    db,
+    lanes: (() => {
+      let lanesCache: { at: number; lanes: VendorLaneInfo[] } | null = null;
+      return {
+      lanes: async (): Promise<VendorLaneInfo[]> => {
+        // providers() makes live list()/capabilities() calls to every vendor
+        // adapter; eligibility asks per route per turn, so cache briefly.
+        const nowMs = Date.now();
+        if (lanesCache && nowMs - lanesCache.at < 5_000) return lanesCache.lanes;
+        const out: VendorLaneInfo[] = [];
+        for (const a of adapterRegistry.adapters) {
+          for (const route of routesForAdapterManifest(a.manifest)) {
+            out.push({
+              vendor: a.manifest.provider,
+              adapterId: a.manifest.adapter_id,
+              appVersion: a.manifest.adapter_version,
+              routes: [route],
+              // YAML web lanes are stateless Playwright bridges; reachability
+              // is the account's (signedIn), so the lane itself is online.
+              online: true,
+            });
+          }
+        }
+        for (const p of await aaiHost.providers()) {
+          if (!p.manifest) continue;
+          for (const route of routesForAgentManifest(p.manifest)) {
+            out.push({
+              vendor: p.manifest.vendor,
+              adapterId: p.adapterId,
+              appVersion: "0.0.0",
+              routes: [route],
+              online: !p.disabled && !p.error,
+            });
+          }
+        }
+        lanesCache = { at: nowMs, lanes: out };
+        return out;
+      },
+      };
+    })(),
+    // Phone routes: the linked phones Allternit Desktop reports (phone.devices
+    // over its loopback phone gateway). Empty when Desktop isn't running here.
+    phones: (() => {
+      const gateway = new DesktopPhoneGateway({ file: process.env.SUBS_GATEWAY_PHONE_GATEWAY_FILE });
+      return { linkedDevices: () => linkedPhones(gateway) };
+    })(),
+    onChoice: (entry) => {
+      log.append({
+        task_id: `route:${entry.vendor}`,
+        kind: "route.choice",
+        payload: entry,
+        callers: [],
+      });
+    },
+  });
+  aaiHost.routeDirector = routeDirector;
+
+  // §2 debug-mode rule, launch-time probe: once vendor adapters have loaded,
+  // record which desktop lane applies per app version from the configured
+  // transport (cdp only when the shipped app accepts its debug flag
+  // unmodified; an ax-configured adapter uses desktop-app-ax instead).
+  // SUBS_GATEWAY_<ADAPTER>_TRANSPORT=ax selects the accessibility lane, the
+  // convention claude-desktop's aai.ts already uses.
+  void aaiHost.vendorsReady.then((ids) => {
+    for (const adapterId of ids) {
+      void aaiHost.providerManifest(adapterId).then((manifest) => {
+        if (!manifest) return;
+        const desktopRoutes = routesForAgentManifest(manifest).filter(
+          (r) => r === "desktop-app-cdp" || r === "desktop-app-ax"
+        );
+        if (desktopRoutes.length === 0) return;
+        const envKey = `SUBS_GATEWAY_${adapterId.replace(/-/g, "_").toUpperCase()}_TRANSPORT`;
+        const transport = process.env[envKey] ?? "cdp";
+        routeDirector.recordProbe(
+          manifest.vendor, "desktop-app-cdp", "0.0.0", transport !== "ax",
+          transport === "ax" ? `${envKey}=ax: the app uses the accessibility lane` : `${envKey} unset: the app must accept its debug flag unmodified`
+        );
+        routeDirector.recordProbe(
+          manifest.vendor, "desktop-app-ax", "0.0.0", transport === "ax",
+          transport === "ax" ? `${envKey}=ax: accessibility bridge configured` : `${envKey} unset: debug-port lane applies while the app accepts the flag`
+        );
+      });
+    }
+  }).catch(() => { /* vendorsReady already logs its own failure */ });
+
   const app = createServer({
-    aai: createAaiHost(config, process.env, deps.fetchImpl, {
-      subscriptionProfile: async (provider) => {
-        const account = preferredReadyAccount(listAccounts(db), provider);
-        if (!account) return null;
-        await pool.deactivate({ provider: account.provider, account_id: account.account_id });
-        return { dir: pool.userDataDirFor(account.profile_ref), account_id: account.account_id };
-      },
-      // Vendor adapters that run their turns as this gateway's own tasks (claude-subscription): the task API over
-      // our UDS with the cli-token, so every rule a /v1/tasks caller meets (initiated_by, routing, mapping) applies.
-      gatewayTasks: {
-        submit: (body) => udsJson("POST", "/v1/tasks", body),
-        get: (taskId) => udsJson("GET", `/v1/tasks/${encodeURIComponent(taskId)}`),
-        cancel: (taskId) => udsJson("POST", `/v1/tasks/${encodeURIComponent(taskId)}/cancel`, {}),
-        // Live task events (reply deltas, reasoning) as the worker logs them; returns unsubscribe.
-        subscribe: (taskId, onEvent) =>
-          hub.subscribe(taskId, createSubscriber((e) => { try { onEvent(e as { kind?: string; payload?: unknown }); } catch { /* adapter's problem */ } return true; })),
-        accountState: async (provider) => {
-          const all = listAccounts(db).filter((a) => a.provider === provider && a.enabled);
-          const best = preferredReadyAccount(all, provider) ?? all.find((a) => a.preferred) ?? all[0];
-          return best ? { health: best.session_health, remainingPct: best.usage?.remaining_pct ?? null, resetsAt: best.usage?.resets_at ?? null, agents: best.agents ?? null } : null;
-        },
-      },
-    }, db),
+    aai: aaiHost,
     db,
     config,
     keychain,
@@ -215,6 +311,7 @@ export async function boot(deps: BootDeps = {}): Promise<RunningGateway> {
     adapterRegistry,
     pool,
     loginBrowser,
+    routeDirector,
     version: packageVersion(),
   });
 

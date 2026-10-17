@@ -83,6 +83,8 @@ export interface PhoneInfo {
   host: string;
   port: number;
   streaming: boolean;
+  /** True while a bot/ARTEMIS session is operating the phone (takeover banner). */
+  agentBusy: boolean;
 }
 
 export type PairingPhase = 'idle' | 'waiting_for_scan' | 'pairing' | 'connecting' | 'done' | 'failed';
@@ -119,6 +121,8 @@ interface Record_ {
   attempts: number;
   nextAttemptAt: number;
   scrcpy: ChildProcess | null;
+  /** In-flight bot/ARTEMIS actions (phone-tools activity + ARTEMIS tasks). */
+  agentActivity: number;
 }
 
 export class PhoneDeviceManager extends EventEmitter {
@@ -168,6 +172,7 @@ export class PhoneDeviceManager extends EventEmitter {
       host: r.stored.host,
       port: r.stored.port,
       streaming: Boolean(r.scrcpy && r.scrcpy.exitCode === null),
+      agentBusy: r.agentActivity > 0,
     }));
   }
 
@@ -407,6 +412,20 @@ export class PhoneDeviceManager extends EventEmitter {
     return known.length === 1 ? known[0].subscriptionId : null;
   }
 
+  // ── agent activity (takeover banner) ──────────────────────────────────────
+
+  /**
+   * Count an in-flight agent action on a phone (bot tool call or ARTEMIS
+   * task); the renderer shows a takeover banner while the count is > 0.
+   */
+  noteAgentActivity(serial: string, delta: number): void {
+    const rec = [...this.phones.values()].find((r) => r.adbSerial === serial);
+    if (!rec) return;
+    const wasBusy = rec.agentActivity > 0;
+    rec.agentActivity = Math.max(0, rec.agentActivity + delta);
+    if ((rec.agentActivity > 0) !== wasBusy) this.emit('devices');
+  }
+
   // ── scrcpy (watch and take over) ──────────────────────────────────────────
 
   scrcpyAvailable(): boolean {
@@ -443,7 +462,7 @@ export class PhoneDeviceManager extends EventEmitter {
   // ── internals ─────────────────────────────────────────────────────────────
 
   private makeRecord(stored: StoredPhone, adbSerial: string, state: PhoneConnState): Record_ {
-    return { stored, adbSerial, state, model: null, androidVersion: null, battery: null, sims: [], attempts: 0, nextAttemptAt: 0, scrcpy: null };
+    return { stored, adbSerial, state, model: null, androidVersion: null, battery: null, sims: [], attempts: 0, nextAttemptAt: 0, scrcpy: null, agentActivity: 0 };
   }
 
   private persist(): void {

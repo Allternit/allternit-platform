@@ -71,3 +71,50 @@ isn't ready answers `409 not_ready` with its `session_health`. An adapter withou
 signed-in page (`adapters/_shared/vendor-memory.ts` turns it into plain text; the bearer never
 leaves the page).
 
+## Route router (deterministic app routing)
+
+One deterministic choice of HOW a signed-in vendor app is driven, per the
+approved spec §2–§6 (this ships P0 + the Settings API). Fixed route order:
+`android-app` → `iphone-app-ictrl` → `desktop-app-cdp` → `desktop-app-ax` →
+`web` → `iphone-app-usb-agent` (phones first — day-one setup with apps the
+user is already signed into; vision routes last — slowest). The choice is
+bound, not raced: it depends only on (vendor, eligible routes, order, user
+override), and every choice is logged with its reason.
+
+- Routes + fixed order + adapter/phone mapping: `src/routes/registry.ts`.
+  `*-web` manifests (interface `ui_bridge_web`) map to `web`; AAI adapters on
+  a local app runtime (e.g. claude-desktop) declare both desktop lanes; AAI
+  `official`/`local` lanes are APIs, not app routes. Phone device shapes
+  mirror Desktop's real `phone.devices` response (`link:<id>` serials,
+  `route: 'iphone-app-ictrl' | 'android-app'`, `health.state`).
+- §3 one contract, no fall-off: the 7 capability items live in
+  `src/routes/contract.ts`, derived from the existing
+  `POST /aai/conformance/:adapterId` suite (extended per route: results are
+  recorded per `(vendor, route, app_version)`, migration `0012`; `?route=<id>`
+  targets one route). An app update stops matching the old rows — the route is
+  ineligible for the new version until the suite re-runs. A route missing any
+  item is not offered; it never quietly does less.
+- Selection: the pure `selectRoute` (`src/routes/select.ts`) — same inputs →
+  same output; override honoured only when eligible; never a weaker fallback.
+- Binding + failover: `RouteDirector` (`src/routes/director.ts`) writes the
+  chosen route into the vendor's binding (`route_bindings`); the AAI host
+  consults it only at turn start (`agent.context.open` / `agent.context.
+  message` on vendor bindings), which is what makes failover strictly
+  between-turn — a turn already streaming never switches. With no eligible
+  route the turn fails typed: `NO_ROUTE` with a plain reason ("phone offline,
+  no other signed-in route"); through the AAI surface that is `LANE_BLOCKED`
+  with `details.no_route` and the reason preserved.
+- §2 debug-mode rule: `desktop-app-cdp` is used only when the shipped app
+  accepts its debug flag unmodified. We never patch, re-sign or inject into a
+  vendor binary; a launch-time probe (`route_probes`, written at boot from
+  `SUBS_GATEWAY_<ADAPTER>_TRANSPORT`, the convention claude-desktop already
+  uses) records which desktop lane applies per app version — otherwise the
+  app uses `desktop-app-ax`, or the phone.
+- Settings API (another task builds the UI against exactly this):
+  `GET /v1/routes` and `PUT /v1/routes/:vendor/override` (`{ route | null }`,
+  400 when the route is not eligible) in `src/http/routes_routes.ts`, scope
+  `accounts:manage` like the rest of Settings.
+- Phone routes are registered now but their adapters land in a follow-up
+  task: until a phone route has passing conformance it reports
+  `eligible: false` with the failing items visible — never assumed.
+

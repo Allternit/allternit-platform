@@ -19,6 +19,8 @@ This namespace is served by the Allternit API data-plane node (`http://127.0.0.1
 | `ANY` | `/api/v1/subscriptions/gateway/v1/...` | Forward to the gateway. `POST v1/tasks` is checked and stamped as described below. |
 | `POST` | `/api/v1/subscriptions/disclosure/ack` | Record the person's acknowledgement of a provider's disclosure. |
 | `GET` | `/api/v1/subscriptions/gateway/v1/lanes` | Health of each connected account: state (`green`, `amber`, `red`), last probe, last pass and drift-breaker state, from the 3-minute canary. See [Lane status](/guides/lane-status). |
+| `GET` | `/api/v1/subscriptions/gateway/v1/routes` | The deterministic route router view: per vendor, the bound route, the Settings override, and every route with its eligibility and capability-contract result. See [Route router](#route-router). |
+| `PUT` | `/api/v1/subscriptions/gateway/v1/routes/:vendor/override` | Pin (`{ "route": "<id>" }`) or clear (`{ "route": null }`) the route override for a vendor. `400 route_not_eligible` when the route is not eligible. |
 
 ## Submitting a task
 
@@ -50,6 +52,46 @@ When a person approves a subscription card, the action created for it can start 
 Submit exactly that task with the action. A task with a different capability, provider, prompt or options is refused with `human_action_task_mismatch`, and the action is not used up. The card's preview and provider are taken from `subscription.task`, so what the person reads is the start of what runs.
 
 A card without a complete `subscription.task` (sent by an Allternit runtime from before task binding) cannot be approved: the decision returns `409 task_required`, the card stays open with that message, and the person can reject it and ask again once Allternit has updated.
+
+## Route router
+
+A vendor app can be driven over one of six routes, chosen deterministically — the same (vendor, eligible routes, order, override) always picks the same route, and the choice is logged with its reason. Fixed order: `android-app` → `iphone-app-ictrl` → `desktop-app-cdp` → `desktop-app-ax` → `web` → `iphone-app-usb-agent` (phones first — day-one setup with apps the person is already signed into; vision routes last — slowest).
+
+A route is eligible only when the vendor is signed in on it, it is online, and it passed every item of the vendor's capability contract (start/continue a chat, read the streaming reply and its end, stop mid-stream, send attachments, exact text and files out, list/reopen threads, typed usage-limit/sign-out/verification-wall errors). Results are stored per app version: an app update makes a route ineligible until the conformance suite re-runs. A route that misses even one item is not offered — it never quietly does less. Phone routes report `eligible: false` with their failing items until their adapters (a follow-up task) pass conformance; nothing is assumed.
+
+The chosen route is written into the vendor's binding. Failover to the next eligible route happens only between turns — a turn already streaming never switches. With no eligible route the turn fails typed: `NO_ROUTE` with a plain reason such as "phone offline, no other signed-in route".
+
+`GET /v1/routes` answers:
+
+```json
+{
+  "vendors": [
+    {
+      "vendor": "chatgpt",
+      "boundRoute": "web",
+      "override": "web",
+      "routes": [
+        {
+          "route": "web",
+          "eligible": true,
+          "signedIn": true,
+          "online": true,
+          "contract": {
+            "passed": ["chat.start_continue", "reply.stream_read"],
+            "failed": ["attachments.send"],
+            "appVersion": "1.4.0",
+            "checkedAt": "2026-10-17T12:00:00.000Z"
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+`boundRoute` and `override` appear only when set; `appVersion` and `checkedAt` only after the suite has run for the current app version. `PUT /v1/routes/:vendor/override` with `{ "route": "<id>" | null }` pins or clears the override — the pin still has to be eligible, otherwise `400 route_not_eligible`.
+
+The debug-port route (`desktop-app-cdp`) is used only while the shipped app accepts its debug flag unmodified; a launch-time probe records which desktop lane applies per app version. Allternit never patches, re-signs or injects into a vendor binary — when the flag is off, the app routes through accessibility (`desktop-app-ax`) or the phone instead.
 
 ## Errors
 
