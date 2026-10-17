@@ -380,7 +380,7 @@ pub fn sms_pending(conn: &Connection, now: DateTime<Utc>) -> Vec<SmsJob> {
     let mut jobs = vec![];
     for (id, owner, summary, bot_id, resolved_at) in rows {
         let last = setting(conn, &owner, &format!("alerts.sms_sent:{id}")).and_then(|s| DateTime::parse_from_rfc3339(&s).ok()).map(|t| t.with_timezone(&Utc));
-        let to = sms_destination(conn, &owner);
+        let to = sms_destination(conn, &owner).filter(|p| crate::netops::sms_verify::is_verified(conn, &owner, p));
         match to {
             Some(to) if resolved_at.is_none() && last.map_or(true, |t| now - t >= SMS_MIN_GAP) => {
                 jobs.push(SmsJob { id, owner, to, bot_id, text: format!("Allternit: {summary} Open Allternit to fix it.") });
@@ -620,6 +620,13 @@ mod tests {
         resolve(&c, "u", "routine_failed:r1", "fixed");
         // On: a critical open is due once; the fake sender records it.
         put_setting(&c, "u", SMS_KEY, r#"{"enabled":true,"phone":"+14155550123"}"#);
+        // On but not verified: the critical text is dropped, never sent.
+        open(&c, &item("critical"));
+        assert!(sms_pending(&c, now).is_empty(), "an unverified number is never texted");
+        resolve(&c, "u", "routine_failed:r1", "fixed");
+        // Verified: the next critical open is texted once.
+        let code = crate::netops::sms_verify::begin(&c, "u", "+14155550123", now).unwrap();
+        crate::netops::sms_verify::confirm(&c, "u", &code, now).unwrap();
         open(&c, &item("critical"));
         let mut sent = vec![];
         for job in sms_pending(&c, now) {

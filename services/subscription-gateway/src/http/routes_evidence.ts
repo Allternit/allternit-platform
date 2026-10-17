@@ -3,7 +3,7 @@
 // streams the PNG). Scoped tasks:read, like the rest of the attempt history. Installing the router
 // also installs the DB sink the adapters write through and prunes screenshots older than 7 days.
 import { createReadStream, existsSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { Router, type Request, type Response } from "express";
 import {
   evidenceDir,
@@ -34,6 +34,20 @@ export function latestEvidenceId(db: Db, adapterId: string): string | null {
   return row?.id ?? null;
 }
 
+/**
+ * The screenshot file for a stored evidence row, or null when there is none, it was pruned, or the
+ * stored name is not a plain file name. Only files directly under the evidence dir are served: the
+ * name is reduced to its basename and the resolved path must stay inside the dir.
+ */
+export function screenshotPath(row: Pick<EvidenceRow, "screenshot_file">, dir = evidenceDir()): string | null {
+  const name = row.screenshot_file;
+  if (!name || name !== basename(name) || name === "." || name === "..") return null;
+  const root = resolve(dir);
+  const path = resolve(root, name);
+  if (dirname(path) !== root) return null;
+  return existsSync(path) ? path : null;
+}
+
 export function evidenceRouter(deps: GatewayDeps): Router {
   const router = Router();
   setEvidenceSink((row) => {
@@ -43,6 +57,27 @@ export function evidenceRouter(deps: GatewayDeps): Router {
   });
   pruneEvidence();
 
+  const sendScreenshot = (row: EvidenceRow, res: Response) => {
+    const path = screenshotPath(row);
+    if (!path) {
+      res.status(410).json({ error: "screenshot_expired", evidence_id: row.id });
+      return;
+    }
+    res.setHeader("Content-Type", "image/png");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Cache-Control", "private, max-age=300");
+    createReadStream(path).pipe(res);
+  };
+
+  router.get("/v1/evidence/:id/screenshot", requireScope("tasks:read"), (req: Request, res: Response) => {
+    const row = getEvidence(deps.db, req.params.id);
+    if (!row) {
+      res.status(404).json({ error: "evidence_not_found", evidence_id: req.params.id });
+      return;
+    }
+    sendScreenshot(row, res);
+  });
+
   router.get("/v1/evidence/:id", requireScope("tasks:read"), (req: Request, res: Response) => {
     const row = getEvidence(deps.db, req.params.id);
     if (!row) {
@@ -50,20 +85,13 @@ export function evidenceRouter(deps: GatewayDeps): Router {
       return;
     }
     if (req.query.file === "screenshot") {
-      const path = row.screenshot_file ? join(evidenceDir(), basename(row.screenshot_file)) : null;
-      if (!path || !existsSync(path)) {
-        res.status(410).json({ error: "screenshot_expired", evidence_id: row.id });
-        return;
-      }
-      res.setHeader("Content-Type", "image/png");
-      res.setHeader("X-Content-Type-Options", "nosniff");
-      createReadStream(path).pipe(res);
+      sendScreenshot(row, res);
       return;
     }
     const { screenshot_file, ...rest } = row;
     res.json({
       ...rest,
-      screenshot: screenshot_file && existsSync(join(evidenceDir(), basename(screenshot_file))) ? `/v1/evidence/${row.id}?file=screenshot` : null,
+      screenshot: screenshot_file && existsSync(join(evidenceDir(), basename(screenshot_file))) ? `/v1/evidence/${row.id}/screenshot` : null,
     });
   });
 

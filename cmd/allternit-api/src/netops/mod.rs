@@ -24,6 +24,7 @@ pub mod hops;
 pub mod lanes;
 pub mod presence;
 pub mod provenance;
+pub mod sms_verify;
 
 /// Every netops route (nested under `/api/v1`, behind auth).
 pub fn router() -> Router<Arc<AppState>> {
@@ -33,6 +34,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .merge(hops::router())
         .merge(presence::router())
         .merge(provenance::router())
+        .merge(sms_verify::router())
 }
 
 /// Start every netops background task.
