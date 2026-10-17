@@ -1,0 +1,50 @@
+[package]
+name = "allternit-sideload"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "Allternit Desktop sidecar: signs the Phone Link iPhone helper (iCTRL runner + host app) with the user's own Apple ID, no Xcode (isideload)"
+
+# Its own workspace and lockfile, on purpose: isideload needs aes-gcm ^0.11.1,
+# while russh 0.60.3 (allternit-api) pins aes-gcm =0.11.0-rc.3. In the root
+# workspace the resolver "fixes" that by downgrading allternit-api's russh, so
+# this crate stays out of it (precedent: platform/packages/office-xlsx-engine).
+#   cargo test --manifest-path cmd/allternit-sideload/Cargo.toml
+[workspace]
+
+[[bin]]
+name = "allternit-sideload"
+path = "src/main.rs"
+
+[dependencies]
+# isideload (MIT) does Apple ID login + 2FA, anisette v3, certificates, App IDs,
+# device registration and profiles. Default features are off so its `keyring`
+# dependency (libdbus on Linux) stays out of the workspace build; this crate
+# brings its own Keychain storage (src/storage.rs). `install` stays on because
+# isideload's lib.rs uses idevice types unconditionally; we never install.
+isideload = { version = "=0.4.6", default-features = false, features = ["install", "tokio-mt"] }
+# Same versions isideload uses, so the types line up.
+rootcause = "0.12"
+apple-codesign-quick = "0.1"
+plist = "1.8"
+zip = { version = "8.3", default-features = false, features = ["deflate"] }
+# isideload's reqwest is built with `rustls-no-provider`; main.rs installs ring.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+zeroize = { version = "1.8", features = ["zeroize_derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.49", features = ["rt-multi-thread", "macros", "io-std", "io-util", "sync", "time"] }
+sha2 = "0.10"
+hex = "0.4"
+base64 = "0.22"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3"
+
+[dev-dependencies]
+tempfile = "3.8"
+
+[profile.release]
+strip = true
+lto = "thin"

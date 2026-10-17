@@ -415,8 +415,17 @@ export class IosDriver implements PhoneLinkDriver {
       } catch (error) {
         this.check(ctx);
         if (error instanceof SetupStop) throw error;
-        if (error instanceof SigningError && (error.code === 'bad_credentials' || error.code === 'two_factor_failed') && signer.needsAppleId) {
-          problem = error.code === 'bad_credentials' ? 'That Apple ID or password didn\'t work. Try again.' : 'That code didn\'t work. Sign in again to get a new one.';
+        if (
+          error instanceof SigningError &&
+          (error.code === 'bad_credentials' || error.code === 'password_required' || error.code === 'two_factor_failed') &&
+          signer.needsAppleId
+        ) {
+          problem =
+            error.code === 'bad_credentials'
+              ? 'That Apple ID or password didn\'t work. Try again.'
+              : error.code === 'password_required'
+                ? 'Your Apple sign-in expired. Enter your password again.'
+                : 'That code didn\'t work. Sign in again to get a new one.';
           continue;
         }
         const code = error instanceof SigningError ? error.code : 'signing_failed';
@@ -426,6 +435,7 @@ export class IosDriver implements PhoneLinkDriver {
           device_limit: 'Your Apple ID has too many registered devices. Remove one at developer.apple.com, then try again.',
           no_identity: 'No developer certificate on this Mac covers this iPhone.',
           signer_unavailable: 'iPhone setup isn\'t available in this version yet.',
+          anisette_unavailable: 'Couldn\'t reach Allternit\'s Apple sign-in service. Check your connection and try again in a few minutes.',
         };
         this.fail(ctx, code, limits[code] ?? 'Couldn\'t sign the helper. Try again.', error instanceof Error ? error.message : String(error), code !== 'signer_unavailable');
       }

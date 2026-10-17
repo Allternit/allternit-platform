@@ -35,8 +35,10 @@ export const DEFAULT_RUNNER_BASE_URL = 'https://runtime.allternit.com/phone-link
  * version → SHA-256 of its manifest.json. Empty until the first build is
  * published (Scripts/package-phone-link.sh prints the line to add here).
  */
-export const PINNED_RUNNER_MANIFESTS: Record<string, string> = {};
-export const RUNNER_VERSION: string | null = null;
+export const PINNED_RUNNER_MANIFESTS: Record<string, string> = {
+  '1.98.12-allternit.1': '02fc92eec1769db97afba4cdea78e158c1c48bc18c2b69958ecc2e9b5934ffcf',
+};
+export const RUNNER_VERSION: string | null = '1.98.12-allternit.1';
 
 export interface RunnerPackage {
   file: string;
@@ -150,7 +152,7 @@ export interface SignRequest {
 export interface SignedRunner {
   runnerIpa: string;
   hostIpa: string;
-  /** Bundle-id prefix after signing (free accounts can't use ours; isideload appends the team id). */
+  /** Bundle-id prefix after signing (App IDs are global, so the sidecar uses `<ours>.<team id lowercased>`). */
   bundlePrefix: string;
   runnerBundleId: string;
   hostBundleId: string;
@@ -163,12 +165,14 @@ export class SigningError extends Error {
   constructor(
     readonly code:
       | 'bad_credentials'
+      | 'password_required'
       | 'two_factor_failed'
       | 'app_id_limit'
       | 'certificate_limit'
       | 'device_limit'
       | 'no_identity'
       | 'signer_unavailable'
+      | 'anisette_unavailable'
       | 'signing_failed',
     message: string,
   ) {
@@ -391,14 +395,19 @@ export class LocalIdentitySigner implements RunnerSigner {
 // ─── Product signer: the allternit-sideload sidecar (isideload) ──────────────
 
 /**
- * JSON lines over stdio. Desktop → sidecar (stdin):
- *   {"op":"sign","apple_id","password","udid","device_name","runner_ipa","host_ipa","out_dir","anisette_url"}
+ * JSON lines over stdio; the sidecar side is cmd/allternit-sideload/src/protocol.rs
+ * (keep both in sync). One sign per process. Desktop → sidecar (stdin):
+ *   {"op":"sign","apple_id","password"?,"udid","device_name","runner_ipa","host_ipa","out_dir","anisette_url"?,"bundle_prefix"?}
  *   {"op":"two_factor","code":"123456"}
+ *   {"op":"cancel"}                      (closing stdin does the same)
  * Sidecar → Desktop (stdout):
  *   {"event":"progress","fraction":0.4,"step":"Registering this iPhone"}
- *   {"event":"two_factor_required","sms":false,"phone":"•••• 12"}
- *   {"event":"done","runner_ipa","host_ipa","bundle_prefix","runner_bundle_id","host_bundle_id","team_id","expires_at"}
- *   {"event":"error","code":"bad_credentials|two_factor_failed|app_id_limit|…","message"}
+ *   {"event":"two_factor_required","sms":false,"phone":"•••• 12","retry_reason"?}
+ *   {"event":"done","runner_ipa","host_ipa","bundle_prefix","runner_bundle_id","host_bundle_id","team_id","expires_at","session_reused"}
+ *   {"event":"error","code":"bad_credentials|password_required|two_factor_failed|app_id_limit|certificate_limit|device_limit|anisette_unavailable|invalid_request|signing_failed","message"}
+ * `password` may be left out when the Apple session saved in the Keychain
+ * (service com.allternit.sideload) is still valid; otherwise the answer is
+ * `password_required`. The sidecar only signs; Desktop installs with go-ios.
  */
 export interface SidecarProcess {
   write(line: string): void;
@@ -430,7 +439,16 @@ export const spawnSidecarProcess: SidecarSpawn = (bin) => {
   };
 };
 
-const SIDECAR_CODES = new Set(['bad_credentials', 'two_factor_failed', 'app_id_limit', 'certificate_limit', 'device_limit', 'signing_failed']);
+const SIDECAR_CODES = new Set([
+  'bad_credentials',
+  'password_required',
+  'two_factor_failed',
+  'app_id_limit',
+  'certificate_limit',
+  'device_limit',
+  'anisette_unavailable',
+  'signing_failed',
+]);
 
 export class SideloadSigner implements RunnerSigner {
   readonly kind = 'apple-id' as const;
@@ -449,7 +467,7 @@ export class SideloadSigner implements RunnerSigner {
   sign(req: SignRequest): Promise<SignedRunner> {
     const bin = this.deps.binary;
     if (!bin) return Promise.reject(new SigningError('signer_unavailable', 'Apple ID signing is not in this build yet.'));
-    if (!req.credentials) return Promise.reject(new SigningError('bad_credentials', 'Apple ID is required.'));
+    if (!req.credentials?.appleId) return Promise.reject(new SigningError('bad_credentials', 'Apple ID is required.'));
     const proc = (this.deps.spawn ?? spawnSidecarProcess)(bin);
     return new Promise<SignedRunner>((resolve, reject) => {
       let settled = false;
@@ -504,13 +522,15 @@ export class SideloadSigner implements RunnerSigner {
         JSON.stringify({
           op: 'sign',
           apple_id: req.credentials!.appleId,
-          password: req.credentials!.password,
+          // Empty password: re-sign with the saved session (password_required if it lapsed).
+          password: req.credentials!.password || undefined,
           udid: req.udid,
           device_name: req.deviceName,
           runner_ipa: req.artifacts.runnerIpa,
           host_ipa: req.artifacts.hostIpa,
           out_dir: req.workDir,
           anisette_url: this.deps.anisetteUrl,
+          bundle_prefix: req.artifacts.manifest?.bundlePrefix,
         }),
       );
     });

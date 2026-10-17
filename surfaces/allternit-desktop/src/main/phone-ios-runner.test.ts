@@ -77,12 +77,12 @@ describe('runner artifacts', () => {
     ).rejects.toThrow(/checksum/);
   });
 
-  it('is unavailable until a version is pinned, and only over https', async () => {
+  it('is unavailable for a version without a pin, and only over https', async () => {
     const prev = { v: process.env.ALLTERNIT_ICTRL_VERSION, s: process.env.ALLTERNIT_ICTRL_MANIFEST_SHA256 };
     delete process.env.ALLTERNIT_ICTRL_VERSION;
     delete process.env.ALLTERNIT_ICTRL_MANIFEST_SHA256;
     try {
-      await expect(ensureRunnerArtifacts(dataDir())).rejects.toMatchObject({ code: 'runner_unavailable' });
+      await expect(ensureRunnerArtifacts(dataDir(), { version: '0.0.0-unpinned' })).rejects.toMatchObject({ code: 'runner_unavailable' });
       await expect(ensureRunnerArtifacts(dataDir(), { baseUrl: 'http://evil.example', version: '1', manifestSha256: 'a'.repeat(64) })).rejects.toThrow(/https/);
     } finally {
       if (prev.v !== undefined) process.env.ALLTERNIT_ICTRL_VERSION = prev.v;
@@ -148,6 +148,30 @@ describe('SideloadSigner (allternit-sideload protocol)', () => {
     const error = await signer.sign({ udid: 'U', deviceName: 'i', artifacts, workDir: dataDir(), credentials: { appleId: 'a', password: 'b' } }).catch((e) => e);
     expect(error).toBeInstanceOf(SigningError);
     expect(error.code).toBe('bad_credentials');
+  });
+
+  it('re-signs with the saved session: no password sent, bundle prefix forwarded, password_required typed', async () => {
+    const fake = fakeSidecar((_m, emit) => emit({ event: 'error', code: 'password_required', message: 'Sign in with your Apple ID again.' }));
+    const signer = new SideloadSigner({ binary: '/bin/x', spawn: fake.spawn });
+    const withManifest = { ...artifacts, manifest: { bundlePrefix: 'com.allternit.phonelink' } } as unknown as RunnerArtifacts;
+    const error = await signer
+      .sign({ udid: 'U', deviceName: 'i', artifacts: withManifest, workDir: dataDir(), credentials: { appleId: 'a@b.c', password: '' } })
+      .catch((e) => e);
+    expect(fake.written[0]).not.toHaveProperty('password');
+    expect(fake.written[0]).toMatchObject({ apple_id: 'a@b.c', bundle_prefix: 'com.allternit.phonelink' });
+    expect(error).toMatchObject({ code: 'password_required' });
+  });
+
+  it('keeps anisette_unavailable and maps unknown codes to signing_failed', async () => {
+    for (const [sent, expected] of [
+      ['anisette_unavailable', 'anisette_unavailable'],
+      ['invalid_request', 'signing_failed'],
+    ] as const) {
+      const fake = fakeSidecar((_m, emit) => emit({ event: 'error', code: sent, message: 'x' }));
+      const signer = new SideloadSigner({ binary: '/bin/x', spawn: fake.spawn });
+      const error = await signer.sign({ udid: 'U', deviceName: 'i', artifacts, workDir: dataDir(), credentials: { appleId: 'a', password: 'b' } }).catch((e) => e);
+      expect(error.code).toBe(expected);
+    }
   });
 
   it('is unavailable when the build has no sidecar', async () => {
