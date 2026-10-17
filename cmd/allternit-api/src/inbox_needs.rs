@@ -301,15 +301,23 @@ pub fn collect(conn: &Connection, user_id: &str, unanswered_min: i64) -> rusqlit
     // Attention items: something failed or needs fixing (`netops::alerts`). Dismiss resolves them.
     let mut st = conn.prepare(
         "SELECT i.id, i.kind, i.severity, COALESCE(i.bot_id, ''), COALESCE(a.name, ''), i.thread_id, i.summary, i.opened_at,
-                i.retry_json IS NOT NULL, i.provenance_json, i.attempts
+                i.retry_json IS NOT NULL, i.provenance_json, i.attempts, i.detail_json
          FROM attention_items i LEFT JOIN agents a ON a.id = i.bot_id
          WHERE i.owner = ?1 AND i.resolved_at IS NULL AND i.kind != 'digest' ORDER BY i.opened_at DESC LIMIT ?2",
     )?;
     for r in st.query_map(params![user_id, PER_SOURCE], |r| {
-        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?, r.get::<_, String>(4)?, r.get::<_, Option<String>>(5)?, r.get::<_, String>(6)?, r.get::<_, String>(7)?, r.get::<_, bool>(8)?, r.get::<_, Option<String>>(9)?, r.get::<_, i64>(10)?))
+        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?, r.get::<_, String>(4)?, r.get::<_, Option<String>>(5)?, r.get::<_, String>(6)?, r.get::<_, String>(7)?, r.get::<_, bool>(8)?, r.get::<_, Option<String>>(9)?, r.get::<_, i64>(10)?, r.get::<_, Option<String>>(11)?))
     })? {
-        let (id, kind, severity, bot, bot_name, thread, summary, at, retryable, prov, attempts) = r?;
-        let mut it = item(format!("attention:{id}"), "attention", &kind, &bot, &bot_name, thread.as_deref(), None, summary, &at, if retryable { ("retry", "Retry") } else { ("open", "Open") }, false);
+        let (id, kind, severity, bot, bot_name, thread, summary, at, retryable, prov, attempts, detail) = r?;
+        let mut it = item(format!("attention:{id}"), "attention", &kind, &bot, &bot_name, thread.as_deref(), None, summary, &at, if retryable { ("retry", if kind == "tool_changed" { "Approve tool" } else { "Retry" }) } else { ("open", "Open") }, false);
+        if kind == "tool_changed" {
+            // The tool and a one-line "what changed" (old vs new description, 200 chars each).
+            let d: Value = detail.and_then(|d| serde_json::from_str(&d).ok()).unwrap_or(Value::Null);
+            it["tool"] = d["tool"].clone();
+            it["serverId"] = d["serverId"].clone();
+            let cut = |v: &Value| v.as_str().map(|s| s.chars().take(200).collect::<String>());
+            it["change"] = json!({ "reason": d["reason"], "old": cut(&d["oldDescription"]), "new": cut(&d["newDescription"]) });
+        }
         it["severity"] = json!(severity);
         it["attentionKind"] = json!(kind);
         it["attempts"] = json!(attempts);

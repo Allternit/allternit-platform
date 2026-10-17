@@ -43,6 +43,8 @@ pub fn memory_drive_router() -> Router<Arc<AppState>> {
         .route("/memory/drive/capture", get(get_capture).put(put_capture))
         .route("/memory/drive/capture/turn", post(capture_turn))
         .route("/memory/drive/forget-source", post(forget_source))
+        .route("/memory/drive/activity", get(list_activity).post(report_activity))
+        .route("/memory/drive/vendors/run", post(run_vendor_reads))
         .route("/memory/drive/ledger", get(ledger_info))
         .route("/memory/drive/ledger/file", get(ledger_file).put(ledger_edit).delete(ledger_delete))
         .route("/memory/drive/ledger/snapshot", post(ledger_snapshot))
@@ -822,6 +824,8 @@ async fn get_capture(State(state): State<Arc<AppState>>, Extension(user): Extens
             "agents": crate::memory_drive_agent_import::home().map(|h| crate::memory_drive_agent_import::detect(&h)).unwrap_or_default(),
             // Channel capture only counts messages from a verified owner identity.
             "verified_channels": crate::memory_capture::verified_channels(&conn, &ctx.1.user_id),
+            // The last read of each assistant login (Read now / every 6 h).
+            "vendor_reads": crate::vendor_memory::last_reads(&conn, &ctx.1.user_id),
         }))
     })
     .await
@@ -832,6 +836,7 @@ struct CaptureBody {
     channels: Option<bool>,
     gizzi: Option<bool>,
     agent_folders: Option<bool>,
+    vendors: Option<bool>,
 }
 
 /// Change capture switches. Turning on agent folders imports what's new right away.
@@ -844,6 +849,7 @@ async fn put_capture(State(state): State<Arc<AppState>>, Extension(user): Extens
             channels: b.channels.unwrap_or(before.channels),
             gizzi: b.gizzi.unwrap_or(before.gizzi),
             agent_folders: b.agent_folders.unwrap_or(before.agent_folders),
+            vendors: b.vendors.unwrap_or(before.vendors),
         };
         crate::memory_capture::save(&conn, &ctx.1.user_id, &after)?;
         drop(conn);
@@ -892,6 +898,101 @@ async fn forget_source(State(state): State<Arc<AppState>>, Extension(user): Exte
         open(ctx, None, true)?;
         let (revision, removed) = crate::memory_capture::forget_source(&ctx.0.db, &ctx.1.user_id, &b.scheme)?;
         Ok(json!({ "revision": revision, "removed": removed, "more": removed >= crate::memory_capture::MAX_FORGET }))
+    })
+    .await
+}
+
+/// "Read now": read every eligible assistant login of the caller and
+/// return what each read did. Read-only on the logins.
+async fn run_vendor_reads(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>) -> Response {
+    if user.user_id.is_empty() {
+        return err(StatusCode::UNAUTHORIZED, "Sign in to use your memory drive.");
+    }
+    let opened = {
+        let (state, user) = (state.clone(), user.clone());
+        tokio::task::spawn_blocking(move || open(&(state, user), None, true).map(|_| ())).await
+    };
+    match opened {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => return error(e),
+        Err(_) => return err(StatusCode::INTERNAL_SERVER_ERROR, "Memory request failed. Retry later."),
+    }
+    let _slot = find_memories_slots().acquire().await;
+    let reads = crate::vendor_memory::run_owner(&state, &user.user_id).await;
+    Json(json!({ "reads": reads })).into_response()
+}
+
+#[derive(Deserialize)]
+struct ActivityQuery {
+    after: Option<i64>,
+    before: Option<i64>,
+    session: Option<String>,
+    run: Option<String>,
+    kind: Option<String>,
+    limit: Option<i64>,
+}
+
+/// What touched this person's memory: saves, recalls, forgets, imports,
+/// Dream steps and vendor reads. `after` follows new rows (oldest first);
+/// otherwise newest first, paged with `before`.
+async fn list_activity(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Query(q): Query<ActivityQuery>) -> Response {
+    run(state, user, move |ctx| {
+        open(ctx, None, false)?;
+        let conn = ctx.0.db.connect()?;
+        let f = crate::memory_activity::Filter { after: q.after, before: q.before, session: q.session, run: q.run, kind: q.kind, limit: q.limit };
+        let items = crate::memory_activity::list(&conn, &ctx.1.user_id, &f)?;
+        let cursor = items.iter().map(|r| r.id).max().or(q.after);
+        Ok(json!({ "items": items, "cursor": cursor }))
+    })
+    .await
+}
+
+#[derive(Deserialize)]
+struct ReportActivityBody {
+    kind: String,
+    title: String,
+    #[serde(default)]
+    items: Vec<ReportedItem>,
+    source: Option<String>,
+    session: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ReportedItem {
+    text: String,
+    #[serde(default)]
+    source: String,
+}
+
+/// An agent working on the person's own drive (Gizzi's memory_recall and
+/// memory_write) reports what it did. Only recall, save and forget.
+async fn report_activity(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Json(b): Json<ReportActivityBody>) -> Response {
+    run(state, user, move |ctx| {
+        if !crate::memory_activity::AGENT_KINDS.contains(&b.kind.as_str()) {
+            return Err(ServiceError::Provenance("kind must be saved, recalled or forgot".into()));
+        }
+        if b.title.trim().is_empty() || b.items.len() > 50 {
+            return Err(ServiceError::Provenance("Give a title and at most 50 items.".into()));
+        }
+        if let Some(src) = &b.source {
+            crate::memory_drive::validate_source(src).map_err(|_| ServiceError::Provenance("source must be a scheme:value label".into()))?;
+        }
+        open(ctx, None, false)?;
+        let conn = ctx.0.db.connect()?;
+        let id = crate::memory_activity::record(
+            &conn,
+            &ctx.1.user_id,
+            crate::memory_activity::Activity {
+                kind: crate::memory_activity::AGENT_KINDS.iter().find(|k| **k == b.kind).copied().unwrap_or("recalled"),
+                title: b.title,
+                items: b.items.into_iter().map(|i| (i.text, i.source)).collect(),
+                extra: None,
+                source: b.source,
+                session: b.session.filter(|s| !s.is_empty() && s.len() <= 128),
+                run: None,
+            },
+        );
+        Ok(json!({ "recorded": id.is_some(), "id": id }))
     })
     .await
 }
@@ -1020,8 +1121,16 @@ async fn put_copies(State(state): State<Arc<AppState>>, Extension(user): Extensi
                 None
             } else {
                 let url = copies::check_remote(&url)?;
-                let token = c.git.as_ref().filter(|g| g.url == url).map(|g| g.token.clone()).unwrap_or_default();
-                Some(copies::GitCopy { url, token, status: Default::default() })
+                // Same repository: keep the token and what was last pushed, so
+                // changes made there since still come back instead of being overwritten.
+                let same = c.git.as_ref().filter(|g| g.url == url);
+                Some(copies::GitCopy {
+                    url: url.clone(),
+                    token: same.map(|g| g.token.clone()).unwrap_or_default(),
+                    last_memory: same.and_then(|g| g.last_memory.clone()),
+                    last_ledger: same.and_then(|g| g.last_ledger.clone()),
+                    ..Default::default()
+                })
             };
         }
         if let (Some(token), Some(g)) = (b.git_token, c.git.as_mut()) {

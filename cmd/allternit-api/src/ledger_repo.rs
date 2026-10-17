@@ -257,6 +257,43 @@ impl LedgerRepo {
         .map(|_| ())
     }
 
+    /// Fetch `remote_branch` from `url` into a local tracking ref. Returns the
+    /// fetched commit, or `None` when the remote has no such branch.
+    pub fn fetch(&self, url: &str, remote_branch: &str, env: &[(String, String)]) -> Result<Option<String>> {
+        let local = format!("refs/allternit-copy/{remote_branch}");
+        let spec = format!("+refs/heads/{remote_branch}:{local}");
+        match self.git_env(&["-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=60", "fetch", "--quiet", "--no-tags", url, &spec], None, None, env) {
+            Ok(_) => Ok(self.text(&["rev-parse", "--verify", "--quiet", &local]).ok().filter(|s| !s.is_empty())),
+            Err(LedgerRepoError::Git(_, msg)) if msg.contains("couldn't find remote ref") => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Paths that differ between two commits: `(status, path)` with status
+    /// `A`, `M` or `D` (renames come back as delete + add).
+    pub fn diff_names(&self, from: &str, to: &str) -> Result<Vec<(char, String)>> {
+        let out = self.text(&["diff", "--name-status", "--no-renames", from, to])?;
+        Ok(out
+            .lines()
+            .filter_map(|l| {
+                let (st, path) = l.split_once('\t')?;
+                Some((st.chars().next()?, path.to_string()))
+            })
+            .collect())
+    }
+
+    /// Whether `commit` exists here.
+    pub fn has_commit(&self, commit: &str) -> bool {
+        self.text(&["cat-file", "-e", &format!("{commit}^{{commit}}")]).is_ok()
+    }
+
+    /// Push any commit here to `dest_branch` on `url` (used to keep a copy's
+    /// conflicting version).
+    pub fn push_commit(&self, url: &str, commit: &str, dest_branch: &str, env: &[(String, String)]) -> Result<()> {
+        let refspec = format!("{commit}:refs/heads/{dest_branch}");
+        self.git_env(&["-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=60", "push", "--quiet", "--no-verify", url, &refspec], None, None, env).map(|_| ())
+    }
+
     /// The tree at `revision` (or the latest) as a zip, under a `ledger/` folder.
     pub fn zip(&self, revision: Option<&str>) -> Result<Option<Vec<u8>>> {
         let Some(rev) = revision.map(str::to_string).or_else(|| self.head()) else { return Ok(None) };

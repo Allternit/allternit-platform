@@ -15,15 +15,21 @@
 //! * **Retry.** `retry_json` says how to run it again; today `{"routineId"}`
 //!   runs the routine now through the same path as "Run now".
 //!
-//! Critical items by SMS (decision D2) is not built: `attention_items.sms_due`
-//! stays 0 and nothing here sends a text.
+//! * **Critical by SMS (D2, opt-in, off by default).** With the owner's
+//!   `alerts.criticalSms` setting on, an item that opens or escalates to
+//!   `critical` gets `sms_due = 1`; the sweep sends ONE text from the bot's own
+//!   number through `phone_outbound` (so the consent gate applies), at most one
+//!   per item per 30 minutes, then clears `sms_due`.
+//! * **Daily digest.** From 09:00 local, one `info` `digest` item per owner lists
+//!   every failed or missed run and every lane that went red in the last 24 h.
+//!   Nothing to list means no digest. The previous digest is resolved.
 
 use std::sync::Arc;
 
 use axum::extract::{Extension, Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::post;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, Duration, Local, NaiveTime, TimeZone, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -136,6 +142,7 @@ pub fn open(conn: &Connection, item: &Item) -> bool {
                 params![id, item.owner, now.to_rfc3339(), item.summary, detail, level, item.retry.as_ref().map(Value::to_string), item.provenance.as_ref().map(Value::to_string)],
             );
             if escalated {
+                mark_sms_due(conn, &item.owner, &id, severity);
                 announce(conn, &item.owner, "attention.opened", &id, &item.kind, severity, &item.summary, item.bot_id.as_deref(), item.thread_id.as_deref(), &format!("attention:{id}:escalated:{severity}:{}", now.timestamp()));
             }
             false
@@ -158,6 +165,7 @@ pub fn open(conn: &Connection, item: &Item) -> bool {
                 warn!(attention = %id, error = %e, "could not open the attention item");
                 return false;
             }
+            mark_sms_due(conn, &item.owner, &id, severity);
             announce(conn, &item.owner, "attention.opened", &id, &item.kind, severity, &item.summary, item.bot_id.as_deref(), item.thread_id.as_deref(), &format!("attention:{id}:opened:{}", now.to_rfc3339()));
             true
         }
@@ -196,8 +204,8 @@ pub fn resolve_source(conn: &Connection, owner: &str, kind: &str, source_id: &st
     resolve(conn, owner, &format!("{kind}:{source_id}"), how)
 }
 
-/// Run an item's retry now. Today that is `{"routineId"}` → the routine runs
-/// again, as "Run now" does. Errors are plain sentences for the person.
+/// Run an item's retry now. `{"routineId"}` runs the routine again, as "Run now" does;
+/// `{"pinApprove": {serverId, tool, hash}}` re-pins an MCP tool and resolves the item. Errors are plain sentences for the person.
 pub async fn retry(state: &Arc<AppState>, owner: &str, id: &str) -> Result<Value, (StatusCode, String)> {
     let retry_json: Option<Option<String>> = state
         .db
@@ -208,6 +216,20 @@ pub async fn retry(state: &Arc<AppState>, owner: &str, id: &str) -> Result<Value
         return Err((StatusCode::NOT_FOUND, "this problem is already fixed".into()));
     };
     let spec: Value = retry_json.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(Value::Null);
+    if let Some(pin) = spec.get("pinApprove").filter(|p| p.is_object()) {
+        let (Some(server), Some(tool), Some(hash)) = (pin["serverId"].as_str(), pin["tool"].as_str(), pin["hash"].as_str()) else {
+            return Err((StatusCode::BAD_REQUEST, "this approval is incomplete; dismiss it and let the bot list its tools again".into()));
+        };
+        let conn = state.db.connect().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        let desc: Option<String> = conn
+            .query_row("SELECT detail_json FROM attention_items WHERE id = ?1 AND owner = ?2", params![id, owner], |r| r.get::<_, Option<String>>(0))
+            .ok()
+            .flatten()
+            .and_then(|d| serde_json::from_str::<Value>(&d).ok())
+            .and_then(|d| d["newDescription"].as_str().map(String::from));
+        crate::mcp_server_routes::pin_tool(&conn, owner, server, tool, hash, desc.as_deref());
+        return Ok(json!({ "status": "approved", "serverId": server, "tool": tool }));
+    }
     let Some(routine_id) = spec["routineId"].as_str() else {
         return Err((StatusCode::BAD_REQUEST, "this problem cannot be retried; fix the cause, then dismiss it".into()));
     };
@@ -300,7 +322,210 @@ async fn resolve_route(State(state): State<Arc<AppState>>, Extension(user): Exte
 
 /// `POST /inbox/:id/retry` and `/inbox/:id/resolve` (siblings of approve / dismiss / snooze).
 pub fn router() -> Router<Arc<AppState>> {
-    Router::new().route("/inbox/:id/retry", post(retry_route)).route("/inbox/:id/resolve", post(resolve_route))
+    Router::new()
+        .route("/inbox/:id/retry", post(retry_route))
+        .route("/inbox/:id/resolve", post(resolve_route))
+        .route("/alerts/sms", get(sms_get).put(sms_put))
+}
+
+// ---------------------------------------------------------------- critical SMS
+
+const SMS_KEY: &str = "alerts.criticalSms";
+/// One text per item in this window, however often it re-escalates.
+const SMS_MIN_GAP: Duration = Duration::minutes(30);
+
+fn setting(conn: &Connection, owner: &str, key: &str) -> Option<String> {
+    conn.query_row("SELECT value FROM runtime_settings WHERE user_id = ?1 AND key = ?2", params![owner, key], |r| r.get(0)).optional().ok().flatten()
+}
+
+fn put_setting(conn: &Connection, owner: &str, key: &str, value: &str) {
+    let _ = conn.execute(
+        "INSERT INTO runtime_settings (user_id, key, value, updated_at) VALUES (?1, ?2, ?3, CURRENT_TIMESTAMP)
+         ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP",
+        params![owner, key, value],
+    );
+}
+
+/// Where the owner's critical texts go: `None` while the setting is off (the default).
+/// The number is the one saved with the setting, else the owner's own phone in People.
+pub fn sms_destination(conn: &Connection, owner: &str) -> Option<String> {
+    let v: Value = serde_json::from_str(&setting(conn, owner, SMS_KEY)?).ok()?;
+    if v["enabled"].as_bool() != Some(true) {
+        return None;
+    }
+    v["phone"].as_str().filter(|p| !p.trim().is_empty()).map(str::to_string).or_else(|| {
+        conn.query_row(
+            "SELECT i.external_id FROM person_identities i JOIN people p ON p.id = i.person_id
+             WHERE i.owner = ?1 AND i.kind = 'phone' AND p.name_source = 'owner' AND p.merged_into IS NULL ORDER BY i.created_at LIMIT 1",
+            params![owner],
+            |r| r.get(0),
+        )
+        .optional()
+        .ok()
+        .flatten()
+    })
+}
+
+fn mark_sms_due(conn: &Connection, owner: &str, id: &str, severity: &str) {
+    if severity == "critical" && sms_destination(conn, owner).is_some() {
+        let _ = conn.execute("UPDATE attention_items SET sms_due = 1 WHERE id = ?1 AND owner = ?2", params![id, owner]);
+    }
+}
+
+/// A text the sweep should send now.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SmsJob {
+    pub id: String,
+    pub owner: String,
+    pub to: String,
+    pub bot_id: Option<String>,
+    pub text: String,
+}
+
+/// Items waiting for a critical text. Resolved items, owners who turned the
+/// setting off, and items texted in the last 30 minutes are cleared, not sent.
+pub fn sms_pending(conn: &Connection, now: DateTime<Utc>) -> Vec<SmsJob> {
+    let rows: Vec<(String, String, String, Option<String>, Option<String>)> = (|| -> rusqlite::Result<_> {
+        let mut st = conn.prepare("SELECT id, owner, summary, bot_id, resolved_at FROM attention_items WHERE sms_due = 1 LIMIT 50")?;
+        let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?;
+        Ok(rows.filter_map(Result::ok).collect())
+    })()
+    .unwrap_or_default();
+    let mut jobs = vec![];
+    for (id, owner, summary, bot_id, resolved_at) in rows {
+        let last = setting(conn, &owner, &format!("alerts.sms_sent:{id}")).and_then(|s| DateTime::parse_from_rfc3339(&s).ok()).map(|t| t.with_timezone(&Utc));
+        let to = sms_destination(conn, &owner).filter(|p| crate::netops::sms_verify::is_verified(conn, &owner, p));
+        match to {
+            Some(to) if resolved_at.is_none() && last.map_or(true, |t| now - t >= SMS_MIN_GAP) => {
+                jobs.push(SmsJob { id, owner, to, bot_id, text: format!("Allternit: {summary} Open Allternit to fix it.") });
+            }
+            _ => {
+                let _ = conn.execute("UPDATE attention_items SET sms_due = 0 WHERE id = ?1", params![id]);
+            }
+        }
+    }
+    jobs
+}
+
+/// Record that the text went out (or was refused for good): clears `sms_due` and starts the 30-minute gap.
+pub fn sms_done(conn: &Connection, job: &SmsJob, now: DateTime<Utc>) {
+    let _ = conn.execute("UPDATE attention_items SET sms_due = 0 WHERE id = ?1", params![job.id]);
+    put_setting(conn, &job.owner, &format!("alerts.sms_sent:{}", job.id), &now.to_rfc3339());
+}
+
+/// Send each pending text from the bot's own number via the existing outbound SMS path.
+async fn deliver_sms(state: &Arc<AppState>, now: DateTime<Utc>) {
+    let jobs = match state.db.connect() {
+        Ok(conn) => sms_pending(&conn, now),
+        Err(_) => return,
+    };
+    for job in jobs {
+        let sent = match crate::phone_outbound::pick_number(&state.db, &job.owner, job.bot_id.as_deref(), None)
+            .or_else(|_| crate::phone_outbound::pick_number(&state.db, &job.owner, None, None))
+        {
+            Ok(n) => crate::phone_outbound::text(&state.db, &crate::phone_outbound::runtime(state), Arc::new(crate::channel_transports::ReqwestSend), &n, &job.to, &job.text).await,
+            Err(e) => Err(e),
+        };
+        // A refusal (no consent, opted out, no number) is final for this open: the item stays in the inbox and the push.
+        if let Err(e) = &sent {
+            warn!(attention = %job.id, error = %e.sentence(), "critical text was not sent");
+        }
+        if let Ok(conn) = state.db.connect() {
+            sms_done(&conn, &job, now);
+        }
+    }
+}
+
+async fn sms_get(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>) -> Response {
+    let Ok(conn) = state.db.connect() else { return err(StatusCode::INTERNAL_SERVER_ERROR, "database unavailable") };
+    let v: Value = setting(&conn, &user.user_id, SMS_KEY).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(Value::Null);
+    Json(json!({ "enabled": v["enabled"].as_bool() == Some(true), "phone": v["phone"].as_str().unwrap_or(""), "resolvedPhone": sms_destination_any(&conn, &user.user_id) })).into_response()
+}
+
+/// The number a text would go to, even while the setting is off (so the UI can show it).
+fn sms_destination_any(conn: &Connection, owner: &str) -> Option<String> {
+    let v: Value = setting(conn, owner, SMS_KEY).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(Value::Null);
+    v["phone"].as_str().filter(|p| !p.trim().is_empty()).map(str::to_string).or_else(|| {
+        conn.query_row(
+            "SELECT i.external_id FROM person_identities i JOIN people p ON p.id = i.person_id
+             WHERE i.owner = ?1 AND i.kind = 'phone' AND p.name_source = 'owner' AND p.merged_into IS NULL ORDER BY i.created_at LIMIT 1",
+            params![owner],
+            |r| r.get(0),
+        )
+        .optional()
+        .ok()
+        .flatten()
+    })
+}
+
+async fn sms_put(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Json(body): Json<Value>) -> Response {
+    let Some(enabled) = body["enabled"].as_bool() else { return err(StatusCode::BAD_REQUEST, "enabled is required") };
+    let phone = body["phone"].as_str().unwrap_or("").trim().to_string();
+    if !phone.is_empty() && !crate::channel_phone::is_e164(&phone) {
+        return err(StatusCode::BAD_REQUEST, "the phone number must look like +14155550123");
+    }
+    let Ok(conn) = state.db.connect() else { return err(StatusCode::INTERNAL_SERVER_ERROR, "database unavailable") };
+    if enabled && phone.is_empty() && sms_destination_any(&conn, &user.user_id).is_none() {
+        return err(StatusCode::CONFLICT, "add your phone number first, then turn this on");
+    }
+    put_setting(&conn, &user.user_id, SMS_KEY, &json!({ "enabled": enabled, "phone": phone }).to_string());
+    Json(json!({ "enabled": enabled, "phone": phone, "resolvedPhone": sms_destination_any(&conn, &user.user_id) })).into_response()
+}
+
+// ---------------------------------------------------------------- daily digest
+
+/// Open today's digest for every owner who had a failed or missed run, or a lane
+/// go red, in the last 24 h. Runs from 09:00 local; once a day per owner; skipped
+/// when there is nothing to list. Returns how many digests it opened.
+pub fn digest_sweep(conn: &Connection, now: DateTime<Utc>) -> usize {
+    let local = now.with_timezone(&Local);
+    if local.time() < NaiveTime::from_hms_opt(DAILY_HOUR, 0, 0).unwrap_or_default() {
+        return 0;
+    }
+    let day = local.format("%Y-%m-%d").to_string();
+    let since = (now - Duration::hours(24)).to_rfc3339();
+    let rows: Vec<(String, String, String, String)> = (|| -> rusqlite::Result<_> {
+        let mut st = conn.prepare(
+            "SELECT owner, kind, summary, id FROM attention_items
+             WHERE kind IN ('routine_failed', 'routine_missed', 'lane_down') AND opened_at >= ?1 ORDER BY opened_at",
+        )?;
+        let rows = st.query_map(params![since], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
+        Ok(rows.filter_map(Result::ok).collect())
+    })()
+    .unwrap_or_default();
+    let mut owners: Vec<String> = rows.iter().map(|r| r.0.clone()).collect();
+    owners.sort();
+    owners.dedup();
+    let mut opened = 0;
+    for owner in owners {
+        let digest_id = format!("digest:{day}");
+        let seen: bool = conn.query_row("SELECT 1 FROM attention_items WHERE id = ?1 AND owner = ?2", params![digest_id, owner], |_| Ok(())).optional().ok().flatten().is_some();
+        if seen {
+            continue;
+        }
+        let mine: Vec<&(String, String, String, String)> = rows.iter().filter(|r| r.0 == owner).collect();
+        let runs = mine.iter().filter(|r| r.1 != "lane_down").count();
+        let lanes = mine.iter().filter(|r| r.1 == "lane_down").count();
+        let mut parts = vec![];
+        if runs > 0 {
+            parts.push(format!("{runs} failed or missed {}", if runs == 1 { "run" } else { "runs" }));
+        }
+        if lanes > 0 {
+            parts.push(format!("{lanes} {} went down", if lanes == 1 { "connection" } else { "connections" }));
+        }
+        let old: Vec<String> = conn
+            .prepare("SELECT id FROM attention_items WHERE owner = ?1 AND kind = 'digest' AND resolved_at IS NULL")
+            .and_then(|mut st| st.query_map(params![owner], |r| r.get(0)).map(|rs| rs.filter_map(Result::ok).collect()))
+            .unwrap_or_default();
+        for id in old {
+            resolve(conn, &owner, &id, "superseded");
+        }
+        let items: Vec<Value> = mine.iter().map(|r| json!({ "id": r.3, "kind": r.1, "summary": r.2 })).collect();
+        if open(conn, &Item { owner: owner.clone(), kind: "digest".into(), severity: "info".into(), source: "digest".into(), source_id: day.clone(), summary: format!("Last 24 hours: {}.", parts.join(", ")), detail: json!({ "items": items }), ..Default::default() }) {
+            opened += 1;
+        }
+    }
+    opened
 }
 
 /// The re-notify sweep, once a minute.
@@ -315,7 +540,9 @@ pub fn spawn(state: Arc<AppState>) {
                 if n > 0 {
                     tracing::info!(n, "re-notified unresolved attention items");
                 }
+                digest_sweep(&conn, Utc::now());
             }
+            deliver_sms(&state, Utc::now()).await;
         }
     });
 }
@@ -388,5 +615,63 @@ mod tests {
         assert_eq!(events(&c, "attention.opened"), 4, "two opens, then two re-sends");
         resolve(&c, "u", "routine_failed:r1", "fixed");
         assert_eq!(sweep(&c, next + Duration::days(2)), 0);
+    }
+
+    fn with_settings(c: &Connection) {
+        c.execute_batch("CREATE TABLE runtime_settings (user_id TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (user_id, key));
+            CREATE TABLE people (id TEXT PRIMARY KEY, owner TEXT, name_source TEXT, merged_into TEXT);
+            CREATE TABLE person_identities (id TEXT PRIMARY KEY, owner TEXT, person_id TEXT, kind TEXT, external_id TEXT, created_at TEXT);").unwrap();
+    }
+
+    #[test]
+    fn critical_sms_is_sent_once_per_item_and_only_when_on() {
+        let c = conn();
+        with_settings(&c);
+        let now = Utc::now();
+        // Off by default: nothing becomes due.
+        open(&c, &item("critical"));
+        assert!(sms_pending(&c, now).is_empty());
+        resolve(&c, "u", "routine_failed:r1", "fixed");
+        // On: a critical open is due once; the fake sender records it.
+        put_setting(&c, "u", SMS_KEY, r#"{"enabled":true,"phone":"+14155550123"}"#);
+        // On but not verified: the critical text is dropped, never sent.
+        open(&c, &item("critical"));
+        assert!(sms_pending(&c, now).is_empty(), "an unverified number is never texted");
+        resolve(&c, "u", "routine_failed:r1", "fixed");
+        // Verified: the next critical open is texted once.
+        let code = crate::netops::sms_verify::begin(&c, "u", "+14155550123", now).unwrap();
+        crate::netops::sms_verify::confirm(&c, "u", &code, now).unwrap();
+        open(&c, &item("critical"));
+        let mut sent = vec![];
+        for job in sms_pending(&c, now) {
+            sent.push(job.to.clone());
+            sms_done(&c, &job, now);
+        }
+        assert_eq!(sent, vec!["+14155550123".to_string()]);
+        assert!(sms_pending(&c, now + Duration::minutes(1)).is_empty(), "sent once");
+        // A re-open and re-escalation inside 30 minutes is rate limited.
+        open(&c, &item("warn"));
+        open(&c, &item("critical"));
+        assert!(sms_pending(&c, now + Duration::minutes(10)).is_empty());
+        // A warn never texts.
+        let mut w = item("warn");
+        w.source_id = "r9".into();
+        open(&c, &w);
+        assert!(sms_pending(&c, now + Duration::hours(2)).is_empty());
+    }
+
+    #[test]
+    fn digest_is_skipped_when_empty_and_resolves_the_previous_one() {
+        let c = conn();
+        let nine_thirty = Local.from_local_datetime(&Local::now().date_naive().and_hms_opt(9, 30, 0).unwrap()).earliest().unwrap().with_timezone(&Utc);
+        assert_eq!(digest_sweep(&c, nine_thirty), 0, "nothing to list");
+        assert_eq!(c.query_row::<i64, _, _>("SELECT COUNT(*) FROM attention_items WHERE kind = 'digest'", [], |r| r.get(0)).unwrap(), 0);
+        open(&c, &item("warn"));
+        let before_nine = Local.from_local_datetime(&Local::now().date_naive().and_hms_opt(8, 0, 0).unwrap()).earliest().unwrap().with_timezone(&Utc);
+        assert_eq!(digest_sweep(&c, before_nine), 0, "not before 09:00");
+        assert_eq!(digest_sweep(&c, nine_thirty), 1);
+        assert_eq!(digest_sweep(&c, nine_thirty + Duration::minutes(5)), 0, "once a day");
+        let (sev, renotify): (String, Option<String>) = c.query_row("SELECT severity, renotify_at FROM attention_items WHERE kind = 'digest'", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        assert_eq!((sev.as_str(), renotify), ("info", None));
     }
 }

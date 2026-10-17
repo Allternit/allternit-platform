@@ -89,7 +89,8 @@ export function approveTools(
   for (const t of tools) store[server]![t.name] = toolHash(t)
 }
 
-/** `GIZZI_MCP_APPROVE_TOOLS=<server>[,<server>…]` (or `*`) approves held tools on the next load. */
+/** Offline fallback only: `GIZZI_MCP_APPROVE_TOOLS=<server>[,<server>…]` (or `*`) approves held tools
+ * on the next load when no runtime is reachable. Normally the owner taps Approve in the inbox. */
 function approvalRequested(server: string): boolean {
   const raw = process.env.GIZZI_MCP_APPROVE_TOOLS
   if (!raw) return false
@@ -120,4 +121,48 @@ export function approvePins(server: string, tools: PinnableTool[], path = pinsPa
   const store = loadPins(path)
   approveTools(store, server, tools)
   savePins(store, path)
+}
+
+function runtimeCredentials(): { base: string; token: string } | null {
+  const base = (process.env.ALLTERNIT_API_URL ?? process.env.Allternit_API_URL)?.trim().replace(/\/+$/, '')
+  if (!base) return null
+  let token = (process.env.ALLTERNIT_API_TOKEN ?? process.env.Allternit_API_TOKEN)?.trim()
+  if (!token) {
+    try {
+      const dir = process.env.GIZZI_CONFIG_DIR ?? join(homedir(), '.config', 'gizzi-code')
+      token = JSON.parse(readFileSync(join(dir, 'session.json'), 'utf8'))?.accessToken
+    } catch {}
+  }
+  return token ? { base, token } : null
+}
+
+/**
+ * Pin check that defers to the runtime (`POST /mcp/pins/check`) whenever one is
+ * configured, so holds and approvals are the same ones the owner sees in the inbox.
+ * Falls back to the local pins file only if there is no runtime or it can't be reached.
+ */
+export async function applyPinsViaRuntime<T extends PinnableTool>(
+  server: string,
+  tools: T[],
+  opts: { path?: string; fetchImpl?: typeof fetch; creds?: { base: string; token: string } | null } = {},
+): Promise<PinCheck<T>> {
+  const creds = opts.creds === undefined ? runtimeCredentials() : opts.creds
+  if (creds) {
+    try {
+      const res = await (opts.fetchImpl ?? fetch)(`${creds.base}/mcp/pins/check`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${creds.token}` },
+        body: JSON.stringify({ serverId: server, tools }),
+        signal: AbortSignal.timeout(5000),
+      })
+      if (res.ok) {
+        const body = (await res.json()) as { allowed?: string[]; held?: PinCheck<T>['held'] }
+        if (Array.isArray(body.allowed)) {
+          const ok = new Set(body.allowed)
+          return { allowed: tools.filter(t => ok.has(t.name)), held: body.held ?? [] }
+        }
+      }
+    } catch {}
+  }
+  return applyPins(server, tools, opts.path)
 }

@@ -18,6 +18,7 @@ Your bots work on their own until something needs a person. The **Needs you** in
 | **Not delivered** | A message from a bot failed to send, or may not have gone through. | **Open** |
 | **Vendor result** | A vendor bot finished, failed or ran out of time on a ticket you directed. | **Review** |
 | **Needs fixing** | A routine failed or was missed, a routine has no bot, or a run's result could not be saved. A red "urgent" tag means it paused itself or was flagged critical. A "Why" line says where the input came from when that matters. | **Retry** (runs the routine now) or **Open** |
+| **Tool changed** | A tool on a connected MCP server is new, or its description, schema or annotations changed since you approved it. The row names the tool and shows one line of what changed (old and new description, up to 200 characters each). The tool stays out of your bots' tool lists until you approve it. | **Approve tool** |
 | **Draft** | A bot wrote a message but kept it as a draft, because its [autonomy level](/guides/bot-autonomy) on that channel is *Draft only*. | **Review** |
 
 Send, Approve and Deny act on the real thing. **Send** on a held message posts it right away. **Send** on an email sends it. Nothing is a copy that can fall out of step.

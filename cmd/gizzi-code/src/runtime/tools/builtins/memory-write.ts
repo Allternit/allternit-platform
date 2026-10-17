@@ -2,6 +2,7 @@ import z from "zod/v4"
 import { Tool } from "@/runtime/tools/builtins/tool"
 import { Instance } from "@/runtime/context/project/instance"
 import { MemoryDrive } from "@/runtime/memory/drive/drive"
+import { MemoryKernelAdapter } from "@/runtime/memory/kernel-adapter"
 
 const DESCRIPTION = `Save, update or delete a fact in the user's Memory Drive.
 
@@ -52,6 +53,7 @@ export const MemoryWriteTool = Tool.define("memory_write", {
       if (!found) {
         return { title: "Memory not found", output: `No memory with id ${params.id} in ${ref}.`, metadata: { id: params.id, path: "", ref, pending: false } }
       }
+      MemoryKernelAdapter.report("forgot", "Removed 1 memory", [{ text: params.id }], ctx.sessionID)
       return {
         title: "Memory deleted",
         output: `Deleted ${params.id} from ${ref}.${syncNote(result)}`,
@@ -68,6 +70,9 @@ export const MemoryWriteTool = Tool.define("memory_write", {
       sessionId: ctx.sessionID,
       projectDir: Instance.directory,
     })
+    if (saved.result.changed) {
+      MemoryKernelAdapter.report("saved", `Saved: ${saved.entry.text}`, [{ text: saved.entry.text, source: saved.entry.source }], ctx.sessionID)
+    }
     return {
       title: saved.result.changed ? `Memory saved: ${saved.path}` : "Memory already saved",
       output: `Saved to ${saved.ref}:${saved.path} (id: ${saved.entry.id}).${syncNote(saved.result)}`,

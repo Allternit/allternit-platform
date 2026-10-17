@@ -295,7 +295,10 @@
         "allternit/cmd/allternit-api/src/memory_consolidation",
         "allternit/cmd/allternit-api/src/memory_relations",
         "allternit/services/memory",
-        "allternit-ai/src/views/settings"
+        "allternit-ai/src/views/settings",
+        "allternit-ai/src/views/cowork",
+        "allternit-ai/src/components/ai-elements",
+        "allternit/services/subscription-gateway"
       ],
       "decisions": [
         {
@@ -309,6 +312,14 @@
         {
           "on": "2026-10-16",
           "note": "Eoj: Memory Drive keeps its name and grows into the user's ledger: import any company's memory, capture from every channel, hold every asset, store where the user wants (plan dag_952346). Phase 1 adds the export-prompt import for 10 assistants and import from Claude Code, Codex, Hermes and OpenClaw files."
+        },
+        {
+          "on": "2026-10-17",
+          "note": "Eoj: agent folders on by default (off switch, Forget prunes and a forget sticks). Every memory action is visible: Searched/Saved to Memory Drive rows in the chat thought stream, a Memory Drive Activity log (memory_activity, V266) and live Dream steps. Next: vendor memory pages and past chats read automatically from signed-in logins."
+        },
+        {
+          "on": "2026-10-17",
+          "note": "Eoj: reading vendor memory is automatic once Memory Drive is on. vendor_memory reads each signed-in login (disclosure acknowledged, vendors switch on by default) every 6 h through the gateway's read-only routes: saved memories and instructions word for word, plus new chats distilled from the person's own messages. It never sends. ChatGPT and Claude first."
         }
       ],
       "evidence": [
@@ -338,11 +349,21 @@
         {
           "on": "2026-10-02",
           "note": "Cloud Voice priced at $0.08 per minute, with 100 minutes in Plus."
+        },
+        {
+          "on": "2026-10-16",
+          "note": "Voice Stage redesign shipped: output-audio-driven melting A-block mark (speaking state), typewriter captions with screen-reader twins, bot avatar as stage speaker in bot chats, docked-bar live transcript, 28 named voices with one-shot previews, first-run intro sheet. Design doc: allternit-ai docs/VOICE_STAGE_DESIGN.md."
         }
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/voice.mdx",
-        "allternit/surfaces/docs/api/voice-tickets.mdx"
+        "allternit/surfaces/docs/api/voice-tickets.mdx",
+        "allternit/surfaces/docs/surfaces/voice.mdx",
+        "allternit-ai/src/components/voice/VoiceBotAvatar.tsx",
+        "allternit-ai/src/components/voice/useTypewriter.ts",
+        "allternit-ai/src/components/voice/useVoiceLevelChannel.ts",
+        "allternit-ai/src/components/voice/VoiceIntroSheet.tsx",
+        "allternit-ai/src/lib/voice/preview.ts"
       ]
     },
     {

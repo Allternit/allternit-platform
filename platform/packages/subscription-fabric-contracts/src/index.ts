@@ -134,6 +134,9 @@ export type {
   ResumeToken,
   SelectorResolver,
   AccountObservation,
+  VendorMemory,
+  VendorThreadSummary,
+  VendorThreadText,
   SubscriptionAdapter,
 } from "./events";
 

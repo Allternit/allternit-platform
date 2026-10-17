@@ -31,7 +31,9 @@ These are off until you turn them on:
 
 **Something needs fixing** is sent by your Allternit API itself, not by an open window, so it reaches you with every window closed. A routine that fails, a routine that was missed because your computer was off or asleep, a routine with no bot, and a run whose result could not be saved each open one problem. Opening the same problem again does not send a second message. Until it is fixed you get the message again an hour later, then every day at 9:00 in your computer's time zone. A problem that needs you right away (a routine flagged critical, or one that paused itself) says "Needs fixing now". Once the next run works, the problem closes and the reminders stop. Every problem is also in the Inbox (as **Needs fixing** items); see [The Needs you inbox](/guides/needs-you-inbox) and [Bot routines](/guides/bot-routines#when-a-routine-fails).
 
-Text messages for critical problems are not available yet.
+**Text me critical alerts** is off until you turn it on, in **Settings**, then **Notifications**, then **Phone and browser notifications**. When it is on and a problem becomes critical (or an open problem is raised to critical), your bot sends you one text from its own phone number: what is wrong, and to open Allternit. Add your phone number there first; if you have already saved your own number in People it is used. Before the first alert, confirm the number: press **Send code**, and your bot texts a 6-digit code (it expires in 10 minutes; you can ask for 3 codes an hour and have 5 tries). Enter it and the row says **Verified**. Alerts are never texted to a number that is not verified, and changing the number means verifying again. You must have texted the bot's number once so it is allowed to text you, and STOP always wins. You get at most one text per problem every 30 minutes, and none for problems that are not critical. Turn the switch off and nothing is sent.
+
+**Daily summary.** Each day from 9:00 in your computer's time zone, one **Last 24 hours** item in the Inbox lists every routine that failed or was missed and every connection that went down in the last 24 hours. It does not send a push. On a day with nothing to list there is no summary, and the previous day's summary closes when the new one opens.
 
 Incoming calls always ring a device that has notifications on. To stop rings on a device, turn notifications off on it.
 
@@ -47,4 +49,4 @@ These switches are for your whole account: they apply to every device you've tur
 
 Usage alerts follow your cloud budget's alert setting: you get one when your spending crosses your alert threshold (80% unless you changed it) and one when it reaches your whole monthly budget. Each comes once a month.
 
-For developers: the switches use [Notification preferences](/api/notifications).
+For developers: the switches use [Notification preferences](/api/notifications). The text setting is `GET/PUT /api/v1/alerts/sms` on your runtime (`{enabled, phone}`, stored as `alerts.criticalSms` in `runtime_settings`); the sweep in `netops/alerts.rs` sets `attention_items.sms_due`, sends through `phone_outbound` (so the consent gate applies) and keeps a 30-minute gap per item. The summary is a `digest` attention item with id `digest:<local date>`.

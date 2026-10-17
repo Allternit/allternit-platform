@@ -5,6 +5,7 @@ import { Router, type Request, type Response } from "express";
 import { getBreaker } from "../breakers.js";
 import { adapterStats, recentRejections } from "../observability/stats.js";
 import { latestCanaryRun, listAccounts } from "../store/queries.js";
+import { latestEvidenceId } from "./routes_evidence.js";
 import { requireScope, type GatewayDeps } from "./server.js";
 
 const DEFAULT_REJECTIONS_LIMIT = 50;
@@ -56,6 +57,7 @@ export function statsRouter(deps: GatewayDeps): Router {
           lastOkAt: lastOk?.ended_at ?? null,
           lastProbeOutcome: lastProbe?.outcome ?? null,
           latency_ms: lastProbe?.latency_ms ?? null,
+          evidence_ref: state === "red" && adapter ? latestEvidenceId(deps.db, adapter.adapter_id) : null,
         };
       });
     res.json({ lanes });

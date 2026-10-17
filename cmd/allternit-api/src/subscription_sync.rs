@@ -160,6 +160,8 @@ pub(crate) struct GatewayLane {
     /// `green`, `amber` or `red`.
     pub state: String,
     pub health: String,
+    /// The gateway's proof of the last failed step (`GET v1/evidence/:id`), when a red lane has one.
+    pub evidence_ref: Option<String>,
 }
 
 pub(crate) fn lanes_from(body: &Value) -> Vec<GatewayLane> {
@@ -174,6 +176,7 @@ pub(crate) fn lanes_from(body: &Value) -> Vec<GatewayLane> {
                         label: r.get("label").and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_string),
                         state: r.get("state")?.as_str()?.to_string(),
                         health: r.get("health").and_then(Value::as_str).unwrap_or("unknown").to_string(),
+                        evidence_ref: r.get("evidence_ref").and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_string),
                     })
                 })
                 .collect()
@@ -237,7 +240,7 @@ pub(crate) fn record_lanes(db: &DbHandle, owner: &str, lanes: &[GatewayLane]) ->
                     source: "lane".into(),
                     source_id: lane_id.clone(),
                     summary: format!("{name} needs a check: {}.{who}", lane_reason(&l.health)),
-                    detail: json!({ "laneId": lane_id, "provider": l.provider, "health": l.health, "affectedBots": bots.iter().map(|(id, n)| json!({ "id": id, "name": n })).collect::<Vec<_>>() }),
+                    detail: json!({ "laneId": lane_id, "provider": l.provider, "health": l.health, "evidenceRef": l.evidence_ref, "affectedBots": bots.iter().map(|(id, n)| json!({ "id": id, "name": n })).collect::<Vec<_>>() }),
                     ..Default::default()
                 },
             );
@@ -525,7 +528,7 @@ mod tests {
              INSERT INTO channel_phone_numbers (number_id, owner, bot_id, e164) VALUES ('n1','u','bot-2','+15555550100');",
         )
         .unwrap();
-        let lane = |state: &str, health: &str| GatewayLane { id: "login-1".into(), provider: Some("claude".into()), label: None, state: state.into(), health: health.into() };
+        let lane = |state: &str, health: &str| GatewayLane { id: "login-1".into(), provider: Some("claude".into()), label: None, state: state.into(), health: health.into(), evidence_ref: None };
         let open_items = |conn: &rusqlite::Connection| -> Vec<(String, String, Option<String>)> {
             let mut s = conn.prepare("SELECT kind, severity, bot_id FROM attention_items WHERE owner = 'u' AND resolved_at IS NULL").unwrap();
             s.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap().map(Result::unwrap).collect()
