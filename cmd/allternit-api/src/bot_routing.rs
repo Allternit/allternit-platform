@@ -27,7 +27,7 @@ use std::time::Duration;
 
 use axum::{
     extract::{Extension, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::post,
     Json, Router,
@@ -38,6 +38,7 @@ use serde_json::{json, Value};
 
 use crate::auth::{AuthUser, INTERNAL_SERVICE_USER_ID};
 use crate::db::DbHandle;
+use crate::netops::hops::{self, Admit, HopIn};
 use crate::thread_routes::{self, CreateThreadBody, ThreadRuntime};
 use crate::AppState;
 
@@ -90,6 +91,16 @@ pub struct MessageBody {
     pub target: String,
     pub message: String,
     pub wait_seconds: Option<u64>,
+    /// Same send, same result: a replayed key returns the earlier hop.
+    pub idempotency_key: Option<String>,
+}
+
+/// Trace and replay context of one hand-off.
+#[derive(Debug, Clone, Default)]
+pub struct HopCtx {
+    /// The `traceparent` header the caller sent.
+    pub traceparent: Option<String>,
+    pub idempotency_key: Option<String>,
 }
 
 /// Refusals the tool shows the model as a plain sentence.
@@ -100,6 +111,8 @@ pub enum RouteError {
     BadRequest(String),
     /// The target bot is still working on the last hand-off from this chat.
     Busy(String),
+    /// The loop guard stopped the hand-off.
+    Held(String),
     Failed(String),
 }
 
@@ -109,13 +122,14 @@ impl RouteError {
             RouteError::NotABotChat => StatusCode::NOT_FOUND,
             RouteError::BadRequest(_) => StatusCode::BAD_REQUEST,
             RouteError::Busy(_) => StatusCode::CONFLICT,
+            RouteError::Held(_) => StatusCode::TOO_MANY_REQUESTS,
             RouteError::Failed(_) => StatusCode::BAD_GATEWAY,
         }
     }
     pub fn message(&self) -> String {
         match self {
             RouteError::NotABotChat => "This chat isn't one of your bots' chats, so it can't hand work to other bots.".into(),
-            RouteError::BadRequest(m) | RouteError::Busy(m) | RouteError::Failed(m) => m.clone(),
+            RouteError::BadRequest(m) | RouteError::Busy(m) | RouteError::Held(m) | RouteError::Failed(m) => m.clone(),
         }
     }
 }
@@ -353,10 +367,34 @@ fn title_of(message: &str) -> String {
     truncate(line, 80)
 }
 
+/// Start (or continue) the target's thread and run the turn, with no trace
+/// context (see [`route_traced`]).
+pub async fn route<R: RouteRuntime>(db: &DbHandle, rt: Arc<R>, caller: &Caller, target: &str, message: &str, wait: Duration) -> Result<Value, RouteError> {
+    route_traced(db, rt, caller, target, message, wait, &HopCtx::default()).await
+}
+
+fn with_receipt(db: &DbHandle, mut v: Value, hop_id: &str) -> Value {
+    if let Ok(conn) = db.connect() {
+        v["receipt"] = hops::receipt(&conn, hop_id);
+    }
+    v
+}
+
 /// Start (or continue) the target's thread and run the turn. Returns the
 /// tool result: `status` is `done` (with `reply`), `started` (still running;
-/// the reply will be posted into the caller's chat) or `failed`.
-pub async fn route<R: RouteRuntime>(db: &DbHandle, rt: Arc<R>, caller: &Caller, target: &str, message: &str, wait: Duration) -> Result<Value, RouteError> {
+/// the reply will be posted into the caller's chat) or `failed`, plus a
+/// `receipt` (`stored → delivered → read → answered`, or `failed`). The
+/// loop guard may hold the hand-off (`RouteError::Held`); a replayed
+/// idempotency key returns the earlier result.
+pub async fn route_traced<R: RouteRuntime>(
+    db: &DbHandle,
+    rt: Arc<R>,
+    caller: &Caller,
+    target: &str,
+    message: &str,
+    wait: Duration,
+    ctx: &HopCtx,
+) -> Result<Value, RouteError> {
     let text = message.trim();
     if text.is_empty() {
         return Err(RouteError::BadRequest("The message is empty. Say what the other bot should do.".into()));
@@ -364,6 +402,44 @@ pub async fn route<R: RouteRuntime>(db: &DbHandle, rt: Arc<R>, caller: &Caller, 
     let bots = roster(db, &caller.user_id, &caller.bot_id);
     let bot = match_target(target, &bots).map_err(RouteError::BadRequest)?.clone();
     let key = channel_key(caller, &bot.id);
+
+    // The chain the caller's thread is already part of wins over a fresh header,
+    // so depth and cycles follow the whole hand-off, not one session's trace.
+    let admit = {
+        let conn = db.connect().map_err(|e| RouteError::Failed(e.to_string()))?;
+        let tp = caller.thread_id.as_deref().and_then(|t| hops::traceparent_for_thread(&conn, t)).or_else(|| ctx.traceparent.clone());
+        let a = hops::admit(
+            &conn,
+            &HopIn {
+                owner: caller.user_id.clone(),
+                via: "message_agent".into(),
+                from_kind: "bot".into(),
+                from_id: caller.bot_id.clone(),
+                to_bot_id: bot.id.clone(),
+                thread_id: None,
+                idempotency_key: ctx.idempotency_key.clone(),
+                traceparent: tp,
+                text: text.to_string(),
+            },
+        );
+        a
+    };
+    let hop_id = match admit {
+        Admit::Held { sentence, .. } => return Err(RouteError::Held(sentence)),
+        Admit::Replay { hop_id, result, thread_id, .. } => {
+            let mut v = result.unwrap_or_else(|| {
+                json!({ "status": "started", "threadId": thread_id, "bot": { "id": bot.id, "name": bot.name }, "note": format!("{} is still working on this exact request.", bot.name) })
+            });
+            v["replayed"] = json!(true);
+            return Ok(with_receipt(db, v, &hop_id));
+        }
+        Admit::Go { hop_id, .. } => hop_id,
+    };
+    let fail_hop = |reason: &str| {
+        if let Ok(conn) = db.connect() {
+            hops::advance(&conn, &hop_id, "failed", Some(reason), None, None);
+        }
+    };
 
     let open: Option<(String, String, Option<String>)> = db.connect().ok().and_then(|c| {
         c.query_row(
@@ -380,6 +456,7 @@ pub async fn route<R: RouteRuntime>(db: &DbHandle, rt: Arc<R>, caller: &Caller, 
     });
     let (thread_id, session_id, resumed) = match open {
         Some((id, status, _)) if status == "working" => {
+            fail_hop("busy");
             return Err(RouteError::Busy(format!(
                 "{} is still working on your last hand-off (thread {id}). Its result will come back to this chat.",
                 bot.name
@@ -404,23 +481,62 @@ pub async fn route<R: RouteRuntime>(db: &DbHandle, rt: Arc<R>, caller: &Caller, 
                     "fromSessionId": caller.session_id,
                 },
             }))
-            .map_err(|e| RouteError::Failed(e.to_string()))?;
-            let t = thread_routes::create(db, rt.as_ref(), &caller.user_id, body).await.map_err(RouteError::Failed)?;
-            let session = t.current_session_id.clone().ok_or_else(|| RouteError::Failed("the thread has no session".into()))?;
+            .map_err(|e| {
+                fail_hop("bad_request");
+                RouteError::Failed(e.to_string())
+            })?;
+            let t = match thread_routes::create(db, rt.as_ref(), &caller.user_id, body).await {
+                Ok(t) => t,
+                Err(e) => {
+                    fail_hop("thread_create_failed");
+                    return Err(RouteError::Failed(e));
+                }
+            };
+            let Some(session) = t.current_session_id.clone() else {
+                fail_hop("no_session");
+                return Err(RouteError::Failed("the thread has no session".into()));
+            };
             (t.id, session, false)
         }
     };
+    if let Ok(conn) = db.connect() {
+        hops::advance(&conn, &hop_id, "delivered", None, Some(&thread_id), None);
+    }
 
     set_status(db, &thread_id, "working", Some(&format!("Working on it for {}", caller.name)), None);
     let kickoff = kickoff_text(caller, text);
-    let (job_db, job_rt, job_caller, job_bot, job_thread, job_session) =
-        (db.clone(), rt.clone(), caller.clone(), bot.clone(), thread_id.clone(), session_id.clone());
+    let base = json!({
+        "threadId": thread_id,
+        "sessionId": session_id,
+        "resumed": resumed,
+        "bot": { "id": bot.id, "name": bot.name },
+    });
+    let (job_db, job_rt, job_caller, job_bot, job_thread, job_session, job_hop, job_base) =
+        (db.clone(), rt.clone(), caller.clone(), bot.clone(), thread_id.clone(), session_id.clone(), hop_id.clone(), base.clone());
     let (tx, rx) = tokio::sync::oneshot::channel::<Result<String, String>>();
     tokio::spawn(async move {
+        if let Ok(conn) = job_db.connect() {
+            hops::advance(&conn, &job_hop, "read", None, None, None);
+        }
         let out = job_rt.send_turn(&job_session, &job_bot.id, &kickoff).await;
         match &out {
             Ok(reply) => set_status(&job_db, &job_thread, "review", Some(&format!("Reported back to {}", job_caller.name)), Some(&truncate(reply, SUMMARY_CAP))),
             Err(e) => set_status(&job_db, &job_thread, "blocked", Some(&truncate(e, 140)), None),
+        }
+        if let Ok(conn) = job_db.connect() {
+            let mut result = job_base.clone();
+            match &out {
+                Ok(reply) => {
+                    result["status"] = json!("done");
+                    result["reply"] = json!(reply);
+                    hops::advance(&conn, &job_hop, "answered", None, None, Some(&result));
+                }
+                Err(e) => {
+                    result["status"] = json!("failed");
+                    result["error"] = json!(e);
+                    hops::advance(&conn, &job_hop, "failed", Some(&truncate(e, 140)), None, Some(&result));
+                }
+            }
         }
         // The caller stopped waiting: post the result into its chat instead.
         if let Err(out) = tx.send(out) {
@@ -434,12 +550,6 @@ pub async fn route<R: RouteRuntime>(db: &DbHandle, rt: Arc<R>, caller: &Caller, 
         }
     });
 
-    let base = json!({
-        "threadId": thread_id,
-        "sessionId": session_id,
-        "resumed": resumed,
-        "bot": { "id": bot.id, "name": bot.name },
-    });
     let mut out = base;
     match tokio::time::timeout(wait, rx).await {
         Ok(Ok(Ok(reply))) => {
@@ -453,13 +563,14 @@ pub async fn route<R: RouteRuntime>(db: &DbHandle, rt: Arc<R>, caller: &Caller, 
         Ok(Err(_)) => {
             out["status"] = json!("failed");
             out["error"] = json!("the turn was dropped");
+            fail_hop("turn_dropped");
         }
         Err(_) => {
             out["status"] = json!("started");
             out["note"] = json!(format!("{} is still working. The result will be posted in this chat when it's ready.", bot.name));
         }
     }
-    Ok(out)
+    Ok(with_receipt(db, out, &hop_id))
 }
 
 fn kickoff_title(db: &DbHandle, thread_id: &str) -> String {
@@ -494,7 +605,7 @@ async fn roster_route(State(state): State<Arc<AppState>>, Extension(user): Exten
     }
 }
 
-async fn message_route(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Json(body): Json<MessageBody>) -> Response {
+async fn message_route(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, headers: HeaderMap, Json(body): Json<MessageBody>) -> Response {
     let db = state.db.clone();
     let (uid, sid) = (user.user_id.clone(), body.session_id.clone());
     let caller = match tokio::task::spawn_blocking(move || authorize(&db, &uid, &sid)).await {
@@ -504,7 +615,11 @@ async fn message_route(State(state): State<Arc<AppState>>, Extension(user): Exte
     };
     let wait = Duration::from_secs(body.wait_seconds.unwrap_or(DEFAULT_WAIT_SECS).min(MAX_WAIT_SECS));
     let rt = Arc::new(GizziRouter { db: state.db.clone() });
-    match route(&state.db, rt, &caller, &body.target, &body.message, wait).await {
+    let ctx = HopCtx {
+        traceparent: headers.get("traceparent").and_then(|v| v.to_str().ok()).map(str::to_string),
+        idempotency_key: body.idempotency_key.clone().filter(|k| !k.trim().is_empty()),
+    };
+    match route_traced(&state.db, rt, &caller, &body.target, &body.message, wait, &ctx).await {
         Ok(v) => Json(v).into_response(),
         Err(e) => refuse(e),
     }
@@ -690,5 +805,75 @@ mod tests {
         assert_eq!(out["status"], "failed");
         let t = thread_routes::load_view(&db, out["threadId"].as_str().unwrap()).unwrap().unwrap();
         assert_eq!(t.status, "blocked");
+    }
+
+    fn receipt_state(v: &Value) -> &str {
+        v["receipt"]["state"].as_str().unwrap_or_default()
+    }
+
+    #[tokio::test]
+    async fn a_hand_off_gets_a_receipt_that_ends_answered() {
+        let db = setup().await;
+        let caller = caller_for_session(&db, "s-main").unwrap();
+        let rt = Arc::new(FakeRt::default());
+        let out = route(&db, rt, &caller, "scout", "Find leads", Duration::from_secs(5)).await.unwrap();
+        assert_eq!(out["status"], "done");
+        // The job records `answered` just before it hands the reply back.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let conn = db.connect().unwrap();
+        let (state, thread, via, from): (String, Option<String>, String, String) =
+            conn.query_row("SELECT state, thread_id, via, from_id FROM agent_hops", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).unwrap();
+        assert_eq!((state.as_str(), thread.as_deref(), via.as_str(), from.as_str()), ("answered", out["threadId"].as_str(), "message_agent", "main"));
+        assert!(out["receipt"]["hopId"].as_str().unwrap().starts_with("hop_"));
+        let (delivered, read, answered): (Option<String>, Option<String>, Option<String>) =
+            conn.query_row("SELECT delivered_at, read_at, answered_at FROM agent_hops", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap();
+        assert!(delivered.is_some() && read.is_some() && answered.is_some());
+    }
+
+    #[tokio::test]
+    async fn a_failed_turn_leaves_a_failed_receipt_with_the_reason() {
+        let db = setup().await;
+        let caller = caller_for_session(&db, "s-main").unwrap();
+        let rt = Arc::new(FakeRt { fail: true, ..Default::default() });
+        let out = route(&db, rt, &caller, "scout", "Find leads", Duration::from_secs(5)).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let conn = db.connect().unwrap();
+        let hop_id = out["receipt"]["hopId"].as_str().unwrap();
+        let r = hops::receipt(&conn, hop_id);
+        assert_eq!((r["state"].as_str(), r["reason"].as_str()), (Some("failed"), Some("model unavailable")));
+    }
+
+    #[tokio::test]
+    async fn a_replayed_idempotency_key_returns_the_earlier_result_without_a_second_turn() {
+        let db = setup().await;
+        let caller = caller_for_session(&db, "s-main").unwrap();
+        let rt = Arc::new(FakeRt::default());
+        let ctx = HopCtx { traceparent: None, idempotency_key: Some("k-1".into()) };
+        let first = route_traced(&db, rt.clone(), &caller, "scout", "Find leads", Duration::from_secs(5), &ctx).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let again = route_traced(&db, rt.clone(), &caller, "scout", "Find leads", Duration::from_secs(5), &ctx).await.unwrap();
+        assert_eq!(again["replayed"], true);
+        assert_eq!(again["reply"], first["reply"]);
+        assert_eq!(again["threadId"], first["threadId"]);
+        assert_eq!(receipt_state(&again), "answered");
+        assert_eq!(rt.turns.lock().unwrap().len(), 1, "the bot is not asked twice");
+    }
+
+    #[tokio::test]
+    async fn the_13th_hand_off_between_two_bots_is_held() {
+        let db = setup().await;
+        let caller = caller_for_session(&db, "s-main").unwrap();
+        let rt = Arc::new(FakeRt::default());
+        for i in 0..12 {
+            let out = route(&db, rt.clone(), &caller, "scout", &format!("task {i}"), Duration::from_secs(5)).await.unwrap();
+            assert_eq!(out["status"], "done", "hop {i}");
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        let held = route(&db, rt.clone(), &caller, "scout", "task 13", Duration::from_secs(5)).await.unwrap_err();
+        assert!(matches!(&held, RouteError::Held(m) if m.starts_with("Held:")), "{held:?}");
+        assert_eq!(rt.turns.lock().unwrap().len(), 12);
+        let conn = db.connect().unwrap();
+        let n: i64 = conn.query_row("SELECT COUNT(*) FROM attention_items WHERE kind = 'loop_guard'", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 1);
     }
 }

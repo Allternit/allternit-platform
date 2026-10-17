@@ -91,6 +91,9 @@ pub struct Session {
     pub directing_name: Option<String>,
     /// The OAuth client behind the call; `None` for the owner's own session.
     pub client: Option<String>,
+    /// The call's `_meta.traceparent` and a key derived from its JSON-RPC id (set per `tools/call`).
+    pub trace: Option<String>,
+    pub call_key: Option<String>,
 }
 
 impl Session {
@@ -149,6 +152,8 @@ pub fn load_session(db: &DbHandle, owner: &str, vendor_bot_id: &str) -> Option<S
         directing_bot_id: directing.as_ref().map(|d| d.0.clone()),
         directing_name: directing.map(|d| d.1),
         client: None,
+        trace: None,
+        call_key: None,
     })
 }
 
@@ -452,7 +457,19 @@ impl<R: ThreadRuntime + 'static> Actions for LiveActions<R> {
         f::send(
             &self.state,
             &s.owner,
-            f::SendIn { bot_id, thread_id: None, text: &body, correlation_id: None, consequential: false, allternit_approval_id: None, via: "vendor-mcp" },
+            f::SendIn {
+                bot_id,
+                thread_id: None,
+                text: &body,
+                correlation_id: s.call_key.clone(),
+                consequential: false,
+                allternit_approval_id: None,
+                via: "vendor-mcp",
+                traceparent: s.trace.clone(),
+                idempotency_key: s.call_key.clone(),
+                from_kind: "vendor_bot",
+                from_id: &s.vendor_bot_id,
+            },
         )
         .await
         .map_err(|e| match e.to_json()["code"].as_str() {
@@ -672,7 +689,10 @@ async fn dispatch_method(db: &DbHandle, actions: &dyn Actions, s: &Session, req:
                 return rpc_err(id, -32602, format!("Unknown tool: {name}"));
             }
             let args = req["params"].get("arguments").cloned().unwrap_or_else(|| json!({}));
-            rpc_ok(id, call_tool(db, actions, s, name, args).await)
+            let mut s = s.clone();
+            s.trace = req["params"]["_meta"]["traceparent"].as_str().map(str::to_string);
+            s.call_key = Some(crate::netops::hops::derive_key(&["vendor_mcp", &s.vendor_bot_id, &id.to_string()]));
+            rpc_ok(id, call_tool(db, actions, &s, name, args).await)
         }
         other => rpc_err(id, -32601, format!("Method not found: {other}")),
     }
