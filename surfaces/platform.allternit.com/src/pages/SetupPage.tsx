@@ -759,6 +759,7 @@ export function SetupPage() {
 
         <section className="ob-rail ob-setup-rail" aria-label="Setup" ref={railRef}>
           <div className="ob-duo">
+            {/* Phones: Skip setup lives here, not in the header, so the header never collides. */}
             <div className="ob-gz" role="img" aria-label="Gizzi">
               <Gizzi />
             </div>
@@ -773,6 +774,9 @@ export function SetupPage() {
                 A:// is {orbState}
               </span>
             </div>
+            <button type="button" className="ob-ghost ob-skipall-m" onClick={() => void finish("skipped")}>
+              Skip setup
+            </button>
           </div>
           <ol className="ob-steps5" aria-label="Setup steps">
             {stepperStates(step).map((t) => (

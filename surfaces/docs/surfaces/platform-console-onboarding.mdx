@@ -46,6 +46,8 @@ Source: `surfaces/platform.allternit.com`.
 
 **Motion.** Scenes dwell 4.6 s; the next one slides in over 450 ms and the old one leaves over 320 ms. With reduced motion there is no autoplay, travel, bursts or packets, and the choice-pick block ripple is off.
 
+On phones (≤ 640 px) **Skip setup** sits in the rail next to Gizzi + A:// instead of the header.
+
 **Tests.** `pnpm test` (Vitest, `src/lib/__tests__/platform-setup.test.ts`) and `pnpm typecheck`.
 
 On localhost the production Clerk key does not render the sign-in card. Use a development Clerk key, or `VITE_DEV_AUTH_BYPASS=1` without a key to open `/setup` signed in as a mock user.

@@ -573,3 +573,24 @@ button.ob-node:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 /* Captions: the old line leaves before the new one lands so the two never sit on top of each other. */
 .ob-caps .ob-sl.out.fw,.ob-caps .ob-sl.out.bk{animation-duration:.18s}
 .ob-caps .ob-sl.cur.fw,.ob-caps .ob-sl.cur.bk{animation-delay:.12s}
+
+/* Header at phone widths (320–430): Skip setup moves into the rail, the wordmark shrinks. */
+.ob-skipall-m{display:none;margin-left:auto;height:32px;font-size:12.5px;white-space:nowrap}
+@media (max-width:640px){
+  .ob-skipall{display:none}
+  .ob-skipall-m{display:inline-flex;align-items:center}
+}
+@media (max-width:400px){
+  .ob-hdr-wm{height:15px!important}
+}
+@media (max-width:640px){
+  .ob-duo{gap:8px}
+  .ob-duo-t{min-width:0}
+  .ob-duo-t b,.ob-duo-t span{white-space:nowrap}
+  .ob-foot .ob-btn{white-space:nowrap;padding:0 14px}
+  .ob-foot .ob-ghost{padding:0 10px}
+}
+@media (max-width:400px){
+  .ob-plus{display:none}
+  .ob-gz,.ob-gz svg{width:36px;height:36px}
+}
