@@ -7,6 +7,8 @@
 //!   goes through the same model extraction a web chat turn does.
 //! - **gizzi**: Gizzi CLI turns, recorded so the nightly Dream sees them
 //!   (Gizzi already saves memories itself, so no second extraction here).
+//! - **vendors**: on unless turned off. Saved memories and new chats from
+//!   the person's own assistant logins (see `vendor_memory`).
 //! - **agent_folders**: on unless turned off. Re-imports Claude Code, Codex,
 //!   Hermes and OpenClaw memory files on this computer every few hours;
 //!   memories already in the drive are skipped. Only the person this computer
@@ -34,13 +36,16 @@ pub struct Settings {
     pub channels: bool,
     pub gizzi: bool,
     pub agent_folders: bool,
+    /// Read saved memories and new chats from the person's own assistant
+    /// logins (`vendor_memory`).
+    pub vendors: bool,
 }
 
 impl Default for Settings {
     /// Everything on. Each one can be turned off, and its memories pruned
     /// with [`forget_source`].
     fn default() -> Self {
-        Settings { channels: true, gizzi: true, agent_folders: true }
+        Settings { channels: true, gizzi: true, agent_folders: true, vendors: true }
     }
 }
 
@@ -295,9 +300,9 @@ mod tests {
 
     #[test]
     fn settings_default_and_partial_json() {
-        assert_eq!(Settings::default(), Settings { channels: true, gizzi: true, agent_folders: true });
+        assert_eq!(Settings::default(), Settings { channels: true, gizzi: true, agent_folders: true, vendors: true });
         let s: Settings = serde_json::from_str(r#"{"agent_folders":false}"#).unwrap();
-        assert_eq!(s, Settings { channels: true, gizzi: true, agent_folders: false });
+        assert_eq!(s, Settings { channels: true, gizzi: true, agent_folders: false, vendors: true });
     }
 
     #[test]

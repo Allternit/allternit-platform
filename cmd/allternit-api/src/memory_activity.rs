@@ -121,6 +121,15 @@ pub fn for_commit(message: &str, added: &[(String, String)], removed: usize) -> 
     if let Some(from) = message.strip_prefix("Forget memories from ") {
         return Some(("forgot", format!("Forgot {removed} {} from {from}", plural(removed))));
     }
+    if let Some(from) = message.strip_prefix("Read memory from ") {
+        return Some(("vendor", format!("Read {n} new {} from your {from} login", plural(n))));
+    }
+    if let Some(from) = message.strip_prefix("Read chats from ") {
+        return Some(("vendor", format!("Found {n} new {} in your {from} chats", plural(n))));
+    }
+    if let Some(from) = message.strip_prefix("Import memories from ") {
+        return Some(("imported", format!("Imported {n} {} from {from}", plural(n))));
+    }
     if let Some(from) = message.strip_prefix("Import memory from ").or_else(|| message.strip_prefix("Sync memory from ")) {
         return Some(("imported", format!("Imported {n} {} from {from}", plural(n))));
     }
@@ -231,6 +240,9 @@ mod tests {
         assert_eq!(for_commit("Remember from conversation", &one, 0).unwrap().0, "saved");
         assert_eq!(for_commit("Import memory from Codex", &one, 0).unwrap().1, "Imported 1 memory from Codex");
         assert_eq!(for_commit("Sync memory from Codex", &one, 0).unwrap().0, "imported");
+        assert_eq!(for_commit("Read memory from ChatGPT", &one, 0).unwrap(), ("vendor", "Read 1 new memory from your ChatGPT login".to_string()));
+        assert_eq!(for_commit("Read chats from Claude", &one, 0).unwrap().0, "vendor");
+        assert_eq!(for_commit("Import memories from ChatGPT chats", &one, 0).unwrap().1, "Imported 1 memory from ChatGPT chats");
         assert_eq!(for_commit("Forget memories from telegram", &[], 3).unwrap().1, "Forgot 3 memories from telegram");
         assert!(for_commit("Edit", &[], 0).is_none());
         assert_eq!(session_of("/?session=abc"), Some("abc".into()));

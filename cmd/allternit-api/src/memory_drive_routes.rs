@@ -44,6 +44,7 @@ pub fn memory_drive_router() -> Router<Arc<AppState>> {
         .route("/memory/drive/capture/turn", post(capture_turn))
         .route("/memory/drive/forget-source", post(forget_source))
         .route("/memory/drive/activity", get(list_activity).post(report_activity))
+        .route("/memory/drive/vendors/run", post(run_vendor_reads))
         .route("/memory/drive/ledger", get(ledger_info))
         .route("/memory/drive/ledger/file", get(ledger_file).put(ledger_edit).delete(ledger_delete))
         .route("/memory/drive/ledger/snapshot", post(ledger_snapshot))
@@ -823,6 +824,8 @@ async fn get_capture(State(state): State<Arc<AppState>>, Extension(user): Extens
             "agents": crate::memory_drive_agent_import::home().map(|h| crate::memory_drive_agent_import::detect(&h)).unwrap_or_default(),
             // Channel capture only counts messages from a verified owner identity.
             "verified_channels": crate::memory_capture::verified_channels(&conn, &ctx.1.user_id),
+            // The last read of each assistant login (Read now / every 6 h).
+            "vendor_reads": crate::vendor_memory::last_reads(&conn, &ctx.1.user_id),
         }))
     })
     .await
@@ -833,6 +836,7 @@ struct CaptureBody {
     channels: Option<bool>,
     gizzi: Option<bool>,
     agent_folders: Option<bool>,
+    vendors: Option<bool>,
 }
 
 /// Change capture switches. Turning on agent folders imports what's new right away.
@@ -845,6 +849,7 @@ async fn put_capture(State(state): State<Arc<AppState>>, Extension(user): Extens
             channels: b.channels.unwrap_or(before.channels),
             gizzi: b.gizzi.unwrap_or(before.gizzi),
             agent_folders: b.agent_folders.unwrap_or(before.agent_folders),
+            vendors: b.vendors.unwrap_or(before.vendors),
         };
         crate::memory_capture::save(&conn, &ctx.1.user_id, &after)?;
         drop(conn);
@@ -895,6 +900,26 @@ async fn forget_source(State(state): State<Arc<AppState>>, Extension(user): Exte
         Ok(json!({ "revision": revision, "removed": removed, "more": removed >= crate::memory_capture::MAX_FORGET }))
     })
     .await
+}
+
+/// "Read now": read every eligible assistant login of the caller and
+/// return what each read did. Read-only on the logins.
+async fn run_vendor_reads(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>) -> Response {
+    if user.user_id.is_empty() {
+        return err(StatusCode::UNAUTHORIZED, "Sign in to use your memory drive.");
+    }
+    let opened = {
+        let (state, user) = (state.clone(), user.clone());
+        tokio::task::spawn_blocking(move || open(&(state, user), None, true).map(|_| ())).await
+    };
+    match opened {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => return error(e),
+        Err(_) => return err(StatusCode::INTERNAL_SERVER_ERROR, "Memory request failed. Retry later."),
+    }
+    let _slot = find_memories_slots().acquire().await;
+    let reads = crate::vendor_memory::run_owner(&state, &user.user_id).await;
+    Json(json!({ "reads": reads })).into_response()
 }
 
 #[derive(Deserialize)]
