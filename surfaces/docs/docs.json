@@ -65,6 +65,7 @@
             "group": "Workspace workflows",
             "pages": [
               "guides/first-run-setup",
+              "guides/bot-setup-picker",
               "guides/platform-workflows",
               "guides/agency-kernel",
               "guides/bot-threads",
@@ -124,6 +125,7 @@
               "architecture",
               "architecture/dependency-map",
               "architecture/first-run-setup",
+              "architecture/bot-setup-picker",
               "architecture/two-machines",
               "architecture/contracts-not-models",
               "architecture/agent-loop",

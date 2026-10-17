@@ -136,11 +136,16 @@
         {
           "on": "2026-10-11",
           "note": "Character avatars use shared optical sizing and activity animation. Gizzi YouTube joins the picker; Allternit Series replaces Office Professionals choices; Codex Carry has true transparent backgrounds. Category selection uses one accessible portalled control."
+        },
+        {
+          "on": "2026-10-16",
+          "note": "The Bots rail's Set up your main bot dialog is the bot setup picker (components/bots/look): pick a look (A://, Gizzi, Gizzi YouTube cast) or one of your bots, or add a vendor bot / new bot / import from the same window. Phone: full-screen reference layout with bottom sheets."
         }
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/bot-threads.mdx",
-        "allternit/surfaces/docs/guides/bot-templates.mdx"
+        "allternit/surfaces/docs/guides/bot-templates.mdx",
+        "allternit/surfaces/docs/guides/bot-setup-picker.mdx"
       ]
     },
     {
@@ -199,7 +204,8 @@
         "allternit-ai/src/components/gateway",
         "allternit-ai/src/lib/gateway",
         "allternit/cmd/allternit-api/src/gateway_*",
-        "allternit/services/subscription-gateway"
+        "allternit/services/subscription-gateway",
+        "allternit-ai/src/components/bots"
       ],
       "decisions": [
         {
@@ -209,13 +215,18 @@
         {
           "on": "2026-10-12",
           "note": "One-step POST /gateway/connect replaces the manual account/state/discover/bind/READY walk; the step-by-step wizard stays as the advanced path. Only Grok Bot is verified live; the web-subscription and dots lanes are offline-verified only."
+        },
+        {
+          "on": "2026-10-16",
+          "note": "The bot setup picker's vendor tiles (Claude, Dots, Grok, Muse) run the real VENDOR_PACKS profiles and the one-step connect (useOneStepConnect shared with QuickConnect); the Claude desktop app profile opens ConnectionWizard."
         }
       ],
       "evidence": [
         "allternit/docs/gateway/QUICKSTART.md",
         "allternit/docs/gateway/AAI_REST.md",
         "allternit/cmd/allternit-api/src/gateway_connect.rs",
-        "allternit/scripts/e2e/gateway-live-check.sh"
+        "allternit/scripts/e2e/gateway-live-check.sh",
+        "allternit/surfaces/docs/guides/bot-setup-picker.mdx"
       ]
     },
     {
@@ -1458,7 +1469,7 @@
       "label": "First-run setup with Gizzi + A://",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "The first time an account opens Allternit, Gizzi and A:// ask where agents run, the style and the default brain (including ChatGPT/Claude/Kimi subscriptions via the Sessions computer), log each real outcome as a result card while the workspace graph builds, then show everything actually connected before landing on Home. Desktop, ai.allternit.com (desktop and phone layouts) and the m.allternit.com PWA.",
+      "description": "The first time an account opens Allternit, Gizzi and A:// ask where agents run, the style, the default brain (including ChatGPT/Claude/Kimi subscriptions via the Sessions computer) and the main bot (the bot setup picker: a look + name + the main-bot disclosure, or a vendor bot / new bot / import), log each real outcome as a result card while the workspace graph builds, then show everything actually connected before landing on Home. Desktop, ai.allternit.com (desktop and phone layouts) and the m.allternit.com PWA.",
       "touches": [
         "allternit-ai/src/components/onboarding",
         "allternit-ai/src/fabric-session",
@@ -1466,7 +1477,10 @@
         "allternit-ai/src/lib/subscriptions",
         "allternit-ai/src/services",
         "allternit-ai/src/shell",
-        "allternit/cmd/allternit-api/src/onboarding_*"
+        "allternit/cmd/allternit-api/src/onboarding_*",
+        "allternit-ai/src/components/bots",
+        "allternit-ai/src/views/bots",
+        "allternit-ai/src/components/gateway"
       ],
       "decisions": [
         {
@@ -1480,12 +1494,18 @@
         {
           "on": "2026-10-16",
           "note": "Eoj: a Main bot step will slot between Your AI and Connected; the step machine has it behind MAIN_BOT_STEP_ENABLED (off) until its design lands."
+        },
+        {
+          "on": "2026-10-16",
+          "note": "Eoj approved the MainBot.dc.html prototype (\"I approve them all\"): MAIN_BOT_STEP_ENABLED on; step 4 is the shared bot setup picker (giant character stage, look tiles, existing disclosure, Set up <Name> via setUpPrimaryBot with the look saved as the avatar), also connecting vendor bots, creating and importing bots."
         }
       ],
       "evidence": [
         "allternit/surfaces/docs/guides/first-run-setup.mdx",
         "allternit/surfaces/docs/architecture/first-run-setup.mdx",
-        "allternit/surfaces/docs/api/onboarding.mdx"
+        "allternit/surfaces/docs/api/onboarding.mdx",
+        "allternit/surfaces/docs/guides/bot-setup-picker.mdx",
+        "allternit/surfaces/docs/architecture/bot-setup-picker.mdx"
       ]
     },
     {
@@ -1806,7 +1826,7 @@
     {
       "id": "journey:first-run-setup",
       "label": "Set up a new account",
-      "description": "From the first signed-in launch to Home with a computer, a style and a default brain.",
+      "description": "From the first signed-in launch to Home with a computer, a style, a default brain and a main bot.",
       "steps": [
         {
           "at": "allternit-ai/src/shell",
@@ -1819,6 +1839,10 @@
         {
           "at": "allternit-ai/src/components/subscriptions",
           "says": "A subscription brain connects on the Sessions computer and needs the provider-terms disclosure before it becomes the default."
+        },
+        {
+          "at": "allternit-ai/src/components/bots",
+          "says": "Step 4: the bot setup picker sets up the main bot (setUpPrimaryBot with the picked look and name) or connects/creates/imports a bot; Gizzi's card appears only on a real result."
         },
         {
           "at": "allternit-ai/src/services",

@@ -1,0 +1,29 @@
+---
+title: Bot setup picker
+description: How the shared main-bot / add-a-bot picker is built in allternit-ai, what it calls, and how results stay honest.
+---
+
+The picker lives in `allternit-ai/src/components/bots/look/` and is used by the first-run Main bot step (`components/onboarding/setup/MainBotStep.tsx`) and the Bots rail (`views/bots/rail/PrimaryBotSetupDialog.tsx`). One build serves Allternit Desktop, ai.allternit.com (desktop and phone layouts) and the m.allternit.com PWA.
+
+| File | What it holds |
+|---|---|
+| `bot-looks.ts` | The look catalogue (A://, Gizzi, the Gizzi YouTube cast, the vendor fighters), stage/tile placement, `lookAvatarConfig` (what each look saves as), and `PROFILE_CONNECT_PRODUCT` (vendor profile → one-step connect product). |
+| `useBotSetup.ts` | The state machine: modes `look` · `vendor` · `new` · `import`, the primary action per state, Gizzi's line, and the `BotSetupOutcome` that becomes the result card. |
+| `BotLookStage.tsx` | The giant stage: out/in layers (blur/darken out 420 ms, bloom in 620 ms), A:// = `AllternitOrb` states on a loop after the blocks assemble, Gizzi's eyes, the cast's state SVGs, vendor stills, the user's own bots through `BotAvatar`. |
+| `BotLookTiles.tsx` | Grouped tiles (aria-pressed buttons) that scroll the pick into view, and `LookRipple`, the haptic block squares from the picked tile. |
+| `BotSetupPanels.tsx` | Per-mode panels, the disclosure (verbatim from the old dialog), the result card, the phone bottom sheet, and the real flows the picker opens. |
+| `BotSetupViews.tsx` | `BotSetupCard` (desktop dialog) and `BotSetupPhone` (reference phone layout). |
+| `bot-look.css` | `.bl-` styles with light/dark tokens and the motion beat sheet; reduced motion removes the out-layer, blur, loops and ripple. |
+
+## What it calls
+
+- **Main bot**: `loadBotRoster()` (the roster must have loaded, so a slow API can't make a second A://), then `setUpPrimaryBot({ name, avatar })` in `views/bots/rail/main-bot.ts`, which reuses or creates the A:// bot, `dressBot()`s it (name + `config.avatar` with a `look` marker, the same save Edit bot uses) and `setMainBot()`s it. One of the user's bots: `setMainBot(id)`. `BotAvatar` renders a primary bot as the orb unless it has its own image or a picked `look`.
+- **Vendor bots**: the profile list, permissions, own-subscription note and terms warning come from `lib/gateway/vendor-packs.ts`. Connecting runs `useOneStepConnect` (extracted from `QuickConnect`, the same `POST /gateway/connect` loop: `needs_consent` → `acceptTerms`, `needs_sign_in` → re-ask every 3 s for ~5 min, `needs_key`/`needs_setup`/`blocked` → shown as is). A profile without a one-step product (the Claude desktop app) opens `ConnectionWizard`. "Make it my main bot" only claims success after the joined bot is in the roster and `setMainBot` ran.
+- **New bot**: `buildCreateBotPayload(defaultBotFormData(botTemplateToFormData(template, { name })), lookAvatar)` → `useBotTemplate(template, { payload, runFirstTask: true })`; Custom → `agentStore.createAgent`.
+- **Import**: `BotTeamImportWizard` (`initialSource` file/url; `onImported` gives the real counts) or `TemplateSetup` for a team template (added bots found by diffing the roster).
+
+No result card is shown unless the call it reports actually returned. In the Bots rail dialog the real flows render in place (the dialog content is centred without a transform so their fixed overlays cover the viewport); in setup they portal to `<body>`.
+
+## Preview
+
+`/preview-mainbot.html?view=onboarding|dialog` (`&phone=1`, `&theme=dark`) renders the picker against whatever agents and gateway APIs the dev server proxies; it is not a production entry.
