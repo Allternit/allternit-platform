@@ -66,7 +66,8 @@ pub fn tool_hash(tool: &Value) -> String {
 }
 
 /// Split `tools` into the ones the owner may use and the ones held (`new` or `changed`).
-/// A server with no pins yet is pinned as listed (nothing held).
+/// A server with no pins yet is pinned as listed (nothing held). Each held tool opens
+/// its own `tool_changed` item (`source_id` = `server/tool`) with an Approve retry.
 pub fn check_pins(conn: &Connection, owner: &str, server_id: &str, tools: &[Value]) -> (Vec<String>, Vec<Value>) {
     let pinned: i64 = conn.query_row("SELECT COUNT(*) FROM mcp_tool_pins WHERE owner = ?1 AND server_id = ?2", params![owner, server_id], |r| r.get(0)).unwrap_or(0);
     let now = crate::agent_gateway_routes::now();
@@ -76,18 +77,22 @@ pub fn check_pins(conn: &Connection, owner: &str, server_id: &str, tools: &[Valu
         let Some(name) = t["name"].as_str() else { continue };
         let hash = tool_hash(t);
         if pinned == 0 {
-            let _ = conn.execute("INSERT OR REPLACE INTO mcp_tool_pins (owner, server_id, tool, hash, approved_at) VALUES (?1,?2,?3,?4,?5)", params![owner, server_id, name, hash, now]);
+            let _ = conn.execute("INSERT OR REPLACE INTO mcp_tool_pins (owner, server_id, tool, hash, approved_at, description) VALUES (?1,?2,?3,?4,?5,?6)", params![owner, server_id, name, hash, now, t["description"].as_str()]);
             allowed.push(name.to_string());
             continue;
         }
-        let stored: Option<String> = conn.query_row("SELECT hash FROM mcp_tool_pins WHERE owner = ?1 AND server_id = ?2 AND tool = ?3", params![owner, server_id, name], |r| r.get(0)).ok();
+        let stored: Option<(String, Option<String>)> = conn.query_row("SELECT hash, description FROM mcp_tool_pins WHERE owner = ?1 AND server_id = ?2 AND tool = ?3", params![owner, server_id, name], |r| Ok((r.get(0)?, r.get(1)?))).ok();
         match stored {
-            Some(h) if h == hash => allowed.push(name.to_string()),
-            other => held.push(json!({ "tool": name, "reason": if other.is_some() { "changed" } else { "new" } })),
+            Some((h, _)) if h == hash => allowed.push(name.to_string()),
+            other => {
+                let reason = if other.is_some() { "changed" } else { "new" };
+                let old = other.and_then(|(_, d)| d);
+                held.push(json!({ "tool": name, "reason": reason, "hash": hash, "oldDescription": old, "newDescription": t["description"] }));
+            }
         }
     }
-    if !held.is_empty() {
-        let names: Vec<&str> = held.iter().filter_map(|h| h["tool"].as_str()).collect();
+    for h in &held {
+        let name = h["tool"].as_str().unwrap_or_default();
         crate::netops::alerts::open(
             conn,
             &crate::netops::alerts::Item {
@@ -95,9 +100,10 @@ pub fn check_pins(conn: &Connection, owner: &str, server_id: &str, tools: &[Valu
                 kind: "tool_changed".into(),
                 severity: "warn".into(),
                 source: "mcp".into(),
-                source_id: server_id.to_string(),
-                summary: format!("{} changed its tools ({}). They stay off until you approve them.", server_id, names.join(", ")),
-                detail: json!({ "serverId": server_id, "held": held }),
+                source_id: format!("{server_id}/{name}"),
+                summary: format!("{server_id} changed its tool \"{name}\". It stays off until you approve it."),
+                detail: json!({ "serverId": server_id, "tool": name, "reason": h["reason"], "hash": h["hash"], "oldDescription": h["oldDescription"], "newDescription": h["newDescription"] }),
+                retry: Some(json!({ "pinApprove": { "serverId": server_id, "tool": name, "hash": h["hash"] } })),
                 ..Default::default()
             },
         );
@@ -105,15 +111,21 @@ pub fn check_pins(conn: &Connection, owner: &str, server_id: &str, tools: &[Valu
     (allowed, held)
 }
 
-/// Approve: re-pin `tools` (the held ones, as the server lists them now) and close the item.
+/// Approve: re-pin `tools` (the held ones, as the server lists them now) and close their items.
 pub fn approve_pins(conn: &Connection, owner: &str, server_id: &str, tools: &[Value]) -> usize {
-    let now = crate::agent_gateway_routes::now();
     let mut n = 0;
     for t in tools {
         let Some(name) = t["name"].as_str() else { continue };
-        n += conn.execute("INSERT OR REPLACE INTO mcp_tool_pins (owner, server_id, tool, hash, approved_at) VALUES (?1,?2,?3,?4,?5)", params![owner, server_id, name, tool_hash(t), now]).unwrap_or(0);
+        n += pin_tool(conn, owner, server_id, name, &tool_hash(t), t["description"].as_str());
     }
-    crate::netops::alerts::resolve_source(conn, owner, "tool_changed", server_id, "approved");
+    n
+}
+
+/// Pin one tool at `hash` and resolve its `tool_changed` item. Used by Approve in the inbox.
+pub fn pin_tool(conn: &Connection, owner: &str, server_id: &str, tool: &str, hash: &str, description: Option<&str>) -> usize {
+    let now = crate::agent_gateway_routes::now();
+    let n = conn.execute("INSERT OR REPLACE INTO mcp_tool_pins (owner, server_id, tool, hash, approved_at, description) VALUES (?1,?2,?3,?4,?5,?6)", params![owner, server_id, tool, hash, now, description]).unwrap_or(0);
+    crate::netops::alerts::resolve_source(conn, owner, "tool_changed", &format!("{server_id}/{tool}"), "approved");
     n
 }
 
@@ -778,6 +790,7 @@ mod tests {
         let c = Connection::open_in_memory().unwrap();
         c.execute_batch(include_str!("../migrations/V258__attention_items.sql").split("-- Why a run").next().unwrap()).unwrap();
         c.execute_batch(include_str!("../migrations/V264__mcp_tool_pins.sql")).unwrap();
+        c.execute_batch(include_str!("../migrations/V265__mcp_tool_pin_description.sql")).unwrap();
         c.execute_batch(
             "CREATE TABLE runtime_user_events (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT, user_id TEXT, event_type TEXT, thread_id TEXT, payload TEXT, idempotency_key TEXT, occurred_at TEXT, UNIQUE(user_id, idempotency_key));
              CREATE TABLE agents (id TEXT PRIMARY KEY, name TEXT);",
@@ -804,6 +817,26 @@ mod tests {
         approve_pins(&c, "u", "srv", &[t1b.clone(), t2.clone()]);
         let (allowed, held) = check_pins(&c, "u", "srv", &[t1b, t2]);
         assert_eq!((allowed.len(), held.len()), (2, 0));
+        let open: i64 = c.query_row("SELECT COUNT(*) FROM attention_items WHERE kind = 'tool_changed' AND resolved_at IS NULL", [], |r| r.get(0)).unwrap();
+        assert_eq!(open, 0);
+    }
+
+    #[test]
+    fn inbox_approve_repins_one_tool_and_it_comes_back() {
+        let c = pin_conn();
+        let t1 = json!({"name": "read", "description": "Read a file"});
+        check_pins(&c, "u", "srv", &[t1]);
+        let t1b = json!({"name": "read", "description": "Read a file, then email it"});
+        let (allowed, held) = check_pins(&c, "u", "srv", &[t1b.clone()]);
+        assert!(allowed.is_empty());
+        assert_eq!(held[0]["oldDescription"], "Read a file");
+        let (id, retry): (String, String) = c.query_row("SELECT id, retry_json FROM attention_items WHERE kind = 'tool_changed' AND resolved_at IS NULL", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        assert_eq!(id, "tool_changed:srv/read");
+        let spec: Value = serde_json::from_str(&retry).unwrap();
+        let p = &spec["pinApprove"];
+        pin_tool(&c, "u", p["serverId"].as_str().unwrap(), p["tool"].as_str().unwrap(), p["hash"].as_str().unwrap(), t1b["description"].as_str());
+        let (allowed, held) = check_pins(&c, "u", "srv", &[t1b]);
+        assert_eq!((allowed.len(), held.len()), (1, 0));
         let open: i64 = c.query_row("SELECT COUNT(*) FROM attention_items WHERE kind = 'tool_changed' AND resolved_at IS NULL", [], |r| r.get(0)).unwrap();
         assert_eq!(open, 0);
     }
