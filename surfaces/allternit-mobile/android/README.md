@@ -118,7 +118,7 @@ adb shell am broadcast -a com.allternit.phonelink.PROVISION -n $PKG/.ProvisionRe
 # or: scripts/provision.sh --mesh-url https://... --mesh-key <key>
 ```
 
-- `mesh_control_url` (https only) and `mesh_auth_key` are optional. Desktop mints the single-use key with `POST /api/v1/mesh/enroll` at cable setup.
+- `mesh_control_url` (https only) and `mesh_auth_key` are optional. The key is a single-use Headscale pre-auth key from `POST /api/v1/mesh/enroll`; Desktop passing it at cable setup is the next step (until then, provision by hand).
 - The key is sealed with the Keystore sealer on arrival, never logged, and dropped after the first successful join; from then on tsnet re-authenticates with the node key in the app's private `files/mesh` dir. A failed join keeps the sealed key.
 - The node starts and stops with the foreground service and rejoins after reboot like the server. `device_info` and the unauthenticated `/whoami` report `mesh_state` (`stopped`/`starting`/`needs_login`/`running`/`error:…`) and `mesh_host` (`<100.x>:8200` or null). The notification shows the mesh host once joined.
 - Network changes (Wi-Fi ↔ cellular, new Wi-Fi) are handled by tsnet/magicsock — there is no app-level reconnect loop.
