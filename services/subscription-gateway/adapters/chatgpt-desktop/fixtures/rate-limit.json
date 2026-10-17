@@ -1,0 +1,132 @@
+{
+ "formatVersion": 1,
+ "bundleId": "com.openai.codex",
+ "capturedAt": 0,
+ "root": {
+  "role": "AXApplication",
+  "title": "ChatGPT",
+  "path": [],
+  "children": [
+   {
+    "role": "AXWindow",
+    "title": "ChatGPT",
+    "path": [
+     0
+    ],
+    "children": [
+     {
+      "role": "AXWebArea",
+      "title": "ChatGPT",
+      "path": [
+       0,
+       0
+      ],
+      "children": [
+       {
+        "role": "AXGroup",
+        "description": "Chat history",
+        "path": [
+         0,
+         0,
+         0
+        ],
+        "children": [
+         {
+          "role": "AXButton",
+          "title": "New chat",
+          "actions": [
+           "AXPress"
+          ],
+          "path": [
+           0,
+           0,
+           0,
+           0
+          ]
+         }
+        ]
+       },
+       {
+        "role": "AXGroup",
+        "subrole": "AXApplicationAlert",
+        "path": [
+         0,
+         0,
+         1
+        ],
+        "children": [
+         {
+          "role": "AXStaticText",
+          "value": "You've reached your usage limit. Try again in 2 hours.",
+          "path": [
+           0,
+           0,
+           1,
+           0
+          ]
+         }
+        ]
+       },
+       {
+        "role": "AXPopUpButton",
+        "description": "Model selector",
+        "value": "",
+        "actions": [
+         "AXPress"
+        ],
+        "path": [
+         0,
+         0,
+         2
+        ]
+       },
+       {
+        "role": "AXGroup",
+        "description": "Conversation",
+        "path": [
+         0,
+         0,
+         3
+        ]
+       },
+       {
+        "role": "AXButton",
+        "title": "Add photos & files",
+        "actions": [
+         "AXPress"
+        ],
+        "path": [
+         0,
+         0,
+         4
+        ]
+       },
+       {
+        "role": "AXTextArea",
+        "description": "Ask anything",
+        "value": "",
+        "path": [
+         0,
+         0,
+         5
+        ]
+       },
+       {
+        "role": "AXButton",
+        "title": "Send prompt",
+        "actions": [
+         "AXPress"
+        ],
+        "path": [
+         0,
+         0,
+         6
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+}
