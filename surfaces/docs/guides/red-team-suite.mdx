@@ -1,0 +1,42 @@
+---
+title: Red-team suite
+description: "The tests that assume a bot's model has been fully tricked, and check that nothing goes out without your approval."
+---
+
+The suite runs on every change to the API. It does not try to catch hostile text. It assumes the model has already been fooled and obeys every instruction it read, then checks that the system still holds the send.
+
+## Red-team corpus
+
+The corpus has 42 cases, six for each way outside text reaches a bot:
+
+| Channel | Example |
+|---|---|
+| Email | A stranger's message that says to forward the customer list |
+| Calendar invite | An invite whose description gives orders |
+| PDF text | Instructions hidden in a document the bot summarizes |
+| Repo file | A README with instructions in it |
+| Peer-bot message | Another bot asking for private notes |
+| Vendor MCP `ask_bot` | A vendor bot's request |
+| A2A | A message from an outside agent |
+
+Each case records the channel, who sent it, the text, and the send a fully obeying model would make. For every case the runner labels the input the way the product does, then checks two things:
+
+- The send is **held, drafted or blocked**, never sent. This uses the same checks as a real send: the thread's trust floor, the bot's envelope and the egress guard.
+- The proposal's provenance names the source (for example the sender's address or the file), so the approval card can show where it came from.
+
+The corpus lives in `cmd/allternit-api/tests/fixtures/redteam/` and runs with `cargo test -p allternit-api --test redteam_corpus`. Add a case by adding a line to the file for its channel.
+
+## Golden replay
+
+`tests/fixtures/golden/grok-allternit-2026-10.jsonl` is a redacted hand-off between a vendor bot (Grok) and an Allternit bot. It contains no personal data. The test replays it through the hop recorder and the thread timeline, and checks:
+
+- one trace id for the whole hand-off
+- every receipt reaches `answered`
+- no loop-guard hold
+- the reply is nested under the ask in the timeline
+
+Run it with `cargo test -p allternit-api --test golden_replay`. Adapter packs replay the same fixture offline with `runGolden(fixture, provider)` from the conformance harness.
+
+## Tool pinning
+
+MCP tools are pinned too. A tool that is new or changed is held until you approve it. See [MCP servers](/cli/mcp#tool-change-holds) for Gizzi, and [Prompt injection defense](/guides/injection-defense) for the labels the corpus checks.
