@@ -18,6 +18,7 @@ This namespace is served by the Allternit API data-plane node (`http://127.0.0.1
 | `POST` | `/api/v1/subscriptions/human-actions` | Create a human action for a UI surface where a person starts a task directly. Needs a person's session; `chat.send` and `approval.confirm` are reserved for the platform. |
 | `ANY` | `/api/v1/subscriptions/gateway/v1/...` | Forward to the gateway. `POST v1/tasks` is checked and stamped as described below. |
 | `POST` | `/api/v1/subscriptions/disclosure/ack` | Record the person's acknowledgement of a provider's disclosure. |
+| `GET` | `/api/v1/subscriptions/gateway/v1/lanes` | Health of each connected account: state (`green`, `amber`, `red`), last probe, last pass and drift-breaker state, from the 3-minute canary. See [Lane status](/guides/lane-status). |
 
 ## Submitting a task
 

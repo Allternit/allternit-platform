@@ -151,6 +151,115 @@ pub(crate) fn record_login_health(db: &DbHandle, owner: &str, logins: &[LoginHea
     Ok(out)
 }
 
+/// One lane as the gateway's `GET v1/lanes` lists it.
+#[derive(Debug, Clone)]
+pub(crate) struct GatewayLane {
+    pub id: String,
+    pub provider: Option<String>,
+    pub label: Option<String>,
+    /// `green`, `amber` or `red`.
+    pub state: String,
+    pub health: String,
+}
+
+pub(crate) fn lanes_from(body: &Value) -> Vec<GatewayLane> {
+    body["lanes"]
+        .as_array()
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|r| {
+                    Some(GatewayLane {
+                        id: r.get("account_id")?.as_str()?.to_string(),
+                        provider: r.get("provider").and_then(Value::as_str).map(str::to_string),
+                        label: r.get("label").and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_string),
+                        state: r.get("state")?.as_str()?.to_string(),
+                        health: r.get("health").and_then(Value::as_str).unwrap_or("unknown").to_string(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn provider_title(provider: Option<&str>) -> String {
+    let p = provider.unwrap_or("The subscription");
+    let mut c = p.chars();
+    c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
+}
+
+/// What a red lane means for the person, in plain words.
+fn lane_reason(health: &str) -> &'static str {
+    match health {
+        "auth_required" => "it needs signing in again",
+        "challenge_presented" => "it is showing a verification check",
+        "ui_drift" => "its page changed and Allternit is updating",
+        "provider_down" => "it is not answering",
+        "account_restricted" => "the provider restricted the account",
+        _ => "its health check is failing",
+    }
+}
+
+/// Records each vendor lane's state change (`lane_samples`, V259) and, on a move
+/// into red, opens a `lane_down` attention item naming the bots that use it.
+/// It is critical when one of them is reached by phone or text. A move out of red
+/// resolves it. Lanes the gateway no longer lists are forgotten. Returns
+/// (lane id, `opened` | `resolved`) for each.
+pub(crate) fn record_lanes(db: &DbHandle, owner: &str, lanes: &[GatewayLane]) -> rusqlite::Result<Vec<(String, &'static str)>> {
+    use crate::netops::{alerts, lanes as lane_store};
+    let conn = db.connect()?;
+    let mut out = vec![];
+    for l in lanes {
+        let lane_id = format!("{}{}", lane_store::VENDOR_PREFIX, l.id);
+        let name = provider_title(l.provider.as_deref());
+        // "Claude", or "Claude · Work" when the login has its own name.
+        let display = match l.label.as_deref() {
+            Some(own) if !own.eq_ignore_ascii_case(&name) => format!("{name} · {own}"),
+            _ => name.clone(),
+        };
+        let reason = (l.state == "red").then(|| format!("{name}: {}", lane_reason(&l.health)));
+        let Some(prev) = lane_store::record_sample(&conn, owner, &lane_id, &l.state, reason.as_deref(), display.as_str())? else { continue };
+        if l.state == "red" && prev != "red" {
+            let bots = lane_store::bots_for_login(&conn, owner, &l.id);
+            let phone_bot = bots.iter().find(|(id, _)| lane_store::bot_has_phone(&conn, id));
+            let first = phone_bot.or(bots.first());
+            let names: Vec<&str> = bots.iter().map(|(id, n)| if n.is_empty() { id.as_str() } else { n.as_str() }).collect();
+            let who = match names.len() {
+                0 => String::new(),
+                _ => format!(" {} can't reply until it is fixed.", names.join(", ")),
+            };
+            alerts::open(
+                &conn,
+                &alerts::Item {
+                    owner: owner.to_string(),
+                    kind: "lane_down".into(),
+                    severity: if phone_bot.is_some() { "critical" } else { "warn" }.into(),
+                    bot_id: first.map(|(id, _)| id.clone()),
+                    source: "lane".into(),
+                    source_id: lane_id.clone(),
+                    summary: format!("{name} needs a check: {}.{who}", lane_reason(&l.health)),
+                    detail: json!({ "laneId": lane_id, "provider": l.provider, "health": l.health, "affectedBots": bots.iter().map(|(id, n)| json!({ "id": id, "name": n })).collect::<Vec<_>>() }),
+                    ..Default::default()
+                },
+            );
+            out.push((lane_id, "opened"));
+        } else if l.state != "red" && prev == "red" {
+            alerts::resolve_source(&conn, owner, "lane_down", &lane_id, "recovered");
+            out.push((lane_id, "resolved"));
+        }
+    }
+    let live: Vec<String> = lanes.iter().map(|l| format!("{}{}", lane_store::VENDOR_PREFIX, l.id)).collect();
+    let known: Vec<String> = {
+        let mut st = conn.prepare("SELECT DISTINCT lane_id FROM lane_samples WHERE owner = ?1 AND lane_id LIKE 'vendor:%'")?;
+        let rows = st.query_map(params![owner], |r| r.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?;
+        rows
+    };
+    for id in known.into_iter().filter(|id| !live.contains(id)) {
+        alerts::resolve_source(&conn, owner, "lane_down", &id, "lane removed");
+        conn.execute("DELETE FROM lane_samples WHERE owner = ?1 AND lane_id = ?2", params![owner, id])?;
+    }
+    Ok(out)
+}
+
 /// Records each recent gateway task stopped at `needs_user` once (keyed by task id).
 /// Returns the task ids newly recorded.
 pub(crate) fn record_needs_user_tasks(db: &DbHandle, owner: &str, tasks: &[Value]) -> rusqlite::Result<Vec<String>> {
@@ -254,6 +363,13 @@ pub(crate) async fn sync_owner(state: &Arc<AppState>, owner: &str) -> Result<Vec
         let db = state.db.clone();
         let o = owner.to_string();
         let _ = tokio::task::spawn_blocking(move || record_needs_user_tasks(&db, &o, &tasks)).await;
+    }
+    // Lane health from the gateway's canary (best effort: an older gateway has no /v1/lanes).
+    if let Ok(body) = gateway_get(state, owner, "v1/lanes", None).await {
+        let lanes = lanes_from(&body);
+        let db = state.db.clone();
+        let o = owner.to_string();
+        let _ = tokio::task::spawn_blocking(move || record_lanes(&db, &o, &lanes)).await;
     }
     let health: HashMap<String, String> = logins.into_iter().map(|l| (l.id, l.health)).collect();
     let db = state.db.clone();
@@ -396,6 +512,45 @@ mod tests {
         assert_eq!(ev[0].0, "subscription.task.needs_user");
         assert_eq!(ev[0].1["detail"], "Sign in");
         assert!(ev[0].1.get("prompt_preview").is_none());
+    }
+
+    #[tokio::test]
+    async fn red_lane_opens_lane_down_with_bots_and_resolves_on_recovery() {
+        let st = state().await;
+        let conn = st.db.connect().unwrap();
+        conn.execute_batch(
+            "INSERT INTO provider_account_bindings (id, owner, vendor, auth_type, external_account_id, state) VALUES ('pab1','u','claude','session','subsfab:login-1','CONNECTED');
+             INSERT INTO bot_execution_bindings (id, owner, bot_id, type, mode, account_binding_id) VALUES ('ebx1','u','bot-1','vendor','chat','pab1');
+             INSERT INTO bot_execution_bindings (id, owner, bot_id, type, mode, account_binding_id) VALUES ('ebx2','u','bot-2','vendor','chat','pab1');
+             INSERT INTO channel_phone_numbers (number_id, owner, bot_id, e164) VALUES ('n1','u','bot-2','+15555550100');",
+        )
+        .unwrap();
+        let lane = |state: &str, health: &str| GatewayLane { id: "login-1".into(), provider: Some("claude".into()), label: None, state: state.into(), health: health.into() };
+        let open_items = |conn: &rusqlite::Connection| -> Vec<(String, String, Option<String>)> {
+            let mut s = conn.prepare("SELECT kind, severity, bot_id FROM attention_items WHERE owner = 'u' AND resolved_at IS NULL").unwrap();
+            s.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap().map(Result::unwrap).collect()
+        };
+        // First sight green: nothing opens.
+        assert!(record_lanes(&st.db, "u", &[lane("green", "ready")]).unwrap().is_empty());
+        // green → red: one critical item (bot-2 has a phone), pointing at that bot.
+        assert_eq!(record_lanes(&st.db, "u", &[lane("red", "auth_required")]).unwrap(), vec![("vendor:login-1".to_string(), "opened")]);
+        assert_eq!(open_items(&conn), vec![("lane_down".to_string(), "critical".to_string(), Some("bot-2".to_string()))]);
+        // Still red: no second open.
+        assert!(record_lanes(&st.db, "u", &[lane("red", "auth_required")]).unwrap().is_empty());
+        // The board shows it red with both bots.
+        let board = crate::netops::lanes::lane_status(&conn, "u", chrono::Utc::now());
+        assert_eq!(board[0]["state"], "red");
+        assert_eq!(board[0]["affectedBots"].as_array().unwrap().len(), 2);
+        // red → green resolves it.
+        assert_eq!(record_lanes(&st.db, "u", &[lane("green", "ready")]).unwrap(), vec![("vendor:login-1".to_string(), "resolved")]);
+        assert!(open_items(&conn).is_empty());
+        // Without a phone binding the item is a warning.
+        conn.execute("DELETE FROM channel_phone_numbers", []).unwrap();
+        record_lanes(&st.db, "u", &[lane("red", "provider_down")]).unwrap();
+        assert_eq!(open_items(&conn)[0].1, "warn");
+        // A lane the gateway stops listing is forgotten and its item closed.
+        record_lanes(&st.db, "u", &[]).unwrap();
+        assert!(open_items(&conn).is_empty());
     }
 
     #[test]
