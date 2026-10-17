@@ -202,7 +202,10 @@ pub fn edit(
     if content.len() > MAX_EDIT_BYTES {
         return Err(say("That file is too large to edit here (1 MB)."));
     }
-    if matches!(path, "README.md" | "connected-apps.json") {
+    if path == "README.md" {
+        return Err(say("Allternit writes this file; it lists what's in your ledger."));
+    }
+    if path == "connected-apps.json" {
         return Err(say("Allternit writes this file. Change connected apps in Settings → Connected apps."));
     }
     if let Some(kind) = kind_for(path) {
@@ -311,7 +314,8 @@ mod tests {
         let err = edit(&conn, "u1", &repo, "bots/matt-ag1/bot.json", &typed_key.to_string(), None, ws).unwrap_err().to_string();
         assert!(err.contains("Keep keys and passwords out of the ledger"), "{err}");
         assert!(edit(&conn, "u1", &repo, "bots/matt-ag1/bot.json", "{not json", None, ws).is_err());
-        assert!(edit(&conn, "u1", &repo, "README.md", "x", None, ws).is_err());
+        assert!(!edit(&conn, "u1", &repo, "README.md", "x", None, ws).unwrap_err().to_string().contains("connected apps"));
+        assert!(edit(&conn, "u1", &repo, "connected-apps.json", "[]", None, ws).unwrap_err().to_string().contains("Connected apps"));
         assert!(edit(&conn, "u1", &repo, "routines/new.json", "{}", None, ws).is_err());
         assert!(edit(&conn, "u1", &repo, "../x", "x", None, ws).is_err());
         assert!(edit(&conn, "u1", &repo, "bots/matt-ag1/workspace/SOUL.md", "API_TOKEN=abcdef123456", None, ws).is_err());
