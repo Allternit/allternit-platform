@@ -22,6 +22,8 @@ target/
 *.tgz
 *.db
 *.jsonl
+# Test fixtures are source, not logs.
+!cmd/allternit-api/tests/fixtures/**/*.jsonl
 *.bak
 *.tsbuildinfo*
 .env

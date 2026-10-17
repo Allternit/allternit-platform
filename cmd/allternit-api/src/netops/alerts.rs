@@ -204,8 +204,8 @@ pub fn resolve_source(conn: &Connection, owner: &str, kind: &str, source_id: &st
     resolve(conn, owner, &format!("{kind}:{source_id}"), how)
 }
 
-/// Run an item's retry now. Today that is `{"routineId"}` → the routine runs
-/// again, as "Run now" does. Errors are plain sentences for the person.
+/// Run an item's retry now. `{"routineId"}` runs the routine again, as "Run now" does;
+/// `{"pinApprove": {serverId, tool, hash}}` re-pins an MCP tool and resolves the item. Errors are plain sentences for the person.
 pub async fn retry(state: &Arc<AppState>, owner: &str, id: &str) -> Result<Value, (StatusCode, String)> {
     let retry_json: Option<Option<String>> = state
         .db
@@ -216,6 +216,20 @@ pub async fn retry(state: &Arc<AppState>, owner: &str, id: &str) -> Result<Value
         return Err((StatusCode::NOT_FOUND, "this problem is already fixed".into()));
     };
     let spec: Value = retry_json.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(Value::Null);
+    if let Some(pin) = spec.get("pinApprove").filter(|p| p.is_object()) {
+        let (Some(server), Some(tool), Some(hash)) = (pin["serverId"].as_str(), pin["tool"].as_str(), pin["hash"].as_str()) else {
+            return Err((StatusCode::BAD_REQUEST, "this approval is incomplete; dismiss it and let the bot list its tools again".into()));
+        };
+        let conn = state.db.connect().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        let desc: Option<String> = conn
+            .query_row("SELECT detail_json FROM attention_items WHERE id = ?1 AND owner = ?2", params![id, owner], |r| r.get::<_, Option<String>>(0))
+            .ok()
+            .flatten()
+            .and_then(|d| serde_json::from_str::<Value>(&d).ok())
+            .and_then(|d| d["newDescription"].as_str().map(String::from));
+        crate::mcp_server_routes::pin_tool(&conn, owner, server, tool, hash, desc.as_deref());
+        return Ok(json!({ "status": "approved", "serverId": server, "tool": tool }));
+    }
     let Some(routine_id) = spec["routineId"].as_str() else {
         return Err((StatusCode::BAD_REQUEST, "this problem cannot be retried; fix the cause, then dismiss it".into()));
     };
