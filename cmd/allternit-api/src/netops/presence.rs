@@ -11,7 +11,7 @@ use axum::Router;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde_json::{json, Value};
 
-use crate::runtime_events::{EventSink, HttpSink};
+use crate::runtime_events::EventSink;
 use crate::AppState;
 
 pub const HEARTBEAT_PATH: &str = "/api/v1/runtime-presence/heartbeat";
@@ -52,8 +52,89 @@ pub fn heartbeat_payload_at(conn: &rusqlite::Connection, owner: &str, now: DateT
     due.sort_by_key(|d| d.0);
     due.truncate(MAX_DUE);
     json!({
+        "failoverRuntimeId": failover_runtime(conn, owner),
         "nextDue": due.into_iter().map(|(t, id, title)| json!({ "routineId": id, "title": title, "at": t.to_rfc3339() })).collect::<Vec<_>>(),
     })
+}
+
+/// The cloud computer this owner's always-on bots fail over to, if any.
+fn failover_runtime(conn: &rusqlite::Connection, owner: &str) -> Value {
+    conn.query_row(
+        "SELECT json_extract(config, '$.availability.failoverRuntimeId') FROM agents
+         WHERE user_id = ?1 AND json_valid(config) AND json_extract(config, '$.availability.alwaysOn') IN (1, 'true')
+           AND COALESCE(json_extract(config, '$.availability.failoverRuntimeId'), '') <> ''
+         ORDER BY created_at LIMIT 1",
+        [owner],
+        |r| r.get::<_, String>(0),
+    )
+    .map(Value::from)
+    .unwrap_or(Value::Null)
+}
+
+/// Write the failovers the cloud reports (it carried this computer's messages
+/// while it was offline) to each always-on bot: a `bot_failovers` row and a
+/// `bot.failover` event on its standing threads. Idempotent per failover id.
+pub fn record_failovers(db: &crate::db::DbHandle, owner: &str, reply: &Value) -> usize {
+    let Ok(conn) = db.connect() else { return 0 };
+    let mut n = 0;
+    for f in reply["failovers"].as_array().into_iter().flatten() {
+        let (Some(fid), Some(from), Some(to), Some(start)) = (f["id"].as_str(), f["from"].as_str(), f["to"].as_str(), f["startedAt"].as_str()) else { continue };
+        let reason = f["reason"].as_str().unwrap_or("home runtime offline");
+        let end = f["endedAt"].as_str();
+        let bots: Vec<String> = conn
+            .prepare(
+                "SELECT id FROM agents WHERE user_id = ?1 AND json_valid(config)
+                   AND json_extract(config, '$.availability.alwaysOn') IN (1, 'true')
+                   AND json_extract(config, '$.availability.failoverRuntimeId') = ?2",
+            )
+            .and_then(|mut st| st.query_map(rusqlite::params![owner, to], |r| r.get(0)).map(|rows| rows.flatten().collect()))
+            .unwrap_or_default();
+        for bot in bots {
+            let row_id = format!("{fid}:{bot}");
+            let inserted = conn
+                .execute(
+                    "INSERT OR IGNORE INTO bot_failovers (id, bot_id, from_runtime, to_runtime, started_at, ended_at, reason) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+                    rusqlite::params![row_id, bot, from, to, start, end, reason],
+                )
+                .unwrap_or(0);
+            if inserted == 0 {
+                continue;
+            }
+            n += 1;
+            let threads: Vec<String> = conn
+                .prepare("SELECT id FROM bot_threads WHERE bot_id = ?1 AND kind = 'standing'")
+                .and_then(|mut st| st.query_map([&bot], |r| r.get(0)).map(|rows| rows.flatten().collect()))
+                .unwrap_or_default();
+            for t in threads {
+                let payload = json!({ "from": from, "to": to, "startedAt": start, "endedAt": end, "reason": reason });
+                // The thread event rides the bot ledger, like every other thread event.
+                let _ = crate::bot_event_routes::append_event(
+                    db,
+                    &bot,
+                    &crate::bot_event_routes::AppendEventBody {
+                        event_type: "bot.failover".into(),
+                        actor: crate::bot_event_routes::ActorBody { r#type: "system".into(), id: "presence".into() },
+                        payload,
+                        occurred_at: None,
+                        session_id: None,
+                        goal_id: None,
+                        wih_id: None,
+                        task_id: None,
+                        run_id: None,
+                        idempotency_key: Some(format!("failover:{fid}:{t}")),
+                    },
+                    &Utc::now().to_rfc3339(),
+                )
+                .map(|_| {
+                    let _ = conn.execute(
+                        "UPDATE bot_events SET thread_id = ?1 WHERE bot_id = ?2 AND idempotency_key = ?3",
+                        rusqlite::params![t, bot, format!("failover:{fid}:{t}")],
+                    );
+                });
+            }
+        }
+    }
+    n
 }
 
 /// Runtime side serves no routes; the heartbeat goes out, not in.
@@ -93,12 +174,45 @@ fn sign(token: &str, owner: &str, runtime_id: &str, body: &[u8]) -> Vec<(String,
     h
 }
 
+/// [`beat_once`] over HTTP that also reads the cloud's reply: the failovers
+/// that carried this computer's messages while it was offline are written to
+/// the always-on bots ([`record_failovers`]).
+async fn beat_and_reconcile(state: &AppState, cloud: &str) -> Result<bool, String> {
+    let secret = crate::relay_auth::process_secret();
+    let (Some(token), Some(owner), Some(runtime_id)) = (secret.device_token(), secret.paired_owner(), secret.runtime_id()) else {
+        return Ok(false);
+    };
+    let db = state.db.clone();
+    let o = owner.clone();
+    let mut body = tokio::task::spawn_blocking(move || db.connect().map(|c| heartbeat_payload(&c, &o)))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    body["runtimeId"] = json!(runtime_id);
+    let bytes = serde_json::to_vec(&body).map_err(|e| e.to_string())?;
+    let mut req = reqwest::Client::new().post(format!("{cloud}{HEARTBEAT_PATH}")).timeout(Duration::from_secs(20)).header("content-type", "application/json");
+    for (k, v) in sign(&token, &owner, &runtime_id, &bytes) {
+        req = req.header(k, v);
+    }
+    let res = req.body(bytes).send().await.map_err(|e| e.to_string())?;
+    if !res.status().is_success() {
+        return Err(format!("the cloud answered {}", res.status()));
+    }
+    if let Ok(reply) = res.json::<Value>().await {
+        if reply["failovers"].as_array().is_some_and(|a| !a.is_empty()) {
+            let db = state.db.clone();
+            let _ = tokio::task::spawn_blocking(move || record_failovers(&db, &owner, &reply)).await;
+        }
+    }
+    Ok(true)
+}
+
 /// The heartbeat loop (inert until the runtime is paired).
 pub fn spawn(state: Arc<AppState>) {
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(EVERY).await;
-            if let Err(e) = beat_once(&state, &HttpSink, &crate::phone_sync::cloud_base()).await {
+            if let Err(e) = beat_and_reconcile(&state, &crate::phone_sync::cloud_base()).await {
                 tracing::debug!("runtime presence heartbeat: {e}");
             }
         }

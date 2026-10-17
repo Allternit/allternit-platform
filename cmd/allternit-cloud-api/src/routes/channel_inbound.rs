@@ -653,6 +653,16 @@ pub(crate) async fn deliver_route(state: &Arc<ApiState>, route_id: &str) -> Resu
                 .await?;
             return Ok(());
         };
+        // Always-on bots: while the home computer is offline, a failover cloud computer gets the message.
+        let home_runtime = runtime_id.clone();
+        let runtime_id = if provider == MCP_EVENTS_PROVIDER {
+            runtime_id
+        } else {
+            let connected = super::runtime_relay::connected_runtime_ids().await;
+            super::runtime_presence::delivery_runtime(&state.db, &user_id, &runtime_id, &connected, Utc::now())
+                .await
+                .unwrap_or(runtime_id)
+        };
         let route = Route { id: route_id.to_string(), user_id, runtime_id, provider };
         let headers: HashMap<String, String> = serde_json::from_value(headers).unwrap_or_default();
         let body = {
@@ -673,7 +683,7 @@ pub(crate) async fn deliver_route(state: &Arc<ApiState>, route_id: &str) -> Resu
                 .await?;
             // A connector event is not a channel message: the runtime decides what (if anything) to tell the owner.
             if route.provider != MCP_EVENTS_PROVIDER {
-                super::web_push::notify_channel_message(&state.db, &route.user_id, &route.id, &route.provider, &route.runtime_id);
+                super::web_push::notify_channel_message(&state.db, &route.user_id, &route.id, &route.provider, &home_runtime);
             }
             continue;
         }
@@ -683,7 +693,7 @@ pub(crate) async fn deliver_route(state: &Arc<ApiState>, route_id: &str) -> Resu
             tracing::warn!(route_id = %route.id, queue_id = id, provider = %route.provider, ?status, attempts, error = ?error, "channel event dead: not delivered to the runtime");
             // Not a silent drop: tell the owner (critical attention item, resolved when the runtime is back).
             if let Err(e) = super::runtime_presence::open_alert(
-                &state.db, &route.user_id, &route.runtime_id, "queue_gave_up", "critical",
+                &state.db, &route.user_id, &home_runtime, "queue_gave_up", "critical",
                 "A message couldn't be delivered to your computer after 24 hours and was dropped.",
             ).await {
                 tracing::warn!(route_id = %route.id, "couldn't raise the give-up alert: {e}");

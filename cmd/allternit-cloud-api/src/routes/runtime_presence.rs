@@ -75,8 +75,15 @@ async fn heartbeat(State(state): State<Arc<ApiState>>, headers: HeaderMap, body:
     let Ok(parsed) = serde_json::from_slice::<Value>(&body) else {
         return (StatusCode::BAD_REQUEST, Json(json!({ "error": "bad_body" }))).into_response();
     };
-    match record_heartbeat(&state.db, &runtime_id, clean_due(&parsed)).await {
-        Ok(()) => Json(json!({ "ok": true })).into_response(),
+    let failover = parsed["failoverRuntimeId"].as_str().filter(|s| !s.is_empty() && s.len() <= 128);
+    let result = async {
+        record_heartbeat(&state.db, &runtime_id, clean_due(&parsed)).await?;
+        set_failover_runtime(&state.db, &runtime_id, failover).await?;
+        take_finished_failovers(&state.db, &runtime_id).await
+    }
+    .await;
+    match result {
+        Ok(failovers) => Json(json!({ "ok": true, "failovers": failovers })).into_response(),
         Err(e) => {
             tracing::error!("runtime presence heartbeat: {e}");
             (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "internal" }))).into_response()
@@ -94,7 +101,96 @@ pub async fn record_heartbeat(db: &PgPool, runtime_id: &str, next_due: Value) ->
     .bind(next_due)
     .execute(db)
     .await?;
+    // The home runtime is back: any failover that was carrying its messages ends here.
+    sqlx::query("UPDATE runtime_failovers SET ended_at = now() WHERE from_runtime = $1 AND ended_at IS NULL")
+        .bind(runtime_id)
+        .execute(db)
+        .await?;
     resolve_all(db, runtime_id).await
+}
+
+/// The cloud computer this runtime's always-on bots fail over to (`None` = none).
+pub async fn set_failover_runtime(db: &PgPool, runtime_id: &str, to: Option<&str>) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE runtime_devices SET failover_runtime_id = $2 WHERE id = $1")
+        .bind(runtime_id)
+        .bind(to)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+/// Finished failovers the runtime has not been told about yet, for it to write
+/// to its bots' threads (`bot.failover`) and `bot_failovers`. Each is returned once.
+pub async fn take_finished_failovers(db: &PgPool, runtime_id: &str) -> Result<Value, sqlx::Error> {
+    let rows: Vec<(String, String, String, DateTime<Utc>, Option<DateTime<Utc>>)> = sqlx::query_as(
+        "UPDATE runtime_failovers SET reported_at = now() WHERE from_runtime = $1 AND ended_at IS NOT NULL AND reported_at IS NULL \
+         RETURNING id, to_runtime, reason, started_at, ended_at",
+    )
+    .bind(runtime_id)
+    .fetch_all(db)
+    .await?;
+    Ok(Value::Array(
+        rows.into_iter()
+            .map(|(id, to, reason, started, ended)| json!({ "id": id, "from": runtime_id, "to": to, "reason": reason, "startedAt": started, "endedAt": ended }))
+            .collect(),
+    ))
+}
+
+/// Where a queued message for `home` should go right now: `home` itself, or its
+/// always-on failover computer while `home` is offline. The pure half of
+/// [`delivery_runtime`].
+pub fn pick_runtime(home: &str, online: bool, failover: Option<&str>, failover_wakeable: bool) -> String {
+    match failover {
+        Some(to) if !online && failover_wakeable && to != home => to.to_string(),
+        _ => home.to_string(),
+    }
+}
+
+/// The runtime a channel message for `home` is delivered to. Opens (once) the
+/// `runtime_failovers` row when it switches; [`record_heartbeat`] closes it.
+pub async fn delivery_runtime(db: &PgPool, user_id: &str, home: &str, connected: &HashSet<String>, now: DateTime<Utc>) -> Result<String, sqlx::Error> {
+    let row: Option<(Option<DateTime<Utc>>, Option<String>)> = sqlx::query_as(
+        "SELECT last_heartbeat_at, failover_runtime_id FROM runtime_devices WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL",
+    )
+    .bind(home)
+    .bind(user_id)
+    .fetch_optional(db)
+    .await?;
+    // Never beat = not a runtime that reports presence: keep today's behaviour.
+    let Some((Some(beat), Some(to))) = row else { return Ok(home.to_string()) };
+    let online = is_online(connected.contains(home), Some(beat), now);
+    if online {
+        return Ok(home.to_string());
+    }
+    let wakeable = is_wakeable(db, user_id, &to).await?;
+    let target = pick_runtime(home, online, Some(&to), wakeable);
+    if target != home {
+        let opened = sqlx::query(
+            "INSERT INTO runtime_failovers (id, user_id, from_runtime, to_runtime) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING",
+        )
+        .bind(format!("fo_{}", uuid::Uuid::new_v4().simple()))
+        .bind(user_id)
+        .bind(home)
+        .bind(&target)
+        .execute(db)
+        .await?;
+        if opened.rows_affected() > 0 {
+            tracing::info!(home, to = %target, "always-on failover: delivering queued messages to the failover computer");
+        }
+    }
+    Ok(target)
+}
+
+/// A cloud computer of this owner (one that `connect_or_wake_runtime` can start).
+pub async fn is_wakeable(db: &PgPool, user_id: &str, runtime_id: &str) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM provisioned_instances p JOIN runtime_devices d ON d.id = p.device_id \
+         WHERE p.device_id = $1 AND d.user_id = $2 AND d.revoked_at IS NULL AND p.status <> 'deleted')",
+    )
+    .bind(runtime_id)
+    .bind(user_id)
+    .fetch_one(db)
+    .await
 }
 
 #[derive(sqlx::FromRow)]
@@ -121,15 +217,22 @@ async fn list(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> Result<
     .await?;
     let connected = super::runtime_relay::connected_runtime_ids().await;
     let now = Utc::now();
+    let mut wakeable = HashSet::new();
+    for r in &rows {
+        if is_wakeable(&state.db, &user.id, &r.id).await.unwrap_or(false) {
+            wakeable.insert(r.id.clone());
+        }
+    }
     let out: Vec<Value> = rows
         .into_iter()
         .map(|r| {
+            let can_wake = wakeable.contains(&r.id);
             json!({
                 "runtimeId": r.id,
                 "name": r.name.unwrap_or_else(|| "Computer".into()),
                 "online": is_online(connected.contains(&r.id), r.last_heartbeat_at, now),
                 "lastSeen": r.last_heartbeat_at.max(r.last_seen_at),
-                "wakeable": false,
+                "wakeable": can_wake,
                 "nextDue": r.next_due,
             })
         })
@@ -334,6 +437,37 @@ mod tests {
         assert_eq!(events(&db, "attention.resolved").await, 3);
         let open: i64 = sqlx::query_scalar("SELECT count(*) FROM runtime_presence_alerts WHERE resolved_at IS NULL").fetch_one(&db).await.unwrap();
         assert_eq!(open, 0);
+    }
+
+    #[tokio::test]
+    #[test]
+    fn failover_only_while_home_is_offline_and_target_is_a_cloud_computer() {
+        assert_eq!(pick_runtime("mac", false, Some("cloud"), true), "cloud");
+        assert_eq!(pick_runtime("mac", true, Some("cloud"), true), "mac", "home is back: switch back");
+        assert_eq!(pick_runtime("mac", false, Some("cloud"), false), "mac", "not a cloud computer: nothing to wake");
+        assert_eq!(pick_runtime("mac", false, None, true), "mac");
+    }
+
+    #[tokio::test]
+    async fn failover_opens_once_and_closes_when_home_beats_again() {
+        let db = schema().await;
+        sqlx::raw_sql(&include_str!("../../migrations_pg/091_runtime_failover.sql").replace("public.", "")).execute(&db).await.unwrap();
+        sqlx::query("CREATE TABLE IF NOT EXISTS provisioned_instances (device_id text, status text)").execute(&db).await.unwrap();
+        seed_runtime_device(&db, "cloud1", "u1").await;
+        sqlx::query("INSERT INTO provisioned_instances VALUES ('cloud1','stopped')").execute(&db).await.unwrap();
+        let now = Utc::now();
+        sqlx::query("UPDATE runtime_devices SET last_heartbeat_at = $1 WHERE id = 'rt1'").bind(now - Duration::minutes(30)).execute(&db).await.unwrap();
+        set_failover_runtime(&db, "rt1", Some("cloud1")).await.unwrap();
+        let none = HashSet::new();
+        assert_eq!(delivery_runtime(&db, "u1", "rt1", &none, now).await.unwrap(), "cloud1");
+        assert_eq!(delivery_runtime(&db, "u1", "rt1", &none, now).await.unwrap(), "cloud1");
+        let open: i64 = sqlx::query_scalar("SELECT count(*) FROM runtime_failovers WHERE ended_at IS NULL").fetch_one(&db).await.unwrap();
+        assert_eq!(open, 1);
+        record_heartbeat(&db, "rt1", json!([])).await.unwrap();
+        assert_eq!(delivery_runtime(&db, "u1", "rt1", &none, now).await.unwrap(), "rt1", "switched back");
+        let told = take_finished_failovers(&db, "rt1").await.unwrap();
+        assert_eq!(told.as_array().unwrap().len(), 1);
+        assert_eq!(take_finished_failovers(&db, "rt1").await.unwrap().as_array().unwrap().len(), 0, "reported once");
     }
 
     #[tokio::test]

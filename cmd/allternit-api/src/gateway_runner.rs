@@ -6,7 +6,9 @@
 //! * A bot whose execution binding is `type=vendor` runs its turns remotely
 //!   through the AAI (`POST {gateway}/aai/call`). No binding, or `type=allternit`,
 //!   is today's native path, unchanged. A vendor bot that is not READY never
-//!   falls back to a native brain.
+//!   falls back to a native brain, unless its owner opted in with
+//!   `agents.config.fallbackBrain` ([`run_with_fallback`]: always disclosed in
+//!   the reply and as a `lane.fallback` thread event).
 //! * One `remote_thread_bindings` row per thread generation. A handoff moves the
 //!   old one ACTIVE -> HANDOFF_PENDING -> CLOSED; the next turn opens a new one
 //!   (possibly on a different execution binding).
@@ -1123,6 +1125,87 @@ pub async fn respond_approval(
 
 // ---------------------------------------------------------------- process-wide entry points
 
+// ---------------------------------------------------------------- fallback lane (opt-in)
+
+/// Errors that mean "the vendor session needs a check": the only ones a bot
+/// that opted in to a fallback brain answers around.
+fn fallback_eligible(code: &str) -> bool {
+    matches!(code, "BINDING_NOT_READY" | "LANE_BLOCKED" | "AUTH_REQUIRED" | "AUTH_REVOKED")
+}
+
+/// `agents.config.fallbackBrain` (`"provider/model"`), when the owner set one.
+pub(crate) fn fallback_brain(db: &DbHandle, bot_id: &str) -> Option<String> {
+    let conn = db.connect().ok()?;
+    let brain: Option<String> = conn
+        .query_row("SELECT json_extract(config, '$.fallbackBrain') FROM agents WHERE id = ?1 AND json_valid(config)", params![bot_id], |r| r.get(0))
+        .optional()
+        .ok()
+        .flatten()
+        .flatten();
+    brain.map(|b| b.trim().to_string()).filter(|b| b.contains('/') && !b.starts_with('/') && !b.ends_with('/'))
+}
+
+fn title_case(s: &str) -> String {
+    let mut c = s.chars();
+    c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
+}
+
+/// [`run_turn`] for a caller that can run the same turn on a native brain.
+/// `Ok(None)` = not a vendor thread. When the vendor session is not usable
+/// (not READY, LANE_BLOCKED, AUTH_REQUIRED) and the bot opted in to a
+/// `fallbackBrain`, `native(brain)` answers instead: a `lane.fallback`
+/// `{from, to, reason}` event lands on the thread and the reply opens with one
+/// disclosure line. Without the opt-in the refusal is unchanged.
+pub async fn run_with_fallback<R, F, Fut>(
+    db: &DbHandle,
+    tx: &dyn AaiTransport,
+    rt: &R,
+    session_id: &str,
+    text: &str,
+    opts: TurnOpts,
+    native: F,
+) -> Option<Result<String, String>>
+where
+    R: ThreadRuntime,
+    F: FnOnce(String) -> Fut,
+    Fut: std::future::Future<Output = Result<String, String>>,
+{
+    match run_turn(db, tx, rt, session_id, text, opts).await {
+        Ok(None) => None,
+        Ok(Some(r)) => Some(r.reply.ok_or_else(|| "the vendor accepted the turn and has not replied yet".to_string())),
+        Err(e) => {
+            let cx = resolve(db, session_id).ok().flatten();
+            let brain = cx.as_ref().filter(|_| fallback_eligible(&e.code)).and_then(|cx| fallback_brain(db, &cx.bot_id).map(|b| (cx, b)));
+            let Some((cx, brain)) = brain else { return Some(Err(e.message)) };
+            let vendor = s(&cx.exec, "vendor");
+            let provider = title_case(&vendor);
+            let model = brain.split_once('/').map(|(_, m)| m).unwrap_or(&brain).to_string();
+            led(
+                db,
+                &cx.bot_id,
+                &cx.thread_id,
+                None,
+                "lane.fallback",
+                ("system", "gateway"),
+                json!({ "from": vendor, "to": brain, "reason": e.code, "message": e.message }),
+                None,
+            );
+            Some(native(brain).await.map(|reply| format!("Answered by {model} because your {provider} session needs a check.\n\n{reply}")))
+        }
+    }
+}
+
+/// [`run_with_fallback`] on the process-wide runtime. `None` = native path.
+pub async fn intercept_turn_with_fallback<F, Fut>(session_id: &str, text: &str, opts: TurnOpts, native: F) -> Option<Result<String, String>>
+where
+    F: FnOnce(String) -> Fut,
+    Fut: std::future::Future<Output = Result<String, String>>,
+{
+    let rt = RUNTIME.get()?;
+    let runtime = crate::thread_routes::GizziRuntime { db: rt.db.clone() };
+    run_with_fallback(&rt.db, rt.tx.as_ref(), &runtime, session_id, text, opts, native).await
+}
+
 /// `send_bot_turn` hook: `None` = native path. `Some` = the vendor turn's reply
 /// (or the reason it did not run).
 pub async fn intercept_turn(session_id: &str, text: &str, opts: TurnOpts) -> Option<Result<String, String>> {
@@ -1809,6 +1892,29 @@ mod tests {
         assert_eq!(e.code, "BINDING_NOT_READY");
         assert_eq!(thread_status(&st), "needs_you");
         assert!(f.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn opted_in_bot_answers_on_its_fallback_brain_with_a_disclosure_and_an_event() {
+        let st = setup("fallback").await;
+        let f = Fake::default();
+        st.db.connect().unwrap().execute("UPDATE bot_execution_bindings SET state='NEEDS_AUTH'", []).unwrap();
+        st.db.connect().unwrap().execute("UPDATE agents SET config='{\"fallbackBrain\":\"anthropic/claude-sonnet-5-5\"}' WHERE id='bot-vendor'", []).unwrap();
+        let r = run_with_fallback(&st.db, &f, &Rt, "s-th-vendor", "hi", key("k"), |brain| async move { Ok(format!("native on {brain}")) }).await.unwrap().unwrap();
+        assert_eq!(r, "Answered by claude-sonnet-5-5 because your Acme session needs a check.\n\nnative on anthropic/claude-sonnet-5-5");
+        assert_eq!(count_events(&st, "lane.fallback"), 1);
+        assert!(f.calls.lock().unwrap().is_empty(), "the vendor lane was not called");
+    }
+
+    #[tokio::test]
+    async fn no_fallback_without_the_opt_in_and_a_native_bot_is_left_alone() {
+        let st = setup("nofallback").await;
+        let f = Fake::default();
+        st.db.connect().unwrap().execute("UPDATE bot_execution_bindings SET state='NEEDS_AUTH'", []).unwrap();
+        let r = run_with_fallback(&st.db, &f, &Rt, "s-th-vendor", "hi", key("k"), |_| async { Ok("native".to_string()) }).await.unwrap();
+        assert!(r.unwrap_err().contains("not READY"));
+        assert_eq!(count_events(&st, "lane.fallback"), 0);
+        assert!(run_with_fallback(&st.db, &f, &Rt, "s-th-native", "hi", key("k2"), |_| async { Ok("native".to_string()) }).await.is_none());
     }
 
     #[tokio::test]
