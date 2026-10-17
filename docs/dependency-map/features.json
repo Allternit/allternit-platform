@@ -1269,7 +1269,8 @@
         "allternit-ai/src/components/phone-link",
         "allternit-ai/src/components/onboarding",
         "allternit-ai/src/views/settings",
-        "allternit-ai/src/lib"
+        "allternit-ai/src/lib",
+        "allternit/cmd/allternit-sideload"
       ],
       "decisions": [
         {
@@ -1299,6 +1300,10 @@
         {
           "on": "2026-10-16",
           "note": "Phone Link setup UI (ai, PhoneLinkSetup / PhoneLinkPanel / usePhoneLink): one screen per backend state with Eoj's per-state copy, Apple ID and 2FA forms that clear after submit and never log, a highlighted 'Turn on Developer Mode?' popup callout after the restart, and a result card listing each app's sign-in state. iPhone has no 'Coming soon': an unfinished backend step is a plain error. Opened from Settings > Subscriptions, Settings > Computers > Phones and onboarding Your AI ('Use the apps on your devices'; done only at ready_wifi). Web, phone layout and PWA show 'Set up from Allternit Desktop'."
+        },
+        {
+          "on": "2026-10-16",
+          "note": "iPhone helper signing with the user's own Apple ID, no Xcode: allternit-sideload sidecar (Rust over isideload 0.4.6, MIT), JSON lines over stdio with Desktop's SideloadSigner. Password only on stdin and zeroized; Apple session, signing key and anisette identity in the macOS Keychain (com.allternit.sideload) so re-signs skip password and 2FA. Stable per-team ids com.allternit.phonelink.<team> reuse App IDs; the runner's .xctest takes the runner's id (isideload's extension handling bypassed via its lower-level APIs; upstream PR drafted). Its own cargo workspace (russh 0.60.3 vs isideload aes-gcm conflict). OPTIONAL in packaging until anisette.allternit.com is hosted; hosting, licence review (apple-codesign-quick is LGPL-2.1) and Apple ToS are open."
         }
       ],
       "evidence": [
@@ -1308,7 +1313,8 @@
         "allternit-ai/src/components/phone-link/PhoneLinkSetup.tsx",
         "allternit/hardware/usb-agent/README.md",
         "allternit/surfaces/allternit-desktop/src/main/phone-tools.ts",
-        "allternit/surfaces/allternit-desktop/src/main/phone-usb-agent.ts"
+        "allternit/surfaces/allternit-desktop/src/main/phone-usb-agent.ts",
+        "allternit/cmd/allternit-sideload/README.md"
       ]
     },
     {

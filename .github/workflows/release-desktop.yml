@@ -292,6 +292,27 @@ jobs:
           chmod +x surfaces/allternit-desktop/resources/bin/allternit-factory
           lipo -info surfaces/allternit-desktop/resources/bin/allternit-factory
 
+      # ── Step 3e3: Build the Phone Link Apple ID signer (optional) ──────────
+      - name: Build allternit-sideload (optional)
+        # Signs the iPhone helper with the user's Apple ID (phone-ios-runner.ts
+        # SideloadSigner). Its own cargo workspace (see its Cargo.toml), hence
+        # --manifest-path. OPTIONAL until anisette.allternit.com is hosted:
+        # a failure here ships Desktop without iPhone setup instead of failing
+        # the release (release-preflight.mjs lists it as advisory).
+        continue-on-error: true
+        run: |
+          for t in x86_64-apple-darwin aarch64-apple-darwin; do
+            cargo build --release --manifest-path cmd/allternit-sideload/Cargo.toml --target "$t" \
+              --target-dir target/sideload
+          done
+          mkdir -p surfaces/allternit-desktop/resources/bin
+          lipo -create \
+            target/sideload/x86_64-apple-darwin/release/allternit-sideload \
+            target/sideload/aarch64-apple-darwin/release/allternit-sideload \
+            -output surfaces/allternit-desktop/resources/bin/allternit-sideload
+          chmod +x surfaces/allternit-desktop/resources/bin/allternit-sideload
+          lipo -info surfaces/allternit-desktop/resources/bin/allternit-sideload
+
       # ── Step 3f: Stage CUA Lume (Apple Virtualization) ──────────────────────
       - name: Stage Lume virtualization helper
         # allternit-api looks for Resources/bin/lume next to itself. The CUA

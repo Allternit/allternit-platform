@@ -10,12 +10,15 @@
 import { EventEmitter } from 'node:events';
 import type { AdbCall } from './phone-tools.js';
 import type { PhoneLinkApp, PhoneLinkPlatform, PhoneLinkStatus } from './phone-link-types.js';
+import { IosDriver, type IosDriverDeps } from './phone-link-ios.js';
 
 export interface PhoneLinkDriver {
   run(ctx: DriverContext): Promise<void>;
   continue?(): void;
   submitAppleId?(creds: { appleId: string; password: string }): void;
   submitTwoFactor?(code: string): void;
+  /** Stop child processes / forwards the run started (cancel, retry, quit). */
+  dispose?(): void;
 }
 
 export interface DriverContext {
@@ -30,6 +33,8 @@ export interface PhoneLinkDeps {
   platform?: NodeJS.Platform;
   /** Lazily resolved so adb is only downloaded when Android setup starts. */
   adb?: () => Promise<AdbCall>;
+  /** Lazily resolved so go-ios and the runner are only fetched when iPhone setup starts. */
+  ios?: () => Promise<IosDriverDeps>;
   sleep?: (ms: number) => Promise<void>;
   logger?: (message: string) => void;
 }
@@ -62,7 +67,7 @@ export class PhoneLinkManager extends EventEmitter {
         instruction: 'iPhone setup needs Allternit Desktop on a Mac.',
       });
     }
-    const driver = platform === 'android' ? new AndroidDriver(this.deps) : new IosDriver();
+    const driver = platform === 'android' ? new AndroidDriver(this.deps) : new LazyIosDriver(this.deps.ios);
     this.driver = driver;
     let cancel!: () => void;
     const cancelled = new Promise<void>((resolve) => (cancel = resolve));
@@ -118,6 +123,7 @@ export class PhoneLinkManager extends EventEmitter {
   }
 
   private stop(): void {
+    this.driver?.dispose?.();
     this.cancelRun?.();
     this.cancelRun = null;
     this.driver = null;
@@ -258,13 +264,54 @@ class AndroidDriver implements PhoneLinkDriver {
 
 // ─── iPhone ───────────────────────────────────────────────────────────────────
 
-/** The cable setup (signing + runner install over idevice) is being built; see SPEC §6. */
-class IosDriver implements PhoneLinkDriver {
+/** Resolves go-ios, the runner and the signer on start, then hands over to IosDriver (phone-link-ios.ts). */
+class LazyIosDriver implements PhoneLinkDriver {
+  private inner: IosDriver | null = null;
+  private disposed = false;
+
+  constructor(private readonly load?: () => Promise<IosDriverDeps>) {}
+
   async run(ctx: DriverContext): Promise<void> {
-    ctx.set({
-      state: 'error',
-      instruction: 'iPhone setup isn\'t ready in this version yet.',
-      error: { code: 'ios_not_ready', message: 'iPhone Phone Link is still being built.', retryable: false },
-    });
+    if (!this.load) {
+      ctx.set({
+        state: 'error',
+        instruction: 'iPhone setup isn\'t ready in this version yet.',
+        error: { code: 'ios_not_ready', message: 'iPhone Phone Link is not wired in this build.', retryable: false },
+      });
+      return;
+    }
+    ctx.set({ state: 'needs_cable', instruction: 'Getting iPhone tools ready…' });
+    let deps: IosDriverDeps;
+    try {
+      deps = await this.load();
+    } catch (error) {
+      if (ctx.isCancelled()) return;
+      ctx.set({
+        state: 'error',
+        instruction: 'Couldn\'t download the iPhone tools. Check your connection and try again.',
+        error: { code: 'tools_unavailable', message: error instanceof Error ? error.message : String(error), retryable: true },
+      });
+      return;
+    }
+    if (ctx.isCancelled() || this.disposed) return;
+    this.inner = new IosDriver(deps);
+    await this.inner.run(ctx);
+  }
+
+  continue(): void {
+    this.inner?.continue();
+  }
+
+  submitAppleId(creds: { appleId: string; password: string }): void {
+    this.inner?.submitAppleId(creds);
+  }
+
+  submitTwoFactor(code: string): void {
+    this.inner?.submitTwoFactor(code);
+  }
+
+  dispose(): void {
+    this.disposed = true;
+    this.inner?.dispose();
   }
 }
