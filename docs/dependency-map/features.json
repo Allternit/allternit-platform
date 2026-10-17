@@ -1317,6 +1317,9 @@
         },
         {
           "on": "2026-10-17",
+          "note": "In-app linked-Android live view (Phase 1): scrcpy-server pinned to v5.0.1 with a recorded SHA-256, downloaded on first use from the official release (never bundled); phone-scrcpy.ts implements the v5 wire protocol (dummy byte, 64-byte device name, h264 codec id, 12-byte session packets for rotation/size, 12-byte frame headers stripped before IPC), one shared PhoneStreamManager session per serial exposed to the renderer over phone:stream-* IPC with Annex-B H.264 chunks as structured-clone Buffers; input (touch/key/text/scroll/back/home/app_switch/power) and SET_DISPLAY_POWER encoded per control_msg.c. Agent-takeover banner: PhoneInfo.agentBusy fed by tool-runner and ARTEMIS activity counters. Streams start only on renderer request; the external scrcpy window stays a secondary action."
+        },
+        {
           "note": "Bots reach Phone-Linked phones through one iCTRL lane in PhoneToolRunner (link: serials) with read_ui/find_and_tap/screen_text on every lane and per-phone health; remount and signature renewal are manual states."
         },
         {
@@ -1336,7 +1339,31 @@
         "allternit/hardware/usb-agent/README.md",
         "allternit/surfaces/allternit-desktop/src/main/phone-tools.ts",
         "allternit/surfaces/allternit-desktop/src/main/phone-usb-agent.ts",
+        "allternit/surfaces/allternit-desktop/src/main/phone-scrcpy.ts",
+        "allternit/surfaces/allternit-desktop/src/main/phone-stream.ts",
         "allternit/cmd/allternit-sideload/README.md"
+      ]
+    },
+    {
+      "id": "feature:phone-stream-relay",
+      "label": "Phone stream relay (Phones 2.0)",
+      "product": "product:computer-use",
+      "status": "building",
+      "description": "Any surface views and controls a linked Android through the account's Desktop app: the browser opens /ws/phones/:serial/stream with a short-lived HMAC token (purpose phone_stream, read-only by default, ACI-gated full control, 4401 close at expiry), and the Desktop's phone-link session socket (/ws/phone-link/session, desktop-credential auth) relays the scrcpy H.264 stream and JSON control envelopes both ways. Registry is in-memory in allternit-api; cloud PG registered_phones rows (identity + last_seen only) are the persistence, so GET /api/v1/phones can say \"linked but Desktop offline\".",
+      "touches": [
+        "allternit/cmd/allternit-api/src/phone_ws.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/registered_phones.rs",
+        "allternit-ai/src/components/phone-link"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-17",
+          "note": "Phones 2.0 relay lane (approved plan): mirrors the computer_ws VNC proxy minus VNC — frames are opaque (binary video + JSON text). Read-only is enforced at the pipe (a read-only token's browser->desktop frames are dropped) because the payload is never parsed. One active stream per phone-link socket: a socket may hello many phones (all register online) but streams one serial at a time; scrcpy is one device per process, so the Desktop opens one socket per streamed phone. Full-control tokens reuse the computer_ws ACI confirmation-grant pattern."
+        }
+      ],
+      "evidence": [
+        "allternit/cmd/allternit-api/src/phone_ws.rs",
+        "allternit/cmd/allternit-cloud-api/src/routes/registered_phones.rs"
       ]
     },
     {

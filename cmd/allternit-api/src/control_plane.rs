@@ -356,6 +356,7 @@ mod tests {
             computer_guest_tokens: Arc::new(tokio::sync::RwLock::new(
                 std::collections::HashMap::new(),
             )),
+            phone_link: crate::phone_ws::PhoneLinkRegistry::new_http(),
             vm_sessions: crate::vm_session_routes::new_vm_session_store(),
             cowork_scheduler: None,
             cowork_background: None,

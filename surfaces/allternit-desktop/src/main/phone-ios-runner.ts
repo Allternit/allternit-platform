@@ -398,6 +398,26 @@ export class LocalIdentitySigner implements RunnerSigner {
 // ─── Product signer: the allternit-sideload sidecar (isideload) ──────────────
 
 /**
+ * Which signer this build uses: developer machines (unpackaged, or
+ * ALLTERNIT_PHONE_LINK_LOCAL_SIGNING=1) sign with the Mac's own Xcode
+ * identity; shipped builds use the Apple ID sidecar next to the app
+ * (`resources/bin/allternit-sideload`, required in macOS packaging via
+ * `npm run prepare:sideload`). Shared by Phone Link setup (phone-link-ipc.ts)
+ * and the automatic renewal (phone-service.ts).
+ */
+export function pickSigner(packaged: boolean, env: NodeJS.ProcessEnv = process.env): RunnerSigner {
+  if (!packaged || env.ALLTERNIT_PHONE_LINK_LOCAL_SIGNING === '1') return new LocalIdentitySigner();
+  const bin = typeof process.resourcesPath === 'string' ? path.join(process.resourcesPath, 'bin', 'allternit-sideload') : null;
+  return new SideloadSigner({
+    // The sidecar binary is a hard requirement of macOS packaging; a missing
+    // one here means the build is broken, and signing reports it.
+    binary: bin && fs.existsSync(bin) ? bin : null,
+    // Allternit-hosted anisette v3 server (anisette.allternit.com, live since 2026-10-17).
+    anisetteUrl: env.ALLTERNIT_ANISETTE_URL ?? 'https://anisette.allternit.com',
+  });
+}
+
+/**
  * JSON lines over stdio; the sidecar side is cmd/allternit-sideload/src/protocol.rs
  * (keep both in sync). One sign per process. Desktop → sidecar (stdin):
  *   {"op":"sign","apple_id","password"?,"udid","device_name","runner_ipa","host_ipa","out_dir","anisette_url"?,"bundle_prefix"?}
