@@ -238,7 +238,24 @@ Passwords, keys and sign-in tokens are never written to the ledger. Values store
 `api_key` or `password` are replaced, links to private git repositories lose their password, and
 a file that still looks like it holds a key is left out and listed in the ledger's `README.md`.
 
-Today the ledger is a copy. Changing a file in it doesn't change the bot or routine itself yet.
+### Edit through the ledger
+
+The ledger's files are the real thing, not just a copy. Open a file under **Browse files** and
+select **Edit**:
+
+- **A bot, agent, routine, workflow, template, task, project or schedule** (`….json`): saving changes
+  it in Allternit. For example, set a routine's `"status"` to `"active"` to turn it back on after a
+  restore, or rewrite a bot's instructions.
+- **A bot's workspace file** (such as `SOUL.md`) or **a file in an installed skill**: saving writes it
+  where the bot or skill reads it.
+
+A few things stay as they are. A record's `id` can't change. Values shown as `[left out: …]` keep what's
+stored. Allternit refuses keys and passwords typed into the ledger, so set those in Allternit's
+settings. Runtime details such as the next run time are worked out by Allternit, not read from
+the file. Each save is recorded in **Changes**.
+
+Making new things and deleting things through the ledger isn't supported yet; do those in Allternit.
+Copies in a folder or your own repository are one-way: changes made there are replaced on the next copy.
 
 ### Restore from a ledger
 

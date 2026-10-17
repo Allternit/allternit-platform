@@ -295,6 +295,7 @@ pub mod memory_capture;
 pub mod ledger;
 pub mod ledger_repo;
 pub mod ledger_restore;
+pub mod ledger_edit;
 pub mod memory_copies;
 #[cfg(test)]
 mod memory_drive_tests;

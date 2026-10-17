@@ -22,22 +22,22 @@ const MAX_FILE_BYTES: u64 = 512 * 1024;
 const MAX_FOLDER_FILES: usize = 200;
 const MAX_TOTAL_BYTES: usize = 50 * 1024 * 1024;
 const SNAPSHOT_EVERY: std::time::Duration = std::time::Duration::from_secs(60 * 60);
-const LEFT_OUT: &str = "[left out: looks like a credential]";
+pub(crate) const LEFT_OUT: &str = "[left out: looks like a credential]";
 
 /// One kind of thing the ledger holds, read from one table.
-struct Kind {
-    dir: &'static str,
-    table: &'static str,
-    id: &'static str,
+pub(crate) struct Kind {
+    pub(crate) dir: &'static str,
+    pub(crate) table: &'static str,
+    pub(crate) id: &'static str,
     /// Column with a human name (`None`: read `name` from the `template` JSON).
-    name: Option<&'static str>,
+    pub(crate) name: Option<&'static str>,
     /// Extra WHERE clause (after the owner check).
-    filter: &'static str,
+    pub(crate) filter: &'static str,
     /// Columns never exported: credentials, links to credentials, runtime state.
-    drop: &'static [&'static str],
+    pub(crate) drop: &'static [&'static str],
 }
 
-const KINDS: &[Kind] = &[
+pub(crate) const KINDS: &[Kind] = &[
     Kind { dir: "bots", table: "agents", id: "id", name: Some("name"), filter: "AND is_bot = 1 AND archived_at IS NULL", drop: &["identity_key", "principal_id", "status", "last_run_at", "user_id"] },
     Kind { dir: "agents", table: "agents", id: "id", name: Some("name"), filter: "AND COALESCE(is_bot, 0) = 0 AND archived_at IS NULL", drop: &["identity_key", "principal_id", "status", "last_run_at", "user_id"] },
     Kind { dir: "bot-templates", table: "bot_templates", id: "id", name: None, filter: "", drop: &["user_id"] },
@@ -79,7 +79,7 @@ fn file_name(name: &str, id: &str) -> String {
     format!("{}-{}", slug(name), if short.is_empty() { "x".into() } else { short })
 }
 
-fn credential_key(k: &str) -> bool {
+pub(crate) fn credential_key(k: &str) -> bool {
     let k = k.to_ascii_lowercase().replace(['-', ' '], "_");
     if k.contains("max_token") || k.ends_with("_tokens") || k == "tokens" || k.contains("token_count") || k.contains("token_limit") {
         return false;
@@ -117,7 +117,7 @@ pub fn strip_userinfo(url: &str) -> String {
     }
 }
 
-fn cell(v: ValueRef<'_>) -> Value {
+pub(crate) fn cell(v: ValueRef<'_>) -> Value {
     match v {
         ValueRef::Null => Value::Null,
         ValueRef::Integer(i) => Value::from(i),
@@ -163,7 +163,7 @@ pub struct Collected {
 }
 
 /// Token shapes that are credentials wherever they appear.
-fn token_like(text: &str) -> bool {
+pub(crate) fn token_like(text: &str) -> bool {
     static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     RE.get_or_init(|| {
         regex::Regex::new(
@@ -175,7 +175,7 @@ fn token_like(text: &str) -> bool {
 }
 
 /// `password: x`, `API_TOKEN=x`, `secret = x`: a value written next to a credential name.
-fn assigns_secret(text: &str) -> bool {
+pub(crate) fn assigns_secret(text: &str) -> bool {
     static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     RE.get_or_init(|| regex::Regex::new(r"(?i)\b[a-z_]*(?:token|secret|password|passwd|api_key|apikey)\s*[:=]\s*[^\s]{6,}").expect("constant regex"))
         .is_match(text)
