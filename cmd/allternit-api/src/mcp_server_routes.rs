@@ -25,6 +25,8 @@ use axum::{
     routing::post,
     Json, Router,
 };
+use rusqlite::{params, Connection};
+use sha2::{Digest, Sha256};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -43,7 +45,115 @@ fn server_spec() -> mcp_protocol::ServerSpec {
 }
 
 pub fn mcp_server_router() -> Router<Arc<AppState>> {
-    Router::new().route("/server", post(handle_rpc))
+    Router::new()
+        .route("/server", post(handle_rpc))
+        .route("/pins/check", post(pins_check_route))
+        .route("/pins/approve", post(pins_approve_route))
+}
+
+// ─── Tool pinning ───────────────────────────────────────────────────────────
+//
+// Same rule as `mcp_directory_held.rs`: once a server's tools are pinned, a new
+// tool or a changed name/description/inputSchema/annotations stays out of the
+// bot's tool list until the owner approves it. The first sight of a server pins
+// what it lists. A change opens a `tool_changed` attention item.
+
+/// sha256 of `(name, description, inputSchema, annotations)`. `serde_json` keeps
+/// object keys sorted, so the same tool always hashes the same.
+pub fn tool_hash(tool: &Value) -> String {
+    let canon = json!([tool["name"], tool["description"], tool["inputSchema"], tool["annotations"]]);
+    hex::encode(Sha256::digest(canon.to_string().as_bytes()))
+}
+
+/// Split `tools` into the ones the owner may use and the ones held (`new` or `changed`).
+/// A server with no pins yet is pinned as listed (nothing held).
+pub fn check_pins(conn: &Connection, owner: &str, server_id: &str, tools: &[Value]) -> (Vec<String>, Vec<Value>) {
+    let pinned: i64 = conn.query_row("SELECT COUNT(*) FROM mcp_tool_pins WHERE owner = ?1 AND server_id = ?2", params![owner, server_id], |r| r.get(0)).unwrap_or(0);
+    let now = crate::agent_gateway_routes::now();
+    let mut allowed = vec![];
+    let mut held = vec![];
+    for t in tools {
+        let Some(name) = t["name"].as_str() else { continue };
+        let hash = tool_hash(t);
+        if pinned == 0 {
+            let _ = conn.execute("INSERT OR REPLACE INTO mcp_tool_pins (owner, server_id, tool, hash, approved_at) VALUES (?1,?2,?3,?4,?5)", params![owner, server_id, name, hash, now]);
+            allowed.push(name.to_string());
+            continue;
+        }
+        let stored: Option<String> = conn.query_row("SELECT hash FROM mcp_tool_pins WHERE owner = ?1 AND server_id = ?2 AND tool = ?3", params![owner, server_id, name], |r| r.get(0)).ok();
+        match stored {
+            Some(h) if h == hash => allowed.push(name.to_string()),
+            other => held.push(json!({ "tool": name, "reason": if other.is_some() { "changed" } else { "new" } })),
+        }
+    }
+    if !held.is_empty() {
+        let names: Vec<&str> = held.iter().filter_map(|h| h["tool"].as_str()).collect();
+        crate::netops::alerts::open(
+            conn,
+            &crate::netops::alerts::Item {
+                owner: owner.to_string(),
+                kind: "tool_changed".into(),
+                severity: "warn".into(),
+                source: "mcp".into(),
+                source_id: server_id.to_string(),
+                summary: format!("{} changed its tools ({}). They stay off until you approve them.", server_id, names.join(", ")),
+                detail: json!({ "serverId": server_id, "held": held }),
+                ..Default::default()
+            },
+        );
+    }
+    (allowed, held)
+}
+
+/// Approve: re-pin `tools` (the held ones, as the server lists them now) and close the item.
+pub fn approve_pins(conn: &Connection, owner: &str, server_id: &str, tools: &[Value]) -> usize {
+    let now = crate::agent_gateway_routes::now();
+    let mut n = 0;
+    for t in tools {
+        let Some(name) = t["name"].as_str() else { continue };
+        n += conn.execute("INSERT OR REPLACE INTO mcp_tool_pins (owner, server_id, tool, hash, approved_at) VALUES (?1,?2,?3,?4,?5)", params![owner, server_id, name, tool_hash(t), now]).unwrap_or(0);
+    }
+    crate::netops::alerts::resolve_source(conn, owner, "tool_changed", server_id, "approved");
+    n
+}
+
+#[derive(Debug, Deserialize)]
+struct PinsBody {
+    #[serde(rename = "serverId")]
+    server_id: String,
+    #[serde(default)]
+    tools: Vec<Value>,
+}
+
+async fn pins_run(state: Arc<AppState>, user: AuthUser, body: PinsBody, approve: bool) -> axum::response::Response {
+    if body.server_id.trim().is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(json!({ "error": "serverId is required" }))).into_response();
+    }
+    let res = tokio::task::spawn_blocking(move || {
+        let conn = state.db.connect().map_err(|e| e.to_string())?;
+        Ok::<Value, String>(if approve {
+            json!({ "pinned": approve_pins(&conn, &user.user_id, &body.server_id, &body.tools) })
+        } else {
+            let (allowed, held) = check_pins(&conn, &user.user_id, &body.server_id, &body.tools);
+            json!({ "allowed": allowed, "held": held })
+        })
+    })
+    .await;
+    match res {
+        Ok(Ok(v)) => Json(v).into_response(),
+        Ok(Err(e)) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))).into_response(),
+    }
+}
+
+/// `POST /mcp/pins/check` `{serverId, tools}` → `{allowed, held}`.
+async fn pins_check_route(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Json(body): Json<PinsBody>) -> axum::response::Response {
+    pins_run(state, user, body, false).await
+}
+
+/// `POST /mcp/pins/approve` `{serverId, tools}` → `{pinned}`.
+async fn pins_approve_route(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Json(body): Json<PinsBody>) -> axum::response::Response {
+    pins_run(state, user, body, true).await
 }
 
 #[derive(Debug, Deserialize)]
@@ -662,5 +772,39 @@ mod tests {
         assert!(!TUNNEL_OAUTH_ISSUER_HEADER.is_empty());
         assert!(!TUNNEL_OAUTH_AUDIENCE_HEADER.is_empty());
         assert!(TUNNEL_ID_HEADER.starts_with("x-allternit-"));
+    }
+
+    fn pin_conn() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(include_str!("../migrations/V258__attention_items.sql").split("-- Why a run").next().unwrap()).unwrap();
+        c.execute_batch(include_str!("../migrations/V264__mcp_tool_pins.sql")).unwrap();
+        c.execute_batch(
+            "CREATE TABLE runtime_user_events (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT, user_id TEXT, event_type TEXT, thread_id TEXT, payload TEXT, idempotency_key TEXT, occurred_at TEXT, UNIQUE(user_id, idempotency_key));
+             CREATE TABLE agents (id TEXT PRIMARY KEY, name TEXT);",
+        )
+        .unwrap();
+        c
+    }
+
+    #[test]
+    fn changed_and_new_tools_are_held_until_approved() {
+        let c = pin_conn();
+        let t1 = json!({"name": "read", "description": "Read a file", "inputSchema": {"type": "object"}});
+        let (allowed, held) = check_pins(&c, "u", "srv", &[t1.clone()]);
+        assert_eq!((allowed, held.len()), (vec!["read".to_string()], 0)); // first sight pins
+
+        let t1b = json!({"name": "read", "description": "Read a file, then email it", "inputSchema": {"type": "object"}});
+        let t2 = json!({"name": "send", "description": "Send"});
+        let (allowed, held) = check_pins(&c, "u", "srv", &[t1b.clone(), t2.clone()]);
+        assert!(allowed.is_empty());
+        assert_eq!(held.iter().map(|h| h["reason"].as_str().unwrap()).collect::<Vec<_>>(), vec!["changed", "new"]);
+        let open: i64 = c.query_row("SELECT COUNT(*) FROM attention_items WHERE kind = 'tool_changed' AND resolved_at IS NULL", [], |r| r.get(0)).unwrap();
+        assert_eq!(open, 1);
+
+        approve_pins(&c, "u", "srv", &[t1b.clone(), t2.clone()]);
+        let (allowed, held) = check_pins(&c, "u", "srv", &[t1b, t2]);
+        assert_eq!((allowed.len(), held.len()), (2, 0));
+        let open: i64 = c.query_row("SELECT COUNT(*) FROM attention_items WHERE kind = 'tool_changed' AND resolved_at IS NULL", [], |r| r.get(0)).unwrap();
+        assert_eq!(open, 0);
     }
 }

@@ -249,6 +249,17 @@ The CLI searches for a config file in this order inside the project:
 
 If none exist, the wizard defaults to `gizzi.json`. For global scope it writes to the equivalent path under `~/.config/gizzi-code/`.
 
+## Tool-change holds
+
+Gizzi pins each MCP server's tools. A pin is a sha256 of the tool's name, description, input schema and annotations, kept in `mcp-tool-pins.json` in Gizzi's config directory.
+
+- The first time Gizzi sees a server, it pins everything that server lists.
+- After that, a tool that is **new** or **changed** (a different description, schema or annotations) is held out of the tool list. The model never sees it, and Gizzi logs which tools were held and why.
+- To approve the held tools for a server, start Gizzi once with `GIZZI_MCP_APPROVE_TOOLS=<server>` (comma-separate several servers, or use `*`). Gizzi re-pins the tools as they are listed now.
+- Removed tools only narrow what the model can do, so they take effect at once.
+
+Bots in the app have the same rule on the server side: a tool change opens a **tool changed** item in your Inbox, and approving it re-pins the tools. See [Red-team suite](/guides/red-team-suite).
+
 ## Disabling MCP support
 
 MCP support is enabled by default. To disable it for a session:
