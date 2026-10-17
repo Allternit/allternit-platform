@@ -634,6 +634,24 @@ const permissionGuideAPI = {
 
 // ─── Phones (Android over Wi-Fi; iPhone over an Allternit USB Agent) ─────────────────────────────────────
 
+// ─── Phone Link (phone-link.ts) ───────────────────────────────────────────────
+// Apple ID credentials pass through once to main; nothing here stores them.
+
+const phoneLinkAPI = {
+  status: (): Promise<unknown> => ipcRenderer.invoke('phone-link:status'),
+  start: (opts: { platform: 'ios' | 'android' }): Promise<unknown> => ipcRenderer.invoke('phone-link:start', opts),
+  cancel: (): Promise<unknown> => ipcRenderer.invoke('phone-link:cancel'),
+  continue: (): Promise<unknown> => ipcRenderer.invoke('phone-link:continue'),
+  retry: (): Promise<unknown> => ipcRenderer.invoke('phone-link:retry'),
+  submitAppleId: (creds: { appleId: string; password: string }): Promise<unknown> => ipcRenderer.invoke('phone-link:submit-apple-id', creds),
+  submitTwoFactor: (code: string): Promise<unknown> => ipcRenderer.invoke('phone-link:submit-two-factor', code),
+  onStatusChanged: (handler: (status: unknown) => void): (() => void) => {
+    const listener = (_: IpcRendererEvent, status: unknown) => handler(status);
+    ipcRenderer.on('phone-link:status-changed', listener);
+    return () => ipcRenderer.removeListener('phone-link:status-changed', listener);
+  },
+};
+
 const phonesAPI = {
   status: (): Promise<unknown> => ipcRenderer.invoke('phone:status'),
   startQrPairing: (): Promise<{ payload: string }> => ipcRenderer.invoke('phone:pair-qr-start'),
@@ -964,6 +982,7 @@ const allternitDesktopAPI = {
   tunnel: tunnelAPI,
   permissionGuide: permissionGuideAPI,
   phones: phonesAPI,
+  phoneLink: phoneLinkAPI,
   featureFlags: featureFlagsAPI,
   findInPage: findInPageAPI,
   locale: localeAPI,

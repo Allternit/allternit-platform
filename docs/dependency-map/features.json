@@ -1256,6 +1256,10 @@
         {
           "on": "2026-10-14",
           "note": "One-step setup: Desktop ships the USB Agent firmware (reproducible image + SHA-256 manifest, built by hardware/usb-agent/build-firmware.sh; source public, Eoj OK'd publishing) and Set up flashes it with esptool-js over Web Serial before writing Wi-Fi and the key. Desktop allows serial only for first-party pages and Espressif boards (VID 0x303A), auto-picked. Boards on older firmware show Update available."
+        },
+        {
+          "on": "2026-10-16",
+          "note": "Phone Link (SPEC-signed-in-apps-routing): bots use the AI apps already signed in on the user's own phone instead of vendor tokens (Sign in with ChatGPT removed, #1584). Desktop main state machine phone-link.ts + window.allternit.phoneLink IPC; Android USB to Wi-Fi in main, iPhone via an iCTRL fork set up over the cable is next. UI owned by the setup-flow track (onboarding 'Your AI' step + PhoneLinkSetup window)."
         }
       ],
       "evidence": [
