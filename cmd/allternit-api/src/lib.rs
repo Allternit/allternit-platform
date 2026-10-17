@@ -360,6 +360,10 @@ pub mod team_skill_routes;
 // Unix-only: talks to the Factory pane engine over a UDS (tokio::net::UnixStream).
 #[cfg(unix)]
 pub mod terminal_routes;
+// Windows: same names, every terminal request answers 501 (no pane engine socket).
+#[cfg(not(unix))]
+#[path = "terminal_routes_windows.rs"]
+pub mod terminal_routes;
 pub mod token_crypto;
 pub mod tool_routes;
 pub mod udemy_routes;
