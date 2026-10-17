@@ -845,12 +845,10 @@ fn workspace(ctx: &Ctx, cmd: WorkspaceCmd) -> u8 {
                 return crate::work::node_list_mine(ctx);
             }
             let mut args = vec!["wih".to_string(), "list".to_string()];
-            if ready {
-                args.push("--ready".into());
-            }
+            args.push(if ready { "--ready" } else { "--all" }.into());
             opt(&mut args, "--dag", dag);
             let shape: fn(&str) -> serde_json::Value =
-                if ready { node_list_ready_json } else { node_list_claimed_json };
+                if ready { node_list_ready_json } else { node_list_open_json };
             run_shaped(ctx, Target::Rails(args), Some(shape))
         }
         WorkspaceCmd::Approve { node, gate, judge, actor, reason, dry_run: dry } => {
@@ -924,15 +922,18 @@ fn node_list_ready_json(text: &str) -> serde_json::Value {
     json!({ "nodes": nodes })
 }
 
-/// `wih list` prints `<wih> <node>` per claimed (open) node.
-fn node_list_claimed_json(text: &str) -> serde_json::Value {
+/// `wih list --all` prints `<dag> <node> <state> <title…>` per open node
+/// (state: ready, claimed or waiting).
+fn node_list_open_json(text: &str) -> serde_json::Value {
     let nodes: Vec<_> = text
         .lines()
         .filter_map(|line| {
-            let mut parts = line.split_whitespace();
-            let wih = parts.next()?;
+            let mut parts = line.trim().splitn(4, ' ');
+            let dag = parts.next().filter(|s| !s.is_empty())?;
             let node = parts.next()?;
-            Some(json!({ "wih": wih, "node": node, "state": "claimed" }))
+            let state = parts.next()?;
+            let title = parts.next().unwrap_or("");
+            Some(json!({ "dag": dag, "node": node, "title": title, "state": state }))
         })
         .collect();
     json!({ "nodes": nodes })
@@ -949,9 +950,12 @@ mod tests {
             json!({ "nodes": [{ "dag": "d1", "node": "n2", "title": "Fix the build", "state": "ready" }] })
         );
         assert_eq!(
-            node_list_claimed_json("wih_1 n2\n"),
-            json!({ "nodes": [{ "wih": "wih_1", "node": "n2", "state": "claimed" }] })
+            node_list_open_json("d1 n2 claimed Fix the build\nd1 n3 waiting Ship it\n"),
+            json!({ "nodes": [
+                { "dag": "d1", "node": "n2", "title": "Fix the build", "state": "claimed" },
+                { "dag": "d1", "node": "n3", "title": "Ship it", "state": "waiting" },
+            ] })
         );
-        assert_eq!(node_list_claimed_json(""), json!({ "nodes": [] }));
+        assert_eq!(node_list_open_json(""), json!({ "nodes": [] }));
     }
 }

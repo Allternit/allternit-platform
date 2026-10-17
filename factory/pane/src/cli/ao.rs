@@ -228,11 +228,29 @@ pub(crate) fn prompt_marker(prompt: &str) -> Option<String> {
 }
 
 
+/// Collapsed-paste placeholders on screen. A long or multi-line paste never
+/// shows its text in some harnesses: Claude Code folds it into
+/// `[Pasted text #N +M lines]` (more than 3 lines or ~800 chars) and Codex into
+/// `[Pasted Content N chars]`, so the marker can never be read back. One more
+/// placeholder than before the paste is the landing proof instead.
+fn paste_placeholders(screen: &str) -> usize {
+    screen.matches("[Pasted text #").count() + screen.matches("[Pasted Content ").count()
+}
+
+/// Ctrl-U presses that clear a failed paste. Claude Code's Ctrl-U kills one
+/// visual line, so a wrapped prompt left behind after a single press got
+/// merged into the next delivery. One press per line the prompt can wrap to
+/// (40-column floor) plus two; extra presses on an empty line do nothing.
+fn clear_presses(prompt: &str) -> usize {
+    (prompt.lines().count() + prompt.chars().count() / 40 + 2).min(200)
+}
+
 /// Verified bracketed-paste injection shared by an engine send and the
-/// mailbox drain (which settles only on `Ok(true)`): paste, poll the pane until the marker shows in
-/// two consecutive captures (a single sighting can be a half-painted frame),
-/// Enter only after verified landing. On a bad read-back the line is cleared
-/// with C-u (NEVER C-c — that kills kimi). Ok(true) == Enter was sent.
+/// mailbox drain (which settles only on `Ok(true)`): paste, poll the pane until
+/// the marker (or a new collapsed-paste placeholder) shows in two consecutive
+/// captures (a single sighting can be a half-painted frame), Enter only after
+/// verified landing. On a bad read-back the whole input is cleared with C-u
+/// presses (NEVER C-c — that kills kimi). Ok(true) == Enter was sent.
 pub(crate) fn paste_and_verify(
     client: &ApiClient,
     pane: &str,
@@ -249,22 +267,26 @@ pub(crate) fn paste_and_verify(
             }),
         )
     };
+    let clear_keys = vec!["ctrl+u"; clear_presses(prompt)];
+    let placeholders_before = pane_read_text(client, pane, 80)
+        .map(|text| paste_placeholders(&text))
+        .unwrap_or(usize::MAX);
+    let landed = |screen: &str| {
+        alnum(screen).contains(marker) || paste_placeholders(screen) > placeholders_before
+    };
 
     // Bracketed paste; the engine wraps text server-side (never send raw).
     if let Err(err) = send(prompt, &[]) {
-        let _ = send("", &["ctrl+u"]);
+        let _ = send("", &clear_keys);
         return Err(err);
     }
 
-    let deadline = std::time::SystemTime::now() + Duration::from_secs(5);
+    let deadline = std::time::SystemTime::now() + Duration::from_secs(8);
     let mut seen = false;
-    let mut last: String;
+    let mut last: bool;
     loop {
-        last = match pane_read_text(client, pane, 80) {
-            Ok(text) => alnum(&text),
-            Err(_) => String::new(),
-        };
-        if last.contains(marker) {
+        last = pane_read_text(client, pane, 80).map(|text| landed(&text)).unwrap_or(false);
+        if last {
             if seen {
                 break;
             }
@@ -278,23 +300,32 @@ pub(crate) fn paste_and_verify(
         std::thread::sleep(Duration::from_millis(200));
     }
 
-    if last.contains(marker) {
+    if last {
         let _ = send("", &["enter"]);
         Ok(true)
     } else {
-        let _ = send("", &["ctrl+u"]);
+        let _ = send("", &clear_keys);
         Ok(false)
     }
 }
 
 
 /// Idle probe: two consecutive captures 800ms apart must be byte-identical.
-/// A busy agent mid-turn keeps repainting; an idle prompt does not.
+/// A busy agent mid-turn keeps repainting; an idle prompt does not. A prompt
+/// that just finished can still repaint once (Claude Code fades a hint or
+/// paints a suggestion after the turn), so up to three pairs are tried before
+/// calling it busy.
 pub(crate) fn pane_idle(client: &ApiClient, pane: &str) -> Result<bool, CallError> {
-    let first = pane_read_text(client, pane, 80)?;
-    std::thread::sleep(Duration::from_millis(800));
-    let second = pane_read_text(client, pane, 80)?;
-    Ok(first == second)
+    let mut previous = pane_read_text(client, pane, 80)?;
+    for _ in 0..3 {
+        std::thread::sleep(Duration::from_millis(800));
+        let next = pane_read_text(client, pane, 80)?;
+        if next == previous {
+            return Ok(true);
+        }
+        previous = next;
+    }
+    Ok(false)
 }
 
 // ---------------------------------------------------------------------------
@@ -531,6 +562,25 @@ fn probe_executor(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn collapsed_paste_placeholders_are_counted() {
+        // Claude Code folds a long or multi-line paste; Codex folds by size.
+        assert_eq!(paste_placeholders("❯ Try \"fix lint errors\""), 0);
+        assert_eq!(paste_placeholders("❯ [Pasted text #2 +4 lines]\n  paste again to expand"), 1);
+        assert_eq!(paste_placeholders("❯ [Pasted text #1]\n❯ [Pasted text #2 +7 lines]"), 2);
+        assert_eq!(paste_placeholders("› [Pasted Content 1204 chars]"), 1);
+    }
+
+    #[test]
+    fn a_failed_paste_is_cleared_line_by_line() {
+        // One press per wrappable line plus two; never a single press for a
+        // wrapped prompt (Claude Code's C-u kills one visual line).
+        assert_eq!(clear_presses("short"), 3);
+        assert_eq!(clear_presses(&"x".repeat(430)), 13);
+        assert_eq!(clear_presses("a\nb\nc"), 5);
+        assert_eq!(clear_presses(&"x".repeat(100_000)), 200);
+    }
 
     #[test]
     fn prompt_marker_is_the_last_40_alphanumerics() {
