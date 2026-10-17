@@ -240,6 +240,22 @@ a file that still looks like it holds a key is left out and listed in the ledger
 
 Today the ledger is a copy. Changing a file in it doesn't change the bot or routine itself yet.
 
+### Restore from a ledger
+
+To bring a ledger into this account, for example on a new computer or in a new account, select
+**Choose a ledger (.zip)** under **Your ledger** and pick the `allternit-ledger.zip` you downloaded.
+A zip of a folder copy works too. Allternit shows what it will do before anything changes:
+
+- what it will add, and what's **already here**;
+- what can't be restored, and why (for example, another account on this computer already has it);
+- settings to fill in again: values the ledger left out, such as an API key, are never written back;
+- apps to reconnect: sign-ins are never in a ledger.
+
+Select **Restore** to add everything listed. Routines, scheduled messages and schedules come back
+**paused**, so nothing starts running on its own; turn them back on when you're ready. Bot
+workspace files and skills are only added: an existing file is never replaced. Restoring the
+same ledger again adds nothing new.
+
 ## Keep a copy where you want
 
 Your Memory Drive and ledger live on the computer that holds your drive (Allternit Desktop, or your

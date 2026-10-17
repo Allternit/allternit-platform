@@ -62,6 +62,8 @@ pub fn memory_drive_router() -> Router<Arc<AppState>> {
         .route("/memory/drive/questions/:id/answer", post(answer_question))
         .route("/memory/drive/questions/:id/resolve", post(resolve_question))
         .layer(DefaultBodyLimit::max(3 * 1024 * 1024))
+        // A whole ledger in one request: bigger than the other drive routes.
+        .merge(Router::new().route("/memory/drive/ledger/restore", post(ledger_restore)).layer(DefaultBodyLimit::max(40 * 1024 * 1024)))
 }
 
 fn err(status: StatusCode, message: impl Into<String>) -> Response {
@@ -1037,6 +1039,28 @@ async fn run_copies(State(state): State<Arc<AppState>>, Extension(user): Extensi
         open(ctx, None, true)?;
         crate::ledger::snapshot(&ctx.0.db, &ctx.1.user_id, "Save ledger")?;
         Ok(crate::memory_copies::run(&ctx.0.db, &ctx.1.user_id)?.public())
+    })
+    .await
+}
+
+#[derive(Deserialize)]
+struct LedgerRestoreBody {
+    /// Ledger-relative path → text, as read from the zip or a copy.
+    files: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    apply: bool,
+}
+
+/// Preview or restore a ledger into this account on this computer.
+async fn ledger_restore(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Json(b): Json<LedgerRestoreBody>) -> Response {
+    run(state, user, move |ctx| {
+        open(ctx, None, b.apply)?;
+        let plan = crate::ledger_restore::restore_for(&ctx.0.db, &ctx.1.user_id, &b.files, b.apply)?;
+        if b.apply {
+            // The ledger shows what's here now.
+            let _ = crate::ledger::snapshot(&ctx.0.db, &ctx.1.user_id, "Restore from a ledger");
+        }
+        Ok(json!({ "dry_run": !b.apply, "plan": plan }))
     })
     .await
 }
