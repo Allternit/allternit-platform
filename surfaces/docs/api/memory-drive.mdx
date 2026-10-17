@@ -236,6 +236,13 @@ credential-like keys are replaced, `git_remote` loses its userinfo, and any file
 
 - `GET /memory/drive/ledger`: `{ revision, files: [{ path, bytes }], history: [{ revision, timestamp, message, changed, paths }] }`.
 - `GET /memory/drive/ledger/file?path=&revision=`: `{ path, content }`.
+- `PUT /memory/drive/ledger/file`: body `{ path, content }` (up to 1 MB). `ledger_edit.rs` applies the
+  edit to the real thing, then saves a snapshot. Returns `{ summary, revision }`.
+  - **Record files** update the owner's row: only columns it has, never `id`, `user_id`, timestamps or
+    the kind's dropped columns. `[left out…]` values keep the stored value, including nested JSON.
+    A credential-keyed value typed into the file is refused.
+  - **Bot workspace files** and **files of installed skills** are written to disk after a secret check.
+  - `README.md` and `connected-apps.json` are read-only. New paths are refused.
 - `POST /memory/drive/ledger/snapshot`: `{ changed, revision }`.
 - `GET /memory/drive/ledger/download?revision=`: `application/zip` with everything under `ledger/`.
 

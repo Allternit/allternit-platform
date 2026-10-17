@@ -44,7 +44,7 @@ pub fn memory_drive_router() -> Router<Arc<AppState>> {
         .route("/memory/drive/capture/turn", post(capture_turn))
         .route("/memory/drive/forget-source", post(forget_source))
         .route("/memory/drive/ledger", get(ledger_info))
-        .route("/memory/drive/ledger/file", get(ledger_file))
+        .route("/memory/drive/ledger/file", get(ledger_file).put(ledger_edit))
         .route("/memory/drive/ledger/snapshot", post(ledger_snapshot))
         .route("/memory/drive/ledger/download", get(ledger_download))
         .route("/memory/drive/copies", get(get_copies).put(put_copies))
@@ -1061,6 +1061,34 @@ async fn ledger_restore(State(state): State<Arc<AppState>>, Extension(user): Ext
             let _ = crate::ledger::snapshot(&ctx.0.db, &ctx.1.user_id, "Restore from a ledger");
         }
         Ok(json!({ "dry_run": !b.apply, "plan": plan }))
+    })
+    .await
+}
+
+#[derive(Deserialize)]
+struct LedgerEditBody {
+    path: String,
+    content: String,
+}
+
+/// Edit a ledger file: the bot, routine, workflow or file it describes
+/// changes, then the ledger records the change.
+async fn ledger_edit(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Json(b): Json<LedgerEditBody>) -> Response {
+    run(state, user, move |ctx| {
+        open(ctx, None, true)?;
+        let repo = crate::ledger::repo_for(&ctx.0.db, &ctx.1.user_id)?;
+        let skills = crate::ledger::skill_dirs().into_iter().next();
+        let summary = crate::ledger_edit::edit(
+            &ctx.0.db.connect()?,
+            &ctx.1.user_id,
+            &repo,
+            &b.path,
+            &b.content,
+            skills.as_deref(),
+            crate::agent_workspace_paths::workspace_dir_for,
+        )?;
+        let revision = crate::ledger::snapshot(&ctx.0.db, &ctx.1.user_id, &format!("Edit {}", b.path))?;
+        Ok(json!({ "summary": summary, "revision": revision }))
     })
     .await
 }
