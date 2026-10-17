@@ -1,0 +1,95 @@
+---
+title: Phone Stream Relay API
+description: View and control a linked Android through the Desktop app — the browser WebSocket, the ws token, and the Desktop phone-link session socket (Phones 2.0).
+---
+
+## Overview
+
+The phone stream relay lets any surface (ai.allternit.com phone layout, m.allternit.com PWA) view and control a linked Android through the account's Desktop app. It mirrors the computer-lane VNC proxy minus VNC: the payload is the scrcpy H.264 stream (binary WebSocket frames) and JSON control envelopes (text frames), and the relay treats both as **opaque** — it never parses scrcpy, video, or control semantics.
+
+Two WebSockets plus two HTTPS endpoints make the plane:
+
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| `GET` | `/api/v1/phones` | Clerk / desktop credential | List the account's registered phones and whether each is online. |
+| `POST` | `/api/v1/phones/:serial/ws-token` | Clerk / desktop credential | Mint the short-lived stream token. |
+| `WS` | `/ws/phones/:serial/stream?token=…` | HMAC token (public mount) | The browser's video/control stream. |
+| `WS` | `/ws/phone-link/session` | Desktop credential | The Desktop-attached session socket. |
+
+<Note>
+Served by the node's allternit-api (the Desktop's gateway, default `http://127.0.0.1:18013` in dev; the installed Desktop owns 8013). Device identity persists in cloud PG (`registered_phones`); the online registry is in-memory in the serving api instance, so `online` means "this node's Desktop is attached".
+</Note>
+
+## `GET /api/v1/phones`
+
+```json
+{ "phones": [{ "serial": "R5CRA1A2LBA", "model": "Pixel 9", "name": "Joe's Pixel", "online": true }] }
+```
+
+`online` is true while a phone-link session for `(account, serial)` is attached to this api instance. A linked phone whose Desktop is asleep stays listed with `online: false`.
+
+## `POST /api/v1/phones/:serial/ws-token`
+
+Body (both shapes accepted; `readOnly` is the canonical one):
+
+```json
+{ "readOnly": true }
+```
+
+Minting requires the phone row to exist for the caller's account **and** a live phone-link session for it. Errors: `404` unknown phone, `503` desktop offline or registry unreachable.
+
+Response:
+
+```json
+{ "token": "eyJhbGciOi…", "expiresInSec": 300 }
+```
+
+The token is HS256-signed (same secret as the computer ws tokens, `ALLTERNIT_DESKTOP_WS_SECRET`), TTL 300 s, claims:
+
+```json
+{ "sub": "<account>", "serial": "<adb serial>", "purpose": "phone_stream", "read_only": true, "exp": 1760000000 }
+```
+
+`readOnly` **defaults to true**. A full-control token (`readOnly: false`) injects input into a personal phone, so minting one requires the ACI confirmation grant (`confirmation_required` denial with an `approval_id`; approve and retry with `?approval_id=`) — the same explicit-request pattern as a full-control computer VNC token.
+
+## `WS /ws/phones/:serial/stream?token=…`
+
+Public mount: the HMAC token IS the credential (like the computer VNC route). If the browser also carries a same-origin Clerk session it must match the token's `sub`. The token's `serial` and `purpose` are enforced at upgrade.
+
+- Frames are passed through untouched, both directions, order preserved per direction.
+- Read-only tokens receive everything but the browser→desktop direction is dropped at the pipe (the payload is opaque, so read-only is enforced by not forwarding).
+- When the token crosses expiry mid-stream the relay sends a JSON text frame `{"type":"end","reason":"token_expired"}` and closes with code **4401**. The remaining lifetime is computed at upgrade.
+- When the Desktop detaches, attached and waiting viewers get `{"type":"end","reason":"desktop_offline"}` (close code 1011). A viewer that connects while no session is attached waits (up to the token's lifetime) for the Desktop to appear.
+- Backpressure: bounded channels both ways; a stalled side loses **binary** (video) frames first, control (text) frames wait up to 5 s.
+
+## `WS /ws/phone-link/session`
+
+The Desktop's session socket, one per streamed phone (scrcpy is one device per process). Authenticated with the Desktop credential (`x-allternit-desktop-access-token` + user headers); the account is resolved from that credential.
+
+1. **Hello.** The first frame (10 s window) must be:
+
+   ```json
+   { "type": "hello", "phones": [{ "serial": "R5CRA1A2LBA", "model": "Pixel 9", "name": "Joe's Pixel" }] }
+   ```
+
+   Every hello phone is upserted in cloud PG (`registered_phones`, `last_seen_at` touched — the same upsert re-runs at disconnect) and marked online. A malformed hello ends the socket with `{"type":"end","reason":"invalid_hello"}` (1011).
+
+2. **Streaming.** One active stream per socket: the socket's desktop→browser output routes to viewers of a single serial at a time. A socket may hello several phones (they all register online), but to stream a phone concurrently the Desktop opens another socket. Relay-level notifications on the session socket tell the Desktop when to start/stop scrcpy:
+
+   ```json
+   { "type": "viewer_attached", "serial": "R5CRA1A2LBA" }
+   { "type": "viewer_detached", "serial": "R5CRA1A2LBA" }
+   ```
+
+   Everything else on the socket is the opaque data plane in both directions.
+
+3. **Heartbeat.** The relay pings every 30 s; a peer silent for 90 s is treated as gone and the session ends (phones marked offline, viewers get `desktop_offline`).
+
+## Cloud side
+
+`allternit-cloud-api` holds the only persistence, one row per `(account, serial)`:
+
+- `PUT /api/v1/runtime-devices/me/registered-phones` — body `{ "phones": [{ "serial", "model"?, "name"? }] }`, upserts rows for the device's account and touches `last_seen_at`. Runtime device credential only.
+- `GET /api/v1/runtime-devices/me/registered-phones` — the account's rows.
+
+No screen or input data is ever persisted or logged — only identity and timestamps.

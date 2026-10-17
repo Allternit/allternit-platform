@@ -259,3 +259,36 @@ describe('scrcpy', () => {
     expect(manager.startScrcpy('192.168.1.20:41234')).toMatchObject({ ok: false });
   });
 });
+
+describe('agent busy flag', () => {
+  const stored: StoredPhone = { id: 'R5CT1234', name: 'Pixel 8', host: '192.168.1.20', port: 41234, pairedAt: 1 };
+
+  it('reflects in-flight bot/ARTEMIS actions and emits devices when it flips', async () => {
+    const { manager } = makeManager([stored]);
+    await manager.poll();
+    const serial = '192.168.1.20:41234';
+    expect(manager.list()[0].agentBusy).toBe(false);
+
+    const listener = vi.fn();
+    manager.on('devices', listener);
+    manager.noteAgentActivity(serial, 1);
+    manager.noteAgentActivity(serial, 1); // overlapping actions: still one flag
+    expect(manager.list()[0].agentBusy).toBe(true);
+    expect(listener).toHaveBeenCalledTimes(1); // only the first flip emits
+
+    manager.noteAgentActivity(serial, -1);
+    expect(manager.list()[0].agentBusy).toBe(true);
+    manager.noteAgentActivity(serial, -1);
+    expect(manager.list()[0].agentBusy).toBe(false);
+    expect(listener).toHaveBeenCalledTimes(2);
+  });
+
+  it('never goes negative and ignores unknown serials', async () => {
+    const { manager } = makeManager([stored]);
+    await manager.poll();
+    manager.noteAgentActivity('192.168.1.20:41234', -1);
+    expect(manager.list()[0].agentBusy).toBe(false);
+    manager.noteAgentActivity('nope:1234', 1);
+    expect(manager.list()[0].agentBusy).toBe(false);
+  });
+});

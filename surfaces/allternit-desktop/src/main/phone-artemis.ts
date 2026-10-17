@@ -137,6 +137,8 @@ export class ArtemisManager implements ArtemisClient {
   constructor(
     private readonly dataDir: string,
     private readonly env: () => NodeJS.ProcessEnv = () => process.env,
+    /** Notified when a task starts/stops on a phone (the device manager's takeover banner). */
+    private readonly onActivity?: (serial: string, running: boolean) => void,
   ) {
     this.state = this.isInstalled() ? 'ready' : 'not_installed';
   }
@@ -208,7 +210,12 @@ export class ArtemisManager implements ArtemisClient {
 
   async runTask(serial: string, task: string, model: 'Flash' | 'Pro'): Promise<unknown> {
     if (this.state !== 'ready') throw new Error('ARTEMIS is not installed.');
-    return runArtemisTask(this.clientFor(serial), serial, task, model);
+    this.onActivity?.(serial, true);
+    try {
+      return await runArtemisTask(this.clientFor(serial), serial, task, model);
+    } finally {
+      this.onActivity?.(serial, false);
+    }
   }
 
   stop(serial: string): void {

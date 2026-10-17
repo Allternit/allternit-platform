@@ -87,6 +87,8 @@ export interface PhoneToolDeps {
   defaultSmsSubscription?: (serial: string) => Promise<number | null>;
   /** iPhones on a USB Agent, when that lane is running. */
   usb?: () => UsbPhoneBackend | null;
+  /** Notified as +/-1 while an acting tool call runs on a serial (takeover banner). */
+  activity?: (serial: string, delta: number) => void;
   /** Phone-Linked phones, when any are linked. Consulted exactly like usb. */
   links?: () => PhoneLinkBackend | null;
 }
@@ -514,6 +516,11 @@ export class PhoneToolRunner {
     if (usb?.has(serial)) return usb.call(name, serial, a);
     if (links?.has(serial)) return links.call(name, serial, a);
 
+    // Anything that operates the phone screen/SIM marks the phone busy, so
+    // the UI can show a takeover banner while a bot is mid-action. Reads
+    // (devices/screenshot) don't.
+    const acting = name !== 'phone.devices' && name !== 'phone.screenshot';
+    if (acting) this.deps.activity?.(serial, 1);
     try {
       switch (name) {
         case 'phone.screenshot':
@@ -549,6 +556,8 @@ export class PhoneToolRunner {
       }
     } catch (error) {
       return fail('adb_failed', error instanceof Error ? error.message : String(error));
+    } finally {
+      if (acting) this.deps.activity?.(serial, -1);
     }
   }
 

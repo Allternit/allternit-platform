@@ -38,7 +38,7 @@ function memoryRates(): RateStore & { data: Record<string, number[]> } {
   return { data, load: (k) => data[k] ?? [], save: (k, v) => void (data[k] = v) };
 }
 
-function runner(opts: { decision?: ApprovalDecision; handler?: Parameters<typeof makeAdb>[0]; now?: () => number; online?: string[]; artemis?: boolean } = {}) {
+function runner(opts: { decision?: ApprovalDecision; handler?: Parameters<typeof makeAdb>[0]; now?: () => number; online?: string[]; artemis?: boolean; activity?: (serial: string, delta: number) => void } = {}) {
   const { adb, calls } = makeAdb(opts.handler);
   const asked: ApprovalRequest[] = [];
   const rates = memoryRates();
@@ -50,6 +50,7 @@ function runner(opts: { decision?: ApprovalDecision; handler?: Parameters<typeof
     now: opts.now,
     onlineSerials: () => opts.online ?? ['192.168.1.20:41234'],
     defaultSmsSubscription: async () => 3,
+    activity: opts.activity,
   });
   return { r, calls, asked, rates };
 }
@@ -402,5 +403,30 @@ describe('Phone-Linked phones in the runner', () => {
     const { r } = linkedRunner(['link:dev-1'], ['10.0.0.7:5555']);
     expect(await r.call('phone.tap', { x: 1, y: 2 })).toMatchObject({ ok: false, error: 'device_required' });
     expect(await r.call('phone.tap', { serial: '10.0.0.7:5555', x: 1, y: 2 })).toEqual({ ok: true });
+  });
+});
+
+describe('agent activity (takeover banner)', () => {
+  it('marks acting tools busy around the call, and reads stay quiet', async () => {
+    const activity = vi.fn();
+    const { r } = runner({ activity });
+    await r.call('phone.screenshot', {});
+    expect(activity).not.toHaveBeenCalled();
+    await r.call('phone.devices', {});
+    expect(activity).not.toHaveBeenCalled();
+
+    await r.call('phone.tap', { x: 5, y: 5 });
+    expect(activity).toHaveBeenNthCalledWith(1, '192.168.1.20:41234', 1);
+    expect(activity).toHaveBeenNthCalledWith(2, '192.168.1.20:41234', -1);
+    expect(activity).toHaveBeenCalledTimes(2);
+  });
+
+  it('balances the counter even when the tool fails', async () => {
+    const activity = vi.fn();
+    const { r } = runner({ activity, handler: () => ({ stdout: 'Error', code: 1 }) });
+    const result = await r.call('phone.home', {});
+    expect(result.ok).toBe(false);
+    expect(activity).toHaveBeenNthCalledWith(1, '192.168.1.20:41234', 1);
+    expect(activity).toHaveBeenNthCalledWith(2, '192.168.1.20:41234', -1);
   });
 });
