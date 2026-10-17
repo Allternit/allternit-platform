@@ -188,7 +188,7 @@ result shapes as `import-text` and the same checks. Each line's source is
 ### `GET /memory/drive/capture`
 
 The capture switches and per-source counts:
-`{ settings: { channels, gizzi, agent_folders }, counts: [{ scheme, memories }], agents: [{ id, name, files, items }] }`.
+`{ settings: { channels, gizzi, agent_folders }, counts: [{ scheme, memories }], agents: [{ id, name, files, items }], verified_channels: [channel] }`. `verified_channels` lists the channels with a verified owner identity, which channel capture needs.
 Switches are stored per user in `runtime_settings` (key `memory_capture`); the defaults are
 `channels` and `gizzi` on, `agent_folders` off. `counts` groups personal-drive entries by the part
 of `source:` before the colon. Session links and `allternit:` ids aren't listed. Older computers answer 404.

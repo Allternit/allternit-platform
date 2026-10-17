@@ -820,6 +820,8 @@ async fn get_capture(State(state): State<Arc<AppState>>, Extension(user): Extens
             "settings": crate::memory_capture::settings(&conn, &ctx.1.user_id),
             "counts": crate::memory_capture::counts(&conn, &ctx.1.user_id)?,
             "agents": crate::memory_drive_agent_import::home().map(|h| crate::memory_drive_agent_import::detect(&h)).unwrap_or_default(),
+            // Channel capture only counts messages from a verified owner identity.
+            "verified_channels": crate::memory_capture::verified_channels(&conn, &ctx.1.user_id),
         }))
     })
     .await
@@ -1092,3 +1094,4 @@ async fn ledger_edit(State(state): State<Arc<AppState>>, Extension(user): Extens
     })
     .await
 }
+
