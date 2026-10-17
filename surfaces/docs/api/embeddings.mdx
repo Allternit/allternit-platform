@@ -5,7 +5,20 @@ description: 'Generate text embeddings through the Allternit LLM gateway'
 
 ## Overview
 
-The `/v1/embeddings` endpoint returns vector embeddings for one or more input strings. Allternit normalizes the request, routes it to the configured embeddings provider when available, and returns a consistent response shape. If no provider is configured, the gateway falls back to deterministic hash-based embeddings suitable for development and testing.
+The `/v1/embeddings` endpoint returns vector embeddings for one or more input strings. Allternit normalizes and validates the request, then proxies it to the configured embeddings provider — the response (vectors, model id, usage) comes straight from the provider.
+
+Without a configured provider the endpoint refuses: `501 allternit.not_configured`. Deterministic hash-based embeddings exist for development and testing only, behind the `ALLTERNIT_GATEWAY_ALLOW_FAKE_PROVIDERS=1` escape hatch, and are never served on production surfaces.
+
+## Provider configuration
+
+The gateway proxies to the OpenAI-compatible backend named by `ALLTERNIT_GATEWAY_EMBED_URL` (full base URL, including `/v1`). When unset or empty, the endpoint returns `501 allternit.not_configured`.
+
+```bash
+# Any OpenAI-compatible embeddings backend you operate (self-hosted or cloud):
+ALLTERNIT_GATEWAY_EMBED_URL=https://embeddings.internal.example/v1
+```
+
+The end-user `user` field is accepted for attribution but is not forwarded to the provider.
 
 ## Base URL
 
@@ -134,6 +147,8 @@ curl -X POST https://api.allternit.com/v1/embeddings \
 | 429 | `allternit.rate_limited` | Per-key rate limit exceeded. |
 | 429 | `allternit.budget_exceeded` | Monthly key or tenant budget exhausted. |
 | 500 | `allternit.internal_error` | Internal gateway error. |
+| 501 | `allternit.not_configured` | No embeddings provider configured (set `ALLTERNIT_GATEWAY_EMBED_URL`). |
+| 502 | `allternit.upstream_error` | The configured embeddings provider is unreachable or returned an unreadable response. |
 
 ## Related pages
 
