@@ -52,23 +52,34 @@ pub fn heartbeat_payload_at(conn: &rusqlite::Connection, owner: &str, now: DateT
     due.sort_by_key(|d| d.0);
     due.truncate(MAX_DUE);
     json!({
-        "failoverRuntimeId": failover_runtime(conn, owner),
+        "failovers": bot_failovers(conn, owner),
         "nextDue": due.into_iter().map(|(t, id, title)| json!({ "routineId": id, "title": title, "at": t.to_rfc3339() })).collect::<Vec<_>>(),
     })
 }
 
-/// The cloud computer this owner's always-on bots fail over to, if any.
-fn failover_runtime(conn: &rusqlite::Connection, owner: &str) -> Value {
-    conn.query_row(
-        "SELECT json_extract(config, '$.availability.failoverRuntimeId') FROM agents
+/// One `{botId, failoverRuntimeId}` per always-on bot that has a failover computer.
+fn bot_failovers(conn: &rusqlite::Connection, owner: &str) -> Vec<Value> {
+    let Ok(mut st) = conn.prepare(
+        "SELECT id, json_extract(config, '$.availability.failoverRuntimeId') FROM agents
          WHERE user_id = ?1 AND json_valid(config) AND json_extract(config, '$.availability.alwaysOn') IN (1, 'true')
            AND COALESCE(json_extract(config, '$.availability.failoverRuntimeId'), '') <> ''
-         ORDER BY created_at LIMIT 1",
-        [owner],
-        |r| r.get::<_, String>(0),
-    )
-    .map(Value::from)
-    .unwrap_or(Value::Null)
+         ORDER BY created_at",
+    ) else { return Vec::new() };
+    let rows: Vec<(String, String)> = st
+        .query_map([owner], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+        .map(|rows| rows.flatten().collect())
+        .unwrap_or_default();
+    rows.into_iter()
+        .map(|(bot, to)| json!({ "botId": bot, "failoverRuntimeId": to, "accounts": default_accounts(conn, owner, &bot) }))
+        .collect()
+}
+
+/// The channel connections whose default bot is `bot`: their public addresses
+/// (cloud routes, labelled with the account id) follow this bot when it fails over.
+fn default_accounts(conn: &rusqlite::Connection, owner: &str, bot: &str) -> Vec<String> {
+    conn.prepare("SELECT account_id FROM channel_account_bots WHERE owner = ?1 AND bot_id = ?2 AND is_default = 1 ORDER BY account_id LIMIT 32")
+        .and_then(|mut st| st.query_map(rusqlite::params![owner, bot], |r| r.get::<_, String>(0)).map(|rows| rows.flatten().collect()))
+        .unwrap_or_default()
 }
 
 /// Write the failovers the cloud reports (it carried this computer's messages
@@ -81,13 +92,16 @@ pub fn record_failovers(db: &crate::db::DbHandle, owner: &str, reply: &Value) ->
         let (Some(fid), Some(from), Some(to), Some(start)) = (f["id"].as_str(), f["from"].as_str(), f["to"].as_str(), f["startedAt"].as_str()) else { continue };
         let reason = f["reason"].as_str().unwrap_or("home runtime offline");
         let end = f["endedAt"].as_str();
+        // A per-bot failover names its bot; an older cloud's does not (every always-on bot on that computer).
+        let only_bot = f["botId"].as_str();
         let bots: Vec<String> = conn
             .prepare(
                 "SELECT id FROM agents WHERE user_id = ?1 AND json_valid(config)
                    AND json_extract(config, '$.availability.alwaysOn') IN (1, 'true')
-                   AND json_extract(config, '$.availability.failoverRuntimeId') = ?2",
+                   AND json_extract(config, '$.availability.failoverRuntimeId') = ?2
+                   AND (?3 IS NULL OR id = ?3)",
             )
-            .and_then(|mut st| st.query_map(rusqlite::params![owner, to], |r| r.get(0)).map(|rows| rows.flatten().collect()))
+            .and_then(|mut st| st.query_map(rusqlite::params![owner, to, only_bot], |r| r.get(0)).map(|rows| rows.flatten().collect()))
             .unwrap_or_default();
         for bot in bots {
             let row_id = format!("{fid}:{bot}");
@@ -240,5 +254,31 @@ mod tests {
         let ids: Vec<&str> = v["nextDue"].as_array().unwrap().iter().map(|d| d["routineId"].as_str().unwrap()).collect();
         assert_eq!(ids, ["soon"]);
         assert_eq!(v["nextDue"][0]["title"], "Morning briefing");
+    }
+
+    #[test]
+    fn payload_lists_one_failover_per_always_on_bot_with_its_default_channels() {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            r#"CREATE TABLE routines (id TEXT, user_id TEXT, name TEXT, status TEXT, next_run_at TEXT);
+             CREATE TABLE agents (id TEXT, user_id TEXT, config TEXT, created_at TEXT);
+             CREATE TABLE channel_account_bots (account_id TEXT, bot_id TEXT, owner TEXT, is_default INTEGER);
+             INSERT INTO agents VALUES ('b1','u','{"availability":{"alwaysOn":true,"failoverRuntimeId":"cloud1"}}','1');
+             INSERT INTO agents VALUES ('b2','u','{"availability":{"alwaysOn":true,"failoverRuntimeId":"cloud2"}}','2');
+             INSERT INTO agents VALUES ('b3','u','{"availability":{"alwaysOn":false,"failoverRuntimeId":"cloud1"}}','3');
+             INSERT INTO agents VALUES ('b4','v','{"availability":{"alwaysOn":true,"failoverRuntimeId":"cloud9"}}','4');
+             INSERT INTO channel_account_bots VALUES ('tg-1','b1','u',1);
+             INSERT INTO channel_account_bots VALUES ('tg-2','b1','u',0);
+             INSERT INTO channel_account_bots VALUES ('wa-1','b2','u',1);"#,
+        )
+        .unwrap();
+        let v = heartbeat_payload_at(&c, "u", Utc::now());
+        assert_eq!(
+            v["failovers"],
+            json!([
+                { "botId": "b1", "failoverRuntimeId": "cloud1", "accounts": ["tg-1"] },
+                { "botId": "b2", "failoverRuntimeId": "cloud2", "accounts": ["wa-1"] }
+            ])
+        );
     }
 }

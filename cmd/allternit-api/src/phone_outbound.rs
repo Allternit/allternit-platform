@@ -311,7 +311,7 @@ pub async fn add_contact(db: &DbHandle, http: Arc<dyn HttpSend>, n: &PhoneNumber
 
 // ---------------------------------------------------------------- HTTP
 
-fn runtime(state: &Arc<AppState>) -> crate::coordinator_routes::GizziCoordinator {
+pub(crate) fn runtime(state: &Arc<AppState>) -> crate::coordinator_routes::GizziCoordinator {
     crate::coordinator_routes::GizziCoordinator { state: state.clone() }
 }
 

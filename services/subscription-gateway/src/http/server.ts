@@ -25,6 +25,7 @@ import { accountsRouter, type AccountsRouterOptions } from "./routes_accounts.js
 import { capabilitiesRouter } from "./routes_capabilities.js";
 import { catalogRouter } from "./routes_catalog.js";
 import { statsRouter } from "./routes_stats.js";
+import { evidenceRouter } from "./routes_evidence.js";
 import { aaiRouter } from "./routes_aai.js";
 import type { AaiHost } from "../aai/registry.js";
 
@@ -134,6 +135,7 @@ export function createServer(deps: GatewayDeps): Express {
   app.use(capabilitiesRouter(deps));
   app.use(catalogRouter(deps));
   app.use(statsRouter(deps));
+  app.use(evidenceRouter(deps));
   app.use(aaiRouter(deps));
 
   app.use((_req, res) => res.status(404).json({ error: "not_found" }));

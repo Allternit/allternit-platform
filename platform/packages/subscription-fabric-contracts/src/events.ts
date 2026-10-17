@@ -210,6 +210,33 @@ export interface AccountObservation {
   agents?: { id: string; name: string; kind?: string; kindLabel?: string; avatarUrl?: string }[];
 }
 
+/**
+ * What the provider remembers about the signed-in person, read from the
+ * provider's own page (saved memories and custom instructions). Text only;
+ * never tokens or cookies. `available: false` when the account has no such
+ * feature or the page didn't say.
+ */
+export interface VendorMemory {
+  available: boolean;
+  memories: { text: string; updated_at?: string | null }[];
+  instructions: { label: string; text: string }[];
+}
+
+/** One past conversation in the account's history list. */
+export interface VendorThreadSummary {
+  id: string;
+  title: string;
+  updated_at: string | null;
+}
+
+/** A past conversation's turns as plain text. */
+export interface VendorThreadText {
+  id: string;
+  title: string;
+  updated_at: string | null;
+  messages: { role: "user" | "assistant"; text: string }[];
+}
+
 export interface SubscriptionAdapter {
   readonly manifest: AdapterManifest;
 
@@ -224,6 +251,12 @@ export interface SubscriptionAdapter {
   // read after a ready probe. Never returns tokens or cookies.
   readAccount?(signal: AbortSignal): Promise<AccountObservation>;
   readQuota?(pool_id: string, signal: AbortSignal): Promise<QuotaSignal | null>;
+
+  // Memory Drive reads — non-spending, read-only (never types, clicks or
+  // sends): what the provider remembers, the history list, one past chat.
+  readMemory?(signal: AbortSignal): Promise<VendorMemory>;
+  listThreads?(opts: { limit: number }, signal: AbortSignal): Promise<VendorThreadSummary[]>;
+  readThreadText?(id: string, signal: AbortSignal): Promise<VendorThreadText | null>;
 
   // Execution — streaming, cancellable.
   execute(task: Task, ctx: ExecutionContext): AsyncIterable<AdapterEvent>;

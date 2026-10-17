@@ -154,7 +154,20 @@ fn vendor_lanes(conn: &Connection, owner: &str) -> Vec<Value> {
             let login = lane_id.trim_start_matches(VENDOR_PREFIX);
             let bots = bots_for_login(conn, owner, login);
             let action = (state != "green").then(|| json!({ "label": "Fix", "url": "/?settings=subscriptions" }));
+            // The gateway's proof of the failed step rides on the open lane_down item (WP8).
+            let evidence_ref: Option<String> = (state == "red")
+                .then(|| {
+                    conn.query_row(
+                        "SELECT json_extract(detail_json, '$.evidenceRef') FROM attention_items WHERE owner = ?1 AND id = ?2 AND resolved_at IS NULL",
+                        params![owner, format!("lane_down:{lane_id}")],
+                        |r| r.get::<_, Option<String>>(0),
+                    )
+                    .ok()
+                    .flatten()
+                })
+                .flatten();
             json!({
+                "evidenceRef": evidence_ref,
                 "laneId": lane_id,
                 "kind": "vendor_account",
                 "label": label.unwrap_or_else(|| login.to_string()),
