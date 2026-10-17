@@ -28,6 +28,7 @@ import { grayFromBgra, type Gray } from './phone-usb-agent-vision.js';
 import type { Calibration } from './phone-usb-agent-pointer.js';
 import { IctrlClient, type SecretStore } from './ictrl-client.js';
 import { fileLinkStore } from './phone-link-ios.js';
+import { hasLinkedPhones } from './phone-link-stores.js';
 import { PhoneLinkBackend, cachedHostResolver, linkedPhoneSource, probeLinkedPhone, rememberLinkedHost, type LinkedPhone } from './phone-link-backend.js';
 import { fileAndroidLinkStore } from './phone-link-android.js';
 import { nodeDiscoveryDeps } from './phone-link-discovery.js';
@@ -352,9 +353,23 @@ class PhoneService {
     return this.usbAgents;
   }
 
+  /**
+   * Bots reach Phone-Linked phones through the gateway + MCP shim. Called at
+   * launch when a linked phone exists and when Phone Link setup finishes, so
+   * the phone tools are there without an adb phone or USB Agent. No adb
+   * download, no processes beyond the gateway.
+   */
+  async startForLinkedPhones(): Promise<void> {
+    await this.ensureGateway().catch((error) => log.warn('[Phone] gateway for linked phones could not start:', error));
+  }
+
   /** Called at launch: only brings a lane up if something was ever paired on it (zero cost for everyone else). */
   async initIfPaired(): Promise<void> {
     const dir = path.join(app.getPath('userData'), 'phone');
+    // Phone-Linked phones (iPhone helper, Android app) are reached through the
+    // same gateway + MCP shim; without this, bots had no phone tools after a
+    // restart until an adb phone or USB Agent woke the gateway.
+    if (hasLinkedPhones(dir)) await this.startForLinkedPhones();
     if (readJson<StoredPhone[]>(path.join(dir, 'phones.json'), []).length > 0) {
       await this.ensureReady().catch((error) => log.warn('[Phone] could not start:', error));
     }
