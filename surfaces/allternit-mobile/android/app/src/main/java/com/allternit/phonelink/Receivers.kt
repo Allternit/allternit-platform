@@ -56,10 +56,12 @@ class ProvisionReceiver : BroadcastReceiver() {
         val wasRemote = s.allowRemote
         val oldPort = s.port
         cmd.applyTo(s, now)
+        cmd.meshAuthKey?.let { ServerController.storeMeshAuthKey(it) }
         if (ServerController.isRunning && (wasRemote != s.allowRemote || oldPort != s.port)) {
             ServerController.restartServer()
         } else {
             ServerController.startServer()
+            ServerController.syncMesh()
         }
         PhoneLinkService.start(context)
         val summary = cmd.summary(s, now)

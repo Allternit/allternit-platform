@@ -50,6 +50,8 @@ class PhoneServer(
                 .put("platform", Schema.PLATFORM)
                 .put("protocol_version", Schema.PROTOCOL_VERSION)
                 .put("server_version", Schema.SERVER_VERSION)
+                .put("mesh_state", c.meshState)
+                .put("mesh_host", c.meshHost ?: JSONObject.NULL)
             // Same-origin only, like iCTRL: a web page must not read the device id.
             HttpResponse.json(200, body.toString(), mapOf("X-No-CORS" to "1"))
         }
@@ -87,13 +89,15 @@ class PhoneServer(
             }
             clientPub = pub
         }
-        if (plain && !req.isLoopback) {
+        // Mesh-forwarded connections arrive from 127.0.0.1 but are remote peers:
+        // no plaintext pairing, and (in requestAuth below) no armed grant.
+        if (plain && (!req.isLoopback || req.viaMesh)) {
             return pairError(403, "plain_forbidden", "Plain grant is localhost/USB only; use X25519 mode")
         }
         val fingerprint = clientPub?.let { SecureEnvelope.sha256(it).copyOfRange(0, 4).toHex() }
         log("pair request from ${req.remote?.hostAddress} name=$clientName fp=$fingerprint")
 
-        val session = when (val outcome = auth.requestAuth(clientName, req.isLoopback, fingerprint)) {
+        val session = when (val outcome = auth.requestAuth(clientName, req.isLoopback && !req.viaMesh, fingerprint)) {
             is PairOutcome.Approved -> outcome.session.also { auth.recordPeer(it.id, peerOf(req)) }
             PairOutcome.Denied -> return pairError(403, "pair_denied", "User rejected or approval timed out")
             is PairOutcome.Busy -> return pairError(429, "pair_busy", "Another pairing request is waiting for approval on the device", outcome.retryAfter)
@@ -137,7 +141,7 @@ class PhoneServer(
         } catch (e: Exception) {
             return authError(401, "auth_failed", AuthManager.AUTH_FAILED_MESSAGE)
         }
-        val reply = dispatcher.handleBody(opened.plaintext, if (req.isLoopback) "local" else "lan")
+        val reply = dispatcher.handleBody(opened.plaintext, if (req.isLoopback && !req.viaMesh) "local" else "lan")
         // Always 200: the real status travels inside the sealed body.
         return HttpResponse.json(200, opened.seal(reply))
     }

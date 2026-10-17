@@ -5,7 +5,16 @@ import org.json.JSONException
 import org.json.JSONObject
 import java.util.Base64
 
-data class ServerConfig(val deviceId: String, val deviceName: String, val allowRemote: Boolean, val port: Int)
+data class ServerConfig(
+    val deviceId: String,
+    val deviceName: String,
+    val allowRemote: Boolean,
+    val port: Int,
+    /** Mesh node lifecycle state (MeshController.State in Go: stopped/starting/running/…). */
+    val meshState: String = "stopped",
+    /** `<meshIP>:8200` while joined, else null. */
+    val meshHost: String? = null,
+)
 
 /** Server-level operations `config` can trigger. Changes apply after the reply is sent. */
 interface ServerHooks {
@@ -251,6 +260,8 @@ class RpcDispatcher(
                 "x∈[0,${i.widthPx}) y∈[0,${i.heightPx}) (status and navigation bars included). " +
                 "page_source frames use the same space. A screenshot at scale s is (width·s × height·s); " +
                 "tap at pixel/s. Rotation changes width/height: re-read device_info after it.")
+            .put("mesh_state", cfg.meshState)
+            .put("mesh_host", cfg.meshHost ?: JSONObject.NULL)
             .put("system", system)
     }
 

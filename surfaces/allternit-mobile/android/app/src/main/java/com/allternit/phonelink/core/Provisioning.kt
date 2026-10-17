@@ -50,6 +50,7 @@ class AppSettings(private val kv: KeyValueStore, private val defaultName: () -> 
         private const val K_PROVISIONED = "provisioned"
         private const val K_USER_STOPPED = "user_stopped"
         private const val K_ARMED_UNTIL = "armed_until_ms"
+        private const val K_MESH_URL = "mesh_control_url"
     }
 
     val deviceId: String
@@ -76,6 +77,14 @@ class AppSettings(private val kv: KeyValueStore, private val defaultName: () -> 
         get() = kv.getBoolean(K_USER_STOPPED, false)
         set(v) = kv.edit { putBoolean(K_USER_STOPPED, v) }
 
+    /**
+     * Headscale control URL for the mesh join (https only). Not secret, so it
+     * lives here in the clear; the pre-auth key is kept in [MeshKeyBox].
+     */
+    var meshControlUrl: String?
+        get() = kv.getString(K_MESH_URL)
+        set(v) = kv.edit { putString(K_MESH_URL, v) }
+
     fun armPairing(nowMs: Long) = kv.edit { putLong(K_ARMED_UNTIL, nowMs + ARM_WINDOW_MS) }
 
     fun isArmed(nowMs: Long): Boolean = kv.getLong(K_ARMED_UNTIL, 0) > nowMs
@@ -100,6 +109,10 @@ data class ProvisionCommand(
     val allowRemote: Boolean,
     val deviceName: String?,
     val port: Int?,
+    /** Headscale control URL for the mesh join (https only), if given. */
+    val meshControlUrl: String?,
+    /** Single-use mesh pre-auth key; sealed by the receiver, never logged. */
+    val meshAuthKey: String?,
 ) {
     companion object {
         const val ACTION = "com.allternit.phonelink.PROVISION"
@@ -107,6 +120,8 @@ data class ProvisionCommand(
         const val EXTRA_REMOTE = "allow_remote_access"
         const val EXTRA_NAME = "device_name"
         const val EXTRA_PORT = "listen_port"
+        const val EXTRA_MESH_URL = "mesh_control_url"
+        const val EXTRA_MESH_KEY = "mesh_auth_key"
 
         /** @param extras the intent extras as plain values (am broadcast --ez/--es/--ei). */
         fun parse(extras: Map<String, Any?>): Result<ProvisionCommand> {
@@ -123,7 +138,23 @@ data class ProvisionCommand(
                 else -> return Result.failure(IllegalArgumentException("listen_port must be a number"))
             }
             if (port != null && port !in 1024..65535) return Result.failure(IllegalArgumentException("listen_port must be 1024..65535"))
-            return Result.success(ProvisionCommand(arm, remote, name?.ifEmpty { null }, port))
+            val meshUrl = when (val u = extras[EXTRA_MESH_URL]) {
+                null -> null
+                is String -> u.trim().ifEmpty { return Result.failure(IllegalArgumentException("mesh_control_url must not be empty")) }
+                else -> return Result.failure(IllegalArgumentException("mesh_control_url must be a string"))
+            }
+            if (meshUrl != null && !meshUrl.startsWith("https://", ignoreCase = true)) {
+                return Result.failure(IllegalArgumentException("mesh_control_url must be an https URL"))
+            }
+            val meshKey = when (val k = extras[EXTRA_MESH_KEY]) {
+                null -> null
+                is String -> k.trim().ifEmpty { return Result.failure(IllegalArgumentException("mesh_auth_key must not be empty")) }
+                else -> return Result.failure(IllegalArgumentException("mesh_auth_key must be a string"))
+            }
+            if (meshKey != null && meshKey.toByteArray(Charsets.UTF_8).size > 4096) {
+                return Result.failure(IllegalArgumentException("mesh_auth_key is at most 4096 bytes"))
+            }
+            return Result.success(ProvisionCommand(arm, remote, name?.ifEmpty { null }, port, meshUrl, meshKey))
         }
 
         private fun Any?.asBool(): Boolean? = when (this) {
@@ -141,6 +172,7 @@ data class ProvisionCommand(
         settings.allowRemote = allowRemote
         deviceName?.let { settings.deviceName = it }
         port?.let { settings.port = it }
+        meshControlUrl?.let { settings.meshControlUrl = it }
         settings.provisioned = true
         settings.userStopped = false
         if (armPairing) settings.armPairing(nowMs)

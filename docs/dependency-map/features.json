@@ -1312,6 +1312,10 @@
         {
           "on": "2026-10-17",
           "note": "Bots reach Phone-Linked phones through one iCTRL lane in PhoneToolRunner (link: serials) with read_ui/find_and_tap/screen_text on every lane and per-phone health; remount and signature renewal are manual states."
+        },
+        {
+          "on": "2026-10-17",
+          "note": "Phone Link helpers join the customer's Headscale mesh with embedded userspace tsnet (no OS VPN slot); keys come from /api/v1/mesh/enroll (Desktop passing them at cable setup is the next step); relays are our own DERP. tsnet log uploads to Tailscale are switched off in every Allternit mesh node (phones and the gizzi mesh-node sidecar). Live 2026-10-17: moto controlled from France over the mesh on LTE with Wi-Fi off."
         }
       ],
       "evidence": [

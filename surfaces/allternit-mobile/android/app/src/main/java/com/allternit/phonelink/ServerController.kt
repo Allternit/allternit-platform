@@ -1,6 +1,9 @@
 package com.allternit.phonelink
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.LinkProperties
+import android.net.Network
 import android.os.Build
 import android.util.DisplayMetrics
 import android.util.Log
@@ -11,6 +14,8 @@ import com.allternit.phonelink.core.AutoStart
 import com.allternit.phonelink.core.DeviceOps
 import com.allternit.phonelink.core.EncryptedFileSessionStore
 import com.allternit.phonelink.core.HttpServer
+import com.allternit.phonelink.core.MeshController
+import com.allternit.phonelink.core.MeshKeyBox
 import com.allternit.phonelink.core.PhoneServer
 import com.allternit.phonelink.core.RpcDispatcher
 import com.allternit.phonelink.core.ServerConfig
@@ -43,6 +48,8 @@ object ServerController {
 
     @Volatile var ops: DeviceOps? = null; private set
     @Volatile var lastError: String? = null; private set
+    private lateinit var meshKeyBox: MeshKeyBox
+    private lateinit var meshController: MeshController
     private val listeners = CopyOnWriteArraySet<() -> Unit>()
     private val scheduler = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "phonelink-ctl").apply { isDaemon = true } }
 
@@ -66,10 +73,29 @@ object ServerController {
             hooks = hooks,
             ownPackage = app.packageName,
         )
-        val phoneServer = PhoneServer(auth, dispatcher, config = { settings.serverConfig() }, log = ::log)
+        meshKeyBox = MeshKeyBox(kv, KeystoreSealer())
+        val phoneServer = PhoneServer(auth, dispatcher, config = { meshAwareConfig() }, log = ::log)
         http = HttpServer(phoneServer::handle, log = ::log)
+        meshController = MeshController(
+            settings = settings,
+            keyBox = meshKeyBox,
+            meshDir = File(app.filesDir, "mesh"),
+            handler = phoneServer::handle,
+            nodeFactory = { GomobileMeshNode(it) },
+            log = ::log,
+        )
+        // Wi-Fi joined or lost, cellular took over: refresh the mesh's view of the interfaces.
+        app.getSystemService(ConnectivityManager::class.java)?.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) = meshController.onNetworkChanged()
+            override fun onLost(network: Network) = meshController.onNetworkChanged()
+            override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) = meshController.onNetworkChanged()
+        })
         initialized = true
     }
+
+    /** ServerConfig plus the live mesh facts, for /whoami and device_info. */
+    private fun meshAwareConfig(): ServerConfig =
+        settings.serverConfig().copy(meshState = meshController.state(), meshHost = meshController.host())
 
     // ── State ───────────────────────────────────────────────────────────────
 
@@ -119,13 +145,29 @@ object ServerController {
             log(lastError!!)
             false
         }
+        if (ok) meshController.start()
         notifyChanged()
         return ok
     }
 
+    /** Seal and persist a mesh pre-auth key from a PROVISION broadcast. Never logged. */
+    fun storeMeshAuthKey(authKey: String) {
+        init(app)
+        meshKeyBox.store(authKey)
+    }
+
+    /** (Re)start the mesh join if provisioned with a mesh control URL. Idempotent. */
+    fun syncMesh() {
+        if (initialized) meshController.start()
+    }
+
+    fun meshState(): String = if (initialized) meshController.state() else "stopped"
+    fun meshHost(): String? = if (initialized) meshController.host() else null
+
     @Synchronized
     fun restartServer() {
         http.stop()
+        meshController.stop()
         startServer()
     }
 
@@ -134,6 +176,7 @@ object ServerController {
     fun stopServer(byUser: Boolean) {
         if (byUser) settings.userStopped = true
         http.stop()
+        meshController.stop()
         log("server stopped (byUser=$byUser)")
         notifyChanged()
     }
@@ -155,7 +198,7 @@ object ServerController {
     }
 
     private val hooks = object : ServerHooks {
-        override fun config(): ServerConfig = settings.serverConfig()
+        override fun config(): ServerConfig = meshAwareConfig()
 
         override fun applyConfig(allowRemote: Boolean?, port: Int?, deviceName: String?) {
             deviceName?.let { settings.deviceName = it }
@@ -203,6 +246,7 @@ object ServerController {
         if (!http.isRunning) return lastError ?: "Stopped"
         val where = if (settings.allowRemote) (lanAddresses().firstOrNull() ?: "this phone") else "127.0.0.1 (cable only)"
         val n = auth.activeSessions.size
-        return "Listening on $where:${settings.port} · $n paired"
+        val mesh = meshHost()?.let { " · mesh $it" } ?: ""
+        return "Listening on $where:${settings.port} · $n paired$mesh"
     }
 }
