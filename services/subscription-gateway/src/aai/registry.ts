@@ -52,6 +52,21 @@ export interface AaiHostState {
   pace(id: string, pacing: AaiPacing | undefined, now: number): AaiResult<never> | undefined;
 }
 
+/**
+ * The route router's turn-start hook (implemented by RouteDirector in
+ * src/routes/director.ts; declared as a narrow interface so the host stays
+ * free of store imports). Consulted ONLY for agent.context.open /
+ * agent.context.message on vendor bindings — i.e. at the start of a turn —
+ * which is what makes failover strictly between-turn (§4.4: a turn already
+ * streaming never switches).
+ */
+export interface RouteDirectorLike {
+  routeForTurn(vendor: string): Promise<
+    | { ok: true; route: string; adapterId: string | null; rebound: boolean; reason: string }
+    | { ok: false; error: "NO_ROUTE"; reason: string }
+  >;
+}
+
 export function guardProvider(provider: AaiProvider, host: AaiHostState, pacing?: AaiPacing): AaiProvider {
   const id = provider.adapterId;
   return new Proxy(provider, {
@@ -90,6 +105,8 @@ export class AaiHost {
   readonly router = new AaiRouter();
   /** Resolves with the vendor adapter ids registered at boot. */
   vendorsReady: Promise<string[]> = Promise.resolve([]);
+  /** Route router turn-start hook (set by main.ts after boot wiring). */
+  routeDirector?: RouteDirectorLike;
   private regs = new Map<string, AaiRegistration & { guarded: AaiProvider }>();
   private disabled = new Set<string>();
   private lastCall = new Map<string, number>();
@@ -202,6 +219,16 @@ export class AaiHost {
     return runConformance(r.provider, fixtures); // raw provider: harness must not consume pacing/kill-switch
   }
 
+  /** The provider's own capability manifest (vendor + lane), or null when unknown. */
+  async providerManifest(adapterId: string): Promise<AgentCapabilityManifest | null> {
+    const reg = this.regs.get(adapterId);
+    if (!reg) return null;
+    const agents = await reg.provider.list();
+    const agentId = agents.ok ? agents.value[0]?.agentId ?? "" : "";
+    const m = await reg.provider.capabilities(agentId).catch(() => undefined);
+    return m?.ok ? m.value : null;
+  }
+
   private async manifestOf(adapterId: string, agentId: string): Promise<AgentCapabilityManifest | undefined> {
     const key = `${adapterId}\u0000${agentId}`;
     const hit = this.manifestCache.get(key);
@@ -310,11 +337,32 @@ export class AaiHost {
   async call(op: string, binding: BotExecutionBinding, input: Record<string, unknown>): Promise<AaiResult<unknown>> {
     const parsed = aaiOperationSchema.safeParse(op);
     if (!parsed.success) return fail("UNSUPPORTED", `unknown AAI op ${op}`, { retryable: false });
-    const p = this.router.bind(binding);
+    // §4 route router, turn start only: an open/message on a vendor binding is
+    // where a turn begins, so this is the only selection point — failover
+    // happens here, at the next turn, never mid-stream. The bound route's
+    // adapter pins the binding; NO_ROUTE answers as a typed error with the
+    // reason preserved (AAI code LANE_BLOCKED, details.no_route=true).
+    let effectiveBinding = binding;
+    if (
+      this.routeDirector &&
+      binding.type === "vendor" &&
+      typeof binding.vendor === "string" &&
+      (parsed.data === "agent.context.open" || parsed.data === "agent.context.message")
+    ) {
+      const r = await this.routeDirector.routeForTurn(binding.vendor);
+      if (!r.ok) {
+        return fail("LANE_BLOCKED", `NO_ROUTE for ${binding.vendor}: ${r.reason}`, {
+          retryable: false,
+          details: { no_route: true, vendor: binding.vendor, reason: r.reason },
+        });
+      }
+      if (r.adapterId) effectiveBinding = { ...binding, adapterId: r.adapterId };
+    }
+    const p = this.router.bind(effectiveBinding);
     const i = input as any;
     // allternit-api names the target agent `externalAgentId` (its binding field); the AAI input is `agentId`.
     if (i.agentId === undefined && typeof i.externalAgentId === "string") i.agentId = i.externalAgentId;
-    const adapterId = binding.adapterId ?? (binding.type === "allternit" ? "allternit-loopback" : undefined);
+    const adapterId = effectiveBinding.adapterId ?? (effectiveBinding.type === "allternit" ? "allternit-loopback" : undefined);
     if (CONTEXT_OPS.has(parsed.data)) {
       const lost = await this.revive(adapterId, parsed.data === "agent.context.open" ? i.adoptContextId : i.contextId);
       if (lost) return lost;
