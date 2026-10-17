@@ -110,6 +110,7 @@
               "guides/messaging-channels",
               "guides/bot-autonomy",
               "guides/injection-defense",
+              "guides/red-team-suite",
               "guides/calls-and-texts",
               "guides/voice",
               "guides/mcp-apps-status",
