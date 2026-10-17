@@ -503,9 +503,12 @@
     {
       "source": "allternit-ai/src/components/computers",
       "target": "allternit/surfaces/allternit-desktop",
-      "kind": "Electron IPC phone:* (Android pairing, screenshots) and phone:usb-* (USB Agent setup, calibrate, stop, forget)",
+      "kind": "Electron IPC phone:* (Android pairing, screenshots, in-app live view: phone:stream-* pushes Annex-B H.264 chunks + phone:stream-{start,stop,status,input,display-power}) and phone:usb-* (USB Agent setup, calibrate, stop, forget)",
       "evidence": [
         "allternit/surfaces/allternit-desktop/src/preload/index.ts",
+        "allternit/surfaces/allternit-desktop/src/main/phone-ipc.ts",
+        "allternit/surfaces/allternit-desktop/src/main/phone-scrcpy.ts",
+        "allternit/surfaces/allternit-desktop/src/main/phone-stream.ts",
         "allternit-ai/src/lib/phones-bridge.ts"
       ]
     },

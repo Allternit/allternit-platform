@@ -1294,6 +1294,10 @@
         {
           "on": "2026-10-16",
           "note": "Phone Link setup UI (ai, PhoneLinkSetup / PhoneLinkPanel / usePhoneLink): one screen per backend state with Eoj's per-state copy, Apple ID and 2FA forms that clear after submit and never log, a highlighted 'Turn on Developer Mode?' popup callout after the restart, and a result card listing each app's sign-in state. iPhone has no 'Coming soon': an unfinished backend step is a plain error. Opened from Settings > Subscriptions, Settings > Computers > Phones and onboarding Your AI ('Use the apps on your devices'; done only at ready_wifi). Web, phone layout and PWA show 'Set up from Allternit Desktop'."
+        },
+        {
+          "on": "2026-10-17",
+          "note": "In-app linked-Android live view (Phase 1): scrcpy-server pinned to v5.0.1 with a recorded SHA-256, downloaded on first use from the official release (never bundled); phone-scrcpy.ts implements the v5 wire protocol (dummy byte, 64-byte device name, h264 codec id, 12-byte session packets for rotation/size, 12-byte frame headers stripped before IPC), one shared PhoneStreamManager session per serial exposed to the renderer over phone:stream-* IPC with Annex-B H.264 chunks as structured-clone Buffers; input (touch/key/text/scroll/back/home/app_switch/power) and SET_DISPLAY_POWER encoded per control_msg.c. Agent-takeover banner: PhoneInfo.agentBusy fed by tool-runner and ARTEMIS activity counters. Streams start only on renderer request; the external scrcpy window stays a secondary action."
         }
       ],
       "evidence": [
@@ -1303,7 +1307,9 @@
         "allternit-ai/src/components/phone-link/PhoneLinkSetup.tsx",
         "allternit/hardware/usb-agent/README.md",
         "allternit/surfaces/allternit-desktop/src/main/phone-tools.ts",
-        "allternit/surfaces/allternit-desktop/src/main/phone-usb-agent.ts"
+        "allternit/surfaces/allternit-desktop/src/main/phone-usb-agent.ts",
+        "allternit/surfaces/allternit-desktop/src/main/phone-scrcpy.ts",
+        "allternit/surfaces/allternit-desktop/src/main/phone-stream.ts"
       ]
     },
     {

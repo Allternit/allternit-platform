@@ -632,7 +632,53 @@ const permissionGuideAPI = {
   },
 };
 
-// ─── Phones (Android over Wi-Fi; iPhone over an Allternit USB Agent) ─────────────────────────────────────
+// ─── Phones (Android over Wi-Fi; iPhone over an Allternit USB Agent) ─────────────────────
+
+// ─── In-app live view (scrcpy-server video + input) ─────────────────────────
+// Types mirror the renderer contract in src/types/electron-api.d.ts and the
+// main-side protocol in src/main/phone-scrcpy.ts; a WebCodecs client decodes
+// the Annex-B chunks and sends PhoneInputEvents back.
+
+type PhoneStreamOptions = { maxSize?: number; videoBitrate?: number; maxFps?: number };
+type PhoneStreamMeta = { deviceName: string; width: number; height: number; codec: 'h264' };
+type PhoneStreamStatus =
+  | { state: 'idle' }
+  | { state: 'starting' }
+  | { state: 'live'; meta: PhoneStreamMeta }
+  | { state: 'ended'; reason: string }
+  | { state: 'error'; message: string };
+type PhoneInputEvent =
+  | { type: 'touch'; action: 'down' | 'move' | 'up'; pointerId: number; x: number; y: number; pressure?: number }
+  | { type: 'key'; action: 'down' | 'up'; keyCode: number; metaState?: number }
+  | { type: 'text'; text: string }
+  | { type: 'scroll'; x: number; y: number; hScroll?: number; vScroll?: number }
+  | { type: 'back' } | { type: 'home' } | { type: 'app_switch' } | { type: 'power' };
+
+// Chunks cross IPC as Buffers and arrive here as Uint8Array views; hand the
+// caller a standalone ArrayBuffer (the contract's chunk type).
+function toArrayBuffer(data: unknown): ArrayBuffer {
+  if (data instanceof ArrayBuffer) return data;
+  if (data instanceof Uint8Array) return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
+  return new ArrayBuffer(0);
+}
+
+// Refcounted per-serial subscription: main pushes to a webContents while it
+// has at least one subscriber for that serial.
+const streamSubCounts = new Map<string, number>();
+function streamSubscribe(serial: string): void {
+  const count = streamSubCounts.get(serial) ?? 0;
+  streamSubCounts.set(serial, count + 1);
+  if (count === 0) void ipcRenderer.invoke('phone:stream-subscribe', serial);
+}
+function streamUnsubscribe(serial: string): void {
+  const count = (streamSubCounts.get(serial) ?? 0) - 1;
+  if (count > 0) {
+    streamSubCounts.set(serial, count);
+  } else {
+    streamSubCounts.delete(serial);
+    void ipcRenderer.invoke('phone:stream-unsubscribe', serial);
+  }
+}
 
 // ─── Phone Link (phone-link.ts) ───────────────────────────────────────────────
 // Apple ID credentials pass through once to main; nothing here stores them.
@@ -660,6 +706,47 @@ const phonesAPI = {
   forget: (id: string): Promise<void> => ipcRenderer.invoke('phone:forget', id),
   startScrcpy: (serial: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('phone:scrcpy-start', serial),
   stopScrcpy: (serial: string): Promise<void> => ipcRenderer.invoke('phone:scrcpy-stop', serial),
+  startStream: (serial: string, opts?: PhoneStreamOptions): Promise<{ ok: true } | { ok: false; message: string }> =>
+    ipcRenderer.invoke('phone:stream-start', serial, opts ?? {}),
+  stopStream: (serial: string): Promise<void> => ipcRenderer.invoke('phone:stream-stop', serial),
+  streamStatus: (serial: string): Promise<PhoneStreamStatus> => ipcRenderer.invoke('phone:stream-status', serial),
+  onStreamMeta: (serial: string, cb: (meta: PhoneStreamMeta) => void): (() => void) => {
+    const listener = (_: IpcRendererEvent, s: string, meta: PhoneStreamMeta) => {
+      if (s === serial) cb(meta);
+    };
+    ipcRenderer.on('phone:stream-meta', listener);
+    streamSubscribe(serial);
+    return () => {
+      ipcRenderer.removeListener('phone:stream-meta', listener);
+      streamUnsubscribe(serial);
+    };
+  },
+  onStreamChunk: (serial: string, cb: (chunk: ArrayBuffer) => void): (() => void) => {
+    const listener = (_: IpcRendererEvent, s: string, chunk: Uint8Array) => {
+      if (s === serial) cb(toArrayBuffer(chunk));
+    };
+    ipcRenderer.on('phone:stream-chunk', listener);
+    streamSubscribe(serial);
+    return () => {
+      ipcRenderer.removeListener('phone:stream-chunk', listener);
+      streamUnsubscribe(serial);
+    };
+  },
+  onStreamEnd: (serial: string, cb: (info: { reason: string }) => void): (() => void) => {
+    const listener = (_: IpcRendererEvent, s: string, info: { reason: string }) => {
+      if (s === serial) cb(info);
+    };
+    ipcRenderer.on('phone:stream-end', listener);
+    streamSubscribe(serial);
+    return () => {
+      ipcRenderer.removeListener('phone:stream-end', listener);
+      streamUnsubscribe(serial);
+    };
+  },
+  sendStreamInput: (serial: string, events: PhoneInputEvent[]): Promise<{ ok: boolean; message?: string }> =>
+    ipcRenderer.invoke('phone:stream-input', serial, events),
+  setStreamDisplayPower: (serial: string, on: boolean): Promise<{ ok: boolean; message?: string }> =>
+    ipcRenderer.invoke('phone:stream-display-power', serial, on),
   tryOpenApp: (serial: string, app: string): Promise<{ ok: boolean; message?: string }> => ipcRenderer.invoke('phone:try-open-app', serial, app),
   screenshot: (serial: string): Promise<{ ok: boolean; dataBase64?: string; message?: string }> => ipcRenderer.invoke('phone:screenshot', serial),
   installArtemis: (): Promise<unknown> => ipcRenderer.invoke('phone:artemis-install'),

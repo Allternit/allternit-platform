@@ -11,8 +11,16 @@ Connecting a phone is **Desktop only**: adb runs in the Desktop app. On ai.allte
 
 - A spare Android phone on Android 11 or newer, on the **same Wi-Fi network** as your computer.
 - Allternit Desktop (macOS, Windows or Linux).
-- Optional: [scrcpy](https://github.com/Genymobile/scrcpy) to watch and control the phone from a window on your computer. The bot works without it.
+- Optional: [scrcpy](https://github.com/Genymobile/scrcpy) if you also want the phone in a separate window on your computer. The in-app live view does not need it — Desktop runs its own pinned copy of the scrcpy server.
 - Optional, for plain-English tasks: Python 3.12+ tooling (`git` and `uv`) and a model key for Google ARTEMIS, which Allternit installs on request.
+
+## Watch and control the phone in the app
+
+Settings → Computers → Phones shows the phone's screen **live**, inside Desktop: video streams from a pinned `scrcpy-server` that Desktop pushes and starts on the phone over the existing wireless-debugging connection — no cable, no separate app, and nothing to install. Tap, type and swipe go straight to the phone; rotating it just works. Press **Stop** any time: the server is torn down on the phone and everything (display timeout, wake state) is restored.
+
+A live view starts only when you ask for it, never on its own. While a bot is mid-action on the phone — running tools or an ARTEMIS task — the phone card shows a **takeover banner**, so you can see the bot is driving before you touch the screen. If the phone drops off Wi-Fi, the live view ends by itself; reconnect the phone and start it again.
+
+The separate scrcpy window (if you installed scrcpy) still works as an alternative.
 
 ## Connect a phone
 
@@ -56,7 +64,8 @@ A text is reported as **submitted** to the phone's messaging service, not delive
 
 ## For developers
 
-- Code: `surfaces/allternit-desktop/src/main/phone-*.ts` (`phone-device-manager.ts`, `phone-tools.ts`, `phone-artemis.ts`, `phone-adb.ts`, `phone-gateway.ts`).
+- Code: `surfaces/allternit-desktop/src/main/phone-*.ts` (`phone-device-manager.ts`, `phone-tools.ts`, `phone-artemis.ts`, `phone-adb.ts`, `phone-gateway.ts`, `phone-scrcpy.ts` — the pinned scrcpy v5.0.1 wire protocol — and `phone-stream.ts` — one shared session per phone).
 - adb is not bundled (Google's platform-tools licence does not permit redistribution). Desktop uses an adb you already have, or downloads the pinned official platform-tools r37.0.1 from `dl.google.com` the first time you connect an Android phone (not when you only open Settings), and verifies its SHA-256 before unpacking.
+- The in-app live view uses the official `scrcpy-server` binary, pinned to v5.0.1 with a recorded SHA-256 (`phone-scrcpy.ts`), downloaded on first use from the Genymobile GitHub release. The server speaks the v5.0.1 protocol: a dummy byte, a 64-byte device name, a codec id, then 12-byte session packets (rotation/size) and 12-byte frame headers around the Annex-B stream — main strips the headers and forwards raw H.264 to the renderer over IPC, where a WebCodecs client decodes it and sends `PhoneInputEvent`s back.
 - Google ARTEMIS is pinned to one commit and installed on request into the Desktop data folder; its MCP server runs as a per-phone sidecar that stops when Desktop quits.
 - The tool gateway listens on `127.0.0.1` only and needs a per-launch token written to `~/.allternit/phone-gateway.json` (mode 0600).

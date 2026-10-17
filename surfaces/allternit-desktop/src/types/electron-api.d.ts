@@ -581,6 +581,7 @@ export interface PhoneInfoData {
   host: string;
   port: number;
   streaming: boolean;
+  agentBusy: boolean;
 }
 
 export interface PhonePairingStatus {
@@ -602,12 +603,48 @@ export interface PhonesAPI {
   forget(id: string): Promise<void>;
   startScrcpy(serial: string): Promise<{ ok: boolean; error?: string }>;
   stopScrcpy(serial: string): Promise<void>;
+  // In-app live view (scrcpy-server video + input; starts only on request).
+  startStream(serial: string, opts?: PhoneStreamOptions): Promise<{ ok: true } | { ok: false; message: string }>;
+  stopStream(serial: string): Promise<void>;
+  streamStatus(serial: string): Promise<PhoneStreamStatus>;
+  onStreamMeta(serial: string, cb: (meta: PhoneStreamMeta) => void): () => void;
+  onStreamChunk(serial: string, cb: (chunk: ArrayBuffer) => void): () => void;
+  onStreamEnd(serial: string, cb: (info: { reason: string }) => void): () => void;
+  sendStreamInput(serial: string, events: PhoneInputEvent[]): Promise<{ ok: boolean; message?: string }>;
+  setStreamDisplayPower(serial: string, on: boolean): Promise<{ ok: boolean; message?: string }>;
   tryOpenApp(serial: string, app: string): Promise<{ ok: boolean; message?: string }>;
   screenshot(serial: string): Promise<{ ok: boolean; dataBase64?: string; message?: string }>;
   installArtemis(): Promise<unknown>;
   onDevices(handler: (phones: PhoneInfoData[]) => void): () => void;
   onPairing(handler: (status: PhonePairingStatus) => void): () => void;
 }
+
+export interface PhoneStreamOptions {
+  maxSize?: number;
+  videoBitrate?: number;
+  maxFps?: number;
+}
+
+export interface PhoneStreamMeta {
+  deviceName: string;
+  width: number;
+  height: number;
+  codec: 'h264';
+}
+
+export type PhoneStreamStatus =
+  | { state: 'idle' }
+  | { state: 'starting' }
+  | { state: 'live'; meta: PhoneStreamMeta }
+  | { state: 'ended'; reason: string }
+  | { state: 'error'; message: string };
+
+export type PhoneInputEvent =
+  | { type: 'touch'; action: 'down' | 'move' | 'up'; pointerId: number; x: number; y: number; pressure?: number }
+  | { type: 'key'; action: 'down' | 'up'; keyCode: number; metaState?: number }
+  | { type: 'text'; text: string }
+  | { type: 'scroll'; x: number; y: number; hScroll?: number; vScroll?: number }
+  | { type: 'back' } | { type: 'home' } | { type: 'app_switch' } | { type: 'power' };
 
 export interface AllternitDesktopAPI {
   sdk: { getBackendUrl(): Promise<string> };

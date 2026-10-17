@@ -20,6 +20,16 @@ import { ArtemisManager } from './phone-artemis.js';
 import { PhoneDeviceManager, type PhoneStore, type StoredPhone } from './phone-device-manager.js';
 import { newGatewayToken, startPhoneGateway } from './phone-gateway.js';
 import { findUxplay } from './phone-airplay.js';
+import {
+  ensureScrcpyServer,
+  nodeScrcpyAdb,
+  nodeScrcpyConnect,
+  ScrcpySession,
+  type PhoneInputEvent,
+  type PhoneStreamOptions,
+  type PhoneStreamStatus,
+} from './phone-scrcpy.js';
+import { PhoneStreamManager } from './phone-stream.js';
 import { UsbAgentManager, type Sealer, type StoredUsbAgent, type UsbAgentConfig, type UsbAgentStore } from './phone-usb-agent.js';
 import { candidatePorts, lanAddresses, serialPort } from './phone-usb-agent-provision.js';
 import { USBA_MDNS_TYPE } from './phone-usb-agent-protocol.js';
@@ -145,6 +155,8 @@ class PhoneService {
   private adbReady: Promise<AdbCall> | null = null;
   private manager: PhoneDeviceManager | null = null;
   private managerReady: Promise<PhoneDeviceManager> | null = null;
+  private streams: PhoneStreamManager | null = null;
+  private scrcpyServerReady: Promise<string> | null = null;
   private usbAgents: UsbAgentManager | null = null;
   private artemis: ArtemisManager | null = null;
   private runner: PhoneToolRunner | null = null;
@@ -186,7 +198,8 @@ class PhoneService {
     this.gatewayReady = (async () => {
       const lazy = (async (args: string[], opts?: { serial?: string; timeoutMs?: number }) => (await this.ensureAdbCall())(args, opts)) as AdbCall;
       lazy.binary = async (args, opts) => (await this.ensureAdbCall()).binary(args, opts);
-      this.artemis = this.artemis ?? new ArtemisManager(this.dir());
+      this.artemis = this.artemis ?? new ArtemisManager(this.dir(), undefined, (serial, running) =>
+        this.manager?.noteAgentActivity(serial, running ? 1 : -1));
       const runner = new PhoneToolRunner({
         adb: lazy,
         gate: dialogGate(),
@@ -195,6 +208,7 @@ class PhoneService {
         onlineSerials: () => this.manager?.onlineSerials() ?? [],
         defaultSmsSubscription: (serial) => this.manager?.defaultSmsSubscription(serial) ?? Promise.resolve(null),
         usb: () => this.usbAgents,
+        activity: (serial, delta) => this.manager?.noteAgentActivity(serial, delta),
       });
       this.runner = runner;
       const token = newGatewayToken();
@@ -225,7 +239,28 @@ class PhoneService {
             : null,
         });
         manager.start();
+        manager.on('devices', () => {
+          // The reconnect state machine handles re-pairing; a stream on a
+          // phone that just went away simply ends and can be restarted.
+          const online = new Set(manager.onlineSerials());
+          for (const serial of this.streams?.activeSerials() ?? []) {
+            if (!online.has(serial)) this.streams?.deviceDisconnected(serial);
+          }
+        });
         this.manager = manager;
+        this.streams = new PhoneStreamManager({
+          createSession: (serial, opts) =>
+            new ScrcpySession(
+              {
+                adb: nodeScrcpyAdb(this.adbPath ?? '', serial),
+                serial,
+                serverPath: this.ensureScrcpyServerPath(),
+                connect: nodeScrcpyConnect,
+                log: (message) => log.info('[PhoneStream]', message),
+              },
+              opts,
+            ),
+        });
         return manager;
       })();
       this.managerReady.catch(() => {
@@ -233,6 +268,57 @@ class PhoneService {
       });
     }
     return this.managerReady;
+  }
+
+  /** The pinned scrcpy-server binary; one shared download (verified) across sessions. */
+  private ensureScrcpyServerPath(): Promise<string> {
+    if (!this.scrcpyServerReady) {
+      this.scrcpyServerReady = ensureScrcpyServer(this.dir());
+      this.scrcpyServerReady.catch(() => {
+        this.scrcpyServerReady = null; // a failed download may be retried on the next start
+      });
+    }
+    return this.scrcpyServerReady;
+  }
+
+  /** The in-app live view manager (scrcpy-server video + input); created with the Android lane. */
+  async ensureStreams(): Promise<PhoneStreamManager> {
+    await this.ensureReady();
+    return this.streams!;
+  }
+
+  /**
+   * Start a live stream on request only. The phone must be online; the
+   * pinned scrcpy-server is downloaded on first use, not here.
+   */
+  async startStream(serial: string, opts?: PhoneStreamOptions): Promise<{ ok: true } | { ok: false; message: string }> {
+    const manager = await this.ensureReady();
+    const phone = manager.list().find((p) => p.serial === serial);
+    if (!phone || phone.state !== 'online') return { ok: false, message: 'That phone is not connected.' };
+    return this.ensureStreams().then((streams) => streams.start(serial, opts ?? {}));
+  }
+
+  /** Stream controls, safe to call before the Android lane exists (no-op / idle results). */
+  async stopStream(serial: string): Promise<void> {
+    await this.streams?.stop(serial);
+  }
+
+  streamStatus(serial: string): PhoneStreamStatus {
+    return this.streams?.status(serial) ?? { state: 'idle' };
+  }
+
+  sendStreamInput(serial: string, events: unknown): { ok: boolean; message?: string } {
+    if (!Array.isArray(events) || events.length === 0) return { ok: false, message: 'No input events.' };
+    // encodeControlMessage validates every event; invalid ones fail as { ok: false }.
+    return this.streams?.sendInput(serial, events as PhoneInputEvent[]) ?? { ok: false, message: 'The stream is not live.' };
+  }
+
+  setStreamDisplayPower(serial: string, on: boolean): { ok: boolean; message?: string } {
+    return this.streams?.setDisplayPower(serial, on) ?? { ok: false, message: 'The stream is not live.' };
+  }
+
+  getStreamManager(): PhoneStreamManager | null {
+    return this.streams;
   }
 
   /** iPhone lane: the USB Agent link, its mDNS advert and the AirPlay receivers. No adb involved. */
@@ -341,6 +427,7 @@ class PhoneService {
   }
 
   shutdown(): void {
+    this.streams?.stopAll();
     this.manager?.stopAll();
     this.usbAgents?.stopAll();
     this.artemis?.stopAll();
