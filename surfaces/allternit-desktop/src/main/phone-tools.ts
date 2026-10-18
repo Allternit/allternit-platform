@@ -12,6 +12,7 @@
 
 import { createHash } from 'node:crypto';
 import type { PhoneLinkHealth } from './phone-link-health.js';
+import { catalogApp, catalogAppByName } from './phone-app-catalog.js';
 
 // ── Injected collaborators ──────────────────────────────────────────────────
 
@@ -685,13 +686,20 @@ export class PhoneToolRunner {
   }
 
   private async openApp(serial: string, a: Record<string, unknown>): Promise<ToolResult> {
-    const pkg = resolveApp(a.app);
-    if (!pkg) return fail('unknown_app', `"${String(a.app)}" is not a package name or a known app name. Use the package, e.g. com.android.settings.`);
-    const res = await this.deps.adb(['shell', 'monkey', '-p', pkg, '-c', 'android.intent.category.LAUNCHER', '1'], { serial });
-    if (res.code !== 0 || /No activities found|monkey aborted/i.test(res.stdout + res.stderr)) {
-      return fail('unknown_app', `${pkg} is not installed or has no launcher activity.`);
+    // A package, a catalog id or name ("whatsapp", "Google Drive"), or a built-in alias.
+    const key = typeof a.app === 'string' ? a.app.trim() : '';
+    const entry = key && !PACKAGE_RE.test(key) ? catalogApp(key.toLowerCase()) ?? catalogAppByName(key.toLowerCase()) : undefined;
+    const alias = resolveApp(a.app);
+    const candidates = [...(entry?.android ?? []), ...(alias ? [alias] : [])];
+    if (candidates.length === 0) return fail('unknown_app', `"${String(a.app)}" is not a package name or a known app name. Use the package, e.g. com.android.settings.`);
+    for (const pkg of candidates) {
+      // A carrier stub (versionName "stub(…)") only opens an install page: not installed.
+      const info = await this.deps.adb(['shell', 'dumpsys', 'package', pkg], { serial });
+      if (/versionName=stub/i.test(info.stdout)) continue;
+      const res = await this.deps.adb(['shell', 'monkey', '-p', pkg, '-c', 'android.intent.category.LAUNCHER', '1'], { serial });
+      if (res.code === 0 && !/No activities found|monkey aborted/i.test(res.stdout + res.stderr)) return { ok: true, package: pkg };
     }
-    return { ok: true, package: pkg };
+    return fail('unknown_app', `${entry?.name ?? candidates[0]} is not installed on the phone.`);
   }
 
   private async task(serial: string, a: Record<string, unknown>): Promise<ToolResult> {
