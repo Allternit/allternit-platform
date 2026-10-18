@@ -17,7 +17,8 @@ import { spawnSidecar } from './process-lifeline.js';
 import { mcpHostManager } from './mcp-host-manager.js';
 import { createAdbCall, ensureAdb, resolveAdb } from './phone-adb.js';
 import { ArtemisManager } from './phone-artemis.js';
-import { PhoneDeviceManager, type PhoneStore, type StoredPhone } from './phone-device-manager.js';
+import { PhoneDeviceManager, type StoredPhone } from './phone-device-manager.js';
+import { fileStore, readJson, writeJson } from './phone-store-file.js';
 import { newGatewayToken, startPhoneGateway, type PhoneGatewayHandover } from './phone-gateway.js';
 import { execFileSync } from 'node:child_process';
 import { handOver, handoverKey, handoverTargets, importHandover, openHandover, type HandoverClientDeps, type HandoverStores } from './phone-link-handover.js';
@@ -69,22 +70,7 @@ import {
 
 export const APPROVAL_TIMEOUT_MS = 120_000;
 
-function readJson<T>(file: string, fallback: T): T {
-  try {
-    return JSON.parse(fs.readFileSync(file, 'utf8')) as T;
-  } catch {
-    return fallback;
-  }
-}
-
-function writeJson(file: string, value: unknown, mode = 0o600): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(value, null, 2), { mode });
-}
-
-export function fileStore(file: string): PhoneStore {
-  return { load: () => readJson<StoredPhone[]>(file, []), save: (phones) => writeJson(file, phones) };
-}
+export { fileStore };
 
 const LINK_DETACH_GRACE_MS = 30_000;
 const LINK_SYNC_INTERVAL_MS = 60_000;

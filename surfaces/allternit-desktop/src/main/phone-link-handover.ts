@@ -212,7 +212,9 @@ export function importHandover(stores: HandoverStores, payload: HandoverPayload,
   const from: HandedOverFrom = { name: payload.from.name, at: now().toISOString() };
   if (payload.platform === 'ios') {
     // The saved LAN host only helps on the same network; a stale one falls back to the scan and the mesh host.
-    stores.iosStore.save({ ...payload.record, handedOverFrom: from });
+    // Call audio names this computer's sound devices: another computer's settings never come along.
+    const { callBridge: _otherComputersAudio, ...record } = payload.record;
+    stores.iosStore.save({ ...record, handedOverFrom: from });
     stores.secrets.set(ictrlStoreKey(payload.record.udid), payload.secret);
     return { deviceId: payload.record.deviceId ?? payload.record.udid, platform: 'ios', name: payload.record.deviceName };
   }

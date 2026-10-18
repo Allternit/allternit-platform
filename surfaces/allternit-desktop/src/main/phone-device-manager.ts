@@ -24,6 +24,7 @@ import {
   type QrPairing,
 } from './phone-adb-pairing.js';
 import type { AdbCall } from './phone-tools.js';
+import type { CallBridgeConfig } from './phone-call-bridge-config.js';
 
 export type PhoneConnState = 'connecting' | 'online' | 'unauthorized' | 'lost' | 'reconnecting';
 
@@ -58,6 +59,8 @@ export interface StoredPhone {
   host: string;
   port: number;
   pairedAt: number;
+  /** "Call audio" settings (phone-call-bridge.ts); absent = never set up. */
+  callBridge?: CallBridgeConfig;
 }
 
 export interface PhoneStore {
@@ -271,7 +274,16 @@ export class PhoneDeviceManager extends EventEmitter {
     const id = (await this.readProp(connected, 'ro.serialno')) ?? connected;
     const hp = parseHostPort(connected) ?? { host, port: pairPort };
     const model = await this.readProp(connected, 'ro.product.model');
-    const stored: StoredPhone = { id, name: model ?? 'Android phone', host: hp.host, port: hp.port, pairedAt: this.now() };
+    // Pairing the same phone again keeps its name-independent settings (Call audio).
+    const previous = this.phones.get(id)?.stored;
+    const stored: StoredPhone = {
+      id,
+      name: model ?? 'Android phone',
+      host: hp.host,
+      port: hp.port,
+      pairedAt: this.now(),
+      ...(previous?.callBridge ? { callBridge: previous.callBridge } : {}),
+    };
     const rec = this.makeRecord(stored, connected, 'online');
     this.phones.set(id, rec);
     this.persist();
@@ -423,6 +435,28 @@ export class PhoneDeviceManager extends EventEmitter {
     const rec = [...this.phones.values()].find((r) => r.adbSerial === serial);
     const known = rec?.sims.filter((s) => s.subscriptionId !== null) ?? [];
     return known.length === 1 ? known[0].subscriptionId : null;
+  }
+
+  // ── call bridge settings ──────────────────────────────────────────────────
+
+  /** A phone by adb serial or stored id. */
+  private find(key: string): Record_ | undefined {
+    return this.phones.get(key) ?? [...this.phones.values()].find((r) => r.adbSerial === key);
+  }
+
+  /** The phone's Call audio settings (by adb serial or stored id); null when unset or unknown. */
+  getCallBridge(key: string): CallBridgeConfig | null {
+    return this.find(key)?.stored.callBridge ?? null;
+  }
+
+  /** Save the phone's Call audio settings on its stored record. False when the phone is unknown. */
+  setCallBridge(key: string, cfg: CallBridgeConfig): boolean {
+    const rec = this.find(key);
+    if (!rec) return false;
+    rec.stored = { ...rec.stored, callBridge: { ...cfg } };
+    this.persist();
+    this.emit('devices');
+    return true;
   }
 
   // ── agent activity (takeover banner) ──────────────────────────────────────
