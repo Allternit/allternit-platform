@@ -45,11 +45,39 @@ describe('parseUiTree', () => {
 
 describe('Discord reader', () => {
   it('reads a conversation: grouped lines per author, mine marked, buttons ignored', () => {
-    expect(CHANNEL_SPECS.discord.messages(parseUiTree(CONVERSATION), 'allternit')).toEqual([
+    expect(CHANNEL_SPECS.discord.messages(parseUiTree(CONVERSATION), 'allternit').map(({ parts: _p, ...m }) => m)).toEqual([
       { author: 'Sam', time: '10/07/2026 11:32 AM', text: 'see you at 5\nbring the phone', mine: false },
       { author: 'allternit', time: '10/07/2026 11:40 AM', text: 'on my way', mine: true },
       { author: 'Sam', time: '7:26 AM', text: 'ok', mine: false },
     ]);
+  });
+
+  it('shows a link card as a picture cut from the screenshot, text stays text', async () => {
+    const screen = [
+      "Window(application), {{0, 0}, {720, 1600}}",
+      "  RelativeLayout, label: 'allternit, 10/02/2026 9:50 AM', {{0, 178}, {720, 1184}}, clickable",
+      "    RecyclerView, id: 'com.discord:id/accessories_view', {{0, 178}, {720, 1180}}",
+      "      TextView, label: 'look at this', {{112, 180}, {500, 38}}",
+      "      FrameLayout, {{112, 250}, {587, 1108}}",
+      "        TextView, label: 'LinkedIn', id: 'com.discord:id/provider', {{140, 264}, {531, 24}}, clickable",
+      "        TextView, label: 'Parted ways.', id: 'com.discord:id/description', {{140, 354}, {531, 363}}, clickable",
+      "        ImageView, id: 'com.discord:id/inline_media_image_preview', {{140, 731}, {473, 613}}",
+      "  EditText, label: 'Message #news', id: 'com.discord:id/chat_input_edit_text', {{112, 1438}, {340, 56}}, clickable editable",
+    ].join('\n');
+    const crops: unknown[] = [];
+    let opened = false;
+    const reader = new PhoneChannelReader({
+      cacheFile: '/dev/null/x.json',
+      wait: async () => undefined,
+      crop: (b64, rect, w) => { crops.push([b64, rect, w]); return 'data:image/jpeg;base64,AAA'; },
+      call: async (name) => name === 'phone.tap' ? ((opened = true), { ok: true }) : name === 'phone.read_ui' ? { ok: true, text: opened ? screen : DRAWER_DMS } : name === 'phone.screenshot' ? { ok: true, dataBase64: 'SHOT' } : { ok: true },
+    });
+    const res = await reader.messages('link:x', 'discord', { id: 'dm:Sam', title: 'Sam', group: 'Direct messages', preview: null, time: null, unread: 0 });
+    expect(res.ok && res.data[0].parts).toEqual([
+      { kind: 'text', text: 'look at this' },
+      { kind: 'image', alt: 'LinkedIn\nParted ways.', src: 'data:image/jpeg;base64,AAA', width: 587, height: 1108 },
+    ]);
+    expect(crops).toEqual([['SHOT', { x: 112, y: 250, w: 587, h: 1108 }, 720]]);
   });
 
   it('lists DMs and server channels, one operation at a time, and keeps a local copy', async () => {
