@@ -250,6 +250,18 @@ export class PhoneLinkBackend implements UsbPhoneBackend {
     return fail('phone_failed', error instanceof Error ? error.message : String(error));
   }
 
+  /** The phone's launchable apps with their names (the helper skips system apps and carrier stubs). */
+  async installedApps(serial: string): Promise<Array<{ packageName: string; label: string }> | null> {
+    const phone = this.deps.phones().find((p) => serial === LINK_SERIAL_PREFIX + p.deviceId);
+    if (!phone) return null;
+    const res = await this.invoke<{ apps?: { package?: string; bundle_id?: string; name?: string }[] }>(phone, 'list_apps', {}, 10_000);
+    if (!res.ok) return null;
+    return (res.value?.apps ?? []).flatMap((a) => {
+      const id = a.package ?? a.bundle_id;
+      return id ? [{ packageName: id, label: a.name || id }] : [];
+    });
+  }
+
   private async simple(phone: LinkedPhone, method: string): Promise<ToolResult> {
     const res = await this.invoke(phone, method);
     return res.ok ? { ok: true } : res.result;

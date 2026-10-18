@@ -62,6 +62,7 @@ import { createGoIosExec, createGoIosSpawn, ensureDdi, ensureGoIos, GoIos } from
 import { ensureRunnerArtifacts, pickSigner } from './phone-ios-runner.js';
 import { readPairRecord, startLoopbackForward } from './phone-usbmux.js';
 import { hasLinkedPhones } from './phone-link-stores.js';
+import { catalogNameForPackage, humanizePackage } from './phone-app-catalog.js';
 import { PhoneLinkBackend, cachedHostResolver, linkedPhoneSource, probeLinkedPhone, rememberLinkedApps,
   rememberLinkedHost, type LinkedPhone } from './phone-link-backend.js';
 import { fileAndroidLinkStore } from './phone-link-android.js';
@@ -629,12 +630,41 @@ class PhoneService {
     return result.ok ? { state: result.state, ...(result.number !== undefined ? { number: result.number } : {}) } : { state: 'idle' };
   }
 
-  /** The PhoneViewport apps sheet inventory (per serial, unlike the comms lane). */
-  async listApps(serial: string): Promise<CommsResult<{ apps: PhoneAppInfo[] }>> {
+  /**
+   * The PhoneViewport apps sheet inventory: `{packageName, label}` per app.
+   * Names come from Phone Link (the helper knows each app's label); over
+   * adb alone Android gives only package names, so those rows use the
+   * catalog's name or the package's last word, and carrier stubs are dropped.
+   */
+  async listApps(serial: string): Promise<CommsResult<{ apps: Array<{ packageName: string; label: string }> }>> {
+    const byLabel = (apps: Array<{ packageName: string; label: string }>) => [...apps].sort((x, y) => x.label.localeCompare(y.label));
+    const link = this.ensureLinkedBackend();
+    const linkSerial = serial.startsWith(LINK_SERIAL_PREFIX) ? serial : await this.linkSerialFor(serial);
+    if (linkSerial) {
+      const named = await link.installedApps(linkSerial).catch(() => null);
+      if (named?.length) return { ok: true, apps: byLabel(named) };
+      if (serial.startsWith(LINK_SERIAL_PREFIX)) return { ok: false as const, message: 'Couldn’t list the phone’s apps. Check that Phone Link is running on it.' };
+    }
     const manager = await this.ensureReady();
     const phone = manager.list().find((p) => p.serial === serial);
     if (!phone || phone.state !== 'online') return { ok: false as const, message: 'That phone is not connected.' };
-    return (await this.ensureComms()).listApps(serial);
+    const res = await (await this.ensureComms()).listApps(serial);
+    if (!res.ok) return res;
+    return {
+      ok: true,
+      apps: byLabel(res.apps
+        .filter((a) => !/^stub/i.test(a.versionName ?? ''))
+        .map((a) => ({ packageName: a.pkg, label: catalogNameForPackage(a.pkg) ?? humanizePackage(a.pkg) }))),
+    };
+  }
+
+  /** The Phone Link serial of the same phone as an adb serial (matched by name), if it is linked and healthy. */
+  private async linkSerialFor(adbSerial: string): Promise<string | null> {
+    const name = this.manager?.list().find((p) => p.serial === adbSerial)?.name?.trim().toLowerCase();
+    const android = (await this.linkedDevices().catch(() => [] as PhoneLinkDevice[]))
+      .filter((d) => d.platform === 'android' && d.health.state === 'HEALTHY');
+    const match = android.find((d) => name && d.name?.trim().toLowerCase() === name) ?? (android.length === 1 ? android[0] : undefined);
+    return match ? LINK_SERIAL_PREFIX + match.deviceId : null;
   }
 
   getComms(): PhoneUserComms | null {

@@ -46,6 +46,20 @@ export function catalogAppByName(name: string): PhoneCatalogApp | undefined {
   return BY_NAME.get(name.trim().toLowerCase());
 }
 
+const BY_ANDROID_PACKAGE = new Map(PHONE_APP_CATALOG.flatMap((app) => app.android.map((pkg) => [pkg, app.name] as const)));
+
+/** "com.discord" → "Discord" when the catalog knows the package. */
+export function catalogNameForPackage(pkg: string): string | undefined {
+  return BY_ANDROID_PACKAGE.get(pkg);
+}
+
+/** Last useful word of a package: "com.walmart.android" → "Walmart". */
+export function humanizePackage(pkg: string): string {
+  const parts = pkg.split('.').filter((p) => !/^(com|org|net|android|app|apps|mobile|client|io|co)$/i.test(p));
+  const word = parts[parts.length - 1] ?? pkg;
+  return word.charAt(0).toUpperCase() + word.slice(1);
+}
+
 function idsFor(platform: PhoneLinkPlatform): Record<string, string[]> {
   const out: Record<string, string[]> = {};
   for (const app of PHONE_APP_CATALOG) {
