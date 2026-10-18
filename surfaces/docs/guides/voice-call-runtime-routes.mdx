@@ -131,7 +131,7 @@ A bot's own real phone (Android over adb, iPhone over iCTRL) can be wired to the
 
 ### Flow
 
-1. Desktop's watcher sees the phone ringing (Android: `dumpsys telephony.registry` polled every second; iPhone: the incoming-call screen via `screen_text`), waits one ring (3.5 s) and answers (`KEYCODE_CALL`, or a tap on Accept). If the input or output device is missing it doesn't answer and raises a needs-you notice "Call audio cable not found for <phone>". For an outbound call, the bridge starts when an approved `phone.call.dial` goes off-hook.
+1. Desktop's watcher sees the phone ringing (Android: `dumpsys telephony.registry` polled every second; iPhone: the incoming-call screen via `screen_text`), waits one ring (3.5 s) and answers (`KEYCODE_CALL`, or a tap on Accept). If the input or output device is missing it doesn't answer and raises a needs-you notice `Call audio cable not found for <phone>`. For an outbound call, the bridge starts when an approved `phone.call.dial` goes off-hook.
 2. Desktop calls `POST /api/v1/voice/linked-calls` on cloud-api.
 3. A hidden window in Desktop joins the returned room with livekit-client: it publishes the input device (echo cancellation, noise suppression and auto gain off) and plays the agent's audio to the output device with `setSinkId`.
 4. The `allternit-voice` worker is dispatched to the room and runs the bot as it does for a SIP call. Its `POST /api/v1/voice/calls` sends `line` and no `numberId`.
