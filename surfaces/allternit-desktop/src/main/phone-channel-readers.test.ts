@@ -29,6 +29,8 @@ const CONVERSATION = [
   "    TextView, label: 'bring the phone', {{112, 990}, {500, 38}}",
   "  RelativeLayout, label: 'allternit, 10/07/2026 11:40 AM', {{0, 1100}, {720, 120}}, clickable",
   "    TextView, label: 'on my way', {{112, 1150}, {500, 38}}",
+  "  RelativeLayout, label: 'Sam, 7:26 AM', {{0, 1230}, {720, 70}}, clickable",
+  "    TextView, label: 'ok', {{112, 1250}, {500, 38}}",
   "  Button, label: 'Send a wave', {{208, 1303}, {304, 84}}, clickable",
   "    TextView, label: 'Wave to Sam', {{292, 1327}, {192, 35}}",
   "  EditText, label: 'Message @Sam', id: 'com.discord:id/chat_input_edit_text', {{112, 1437}, {340, 56}}, clickable editable",
@@ -46,6 +48,7 @@ describe('Discord reader', () => {
     expect(CHANNEL_SPECS.discord.messages(parseUiTree(CONVERSATION), 'allternit')).toEqual([
       { author: 'Sam', time: '10/07/2026 11:32 AM', text: 'see you at 5\nbring the phone', mine: false },
       { author: 'allternit', time: '10/07/2026 11:40 AM', text: 'on my way', mine: true },
+      { author: 'Sam', time: '7:26 AM', text: 'ok', mine: false },
     ]);
   });
 
