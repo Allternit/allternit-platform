@@ -31,6 +31,19 @@ The caller can interrupt the bot at any time; the bot stops talking immediately.
 4. **Conversation.** Caller audio goes to the Voice Session core. Each finished turn goes to cloud-api, which relays it to the bot's runtime, and the reply is spoken as it streams back.
 5. **Events.** Transcript, keypad presses, state changes, transfers, takeovers and the call's end are queued per call. They are delivered to the thread in order, with retries, so none are lost while the runtime wakes.
 
+## Calls on a linked phone
+
+The same worker also runs calls on a bot's own real phone wired to the Mac running Allternit Desktop ([user guide](/guides/bot-voice-on-linked-phone)). There is no SIP leg; Desktop is the caller side of the room:
+
+- Desktop creates the room through cloud-api `POST /api/v1/voice/linked-calls`. Rooms are named `call-lp-<uuid>`, so the worker's `call-` prefix check accepts them.
+- The worker reads the job's dispatch metadata, a JSON string `{source: "linked_phone", botId, ownerId, line, direction, from, to}`, and parses it into its attributes alongside `job.attributes`.
+- A participant whose identity starts with `linked-phone-` is treated exactly like the SIP caller: its audio is the caller, and when it leaves, the call ends.
+- The worker's call start sends `line` and no `numberId`; cloud-api trusts it only for rooms it recorded in `voice_linked_call_rooms`.
+- `hangup` deletes the room, and Desktop then ends the carrier call. `dtmf`, `transfer` and `hold` aren't supported on a linked line: the worker answers `call.state.changed` with the state unchanged plus `{unsupported: "<action>"}` and keeps the call going.
+- The opening AI disclosure and the recording rules are the same as on a number.
+
+Routes, runtime thread keys and billing: [Voice call runtime routes: calls on a linked phone](/guides/voice-call-runtime-routes#calls-on-a-linked-phone).
+
 ## Controls from the phone screen
 
 The thread's phone screen sends **hang up**, **mute** (bot or caller), **hold/resume**, **keypad (DTMF)**, **transfer** (cold, or warm: the bot briefs the person you're sending the call to and connects them only if they accept), **take over**, **hand back**, and **listen**. cloud-api forwards each one to the worker over the room's data channel, and the worker confirms it with an event so the screen updates. Hold plays soft music to the caller. During a takeover the bot goes quiet and the thread transcribes both the caller and you. After hand back, the bot picks up with the same context.
@@ -39,7 +52,7 @@ The thread's phone screen sends **hang up**, **mute** (bot or caller), **hold/re
 
 | Event | Meaning |
 |---|---|
-| `call.started` | The call connected (direction, numbers). |
+| `call.started` | The call connected (direction, numbers, and `line`: an Allternit number or a linked phone). |
 | `call.transcript.delta` | A line of transcript from the caller or the bot. Only final lines are stored. |
 | `call.dtmf` | A keypad press, by the caller or sent from the screen. |
 | `call.state.changed` | Hold and mute state after a control. |
