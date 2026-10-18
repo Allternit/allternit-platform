@@ -1,9 +1,26 @@
+import { EventEmitter } from 'node:events';
 import * as net from 'node:net';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('electron', () => ({ app: { isPackaged: false, getAppPath: () => '/nonexistent-app' } }));
 vi.mock('electron-log', () => ({ default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
+
+const fakeProcs: FakeProc[] = [];
+class FakeProc extends EventEmitter {
+  stdout = new EventEmitter();
+  stderr = new EventEmitter();
+  exitCode: number | null = null;
+  kill = vi.fn();
+}
+vi.mock('./process-lifeline.js', () => ({
+  spawnSidecar: () => {
+    const p = new FakeProc();
+    fakeProcs.push(p);
+    return p;
+  },
+}));
 
 import {
   apiEnvironmentFor,
@@ -80,5 +97,25 @@ describe('subs-gateway-manager', () => {
     await m.prepare();
     expect(m.getStatus()).toBe('degraded');
     expect(m.getApiEnvironment()).toEqual({});
+  });
+
+  it('keeps a gateway that is slow to boot and marks it running once it listens', async () => {
+    vi.useFakeTimers();
+    process.env.SUBS_GATEWAY_STATE_DIR = path.join(os.tmpdir(), 'subs-gw-manager-test');
+    try {
+      const m = new SubsGatewayManager();
+      Object.assign(m, { layout, port: 7788 });
+      vi.spyOn(m, 'prepare').mockResolvedValue(undefined as never);
+      const started = m.start();
+      await vi.advanceTimersByTimeAsync(61_000);
+      expect(await started).toBe('starting');
+      const proc = fakeProcs.at(-1)!;
+      expect(proc.kill).not.toHaveBeenCalled();
+      proc.stdout.emit('data', Buffer.from('subscription-gateway: listening on http://127.0.0.1:7788 (token required)\n'));
+      expect(m.getStatus()).toBe('running');
+    } finally {
+      delete process.env.SUBS_GATEWAY_STATE_DIR;
+      vi.useRealTimers();
+    }
   });
 });

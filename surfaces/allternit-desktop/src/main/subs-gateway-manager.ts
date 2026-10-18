@@ -200,8 +200,12 @@ export class SubsGatewayManager {
     });
     this.proc = proc;
     let tail = '';
+    let timedOut = false;
     const ready = new Promise<boolean>((resolve) => {
-      const timer = setTimeout(() => resolve(false), READY_TIMEOUT_MS);
+      const timer = setTimeout(() => {
+        timedOut = true;
+        resolve(false);
+      }, READY_TIMEOUT_MS);
       const onData = (d: Buffer) => {
         const text = d.toString();
         tail = (tail + text).slice(-4000);
@@ -209,6 +213,8 @@ export class SubsGatewayManager {
         if (READY_RE.test(tail)) {
           clearTimeout(timer);
           resolve(true);
+          // Ready after the timeout (first boot on a slow machine).
+          if (timedOut && this.proc === proc && !this.everReady) this.markReady();
         }
       };
       proc.stdout?.on('data', onData);
@@ -225,22 +231,28 @@ export class SubsGatewayManager {
       if (intentional) return;
       log.warn(`[SubsGateway] exited (code ${code})`);
       if (this.everReady) this.scheduleRestart();
+      else this.status = 'degraded';
     });
     if (!(await ready)) {
-      log.error(`[SubsGateway] did not start: ${tail.trim().split('\n').slice(-5).join(' | ')}`);
-      if (this.proc === proc) {
-        this.stopping = true;
-        proc.kill('SIGTERM');
-        this.proc = null;
+      if (this.proc === proc && proc.exitCode === null) {
+        // Still booting (first run after an install, antivirus scanning the
+        // bundle): leave it running; onData marks it ready when it listens.
+        log.warn(`[SubsGateway] not listening after ${READY_TIMEOUT_MS / 1000}s; still starting`);
+        return this.status;
       }
+      log.error(`[SubsGateway] did not start: ${tail.trim().split('\n').slice(-5).join(' | ')}`);
       this.status = 'degraded';
       return this.status;
     }
+    this.markReady();
+    return this.status;
+  }
+
+  private markReady(): void {
     this.everReady = true;
     this.crashRestarts = 0;
     this.status = 'running';
     log.info(`[SubsGateway] running on 127.0.0.1:${this.port}`);
-    return this.status;
   }
 
   stop(): void {
