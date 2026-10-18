@@ -31,7 +31,7 @@ This document defines the official port assignments for all Allternit services.
 ### Local Daemons
 | Port | Service | Path | Protocol | Production Required |
 |------|---------|------|----------|---------------------|
-| 7788 | Subscription Gateway (optional TCP; UDS `~/.allternit/subscriptions/gateway.sock` is the default transport, TCP is loopback-only and always token-authed) | `services/subscription-gateway/` | HTTP | ❌ Local Only |
+| 7788 | Subscription Gateway (optional TCP; UDS `~/.allternit/subscriptions/gateway.sock` is the default transport (a named pipe on Windows), TCP is loopback-only and always token-authed) | `services/subscription-gateway/` | HTTP | ❌ Local Only |
 
 ### Infrastructure Services (3200-3299)
 | Port | Service | Path | Protocol | Production Required |

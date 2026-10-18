@@ -17,6 +17,8 @@ All state lives under `~/.allternit/subscriptions/` (override with
 
 Default transport is a Unix domain socket at
 `~/.allternit/subscriptions/gateway.sock` (mode 0600), always token-authed.
+On Windows it is a named pipe, `\\.\pipe\allternit-subs-gateway-<hash>`,
+keyed to the state dir (`gatewaySocketPathFor` in `src/config.ts`).
 TCP `127.0.0.1:7788` is off unless `SUBS_GATEWAY_TCP=1` and still always
 requires a scoped bearer token.
 
