@@ -26,7 +26,17 @@ The separate scrcpy window (if you installed scrcpy) still works as an alternati
 
 Open **Settings → Computers → Phones → Connect an Android phone**.
 
-The phone appears under **Screen & control**, and its status reads **Screen: Connected** once it's online. That status is separate from Phone Link's **Apps:** status further down the page. A phone can be linked for AI apps without its screen being connected, and the page shows each one on its own.
+The phone appears in the **Phones** list as one row, and reads **Screen: Connected** once it's online. If the same phone is also linked through [Phone Link](/guides/phone-link), the same row shows **Apps: …** too: one phone, one row, both statuses.
+
+Each row has one button, **Open**: the phone's live screen opens in the preview pane, the same place a computer or the browser opens. The **⋯** menu has the rest:
+
+- **Open in separate window**: the scrcpy window, if you installed scrcpy.
+- **Connect screen**: for a phone that only has Phone Link so far.
+- **Use on Sessions computer**: hands a linked phone to your Sessions computer.
+- **Set up again**: when Phone Link needs you.
+- **Forget**: removes the phone's screen pairing.
+
+The rail's Phones button lists connected phones under **Connected phones**. Choosing one opens it in the preview pane too.
 
 1. On the phone, open **Settings → About phone** and tap **Build number** seven times to turn on Developer options. Then open **Settings → System → Developer options** and turn on **Wireless debugging**.
 2. In Wireless debugging, tap **Pair device with QR code**, then scan the code Desktop shows. No QR scanner? Tap **Pair device with pairing code** instead, and type the address and six-digit code into Desktop.
