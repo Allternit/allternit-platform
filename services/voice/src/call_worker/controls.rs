@@ -167,6 +167,17 @@ impl CallState {
             muted_caller: self.muted_caller,
             speaker: self.speaker,
             recording: self.recording,
+            unsupported: None,
+        }
+    }
+
+    /// The unchanged state, acking a control the line can't do.
+    pub fn unsupported_event(&self, action: &'static str) -> CallEvent {
+        match self.state_event() {
+            CallEvent::StateChanged { held, muted_bot, muted_caller, speaker, recording, .. } => {
+                CallEvent::StateChanged { held, muted_bot, muted_caller, speaker, recording, unsupported: Some(action) }
+            }
+            other => other,
         }
     }
 }
@@ -244,7 +255,7 @@ mod tests {
         assert!(!s.bot_active());
         assert_eq!(
             s.state_event(),
-            CallEvent::StateChanged { held: true, muted_bot: false, muted_caller: false, speaker: None, recording: false }
+            CallEvent::StateChanged { held: true, muted_bot: false, muted_caller: false, speaker: None, recording: false, unsupported: None }
         );
     }
 }
