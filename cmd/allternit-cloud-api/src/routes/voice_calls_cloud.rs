@@ -20,6 +20,13 @@
 //! - `POST /api/v1/voice/calls/:callId/control` (user auth from the UI):
 //!   validated, then published on the LiveKit data channel topic
 //!   `allternit.call.control`.
+//! - `POST /api/v1/voice/linked-calls` (Desktop device token or user auth):
+//!   open a `call-lp-<uuid>` room for a bot's own phone wired to the Mac,
+//!   with agent dispatch, and hand Desktop its caller token
+//!   (CONTRACT-linked-phone-voice-2026-10-18 C3.1). The worker's start call
+//!   for that room takes owner/runtime/bot from `voice_linked_call_rooms`.
+//! - `GET /api/v1/voice/calls/live` (user auth): the owner's calls that have
+//!   not ended, with their line and thread (C3.4).
 //!
 //! Event delivery mirrors `channel_inbound`: per-call in-order, retry with
 //! backoff for 24h, wake a sleeping computer, `call.started` first because it
@@ -29,7 +36,7 @@ use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::{post, put},
+    routing::{get, post, put},
     Json, Router,
 };
 use serde::Deserialize;
@@ -44,6 +51,7 @@ use super::channel_inbound::{attempt_error, backoff_secs, classify, is_dead, Del
 use super::phone::{clean_transfer_targets, record_transfer_targets, transfer_consent_ref, transfer_targets_for_bot, PhoneError, TransferInitiator, TransferTarget};
 use super::livekit_admin::{
     LiveKitAdminClient, LiveKitConfig, LiveKitError, LiveKitHttpAdmin, CONTROL_TOPIC,
+    SIP_AGENT_NAME,
 };
 use super::runtime_relay::{relay_signed_request_to_runtime_with, RelayRequest};
 use crate::{ApiError, ApiState};
@@ -89,6 +97,10 @@ const PROXY_ALLOWLIST: &[(&str, &str)] = &[
 pub fn routes() -> Router<Arc<ApiState>> {
     Router::new()
         .route("/api/v1/voice/calls", post(start_call))
+        // Static `live` beside the `:callId/...` routes: matchit prefers the
+        // static segment, and no `/api/v1/voice/calls/:callId` route exists.
+        .route("/api/v1/voice/calls/live", get(live_calls))
+        .route("/api/v1/voice/linked-calls", post(linked_call))
         .route("/api/v1/voice/bot-config/:botId", put(put_bot_config))
         .route("/api/v1/voice/calls/:callId/events", post(post_events))
         .route("/api/v1/voice/calls/:callId/turns", post(post_turn))
@@ -175,6 +187,139 @@ impl PhoneNumberDirectory for PgPhoneNumberDirectory {
                 .fetch_optional(&self.db)
                 .await?;
         Ok(row.map(|(user_id, runtime_id, bot_id)| NumberOwner { user_id, runtime_id, bot_id: Some(bot_id).filter(|b| !b.is_empty()) }))
+    }
+}
+
+// ------------------------------------------------------------------- lines
+// CONTRACT-linked-phone-voice-2026-10-18.md C1/C2: a call is on a line. A
+// Telnyx number is `{kind:"number", numberId}`; a bot's own phone wired to the
+// Mac running Desktop is `{kind:"linked_phone", deviceId, serial?, label,
+// platform}`. Rows from before pg 094 have no line and are number calls.
+
+/// Room prefix for a linked-phone call. Still under
+/// [`super::livekit_admin::CALL_ROOM_PREFIX`]
+/// (`call-`), so the voice worker accepts the room.
+pub const LINKED_ROOM_PREFIX: &str = "call-lp-";
+/// Desktop joins a linked-phone room as `linked-phone-<deviceId>`; the worker
+/// treats that participant as the caller.
+pub const LINKED_IDENTITY_PREFIX: &str = "linked-phone-";
+/// Desktop's room token lives four hours (one long call, no refresh).
+const LINKED_TOKEN_TTL_SECS: i64 = 4 * 3600;
+/// The worker's start call is trusted for a linked room only this long after
+/// Desktop opened it (the agent is dispatched when the room is created).
+const LINKED_ROOM_START_MINUTES: i32 = 15;
+/// Longest linked-phone call billed in one go (a lost call's end is guessed).
+const LINKED_MAX_BILLED_SECS: i64 = 6 * 3600;
+const LINE_FIELD_MAX: usize = 200;
+const PHONE_FIELD_MAX: usize = 64;
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CallLine {
+    #[serde(rename_all = "camelCase")]
+    Number { number_id: String },
+    #[serde(rename_all = "camelCase")]
+    LinkedPhone {
+        device_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        serial: Option<String>,
+        label: String,
+        platform: String,
+    },
+}
+
+/// A required line field: trimmed, non-empty, short, no whitespace or control
+/// characters inside when `token` (ids end up in a LiveKit identity).
+fn line_field(name: &str, value: &str, token: bool) -> Result<String, ApiError> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(ApiError::BadRequest(format!("line.{name} is required")));
+    }
+    if value.chars().count() > LINE_FIELD_MAX {
+        return Err(ApiError::BadRequest(format!("line.{name} is too long")));
+    }
+    if value.chars().any(|c| c.is_control() || (token && c.is_whitespace())) {
+        return Err(ApiError::BadRequest(format!("line.{name} has invalid characters")));
+    }
+    Ok(value.to_string())
+}
+
+impl CallLine {
+    /// The same line with every field checked and trimmed (an empty serial is
+    /// no serial).
+    pub fn validated(&self) -> Result<CallLine, ApiError> {
+        match self {
+            CallLine::Number { number_id } => Ok(CallLine::Number { number_id: line_field("numberId", number_id, true)? }),
+            CallLine::LinkedPhone { device_id, serial, label, platform } => {
+                let platform = platform.trim();
+                if !matches!(platform, "android" | "ios") {
+                    return Err(ApiError::BadRequest("line.platform must be android or ios".to_string()));
+                }
+                let serial = match serial.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                    Some(serial) => Some(line_field("serial", serial, true)?),
+                    None => None,
+                };
+                Ok(CallLine::LinkedPhone {
+                    device_id: line_field("deviceId", device_id, true)?,
+                    serial,
+                    label: line_field("label", label, false)?,
+                    platform: platform.to_string(),
+                })
+            }
+        }
+    }
+
+    pub fn kind(&self) -> &'static str {
+        match self {
+            CallLine::Number { .. } => "number",
+            CallLine::LinkedPhone { .. } => "linked_phone",
+        }
+    }
+
+    pub fn to_json(&self) -> Value {
+        serde_json::to_value(self).unwrap_or(Value::Null)
+    }
+}
+
+/// The line a stored call is on: its `line` column, else (rows from before
+/// pg 094) the number line its `number_id` implies, else null.
+fn stored_line(line: Option<Value>, number_id: Option<&str>) -> Value {
+    match (line.filter(|l| !l.is_null()), number_id) {
+        (Some(line), _) => line,
+        (None, Some(number_id)) => json!({ "kind": "number", "numberId": number_id }),
+        (None, None) => Value::Null,
+    }
+}
+
+/// `threadId` from the runtime's reply to the relayed call.started.
+fn thread_id_from_reply(reply: &[u8]) -> Option<String> {
+    serde_json::from_slice::<Value>(reply)
+        .ok()?
+        .get("threadId")?
+        .as_str()
+        .map(str::trim)
+        .filter(|t| !t.is_empty() && t.len() <= 256)
+        .map(str::to_string)
+}
+
+/// A fresh linked-phone room name, `call-lp-<uuid>`.
+fn linked_room_name() -> String {
+    format!("{LINKED_ROOM_PREFIX}{}", uuid::Uuid::new_v4())
+}
+
+/// Desktop's participant identity in a linked-phone room.
+fn linked_identity(device_id: &str) -> String {
+    format!("{LINKED_IDENTITY_PREFIX}{device_id}")
+}
+
+/// An optional phone number / caller id: trimmed, empty = none (a withheld
+/// caller), at most 64 characters.
+fn optional_phone(name: &str, value: Option<&str>) -> Result<Option<String>, ApiError> {
+    match value.map(str::trim).filter(|v| !v.is_empty()) {
+        Some(v) if v.chars().count() > PHONE_FIELD_MAX || v.chars().any(char::is_control) => {
+            Err(ApiError::BadRequest(format!("{name} is not a phone number")))
+        }
+        other => Ok(other.map(str::to_string)),
     }
 }
 
@@ -455,9 +600,17 @@ async fn put_bot_config(
 #[serde(rename_all = "camelCase")]
 struct StartCall {
     bot_id: String,
-    number_id: String,
-    from: String,
-    to: String,
+    /// A number call's number. Absent on a linked-phone call (C3.2).
+    #[serde(default)]
+    number_id: Option<String>,
+    /// The call's line (C1). Absent from older workers = a number call.
+    #[serde(default)]
+    line: Option<CallLine>,
+    /// Caller id / dialled number. A linked-phone caller may be withheld.
+    #[serde(default)]
+    from: Option<String>,
+    #[serde(default)]
+    to: Option<String>,
     direction: String,
     room: String,
     /// From the dispatch rule attributes; checked against the number's owner.
@@ -482,6 +635,19 @@ async fn start_call(
     }
 }
 
+/// Who a started call belongs to and what it is on, from the number directory
+/// (number line) or `voice_linked_call_rooms` (linked phone).
+struct ResolvedCall {
+    user_id: String,
+    runtime_id: String,
+    bot_id: String,
+    number_id: Option<String>,
+    line: CallLine,
+    direction: String,
+    from: String,
+    to: String,
+}
+
 async fn start_call_inner(
     state: &Arc<ApiState>,
     directory: &dyn PhoneNumberDirectory,
@@ -490,51 +656,87 @@ async fn start_call_inner(
     if !matches!(body.direction.as_str(), "inbound" | "outbound") {
         return Err(ApiError::BadRequest("direction must be inbound or outbound".to_string()));
     }
-    // A Platform API project's number (or realtime session) is answered by its
-    // hosted agent: registered and answered by the platform module, not a user's runtime.
-    let platform = super::platform_v1::calls::worker_start(
-        &state.db,
-        super::platform_v1::calls::WorkerStart {
-            number_id: &body.number_id,
-            room: &body.room,
-            direction: &body.direction,
-            from: &body.from,
-            to: &body.to,
-            sip_call_id: body.sip_call_id.as_deref(),
-            consent_ref: body.consent_ref.as_deref(),
-        },
-    )
-    .await?;
-    if let Some(answer) = platform {
-        return Ok(Json(answer).into_response());
-    }
-    let Some(owner) = directory.owner_for(&body.number_id).await? else {
-        return Err(ApiError::NotFound("number not found".to_string()));
-    };
-    if body.owner_id.as_deref().is_some_and(|claimed| claimed != owner.user_id) {
-        return Err(ApiError::Forbidden("ownerId does not match the number's owner".to_string()));
-    }
-    // Inbound: the number's bot now, not the dispatch rule's (stale after a move).
-    let bot_id = match (body.direction.as_str(), owner.bot_id.as_deref()) {
-        ("inbound", Some(current)) => current.to_string(),
-        _ => body.bot_id.clone(),
+    let line = body.line.as_ref().map(CallLine::validated).transpose()?;
+    let resolved = match line {
+        Some(CallLine::LinkedPhone { device_id, .. }) => {
+            match resolve_linked_start(&state.db, &body, &device_id).await? {
+                LinkedStart::New(resolved) => resolved,
+                // A retried start for the same room answers with the call it already made.
+                LinkedStart::Existing { call_id, bot_id } => return answer_call(state, call_id, &bot_id).await,
+            }
+        }
+        number_line => {
+            let number_id = match (number_line, body.number_id.as_deref().map(str::trim).filter(|n| !n.is_empty())) {
+                (Some(CallLine::Number { number_id }), Some(claimed)) if claimed != number_id => {
+                    return Err(ApiError::BadRequest("numberId does not match line.numberId".to_string()));
+                }
+                (Some(CallLine::Number { number_id }), _) => number_id,
+                (_, Some(claimed)) => claimed.to_string(),
+                _ => return Err(ApiError::BadRequest("numberId is required".to_string())),
+            };
+            let (Some(from), Some(to)) = (body.from.clone(), body.to.clone()) else {
+                return Err(ApiError::BadRequest("from and to are required".to_string()));
+            };
+            // A Platform API project's number (or realtime session) is answered by its
+            // hosted agent: registered and answered by the platform module, not a user's runtime.
+            let platform = super::platform_v1::calls::worker_start(
+                &state.db,
+                super::platform_v1::calls::WorkerStart {
+                    number_id: &number_id,
+                    room: &body.room,
+                    direction: &body.direction,
+                    from: &from,
+                    to: &to,
+                    sip_call_id: body.sip_call_id.as_deref(),
+                    consent_ref: body.consent_ref.as_deref(),
+                },
+            )
+            .await?;
+            if let Some(answer) = platform {
+                return Ok(Json(answer).into_response());
+            }
+            let Some(owner) = directory.owner_for(&number_id).await? else {
+                return Err(ApiError::NotFound("number not found".to_string()));
+            };
+            if body.owner_id.as_deref().is_some_and(|claimed| claimed != owner.user_id) {
+                return Err(ApiError::Forbidden("ownerId does not match the number's owner".to_string()));
+            }
+            // Inbound: the number's bot now, not the dispatch rule's (stale after a move).
+            let bot_id = match (body.direction.as_str(), owner.bot_id.as_deref()) {
+                ("inbound", Some(current)) => current.to_string(),
+                _ => body.bot_id.clone(),
+            };
+            ResolvedCall {
+                user_id: owner.user_id,
+                runtime_id: owner.runtime_id,
+                bot_id,
+                line: CallLine::Number { number_id: number_id.clone() },
+                number_id: Some(number_id),
+                direction: body.direction.clone(),
+                from,
+                to,
+            }
+        }
     };
     let call_id = uuid::Uuid::new_v4().to_string();
+    let line_json = resolved.line.to_json();
     sqlx::query(
-        "INSERT INTO voice_calls (call_id, user_id, runtime_id, number_id, bot_id, room, direction, from_e164, to_e164, sip_call_id, consent_ref)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+        "INSERT INTO voice_calls (call_id, user_id, runtime_id, number_id, bot_id, room, direction, from_e164, to_e164, sip_call_id, consent_ref, line, line_kind)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
     )
     .bind(&call_id)
-    .bind(&owner.user_id)
-    .bind(&owner.runtime_id)
-    .bind(&body.number_id)
-    .bind(&bot_id)
+    .bind(&resolved.user_id)
+    .bind(&resolved.runtime_id)
+    .bind(resolved.number_id.as_deref())
+    .bind(&resolved.bot_id)
     .bind(&body.room)
-    .bind(&body.direction)
-    .bind(&body.from)
-    .bind(&body.to)
+    .bind(&resolved.direction)
+    .bind(&resolved.from)
+    .bind(&resolved.to)
     .bind(body.sip_call_id.as_deref())
     .bind(body.consent_ref.as_deref())
+    .bind(&line_json)
+    .bind(resolved.line.kind())
     .execute(&state.db)
     .await?;
     // The cloud's own call.started is seq 0, so in-order delivery always lands
@@ -548,10 +750,11 @@ async fn start_call_inner(
         0,
         Some(chrono::Utc::now().timestamp_millis()),
         &json!({
-            "direction": body.direction,
-            "from": body.from,
-            "to": body.to,
-            "numberId": body.number_id,
+            "direction": resolved.direction,
+            "from": resolved.from,
+            "to": resolved.to,
+            "numberId": resolved.number_id,
+            "line": line_json,
         }),
     )
     .await?;
@@ -564,11 +767,70 @@ async fn start_call_inner(
             tracing::warn!(call_id = %spawned_call, "voice call delivery pass failed: {error}");
         }
     });
-    let bot = match tokio::time::timeout(BOT_CONFIG_BUDGET, load_bot_config(&state.db, &bot_id)).await {
+    answer_call(state, call_id, &resolved.bot_id).await
+}
+
+/// The worker's start-call answer: the call id and the bot's cached voice
+/// config (safe defaults past the cache budget).
+async fn answer_call(state: &Arc<ApiState>, call_id: String, bot_id: &str) -> Result<Response, ApiError> {
+    let bot = match tokio::time::timeout(BOT_CONFIG_BUDGET, load_bot_config(&state.db, bot_id)).await {
         Ok(bot) => bot?,
         Err(_) => default_bot(),
     };
     Ok(Json(json!({ "callId": call_id, "bot": bot })).into_response())
+}
+
+enum LinkedStart {
+    New(ResolvedCall),
+    Existing { call_id: String, bot_id: String },
+}
+
+/// A linked-phone start is trusted only for a room Desktop opened with
+/// `POST /api/v1/voice/linked-calls` (C3.1) in the last few minutes; owner,
+/// runtime, bot, line and direction all come from that row, never the worker.
+async fn resolve_linked_start(db: &sqlx::PgPool, body: &StartCall, device_id: &str) -> Result<LinkedStart, ApiError> {
+    if !body.room.starts_with(LINKED_ROOM_PREFIX) {
+        return Err(ApiError::BadRequest(format!("a linked_phone call's room starts with {LINKED_ROOM_PREFIX}")));
+    }
+    let row: Option<(String, String, String, Value, String, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT owner_id, runtime_id, bot_id, line, direction, from_number, to_number
+           FROM voice_linked_call_rooms
+          WHERE room = $1 AND ended_at IS NULL AND created_at > now() - make_interval(mins => $2)",
+    )
+    .bind(&body.room)
+    .bind(LINKED_ROOM_START_MINUTES)
+    .fetch_optional(db)
+    .await?;
+    let Some((owner_id, runtime_id, bot_id, line, direction, from, to)) = row else {
+        return Err(ApiError::NotFound("linked call room not found".to_string()));
+    };
+    if body.owner_id.as_deref().is_some_and(|claimed| claimed != owner_id) {
+        return Err(ApiError::Forbidden("ownerId does not match the room's owner".to_string()));
+    }
+    let line: CallLine = serde_json::from_value(line)
+        .map_err(|e| ApiError::Internal(format!("stored linked line: {e}")))?;
+    if !matches!(&line, CallLine::LinkedPhone { device_id: stored, .. } if stored == device_id) {
+        return Err(ApiError::Forbidden("line does not match the room's phone".to_string()));
+    }
+    let existing: Option<(String, String)> =
+        sqlx::query_as("SELECT call_id, bot_id FROM voice_calls WHERE room = $1 ORDER BY started_at LIMIT 1")
+            .bind(&body.room)
+            .fetch_optional(db)
+            .await?;
+    if let Some((call_id, bot_id)) = existing {
+        return Ok(LinkedStart::Existing { call_id, bot_id });
+    }
+    Ok(LinkedStart::New(ResolvedCall {
+        user_id: owner_id,
+        runtime_id,
+        bot_id,
+        number_id: None,
+        line,
+        direction,
+        // The room row has what Desktop saw; a withheld caller is "".
+        from: from.or_else(|| body.from.clone()).unwrap_or_default(),
+        to: to.or_else(|| body.to.clone()).unwrap_or_default(),
+    }))
 }
 
 // ------------------------------------------------------------------ events
@@ -678,6 +940,9 @@ async fn post_events_inner(
     if !enqueue_event(&state.db, call_id, &event.event_type, n, event.seq, event.at_ms, &payload).await? {
         // The worker counts 409 as delivered.
         return Ok((StatusCode::CONFLICT, Json(json!({ "duplicate": true }))).into_response());
+    }
+    if event.event_type == "call.ended" {
+        mark_call_ended(&state.db, call_id, event.at_ms).await?;
     }
     let spawned = state.clone();
     let spawned_call = call_id.to_string();
@@ -962,6 +1227,234 @@ async fn runtime_proxy_inner(
     Ok((StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY), bytes).into_response())
 }
 
+// ------------------------------------------------------------ linked phone
+
+/// `POST /api/v1/voice/linked-calls` body (C3.1).
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LinkedCallRequest {
+    bot_id: String,
+    line: CallLine,
+    direction: String,
+    #[serde(default)]
+    from: Option<String>,
+    #[serde(default)]
+    to: Option<String>,
+    /// User-token callers only: the runtime that runs the bot. A device token
+    /// is its own runtime and ignores this.
+    #[serde(default)]
+    runtime_id: Option<String>,
+}
+
+/// A checked [`LinkedCallRequest`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LinkedCall {
+    bot_id: String,
+    line: CallLine,
+    device_id: String,
+    direction: String,
+    from: Option<String>,
+    to: Option<String>,
+}
+
+impl LinkedCallRequest {
+    fn validated(&self) -> Result<LinkedCall, ApiError> {
+        let bot_id = self.bot_id.trim();
+        if bot_id.is_empty() {
+            return Err(ApiError::BadRequest("botId is required".to_string()));
+        }
+        if bot_id.chars().count() > LINE_FIELD_MAX {
+            return Err(ApiError::BadRequest("botId is too long".to_string()));
+        }
+        let line = self.line.validated()?;
+        let CallLine::LinkedPhone { device_id, .. } = &line else {
+            return Err(ApiError::BadRequest("line.kind must be linked_phone".to_string()));
+        };
+        let direction = self.direction.trim();
+        if !matches!(direction, "inbound" | "outbound") {
+            return Err(ApiError::BadRequest("direction must be inbound or outbound".to_string()));
+        }
+        Ok(LinkedCall {
+            bot_id: bot_id.to_string(),
+            device_id: device_id.clone(),
+            line: line.clone(),
+            direction: direction.to_string(),
+            from: optional_phone("from", self.from.as_deref())?,
+            to: optional_phone("to", self.to.as_deref())?,
+        })
+    }
+}
+
+/// Who opened a linked-phone call: the Desktop runtime by its device token
+/// (owner + runtime), or a signed-in user (owner only).
+struct LinkedCaller {
+    owner_id: String,
+    runtime_id: Option<String>,
+}
+
+async fn linked_caller(db: &sqlx::PgPool, headers: &HeaderMap) -> Result<LinkedCaller, ApiError> {
+    if let Some(token) = super::runtime_pairing::device_token_from_headers(headers) {
+        let device = super::runtime_pairing::runtime_device_for_token(db, token, None).await?;
+        return Ok(LinkedCaller { owner_id: device.user_id, runtime_id: Some(device.id) });
+    }
+    let user = crate::auth::resolve_user_scoped(db, headers, "compute").await?;
+    Ok(LinkedCaller { owner_id: user.id, runtime_id: None })
+}
+
+async fn linked_call(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+    Json(body): Json<LinkedCallRequest>,
+) -> Result<Response, ApiError> {
+    let caller = linked_caller(&state.db, &headers).await?;
+    let Some(config) = LiveKitConfig::from_env() else {
+        return Ok(livekit_not_configured());
+    };
+    let livekit = LiveKitHttpAdmin::new(config);
+    let answer = linked_call_inner(&state.db, &caller, &body, &livekit).await?;
+    Ok((StatusCode::CREATED, Json(answer)).into_response())
+}
+
+/// The runtime a user-token caller's call goes to: the named one if it is
+/// theirs, else their most recently seen runtime.
+async fn runtime_for_owner(db: &sqlx::PgPool, owner_id: &str, named: Option<&str>) -> Result<String, ApiError> {
+    let found: Option<String> = match named.map(str::trim).filter(|r| !r.is_empty()) {
+        Some(runtime_id) => sqlx::query_scalar(
+            "SELECT id FROM runtime_devices WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL",
+        )
+        .bind(runtime_id)
+        .bind(owner_id)
+        .fetch_optional(db)
+        .await?,
+        None => sqlx::query_scalar(
+            "SELECT id FROM runtime_devices WHERE user_id = $1 AND revoked_at IS NULL
+              ORDER BY last_seen_at DESC NULLS LAST, created_at DESC LIMIT 1",
+        )
+        .bind(owner_id)
+        .fetch_optional(db)
+        .await?,
+    };
+    found.ok_or_else(|| ApiError::NotFound("runtime not found".to_string()))
+}
+
+async fn linked_call_inner(
+    db: &sqlx::PgPool,
+    caller: &LinkedCaller,
+    body: &LinkedCallRequest,
+    livekit: &dyn LiveKitAdminClient,
+) -> Result<Value, ApiError> {
+    let call = body.validated()?;
+    let owner_id = caller.owner_id.as_str();
+    // Linked-phone calls are Cloud Voice minutes: a plan with Cloud Voice only.
+    let plan = crate::services::voice_usage::plan_for_user(db, owner_id).await?;
+    if !crate::services::voice_usage::plan_allows_overage(&plan) {
+        return Err(ApiError::PaymentRequired("plan_has_no_voice".to_string()));
+    }
+    // Bots live on the runtime; the cloud's record of who owns a bot is the
+    // voice config the runtime saves (PUT /api/v1/voice/bot-config/:botId).
+    // Someone else's bot reads as missing; a bot with no saved config yet runs
+    // on the owner's runtime with safe defaults, as a number call does.
+    let config_owner: Option<String> = sqlx::query_scalar("SELECT user_id FROM voice_bot_config WHERE bot_id = $1")
+        .bind(&call.bot_id)
+        .fetch_optional(db)
+        .await?;
+    if config_owner.is_some_and(|owner| owner != owner_id) {
+        return Err(ApiError::NotFound("bot not found".to_string()));
+    }
+    let runtime_id = match &caller.runtime_id {
+        Some(runtime_id) => runtime_id.clone(),
+        None => runtime_for_owner(db, owner_id, body.runtime_id.as_deref()).await?,
+    };
+    let room = linked_room_name();
+    let identity = linked_identity(&call.device_id);
+    let line_json = call.line.to_json();
+    let livekit_err = |error: LiveKitError| match error {
+        LiveKitError::NotConfigured => ApiError::ServiceUnavailable("livekit_not_configured".into()),
+        LiveKitError::PublicUrlMissing => ApiError::ServiceUnavailable("livekit_public_url_not_configured".into()),
+        other => ApiError::Internal(format!("livekit: {other}")),
+    };
+    // Mint first: a missing public URL fails before anything is stored or created.
+    let access = livekit
+        .participant_access_ttl(&room, &identity, true, LINKED_TOKEN_TTL_SECS)
+        .map_err(livekit_err)?;
+    // The row exists before the room does, so the agent's start call (sent as
+    // soon as the room opens) always finds it.
+    sqlx::query(
+        "INSERT INTO voice_linked_call_rooms (room, owner_id, runtime_id, bot_id, line, direction, from_number, to_number)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+    )
+    .bind(&room)
+    .bind(owner_id)
+    .bind(&runtime_id)
+    .bind(&call.bot_id)
+    .bind(&line_json)
+    .bind(&call.direction)
+    .bind(call.from.as_deref())
+    .bind(call.to.as_deref())
+    .execute(db)
+    .await?;
+    let metadata = json!({
+        "source": "linked_phone",
+        "botId": call.bot_id,
+        "ownerId": owner_id,
+        "line": line_json,
+        "direction": call.direction,
+        "from": call.from,
+        "to": call.to,
+    })
+    .to_string();
+    if let Err(error) = livekit.create_room_with_agent(&room, SIP_AGENT_NAME, &metadata).await {
+        let _ = sqlx::query("DELETE FROM voice_linked_call_rooms WHERE room = $1").bind(&room).execute(db).await;
+        return Err(livekit_err(error));
+    }
+    Ok(json!({ "room": room, "livekitUrl": access.url, "token": access.token, "identity": identity }))
+}
+
+/// `GET /api/v1/voice/calls/live` (C3.4): the signed-in owner's calls that have
+/// not ended, newest first. `threadId` is null until the runtime has answered
+/// the relayed call.started.
+async fn live_calls(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> Result<Response, ApiError> {
+    let user = crate::auth::resolve_user_scoped(&state.db, &headers, "compute").await?;
+    Ok(Json(live_calls_for(&state.db, &user.id).await?).into_response())
+}
+
+type LiveRow = (String, String, Option<String>, Option<Value>, Option<String>, chrono::DateTime<chrono::Utc>, String, String, String);
+
+async fn live_calls_for(db: &sqlx::PgPool, user_id: &str) -> Result<Value, ApiError> {
+    // ended_at is stamped with call.ended (pg 094). The NOT EXISTS covers
+    // calls that ended before 094 ran; the day bound covers a call whose
+    // events were already cleaned up (the lost-call sweep ends silent calls
+    // after 4 hours, so a live call is never that old).
+    let rows: Vec<LiveRow> = sqlx::query_as(
+        "SELECT c.call_id, c.bot_id, c.thread_id, c.line, c.number_id, c.started_at, c.direction, c.from_e164, c.to_e164
+           FROM voice_calls c
+          WHERE c.user_id = $1 AND c.ended_at IS NULL AND c.started_at > now() - interval '1 day'
+            AND NOT EXISTS (SELECT 1 FROM voice_call_events e WHERE e.call_id = c.call_id AND e.event_type = 'call.ended')
+          ORDER BY c.started_at DESC
+          LIMIT 50",
+    )
+    .bind(user_id)
+    .fetch_all(db)
+    .await?;
+    let blank = |v: String| Some(v).filter(|v| !v.is_empty());
+    Ok(Value::Array(
+        rows.into_iter()
+            .map(|(call_id, bot_id, thread_id, line, number_id, started_at, direction, from, to)| {
+                json!({
+                    "callId": call_id,
+                    "botId": bot_id,
+                    "threadId": thread_id,
+                    "line": stored_line(line, number_id.as_deref()),
+                    "startedAt": started_at.to_rfc3339(),
+                    "direction": direction,
+                    "from": blank(from),
+                    "to": blank(to),
+                })
+            })
+            .collect(),
+    ))
+}
+
 // ---------------------------------------------------------------- controls
 
 async fn control(
@@ -985,7 +1478,9 @@ async fn control_inner(
     body: Value,
     livekit: &dyn LiveKitAdminClient,
 ) -> Result<Response, ApiError> {
-    let Some((owner_id, room, number_id, bot_id)) = sqlx::query_as::<_, (String, String, String, String)>(
+    // number_id is NULL on a linked-phone call (pg 094): it has no number to
+    // issue a transfer consent against, and the worker refuses transfer there.
+    let Some((owner_id, room, number_id, bot_id)) = sqlx::query_as::<_, (String, String, Option<String>, String)>(
         "SELECT user_id, room, number_id, bot_id FROM voice_calls WHERE call_id = $1",
     )
     .bind(call_id)
@@ -1049,9 +1544,12 @@ async fn control_inner(
             TransferInitiator::Owner
         };
         let to = body.get("to").and_then(Value::as_str).unwrap_or_default();
-        match transfer_consent_ref(&state.db, user_id, &number_id, &bot_id, to, initiator).await {
-            Ok(consent) => consent.map(|c| c.id),
-            Err(error) => return Err(ApiError::Internal(format!("transfer consent: {error:?}"))),
+        match number_id.as_deref() {
+            Some(number_id) => match transfer_consent_ref(&state.db, user_id, number_id, &bot_id, to, initiator).await {
+                Ok(consent) => consent.map(|c| c.id),
+                Err(error) => return Err(ApiError::Internal(format!("transfer consent: {error:?}"))),
+            },
+            None => None,
         }
     } else {
         None
@@ -1169,8 +1667,66 @@ async fn end_lost_calls(db: &sqlx::PgPool) -> Result<usize, ApiError> {
         if enqueue_event(db, &call_id, "call.ended", 1, seq + 1, Some(chrono::Utc::now().timestamp_millis()), &payload).await? {
             ended += 1;
         }
+        // Lost: billed up to the last word from the worker, not the 4 silent hours.
+        let last_ms: Option<i64> = sqlx::query_scalar(
+            "SELECT (extract(epoch FROM max(received_at)) * 1000)::bigint FROM voice_call_events
+              WHERE call_id = $1 AND NOT (event_type = 'call.ended' AND payload->>'reason' = 'lost')",
+        )
+        .bind(&call_id)
+        .fetch_one(db)
+        .await?;
+        mark_call_ended(db, &call_id, last_ms).await?;
     }
     Ok(ended)
+}
+
+/// The call is over (`call.ended` queued): stamp `ended_at` once, close its
+/// linked-phone room, and meter a linked-phone call's seconds as Cloud Voice
+/// (C3.5). Metering always records, like the Cloud Voice ticket path;
+/// `ALLTERNIT_VOICE_BILLING_MODE` decides downstream whether those seconds are
+/// ever priced or charged (`voice_billing::compute_period`), so `off` bills
+/// nothing. Number calls are metered elsewhere and untouched here.
+async fn mark_call_ended(db: &sqlx::PgPool, call_id: &str, at_ms: Option<i64>) -> Result<(), ApiError> {
+    let now = chrono::Utc::now();
+    let ended_at = at_ms
+        .and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis)
+        .filter(|at| *at <= now)
+        .unwrap_or(now);
+    let ended: Option<(String, Option<String>, String, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
+        "UPDATE voice_calls SET ended_at = GREATEST($2, started_at)
+          WHERE call_id = $1 AND ended_at IS NULL
+          RETURNING user_id, line_kind, room, started_at, ended_at",
+    )
+    .bind(call_id)
+    .bind(ended_at)
+    .fetch_optional(db)
+    .await?;
+    let Some((user_id, line_kind, room, started_at, ended_at)) = ended else {
+        return Ok(());
+    };
+    if line_kind.as_deref() != Some("linked_phone") {
+        return Ok(());
+    }
+    sqlx::query("UPDATE voice_linked_call_rooms SET ended_at = now() WHERE room = $1 AND ended_at IS NULL")
+        .bind(&room)
+        .execute(db)
+        .await?;
+    let seconds = linked_billed_seconds(started_at, ended_at);
+    crate::services::voice_usage::record_at(
+        db,
+        &user_id,
+        crate::services::voice_usage::ENGINE_CLOUD,
+        seconds,
+        &format!("linked-call:{call_id}"),
+        ended_at,
+    )
+    .await
+}
+
+/// Whole seconds between start and end, never negative, capped at
+/// [`LINKED_MAX_BILLED_SECS`].
+fn linked_billed_seconds(started_at: chrono::DateTime<chrono::Utc>, ended_at: chrono::DateTime<chrono::Utc>) -> i32 {
+    (ended_at - started_at).num_seconds().clamp(0, LINKED_MAX_BILLED_SECS) as i32
 }
 
 async fn deliver_due_calls(state: &Arc<ApiState>) -> Result<(), ApiError> {
@@ -1220,9 +1776,11 @@ async fn deliver_call(
         else {
             return Ok(());
         };
-        let Some((user_id, runtime_id, bot_id, number_id, from, to, direction, room, started_at)) =
-            sqlx::query_as::<_, (String, String, String, String, String, String, String, String, chrono::DateTime<chrono::Utc>)>(
-                "SELECT user_id, runtime_id, bot_id, number_id, from_e164, to_e164, direction, room, started_at
+        // number_id is NULL and line set on a linked-phone call (pg 094);
+        // rows from before 094 have no line and are number calls.
+        let Some((user_id, runtime_id, bot_id, number_id, from, to, direction, room, started_at, line)) =
+            sqlx::query_as::<_, (String, String, String, Option<String>, String, String, String, String, chrono::DateTime<chrono::Utc>, Option<Value>)>(
+                "SELECT user_id, runtime_id, bot_id, number_id, from_e164, to_e164, direction, room, started_at, line
                    FROM voice_calls WHERE call_id = $1",
             )
             .bind(call_id)
@@ -1272,6 +1830,7 @@ async fn deliver_call(
                     "botId": bot_id,
                     "ownerId": user_id,
                     "numberId": number_id,
+                    "line": stored_line(line, number_id.as_deref()),
                     "from": from,
                     "to": to,
                     "direction": direction,
@@ -1300,6 +1859,17 @@ async fn deliver_call(
             Err(message) => (None, Some(message.clone())),
         };
         if status.map(classify) == Some(Delivery::Done) {
+            // The runtime answers the create body with the call's thread; keep it
+            // for GET /api/v1/voice/calls/live (web and PWA find the call by it).
+            if event_type == "call.started" {
+                if let Some(thread_id) = outcome.as_ref().ok().and_then(|(_, reply)| thread_id_from_reply(reply)) {
+                    sqlx::query("UPDATE voice_calls SET thread_id = $2 WHERE call_id = $1")
+                        .bind(call_id)
+                        .bind(&thread_id)
+                        .execute(&state.db)
+                        .await?;
+                }
+            }
             sqlx::query(
                 "UPDATE voice_call_events SET delivered_at = now(), locked_until = NULL, last_status = $2 WHERE id = $1",
             )
@@ -1370,6 +1940,8 @@ mod tests {
         /// (like a runtime still working) unless `sse_ends` is set.
         sse: std::sync::Mutex<Vec<String>>,
         sse_ends: std::sync::atomic::AtomicBool,
+        /// Reply body for buffered relays; defaults to `{"ok":true}`.
+        reply: std::sync::Mutex<Option<String>>,
     }
 
     use std::collections::VecDeque;
@@ -1408,7 +1980,8 @@ mod tests {
                 path.to_string(),
                 if body.is_empty() { Value::Null } else { serde_json::from_slice(body).unwrap() },
             ));
-            Ok((status, br#"{"ok":true}"#.to_vec()))
+            let reply = self.reply.lock().unwrap().clone().unwrap_or_else(|| r#"{"ok":true}"#.to_string());
+            Ok((status, reply.into_bytes()))
         }
 
         async fn stream(
@@ -1442,6 +2015,11 @@ mod tests {
     #[derive(Default)]
     struct FakeLiveKit {
         sent: std::sync::Mutex<Vec<(String, String, Value)>>,
+        /// (room, agent, metadata) per create_room_with_agent.
+        rooms: std::sync::Mutex<Vec<(String, String, Value)>>,
+        /// (room, identity, can_publish, ttl) per minted token.
+        tokens: std::sync::Mutex<Vec<(String, String, bool, i64)>>,
+        fail_rooms: std::sync::atomic::AtomicBool,
     }
 
     #[async_trait::async_trait]
@@ -1470,6 +2048,23 @@ mod tests {
             _r: crate::routes::livekit_admin::CreateSipParticipantRequest,
         ) -> Result<Value, LiveKitError> {
             unimplemented!()
+        }
+        async fn create_room_with_agent(&self, room: &str, agent: &str, metadata: &str) -> Result<(), LiveKitError> {
+            if self.fail_rooms.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(LiveKitError::Http("boom".into()));
+            }
+            self.rooms.lock().unwrap().push((room.to_string(), agent.to_string(), serde_json::from_str(metadata).unwrap()));
+            Ok(())
+        }
+        fn participant_access_ttl(
+            &self,
+            room: &str,
+            identity: &str,
+            can_publish: bool,
+            ttl_secs: i64,
+        ) -> Result<crate::routes::livekit_admin::ParticipantAccess, LiveKitError> {
+            self.tokens.lock().unwrap().push((room.to_string(), identity.to_string(), can_publish, ttl_secs));
+            self.participant_access(room, identity, can_publish)
         }
         async fn send_data(&self, room: &str, topic: &str, payload: &[u8]) -> Result<(), LiveKitError> {
             self.sent.lock().unwrap().push((
@@ -1515,7 +2110,7 @@ mod tests {
              call_id TEXT PRIMARY KEY,
              user_id TEXT NOT NULL,
              runtime_id TEXT NOT NULL,
-             number_id TEXT NOT NULL,
+             number_id TEXT,
              bot_id TEXT NOT NULL,
              room TEXT NOT NULL,
              direction TEXT NOT NULL,
@@ -1523,7 +2118,23 @@ mod tests {
              to_e164 TEXT NOT NULL,
              sip_call_id TEXT,
              consent_ref TEXT,
-             started_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+             started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+             line JSONB,
+             line_kind TEXT,
+             ended_at TIMESTAMPTZ,
+             thread_id TEXT
+           )"#,
+        r#"CREATE TABLE voice_linked_call_rooms (
+             room TEXT PRIMARY KEY,
+             owner_id TEXT NOT NULL,
+             runtime_id TEXT NOT NULL,
+             bot_id TEXT NOT NULL,
+             line JSONB NOT NULL,
+             direction TEXT NOT NULL CHECK (direction IN ('inbound','outbound')),
+             from_number TEXT,
+             to_number TEXT,
+             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+             ended_at TIMESTAMPTZ
            )"#,
         r#"CREATE TABLE voice_call_events (
              id BIGSERIAL PRIMARY KEY,
@@ -1576,9 +2187,10 @@ mod tests {
     fn start_body(number_id: &str, bot_id: &str) -> StartCall {
         StartCall {
             bot_id: bot_id.to_string(),
-            number_id: number_id.to_string(),
-            from: "+15550001111".to_string(),
-            to: "+15550002222".to_string(),
+            number_id: Some(number_id.to_string()),
+            line: None,
+            from: Some("+15550001111".to_string()),
+            to: Some("+15550002222".to_string()),
             direction: "inbound".to_string(),
             room: "call-room-1".to_string(),
             owner_id: None,
@@ -1752,9 +2364,10 @@ mod tests {
         keys.sort_unstable();
         assert_eq!(
             keys,
-            ["botId", "callId", "direction", "from", "numberId", "ownerId", "room", "startedAt", "to"]
+            ["botId", "callId", "direction", "from", "line", "numberId", "ownerId", "room", "startedAt", "to"]
         );
         assert_eq!(create["callId"], call_id);
+        assert_eq!(create["line"], json!({ "kind": "number", "numberId": "number-9" }));
         assert_eq!(create["botId"], "bot-1");
         assert_eq!(create["ownerId"], "user-1");
         assert_eq!(create["numberId"], "number-9");
@@ -2364,5 +2977,472 @@ mod tests {
         let id = ref_of(3)["consentRef"].as_str().expect("approved target gets a ref").to_string();
         let basis: String = sqlx::query_scalar("SELECT basis FROM call_consents WHERE id = $1").bind(&id).fetch_one(&state.db).await.unwrap();
         assert_eq!(basis, "owner_transfer_target");
+    }
+
+
+    // ---- linked phone (CONTRACT-linked-phone-voice-2026-10-18 C1–C3)
+
+    fn moto() -> CallLine {
+        CallLine::LinkedPhone {
+            device_id: "ZY22ABCD".to_string(),
+            serial: Some("ZY22ABCD".to_string()),
+            label: "Moto".to_string(),
+            platform: "android".to_string(),
+        }
+    }
+
+    #[test]
+    fn lines_parse_validate_and_serialize_in_the_contract_shape() {
+        let number: CallLine = serde_json::from_value(json!({ "kind": "number", "numberId": "num-1" })).unwrap();
+        assert_eq!(number.validated().unwrap(), CallLine::Number { number_id: "num-1".into() });
+        assert_eq!(number.to_json(), json!({ "kind": "number", "numberId": "num-1" }));
+
+        let linked: CallLine = serde_json::from_value(json!({
+            "kind": "linked_phone", "deviceId": " ZY22ABCD ", "serial": "", "label": " Moto ", "platform": "android"
+        }))
+        .unwrap();
+        let checked = linked.validated().unwrap();
+        // Trimmed, and an empty serial is no serial (left out of the JSON).
+        assert_eq!(checked.to_json(), json!({ "kind": "linked_phone", "deviceId": "ZY22ABCD", "label": "Moto", "platform": "android" }));
+        assert_eq!(checked.kind(), "linked_phone");
+        assert_eq!(moto().to_json()["serial"], "ZY22ABCD");
+
+        let bad = |v: Value| serde_json::from_value::<CallLine>(v).map_err(|_| ()).and_then(|l| l.validated().map_err(|_| ()));
+        assert!(bad(json!({ "kind": "linked_phone", "deviceId": "x", "label": "Moto", "platform": "windows" })).is_err());
+        assert!(bad(json!({ "kind": "linked_phone", "deviceId": "  ", "label": "Moto", "platform": "ios" })).is_err());
+        assert!(bad(json!({ "kind": "linked_phone", "deviceId": "a b", "label": "Moto", "platform": "ios" })).is_err());
+        assert!(bad(json!({ "kind": "linked_phone", "deviceId": "x", "label": "", "platform": "ios" })).is_err());
+        assert!(bad(json!({ "kind": "linked_phone", "deviceId": "x".repeat(201), "label": "Moto", "platform": "ios" })).is_err());
+        assert!(bad(json!({ "kind": "number", "numberId": "" })).is_err());
+        assert!(bad(json!({ "kind": "landline", "numberId": "n" })).is_err());
+        // An iPhone udid with dashes is fine; a label may have spaces.
+        assert!(bad(json!({ "kind": "linked_phone", "deviceId": "00008110-001A2B3C", "label": "Eoj's iPhone", "platform": "ios" })).is_ok());
+    }
+
+    #[test]
+    fn linked_rooms_and_identities_follow_c2() {
+        let room = linked_room_name();
+        assert!(room.starts_with("call-lp-"));
+        assert!(room.starts_with(crate::routes::livekit_admin::CALL_ROOM_PREFIX), "the worker only takes call- rooms");
+        assert!(uuid::Uuid::parse_str(room.trim_start_matches(LINKED_ROOM_PREFIX)).is_ok());
+        assert_ne!(room, linked_room_name());
+        assert_eq!(linked_identity("ZY22ABCD"), "linked-phone-ZY22ABCD");
+    }
+
+    #[test]
+    fn linked_call_requests_are_checked() {
+        let parse = |v: Value| serde_json::from_value::<LinkedCallRequest>(v).unwrap();
+        let ok = parse(json!({
+            "botId": " bot-1 ", "direction": "inbound", "from": " +15550001111 ", "to": "",
+            "line": { "kind": "linked_phone", "deviceId": "ZY22ABCD", "label": "Moto", "platform": "android" }
+        }))
+        .validated()
+        .unwrap();
+        assert_eq!((ok.bot_id.as_str(), ok.device_id.as_str(), ok.direction.as_str()), ("bot-1", "ZY22ABCD", "inbound"));
+        assert_eq!((ok.from.as_deref(), ok.to.as_deref()), (Some("+15550001111"), None));
+        // from/to may be null or missing (withheld caller).
+        let withheld = parse(json!({ "botId": "b", "direction": "outbound", "from": null,
+            "line": { "kind": "linked_phone", "deviceId": "d", "label": "Moto", "platform": "ios" } }));
+        assert_eq!(withheld.validated().unwrap().from, None);
+
+        let line = json!({ "kind": "linked_phone", "deviceId": "d", "label": "Moto", "platform": "ios" });
+        for bad in [
+            json!({ "botId": "", "direction": "inbound", "line": line }),
+            json!({ "botId": "b", "direction": "sideways", "line": line }),
+            json!({ "botId": "b", "direction": "inbound", "line": { "kind": "number", "numberId": "n" } }),
+            json!({ "botId": "b", "direction": "inbound", "line": line, "from": "x".repeat(65) }),
+        ] {
+            assert!(matches!(parse(bad).validated(), Err(ApiError::BadRequest(_))));
+        }
+    }
+
+    #[test]
+    fn stored_lines_thread_replies_and_billed_seconds() {
+        assert_eq!(stored_line(None, Some("num-1")), json!({ "kind": "number", "numberId": "num-1" }));
+        assert_eq!(stored_line(Some(moto().to_json()), None), moto().to_json());
+        assert_eq!(stored_line(Some(Value::Null), None), Value::Null);
+        assert_eq!(thread_id_from_reply(br#"{"threadId":"thr-1","sessionId":"s"}"#).as_deref(), Some("thr-1"));
+        assert_eq!(thread_id_from_reply(br#"{"threadId":""}"#), None);
+        assert_eq!(thread_id_from_reply(b"not json"), None);
+        let t0 = chrono::Utc::now();
+        assert_eq!(linked_billed_seconds(t0, t0 + chrono::Duration::milliseconds(61_900)), 61);
+        assert_eq!(linked_billed_seconds(t0, t0 - chrono::Duration::seconds(5)), 0);
+        assert_eq!(linked_billed_seconds(t0, t0 + chrono::Duration::hours(30)), LINKED_MAX_BILLED_SECS as i32);
+    }
+
+    async fn linked_test_state(plan: Option<&str>) -> Arc<ApiState> {
+        let state = voice_test_state().await;
+        sqlx::raw_sql(&include_str!("../../migrations_pg/029_voice_usage.sql").replace("public.", ""))
+            .execute(&state.db)
+            .await
+            .unwrap();
+        sqlx::raw_sql(
+            "CREATE TABLE billing_subscriptions (user_id TEXT, plan_id TEXT, plan_tier TEXT, \
+             status TEXT, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
+        )
+        .execute(&state.db)
+        .await
+        .unwrap();
+        if let Some(plan) = plan {
+            sqlx::query("INSERT INTO billing_subscriptions (user_id, plan_id, plan_tier, status) VALUES ('user-1', $1, 'pro', 'active')")
+                .bind(plan)
+                .execute(&state.db)
+                .await
+                .unwrap();
+        }
+        for (id, user, seen) in [("rt-old", "user-1", "1 hour"), ("rt-new", "user-1", "1 minute"), ("rt-x", "user-2", "1 second")] {
+            sqlx::query(&format!("INSERT INTO runtime_devices (id, user_id, name, last_seen_at) VALUES ($1, $2, 'Mac', now() - interval '{seen}')"))
+                .bind(id)
+                .bind(user)
+                .execute(&state.db)
+                .await
+                .unwrap();
+        }
+        state
+    }
+
+    fn linked_request(bot: &str) -> LinkedCallRequest {
+        serde_json::from_value(json!({
+            "botId": bot, "direction": "inbound", "from": "+15550001111", "to": null,
+            "line": moto().to_json(),
+        }))
+        .unwrap()
+    }
+
+    fn desktop(runtime: &str) -> LinkedCaller {
+        LinkedCaller { owner_id: "user-1".into(), runtime_id: Some(runtime.into()) }
+    }
+
+    #[tokio::test]
+    async fn linked_call_opens_a_room_with_agent_dispatch_and_a_caller_token() {
+        let state = linked_test_state(Some("plus")).await;
+        let livekit = FakeLiveKit::default();
+        let answer = linked_call_inner(&state.db, &desktop("rt-desk"), &linked_request("bot-1"), &livekit).await.unwrap();
+        let room = answer["room"].as_str().unwrap().to_string();
+        assert!(room.starts_with("call-lp-"));
+        assert_eq!(answer["identity"], "linked-phone-ZY22ABCD");
+        assert_eq!(answer["livekitUrl"], FakeLiveKit::PUBLIC);
+        assert_eq!(answer["token"], format!("tok:{room}:linked-phone-ZY22ABCD:true"));
+        // Publish + subscribe, four hours.
+        assert_eq!(livekit.tokens.lock().unwrap()[0], (room.clone(), "linked-phone-ZY22ABCD".to_string(), true, 4 * 3600));
+        let rooms = livekit.rooms.lock().unwrap().clone();
+        assert_eq!(rooms.len(), 1);
+        assert_eq!((rooms[0].0.as_str(), rooms[0].1.as_str()), (room.as_str(), "allternit-voice"));
+        assert_eq!(
+            rooms[0].2,
+            json!({ "source": "linked_phone", "botId": "bot-1", "ownerId": "user-1", "line": moto().to_json(),
+                    "direction": "inbound", "from": "+15550001111", "to": null })
+        );
+        let row: (String, String, String, Value, String) =
+            sqlx::query_as("SELECT owner_id, runtime_id, bot_id, line, direction FROM voice_linked_call_rooms WHERE room = $1")
+                .bind(&room)
+                .fetch_one(&state.db)
+                .await
+                .unwrap();
+        assert_eq!(row, ("user-1".into(), "rt-desk".into(), "bot-1".into(), moto().to_json(), "inbound".into()));
+
+        // A signed-in user (no device token) goes to their most recently seen runtime, or the named one if theirs.
+        let user = LinkedCaller { owner_id: "user-1".into(), runtime_id: None };
+        let answer = linked_call_inner(&state.db, &user, &linked_request("bot-1"), &livekit).await.unwrap();
+        let rt: String = sqlx::query_scalar("SELECT runtime_id FROM voice_linked_call_rooms WHERE room = $1")
+            .bind(answer["room"].as_str().unwrap()).fetch_one(&state.db).await.unwrap();
+        assert_eq!(rt, "rt-new");
+        let mut named = linked_request("bot-1");
+        named.runtime_id = Some("rt-old".into());
+        let answer = linked_call_inner(&state.db, &user, &named, &livekit).await.unwrap();
+        let rt: String = sqlx::query_scalar("SELECT runtime_id FROM voice_linked_call_rooms WHERE room = $1")
+            .bind(answer["room"].as_str().unwrap()).fetch_one(&state.db).await.unwrap();
+        assert_eq!(rt, "rt-old");
+        named.runtime_id = Some("rt-x".into());
+        assert!(matches!(linked_call_inner(&state.db, &user, &named, &livekit).await, Err(ApiError::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn linked_call_needs_a_voice_plan_the_owners_bot_and_a_working_livekit() {
+        let free = linked_test_state(None).await;
+        let livekit = FakeLiveKit::default();
+        let err = linked_call_inner(&free.db, &desktop("rt-desk"), &linked_request("bot-1"), &livekit).await.unwrap_err();
+        assert!(matches!(err, ApiError::PaymentRequired(_)));
+        assert!(livekit.rooms.lock().unwrap().is_empty());
+
+        let state = linked_test_state(Some("super")).await;
+        sqlx::query("INSERT INTO voice_bot_config (bot_id, user_id) VALUES ('bot-theirs', 'user-2'), ('bot-mine', 'user-1')")
+            .execute(&state.db)
+            .await
+            .unwrap();
+        let err = linked_call_inner(&state.db, &desktop("rt-desk"), &linked_request("bot-theirs"), &livekit).await.unwrap_err();
+        assert!(matches!(err, ApiError::NotFound(_)));
+        assert!(linked_call_inner(&state.db, &desktop("rt-desk"), &linked_request("bot-mine"), &livekit).await.is_ok());
+
+        // LiveKit refuses the room: nothing is left behind for the worker to trust.
+        livekit.fail_rooms.store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(linked_call_inner(&state.db, &desktop("rt-desk"), &linked_request("bot-mine"), &livekit).await.is_err());
+        let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM voice_linked_call_rooms").fetch_one(&state.db).await.unwrap();
+        assert_eq!(rows, 1);
+    }
+
+    fn linked_start(room: &str) -> StartCall {
+        StartCall {
+            bot_id: "bot-from-worker".to_string(),
+            number_id: None,
+            line: Some(moto()),
+            from: None,
+            to: None,
+            direction: "inbound".to_string(),
+            room: room.to_string(),
+            owner_id: Some("user-1".to_string()),
+            sip_call_id: None,
+            consent_ref: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_linked_phone_start_is_trusted_only_for_a_room_desktop_opened() {
+        let state = linked_test_state(Some("plus")).await;
+        save_bot_config(&state, "bot-1", "off").await;
+        let livekit = FakeLiveKit::default();
+        let opened = linked_call_inner(&state.db, &desktop("rt-desk"), &linked_request("bot-1"), &livekit).await.unwrap();
+        let room = opened["room"].as_str().unwrap().to_string();
+        let directory = FakeDirectory::default();
+
+        // Unknown room, wrong owner, wrong phone, non-call-lp room: refused, nothing stored.
+        let err = start_call_inner(&state, &directory, linked_start("call-lp-nope")).await.unwrap_err();
+        assert!(matches!(err, ApiError::NotFound(_)));
+        let mut other_owner = linked_start(&room);
+        other_owner.owner_id = Some("user-2".into());
+        assert!(matches!(start_call_inner(&state, &directory, other_owner).await, Err(ApiError::Forbidden(_))));
+        let mut other_phone = linked_start(&room);
+        other_phone.line = Some(CallLine::LinkedPhone { device_id: "OTHER".into(), serial: None, label: "Moto".into(), platform: "android".into() });
+        assert!(matches!(start_call_inner(&state, &directory, other_phone).await, Err(ApiError::Forbidden(_))));
+        assert!(matches!(start_call_inner(&state, &directory, linked_start("call-room-1")).await, Err(ApiError::BadRequest(_))));
+
+        // The room's call: owner, runtime and bot come from the room row, not the worker.
+        let response = start_call_inner(&state, &directory, linked_start(&room)).await.unwrap();
+        let answer = body_json(response).await;
+        assert_eq!(answer["bot"]["greeting"], "Hi there");
+        let call_id = answer["callId"].as_str().unwrap().to_string();
+        let row: (String, String, Option<String>, String, Option<Value>, Option<String>, String, String) = sqlx::query_as(
+            "SELECT user_id, runtime_id, number_id, bot_id, line, line_kind, from_e164, to_e164 FROM voice_calls WHERE call_id = $1",
+        )
+        .bind(&call_id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+        assert_eq!(
+            row,
+            ("user-1".into(), "rt-desk".into(), None, "bot-1".into(), Some(moto().to_json()), Some("linked_phone".into()), "+15550001111".into(), "".into())
+        );
+        let started: Value = sqlx::query_scalar("SELECT payload FROM voice_call_events WHERE call_id = $1 AND event_type = 'call.started'")
+            .bind(&call_id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+        assert_eq!(started["line"], moto().to_json());
+        assert!(started["numberId"].is_null());
+
+        // A retried start answers with the same call.
+        let again = body_json(start_call_inner(&state, &directory, linked_start(&room)).await.unwrap()).await;
+        assert_eq!(again["callId"], call_id.as_str());
+        let calls: i64 = sqlx::query_scalar("SELECT count(*) FROM voice_calls").fetch_one(&state.db).await.unwrap();
+        assert_eq!(calls, 1);
+
+        // Delivery: the runtime's create body has the line and a null numberId; its threadId is kept.
+        let relay = FakeRelay::default();
+        *relay.reply.lock().unwrap() = Some(r#"{"threadId":"thr-lp","sessionId":"s-1"}"#.to_string());
+        // Let the background delivery pass (no runtime in tests) settle, then make the event due.
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        sqlx::query("UPDATE voice_call_events SET next_attempt_at = now(), locked_until = NULL").execute(&state.db).await.unwrap();
+        deliver_call(&state, &call_id, &relay).await.unwrap();
+        let sent = relay.recorded();
+        let create = sent.iter().find(|(path, _)| path == "/api/v1/voice/calls").expect("create body relayed");
+        assert_eq!(create.1["line"], moto().to_json());
+        assert!(create.1["numberId"].is_null());
+        assert_eq!(create.1["botId"], "bot-1");
+        let thread: Option<String> = sqlx::query_scalar("SELECT thread_id FROM voice_calls WHERE call_id = $1")
+            .bind(&call_id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+        assert_eq!(thread.as_deref(), Some("thr-lp"));
+        let live = live_calls_for(&state.db, "user-1").await.unwrap();
+        assert_eq!(live[0]["threadId"], "thr-lp");
+    }
+
+    #[tokio::test]
+    async fn a_number_start_still_works_and_now_records_its_line() {
+        let state = voice_test_state().await;
+        let directory = FakeDirectory::default();
+        directory.owners.lock().unwrap().insert(
+            "number-9".to_string(),
+            NumberOwner { user_id: "user-1".to_string(), runtime_id: "rt-1".to_string(), bot_id: None },
+        );
+        // numberId only inside the line (new worker), or only at the top (old worker).
+        let mut body = start_body("ignored", "bot-1");
+        body.number_id = None;
+        body.line = Some(CallLine::Number { number_id: "number-9".into() });
+        let answer = body_json(start_call_inner(&state, &directory, body).await.unwrap()).await;
+        let (line, kind): (Option<Value>, Option<String>) = sqlx::query_as("SELECT line, line_kind FROM voice_calls WHERE call_id = $1")
+            .bind(answer["callId"].as_str().unwrap())
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+        assert_eq!((line, kind.as_deref()), (Some(json!({ "kind": "number", "numberId": "number-9" })), Some("number")));
+        let started: Value = sqlx::query_scalar("SELECT payload FROM voice_call_events WHERE call_id = $1")
+            .bind(answer["callId"].as_str().unwrap())
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+        assert_eq!((started["numberId"].as_str(), started["line"]["kind"].as_str()), (Some("number-9"), Some("number")));
+
+        let mut mismatch = start_body("number-9", "bot-1");
+        mismatch.line = Some(CallLine::Number { number_id: "number-8".into() });
+        assert!(matches!(start_call_inner(&state, &directory, mismatch).await, Err(ApiError::BadRequest(_))));
+        let mut none = start_body("x", "bot-1");
+        none.number_id = None;
+        assert!(matches!(start_call_inner(&state, &directory, none).await, Err(ApiError::BadRequest(_))));
+        let mut no_from = start_body("number-9", "bot-1");
+        no_from.from = None;
+        assert!(matches!(start_call_inner(&state, &directory, no_from).await, Err(ApiError::BadRequest(_))));
+    }
+
+    async fn seed_linked_call(state: &ApiState, call_id: &str, room: &str, started_ago_secs: i64) {
+        sqlx::query(
+            "INSERT INTO voice_linked_call_rooms (room, owner_id, runtime_id, bot_id, line, direction) VALUES ($1, 'user-1', 'rt-1', 'bot-1', $2, 'inbound')",
+        )
+        .bind(room)
+        .bind(moto().to_json())
+        .execute(&state.db)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO voice_calls (call_id, user_id, runtime_id, number_id, bot_id, room, direction, from_e164, to_e164, line, line_kind, started_at)
+             VALUES ($1, 'user-1', 'rt-1', NULL, 'bot-1', $2, 'inbound', '', '', $3, 'linked_phone', now() - make_interval(secs => $4))",
+        )
+        .bind(call_id)
+        .bind(room)
+        .bind(moto().to_json())
+        .bind(started_ago_secs as f64)
+        .execute(&state.db)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn controls_on_a_linked_line_never_touch_a_number() {
+        let state = voice_test_state().await;
+        seed_linked_call(&state, "call-lp", "call-lp-room", 5).await;
+        let livekit = FakeLiveKit::default();
+        // Warm transfer: no number to issue consent against, so no ref; the worker answers unsupported.
+        let response = control_inner(&state, "user-1", "call-lp", json!({ "action": "transfer", "to": "+15550009999", "mode": "warm" }), &livekit).await.unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let response = control_inner(&state, "user-1", "call-lp", json!({ "action": "hangup" }), &livekit).await.unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let sent = livekit.sent.lock().unwrap().clone();
+        assert!(sent[0].2["consentRef"].is_null());
+        assert_eq!((sent[1].0.as_str(), sent[1].2["action"].as_str()), ("call-lp-room", Some("hangup")));
+        let listen = body_json(control_inner(&state, "user-1", "call-lp", json!({ "action": "listen" }), &livekit).await.unwrap()).await;
+        assert_eq!(listen["room"], "call-lp-room");
+    }
+
+    #[tokio::test]
+    async fn live_calls_list_the_owners_open_calls_and_ending_bills_linked_seconds() {
+        let state = linked_test_state(Some("plus")).await;
+        seed_linked_call(&state, "call-lp", "call-lp-room", 90).await;
+        seed_call(&state).await; // number call 'call-1' for user-1
+        sqlx::query("UPDATE voice_calls SET thread_id = 'thr-9' WHERE call_id = 'call-lp'").execute(&state.db).await.unwrap();
+        sqlx::query(
+            "INSERT INTO voice_calls (call_id, user_id, runtime_id, number_id, bot_id, room, direction, from_e164, to_e164)
+             VALUES ('call-theirs', 'user-2', 'rt-x', 'number-2', 'bot-2', 'room-x', 'inbound', '+1', '+2')",
+        )
+        .execute(&state.db)
+        .await
+        .unwrap();
+
+        let live = live_calls_for(&state.db, "user-1").await.unwrap();
+        let live = live.as_array().unwrap();
+        assert_eq!(live.len(), 2);
+        let lp = live.iter().find(|c| c["callId"] == "call-lp").unwrap();
+        assert_eq!(lp["line"], moto().to_json());
+        assert_eq!((lp["botId"].as_str(), lp["threadId"].as_str(), lp["direction"].as_str()), (Some("bot-1"), Some("thr-9"), Some("inbound")));
+        assert!(lp["from"].is_null() && lp["to"].is_null(), "a withheld caller reads null");
+        let num = live.iter().find(|c| c["callId"] == "call-1").unwrap();
+        assert_eq!(num["line"], json!({ "kind": "number", "numberId": "number-9" }));
+        assert!(num["threadId"].is_null());
+        assert_eq!(num["from"], "+1");
+
+        // The worker reports the linked call ended: off the live list, room closed, seconds metered as cloud once.
+        let ended = worker_event("call-lp", "call.ended", 1, 9, json!({ "reason": "hangup" }));
+        let mut ended_now = ended;
+        ended_now.at_ms = Some(chrono::Utc::now().timestamp_millis());
+        post_events_inner(&state, "call-lp", None, ended_now).await.unwrap();
+        // A duplicate never bills twice.
+        let mut dup = worker_event("call-lp", "call.ended", 1, 9, json!({}));
+        dup.at_ms = Some(chrono::Utc::now().timestamp_millis());
+        assert_eq!(post_events_inner(&state, "call-lp", None, dup).await.unwrap().status(), StatusCode::CONFLICT);
+        mark_call_ended(&state.db, "call-lp", None).await.unwrap();
+
+        let live = live_calls_for(&state.db, "user-1").await.unwrap();
+        assert_eq!(live.as_array().unwrap().iter().map(|c| c["callId"].as_str().unwrap()).collect::<Vec<_>>(), ["call-1"]);
+        let room_ended: Option<chrono::DateTime<chrono::Utc>> =
+            sqlx::query_scalar("SELECT ended_at FROM voice_linked_call_rooms WHERE room = 'call-lp-room'").fetch_one(&state.db).await.unwrap();
+        assert!(room_ended.is_some());
+        let usage: Vec<(String, String, i32, String)> =
+            sqlx::query_as("SELECT user_id, engine, seconds, ref FROM voice_usage").fetch_all(&state.db).await.unwrap();
+        assert_eq!(usage.len(), 1);
+        assert_eq!((usage[0].0.as_str(), usage[0].1.as_str(), usage[0].3.as_str()), ("user-1", "cloud", "linked-call:call-lp"));
+        assert!((89..=92).contains(&usage[0].2), "about 90 s, got {}", usage[0].2);
+
+        // A number call's end stamps ended_at but meters nothing here.
+        let mut num_end = worker_event("call-1", "call.ended", 1, 3, json!({}));
+        num_end.at_ms = None;
+        post_events_inner(&state, "call-1", None, num_end).await.unwrap();
+        assert!(live_calls_for(&state.db, "user-1").await.unwrap().as_array().unwrap().is_empty());
+        let usage: i64 = sqlx::query_scalar("SELECT count(*) FROM voice_usage").fetch_one(&state.db).await.unwrap();
+        assert_eq!(usage, 1);
+    }
+
+    #[tokio::test]
+    async fn a_lost_linked_call_is_billed_to_its_last_event() {
+        let state = linked_test_state(Some("plus")).await;
+        seed_linked_call(&state, "call-lost", "call-lp-lost", 6 * 3600).await;
+        sqlx::query(
+            "INSERT INTO voice_call_events (call_id, event_type, n, seq, event_key, payload, received_at, delivered_at)
+             VALUES ('call-lost', 'call.started', 1, 0, 'call:call-lost:call.started:1', '{}', now() - interval '6 hours', now()),
+                    ('call-lost', 'call.turn', 1, 1, 'call:call-lost:call.turn:1', '{}', now() - interval '5 hours', now())",
+        )
+        .execute(&state.db)
+        .await
+        .unwrap();
+        assert_eq!(end_lost_calls(&state.db).await.unwrap(), 1);
+        let seconds: i32 = sqlx::query_scalar("SELECT seconds FROM voice_usage WHERE ref = 'linked-call:call-lost'").fetch_one(&state.db).await.unwrap();
+        assert!((3595..=3605).contains(&seconds), "billed to the last event (~1 h), got {seconds}");
+    }
+
+    /// The full router builds (a route overlap panics and crash-loops prod) and
+    /// the new routes are mounted next to `/api/v1/voice/calls/:callId/...`.
+    #[tokio::test]
+    async fn full_router_mounts_linked_calls_and_live_without_overlap() {
+        use tower::ServiceExt;
+        let state = voice_test_state().await;
+        let router = crate::create_router(state);
+        let call = |method: &str, path: &str| {
+            axum::http::Request::builder()
+                .method(method)
+                .uri(path)
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    r#"{"botId":"b","direction":"inbound","line":{"kind":"linked_phone","deviceId":"d","label":"Moto","platform":"android"}}"#,
+                ))
+                .unwrap()
+        };
+        let r = router.clone().oneshot(call("GET", "/api/v1/voice/calls/live")).await.unwrap();
+        assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
+        let r = router.clone().oneshot(call("POST", "/api/v1/voice/linked-calls")).await.unwrap();
+        assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
+        // The param routes beside `live` still route to their handlers.
+        let r = router.clone().oneshot(call("POST", "/api/v1/voice/calls/live/control")).await.unwrap();
+        assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
+        let r = router.clone().oneshot(call("GET", "/api/v1/voice/calls/some-call/recording")).await.unwrap();
+        assert_ne!(r.status(), StatusCode::NOT_FOUND);
     }
 }
