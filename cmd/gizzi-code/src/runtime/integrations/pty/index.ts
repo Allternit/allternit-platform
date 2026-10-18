@@ -19,6 +19,7 @@ import { Plugin } from "@/runtime/integrations/plugin"
 import { connect as netConnect, type Socket as NetSocket } from "node:net"
 import { existsSync } from "node:fs"
 import { dirname, join } from "node:path"
+import { paneEndpointFor } from "./endpoint"
 
 export namespace Pty {
   const log = Log.create({ service: "pty" })
@@ -40,13 +41,14 @@ export namespace Pty {
   export function factoryBinary(): string | undefined {
     const execDir = dirname(process.execPath)
     const platformArch = `${process.platform}-${process.arch}`
+    const exe = process.platform === "win32" ? "allternit-factory.exe" : "allternit-factory"
     const candidates = [
       process.env.ALLTERNIT_FACTORY_BIN,
-      join(execDir, "allternit-factory"),
-      join(execDir, "vendor", "allternit-factory", platformArch, "allternit-factory"),
+      join(execDir, exe),
+      join(execDir, "vendor", "allternit-factory", platformArch, exe),
       Bun.which("allternit-factory") ?? undefined,
-      join(process.cwd(), "..", "..", "target", "release", "allternit-factory"),
-      join(process.cwd(), "..", "..", "target", "debug", "allternit-factory"),
+      join(process.cwd(), "..", "..", "target", "release", exe),
+      join(process.cwd(), "..", "..", "target", "debug", exe),
     ].filter(Boolean) as string[]
     return candidates.find((bin) => existsSync(bin))
   }
@@ -88,9 +90,12 @@ export namespace Pty {
     }
   }
 
+  /** Where to connect for a pane engine socket (named pipe on Windows). */
+  export const paneEndpoint = paneEndpointFor
+
   function dial(path: string): Promise<NetSocket> {
     return new Promise((resolve, reject) => {
-      const sock = netConnect(path)
+      const sock = netConnect(paneEndpoint(path))
       sock.once("connect", () => {
         sock.off("error", reject)
         resolve(sock)

@@ -34,7 +34,7 @@ flowchart TB
 - **Gizzi is both a product and a harness.** With no arguments, `gizzi` opens the TUI. Inside a Factory pane, Gizzi is an agent harness like Claude Code or Codex. The same binary does both, so Gizzi dogfoods itself.
 - **The engine is one process that outlives any window.** Agents keep running when you close Gizzi. Desktop and your phone read the same engine at the same time. An engine crash doesn't take your terminal with it, which is why the engine is a separate executable.
 - **One TUI, two renderers.** Gizzi's TUI draws the home screen, the agents list, the board and approvals. The engine's Rust pane view draws the wall of live terminals. You only ever launch `gizzi`.
-- **Windows.** Gizzi runs on Windows, but the pane engine is Unix-only. On Windows, Gizzi drives a Factory running on another machine (a Mac, Linux, or a cloud computer).
+- **Windows.** Allternit Desktop for Windows ships and runs the engine (`allternit-factory.exe`), so Code mode terminals and agent panes work there. The pane engine talks over a named pipe instead of a Unix socket and runs shells through ConPTY. A few things still need a Mac or Linux and say so when you try them: the tmux transport, the strict env fence, harness tools that install with a bash script, and direct peer inbox delivery (messages still arrive through the inbox). Gizzi on Windows can also drive a Factory on another machine (a Mac, Linux, or a cloud computer).
 
 ### Where the engine comes from
 

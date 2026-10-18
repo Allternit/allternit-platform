@@ -13,6 +13,9 @@ fn zig_target(target: &str) -> &str {
         "aarch64-apple-darwin" => "aarch64-macos",
         "x86_64-pc-windows-msvc" => "x86_64-windows-msvc",
         "aarch64-pc-windows-msvc" => "aarch64-windows-msvc",
+        // Allternit: mingw is not a shipped target; it lets macOS hosts
+        // `cargo check --target x86_64-pc-windows-gnu` the Windows code.
+        "x86_64-pc-windows-gnu" => "x86_64-windows-gnu",
         other => panic!("unsupported target for libghostty-vt build: {other}"),
     }
 }

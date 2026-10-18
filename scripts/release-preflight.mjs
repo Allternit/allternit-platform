@@ -320,9 +320,9 @@ function checkPackagingDryRun(jobs) {
   }
   bins.push({ name: 'mesh-node', optional: false, flag: null });
   // The Factory engine Desktop runs and gizzi finds next to itself; its pane
-  // engine runs every terminal (allternit-api /terminal, gizzi /pty). Unix-only.
-  // It replaced allternit-mux.
-  bins.push({ name: 'allternit-factory', optional: false, flag: null, darwinOnly: true });
+  // engine runs every terminal (allternit-api /terminal, gizzi /pty) over a
+  // Unix socket, or a named pipe on Windows. It replaced allternit-mux.
+  bins.push({ name: 'allternit-factory', optional: false, flag: null });
   bins.push({ name: 'lume', optional: false, flag: null, darwinOnly: true });
   // Phone Link's Apple ID signer (cmd/allternit-sideload, staged by
   // prepare-sideload.cjs). ADVISORY ONLY for now: iPhone setup also needs the

@@ -50,8 +50,8 @@ const BUCKET = process.env.ALLTERNIT_RUNTIME_BUCKET || 'allternit-runtime';
 const ACCOUNT = process.env.CLOUDFLARE_ACCOUNT_ID || '7cd19487307235aedc039d3a64ad7039';
 const EXE = TARGET_OS === 'win32' ? '.exe' : '';
 // allternit-factory (the Factory engine) rides with gizzi-code so a runtime
-// update moves both together; it is Unix-only.
-const BINARIES = [`allternit-api${EXE}`, `gizzi-code${EXE}`, ...(TARGET_OS === 'win32' ? [] : ['allternit-factory'])];
+// update moves both together.
+const BINARIES = [`allternit-api${EXE}`, `gizzi-code${EXE}`, `allternit-factory${EXE}`];
 
 const die = (msg) => { console.error(`✗ ${msg}`); process.exit(1); };
 const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');

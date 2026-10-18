@@ -357,12 +357,8 @@ pub mod swarm_routes;
 pub mod tag_routes;
 pub mod task_routes;
 pub mod team_skill_routes;
-// Unix-only: talks to the Factory pane engine over a UDS (tokio::net::UnixStream).
-#[cfg(unix)]
-pub mod terminal_routes;
-// Windows: same names, every terminal request answers 501 (no pane engine socket).
-#[cfg(not(unix))]
-#[path = "terminal_routes_windows.rs"]
+// Code Mode terminals on the Factory pane engine (Unix socket, or a named
+// pipe on Windows).
 pub mod terminal_routes;
 pub mod token_crypto;
 pub mod tool_routes;
@@ -691,8 +687,7 @@ pub struct AppState {
     pub office_cli_mcp_sessions: OfficeCliMcpState,
     /// Daemon-side Open Design skill cache with hot-reload semantics.
     pub design_skill_cache: DesignSkillCache,
-    /// Code Mode terminals on the Factory pane engine (a placeholder on
-    /// Windows, where the routes answer 501).
+    /// Code Mode terminals on the Factory pane engine.
     pub terminal_sessions: TerminalSessionStore,
     /// Attached MCP servers reachable through the server-side MCP dispatcher.
     pub mcp_dispatcher: crate::mcp_dispatcher::McpDispatcher,

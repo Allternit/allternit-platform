@@ -31,6 +31,7 @@ const localEngineName = process.platform === 'win32' ? 'allternit-local-engine.e
 const gizziName = process.platform === 'win32' ? 'gizzi-code.exe' : 'gizzi-code';
 const voiceName = process.platform === 'win32' ? 'allternit-voice-service.exe' : 'allternit-voice-service';
 const ttsName = process.platform === 'win32' ? 'allternit-tts.exe' : 'allternit-tts';
+const factoryName = process.platform === 'win32' ? 'allternit-factory.exe' : 'allternit-factory';
 
 const required = [
   {
@@ -58,17 +59,11 @@ const required = [
     label: 'TTS program (allternit-tts, GPL-3.0, started by the voice service)',
     buildStep: 'scripts/build-desktop.sh',
   },
-  // allternit-factory is Unix-only for now (its pane engine, which runs every
-  // terminal, serves a Unix socket), so Windows ships without it.
-  ...(process.platform === 'win32'
-    ? []
-    : [
-        {
-          path: path.join(resourcesDir, 'bin', 'allternit-factory'),
-          label: 'allternit-factory (the Allternit Factory engine and its pane engine: terminals, agent panes; Desktop runs it, gizzi finds it next to itself)',
-          buildStep: 'npm run prepare:factory',
-        },
-      ]),
+  {
+    path: path.join(resourcesDir, 'bin', factoryName),
+    label: 'allternit-factory (the Allternit Factory engine and its pane engine: terminals, agent panes; Desktop runs it, gizzi finds it next to itself)',
+    buildStep: 'npm run prepare:factory',
+  },
   {
     path: path.join(resourcesDir, 'bin', process.platform === 'win32' ? 'system-one.exe' : 'system-one'),
     label: 'System One (S1) server binary',

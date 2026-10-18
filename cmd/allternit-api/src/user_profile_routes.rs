@@ -552,7 +552,6 @@ mod tests {
                 crate::office_routes::OfficeRuntimeFile::default(),
             )),
             design_skill_cache: crate::design_connector_routes::DesignSkillCache::new(),
-            #[cfg(unix)]
             terminal_sessions: crate::terminal_routes::TerminalSessionStore::new(),
             office_cli_docs: Arc::new(RwLock::new(HashMap::new())),
             office_cli_watches: Arc::new(RwLock::new(HashMap::new())),

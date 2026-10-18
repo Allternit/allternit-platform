@@ -1755,7 +1755,6 @@ mod tests {
             webhook_secret: None,
             office_runtime: Arc::new(RwLock::new(crate::office_routes::OfficeRuntimeFile::default())),
             design_skill_cache: crate::design_connector_routes::DesignSkillCache::new(),
-            #[cfg(unix)]
             terminal_sessions: crate::terminal_routes::TerminalSessionStore::new(),
             mcp_dispatcher: crate::mcp_dispatcher::McpDispatcher::new(),
             office_cli_docs: Arc::new(RwLock::new(HashMap::new())),
