@@ -291,6 +291,10 @@
         {
           "on": "2026-10-17",
           "note": "Sends to Claude Code bots no longer queue forever: a collapsed paste ([Pasted text #N], Codex [Pasted Content]) counts as landed, a failed paste is cleared line by line, and the idle probe retries. Spawn records folder trust for Claude Code and Kimi. Plain `workspace node list` shows every open node."
+        },
+        {
+          "on": "2026-10-17",
+          "note": "Terminal bots never wait on an approval prompt: Kimi panes start with --auto and Gemini panes with --yolo (ACP mode and kimi subcommands untouched), as Claude, Codex and Qwen already ran auto-approve behind the Gate."
         }
       ],
       "evidence": [

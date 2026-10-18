@@ -51,6 +51,20 @@ Delivery keeps a git workdir clean. Claude Code's Gate hook rides on the spawn's
 
 Claude Code and Kimi stop on a "trust this folder" prompt the first time they open a folder. Claude Code also asks once about external `CLAUDE.md` includes. Nobody watches a pane at spawn, so the bot sat idle and every send queued behind the dialog. The engine now records that trust before the pane starts, for the workdir you passed to `agents up` (and its real path, if it is a symlink). For Claude Code it sets `hasTrustDialogAccepted` and `hasClaudeMdExternalIncludesApproved` on that folder in `~/.claude.json`. For Kimi it writes `~/.kimi-code/workspace-trust/wd_<folder>_<hash>`. The stores are replaced atomically. A store that is missing or can't be parsed is left alone, never recreated.
 
+### Approval prompts at spawn
+
+A Terminal bot's harness never stops to ask a person before running a command or writing a file. Nobody answers prompts in a pane, so the engine starts each harness in its own auto-approve mode and puts Allternit's Gate in front instead:
+
+| Harness | Started with | What holds it to policy |
+|---|---|---|
+| Claude Code | `--permission-mode bypassPermissions` | The Gate `PreToolUse` hook in the spawn's `--settings` file; a deny wins |
+| Codex | `-c approval_policy="never"` `-c sandbox_mode="danger-full-access"` | The Gate hook passed with `-c` |
+| Qwen | `--yolo` | The Gate hook in a system-settings file |
+| Kimi | `--auto` (never-ask mode; `--yolo` still asks before risky actions) | Allternit's execution environment |
+| Gemini | `--yolo` | Allternit's execution environment |
+
+Any approval or sandbox flag in the bot's command is replaced, so every bot of a harness starts the same way. Kimi and Gemini run in ACP mode (`kimi acp`, `gemini --experimental-acp`) when gizzi drives them. There the client answers each permission request with the Gate's verdict, so their command is left as it is. Kimi's other subcommands, such as `kimi session`, and its one-shot `kimi -p` (which refuses `--auto` and `--yolo`) are also left alone.
+
 ### When a pane can't open its folder (macOS)
 
 On macOS the pane host runs under Allternit Desktop, so it needs Desktop's permission for protected folders (Desktop, Documents, Downloads). If a bot's workdir is in one of them and the permission is off, the agent exits right away with `getcwd: Operation not permitted`. `gizzi agents up` then fails with `needs_person` and says what to do: allow Allternit Desktop under **System Settings → Privacy & Security → Files and Folders** (or Full Disk Access), or use a workdir outside those folders.
@@ -153,6 +167,23 @@ The same path lets Gizzi on Windows run a team on a Mac, Linux or cloud computer
 ## Harnesses
 
 `gizzi agents harness list` shows the agent CLIs on a machine (Claude Code, Codex, Kimi, Grok, Antigravity, Gizzi and others): whether each is installed, and whether Allternit's skills, MCP server and rules are synced into it. `gizzi agents harness sync` brings them up to date. Discovery is local; no network calls are made. This replaces `gizzi runtime`.
+
+`gizzi agents doctor` checks a machine in three parts:
+- **transport:** the pane engine's socket and git.
+- **executors:** each harness that can run a bot, and whether it works interactively and headless.
+- **harness:** the copies the Factory installs itself into its managed folder (`~/.allternit/factory/harness`).
+
+Each tool in the harness part gets one status:
+
+| Status | Meaning |
+|---|---|
+| `ok` | A Factory-managed copy matches its pinned version |
+| `on PATH` | Installed by you outside the Factory. Bots still use it; the Factory just doesn't manage it |
+| `not installed` | Not found on this machine |
+| `external` | The Factory has no install channel for this tool |
+| `PROBLEM` | A managed copy is broken: pin mismatch, out-of-date terms, or not reachable |
+
+Only `PROBLEM` turns the check red.
 
 ## Watching and attaching
 

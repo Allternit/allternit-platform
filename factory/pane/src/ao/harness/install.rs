@@ -896,11 +896,14 @@ pub(crate) fn doctor(manifest: &Manifest, root: &Path, ctx: &super::FsCtx) -> Ha
         }
         let bin = root.join("bin").join(driver.key);
         if !bin.exists() {
-            rows.push(DoctorRow {
-                tool: driver.label.to_string(),
-                status: "not installed",
-                detail: String::new(),
-            });
+            // A copy the person installed themselves still runs bots; "not
+            // installed" read as missing next to doctor's executor section.
+            let (status, detail) = if ctx.which(driver.key) {
+                ("on PATH", "installed outside the Factory; not Factory-managed".to_string())
+            } else {
+                ("not installed", String::new())
+            };
+            rows.push(DoctorRow { tool: driver.label.to_string(), status, detail });
             continue;
         }
         let class = cfg.license.unwrap_or(LicenseClass::Undeclared);
@@ -1325,6 +1328,29 @@ mod tests {
         assert!(!report.ok);
         let row = report.rows.iter().find(|r| r.tool.contains("Kimi")).unwrap();
         assert!(row.detail.contains("unreachable"), "{}", row.detail);
+    }
+
+    #[test]
+    fn doctor_names_a_tool_found_on_path_outside_the_managed_dir() {
+        let (tmp, root) = scratch();
+        let manifest = fixture_manifest();
+        let backend = FakeBackend::new();
+        install_tool(&manifest, driver("kimi"), &root, "kimi", false, false, &backend).unwrap();
+        let own = tmp.path().join("own-bin");
+        std::fs::create_dir_all(&own).unwrap();
+        let claude = own.join("claude");
+        std::fs::write(&claude, "#!/bin/sh\n").unwrap();
+        #[cfg(unix)]
+        std::fs::set_permissions(&claude, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        let home = tmp.path().join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let ctx = doctor_ctx(&home, vec![root.join("bin"), own]);
+        let report = doctor(&manifest, &root, &ctx);
+        let row = |name: &str| report.rows.iter().find(|r| r.tool.contains(name)).unwrap();
+        assert_eq!(row("Claude").status, "on PATH");
+        assert!(row("Claude").detail.contains("not Factory-managed"));
+        assert_eq!(row("Codex").status, "not installed");
+        assert!(report.ok, "a tool outside the managed dir is not a problem: {:?}", report.rows);
     }
 
     #[test]
