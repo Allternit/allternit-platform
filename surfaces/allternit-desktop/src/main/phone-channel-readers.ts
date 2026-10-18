@@ -38,7 +38,21 @@ type Rect = { x: number; y: number; w: number; h: number };
 /** A piece of a message: text, or a picture of a non-text element. `alt` is its text for search and screen readers. */
 export type MessagePart =
   | { kind: 'text'; text: string }
-  | { kind: 'image'; alt: string; src?: string; width: number; height: number; crop?: Rect };
+  | { kind: 'image'; alt: string; src?: string; width: number; height: number; crop?: Rect;
+      /** Where it sat on the phone's screen (for playing its clip). */
+      at?: Rect;
+      /** It moved between two screenshots: a GIF, animated sticker or video. */
+      animated?: boolean };
+
+/** A few seconds of the phone's screen, recorded on request to play animated parts. */
+export interface ChannelClip {
+  /** data:video/mp4 URL of the whole screen. */
+  src: string;
+  /** The screen size the parts' `at` rects use. */
+  screenWidth: number;
+  screenHeight: number;
+  recordedAt: string;
+}
 
 export interface ChannelMessage {
   author: string;
@@ -271,6 +285,7 @@ interface Cache {
   conversations: Record<string, { data: ChannelConversation[]; readAt: string }>;
   messages: Record<string, { data: ChannelMessage[]; readAt: string }>;
   me: Record<string, string>;
+  clips?: Record<string, ChannelClip>;
 }
 
 export interface ChannelReaderDeps {
@@ -283,6 +298,9 @@ export interface ChannelReaderDeps {
   /** Cut `rect` (screen coordinates; the screen is `screenWidth` wide) out of a screenshot → data URL, or null. */
   crop?: (imageBase64: string, rect: Rect, screenWidth: number) => string | null;
 }
+
+/** Record the phone's screen for a few seconds → base64 MP4 at `size`, or null. */
+export type ScreenRecorder = (size: { width: number; height: number }) => Promise<string | null>;
 
 export class PhoneChannelReader {
   private queue: Promise<unknown> = Promise.resolve();
@@ -320,6 +338,7 @@ export class PhoneChannelReader {
     return this.run(serial, app, async (spec, nav) => {
       await spec.open(nav, conversation);
       const data = await this.readMessages(spec, nav, app);
+      delete this.cache.clips?.[`${app}::${conversation.id}`];
       this.cache.messages[`${app}::${conversation.id}`] = { data, readAt: this.stamp() };
       return data;
     });
@@ -332,6 +351,7 @@ export class PhoneChannelReader {
       await spec.open(nav, conversation);
       await spec.send(nav, body);
       const data = await this.readMessages(spec, nav, app);
+      delete this.cache.clips?.[`${app}::${conversation.id}`];
       this.cache.messages[`${app}::${conversation.id}`] = { data, readAt: this.stamp() };
       return data;
     });
@@ -343,15 +363,54 @@ export class PhoneChannelReader {
     const data = spec.messages(nodes, this.cache.me[app] ?? null);
     const pictures = data.flatMap((m) => m.parts ?? []).filter((p): p is Extract<MessagePart, { kind: 'image' }> => p.kind === 'image');
     if (pictures.length && this.deps.crop) {
-      const shot = await nav.call('phone.screenshot', {}).catch(() => null);
-      const b64 = shot?.ok && typeof shot.dataBase64 === 'string' ? shot.dataBase64 : null;
+      const shoot = async () => {
+        const shot = await nav.call('phone.screenshot', {}).catch(() => null);
+        return shot?.ok && typeof shot.dataBase64 === 'string' ? shot.dataBase64 : null;
+      };
+      const b64 = await shoot();
       const screenWidth = Math.max(0, ...nodes.map((n) => (n.rect ? n.rect.x + n.rect.w : 0)));
       for (const p of pictures) {
         if (b64 && p.crop && screenWidth > 0) p.src = this.deps.crop(b64, p.crop, screenWidth) ?? undefined;
       }
+      // A second look shortly after: a picture whose pixels changed is animated.
+      if (b64 && screenWidth > 0) {
+        await nav.wait(400);
+        const again = await shoot();
+        for (const p of pictures) {
+          if (again && p.crop && p.src && this.deps.crop(again, p.crop, screenWidth) !== p.src) p.animated = true;
+        }
+      }
     }
-    for (const p of pictures) delete p.crop;
+    for (const p of pictures) { if (p.crop) p.at = p.crop; delete p.crop; }
     return data;
+  }
+
+  /** The last clip recorded for a conversation, without touching the phone. */
+  cachedClip(app: string, conversationId: string): ChannelClip | null {
+    return this.cache.clips?.[`${app}::${conversationId}`] ?? null;
+  }
+
+  /**
+   * Record a few seconds of a conversation as the phone shows it, so its
+   * animated parts (GIFs, stickers, videos) play in Allternit. Opens the
+   * conversation first, the same way a read does.
+   */
+  clip(serial: string, app: string, conversation: ChannelConversation, record: ScreenRecorder | null): Promise<ReaderResult<ChannelClip>> {
+    if (!record) return Promise.resolve({ ok: false, error: 'unsupported', message: 'Playing needs the phone’s screen connection (Settings › Computers › Phones).' });
+    return this.run(serial, app, async (spec, nav) => {
+      await spec.open(nav, conversation);
+      const nodes = await nav.read();
+      const screenWidth = Math.max(0, ...nodes.map((n) => (n.rect ? n.rect.x + n.rect.w : 0)));
+      const screenHeight = Math.max(0, ...nodes.map((n) => (n.rect ? n.rect.y + n.rect.h : 0)));
+      if (!screenWidth || !screenHeight) throw new ReaderError('read_failed', 'Couldn’t read the phone’s screen.');
+      // Half size is plenty for a 280px-wide part; even numbers for the encoder.
+      const even = (n: number) => Math.max(2, Math.round(n / 4) * 2);
+      const b64 = await record({ width: even(screenWidth), height: even(screenHeight) });
+      if (!b64) throw new ReaderError('record_failed', 'The phone didn’t record its screen. Try again.');
+      const clip: ChannelClip = { src: `data:video/mp4;base64,${b64}`, screenWidth, screenHeight, recordedAt: this.stamp() };
+      (this.cache.clips ??= {})[`${app}::${conversation.id}`] = clip;
+      return clip;
+    });
   }
 
   /** One operation at a time: each one drives the phone's screen. */
@@ -405,14 +464,14 @@ export class PhoneChannelReader {
   private load(): Cache {
     try {
       const raw = JSON.parse(fs.readFileSync(this.deps.cacheFile, 'utf8')) as Partial<Cache>;
-      return { conversations: raw.conversations ?? {}, messages: raw.messages ?? {}, me: raw.me ?? {} };
+      return { conversations: raw.conversations ?? {}, messages: raw.messages ?? {}, me: raw.me ?? {}, clips: raw.clips ?? {} };
     } catch {
-      return { conversations: {}, messages: {}, me: {} };
+      return { conversations: {}, messages: {}, me: {}, clips: {} };
     }
   }
 
   private save(): void {
-    trimPictures(this.cache.messages, PICTURE_CACHE_BYTES);
+    trimPictures(this.cache.messages, PICTURE_CACHE_BYTES, this.cache.clips);
     try {
       fs.mkdirSync(path.dirname(this.deps.cacheFile), { recursive: true });
       fs.writeFileSync(this.deps.cacheFile, JSON.stringify(this.cache), { mode: 0o600 });
@@ -423,7 +482,7 @@ export class PhoneChannelReader {
 }
 
 /** Drop pictures from the least recently read conversations until the rest fit in `limit` bytes. */
-export function trimPictures(messages: Cache['messages'], limit: number): void {
+export function trimPictures(messages: Cache['messages'], limit: number, clips: Record<string, ChannelClip> = {}): void {
   const pics = (m: ChannelMessage[]) => m.flatMap((x) => x.parts ?? []).filter((p): p is Extract<MessagePart, { kind: 'image' }> => p.kind === 'image' && Boolean(p.src));
   const entries = Object.values(messages).sort((a, b) => b.readAt.localeCompare(a.readAt));
   let total = 0;
@@ -432,5 +491,10 @@ export function trimPictures(messages: Cache['messages'], limit: number): void {
       total += p.src!.length;
       if (total > limit) delete p.src;
     }
+  }
+  // Clips share the cap: newest kept, the rest dropped (tap ▶ records again).
+  for (const [key, c] of Object.entries(clips).sort((a, b) => b[1].recordedAt.localeCompare(a[1].recordedAt))) {
+    total += c.src.length;
+    if (total > limit) delete clips[key];
   }
 }

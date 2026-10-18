@@ -70,7 +70,7 @@ import { nodeDiscoveryDeps } from './phone-link-discovery.js';
 import { PHONE_LINK_MESH_ENABLED } from './phone-link-mesh.js';
 import { meshManager } from './mesh-manager.js';
 import { PhoneLinkHealthMonitor } from './phone-link-health.js';
-import { PhoneChannelReader, type ChannelConversation, type ReaderResult } from './phone-channel-readers.js';
+import { PhoneChannelReader, type ChannelConversation, type ReaderResult, type ScreenRecorder } from './phone-channel-readers.js';
 import type { PhoneLinkDevice, PhoneLinkHandoverResult, PhoneLinkHandoverTarget } from './phone-link-types.js';
 import { readSecret, writeSecret, deleteSecret } from './secure-store.js';
 import {
@@ -1123,6 +1123,38 @@ class PhoneService {
 
   channelSend(app: string, conversation: ChannelConversation, text: string) {
     return this.withChannel(app, (r, serial) => r.send(serial, app, conversation, text));
+  }
+
+  async channelCachedClip(app: string, conversationId: string) {
+    return (await this.channels().catch(() => null))?.cachedClip(app, conversationId) ?? null;
+  }
+
+  /** Record a few seconds of a conversation (Android's screenrecord over the screen lane's adb). */
+  channelClip(app: string, conversation: ChannelConversation) {
+    return this.withChannel(app, async (r, serial) => {
+      const adbSerial = await this.adbSerialFor(serial);
+      const record: ScreenRecorder | null = adbSerial ? async (size) => {
+        const adb = await this.ensureAdbCall();
+        const file = '/data/local/tmp/allternit-clip.mp4';
+        const rec = await adb(['shell', 'screenrecord', '--time-limit', '3', '--size', `${size.width}x${size.height}`, '--bit-rate', '1500000', file], { serial: adbSerial, timeoutMs: 15_000 });
+        if (rec.code !== 0) return null;
+        const out = await adb(['exec-out', 'base64', file], { serial: adbSerial, timeoutMs: 15_000 });
+        await adb(['shell', 'rm', '-f', file], { serial: adbSerial });
+        const b64 = out.code === 0 ? out.stdout.replace(/\s+/g, '') : '';
+        return b64.length > 100 ? b64 : null;
+      } : null;
+      return r.clip(serial, app, conversation, record);
+    });
+  }
+
+  /** The adb (screen lane) serial for the phone a channel serial names: itself, or the online adb phone with the same name. */
+  private async adbSerialFor(serial: string): Promise<string | null> {
+    const online = this.manager?.list().filter((p) => p.state === 'online') ?? [];
+    if (!serial.startsWith(LINK_SERIAL_PREFIX)) return online.some((p) => p.serial === serial) ? serial : null;
+    const name = (await this.linkedDevices().catch(() => [] as PhoneLinkDevice[]))
+      .find((d) => LINK_SERIAL_PREFIX + d.deviceId === serial)?.name?.trim().toLowerCase();
+    const match = online.find((p) => name && p.name?.trim().toLowerCase() === name) ?? (online.length === 1 ? online[0] : undefined);
+    return match?.serial ?? null;
   }
 
   async tryOpenApp(serial: string, appName: string) {

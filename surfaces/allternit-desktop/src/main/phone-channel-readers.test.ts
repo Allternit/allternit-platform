@@ -66,18 +66,20 @@ describe('Discord reader', () => {
     ].join('\n');
     const crops: unknown[] = [];
     let opened = false;
+    const shots = ['SHOT', 'SHOT2'];
     const reader = new PhoneChannelReader({
       cacheFile: '/dev/null/x.json',
       wait: async () => undefined,
-      crop: (b64, rect, w) => { crops.push([b64, rect, w]); return 'data:image/jpeg;base64,AAA'; },
-      call: async (name) => name === 'phone.tap' ? ((opened = true), { ok: true }) : name === 'phone.read_ui' ? { ok: true, text: opened ? screen : DRAWER_DMS } : name === 'phone.screenshot' ? { ok: true, dataBase64: 'SHOT' } : { ok: true },
+      // The second screenshot differs: the card is animated.
+      crop: (b64, rect, w) => { crops.push([b64, rect, w]); return b64 === 'SHOT' ? 'data:image/jpeg;base64,AAA' : 'data:image/jpeg;base64,BBB'; },
+      call: async (name) => name === 'phone.tap' ? ((opened = true), { ok: true }) : name === 'phone.read_ui' ? { ok: true, text: opened ? screen : DRAWER_DMS } : name === 'phone.screenshot' ? { ok: true, dataBase64: shots.shift() ?? 'SHOT' } : { ok: true },
     });
     const res = await reader.messages('link:x', 'discord', { id: 'dm:Sam', title: 'Sam', group: 'Direct messages', preview: null, time: null, unread: 0 });
     expect(res.ok && res.data[0].parts).toEqual([
       { kind: 'text', text: 'look at this' },
-      { kind: 'image', alt: 'LinkedIn\nParted ways.', src: 'data:image/jpeg;base64,AAA', width: 587, height: 1108 },
+      { kind: 'image', alt: 'LinkedIn\nParted ways.', src: 'data:image/jpeg;base64,AAA', width: 587, height: 1108, at: { x: 112, y: 250, w: 587, h: 1108 }, animated: true },
     ]);
-    expect(crops).toEqual([['SHOT', { x: 112, y: 250, w: 587, h: 1108 }, 720]]);
+    expect(crops).toEqual([['SHOT', { x: 112, y: 250, w: 587, h: 1108 }, 720], ['SHOT2', { x: 112, y: 250, w: 587, h: 1108 }, 720]]);
   });
 
   it('lists DMs and server channels, one operation at a time, and keeps a local copy', async () => {

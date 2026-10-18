@@ -257,6 +257,11 @@ export function registerPhoneIpc(handle: Guarded): void {
     const c = sanitizeConversation(conversation);
     return c ? phoneService.channelMessages(String(app ?? ''), c) : { ok: false, error: 'invalid_args', message: 'Pick a conversation.' };
   });
+  handle('phone:channel-clip', (_e, app: unknown, conversation: unknown) => {
+    const c = sanitizeConversation(conversation);
+    return c ? phoneService.channelClip(String(app ?? ''), c) : { ok: false, error: 'invalid_args', message: 'Pick a conversation.' };
+  });
+  handle('phone:channel-cached-clip', (_e, app: unknown, id: unknown) => phoneService.channelCachedClip(String(app ?? ''), String(id ?? '')));
   handle('phone:channel-send', (_e, app: unknown, conversation: unknown, text: unknown) => {
     const c = sanitizeConversation(conversation);
     if (!c || typeof text !== 'string') return { ok: false, error: 'invalid_args', message: 'Pick a conversation and write a message.' };
