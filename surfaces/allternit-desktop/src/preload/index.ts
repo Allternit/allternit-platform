@@ -774,6 +774,12 @@ const phonesAPI = {
   screenshot: (serial: string): Promise<{ ok: boolean; dataBase64?: string; message?: string }> => ipcRenderer.invoke('phone:screenshot', serial),
   installArtemis: (): Promise<unknown> => ipcRenderer.invoke('phone:artemis-install'),
   home: (serial: string): Promise<{ ok: boolean; message?: string }> => ipcRenderer.invoke('phone:home', serial),
+  // Channel readers: messaging apps on the linked phone (Discord first), read by driving their UI.
+  channelApps: (): Promise<Array<{ app: string; name: string }>> => ipcRenderer.invoke('phone:channel-apps'),
+  channelCached: (app: string, conversationId?: string): Promise<unknown> => ipcRenderer.invoke('phone:channel-cached', app, conversationId),
+  channelConversations: (app: string): Promise<unknown> => ipcRenderer.invoke('phone:channel-conversations', app),
+  channelMessages: (app: string, conversation: unknown): Promise<unknown> => ipcRenderer.invoke('phone:channel-messages', app, conversation),
+  channelSend: (app: string, conversation: unknown, text: string): Promise<unknown> => ipcRenderer.invoke('phone:channel-send', app, conversation, text),
   usbStatus: (): Promise<unknown> => ipcRenderer.invoke('phone:usb-status'),
   usbPorts: (): Promise<string[]> => ipcRenderer.invoke('phone:usb-ports'),
   usbIdentify: (port: string): Promise<unknown> => ipcRenderer.invoke('phone:usb-identify', port),

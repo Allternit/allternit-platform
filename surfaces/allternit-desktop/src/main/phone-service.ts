@@ -57,6 +57,7 @@ import { nodeDiscoveryDeps } from './phone-link-discovery.js';
 import { PHONE_LINK_MESH_ENABLED } from './phone-link-mesh.js';
 import { meshManager } from './mesh-manager.js';
 import { PhoneLinkHealthMonitor } from './phone-link-health.js';
+import { PhoneChannelReader, type ChannelConversation, type ReaderResult } from './phone-channel-readers.js';
 import type { PhoneLinkDevice, PhoneLinkHandoverResult, PhoneLinkHandoverTarget } from './phone-link-types.js';
 import { readSecret, writeSecret, deleteSecret } from './secure-store.js';
 import {
@@ -869,6 +870,63 @@ class PhoneService {
   }
 
   /** Wizard "Try it": the tools the renderer may call directly. Sends and dials stay bot-only, behind the approval dialog. */
+  // ── Channel readers (phone-channel-readers.ts) ─────────────────────────────
+  // Read and send in messaging apps on the linked phone by driving their UI.
+  // What is read stays in this computer's user data (phone-channels.json).
+
+  private channelReader: PhoneChannelReader | null = null;
+
+  private async channels(): Promise<PhoneChannelReader> {
+    await this.ensureGatewayServer();
+    const runner = this.runner;
+    if (!runner) throw new Error('Phones are not set up yet.');
+    this.channelReader ??= new PhoneChannelReader({
+      call: (name, args) => runner.call(name, args) as never,
+      cacheFile: path.join(this.dir(), 'phone-channels.json'),
+    });
+    return this.channelReader;
+  }
+
+  /** The phone to read `app` on: a healthy Phone Link phone that has it, else an online adb phone. */
+  private async channelSerial(app: string): Promise<string | null> {
+    const devices = await this.linkedDevices().catch(() => [] as PhoneLinkDevice[]);
+    const android = devices.filter((d) => d.platform === 'android' && d.health.state === 'HEALTHY');
+    const withApp = android.find((d) => d.apps?.some((a) => a.vendor === app)) ?? android[0];
+    if (withApp) return `link:${withApp.deviceId}`;
+    return this.manager?.onlineSerials()[0] ?? null;
+  }
+
+  private async withChannel<T>(app: string, op: (reader: PhoneChannelReader, serial: string) => Promise<ReaderResult<T>>): Promise<ReaderResult<T>> {
+    try {
+      const reader = await this.channels();
+      const serial = await this.channelSerial(app);
+      if (!serial) return { ok: false, error: 'no_phone', message: 'Link an Android phone to read its apps here.' };
+      return await op(reader, serial);
+    } catch (error) {
+      return { ok: false, error: 'reader_failed', message: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  async channelApps(): Promise<Array<{ app: string; name: string }>> {
+    return (await this.channels().catch(() => null))?.apps() ?? [];
+  }
+
+  async channelCached(app: string, conversationId?: string) {
+    return (await this.channels().catch(() => null))?.cached(app, conversationId) ?? {};
+  }
+
+  channelConversations(app: string) {
+    return this.withChannel(app, (r, serial) => r.conversations(serial, app));
+  }
+
+  channelMessages(app: string, conversation: ChannelConversation) {
+    return this.withChannel(app, (r, serial) => r.messages(serial, app, conversation));
+  }
+
+  channelSend(app: string, conversation: ChannelConversation, text: string) {
+    return this.withChannel(app, (r, serial) => r.send(serial, app, conversation, text));
+  }
+
   async tryOpenApp(serial: string, appName: string) {
     return this.runner?.call('phone.open_app', { serial, app: appName }) ?? { ok: false, error: 'device_offline', message: 'Phones are not set up yet.' };
   }

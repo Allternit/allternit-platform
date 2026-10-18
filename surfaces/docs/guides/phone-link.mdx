@@ -71,6 +71,16 @@ Once a phone is linked, bots reach it with the same `phone.*` tools as any other
 - **iPhone has no Back button.** `phone.back` works on Android; on a linked iPhone the bot gets a plain "use the app's back control" instead.
 - **Texts and calls stay on the adb lane for now.** `phone.sms.send` and `phone.call.dial` need an Android phone over adb with its on-screen approval; they are not available on linked phones. The same goes for hardware keys (`phone.key`) and plain-English tasks (`phone.task`).
 
+## Read messaging apps in Allternit
+
+Allternit can read and send in some messaging apps on a linked Android phone by using the app the way you would: it opens the app, reads the screen, taps a conversation, and types. **Discord** is first (your direct messages and your servers' text channels). More apps follow, one reader per app.
+
+- Open the app's tile in the Allternit phone to see its conversations. Tap one to read it, and reply from the box at the bottom.
+- The phone's screen moves while Allternit reads. Switch the phone frame to **Linked phone** to watch.
+- It reads what the app shows on screen: the conversation list and the latest messages in a conversation.
+- What it reads stays on this computer (in Allternit Desktop's data folder). It isn't uploaded.
+- Until an app has a reader, its tile opens the app on the phone itself.
+
 ## Phone health
 
 Settings → Subscriptions › Linked phones shows each linked phone's state as an **Apps:** pill (for example **Apps: Connected**), the app rows under Apps and channels repeat it per app, and `phone.devices` reports it to bots. Phone Link never shows or controls the screen. An Android phone's screen connects through wireless debugging (see [A phone for your bot](/guides/phone-for-your-bot)). When a phone has both, Settings → Computers → Phones shows it as one row with **Screen: …** and **Apps: …**.
@@ -116,6 +126,8 @@ An iPhone still needs your Mac for two things, and the Sessions computer shows t
 A Sessions computer can't do these because they need a cable to the iPhone.
 
 ## For developers
+
+**Channel readers** (`surfaces/allternit-desktop/src/main/phone-channel-readers.ts`). A `ChannelAppSpec` per app (`conversations`, `open`, `messages`, `send`, optional `me`) drives the app through the phone tool runner (`phone.open_app`, `phone.read_ui`, `phone.tap`, `phone.find_and_tap`, `phone.type`, `phone.back`), so approvals, rate limits and the busy indicator apply. `phone-ui-tree.ts` parses `read_ui` text into nodes. `PhoneChannelReader` runs one operation at a time and keeps a local copy in `<userData>/phone/phone-channels.json` (mode 600). IPC: `phone:channel-apps`, `phone:channel-cached`, `phone:channel-conversations`, `phone:channel-messages`, `phone:channel-send`, exposed as `window.allternit.phones.channel*`. The phone used is a healthy Phone Link phone that lists the app, else an online adb phone. To add an app, write its spec (match on accessibility labels and ids, never on coordinates) and register it in `CHANNEL_SPECS`.
 
 Desktop main runs the setup as a state machine (`surfaces/allternit-desktop/src/main/phone-link.ts`, with the platform drivers in `phone-link-ios.ts` and `phone-link-android.ts`). The renderer API is `window.allternit.phoneLink`; types are in `phone-link-types.ts`.
 
