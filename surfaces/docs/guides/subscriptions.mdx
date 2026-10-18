@@ -1,6 +1,6 @@
 ---
 title: Connected subscriptions
-description: Connect subscription accounts, select a login, and use available capabilities through the Sessions computer.
+description: Connect subscription accounts with your phone, a desktop app or a browser sign-in, and use them from this computer or a Sessions computer.
 ---
 
 Connected subscriptions let the workspace use supported capabilities from your own ChatGPT, Claude, Kimi, Gemini, or Copilot account through Subscription Fabric. This is separate from a provider API key, an Allternit Cloud model, or a CLI harness login. The subscription account's plan, observed capabilities, quotas, and session health determine availability.
@@ -11,16 +11,36 @@ For bot login assignment, gateway sign-in, and the account status reference, see
 
 The quickest way to connect is **Settings → Subscriptions → Link a phone**: your bots then use the apps already signed in on your phone, with no password and no Sessions computer. See [Phone Link](/guides/phone-link). Settings → Subscriptions › **Apps and channels** lists one row per app with how bots reach it (on your phone, a desktop app, or a browser sign-in) and which route they use. A browser sign-in, below, is the fallback for an app that isn't on your phone.
 
+## Which computer runs your subscriptions
+
+Allternit Desktop runs its own subscription gateway. **Settings → Subscriptions › Runs on** shows which computer answers:
+
+- **A Sessions computer, when one is bound and running.** It answers first, for every route.
+- **This computer, otherwise.** Phone and desktop-app connections work from the computer you use Allternit Desktop on, with no Sessions computer. **Add a Sessions computer** binds an always-on computer that keeps your subscriptions working while this one is off. When a bound Sessions computer is stopped, the page names it and this computer answers until it runs again.
+
+Chats with a subscription model from the model picker and bot turns use the same routes: the app on your phone first, then a desktop app, then a browser sign-in. See [the subscription gateway API](/api/subscription-gateway).
+
+### Browser sign-ins on this computer
+
+On the computer you work on, browser sign-ins are off until you turn on **Browser sign-ins on this computer** under Runs on. When it is on:
+
+- They run in the Google Chrome you already have installed, on a separate Allternit profile. Your own Chrome profile is never opened or changed. They don't use Chrome for Testing, because some vendors block it.
+- They run hidden: no window, no Dock icon, and nothing takes focus.
+- A window opens only when you click: to sign in, or to clear a vendor's check.
+- Without Google Chrome installed, the switch stays off and says to install it.
+
+Turning the switch off closes every running browser sign-in on this computer. A Sessions computer always runs browser sign-ins in its own windows; it has no switch.
+
 ## Connect an account in a browser
 
 1. Open Settings → Subscriptions (**Sign in with a browser**), the subscription connection flow in the model picker, or **Use your subscription** in [first-run setup](/guides/first-run-setup).
-2. Ensure your Sessions computer is connected and running.
-3. Choose a supported provider and open its sign-in window. Sign in yourself in the live computer view.
+2. Make sure a Sessions computer is running, or that **Browser sign-ins on this computer** is on.
+3. Choose a supported provider and open its sign-in window. Sign in yourself: in the window that opens on this computer, or in the live computer view of your Sessions computer.
 4. Wait for sign-in detection, or use the sign-in check offered by an older gateway.
 5. Read and acknowledge the provider-terms disclosure before selecting the subscription model.
 6. Select an available subscription model and send your request.
 
-The gateway runs on a single-tenant Sessions computer: hosted, BYOC, or locally contained. It does not run uncontained in your everyday Desktop session. The workspace reaches it through the private runtime's subscription proxy; gateway credentials stay server-side.
+The gateway runs inside Allternit Desktop on your computer, and on a single-tenant Sessions computer (hosted, BYOC, or locally contained) when you bind one. The workspace reaches it through the runtime's subscription proxy; gateway credentials stay server-side.
 
 ## Bring your memory from a login
 
