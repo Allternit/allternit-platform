@@ -27,6 +27,8 @@
 //! - [`voicemail`]: outbound answering-machine detection (text, VAD, beep).
 //! - [`hold_music`]: the synthesized hold loop.
 //! - [`invite_code`]: the outbound call that reads a phone-invite code aloud.
+//! - [`line`]: caller matching (SIP, linked phone, in-app), job metadata,
+//!   the call's line and what a linked phone can't do.
 //! - [`transfer`]: warm transfer state machine and briefing wording.
 //! - [`recording`]: Egress recording decision (the disclosure follows it).
 //! - [`room`] (`call-worker` feature): LiveKit media + server API binding.
@@ -42,6 +44,7 @@ pub mod dispatch;
 pub mod events;
 pub mod hold_music;
 pub mod invite_code;
+pub mod line;
 pub mod recording;
 pub mod revise;
 pub mod session_adapter;
