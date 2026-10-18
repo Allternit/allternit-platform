@@ -738,7 +738,7 @@ fn open_mirrors(sessions: &[String]) -> Vec<String> {
         .iter()
         .filter_map(|k| std::env::var(k).ok().filter(|v| !v.is_empty()).map(|v| (k.to_string(), v)))
         .collect();
-    let cwd = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
+    let cwd = allternit_factory_engine::platform::user_home().unwrap_or_else(std::env::temp_dir);
     let mut opened = Vec::new();
     for session in sessions {
         let Some((_, address, _, _)) = remote_bot(session) else { continue };

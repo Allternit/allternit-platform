@@ -255,7 +255,7 @@ fn truncate(s: &str, max_bytes: usize) -> String {
 }
 
 fn command_exists(name: &str) -> bool {
-    std::process::Command::new("which")
+    std::process::Command::new(if cfg!(windows) { "where" } else { "which" })
         .arg(name)
         .output()
         .map(|o| o.status.success())
@@ -263,9 +263,16 @@ fn command_exists(name: &str) -> bool {
 }
 
 async fn run_shell_command(cmd: &str, cwd: &Path, stdin: &str) -> Result<String> {
-    let mut child = Command::new("bash")
-        .arg("-c")
-        .arg(cmd)
+    // bash on Unix (consult commands may use bash syntax); cmd.exe on Windows.
+    #[cfg(unix)]
+    let mut shell = {
+        let mut c = Command::new("bash");
+        c.arg("-c").arg(cmd);
+        c
+    };
+    #[cfg(not(unix))]
+    let mut shell = Command::from(crate::platform::shell_command(cmd));
+    let mut child = shell
         .current_dir(cwd)
         // Recursion guard: nested steering consults triggered by hooks inside
         // this child must not re-run the consult command.

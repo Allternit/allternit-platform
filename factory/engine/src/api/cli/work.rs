@@ -1000,10 +1000,7 @@ async fn hooks_cmd(ctx: &WorkContext, command: HookCommand) -> Result<()> {
                 .find(|h| h.name == name)
                 .ok_or_else(|| anyhow!("hook not found"))?;
             if exec {
-                let status = std::process::Command::new("sh")
-                    .arg("-c")
-                    .arg(&hook.command)
-                    .status()?;
+                let status = crate::platform::shell_command(&hook.command).status()?;
                 println!("exit: {}", status.code().unwrap_or(-1));
             }
             let evt = compat_event(

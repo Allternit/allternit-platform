@@ -112,7 +112,12 @@ impl Spawner {
         let logdir = registry::logs_dir();
         ensure_dir(&logdir)?;
         let log = logdir.join(format!("{}-{}.log", session, Utc::now().format("%Y%m%d-%H%M%S")));
-        let runner = logdir.join(format!("{}.cmd.sh", session));
+        // Windows runs a cmd.exe batch runner (no /bin/sh there).
+        let runner = if cfg!(windows) {
+            logdir.join(format!("{}.runner.cmd", session))
+        } else {
+            logdir.join(format!("{}.cmd.sh", session))
+        };
 
         let pane = backend::backend()?;
         {
@@ -243,6 +248,16 @@ impl Spawner {
             gate_env.push(("IS_SANDBOX".to_string(), "1".to_string()));
         }
 
+        let enforce_env = fence_strict || std::env::var("ALLTERNIT_EXEC_ENV_ENFORCE").as_deref() == Ok("1");
+        if cfg!(windows) && enforce_env {
+            // `env -i` has no cmd.exe equivalent; refuse rather than run the
+            // agent with the full environment the fence promised to strip.
+            cleanup(workdir.clone()).await;
+            bail!(
+                "the strict env fence (env allowlist) needs macOS or Linux; on Windows unset ALLTERNIT_EXEC_ENV_ENFORCE and the strict fence, or run this agent on a Mac or Linux computer"
+            );
+        }
+
         // The runner file sidesteps quoting; the env allowlist (when enforced)
         // wraps it so only allowlisted and per-session names survive.
         let env_prefix = if fence_strict || std::env::var("ALLTERNIT_EXEC_ENV_ENFORCE").as_deref() == Ok("1") {
@@ -287,12 +302,29 @@ impl Spawner {
         if let Some(sentinel) = opts.notes_sentinel {
             runner_text.push_str(&format!("\ntouch {}", shell_escape(&sentinel.to_string_lossy())));
         }
-        tokio::fs::write(&runner, format!("{}\n", runner_text)).await?;
+        let runner_argv = if cfg!(windows) {
+            let text = windows_runner(
+                &cmd,
+                &gate_env,
+                opts.capture.as_ref().map(|c| (c.stdout.as_path(), c.stderr.as_path(), c.exit_code.as_path())),
+                opts.notes_sentinel,
+            );
+            tokio::fs::write(&runner, text).await?;
+            vec![
+                "cmd.exe".to_string(),
+                "/d".to_string(),
+                "/c".to_string(),
+                runner.to_string_lossy().to_string(),
+            ]
+        } else {
+            tokio::fs::write(&runner, format!("{}\n", runner_text)).await?;
+            vec!["/bin/sh".to_string(), runner.to_string_lossy().to_string()]
+        };
 
         let request = PaneSpawn {
             session: session.clone(),
             cwd: workdir.clone(),
-            argv: vec!["/bin/sh".to_string(), runner.to_string_lossy().to_string()],
+            argv: runner_argv,
             env,
             transcript: Some(log.clone()),
         };
@@ -714,6 +746,47 @@ pub fn sanitize_slug(slug: &str) -> String {
         .to_lowercase()
 }
 
+/// A cmd.exe word: double-quoted, `"` as `\"` (the MSVC argv rule most
+/// Windows programs parse with), `%` doubled so batch expansion leaves it.
+fn cmd_quote(s: &str) -> String {
+    format!("\"{}\"", s.replace('%', "%%").replace('"', "\\\""))
+}
+
+/// The Windows twin of the `/bin/sh` runner: set the gate env, run the
+/// harness (`call` so a `.cmd` harness returns here), then the same capture
+/// files and notes sentinel.
+fn windows_runner(
+    cmd: &[String],
+    gate_env: &[(String, String)],
+    capture: Option<(&Path, &Path, &Path)>,
+    sentinel: Option<&Path>,
+) -> String {
+    let mut text = String::from("@echo off\r\n");
+    for (k, v) in gate_env {
+        // `set "K=V"`: the quotes keep & | < > literal.
+        text.push_str(&format!("set \"{}={}\"\r\n", k, v.replace('%', "%%")));
+    }
+    let line = format!("call {}", cmd.iter().map(|s| cmd_quote(s)).collect::<Vec<_>>().join(" "));
+    match capture {
+        Some((stdout, stderr, exit_code)) => {
+            let tmp = exit_code.with_extension("tmp");
+            text.push_str(&format!(
+                "{line} < NUL > {} 2> {}\r\n>{} echo %ERRORLEVEL%\r\nmove /y {} {} >NUL\r\n",
+                cmd_quote(&stdout.to_string_lossy()),
+                cmd_quote(&stderr.to_string_lossy()),
+                cmd_quote(&tmp.to_string_lossy()),
+                cmd_quote(&tmp.to_string_lossy()),
+                cmd_quote(&exit_code.to_string_lossy()),
+            ));
+        }
+        None => text.push_str(&format!("{line}\r\n")),
+    }
+    if let Some(sentinel) = sentinel {
+        text.push_str(&format!("type NUL >> {}\r\n", cmd_quote(&sentinel.to_string_lossy())));
+    }
+    text
+}
+
 fn shell_escape(s: &str) -> String {
     // POSIX single quotes: everything inside is literal, including
     // backslashes. Only `'` needs closing, escaping and reopening.
@@ -722,7 +795,7 @@ fn shell_escape(s: &str) -> String {
 
 async fn create_worktree(repo: &Path, slug: &str) -> Result<(PathBuf, bool)> {
     let root = git_toplevel(repo).await?;
-    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/tmp"));
+    let home = crate::platform::user_home_or("/tmp");
     if root == home {
         bail!("git root is $HOME — a worktree would checkout your whole home dir");
     }
@@ -800,6 +873,21 @@ mod tests {
         assert_eq!(sanitize_slug("My Session"), "my-session");
         assert_eq!(sanitize_slug("foo_bar-1"), "foo_bar-1");
         assert_eq!(sanitize_slug("--trim--"), "trim");
+    }
+
+    #[test]
+    fn windows_runner_sets_env_calls_harness_and_captures() {
+        let text = windows_runner(
+            &["claude".to_string(), "say \"hi\" 100%".to_string()],
+            &[("IS_SANDBOX".to_string(), "1".to_string())],
+            Some((Path::new(r"C:\l\o.txt"), Path::new(r"C:\l\e.txt"), Path::new(r"C:\l\x.code"))),
+            Some(Path::new(r"C:\l\done")),
+        );
+        assert!(text.starts_with("@echo off\r\nset \"IS_SANDBOX=1\"\r\n"), "{text}");
+        assert!(text.contains(r#"call "claude" "say \"hi\" 100%%" < NUL > "C:\l\o.txt" 2> "C:\l\e.txt""#), "{text}");
+        assert!(text.contains(r#">"C:\l\x.tmp" echo %ERRORLEVEL%"#), "{text}");
+        assert!(text.contains(r#"move /y "C:\l\x.tmp" "C:\l\x.code" >NUL"#), "{text}");
+        assert!(text.ends_with("type NUL >> \"C:\\l\\done\"\r\n"), "{text}");
     }
 
     #[test]

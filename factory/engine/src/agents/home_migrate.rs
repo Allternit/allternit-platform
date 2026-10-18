@@ -35,10 +35,7 @@ pub const MARKER_FILE: &str = "migrated-agent-orchestrator.json";
 
 /// The agent orchestrator's old home folder.
 pub fn legacy_home() -> PathBuf {
-    std::env::var_os("HOME")
-        .filter(|h| !h.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/"))
+    crate::platform::user_home_or("/")
         .join(".agent-orchestrator") // old-names: keep (the folder this migrates from)
 }
 

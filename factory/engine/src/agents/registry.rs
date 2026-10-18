@@ -73,10 +73,7 @@ pub fn prepend_harness_bin_to_path() {
 }
 
 fn home_dir() -> PathBuf {
-    std::env::var_os("HOME")
-        .filter(|h| !h.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/"))
+    crate::platform::user_home_or("/")
 }
 
 /// Where agent transcripts, runner files and spawn-gate settings live.
@@ -322,6 +319,9 @@ impl Registry {
                 anyhow::bail!("locking {}: {}", lock_path.display(), std::io::Error::last_os_error());
             }
         }
+        // Windows: LockFileEx through std (released when the handle closes).
+        #[cfg(windows)]
+        lock.lock().with_context(|| format!("locking {}", lock_path.display()))?;
         let out = f();
         drop(lock); // closing the descriptor releases the flock
         out

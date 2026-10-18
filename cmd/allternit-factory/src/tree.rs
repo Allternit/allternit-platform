@@ -607,6 +607,9 @@ fn serve(ctx: &Ctx, args: ServeArgs) -> u8 {
     } else {
         match args.socket {
             Some(path) => Some(path),
+            // Windows has no Unix socket listener: the engine serves HTTP on
+            // its port only (that is what Desktop and gizzi use there).
+            None if cfg!(windows) => None,
             None => match std::env::var_os("HOME").filter(|h| !h.is_empty()) {
                 Some(home) => Some(PathBuf::from(home).join(".allternit/factory/factory.sock")),
                 None => {
@@ -626,7 +629,7 @@ fn serve(ctx: &Ctx, args: ServeArgs) -> u8 {
     let peer = match peer_port {
         None => None,
         Some(port) => {
-            let home = std::env::var_os("HOME").filter(|h| !h.is_empty()).map(PathBuf::from);
+            let home = allternit_factory_engine::platform::user_home();
             match allternit_factory_engine::api::peer::PeerOptions::resolve(port, home.as_deref()) {
                 Ok(opts) => Some(opts),
                 Err(e) => return fail(ctx, Code::Usage, &format!("{e:#}"), Some("Pair this computer first, or start without --peer-port.")),

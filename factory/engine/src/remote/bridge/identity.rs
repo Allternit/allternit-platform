@@ -236,9 +236,7 @@ pub fn default_identities_path() -> PathBuf {
             return PathBuf::from(p);
         }
     }
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
+    let home = crate::platform::user_home_or(".");
     let new = home.join(".allternit/factory/bridge/identities.json");
     let old = home.join(".allternit/commrails-bridge/identities.json"); // old-names: keep (grants written before the Factory)
     if !new.exists() && old.is_file() {

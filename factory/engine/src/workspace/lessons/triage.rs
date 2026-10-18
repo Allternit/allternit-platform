@@ -90,8 +90,7 @@ pub fn default_brain_root() -> PathBuf {
     if let Ok(p) = std::env::var("ALLTERNIT_BRAIN_ROOT") {
         return PathBuf::from(p);
     }
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home)
+    crate::platform::user_home_or(".")
         .join("Desktop")
         .join("Allternit")
         .join("Allternit Brain")

@@ -302,6 +302,9 @@ impl FileLock {
                 bail!("flock failed: {}", std::io::Error::last_os_error());
             }
         }
+        // Windows: LockFileEx through std (released when the handle closes).
+        #[cfg(windows)]
+        f.lock().context("lock chain")?;
         Ok(Self(f)) // lock released when the file closes
     }
 }

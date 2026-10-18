@@ -2148,7 +2148,7 @@ async fn run_hook_command(root: &Path, stores: &Stores, ledger: &Arc<Ledger>, cm
             // AsyncReadExt is imported only on unix at the top of this file.
             use tokio::io::AsyncReadExt as _;
             let read = tokio::io::stdin().read_to_string(&mut raw).await;
-            let home = std::env::var_os("HOME").map(PathBuf::from);
+            let home = crate::platform::user_home();
             let parsed = read
                 .map_err(anyhow::Error::from)
                 .and_then(|_| serde_json::from_str::<Value>(&raw).map_err(anyhow::Error::from))
@@ -2590,6 +2590,11 @@ async fn run_tmux_transport(
     pane_name: String,
     watch: bool,
 ) -> Result<()> {
+    if cfg!(windows) {
+        anyhow::bail!(
+            "the tmux transport needs tmux, which doesn't run on Windows; use the pane engine (agent panes) or the socket transport instead"
+        );
+    }
     let recipient = format!("tmux:{}", pane_name);
     loop {
         let pending = bus.poll_pending_for(&recipient, Some("tmux"), 5).await?;
