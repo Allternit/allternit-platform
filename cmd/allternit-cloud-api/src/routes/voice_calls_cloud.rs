@@ -1882,6 +1882,16 @@ async fn deliver_call(
             }
             return Ok(());
         }
+        if room.starts_with(INAPP_ROOM_PREFIX) {
+            // An in-app call's thread and call state live in the cloud
+            // (inapp_calls), and the runtime has no line or number to file it
+            // under: never relay, or every event dead-letters after 10 tries.
+            sqlx::query("UPDATE voice_call_events SET delivered_at = now(), locked_until = NULL, last_error = NULL WHERE id = $1")
+                .bind(id)
+                .execute(&state.db)
+                .await?;
+            continue;
+        }
         // What the runtime's voice routes accept (allternit-api voice_calls.rs):
         // call.started becomes the create body, anything else a one-event batch.
         let (path, body) = if event_type == "call.started" {
