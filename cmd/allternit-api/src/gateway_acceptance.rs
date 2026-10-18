@@ -316,8 +316,14 @@ async fn channel_milestone_slack_walk() {
     assert_eq!(s, StatusCode::OK, "{v}");
     assert_eq!(v["bindings"][0]["externalConversationId"], "slack:C1:1700000000.000100");
 
-    // Outbound: the post lands in the Slack thread and its remote id is stored.
-    let out = cg::send(&st.db, &slack, "user-a", &thread, &SendReq { text: "all green".into(), correlation_id: Some("o1".into()), ..Default::default() }).await.unwrap();
+    // Outbound: the Slack user is outside the team, so the thread is tainted and the
+    // post waits for the owner's OK. Approved, it lands in the Slack thread and its
+    // remote id is stored.
+    let req = SendReq { text: "all green".into(), correlation_id: Some("o1".into()), ..Default::default() };
+    let SendOutcome::ApprovalRequired { approval_id } = cg::send(&st.db, &slack, "user-a", &thread, &req).await.unwrap() else { panic!("a tainted thread holds the send") };
+    assert!(slack.posted.lock().unwrap().is_empty());
+    c.execute("UPDATE gateway_approvals SET state='approved' WHERE id=?1", params![approval_id]).unwrap();
+    let out = cg::send(&st.db, &slack, "user-a", &thread, &SendReq { allternit_approval_id: Some(approval_id), ..req }).await.unwrap();
     let SendOutcome::Sent { remote_id, .. } = out else { panic!("{out:?}") };
     assert_eq!(slack.posted.lock().unwrap()[0].thread.as_deref(), Some("1700000000.000100"));
     let (logged, cursor): (Option<String>, Option<String>) = c
@@ -329,7 +335,9 @@ async fn channel_milestone_slack_walk() {
         .unwrap();
     assert_eq!((logged.as_deref(), cursor.as_deref()), (Some(remote_id.as_str()), Some(remote_id.as_str())));
     let sent = events_of(&st, &thread, "channel.message.sent");
-    assert_eq!((sent.len(), sent[0]["remoteId"].as_str()), (1, Some(remote_id.as_str())));
+    // First the held post (no remote id yet), then the approved one.
+    assert_eq!((sent.len(), sent[0]["state"].as_str(), sent[0]["remoteId"].as_str()), (2, Some("awaiting_approval"), None));
+    assert_eq!(sent[1]["remoteId"].as_str(), Some(remote_id.as_str()));
 
     // Reconnect: two messages arrived while disconnected; resume records them once.
     for (ts, t) in [("1700000200.000100", "any failures?"), ("1700000300.000100", "thanks")] {
