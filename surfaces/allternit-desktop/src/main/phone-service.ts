@@ -860,7 +860,7 @@ class PhoneService {
               baseUrl: () => process.env.ALLTERNIT_CLOUD_API_URL || URLS.CLOUD_API,
               deviceToken: () => authManager.getSessionSnapshot()?.accessToken || null,
               clerkToken: () => authManager.getClerkToken(5_000),
-              fetch: (input, init) => fetch(input, init),
+              fetch: ((input, init) => fetch(input, init)) as typeof fetch,
             },
             req,
           ),
