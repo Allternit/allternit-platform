@@ -18,7 +18,9 @@ import { mcpHostManager } from './mcp-host-manager.js';
 import { createAdbCall, ensureAdb, resolveAdb } from './phone-adb.js';
 import { ArtemisManager } from './phone-artemis.js';
 import { PhoneDeviceManager, type PhoneStore, type StoredPhone } from './phone-device-manager.js';
-import { newGatewayToken, startPhoneGateway } from './phone-gateway.js';
+import { newGatewayToken, startPhoneGateway, type PhoneGatewayHandover } from './phone-gateway.js';
+import { execFileSync } from 'node:child_process';
+import { handOver, handoverKey, handoverTargets, importHandover, openHandover, type HandoverClientDeps, type HandoverStores } from './phone-link-handover.js';
 import { findUxplay } from './phone-airplay.js';
 import {
   ensureScrcpyServer,
@@ -55,7 +57,7 @@ import { nodeDiscoveryDeps } from './phone-link-discovery.js';
 import { PHONE_LINK_MESH_ENABLED } from './phone-link-mesh.js';
 import { meshManager } from './mesh-manager.js';
 import { PhoneLinkHealthMonitor } from './phone-link-health.js';
-import type { PhoneLinkDevice } from './phone-link-types.js';
+import type { PhoneLinkDevice, PhoneLinkHandoverResult, PhoneLinkHandoverTarget } from './phone-link-types.js';
 import { readSecret, writeSecret, deleteSecret } from './secure-store.js';
 import {
   PhoneToolRunner,
@@ -196,6 +198,7 @@ class PhoneService {
   private gatewayReady: Promise<void> | null = null;
   private gatewayClose: (() => void) | null = null;
   private gatewayFile = path.join(os.homedir(), '.allternit', 'phone-gateway.json');
+  private shimRegistered = false;
 
   getGatewayFile(): string {
     return this.gatewayFile;
@@ -340,8 +343,103 @@ class PhoneService {
     return this.ensureLinkedBackend().linkedDevices();
   }
 
+  // ── Pairing handover (phone-link-handover.ts) ──────────────────────────────
+
+  private handoverStores(): HandoverStores {
+    const dir = this.dir();
+    return {
+      iosStore: fileLinkStore(path.join(dir, 'phone-link-ios.json')),
+      androidStore: fileAndroidLinkStore(path.join(dir, 'phone-link-android.json')),
+      secrets: { get: readSecret, set: writeSecret, delete: deleteSecret },
+    };
+  }
+
+  private signedInUser(): string | null {
+    return authManager.getSessionSnapshot()?.userId ?? null;
+  }
+
+  /** Receiving side, served on the loopback phone gateway. */
+  private handoverInbox(): PhoneGatewayHandover {
+    return {
+      key: () => handoverKey(this.handoverStores().secrets, this.signedInUser()),
+      receive: async (sealed) => {
+        const stores = this.handoverStores();
+        const payload = openHandover(sealed, stores.secrets, this.signedInUser());
+        const got = importHandover(stores, payload);
+        log.info(`[Phone] received ${got.platform} phone ${got.deviceId} from ${payload.from.name} by pairing handover`);
+        // Bots get the phone tools now, not at the next launch.
+        void this.startForLinkedPhones();
+        return got;
+      },
+    };
+  }
+
+  private handoverClient(): HandoverClientDeps {
+    return {
+      apiUrl: () => backendManager.getUrl(),
+      headers: () => {
+        const session = authManager.getSessionSnapshot();
+        const base = backendManager.getLocalAuthHeaders(session?.userId ?? 'desktop-local');
+        return session?.userEmail ? { ...base, 'x-allternit-user-email': session.userEmail } : base;
+      },
+      owner: () => this.signedInUser(),
+      stores: this.handoverStores(),
+      computerName: () => {
+        if (process.platform === 'darwin') {
+          try {
+            const name = execFileSync('/usr/sbin/scutil', ['--get', 'ComputerName'], { encoding: 'utf8', timeout: 2000 }).trim();
+            if (name) return name;
+          } catch {
+            // fall through to the host name
+          }
+        }
+        return os.hostname().replace(/\.local$/, '');
+      },
+      confirm: async (phone, computerName) => {
+        const kind = phone.platform === 'ios' ? 'iPhone' : 'phone';
+        const result = await dialog.showMessageBox({
+          type: 'question',
+          buttons: [`Use on ${computerName}`, 'Cancel'],
+          defaultId: 0,
+          cancelId: 1,
+          message: `Use ${phone.name} on ${computerName}?`,
+          detail:
+            `${computerName} gets this ${kind}'s pairing, so its apps work there while this computer is off. ` +
+            'This computer keeps its pairing too.' +
+            (phone.platform === 'ios'
+              ? ' Renewing the iPhone helper each week and remounting after a restart still need this computer and a cable.'
+              : ''),
+        });
+        return result.response === 0;
+      },
+    };
+  }
+
+  /** phone-link:handover-targets — the person's bound Sessions computer, or none. */
+  handoverTargets(): Promise<PhoneLinkHandoverTarget[]> {
+    return handoverTargets(this.handoverClient());
+  }
+
+  /** phone-link:handover — confirm here, then seal and send one phone's pairing. */
+  handover(opts: { deviceId: string; computerId: string }): Promise<PhoneLinkHandoverResult> {
+    return handOver(this.handoverClient(), opts);
+  }
+
   /** The tool runner, loopback gateway and MCP shim that every bot reaches phones through. */
-  private ensureGateway(): Promise<void> {
+  private async ensureGateway(): Promise<void> {
+    await this.ensureGatewayServer();
+    if (!this.shimRegistered) {
+      this.shimRegistered = true;
+      this.registerShim();
+    }
+  }
+
+  /**
+   * The loopback phone gateway alone, without giving bots the phone tools:
+   * started at every launch so this computer can receive a phone handed over
+   * from the person's Mac (phone-link-handover.ts) before it has a phone.
+   */
+  private ensureGatewayServer(): Promise<void> {
     if (this.gatewayReady) return this.gatewayReady;
     this.gatewayReady = (async () => {
       const lazy = (async (args: string[], opts?: { serial?: string; timeoutMs?: number }) => (await this.ensureAdbCall())(args, opts)) as AdbCall;
@@ -361,10 +459,9 @@ class PhoneService {
       });
       this.runner = runner;
       const token = newGatewayToken();
-      const gateway = await startPhoneGateway({ token, runner });
+      const gateway = await startPhoneGateway({ token, runner, handover: this.handoverInbox() });
       this.gatewayClose = gateway.close;
       writeJson(this.gatewayFile, { url: gateway.url, token });
-      this.registerShim();
     })();
     this.gatewayReady.catch(() => {
       this.gatewayReady = null;
@@ -731,6 +828,9 @@ class PhoneService {
   /** Called at launch: only brings a lane up if something was ever paired on it (zero cost for everyone else). */
   async initIfPaired(): Promise<void> {
     this.ensureIosRecovery();
+    // The loopback gateway alone (no phone tools for bots): lets this computer
+    // receive a phone handed over from the person's Mac before it has one.
+    void this.ensureGatewayServer().catch((error) => log.warn('[Phone] gateway could not start:', error));
     const dir = path.join(app.getPath('userData'), 'phone');
     // Phone-Linked phones (iPhone helper, Android app) are reached through the
     // same gateway + MCP shim; without this, bots had no phone tools after a

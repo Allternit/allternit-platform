@@ -28,6 +28,7 @@ import { statsRouter } from "./routes_stats.js";
 import { evidenceRouter } from "./routes_evidence.js";
 import { aaiRouter } from "./routes_aai.js";
 import { routesRouter } from "./routes_routes.js";
+import { phoneHandoverRouter, type PhoneHandoverRelay } from "./routes_phone_handover.js";
 import type { AaiHost } from "../aai/registry.js";
 import type { RouteDirector } from "../routes/director.js";
 
@@ -47,6 +48,7 @@ export interface GatewayDeps {
   accountsOptions?: AccountsRouterOptions; // login watcher poll + cookie reader (tests)
   aai?: AaiHost; // AAI host — POST /aai/call (one AaiRouter per process)
   routeDirector?: RouteDirector; // deterministic route router — GET/PUT /v1/routes
+  phoneHandover?: PhoneHandoverRelay; // /v1/phone/handover*; default: Desktop's phone gateway on this computer
   aaiStream?: { pollMs?: number; heartbeatMs?: number }; // GET /aai/events/stream timing (tests)
   allowedOrigins?: string[]; // default: empty — every Origin is rejected
   version?: string;
@@ -141,6 +143,7 @@ export function createServer(deps: GatewayDeps): Express {
   app.use(evidenceRouter(deps));
   app.use(aaiRouter(deps));
   app.use(routesRouter(deps));
+  app.use(phoneHandoverRouter(deps));
 
   app.use((_req, res) => res.status(404).json({ error: "not_found" }));
   return app;

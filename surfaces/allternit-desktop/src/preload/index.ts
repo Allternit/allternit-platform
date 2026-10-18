@@ -686,6 +686,8 @@ function streamUnsubscribe(serial: string): void {
 const phoneLinkAPI = {
   status: (): Promise<unknown> => ipcRenderer.invoke('phone-link:status'),
   devices: (): Promise<unknown> => ipcRenderer.invoke('phone-link:devices'),
+  handoverTargets: (): Promise<unknown> => ipcRenderer.invoke('phone-link:handover-targets'),
+  handover: (opts: { deviceId: string; computerId: string }): Promise<unknown> => ipcRenderer.invoke('phone-link:handover', opts),
   start: (opts: { platform: 'ios' | 'android' }): Promise<unknown> => ipcRenderer.invoke('phone-link:start', opts),
   cancel: (): Promise<unknown> => ipcRenderer.invoke('phone-link:cancel'),
   continue: (): Promise<unknown> => ipcRenderer.invoke('phone-link:continue'),

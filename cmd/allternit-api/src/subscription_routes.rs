@@ -92,6 +92,10 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/subscriptions/disclosure", get(get_disclosure))
         .route("/subscriptions/disclosure/ack", post(ack_disclosure))
         .route("/subscriptions/human-actions", post(post_human_action))
+        .route(
+            "/subscriptions/sessions-computer/phone-handover",
+            get(get_phone_handover).post(post_phone_handover),
+        )
         // Axum's 2 MB default would 413 before GATEWAY_BODY_LIMIT applies
         // (image.generate carries a reference photo inline).
         .route(
@@ -951,6 +955,135 @@ pub(crate) fn prepare_task_submission(
     Ok(serde_json::to_vec(&task).expect("json map serializes"))
 }
 
+// ── Phone Link pairing handover ──────────────────────────────────────────────
+
+/// The Sessions computer a phone can be handed to, and why not when it can't.
+/// Never the local gateway: a handover only makes sense to another computer.
+async fn handover_target(
+    state: &Arc<AppState>,
+    user: &AuthUser,
+) -> Result<Option<(Binding, crate::computer_routes::ComputerResponse, Option<String>)>, Response> {
+    let binding = match load_binding(&state.db, &user.user_id) {
+        Ok(Some(b)) if !b.token.is_empty() => b,
+        Ok(_) => return Ok(None),
+        Err(e) => return Err(db_error(e)),
+    };
+    let computer = match fetch_computer(state, user, &binding.computer_id).await {
+        Ok(Some(c)) => c,
+        Ok(None) => return Ok(None),
+        Err(response) => return Err(response),
+    };
+    let reason = if let Some(detail) = not_a_sessions_computer(&computer) {
+        Some(detail.to_string())
+    } else if computer.status != ComputerStatus::Running {
+        Some(format!("{} is off. Start it, then try again.", computer.name))
+    } else {
+        None
+    };
+    Ok(Some((binding, computer, reason)))
+}
+
+async fn read_json(response: Response) -> (StatusCode, Value) {
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), 256 * 1024).await.unwrap_or_default();
+    (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+}
+
+/// GET /subscriptions/sessions-computer/phone-handover — the caller's own
+/// Sessions computer and, when it can take a phone now, its Desktop's
+/// handover key (surfaces/allternit-desktop/src/main/phone-link-handover.ts).
+/// `{computer: null}` when none is bound.
+async fn get_phone_handover(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>) -> Response {
+    let (binding, computer, reason) = match handover_target(&state, &user).await {
+        Ok(Some(t)) => t,
+        Ok(None) => return Json(json!({"computer": null, "ready": false})).into_response(),
+        Err(response) => return response,
+    };
+    let info = json!({"id": computer.id, "name": computer.name, "running": computer.status == ComputerStatus::Running});
+    if let Some(reason) = reason {
+        return Json(json!({"computer": info, "ready": false, "reason": reason})).into_response();
+    }
+    let response = crate::computer_ws::forward_to_guest(
+        &state,
+        &computer,
+        binding.guest_port,
+        "v1/phone/handover/key",
+        None,
+        Method::GET,
+        &gateway_headers(&HeaderMap::new(), &binding.token),
+        Bytes::new(),
+        Duration::from_secs(20),
+    )
+    .await;
+    let (status, key) = read_json(response).await;
+    if status != StatusCode::OK || key.get("publicKey").and_then(Value::as_str).is_none() {
+        let reason = format!("Allternit Desktop isn't running on {} yet. Open it there, then try again.", computer.name);
+        return Json(json!({"computer": info, "ready": false, "reason": reason})).into_response();
+    }
+    Json(json!({"computer": info, "ready": true, "key": key})).into_response()
+}
+
+#[derive(Debug, Deserialize)]
+struct PhoneHandoverRequest {
+    computer_id: String,
+    sealed: Value,
+}
+
+/// POST /subscriptions/sessions-computer/phone-handover — relay a pairing the
+/// caller's Desktop sealed to the Sessions computer's key. The payload stays
+/// sealed here; only the caller's own bound Sessions computer can receive it.
+async fn post_phone_handover(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
+    Json(body): Json<PhoneHandoverRequest>,
+) -> Response {
+    let (binding, computer, reason) = match handover_target(&state, &user).await {
+        Ok(Some(t)) => t,
+        Ok(None) => {
+            return coded(
+                StatusCode::CONFLICT,
+                json!({"ok": false, "error": "sessions_computer_not_bound", "message": "Bind a Sessions computer first."}),
+            )
+        }
+        Err(response) => return response,
+    };
+    if computer.id != body.computer_id {
+        return coded(
+            StatusCode::CONFLICT,
+            json!({"ok": false, "error": "not_your_sessions_computer", "message": "That computer isn't your Sessions computer."}),
+        );
+    }
+    if let Some(reason) = reason {
+        return coded(StatusCode::SERVICE_UNAVAILABLE, json!({"ok": false, "error": "not_ready", "message": reason}));
+    }
+    if !body.sealed.is_object() {
+        return coded(StatusCode::BAD_REQUEST, json!({"ok": false, "error": "sealed_required", "message": "sealed is required"}));
+    }
+    let mut headers = HeaderMap::new();
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    let response = crate::computer_ws::forward_to_guest(
+        &state,
+        &computer,
+        binding.guest_port,
+        "v1/phone/handover",
+        None,
+        Method::POST,
+        &gateway_headers(&headers, &binding.token),
+        Bytes::from(json!({"sealed": body.sealed}).to_string()),
+        Duration::from_secs(60),
+    )
+    .await;
+    let (status, answer) = read_json(response).await;
+    crate::computer_audit::log_computer_access(
+        &state.db,
+        &computer.id,
+        &user.user_id,
+        crate::computer_audit::KIND_SUBS_GATEWAY,
+        &format!("POST /v1/phone/handover → {status}"),
+    );
+    (status, Json(answer)).into_response()
+}
+
 /// ANY /subscriptions/gateway/*path → gateway `/{path}` on the caller's
 /// Sessions computer, with the gateway token added server-side.
 async fn gateway_forward(
@@ -1211,6 +1344,42 @@ mod tests {
         let (status, body) = send(&app, "GET", "/subscriptions/gateway/v1/accounts", &[], Value::Null).await;
         assert_eq!(status, StatusCode::CONFLICT);
         assert_eq!(body["error"], "sessions_computer_not_bound");
+        assert!(seen.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn phone_handover_reaches_only_the_callers_running_sessions_computer() {
+        let (app, state, seen) = setup().await;
+        // Nothing bound: no target, and a POST is refused before anything is sent.
+        let (status, body) = send(&app, "GET", "/subscriptions/sessions-computer/phone-handover", &[], Value::Null).await;
+        assert_eq!((status, body["computer"].clone(), body["ready"].clone()), (StatusCode::OK, Value::Null, json!(false)));
+        let sealed = json!({"computer_id": "computer-off", "sealed": {"v": 1}});
+        let (status, body) = send(&app, "POST", "/subscriptions/sessions-computer/phone-handover", &[], sealed.clone()).await;
+        assert_eq!((status, body["error"].as_str()), (StatusCode::CONFLICT, Some("sessions_computer_not_bound")));
+
+        // A stopped Sessions computer is named, with the reason, and takes nothing.
+        let conn = state.db.connect().unwrap();
+        conn.execute_batch(&format!(
+            "INSERT INTO computers (id, kind, provider, status, owner_type, owner_id, name, billing_source)
+             VALUES ('computer-off', 'cloud_desktop', 'incus', 'stopped', 'user', '{USER}', 'Sessions box', 'credits');"
+        ))
+        .unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO subs_gateway_bindings (user_id, computer_id, guest_port, token_sealed) VALUES (?1, 'computer-off', 7788, ?2)",
+            params![USER, crate::token_crypto::seal("gw-token")],
+        )
+        .unwrap();
+        let (_, body) = send(&app, "GET", "/subscriptions/sessions-computer/phone-handover", &[], Value::Null).await;
+        assert_eq!(body["computer"]["name"], "Sessions box");
+        assert_eq!(body["ready"], false);
+        assert_eq!(body["reason"], "Sessions box is off. Start it, then try again.");
+        assert!(body.get("key").is_none());
+        let (status, body) = send(&app, "POST", "/subscriptions/sessions-computer/phone-handover", &[], sealed).await;
+        assert_eq!((status, body["error"].as_str()), (StatusCode::SERVICE_UNAVAILABLE, Some("not_ready")));
+        // Naming any other computer is refused.
+        let other = json!({"computer_id": "computer-someone", "sealed": {"v": 1}});
+        let (status, body) = send(&app, "POST", "/subscriptions/sessions-computer/phone-handover", &[], other).await;
+        assert_eq!((status, body["error"].as_str()), (StatusCode::CONFLICT, Some("not_your_sessions_computer")));
         assert!(seen.lock().unwrap().is_empty());
     }
 
