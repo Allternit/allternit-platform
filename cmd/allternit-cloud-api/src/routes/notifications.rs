@@ -240,6 +240,9 @@ fn enc(v: &str) -> String {
 }
 
 /// The push-links scheme the app reads (`allternit-ai` `lib/gateway/push-links.ts`).
+/// The answer pages agents make (answer-me-with-html) are served here; a push may open one.
+pub const ARTIFACTS_ORIGIN: &str = "https://artifacts.allternit.com/";
+
 fn thread_link(bot: Option<&str>, thread: Option<&str>) -> Option<String> {
     Some(format!("/?allternit_thread={}&bot={}", enc(thread?), enc(bot?)))
 }
@@ -329,6 +332,12 @@ pub fn message_for(event: &str, data: &Value) -> Option<PushMessage> {
             msg.body = s(data, &["reason", "detail"]).map(|r| clip(r, 200)).or(thread_title.map(|t| format!("In “{}”", clip(t, 120)))).unwrap_or_else(|| "Open the thread to reply.".into());
             msg.tag = format!("needs-{}", thread.or(bot).unwrap_or("you"));
             msg.high_urgency = true;
+            // An agent waiting on an answer page (answer-me-with-html steering): the notification opens that page.
+            // Only artifacts.allternit.com links; the page key rides in the fragment.
+            if let Some(page) = s(data, &["url"]).filter(|u| u.starts_with(ARTIFACTS_ORIGIN) && !u.contains(['\n', '\r', ' '])) {
+                msg.url = page.to_string();
+                msg.tag = format!("needs-page-{}", clip(s(data, &["page_id", "pageId"]).unwrap_or("page"), 40));
+            }
         }
         "message.received" => {
             let provider = s(data, &["channel", "provider"]);
@@ -641,6 +650,11 @@ mod tests {
 
         let m = message_for("thread.needs_user", &json!({ "botName": "Olive", "thread_id": "t1", "bot_id": "b1", "reason": "Which date works?" })).unwrap();
         assert_eq!((m.title.as_str(), m.body.as_str(), m.tag.as_str()), ("Olive needs you", "Which date works?", "needs-t1"));
+        // An answer page link opens the page itself; any other URL is ignored.
+        let m = message_for("thread.needs_user", &json!({ "botName": "Claude Code", "reason": "Which database?", "url": "https://artifacts.allternit.com/p-abc.html#k=1f", "page_id": "abc" })).unwrap();
+        assert_eq!((m.url.as_str(), m.tag.as_str()), ("https://artifacts.allternit.com/p-abc.html#k=1f", "needs-page-abc"));
+        let m = message_for("thread.needs_user", &json!({ "botName": "X", "url": "https://evil.example/a" })).unwrap();
+        assert_eq!(m.url.as_str(), "/");
 
         let m = message_for("call.ended", &json!({ "missed": true, "from": "+1 555 0100", "call_id": "c1" })).unwrap();
         assert_eq!((m.title.as_str(), m.tag.as_str()), ("Missed call from +1 555 0100", "call-c1"));
