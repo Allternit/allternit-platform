@@ -96,10 +96,10 @@ After exiting, the session returns to its previous permission mode and the agent
 
 ## Plan mode with an installed CLI model
 
-When the session's model is an installed CLI (for example `claude-cli/claude-sonnet-5` or `codex-cli/…`), that CLI runs its own tools, so Gizzi carries plan mode over to it:
+When the session's model is an installed coding CLI (one you connected under **Providers**), that CLI runs its own tools, so Gizzi carries plan mode over to it:
 
-- **Claude Code** runs in its own plan mode. Anything that mode would ask about goes to Gizzi: edits to the session plan file are allowed, everything else is refused. When Claude presents the plan (`ExitPlanMode`), Gizzi saves it as the session plan file and asks the usual **Build Agent** question.
-- **Codex** plans in a read-only sandbox and hands the plan over with Gizzi's `plan_exit` tool, which takes the whole plan as Markdown.
+- **A CLI with its own plan mode** runs in that mode. Anything the mode would ask about goes to Gizzi: edits to the session plan file are allowed, everything else is refused. When the CLI presents its plan, Gizzi saves it as the session plan file and asks the usual **Build Agent** question.
+- **A CLI with a sandbox** plans in a read-only sandbox and hands the plan over with Gizzi's `plan_exit` tool, which takes the whole plan as Markdown.
 - **Other CLIs** get the same `plan_exit` tool and plan-mode instructions.
 
 The CLI ends its turn as soon as the question is asked, so you can take as long as you need to review. Answer **Yes** and Gizzi starts a build turn that carries the plan out. Answer **No** and reply with notes to revise it. If the plan is presented again before you answer, the newer plan replaces the open question.
