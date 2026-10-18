@@ -91,7 +91,7 @@ export function resolveFactoryBinary(context: FactoryBinaryContext): string | nu
   return candidates.find((c) => c !== '' && exists(c)) ?? null;
 }
 
-/** The gizzi binary a packaged Desktop ships in resources/bin, or null. */
+/** The gizzi binary in a resources dir (the app bundle's or a runtime package's) bin/, or null. */
 export function bundledGizziBinary(
   resourcesPath: string | undefined,
   platform: NodeJS.Platform = process.platform,
@@ -178,9 +178,12 @@ export const nodeLinkFs: LinkFs = {
   mkdirp: (p) => fs.mkdirSync(p, { recursive: true }),
 };
 
-/** A link target that lives inside an Allternit Desktop bundle or staging dir. */
+/**
+ * A link target that Desktop owns: inside an Allternit Desktop bundle, its
+ * staging dir, or a runtime package (<userData>/runtime/versions/<v>/bin).
+ */
 function isDesktopBundled(target: string): boolean {
-  return /Allternit Desktop\.app\/|allternit-desktop\/resources\/bin\//.test(target);
+  return /Allternit Desktop\.app\/|allternit-desktop\/resources\/bin\/|@allternit\/desktop\/runtime\/versions\/[^/]+\/bin\//.test(target);
 }
 
 export type GizziLinkResult =

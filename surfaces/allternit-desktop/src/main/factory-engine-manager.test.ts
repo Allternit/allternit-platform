@@ -136,6 +136,18 @@ describe('gizzi on PATH', () => {
     expect(readlinkSync(join(brewBin, 'gizzi'))).toBe('/opt/homebrew/bin/gizzi');
   });
 
+  it('follows a runtime package update from the bundle to the runtime copy and back', () => {
+    const home = tmp('allternit-home-');
+    const bundled = '/Applications/Allternit Desktop.app/Contents/Resources/bin/gizzi-code';
+    const runtime = '/Users/u/Library/Application Support/@allternit/desktop/runtime/versions/r20261018.1946-47656ef-388/bin/gizzi-code';
+    installGizziLink(bundled, home);
+    expect(installGizziLink(runtime, home).action).toBe('relinked');
+    expect(readlinkSync(join(home, '.local', 'bin', 'gizzi'))).toBe(runtime);
+    const next = runtime.replace('r20261018.1946-47656ef-388', 'r20261019.0900-abcdef0-100');
+    expect(installGizziLink(next, home).action).toBe('relinked');
+    expect(installGizziLink(bundled, home).action).toBe('relinked');
+  });
+
   it('links only gizzi, never the engine', () => {
     const home = tmp('allternit-home-');
     installGizziLink('/Applications/Allternit Desktop.app/Contents/Resources/bin/gizzi-code', home);

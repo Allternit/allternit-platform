@@ -1373,8 +1373,10 @@ async function initializeBundledMode(): Promise<void> {
         }
         // Windows puts gizzi on PATH with a .cmd shim instead
         // (installWindowsGizziOnPath above); ~/.local/bin links are Unix-only.
+        // The active runtime package's gizzi when there is one (a runtime
+        // update ships a newer gizzi than the app bundle), else the bundled one.
         if (app.isPackaged && process.platform !== 'win32') {
-          factoryEngineManager.installCli(bundledGizziBinary(process.resourcesPath));
+          factoryEngineManager.installCli(bundledGizziBinary(dirname(dirname(runtimeResource('bin', 'gizzi-code')))));
         }
       } catch (factoryErr) {
         log.warn('[Main] Factory engine failed to start, continuing without it:', factoryErr);
