@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CHANNEL_SPECS, PhoneChannelReader } from './phone-channel-readers.js';
+import { CHANNEL_SPECS, PhoneChannelReader, trimPictures } from './phone-channel-readers.js';
 import { parseUiTree } from './phone-ui-tree.js';
 
 // Discord screens as the helper's read_ui prints them (trimmed to what the spec reads).
@@ -106,4 +106,15 @@ describe('Discord reader', () => {
     const reader = new PhoneChannelReader({ cacheFile: '/dev/null/x.json', call: async () => ({ ok: true }) });
     expect(await reader.conversations('link:x', 'snapchat')).toMatchObject({ ok: false, error: 'unsupported_app' });
   });
+});
+
+it('keeps pictures for the most recently read conversations within the size cap', () => {
+  const pic = (src: string) => ({ author: 'a', time: null, text: '', mine: false, parts: [{ kind: 'image' as const, alt: 'card', src, width: 1, height: 1 }] });
+  const messages = {
+    old: { data: [pic('x'.repeat(60))], readAt: '2026-10-01T00:00:00Z' },
+    new: { data: [pic('y'.repeat(60))], readAt: '2026-10-18T00:00:00Z' },
+  };
+  trimPictures(messages, 100);
+  expect(messages.new.data[0].parts[0].src).toBeDefined();
+  expect(messages.old.data[0].parts[0]).toEqual({ kind: 'image', alt: 'card', width: 1, height: 1 });
 });

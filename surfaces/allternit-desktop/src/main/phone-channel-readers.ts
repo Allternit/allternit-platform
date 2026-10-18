@@ -259,6 +259,14 @@ export const CHANNEL_SPECS: Record<string, ChannelAppSpec> = { discord };
 
 // ── Reader ──────────────────────────────────────────────────────────────────
 
+/**
+ * Pictures are kept only for each conversation's latest read (a new read
+ * replaces the old one), and all of them together stay under this many bytes:
+ * past it, the conversations read longest ago drop their pictures (their
+ * text stays) until it fits. Opening one again re-reads them from the phone.
+ */
+export const PICTURE_CACHE_BYTES = 20 * 1024 * 1024;
+
 interface Cache {
   conversations: Record<string, { data: ChannelConversation[]; readAt: string }>;
   messages: Record<string, { data: ChannelMessage[]; readAt: string }>;
@@ -404,11 +412,25 @@ export class PhoneChannelReader {
   }
 
   private save(): void {
+    trimPictures(this.cache.messages, PICTURE_CACHE_BYTES);
     try {
       fs.mkdirSync(path.dirname(this.deps.cacheFile), { recursive: true });
       fs.writeFileSync(this.deps.cacheFile, JSON.stringify(this.cache), { mode: 0o600 });
     } catch {
       /* the copy is a convenience; reading still works */
+    }
+  }
+}
+
+/** Drop pictures from the least recently read conversations until the rest fit in `limit` bytes. */
+export function trimPictures(messages: Cache['messages'], limit: number): void {
+  const pics = (m: ChannelMessage[]) => m.flatMap((x) => x.parts ?? []).filter((p): p is Extract<MessagePart, { kind: 'image' }> => p.kind === 'image' && Boolean(p.src));
+  const entries = Object.values(messages).sort((a, b) => b.readAt.localeCompare(a.readAt));
+  let total = 0;
+  for (const e of entries) {
+    for (const p of pics(e.data)) {
+      total += p.src!.length;
+      if (total > limit) delete p.src;
     }
   }
 }
