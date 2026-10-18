@@ -50,6 +50,7 @@ import {
   userTurnFingerprint,
   type DivergencePolicy,
 } from "../_shared/web-chat.js";
+import { adapterFile } from "../_shared/adapter-file.js";
 
 export {
   isProfileLockError,
@@ -75,13 +76,13 @@ const DISMISS_BUTTON = /^(close|dismiss|not now|maybe later|no thanks|skip|got i
 
 export function loadManifest(): AdapterManifest {
   const raw = yamlLoad(
-    readFileSync(new URL("./manifest.yaml", import.meta.url), "utf8")
+    readFileSync(adapterFile(import.meta.url, "chatgpt-web", "./manifest.yaml"), "utf8")
   );
   return adapterManifestSchema.parse(raw);
 }
 
 export function selectorsYaml(): string {
-  return readFileSync(new URL("./selectors/v1.yaml", import.meta.url), "utf8");
+  return readFileSync(adapterFile(import.meta.url, "chatgpt-web", "./selectors/v1.yaml"), "utf8");
 }
 
 export function chatGPTWebConfig(

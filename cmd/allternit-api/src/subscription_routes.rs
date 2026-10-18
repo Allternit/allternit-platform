@@ -1,7 +1,11 @@
 //! Subscription Fabric forwarder (SURFACES_PLAN §3 step 1).
 //!
-//! The subscription gateway runs only on the user's Sessions computer (D15).
-//! This module is the one way the platform reaches it:
+//! The subscription gateway runs on the user's Sessions computer (D15), and,
+//! since 2026-10-17, also inside Allternit Desktop on the computer the person
+//! works on (phone and desktop-app lanes; browser lanes only when the person
+//! turns them on, in a hidden Chrome). A running Sessions computer goes first;
+//! Desktop's own gateway is the fallback. This module is the one way the
+//! platform reaches either:
 //!
 //! - `/subscriptions/binding` records which of the user's computers is the
 //!   Sessions computer, its gateway guest port, and the gateway token (sealed
@@ -99,16 +103,27 @@ pub fn router() -> Router<Arc<AppState>> {
 
 // ── Local gateway ────────────────────────────────────────────────────────────
 
-/// A subscription gateway on this same machine. An Allternit cloud computer
-/// runs the runtime and the gateway together, so it is its own Sessions
-/// computer: no binding to another computer is needed. Opt-in, set by the
-/// cloud computer image: `ALLTERNIT_LOCAL_SUBS_GATEWAY=1`, optional
-/// `ALLTERNIT_LOCAL_SUBS_GATEWAY_PORT` (7788) and
-/// `ALLTERNIT_LOCAL_SUBS_GATEWAY_STATE_DIR` (/var/lib/subs-gateway, whose
-/// keychain.json holds the gateway's cli-token).
+/// A subscription gateway on this same machine. Opt-in through
+/// `ALLTERNIT_LOCAL_SUBS_GATEWAY`, optional `ALLTERNIT_LOCAL_SUBS_GATEWAY_PORT`
+/// (7788) and `ALLTERNIT_LOCAL_SUBS_GATEWAY_STATE_DIR` (/var/lib/subs-gateway,
+/// whose keychain.json holds the gateway's cli-token):
+///
+/// - `1`: an Allternit cloud computer runs the runtime and the gateway
+///   together, so it is its own Sessions computer and the local gateway always
+///   answers ([`LocalMode::Primary`]).
+/// - `fallback`: Allternit Desktop's bundled gateway on the person's own
+///   computer (subs-gateway-manager.ts). A bound, running Sessions computer
+///   answers first; this one answers when there is none ([`LocalMode::Fallback`]).
 pub(crate) struct LocalGateway {
     port: u16,
     token: String,
+    mode: LocalMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LocalMode {
+    Primary,
+    Fallback,
 }
 
 pub(crate) fn local_gateway() -> Option<LocalGateway> {
@@ -116,14 +131,50 @@ pub(crate) fn local_gateway() -> Option<LocalGateway> {
 }
 
 fn local_gateway_from(env: impl Fn(&str) -> Option<String>) -> Option<LocalGateway> {
-    if !matches!(env("ALLTERNIT_LOCAL_SUBS_GATEWAY").as_deref(), Some("1") | Some("true")) {
-        return None;
-    }
+    let mode = match env("ALLTERNIT_LOCAL_SUBS_GATEWAY").as_deref() {
+        Some("1") | Some("true") => LocalMode::Primary,
+        Some("fallback") => LocalMode::Fallback,
+        _ => return None,
+    };
     let port = env("ALLTERNIT_LOCAL_SUBS_GATEWAY_PORT").and_then(|p| p.parse().ok()).unwrap_or(DEFAULT_GATEWAY_PORT);
     let dir = env("ALLTERNIT_LOCAL_SUBS_GATEWAY_STATE_DIR").unwrap_or_else(|| "/var/lib/subs-gateway".to_string());
     let raw = std::fs::read_to_string(std::path::Path::new(&dir).join("keychain.json")).ok()?;
     let token = serde_json::from_str::<Value>(&raw).ok()?.get("cli-token")?.as_str()?.to_string();
-    (!token.is_empty()).then_some(LocalGateway { port, token })
+    (!token.is_empty()).then_some(LocalGateway { port, token, mode })
+}
+
+/// The bound Sessions computer when it can take a request now: bound with a
+/// token, still there, allowed (D15) and running. `Err` carries the response
+/// that explains why not, for callers with no local fallback.
+async fn usable_binding(
+    state: &Arc<AppState>,
+    user: &AuthUser,
+) -> Result<(Binding, crate::computer_routes::ComputerResponse), Response> {
+    let binding = match load_binding(&state.db, &user.user_id) {
+        Ok(Some(b)) if !b.token.is_empty() => b,
+        Ok(_) => {
+            return Err(coded(
+                StatusCode::CONFLICT,
+                json!({"error": "sessions_computer_not_bound", "detail": "bind a Sessions computer: PUT /api/v1/subscriptions/binding"}),
+            ))
+        }
+        Err(e) => return Err(db_error(e)),
+    };
+    let computer = match fetch_computer(state, user, &binding.computer_id).await {
+        Ok(Some(c)) => c,
+        Ok(None) => return Err(coded(StatusCode::CONFLICT, json!({"error": "sessions_computer_missing"}))),
+        Err(response) => return Err(response),
+    };
+    // D15 on every call, not only when binding: a binding stored before the
+    // bind-time guard existed may point at the user's own desktop or a bot's
+    // computer, and must not forward.
+    if let Some(detail) = not_a_sessions_computer(&computer) {
+        return Err(coded(StatusCode::CONFLICT, json!({"error": "sessions_computer_not_allowed", "detail": detail})));
+    }
+    if computer.status != ComputerStatus::Running {
+        return Err(coded(StatusCode::SERVICE_UNAVAILABLE, json!({"error": "sessions_computer_not_running"})));
+    }
+    Ok((binding, computer))
 }
 
 // ── Storage ──────────────────────────────────────────────────────────────────
@@ -313,21 +364,38 @@ fn coded(status: StatusCode, body: Value) -> Response {
 
 // ── Status / binding ─────────────────────────────────────────────────────────
 
+/// `local`: requests go to a gateway on this machine. `fallback`: that
+/// gateway is Desktop's own, answering because no Sessions computer can
+/// (`sessions_computer` then says which one is bound, if any).
 async fn get_status(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>) -> Response {
     if let Some(local) = local_gateway() {
-        let disclosure = match disclosure_json(&state, &user.user_id) {
-            Ok(d) => d,
-            Err(e) => return db_error(e),
-        };
-        return Json(json!({
-            "bound": true,
-            "local": true,
-            "guest_port": local.port,
-            "token_set": true,
-            "computer": {"id": "local", "name": "This computer", "running": true},
-            "disclosure": disclosure,
-        }))
-        .into_response();
+        let remote_up = local.mode == LocalMode::Fallback && usable_binding(&state, &user).await.is_ok();
+        if !remote_up {
+            let disclosure = match disclosure_json(&state, &user.user_id) {
+                Ok(d) => d,
+                Err(e) => return db_error(e),
+            };
+            let mut sessions_computer = Value::Null;
+            if local.mode == LocalMode::Fallback {
+                if let Ok(Some(b)) = load_binding(&state.db, &user.user_id) {
+                    sessions_computer = match fetch_computer(&state, &user, &b.computer_id).await {
+                        Ok(Some(c)) => json!({"id": c.id, "name": c.name, "running": c.status == ComputerStatus::Running}),
+                        _ => json!({"id": b.computer_id, "missing": true}),
+                    };
+                }
+            }
+            return Json(json!({
+                "bound": true,
+                "local": true,
+                "fallback": local.mode == LocalMode::Fallback,
+                "guest_port": local.port,
+                "token_set": true,
+                "computer": {"id": "local", "name": "This computer", "running": true},
+                "sessions_computer": sessions_computer,
+                "disclosure": disclosure,
+            }))
+            .into_response();
+        }
     }
     let binding = match load_binding(&state.db, &user.user_id) {
         Ok(b) => b,
@@ -917,7 +985,17 @@ pub(crate) async fn forward(
     if body.len() > GATEWAY_BODY_LIMIT {
         return error_response(StatusCode::PAYLOAD_TOO_LARGE, "request body exceeds 10 MB");
     }
-    if let Some(local) = local_gateway() {
+    let local = local_gateway();
+    let remote = match &local {
+        Some(l) if l.mode == LocalMode::Primary => None,
+        _ => match usable_binding(state, user).await {
+            Ok(r) => Some(r),
+            // No usable Sessions computer: Desktop's own gateway answers.
+            Err(_) if local.is_some() => None,
+            Err(response) => return response,
+        },
+    };
+    if let (None, Some(local)) = (&remote, &local) {
         let mut body = body;
         if method == Method::POST && path.trim_end_matches('/') == "v1/tasks" {
             let action = headers.get(HUMAN_ACTION_HEADER).and_then(|v| v.to_str().ok());
@@ -939,30 +1017,10 @@ pub(crate) async fn forward(
         )
         .await;
     }
-    let binding = match load_binding(&state.db, &user.user_id) {
-        Ok(Some(b)) if !b.token.is_empty() => b,
-        Ok(_) => {
-            return coded(
-                StatusCode::CONFLICT,
-                json!({"error": "sessions_computer_not_bound", "detail": "bind a Sessions computer: PUT /api/v1/subscriptions/binding"}),
-            )
-        }
-        Err(e) => return db_error(e),
+    let Some((binding, computer)) = remote else {
+        // Unreachable: no local gateway means usable_binding succeeded or returned.
+        return error_response(StatusCode::SERVICE_UNAVAILABLE, "no subscription gateway");
     };
-    let computer = match fetch_computer(state, user, &binding.computer_id).await {
-        Ok(Some(c)) => c,
-        Ok(None) => return coded(StatusCode::CONFLICT, json!({"error": "sessions_computer_missing"})),
-        Err(response) => return response,
-    };
-    // D15 on every call, not only when binding: a binding stored before the
-    // bind-time guard existed may point at the user's own desktop or a bot's
-    // computer, and must not forward.
-    if let Some(detail) = not_a_sessions_computer(&computer) {
-        return coded(StatusCode::CONFLICT, json!({"error": "sessions_computer_not_allowed", "detail": detail}));
-    }
-    if computer.status != ComputerStatus::Running {
-        return coded(StatusCode::SERVICE_UNAVAILABLE, json!({"error": "sessions_computer_not_running"}));
-    }
 
     let mut body = body;
     if method == Method::POST && path.trim_end_matches('/') == "v1/tasks" {
@@ -1062,6 +1120,10 @@ mod tests {
         assert!(local_gateway_from(env(None, state_dir.clone())).is_none(), "off unless the image opts in");
         let local = local_gateway_from(env(Some("1"), state_dir.clone())).unwrap();
         assert_eq!((local.port, local.token.as_str()), (7788, "gw-token"));
+        assert_eq!(local.mode, LocalMode::Primary, "a cloud computer's own gateway always answers");
+        let desktop = local_gateway_from(env(Some("fallback"), state_dir.clone())).unwrap();
+        assert_eq!(desktop.mode, LocalMode::Fallback, "Desktop's gateway answers only without a Sessions computer");
+        assert!(local_gateway_from(env(Some("yes"), state_dir.clone())).is_none(), "unknown values stay off");
         std::fs::write(dir.path().join("keychain.json"), r#"{}"#).unwrap();
         assert!(local_gateway_from(env(Some("1"), state_dir)).is_none(), "no token yet: not bound");
     }

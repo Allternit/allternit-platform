@@ -4,7 +4,7 @@
 import { EventEmitter } from "node:events";
 import { mkdirSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import Database from "better-sqlite3";
+import { Database } from "../src/store/sqlite.js";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AdapterRegistry } from "../src/adapters/registry.js";

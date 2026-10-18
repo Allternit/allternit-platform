@@ -11,6 +11,7 @@ import type { AccountObservation } from "@allternit/subscription-fabric-contract
 import type { DeclarativeChatConfig } from "@allternit/subscription-adapter-sdk";
 import { readFileSync } from "node:fs";
 import { WebChatAdapter, loadManifestAt, type WebChatOptions } from "../_shared/web-chat.js";
+import { adapterFile } from "../_shared/adapter-file.js";
 
 // Conversation URLs are /app/<16-hex> (the Bard-era /chat/<id> became
 // /app/<id>); v1-unverified.
@@ -18,8 +19,8 @@ export const THREAD_URL_PATTERN = /^https:\/\/gemini\.google\.com\/app\/([0-9a-f
 
 export function geminiWebConfig(overrides: Partial<DeclarativeChatConfig> = {}): DeclarativeChatConfig {
   return {
-    manifest: loadManifestAt(new URL("./manifest.yaml", import.meta.url)),
-    selectorsYaml: readFileSync(new URL("./selectors/v1.yaml", import.meta.url), "utf8"),
+    manifest: loadManifestAt(adapterFile(import.meta.url, "gemini-web", "./manifest.yaml")),
+    selectorsYaml: readFileSync(adapterFile(import.meta.url, "gemini-web", "./selectors/v1.yaml"), "utf8"),
     threadUrlPattern: THREAD_URL_PATTERN,
     banners: [
       { kind: "limit_banner", pattern: /(reached|hit|exceeded) (your |the )?(gemini |usage |daily )?limit/i, blocksSend: true },
