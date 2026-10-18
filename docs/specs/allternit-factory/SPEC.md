@@ -40,7 +40,7 @@ Gizzi (terminal product)                   Allternit Desktop (graphical product)
 - **Gizzi is both.** With no arguments it's the TUI. Inside a Factory pane it's an agent harness like Claude Code or Codex. The same binary does both, so Gizzi dogfoods itself.
 - **The engine is one process that outlives any window.** Agents keep running when you close Gizzi. Desktop and the phone read the same engine at the same time. An engine crash doesn't take your terminal with it. That's why it's a separate executable, not code inside Gizzi's process.
 - **One TUI product, two renderers.** Gizzi's Ink TUI draws the home screen, the agents list, the board and approvals. The engine's Rust pane view draws the wall of live terminals, because it's built for that. You only ever launch `gizzi`.
-- **Windows.** Gizzi ships on Windows, but the pane engine is Unix-only. On Windows, Gizzi drives a Factory running on another machine (Mac, Linux, a cloud computer).
+- **Windows.** Desktop ships and runs `allternit-factory.exe` on Windows too. The pane engine serves its clients on a named pipe there (`\\.\pipe\<socket path>`) instead of a Unix socket, and runs shells through ConPTY, so Code mode terminals work. Agent panes run a `cmd.exe` runner instead of `/bin/sh`. What still needs macOS or Linux, and says so when asked: the tmux transport, the strict env fence (`env -i`), script-installed harness tools, and peer inbox sockets (peers fall back to the durable inbox). Gizzi on Windows can also drive a Factory on another machine (Mac, Linux, a cloud computer).
 
 ## 2. Do CommRails and ao stay separate?
 

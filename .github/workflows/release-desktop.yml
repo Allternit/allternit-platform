@@ -533,10 +533,30 @@ jobs:
              surfaces/allternit-desktop/resources/bin/allternit-local-engine.exe
           ls -lh surfaces/allternit-desktop/resources/bin/allternit-local-engine.exe
 
-      # Terminals on Windows: allternit-api's /terminal routes (cfg(unix)) and
-      # gizzi's /pty dial the Factory pane engine's Unix socket, and this job
-      # doesn't build allternit-factory, so Windows Desktop has no terminals,
-      # as before (allternit-mux was macOS/Linux only too).
+      # ── Zig + allternit-factory: terminals and the Factory on Windows ──────
+      # allternit-api's /terminal routes and gizzi's /pty run every terminal in
+      # the Factory pane engine, which serves a named pipe on Windows (ConPTY
+      # under it). Its libghostty-vt is built by Zig 0.15.2
+      # (factory/pane/build.rs maps x86_64-pc-windows-msvc).
+      - name: Install Zig 0.15.2
+        shell: bash
+        run: |
+          curl -fsSL https://ziglang.org/download/0.15.2/zig-x86_64-windows-0.15.2.zip -o "$RUNNER_TEMP/zig.zip"
+          echo "3a0ed1e8799a2f8ce2a6e6290a9ff22e6906f8227865911fb7ddedc3cc14cb0c  $RUNNER_TEMP/zig.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/zig.zip" -d "$RUNNER_TEMP"
+          echo "ZIG=$RUNNER_TEMP/zig-x86_64-windows-0.15.2/zig.exe" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/zig-x86_64-windows-0.15.2/zig.exe" version
+
+      - name: Build allternit-factory engine (Windows)
+        # Desktop runs it (factory-engine-manager.ts); its pane engine owns
+        # every terminal. prepare-factory.cjs then finds it already staged.
+        shell: bash
+        run: |
+          cargo build --release -p allternit-factory --target x86_64-pc-windows-msvc
+          mkdir -p surfaces/allternit-desktop/resources/bin
+          cp target/x86_64-pc-windows-msvc/release/allternit-factory.exe \
+             surfaces/allternit-desktop/resources/bin/allternit-factory.exe
+          ls -lh surfaces/allternit-desktop/resources/bin/allternit-factory.exe
 
       - name: Build open-connector sidecar bundle
         # services/open-connector is a plain npm project excluded from the

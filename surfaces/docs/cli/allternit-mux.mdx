@@ -86,7 +86,7 @@ Error codes: `terminal_not_found`, `terminal_exists`, `invalid_terminal_id`, `in
 - **Size.** The client owns a terminal's size: a resize holds even when the agent wall lays the pane out differently.
 - **Terminal replies.** While a client is streaming a terminal, that client answers the program's terminal queries (cursor position, device attributes) and the pane engine's own emulator stays quiet, so programs never read two replies. With nobody attached, the pane engine answers.
 - **Lifetime.** Terminals live in the pane engine daemon. They survive UI reconnects and restarts of allternit-api or `gizzi serve`, and end when the shell exits, the terminal is closed, or the pane engine stops.
-- **Windows.** The pane engine's terminals need its Unix socket, and Windows Desktop doesn't ship `allternit-factory` yet, so Windows Desktop has no terminals. That's unchanged: `allternit-mux` was macOS and Linux only too.
+- **Windows.** Windows Desktop ships `allternit-factory.exe`, and terminals work there too. The pane engine listens on a named pipe (`\\.\pipe\` followed by the socket path that `pane tty ensure` reports) instead of a Unix socket, and runs shells through ConPTY. A terminal opened with a Unix shell path (the web UI's `/bin/zsh` default) gets PowerShell, the pane engine's default shell on Windows.
 
 ## Related
 
