@@ -642,7 +642,8 @@ struct ResolvedCall {
     runtime_id: String,
     bot_id: String,
     number_id: Option<String>,
-    line: CallLine,
+    /// None for an in-app call (`call-app-` room): no number, no phone.
+    line: Option<CallLine>,
     direction: String,
     from: String,
     to: String,
@@ -658,6 +659,12 @@ async fn start_call_inner(
     }
     let line = body.line.as_ref().map(CallLine::validated).transpose()?;
     let resolved = match line {
+        // An in-app call a bot answers (inapp_calls::ring with auto-answer): the
+        // worker sends numberId "" and no line; owner and bot come from the ring.
+        None if body.room.starts_with(INAPP_ROOM_PREFIX) => match resolve_inapp_start(&state.db, &body).await? {
+            LinkedStart::New(resolved) => resolved,
+            LinkedStart::Existing { call_id, bot_id } => return answer_call(state, call_id, &bot_id).await,
+        },
         Some(CallLine::LinkedPhone { device_id, .. }) => {
             match resolve_linked_start(&state.db, &body, &device_id).await? {
                 LinkedStart::New(resolved) => resolved,
@@ -710,7 +717,7 @@ async fn start_call_inner(
                 user_id: owner.user_id,
                 runtime_id: owner.runtime_id,
                 bot_id,
-                line: CallLine::Number { number_id: number_id.clone() },
+                line: Some(CallLine::Number { number_id: number_id.clone() }),
                 number_id: Some(number_id),
                 direction: body.direction.clone(),
                 from,
@@ -719,7 +726,7 @@ async fn start_call_inner(
         }
     };
     let call_id = uuid::Uuid::new_v4().to_string();
-    let line_json = resolved.line.to_json();
+    let line_json = resolved.line.as_ref().map(CallLine::to_json).unwrap_or(Value::Null);
     sqlx::query(
         "INSERT INTO voice_calls (call_id, user_id, runtime_id, number_id, bot_id, room, direction, from_e164, to_e164, sip_call_id, consent_ref, line, line_kind)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
@@ -735,8 +742,8 @@ async fn start_call_inner(
     .bind(&resolved.to)
     .bind(body.sip_call_id.as_deref())
     .bind(body.consent_ref.as_deref())
-    .bind(&line_json)
-    .bind(resolved.line.kind())
+    .bind(resolved.line.as_ref().map(|_| &line_json))
+    .bind(resolved.line.as_ref().map(CallLine::kind))
     .execute(&state.db)
     .await?;
     // The cloud's own call.started is seq 0, so in-order delivery always lands
@@ -780,6 +787,66 @@ async fn answer_call(state: &Arc<ApiState>, call_id: String, bot_id: &str) -> Re
     Ok(Json(json!({ "callId": call_id, "bot": bot })).into_response())
 }
 
+/// Room prefix of an in-app (app-to-app) call (`inapp_calls::ROOM_PREFIX`).
+const INAPP_ROOM_PREFIX: &str = "call-app-";
+
+/// The call already started for a room (a retried worker start).
+async fn existing_call_for_room(db: &sqlx::PgPool, room: &str) -> Result<Option<LinkedStart>, ApiError> {
+    let existing: Option<(String, String)> =
+        sqlx::query_as("SELECT call_id, bot_id FROM voice_calls WHERE room = $1 ORDER BY started_at LIMIT 1")
+            .bind(room)
+            .fetch_optional(db)
+            .await?;
+    Ok(existing.map(|(call_id, bot_id)| LinkedStart::Existing { call_id, bot_id }))
+}
+
+/// An in-app call's start is trusted only for a ring a bot answered
+/// (`inapp_calls`, `answered_by_agent`, not ended, recent). The owner is the
+/// callee; the bot is the callee's auto-answer bot when the worker names it
+/// (that is what the room's dispatch metadata carries), else the ring's bot.
+async fn resolve_inapp_start(db: &sqlx::PgPool, body: &StartCall) -> Result<LinkedStart, ApiError> {
+    let ring: Option<(String, String)> = sqlx::query_as(
+        "SELECT callee_user_id, bot_id FROM inapp_calls
+          WHERE room = $1 AND answered_by_agent AND state = 'answered' AND ended_at IS NULL
+            AND created_at > now() - make_interval(mins => $2)",
+    )
+    .bind(&body.room)
+    .bind(LINKED_ROOM_START_MINUTES)
+    .fetch_optional(db)
+    .await?;
+    let Some((owner_id, ring_bot)) = ring else {
+        return Err(ApiError::NotFound("in-app call not found".to_string()));
+    };
+    if body.owner_id.as_deref().is_some_and(|claimed| !claimed.is_empty() && claimed != owner_id) {
+        return Err(ApiError::Forbidden("ownerId does not match the call's owner".to_string()));
+    }
+    if let Some(existing) = existing_call_for_room(db, &body.room).await? {
+        return Ok(existing);
+    }
+    let auto_bot: Option<String> = sqlx::query_scalar("SELECT auto_answer_bot_id FROM phone_call_prefs WHERE user_id = $1")
+        .bind(&owner_id)
+        .fetch_optional(db)
+        .await?
+        .flatten();
+    let named = body.bot_id.trim();
+    let bot_id = match auto_bot.filter(|b| !b.is_empty()) {
+        Some(auto) if auto == named => auto,
+        Some(auto) if named.is_empty() => auto,
+        _ => ring_bot,
+    };
+    let runtime_id = runtime_for_owner(db, &owner_id, None).await?;
+    Ok(LinkedStart::New(ResolvedCall {
+        user_id: owner_id,
+        runtime_id,
+        bot_id,
+        number_id: None,
+        line: None,
+        direction: body.direction.clone(),
+        from: body.from.clone().unwrap_or_default(),
+        to: body.to.clone().unwrap_or_default(),
+    }))
+}
+
 enum LinkedStart {
     New(ResolvedCall),
     Existing { call_id: String, bot_id: String },
@@ -812,20 +879,15 @@ async fn resolve_linked_start(db: &sqlx::PgPool, body: &StartCall, device_id: &s
     if !matches!(&line, CallLine::LinkedPhone { device_id: stored, .. } if stored == device_id) {
         return Err(ApiError::Forbidden("line does not match the room's phone".to_string()));
     }
-    let existing: Option<(String, String)> =
-        sqlx::query_as("SELECT call_id, bot_id FROM voice_calls WHERE room = $1 ORDER BY started_at LIMIT 1")
-            .bind(&body.room)
-            .fetch_optional(db)
-            .await?;
-    if let Some((call_id, bot_id)) = existing {
-        return Ok(LinkedStart::Existing { call_id, bot_id });
+    if let Some(existing) = existing_call_for_room(db, &body.room).await? {
+        return Ok(existing);
     }
     Ok(LinkedStart::New(ResolvedCall {
         user_id: owner_id,
         runtime_id,
         bot_id,
         number_id: None,
-        line,
+        line: Some(line),
         direction,
         // The room row has what Desktop saw; a withheld caller is "".
         from: from.or_else(|| body.from.clone()).unwrap_or_default(),
@@ -3444,5 +3506,95 @@ mod tests {
         assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
         let r = router.clone().oneshot(call("GET", "/api/v1/voice/calls/some-call/recording")).await.unwrap();
         assert_ne!(r.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn an_in_app_call_a_bot_answers_starts_from_the_ring_not_the_number_directory() {
+        let state = linked_test_state(Some("plus")).await;
+        sqlx::raw_sql(&include_str!("../../migrations_pg/038_inapp_calls.sql").replace("public.", ""))
+            .execute(&state.db)
+            .await
+            .unwrap();
+        sqlx::raw_sql(
+            "INSERT INTO inapp_threads (id, owner_user_id, bot_id, contact_user_id) VALUES ('thr-a', 'user-1', 'bot-link', 'user-9');
+             INSERT INTO phone_call_prefs (user_id, auto_answer_bot_id) VALUES ('user-1', 'bot-auto');
+             INSERT INTO inapp_calls (room, thread_id, caller_user_id, callee_user_id, bot_id, state, answered_by_agent, expires_at)
+                  VALUES ('call-app-abc', 'thr-a', 'user-9', 'user-1', 'bot-link', 'answered', true, now()),
+                         ('call-app-rung', 'thr-a', 'user-9', 'user-1', 'bot-link', 'ringing', false, now() + interval '1 minute')",
+        )
+        .execute(&state.db)
+        .await
+        .unwrap();
+        let directory = FakeDirectory::default();
+        // What the worker sends today: numberId "", no line, the metadata's botId/ownerId.
+        let inapp = |room: &str| StartCall {
+            bot_id: "bot-auto".into(),
+            number_id: Some(String::new()),
+            line: None,
+            from: None,
+            to: None,
+            direction: "inbound".into(),
+            room: room.into(),
+            owner_id: Some("user-1".into()),
+            sip_call_id: None,
+            consent_ref: None,
+        };
+        let answer = body_json(start_call_inner(&state, &directory, inapp("call-app-abc")).await.unwrap()).await;
+        let call_id = answer["callId"].as_str().unwrap().to_string();
+        let row: (String, String, Option<String>, String, Option<Value>, Option<String>) =
+            sqlx::query_as("SELECT user_id, runtime_id, number_id, bot_id, line, line_kind FROM voice_calls WHERE call_id = $1")
+                .bind(&call_id)
+                .fetch_one(&state.db)
+                .await
+                .unwrap();
+        assert_eq!(row, ("user-1".into(), "rt-new".into(), None, "bot-auto".into(), None, None));
+        let started: Value = sqlx::query_scalar("SELECT payload FROM voice_call_events WHERE call_id = $1")
+            .bind(&call_id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+        assert!(started["numberId"].is_null() && started["line"].is_null());
+        // Retry = same call; a ring nobody's bot answered, a stranger owner, or an unknown room is refused.
+        let again = body_json(start_call_inner(&state, &directory, inapp("call-app-abc")).await.unwrap()).await;
+        assert_eq!(again["callId"], call_id.as_str());
+        assert!(matches!(start_call_inner(&state, &directory, inapp("call-app-rung")).await, Err(ApiError::NotFound(_))));
+        assert!(matches!(start_call_inner(&state, &directory, inapp("call-app-none")).await, Err(ApiError::NotFound(_))));
+        let mut stranger = inapp("call-app-abc");
+        stranger.owner_id = Some("user-2".into());
+        assert!(matches!(start_call_inner(&state, &directory, stranger).await, Err(ApiError::Forbidden(_))));
+        // A worker naming some other bot gets the ring's bot, never an arbitrary one.
+        sqlx::query("DELETE FROM voice_calls").execute(&state.db).await.unwrap();
+        let mut other_bot = inapp("call-app-abc");
+        other_bot.bot_id = "bot-evil".into();
+        let answer = body_json(start_call_inner(&state, &directory, other_bot).await.unwrap()).await;
+        let bot: String = sqlx::query_scalar("SELECT bot_id FROM voice_calls WHERE call_id = $1")
+            .bind(answer["callId"].as_str().unwrap())
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+        assert_eq!(bot, "bot-link");
+        // A SIP start with numberId "" is a missing number, not a lookup of "".
+        let mut sip = start_body("", "bot-1");
+        sip.room = "call-room-9".into();
+        assert!(matches!(start_call_inner(&state, &directory, sip).await, Err(ApiError::BadRequest(_))));
+    }
+
+    #[tokio::test]
+    async fn a_linked_phone_outbound_start_needs_no_consent_ref() {
+        let state = linked_test_state(Some("plus")).await;
+        let livekit = FakeLiveKit::default();
+        let mut request = linked_request("bot-1");
+        request.direction = "outbound".into();
+        let opened = linked_call_inner(&state.db, &desktop("rt-desk"), &request, &livekit).await.unwrap();
+        let mut start = linked_start(opened["room"].as_str().unwrap());
+        start.direction = "outbound".into();
+        assert!(start.consent_ref.is_none());
+        let answer = body_json(start_call_inner(&state, &FakeDirectory::default(), start).await.unwrap()).await;
+        let direction: String = sqlx::query_scalar("SELECT direction FROM voice_calls WHERE call_id = $1")
+            .bind(answer["callId"].as_str().unwrap())
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+        assert_eq!(direction, "outbound");
     }
 }
