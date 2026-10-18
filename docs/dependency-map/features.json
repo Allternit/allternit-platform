@@ -682,13 +682,20 @@
         {
           "on": "2026-10-15",
           "note": "Phone drawer reorganized around the desktop mode wheel (Home · Bots · Code · ACI, from src/shell/mode-buttons.ts): it shows only the active mode's rail and recents, with the A://TERNIT wordmark (A://TERNIT BOTS / A://TERNIT ACI at a smaller size in Bots and ACI, per Eoj 2026-10-16; gizzi code lockup in Code). Code, Bots, ACI, Tasks and Customize rows left the drawer; Inbox and Phones became icons; Customize moved into phone Settings; PhoneBotDrawer merged into PhoneDrawer."
+        },
+        {
+          "on": "2026-10-18",
+          "note": "Phone UI gained iOS-style gesture physics on a shared pan/spring core: back-stack navigation with edge-swipe-back and screen push/pop, swipe actions on recents and messages (delete, reply), bottom-sheet detents with velocity fling, long-press peek, drag-to-reorder, pull-to-refresh, toast swipe-dismiss. Desktop behavior unchanged (phone-gated); reduced motion disables tracking."
         }
       ],
       "evidence": [
         "allternit/surfaces/docs/surfaces/mobile.mdx",
         "allternit-ai/src/fabric-session/phone/PhoneShell.tsx",
         "allternit-ai/src/fabric-session/phone/PhoneDrawer.tsx",
-        "allternit-ai/src/fabric-session/phone/PhoneModeWheel.tsx"
+        "allternit-ai/src/fabric-session/phone/PhoneModeWheel.tsx",
+        "allternit-ai/src/fabric-session/phone/gestures/pan.ts",
+        "allternit-ai/src/fabric-session/phone/ScreenStack.tsx",
+        "allternit-ai/src/fabric-session/phone/phone-ui-store.ts"
       ]
     },
     {

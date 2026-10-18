@@ -485,6 +485,7 @@
               "surfaces/manufacturing",
               "surfaces/native-agent",
               "surfaces/mobile",
+              "surfaces/web-phone",
               "surfaces/vscode",
               "surfaces/docmost",
               "surfaces/vault"
