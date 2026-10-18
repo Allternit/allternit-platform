@@ -32,6 +32,22 @@ export interface LocalEngineStatus {
   version?: string;
 }
 
+/**
+ * PIDs listening on `port` from `netstat -ano -p TCP` output (Windows).
+ * Rows look like `  TCP    127.0.0.1:3015    0.0.0.0:0    LISTENING    1234`.
+ */
+export function parseWindowsNetstatListeners(output: string, port: number): number[] {
+  const pids = new Set<number>();
+  for (const line of output.split(/\r?\n/)) {
+    const cols = line.trim().split(/\s+/);
+    if (cols.length < 5 || cols[0] !== 'TCP' || cols[3] !== 'LISTENING') continue;
+    if (!cols[1].endsWith(`:${port}`)) continue;
+    const pid = Number(cols[4]);
+    if (Number.isFinite(pid) && pid > 0) pids.add(pid);
+  }
+  return [...pids];
+}
+
 export class LocalEngineManager {
   private static instance: LocalEngineManager;
   private engineProc: ChildProcess | null = null;
@@ -218,8 +234,16 @@ export class LocalEngineManager {
     return { installed, running, url: this.getUrl(), version };
   }
 
-  /** PIDs (excluding ours) listening on the engine port, via lsof. */
+  /** PIDs (excluding ours) listening on the engine port, via lsof (netstat on Windows). */
   private portListenerPids(): number[] {
+    if (process.platform === 'win32') {
+      try {
+        const out = execFileSync('netstat', ['-ano', '-p', 'TCP'], { encoding: 'utf8', windowsHide: true });
+        return parseWindowsNetstatListeners(out, ENGINE_PORT).filter((pid) => pid !== process.pid);
+      } catch {
+        return [];
+      }
+    }
     try {
       const out = execFileSync(
         'lsof',

@@ -371,7 +371,7 @@ Response:
 }
 ```
 
-GPU detection uses `system_profiler` on macOS and `nvidia-smi` on Linux. On Apple Silicon, GPU memory is reported as shared system memory.
+GPU detection uses `system_profiler` on macOS, `nvidia-smi` on Linux, and on Windows `nvidia-smi` for NVIDIA cards, then the WMI adapter list (`Win32_VideoController`) for AMD/Intel. WMI can't report VRAM of 4 GB or more, so those cards show no memory figure. On Apple Silicon, GPU memory is reported as shared system memory.
 
 ## Error codes
 

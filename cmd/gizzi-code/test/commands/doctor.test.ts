@@ -85,6 +85,15 @@ describe("checkGatewayReachability", () => {
 })
 
 describe("checkCronDaemon", () => {
+  test("reports a Windows scheduled task as installed", async () => {
+    const results = await checkCronDaemon({
+      isRunning: async () => true,
+      supervised: async () => ({ launchdPlist: null, systemdUnit: null, scheduledTask: "C:\\task.xml", supported: true }),
+      readUnit: () => "<Task></Task>",
+    })
+    expect(results.find((r) => r.id === "cron-autostart")?.status).toBe("pass")
+  })
+
   test("passes when the daemon is running", async () => {
     const results = await checkCronDaemon({ isRunning: async () => true })
     expect(results.find((r) => r.id === "cron-daemon")?.status).toBe("pass")

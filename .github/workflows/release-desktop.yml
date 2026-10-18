@@ -520,6 +520,19 @@ jobs:
           # No espeak-ng (GPL-3.0) in the voice service: it lives in allternit-tts.
           bash scripts/check-voice-no-gpl.sh surfaces/allternit-desktop/resources/bin/allternit-voice-service.exe
 
+      - name: Build local-engine sidecar (Windows)
+        # Model Lab's local model engine (services/local-engine; cargo bin name
+        # local-engine). prepare-platform-static and verify-packaged-resources
+        # require resources/bin/allternit-local-engine.exe on win32. GPU
+        # detection on Windows: nvidia-smi, then WMI Win32_VideoController.
+        shell: bash
+        run: |
+          cargo build --release --target x86_64-pc-windows-msvc --manifest-path services/local-engine/Cargo.toml
+          mkdir -p surfaces/allternit-desktop/resources/bin
+          cp target/x86_64-pc-windows-msvc/release/local-engine.exe \
+             surfaces/allternit-desktop/resources/bin/allternit-local-engine.exe
+          ls -lh surfaces/allternit-desktop/resources/bin/allternit-local-engine.exe
+
       # Terminals on Windows: allternit-api's /terminal routes (cfg(unix)) and
       # gizzi's /pty dial the Factory pane engine's Unix socket, and this job
       # doesn't build allternit-factory, so Windows Desktop has no terminals,
@@ -556,11 +569,7 @@ jobs:
       - name: Package with electron-builder
         # --publish never: publishing happens ONLY in the release job, which
         # collects artifacts from all build jobs. Never publish here.
-        # ALLTERNIT_ALLOW_MISSING_LOCAL_ENGINE: the local-engine crate's unix-only
-        # deps are untested on the windows runner; 1.1.0 shipped without this
-        # sidecar. Follow-up: make local-engine compile for windows and drop this.
         env:
-          ALLTERNIT_ALLOW_MISSING_LOCAL_ENGINE: "1"
           NODE_OPTIONS: --max-old-space-size=12288
         run: npm run dist -- --publish never
         working-directory: surfaces/allternit-desktop

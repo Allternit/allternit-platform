@@ -33,6 +33,7 @@ import { factoryEngineManager, bundledGizziBinary } from './factory-engine-manag
 import { fabricWorkerManager, type FabricWorkerState } from './fabric-worker-manager.js';
 import { readSecret, writeSecret, deleteSecret, FABRIC_WORKER_TOKEN_KEY } from './secure-store.js';
 import { localEngineManager } from './local-engine-manager.js';
+import { installWindowsGizziOnPath } from './windows-gizzi-path.js';
 import {
   editorForFile,
   extractOfficeFileArg,
@@ -1337,6 +1338,9 @@ async function initializeBundledMode(): Promise<void> {
     // Local engine: allternit-api reads LOCAL_ENGINE_URL at request time (it
     // proxies /api/local-engine/* per request), but readiness is ~1s with the
     // ECONNREFUSED fast-path, so it still starts in the parallel group.
+    // A start failure is passed to the API as LOCAL_ENGINE_START_ERROR so Model
+    // Lab shows why the engine is missing instead of a bare 502.
+    let localEngineStartError = null as string | null;
     const localEngineTask = (async (): Promise<string | null> => {
       try {
         const url = await localEngineManager.ensureStarted();
@@ -1344,9 +1348,17 @@ async function initializeBundledMode(): Promise<void> {
         return url;
       } catch (engineErr) {
         log.warn('[Main] Local engine failed to start, continuing without it:', engineErr);
+        localEngineStartError = (engineErr instanceof Error ? engineErr.message : String(engineErr)).slice(0, 500);
         return null;
       }
     })();
+    // Windows: gizzi on PATH via a gizzi.cmd shim + per-user PATH entry
+    // (windows-gizzi-path.ts). Independent of the Factory engine starting.
+    if (app.isPackaged && process.platform === 'win32') {
+      installWindowsGizziOnPath(process.resourcesPath)
+        .then((r) => log.info('[Main] gizzi on PATH (Windows):', JSON.stringify(r)))
+        .catch((err) => log.warn('[Main] Could not put gizzi on PATH (Windows):', err));
+    }
     // Factory engine: allternit-api proxies /api/factory/* to it per request
     // (ALLTERNIT_FACTORY_URL), so it starts in the parallel group. A packaged
     // app also puts `gizzi` on PATH and removes the retired rails/ao tools.
@@ -1397,6 +1409,7 @@ async function initializeBundledMode(): Promise<void> {
         extraEnv: {
           ...(meshBridge ? { ALLTERNIT_MESH_BRIDGE_URL: meshBridge } : {}),
           ...(localEngineUrl ? { LOCAL_ENGINE_URL: localEngineUrl } : {}),
+          ...(localEngineStartError ? { LOCAL_ENGINE_START_ERROR: localEngineStartError } : {}),
           ...computerUseDriverManager.getLaunchEnvironment(),
           ...decisionRuntimeManager.getLaunchEnvironment(),
           ...acuGatewayManager.getLaunchEnvironment(),

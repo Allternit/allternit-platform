@@ -98,6 +98,44 @@ pub(crate) fn evaluate(ws: &Ws, attempt: u32, planned: &[(usize, &Planned)], tes
     out
 }
 
+/// Share a dependency directory into a candidate checkout. Unix: a symlink.
+/// Windows: a directory symlink when the account may create one (Developer
+/// Mode or admin), else an NTFS junction, which needs no privilege.
+pub(crate) fn link_dir(src: &Path, dst: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(src, dst)
+    }
+    #[cfg(windows)]
+    {
+        if std::os::windows::fs::symlink_dir(src, dst).is_ok() {
+            return Ok(());
+        }
+        // `mklink /J` takes absolute paths; junctions can't be relative.
+        let src = std::path::absolute(src)?;
+        let dst = std::path::absolute(dst)?;
+        let status = std::process::Command::new("cmd")
+            .arg("/C")
+            .arg("mklink")
+            .arg("/J")
+            .arg(&dst)
+            .arg(&src)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(std::io::Error::other(format!("mklink /J exited with {status}")))
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (src, dst);
+        Err(std::io::Error::other("directory links are not supported on this OS"))
+    }
+}
+
 fn evaluate_one(ws: &Ws, dir: &Path, p: &Planned, test_cmd: &[&str], x: &Extras) -> Outcome {
     let fail = |m: String| Outcome::failed(m, false);
     let _ = std::fs::remove_dir_all(dir);
@@ -110,8 +148,7 @@ fn evaluate_one(ws: &Ws, dir: &Path, p: &Planned, test_cmd: &[&str], x: &Extras)
     // Ignored dependency dirs are not in a clone; share the run checkout's.
     for d in ["node_modules", ".venv", "venv"] {
         if ws.repo.join(d).is_dir() && !dir.join(d).exists() {
-            #[cfg(unix)]
-            let _ = std::os::unix::fs::symlink(ws.repo.join(d), dir.join(d));
+            let _ = link_dir(&ws.repo.join(d), &dir.join(d));
         }
     }
     if let Err(e) = select::write_planned(dir, p) {

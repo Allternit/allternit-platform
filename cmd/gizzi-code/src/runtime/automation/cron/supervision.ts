@@ -90,6 +90,61 @@ export function systemdUnitPath(home: string = os.homedir()): string {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// Task Scheduler (Windows)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export type WindowsTaskOptions = {
+  description: string
+  /** Absolute path of the installed gizzi.exe. */
+  program: string
+  args: string[]
+}
+
+const xmlEscape = (v: string): string =>
+  v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
+
+/** Quote one argument for a Windows command line (CommandLineToArgvW rules). */
+export function windowsQuoteArg(arg: string): string {
+  if (arg !== "" && !/[\s"]/.test(arg)) return arg
+  return `"${arg.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, "$1$1")}"`
+}
+
+/**
+ * Task Scheduler definition for the cron daemon: starts at logon for the
+ * current user (no admin rights, no stored password), restarts on failure,
+ * no time limit. The program runs under `conhost.exe --headless` so no
+ * console window opens on the user's desktop.
+ */
+export function windowsTaskXml(opts: WindowsTaskOptions): string {
+  const commandLine = ["--headless", opts.program, ...opts.args].map(windowsQuoteArg).join(" ")
+  return `<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo><Description>${xmlEscape(opts.description)}</Description></RegistrationInfo>
+  <Triggers><LogonTrigger><Enabled>true</Enabled></LogonTrigger></Triggers>
+  <Principals><Principal id="Author"><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <RestartOnFailure><Interval>PT1M</Interval><Count>999</Count></RestartOnFailure>
+  </Settings>
+  <Actions Context="Author"><Exec><Command>%SystemRoot%\\System32\\conhost.exe</Command><Arguments>${xmlEscape(commandLine)}</Arguments></Exec></Actions>
+</Task>
+`
+}
+
+/** Where the task definition is kept (also the "installed" marker, like the plist/unit). */
+export function windowsTaskXmlPath(home: string = os.homedir()): string {
+  return path.join(home, "AppData", "Local", "gizzi", "autostart", `${CRON_DAEMON_LABEL}.xml`)
+}
+
+/** Task Scheduler name (a folder keeps it out of the root task list). */
+export const WINDOWS_TASK_NAME = `Allternit\\${CRON_DAEMON_LABEL}`
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // State dir (pidfile + crash record)
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -200,25 +255,35 @@ export async function readLastCrash(stateDir: string = cronStateDir()): Promise<
 // Supervision install / remove / status
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export type SupervisionPlatform = "launchd" | "systemd" | "unsupported"
+export type SupervisionPlatform = "launchd" | "systemd" | "schtasks" | "unsupported"
 
 export type SupervisionState = {
   platform: SupervisionPlatform
   supported: boolean
   launchdPlist: string | null
   systemdUnit: string | null
+  /** Windows: the saved Task Scheduler definition when autostart is installed. */
+  scheduledTask: string | null
+}
+
+export function supervisionPlatform(platform: NodeJS.Platform = process.platform): SupervisionPlatform {
+  if (platform === "darwin") return "launchd"
+  if (platform === "linux") return "systemd"
+  if (platform === "win32") return "schtasks"
+  return "unsupported"
 }
 
 export async function supervisionState(home: string = os.homedir()): Promise<SupervisionState> {
-  const platform: SupervisionPlatform =
-    process.platform === "darwin" ? "launchd" : process.platform === "linux" ? "systemd" : "unsupported"
+  const platform = supervisionPlatform()
   const plist = launchdPlistPath(home)
   const unit = systemdUnitPath(home)
+  const task = windowsTaskXmlPath(home)
   return {
     platform,
     supported: platform !== "unsupported",
     launchdPlist: platform === "launchd" && fsSync.existsSync(plist) ? plist : null,
     systemdUnit: platform === "systemd" && fsSync.existsSync(unit) ? unit : null,
+    scheduledTask: platform === "schtasks" && fsSync.existsSync(task) ? task : null,
   }
 }
 
@@ -226,7 +291,7 @@ const SUPERVISABLE_BINARIES = new Set(["bun", "node", "bunx", "npx", "tsx", "den
 
 /**
  * True when execPath is a standalone installed binary (not a JS runtime) —
- * required because launchd/systemd must be able to exec the program directly.
+ * required because launchd/systemd/Task Scheduler must be able to exec the program directly.
  */
 export function isSupervisableExec(execPath: string): boolean {
   // Split on both separators: path.basename is platform-specific, and a
@@ -255,8 +320,7 @@ export async function enableSupervision(
   execPath: string,
   home: string = os.homedir(),
 ): Promise<EnableSupervisionResult> {
-  const platform: SupervisionPlatform =
-    process.platform === "darwin" ? "launchd" : process.platform === "linux" ? "systemd" : "unsupported"
+  const platform = supervisionPlatform()
 
   if (platform === "unsupported") {
     return {
@@ -301,6 +365,38 @@ export async function enableSupervision(
       message += ` (load it with: launchctl bootstrap gui/$UID ${plistPath})`
     }
     return { ok: true, platform, path: plistPath, message }
+  }
+
+  if (platform === "schtasks") {
+    const xmlPath = windowsTaskXmlPath(home)
+    const xml = windowsTaskXml({
+      description: "Gizzi cron daemon (scheduled workflows)",
+      program: execPath,
+      args: ["workflows", "wake", "jobs", "start"],
+    })
+    await fs.mkdir(path.dirname(xmlPath), { recursive: true })
+    // schtasks /XML reads UTF-16 reliably; write it with a BOM to match the declaration.
+    await fs.writeFile(xmlPath, Buffer.from("\ufeff" + xml, "utf16le"))
+    const manual = `schtasks /Create /TN "${WINDOWS_TASK_NAME}" /XML "${xmlPath}" /F`
+    try {
+      const { $ } = await import("bun")
+      const res = await $`schtasks /Create /TN ${WINDOWS_TASK_NAME} /XML ${xmlPath} /F`.quiet().nothrow()
+      if (res.exitCode !== 0) {
+        await fs.rm(xmlPath, { force: true })
+        const detail = (res.stderr.toString() || res.stdout.toString()).trim()
+        return { ok: false, platform, message: `couldn't register the scheduled task${detail ? `: ${detail}` : ""}. Try: ${manual}` }
+      }
+      await $`schtasks /Run /TN ${WINDOWS_TASK_NAME}`.quiet().nothrow()
+    } catch (err) {
+      await fs.rm(xmlPath, { force: true })
+      return { ok: false, platform, message: `couldn't run schtasks (${(err as Error).message}). Try: ${manual}` }
+    }
+    return {
+      ok: true,
+      platform,
+      path: xmlPath,
+      message: `Scheduled task installed: ${WINDOWS_TASK_NAME} (starts at logon, restarts on failure)`,
+    }
   }
 
   const unitPath = systemdUnitPath(home)
@@ -362,6 +458,21 @@ export async function disableSupervision(home: string = os.homedir()): Promise<D
     }
     await fs.rm(unitPath, { force: true })
     return { removed: true, path: unitPath, message: `systemd user unit removed: ${unitPath}` }
+  }
+  if (process.platform === "win32") {
+    const xmlPath = windowsTaskXmlPath(home)
+    if (!fsSync.existsSync(xmlPath)) {
+      return { removed: false, path: null, message: "no scheduled task installed" }
+    }
+    try {
+      const { $ } = await import("bun")
+      await $`schtasks /End /TN ${WINDOWS_TASK_NAME}`.quiet().nothrow()
+      await $`schtasks /Delete /TN ${WINDOWS_TASK_NAME} /F`.quiet().nothrow()
+    } catch {
+      // Best-effort; the saved definition below is the source of truth.
+    }
+    await fs.rm(xmlPath, { force: true })
+    return { removed: true, path: xmlPath, message: `Scheduled task removed: ${WINDOWS_TASK_NAME}` }
   }
   return { removed: false, path: null, message: `autostart is not supported on ${process.platform}` }
 }

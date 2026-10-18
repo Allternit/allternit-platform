@@ -267,15 +267,37 @@ async fn forward_response(res: reqwest::Response) -> Response {
 }
 
 fn engine_unavailable(err: reqwest::Error) -> Response {
-    (
-        StatusCode::BAD_GATEWAY,
-        Json(json!({
-            "error": "local_engine_unavailable",
-            "message": err.to_string(),
-            "note": "Ensure the Local Engine controller is running."
-        })),
-    )
-        .into_response()
+    let start_error = std::env::var("LOCAL_ENGINE_START_ERROR").ok();
+    let (status, body) = engine_unavailable_body(&err.to_string(), start_error.as_deref());
+    (status, Json(body)).into_response()
+}
+
+/// The proxy's answer when the engine can't be reached. `error` is the
+/// human-readable sentence (the web client shows `error` first); `code` is the
+/// stable machine code. When Desktop tried to start the engine and that failed,
+/// it passes the reason in `LOCAL_ENGINE_START_ERROR` and the answer says so
+/// (503: the engine isn't running, not a bad upstream response).
+fn engine_unavailable_body(transport: &str, start_error: Option<&str>) -> (StatusCode, serde_json::Value) {
+    match start_error.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(reason) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            json!({
+                "error": format!("The local model engine didn't start on this computer: {reason}"),
+                "code": "local_engine_start_failed",
+                "message": reason,
+                "note": "Restart Allternit Desktop to try again. The Desktop log has the full startup output."
+            }),
+        ),
+        None => (
+            StatusCode::BAD_GATEWAY,
+            json!({
+                "error": "The local model engine isn't answering. It may still be starting; try again in a moment, or restart Allternit Desktop.",
+                "code": "local_engine_unavailable",
+                "message": transport,
+                "note": "Ensure the Local Engine controller is running."
+            }),
+        ),
+    }
 }
 
 fn is_hop_by_hop_header(name: &str) -> bool {
@@ -291,4 +313,25 @@ fn is_hop_by_hop_header(name: &str) -> bool {
             | "transfer-encoding"
             | "upgrade"
     )
+}
+
+#[cfg(test)]
+mod unavailable_tests {
+    use super::*;
+
+    #[test]
+    fn start_failure_is_reported_in_plain_words() {
+        let (status, body) = engine_unavailable_body("connection refused", Some("binary missing"));
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body["code"], "local_engine_start_failed");
+        assert!(body["error"].as_str().unwrap().contains("binary missing"));
+    }
+
+    #[test]
+    fn unreachable_engine_without_start_error_is_502_with_readable_error() {
+        let (status, body) = engine_unavailable_body("connection refused", Some("  "));
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert_eq!(body["code"], "local_engine_unavailable");
+        assert!(body["error"].as_str().unwrap().starts_with("The local model engine"));
+    }
 }

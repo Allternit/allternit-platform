@@ -42,3 +42,12 @@
 ; ── Progress bar ──────────────────────────────────────────────────────────────
 ; Use smooth progress bar so it feels like a modern installer
 !define MUI_INSTFILESPAGE_PROGRESSBAR  "smooth"
+
+; ── Uninstall: remove the gizzi CLI shim ─────────────────────────────────────
+; The app writes %LOCALAPPDATA%\Allternit\bin\gizzi.cmd on first run
+; (src/main/windows-gizzi-path.ts). The PATH entry stays; an empty folder on
+; PATH is harmless and a reinstall reuses it.
+!macro customUnInstall
+  Delete "$LOCALAPPDATA\Allternit\bin\gizzi.cmd"
+  RMDir "$LOCALAPPDATA\Allternit\bin"
+!macroend

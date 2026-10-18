@@ -183,9 +183,10 @@ for (const mdxPath of collectMdxFiles(DOCS_DIR)) {
       if (mdxPath.endsWith('plugins/guides/porting.mdx')) continue;
       // Connecting AI apps (approvals, MCP Events subscriptions) has to name the apps people connect.
       if (['guides/connected-apps.mdx', 'guides/mcp-events.mdx'].some((p) => mdxPath.endsWith(p))) continue;
-      // The Allternit Factory runs bots on named harnesses and vendor accounts; these pages
+      // The Allternit Factory runs bots on named harnesses and vendor accounts (and sends text
+      // into their panes, matching each harness's own paste placeholder); these pages
       // and the generated contract reference have to name which ones (binding badges, harness ids).
-      if (['factory/agents.mdx', 'factory/overview.mdx', 'factory/api-reference.mdx'].some((p) => mdxPath.endsWith(p))) continue;
+      if (['factory/agents.mdx', 'factory/overview.mdx', 'factory/orchestration.mdx', 'factory/api-reference.mdx'].some((p) => mdxPath.endsWith(p))) continue;
       // Memory Drive is shared with other agents (install steps for Claude Code, Codex, their
       // session ids), and hosted agents name provider/model ids; these pages have to name them.
       if (['guides/memory-drive.mdx', 'core/memory-drive.mdx', 'cli/memory.mdx', 'api/platform/agents.mdx', 'api/memory-drive.mdx'].some((p) => mdxPath.endsWith(p))) continue;
