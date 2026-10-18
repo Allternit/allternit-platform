@@ -182,16 +182,39 @@ const PRIVATE_NODE_VERSION: &str = "22.20.0";
 
 fn on_path(bin: &str, path: &std::ffi::OsStr) -> bool {
     std::env::split_paths(path).any(|dir| {
-        let candidate = dir.join(bin);
-        std::fs::metadata(&candidate).map(|m| m.is_file()).unwrap_or(false)
+        exe_names(bin)
+            .iter()
+            .any(|name| std::fs::metadata(dir.join(name)).map(|m| m.is_file()).unwrap_or(false))
     })
 }
 
-/// nodejs.org's name for this machine (`darwin-arm64`, `linux-x64`, ...).
+/// The file names `bin` can have on disk: itself, plus on Windows the
+/// `.exe` and `.cmd` forms (npm, npx and npm-installed CLIs are `.cmd`).
+fn exe_names(bin: &str) -> Vec<String> {
+    if cfg!(windows) {
+        vec![format!("{bin}.exe"), format!("{bin}.cmd"), bin.to_string()]
+    } else {
+        vec![bin.to_string()]
+    }
+}
+
+/// The program to run for npm: Windows' npm is `npm.cmd`, which
+/// `std::process::Command` does not find from a bare `npm`.
+fn npm_program() -> &'static str {
+    if cfg!(windows) {
+        "npm.cmd"
+    } else {
+        "npm"
+    }
+}
+
+/// nodejs.org's name for this machine (`darwin-arm64`, `linux-x64`,
+/// `win-x64`, ...).
 fn node_platform() -> Option<String> {
     let os = match std::env::consts::OS {
         "macos" => "darwin",
         "linux" => "linux",
+        "windows" => "win",
         _ => return None,
     };
     let arch = match std::env::consts::ARCH {
@@ -203,20 +226,16 @@ fn node_platform() -> Option<String> {
 }
 
 fn sha256_of(file: &Path) -> io::Result<String> {
-    // macOS ships shasum, Linux ships sha256sum.
-    let output = Command::new("shasum")
-        .args(["-a", "256"])
-        .arg(file)
-        .output()
-        .or_else(|_| Command::new("sha256sum").arg(file).output())?;
-    if !output.status.success() {
-        return Err(io::Error::other("could not hash the Node download"));
-    }
-    String::from_utf8_lossy(&output.stdout)
-        .split_whitespace()
-        .next()
-        .map(str::to_string)
-        .ok_or_else(|| io::Error::other("empty hash output"))
+    // In process: Windows has neither shasum nor sha256sum.
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    let mut f = std::fs::File::open(file)?;
+    io::copy(&mut f, &mut hasher)?;
+    Ok(hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect())
 }
 
 /// Make `npm` available for an npm-method install: the machine's own if it
@@ -233,16 +252,23 @@ fn ensure_npm(root: &Path) -> io::Result<()> {
     })?;
     let name = format!("node-v{PRIVATE_NODE_VERSION}-{platform}");
     let dir = root.join(&name);
-    if !dir.join("bin").join("npm").exists() {
+    // nodejs.org ships a .tar.gz with bin/ for macOS/Linux, and a .zip with
+    // node.exe, npm.cmd and npx.cmd at its top for Windows.
+    let (archive_ext, node_bin, npm_file) = if cfg!(windows) {
+        ("zip", dir.clone(), "npm.cmd")
+    } else {
+        ("tar.gz", dir.join("bin"), "npm")
+    };
+    if !node_bin.join(npm_file).exists() {
         println!("   npm not found — installing a private Node {PRIVATE_NODE_VERSION} for Allternit's tools");
         let tmp = root.join(".node-download");
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp)?;
         let base = format!("https://nodejs.org/dist/v{PRIVATE_NODE_VERSION}");
-        let tarball = tmp.join(format!("{name}.tar.gz"));
+        let tarball = tmp.join(format!("{name}.{archive_ext}"));
         let sums = tmp.join("SHASUMS256.txt");
         run_logged(
-            Command::new("curl").args(["-fsSL", "--retry", "3", "-o"]).arg(&tarball).arg(format!("{base}/{name}.tar.gz")),
+            Command::new("curl").args(["-fsSL", "--retry", "3", "-o"]).arg(&tarball).arg(format!("{base}/{name}.{archive_ext}")),
             "download Node",
         )?;
         run_logged(
@@ -251,26 +277,35 @@ fn ensure_npm(root: &Path) -> io::Result<()> {
         )?;
         let want = std::fs::read_to_string(&sums)?
             .lines()
-            .find(|line| line.ends_with(&format!("  {name}.tar.gz")))
+            .find(|line| line.ends_with(&format!("  {name}.{archive_ext}")))
             .and_then(|line| line.split_whitespace().next())
             .map(str::to_string)
-            .ok_or_else(|| io::Error::other(format!("{name}.tar.gz is not in Node's SHASUMS256.txt")))?;
+            .ok_or_else(|| io::Error::other(format!("{name}.{archive_ext} is not in Node's SHASUMS256.txt")))?;
         let got = sha256_of(&tarball)?;
         if got != want {
             let _ = std::fs::remove_dir_all(&tmp);
             return Err(io::Error::other(format!("Node download failed its checksum (got {got}, want {want})")));
         }
-        run_logged(Command::new("tar").arg("-xzf").arg(&tarball).arg("-C").arg(root), "unpack Node")?;
+        // Windows 10+ ships curl.exe and bsdtar (tar.exe), which reads .zip.
+        let unpack = if cfg!(windows) { "-xf" } else { "-xzf" };
+        run_logged(Command::new("tar").arg(unpack).arg(&tarball).arg("-C").arg(root), "unpack Node")?;
         let _ = std::fs::remove_dir_all(&tmp);
         println!("   private Node ready: {}", dir.display());
     }
     let bin = root.join("bin");
     std::fs::create_dir_all(&bin)?;
+    #[cfg(unix)]
     for tool in ["node", "npm", "npx"] {
         let link = bin.join(tool);
         let _ = std::fs::remove_file(&link);
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(dir.join("bin").join(tool), &link)?;
+        std::os::unix::fs::symlink(node_bin.join(tool), &link)?;
+    }
+    // No symlinks without Developer Mode: `.cmd` shims instead. npm.cmd
+    // finds node.exe next to itself, so the shims point into the Node dir.
+    #[cfg(not(unix))]
+    for tool in ["node.exe", "npm.cmd", "npx.cmd"] {
+        let stem = tool.split('.').next().unwrap_or(tool);
+        write_shim(&bin.join(stem), &node_bin.join(tool))?;
     }
     Ok(())
 }
@@ -281,9 +316,12 @@ impl InstallBackend for SystemBackend {
     fn npm_global(&self, root: &Path, _tool: &str, install_args: &[String]) -> io::Result<()> {
         std::fs::create_dir_all(root)?;
         ensure_npm(root)?;
-        let mut cmd = Command::new("npm");
+        let mut cmd = Command::new(npm_program());
+        // npm -g --prefix puts executables in <prefix>/bin on Unix but in
+        // <prefix> itself on Windows, so there the prefix is the bin dir.
+        let prefix = if cfg!(windows) { root.join("bin") } else { root.to_path_buf() };
         cmd.args(["install", "-g", "--prefix"])
-            .arg(root)
+            .arg(&prefix)
             .args(["--no-audit", "--no-fund"])
             .args(install_args)
             .env("PATH", path_env_with(root)?)
@@ -299,19 +337,25 @@ impl InstallBackend for SystemBackend {
         if venv.exists() {
             std::fs::remove_dir_all(&venv)?;
         }
+        // Windows: `python` (python3 is the Store stub) and venv\Scripts.
+        let (python, scripts) = if cfg!(windows) { ("python", "Scripts") } else { ("python3", "bin") };
         run_logged(
-            Command::new("python3").args(["-m", "venv"]).arg(&venv),
-            "python3 -m venv",
+            Command::new(python).args(["-m", "venv"]).arg(&venv),
+            &format!("{python} -m venv"),
         )?;
         run_logged(
-            Command::new(venv.join("bin").join("pip"))
+            Command::new(venv.join(scripts).join(if cfg!(windows) { "pip.exe" } else { "pip" }))
                 .args(["install", "--no-cache-dir", "-q"])
                 .args(install_args),
             "pip install",
         )?;
         // The shim only exists after pip succeeded (HR dsh-ready pattern):
         // a venv whose pip half-failed must not report the tool available.
-        let entry = venv.join("bin").join(tool);
+        let entry = if cfg!(windows) {
+            venv.join(scripts).join(format!("{tool}.exe"))
+        } else {
+            venv.join("bin").join(tool)
+        };
         if !entry.exists() {
             return Err(io::Error::new(
                 io::ErrorKind::NotFound,
@@ -333,6 +377,12 @@ impl InstallBackend for SystemBackend {
             .skip(1)
             .map(|arg| arg.replace("{bin}", &bin_str))
             .collect();
+        if cfg!(windows) {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                format!("{tool} installs with a bash script from {url}, which needs macOS or Linux; install it by hand on Windows, then run `allternit-factory pane harness sync`"),
+            ));
+        }
         let curl = Command::new("curl")
             .args(["-fsSL", url])
             .stdout(std::process::Stdio::piped())
@@ -348,7 +398,7 @@ impl InstallBackend for SystemBackend {
             return Ok(());
         }
         // Vendor scripts that ignore --dir (Cursor) land in ~/.local/bin.
-        let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"));
+        let home = allternit_factory_engine::platform::user_home_or("/");
         let local = home.join(".local").join("bin");
         for name in [tool, "cursor-agent", "agent", "agy"] {
             let src = local.join(name);
@@ -371,15 +421,15 @@ fn write_shim(shim: &Path, target: &Path) -> io::Result<()> {
     std::fs::set_permissions(shim, std::fs::Permissions::from_mode(0o755))
 }
 
+/// Windows: `<shim>.cmd` that runs `target` with the same arguments (no
+/// symlinks without Developer Mode, and `.cmd` resolves through PATHEXT).
 #[cfg(not(unix))]
 fn write_shim(shim: &Path, target: &Path) -> io::Result<()> {
-    // Windows install methods are out of scope for P7 (spec non-goal); the
-    // venv-pip method is POSIX-only and says so when asked.
-    let _ = (shim, target);
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "venv-pip install method is POSIX-only in P7 (spec non-goal: Windows)",
-    ))
+    std::fs::create_dir_all(shim.parent().unwrap_or_else(|| Path::new(".")))?;
+    std::fs::write(
+        shim.with_extension("cmd"),
+        format!("@echo off\r\n\"{}\" %*\r\n", target.display()),
+    )
 }
 
 /// Test fixture backend: no network, no npm/pip — writes an executable
@@ -459,10 +509,8 @@ impl InstallBackend for FakeBackend {
 /// the combined output's first line. `None` when the command cannot run at
 /// all (missing binary, spawn failure).
 pub(crate) fn run_verify(root: &Path, verify_cmd: &str) -> io::Result<Option<String>> {
-    let mut cmd = Command::new("sh");
-    cmd.arg("-c")
-        .arg(verify_cmd)
-        .env("PATH", path_env_with(root)?)
+    let mut cmd = allternit_factory_engine::platform::shell_command(verify_cmd);
+    cmd.env("PATH", path_env_with(root)?)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());

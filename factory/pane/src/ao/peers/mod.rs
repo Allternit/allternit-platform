@@ -94,8 +94,8 @@ pub fn resolve<'a>(peers: &'a [Peer], id_or_name: &str) -> Option<&'a Peer> {
 }
 
 /// Deliver a plain-text message to a peer's UDS inbox via the rails
-/// transport (`send_envelope`), with a short timeout.
-#[cfg(unix)]
+/// transport (`send_envelope`), with a short timeout. Off Unix the transport
+/// reports the delivery as failed with a reason (no UDS inbox there).
 pub fn send_message(
     from: &str,
     peer: &Peer,

@@ -619,7 +619,7 @@ fn phone_remote_dir() -> Option<std::path::PathBuf> {
             }
         }
     }
-    let home = std::env::var_os("HOME").map(std::path::PathBuf::from)?;
+    let home = allternit_factory_engine::platform::user_home()?;
     let fallback = home.join("Desktop/allternit-workspace/allternit/surfaces/phone-remote");
     if fallback.join("server/index.mjs").is_file() {
         return Some(fallback);

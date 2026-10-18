@@ -273,7 +273,7 @@ impl FsCtx {
             path_dirs.insert(0, managed_bin);
         }
         FsCtx {
-            home: std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/")),
+            home: allternit_factory_engine::platform::user_home_or("/"),
             path_dirs,
             app_root: PathBuf::from("/"),
         }
@@ -290,7 +290,15 @@ impl FsCtx {
     }
 
     fn which(&self, bin: &str) -> bool {
-        self.path_dirs.iter().any(|dir| is_executable(&dir.join(bin)))
+        // Windows CLIs are `<bin>.exe` or `<bin>.cmd` (npm shims).
+        let names: Vec<String> = if cfg!(windows) {
+            vec![bin.to_string(), format!("{bin}.exe"), format!("{bin}.cmd")]
+        } else {
+            vec![bin.to_string()]
+        };
+        self.path_dirs
+            .iter()
+            .any(|dir| names.iter().any(|name| is_executable(&dir.join(name))))
     }
 }
 
@@ -329,8 +337,8 @@ fn absent_skips_sync(driver: &Driver, cfg: &ToolCfg, ctx: &FsCtx) -> bool {
 /// so plain concatenation is used (documented in the P4 notes).
 pub(crate) fn expand(p: &str) -> PathBuf {
     if let Some(rest) = p.strip_prefix('~') {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/".to_string());
-        PathBuf::from(format!("{home}{rest}"))
+        let home = allternit_factory_engine::platform::user_home_or("/");
+        PathBuf::from(format!("{}{rest}", home.display()))
     } else {
         PathBuf::from(p)
     }
