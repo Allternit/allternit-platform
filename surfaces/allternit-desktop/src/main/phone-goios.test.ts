@@ -142,6 +142,17 @@ describe('GoIos commands', () => {
     expect(await goios.launch('UDID-1', 'x')).toMatchObject({ ok: false, untrusted: true, notInstalled: false });
   });
 
+  it('iOS 26: processcontrol error code 2 on launch means the developer is not trusted yet', async () => {
+    const { goios } = make({
+      launch: {
+        stdout: '',
+        stderr: '{"level":"ERROR","msg":"launch app command failed","err":"failed invoking method \'launchSuspendedProcessWithDevicePath:bundleIdentifier:environment:arguments:options:\' with error: Request to launch x failed. (Error code: 2, Domain: com.apple.dt.deviceprocesscontrolservice)"}\n',
+        code: 1,
+      },
+    });
+    expect(await goios.launch('UDID-1', 'x')).toMatchObject({ ok: false, untrusted: true });
+  });
+
   it('runtest passes the auto-approve env only when asked; tunnel uses our identity dir', () => {
     const { goios, spawned } = make({});
     goios.runtest({ udid: 'U', runnerBundleId: 'p.ictrl.uitests.xctrunner', xctestConfig: 'iCTRLUITests.xctest', testToRun: 'iCTRLUITests.iCTRLUITests/testStartServer', env: { ICTRL_ALLOW_AUTH_ONCE: '1' } });

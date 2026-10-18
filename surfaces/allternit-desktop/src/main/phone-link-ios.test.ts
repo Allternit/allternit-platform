@@ -49,6 +49,7 @@ interface World {
   lanDeadHosts: string[];
   key: boolean;
   installed: string[];
+  uninstalled: string[];
   launches: string[];
   pushes: { bundleId: string; remote: string }[];
   runtests: RunTestOptions[];
@@ -71,6 +72,7 @@ function world(over: Partial<World> = {}): World {
     lanDeadHosts: [],
     key: false,
     installed: [],
+    uninstalled: [],
     launches: [],
     pushes: [],
     runtests: [],
@@ -112,7 +114,9 @@ function fakeGoIos(w: World): GoIosLike {
     tunnels: async () => [{ udid: 'U' }],
     imageAuto: async () => {},
     install: async (_u, file) => void w.installed.push(file),
-    apps: async () => ['com.openai.chat', 'ai.x.GrokApp', 'com.apple.Maps'],
+    uninstall: async (_u, bundleId) => void w.uninstalled.push(bundleId),
+    // A helper left by an earlier link under another Apple ID's team.
+    apps: async () => ['com.openai.chat', 'ai.x.GrokApp', 'com.apple.Maps', 'com.allternit.phonelink.oldteam.ictrl'],
     launch: async (_u, bundleId) => {
       w.launches.push(bundleId);
       if (bundleId === ARTIFACTS.manifest.host.bundleId && w.untrustedLaunches > 0) {
@@ -278,6 +282,8 @@ describe('iPhone Phone Link', () => {
     });
     expect(w.signRequests[1].credentials).toEqual({ appleId: 'eoj@example.com', password: 'right' });
     expect(w.installed).toEqual(['/s/host.ipa', '/s/runner.ipa']);
+    // The old helper went first (free Apple IDs allow 3 sideloaded apps); others stay.
+    expect(w.uninstalled).toEqual(['com.allternit.phonelink.oldteam.ictrl']);
     // Only Desktop's own cable launch carries the one-shot auto-approval.
     expect(w.runtests).toHaveLength(1);
     expect(w.runtests[0].env).toEqual({ ICTRL_ALLOW_AUTH_ONCE: '1' });

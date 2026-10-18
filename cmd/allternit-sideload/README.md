@@ -48,6 +48,7 @@ Desktop → sidecar:
  "runner_ipa":"/abs/iCTRLUITests-Runner.ipa","host_ipa":"/abs/iCTRL.ipa","out_dir":"/abs/signed/<udid>",
  "anisette_url":"https://anisette.allternit.com","bundle_prefix":"com.allternit.phonelink"}
 {"op":"two_factor","code":"123456"}
+{"op":"two_factor_sms"}
 {"op":"cancel"}
 ```
 
@@ -63,6 +64,13 @@ Sidecar → Desktop:
 ```json
 {"event":"progress","fraction":0.4,"step":"Setting up your developer certificate"}
 {"event":"two_factor_required","sms":false,"phone":"•••• 12","retry_reason":"Incorrect verification code"}
+```
+
+`two_factor_sms` answers a device-route prompt (`sms:false`) by having Apple
+text the code to the trusted number in `phone` instead; the next prompt then
+has `sms:true`. With no trusted number it asks the devices again.
+
+```json
 {"event":"done","runner_ipa":"/abs/runner-signed.ipa","host_ipa":"/abs/host-signed.ipa",
  "bundle_prefix":"com.allternit.phonelink.abcde12345",
  "runner_bundle_id":"com.allternit.phonelink.abcde12345.ictrl.uitests.xctrunner",
@@ -175,11 +183,22 @@ embedded profile. The upstream fix is drafted in `UPSTREAM-PR.md`.
   `device_limit`.
 - **Rate limits.** isideload retries HTTP 429 from Apple up to 10 times.
 
-## Anisette (decision needed, owned by the orchestrator)
+## Anisette
 
 Apple's login needs "anisette" headers, which are normally produced by Apple's
-own software on a Mac or iPhone. isideload gets them from a remote **anisette
-v3** server.
+own software on a Mac or iPhone.
+
+- **On a Mac (first choice):** `src/mac_anisette.rs` asks the Mac's own
+  AuthKit, as Xcode and AltServer do (`AOSUtilities
+  retrieveOTPHeadersForDSID:` and `AKDevice currentDevice`). No server and no
+  stored machine state. isideload has no public way to build `AnisetteData`,
+  so `vendor/isideload` is 0.4.6 with one added constructor (`vendor/README.md`).
+  On 2026-10-18 Apple answered `-80045` ("This action cannot be completed at
+  this time") to a made-up Apple ID through every emulated-device server we
+  tried (anisette.allternit.com, ani.sidestore.app) and `-20970` (wrong
+  account details, so the headers were accepted) through the Mac's own.
+  `-80045` is classified as `anisette_unavailable`, not `bad_credentials`.
+- **Fallback:** when AuthKit gives nothing, a remote **anisette v3** server.
 
 - **Default here:** `https://anisette.allternit.com`, the constant
   `DEFAULT_ANISETTE_URL` in `src/main.rs`. It runs on allternit-standby

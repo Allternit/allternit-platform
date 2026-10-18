@@ -25,7 +25,8 @@ use tokio::sync::{mpsc, Mutex};
 use crate::bundle::{self, PreparedApp};
 use crate::bundle_ids::team_prefix;
 use crate::errors::{classify_report, ErrorCode, Failure};
-use crate::protocol::{mask_phone, Done, Event, Secret, SignRequest};
+use crate::mac_anisette::MacAnisetteProvider;
+use crate::protocol::{mask_phone, Done, Event, SignRequest, TwoFactorInput};
 use crate::session::{self, StoredSession, SESSION_VERSION};
 use crate::storage;
 
@@ -42,7 +43,7 @@ pub struct Signer {
     pub anisette_url: String,
     pub emit: Emit,
     /// 2FA codes arriving on stdin.
-    pub codes: Arc<Mutex<mpsc::Receiver<Secret>>>,
+    pub codes: Arc<Mutex<mpsc::Receiver<TwoFactorInput>>>,
     /// Builds a fresh storage handle (Keychain on macOS).
     pub storage: fn() -> Box<dyn SideloadingStorage>,
 }
@@ -57,13 +58,19 @@ impl Signer {
     }
 
     async fn new_account(&self, apple_id: &str) -> Result<AppleAccount, Failure> {
-        let provider = RemoteV3AnisetteProvider::new(&self.anisette_url, (self.storage)(), "0".to_string())
-            .map_err(|r| fail_report(r, ErrorCode::AnisetteUnavailable))?;
-        AppleAccountBuilder::new(apple_id)
-            .anisette_provider(provider)
+        let builder = AppleAccountBuilder::new(apple_id);
+        // This Mac's own AuthKit first (mac_anisette.rs says why); the server only when it gives nothing.
+        let builder = match MacAnisetteProvider::probe() {
+            Some(mac) => builder.anisette_provider(mac),
+            None => builder.anisette_provider(
+                RemoteV3AnisetteProvider::new(&self.anisette_url, (self.storage)(), "0".to_string())
+                    .map_err(|r| fail_report(r, ErrorCode::AnisetteUnavailable))?,
+            ),
+        };
+        builder
             .build()
             .await
-            // Building fetches /v3/client_info: a failure here is the anisette server.
+            // Building fetches the client info (from /v3/client_info for the server): a failure here is anisette.
             .map_err(|r| fail_report(r, ErrorCode::AnisetteUnavailable))
     }
 
@@ -82,19 +89,21 @@ impl Signer {
                         _ => TwoFactorCallbackResponse::SendToDevices,
                     });
                 }
-                let phone = if params.sms {
-                    params
-                        .selected_number_id
-                        .and_then(|id| params.numbers.iter().find(|n| n.id == id))
-                        .or(params.numbers.first())
-                        .and_then(|n| mask_phone(&n.last_two_digits))
-                } else {
-                    None
-                };
+                // On the device route this is the number a text can go to instead.
+                let number = params
+                    .selected_number_id
+                    .and_then(|id| params.numbers.iter().find(|n| n.id == id))
+                    .or(params.numbers.first());
+                let phone = number.and_then(|n| mask_phone(&n.last_two_digits));
                 emit(Event::TwoFactorRequired { sms: params.sms, phone, retry_reason: params.last_error.clone() });
                 let mut rx = codes.lock().await;
                 match tokio::time::timeout(TWO_FACTOR_TIMEOUT, rx.recv()).await {
-                    Ok(Some(code)) => Ok(TwoFactorCallbackResponse::SubmitCode(code.expose().to_string())),
+                    Ok(Some(TwoFactorInput::Code(code))) => Ok(TwoFactorCallbackResponse::SubmitCode(code.expose().to_string())),
+                    Ok(Some(TwoFactorInput::Text)) => Ok(match number {
+                        Some(n) => TwoFactorCallbackResponse::SendSms(n.id),
+                        // No trusted number on the account: ask the devices again.
+                        None => TwoFactorCallbackResponse::ResendCode,
+                    }),
                     // Timed out or stdin closed: isideload reports "No 2FA code provided".
                     _ => Ok(TwoFactorCallbackResponse::Abort),
                 }

@@ -6,11 +6,13 @@
 //!   {"op":"sign","apple_id","password"?,"udid","device_name","runner_ipa","host_ipa",
 //!    "out_dir","anisette_url"?,"bundle_prefix"?}
 //!   {"op":"two_factor","code":"123456"}
+//!   {"op":"two_factor_sms"}              (text the code to the trusted number instead)
 //!   {"op":"cancel"}                      (closing stdin does the same)
 //!
 //! Sidecar → Desktop (stdout):
 //!   {"event":"progress","fraction":0.4,"step":"Registering this iPhone"}
 //!   {"event":"two_factor_required","sms":false,"phone":"•••• 12","retry_reason"?}
+//!     (sms false + phone: the code went to trusted devices; that number can get a text instead)
 //!   {"event":"done","runner_ipa","host_ipa","bundle_prefix","runner_bundle_id",
 //!    "host_bundle_id","team_id","expires_at","session_reused"}
 //!   {"event":"error","code":"…","message":"…"}
@@ -64,7 +66,16 @@ impl<'de> Deserialize<'de> for Secret {
 pub enum Request {
     Sign(SignRequest),
     TwoFactor { code: Secret },
+    /// Text the code to the account's trusted phone number instead.
+    TwoFactorSms,
     Cancel,
+}
+
+/// What Desktop answers a 2FA prompt with.
+#[derive(Debug)]
+pub enum TwoFactorInput {
+    Code(Secret),
+    Text,
 }
 
 #[derive(Debug, Deserialize)]
@@ -151,7 +162,7 @@ pub fn parse_request(line: &str) -> Result<Request, Failure> {
                 return Err(Failure::new(ErrorCode::TwoFactorFailed, "The verification code must be 6 digits."));
             }
         }
-        Request::Cancel => {}
+        Request::TwoFactorSms | Request::Cancel => {}
     }
     Ok(request)
 }

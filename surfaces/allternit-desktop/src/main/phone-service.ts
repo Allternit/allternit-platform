@@ -417,6 +417,35 @@ class PhoneService {
     };
   }
 
+  /**
+   * phone-link:remove: forget a linked phone on this Desktop, its record and
+   * its pairing secret. The helper app stays on the phone; linking again sets
+   * it up fresh. False when no phone has that id.
+   */
+  removeLinked(deviceId: string): boolean {
+    const dir = this.dir();
+    const { secrets } = this.handoverStores();
+    let removed = false;
+    const drop = (file: string, matches: (key: string, record: { udid?: string; deviceId?: string }) => boolean, secretKey: (key: string) => string) => {
+      let all: Record<string, { udid?: string; deviceId?: string }>;
+      try {
+        all = JSON.parse(fs.readFileSync(file, 'utf8'));
+      } catch {
+        return;
+      }
+      const keys = Object.keys(all).filter((key) => matches(key, all[key]));
+      for (const key of keys) {
+        delete all[key];
+        secrets.delete(secretKey(key));
+      }
+      if (keys.length) fs.writeFileSync(file, JSON.stringify(all, null, 2), { mode: 0o600 });
+      removed ||= keys.length > 0;
+    };
+    drop(path.join(dir, 'phone-link-ios.json'), (udid, r) => (r.deviceId ?? udid) === deviceId, (udid) => ictrlStoreKey(udid));
+    drop(path.join(dir, 'phone-link-android.json'), (id) => id === deviceId, (id) => ictrlStoreKey(`android:${id}`));
+    return removed;
+  }
+
   /** phone-link:handover-targets — the person's bound Sessions computer, or none. */
   handoverTargets(): Promise<PhoneLinkHandoverTarget[]> {
     return handoverTargets(this.handoverClient());

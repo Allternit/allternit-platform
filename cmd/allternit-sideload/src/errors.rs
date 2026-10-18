@@ -36,7 +36,7 @@ impl ErrorCode {
             ErrorCode::AppIdLimit => "This Apple ID has reached Apple's limit of new App IDs for this week.",
             ErrorCode::CertificateLimit => "This Apple ID has too many development certificates.",
             ErrorCode::DeviceLimit => "This Apple ID has too many registered devices.",
-            ErrorCode::AnisetteUnavailable => "Couldn't reach the Apple sign-in helper service.",
+            ErrorCode::AnisetteUnavailable => "Apple's sign-in check didn't go through.",
             ErrorCode::InvalidRequest => "The signing request was invalid.",
             ErrorCode::SigningFailed => "Signing the helper failed.",
         }
@@ -78,15 +78,33 @@ impl std::fmt::Display for Failure {
 impl std::error::Error for Failure {}
 
 /// First line, trimmed, at most 300 chars.
+/// The whole cause chain on one line ("outer — cause — root"): isideload wraps
+/// Apple's real answer under contexts like "Failed to log in to Apple ID", and
+/// keeping only the first line hid it.
 pub fn short_detail(text: &str) -> String {
-    let line = text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
-    line.chars().take(300).collect()
+    let parts: Vec<String> = text
+        .lines()
+        .map(|l| l.trim_start_matches(|c: char| c.is_whitespace() || "●├╰│─|".contains(c)).trim().to_string())
+        .map(|l| l.trim_matches('"').to_string())
+        // Source locations (isideload's file:line) say nothing to a person.
+        .filter(|l| !l.is_empty() && !l.starts_with("at ") && !l.starts_with("Backtrace") && !l.contains(".rs:"))
+        .collect();
+    let mut seen = Vec::new();
+    for p in parts {
+        if !seen.contains(&p) {
+            seen.push(p);
+        }
+    }
+    seen.join(" — ").chars().take(300).collect()
 }
 
 // Apple GrandSlam (`ec`) and developer services (`resultCode`) codes. The
 // developer-services ones are the codes AltServer/SideStore map (ALTAppleAPIError).
-const GSA_BAD_CREDENTIALS: &[i64] = &[-20101, -22406, -20283];
+const GSA_BAD_CREDENTIALS: &[i64] = &[-20101, -22406, -20283, -20970];
 const GSA_BAD_CODE: &[i64] = &[-21669];
+// "This action cannot be completed at this time": Apple refused the anisette
+// headers before looking at the password (mac_anisette.rs).
+const GSA_ANISETTE_REFUSED: &[i64] = &[-80045];
 const DEV_CERT_LIMIT: &[i64] = &[7460];
 const DEV_APP_ID_LIMIT: &[i64] = &[9120];
 const DEV_DEVICE_LIMIT: &[i64] = &[];
@@ -99,6 +117,8 @@ pub fn classify_sideload_error(err: &SideloadError) -> Option<ErrorCode> {
                 Some(ErrorCode::BadCredentials)
             } else if GSA_BAD_CODE.contains(code) {
                 Some(ErrorCode::TwoFactorFailed)
+            } else if GSA_ANISETTE_REFUSED.contains(code) {
+                Some(ErrorCode::AnisetteUnavailable)
             } else {
                 classify_text(msg)
             }
@@ -142,7 +162,7 @@ pub fn classify_text(text: &str) -> Option<ErrorCode> {
 /// Classify an isideload report: typed errors anywhere in the chain win, then
 /// the rendered text, then `fallback`.
 pub fn classify_report(report: &rootcause::Report, fallback: ErrorCode) -> Failure {
-    let rendered = format!("{report}");
+    let rendered = format!("{report:?}");
     let typed = report
         .iter_reports()
         .filter_map(|node| node.downcast_current_context::<SideloadError>())
@@ -163,6 +183,8 @@ mod tests {
         assert_eq!(classify_sideload_error(&e), Some(ErrorCode::BadCredentials));
         let e = SideloadError::AuthWithMessage(-21669, "Incorrect verification code".into());
         assert_eq!(classify_sideload_error(&e), Some(ErrorCode::TwoFactorFailed));
+        let e = SideloadError::AuthWithMessage(-80045, "This action cannot be completed at this time.".into());
+        assert_eq!(classify_sideload_error(&e), Some(ErrorCode::AnisetteUnavailable));
     }
 
     #[test]
@@ -189,9 +211,9 @@ mod tests {
     }
 
     #[test]
-    fn detail_is_one_short_line() {
+    fn detail_is_the_whole_chain_on_one_short_line() {
         let f = Failure::with_detail(ErrorCode::SigningFailed, &format!("\n  first line\nsecond {}", "x".repeat(10)));
-        assert_eq!(f.message, "Signing the helper failed. (first line)");
+        assert_eq!(f.message, format!("Signing the helper failed. (first line — second {})", "x".repeat(10)));
         let long = "y".repeat(1000);
         assert!(Failure::with_detail(ErrorCode::SigningFailed, &long).message.len() < 400);
         assert_eq!(Failure::with_detail(ErrorCode::AppIdLimit, "").message, ErrorCode::AppIdLimit.default_message());

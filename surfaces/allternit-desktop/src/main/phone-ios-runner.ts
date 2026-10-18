@@ -147,7 +147,10 @@ export interface SignRequest {
   workDir: string;
   /** Asked only by signers with needsAppleId. */
   credentials?: AppleIdCredentials;
-  /** Resolves with the 6-digit code the user typed; asked only when Apple wants one. */
+  /**
+   * Resolves with the 6-digit code the user typed, or 'sms' to have Apple text
+   * the code to `phone` instead; asked only when Apple wants one.
+   */
   twoFactor?: (hint: { sms: boolean; phone?: string }) => Promise<string>;
   onProgress?: (fraction: number, step: string) => void;
 }
@@ -422,6 +425,7 @@ export function pickSigner(packaged: boolean, env: NodeJS.ProcessEnv = process.e
  * (keep both in sync). One sign per process. Desktop → sidecar (stdin):
  *   {"op":"sign","apple_id","password"?,"udid","device_name","runner_ipa","host_ipa","out_dir","anisette_url"?,"bundle_prefix"?}
  *   {"op":"two_factor","code":"123456"}
+ *   {"op":"two_factor_sms"}   (text the code to the trusted number instead)
  *   {"op":"cancel"}                      (closing stdin does the same)
  * Sidecar → Desktop (stdout):
  *   {"event":"progress","fraction":0.4,"step":"Registering this iPhone"}
@@ -514,7 +518,7 @@ export class SideloadSigner implements RunnerSigner {
           case 'two_factor_required': {
             if (!req.twoFactor) return finish(() => reject(new SigningError('two_factor_failed', 'A verification code is required.')));
             req.twoFactor({ sms: msg.sms === true, phone: typeof msg.phone === 'string' ? msg.phone : undefined }).then(
-              (code) => proc.write(JSON.stringify({ op: 'two_factor', code })),
+              (code) => proc.write(JSON.stringify(code === 'sms' ? { op: 'two_factor_sms' } : { op: 'two_factor', code })),
               (error) => finish(() => reject(error)),
             );
             break;

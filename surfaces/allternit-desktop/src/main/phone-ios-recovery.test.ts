@@ -91,6 +91,7 @@ function fakeGoIos(w: World): GoIosLike {
       w.imageAutos++;
     },
     install: async (_u, file) => void w.installed.push(file),
+    uninstall: async () => {},
     apps: async () => [],
     launch: async (_u, bundleId) => {
       w.launches.push(bundleId);
