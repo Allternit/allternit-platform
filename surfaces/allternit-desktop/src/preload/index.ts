@@ -688,6 +688,8 @@ const phoneLinkAPI = {
   devices: (): Promise<unknown> => ipcRenderer.invoke('phone-link:devices'),
   handoverTargets: (): Promise<unknown> => ipcRenderer.invoke('phone-link:handover-targets'),
   handover: (opts: { deviceId: string; computerId: string }): Promise<unknown> => ipcRenderer.invoke('phone-link:handover', opts),
+  /** Forget a linked phone on this Desktop (record + pairing secret); true when one was removed. */
+  remove: (deviceId: string): Promise<boolean> => ipcRenderer.invoke('phone-link:remove', deviceId),
   start: (opts: { platform: 'ios' | 'android' }): Promise<unknown> => ipcRenderer.invoke('phone-link:start', opts),
   cancel: (): Promise<unknown> => ipcRenderer.invoke('phone-link:cancel'),
   continue: (): Promise<unknown> => ipcRenderer.invoke('phone-link:continue'),

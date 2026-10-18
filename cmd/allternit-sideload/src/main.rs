@@ -12,6 +12,7 @@
 mod bundle;
 mod bundle_ids;
 mod errors;
+mod mac_anisette;
 mod protocol;
 mod session;
 mod signer;
@@ -26,7 +27,7 @@ use tokio::sync::{mpsc, Mutex, Notify};
 use zeroize::Zeroizing;
 
 use crate::errors::{ErrorCode, Failure};
-use crate::protocol::{parse_request, Event, Request};
+use crate::protocol::{parse_request, Event, Request, TwoFactorInput};
 use crate::signer::{Emit, Signer};
 
 /// Allternit-hosted anisette v3 server (live since 2026-10-17; README
@@ -148,7 +149,12 @@ async fn main() -> ExitCode {
                 };
                 match parse_request(&line) {
                     Ok(Request::TwoFactor { code }) => {
-                        if codes_tx.send(code).await.is_err() {
+                        if codes_tx.send(TwoFactorInput::Code(code)).await.is_err() {
+                            return;
+                        }
+                    }
+                    Ok(Request::TwoFactorSms) => {
+                        if codes_tx.send(TwoFactorInput::Text).await.is_err() {
                             return;
                         }
                     }
@@ -247,8 +253,9 @@ mod tests {
         let (tx, rx) = mpsc::channel(4);
         let rx = Arc::new(Mutex::new(rx));
         let Request::TwoFactor { code } = parse_request(r#"{"op":"two_factor","code":"654321"}"#).unwrap() else { panic!() };
-        tx.send(code).await.unwrap();
-        let got = rx.lock().await.recv().await.unwrap();
+        tx.send(TwoFactorInput::Code(code)).await.unwrap();
+        let Some(TwoFactorInput::Code(got)) = rx.lock().await.recv().await else { panic!() };
         assert_eq!(got.expose(), "654321");
+        assert!(matches!(parse_request(r#"{"op":"two_factor_sms"}"#).unwrap(), Request::TwoFactorSms));
     }
 }

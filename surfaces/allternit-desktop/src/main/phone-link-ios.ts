@@ -152,7 +152,7 @@ export type { IctrlLike } from './ictrl-client.js';
 
 export type GoIosLike = Pick<
   GoIos,
-  'list' | 'info' | 'pair' | 'devmodeEnabled' | 'devmodeReveal' | 'tunnelStart' | 'tunnels' | 'imageAuto' | 'install' | 'apps' | 'launch' | 'kill' | 'pushToApp' | 'runtest'
+  'list' | 'info' | 'pair' | 'devmodeEnabled' | 'devmodeReveal' | 'tunnelStart' | 'tunnels' | 'imageAuto' | 'install' | 'uninstall' | 'apps' | 'launch' | 'kill' | 'pushToApp' | 'runtest'
 >;
 
 export interface IosDriverDeps {
@@ -242,6 +242,7 @@ export class IosDriver implements PhoneLinkDriver {
     this.appleIdWaiter?.(creds);
   }
 
+  /** A 6-digit code, or 'sms' to have Apple text the code instead. */
   submitTwoFactor(code: string): void {
     this.codeWaiter?.(code);
   }
@@ -383,6 +384,7 @@ export class IosDriver implements PhoneLinkDriver {
     };
     await this.prepareDevice(ctx, udid, 0.05);
     const install = async (pkg: SignedRunner) => {
+      await this.removeOldHelpers(udid!, artifacts!.manifest.bundlePrefix, [pkg.hostBundleId, pkg.runnerBundleId]);
       for (const [file, progress] of [[pkg.hostIpa, 0.35], [pkg.runnerIpa, 0.55]] as const) {
         this.set(ctx, 'installing', 'Installing the Allternit helper on your iPhone…', { progress });
         await this.attempt(ctx, 'install_failed', 'Couldn\'t install the helper. Keep the cable in and try again.', () => goios.install(udid!, file));
@@ -484,7 +486,12 @@ export class IosDriver implements PhoneLinkDriver {
           workDir: path.join(this.deps.workDir, 'signed', udid),
           credentials,
           twoFactor: (hint) => {
-            this.set(ctx, 'two_factor', hint.sms ? `Enter the code Apple texted to ${hint.phone ?? 'your phone'}.` : 'Enter the 6-digit code shown on your Apple devices.');
+            this.set(
+              ctx,
+              'two_factor',
+              hint.sms ? `Enter the code Apple texted to ${hint.phone ?? 'your phone'}.` : 'Enter the 6-digit code shown on your Apple devices.',
+              hint.sms ? {} : { textTo: hint.phone },
+            );
             return this.ask<string>(ctx, (resolve) => (this.codeWaiter = resolve)).finally(() => {
               this.codeWaiter = null;
               this.set(ctx, 'apple_id', 'Setting up your developer certificate…');
@@ -516,7 +523,7 @@ export class IosDriver implements PhoneLinkDriver {
           device_limit: 'Your Apple ID has too many registered devices. Remove one at developer.apple.com, then try again.',
           no_identity: 'No developer certificate on this Mac covers this iPhone.',
           signer_unavailable: 'iPhone setup isn\'t available in this version yet.',
-          anisette_unavailable: 'Couldn\'t reach Allternit\'s Apple sign-in service. Check your connection and try again in a few minutes.',
+          anisette_unavailable: 'Apple\'s sign-in check didn\'t go through. Check your connection and try again in a few minutes.',
         };
         this.fail(ctx, code, limits[code] ?? 'Couldn\'t sign the helper. Try again.', error instanceof Error ? error.message : String(error), code !== 'signer_unavailable');
       }
@@ -595,6 +602,23 @@ export class IosDriver implements PhoneLinkDriver {
       await ctx.sleep(1000);
     }
     this.fail(ctx, 'runner_start_failed', 'The helper didn\'t start. Unlock your iPhone and try again.', 'runner did not answer on :8200', true);
+  }
+
+  /**
+   * A free Apple ID may have only 3 sideloaded apps on a phone, so helpers left
+   * by an earlier link (another Apple ID's team, or older bundle ids) would make
+   * the install fail with ApplicationVerificationFailed. Remove ours that aren't
+   * the pair being installed; best effort.
+   */
+  private async removeOldHelpers(udid: string, prefix: string, keep: string[]): Promise<void> {
+    const installed = await this.deps.goios.apps(udid).catch(() => [] as string[]);
+    for (const id of installed) {
+      if (!id.startsWith(`${prefix}.`) || keep.includes(id)) continue;
+      await this.deps.goios.uninstall(udid, id).then(
+        () => this.log(`removed old helper ${id}`),
+        (error) => this.log(`couldn't remove old helper ${id}: ${error instanceof Error ? error.message : String(error)}`),
+      );
+    }
   }
 
   private async leavePairingFile(udid: string, hostBundleId: string): Promise<void> {

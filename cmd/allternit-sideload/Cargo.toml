@@ -26,6 +26,7 @@ path = "src/main.rs"
 isideload = { version = "=0.4.6", default-features = false, features = ["install", "tokio-mt"] }
 # Same versions isideload uses, so the types line up.
 rootcause = "0.12"
+async-trait = "0.1"
 apple-codesign-quick = "0.1"
 plist = "1.8"
 zip = { version = "8.3", default-features = false, features = ["deflate"] }
@@ -48,3 +49,7 @@ tempfile = "3.8"
 [profile.release]
 strip = true
 lto = "thin"
+
+# isideload with one added constructor (vendor/README.md).
+[patch.crates-io]
+isideload = { path = "vendor/isideload" }

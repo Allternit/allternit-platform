@@ -291,7 +291,8 @@ export interface RunTestOptions {
 export type LaunchResult = { ok: true } | { ok: false; error: string; untrusted: boolean; notInstalled: boolean };
 
 /** The phrases iOS/go-ios use when the developer certificate isn't trusted yet. */
-const UNTRUSTED = /explicitly trusted|untrusted developer|not been trusted|invalid code signature|0xe8008018|0xe800801c|profile has not/i;
+// iOS 26 reports an untrusted developer only as processcontrol "Error code: 2" (seen 2026-10-18; launch worked once trusted).
+const UNTRUSTED = /explicitly trusted|untrusted developer|not been trusted|invalid code signature|0xe8008018|0xe800801c|profile has not|Error code: 2, Domain: com\.apple\.dt\.deviceprocesscontrolservice/i;
 const NOT_INSTALLED = /not installed|no such app|could not find|unknown bundle/i;
 
 /** Typed go-ios commands. Every call is scoped to one UDID. */
@@ -374,6 +375,11 @@ export class GoIos {
   async install(udid: string, ipaOrApp: string): Promise<void> {
     const res = await this.exec(['install', `--path=${ipaOrApp}`, `--udid=${udid}`], { timeoutMs: 300_000 });
     if (res.code !== 0) throw new Error(lastGoIosError(res.stderr || res.stdout) ?? 'install failed');
+  }
+
+  async uninstall(udid: string, bundleId: string): Promise<void> {
+    const res = await this.exec(['uninstall', bundleId, `--udid=${udid}`], { timeoutMs: 60_000 });
+    if (res.code !== 0) throw new Error(lastGoIosError(res.stderr || res.stdout) ?? 'uninstall failed');
   }
 
   /** User-installed bundle ids (installation_proxy; no app is opened). */

@@ -102,6 +102,10 @@ export function registerPhoneLinkIpc(handleGuarded: Guarded): PhoneLinkManager {
   handleGuarded('phone-link:status', () => manager.status());
   handleGuarded('phone-link:devices', () => phoneService.linkedDevices());
   handleGuarded('phone-link:handover-targets', () => phoneService.handoverTargets());
+  handleGuarded('phone-link:remove', (_event, deviceId?: unknown) => {
+    if (typeof deviceId !== 'string' || !deviceId) throw new Error('deviceId is required');
+    return phoneService.removeLinked(deviceId);
+  });
   handleGuarded('phone-link:handover', (_event, opts?: { deviceId?: unknown; computerId?: unknown }) => {
     if (typeof opts?.deviceId !== 'string' || typeof opts?.computerId !== 'string') throw new Error('deviceId and computerId are required');
     return phoneService.handover({ deviceId: opts.deviceId, computerId: opts.computerId });
@@ -119,7 +123,8 @@ export function registerPhoneLinkIpc(handleGuarded: Guarded): PhoneLinkManager {
     return manager.submitAppleId({ appleId: creds.appleId, password: creds.password });
   });
   handleGuarded('phone-link:submit-two-factor', (_event, code?: unknown) => {
-    if (typeof code !== 'string' || !/^\d{6}$/.test(code)) throw new Error('code must be 6 digits');
+    // 'sms' asks Apple to text the code instead.
+    if (typeof code !== 'string' || !/^(\d{6}|sms)$/.test(code)) throw new Error('code must be 6 digits or "sms"');
     return manager.submitTwoFactor(code);
   });
   return manager;

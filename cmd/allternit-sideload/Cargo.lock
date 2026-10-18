@@ -69,6 +69,7 @@ name = "allternit-sideload"
 version = "0.1.0"
 dependencies = [
  "apple-codesign-quick",
+ "async-trait",
  "base64 0.22.1",
  "hex",
  "isideload",
@@ -1463,8 +1464,6 @@ checksum = "791930b43c0d5973160d90a8f3894509f2b273430f5c5c73b668636d0287c5c0"
 [[package]]
 name = "isideload"
 version = "0.4.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "473bde4da71c72bcf5f1cf77acfffdf4b879b65ef989c19f8cb4c3e9ea758a76"
 dependencies = [
  "aes 0.9.3",
  "aes-gcm",

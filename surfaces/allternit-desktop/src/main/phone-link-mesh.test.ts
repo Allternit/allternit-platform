@@ -412,6 +412,7 @@ function meshFakeGoIos(): GoIosLike {
     tunnels: async () => [{ udid: 'U' }],
     imageAuto: async () => {},
     install: async () => {},
+    uninstall: async () => {},
     apps: async () => ['com.openai.chat'],
     launch: async (_u, bundleId) => {
       if (bundleId === ARTIFACTS.manifest.host.bundleId && !launches.host) {

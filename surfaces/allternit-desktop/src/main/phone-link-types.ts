@@ -68,6 +68,11 @@ export interface PhoneLinkStatus {
   /** One plain-English line telling the user what to do now. */
   instruction: string;
   detail?: string;
+  /**
+   * two_factor only: Apple sent the code to trusted devices, and this masked
+   * number ("•••• 12") can get it by text instead (submitTwoFactor('sms')).
+   */
+  textTo?: string;
   /** App-relative asset path or data URL. */
   hintImage?: string;
   /** 0–1 while installing. */
