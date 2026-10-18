@@ -336,7 +336,9 @@ async fn inbound_turns_into_one_threaded_reply_and_guards_hold() {
     assert_eq!(*recorded.session_creates.lock().unwrap(), 1);
     assert_eq!(recorded.sends.lock().unwrap().len(), 1);
 
-    // Scenario 4 (mode auto on a verified domain): direct send, admin key.
+    // Scenario 4 (mode auto on a verified domain): frank is outside the team, so the
+    // conversation is tainted and the reply still goes to review, not the admin
+    // skip-approval path (injection defense: a tainted conversation never auto-sends).
     {
         let conn = state.db.connect().unwrap();
         conn.execute(
@@ -359,16 +361,15 @@ async fn inbound_turns_into_one_threaded_reply_and_guards_hold() {
     .await;
     assert_eq!(status, 200);
     let sends = wait_for_sends(&recorded, 2).await;
-    let direct = &sends[1];
-    assert_eq!(
-        direct["skipApproval"],
-        true,
-        "auto mode on a verified domain sends through the admin skip-approval path: {direct}"
+    let held = &sends[1];
+    assert!(
+        held.get("skipApproval").is_none(),
+        "a tainted conversation must not skip the gate, even in auto mode: {held}"
     );
-    assert_eq!(direct["headers"]["In-Reply-To"], "<in-4@other.com>");
+    assert_eq!(held["headers"]["In-Reply-To"], "<in-4@other.com>");
     let row = wait_for_row(&state, "frank@other.com").await;
     assert_eq!(row.0, None);
-    assert_eq!(row.1.as_deref(), Some("sent"));
+    assert_eq!(row.1.as_deref(), Some("pending_approval"));
 
     // Scenario 5 (kill switch): the turn runs, the reply does not go out.
     {

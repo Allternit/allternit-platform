@@ -71,7 +71,7 @@ Built-in bots come with one that fits the job. Bots that contact clients start o
 ## Good to know
 
 - A call that needs your OK is not placed until you approve it. The bot is told to try again once you have.
-- Email keeps the mailbox's own reply mode until you choose a level for it. Once you choose one, your level decides: **Send and tell me** and **Act within limits** reply directly, but only for a verified domain and never past the reply caps. **Ask first** and **Draft only** send the email to the review queue.
+- Email keeps the mailbox's own reply mode until you choose a level for it. Once you choose one, your level decides: **Send and tell me** and **Act within limits** reply directly, but only for a verified domain and never past the reply caps. **Ask first** and **Draft only** send the email to the review queue. Whatever the mode or level, a reply in a conversation with outside content (anyone below `team`, such as a contact or a stranger) goes to the review queue. See [Injection defense](/guides/injection-defense).
 - AI apps and vendor bots that text, call or email through your bot follow the same levels.
 
 See [Autonomy API](/api/autonomy) for developers, and [Prompt injection defense](/guides/injection-defense) for how content from outside holds a send.
