@@ -1,14 +1,41 @@
 import type { AgentTask } from "@/runtime/runtime-driver"
 import { claudeBotFlags } from "@/runtime/bots/bot-turn"
 
+/** The CLI bridge tool Claude Code's plan mode asks for permission (`--permission-prompt-tool`). */
+export const CLI_PERMISSION_TOOL = "permission_prompt"
+
 /**
  * Claude Code permission + isolation flags for a session turn. Normal
  * sessions keep the long-standing `bypassPermissions`; a bot turn gets
- * settings isolation and its own tool policy (see claudeBotFlags).
+ * settings isolation and its own tool policy (see claudeBotFlags). A plan
+ * turn runs Claude's own plan mode (read-only), and what that mode would ask
+ * about goes to gizzi's bridge: the plan file may be edited, ExitPlanMode
+ * becomes gizzi's "Build Agent" question, everything else is refused.
  */
-export function claudePermissionFlags(ctx: { bot?: AgentTask["bot"]; mcp?: AgentTask["mcp"] }): string[] {
+export function claudePermissionFlags(ctx: { bot?: AgentTask["bot"]; mcp?: AgentTask["mcp"]; plan?: AgentTask["plan"] }): string[] {
   if (ctx.bot) return claudeBotFlags(ctx.bot, ctx.mcp?.name)
+  if (ctx.plan) {
+    return ["--permission-mode", "plan", ...(ctx.mcp ? ["--permission-prompt-tool", `mcp__${ctx.mcp.name}__${CLI_PERMISSION_TOOL}`] : [])]
+  }
   return ["--permission-mode", "bypassPermissions"]
+}
+
+/** What a CLI needs to know in a plan turn: where the plan goes and how to hand it over. */
+export function planInstructions(cli: string, plan: NonNullable<AgentTask["plan"]>): string {
+  const handoff =
+    cli === "claude-cli"
+      ? "When the plan is ready, present it with ExitPlanMode."
+      : "When the plan is ready, call the allternit plan_exit tool with the whole plan as Markdown."
+  return [
+    "Gizzi plan mode is on: research and plan, do not build. Take read-only actions only.",
+    `${handoff} Gizzi saves it as the plan file (${plan.file}) and asks the user to approve it.`,
+    "If they approve, end your turn: the session switches to the build agent, which carries the plan out.",
+  ].join(" ")
+}
+
+/** Codex thread settings for a plan turn: a read-only sandbox, so the plan agent cannot change files. */
+export function codexPlanParams(plan: AgentTask["plan"]): Record<string, unknown> {
+  return plan ? { sandbox: "read-only" } : {}
 }
 
 /**

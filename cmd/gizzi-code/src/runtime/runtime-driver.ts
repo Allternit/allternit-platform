@@ -39,6 +39,12 @@ export interface AgentTask {
    * apply the bot's tool allowlist / approval gates (runtime/bots/bot-turn.ts).
    */
   bot?: BotTurnInfo
+  /**
+   * Set when the session turn runs the plan agent: the session's plan file.
+   * CLI adapters run the vendor's own read-only mode where there is one and
+   * hand the plan over through the bridge's plan_exit (see CliBridge).
+   */
+  plan?: { file: string }
 }
 
 export interface TaskHandle {

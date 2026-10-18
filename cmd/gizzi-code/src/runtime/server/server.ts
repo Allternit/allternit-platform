@@ -637,6 +637,18 @@ export namespace Server {
     }
   }
 
+  /**
+   * A bare loopback listener for an in-process run (`gizzi run` without
+   * --attach): its requests go straight to App().fetch, but a CLI agent
+   * reaches the session's tool bridge over HTTP, so url() must point here and
+   * not at whatever else holds the default port. No cron, heartbeat or mDNS.
+   */
+  export function listenLoopback(port = 0) {
+    const server = Bun.serve({ hostname: "127.0.0.1", port, idleTimeout: 0, fetch: App().fetch, websocket })
+    _url = server.url
+    return server
+  }
+
   export function listen(opts: {
     port: number
     hostname: string

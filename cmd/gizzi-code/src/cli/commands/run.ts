@@ -824,6 +824,8 @@ export const RunCommand = cmd({
       // Validate agent if specified
       const agent = await (async () => {
         if (!args.agent) return undefined
+        // Attached: there is no local project instance; the server resolves the agent.
+        if (args.attach) return args.agent
         const entry = await AgentManager.get(args.agent)
         if (!entry) {
           UI.println(
@@ -947,15 +949,13 @@ export const RunCommand = cmd({
 
       await loopDone
 
-      // Print mode (gizzi exec / -p) is one-shot by definition: once the run
-      // loop finishes, the process MUST terminate. Background runtime
-      // handles — agent communication runtime, lazily re-created Instances,
-      // db watchers — can outlive the answer and would otherwise hold the
-      // event loop open forever (exec hung for minutes after the prompt
-      // completed). Give stdout/stderr 100ms to drain, then exit hard.
-      if (printMode) {
-        setTimeout(() => process.exit(process.exitCode ?? 0), 100)
-      }
+      // run and exec are one-shot: once the run loop finishes, the process
+      // MUST terminate. Background runtime handles — agent communication
+      // runtime, lazily re-created Instances, db watchers — can outlive the
+      // answer and would otherwise hold the event loop open forever (exec, and
+      // plain `gizzi run` too, hung for minutes after the prompt completed).
+      // Give stdout/stderr 100ms to drain, then exit hard.
+      setTimeout(() => process.exit(process.exitCode ?? 0), 100)
     }
 
     if (args.attach) {
@@ -984,12 +984,19 @@ export const RunCommand = cmd({
         if (key) process.env[`${profile.provider.toUpperCase().replace(/-/g, "_")}_API_KEY`] ??= key
         if (profile.base_url) process.env[`${profile.provider.toUpperCase().replace(/-/g, "_")}_BASE_URL`] ??= profile.base_url
       }
+      // CLI models (claude-cli, codex-cli…) call back into this session's tool bridge over HTTP.
+      const loopback = Server.listenLoopback(typeof args.port === "number" ? args.port : 0)
       const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
         const request = new Request(input, init)
         return Server.App().fetch(request)
       }) as typeof globalThis.fetch
       const sdk = createAllternitClient({ baseUrl: "http://gizzi.internal", fetch: fetchFn })
-      await execute(sdk)
+      try {
+        await execute(sdk)
+      } finally {
+        // An open listener keeps the process alive after the run.
+        loopback.stop(true)
+      }
     })
   },
 })

@@ -2,7 +2,11 @@ import { describe, expect, test } from "bun:test"
 import { CliBridge } from "../../src/runtime/integrations/cli-bridge"
 import {
   acpMcpServers,
+  CLI_PERMISSION_TOOL,
+  claudePermissionFlags,
   claudeSessionFlags,
+  codexPlanParams,
+  planInstructions,
   codexMcpConfig,
   withInstructions,
 } from "../../src/runtime/drivers/cli-session-flags"
@@ -114,5 +118,39 @@ describe("handing the bridge to each kind of CLI", () => {
         { role: "system", content: [{ type: "text", text: "Artifact session." }] },
       ]),
     ).toBe("Mode: Docs.\n\nArtifact session.")
+  })
+})
+
+describe("plan turns on a CLI", () => {
+  const mcp = { name: "allternit", url: "http://127.0.0.1:4096/cli-bridge/s/mcp", headers: {} }
+  const plan = { file: "/repo/.gizzi/plans/1-x.md" }
+
+  test("Claude runs its own plan mode and asks gizzi's bridge about what that mode would prompt for", () => {
+    expect(claudePermissionFlags({ mcp })).toEqual(["--permission-mode", "bypassPermissions"])
+    expect(claudePermissionFlags({ mcp, plan })).toEqual([
+      "--permission-mode",
+      "plan",
+      "--permission-prompt-tool",
+      `mcp__allternit__${CLI_PERMISSION_TOOL}`,
+    ])
+    expect(claudePermissionFlags({ plan })).toEqual(["--permission-mode", "plan"])
+  })
+
+  test("Codex plans in a read-only sandbox; other turns keep their settings", () => {
+    expect(codexPlanParams(plan)).toEqual({ sandbox: "read-only" })
+    expect(codexPlanParams(undefined)).toEqual({})
+  })
+
+  test("the instructions name the plan file and the CLI's own way to hand the plan over", () => {
+    expect(planInstructions("claude-cli", plan)).toContain("ExitPlanMode")
+    expect(planInstructions("codex-cli", plan)).toContain("plan_exit")
+    expect(planInstructions("codex-cli", plan)).toContain(plan.file)
+  })
+
+  test("outside a plan turn the bridge lists no plan tools", async () => {
+    const list = (await CliBridge.handle("ses_none", { jsonrpc: "2.0", id: 9, method: "tools/list" }, signal)) as any
+    const names = list.result.tools.map((t: any) => t.name)
+    expect(names).not.toContain("plan_exit")
+    expect(names).not.toContain(CLI_PERMISSION_TOOL)
   })
 })
