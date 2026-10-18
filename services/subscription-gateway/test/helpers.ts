@@ -32,6 +32,7 @@ import type { AccountsRouterOptions } from "../src/http/routes_accounts.js";
 import type { CapabilityRouter } from "@allternit/subscription-fabric-contracts";
 import type { KeychainBackend } from "../src/security/keychain.js";
 import { openDatabase, type Db } from "../src/store/db.js";
+import type { AppRouteTasks } from "../src/routes/app-route-tasks.js";
 
 export function tmpStateDir(): string {
   return mkdtempSync(join(tmpdir(), "subs-gw-test-"));
@@ -58,7 +59,7 @@ export interface TestDeps extends GatewayDeps {
 
 export function makeDeps(
   stateDir: string,
-  opts: { fetchImpl?: typeof fetch; scheduler?: Scheduler; adapterRegistry?: AdapterRegistry; router?: CapabilityRouter; pool?: WorkerPool; loginBrowser?: LoginBrowser; accountsOptions?: AccountsRouterOptions } = {}
+  opts: { fetchImpl?: typeof fetch; scheduler?: Scheduler; adapterRegistry?: AdapterRegistry; router?: CapabilityRouter; pool?: WorkerPool; loginBrowser?: LoginBrowser; accountsOptions?: AccountsRouterOptions; appRouteTasks?: (db: Db, log: EventLog) => AppRouteTasks } = {}
 ): TestDeps {
   const config: Config = loadConfig({ SUBS_GATEWAY_STATE_DIR: stateDir });
   const db: Db = openDatabase(":memory:");
@@ -87,6 +88,7 @@ export function makeDeps(
     pool: opts.pool,
     loginBrowser: opts.loginBrowser,
     accountsOptions: opts.accountsOptions,
+    appRouteTasks: opts.appRouteTasks?.(db, log),
     version: "0.1.0-test",
   });
   return {

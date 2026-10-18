@@ -77,7 +77,7 @@ export function tasksRouter(deps: GatewayDeps): Router {
     res.json({ tasks: listTaskSummaries(deps.db, { statuses, limit: parsed.data.limit }) });
   });
 
-  router.post("/v1/tasks", requireScope("tasks:submit"), (req: Request, res: Response) => {
+  router.post("/v1/tasks", requireScope("tasks:submit"), async (req: Request, res: Response) => {
     const parsed = submitTaskSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: "invalid_task", detail: parsed.error.issues });
@@ -158,6 +158,27 @@ export function tasksRouter(deps: GatewayDeps): Router {
     // §S6 — chat.continue on a fabric thread: resolve the provider thread,
     // the divergence fingerprint and the owning account from the active
     // mapping, and pin routing there (a thread lives in one account).
+    // Same router as vendor bot turns: at turn start the RouteDirector picks
+    // the vendor's route; a phone or desktop-app route runs the turn through
+    // its AAI adapter (routes/app-route-tasks.ts). Turns the gateway's own
+    // vendor adapters submit (x-subs-route-chosen) were routed already.
+    const internal = req.headers["x-subs-route-chosen"] === "1";
+    if (deps.appRouteTasks && !internal) {
+      const pick = await deps.appRouteTasks.pick(task).catch(() => null);
+      if (pick) {
+        task.status_detail = `via ${pick.route}: ${pick.reason}`;
+        insertTask(deps.db, task);
+        deps.log.append({
+          task_id: task.task_id,
+          kind: "task.created",
+          payload: { task_id: task.task_id, status: task.status, capability: task.capability, thread_id: task.thread_id, route: pick.route },
+          callers: [caller.caller_id],
+        });
+        void deps.appRouteTasks.run(task, pick);
+        res.status(201).json(task);
+        return;
+      }
+    }
     if (task.capability === "chat.continue" && task.thread_id && task.options.provider_thread_id === undefined) {
       const mapping = getActiveThreadMapping(deps.db, task.thread_id);
       if (!mapping) {
@@ -217,16 +238,19 @@ export function tasksRouter(deps: GatewayDeps): Router {
     res.json(task);
   });
 
-  router.post("/v1/tasks/:id/cancel", requireScope("tasks:submit"), (req: Request, res: Response) => {
+  router.post("/v1/tasks/:id/cancel", requireScope("tasks:submit"), async (req: Request, res: Response) => {
     const task = getTask(deps.db, req.params.id);
     if (!task) {
       res.status(404).json({ error: "task_not_found", task_id: req.params.id });
       return;
     }
-    if (task.status !== "queued" && task.status !== "needs_user") {
+    // A phone/desktop-app turn in flight: press the app's Stop, then mark it cancelled.
+    const appTurn = deps.appRouteTasks?.isRunning(task.task_id) ?? false;
+    if (!appTurn && task.status !== "queued" && task.status !== "needs_user") {
       res.status(409).json({ error: "not_cancellable", status: task.status });
       return;
     }
+    if (appTurn) await deps.appRouteTasks!.cancel(task.task_id);
     deps.scheduler?.remove(task.task_id);
     const completedAt = new Date().toISOString();
     updateTaskStatus(deps.db, task.task_id, "cancelled", { completedAt });

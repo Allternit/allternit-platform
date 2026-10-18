@@ -31,6 +31,7 @@ import { routesRouter } from "./routes_routes.js";
 import { settingsRouter } from "./routes_settings.js";
 import type { AaiHost } from "../aai/registry.js";
 import type { RouteDirector } from "../routes/director.js";
+import type { AppRouteTasks } from "../routes/app-route-tasks.js";
 
 export interface GatewayDeps {
   db: Db;
@@ -48,6 +49,7 @@ export interface GatewayDeps {
   accountsOptions?: AccountsRouterOptions; // login watcher poll + cookie reader (tests)
   aai?: AaiHost; // AAI host — POST /aai/call (one AaiRouter per process)
   routeDirector?: RouteDirector; // deterministic route router — GET/PUT /v1/routes
+  appRouteTasks?: AppRouteTasks; // POST /v1/tasks chats on a phone / desktop-app route (same router as bot turns)
   aaiStream?: { pollMs?: number; heartbeatMs?: number }; // GET /aai/events/stream timing (tests)
   allowedOrigins?: string[]; // default: empty — every Origin is rejected
   version?: string;

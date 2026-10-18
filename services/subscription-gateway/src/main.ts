@@ -31,6 +31,7 @@ import { FabricRouter } from "./router/resolve.js";
 import type { DispatchDeps } from "./router/dispatch.js";
 import { DesktopPhoneGateway, linkedPhones } from "./phone/gateway.js";
 import { RouteDirector, type VendorLaneInfo } from "./routes/director.js";
+import { AppRouteTasks } from "./routes/app-route-tasks.js";
 import { routesForAdapterManifest, routesForAgentManifest } from "./routes/registry.js";
 import { WorkerSupervisor } from "./worker/supervisor.js";
 import { WorkerPool } from "./worker/pool.js";
@@ -184,7 +185,8 @@ export async function boot(deps: BootDeps = {}): Promise<RunningGateway> {
       const token = keychain.get(CLI_TOKEN_ACCOUNT) ?? "";
       const payload = body === undefined ? undefined : JSON.stringify(body);
       const req = httpRequest(
-        { socketPath: config.udsPath, path, method, headers: { host: "localhost", authorization: `Bearer ${token}`, ...(payload ? { "content-type": "application/json" } : {}) } },
+        // x-subs-route-chosen: these turns come from vendor adapters the RouteDirector already picked.
+        { socketPath: config.udsPath, path, method, headers: { host: "localhost", authorization: `Bearer ${token}`, "x-subs-route-chosen": "1", ...(payload ? { "content-type": "application/json" } : {}) } },
         (res) => {
           let raw = "";
           res.setEncoding("utf8");
@@ -286,6 +288,13 @@ export async function boot(deps: BootDeps = {}): Promise<RunningGateway> {
     },
   });
   aaiHost.routeDirector = routeDirector;
+  // Model-picker chats (POST /v1/tasks) on the same router (Eoj, 2026-10-17).
+  const appRouteTasks = new AppRouteTasks({
+    db,
+    log,
+    host: { call: (op, binding, input) => aaiHost.call(op, binding as never, input) as never },
+    director: routeDirector,
+  });
 
   // §2 debug-mode rule, launch-time probe: once vendor adapters have loaded,
   // record which desktop lane applies per app version from the configured
@@ -330,6 +339,7 @@ export async function boot(deps: BootDeps = {}): Promise<RunningGateway> {
     pool,
     loginBrowser,
     routeDirector,
+    appRouteTasks,
     version: packageVersion(),
   });
 
@@ -381,6 +391,7 @@ export async function boot(deps: BootDeps = {}): Promise<RunningGateway> {
       stopCanary();
       supervisor.shutdown();
       await pool.shutdown();
+      await appRouteTasks.settled();
       await notifier.drain();
       await Promise.all(servers.map((s) => closeServer(s)));
       db.pragma("wal_checkpoint(TRUNCATE)");
