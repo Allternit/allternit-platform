@@ -483,7 +483,10 @@ export class ScrcpySession {
   private readonly metaPromise: Promise<void>;
   private videoSocket: ScrcpySocket | null = null;
   private controlSocket: ScrcpySocket | null = null;
-  private controlStarting = false;
+  /** The first session packet, held until the control socket is attached. */
+  private pendingLive: ParsedSessionPacket | null = null;
+  private live = false;
+  private endReason: string | null = null;
   private shell: ScrcpyShell | null = null;
   private ended = false;
   private intentionalClose = false;
@@ -549,13 +552,82 @@ export class ScrcpySession {
       if (!this.intentionalClose && !this.ended) this.dispose(`the scrcpy server on the phone stopped (exit ${code ?? 'signal'})`);
     });
 
-    const video = await this.connectWithRetry();
-    this.videoSocket = video;
-    this.attachSocket(video, 'video');
+    await this.connectVideo();
     this.log(`video socket connected on 127.0.0.1:${this.port}`);
+    // The server sends the device name, codec and first session packet only
+    // after it has accepted every socket (DesktopConnection.open, then
+    // Server.java sendDeviceMeta), so the control socket connects now, right
+    // after the dummy byte, not after the header.
+    const control = await this.connectWithRetry();
+    if (this.ended) {
+      control.destroy();
+      throw new Error(this.endReason ?? 'The session was closed while connecting.');
+    }
+    this.controlSocket = control;
+    this.attachSocket(control, 'control');
+    this.maybeGoLive();
     // Resolve start() only once the stream is live (meta emitted) — or reject
     // with the reason it failed, so callers get a real verdict.
     await this.metaPromise;
+  }
+
+  /**
+   * Connect the video socket the way scrcpy's client does
+   * (server.c connect_and_read_byte): through an adb forward the TCP connect
+   * succeeds even while nothing listens on the phone yet, and adb then closes
+   * it. Only the server's dummy byte proves the server accepted, so a close
+   * before that byte is a retry, not the end of the stream.
+   */
+  private async connectVideo(): Promise<void> {
+    let lastError = 'no attempt was made';
+    for (let attempt = 0; attempt < CONNECT_RETRIES; attempt += 1) {
+      if (this.ended) throw new Error(this.endReason ?? 'The session was closed while connecting.');
+      let socket: ScrcpySocket;
+      try {
+        socket = await this.deps.connect(this.port);
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error);
+        await new Promise((r) => setTimeout(r, CONNECT_RETRY_MS));
+        continue;
+      }
+      // Held here so dispose() (start timeout) destroys a socket still waiting for its byte.
+      this.videoSocket = socket;
+      const accepted = await new Promise<boolean>((resolve) => {
+        let probing = true;
+        socket.on('data', (chunk) => {
+          if (probing) {
+            probing = false;
+            resolve(true);
+          }
+          this.onVideoData(chunk);
+        });
+        socket.on('error', (error) => {
+          if (probing) {
+            probing = false;
+            lastError = error.message;
+            resolve(false);
+            return;
+          }
+          this.dispose(`video socket error: ${error.message}`);
+        });
+        socket.on('close', () => {
+          if (probing) {
+            probing = false;
+            lastError = 'the connection closed before the server answered';
+            resolve(false);
+            return;
+          }
+          if (!this.intentionalClose && !this.ended) this.dispose('the video stream closed (phone unplugged or server stopped)');
+        });
+      });
+      if (accepted) return;
+      this.videoSocket = null;
+      socket.destroy();
+      if (this.ended) break;
+      await new Promise((r) => setTimeout(r, CONNECT_RETRY_MS));
+    }
+    if (this.ended) throw new Error(this.endReason ?? 'The session was closed while connecting.');
+    throw new Error(`Could not connect to the scrcpy server (127.0.0.1:${this.port}): ${lastError}`);
   }
 
   /** Connect + read the video header; called by the socket reader as bytes arrive. */
@@ -617,24 +689,21 @@ export class ScrcpySession {
 
   private onSessionPacket(packet: ParsedSessionPacket): void {
     this.videoSize = { width: packet.width, height: packet.height };
-    if (!this.controlSocket && !this.controlStarting) {
-      // First session packet: connect the control channel once, then go live.
-      this.controlStarting = true;
-      void this.finishStart(packet).catch((error) => this.dispose(error instanceof Error ? error.message : String(error)));
+    if (!this.live && !this.pendingLive) {
+      // First session packet: go live once the control socket is attached too.
+      this.pendingLive = packet;
+      this.maybeGoLive();
       return;
     }
     this.emit('deviceMessage', { type: 'size', width: packet.width, height: packet.height, clientResized: packet.clientResized });
   }
 
-  private async finishStart(packet: ParsedSessionPacket): Promise<void> {
+  private maybeGoLive(): void {
+    const packet = this.pendingLive;
+    if (this.ended || this.live || !packet || !this.controlSocket) return;
+    this.pendingLive = null;
+    this.live = true;
     this.clearStartTimeout();
-    const control = await this.connectWithRetry();
-    if (this.ended) {
-      control.destroy();
-      return;
-    }
-    this.controlSocket = control;
-    this.attachSocket(control, 'control');
     this.emit('meta', {
       deviceName: this.deviceName,
       width: packet.width,
@@ -674,7 +743,7 @@ export class ScrcpySession {
   private async connectWithRetry(): Promise<ScrcpySocket> {
     let lastError: unknown = null;
     for (let attempt = 0; attempt < CONNECT_RETRIES; attempt += 1) {
-      if (this.ended) throw new Error('The session was closed while connecting.');
+      if (this.ended) throw new Error(this.endReason ?? 'The session was closed while connecting.');
       try {
         return await this.deps.connect(this.port);
       } catch (error) {
@@ -725,6 +794,8 @@ export class ScrcpySession {
   private dispose(reason: string): void {
     if (this.ended) return;
     this.ended = true;
+    this.endReason = reason;
+    this.log(`ended: ${reason}`);
     this.clearStartTimeout();
     this.metaReject?.(new Error(reason));
     this.metaResolve = null;

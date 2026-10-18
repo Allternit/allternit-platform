@@ -21,6 +21,7 @@
  * stream wiring.
  */
 
+import WebSocket from 'ws';
 import type { PhoneInputEvent, PhoneStreamMeta } from './phone-scrcpy.js';
 
 export interface LinkedPhoneSummary {
@@ -262,10 +263,8 @@ export class PhoneLinkPhoneSocket {
   }
 }
 
-/** The real ws client (lazy import so tests never touch it). */
+/** The real ws client (tests inject createSocket instead). Main is ESM, so no require(). */
 function defaultSocket(url: string, headers: Record<string, string>): PhoneLinkSocket {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const WebSocket = require('ws') as typeof import('ws').WebSocket;
   const ws = new WebSocket(url, { headers });
   return {
     send: (data) => ws.send(data),

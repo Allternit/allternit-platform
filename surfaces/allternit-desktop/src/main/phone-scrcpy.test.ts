@@ -243,7 +243,7 @@ function fakeAdb() {
   return { adb, calls, kill, endShell: (code: number | null) => shellDone(code) };
 }
 
-function makeSession(opts: { deviceName?: string; width?: number; height?: number; startTimeoutMs?: number } = {}) {
+function makeSession(opts: { deviceName?: string; width?: number; height?: number; startTimeoutMs?: number; onConnect?: (s: FakeSocket, n: number) => void } = {}) {
   const { adb, calls, kill, endShell } = fakeAdb();
   const sockets: FakeSocket[] = [];
   const session = new ScrcpySession(
@@ -254,6 +254,7 @@ function makeSession(opts: { deviceName?: string; width?: number; height?: numbe
       connect: async () => {
         const s = new FakeSocket();
         sockets.push(s);
+        opts.onConnect?.(s, sockets.length);
         return s as unknown as ScrcpySocket;
       },
       port: 27183,
@@ -269,13 +270,17 @@ function makeSession(opts: { deviceName?: string; width?: number; height?: numbe
   session.on('videoChunk', (c) => chunks.push(Buffer.from(c)));
   session.on('deviceMessage', (m) => messages.push(m));
   session.on('ended', ended);
+  // Server order (DesktopConnection.open → sendDeviceMeta): dummy byte on
+  // accept, then the control accept, and only then the rest of the header.
   const goLive = async () => {
     const started = session.start();
     await vi.waitFor(() => expect(sockets.length).toBeGreaterThan(0)); // video socket connected
-    sockets[0].emit('data', headerBytes(opts.deviceName ?? 'Pixel 8', opts.width ?? 1080, opts.height ?? 2400));
+    const header = headerBytes(opts.deviceName ?? 'Pixel 8', opts.width ?? 1080, opts.height ?? 2400);
+    sockets[0].emit('data', header.subarray(0, 1));
+    await vi.waitFor(() => expect(sockets.length).toBe(2)); // control socket connected
+    sockets[0].emit('data', header.subarray(1));
     await started;
     expect(meta).toHaveBeenCalledWith({ deviceName: opts.deviceName ?? 'Pixel 8', width: opts.width ?? 1080, height: opts.height ?? 2400, codec: 'h264' } satisfies PhoneStreamMeta);
-    await vi.waitFor(() => expect(sockets.length).toBe(2)); // control socket connected
   };
   return { session, sockets, calls, kill, endShell, meta, chunks, messages, ended, goLive };
 }
@@ -299,8 +304,41 @@ describe('ScrcpySession', () => {
     const { session, sockets } = makeSession();
     const started = session.start();
     await vi.waitFor(() => expect(sockets.length).toBe(1));
-    for (const byte of headerBytes('Pixel 8')) sockets[0].emit('data', Buffer.from([byte]));
+    const header = headerBytes('Pixel 8');
+    sockets[0].emit('data', header.subarray(0, 1));
+    await vi.waitFor(() => expect(sockets.length).toBe(2));
+    for (const byte of header.subarray(1)) sockets[0].emit('data', Buffer.from([byte]));
     await started; // resolves only once live
+    session.close();
+  });
+
+  it('retries when the adb tunnel accepts and closes before the server listens', async () => {
+    // adb forward accepts the TCP connect even when nothing listens on the
+    // phone yet, then closes it (server.c connect_and_read_byte).
+    const { session, sockets, ended, meta } = makeSession({ onConnect: (s, n) => n <= 2 && queueMicrotask(() => s.destroy()) });
+    const started = session.start();
+    await vi.waitFor(() => expect(sockets.length).toBe(3), { timeout: 3000 });
+    expect(ended).not.toHaveBeenCalled();
+    const header = headerBytes('moto g play 2024');
+    sockets[2].emit('data', header.subarray(0, 1));
+    await vi.waitFor(() => expect(sockets.length).toBe(4)); // control
+    sockets[2].emit('data', header.subarray(1));
+    await started;
+    expect(meta).toHaveBeenCalledWith(expect.objectContaining({ deviceName: 'moto g play 2024' }));
+    expect(ended).not.toHaveBeenCalled();
+    session.close();
+  });
+
+  it('connects the control socket after the dummy byte, before the device name', async () => {
+    const { session, sockets, meta } = makeSession();
+    const started = session.start();
+    await vi.waitFor(() => expect(sockets.length).toBe(1));
+    sockets[0].emit('data', Buffer.from([0])); // the server sends nothing more until control is accepted
+    await vi.waitFor(() => expect(sockets.length).toBe(2));
+    expect(meta).not.toHaveBeenCalled();
+    sockets[0].emit('data', headerBytes('Pixel 8').subarray(1));
+    await started;
+    expect(meta).toHaveBeenCalledTimes(1);
     session.close();
   });
 
@@ -335,20 +373,19 @@ describe('ScrcpySession', () => {
   });
 
   it('connects the control socket once even with back-to-back session packets', async () => {
-    const { session, sockets, messages } = makeSession();
+    const { session, sockets, messages, meta } = makeSession();
     const started = session.start();
     await vi.waitFor(() => expect(sockets.length).toBe(1));
-    // header with TWO session packets coalesced into a single read
+    sockets[0].emit('data', Buffer.from([0]));
+    await vi.waitFor(() => expect(sockets.length).toBe(2));
+    // rest of the header with TWO session packets coalesced into a single read
     const name = Buffer.alloc(64);
     Buffer.from('Pixel 8').copy(name);
-    sockets[0].emit(
-      'data',
-      Buffer.concat([Buffer.from([0]), name, Buffer.from([0x68, 0x32, 0x36, 0x34]), sessionPacket(1080, 2400), sessionPacket(2400, 1080)]),
-    );
+    sockets[0].emit('data', Buffer.concat([name, Buffer.from([0x68, 0x32, 0x36, 0x34]), sessionPacket(1080, 2400), sessionPacket(2400, 1080)]));
     await started;
-    await vi.waitFor(() => expect(sockets.length).toBe(2));
     await new Promise((r) => setTimeout(r, 50));
     expect(sockets.length).toBe(2); // no duplicate control connection
+    expect(meta).toHaveBeenCalledTimes(1);
     expect(messages).toEqual([{ type: 'size', width: 2400, height: 1080, clientResized: false }]);
     session.close();
   });
