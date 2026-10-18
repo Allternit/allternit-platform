@@ -373,7 +373,6 @@ mod tests {
                 std::collections::HashMap::new(),
             )),
             design_skill_cache: crate::design_connector_routes::DesignSkillCache::new(),
-            #[cfg(unix)]
             terminal_sessions: crate::terminal_routes::TerminalSessionStore::new(),
             mcp_dispatcher: crate::mcp_dispatcher::McpDispatcher::new(),
             approval_store: Arc::new(crate::permission_policy::ApprovalStore::new()),

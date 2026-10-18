@@ -557,7 +557,6 @@ mod tests {
             office_cli_watches: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             office_cli_mcp_sessions: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             design_skill_cache: crate::design_connector_routes::DesignSkillCache::new(),
-            #[cfg(unix)]
             terminal_sessions: crate::terminal_routes::TerminalSessionStore::new(),
             mcp_dispatcher: crate::mcp_dispatcher::McpDispatcher::new(),
             approval_store: Arc::new(crate::permission_policy::ApprovalStore::new()),
