@@ -115,6 +115,22 @@ describe('PhoneLinkPhoneSocket', () => {
     client.stop();
   });
 
+  it('re-helloes with the Call audio summary when it changes (no device ids)', async () => {
+    let callBridge: { enabled: boolean; botName: string | null } | undefined;
+    const { deps, sockets } = makeDeps({ phone: () => ({ serial: 'ser1', model: 'Pixel 8', name: 'Pixel', ...(callBridge ? { callBridge } : {}) }) });
+    const client = new PhoneLinkPhoneSocket(deps);
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    sockets[0].simulateOpen();
+    callBridge = { enabled: true, botName: 'Receptionist' };
+    client.notePhoneChanged();
+    await vi.advanceTimersByTimeAsync(1_100);
+    const hellos = textFrames(sockets[0]).filter((f) => f.type === 'hello');
+    expect(hellos).toHaveLength(2);
+    expect(hellos.at(-1)?.phones).toEqual([{ serial: 'ser1', model: 'Pixel 8', name: 'Pixel', callBridge: { enabled: true, botName: 'Receptionist' } }]);
+    client.stop();
+  });
+
   it('reconnects with backoff after close; stop() prevents reconnects', async () => {
     const { deps, sockets } = makeDeps();
     const client = new PhoneLinkPhoneSocket(deps);

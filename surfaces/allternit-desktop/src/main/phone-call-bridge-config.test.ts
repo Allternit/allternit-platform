@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { callBridgeMissing, DEFAULT_CALL_BRIDGE, pickAudioDevice, sanitizeCallBridge, type CallBridgeConfig } from './phone-call-bridge-config.js';
+import { callBridgeMissing, callBridgeSummary, DEFAULT_CALL_BRIDGE, pickAudioDevice, sanitizeCallBridge, type CallBridgeConfig } from './phone-call-bridge-config.js';
 import { PhoneDeviceManager, type PhoneStore, type StoredPhone } from './phone-device-manager.js';
 import { fileLinkStore, findIosLinkRecord, setIosCallBridge, type IosLinkRecord } from './phone-link-ios.js';
 import { fileStore } from './phone-store-file.js';
@@ -37,6 +37,15 @@ describe('sanitizeCallBridge', () => {
     expect(sanitizeCallBridge({ ...CFG, extra: 'x', enabled: 'yes' })).toEqual({ ...CFG, enabled: false });
     expect(sanitizeCallBridge(null)).toEqual(DEFAULT_CALL_BRIDGE);
     expect(sanitizeCallBridge({ botId: '   ', inputLabel: 7 })).toEqual(DEFAULT_CALL_BRIDGE);
+  });
+});
+
+describe('callBridgeSummary', () => {
+  it('tells the cloud only on/off and the bot name', () => {
+    expect(callBridgeSummary({ ...CFG, botName: 'Receptionist' })).toEqual({ enabled: true, botName: 'Receptionist' });
+    expect(callBridgeSummary({ ...CFG, enabled: false, botName: 'Receptionist' })).toEqual({ enabled: false, botName: null });
+    expect(callBridgeSummary(null)).toEqual({ enabled: false, botName: null });
+    expect(sanitizeCallBridge({ ...CFG, botName: ' Receptionist ' }).botName).toBe('Receptionist');
   });
 });
 

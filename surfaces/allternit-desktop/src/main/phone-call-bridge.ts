@@ -126,8 +126,11 @@ export interface CallMediaJoin extends LinkedCallRoom {
 
 /** The hidden bridge window (phone-call-bridge-window.ts). */
 export interface CallMedia {
-  /** Are both sides of the cable present on this Mac right now? */
-  checkDevices(cfg: CallBridgeConfig): Promise<{ input: boolean; output: boolean }>;
+  /**
+   * Are both sides of the cable present on this Mac right now? `problem`
+   * names a cause other than a missing device (e.g. microphone access denied).
+   */
+  checkDevices(cfg: CallBridgeConfig): Promise<{ input: boolean; output: boolean; problem?: string }>;
   /** Join the room as the caller; rejects when the join fails. */
   join(serial: string, join: CallMediaJoin): Promise<void>;
   leave(serial: string): Promise<void>;
@@ -164,6 +167,9 @@ const SUPPORT: Record<CallBridgePlatform, { platformSupport: CallBridgePlatformS
     platformNote: "Answers from the iPhone's incoming-call screen. It can't see a call while the iPhone is locked; keep it unlocked on the charger.",
   },
 };
+
+/** checkDevices problems about microphone access start with this (kept visible like a cable error). */
+export const MIC_PROBLEM_PREFIX = 'Allow Allternit to use the microphone';
 
 export function cableMissingMessage(label: string): string {
   return `Call audio cable not found for ${label}`;
@@ -277,10 +283,10 @@ export class CallBridge extends EventEmitter {
     if (!phone) return null;
     const run = this.run(phone.serial);
     if (phone.config?.enabled && callBridgeMissing(phone.config) === null && (run.state === 'idle' || run.state === 'error')) {
-      const ok = await this.cablePresent(phone.config);
+      const cable = await this.cablePresent(phone.config);
       const msg = cableMissingMessage(phone.label);
-      if (!ok) run.error = msg;
-      else if (run.error === msg) run.error = undefined;
+      if (!cable.ok) run.error = cable.problem ?? msg;
+      else if (run.error === msg || run.error?.startsWith(MIC_PROBLEM_PREFIX)) run.error = undefined;
       this.emitStatus(phone);
     }
     return this.statusOf(phone);
@@ -299,6 +305,13 @@ export class CallBridge extends EventEmitter {
     run.room = undefined;
     this.beginEnding(phone, run);
     void this.deps.carrier[phone.platform].end(phone).catch(() => false);
+  }
+
+  /** The media window itself went away (renderer crash): every live call loses its room. */
+  mediaLost(reason: string): void {
+    for (const [serial, run] of this.runs) {
+      if (run.state === 'live' || run.state === 'answering') this.mediaDisconnected(serial, reason);
+    }
   }
 
   // ── the loop ──────────────────────────────────────────────────────────────
@@ -443,10 +456,10 @@ export class CallBridge extends EventEmitter {
     const cable = this.cablePresent(cfg);
     run.answerTimer = setTimeout(() => {
       run.answerTimer = undefined;
-      void cable.then((ok) => {
+      void cable.then((found) => {
         if (gen !== run.gen || run.state !== 'ringing') return;
-        if (!ok) {
-          this.refuseForCable(phone, run);
+        if (!found.ok) {
+          this.refuseForCable(phone, run, found.problem);
           return;
         }
         void this.answer(phone, run, gen);
@@ -454,19 +467,19 @@ export class CallBridge extends EventEmitter {
     }, ONE_RING_MS);
   }
 
-  private async cablePresent(cfg: CallBridgeConfig): Promise<boolean> {
+  private async cablePresent(cfg: CallBridgeConfig): Promise<{ ok: boolean; problem?: string }> {
     try {
       const found = await this.deps.media.checkDevices(cfg);
-      return found.input && found.output;
+      return found.input && found.output && !found.problem ? { ok: true } : { ok: false, ...(found.problem ? { problem: found.problem } : {}) };
     } catch (error) {
       this.deps.log?.(`[CallBridge] device check failed: ${error instanceof Error ? error.message : String(error)}`);
-      return false;
+      return { ok: false };
     }
   }
 
   /** Don't answer; raise the needs-you notice once for this ring. The phone keeps ringing for a person. */
-  private refuseForCable(phone: CallBridgePhone, run: Run): void {
-    const message = cableMissingMessage(phone.label);
+  private refuseForCable(phone: CallBridgePhone, run: Run, problem?: string): void {
+    const message = problem ?? cableMissingMessage(phone.label);
     run.state = 'error';
     run.error = message;
     run.ignoreUntilIdle = true;
@@ -477,7 +490,9 @@ export class CallBridge extends EventEmitter {
         type: 'notice',
         serial: phone.serial,
         title: message,
-        message: `The bot didn't answer a call on ${phone.label}. Plug the call audio cable into this Mac, or check the input and output in Call audio.`,
+        message: problem
+          ? `The bot didn't answer a call on ${phone.label}. ${problem}.`
+          : `The bot didn't answer a call on ${phone.label}. Plug the call audio cable into this Mac, or check the input and output in Call audio.`,
       } satisfies CallBridgeEvent);
     }
   }
@@ -596,7 +611,7 @@ export class CallBridge extends EventEmitter {
     run.endingSince = undefined;
     run.idleReads = 0;
     // A cable/answer error stays readable on the idle phone until the next call works.
-    if (clearError && !run.error?.startsWith('Call audio cable')) run.error = undefined;
+    if (clearError && !run.error?.startsWith('Call audio cable') && !run.error?.startsWith(MIC_PROBLEM_PREFIX)) run.error = undefined;
     this.emitStatus(phone);
   }
 
@@ -755,4 +770,45 @@ export function iosCarrierLine(
       return true;
     },
   };
+}
+
+// ── cloud-api: POST /api/v1/voice/linked-calls (contract C3.1) ─────────────
+
+export interface LinkedCallAuth {
+  baseUrl: () => string;
+  /** The paired runtime's device token (preferred: the route maps it to runtime + owner). */
+  deviceToken: () => string | null;
+  /** Fallback: the signed-in person's Clerk session token. */
+  clerkToken: () => Promise<string | null>;
+  fetch: typeof fetch;
+}
+
+export const LINKED_CALL_TIMEOUT_MS = 10_000;
+
+export async function requestLinkedCallRoom(auth: LinkedCallAuth, req: LinkedCallRequest): Promise<LinkedCallRoom> {
+  const headers: Record<string, string> = { 'content-type': 'application/json' };
+  const device = auth.deviceToken();
+  if (device) {
+    headers.authorization = `Bearer ${device}`;
+    headers['x-allternit-desktop-access-token'] = device;
+  } else {
+    const clerk = await auth.clerkToken();
+    if (!clerk) throw new Error('Sign in to Allternit Desktop so the bot can take calls');
+    headers.authorization = `Bearer ${clerk}`;
+  }
+  const res = await auth.fetch(`${auth.baseUrl().replace(/\/$/, '')}/api/v1/voice/linked-calls`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(req),
+    signal: AbortSignal.timeout(LINKED_CALL_TIMEOUT_MS),
+  });
+  const body = (await res.json().catch(() => ({}))) as Partial<LinkedCallRoom> & { error?: unknown; message?: unknown };
+  if (!res.ok) {
+    const why = typeof body.message === 'string' ? body.message : typeof body.error === 'string' ? body.error : `cloud-api answered ${res.status}`;
+    throw new Error(why);
+  }
+  if (typeof body.room !== 'string' || typeof body.livekitUrl !== 'string' || typeof body.token !== 'string' || typeof body.identity !== 'string') {
+    throw new Error('cloud-api returned an incomplete call room');
+  }
+  return { room: body.room, livekitUrl: body.livekitUrl, token: body.token, identity: body.identity };
 }

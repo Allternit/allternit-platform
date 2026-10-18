@@ -12,6 +12,7 @@ import {
   importHandover,
   openHandover,
   sealHandover,
+  type HandoverKey,
   type HandoverClientDeps,
   type HandoverStores,
 } from './phone-link-handover.js';
@@ -209,7 +210,7 @@ describe('pairing handover: the receiving phone gateway', () => {
     closers.push(gw.close);
     const h = { [PHONE_GATEWAY_TOKEN_HEADER]: 'tkn', 'content-type': 'application/json' };
     expect((await fetch(`${gw.url}/phone/handover/key`)).status).toBe(403);
-    const key = await (await fetch(`${gw.url}/phone/handover/key`, { headers: h })).json();
+    const key = (await (await fetch(`${gw.url}/phone/handover/key`, { headers: h })).json()) as HandoverKey;
     const sealed = sealHandover(exportPairing(mac(), 'moto-1', FROM), key, 'user_1');
     const res = await fetch(`${gw.url}/phone/handover`, { method: 'POST', headers: h, body: JSON.stringify({ sealed }) });
     expect(await res.json()).toMatchObject({ ok: true, deviceId: 'moto-1', platform: 'android' });

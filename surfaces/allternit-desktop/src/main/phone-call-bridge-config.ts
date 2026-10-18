@@ -12,6 +12,11 @@ export interface CallBridgeConfig {
   /** "Bot answers calls": answer after one ring and put the bot on the line. */
   enabled: boolean;
   botId: string | null;
+  /**
+   * Optional: the bot's display name as the settings sheet showed it. Only
+   * used for the cloud summary (web/PWA show "answered by <bot>").
+   */
+  botName?: string | null;
   /** Mac input that carries the caller's voice (the USB sound card's mic in). */
   inputDeviceId: string | null;
   inputLabel: string | null;
@@ -41,11 +46,17 @@ export function sanitizeCallBridge(raw: unknown): CallBridgeConfig {
   return {
     enabled: r.enabled === true,
     botId: str(r.botId, 128),
+    ...(r.botName !== undefined ? { botName: str(r.botName, 128) } : {}),
     inputDeviceId: str(r.inputDeviceId),
     inputLabel: str(r.inputLabel, 256),
     outputDeviceId: str(r.outputDeviceId),
     outputLabel: str(r.outputLabel, 256),
   };
+}
+
+/** What the cloud may know about a phone's Call audio (no device ids or labels: those stay on this Mac). */
+export function callBridgeSummary(cfg: CallBridgeConfig | null | undefined): { enabled: boolean; botName: string | null } {
+  return { enabled: cfg?.enabled === true, botName: cfg?.enabled ? (cfg.botName ?? null) : null };
 }
 
 /** What still has to be set before the bridge may answer, or null when ready. */

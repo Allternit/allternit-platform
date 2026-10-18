@@ -7,6 +7,7 @@ import {
   iosCarrierLine,
   ONE_RING_MS,
   parseIosCallScreen,
+  requestLinkedCallRoom,
   type AndroidCallLane,
   type CallBridgeEvent,
   type CallBridgePhone,
@@ -457,5 +458,49 @@ describe('carrier lines', () => {
       throw new Error('device locked');
     });
     expect(await line.read({ serial: 'link:x', deviceId: 'u', label: 'iPhone', platform: 'ios', online: true, config: CFG })).toBeNull();
+  });
+});
+
+describe('requestLinkedCallRoom', () => {
+  const REQ: LinkedCallRequest = {
+    botId: 'bot_1',
+    line: { kind: 'linked_phone', deviceId: 'ZY22ABC', serial: MOTO.serial, label: 'Moto', platform: 'android' },
+    direction: 'inbound',
+    from: '+15559876543',
+    to: null,
+  };
+  const ROOM = { room: 'call-lp-1', livekitUrl: 'wss://lk', token: 't', identity: 'linked-phone-ZY22ABC' };
+
+  it('posts with the device token and returns the room', async () => {
+    vi.useRealTimers();
+    const seen: { url: string; init: RequestInit }[] = [];
+    const fetchFn = (async (url: string, init: RequestInit) => {
+      seen.push({ url, init });
+      return new Response(JSON.stringify(ROOM), { status: 200 });
+    }) as unknown as typeof fetch;
+    const room = await requestLinkedCallRoom({ baseUrl: () => 'https://api.example/', deviceToken: () => 'dev-tok', clerkToken: async () => null, fetch: fetchFn }, REQ);
+    expect(room).toEqual(ROOM);
+    expect(seen[0].url).toBe('https://api.example/api/v1/voice/linked-calls');
+    expect((seen[0].init.headers as Record<string, string>).authorization).toBe('Bearer dev-tok');
+    expect(JSON.parse(String(seen[0].init.body))).toEqual(REQ);
+  });
+
+  it('falls back to the Clerk token, and refuses when signed out', async () => {
+    vi.useRealTimers();
+    const auths: string[] = [];
+    const fetchFn = (async (_u: string, init: RequestInit) => {
+      auths.push((init.headers as Record<string, string>).authorization);
+      return new Response(JSON.stringify(ROOM), { status: 200 });
+    }) as unknown as typeof fetch;
+    await requestLinkedCallRoom({ baseUrl: () => 'https://a', deviceToken: () => null, clerkToken: async () => 'clerk', fetch: fetchFn }, REQ);
+    expect(auths).toEqual(['Bearer clerk']);
+    await expect(requestLinkedCallRoom({ baseUrl: () => 'https://a', deviceToken: () => null, clerkToken: async () => null, fetch: fetchFn }, REQ)).rejects.toThrow(/Sign in/);
+    expect(auths).toHaveLength(1);
+  });
+
+  it('surfaces the refusal message (no voice on the plan, not your bot)', async () => {
+    vi.useRealTimers();
+    const fetchFn = (async () => new Response(JSON.stringify({ error: 'voice is not included in your plan' }), { status: 402 })) as unknown as typeof fetch;
+    await expect(requestLinkedCallRoom({ baseUrl: () => 'https://a', deviceToken: () => 'd', clerkToken: async () => null, fetch: fetchFn }, REQ)).rejects.toThrow('voice is not included in your plan');
   });
 });
