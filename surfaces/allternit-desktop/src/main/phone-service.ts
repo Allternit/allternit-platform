@@ -1039,6 +1039,17 @@ class PhoneService {
     this.channelReader ??= new PhoneChannelReader({
       call: (name, args) => runner.call(name, args) as never,
       cacheFile: path.join(this.dir(), 'phone-channels.json'),
+      crop: (b64, r, screenWidth) => {
+        const img = nativeImage.createFromBuffer(Buffer.from(b64, 'base64'));
+        const size = img.getSize();
+        if (!size.width) return null;
+        const k = size.width / screenWidth;
+        const rect = { x: Math.round(r.x * k), y: Math.round(r.y * k), width: Math.round(r.w * k), height: Math.round(r.h * k) };
+        if (rect.width < 1 || rect.height < 1 || rect.x + rect.width > size.width || rect.y + rect.height > size.height) return null;
+        let part = img.crop(rect);
+        if (rect.width > 600) part = part.resize({ width: 600 });
+        return `data:image/jpeg;base64,${part.toJPEG(78).toString('base64')}`;
+      },
     });
     return this.channelReader;
   }

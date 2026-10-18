@@ -12,6 +12,11 @@
  *
  * v1 reads what is on screen (the conversation list and the visible part of a
  * conversation). Scrolling back for older messages is a later step.
+ *
+ * Text is read as text. Anything else in a message (images, link cards,
+ * embeds, stickers, attachments) is cut out of one screenshot taken with the
+ * read, at its place on screen, so the bot phone shows what it really looks
+ * like rather than its accessibility description (Eoj, 2026-10-18).
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -28,11 +33,20 @@ export interface ChannelConversation {
   unread: number;
 }
 
+type Rect = { x: number; y: number; w: number; h: number };
+
+/** A piece of a message: text, or a picture of a non-text element. `alt` is its text for search and screen readers. */
+export type MessagePart =
+  | { kind: 'text'; text: string }
+  | { kind: 'image'; alt: string; src?: string; width: number; height: number; crop?: Rect };
+
 export interface ChannelMessage {
   author: string;
   time: string | null;
+  /** Plain-text version (previews, search, older copies). */
   text: string;
   mine: boolean;
+  parts?: MessagePart[];
 }
 
 export type ReaderResult<T> = { ok: true; data: T; readAt: string } | { ok: false; error: string; message: string };
@@ -175,25 +189,55 @@ const discord: ChannelAppSpec = {
   messages(nodes, me) {
     const out: ChannelMessage[] = [];
     const composer = nodes.find((n) => n.editable);
+    const top = 170;
     const bottom = composer?.rect?.y ?? Number.POSITIVE_INFINITY;
     // Discord's own action buttons (Send a wave, Invite…) are not message content.
     const buttons = nodes.filter((n) => n.type === 'Button' && n.rect);
     const inButton = (n: UiNode) => buttons.some((b) => b === n || nodesInside([n], b).length > 0);
+    // A message's body is the accessories_view list: each child is a text
+    // line or a block (embed card, attachment, sticker) shown as a picture.
+    const lists = nodes.filter((n) => n.id?.endsWith('accessories_view') && n.rect);
+    const blockOf = (n: UiNode) => lists.find((l) => n.depth === l.depth + 1 && nodesInside([n], l).length > 0);
+    const underList = (n: UiNode) => lists.some((l) => n.depth > l.depth + 1 && nodesInside([n], l).length > 0);
     let current: { author: string; time: string | null } | null = null;
+    const add = (part: MessagePart) => {
+      if (!current) return;
+      const last = out[out.length - 1];
+      const msg = last && last.author === current.author && last.time === current.time
+        ? last
+        : (out.push({ author: current.author, time: current.time, text: '', mine: me !== null && current.author === me, parts: [] }), out[out.length - 1]);
+      const line = part.kind === 'text' ? part.text : `[${part.alt.split('\n')[0].slice(0, 80) || 'Image'}]`;
+      msg.text = msg.text ? `${msg.text}\n${line}` : line;
+      msg.parts!.push(part);
+    };
+    const picture = (n: UiNode, alt: string) => {
+      const r = n.rect!;
+      const y0 = Math.max(r.y, top), y1 = Math.min(r.y + r.h, bottom);
+      if (y1 - y0 < 24 || r.w < 24) return;
+      add({ kind: 'image', alt, width: r.w, height: y1 - y0, crop: { x: r.x, y: y0, w: r.w, h: y1 - y0 } });
+    };
     for (const n of nodes) {
-      if (!n.rect || n.rect.y >= bottom || n.rect.y < 170 || inButton(n)) continue;
+      if (!n.rect || n.rect.y + n.rect.h <= top || n.rect.y >= bottom || inButton(n)) continue;
       const header = n.label ? DISCORD_HEADER.exec(n.label) : null;
       if (header && n.type !== 'TextView') {
         current = { author: header[1], time: header[2] };
         continue;
       }
       if (n.id?.endsWith('author_name') || n.id?.endsWith('timestamp') || n.id?.endsWith('middle_text')) continue;
-      if (!current || !n.label) continue;
-      const text = n.type === 'ImageView' ? `[${n.label}]` : n.type === 'TextView' ? n.label : null;
-      if (!text || text === current.time) continue;
-      const last = out[out.length - 1];
-      if (last && last.author === current.author && last.time === current.time) last.text += `\n${text}`;
-      else out.push({ author: current.author, time: current.time, text, mine: me !== null && current.author === me });
+      if (!current || underList(n)) continue;
+      if (blockOf(n)) {
+        if (n.type === 'TextView' && n.label) { if (n.label !== current.time) add({ kind: 'text', text: n.label }); continue; }
+        const inner = nodesInside(nodes, n);
+        if (!inner.some((c) => c.type === 'ImageView' || c.id?.endsWith('border')) && n.type !== 'ImageView') {
+          for (const t of inner) if (t.type === 'TextView' && t.label) add({ kind: 'text', text: t.label });
+          continue;
+        }
+        picture(n, inner.map((c) => c.label).filter((l): l is string => Boolean(l)).join('\n') || n.label || 'Image');
+        continue;
+      }
+      if (!n.label) continue;
+      if (n.type === 'TextView' && n.label !== current.time) add({ kind: 'text', text: n.label });
+      else if (n.type === 'ImageView') picture(n, n.label);
     }
     return out;
   },
@@ -228,6 +272,8 @@ export interface ChannelReaderDeps {
   cacheFile: string;
   now?: () => Date;
   wait?: (ms: number) => Promise<void>;
+  /** Cut `rect` (screen coordinates; the screen is `screenWidth` wide) out of a screenshot → data URL, or null. */
+  crop?: (imageBase64: string, rect: Rect, screenWidth: number) => string | null;
 }
 
 export class PhoneChannelReader {
@@ -265,7 +311,7 @@ export class PhoneChannelReader {
   messages(serial: string, app: string, conversation: ChannelConversation): Promise<ReaderResult<ChannelMessage[]>> {
     return this.run(serial, app, async (spec, nav) => {
       await spec.open(nav, conversation);
-      const data = spec.messages(await nav.read(), this.cache.me[app] ?? null);
+      const data = await this.readMessages(spec, nav, app);
       this.cache.messages[`${app}::${conversation.id}`] = { data, readAt: this.stamp() };
       return data;
     });
@@ -277,10 +323,27 @@ export class PhoneChannelReader {
     return this.run(serial, app, async (spec, nav) => {
       await spec.open(nav, conversation);
       await spec.send(nav, body);
-      const data = spec.messages(await nav.read(), this.cache.me[app] ?? null);
+      const data = await this.readMessages(spec, nav, app);
       this.cache.messages[`${app}::${conversation.id}`] = { data, readAt: this.stamp() };
       return data;
     });
+  }
+
+  /** Read the open conversation; non-text parts become crops of one screenshot. */
+  private async readMessages(spec: ChannelAppSpec, nav: ReaderNav, app: string): Promise<ChannelMessage[]> {
+    const nodes = await nav.read();
+    const data = spec.messages(nodes, this.cache.me[app] ?? null);
+    const pictures = data.flatMap((m) => m.parts ?? []).filter((p): p is Extract<MessagePart, { kind: 'image' }> => p.kind === 'image');
+    if (pictures.length && this.deps.crop) {
+      const shot = await nav.call('phone.screenshot', {}).catch(() => null);
+      const b64 = shot?.ok && typeof shot.dataBase64 === 'string' ? shot.dataBase64 : null;
+      const screenWidth = Math.max(0, ...nodes.map((n) => (n.rect ? n.rect.x + n.rect.w : 0)));
+      for (const p of pictures) {
+        if (b64 && p.crop && screenWidth > 0) p.src = this.deps.crop(b64, p.crop, screenWidth) ?? undefined;
+      }
+    }
+    for (const p of pictures) delete p.crop;
+    return data;
   }
 
   /** One operation at a time: each one drives the phone's screen. */
