@@ -236,6 +236,9 @@ impl Spawner {
         // Claude refuses bypassPermissions as root unless told it is in a
         // sandbox; Allternit's execution environment is that sandbox.
         let mut gate_env = gated.env;
+        if let Some(home) = std::env::var_os("HOME") {
+            super::trust::pre_trust(harness, &workdir, Path::new(&home));
+        }
         if hook::HookFlavor::of(harness) == Some(hook::HookFlavor::Claude) {
             gate_env.push(("IS_SANDBOX".to_string(), "1".to_string()));
         }

@@ -547,6 +547,10 @@ enum WihCmd {
     List {
         #[arg(long)]
         ready: bool,
+        /// Every open node (not DONE/FAILED/CANCELLED/CLOSED):
+        /// `<dag> <node> <ready|claimed|waiting> <title…>`.
+        #[arg(long, conflicts_with = "ready")]
+        all: bool,
         #[arg(long = "dag")]
         dag_id: Option<String>,
     },
@@ -1003,7 +1007,7 @@ where
             }
         },
         Commands::Wih(cmd) => match cmd {
-            WihCmd::List { ready, dag_id } => {
+            WihCmd::List { ready, all, dag_id } => {
                 let events = ledger.query(LedgerQuery::default()).await?;
                 let dag_ids = if let Some(dag_id) = dag_id {
                     vec![dag_id]
@@ -1048,6 +1052,26 @@ where
                             if let Some(node) = dag.nodes.get(&node_id) {
                                 println!("{dag_id} {node_id} {}", node.title);
                             }
+                        }
+                    }
+                } else if all {
+                    for dag_id in dag_ids {
+                        let dag = project_dag(&events_for_dag(&events, &dag_id), &dag_id);
+                        let ready = ready_nodes(&dag);
+                        let mut nodes: Vec<_> = dag.nodes.iter().collect();
+                        nodes.sort_by(|a, b| a.0.cmp(b.0));
+                        for (node_id, node) in nodes {
+                            if matches!(node.status.as_str(), "DONE" | "FAILED" | "CANCELLED" | "CLOSED") {
+                                continue;
+                            }
+                            let state = if active.contains_key(node_id) {
+                                "claimed"
+                            } else if ready.contains(node_id) {
+                                "ready"
+                            } else {
+                                "waiting"
+                            };
+                            println!("{dag_id} {node_id} {state} {}", node.title);
                         }
                     }
                 } else {

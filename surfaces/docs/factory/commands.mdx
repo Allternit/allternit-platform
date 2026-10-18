@@ -89,8 +89,8 @@ The work and its proof. See [Workspace](/factory/workspace).
 |---|---|---|
 | `gizzi workspace campaign new\|list\|status\|pause\|finish` | `rig scope mission` | Campaigns |
 | `gizzi workspace plan new\|refine` | — | Create or change a plan |
-| `gizzi workspace node add` | `rig queue create`, `rig scope slice create` | Add a node and its folder |
-| `gizzi workspace node list [--mine]` | `rig queue list --owned`, `rig scope slice ls` | List nodes |
+| `gizzi workspace node add --dag --parent --title` | `rig queue create`, `rig scope slice create` | Add a node and its folder |
+| `gizzi workspace node list [--dag] [--ready\|--mine]` | `rig queue list --owned`, `rig scope slice ls` | List open nodes (ready, claimed, waiting) |
 | `gizzi workspace node claim\|handoff\|close` | `rig queue claim` / `handoff` | Pick up, hand off or close a node |
 | `gizzi workspace approve <node>` | `rig queue resolve` | Approve a node at its gate |
 | `gizzi workspace proof add\|show` | `rig proof add` / `show` | Add or show evidence |
