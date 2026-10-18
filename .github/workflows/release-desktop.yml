@@ -15,6 +15,12 @@ on:
         required: false
         type: boolean
         default: true
+      platforms:
+        description: 'Platforms to build (a partial run makes no release)'
+        required: false
+        type: choice
+        options: [all, windows, macos, linux]
+        default: all
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -77,6 +83,7 @@ jobs:
 
   # Build macOS .dmg (arm64 + x64, universal)
   build-macos:
+    if: github.event_name != 'workflow_dispatch' || inputs.platforms == 'all' || inputs.platforms == 'macos'
     name: Build macOS
     needs: [unit-tests, release-preflight]
     # macos-15, not macos-latest: macos-latest is macOS 26, and Zig 0.15.2
@@ -173,10 +180,26 @@ jobs:
         # prost-build (allternit-agent-system-rails) shells out to protoc.
         run: brew install protobuf
 
+      # Reuse last build's allternit-api and allternit-factory when no Rust input changed
+      # (.github/scripts/prebuilt-rust-bin.mjs); a hit skips the cargo builds.
+      - name: Restore prebuilt Rust binaries
+        uses: actions/cache/restore@v4
+        with:
+          path: .prebuilt/rust-macos
+          key: prebuilt-rust-macos-${{ github.sha }}-${{ github.run_id }}
+          restore-keys: prebuilt-rust-macos-
+
+      - name: Reuse prebuilt Rust binaries if unchanged
+        id: prebuilt
+        shell: bash
+        run: node .github/scripts/prebuilt-rust-bin.mjs check --dir .prebuilt/rust-macos
+
       - name: Build allternit-api (x86_64)
+        if: steps.prebuilt.outputs.hit != 'true'
         run: cargo build --release --target x86_64-apple-darwin --manifest-path cmd/allternit-api/Cargo.toml
 
       - name: Build allternit-api (aarch64)
+        if: steps.prebuilt.outputs.hit != 'true'
         run: cargo build --release --target aarch64-apple-darwin --manifest-path cmd/allternit-api/Cargo.toml
 
       - name: Create universal allternit-api binary
@@ -282,8 +305,10 @@ jobs:
         # every terminal (allternit-api /terminal, gizzi /pty), and gizzi finds
         # it next to itself in resources/bin. Universal lipo matches api/gizzi.
         run: |
-          cargo build --release -p allternit-factory --target x86_64-apple-darwin
-          cargo build --release -p allternit-factory --target aarch64-apple-darwin
+          if [ "${{ steps.prebuilt.outputs.hit }}" != true ]; then
+            cargo build --release -p allternit-factory --target x86_64-apple-darwin
+            cargo build --release -p allternit-factory --target aarch64-apple-darwin
+          fi
           mkdir -p surfaces/allternit-desktop/resources/bin
           lipo -create \
             target/x86_64-apple-darwin/release/allternit-factory \
@@ -291,6 +316,18 @@ jobs:
             -output surfaces/allternit-desktop/resources/bin/allternit-factory
           chmod +x surfaces/allternit-desktop/resources/bin/allternit-factory
           lipo -info surfaces/allternit-desktop/resources/bin/allternit-factory
+
+      - name: Record Rust binaries for reuse
+        if: steps.prebuilt.outputs.hit != 'true'
+        shell: bash
+        run: node .github/scripts/prebuilt-rust-bin.mjs save --dir .prebuilt/rust-macos --bin target/x86_64-apple-darwin/release/allternit-api --bin target/aarch64-apple-darwin/release/allternit-api --bin target/x86_64-apple-darwin/release/allternit-factory --bin target/aarch64-apple-darwin/release/allternit-factory
+
+      - name: Save prebuilt Rust binaries
+        if: steps.prebuilt.outputs.hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .prebuilt/rust-macos
+          key: prebuilt-rust-macos-${{ github.sha }}-${{ github.run_id }}
 
       # ── Step 3e3: Build the Phone Link Apple ID signer (optional) ──────────
       - name: Build allternit-sideload (optional)
@@ -394,6 +431,7 @@ jobs:
 
   # Build Windows NSIS installer
   build-windows:
+    if: github.event_name != 'workflow_dispatch' || inputs.platforms == 'all' || inputs.platforms == 'windows'
     name: Build Windows
     needs: [unit-tests, release-preflight]
     # windows-latest ships only VS2026 (major 18), which node-gyp 11.x cannot
@@ -478,7 +516,22 @@ jobs:
         with:
           token: ${{ secrets.ALLTERNIT_AI_CHECKOUT_TOKEN }}
 
+      # Reuse last build's allternit-api and allternit-factory when no Rust input changed
+      # (.github/scripts/prebuilt-rust-bin.mjs); a hit skips the cargo builds.
+      - name: Restore prebuilt Rust binaries
+        uses: actions/cache/restore@v4
+        with:
+          path: .prebuilt/rust-windows
+          key: prebuilt-rust-windows-${{ github.sha }}-${{ github.run_id }}
+          restore-keys: prebuilt-rust-windows-
+
+      - name: Reuse prebuilt Rust binaries if unchanged
+        id: prebuilt
+        shell: bash
+        run: node .github/scripts/prebuilt-rust-bin.mjs check --dir .prebuilt/rust-windows
+
       - name: Build allternit-api (Windows)
+        if: steps.prebuilt.outputs.hit != 'true'
         run: cargo build --release --target x86_64-pc-windows-msvc --manifest-path cmd/allternit-api/Cargo.toml
 
       - name: Copy allternit-api binary
@@ -565,11 +618,25 @@ jobs:
         # every terminal. prepare-factory.cjs then finds it already staged.
         shell: bash
         run: |
-          cargo build --release -p allternit-factory --target x86_64-pc-windows-msvc
+          if [ "${{ steps.prebuilt.outputs.hit }}" != true ]; then
+            cargo build --release -p allternit-factory --target x86_64-pc-windows-msvc
+          fi
           mkdir -p surfaces/allternit-desktop/resources/bin
           cp target/x86_64-pc-windows-msvc/release/allternit-factory.exe \
              surfaces/allternit-desktop/resources/bin/allternit-factory.exe
           ls -lh surfaces/allternit-desktop/resources/bin/allternit-factory.exe
+
+      - name: Record Rust binaries for reuse
+        if: steps.prebuilt.outputs.hit != 'true'
+        shell: bash
+        run: node .github/scripts/prebuilt-rust-bin.mjs save --dir .prebuilt/rust-windows --bin target/x86_64-pc-windows-msvc/release/allternit-api.exe --bin target/x86_64-pc-windows-msvc/release/allternit-factory.exe
+
+      - name: Save prebuilt Rust binaries
+        if: steps.prebuilt.outputs.hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .prebuilt/rust-windows
+          key: prebuilt-rust-windows-${{ github.sha }}-${{ github.run_id }}
 
       - name: Build open-connector sidecar bundle
         # services/open-connector is a plain npm project excluded from the
@@ -628,6 +695,7 @@ jobs:
   # Build Linux unpacked dir (smoke-test the linux electron-builder target;
   # artifacts are NOT attached to the GitHub release)
   build-linux:
+    if: github.event_name != 'workflow_dispatch' || inputs.platforms == 'all' || inputs.platforms == 'linux'
     name: Build Linux
     needs: [unit-tests, release-preflight]
     runs-on: ubuntu-latest
@@ -699,7 +767,22 @@ jobs:
         timeout-minutes: 10
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
+      # Reuse last build's allternit-api when no Rust input changed
+      # (.github/scripts/prebuilt-rust-bin.mjs); a hit skips the cargo builds.
+      - name: Restore prebuilt Rust binaries
+        uses: actions/cache/restore@v4
+        with:
+          path: .prebuilt/rust-linux
+          key: prebuilt-rust-linux-${{ github.sha }}-${{ github.run_id }}
+          restore-keys: prebuilt-rust-linux-
+
+      - name: Reuse prebuilt Rust binaries if unchanged
+        id: prebuilt
+        shell: bash
+        run: node .github/scripts/prebuilt-rust-bin.mjs check --dir .prebuilt/rust-linux
+
       - name: Build allternit-api (Linux)
+        if: steps.prebuilt.outputs.hit != 'true'
         run: cargo build --release --target x86_64-unknown-linux-gnu --manifest-path cmd/allternit-api/Cargo.toml
 
       - name: Copy allternit-api binary
@@ -708,6 +791,18 @@ jobs:
           cp target/x86_64-unknown-linux-gnu/release/allternit-api \
              surfaces/allternit-desktop/resources/bin/allternit-api
           chmod +x surfaces/allternit-desktop/resources/bin/allternit-api
+
+      - name: Record Rust binaries for reuse
+        if: steps.prebuilt.outputs.hit != 'true'
+        shell: bash
+        run: node .github/scripts/prebuilt-rust-bin.mjs save --dir .prebuilt/rust-linux --bin target/x86_64-unknown-linux-gnu/release/allternit-api
+
+      - name: Save prebuilt Rust binaries
+        if: steps.prebuilt.outputs.hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .prebuilt/rust-linux
+          key: prebuilt-rust-linux-${{ github.sha }}-${{ github.run_id }}
 
       - name: Build voice service sidecar (Linux)
         # Same as macOS/Windows: allternit-voice-service (STT + API, no GPL)
