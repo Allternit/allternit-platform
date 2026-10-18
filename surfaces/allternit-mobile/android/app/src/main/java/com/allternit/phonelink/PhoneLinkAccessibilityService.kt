@@ -284,9 +284,21 @@ class PhoneLinkAccessibilityService : AccessibilityService(), DeviceOps {
 
     // ── Apps ────────────────────────────────────────────────────────────────
 
-    override fun isInstalled(packageName: String): Boolean = packageManager.getLaunchIntentForPackage(packageName) != null
+    override fun isInstalled(packageName: String): Boolean =
+        packageManager.getLaunchIntentForPackage(packageName) != null && !isCarrierStub(packageName)
+
+    /**
+     * Carrier "stub" apps (e.g. a preloaded WhatsApp whose versionName reads
+     * "stub(132.0.26)") have a launcher icon but only open an install page.
+     * They are not installed apps: they never list and never launch.
+     */
+    private fun isCarrierStub(packageName: String): Boolean = try {
+        @Suppress("DEPRECATION")
+        packageManager.getPackageInfo(packageName, 0).versionName?.startsWith("stub", ignoreCase = true) == true
+    } catch (e: PackageManager.NameNotFoundException) { false }
 
     override fun launchApp(packageName: String): Boolean {
+        if (isCarrierStub(packageName)) return false
         val intent = packageManager.getLaunchIntentForPackage(packageName) ?: return false
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
         return try { startActivity(intent); true } catch (e: Exception) { false }
@@ -307,7 +319,7 @@ class PhoneLinkAccessibilityService : AccessibilityService(), DeviceOps {
         val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
         @Suppress("DEPRECATION")
         val list = packageManager.queryIntentActivities(intent, 0)
-        return list.distinctBy { it.activityInfo.packageName }.map { ri ->
+        return list.distinctBy { it.activityInfo.packageName }.filterNot { isCarrierStub(it.activityInfo.packageName) }.map { ri ->
             val ai = ri.activityInfo.applicationInfo
             val system = (ai.flags and ApplicationInfo.FLAG_SYSTEM) != 0 && (ai.flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) == 0
             AppInfo(ri.activityInfo.packageName, ri.loadLabel(packageManager).toString(), system)
