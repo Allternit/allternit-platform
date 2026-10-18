@@ -7,6 +7,8 @@ description: Run agents non-interactively with gizzi exec
 
 `gizzi exec` is a pipe-safe, non-interactive alias for `gizzi run`. It prints the response and exits without launching the TUI — ideal for scripts, CI pipelines, and shell automation.
 
+Both exit as soon as the run finishes. When the model is an installed coding CLI, the run serves its session tools to that CLI on a loopback port (`--port` picks it; a free port by default). `gizzi run --attach <url>` sends the run to an already running `gizzi serve` instead.
+
 ## Basic usage
 
 ```bash

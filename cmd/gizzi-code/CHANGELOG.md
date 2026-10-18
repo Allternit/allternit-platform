@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+## 2.2.8 (2026-10-18)
+
+### Fixed
+- Plan mode with an installed coding CLI as the model. The CLI used to run
+  with every permission bypassed, was never told where the plan goes, and had
+  no `plan_exit`, so a plan could not be handed over. A CLI with its own plan
+  mode now runs in it, and Gizzi answers that mode's permission questions:
+  the plan file may be edited, presenting the plan asks the Build Agent
+  question, and everything else is refused. A CLI with a sandbox plans
+  read-only. Every CLI gets `plan_exit`. The CLI ends its turn once the
+  question is asked, and a yes starts the build turn, however long the review
+  takes.
+- `gizzi run` serves the session on a loopback port (`--port`), so an
+  installed CLI reaches the session's tools instead of another server on
+  port 4096. `gizzi run` exits once the run finishes; it used to hang after
+  the answer. `gizzi run --attach` no longer fails with "No context found for
+  instance".
+- Factory: messages sent to a Claude Code pane no longer queue forever; folded
+  pastes count as delivered; `node list` shows every open node; spawning
+  pre-trusts the work folder.
+- Memory Drive: a forgotten agent memory no longer comes back at the next sync.
+
+### Added
+- Windows: terminals and the Factory engine run in Desktop (named-pipe pane
+  transport, cmd.exe runner, Windows file locks); the Model Lab local engine
+  ships on Windows with GPU detection and readable start errors.
+- Memory Drive activity log: memory_recall and memory_write report to it.
+- MCP tool pinning: app bots only call the tools pinned for them, and new
+  tools are approved from the inbox.
+
+### Removed
+- The unshipped "Sign in with ChatGPT" provider (it was behind a flag that was off).
+
 ## 2.2.7 (2026-10-16)
 
 ### Added

@@ -24,7 +24,7 @@ import type {
   TaskHandle,
 } from "@/runtime/runtime-driver"
 import { claudeToolDecision, deniedMessage } from "@/runtime/bots/bot-turn"
-import { acpCanLoadSession, acpMcpServers, claudePermissionFlags, claudeSessionFlags, codexThreadRequest, opencodeResumeFlags, qwenResumeFlags, vendorSessionIdFromEvent, codexMcpConfig, withInstructions } from "@/runtime/drivers/cli-session-flags"
+import { acpCanLoadSession, acpMcpServers, claudePermissionFlags, claudeSessionFlags, codexPlanParams, codexThreadRequest, opencodeResumeFlags, qwenResumeFlags, vendorSessionIdFromEvent, codexMcpConfig, withInstructions } from "@/runtime/drivers/cli-session-flags"
 import { attachmentsToAcpContent } from "./attachments"
 import { RuntimeService, RuntimeNotFoundError, type RegisteredRuntime } from "@/runtime/runtime-service"
 import { ExecutionLogService } from "@/runtime/execution-log"
@@ -165,6 +165,7 @@ export class LocalCliDriver implements RuntimeDriver {
       mcp: task?.mcp,
       vendorSessionId: task?.vendorSessionId,
       bot: task?.bot,
+      plan: task?.plan,
     })
 
     const env = adapter.env ? { ...adapter.env, ...task?.env } : task?.env
@@ -1549,6 +1550,7 @@ export class LocalCliDriver implements RuntimeDriver {
         ...(model ? { model } : {}),
         developerInstructions: systemPrompt,
         ...(mcpConfig ? { config: mcpConfig } : {}),
+        ...codexPlanParams(this.tasks.get(handle.taskId)?.plan),
       }
       const resumeId = this.tasks.get(handle.taskId)?.vendorSessionId
       let thread: unknown
@@ -1750,6 +1752,7 @@ interface CliAdapter {
       mcp?: AgentTask["mcp"]
       vendorSessionId?: string
       bot?: AgentTask["bot"]
+      plan?: AgentTask["plan"]
     },
   ): string[]
 }

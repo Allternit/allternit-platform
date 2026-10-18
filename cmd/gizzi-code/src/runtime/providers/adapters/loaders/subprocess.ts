@@ -20,6 +20,7 @@ import { Server } from "@/runtime/server/server"
 import { VendorSession } from "@/runtime/session/vendor-session"
 import { Instance } from "@/runtime/context/project/instance"
 import * as BotTurn from "@/runtime/bots/bot-turn"
+import { planInstructions } from "@/runtime/drivers/cli-session-flags"
 
 const log = Log.create({ service: "subprocess-lm" })
 
@@ -69,6 +70,11 @@ export class SubprocessLanguageModel implements LanguageModelV2 {
     const { runtime, driver } = await RuntimeDriverFactory.resolveCli(this.providerID)
     const sessionID = resolveTaskSessionID(options?.headers)
     const vendorSessionId = sessionID ? await VendorSession.get(sessionID, this.providerID) : undefined
+    // A plan turn (bots never plan): the CLI runs read-only and hands the plan over through the bridge.
+    const bot = BotTurn.get(sessionID)
+    const planFile = sessionID && !bot ? await CliBridge.planFile(sessionID).catch(() => undefined) : undefined
+    const plan = planFile ? { file: planFile } : undefined
+    const systemText = extractSystemText(options.prompt ?? [])
     const task = await driver.assign({
       taskId: generateTaskId(),
       prompt: message,
@@ -76,7 +82,7 @@ export class SubprocessLanguageModel implements LanguageModelV2 {
       // The session's instructions (mode contract, artifact-session note…)
       // go to the CLI as its system prompt; without them it only sees the
       // last user message.
-      systemPrompt: extractSystemText(options.prompt ?? []) || undefined,
+      systemPrompt: [systemText, plan ? planInstructions(this.providerID, plan) : ""].filter(Boolean).join("\n\n") || undefined,
       // The CLI executes its own tools opaquely; the session id lets the
       // driver's ACP permission requests gate through the session's
       // PermissionNext policy instead of auto-approving.
@@ -89,7 +95,8 @@ export class SubprocessLanguageModel implements LanguageModelV2 {
       mcp: sessionID ? bridgeConfig(sessionID) : undefined,
       // A bot turn: the CLI runs isolated from the user's own settings, with
       // the bot's tool allowlist (runtime/bots/bot-turn.ts).
-      bot: BotTurn.get(sessionID),
+      bot,
+      plan,
     })
 
     const stream = new ReadableStream<LanguageModelV2StreamPart>({
