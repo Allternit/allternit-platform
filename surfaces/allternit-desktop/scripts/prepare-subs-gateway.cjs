@@ -198,8 +198,20 @@ async function smokeBoot() {
       resolve(/listening on http/.test(output));
     });
   });
-  child.kill('SIGTERM');
-  fs.rmSync(state, { recursive: true, force: true });
+  // Windows keeps state.db locked until the gateway has really exited, so
+  // wait for it before removing the temp state dir.
+  if (child.exitCode === null && child.signalCode === null) {
+    await new Promise((resolve) => {
+      child.once('exit', resolve);
+      child.kill('SIGTERM');
+      setTimeout(() => { child.kill('SIGKILL'); resolve(); }, 10_000);
+    });
+  }
+  try {
+    fs.rmSync(state, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  } catch (e) {
+    log(`Smoke boot: could not remove ${state} (${e.code}); leaving it`);
+  }
   if (!ok) fail(`bundle did not start:\n${output.slice(-4000)}`);
   const loadErrors = output.split('\n').filter((l) => /failed to load|Cannot find module|ERR_MODULE_NOT_FOUND/.test(l));
   if (loadErrors.length) fail(`bundle started but adapters failed to load:\n${loadErrors.slice(0, 20).join('\n')}`);
