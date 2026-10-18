@@ -8,6 +8,7 @@ import {
   messageId,
   normalizeAddress,
   parseCallState,
+  parseTelephonyState,
   parseContentQueryRows,
   parsePackageList,
   parseVersionName,
@@ -438,9 +439,15 @@ describe('callState', () => {
     expect(res).toEqual({ ok: true, state: 'active', number: '+15551234567' });
   });
 
-  it('maps ringing to active (the 3-state contract has no ringing)', async () => {
+  it('maps ringing to active for 3-state consumers and flags the ring', async () => {
     const res = await commsWith('', REGISTRY_RINGING).callState(SERIAL);
-    expect(res).toEqual({ ok: true, state: 'active', number: '+15559876543' });
+    expect(res).toEqual({ ok: true, state: 'active', number: '+15559876543', ringing: true });
+  });
+
+  it('asks dumpsys for the caller-number line too (grep keeps mCallIncomingNumber)', async () => {
+    const { comms, calls } = makeComms({ handler: () => ({ stdout: REGISTRY_IDLE }) });
+    await comms.callState(SERIAL);
+    expect(calls.some((c) => c.join(' ').includes('CallIncomingNumber'))).toBe(true);
   });
 
   it('falls back to UI presence when no mCallState lines parse (OEM rename)', async () => {
@@ -464,6 +471,58 @@ describe('callState', () => {
   it('is adb_failed only when both dumps fail', async () => {
     const { comms } = makeComms({ handler: () => ({ code: 1, stderr: 'error: device offline' }) });
     expect(await comms.callState(SERIAL)).toMatchObject({ ok: false });
+  });
+});
+
+// ── telephonyState / callAnswer (call bridge) ──────────────────────────────
+
+describe('parseTelephonyState', () => {
+  it('reads idle, ringing and offhook', () => {
+    expect(parseTelephonyState(REGISTRY_IDLE)).toEqual({ state: 'idle' });
+    expect(parseTelephonyState(REGISTRY_RINGING)).toEqual({ state: 'ringing', number: '+15559876543' });
+    expect(parseTelephonyState(REGISTRY_OFFHOOK)).toEqual({ state: 'offhook', number: '+15551234567' });
+  });
+
+  it('dual SIM: one subscription ringing beats an idle one', () => {
+    const dual = '  Phone Id=0\n  mCallState=0\n  Phone Id=1\n  mCallState=1\n  mCallIncomingNumber=+15550001111\n';
+    expect(parseTelephonyState(dual)).toEqual({ state: 'ringing', number: '+15550001111' });
+  });
+
+  it('a withheld caller rings with no number', () => {
+    expect(parseTelephonyState('  mCallState=1\n  mCallIncomingNumber=\n')).toEqual({ state: 'ringing' });
+  });
+
+  it('unknown when no mCallState line parses', () => {
+    expect(parseTelephonyState('')).toEqual({ state: 'unknown' });
+  });
+});
+
+describe('telephonyState', () => {
+  it('polls one cheap registry dump', async () => {
+    const { comms, calls } = makeComms({ handler: () => ({ stdout: REGISTRY_RINGING }) });
+    expect(await comms.telephonyState(SERIAL)).toEqual({ ok: true, state: 'ringing', number: '+15559876543' });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].join(' ')).toContain('telephony.registry');
+  });
+
+  it('grep finding nothing (exit 1, no stderr) is unknown, not a failure', async () => {
+    const { comms } = makeComms({ handler: () => ({ code: 1, stdout: '' }) });
+    expect(await comms.telephonyState(SERIAL)).toEqual({ ok: true, state: 'unknown' });
+  });
+
+  it('a dead transport is adb_failed', async () => {
+    const { comms } = makeComms({ handler: () => ({ code: 1, stderr: 'error: device offline' }) });
+    expect(await comms.telephonyState(SERIAL)).toMatchObject({ ok: false, message: expect.stringContaining('adb_failed') });
+  });
+});
+
+describe('callAnswer', () => {
+  it('sends KEYCODE_CALL by default and HEADSETHOOK on request', async () => {
+    const { comms, calls } = makeComms({ handler: () => ({}) });
+    expect(await comms.callAnswer(SERIAL)).toEqual({ ok: true });
+    expect(calls.at(-1)).toEqual(['shell', 'input', 'keyevent', 'KEYCODE_CALL']);
+    await comms.callAnswer(SERIAL, 'KEYCODE_HEADSETHOOK');
+    expect(calls.at(-1)).toEqual(['shell', 'input', 'keyevent', 'KEYCODE_HEADSETHOOK']);
   });
 });
 

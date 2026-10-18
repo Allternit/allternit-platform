@@ -8,7 +8,7 @@
  * and adb is only fetched the first time an Android phone is used.
  */
 
-import { app, dialog, nativeImage, safeStorage } from 'electron';
+import { app, dialog, nativeImage, Notification, safeStorage } from 'electron';
 import log from 'electron-log';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -17,7 +17,8 @@ import { spawnSidecar } from './process-lifeline.js';
 import { mcpHostManager } from './mcp-host-manager.js';
 import { createAdbCall, ensureAdb, resolveAdb } from './phone-adb.js';
 import { ArtemisManager } from './phone-artemis.js';
-import { PhoneDeviceManager, type PhoneStore, type StoredPhone } from './phone-device-manager.js';
+import { PhoneDeviceManager, type StoredPhone } from './phone-device-manager.js';
+import { fileStore, readJson, writeJson } from './phone-store-file.js';
 import { newGatewayToken, startPhoneGateway, type PhoneGatewayHandover } from './phone-gateway.js';
 import { execFileSync } from 'node:child_process';
 import { handOver, handoverKey, handoverTargets, importHandover, openHandover, type HandoverClientDeps, type HandoverStores } from './phone-link-handover.js';
@@ -44,7 +45,18 @@ import { loadFirmware, type BundledFirmware } from './phone-usb-agent-firmware.j
 import { grayFromBgra, type Gray } from './phone-usb-agent-vision.js';
 import type { Calibration } from './phone-usb-agent-pointer.js';
 import { IctrlClient, ictrlStoreKey, type SecretStore } from './ictrl-client.js';
-import { fileLinkStore } from './phone-link-ios.js';
+import { fileLinkStore, findIosLinkRecord, setIosCallBridge, type IosLinkRecord } from './phone-link-ios.js';
+import {
+  androidCarrierLine,
+  CallBridge,
+  iosCarrierLine,
+  requestLinkedCallRoom,
+  type CallBridgeEvent,
+  type CallBridgePhone,
+  type CallBridgeStatus,
+} from './phone-call-bridge.js';
+import { CallBridgeWindow } from './phone-call-bridge-window.js';
+import { callBridgeSummary, DEFAULT_CALL_BRIDGE, sanitizeCallBridge, type CallBridgeConfig } from './phone-call-bridge-config.js';
 import { IosRecoveryScheduler, type IosRecoveryDeps } from './phone-ios-recovery.js';
 import { createGoIosExec, createGoIosSpawn, ensureDdi, ensureGoIos, GoIos } from './phone-goios.js';
 import { ensureRunnerArtifacts, pickSigner } from './phone-ios-runner.js';
@@ -69,22 +81,7 @@ import {
 
 export const APPROVAL_TIMEOUT_MS = 120_000;
 
-function readJson<T>(file: string, fallback: T): T {
-  try {
-    return JSON.parse(fs.readFileSync(file, 'utf8')) as T;
-  } catch {
-    return fallback;
-  }
-}
-
-function writeJson(file: string, value: unknown, mode = 0o600): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(value, null, 2), { mode });
-}
-
-export function fileStore(file: string): PhoneStore {
-  return { load: () => readJson<StoredPhone[]>(file, []), save: (phones) => writeJson(file, phones) };
-}
+export { fileStore };
 
 const LINK_DETACH_GRACE_MS = 30_000;
 const LINK_SYNC_INTERVAL_MS = 60_000;
@@ -199,6 +196,9 @@ class PhoneService {
   private gatewayClose: (() => void) | null = null;
   private gatewayFile = path.join(os.homedir(), '.allternit', 'phone-gateway.json');
   private shimRegistered = false;
+  private callBridge: CallBridge | null = null;
+  private callBridgeWindow: CallBridgeWindow | null = null;
+  private iosRecordsCache: { at: number; records: IosLinkRecord[] } | null = null;
 
   getGatewayFile(): string {
     return this.gatewayFile;
@@ -456,6 +456,7 @@ class PhoneService {
         usb: () => this.usbAgents,
         activity: (serial, delta) => this.manager?.noteAgentActivity(serial, delta),
         links: () => this.ensureLinkedBackend(),
+        onDialPlaced: (serial, number) => this.callBridge?.noteOutboundDial(serial, number) ?? false,
       });
       this.runner = runner;
       const token = newGatewayToken();
@@ -511,6 +512,7 @@ class PhoneService {
         this.linkSyncTimer = setInterval(() => this.syncLinkSockets(), LINK_SYNC_INTERVAL_MS);
         this.linkSyncTimer.unref?.();
         this.syncLinkSockets();
+        this.ensureCallBridge();
         return manager;
       })();
       this.managerReady.catch(() => {
@@ -701,7 +703,14 @@ class PhoneService {
       },
       phone: () => {
         const p = this.manager?.list().find((entry) => entry.serial === serial);
-        return { serial, model: p?.model ?? '', name: p?.name || p?.model || 'Linked phone' };
+        const bridge = p ? this.manager?.getCallBridge(p.id) : null;
+        return {
+          serial,
+          model: p?.model ?? '',
+          name: p?.name || p?.model || 'Linked phone',
+          // Web/PWA show the Call audio state read-only; device ids and labels stay on this Mac.
+          ...(bridge ? { callBridge: callBridgeSummary(bridge) } : {}),
+        };
       },
       onViewerAttached: (s) => this.linkViewerAttached(s),
       onViewerDetached: (s) => this.linkViewerDetached(s),
@@ -823,6 +832,153 @@ class PhoneService {
    */
   async startForLinkedPhones(): Promise<void> {
     await this.ensureGateway().catch((error) => log.warn('[Phone] gateway for linked phones could not start:', error));
+    this.iosRecordsCache = null;
+    this.ensureCallBridge();
+  }
+
+  // ── Call bridge (CONTRACT-linked-phone-voice C5): the bot talks on a real  ──
+  // ── carrier call through an audio cable to this Mac. Logic and states live ──
+  // ── in phone-call-bridge.ts; this is the Electron glue.                    ──
+
+  /** The watcher: started with the Android lane or when a linked phone exists; idle phones cost nothing. */
+  ensureCallBridge(): CallBridge {
+    if (this.callBridge) return this.callBridge;
+    const media = new CallBridgeWindow({
+      onDisconnected: (serial, reason) => (serial === '*' ? bridge.mediaLost(reason) : bridge.mediaDisconnected(serial, reason)),
+      log: (m) => log.info(m),
+    });
+    const bridge: CallBridge = new CallBridge({
+      phones: () => this.callBridgePhones(),
+      carrier: {
+        android: androidCarrierLine(() => this.ensureComms()),
+        ios: iosCarrierLine((phone, method, params) => this.ensureLinkedBackend().helperCall(phone.serial, method, params ?? {})),
+      },
+      cloud: {
+        createRoom: (req) =>
+          requestLinkedCallRoom(
+            {
+              baseUrl: () => process.env.ALLTERNIT_CLOUD_API_URL || URLS.CLOUD_API,
+              deviceToken: () => authManager.getSessionSnapshot()?.accessToken || null,
+              clerkToken: () => authManager.getClerkToken(5_000),
+              fetch: (input, init) => fetch(input, init),
+            },
+            req,
+          ),
+      },
+      media,
+      log: (m) => log.info(m),
+    });
+    bridge.on('event', (ev: CallBridgeEvent) => {
+      // The needs-you notice: shown even when no Allternit window is open.
+      if (ev.type === 'notice') {
+        if (Notification.isSupported()) new Notification({ title: ev.title, body: ev.message }).show();
+        log.warn(`[CallBridge] ${ev.title}`);
+      }
+    });
+    bridge.start();
+    this.callBridge = bridge;
+    this.callBridgeWindow = media;
+    return bridge;
+  }
+
+  getCallBridge(): CallBridge | null {
+    return this.callBridge;
+  }
+
+  /** Linked iPhone records, re-read at most every 5 s (the watcher asks every second). */
+  private iosRecords(): IosLinkRecord[] {
+    const now = Date.now();
+    if (!this.iosRecordsCache || now - this.iosRecordsCache.at > 5_000) {
+      this.iosRecordsCache = { at: now, records: fileLinkStore(path.join(this.dir(), 'phone-link-ios.json')).all() };
+    }
+    return this.iosRecordsCache.records;
+  }
+
+  /** Every phone that can carry a bridged call: Android over adb, iPhones on the iCTRL helper. */
+  private callBridgePhones(): CallBridgePhone[] {
+    const out: CallBridgePhone[] = [];
+    const manager = this.manager;
+    for (const p of manager?.list() ?? []) {
+      out.push({
+        serial: p.serial,
+        deviceId: p.id,
+        label: p.name || p.model || 'Android phone',
+        platform: 'android',
+        online: p.state === 'online',
+        config: manager?.getCallBridge(p.id) ?? null,
+      });
+    }
+    const ios = this.iosRecords();
+    if (ios.length) {
+      const backend = this.ensureLinkedBackend();
+      for (const r of ios) {
+        const serial = `link:${r.deviceId ?? r.udid}`;
+        out.push({ serial, deviceId: r.udid, label: r.deviceName || 'iPhone', platform: 'ios', online: backend.has(serial), config: r.callBridge ?? null });
+      }
+    }
+    return out;
+  }
+
+  private async callBridgeLanes(): Promise<void> {
+    if (!this.manager && this.androidInUse()) await this.ensureReady().catch(() => {});
+    this.ensureCallBridge();
+  }
+
+  /** phone:call-bridge-get — the phone's Call audio settings (defaults when never set) and its live status. */
+  async callBridgeGet(serial: string): Promise<{ ok: true; config: CallBridgeConfig; status: CallBridgeStatus | null } | { ok: false; message: string }> {
+    await this.callBridgeLanes();
+    const android = this.manager?.list().find((p) => p.serial === serial || p.id === serial);
+    if (android) {
+      return { ok: true, config: this.manager?.getCallBridge(android.id) ?? { ...DEFAULT_CALL_BRIDGE }, status: this.callBridge?.statusFor(android.serial) ?? null };
+    }
+    const ios = findIosLinkRecord(fileLinkStore(path.join(this.dir(), 'phone-link-ios.json')), serial);
+    if (ios) {
+      return { ok: true, config: ios.callBridge ?? { ...DEFAULT_CALL_BRIDGE }, status: this.callBridge?.statusFor(`link:${ios.deviceId ?? ios.udid}`) ?? null };
+    }
+    return { ok: false, message: this.callBridgeUnknown(serial) };
+  }
+
+  /** phone:call-bridge-set — save Call audio on the phone's record; turning it on asks for the microphone once and checks the cable. */
+  async callBridgeSet(serial: string, raw: unknown): Promise<{ ok: true; config: CallBridgeConfig; status: CallBridgeStatus | null } | { ok: false; message: string }> {
+    await this.callBridgeLanes();
+    const cfg = sanitizeCallBridge(raw);
+    let key: string | null = null;
+    const android = this.manager?.list().find((p) => p.serial === serial || p.id === serial);
+    if (android && this.manager?.setCallBridge(android.id, cfg)) {
+      key = android.serial;
+      // Re-hello now so web/PWA see the new Call audio state (setCallBridge's 'devices' event does too, debounced).
+      this.linkSockets.get(android.serial)?.notePhoneChanged();
+    }
+    if (!key) {
+      const store = fileLinkStore(path.join(this.dir(), 'phone-link-ios.json'));
+      const ios = findIosLinkRecord(store, serial);
+      if (ios && setIosCallBridge(store, serial, cfg)) {
+        key = `link:${ios.deviceId ?? ios.udid}`;
+        this.iosRecordsCache = null;
+      }
+    }
+    if (!key) return { ok: false, message: this.callBridgeUnknown(serial) };
+    log.info(`[CallBridge] Call audio ${cfg.enabled ? 'on' : 'off'} for ${serial}`);
+    const bridge = this.ensureCallBridge();
+    if (cfg.enabled) await CallBridgeWindow.ensureMicAccess(true).catch(() => false);
+    const status = cfg.enabled ? await bridge.verifyCable(key) : bridge.statusFor(key);
+    if (status) bridge.emit('event', { type: 'status', status } satisfies CallBridgeEvent);
+    return { ok: true, config: cfg, status };
+  }
+
+  /** phone:call-bridge-status — every phone that can carry a bridged call. */
+  async callBridgeStatus(): Promise<CallBridgeStatus[]> {
+    await this.callBridgeLanes();
+    return this.callBridge?.status() ?? [];
+  }
+
+  private callBridgeUnknown(serial: string): string {
+    const android = fileAndroidLinkStore(path.join(this.dir(), 'phone-link-android.json'));
+    const bare = serial.startsWith('link:') ? serial.slice(5) : serial;
+    if (android.all().some((r) => r.deviceId === bare)) {
+      return 'Call audio needs an Android phone paired over wireless debugging (adb), or an iPhone. This phone uses the Allternit app link.';
+    }
+    return 'That phone is not linked to this computer.';
   }
 
   /** Called at launch: only brings a lane up if something was ever paired on it (zero cost for everyone else). */
@@ -882,6 +1038,10 @@ class PhoneService {
   }
 
   shutdown(): void {
+    this.callBridge?.stop();
+    this.callBridgeWindow?.destroy();
+    this.callBridge = null;
+    this.callBridgeWindow = null;
     this.iosRecovery?.stop();
     if (this.linkSyncTimer) clearInterval(this.linkSyncTimer);
     this.linkSyncTimer = null;

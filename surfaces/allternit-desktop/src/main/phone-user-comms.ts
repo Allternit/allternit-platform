@@ -43,7 +43,8 @@
  * parses we fall back to UI-presence (incall → 'active', else 'idle');
  * (3) the caller number is best-effort (mCallIncomingNumber, else a
  * `dat=tel:` in the activity dump, else omitted). Treat the state as a UI
- * hint, not ground truth.
+ * hint, not ground truth. A ringing call also sets `ringing: true`; the call
+ * bridge reads the ring directly through telephonyState().
  */
 
 import {
@@ -82,6 +83,12 @@ export interface PhoneSmsMessage {
 
 export type CommsEvent = { type: 'sms'; address: string };
 export type CallStateName = 'idle' | 'dialing' | 'active';
+/**
+ * The carrier line as the call bridge (phone-call-bridge.ts) needs it: unlike
+ * CallStateName it keeps an inbound ring apart from a live call, so the bridge
+ * can wait one ring and answer. 'unknown' = no mCallState line parsed.
+ */
+export type TelephonyStateName = 'idle' | 'ringing' | 'offhook' | 'unknown';
 
 export interface PhoneAppInfo {
   pkg: string;
@@ -260,6 +267,13 @@ export function parseVersionName(dumpsysStdout: string): string | undefined {
 export interface ParsedCallState {
   state: CallStateName;
   number?: string;
+  /** True while an inbound call rings (state still reads 'active' for older consumers). */
+  ringing?: true;
+}
+
+export interface ParsedTelephonyState {
+  state: TelephonyStateName;
+  number?: string;
 }
 
 const TEL_RE = /dat=tel:([^,\s)}]+)/i;
@@ -298,8 +312,26 @@ export function parseCallState(activitiesStdout: string, registryStdout: string)
 
   const out: ParsedCallState = { state };
   if (number) out.number = number;
+  if (states.length && Math.max(...states) === 1) out.ringing = true;
   return out;
 }
+
+/**
+ * The registry dump alone (cheap enough to poll every second): 0 idle,
+ * 1 ringing, 2 offhook, the highest state across subscriptions wins. A dual-SIM
+ * phone ringing on one SIM while the other is idle reads 'ringing'.
+ */
+export function parseTelephonyState(registryStdout: string): ParsedTelephonyState {
+  const states: number[] = [];
+  for (const m of registryStdout.matchAll(/callState\s*[=:]\s*(\d)/gi)) states.push(Number(m[1]));
+  const number = INCOMING_NUMBER_RE.exec(registryStdout)?.[1];
+  const worst = states.length ? Math.max(...states) : -1;
+  const state: TelephonyStateName = worst === 0 ? 'idle' : worst === 1 ? 'ringing' : worst === 2 ? 'offhook' : 'unknown';
+  return number ? { state, number } : { state };
+}
+
+/** `dumpsys telephony.registry` filtered to the call state and caller number lines. */
+const REGISTRY_CALL_GREP = "dumpsys telephony.registry | grep -iE 'callState|CallIncomingNumber'";
 
 // ── Bounded concurrency helper ──────────────────────────────────────────────
 
@@ -527,11 +559,11 @@ export class PhoneUserComms {
    * Best-effort call state — heuristic with documented limits (file header).
    * `number` is populated when the dumps happen to reveal it.
    */
-  async callState(serial: string): Promise<CommsResult<{ state: CallStateName; number?: string }>> {
+  async callState(serial: string): Promise<CommsResult<{ state: CallStateName; number?: string; ringing?: true }>> {
     try {
       const [activities, registry] = await Promise.all([
         this.deps.adb(['shell', 'dumpsys activity activities | grep -i incall'], { serial, timeoutMs: 15_000 }),
-        this.deps.adb(['shell', 'dumpsys telephony.registry | grep -i callState'], { serial, timeoutMs: 15_000 }),
+        this.deps.adb(['shell', REGISTRY_CALL_GREP], { serial, timeoutMs: 15_000 }),
       ]);
       if (activities.code !== 0 && registry.code !== 0) {
         const detail = (activities.stderr || registry.stderr || 'dumpsys failed').trim().slice(0, 300);
@@ -539,6 +571,41 @@ export class PhoneUserComms {
       }
       const parsed = parseCallState(activities.stdout, registry.stdout);
       return { ok: true, ...parsed };
+    } catch (error) {
+      return this.unexpected(error);
+    }
+  }
+
+  /**
+   * The carrier line for the call bridge: idle / ringing / offhook (+ the
+   * caller number when Android reveals it). One dumpsys, so it is cheap to
+   * poll every second.
+   */
+  async telephonyState(serial: string): Promise<CommsResult<ParsedTelephonyState>> {
+    try {
+      const res = await this.deps.adb(['shell', REGISTRY_CALL_GREP], { serial, timeoutMs: 5_000 });
+      // grep exits 1 when nothing matched: that is an OEM rename, not a dead phone.
+      if (res.code !== 0 && !(res.code === 1 && !res.stderr.trim())) {
+        return { ok: false, message: `adb_failed: ${(res.stderr || res.stdout || `adb exited ${res.code}`).trim().slice(0, 300)}` };
+      }
+      return { ok: true, ...parseTelephonyState(res.stdout) };
+    } catch (error) {
+      return this.unexpected(error);
+    }
+  }
+
+  /**
+   * Answer a ringing call the way a headset button would: KEYCODE_CALL, which
+   * the stock dialers take as "answer" while ringing.
+   */
+  async callAnswer(serial: string, key: 'KEYCODE_CALL' | 'KEYCODE_HEADSETHOOK' = 'KEYCODE_CALL'): Promise<CommsResult<{}>> {
+    try {
+      const res = await this.deps.adb(['shell', 'input', 'keyevent', key], { serial });
+      if (res.code !== 0) {
+        const detail = (res.stderr || res.stdout).trim().slice(0, 300);
+        return { ok: false, message: `adb_failed: ${detail || `adb exited ${res.code}`}` };
+      }
+      return { ok: true };
     } catch (error) {
       return this.unexpected(error);
     }

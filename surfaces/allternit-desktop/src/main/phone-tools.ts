@@ -91,6 +91,11 @@ export interface PhoneToolDeps {
   activity?: (serial: string, delta: number) => void;
   /** Phone-Linked phones, when any are linked. Consulted exactly like usb. */
   links?: () => PhoneLinkBackend | null;
+  /**
+   * An approved dial went out (phone-call-bridge.ts): true when the phone has
+   * Call audio set up, so the bot joins the call once it connects.
+   */
+  onDialPlaced?: (serial: string, number: string) => boolean;
 }
 
 // ── Result shapes ───────────────────────────────────────────────────────────
@@ -273,7 +278,7 @@ export const PHONE_TOOLS = [
   {
     name: 'phone.call.dial',
     description:
-      'Place a call from the phone\'s own SIM. Dial only — the bot cannot speak on a carrier call. The user must approve every call.',
+      'Place a call from the phone\'s own SIM. The user must approve every call. When Call audio is set up for this phone in Allternit Desktop (audio cable + "Bot answers calls"), you talk on the call once it connects; otherwise this only dials and you can\'t speak or listen.',
     inputSchema: {
       type: 'object',
       properties: { serial: serialProp, number: { type: 'string' }, subscription_id: { type: 'integer', minimum: 0 } },
@@ -771,6 +776,14 @@ export class PhoneToolRunner {
     if (res.code !== 0 || /Error|Exception|Permission Denial/i.test(res.stdout + res.stderr)) {
       return fail('adb_failed', (res.stderr || res.stdout).trim().slice(0, 300) || 'The phone refused to place the call.');
     }
-    return { ok: true, status: 'dialing', note: 'Call placed. The bot cannot speak or listen on a carrier call.' };
+    const bridged = this.deps.onDialPlaced?.(serial, number) === true;
+    return {
+      ok: true,
+      status: 'dialing',
+      bridged,
+      note: bridged
+        ? 'Call placed. You join the call through Call audio as soon as it connects.'
+        : 'Call placed. Call audio is not set up for this phone, so you cannot speak or listen on this call.',
+    };
   }
 }

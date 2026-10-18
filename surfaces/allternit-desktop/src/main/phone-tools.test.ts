@@ -38,7 +38,7 @@ function memoryRates(): RateStore & { data: Record<string, number[]> } {
   return { data, load: (k) => data[k] ?? [], save: (k, v) => void (data[k] = v) };
 }
 
-function runner(opts: { decision?: ApprovalDecision; handler?: Parameters<typeof makeAdb>[0]; now?: () => number; online?: string[]; artemis?: boolean; activity?: (serial: string, delta: number) => void } = {}) {
+function runner(opts: { decision?: ApprovalDecision; handler?: Parameters<typeof makeAdb>[0]; now?: () => number; online?: string[]; artemis?: boolean; activity?: (serial: string, delta: number) => void; onDialPlaced?: (serial: string, number: string) => boolean } = {}) {
   const { adb, calls } = makeAdb(opts.handler);
   const asked: ApprovalRequest[] = [];
   const rates = memoryRates();
@@ -51,6 +51,7 @@ function runner(opts: { decision?: ApprovalDecision; handler?: Parameters<typeof
     onlineSerials: () => opts.online ?? ['192.168.1.20:41234'],
     defaultSmsSubscription: async () => 3,
     activity: opts.activity,
+    onDialPlaced: opts.onDialPlaced,
   });
   return { r, calls, asked, rates };
 }
@@ -166,14 +167,26 @@ describe('approval gate: sms and dial', () => {
     expect(isEmergencyNumber('+15550102030')).toBe(false);
   });
 
-  it('dials only after approval, from the chosen SIM, and says it cannot speak', async () => {
+  it('dials only after approval, from the chosen SIM, and says it cannot speak without Call audio', async () => {
     const { r, calls, asked } = runner();
     const res = await r.call('phone.call.dial', { number: '555-010-2030', subscription_id: 4 });
-    expect(res).toMatchObject({ ok: true, status: 'dialing' });
+    expect(res).toMatchObject({ ok: true, status: 'dialing', bridged: false });
     expect(asked[0].kind).toBe('dial');
     expect(calls[0]).toContain('android.intent.action.CALL');
     expect(calls[0]).toContain('4');
     expect(String((res as unknown as { note: string }).note)).toMatch(/cannot speak/);
+  });
+
+  it('arms the call bridge after an approved dial when Call audio is set up', async () => {
+    const placed: [string, string][] = [];
+    const { r } = runner({ onDialPlaced: (serial, number) => (placed.push([serial, number]), true) });
+    const res = await r.call('phone.call.dial', { number: '+15550102030' });
+    expect(res).toMatchObject({ ok: true, bridged: true, note: expect.stringMatching(/Call audio/) });
+    expect(placed).toEqual([['192.168.1.20:41234', '+15550102030']]);
+    // A denied dial never arms it.
+    const denied = runner({ decision: 'denied', onDialPlaced: () => (placed.push(['x', 'y']), true) });
+    await denied.r.call('phone.call.dial', { number: '+15550102031' });
+    expect(placed).toHaveLength(1);
   });
 
   it('refuses a send when the phone does not accept it', async () => {

@@ -202,6 +202,19 @@ export class PhoneLinkBackend implements UsbPhoneBackend {
     }
   }
 
+  /**
+   * One raw helper call (iCTRL JSON-RPC) on a linked phone, for the call
+   * bridge's screen reads and taps. Rejects on any failure (unknown phone, no
+   * address, locked, unreachable).
+   */
+  async helperCall(serial: string, method: string, params: Record<string, unknown> = {}, timeoutMs = 5_000): Promise<unknown> {
+    const phone = this.deps.phones().find((p) => serial === LINK_SERIAL_PREFIX + p.deviceId);
+    if (!phone) throw new Error(`Phone ${serial} is not linked.`);
+    const host = await (this.deps.resolveHost ?? defaultResolveHost)(phone);
+    if (!host) throw new Error(`No address is known for ${phone.name ?? 'this phone'} yet.`);
+    return this.deps.client(phone, host).call(method, params, timeoutMs);
+  }
+
   // ── calls ────────────────────────────────────────────────────────────────
 
   private async invoke<T>(phone: LinkedPhone, method: string, params: Record<string, unknown> = {}, timeoutMs?: number): Promise<{ ok: true; value: T } | { ok: false; result: ToolResult }> {
