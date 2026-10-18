@@ -1,0 +1,62 @@
+---
+title: Delegate tasks to a project's bots
+description: Keep a project's to-do list, hand each task to a bot by dragging or with Assign to, or let Auto give tasks to whoever is free first.
+---
+
+**Delegate** is a project's to-do list that you hand to its bots. Tasks wait unassigned until you give one to a bot. That task then becomes a [project thread](/guides/bot-threads) for that bot and runs like any other project thread: it starts, reports back, and moves to review.
+
+Delegate is in every project: the bot project page and Projects-tab workspaces (Chat, Code and Cowork).
+
+## Open Delegate
+
+- **Bot project page:** choose **Delegate** in the pane's view menu, or **Open** on the Delegate card.
+- **Projects tab:** choose **Delegate** in the header, or in the pane's view menu.
+- **Phone (ai.allternit.com and the PWA):** the same menu opens Delegate full screen. The view shows one column, and you assign with **Assign to…** instead of dragging.
+
+## Add and hand out tasks
+
+1. Type a task in **Add a task**. You can also pick a time estimate (10 minutes to 2 hours).
+2. Give it to a bot:
+   - On a computer, drag the card by its handle onto a bot.
+   - Anywhere, choose **Assign to…** on the card and pick a bot. This works with the keyboard and screen readers too.
+3. While you drag over a bot, its row shows what the task adds. This is the bot's cost per task, the extra time and the finish time, when Allternit knows them.
+
+Remove a task you no longer need with the trash button. Once a task is handed out it is a thread: open it from the bot's lane, and resolve or reopen it from Threads.
+
+## How a bot works through its tasks
+
+Each bot works its delegated tasks **one at a time**. A task given to a bot that has nothing running in the project starts at once. Otherwise the task waits in the bot's lane and starts when the bot's running thread stops. A thread stops when it moves to review, is done, is blocked, needs you, or is paused. A blocked thread doesn't hold up the bot's next task, and it doesn't count toward the bot's busy time. It stays in the bot's lane in a warning colour until you answer it.
+
+A bot's lane shows what it runs now (with a pulsing dot) and what waits behind it. Tap any item to open its thread.
+
+The coordinator's own plans are separate. Threads that Al plans with dependencies still wait for those dependencies. Delegate only orders the tasks you handed out.
+
+## Auto
+
+Turn on **Auto** to hand every unassigned task out at once, and every new task as you add it. Each task goes to the bot with the least estimated work left in the project, then the bot with the fewest open threads. Auto is off by default and saved per project. If Auto can't hand a task out (for example, the project has no bots), the task stays unassigned and the view says why.
+
+## Cost and time are estimates
+
+- **Time** comes from your own estimate on each task. "Busy until" appears only when every item in a bot's lane has an estimate. For a running item, it counts the time already spent. Otherwise the bot shows **Busy** and how many tasks are in line.
+- **Cost per task** is the average real cost of the bot's last 20 finished task threads, from the usage ledger. A bot with no finished tasks shows **No cost history yet**. A bot that runs on your own vendor subscription averages $0.00, because Allternit meters nothing for it.
+- **In lanes** at the top adds each bot's cost per task over the tasks in its lane.
+
+None of these numbers is a quote or a promise. Check the thread's own usage for what a task actually cost.
+
+## Runtime API
+
+These are authenticated private data-plane routes. They are not a promise of public Cloud API availability. Every write returns the whole board.
+
+| Method | Runtime path | Purpose |
+| --- | --- | --- |
+| GET | `/api/v1/projects/:project_id/delegate` | The board: `auto`, unassigned `tasks`, each bot's lane, cost and busy minutes. |
+| POST | `/api/v1/projects/:project_id/delegate/tasks` | Add a task: `title`, optional `notes` and `estimateMin` (1–1440). With Auto on, it is handed out at once. |
+| DELETE | `/api/v1/projects/:project_id/delegate/tasks/:task_id` | Remove an unassigned task. |
+| POST | `/api/v1/projects/:project_id/delegate/tasks/:task_id/assign` | Hand a task to a bot on the project's team: `botId`. Returns the new `thread`. |
+| PUT | `/api/v1/projects/:project_id/delegate/auto` | Turn Auto on or off: `auto`. Turning it on hands out every unassigned task. |
+
+Errors come back as `{ "error": "…" }` written for people. They cover a task that is already handed out (409), a bot not on the team (400), a project with no bots (409) and a thread that could not start (502).
+
+When the API restarts, any bot that was freed by the restart starts its next waiting task.
+
+See [Projects and launch coordination](/guides/project-coordination) and [threads](/guides/bot-threads).

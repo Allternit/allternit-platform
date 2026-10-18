@@ -634,6 +634,29 @@
       ]
     },
     {
+      "id": "feature:project-delegate",
+      "label": "Project Delegate board",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "A project's to-do list handed to its bots: drag or Assign to, one task at a time per bot, Auto gives tasks to whoever is free first, cost and time shown as estimates.",
+      "touches": [
+        "allternit-ai/src/components/threads",
+        "allternit-ai/src/lib/bots",
+        "allternit-ai/src/views/project",
+        "allternit/cmd/allternit-api/src/delegate_*",
+        "allternit/cmd/allternit-api/src/coordinator_*"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-18",
+          "note": "Delegate ships in Projects first (bot project page + Projects tab); Factory team tab and Bot Mode lanes come after. Each bot runs delegated tasks one at a time; cost is the real ledger average per finished task, never a quote."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/project-delegate.mdx"
+      ]
+    },
+    {
       "id": "feature:cowork",
       "label": "Cowork",
       "product": "product:ai-allternit",

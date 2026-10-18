@@ -1218,6 +1218,20 @@ async fn patch_thread(
     .await;
     match res {
         Ok(Some(s)) => {
+            // A running thread that stops frees its bot for the next delegated task.
+            if matches!(before.status.as_str(), "working" | "planning") && !matches!(s.view.status.as_str(), "working" | "planning") {
+                if let Some(project_id) = s.view.project_id.clone() {
+                    let next = crate::delegate_routes::pump(&state.db, &project_id, &s.view.bot_id);
+                    if !next.is_empty() {
+                        let st = state.clone();
+                        let uid = user.user_id.clone();
+                        tokio::spawn(async move {
+                            let rt = crate::coordinator_routes::GizziCoordinator { state: st.clone() };
+                            crate::coordinator_routes::start_threads(&st.db, &rt, &uid, &project_id, next).await;
+                        });
+                    }
+                }
+            }
             // A thread reaching review/done may unblock queued dependents.
             if matches!(s.view.status.as_str(), "review" | "done") {
                 if let Some(project_id) = s.view.project_id.clone() {

@@ -38,6 +38,7 @@ These are authenticated private data-plane routes, not a promise of public Cloud
 | GET / POST | `/api/v1/projects/:project_id/messages` | Read project chat or send a coordinator request. |
 | POST | `/api/v1/projects/:project_id/start` | Start existing project threads. |
 | GET / PUT | `/api/v1/projects/:project_id/bots` | Read or set project team membership. |
+| GET / POST / PUT / DELETE | `/api/v1/projects/:project_id/delegate…` | The [Delegate](/guides/project-delegate) board: tasks, assignment and Auto. |
 | GET / PUT | `/api/v1/project-workspaces/:project_key` | Read or register a project workspace. |
 | POST | `/api/v1/project-workspaces/:project_key/threads` | Create a workspace thread. |
 
@@ -57,8 +58,8 @@ Project settings include icon, colour, and coordinator instructions. Coordinator
 
 ## Inspect project work
 
-The bot project page has one docked pane with **Threads · Library · Routines · Browser** in its view menu. Opening the pane collapses the details card to leave room for the work. Threads are grouped by work status. Open the graph to inspect dependencies, or open a thread card to see its conversation. Library collects project outputs; Routines exposes project schedules; Browser opens the project browser.
+The bot project page has one docked pane with **Threads · Delegate · Library · Routines · Browser** in its view menu. Opening the pane collapses the details card to leave room for the work. Threads are grouped by work status. Open the graph to inspect dependencies, or open a thread card to see its conversation. [Delegate](/guides/project-delegate) is the project's to-do list you hand to its bots. Library collects project outputs; Routines exposes project schedules; Browser opens the project browser.
 
-Projects-tab workspaces also show grouped threads, a dependency graph, coordinator receipts, thread chips and pills, wrap-up reports, decision cards for work that needs you, and a Library of outputs. Receipts report routing and execution state; review the underlying thread and deliverable before accepting the result.
+Projects-tab workspaces also show grouped threads, [Delegate](/guides/project-delegate), a dependency graph, coordinator receipts, thread chips and pills, wrap-up reports, decision cards for work that needs you, and a Library of outputs. Receipts report routing and execution state; review the underlying thread and deliverable before accepting the result.
 
 On the phone, a thread tap opens the pane full screen. Its slim bar keeps the view menu and available actions reachable, and **Back** returns to the project conversation. On a bot project, use the details toggle to reach Context, Folder, team, Library, and Routines; Browser is also available from the pane menu. Pin, archive, and project settings remain available. These paths are shared by the web phone layout and PWA.
