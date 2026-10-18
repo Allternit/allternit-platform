@@ -618,7 +618,24 @@ async fn start_number_call(state: &AppState, deps: &VoiceDeps, auth: &RelayedAut
             }
         }
     }
-    deps.resolver.resolve(&state.db, number_id, caller).await.map_err(|e| fail(StatusCode::BAD_GATEWAY, &e))
+    let (thread_id, session_id) = deps.resolver.resolve(&state.db, number_id, caller).await.map_err(|e| fail(StatusCode::BAD_GATEWAY, &e))?;
+    let caller = Some(caller.trim()).filter(|c| crate::channel_phone::is_e164(c));
+    label_caller(state, auth, &thread_id, caller, &format!("Phone call on {} with {}", number.e164, caller.unwrap_or("withheld")));
+    Ok((thread_id, session_id))
+}
+
+/// Label a call's thread with the caller's trust, the same way a text to the
+/// number is labelled, and tighten the thread's tools the first time a
+/// stranger reaches it.
+fn label_caller(state: &AppState, auth: &RelayedAuth, thread_id: &str, caller: Option<&str>, summary: &str) {
+    let Ok(conn) = state.db.connect() else { return };
+    use crate::netops::provenance;
+    let trust = linked_caller_trust(&conn, &auth.owner, caller);
+    let before = provenance::trust_floor(&conn, thread_id);
+    let label = provenance::label(&conn, thread_id, trust, "phone", caller.unwrap_or("withheld"), summary);
+    if label.trust.tainted() && !before.is_some_and(|f| f.tainted()) {
+        crate::thread_routes::enforce_envelope_bg(&state.db, thread_id);
+    }
 }
 
 /// A call on a bot's linked real phone (contract C4): no number directory. The
@@ -637,16 +654,7 @@ async fn start_linked_call(state: &AppState, deps: &VoiceDeps, auth: &RelayedAut
     let raw = if b.direction == "inbound" { from } else { to };
     let caller = Some(raw.trim()).filter(|c| crate::channel_phone::is_e164(c));
     let (thread_id, session_id) = deps.resolver.resolve_linked(&state.db, &b.bot_id, line, caller).await.map_err(|e| fail(StatusCode::BAD_GATEWAY, &e))?;
-    if let Ok(conn) = state.db.connect() {
-        use crate::netops::provenance;
-        let trust = linked_caller_trust(&conn, &auth.owner, caller);
-        let before = provenance::trust_floor(&conn, &thread_id);
-        let who = caller.unwrap_or("withheld");
-        let label = provenance::label(&conn, &thread_id, trust, "phone", who, &format!("Phone call on {} with {who}", line.label));
-        if label.trust.tainted() && !before.is_some_and(|f| f.tainted()) {
-            crate::thread_routes::enforce_envelope_bg(&state.db, &thread_id);
-        }
-    }
+    label_caller(state, auth, &thread_id, caller, &format!("Phone call on {} with {}", line.label, caller.unwrap_or("withheld")));
     Ok((thread_id, session_id))
 }
 
@@ -1081,6 +1089,10 @@ mod tests {
         assert_eq!(s, StatusCode::OK, "{b}");
         let n = crate::channel_phone::number(&h.state.db, "num-new").expect("registered");
         assert_eq!((n.owner.as_str(), n.bot_id.as_str(), n.e164.as_str()), (OWNER, "bot-1", "+14155550120"));
+        // Caller speech on a number call is labelled like a text to that number: an unknown caller is a stranger.
+        let from = call_body("c1")["from"].as_str().unwrap().to_string();
+        let trust: String = h.state.db.connect().unwrap().query_row("SELECT trust FROM content_provenance WHERE thread_id = ?1 AND source_kind = 'phone' LIMIT 1", params![format!("thr-num-new-{from}")], |r| r.get(0)).unwrap();
+        assert_eq!(trust, "stranger");
         // Outbound registers the bot's number from `from`.
         let mut out = call_body("c2");
         (out["numberId"], out["direction"], out["from"], out["to"]) = (json!("num-out"), json!("outbound"), json!("+14155550111"), json!("+14155550199"));
