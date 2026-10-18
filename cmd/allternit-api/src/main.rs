@@ -670,6 +670,15 @@ async fn main() {
             }
         });
     }
+    // Delegated project tasks whose bot was freed by the restart (its turn was
+    // interrupted above): start each bot's next one.
+    for (user, project, _bot, start) in allternit_api::delegate_routes::pump_all(&state.db) {
+        let st = state.clone();
+        tokio::spawn(async move {
+            let rt = allternit_api::coordinator_routes::GizziCoordinator { state: st.clone() };
+            allternit_api::coordinator_routes::start_threads(&st.db, &rt, &user, &project, start).await;
+        });
+    }
     // Keep this runtime's phone numbers in step with the cloud (inert until the runtime is paired).
     allternit_api::phone_sync::spawn(state.clone());
     allternit_api::computer_idle::spawn_idle_sweeper(state.clone(), shutdown_tx.subscribe());
@@ -1096,6 +1105,7 @@ async fn main() {
         .merge(allternit_api::templates_routes::templates_router())
         .merge(allternit_api::memory_curation::memory_curation_router())
         .merge(allternit_api::coordinator_routes::coordinator_router())
+        .merge(allternit_api::delegate_routes::delegate_router())
         .merge(allternit_api::slack_webhook_routes::slack_binding_router())
         .merge(model_training_router())
         .merge(photon_router())

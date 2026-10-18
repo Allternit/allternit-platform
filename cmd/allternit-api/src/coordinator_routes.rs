@@ -775,7 +775,9 @@ async fn run_kickoff<R: CoordinatorRuntime>(db: &DbHandle, rt: &R, user_id: &str
                 &format!("The {} thread has an update ready for you{}", t.title, line.as_ref().map(|l| format!(": {l}")).unwrap_or_else(|| ".".into())),
                 json!({"kind": "completed", "threadId": t.id, "threadTitle": t.title}),
             );
-            ready_dependents(db, project_id, &t.id)
+            let mut next = ready_dependents(db, project_id, &t.id);
+            next.extend(crate::delegate_routes::pump(db, project_id, &t.bot_id));
+            next
         }
         Err(e) => {
             move_thread(db, rt, &t.id, "blocked", Some(&truncate(&e, 140)), None).await;
@@ -787,7 +789,8 @@ async fn run_kickoff<R: CoordinatorRuntime>(db: &DbHandle, rt: &R, user_id: &str
                 &format!("The {} thread is blocked: {}", t.title, truncate(&e, 200)),
                 json!({"kind": "blocked", "threadId": t.id, "threadTitle": t.title}),
             );
-            vec![]
+            // The bot is free again: its next delegated task can start.
+            crate::delegate_routes::pump(db, project_id, &t.bot_id)
         }
     }
 }

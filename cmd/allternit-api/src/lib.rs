@@ -118,6 +118,7 @@ pub mod memory_curation;
 pub mod memory_consolidation;
 pub mod placement;
 pub mod coordinator_routes;
+pub mod delegate_routes;
 pub mod gateway_placement;
 pub mod browser_history_service;
 pub mod procedural_memory_service;
