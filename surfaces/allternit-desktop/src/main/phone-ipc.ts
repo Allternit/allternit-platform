@@ -5,6 +5,7 @@ import { phoneService } from './phone-service.js';
 import type { PhoneDeviceManager } from './phone-device-manager.js';
 import type { UsbAgentManager } from './phone-usb-agent.js';
 import type { StreamConsumer } from './phone-stream.js';
+import type { ChannelConversation } from './phone-channel-readers.js';
 
 type Guarded = (channel: string, fn: (event: IpcMainInvokeEvent, ...args: any[]) => unknown) => void;
 
@@ -239,6 +240,21 @@ export function registerPhoneIpc(handle: Guarded): void {
   handle('phone:screenshot', (_e, serial: unknown) => phoneService.tryScreenshot(String(serial)));
   handle('phone:home', (_e, serial: unknown) => phoneService.tryHome(String(serial)));
 
+  // Channel readers: messaging apps on the linked phone, read by driving their UI.
+  handle('phone:channel-apps', () => phoneService.channelApps());
+  handle('phone:channel-cached', (_e, app: unknown, conversationId: unknown) =>
+    phoneService.channelCached(String(app ?? ''), typeof conversationId === 'string' ? conversationId : undefined));
+  handle('phone:channel-conversations', (_e, app: unknown) => phoneService.channelConversations(String(app ?? '')));
+  handle('phone:channel-messages', (_e, app: unknown, conversation: unknown) => {
+    const c = sanitizeConversation(conversation);
+    return c ? phoneService.channelMessages(String(app ?? ''), c) : { ok: false, error: 'invalid_args', message: 'Pick a conversation.' };
+  });
+  handle('phone:channel-send', (_e, app: unknown, conversation: unknown, text: unknown) => {
+    const c = sanitizeConversation(conversation);
+    if (!c || typeof text !== 'string') return { ok: false, error: 'invalid_args', message: 'Pick a conversation and write a message.' };
+    return phoneService.channelSend(String(app ?? ''), c, text);
+  });
+
   // In-app live view (scrcpy-server video + input). A stream starts only on
   // explicit renderer request, never by itself.
   handle('phone:stream-start', (_e, serial: unknown, opts: unknown) => phoneService.startStream(String(serial ?? ''), sanitizeStreamOpts(opts)));
@@ -297,4 +313,14 @@ export function registerPhoneIpc(handle: Guarded): void {
     await phoneService.ensureReady();
     return phoneService.getArtemis()?.install();
   });
+}
+
+/** A renderer-supplied conversation, reduced to the fields the reader uses. */
+function sanitizeConversation(v: unknown): ChannelConversation | null {
+  if (!v || typeof v !== 'object') return null;
+  const c = v as Record<string, unknown>;
+  const str = (x: unknown, max = 200) => (typeof x === 'string' && x.length > 0 && x.length <= max ? x : null);
+  const id = str(c.id), title = str(c.title), group = str(c.group);
+  if (!id || !title || !group) return null;
+  return { id, title, group, preview: null, time: null, unread: 0 };
 }
