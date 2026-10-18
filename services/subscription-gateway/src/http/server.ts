@@ -28,6 +28,7 @@ import { statsRouter } from "./routes_stats.js";
 import { evidenceRouter } from "./routes_evidence.js";
 import { aaiRouter } from "./routes_aai.js";
 import { routesRouter } from "./routes_routes.js";
+import { settingsRouter } from "./routes_settings.js";
 import type { AaiHost } from "../aai/registry.js";
 import type { RouteDirector } from "../routes/director.js";
 
@@ -141,6 +142,7 @@ export function createServer(deps: GatewayDeps): Express {
   app.use(evidenceRouter(deps));
   app.use(aaiRouter(deps));
   app.use(routesRouter(deps));
+  app.use(settingsRouter(deps));
 
   app.use((_req, res) => res.status(404).json({ error: "not_found" }));
   return app;

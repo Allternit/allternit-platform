@@ -10,6 +10,8 @@ import type { RedactingLogger } from "@allternit/subscription-fabric-contracts";
 import { loadConfig, stallTimeoutFor, type Config } from "./config.js";
 import { loadAdapterRegistry, type AdapterRegistry } from "./adapters/registry.js";
 import { openDatabase, type Db } from "./store/db.js";
+import { BROWSER_LANES_NEED_CHROME, BROWSER_LANES_OFF, browserLanesEnabled, isLocalDesktop, setBrowserLanesCheck } from "./local_desktop.js";
+import { detectGoogleChrome } from "./worker/hidden_chrome.js";
 import { listAccounts, preferredReadyAccount } from "./store/queries.js";
 import { EventLog } from "./events/log.js";
 import { SseHub, createSubscriber } from "./events/sse.js";
@@ -135,6 +137,7 @@ export async function boot(deps: BootDeps = {}): Promise<RunningGateway> {
     makeReconcileCtx: (attempt, adapter) => pool.reconcileCtx(attempt, adapter),
     stallTimeoutS: (capability) => stallTimeoutFor(config, capability),
   });
+  setBrowserLanesCheck(() => browserLanesEnabled(config.stateDir));
   // Firefox logins sign in on a separate profile whose session is copied
   // into Chrome at launch; Chrome logins sign in on Chrome's own profile.
   const firefoxLogin = config.loginBrowser !== null && /firefox/i.test(config.loginBrowser);
@@ -147,6 +150,21 @@ export async function boot(deps: BootDeps = {}): Promise<RunningGateway> {
     logger,
     sessionImport: firefoxLogin ? importFirefoxSessionIfNewer : undefined,
     laneIdleCloseMs: config.laneIdleCloseMin * 60_000,
+    // Allternit Desktop on the person's own computer: browser lanes only when
+    // turned on, in a hidden Google Chrome (local_desktop.ts).
+    ...(isLocalDesktop()
+      ? {
+          hiddenChrome: () => {
+            if (!browserLanesEnabled(config.stateDir)) {
+              return { refuse: BROWSER_LANES_OFF };
+            }
+            const executable = detectGoogleChrome();
+            return executable
+              ? { executable }
+              : { refuse: BROWSER_LANES_NEED_CHROME };
+          },
+        }
+      : {}),
   });
   await supervisor.sweepAtBoot();
   const loginBrowser = config.loginBrowser

@@ -27,6 +27,7 @@ import { PORTS, URLS, factoryEngineUrl, webhookReceiverUrl } from './config.js';
 import { resolveApiDataDir } from './desktop-data-dir.js';
 import { spawnSidecar } from './process-lifeline.js';
 import { systemOne } from './system-one-manager.js';
+import { subsGatewayManager } from './subs-gateway-manager.js';
 import { factoryEngineManager } from './factory-engine-manager.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -306,6 +307,9 @@ export class BackendManager {
       // Local S1 (Q28/Q29): ALLTERNIT_S1_URL, shared shadow ledger dir; the S1
       // backend is "auto" (Laya while healthy) unless exported explicitly.
       ...systemOne.getApiEnvironment(),
+      // Desktop's own subscription gateway, the fallback when no Sessions
+      // computer answers (empty on a cloud computer, whose image sets its own).
+      ...subsGatewayManager.getApiEnvironment(),
       ...(config.extraEnv ?? {}),
     };
     loadTartHostEnv(env);
