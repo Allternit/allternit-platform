@@ -64,7 +64,7 @@ import { readPairRecord, startLoopbackForward } from './phone-usbmux.js';
 import { hasLinkedPhones } from './phone-link-stores.js';
 import { catalogNameForPackage, humanizePackage } from './phone-app-catalog.js';
 import { PhoneLinkBackend, cachedHostResolver, linkedPhoneSource, probeLinkedPhone, rememberLinkedApps,
-  rememberLinkedHost, type LinkedPhone } from './phone-link-backend.js';
+  rememberLinkedHost, LINK_SERIAL_PREFIX, type LinkedPhone } from './phone-link-backend.js';
 import { fileAndroidLinkStore } from './phone-link-android.js';
 import { nodeDiscoveryDeps } from './phone-link-discovery.js';
 import { PHONE_LINK_MESH_ENABLED } from './phone-link-mesh.js';
