@@ -74,12 +74,17 @@ describe('Discord reader', () => {
       crop: (b64, rect, w) => { crops.push([b64, rect, w]); return b64 === 'SHOT' ? 'data:image/jpeg;base64,AAA' : 'data:image/jpeg;base64,BBB'; },
       call: async (name) => name === 'phone.tap' ? ((opened = true), { ok: true }) : name === 'phone.read_ui' ? { ok: true, text: opened ? screen : DRAWER_DMS } : name === 'phone.screenshot' ? { ok: true, dataBase64: shots.shift() ?? 'SHOT' } : { ok: true },
     });
-    const res = await reader.messages('link:x', 'discord', { id: 'dm:Sam', title: 'Sam', group: 'Direct messages', preview: null, time: null, unread: 0 });
+    const sizes: unknown[] = [];
+    const res = await reader.messages('link:x', 'discord', { id: 'dm:Sam', title: 'Sam', group: 'Direct messages', preview: null, time: null, unread: 0 },
+      async (size) => { sizes.push(size); return 'MP4'; });
     expect(res.ok && res.data[0].parts).toEqual([
       { kind: 'text', text: 'look at this' },
       { kind: 'image', alt: 'LinkedIn\nParted ways.', src: 'data:image/jpeg;base64,AAA', width: 587, height: 1108, at: { x: 112, y: 250, w: 587, h: 1108 }, animated: true },
     ]);
     expect(crops).toEqual([['SHOT', { x: 112, y: 250, w: 587, h: 1108 }, 720], ['SHOT2', { x: 112, y: 250, w: 587, h: 1108 }, 720]]);
+    // Something moved, so the read recorded its clip right away (half size).
+    expect(sizes).toEqual([{ width: 360, height: 748 }]);
+    expect(reader.cachedClip('discord', 'dm:Sam')).toMatchObject({ src: 'data:video/mp4;base64,MP4', screenWidth: 720 });
   });
 
   it('lists DMs and server channels, one operation at a time, and keeps a local copy', async () => {
