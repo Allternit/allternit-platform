@@ -28,7 +28,7 @@ import log from 'electron-log';
 import WebSocket from 'ws';
 import { URLS } from './config.js';
 import { dropRuntimeCredentialForGizzi, isGizziProviderListPath } from './relay-gizzi-credential.js';
-import { isDesktopAuthNavigation } from './desktop-auth-url.js';
+import { isDesktopAuthNavigation, shouldPairWithLateClerkToken } from './desktop-auth-url.js';
 import { ClerkTokenBroker } from './clerk-token-broker.js';
 import { cloudAccountMismatch, type CloudReconnectResult } from './cloud-account.js';
 import {
@@ -266,6 +266,21 @@ export class DesktopAuthManager {
       log.info('[Auth] Clerk session token received from renderer; resolver present:', Boolean(this.clerkTokenResolver), 'email:', email || '(none)');
       if (normalized.token) this.cacheClerkToken(normalized.token);
       if (email) this.applyAccountEmail(email);
+      if (shouldPairWithLateClerkToken({
+        waiting: Boolean(this.clerkTokenResolver),
+        token: normalized.token,
+        paired: Boolean(this.session),
+        pairingInFlight: Boolean(this.pendingPairing),
+      })) {
+        // A sign-in that finished after its pairing expired (or after the
+        // wait was dropped): the person is signed in, so pair with this token
+        // instead of leaving the window on "Completing runtime pairing".
+        log.info('[Auth] Late Clerk token with no pairing in progress; starting a new pairing with it');
+        this.closeAuthWindow();
+        this.pendingClerkEmail = preferredEmail(email, emailFromJwt(normalized.token));
+        void this.handleLoginRequest(normalized.token);
+        return;
+      }
       this.clerkTokenResolver?.(normalized);
       this.clerkTokenResolver = null;
       this.clerkTokenRejecter = null;
@@ -536,13 +551,13 @@ export class DesktopAuthManager {
     this.writeAccountsToDisk(next);
   }
 
-  private async handleLoginRequest(): Promise<void> {
+  private async handleLoginRequest(clerkToken?: string): Promise<void> {
     const visibleWindow = this.splashWindow
       || BrowserWindow.getAllWindows().find((candidate) => candidate.isVisible() && !candidate.isDestroyed());
     visibleWindow?.setAlwaysOnTop(false);
 
     try {
-      const session = await this.startPairing();
+      const session = await this.startPairing(undefined, clerkToken);
       this.notifySplash('auth:login-success', 'Runtime paired — starting Allternit…');
       this.signInResolver?.(session);
       this.signInResolver = null;
@@ -558,7 +573,7 @@ export class DesktopAuthManager {
     }
   }
 
-  private async startPairing(bootstrap?: ProvisionedBootstrap): Promise<DesktopAuthSession> {
+  private async startPairing(bootstrap?: ProvisionedBootstrap, clerkToken?: string): Promise<DesktopAuthSession> {
     if (this.pendingPairing) return this.pendingPairing.promise;
 
     const { publicKey, privateKey } = generateKeyPairSync('ed25519');
@@ -620,7 +635,9 @@ export class DesktopAuthManager {
     // load the React/Clerk renderer, and wait for the user to sign in.
     void (async () => {
       try {
-        const clerk = await this.requestClerkSession({ hidden: false });
+        const clerk = clerkToken
+          ? { token: clerkToken, userId: '', email: this.pendingClerkEmail ?? '' }
+          : await this.requestClerkSession({ hidden: false });
         this.closeAuthWindow();
         this.pendingClerkEmail = preferredEmail(clerk.email, emailFromJwt(clerk.token));
         this.cacheClerkToken(clerk.token);

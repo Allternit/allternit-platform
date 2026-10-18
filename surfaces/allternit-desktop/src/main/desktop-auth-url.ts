@@ -18,3 +18,17 @@ export function isDesktopAuthNavigation(url: string, authBaseUrl: string): boole
     return false;
   }
 }
+
+/**
+ * A Clerk token reached main with nothing waiting for it (the pairing it was
+ * for expired, or the wait was dropped). If this desktop isn't paired and no
+ * pairing is running, the person is signed in: pair with the token.
+ */
+export function shouldPairWithLateClerkToken(state: {
+  waiting: boolean;
+  token: string;
+  paired: boolean;
+  pairingInFlight: boolean;
+}): boolean {
+  return !state.waiting && state.token.length > 0 && !state.paired && !state.pairingInFlight;
+}
