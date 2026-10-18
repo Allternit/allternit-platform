@@ -477,6 +477,9 @@ mod tests {
         let db = test_pool().await;
         events_backbone_schema(&db).await;
         sqlx::raw_sql(&include_str!("../../migrations_pg/090_runtime_presence.sql").replace("public.", "")).execute(&db).await.unwrap();
+        // A heartbeat also closes failovers (091/092), so every test needs them.
+        sqlx::raw_sql(&include_str!("../../migrations_pg/091_runtime_failover.sql").replace("public.", "")).execute(&db).await.unwrap();
+        sqlx::raw_sql(&include_str!("../../migrations_pg/092_per_bot_failover.sql").replace("public.", "")).execute(&db).await.unwrap();
         seed_runtime_device(&db, "rt1", "u1").await;
         db
     }
@@ -524,8 +527,6 @@ mod tests {
     #[tokio::test]
     async fn failover_opens_once_and_closes_when_home_beats_again() {
         let db = schema().await;
-        sqlx::raw_sql(&include_str!("../../migrations_pg/091_runtime_failover.sql").replace("public.", "")).execute(&db).await.unwrap();
-        sqlx::raw_sql(&include_str!("../../migrations_pg/092_per_bot_failover.sql").replace("public.", "")).execute(&db).await.unwrap();
         sqlx::query("CREATE TABLE IF NOT EXISTS provisioned_instances (device_id text, status text)").execute(&db).await.unwrap();
         seed_runtime_device(&db, "cloud1", "u1").await;
         sqlx::query("INSERT INTO provisioned_instances VALUES ('cloud1','stopped')").execute(&db).await.unwrap();

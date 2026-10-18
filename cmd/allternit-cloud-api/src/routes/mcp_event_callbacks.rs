@@ -426,6 +426,15 @@ mod tests {
             .execute(&state.db)
             .await
             .expect("059 applies");
+        // The relay worker reads channel_inbound_routes.bot_id (092, which alters 091's table).
+        sqlx::raw_sql(&include_str!("../../migrations_pg/091_runtime_failover.sql").replace("public.", ""))
+            .execute(&state.db)
+            .await
+            .expect("091 applies");
+        sqlx::raw_sql(&include_str!("../../migrations_pg/092_per_bot_failover.sql").replace("public.", ""))
+            .execute(&state.db)
+            .await
+            .expect("092 applies");
         seed_runtime_device(&state.db, RT, USER).await;
         seed_runtime_device(&state.db, "rt-2", "user-2").await;
         state
