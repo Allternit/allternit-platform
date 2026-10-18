@@ -41,7 +41,16 @@ pub enum CallEvent {
     Started { direction: String, from: String, to: String, number_id: String, line: Option<Value> },
     TranscriptDelta { speaker: Speaker, text: String, is_final: bool, segment_id: String },
     Dtmf { digits: String, from: String },
-    StateChanged { held: bool, muted_bot: bool, muted_caller: bool, speaker: Option<Speaker>, recording: bool },
+    /// `unsupported`: the control the line can't do (linked phone: dtmf,
+    /// transfer, hold); the state is otherwise unchanged.
+    StateChanged {
+        held: bool,
+        muted_bot: bool,
+        muted_caller: bool,
+        speaker: Option<Speaker>,
+        recording: bool,
+        unsupported: Option<&'static str>,
+    },
     Transferred { to: String, mode: TransferMode, ok: bool, reason: Option<String> },
     Takeover { by: String, active: bool },
     VoicemailDetected { action: String },
@@ -78,10 +87,16 @@ impl CallEvent {
                 json!({"speaker": speaker, "text": text, "final": is_final, "segmentId": segment_id})
             }
             CallEvent::Dtmf { digits, from } => json!({"digits": digits, "from": from}),
-            CallEvent::StateChanged { held, muted_bot, muted_caller, speaker, recording } => json!({
-                "held": held, "mutedBot": muted_bot, "mutedCaller": muted_caller, "speaker": speaker,
-                "recording": recording
-            }),
+            CallEvent::StateChanged { held, muted_bot, muted_caller, speaker, recording, unsupported } => {
+                let mut v = json!({
+                    "held": held, "mutedBot": muted_bot, "mutedCaller": muted_caller, "speaker": speaker,
+                    "recording": recording
+                });
+                if let Some(action) = unsupported {
+                    v["unsupported"] = json!(action);
+                }
+                v
+            }
             CallEvent::Transferred { to, mode, ok, reason } => {
                 let mut v = json!({"to": to, "mode": mode, "ok": ok});
                 if let Some(r) = reason {
@@ -305,12 +320,16 @@ mod tests {
 
     #[test]
     fn payload_shapes() {
-        let p = CallEvent::StateChanged { held: true, muted_bot: false, muted_caller: true, speaker: None, recording: false }
+        let p = CallEvent::StateChanged { held: true, muted_bot: false, muted_caller: true, speaker: None, recording: false, unsupported: None }
             .payload("c");
         assert_eq!(
             p,
             json!({"held":true,"mutedBot":false,"mutedCaller":true,"speaker":null,"recording":false,"callId":"c"})
         );
+        let p = CallEvent::StateChanged { held: false, muted_bot: false, muted_caller: false, speaker: None, recording: false, unsupported: Some("hold") }
+            .payload("c");
+        assert_eq!(p["unsupported"], "hold");
+        assert_eq!(p["held"], false);
         let p = CallEvent::Ended { duration_sec: 42, reason: "caller_hangup".into(), recording_ref: None, answered: true, missed: false }
             .payload("c");
         assert_eq!(p, json!({"durationSec":42,"reason":"caller_hangup","answered":true,"callId":"c"}));
