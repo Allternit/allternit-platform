@@ -1118,33 +1118,36 @@ class PhoneService {
   }
 
   channelMessages(app: string, conversation: ChannelConversation) {
-    return this.withChannel(app, (r, serial) => r.messages(serial, app, conversation));
+    return this.withChannel(app, async (r, serial) => r.messages(serial, app, conversation, await this.screenRecorder(serial)));
   }
 
   channelSend(app: string, conversation: ChannelConversation, text: string) {
-    return this.withChannel(app, (r, serial) => r.send(serial, app, conversation, text));
+    return this.withChannel(app, async (r, serial) => r.send(serial, app, conversation, text, await this.screenRecorder(serial)));
   }
 
   async channelCachedClip(app: string, conversationId: string) {
     return (await this.channels().catch(() => null))?.cachedClip(app, conversationId) ?? null;
   }
 
-  /** Record a few seconds of a conversation (Android's screenrecord over the screen lane's adb). */
+  /** Record a few seconds of a conversation on request (the ▶ fallback). */
   channelClip(app: string, conversation: ChannelConversation) {
-    return this.withChannel(app, async (r, serial) => {
-      const adbSerial = await this.adbSerialFor(serial);
-      const record: ScreenRecorder | null = adbSerial ? async (size) => {
-        const adb = await this.ensureAdbCall();
-        const file = '/data/local/tmp/allternit-clip.mp4';
-        const rec = await adb(['shell', 'screenrecord', '--time-limit', '3', '--size', `${size.width}x${size.height}`, '--bit-rate', '1500000', file], { serial: adbSerial, timeoutMs: 15_000 });
-        if (rec.code !== 0) return null;
-        const out = await adb(['exec-out', 'base64', file], { serial: adbSerial, timeoutMs: 15_000 });
-        await adb(['shell', 'rm', '-f', file], { serial: adbSerial });
-        const b64 = out.code === 0 ? out.stdout.replace(/\s+/g, '') : '';
-        return b64.length > 100 ? b64 : null;
-      } : null;
-      return r.clip(serial, app, conversation, record);
-    });
+    return this.withChannel(app, async (r, serial) => r.clip(serial, app, conversation, await this.screenRecorder(serial)));
+  }
+
+  /** Android's screenrecord over the screen lane's adb, for the phone a channel serial names; null without one. */
+  private async screenRecorder(serial: string): Promise<ScreenRecorder | null> {
+    const adbSerial = await this.adbSerialFor(serial);
+    if (!adbSerial) return null;
+    return async (size) => {
+      const adb = await this.ensureAdbCall();
+      const file = '/data/local/tmp/allternit-clip.mp4';
+      const rec = await adb(['shell', 'screenrecord', '--time-limit', '3', '--size', `${size.width}x${size.height}`, '--bit-rate', '1500000', file], { serial: adbSerial, timeoutMs: 15_000 });
+      if (rec.code !== 0) return null;
+      const out = await adb(['exec-out', 'base64', file], { serial: adbSerial, timeoutMs: 15_000 });
+      await adb(['shell', 'rm', '-f', file], { serial: adbSerial });
+      const b64 = out.code === 0 ? out.stdout.replace(/\s+/g, '') : '';
+      return b64.length > 100 ? b64 : null;
+    };
   }
 
   /** The adb (screen lane) serial for the phone a channel serial names: itself, or the online adb phone with the same name. */

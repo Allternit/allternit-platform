@@ -334,27 +334,54 @@ export class PhoneChannelReader {
     });
   }
 
-  messages(serial: string, app: string, conversation: ChannelConversation): Promise<ReaderResult<ChannelMessage[]>> {
+  /**
+   * Read a conversation. With `record` (the phone's screen recorder), a read
+   * that finds animated parts records their clip right away — the phone is
+   * already showing them — so they play without a tap (cachedClip).
+   */
+  messages(serial: string, app: string, conversation: ChannelConversation, record: ScreenRecorder | null = null): Promise<ReaderResult<ChannelMessage[]>> {
     return this.run(serial, app, async (spec, nav) => {
       await spec.open(nav, conversation);
-      const data = await this.readMessages(spec, nav, app);
-      delete this.cache.clips?.[`${app}::${conversation.id}`];
-      this.cache.messages[`${app}::${conversation.id}`] = { data, readAt: this.stamp() };
-      return data;
+      return this.readAndKeep(spec, nav, app, conversation, record);
     });
   }
 
-  send(serial: string, app: string, conversation: ChannelConversation, text: string): Promise<ReaderResult<ChannelMessage[]>> {
+  send(serial: string, app: string, conversation: ChannelConversation, text: string, record: ScreenRecorder | null = null): Promise<ReaderResult<ChannelMessage[]>> {
     const body = text.trim();
     if (!body || body.length > 2000) return Promise.resolve({ ok: false, error: 'invalid_args', message: 'A message is 1–2000 characters.' });
     return this.run(serial, app, async (spec, nav) => {
       await spec.open(nav, conversation);
       await spec.send(nav, body);
-      const data = await this.readMessages(spec, nav, app);
-      delete this.cache.clips?.[`${app}::${conversation.id}`];
-      this.cache.messages[`${app}::${conversation.id}`] = { data, readAt: this.stamp() };
-      return data;
+      return this.readAndKeep(spec, nav, app, conversation, record);
     });
+  }
+
+  /** Read the open conversation, keep it, and record a clip when something on it moves. */
+  private async readAndKeep(spec: ChannelAppSpec, nav: ReaderNav, app: string, conversation: ChannelConversation, record: ScreenRecorder | null): Promise<ChannelMessage[]> {
+    const key = `${app}::${conversation.id}`;
+    const data = await this.readMessages(spec, nav, app);
+    delete this.cache.clips?.[key];
+    this.cache.messages[key] = { data, readAt: this.stamp() };
+    const moving = data.some((m) => m.parts?.some((p) => p.kind === 'image' && p.animated));
+    if (moving && record) {
+      // A clip is a bonus: a failed recording leaves the stills.
+      const clip = await this.recordScreen(nav, record).catch(() => null);
+      if (clip) (this.cache.clips ??= {})[key] = clip;
+    }
+    return data;
+  }
+
+  /** Record a few seconds of what the phone shows now. */
+  private async recordScreen(nav: ReaderNav, record: ScreenRecorder): Promise<ChannelClip> {
+    const nodes = await nav.read();
+    const screenWidth = Math.max(0, ...nodes.map((n) => (n.rect ? n.rect.x + n.rect.w : 0)));
+    const screenHeight = Math.max(0, ...nodes.map((n) => (n.rect ? n.rect.y + n.rect.h : 0)));
+    if (!screenWidth || !screenHeight) throw new ReaderError('read_failed', 'Couldn’t read the phone’s screen.');
+    // Half size is plenty for a 280px-wide part; even numbers for the encoder.
+    const even = (n: number) => Math.max(2, Math.round(n / 4) * 2);
+    const b64 = await record({ width: even(screenWidth), height: even(screenHeight) });
+    if (!b64) throw new ReaderError('record_failed', 'The phone didn’t record its screen. Try again.');
+    return { src: b64.startsWith('data:') ? b64 : `data:video/mp4;base64,${b64}`, screenWidth, screenHeight, recordedAt: this.stamp() };
   }
 
   /** Read the open conversation; non-text parts become crops of one screenshot. */
@@ -399,15 +426,7 @@ export class PhoneChannelReader {
     if (!record) return Promise.resolve({ ok: false, error: 'unsupported', message: 'Playing needs the phone’s screen connection (Settings › Computers › Phones).' });
     return this.run(serial, app, async (spec, nav) => {
       await spec.open(nav, conversation);
-      const nodes = await nav.read();
-      const screenWidth = Math.max(0, ...nodes.map((n) => (n.rect ? n.rect.x + n.rect.w : 0)));
-      const screenHeight = Math.max(0, ...nodes.map((n) => (n.rect ? n.rect.y + n.rect.h : 0)));
-      if (!screenWidth || !screenHeight) throw new ReaderError('read_failed', 'Couldn’t read the phone’s screen.');
-      // Half size is plenty for a 280px-wide part; even numbers for the encoder.
-      const even = (n: number) => Math.max(2, Math.round(n / 4) * 2);
-      const b64 = await record({ width: even(screenWidth), height: even(screenHeight) });
-      if (!b64) throw new ReaderError('record_failed', 'The phone didn’t record its screen. Try again.');
-      const clip: ChannelClip = { src: `data:video/mp4;base64,${b64}`, screenWidth, screenHeight, recordedAt: this.stamp() };
+      const clip = await this.recordScreen(nav, record);
       (this.cache.clips ??= {})[`${app}::${conversation.id}`] = clip;
       return clip;
     });
