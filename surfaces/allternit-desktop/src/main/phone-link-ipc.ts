@@ -101,6 +101,11 @@ export function registerPhoneLinkIpc(handleGuarded: Guarded): PhoneLinkManager {
   });
   handleGuarded('phone-link:status', () => manager.status());
   handleGuarded('phone-link:devices', () => phoneService.linkedDevices());
+  handleGuarded('phone-link:handover-targets', () => phoneService.handoverTargets());
+  handleGuarded('phone-link:handover', (_event, opts?: { deviceId?: unknown; computerId?: unknown }) => {
+    if (typeof opts?.deviceId !== 'string' || typeof opts?.computerId !== 'string') throw new Error('deviceId and computerId are required');
+    return phoneService.handover({ deviceId: opts.deviceId, computerId: opts.computerId });
+  });
   handleGuarded('phone-link:start', (_event, opts?: { platform?: PhoneLinkPlatform }) => {
     const platform = opts?.platform;
     if (platform !== 'ios' && platform !== 'android') throw new Error('platform must be ios or android');

@@ -27,7 +27,7 @@ import {
   type LinkedPhone,
   type LinkedPhoneSource,
 } from './phone-link-health.js';
-import type { PhoneLinkApp, PhoneLinkDevice, PhoneLinkHealth } from './phone-link-types.js';
+import type { HandedOverFrom, PhoneLinkApp, PhoneLinkDevice, PhoneLinkHealth } from './phone-link-types.js';
 
 export type { LinkedPhone, LinkedPhoneSource };
 
@@ -43,6 +43,8 @@ export interface LinkedPhoneDeviceInfo {
   apps?: PhoneLinkApp[];
   /** Which transport last reached the phone ('lan' or 'mesh'), when known. */
   path?: 'lan' | 'mesh';
+  /** Received from another computer by pairing handover (phone-link-handover.ts). */
+  handedOverFrom?: HandedOverFrom;
 }
 
 export const LINK_SERIAL_PREFIX = 'link:';
@@ -156,6 +158,7 @@ export class PhoneLinkBackend implements UsbPhoneBackend {
       },
       apps: p.apps,
       ...(pathOf?.(p.deviceId) ? { path: pathOf(p.deviceId)! } : {}),
+      ...(p.handedOverFrom ? { handedOverFrom: p.handedOverFrom } : {}),
     }));
   }
 
@@ -441,6 +444,7 @@ export function linkedPhoneSource(deps: { iosStore: IosLinkStore; androidStore: 
       storeKey: ictrlStoreKey(r.udid),
       expiresAt: r.expiresAt,
       apps: r.apps ? nameCatalogApps(r.apps) : r.apps,
+      handedOverFrom: r.handedOverFrom,
     })),
     ...deps.androidStore.all().map((r) => ({
       deviceId: r.deviceId,
@@ -450,6 +454,7 @@ export function linkedPhoneSource(deps: { iosStore: IosLinkStore; androidStore: 
       meshHost: r.meshHost,
       storeKey: ictrlStoreKey(`android:${r.deviceId}`),
       apps: r.apps ? nameCatalogApps(r.apps) : r.apps,
+      handedOverFrom: r.handedOverFrom,
     })),
   ];
 }

@@ -42,6 +42,27 @@ export class DesktopPhoneGateway implements PhoneGateway {
     }
   }
 
+  /**
+   * Any other phone-gateway route (the pairing handover pair, /phone/handover*).
+   * `status` 0 = Desktop or its gateway isn't running here.
+   */
+  async request(method: "GET" | "POST", path: string, body?: unknown): Promise<{ status: number; body: unknown }> {
+    const ep = this.endpoint();
+    if (!ep) return { status: 0, body: { ok: false, error: "desktop_unavailable", message: "Allternit Desktop isn't running on this computer." } };
+    const f = this.opts.fetchImpl ?? fetch;
+    try {
+      const res = await f(`${ep.url.replace(/\/+$/, "")}${path}`, {
+        method,
+        headers: { "content-type": "application/json", [PHONE_GATEWAY_TOKEN_HEADER]: ep.token },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        signal: AbortSignal.timeout(this.opts.timeoutMs ?? 60_000),
+      });
+      return { status: res.status, body: await res.json().catch(() => null) };
+    } catch (e) {
+      return { status: 0, body: { ok: false, error: "desktop_unavailable", message: `Couldn't reach Allternit Desktop's phone gateway: ${(e as Error).message}` } };
+    }
+  }
+
   async call(name: string, args: Record<string, unknown> = {}): Promise<PhoneToolResult> {
     const ep = this.endpoint();
     if (!ep) return { ok: false, error: "desktop_unavailable", message: "Allternit Desktop's phone gateway isn't running on this computer." };

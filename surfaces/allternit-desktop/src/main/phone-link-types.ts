@@ -105,6 +105,26 @@ export interface PhoneLinkHealth {
   action?: string;
 }
 
+/** On a computer that received a phone by pairing handover: who gave it (phone-link-handover.ts). */
+export interface HandedOverFrom {
+  /** The giving computer's name, e.g. "Eoj's MacBook Pro". */
+  name: string;
+  at: string;
+}
+
+/** A computer this Desktop can hand a linked phone to: the person's bound Sessions computer. */
+export interface PhoneLinkHandoverTarget {
+  computerId: string;
+  name: string;
+  /** False when it can't take a phone now; `reason` says why in one sentence. */
+  ready: boolean;
+  reason?: string;
+}
+
+export type PhoneLinkHandoverResult =
+  | { ok: true; deviceId: string; computerName: string }
+  | { ok: false; cancelled?: boolean; error: string; message: string };
+
 /** A linked phone as the UI's device list shows it (phone-link:devices). */
 export interface PhoneLinkDevice {
   deviceId: string;
@@ -113,6 +133,8 @@ export interface PhoneLinkDevice {
   route: 'iphone-app-ictrl' | 'android-app';
   health: PhoneLinkHealth;
   apps?: PhoneLinkApp[];
+  /** Set on a Sessions computer for a phone the Mac handed over. */
+  handedOverFrom?: HandedOverFrom;
 }
 
 /** `window.allternit.phoneLink` */
@@ -128,4 +150,8 @@ export interface PhoneLinkAPI {
   submitAppleId(creds: { appleId: string; password: string }): Promise<PhoneLinkStatus>;
   submitTwoFactor(code: string): Promise<PhoneLinkStatus>;
   retry(): Promise<PhoneLinkStatus>;
+  /** The person's Sessions computer, when one is bound (empty list otherwise). */
+  handoverTargets(): Promise<PhoneLinkHandoverTarget[]>;
+  /** Give a linked phone's pairing to the Sessions computer. Asks the person to confirm on this computer first. */
+  handover(opts: { deviceId: string; computerId: string }): Promise<PhoneLinkHandoverResult>;
 }
