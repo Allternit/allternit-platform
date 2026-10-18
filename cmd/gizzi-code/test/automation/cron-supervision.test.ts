@@ -14,7 +14,12 @@ import {
   supervisionState,
   systemdUnitPath,
   systemdUserUnit,
+  supervisionPlatform,
   validatePidfile,
+  WINDOWS_TASK_NAME,
+  windowsQuoteArg,
+  windowsTaskXml,
+  windowsTaskXmlPath,
   writePidfile,
 } from "../../src/runtime/automation/cron/supervision"
 
@@ -155,7 +160,8 @@ describe("supervision state", () => {
     await using tmp = await tmpdir()
     const home = path.join(tmp.path, "home")
     const state = await supervisionState(home)
-    expect(state.supported).toBe(process.platform !== "win32")
+    expect(state.supported).toBe(["darwin", "linux", "win32"].includes(process.platform))
+    expect(state.scheduledTask).toBeNull()
     if (process.platform === "darwin") {
       expect(state.launchdPlist).toBeNull()
       await Bun.$`mkdir -p ${path.dirname(launchdPlistPath(home))}`
@@ -186,5 +192,45 @@ describe("supervision state", () => {
     const result = await enableSupervision("/Users/u/.bun/bin/bun", path.join(tmp.path, "home"))
     expect(result.ok).toBe(false)
     expect(result.message).toContain("installed gizzi binary")
+  })
+})
+
+describe("Windows Task Scheduler autostart", () => {
+  test("every desktop OS has an autostart mechanism", () => {
+    expect(supervisionPlatform("darwin")).toBe("launchd")
+    expect(supervisionPlatform("linux")).toBe("systemd")
+    expect(supervisionPlatform("win32")).toBe("schtasks")
+    expect(supervisionPlatform("freebsd")).toBe("unsupported")
+  })
+
+  test("quotes arguments by CommandLineToArgvW rules", () => {
+    expect(windowsQuoteArg("start")).toBe("start")
+    expect(windowsQuoteArg("C:\\Program Files\\gizzi.exe")).toBe('"C:\\Program Files\\gizzi.exe"')
+    expect(windowsQuoteArg('say "hi"')).toBe('"say \\"hi\\""')
+    expect(windowsQuoteArg("C:\\dir with space\\")).toBe('"C:\\dir with space\\\\"')
+    expect(windowsQuoteArg("")).toBe('""')
+  })
+
+  test("task runs gizzi headless at logon and restarts on failure", () => {
+    const xml = windowsTaskXml({
+      description: "Gizzi cron daemon",
+      program: "C:\\Users\\eoj & co\\gizzi.exe",
+      args: ["workflows", "wake", "jobs", "start"],
+    })
+    expect(xml).toContain("<LogonTrigger><Enabled>true</Enabled></LogonTrigger>")
+    expect(xml).toContain("<LogonType>InteractiveToken</LogonType>")
+    expect(xml).toContain("<RunLevel>LeastPrivilege</RunLevel>")
+    expect(xml).toContain("<RestartOnFailure>")
+    expect(xml).toContain("<Command>%SystemRoot%\\System32\\conhost.exe</Command>")
+    expect(xml).toContain(
+      "<Arguments>--headless &quot;C:\\Users\\eoj &amp; co\\gizzi.exe&quot; workflows wake jobs start</Arguments>",
+    )
+    expect(WINDOWS_TASK_NAME).toBe("Allternit\\com.allternit.gizzi.cron")
+  })
+
+  test("the saved task definition lives under the user's local app data", () => {
+    expect(windowsTaskXmlPath("/home/eoj")).toBe(
+      path.join("/home/eoj", "AppData", "Local", "gizzi", "autostart", "com.allternit.gizzi.cron.xml"),
+    )
   })
 })
