@@ -154,16 +154,20 @@ export function createServer(deps: GatewayDeps): Express {
 }
 
 // UDS default transport: unlink any stale socket, bind, then chmod 0600.
+// A Windows named pipe (\\.\pipe\...) has no file to unlink or chmod.
 export function listenUds(app: Express, udsPath: string): Promise<Server> {
-  mkdirSync(dirname(udsPath), { recursive: true });
-  try {
-    unlinkSync(udsPath);
-  } catch {
-    // no stale socket — fine
+  const pipe = udsPath.startsWith("\\\\.\\pipe\\");
+  if (!pipe) {
+    mkdirSync(dirname(udsPath), { recursive: true });
+    try {
+      unlinkSync(udsPath);
+    } catch {
+      // no stale socket — fine
+    }
   }
   return new Promise((resolve, reject) => {
     const server = app.listen(udsPath, () => {
-      chmodSync(udsPath, 0o600);
+      if (!pipe) chmodSync(udsPath, 0o600);
       resolve(server);
     });
     server.on("error", reject);

@@ -1,9 +1,18 @@
 // §1 config — env (SUBS_GATEWAY_*) + optional flat-key policy file.
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { defaultAdaptersDir } from "./adapters/registry.js";
 import type { KeychainBackendKind } from "./security/keychain.js";
+
+// Windows has no unix sockets: the same transport is a named pipe, one per
+// state dir so two gateways (e.g. a smoke boot) never share a pipe.
+export function gatewaySocketPathFor(stateDir: string, platform: NodeJS.Platform = process.platform): string {
+  if (platform !== "win32") return join(stateDir, "gateway.sock");
+  const id = createHash("sha256").update(resolve(stateDir).toLowerCase()).digest("hex").slice(0, 16);
+  return `\\\\.\\pipe\\allternit-subs-gateway-${id}`;
+}
 
 export interface TcpConfig {
   enabled: boolean;
@@ -163,7 +172,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     stateDir,
     dbPath: join(stateDir, "state.db"),
     artifactsDir: join(stateDir, "artifacts"),
-    udsPath: join(stateDir, "gateway.sock"),
+    udsPath: gatewaySocketPathFor(stateDir),
     adaptersDir: env[`${ENV_PREFIX}ADAPTERS_DIR`] ?? defaultAdaptersDir(),
     keychainBackend: keychainEnv ?? "keychain",
     tcp: {
