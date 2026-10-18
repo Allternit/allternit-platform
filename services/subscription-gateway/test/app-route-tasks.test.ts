@@ -135,6 +135,18 @@ describe("POST /v1/tasks on the RouteDirector", () => {
     expect(calls.filter((c) => c.op === "agent.context.message").map((c) => c.input.contextId)).toEqual(["ctx-1", "ctx-1"]);
   });
 
+  it("remembers the thread's app conversation across a gateway restart", async () => {
+    const { host, calls } = fakeHost({ reply: "ok" });
+    const t = setup(host, director("android-app"));
+    const first = await submit(t, { thread_id: "th-r" });
+    await untilTerminal(t, first.body.task_id);
+    // A new runner on the same database: what a restarted gateway builds.
+    const restarted = new AppRouteTasks({ db: deps.db, log: deps.log, host, director: director("android-app"), pollMs: 5 });
+    expect(restarted.holdsThread("th-r")).toBe(true);
+    expect(restarted.holdsThread("th-other")).toBe(false);
+    expect(calls.filter((c) => c.op === "agent.context.open")).toHaveLength(1);
+  });
+
   it("maps an adapter error to a failed task with a typed error", async () => {
     const { host } = fakeHost({ messageError: { code: "ADAPTER_DRIFT", humanMessage: "ChatGPT's composer on your phone wasn't found." } });
     const t = setup(host, director("android-app"));

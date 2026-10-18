@@ -89,14 +89,40 @@ function fromAaiError(e: { code: string; humanMessage: string; retryable?: boole
   };
 }
 
+/** Fabric thread → the app conversation it continues in (table app_route_threads, migration 0013). */
+class ThreadStore {
+  constructor(private readonly db: Db) {}
+  has(threadId: string): boolean {
+    return this.get(threadId) !== undefined;
+  }
+  get(threadId: string): { adapterId: string; contextId: string } | undefined {
+    const row = this.db.prepare("SELECT adapter_id, context_id FROM app_route_threads WHERE thread_id = ?").get(threadId) as
+      | { adapter_id: string; context_id: string }
+      | undefined;
+    return row ? { adapterId: row.adapter_id, contextId: row.context_id } : undefined;
+  }
+  set(threadId: string, v: { adapterId: string; contextId: string }): void {
+    this.db
+      .prepare(
+        "INSERT INTO app_route_threads (thread_id, adapter_id, context_id, updated_at) VALUES (?, ?, ?, ?) " +
+          "ON CONFLICT(thread_id) DO UPDATE SET adapter_id = excluded.adapter_id, context_id = excluded.context_id, updated_at = excluded.updated_at"
+      )
+      .run(threadId, v.adapterId, v.contextId, new Date().toISOString());
+  }
+  delete(threadId: string): void {
+    this.db.prepare("DELETE FROM app_route_threads WHERE thread_id = ?").run(threadId);
+  }
+}
+
 export class AppRouteTasks {
-  /** Fabric thread → the app conversation it continues in. */
-  private readonly threads = new Map<string, { adapterId: string; contextId: string }>();
+  private readonly threads: ThreadStore;
   /** Running turns: task → what cancel needs. */
   private readonly running = new Map<string, { adapterId: string; contextId: string | null; cancelled: boolean }>();
   private readonly inFlight = new Set<Promise<void>>();
 
-  constructor(private readonly deps: AppRouteTasksDeps) {}
+  constructor(private readonly deps: AppRouteTasksDeps) {
+    this.threads = new ThreadStore(deps.db);
+  }
 
   /**
    * Turn start. Returns the app route to run on, or null for today's web path:
