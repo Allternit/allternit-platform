@@ -107,14 +107,14 @@ export class PhoneChatProvider extends BaseAaiProvider {
       const h = mine[0].health;
       return fail("VENDOR_UNAVAILABLE", h?.action ?? `Your ${this.spec.platform === "ios" ? "iPhone" : "Android phone"} isn't reachable right now (${h?.state ?? "offline"}).`);
     }
-    return fail("VENDOR_UNAVAILABLE", `No ${this.spec.platform === "ios" ? "iPhone" : "Android phone"} is linked. Set one up in Allternit Desktop › Settings › Computers › Phones.`);
+    return fail("VENDOR_UNAVAILABLE", `No ${this.spec.platform === "ios" ? "iPhone" : "Android phone"} is linked. Link one in Allternit Desktop › Settings › Subscriptions › Link a phone.`);
   }
 
   /** A phone tool error, typed for AAI. */
   private toolError(r: Extract<PhoneToolResult, { ok: false }>): AaiResult<never> {
     switch (r.error) {
       case "device_locked": return fail("VENDOR_UNAVAILABLE", "Unlock your phone, then try again.", { retryAfterMs: 30_000 });
-      case "pairing_invalid": return fail("AUTH_REQUIRED", "Pair your phone again in Allternit Desktop › Settings › Computers › Phones.");
+      case "pairing_invalid": return fail("AUTH_REQUIRED", "Pair your phone again in Allternit Desktop › Settings › Subscriptions › Linked phones.");
       case "device_offline":
       case "desktop_unavailable": return fail("VENDOR_UNAVAILABLE", r.message);
       case "unknown_app": return fail("AUTH_REQUIRED", `${this.spec.appName} isn't installed on your phone. Install it and sign in, then try again.`);

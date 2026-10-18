@@ -1,6 +1,6 @@
 /**
  * Phone Link: per-phone health. A linked phone is only useful to bots when it
- * actually answers, so `phone.devices` and Settings → Computers → Phones show
+ * actually answers, so `phone.devices` and Settings → Subscriptions › Linked phones show
  * one of a small set of states, classified from evidence only — never guessed.
  *
  *   HEALTHY                              whoami matches + a sealed call works
@@ -17,7 +17,7 @@
  * never mark them automatic.
  */
 
-import type { PhoneLinkHealth, PhoneLinkHealthState } from './phone-link-types.js';
+import type { PhoneLinkApp, PhoneLinkHealth, PhoneLinkHealthState } from './phone-link-types.js';
 
 export type { PhoneLinkHealth, PhoneLinkHealthState };
 
@@ -33,7 +33,7 @@ export interface LinkedPhone {
   storeKey: string;
   /** iOS only: when the free-Apple-ID signature lapses (ISO string). */
   expiresAt?: string;
-  apps?: { vendor: string; signedIn: boolean | null }[];
+  apps?: PhoneLinkApp[];
 }
 
 export type LinkedPhoneSource = () => LinkedPhone[];
@@ -111,7 +111,7 @@ export function classifyHealth(ev: HealthEvidence, now: number): PhoneLinkHealth
       ...base,
       state: 'PAIRING_INVALID',
       recovery: 'manual',
-      action: 'Pair this phone again in Settings › Computers › Phones.',
+      action: 'Pair this phone again in Settings › Subscriptions › Linked phones.',
       detail: 'The phone no longer accepts this computer\'s key.',
     };
   }

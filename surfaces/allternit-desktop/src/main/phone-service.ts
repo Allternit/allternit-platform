@@ -48,7 +48,8 @@ import { createGoIosExec, createGoIosSpawn, ensureDdi, ensureGoIos, GoIos } from
 import { ensureRunnerArtifacts, pickSigner } from './phone-ios-runner.js';
 import { readPairRecord, startLoopbackForward } from './phone-usbmux.js';
 import { hasLinkedPhones } from './phone-link-stores.js';
-import { PhoneLinkBackend, cachedHostResolver, linkedPhoneSource, probeLinkedPhone, rememberLinkedHost, type LinkedPhone } from './phone-link-backend.js';
+import { PhoneLinkBackend, cachedHostResolver, linkedPhoneSource, probeLinkedPhone, rememberLinkedApps,
+  rememberLinkedHost, type LinkedPhone } from './phone-link-backend.js';
 import { fileAndroidLinkStore } from './phone-link-android.js';
 import { nodeDiscoveryDeps } from './phone-link-discovery.js';
 import { PHONE_LINK_MESH_ENABLED } from './phone-link-mesh.js';
@@ -263,7 +264,14 @@ class PhoneService {
         logger: (m) => log.info(m),
       });
       this.linkedHealth = health;
-      this.linkedBackend = new PhoneLinkBackend({ phones: source, client, resolveHost, health, logger: (m) => log.info(m) });
+      this.linkedBackend = new PhoneLinkBackend({
+        phones: source,
+        client,
+        resolveHost,
+        health,
+        saveApps: rememberLinkedApps(stores),
+        logger: (m) => log.info(m),
+      });
     }
     return this.linkedBackend;
   }
@@ -327,7 +335,7 @@ class PhoneService {
     this.iosRecovery.start();
   }
 
-  /** Linked phones with health, for phone-link:devices (Settings → Computers → Phones). */
+  /** Linked phones with health, for phone-link:devices (Settings → Subscriptions › Linked phones). */
   linkedDevices(): Promise<PhoneLinkDevice[]> {
     return this.ensureLinkedBackend().linkedDevices();
   }

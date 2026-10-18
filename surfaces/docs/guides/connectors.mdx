@@ -1,0 +1,40 @@
+---
+title: Connectors
+description: Find, connect and check the apps your bots and chats can use as tools, in Customize › Connectors.
+---
+
+A **connector** gives your chats and bots tools for another app: search your Google Drive, file a Linear issue, read a HubSpot deal. Connectors run through Allternit's own connector service; you sign in to each app once.
+
+## Find one
+
+Open **Customize › Connectors**. The directory shows:
+
+- **Collections** at the top: sets of connectors for developers, design and operations.
+- **Top connectors**: the most used ones, with the size of the whole directory.
+- **A section per category** (Communication, CRM, Storage and so on), each with **Show all**, and a cloud of category chips.
+
+## What a connector page tells you
+
+Open a connector to see its description, its **Tools** (green dot: only reads; orange dot: changes data), and a side column:
+
+| Field | Means |
+|---|---|
+| Made by | Who publishes it. A blue check means the vendor publishes it themselves. |
+| Category | Where it sits in the directory. |
+| Sign-in | **Required** (you sign in to the app), **API key**, **Local CLI (no sign-in)** or **Not required**. |
+| On your phone | The linked phones that have this app installed (Allternit Desktop). See [Phone Link](/guides/phone-link). |
+| Connector URL, More info | The connector's address and the vendor's docs, when known. |
+
+Only connect apps from developers you trust: Allternit does not control which tools a developer offers.
+
+## Connect
+
+Press **Connect** on the connector's page or card and follow its sign-in. An API-key connector asks for the key on the same page. A connected app's tools are then available in chats and to bots you allow; attach a connector to a bot from that bot's settings.
+
+## Connectors and the apps on your phone
+
+The phone apps Phone Link looks for use the same ids and categories as these connectors, so one app is one identity across both: Settings › Subscriptions lists it under **Apps and channels** with its phone lanes, and its connector page says which phones have it. A connector and a phone app are two different ways in. The connector calls the app's service with your sign-in; the phone lane drives the app itself on your phone.
+
+## For developers
+
+The directory is `GET /api/v1/connectors` (see [Connectors API](/api/connectors)), loaded once per session by allternit-ai `src/lib/connectors/connector-directory.ts`. The catalog ships in `cmd/allternit-api/assets/open-design/connectors.json`; the Customize screens are `src/views/customize/ConnectorsDirectory.tsx`. The "On your phone" line matches the connector id against `phone.devices` apps from Desktop's phone app catalog (`surfaces/allternit-desktop/src/main/phone-app-catalog.json`).

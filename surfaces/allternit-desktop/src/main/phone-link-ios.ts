@@ -41,6 +41,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import type { DriverContext, PhoneLinkDriver } from './phone-link.js';
 import type { PhoneLinkApp, PhoneLinkStatus } from './phone-link-types.js';
+import { IOS_APP_BUNDLES, IOS_PROBE_BUNDLES, catalogPhoneApps, nameCatalogApps } from './phone-app-catalog.js';
 import { ICTRL_PORT, IctrlError } from './ictrl-client.js';
 import type { IctrlLike } from './ictrl-client.js';
 import type { GoIos, LongRunning } from './phone-goios.js';
@@ -62,28 +63,11 @@ import {
   type SignedRunner,
 } from './phone-ios-runner.js';
 
-/**
- * Bundle ids of the vendor apps Phone Link looks for. Verified 2026-10-16
- * against the App Store lookup API (itunes.apple.com/search → bundleId)
- * unless marked otherwise.
- */
-export const IOS_VENDOR_BUNDLES: Record<string, string[]> = {
-  chatgpt: ['com.openai.chat'], // ChatGPT, OpenAI OpCo (id 6448311069)
-  claude: ['com.anthropic.claude'], // Claude by Anthropic (id 6473753684)
-  gemini: ['com.google.gemini'], // Google Gemini (id 6477489729)
-  grok: ['ai.x.GrokApp'], // Grok AI, X Corp. (id 6670324846)
-  kimi: ['com.moonshot.kimichat'], // Kimi, Beijing Moonshot (id 6474233312)
-  // "Microsoft Copilot" in the US store is com.microsoft.officemobile (id 541164041, the M365 app).
-  // com.microsoft.copilot (the consumer Copilot app) is UNVERIFIED: it no longer appears in US search.
-  copilot: ['com.microsoft.copilot', 'com.microsoft.officemobile'],
-  perplexity: ['ai.perplexity.app'], // Perplexity (id 1668000334)
-};
+/** Catalog id → iPhone bundle ids (phone-app-catalog.json). */
+export const IOS_VENDOR_BUNDLES = IOS_APP_BUNDLES;
 
 export function iosVendorApps(installed: Iterable<string>): PhoneLinkApp[] {
-  const set = new Set(installed);
-  return Object.entries(IOS_VENDOR_BUNDLES)
-    .filter(([, ids]) => ids.some((id) => set.has(id)))
-    .map(([vendor]) => ({ vendor, signedIn: null }));
+  return catalogPhoneApps(installed, 'ios');
 }
 
 /** Non-secret per-phone state, kept so a later start can reconnect instead of re-installing. */
@@ -707,11 +691,12 @@ export class IosDriver implements PhoneLinkDriver {
       apps = iosVendorApps(await this.deps.goios.apps(udid));
     } catch {
       if (record.apps) {
-        apps = record.apps;
+        apps = nameCatalogApps(record.apps);
       } else {
-        // No cable and no earlier list: ask the runner. Each launch opens the app, so go Home after.
+        // No cable and no earlier list: ask the runner. Each launch opens the
+        // app, so only the AI vendors are probed, and go Home after.
         const installed: string[] = [];
-        for (const ids of Object.values(IOS_VENDOR_BUNDLES)) {
+        for (const ids of Object.values(IOS_PROBE_BUNDLES)) {
           for (const id of ids) {
             if (await client.call('launch_app', { bundle_id: id }).then(() => true, () => false)) installed.push(id);
           }
