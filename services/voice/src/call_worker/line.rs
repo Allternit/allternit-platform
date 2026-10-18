@@ -80,6 +80,20 @@ fn valid_line(v: &Value) -> bool {
     }
 }
 
+/// `numberId` for the worker's start call: absent on a linked phone; otherwise
+/// the number, or `""` as before (an in-app call has none; older cloud-api
+/// builds require the field).
+pub fn start_number_id(line: Option<&Value>, get: &dyn Fn(&str) -> Option<String>) -> Option<String> {
+    (!is_linked_phone(line)).then(|| get("numberId").unwrap_or_default())
+}
+
+/// An outbound call needs the consent gate's `consentRef` (§4.1) unless it is
+/// on a linked phone: there the owner's runtime approved the `phone.call.dial`
+/// and Desktop placed the carrier call itself; the worker only joins it.
+pub fn needs_consent_ref(outbound: bool, line: Option<&Value>) -> bool {
+    outbound && !is_linked_phone(line)
+}
+
 pub fn is_linked_phone(line: Option<&Value>) -> bool {
     line.and_then(|l| l.get("kind")).and_then(Value::as_str) == Some(LINKED_PHONE_KIND)
 }
@@ -171,6 +185,21 @@ mod tests {
         assert_eq!(line_of(&[("line", "garbage")]), None);
         assert_eq!(line_of(&[]), None);
         assert!(!is_linked_phone(None));
+    }
+
+    #[test]
+    fn start_fields_per_line() {
+        let lp = json!({"kind": "linked_phone", "deviceId": "ZY22", "label": "Moto", "platform": "android"});
+        let num = json!({"kind": "number", "numberId": "n1"});
+        let with = |k: &str| (k == "numberId").then(|| "n1".to_string());
+        let without = |_: &str| None;
+        assert_eq!(start_number_id(Some(&num), &with).as_deref(), Some("n1"));
+        assert_eq!(start_number_id(None, &without).as_deref(), Some(""));
+        assert_eq!(start_number_id(Some(&lp), &with), None);
+        assert!(needs_consent_ref(true, Some(&num)));
+        assert!(needs_consent_ref(true, None));
+        assert!(!needs_consent_ref(true, Some(&lp)));
+        assert!(!needs_consent_ref(false, Some(&num)));
     }
 
     #[test]

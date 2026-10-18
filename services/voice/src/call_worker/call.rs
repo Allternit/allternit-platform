@@ -94,6 +94,8 @@ pub struct CallContext {
     pub local: String,
     pub direction: String,
     pub number_id: String,
+    /// The call's line (C1); `None` for an in-app call.
+    pub line: Option<serde_json::Value>,
     pub bot: BotConfig,
     /// The SIP leg was already answered when the worker joined (always true
     /// inbound). An outbound leg that is still ringing flips on `SipStatus("active")`.
@@ -383,6 +385,7 @@ pub async fn run_call(
         from: if call.ctx.direction == "outbound" { call.ctx.local.clone() } else { call.ctx.remote.clone() },
         to: if call.ctx.direction == "outbound" { call.ctx.remote.clone() } else { call.ctx.local.clone() },
         number_id: call.ctx.number_id.clone(),
+        line: call.ctx.line.clone(),
     });
     if let Some(why) = &recording.unavailable {
         // Recording was requested and isn't happening: say so in the state the
@@ -1278,6 +1281,7 @@ mod tests {
             local: "+16512686010".into(),
             direction: "inbound".into(),
             number_id: "num_1".into(),
+            line: Some(serde_json::json!({"kind": "number", "numberId": "num_1"})),
             sip_answered: true,
             bot: BotConfig {
                 name: Some("Acme Plumbing".into()),

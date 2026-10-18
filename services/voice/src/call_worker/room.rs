@@ -145,7 +145,8 @@ async fn handle_job(cfg: WorkerConfig, cloud: CloudClient, job: JobInfo, cancel:
     let get = |k: &str| attrs.get(k).cloned().filter(|v| !v.is_empty());
 
     let direction = if get("direction").as_deref() == Some("outbound") { Direction::Outbound } else { Direction::Inbound };
-    if direction == Direction::Outbound && get("consentRef").is_none() {
+    let call_line = line::call_line(&get);
+    if line::needs_consent_ref(direction == Direction::Outbound, call_line.as_ref()) && get("consentRef").is_none() {
         // §4.1: outbound only through the consent gate.
         tracing::error!(room = %room_name, "outbound call without consentRef; hanging up");
         let _ = rooms.delete_room(&room_name).await;
@@ -154,7 +155,8 @@ async fn handle_job(cfg: WorkerConfig, cloud: CloudClient, job: JobInfo, cancel:
     let (remote, local) = call_parties(&direction, &get);
     let start_req = StartCallRequest {
         bot_id: get("botId").unwrap_or_default(),
-        number_id: get("numberId").unwrap_or_default(),
+        number_id: line::start_number_id(call_line.as_ref(), &get),
+        line: call_line.clone(),
         from: if direction == Direction::Outbound { local.clone() } else { remote.clone() },
         to: if direction == Direction::Outbound { remote.clone() } else { local.clone() },
         direction: direction.clone(),
@@ -209,7 +211,8 @@ async fn handle_job(cfg: WorkerConfig, cloud: CloudClient, job: JobInfo, cancel:
                 remote,
                 local,
                 direction: direction.as_str().into(),
-                number_id: start_req.number_id.clone(),
+                number_id: start_req.number_id.clone().unwrap_or_default(),
+                line: call_line.clone(),
                 bot: resp.bot,
                 sip_answered: get(SIP_CALL_STATUS).is_none_or(|s| s == "active"),
             };

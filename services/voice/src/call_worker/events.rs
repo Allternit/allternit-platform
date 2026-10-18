@@ -37,7 +37,8 @@ pub enum TransferMode {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum CallEvent {
-    Started { direction: String, from: String, to: String, number_id: String },
+    /// `line` (C1) is sent when known; on a linked phone `numberId` is null.
+    Started { direction: String, from: String, to: String, number_id: String, line: Option<Value> },
     TranscriptDelta { speaker: Speaker, text: String, is_final: bool, segment_id: String },
     Dtmf { digits: String, from: String },
     StateChanged { held: bool, muted_bot: bool, muted_caller: bool, speaker: Option<Speaker>, recording: bool },
@@ -64,8 +65,14 @@ impl CallEvent {
     /// camelCase payload; always includes `callId`.
     pub fn payload(&self, call_id: &str) -> Value {
         let mut v = match self {
-            CallEvent::Started { direction, from, to, number_id } => {
-                json!({"direction": direction, "from": from, "to": to, "numberId": number_id})
+            CallEvent::Started { direction, from, to, number_id, line } => {
+                let linked = super::line::is_linked_phone(line.as_ref());
+                let number = if linked { Value::Null } else { json!(number_id) };
+                let mut v = json!({"direction": direction, "from": from, "to": to, "numberId": number});
+                if let Some(l) = line {
+                    v["line"] = l.clone();
+                }
+                v
             }
             CallEvent::TranscriptDelta { speaker, text, is_final, segment_id } => {
                 json!({"speaker": speaker, "text": text, "final": is_final, "segmentId": segment_id})
@@ -265,6 +272,7 @@ mod tests {
             from: "+1".into(),
             to: "+2".into(),
             number_id: "n".into(),
+            line: None,
         });
         let b = s.envelope(&t("hi"));
         let c = s.envelope(&t("there"));
@@ -277,6 +285,22 @@ mod tests {
         assert_eq!(c.payload["callId"], "c1");
         assert_eq!(c.payload["final"], true);
         assert_eq!(c.payload["segmentId"], "s");
+    }
+
+    #[test]
+    fn started_carries_the_line() {
+        let lp = json!({"kind": "linked_phone", "deviceId": "ZY22", "label": "Moto", "platform": "android"});
+        let p = CallEvent::Started { direction: "inbound".into(), from: "+1".into(), to: "".into(), number_id: "".into(), line: Some(lp.clone()) }
+            .payload("c");
+        assert_eq!(p["line"], lp);
+        assert!(p["numberId"].is_null());
+        let num = json!({"kind": "number", "numberId": "n1"});
+        let p = CallEvent::Started { direction: "inbound".into(), from: "+1".into(), to: "+2".into(), number_id: "n1".into(), line: Some(num.clone()) }
+            .payload("c");
+        assert_eq!((p["numberId"].as_str(), &p["line"]), (Some("n1"), &num));
+        let p = CallEvent::Started { direction: "inbound".into(), from: "+1".into(), to: "+2".into(), number_id: "".into(), line: None }.payload("c");
+        assert!(p.get("line").is_none());
+        assert_eq!(p["numberId"], "");
     }
 
     #[test]

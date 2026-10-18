@@ -49,7 +49,12 @@ impl Direction {
 #[serde(rename_all = "camelCase")]
 pub struct StartCallRequest {
     pub bot_id: String,
-    pub number_id: String,
+    /// The bot's number. Absent for a linked-phone call (C3.2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub number_id: Option<String>,
+    /// The call's line (C1): `{kind:"number", numberId}` or the linked phone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<serde_json::Value>,
     /// Caller E.164 (inbound) or bot number (outbound).
     pub from: String,
     pub to: String,
@@ -342,7 +347,8 @@ mod tests {
     fn start_call_wire_shape() {
         let req = StartCallRequest {
             bot_id: "bot_1".into(),
-            number_id: "num_1".into(),
+            number_id: Some("num_1".into()),
+            line: Some(json!({"kind": "number", "numberId": "num_1"})),
             from: "+15551230000".into(),
             to: "+16512686010".into(),
             direction: Direction::Inbound,
@@ -353,9 +359,16 @@ mod tests {
         };
         assert_eq!(
             serde_json::to_value(&req).unwrap(),
-            json!({"botId":"bot_1","numberId":"num_1","from":"+15551230000",
-                   "to":"+16512686010","direction":"inbound","room":"call-abc"})
+            json!({"botId":"bot_1","numberId":"num_1","line":{"kind":"number","numberId":"num_1"},
+                   "from":"+15551230000","to":"+16512686010","direction":"inbound","room":"call-abc"})
         );
+        // A linked-phone call: no numberId, the line instead.
+        let lp = json!({"kind": "linked_phone", "deviceId": "ZY22", "label": "Moto", "platform": "android"});
+        let linked = StartCallRequest { number_id: None, line: Some(lp.clone()), room: "call-lp-1".into(), ..req.clone() };
+        let v = serde_json::to_value(&linked).unwrap();
+        assert!(v.get("numberId").is_none());
+        assert_eq!(v["line"], lp);
+        assert_eq!(serde_json::from_value::<StartCallRequest>(v).unwrap(), linked);
         let resp: StartCallResponse = serde_json::from_value(json!({
             "callId": "call_9",
             "bot": {"persona": {"name": "Acme Plumbing"}, "voiceId": "af_heart",
