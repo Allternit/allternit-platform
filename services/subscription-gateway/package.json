@@ -1,9 +1,9 @@
 {
   "name": "subscription-gateway",
   "version": "0.1.0",
-  "description": "Allternit Subscription Gateway \u2014 local daemon turning paid consumer AI subscriptions into addressable capabilities",
+  "description": "Allternit Subscription Gateway — local daemon turning paid consumer AI subscriptions into addressable capabilities",
   "type": "module",
-  "main": "./dist/main.js",
+  "main": "./dist/src/main.js",
   "scripts": {
     "dev": "tsx watch src/main.ts",
     "build": "tsc -b && node scripts/copy-migrations.mjs",
@@ -19,22 +19,23 @@
     "@allternit/subscription-fabric-contracts": "workspace:*",
     "@anthropic-ai/sdk": "^0.95.2",
     "@copilotkit/core": "1.75.0",
-    "better-sqlite3": "13.0.3",
     "express": "^4.18.2",
     "tweetnacl": "1.0.3",
     "js-yaml": "^4.2.0",
     "zod": "^3.25.0"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.11",
     "@types/express": "^4.17.21",
     "@types/js-yaml": "^4.0.9",
-    "@types/node": "^20.0.0",
+    "@types/node": "^24.10.1",
     "@types/supertest": "^6.0.2",
     "playwright": "^1.58.2",
     "supertest": "^7.0.0",
     "tsx": "^4.7.0",
     "typescript": "^5.3.0",
     "vitest": "^1.0.0"
+  },
+  "engines": {
+    "node": ">=22.13.0"
   }
 }

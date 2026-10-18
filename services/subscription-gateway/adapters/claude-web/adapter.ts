@@ -9,13 +9,14 @@ import type { DeclarativeChatConfig, SdkSelectorResolver } from "@allternit/subs
 import type { Page } from "playwright";
 import { readFileSync } from "node:fs";
 import { WebChatAdapter, loadManifestAt, type WebChatOptions } from "../_shared/web-chat.js";
+import { adapterFile } from "../_shared/adapter-file.js";
 
 export const THREAD_URL_PATTERN = /^https:\/\/claude\.ai\/chat\/([0-9a-f-]{36})/;
 
 export function claudeWebConfig(overrides: Partial<DeclarativeChatConfig> = {}): DeclarativeChatConfig {
   return {
-    manifest: loadManifestAt(new URL("./manifest.yaml", import.meta.url)),
-    selectorsYaml: readFileSync(new URL("./selectors/v1.yaml", import.meta.url), "utf8"),
+    manifest: loadManifestAt(adapterFile(import.meta.url, "claude-web", "./manifest.yaml")),
+    selectorsYaml: readFileSync(adapterFile(import.meta.url, "claude-web", "./selectors/v1.yaml"), "utf8"),
     threadUrlPattern: THREAD_URL_PATTERN,
     banners: [
       { kind: "limit_banner", pattern: /out of (free )?messages/i, blocksSend: true },

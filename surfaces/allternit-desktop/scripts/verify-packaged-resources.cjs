@@ -288,6 +288,30 @@ if (!fs.existsSync(connectorBundlePath)) {
   }
 }
 
+// Desktop's own subscription gateway (prepare-subs-gateway.cjs): the entry,
+// the adapters it loads, its migrations and Playwright must all be there.
+const subsGatewayDir = path.join(resourcesDir, 'subs-gateway');
+const subsGatewayRequired = [
+  path.join('src', 'main.js'),
+  'package.json',
+  path.join('adapters', 'chatgpt-android-app', 'aai.js'),
+  path.join('adapters', 'chatgpt-web', 'manifest.yaml'),
+  path.join('migrations', '0001_init.sql'),
+  path.join('node_modules', 'playwright-core', 'package.json'),
+  ...(process.platform === 'darwin' ? [path.join('bin', 'ax-bridge')] : []),
+];
+const subsGatewayMissing = subsGatewayRequired.filter((rel) => !fs.existsSync(path.join(subsGatewayDir, rel)));
+if (subsGatewayMissing.length > 0) {
+  failed = true;
+  process.stderr.write(
+    `[verify-packaged-resources] ✗ Subscription gateway bundle incomplete: ${subsGatewayMissing.join(', ')}\n` +
+    `    Expected under: ${subsGatewayDir}\n` +
+    '    Build it with: npm run prepare:subs-gateway\n'
+  );
+} else {
+  log(`✓ Subscription gateway bundle (${subsGatewayDir})`);
+}
+
 if (failed) {
   process.stderr.write(
     '\n[verify-packaged-resources] Packaged resources are incomplete. ' +

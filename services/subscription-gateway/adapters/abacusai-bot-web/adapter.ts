@@ -8,13 +8,14 @@ import type { DeclarativeChatConfig } from "@allternit/subscription-adapter-sdk"
 import { readFileSync } from "node:fs";
 import { WebChatAdapter, loadManifestAt, type WebChatOptions } from "../_shared/web-chat.js";
 import { readAccountBots } from "../_shared/account-bots.js";
+import { adapterFile } from "../_shared/adapter-file.js";
 
 export const THREAD_URL_PATTERN = /^https:\/\/apps\.abacus\.ai\/bot\/(?:chat\/)?([\w-]+)/;
 
 export function abacusaiBotWebConfig(overrides: Partial<DeclarativeChatConfig> = {}): DeclarativeChatConfig {
   return {
-    manifest: loadManifestAt(new URL("./manifest.yaml", import.meta.url)),
-    selectorsYaml: readFileSync(new URL("./selectors/v1.yaml", import.meta.url), "utf8"),
+    manifest: loadManifestAt(adapterFile(import.meta.url, "abacusai-bot-web", "./manifest.yaml")),
+    selectorsYaml: readFileSync(adapterFile(import.meta.url, "abacusai-bot-web", "./selectors/v1.yaml"), "utf8"),
     threadUrlPattern: THREAD_URL_PATTERN,
     banners: [
       { kind: "limit_banner", pattern: /(reached|hit) (the |your )?(usage |daily |message |chat )?limit/i, blocksSend: true },

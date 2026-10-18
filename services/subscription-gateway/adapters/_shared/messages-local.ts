@@ -7,7 +7,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
-import Database from 'better-sqlite3';
+import { Database } from '../../src/store/sqlite.js';
 import { BaseAaiProvider, fail, ok, type AaiResult, type AgentSummary, type OpenContextInput, type MessageInput, type EventsInput, type EventsResult, type CursoredEvent } from '@allternit/agent-gateway';
 import { agentCapabilityManifestSchema } from '@allternit/subscription-fabric-contracts';
 import { isObject, type Json } from './paired-local.js';
@@ -84,7 +84,7 @@ export function extractAttributedText(blob: Buffer | null | undefined): string {
 }
 
 /** Opens chat.db read-only. Failure almost always means the gateway process lacks Full Disk Access. */
-export function openChatDb(path: string = CHAT_DB): AaiResult<Database.Database> {
+export function openChatDb(path: string = CHAT_DB): AaiResult<Database> {
   if (!existsSync(path)) return fail('AUTH_REQUIRED', 'Messages history was not found on this computer. Sign in to Messages on the gateway Mac first.');
   try {
     return ok(new Database(path, { readonly: true, fileMustExist: true }));
@@ -116,7 +116,7 @@ function osascriptSend(handle: string, text: string, service: 'iMessage' | 'SMS'
 }
 
 type InboundRow = { rowid: number; text: string };
-function inbound(db: Database.Database, handle: string, after: number): InboundRow[] {
+function inbound(db: Database, handle: string, after: number): InboundRow[] {
   const key = handleKey(handle);
   const ids = (db.prepare('SELECT ROWID AS rowid, id FROM handle').all() as { rowid: number; id: string }[])
     .filter((row) => handleKey(row.id) === key)

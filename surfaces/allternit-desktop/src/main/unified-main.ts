@@ -50,6 +50,7 @@ import {
 import { systemOne } from './system-one-manager.js';
 import { gizziManager } from './gizzi-manager.js';
 import { connectorSidecarManager } from './connector-sidecar-manager.js';
+import { subsGatewayManager } from './subs-gateway-manager.js';
 import { gizziDaemonManager } from './gizzi-daemon-manager.js';
 import { PORTS, URLS, devUiUrl, apiUrl, notebookUrl, staticUiUrl } from './config.js';
 import { acceptsDeviceToken, isPublicCloudCatalogPath, rewriteCloudApiToProtocol, shouldInjectDesktopIdentity } from './api-protocol.js';
@@ -1377,6 +1378,12 @@ async function initializeBundledMode(): Promise<void> {
         log.warn('[Main] Factory engine failed to start, continuing without it:', factoryErr);
       }
     })();
+    // Subscription gateway (subs-gateway-manager.ts): phone and desktop-app
+    // lanes on this computer. The API only needs its port, reserved here; the
+    // gateway itself finishes starting in the background.
+    const subsGatewayTask = subsGatewayManager.prepare().then(() => {
+      void subsGatewayManager.start();
+    });
     const [gizziUrl, , , , localEngineUrl] = await Promise.all([
       gizziTask,
       officeTask,
@@ -1385,6 +1392,7 @@ async function initializeBundledMode(): Promise<void> {
       localEngineTask,
       factoryTask,
       decisionsTask,
+      subsGatewayTask,
     ]);
 
     // Step 2 — allternit-api (Rust operator API, port ${PORTS.API} — VM, rails, terminal)
@@ -2739,6 +2747,7 @@ async function shutdownAllServices(): Promise<void> {
   await backendManager.stopBackend();
   await localEngineManager.stop();
   connectorSidecarManager.stop();
+  subsGatewayManager.stop();
   officeEngineManager.stop();
   factoryEngineManager.stop();
   meshManager.stop().catch(() => {}); // best-effort mesh sidecar shutdown

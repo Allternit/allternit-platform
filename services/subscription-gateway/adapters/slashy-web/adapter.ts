@@ -7,13 +7,14 @@ import { readFileSync } from "node:fs";
 import type { DeclarativeChatConfig } from "@allternit/subscription-adapter-sdk";
 import type { AccountObservation, ExecutionContext } from "@allternit/subscription-fabric-contracts";
 import { WebChatAdapter, loadManifestAt, sdkPage, type WebChatOptions } from "../_shared/web-chat.js";
+import { adapterFile } from "../_shared/adapter-file.js";
 
 export const THREAD_URL_PATTERN = /^https:\/\/slashy\.com\/(?:chat|t)\/([\w-]+)/;
 
 export function slashyWebConfig(overrides: Partial<DeclarativeChatConfig> = {}): DeclarativeChatConfig {
   return {
-    manifest: loadManifestAt(new URL("./manifest.yaml", import.meta.url)),
-    selectorsYaml: readFileSync(new URL("./selectors/v1.yaml", import.meta.url), "utf8"),
+    manifest: loadManifestAt(adapterFile(import.meta.url, "slashy-web", "./manifest.yaml")),
+    selectorsYaml: readFileSync(adapterFile(import.meta.url, "slashy-web", "./selectors/v1.yaml"), "utf8"),
     threadUrlPattern: THREAD_URL_PATTERN,
     banners: [
       { kind: "limit_banner", pattern: /(reached|hit|exceeded) (your |the )?(usage |daily )?limit/i, blocksSend: true },

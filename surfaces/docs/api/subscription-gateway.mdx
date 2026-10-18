@@ -5,11 +5,38 @@ description: Start tasks on a connected ChatGPT, Claude or Kimi subscription thr
 
 ## Overview
 
-A connected subscription runs in its own browser on the person's Sessions computer. The Allternit API forwards requests to that computer's gateway and adds the gateway token server-side. Every task that would send something through a subscription needs a **human action**: proof that a person sent or confirmed that task. Agents, tools, bots and schedules never get one on their own. They prepare the task on an approval card, and the action is created when a person approves it.
+A connected subscription runs through a gateway: the one Allternit Desktop runs on the person's own computer, or the one on their Sessions computer. The Allternit API forwards requests to that gateway and adds the gateway token server-side. Every task that would send something through a subscription needs a **human action**: proof that a person sent or confirmed that task. Agents, tools, bots and schedules never get one on their own. They prepare the task on an approval card, and the action is created when a person approves it.
 
 <Note>
 This namespace is served by the Allternit API data-plane node (`http://127.0.0.1:8013` on the same machine, or your paired or provisioned node), under `/api/v1`.
 </Note>
+
+## Which gateway answers
+
+`allternit-api` reads `ALLTERNIT_LOCAL_SUBS_GATEWAY`:
+
+| Value | Set by | Order |
+|---|---|---|
+| unset | cloud API | The bound Sessions computer only. `409 sessions_computer_not_bound` without one. |
+| `1` | Allternit cloud computer image | The gateway on the same machine, always. |
+| `fallback` | Allternit Desktop (`subs-gateway-manager.ts`) | A bound Sessions computer that is running and allowed, else the gateway inside Desktop on this computer. |
+
+`ALLTERNIT_LOCAL_SUBS_GATEWAY_PORT` (default 7788) and `ALLTERNIT_LOCAL_SUBS_GATEWAY_STATE_DIR` (its `keychain.json` holds the gateway token) say where the local gateway is. `GET /api/v1/subscriptions/status` reports `local: true` when the local gateway answers, `fallback: true` when it is Desktop's, and `sessions_computer` with the bound computer that is not answering, if any.
+
+### The gateway inside Allternit Desktop
+
+`surfaces/allternit-desktop/scripts/prepare-subs-gateway.cjs` bundles `services/subscription-gateway` into `resources/subs-gateway`:
+
+- `src/main.js` and one entry per adapter, with shared chunks.
+- Adapter data files, migrations and Playwright.
+- `bin/ax-bridge` on macOS.
+
+The gateway uses `node:sqlite`, so no native module ships. Desktop runs it on Electron's own Node. It is not started where the machine already runs a gateway (`ALLTERNIT_LOCAL_SUBS_GATEWAY=1`). State lives in `~/.allternit/subscriptions` with the file secret store. The script ends by booting the bundle once on a throwaway state dir.
+
+With `SUBS_GATEWAY_LOCAL_DESKTOP=1`, the gateway is on the person's own computer:
+
+- Browser lanes are off until `PUT /v1/settings/browser-lanes {"enabled": true}`. While off, no browser account routes, the `web` route is offline, `GET /v1/providers` reports `login_supported: false`, and a sign-in answers `409 browser_lanes_off`.
+- When on, a browser lane starts the installed Google Chrome itself (`worker/hidden_chrome.ts`) and Playwright attaches over CDP. Chrome runs with `--headless=new`, on the account's own profile, with automation features off and Chrome's normal user agent. Never Chrome for Testing.
 
 ## Endpoints
 
@@ -20,6 +47,8 @@ This namespace is served by the Allternit API data-plane node (`http://127.0.0.1
 | `POST` | `/api/v1/subscriptions/disclosure/ack` | Record the person's acknowledgement of a provider's disclosure. |
 | `GET` | `/api/v1/subscriptions/gateway/v1/lanes` | Health of each connected account: state (`green`, `amber`, `red`), last probe, last pass and drift-breaker state, from the 3-minute canary. See [Lane status](/guides/lane-status). |
 | `GET` | `/api/v1/subscriptions/gateway/v1/routes` | The deterministic route router view: per vendor, the bound route, the Settings override, and every route with its eligibility and capability-contract result. See [Route router](#route-router). |
+| `GET` | `/api/v1/subscriptions/gateway/v1/settings/browser-lanes` | `{ local_desktop, enabled, changed_at, chrome_installed }`. On a Sessions computer `local_desktop` is false and `enabled` is always true. |
+| `PUT` | `/api/v1/subscriptions/gateway/v1/settings/browser-lanes` | `{ "enabled": true \| false }` turns browser sign-ins on this computer on or off; off closes running browser lanes. `409 not_local_desktop` on a Sessions computer. |
 | `PUT` | `/api/v1/subscriptions/gateway/v1/routes/:vendor/override` | Pin (`{ "route": "<id>" }`) or clear (`{ "route": null }`) the route override for a vendor. `400 route_not_eligible` when the route is not eligible. |
 
 ## Submitting a task
@@ -93,6 +122,16 @@ The chosen route is written into the vendor's binding. Failover to the next elig
 
 The debug-port route (`desktop-app-cdp`) is used only while the shipped app accepts its debug flag unmodified; a launch-time probe records which desktop lane applies per app version. Allternit never patches, re-signs or injects into a vendor binary — when the flag is off, the app routes through accessibility (`desktop-app-ax`) or the phone instead.
 
+### Chats from the model picker use the same routes
+
+A chat with a subscription model from the model picker (`subs-chatgpt`, `subs-claude`, …) is a `POST /v1/tasks` with `capability` `chat.create` or `chat.continue` and `routing.provider` set. At submission — the start of the turn — the gateway asks the same route router a bot turn asks:
+
+- **A phone or desktop-app route** (`android-app`, `iphone-app-ictrl`, `iphone-app-usb-agent`, `desktop-app-cdp`, `desktop-app-ax`): the turn runs through that route's adapter, the same calls a bot turn makes. The task reads exactly like any other task: `task.status` `running`, `reply` events with `reply.text.delta`, then `completed` with `result.text`. `status_detail` names the route (`via android-app: …`). A later turn in the same `thread_id` continues the same conversation in the app, also after a gateway restart (table `app_route_threads`). `POST /v1/tasks/:id/cancel` presses the app's Stop button while the reply is running.
+- **The web route, or no eligible route:** the task takes the browser path as before, and that path records its own reasons when nothing can serve it.
+- **A thread that already lives in a web account** stays there, because the conversation belongs to that account.
+
+An app-route failure ends the task `failed` with a typed error. Examples: `provider_ui_changed` when the app's layout moved, `auth_required`, `rate_limited`, and `timeout` when the app never finished its reply. These errors have `fallback_eligible: true`, so the next turn can pick another route. A running turn never switches routes. Turns that a vendor adapter submits on its own were already routed when they started (`x-subs-route-chosen: 1` over the gateway's socket), so they are not routed a second time.
+
 ## Errors
 
 | Status | `error` | Meaning |
@@ -104,6 +143,7 @@ The debug-port route (`desktop-app-cdp`) is used only while the shipped app acce
 | 403 | `human_action_task_mismatch` | The action was approved for a different task. |
 | 403 | `person_required` | A human action or card decision came from an agent or API token instead of a person. |
 | 409 | `task_required` | Approving a card that does not carry its complete task. |
+| 409 | `browser_lanes_off` | A browser sign-in on the person's own computer while browser sign-ins are off there. |
 
 ## Related pages
 

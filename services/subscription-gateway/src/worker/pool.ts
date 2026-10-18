@@ -8,6 +8,7 @@ import { existsSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { chromium, type BrowserContext } from "playwright";
+import { launchHiddenChrome, type HiddenChrome } from "./hidden_chrome.js";
 import {
   createPageLease,
   createResolver,
@@ -80,6 +81,7 @@ export interface WorkerPoolDeps {
   log?: EventLog; // challenge transitions surface one account-scoped ledger event
   logger?: (line: string) => void;
   sessionImport?: PlaywrightLauncherDeps["sessionImport"];
+  hiddenChrome?: PlaywrightLauncherDeps["hiddenChrome"];
   // After a verification check appears: how often the pool looks again, and
   // for how long (defaults 15 s, 10 min).
   challengeRecheckMs?: number;
@@ -153,6 +155,7 @@ export class WorkerPool {
         profilesDir: deps.profilesDir ?? process.cwd(),
         sessionImport: deps.sessionImport,
         logger: deps.logger,
+        hiddenChrome: deps.hiddenChrome,
       });
   }
 
@@ -514,6 +517,11 @@ export interface PlaywrightLauncherDeps {
   // 8 s). Single-page apps (Kimi) draw the signed-in UI after
   // domcontentloaded; judging at once reads a signed-in page as logged out.
   probeSettleMs?: number;
+  // The person's own computer (local_desktop.ts): `refuse` = no browser lane
+  // here (off, or no Google Chrome), with the sentence to show; `executable` =
+  // run that installed Google Chrome hidden (hidden_chrome.ts). Unset = a
+  // Sessions computer: headed Chrome as before.
+  hiddenChrome?: () => { executable: string } | { refuse: string };
 }
 
 // Wait until the page shows something decisive: the signed-in marker, a
@@ -546,20 +554,34 @@ export function createPlaywrightLauncher(deps: PlaywrightLauncherDeps): Launcher
     }
 
     const userDataDir = isAbsolute(profileRef) ? profileRef : join(deps.profilesDir, profileRef);
-    // Sessions window: headed, real Chrome, persistent profile. Never closed
-    // on auth walls or challenges — the human drives it; pool.shutdown() owns
-    // the lifecycle.
-    const context: BrowserContext = await chromium.launchPersistentContext(userDataDir, {
-      channel: "chrome",
-      headless: false,
-      // After a crash or kill -9 Chrome otherwise floats a "Restore pages?"
-      // bubble over the provider page on every relaunch.
-      args: ["--hide-crash-restore-bubble", "--start-maximized"],
-      // The page follows the window. Playwright's default 1280x720 viewport plus
-      // Chrome's toolbars made the window taller than a 720p Sessions display,
-      // so its bottom (composer, buttons) sat off-screen in the viewer.
-      viewport: null,
-    });
+    let hidden: HiddenChrome | null = null;
+    let context: BrowserContext;
+    const own = deps.hiddenChrome?.();
+    if (own) {
+      if ("refuse" in own) throw new Error(own.refuse);
+      // The person's own computer: hidden, on the account's own profile.
+      hidden = await launchHiddenChrome(userDataDir, { executable: own.executable });
+      context = hidden.context;
+    } else {
+      // Sessions window: headed, real Chrome, persistent profile. Never closed
+      // on auth walls or challenges — the human drives it; pool.shutdown() owns
+      // the lifecycle.
+      context = await chromium.launchPersistentContext(userDataDir, {
+        channel: "chrome",
+        headless: false,
+        // After a crash or kill -9 Chrome otherwise floats a "Restore pages?"
+        // bubble over the provider page on every relaunch.
+        args: ["--hide-crash-restore-bubble", "--start-maximized"],
+        // The page follows the window. Playwright's default 1280x720 viewport plus
+        // Chrome's toolbars made the window taller than a 720p Sessions display,
+        // so its bottom (composer, buttons) sat off-screen in the viewer.
+        viewport: null,
+      });
+    }
+    const closeContext = async () => {
+      if (hidden) await hidden.close();
+      else await context.close().catch(() => {});
+    };
     try {
       if (deps.sessionImport) {
         const n = await deps.sessionImport(userDataDir, context);
@@ -584,6 +606,9 @@ export function createPlaywrightLauncher(deps: PlaywrightLauncherDeps): Launcher
       let closed = false;
       let alive = true;
       context.on("close", () => {
+        alive = false;
+      });
+      void hidden?.closed.then(() => {
         alive = false;
       });
       return {
@@ -625,11 +650,11 @@ export function createPlaywrightLauncher(deps: PlaywrightLauncherDeps): Launcher
           if (closed) return;
           closed = true;
           await adapter.detach().catch(() => {});
-          await context.close().catch(() => {});
+          await closeContext();
         },
       };
     } catch (err) {
-      await context.close().catch(() => {});
+      await closeContext();
       throw err;
     }
   };

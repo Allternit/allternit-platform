@@ -98,6 +98,23 @@ This works on Android phones and iPhones. On an iPhone the helper itself must be
 
 If away-from-home setup can't finish (for example, you're not signed in to Allternit), the phone still works on your Wi-Fi. Plug it in and run setup again to finish.
 
+## Use a linked phone on your Sessions computer
+
+If you have a Sessions computer (an always-on computer that runs your subscriptions), it can use a phone you linked on your Mac, so the phone's apps work while your Mac is off. Your Mac gives the Sessions computer the phone's pairing; you don't set the phone up again, and nothing changes on the phone.
+
+1. Your Sessions computer must be on, with Allternit Desktop open on it.
+2. On your Mac, in Settings → Subscriptions › Linked phones, choose **Use on Sessions computer** for the phone.
+3. Your Mac asks you to confirm. Choose **Use on**, followed by your Sessions computer's name.
+
+The phone then shows in the Sessions computer's Linked phones too. Your Mac keeps its pairing.
+
+An iPhone still needs your Mac for two things, and the Sessions computer shows them as **Needs you** with the reason:
+
+- **Renewing the helper**, about once a week: plug the iPhone into your Mac and open Allternit there.
+- **Remounting after the iPhone restarts**: plug it into your Mac, or on the iPhone open iCTRL › Mount without a Mac, then Start Server.
+
+A Sessions computer can't do these because they need a cable to the iPhone.
+
 ## For developers
 
 Desktop main runs the setup as a state machine (`surfaces/allternit-desktop/src/main/phone-link.ts`, with the platform drivers in `phone-link-ios.ts` and `phone-link-android.ts`). The renderer API is `window.allternit.phoneLink`; types are in `phone-link-types.ts`.
@@ -111,6 +128,20 @@ Desktop main runs the setup as a state machine (`surfaces/allternit-desktop/src/
 | `submitAppleId()`, `submitTwoFactor()` | iPhone signing; credentials go to main once and are not stored in plain text or logged |
 
 The renderer side lives in allternit-ai `src/components/phone-link/`: `PhoneLinkSetup` (dialog on Desktop and web, bottom sheet on the phone layout and PWA), the compact `PhoneLinkPanel` used inline in onboarding, and `usePhoneLink()`. Types mirror the contract in `src/lib/phone-link-bridge.ts`; per-state copy is in `phoneLinkCopy.ts`, with the backend `instruction` and `detail` shown underneath when they say something different. Where `window.allternit.phoneLink` is missing (web, phone, PWA, Desktop builds from before Phone Link) the UI shows "Set up from Allternit Desktop". Apple ID and 2FA values are cleared from component state before the call and never logged. Unmounting the setup while it's running calls `cancel()`. Onboarding counts Phone Link as done only at `ready_wifi`. Preview with a mocked bridge: run vite and open `/preview-phone-link.html?platform=ios&state=apple_id`.
+
+### Pairing handover
+
+`surfaces/allternit-desktop/src/main/phone-link-handover.ts` moves an existing pairing (the link record plus the `phone-link.ictrl.<device>` key record) from one Desktop to the person's Sessions computer. It never re-pairs: the phone helpers refuse pairing over the mesh on purpose. Approving a new computer on the phone itself is a possible future addition and is not built.
+
+| Hop | Route | Auth |
+|---|---|---|
+| Mac Desktop main → Mac allternit-api | `GET` / `POST /api/v1/subscriptions/sessions-computer/phone-handover` | Desktop access token + the signed-in user |
+| allternit-api → Sessions computer gateway | `GET /v1/phone/handover/key`, `POST /v1/phone/handover` (`routes_phone_handover.ts`) | the binding's gateway token, `accounts:manage` |
+| gateway → Sessions computer Desktop | `GET /phone/handover/key`, `POST /phone/handover` on the loopback phone gateway (`phone-gateway.ts`) | the per-launch `x-allternit-phone-token` |
+
+allternit-api reaches only the caller's own bound, running Sessions computer, never the local gateway and never another owner's computer. The receiving Desktop keeps an X25519 key pair (private half in its secure store, `phone-link.handover-key`). The Mac seals the payload to it with an ephemeral X25519 key, HKDF-SHA256 and AES-256-GCM, with the owner and key id bound in as associated data, so the API and the gateway only relay ciphertext. The receiver opens it, refuses another owner's or another computer's box, and writes the record (with `handedOverFrom: { name, at }`) and the key into its own stores. The Mac asks the person to confirm in a native dialog before anything is sent.
+
+Renderer API, `window.allternit.phoneLink`: `handoverTargets()` returns the bound Sessions computer as `{ computerId, name, ready, reason? }` (an empty list when none is bound) and `handover({ deviceId, computerId })` returns `{ ok: true, deviceId, computerName }` or `{ ok: false, cancelled?, error, message }`. `phone.devices` entries for a received phone carry `handedOverFrom`. `handedOverHealth()` in `phone-link-health.ts` rewrites the signature, remount and pairing actions to name the giving computer. The phone gateway starts at every launch (without giving bots the phone tools) so a computer with no phone yet can receive one.
 
 ### Phone app catalog
 

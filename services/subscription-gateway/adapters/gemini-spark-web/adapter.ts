@@ -10,13 +10,14 @@ import type { DeclarativeChatConfig } from "@allternit/subscription-adapter-sdk"
 import type { ExecutionContext, Task } from "@allternit/subscription-fabric-contracts";
 import { GeminiWebAdapter } from "../gemini-web/adapter.js";
 import { loadManifestAt, sdkPage, type WebChatOptions } from "../_shared/web-chat.js";
+import { adapterFile } from "../_shared/adapter-file.js";
 
 const GEMINI_APP = "https://gemini.google.com/app";
 
 export function geminiSparkConfig(overrides: Partial<DeclarativeChatConfig> = {}): Partial<DeclarativeChatConfig> {
   return {
-    manifest: loadManifestAt(new URL("./manifest.yaml", import.meta.url)),
-    selectorsYaml: readFileSync(new URL("./selectors/v1.yaml", import.meta.url), "utf8"),
+    manifest: loadManifestAt(adapterFile(import.meta.url, "gemini-spark-web", "./manifest.yaml")),
+    selectorsYaml: readFileSync(adapterFile(import.meta.url, "gemini-spark-web", "./selectors/v1.yaml"), "utf8"),
     ...overrides,
   };
 }

@@ -31,6 +31,7 @@ import {
 } from "./store.js";
 import type { Db } from "../store/db.js";
 import { listAccounts } from "../store/queries.js";
+import { browserLanesRoutable } from "../local_desktop.js";
 
 // ---------------------------------------------------------------------------
 // Inputs (seams implemented in main.ts, faked in tests)
@@ -174,6 +175,8 @@ export class RouteDirector {
         (a) => a.provider === vendor && a.enabled && (a.session_health === "ready" || a.session_health === "degraded")
       );
       online = adapters.some((a) => a.online);
+      // The person's own computer with browser sign-ins off (local_desktop.ts).
+      if (route === "web" && !browserLanesRoutable()) online = false;
     }
 
     let eligible = signedIn && online && contract.ok;

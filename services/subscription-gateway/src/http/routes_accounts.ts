@@ -18,6 +18,7 @@ import {
 import { firefoxProfileFor, readFirefoxCookies, type ImportableCookie, type SessionStorageKey } from "../worker/login_browser.js";
 import { callerOf, requireScope, type GatewayDeps } from "./server.js";
 import type { LaneRuntime } from "../worker/pool.js";
+import { BROWSER_LANES_OFF, browserLanesEnabled } from "../local_desktop.js";
 
 const patchAccountSchema = z
   .object({ preferred: z.literal(true).optional(), label: z.string().trim().min(1).max(60).optional() })
@@ -258,6 +259,10 @@ export function accountsRouter(deps: GatewayDeps, opts: AccountsRouterOptions = 
 
   // Opens the login window and starts watching for the sign-in.
   const openLogin = async (account: Account) => {
+    // The person's own computer: no browser sign-in until they turn browser lanes on (local_desktop.ts).
+    if (!browserLanesEnabled(deps.config.stateDir)) {
+      return { error: 409, body: { error: "browser_lanes_off", detail: BROWSER_LANES_OFF } };
+    }
     const origin = manifestFor(account.provider)?.origins[0];
     if (!origin) return { error: 409, body: { error: "no_adapter_for_provider", provider: account.provider } };
     const lane = { provider: account.provider, account_id: account.account_id };
@@ -315,12 +320,13 @@ export function accountsRouter(deps: GatewayDeps, opts: AccountsRouterOptions = 
   router.get("/v1/providers", requireScope("accounts:manage"), (_req: Request, res: Response) => {
     const registered = new Set((deps.adapterRegistry?.adapters ?? []).map((a) => a.manifest.provider as string));
     const ids = [...new Set([...Object.keys(KNOWN_PROVIDERS), ...registered])];
+    const lanesOn = browserLanesEnabled(deps.config.stateDir);
     res.json(
       ids.map((id) => ({
         id,
         name: providerName(id),
         supported: registered.has(id),
-        login_supported: registered.has(id) && Boolean(deps.loginBrowser && deps.pool),
+        login_supported: registered.has(id) && Boolean(deps.loginBrowser && deps.pool) && lanesOn,
       }))
     );
   });

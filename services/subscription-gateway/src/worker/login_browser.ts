@@ -18,7 +18,7 @@ import {
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import Database from "better-sqlite3";
+import { Database } from "../store/sqlite.js";
 
 // The Firefox profile that belongs to a Chrome user-data dir.
 export function firefoxProfileFor(userDataDir: string): string {

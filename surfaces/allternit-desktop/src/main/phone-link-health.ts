@@ -17,7 +17,7 @@
  * never mark them automatic.
  */
 
-import type { PhoneLinkApp, PhoneLinkHealth, PhoneLinkHealthState } from './phone-link-types.js';
+import type { HandedOverFrom, PhoneLinkApp, PhoneLinkHealth, PhoneLinkHealthState } from './phone-link-types.js';
 
 export type { PhoneLinkHealth, PhoneLinkHealthState };
 
@@ -34,6 +34,8 @@ export interface LinkedPhone {
   /** iOS only: when the free-Apple-ID signature lapses (ISO string). */
   expiresAt?: string;
   apps?: PhoneLinkApp[];
+  /** Received from another computer by pairing handover: upkeep that needs a cable happens there. */
+  handedOverFrom?: HandedOverFrom;
 }
 
 export type LinkedPhoneSource = () => LinkedPhone[];
@@ -141,6 +143,48 @@ export function classifyHealth(ev: HealthEvidence, now: number): PhoneLinkHealth
   return { ...base, state: 'UNKNOWN', recovery: 'automatic', detail: 'Not enough evidence to tell what is wrong.' };
 }
 
+/**
+ * Health for a phone this computer received by pairing handover (a Sessions
+ * computer). Re-signing the iPhone helper and remounting its developer image
+ * need the computer it was set up on and a cable (Eoj, 2026-10-17: show it so
+ * it's understood), so the action names that computer and says why this one
+ * can't. Pure; unit-tested.
+ */
+export function handedOverHealth(health: PhoneLinkHealth, phone: Pick<LinkedPhone, 'platform' | 'handedOverFrom' | 'expiresAt'>): PhoneLinkHealth {
+  const from = phone.handedOverFrom?.name;
+  if (!from) return health;
+  const there = `Plug your ${phone.platform === 'ios' ? 'iPhone' : 'phone'} into ${from} and open Allternit there`;
+  switch (health.state) {
+    case 'SIGNATURE_RENEWAL_REQUIRED': {
+      const date = phone.expiresAt
+        ? new Date(phone.expiresAt).toLocaleDateString('en-US', { timeZone: 'UTC', year: 'numeric', month: 'long', day: 'numeric' })
+        : null;
+      return {
+        ...health,
+        action: `${date ? `Your iPhone helper's signature runs out on ${date}. ` : ''}${there} to renew it.`,
+        detail: `This computer got the iPhone from ${from} and can't renew the signature: that needs ${from} and a cable.`,
+      };
+    }
+    case 'DEVELOPER_IMAGE_REMOUNT_REQUIRED':
+      return {
+        ...health,
+        action: `${there} to remount its developer image.`,
+        detail: `This computer got the iPhone from ${from} and can't remount it: that needs ${from} and a cable.`,
+      };
+    case 'PAIRING_INVALID':
+      return {
+        ...health,
+        action: `Set the phone up again on ${from}, then use it on this computer again from there.`,
+      };
+    case 'TRANSPORT_OFFLINE':
+      return phone.platform === 'ios'
+        ? { ...health, detail: `If the iPhone restarted, its developer image needs remounting. ${there}; this computer can't remount it.` }
+        : health;
+    default:
+      return health;
+  }
+}
+
 /** States that count as online for tool routing: the phone answers, even locked. */
 export function healthIsOnline(health: PhoneLinkHealth | null | undefined): boolean {
   return !health || health.state === 'HEALTHY' || health.state === 'DEVICE_LOCKED';
@@ -209,10 +253,11 @@ export class PhoneLinkHealthMonitor {
           ])
         : await this.deps.probe(phone).catch(() => null)
       : null;
-    const health = classifyHealth(
+    const classified = classifyHealth(
       evidence ?? { deviceId, platform: phone?.platform ?? 'ios', whoami: null, call: 'failed', expiresAt: phone?.expiresAt },
       this.now(),
     );
+    const health = phone ? handedOverHealth(classified, phone) : classified;
     this.cache.set(deviceId, { at: this.now(), health });
     return health;
   }

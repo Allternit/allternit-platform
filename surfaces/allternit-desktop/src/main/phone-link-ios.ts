@@ -40,7 +40,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { DriverContext, PhoneLinkDriver } from './phone-link.js';
-import type { PhoneLinkApp, PhoneLinkStatus } from './phone-link-types.js';
+import type { HandedOverFrom, PhoneLinkApp, PhoneLinkStatus } from './phone-link-types.js';
 import { IOS_APP_BUNDLES, IOS_PROBE_BUNDLES, catalogPhoneApps, nameCatalogApps } from './phone-app-catalog.js';
 import { ICTRL_PORT, IctrlError } from './ictrl-client.js';
 import type { IctrlLike } from './ictrl-client.js';
@@ -94,7 +94,8 @@ export interface IosLinkRecord {
   meshPending?: boolean;
   /** Vendor apps found last time, so a Wi-Fi-only reconnect doesn't open every app to check. */
   apps?: PhoneLinkApp[];
-  linkedAt: string;
+  linkedAt: string;  /** Received from another computer by pairing handover (phone-link-handover.ts). */
+  handedOverFrom?: HandedOverFrom;
 }
 
 export interface IosLinkStore {

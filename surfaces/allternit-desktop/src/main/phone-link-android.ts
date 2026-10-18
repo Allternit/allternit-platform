@@ -24,7 +24,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import type { AdbCall } from './phone-tools.js';
 import type { DriverContext, PhoneLinkDriver } from './phone-link.js';
-import type { PhoneLinkApp, PhoneLinkStatus } from './phone-link-types.js';
+import type { HandedOverFrom, PhoneLinkApp, PhoneLinkStatus } from './phone-link-types.js';
 import { ICTRL_PORT, ictrlStoreKey, type IctrlLike, type IctrlWhoami } from './ictrl-client.js';
 import { AndroidHelperUnavailableError, type AndroidHelper } from './phone-android-helper.js';
 import { findPhoneHost, nodeDiscoveryDeps, type DiscoveryDeps } from './phone-link-discovery.js';
@@ -113,7 +113,8 @@ export interface AndroidLinkRecord {
   /** Vendor apps found last time. */
   apps?: PhoneLinkApp[];
   pairedAt: string;
-  helperVersion?: string;
+  helperVersion?: string;  /** Received from another computer by pairing handover (phone-link-handover.ts). */
+  handedOverFrom?: HandedOverFrom;
 }
 
 export interface AndroidLinkStore {
