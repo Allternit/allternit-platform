@@ -637,7 +637,7 @@
       "id": "feature:project-delegate",
       "label": "Project Delegate board",
       "product": "product:ai-allternit",
-      "status": "building",
+      "status": "live",
       "description": "A project's to-do list handed to its bots: drag or Assign to, one task at a time per bot, Auto gives tasks to whoever is free first, cost and time shown as estimates.",
       "touches": [
         "allternit-ai/src/components/threads",
