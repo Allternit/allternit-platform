@@ -5,6 +5,7 @@ import android.os.Build
 import android.util.DisplayMetrics
 import android.util.Log
 import android.view.WindowManager
+import com.allternit.phonelink.core.AdbKeyBox
 import com.allternit.phonelink.core.AppSettings
 import com.allternit.phonelink.core.AuthManager
 import com.allternit.phonelink.core.AutoStart
@@ -17,6 +18,7 @@ import com.allternit.phonelink.core.RpcDispatcher
 import com.allternit.phonelink.core.ServerConfig
 import com.allternit.phonelink.core.ServerHooks
 import com.allternit.phonelink.core.StaticDeviceInfo
+import com.allternit.phonelink.core.StreamOpener
 import java.io.File
 import java.net.Inet4Address
 import java.net.InetAddress
@@ -46,6 +48,8 @@ object ServerController {
     @Volatile var lastError: String? = null; private set
     private lateinit var meshKeyBox: MeshKeyBox
     private lateinit var meshManager: MeshManager
+    private lateinit var adbKeyBox: AdbKeyBox
+    lateinit var shell: ShellServerLauncher; private set
     private val listeners = CopyOnWriteArraySet<() -> Unit>()
     private val scheduler = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "phonelink-ctl").apply { isDaemon = true } }
 
@@ -70,7 +74,13 @@ object ServerController {
             ownPackage = app.packageName,
         )
         meshKeyBox = MeshKeyBox(kv, KeystoreSealer())
-        val phoneServer = PhoneServer(auth, dispatcher, config = { meshAwareConfig() }, log = ::log)
+        adbKeyBox = AdbKeyBox(kv, KeystoreSealer())
+        shell = ShellServerLauncher(app, adbKeyBox, log = ::log, onChanged = { notifyChanged() })
+        val streams = StreamOpener { command ->
+            if (!shell.ensureRunningBlocking()) throw java.io.IOException(shell.lastError ?: "The screen service isn't set up on this phone.")
+            shell.client.openRaw(command)
+        }
+        val phoneServer = PhoneServer(auth, dispatcher, config = { meshAwareConfig() }, log = ::log, streams = streams)
         http = HttpServer(phoneServer::handle, log = ::log)
         meshManager = MeshManager(
             app = app,
@@ -89,7 +99,7 @@ object ServerController {
 
     /** ServerConfig plus the live mesh facts, for /whoami and device_info. */
     private fun meshAwareConfig(): ServerConfig =
-        settings.serverConfig().copy(meshState = meshManager.state(), meshHost = meshManager.host())
+        settings.serverConfig().copy(meshState = meshManager.state(), meshHost = meshManager.host(), screenState = shell.state.name.lowercase())
 
     // ── State ───────────────────────────────────────────────────────────────
 
@@ -139,7 +149,10 @@ object ServerController {
             log(lastError!!)
             false
         }
-        if (ok) meshManager.start()
+        if (ok) {
+            meshManager.start()
+            shell.ensureRunning()
+        }
         notifyChanged()
         return ok
     }
@@ -148,6 +161,13 @@ object ServerController {
     fun storeMeshAuthKey(authKey: String) {
         init(app)
         meshKeyBox.store(authKey)
+    }
+
+    /** Seal and persist the per-phone adb key from a PROVISION broadcast, then start the shell server. Never logged. */
+    fun storeAdbKey(pkcs8: ByteArray) {
+        init(app)
+        adbKeyBox.store(pkcs8)
+        shell.ensureRunning()
     }
 
     /** (Re)start the mesh join if provisioned with a mesh control URL. Idempotent. */
@@ -168,7 +188,10 @@ object ServerController {
     /** Stop now. [byUser] keeps it off across reboots until Start or re-provisioning. */
     @Synchronized
     fun stopServer(byUser: Boolean) {
-        if (byUser) settings.userStopped = true
+        if (byUser) {
+            settings.userStopped = true
+            shell.stop()
+        }
         http.stop()
         meshManager.stop()
         log("server stopped (byUser=$byUser)")
@@ -241,6 +264,7 @@ object ServerController {
         val where = if (settings.allowRemote) (lanAddresses().firstOrNull() ?: "this phone") else "127.0.0.1 (cable only)"
         val n = auth.activeSessions.size
         val mesh = meshHost()?.let { " · mesh $it" } ?: ""
-        return "Listening on $where:${settings.port} · $n paired$mesh"
+        val screen = if (shell.state == ShellServerLauncher.State.RUNNING) " · screen on" else ""
+        return "Listening on $where:${settings.port} · $n paired$mesh$screen"
     }
 }

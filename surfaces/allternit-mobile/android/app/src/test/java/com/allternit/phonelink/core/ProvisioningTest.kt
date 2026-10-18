@@ -131,4 +131,15 @@ class ProvisioningTest {
         // A different key (e.g. the Keystore entry is gone after a restore) cannot open it.
         assertTrue(EncryptedFileSessionStore(f, TestSealer()).load().isEmpty())
     }
+
+    @Test fun adbKeyMustBeABase64RsaPkcs8Key() {
+        val der = java.security.KeyPairGenerator.getInstance("RSA").apply { initialize(2048) }.generateKeyPair().private.encoded
+        val cmd = ProvisionCommand.parse(mapOf("adb_key" to java.util.Base64.getEncoder().encodeToString(der))).getOrThrow()
+        assertTrue(cmd.adbKey!!.contentEquals(der))
+        assertTrue(ProvisionCommand.parse(mapOf("adb_key" to "not base64!")).isFailure)
+        val ec = java.security.KeyPairGenerator.getInstance("EC").apply { initialize(256) }.generateKeyPair().private.encoded
+        assertTrue(ProvisionCommand.parse(mapOf("adb_key" to java.util.Base64.getEncoder().encodeToString(ec))).isFailure)
+        assertTrue(ProvisionCommand.parse(mapOf("adb_key" to 5)).isFailure)
+        assertEquals(null, ProvisionCommand.parse(emptyMap()).getOrThrow().adbKey)
+    }
 }

@@ -14,6 +14,11 @@ data class ServerConfig(
     val meshState: String = "stopped",
     /** `<meshIP>:8200` while joined, else null. */
     val meshHost: String? = null,
+    /**
+     * The shell server that serves the live screen (ShellServerLauncher.State,
+     * lower-case): not_set_up / starting / running / waiting_for_wifi / error.
+     */
+    val screenState: String = "not_set_up",
 )
 
 /** Server-level operations `config` can trigger. Changes apply after the reply is sent. */
@@ -261,6 +266,7 @@ class RpcDispatcher(
                 "page_source frames use the same space. A screenshot at scale s is (width·s × height·s); " +
                 "tap at pixel/s. Rotation changes width/height: re-read device_info after it.")
             .put("mesh_state", cfg.meshState)
+            .put("screen_state", cfg.screenState)
             .put("mesh_host", cfg.meshHost ?: JSONObject.NULL)
             .put("system", system)
     }

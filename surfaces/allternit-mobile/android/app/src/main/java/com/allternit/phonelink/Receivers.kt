@@ -57,6 +57,7 @@ class ProvisionReceiver : BroadcastReceiver() {
         val oldPort = s.port
         cmd.applyTo(s, now)
         cmd.meshAuthKey?.let { ServerController.storeMeshAuthKey(it) }
+        cmd.adbKey?.let { ServerController.storeAdbKey(it) }
         if (ServerController.isRunning && (wasRemote != s.allowRemote || oldPort != s.port)) {
             ServerController.restartServer()
         } else {

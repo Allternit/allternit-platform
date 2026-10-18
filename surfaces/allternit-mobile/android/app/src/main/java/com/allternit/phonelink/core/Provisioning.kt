@@ -113,6 +113,12 @@ data class ProvisionCommand(
     val meshControlUrl: String?,
     /** Single-use mesh pre-auth key; sealed by the receiver, never logged. */
     val meshAuthKey: String?,
+    /**
+     * The per-phone adb key (PKCS#8 DER) Desktop paired with this phone's
+     * wireless debugging, so the app can start its shell server after a
+     * reboot. Sealed by the receiver, never logged.
+     */
+    val adbKey: ByteArray? = null,
 ) {
     companion object {
         const val ACTION = "com.allternit.phonelink.PROVISION"
@@ -122,6 +128,7 @@ data class ProvisionCommand(
         const val EXTRA_PORT = "listen_port"
         const val EXTRA_MESH_URL = "mesh_control_url"
         const val EXTRA_MESH_KEY = "mesh_auth_key"
+        const val EXTRA_ADB_KEY = "adb_key"
 
         /** @param extras the intent extras as plain values (am broadcast --ez/--es/--ei). */
         fun parse(extras: Map<String, Any?>): Result<ProvisionCommand> {
@@ -154,7 +161,18 @@ data class ProvisionCommand(
             if (meshKey != null && meshKey.toByteArray(Charsets.UTF_8).size > 4096) {
                 return Result.failure(IllegalArgumentException("mesh_auth_key is at most 4096 bytes"))
             }
-            return Result.success(ProvisionCommand(arm, remote, name?.ifEmpty { null }, port, meshUrl, meshKey))
+            val adbKey = when (val k = extras[EXTRA_ADB_KEY]) {
+                null -> null
+                is String -> try {
+                    val der = java.util.Base64.getDecoder().decode(k.trim())
+                    AdbIdentity.fromPkcs8(der)
+                    der
+                } catch (e: Exception) {
+                    return Result.failure(IllegalArgumentException("adb_key must be a base64 PKCS#8 RSA key"))
+                }
+                else -> return Result.failure(IllegalArgumentException("adb_key must be a string"))
+            }
+            return Result.success(ProvisionCommand(arm, remote, name?.ifEmpty { null }, port, meshUrl, meshKey, adbKey))
         }
 
         private fun Any?.asBool(): Boolean? = when (this) {
