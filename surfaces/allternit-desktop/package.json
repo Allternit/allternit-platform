@@ -197,6 +197,13 @@
         "to": "subs-gateway"
       },
       {
+        "from": "resources/subs-gateway/node_modules",
+        "to": "subs-gateway/node_modules",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
         "from": "../phone-remote/server",
         "to": "phone-remote/server",
         "filter": [
