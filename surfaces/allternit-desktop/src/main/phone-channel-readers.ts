@@ -69,7 +69,8 @@ class ReaderError extends Error {
 // ── Discord ──────────────────────────────────────────────────────────────────
 
 const DISCORD_TIME = /^(\d+[smhdwy]|\d{1,2}:\d{2}\s?[AP]M|yesterday|\d{1,2}\/\d{1,2}(\/\d{2,4})?)$/i;
-const DISCORD_HEADER = /^(.+), (\d{2}\/\d{2}\/\d{4} \d{1,2}:\d{2} [AP]M|Today at .+|Yesterday at .+)$/;
+// Today's messages carry only the time ('allternit, 7:26 AM'); older ones the date too.
+const DISCORD_HEADER = /^(.+), ((?:\d{2}\/\d{2}\/\d{4} )?\d{1,2}:\d{2}(?: [AP]M)?|Today at .+|Yesterday at .+)$/;
 const RAIL_WIDTH = 130; // the server rail on the left: DM avatars and servers
 
 function mentionCount(label: string): number {
