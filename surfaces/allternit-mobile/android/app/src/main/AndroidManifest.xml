@@ -11,6 +11,12 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- terminate_app (best effort): killBackgroundProcesses. Normal permission. -->
     <uses-permission android:name="android.permission.KILL_BACKGROUND_PROCESSES" />
+    <!-- Live screen (ShellServerLauncher): turn wireless debugging on after a
+         reboot to start the shell server. A development permission: only
+         `adb shell pm grant` (cable setup) can grant it. -->
+    <uses-permission
+        android:name="android.permission.WRITE_SECURE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
 
     <!-- Android 11+ package visibility: launchable apps (list_apps, launch_app,
          and through them custom-scheme deep links) and browsers for open_url. -->

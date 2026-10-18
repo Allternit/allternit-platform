@@ -291,6 +291,17 @@ export class IctrlClient {
     return record;
   }
 
+  /**
+   * Seal an arbitrary JSON body for a route other than /rpc (POST /stream) with
+   * the stored key and the corrected clock. Throws when not paired.
+   */
+  sealBody(body: string): RequestEnvelope {
+    const record = this.record();
+    if (!record) throw new IctrlError('no_key', 'Not paired with this phone yet.');
+    const ts = Math.floor(this.nowMs() / 1000) + this.clockOffsetS;
+    return sealRequest(Buffer.from(record.key, 'hex'), body, ts, (this.opts.random ?? nodeRandomBytes)(16));
+  }
+
   /** One sealed JSON-RPC call; returns `result`. A skewed clock is corrected once from server_ts. */
   async call<T = Record<string, unknown>>(method: string, params: Record<string, unknown> = {}, timeoutMs?: number): Promise<T> {
     try {

@@ -218,4 +218,90 @@ class PhoneServerTest {
             Socket("127.0.0.1", http.localPort.takeIf { it > 0 } ?: 1).close()
         } catch (_: Exception) { /* refused, as expected */ }
     }
+
+    // ── POST /stream ────────────────────────────────────────────────────────
+
+    /** A server whose StreamOpener connects to an echo socket, so the 101 pipe can be exercised end to end. */
+    private fun streamServer(opened: MutableList<String>): Pair<HttpServer, java.net.ServerSocket> {
+        val echo = java.net.ServerSocket(0, 4, InetAddress.getByName("127.0.0.1"))
+        kotlin.concurrent.thread(isDaemon = true) {
+            while (!echo.isClosed) {
+                val s = try { echo.accept() } catch (e: java.io.IOException) { break }
+                kotlin.concurrent.thread(isDaemon = true) { s.use { it.getInputStream().copyTo(it.getOutputStream()) } }
+            }
+        }
+        val hooks = FakeHooks()
+        val dispatcher = RpcDispatcher({ FakeDeviceOps() }, { FakeDeviceOps.INFO }, auth, hooks, "com.allternit.phonelink")
+        val streaming = PhoneServer(auth, dispatcher, { hooks.config() }, streams = StreamOpener { cmd ->
+            opened.add(cmd)
+            Socket("127.0.0.1", echo.localPort)
+        })
+        val h = HttpServer(streaming::handle, viaMesh = true)
+        h.start(InetAddress.getByName("127.0.0.1"), 0)
+        return h to echo
+    }
+
+    private fun sealedStream(key: ByteArray, plaintext: JSONObject): ByteArray =
+        SecureEnvelope.sealRequest(key, plaintext.toString(), System.currentTimeMillis() / 1000, SecureEnvelope.randomBytes(16)).toString().toByteArray()
+
+    private fun readHead(input: java.io.InputStream): String {
+        val sb = StringBuilder()
+        while (!sb.endsWith("\r\n\r\n")) {
+            val b = input.read()
+            if (b < 0) break
+            sb.append(b.toChar())
+        }
+        return sb.toString()
+    }
+
+    @Test fun streamUpgradesASealedMeshRequestToARawPipe() {
+        val key = pair()
+        val opened = ArrayList<String>()
+        val (h, echo) = streamServer(opened)
+        try {
+            Socket("127.0.0.1", h.localPort).use { s ->
+                val body = sealedStream(key, JSONObject().put("kind", "video").put("scid", "0000abcd")
+                    .put("args", org.json.JSONArray().put("audio=false").put("max_size=1080")))
+                s.getOutputStream().write("POST /stream HTTP/1.1\r\nHost: x\r\nContent-Length: ${body.size}\r\n\r\n".toByteArray() + body)
+                val head = readHead(s.getInputStream())
+                assertTrue(head, head.startsWith("HTTP/1.1 101 "))
+                s.getOutputStream().write("frames".toByteArray())
+                val back = ByteArray(6)
+                java.io.DataInputStream(s.getInputStream()).readFully(back)
+                assertEquals("frames", String(back))
+            }
+            assertEquals(listOf("SCRCPY 0000abcd audio=false max_size=1080"), opened)
+        } finally {
+            h.stop(); echo.close()
+        }
+    }
+
+    @Test fun streamRefusesPlainLanUnsealedAndUnsafeRequests() {
+        val key = pair()
+        val opened = ArrayList<String>()
+        val (h, echo) = streamServer(opened)
+        try {
+            val hooks = FakeHooks()
+            val dispatcher = RpcDispatcher({ FakeDeviceOps() }, { FakeDeviceOps.INFO }, auth, hooks, "com.allternit.phonelink")
+            val direct = PhoneServer(auth, dispatcher, { hooks.config() }, streams = StreamOpener { error("must not open") })
+            val ok = sealedStream(key, JSONObject().put("kind", "control").put("scid", "0000abcd"))
+            // Plain LAN: never, even sealed.
+            val lan = direct.handle(HttpRequest("POST", "/stream", "", emptyMap(), ok, InetAddress.getByName("10.0.0.5")))
+            assertEquals(403, lan.status)
+            // Mesh but unsealed.
+            val unsealed = direct.handle(HttpRequest("POST", "/stream", "", emptyMap(), """{"kind":"control"}""".toByteArray(), InetAddress.getByName("127.0.0.1"), viaMesh = true))
+            assertEquals(401, unsealed.status)
+            // Sealed but shell syntax in an option: refused before the shell server.
+            val evil = sealedStream(key, JSONObject().put("kind", "video").put("scid", "0000abcd").put("args", org.json.JSONArray().put("a=b;reboot")))
+            val bad = direct.handle(HttpRequest("POST", "/stream", "", emptyMap(), evil, InetAddress.getByName("127.0.0.1"), viaMesh = true))
+            assertEquals(400, bad.status)
+            assertTrue(opened.isEmpty())
+        } finally {
+            h.stop(); echo.close()
+        }
+    }
+
+    @Test fun whoamiReportsTheScreenState() {
+        assertEquals("not_set_up", JSONObject(request("GET", "/whoami").body).getString("screen_state"))
+    }
 }

@@ -44,6 +44,12 @@ class HttpResponse(
     val contentType: String,
     val body: ByteArray,
     val headers: Map<String, String> = emptyMap(),
+    /**
+     * Set on a 101 reply: after the response head is written, the connection
+     * leaves HTTP and this runs with the raw socket (read timeout off) until
+     * the stream ends. Used only by PhoneServer's /stream.
+     */
+    val upgrade: ((Socket) -> Unit)? = null,
 ) {
     companion object {
         fun text(status: Int, body: String, contentType: String = "text/plain; charset=utf-8", headers: Map<String, String> = emptyMap()) =
@@ -132,6 +138,10 @@ class HttpServer(
                     is ReadResult.Error -> HttpResponse.text(req.status, req.message)
                 }
                 write(s, resp)
+                resp.upgrade?.let { stream ->
+                    s.soTimeout = 0
+                    stream(s)
+                }
             } catch (e: SocketException) {
                 // client went away
             } catch (e: IOException) {
@@ -206,7 +216,7 @@ class HttpServer(
     }
 
     private fun reason(status: Int) = when (status) {
-        200 -> "OK"; 400 -> "Bad Request"; 401 -> "Unauthorized"; 403 -> "Forbidden"
+        101 -> "Switching Protocols"; 200 -> "OK"; 400 -> "Bad Request"; 401 -> "Unauthorized"; 403 -> "Forbidden"
         404 -> "Not Found"; 411 -> "Length Required"; 413 -> "Payload Too Large"
         429 -> "Too Many Requests"; 431 -> "Request Header Fields Too Large"
         500 -> "Internal Server Error"; 503 -> "Service Unavailable"; else -> "Unknown"
