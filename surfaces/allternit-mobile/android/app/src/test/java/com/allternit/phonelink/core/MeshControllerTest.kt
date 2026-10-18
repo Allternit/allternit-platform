@@ -147,6 +147,8 @@ class MeshControllerTest {
         c.stop()
         c.start()
         assertTrue(fake.started.await(10, TimeUnit.SECONDS))
+        // The join posts its "running" report just after the node starts; count after it.
+        awaitRunning()
         val countAfterJoin = reports.size
         c.stop()
         assertTrue(fake.closed)

@@ -90,12 +90,20 @@ describe('argument validation', () => {
     expect(await r.call('phone.swipe', { direction: 'up', durationMs: 5 })).toMatchObject({ error: 'invalid_args' });
   });
 
-  it('opens apps by package or alias only', async () => {
+  it('opens apps by package, catalog id or alias only', async () => {
     const { r, calls } = runner();
     expect(await r.call('phone.open_app', { app: 'Settings' })).toEqual({ ok: true, package: 'com.android.settings' });
-    expect(calls[0]).toEqual(['shell', 'monkey', '-p', 'com.android.settings', '-c', 'android.intent.category.LAUNCHER', '1']);
+    expect(calls.find((c) => c[1] === 'monkey')).toEqual(['shell', 'monkey', '-p', 'com.android.settings', '-c', 'android.intent.category.LAUNCHER', '1']);
+    // A catalog id the bot phone's tiles pass ("whatsapp") resolves to its package.
+    expect(await r.call('phone.open_app', { app: 'whatsapp' })).toEqual({ ok: true, package: 'com.whatsapp' });
     expect(await r.call('phone.open_app', { app: 'x; reboot' })).toMatchObject({ error: 'unknown_app' });
     expect(resolveApp('com.foo.bar')).toBe('com.foo.bar');
+  });
+
+  it('treats a carrier stub (versionName "stub(…)") as not installed', async () => {
+    const { r, calls } = runner({ handler: (args) => (args[1] === 'dumpsys' ? { stdout: '    versionName=stub(132.0.26)\n' } : {}) });
+    expect(await r.call('phone.open_app', { app: 'whatsapp' })).toMatchObject({ error: 'unknown_app', message: 'WhatsApp is not installed on the phone.' });
+    expect(calls.some((c) => c[1] === 'monkey')).toBe(false);
     expect(resolveApp('nonsense')).toBeNull();
   });
 
