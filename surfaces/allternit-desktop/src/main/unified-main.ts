@@ -1371,7 +1371,9 @@ async function initializeBundledMode(): Promise<void> {
         } else {
           log.warn('[Main] Factory engine unavailable; /api/factory will answer 502 until it starts');
         }
-        if (app.isPackaged) {
+        // Windows puts gizzi on PATH with a .cmd shim instead
+        // (installWindowsGizziOnPath above); ~/.local/bin links are Unix-only.
+        if (app.isPackaged && process.platform !== 'win32') {
           factoryEngineManager.installCli(bundledGizziBinary(process.resourcesPath));
         }
       } catch (factoryErr) {
