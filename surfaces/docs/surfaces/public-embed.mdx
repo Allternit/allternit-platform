@@ -1,0 +1,46 @@
+---
+title: Public preview embed
+description: The real Allternit Home that www.allternit.com shows in its hero, how it runs with no account and no model, and the ?q= link that hands a request to the app
+---
+
+## What it is
+
+`ai.allternit.com/embed/home` is the real web app's Home, shown to anyone, signed in or not. www.allternit.com frames it in its hero so a visitor can try the actual product: the rail, the composer, the Chat and Cowork switch, the model picker and voice.
+
+It is a preview. Nothing in it reaches a model or an account.
+
+| You do | What happens |
+| --- | --- |
+| Pick a main bot (the look tiles above the composer) | The real bot setup stage shows that look. **Talk to** and **Sign up free with** use its name |
+| Type a request and send it (Chat or Cowork) | A scripted reply streams into the real thread, matched to what you asked (a site, a deck, a team, code, voice and so on) |
+| Switch to Cowork | The real Cowork view opens, with the rail |
+| Open the model picker | Allternit Cloud's models. Allternit Cloud is the default |
+| Press **Talk to …** or the voice button | The full-screen voice stage opens with the bot you picked as the speaker (A:// shows the orb). Talk, pause, and it answers out loud with a scripted reply. The first time, a short sheet says it is a preview and offers **Sign up free** |
+| Press **Continue in Allternit**, or anything that signs in | ai.allternit.com opens in a new tab with your last request in the composer |
+
+On a phone-width screen the embed shows the phone layout.
+
+## The ?q= link
+
+Any link to `ai.allternit.com/?q=<request>` puts the request in the Home composer as a draft. Nothing is sent until you press Send.
+
+- It works signed out: the request is kept through sign-in.
+- It is used once and then removed from the address bar, so a reload doesn't bring it back.
+- Requests longer than 4,000 characters are cut to 4,000.
+
+```text
+https://ai.allternit.com/?q=Build%20a%20one-page%20site%20for%20our%20bakery
+```
+
+## How it stays a preview
+
+All of this applies only on `/embed/*` (`allternit-ai/src/embed`):
+
+- **Always signed out.** www.allternit.com and ai.allternit.com are the same site, so the browser would share a signed-in visitor's session. The embed's auth context always reports signed out, so no account data is read and no token is sent.
+- **Its own storage.** localStorage and sessionStorage are in memory, so the preview never reads or changes a real workspace in the same browser.
+- **No API traffic.** App API calls and live-update streams are answered inside the page. The one request that leaves is Allternit Cloud's public model list (`api.allternit.com/v1/models`); if it can't be read, a built-in copy is used.
+- **No model, no recording.** Replies come from a fixed set in `scripted-replies.ts`. Voice measures how loud the microphone is to find the end of a turn; it records, transcribes and uploads nothing, and the reply is spoken by the browser's own voice.
+- **Framing.** `/embed/*` may be framed only by `https://www.allternit.com` and `https://allternit.com` (`public/_headers`). Every other path still refuses to be framed.
+- **No onboarding** and no agent, routine or connector loading.
+
+To change what the preview says, edit `allternit-ai/src/embed/scripted-replies.ts`: add a topic pattern and its replies. Keep each reply true about the product and short enough to speak.

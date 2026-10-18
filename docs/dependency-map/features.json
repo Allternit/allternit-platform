@@ -1381,7 +1381,7 @@
       "decisions": [
         {
           "on": "2026-10-17",
-          "note": "Phones 2.0 relay lane (approved plan): mirrors the computer_ws VNC proxy minus VNC — frames are opaque (binary video + JSON text). Read-only is enforced at the pipe (a read-only token's browser->desktop frames are dropped) because the payload is never parsed. One active stream per phone-link socket: a socket may hello many phones (all register online) but streams one serial at a time; scrcpy is one device per process, so the Desktop opens one socket per streamed phone. Full-control tokens reuse the computer_ws ACI confirmation-grant pattern."
+          "note": "Phones 2.0 relay lane (approved plan): mirrors the computer_ws VNC proxy minus VNC \u2014 frames are opaque (binary video + JSON text). Read-only is enforced at the pipe (a read-only token's browser->desktop frames are dropped) because the payload is never parsed. One active stream per phone-link socket: a socket may hello many phones (all register online) but streams one serial at a time; scrcpy is one device per process, so the Desktop opens one socket per streamed phone. Full-control tokens reuse the computer_ws ACI confirmation-grant pattern."
         }
       ],
       "evidence": [
@@ -1644,6 +1644,34 @@
       "evidence": [
         "allternit/surfaces/docs/surfaces/platform-console-onboarding.mdx",
         "allternit/surfaces/platform.allternit.com/src/lib/__tests__/platform-setup.test.ts"
+      ]
+    },
+    {
+      "id": "feature:public-preview-embed",
+      "label": "Public preview of the real Home (www.allternit.com hero)",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "ai.allternit.com/embed/home: the real shell, Home composer, Chat/Cowork switch, Allternit Cloud model picker and voice stage for any visitor, framed in the www.allternit.com hero. Always signed out, in-memory storage, no API traffic, scripted replies and preview voice (no model). Continue in Allternit hands the request to the app via ?q=, which prefills the Home composer for everyone.",
+      "touches": [
+        "allternit-ai/src/embed",
+        "allternit-ai/src/lib/launch-prompt.ts",
+        "allternit-ai/src/lib/platform-auth-client.tsx",
+        "allternit-ai/src/lib/agents/mode-session-store.ts",
+        "allternit-ai/src/lib/voice/useVoiceConversation.ts",
+        "allternit-ai/src/views/chat/ChatComposer.tsx",
+        "allternit-ai/public/_headers",
+        "allternit-websites/projects/www.allternit.com/source/app/src/sections/Hero.tsx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-17",
+          "note": "Eoj: the hero embeds the real app like other platforms do, not a copy. Signed-out visitors get no inference: sends and voice open the real UI and answer from a large bank of scripted replies; model picker on Allternit Cloud by default."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/surfaces/public-embed.mdx",
+        "allternit-ai/src/embed/__tests__/scripted-replies.test.ts",
+        "allternit-ai/src/lib/__tests__/launch-prompt.test.ts"
       ]
     }
   ],
