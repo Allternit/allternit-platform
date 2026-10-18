@@ -288,6 +288,7 @@ dependencies = [
  "usvg",
  "uuid",
  "webauthn-rs",
+ "windows-sys 0.59.0",
  "zip 0.6.6",
 ]
 

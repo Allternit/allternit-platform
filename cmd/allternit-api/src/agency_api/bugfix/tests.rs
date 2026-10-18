@@ -130,3 +130,17 @@ fn bugfix_selection_prefers_tests_then_lint_then_votes_then_smallest_diff() {
     assert_eq!(d.len(), 2);
     assert!(d[0].1.tests_pass && !d[1].1.lint_ok && d[1].0 == 2);
 }
+
+#[test]
+fn candidate_shares_the_run_checkouts_dependency_dir() {
+    let t = tempfile::tempdir().unwrap();
+    let src = t.path().join("repo").join("node_modules");
+    std::fs::create_dir_all(src.join("left-pad")).unwrap();
+    let dst = t.path().join("candidate").join("node_modules");
+    std::fs::create_dir_all(dst.parent().unwrap()).unwrap();
+    super::link_dir(&src, &dst).unwrap();
+    assert!(dst.join("left-pad").is_dir());
+    // Removing the candidate removes the link, never the shared deps.
+    std::fs::remove_dir_all(t.path().join("candidate")).unwrap();
+    assert!(src.join("left-pad").is_dir());
+}
