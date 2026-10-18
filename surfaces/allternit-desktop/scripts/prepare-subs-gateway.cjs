@@ -165,17 +165,21 @@ if (process.platform === 'darwin') {
 // Smoke boot: the bundle must start and listen on a throwaway state dir.
 async function smokeBoot() {
   const state = fs.mkdtempSync(path.join(os.tmpdir(), 'subs-gateway-smoke-'));
+  // Boot a copy outside the repo, as the installed app runs it: inside the
+  // repo, Node would find any missing package in the workspace node_modules.
+  const bundle = path.join(state, 'bundle');
+  fs.cpSync(outDir, bundle, { recursive: true });
   const port = 20000 + Math.floor(Math.random() * 20000);
-  const child = spawn(process.execPath, [path.join(outDir, 'src', 'main.js')], {
+  const child = spawn(process.execPath, [path.join(bundle, 'src', 'main.js')], {
     env: {
       ...process.env,
-      SUBS_GATEWAY_STATE_DIR: state,
+      SUBS_GATEWAY_STATE_DIR: path.join(state, 'state'),
       SUBS_GATEWAY_KEYCHAIN: 'file',
       SUBS_GATEWAY_TCP: '1',
       SUBS_GATEWAY_TCP_PORT: String(port),
-      SUBS_GATEWAY_ADAPTERS_DIR: path.join(outDir, 'adapters'),
-      SUBS_GATEWAY_MIGRATIONS_DIR: path.join(outDir, 'migrations'),
-      SUBS_GATEWAY_BUNDLE_ROOT: outDir,
+      SUBS_GATEWAY_ADAPTERS_DIR: path.join(bundle, 'adapters'),
+      SUBS_GATEWAY_MIGRATIONS_DIR: path.join(bundle, 'migrations'),
+      SUBS_GATEWAY_BUNDLE_ROOT: bundle,
       SUBS_GATEWAY_CANARY_SEC: '0',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
