@@ -28,6 +28,8 @@ export interface LinkedPhoneSummary {
   serial: string;
   model: string;
   name: string;
+  /** Call audio on this phone (phone-call-bridge.ts); never device ids or labels. Absent = never set up. */
+  callBridge?: { enabled: boolean; botName: string | null };
 }
 
 /** The relay's per-socket relay-level notifications (not part of the data plane). */
@@ -119,7 +121,7 @@ export class PhoneLinkPhoneSocket {
     return this.viewers;
   }
 
-  /** The service re-helloes when the phone's model/name changes. */
+  /** The service re-helloes when the phone's model/name or Call audio changes (identical hellos are skipped). */
   notePhoneChanged(): void {
     if (this.helloTimer) return;
     this.helloTimer = setTimeout(() => {

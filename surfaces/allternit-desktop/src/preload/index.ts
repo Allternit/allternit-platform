@@ -761,6 +761,27 @@ const phonesAPI = {
   callEnd: (): Promise<unknown> => ipcRenderer.invoke('phone:comms-call-end'),
   callState: (): Promise<unknown> => ipcRenderer.invoke('phone:comms-call-state'),
   listApps: (serial: string): Promise<unknown> => ipcRenderer.invoke('phone:comms-list-apps', serial),
+  // Call bridge (bot answers carrier calls through an audio cable to this Mac).
+  // serial = the mirror's key: adb serial, or link:<deviceId> for an iPhone.
+  callBridgeGet: (serial: string): Promise<unknown> => ipcRenderer.invoke('phone:call-bridge-get', serial),
+  callBridgeSet: (serial: string, cfg: {
+    enabled: boolean;
+    botId: string | null;
+    /** Optional: shown read-only on web/PWA ("answered by <bot>"). */
+    botName?: string | null;
+    inputDeviceId: string | null;
+    inputLabel: string | null;
+    outputDeviceId: string | null;
+    outputLabel: string | null;
+  }): Promise<unknown> => ipcRenderer.invoke('phone:call-bridge-set', serial, cfg),
+  callBridgeStatus: (): Promise<unknown> => ipcRenderer.invoke('phone:call-bridge-status'),
+  onCallBridgeEvent: (cb: (ev: unknown) => void): (() => void) => {
+    const listener = (_: IpcRendererEvent, ev: unknown) => cb(ev);
+    ipcRenderer.on('phone:call-bridge-event', listener);
+    // Starting the watcher also wires the broadcast (cheap: idle phones aren't polled).
+    void ipcRenderer.invoke('phone:call-bridge-status').catch(() => {});
+    return () => ipcRenderer.removeListener('phone:call-bridge-event', listener);
+  },
   onCommsEvent: (cb: (ev: unknown) => void): (() => void) => {
     const listener = (_: IpcRendererEvent, ev: unknown) => cb(ev);
     ipcRenderer.on('phone:comms-event', listener);

@@ -7,11 +7,17 @@
 //! are stored — never screen or input data.
 //!
 //! * `PUT /api/v1/runtime-devices/me/registered-phones` — body
-//!   `{ phones: [{ serial, model?, name? }] }`; upserts each row for the
+//!   `{ phones: [{ serial, model?, name?, callBridge? }] }`; upserts each row for the
 //!   device's account and touches `last_seen_at` (also the disconnect-time
 //!   heartbeat: the runtime re-PUTs its phones when the session detaches).
 //! * `GET /api/v1/runtime-devices/me/registered-phones` — the account's rows,
-//!   `{ phones: [{ serial, model, name, lastSeenAt? }] }`.
+//!   `{ phones: [{ serial, model, name, lastSeenAt?, callBridge }] }`.
+//!
+//! `callBridge` (CONTRACT-linked-phone-voice-2026-10-18, pg 094) is the phone's
+//! "bot answers calls" setting as the Desktop holds it, `{ enabled, botName }`,
+//! so web and the PWA can show it read-only. Absent or null on an upsert keeps
+//! what is stored (an older runtime or a heartbeat re-PUT never wipes it);
+//! `null` in the list = never set.
 //!
 //! Device credential only, same as `phone_sync::my_phone_numbers`: a user
 //! token has no single runtime to answer for, and the account is resolved
@@ -41,6 +47,39 @@ pub struct RegisteredPhoneInput {
     pub model: Option<String>,
     #[serde(default)]
     pub name: Option<String>,
+    #[serde(default, rename = "callBridge")]
+    pub call_bridge: Option<CallBridgeInput>,
+}
+
+/// A phone's call-bridge summary: whether a bot answers its calls, and which.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CallBridgeInput {
+    pub enabled: bool,
+    #[serde(default)]
+    pub bot_name: Option<String>,
+}
+
+/// Longest stored `callBridge.botName`.
+const MAX_BOT_NAME: usize = 80;
+
+impl CallBridgeInput {
+    /// Trimmed, capped at [`MAX_BOT_NAME`] characters, empty = none.
+    fn normalized(&self) -> CallBridgeInput {
+        CallBridgeInput {
+            enabled: self.enabled,
+            bot_name: self
+                .bot_name
+                .as_deref()
+                .map(|v| v.trim().chars().filter(|c| !c.is_control()).take(MAX_BOT_NAME).collect::<String>())
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty()),
+        }
+    }
+
+    fn to_json(&self) -> Value {
+        json!({ "enabled": self.enabled, "botName": self.bot_name })
+    }
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -49,6 +88,7 @@ pub struct RegisteredPhoneRow {
     pub model: Option<String>,
     pub name: Option<String>,
     pub last_seen_at: Option<DateTime<Utc>>,
+    pub call_bridge: Option<Value>,
 }
 
 /// At most this many phones per hello/upsert — a person links a handful.
@@ -81,6 +121,7 @@ fn normalize(input: RegisteredPhoneInput) -> Result<RegisteredPhoneInput, ApiErr
         serial,
         model: take(input.model, 256),
         name: take(input.name, 256),
+        call_bridge: input.call_bridge.as_ref().map(CallBridgeInput::normalized),
     })
 }
 
@@ -99,15 +140,17 @@ pub async fn upsert_phone(
             .filter(|v| !v.is_empty())
     };
     sqlx::query(
-        "INSERT INTO registered_phones (account_id, serial, model, name, last_seen_at)
-         VALUES ($1, $2, $3, $4, now())
+        "INSERT INTO registered_phones (account_id, serial, model, name, last_seen_at, call_bridge)
+         VALUES ($1, $2, $3, $4, now(), $5)
          ON CONFLICT (account_id, serial) DO UPDATE
-           SET model = EXCLUDED.model, name = EXCLUDED.name, last_seen_at = EXCLUDED.last_seen_at",
+           SET model = EXCLUDED.model, name = EXCLUDED.name, last_seen_at = EXCLUDED.last_seen_at,
+               call_bridge = COALESCE(EXCLUDED.call_bridge, registered_phones.call_bridge)",
     )
     .bind(account_id)
     .bind(phone.serial.trim())
     .bind(take(&phone.model))
     .bind(take(&phone.name))
+    .bind(phone.call_bridge.as_ref().map(|b| b.normalized().to_json()))
     .execute(db)
     .await?;
     Ok(())
@@ -119,7 +162,7 @@ pub async fn phones_for_account(
     account_id: &str,
 ) -> Result<Vec<RegisteredPhoneRow>, sqlx::Error> {
     sqlx::query_as::<_, RegisteredPhoneRow>(
-        "SELECT serial, model, name, last_seen_at FROM registered_phones
+        "SELECT serial, model, name, last_seen_at, call_bridge FROM registered_phones
          WHERE account_id = $1 ORDER BY created_at",
     )
     .bind(account_id)
@@ -145,7 +188,11 @@ async fn upsert_registered_phones(
             .cloned()
             .unwrap_or_else(|| json!([])),
     )
-    .map_err(|_| ApiError::BadRequest("phones must be an array of { serial, model?, name? }".into()))?;
+    .map_err(|_| {
+        ApiError::BadRequest(
+            "phones must be an array of { serial, model?, name?, callBridge?: { enabled, botName? } }".into(),
+        )
+    })?;
     if phones.is_empty() {
         return Err(ApiError::BadRequest("phones must not be empty".into()));
     }
@@ -173,6 +220,7 @@ async fn list_registered_phones(
             "model": r.model,
             "name": r.name,
             "lastSeenAt": r.last_seen_at.map(|t| t.to_rfc3339()),
+            "callBridge": r.call_bridge.clone().unwrap_or(Value::Null),
         })).collect::<Vec<_>>()
     }))
     .into_response())
@@ -188,6 +236,11 @@ mod tests {
     async fn pool() -> PgPool {
         let db = test_pool().await;
         sqlx::raw_sql(&include_str!("../../migrations_pg/093_registered_phones.sql").replace("public.", ""))
+            .execute(&db)
+            .await
+            .unwrap();
+        // pg 094 adds call_bridge (its voice_calls part needs tables this test has no use for).
+        sqlx::raw_sql("ALTER TABLE registered_phones ADD COLUMN IF NOT EXISTS call_bridge jsonb")
             .execute(&db)
             .await
             .unwrap();
@@ -212,6 +265,7 @@ mod tests {
                 serial: serial.to_string(),
                 model: model.map(str::to_string),
                 name: name.map(str::to_string),
+                call_bridge: None,
             },
         )
         .await
@@ -264,7 +318,7 @@ mod tests {
 
     #[test]
     fn serial_validation() {
-        let ok = |serial: &str| normalize(RegisteredPhoneInput { serial: serial.into(), model: None, name: None });
+        let ok = |serial: &str| normalize(RegisteredPhoneInput { serial: serial.into(), model: None, name: None, call_bridge: None });
         assert!(ok("R5CRA1A2LBA").is_ok());
         assert!(ok("emulator-5554").is_ok());
         assert!(ok("5200f6d3e687c8a9").is_ok());
@@ -278,9 +332,43 @@ mod tests {
             serial: "s".into(),
             model: Some(("m".repeat(300))),
             name: Some("".into()),
+            call_bridge: None,
         })
         .unwrap();
         assert_eq!(long.model.unwrap().len(), 256, "model is capped");
         assert!(long.name.is_none(), "empty name becomes NULL");
+    }
+
+    #[test]
+    fn call_bridge_shape_is_checked_and_bot_name_capped() {
+        let parse = |v: Value| serde_json::from_value::<RegisteredPhoneInput>(v);
+        let phone = parse(json!({ "serial": "s", "callBridge": { "enabled": true, "botName": format!("  {}  ", "B".repeat(100)) } })).unwrap();
+        let bridge = normalize(phone).unwrap().call_bridge.unwrap();
+        assert!(bridge.enabled);
+        assert_eq!(bridge.bot_name.unwrap().chars().count(), 80);
+        let off = normalize(parse(json!({ "serial": "s", "callBridge": { "enabled": false, "botName": " " } })).unwrap()).unwrap();
+        assert_eq!(off.call_bridge.unwrap().to_json(), json!({ "enabled": false, "botName": null }));
+        assert!(parse(json!({ "serial": "s", "callBridge": null })).unwrap().call_bridge.is_none());
+        assert!(parse(json!({ "serial": "s" })).unwrap().call_bridge.is_none());
+        assert!(parse(json!({ "serial": "s", "callBridge": { "botName": "x" } })).is_err(), "enabled is required");
+        assert!(parse(json!({ "serial": "s", "callBridge": { "enabled": "yes" } })).is_err());
+        assert!(parse(json!({ "serial": "s", "callBridge": { "enabled": true, "inputDeviceId": "x" } })).is_err(), "no device ids in the cloud");
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn call_bridge_is_stored_returned_and_kept_when_absent() {
+        let db = pool().await;
+        let put = |bridge: Option<CallBridgeInput>| RegisteredPhoneInput { serial: "moto".into(), model: None, name: Some("Moto".into()), call_bridge: bridge };
+        upsert_phone(&db, USER, &put(None)).await.unwrap();
+        assert!(phones_for_account(&db, USER).await.unwrap()[0].call_bridge.is_none(), "never set reads null");
+        upsert_phone(&db, USER, &put(Some(CallBridgeInput { enabled: true, bot_name: Some(" Front desk ".into()) }))).await.unwrap();
+        let stored = phones_for_account(&db, USER).await.unwrap()[0].call_bridge.clone();
+        assert_eq!(stored, Some(json!({ "enabled": true, "botName": "Front desk" })));
+        // A heartbeat re-PUT without callBridge keeps it.
+        upsert_phone(&db, USER, &put(None)).await.unwrap();
+        assert_eq!(phones_for_account(&db, USER).await.unwrap()[0].call_bridge, stored);
+        upsert_phone(&db, USER, &put(Some(CallBridgeInput { enabled: false, bot_name: None }))).await.unwrap();
+        assert_eq!(phones_for_account(&db, USER).await.unwrap()[0].call_bridge, Some(json!({ "enabled": false, "botName": null })));
     }
 }

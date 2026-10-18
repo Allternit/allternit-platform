@@ -45,6 +45,8 @@ pub struct JobInfo {
     pub url: Option<String>,
     /// Dispatch attributes (outbound dispatch carries `direction`, `consentRef`, …).
     pub attributes: HashMap<String, String>,
+    /// Job metadata: cloud-api's `create_room_with_agent` puts the call's fields
+    /// here as a JSON object (`line::merge_metadata`).
     pub metadata: String,
 }
 

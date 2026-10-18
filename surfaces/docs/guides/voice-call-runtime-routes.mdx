@@ -45,6 +45,8 @@ The credential hash is now a signing secret for relays: treat `runtime_devices.c
 
 The runtime resolves the thread with the caller's number (`from` for inbound, `to` for outbound), so calls and texts from one person share a thread, stores a `voice_calls` row and returns `{ "threadId": "…", "sessionId": "…" }`. Repeating a `callId` returns the same ids. `ownerId` must match the signed owner, and the number must belong to that owner and bot (403 otherwise; 404 for an unknown number).
 
+`numberId` is optional and the body can carry `line` (see [the call line](/guides/channel-events-and-connect-api#the-call-line)). For a `linked_phone` line there is no number lookup; see [Calls on a linked phone](#calls-on-a-linked-phone).
+
 ### Write call events
 
 `POST /api/v1/voice/calls/{callId}/events` with `{ "events": [{ "type", "n", "payload", "occurredAt" }] }`.
@@ -110,16 +112,68 @@ The worker authenticates to cloud-api with a bearer token (`ALLTERNIT_VOICE_WORK
 
 | Route | Request | Answer |
 | --- | --- | --- |
-| `POST /api/v1/voice/calls` | `{botId, numberId, from, to, direction, room, ownerId?, sipCallId?, consentRef?}` | `{callId, bot: {name, persona, voiceId, greeting, recording}}` from the bot-config cache, within 900 ms. `recording` is a boolean, off unless the owner consented. A mismatched `ownerId` is 403. |
+| `POST /api/v1/voice/calls` | `{botId, numberId?, line?, from, to, direction, room, ownerId?, sipCallId?, consentRef?}` | `{callId, bot: {name, persona, voiceId, greeting, recording}}` from the bot-config cache, within 900 ms. `recording` is a boolean, off unless the owner consented. A mismatched `ownerId` is 403. |
 | `POST /api/v1/voice/calls/{callId}/events` | One event: `{type, idempotencyKey, seq, atMs, payload}` plus an `Idempotency-Key` header | 202 when queued, 409 for a duplicate key (the worker counts both as delivered). Events reach the runtime in `seq` order. |
 | `POST /api/v1/voice/calls/{callId}/turns` | `{callId, turnId, text, confidence}` | Streamed `application/x-ndjson`: `{"type":"delta","text"}` … then `{"type":"done"}` or `{"type":"error","message"}`. |
 | `POST /api/v1/voice/calls/{callId}/control` | `{action, target?, digits?, to?, mode?}` from the signed-in owner | Published on the `allternit.call.control` topic with `by` set to the acting user. A `mute` or `unmute` with no `target` means the bot. |
 
 How cloud-api translates for the runtime:
 
-- `call.started` becomes the create body above (`callId`, `botId`, `ownerId`, `numberId`, `from`, `to`, `direction`, `room`, `startedAt`). The cloud queues its own copy first with `seq` 0, so the worker's own `call.started` is a duplicate.
+- `call.started` becomes the create body above (`callId`, `botId`, `ownerId`, `numberId`, `line`, `from`, `to`, `direction`, `room`, `startedAt`). The cloud queues its own copy first with `seq` 0, so the worker's own `call.started` is a duplicate.
 - Every other event becomes `{"events":[{type, n, payload, occurredAt}]}` with one entry. `n` counts that event type within the call. Delivery retries with backoff for 24 hours and wakes a sleeping cloud computer.
 - A turn is relayed to the runtime's SSE `POST …/turn`; each `text.delta` becomes a `delta` line, tool progress and keep-alives are not spoken. If the worker drops the connection before `done`, cloud-api calls the runtime's `DELETE …/turn`. If the runtime does not answer within 20 seconds, the worker gets a 504.
 
 Cloud-api migration 030 adds the columns behind this (`voice_bot_config.name`, `voice_calls.sip_call_id` and `consent_ref`, `voice_call_events.seq` and `at_ms`). The runtime saves the spoken name with `PUT /api/v1/voice/bot-config/{botId}` (`name`; `recording` accepts `"off"`, `"consented"` or a boolean; `transferTargets` is the owner-approved warm-transfer list, see [Phone numbers](/api/phone-numbers#warm-transfers)).
 
+## Calls on a linked phone
+
+A bot's own real phone (Android over adb, iPhone over iCTRL) can be wired to the Mac running Allternit Desktop with a call cable: the phone's headset port goes to a USB sound card, so the Mac **input** device carries the caller's voice and the Mac **output** device carries the bot's voice into the phone's mic. User guide: [Let your bot talk on its own phone](/guides/bot-voice-on-linked-phone). The rest of the call (worker, turns, events, controls, UI) is the same as a SIP call.
+
+### Flow
+
+1. Desktop's watcher sees the phone ringing (Android: `dumpsys telephony.registry` polled every second; iPhone: the incoming-call screen via `screen_text`), waits one ring (3.5 s) and answers (`KEYCODE_CALL`, or a tap on Accept). If the input or output device is missing it doesn't answer and raises a needs-you notice `Call audio cable not found for <phone>`. For an outbound call, the bridge starts when an approved `phone.call.dial` goes off-hook.
+2. Desktop calls `POST /api/v1/voice/linked-calls` on cloud-api.
+3. A hidden window in Desktop joins the returned room with livekit-client: it publishes the input device (echo cancellation, noise suppression and auto gain off) and plays the agent's audio to the output device with `setSinkId`.
+4. The `allternit-voice` worker is dispatched to the room and runs the bot as it does for a SIP call. Its `POST /api/v1/voice/calls` sends `line` and no `numberId`.
+5. When the carrier call ends, Desktop leaves the room. When the room goes away (for example after `hangup`), Desktop ends the carrier call.
+
+### Rooms and identities
+
+- Room name: `call-lp-<uuid>`. It keeps the `call-` prefix the worker accepts.
+- Desktop joins as participant identity `linked-phone-<deviceId>`, kind Standard. The worker treats a participant whose identity starts with `linked-phone-` exactly like the SIP caller: its audio is the caller, and when it leaves the call ends.
+- Agent dispatch metadata is a JSON string in the job metadata: `{source: "linked_phone", botId, ownerId, line, direction: "inbound" | "outbound", from, to}`. The worker parses `job.metadata` as JSON into its attributes.
+- Controls: `hangup` deletes the room. `mute`, `unmute`, `listen`, `takeover` and `release` work as usual. `dtmf`, `transfer` and `hold` are not supported; the worker acks with `call.state.changed` unchanged plus `{unsupported: "<action>"}` and never fails the call.
+
+### cloud-api routes
+
+| Route | Auth | Request | Answer |
+| --- | --- | --- | --- |
+| `POST /api/v1/voice/linked-calls` | Desktop's runtime device token, or a signed-in user token | `{botId, line, direction, from: string \| null, to: string \| null}` | `{room, livekitUrl, token, identity}`. The token can publish and subscribe, its identity is `linked-phone-<deviceId>`, and it lasts 4 hours. |
+| `GET /api/v1/voice/calls/live` | Signed-in user | none | `[{callId, botId, threadId, line, startedAt, direction, from, to}]` for the owner's calls that haven't ended. `threadId` is `null` until the runtime has resolved it. |
+
+`POST /api/v1/voice/linked-calls` checks that the bot belongs to the owner and that the owner's plan includes voice. It creates the room with the agent dispatch above and records a row in `voice_linked_call_rooms` (`room` primary key, `owner_id`, `runtime_id`, `bot_id`, `line` jsonb, `direction`, `created_at`, `ended_at`). The worker's `POST /api/v1/voice/calls` with a `linked_phone` line is trusted only for a room in that table, and owner, runtime and bot come from that row rather than from the phone-number directory.
+
+The app uses `GET /api/v1/voice/calls/live` on ai.allternit.com and the PWA, polling every 5 seconds while a phone mirror is open, to find a live call on that phone. Desktop uses its own bridge status (`window.allternit.phones.callBridgeStatus()` and `onCallBridgeEvent`) plus the thread's call events.
+
+In cloud-api's `voice_calls`, `number_id` is nullable and the table has `line` (jsonb) and `line_kind`.
+
+### Runtime
+
+- The create body takes an optional `number_id` and `line`. For a `linked_phone` line the number lookups are skipped.
+- The thread is resolved with `thread_routes::channel_thread(db, rt, bot_id, "phone", key, …)` where `key` is `linked:<deviceId>:<caller E.164>`, or `linked:<deviceId>:unknown` when the caller's number is withheld (a `from` that isn't E.164 is allowed).
+- Sender roles apply as for phone numbers: a caller matching the owner's identity is the owner, anyone else is a stranger handled under the receptionist policy.
+- In the runtime's `voice_calls`, `number_id` is nullable and `line` holds the line as JSON text.
+
+### Billing
+
+When a linked-phone call ends, cloud-api records its seconds as engine `cloud` usage through the existing voice usage path, so it counts as Cloud Voice minutes. It follows `ALLTERNIT_VOICE_BILLING_MODE` like other Cloud Voice usage.
+
+### Desktop settings and IPC
+
+Per-phone settings live on the phone's stored record (Android `StoredPhone`, iPhone `IosLinkRecord`):
+
+```ts
+callBridge?: { enabled: boolean; botId: string | null; inputDeviceId: string | null; inputLabel: string | null; outputDeviceId: string | null; outputLabel: string | null }
+```
+
+`window.allternit.phones` exposes `callBridgeGet(serial)`, `callBridgeSet(serial, cfg)`, `callBridgeStatus()` (`[{serial, deviceId, label, platform, enabled, state: "idle" | "ringing" | "answering" | "live" | "ending" | "error", room?, error?, platformSupport}]`) and `onCallBridgeEvent(cb)`. The settings sheet is **Call audio** in the linked phone row's menu (`ConnectedPhoneRow`).

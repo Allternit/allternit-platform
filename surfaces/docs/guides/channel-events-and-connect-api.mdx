@@ -33,7 +33,7 @@ Frozen contract between the voice engine and messaging (`HANDOFF-realtime-voice-
 
 | Event | Payload |
 | --- | --- |
-| `call.started` | `direction`, `from`, `to`, `numberId` |
+| `call.started` | `direction`, `from`, `to`, `numberId`, `line?` (see below) |
 | `call.transcript.delta` | `speaker` (`caller`, `bot`, `human`), `text`, `final`, `segmentId`. Only `final: true` is persisted; interim text is live only. |
 | `call.dtmf` | `digits`, `from` |
 | `call.state.changed` | `held`, `mutedBot`, `mutedCaller`, `speaker`. The acknowledgement of every control. |
@@ -43,6 +43,23 @@ Frozen contract between the voice engine and messaging (`HANDOFF-realtime-voice-
 | `call.ended` | `durationSec`, `reason`, `recordingRef?` |
 
 Tool use during a call reuses the `agent.tool.*` events.
+
+### The call line
+
+`call.started` has an optional `line` field (added 2026-10-18) saying which line the call is on:
+
+```ts
+type CallLine =
+  | { kind: "number"; numberId: string }
+  | { kind: "linked_phone"; deviceId: string; serial?: string; label: string; platform: "android" | "ios" };
+```
+
+- Calls on an Allternit number send `{ kind: "number", numberId }` and keep the top-level `numberId` as before.
+- Calls on a bot's own phone wired to Desktop ([user guide](/guides/bot-voice-on-linked-phone)) send the `linked_phone` line, with `numberId` absent or `null`. `deviceId` is the Android hardware serial (`PhoneInfo.id` / `StoredPhone.id`) or the iPhone udid; `serial` is the key the phone mirror uses (`PhoneInfo.serial`); `label` is the phone's name, for example "Moto".
+- Older events have no `line`. Every consumer must accept it missing. `foldCallEvents` puts it on `CallModel.line`; `CallScreen` and `CallCard` show `on <label>` for a linked phone, and the phone mirror (`PhoneViewport`, `LinkedPhoneOverlay`) switches to `CallScreen` when a live call's `line.serial` (else `deviceId`, else a `phoneNameKey` label match) is that phone.
+- On a `linked_phone` line, `dtmf`, `transfer` and `hold` are not supported. The worker answers with `call.state.changed` (state unchanged) plus `{ unsupported: "<action>" }`; the call carries on.
+
+Room, worker and route details: [Voice call runtime routes: calls on a linked phone](/guides/voice-call-runtime-routes#calls-on-a-linked-phone).
 
 ### Call controls
 

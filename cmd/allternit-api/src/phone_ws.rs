@@ -9,7 +9,9 @@
 //! # Routes
 //!
 //! * `GET /api/v1/phones` (Clerk/desktop-auth): the caller's registered phones
-//!   from cloud PG, `{ "phones": [{ "serial", "model", "name", "online" }] }`.
+//!   from cloud PG, `{ "phones": [{ "serial", "model", "name", "online", "callBridge" }] }`.
+//!   `callBridge` is `{ "enabled", "botName"? }` as the Desktop last announced it in the
+//!   hello (`phones[].callBridge`, forwarded with the registered-phones upsert), or null.
 //!   `online` = a phone-link session for `(account, serial)` is attached to
 //!   THIS api instance's in-memory registry.
 //! * `POST /api/v1/phones/:serial/ws-token`, body `{ "readOnly"?: bool }` →
@@ -29,7 +31,7 @@
 //!   the `x-allternit-desktop-access-token` credential like every other
 //!   Desktop call — auth_middleware resolves it to the account): the Desktop's
 //!   session client. First frame MUST be
-//!   `{"type":"hello","phones":[{"serial","model","name"}]}`; the phones are
+//!   `{"type":"hello","phones":[{"serial","model","name","callBridge"?}]}`; the phones are
 //!   upserted in cloud PG (`last_seen_at` touched) and marked online. 30 s
 //!   heartbeat ping/pong.
 //!
@@ -241,6 +243,44 @@ pub struct CloudPhone {
     pub name: Option<String>,
     #[serde(default)]
     pub last_seen_at: Option<String>,
+    /// The phone's call-bridge summary as the Desktop last announced it
+    /// (contract C5); `None` when never announced or malformed.
+    #[serde(default, alias = "callBridge", deserialize_with = "lenient_call_bridge")]
+    pub call_bridge: Option<CallBridgeSummary>,
+}
+
+/// Longest bot name kept in a call-bridge summary.
+pub const MAX_CALL_BRIDGE_BOT_NAME: usize = 80;
+
+/// What the Desktop says about a phone's call bridge ("bot answers calls"),
+/// so web and the PWA can show it read-only. JSON `{enabled, botName?}`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CallBridgeSummary {
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bot_name: Option<String>,
+}
+
+impl CallBridgeSummary {
+    /// From any JSON value: anything malformed is `None`; the bot name is
+    /// trimmed, empty dropped, and capped at [`MAX_CALL_BRIDGE_BOT_NAME`] chars.
+    pub fn from_value(v: &Value) -> Option<Self> {
+        let enabled = v.get("enabled")?.as_bool()?;
+        let bot_name = v
+            .get("botName")
+            .or_else(|| v.get("bot_name"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|n| !n.is_empty())
+            .map(|n| n.chars().take(MAX_CALL_BRIDGE_BOT_NAME).collect());
+        Some(Self { enabled, bot_name })
+    }
+}
+
+fn lenient_call_bridge<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<CallBridgeSummary>, D::Error> {
+    let v = Value::deserialize(d)?;
+    Ok(CallBridgeSummary::from_value(&v))
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -348,6 +388,9 @@ pub struct PhoneHelloPhone {
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// Optional `callBridge: {enabled, botName?}`; malformed is ignored.
+    #[serde(default, rename = "callBridge", deserialize_with = "lenient_call_bridge", skip_serializing_if = "Option::is_none")]
+    pub call_bridge: Option<CallBridgeSummary>,
 }
 
 /// Parse + validate the session's first frame. Returns the normalized phone
@@ -395,6 +438,7 @@ pub(crate) fn parse_phone_hello(text: &str) -> Result<Vec<PhoneHelloPhone>, &'st
             serial,
             model: phone.model,
             name: phone.name,
+            call_bridge: phone.call_bridge,
         });
     }
     Ok(phones)
@@ -1162,6 +1206,7 @@ async fn list_phones(
             "model": row.model.unwrap_or_default(),
             "name": row.name.unwrap_or_default(),
             "online": online,
+            "callBridge": row.call_bridge,
         }));
     }
     Json(json!({ "phones": phones })).into_response()
@@ -1605,6 +1650,51 @@ pub(crate) mod tests {
         assert!(parse_phone_hello("not json").is_err());
     }
 
+    #[tokio::test]
+    async fn call_bridge_rides_the_hello_to_the_cloud_and_back_to_the_list() {
+        let long = "B".repeat(200);
+        let hello = format!(
+            r#"{{"type":"hello","phones":[
+                {{"serial":"s1","callBridge":{{"enabled":true,"botName":"  Front desk  "}}}},
+                {{"serial":"s2","callBridge":{{"enabled":"yes"}}}},
+                {{"serial":"s3","callBridge":{{"enabled":false,"botName":"{long}"}}}},
+                {{"serial":"s4","callBridge":null}},
+                {{"serial":"s5"}}
+            ]}}"#
+        );
+        let phones = parse_phone_hello(&hello).expect("malformed callBridge never fails the hello");
+        let bridges: Vec<_> = phones.iter().map(|p| p.call_bridge.clone()).collect();
+        assert_eq!(bridges[0], Some(CallBridgeSummary { enabled: true, bot_name: Some("Front desk".into()) }));
+        assert_eq!(bridges[1], None, "malformed is ignored");
+        assert_eq!(bridges[2].as_ref().unwrap().bot_name.as_ref().unwrap().chars().count(), MAX_CALL_BRIDGE_BOT_NAME);
+        assert_eq!((bridges[3].clone(), bridges[4].clone()), (None, None));
+
+        // The upsert payload (what reaches /registered-phones) carries it camelCase, absent when None.
+        let payload = serde_json::to_value(&phones).unwrap();
+        assert_eq!(payload[0]["callBridge"], json!({ "enabled": true, "botName": "Front desk" }));
+        assert!(payload[4].get("callBridge").is_none());
+
+        // The cloud's rows (either casing) come back on GET /phones; null when absent.
+        handler_test_secret();
+        let rows: Vec<CloudPhone> = serde_json::from_value(json!([
+            { "serial": "s1", "call_bridge": { "enabled": true, "botName": "Front desk" } },
+            { "serial": "s2", "callBridge": { "enabled": false } },
+            { "serial": "s3", "callBridge": "garbage" },
+            { "serial": "s4" }
+        ]))
+        .unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let directory = stub_directory(rows);
+        let state = crate::test_helpers::app_state_with_phone_directory(temp.path(), directory.clone()).await;
+        std::mem::forget(temp);
+        state.phone_link.directory.upsert_phones("", "", &phones).await.unwrap();
+        assert_eq!(directory.upserts.lock().unwrap()[0][0].call_bridge, bridges[0]);
+        let response = list_phones(State(state), Extension(auth_user("user-1"))).await.into_response();
+        let value: Value = serde_json::from_slice(&axum::body::to_bytes(response.into_body(), 1 << 20).await.unwrap()).unwrap();
+        let listed: Vec<Value> = value["phones"].as_array().unwrap().iter().map(|p| p["callBridge"].clone()).collect();
+        assert_eq!(listed, vec![json!({ "enabled": true, "botName": "Front desk" }), json!({ "enabled": false }), Value::Null, Value::Null]);
+    }
+
     // ── Registry behavior ───────────────────────────────────────────────────
 
     fn registry_with_stub() -> Arc<PhoneLinkRegistry> {
@@ -1622,6 +1712,7 @@ pub(crate) mod tests {
                 serial: serial.to_string(),
                 model: Some("Pixel 9".into()),
                 name: None,
+                call_bridge: None,
             })
             .collect();
         let (session, _rx) = PhoneLinkSession::new(registry.next_session_id(), account.to_string(), phones);
@@ -1967,8 +2058,8 @@ pub(crate) mod tests {
         handler_test_secret();
         let temp = tempfile::tempdir().unwrap();
         let directory = stub_directory(vec![
-            CloudPhone { serial: "serial-1".into(), model: Some("Pixel 9".into()), name: Some("Pixel".into()), last_seen_at: None },
-            CloudPhone { serial: "serial-2".into(), model: None, name: None, last_seen_at: None },
+            CloudPhone { serial: "serial-1".into(), model: Some("Pixel 9".into()), name: Some("Pixel".into()), last_seen_at: None, call_bridge: None },
+            CloudPhone { serial: "serial-2".into(), model: None, name: None, last_seen_at: None, call_bridge: None },
         ]);
         let state = crate::test_helpers::app_state_with_phone_directory(temp.path(), directory).await;
         std::mem::forget(temp);
@@ -2010,6 +2101,7 @@ pub(crate) mod tests {
             model: None,
             name: None,
             last_seen_at: None,
+            call_bridge: None,
         }]);
         let state = crate::test_helpers::app_state_with_phone_directory(temp.path(), directory).await;
         std::mem::forget(temp);
@@ -2049,6 +2141,7 @@ pub(crate) mod tests {
             model: None,
             name: None,
             last_seen_at: None,
+            call_bridge: None,
         }]);
         let state = crate::test_helpers::app_state_with_phone_directory(temp.path(), directory).await;
         std::mem::forget(temp);

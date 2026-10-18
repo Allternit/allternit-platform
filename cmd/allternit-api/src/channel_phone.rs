@@ -45,6 +45,13 @@ pub fn phone_key(bot_e164: &str, caller_e164: &str) -> String {
     format!("phone:{bot_e164}:{caller_e164}")
 }
 
+/// The conversation key for calls on a bot's linked real phone (contract C4):
+/// `linked:<deviceId>:<callerE164>`, or `unknown` when the caller withheld their
+/// number. Withheld callers on one phone share a thread.
+pub fn linked_key(device_id: &str, caller_e164: Option<&str>) -> String {
+    format!("linked:{device_id}:{}", caller_e164.filter(|c| is_e164(c)).unwrap_or("unknown"))
+}
+
 // ---------------------------------------------------------------- numbers
 
 #[derive(Debug, Clone, PartialEq)]
@@ -112,6 +119,28 @@ pub async fn resolve_thread_async<R: ThreadRuntime>(db: &DbHandle, rt: &R, numbe
     let title = format!("Phone: {caller_e164}");
     let objective = format!("Calls and texts between {caller_e164} and this bot on {}.", n.e164);
     let session = crate::thread_routes::channel_thread(db, rt, &n.bot_id, "phone", &key, &title, &objective).await?;
+    let thread_id: String = db
+        .connect()
+        .map_err(|e| e.to_string())?
+        .query_row("SELECT thread_id FROM bot_thread_sessions WHERE session_id = ?1", params![session], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    Ok((thread_id, session))
+}
+
+/// The thread (and its live session) for a call on a bot's linked real phone
+/// (`device_id`, shown to the owner as `label`). No number directory is involved:
+/// the phone is wired to the owner's computer. `caller_e164` is `None` (or not
+/// E.164) when the caller withheld their number.
+pub async fn resolve_thread_for_line_async<R: ThreadRuntime>(db: &DbHandle, rt: &R, bot_id: &str, device_id: &str, label: &str, caller_e164: Option<&str>) -> Result<(String, String), String> {
+    if device_id.is_empty() {
+        return Err("the linked phone has no device id".into());
+    }
+    let caller = caller_e164.filter(|c| is_e164(c));
+    let key = linked_key(device_id, caller);
+    let who = caller.unwrap_or("withheld caller");
+    let title = format!("Phone: {who} on {label}");
+    let objective = format!("Calls between {who} and this bot on the linked phone {label}.");
+    let session = crate::thread_routes::channel_thread(db, rt, bot_id, "phone", &key, &title, &objective).await?;
     let thread_id: String = db
         .connect()
         .map_err(|e| e.to_string())?
@@ -686,6 +715,30 @@ mod tests {
         assert_ne!(t1, t2);
         assert!(resolve_thread_async(&st.db, &Rt, "nope", "+14155550123").await.is_err());
         assert!(resolve_thread_async(&st.db, &Rt, "num-1", "555").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn linked_phone_calls_get_their_own_thread_per_device_and_caller() {
+        let st = setup("linked").await;
+        assert_eq!(linked_key("SER1", Some("+14155550123")), "linked:SER1:+14155550123");
+        assert_eq!(linked_key("SER1", Some("Restricted")), "linked:SER1:unknown");
+        assert_eq!(linked_key("SER1", None), "linked:SER1:unknown");
+        let (t1, s1) = resolve_thread_for_line_async(&st.db, &Rt, "bot-1", "SER1", "Moto", Some("+14155550123")).await.unwrap();
+        assert_eq!(resolve_thread_for_line_async(&st.db, &Rt, "bot-1", "SER1", "Moto", Some("+14155550123")).await.unwrap(), (t1.clone(), s1));
+        // Not the number's thread: a linked phone is its own line.
+        let (tn, _) = resolve_thread_async(&st.db, &Rt, "num-1", "+14155550123").await.unwrap();
+        assert_ne!(t1, tn);
+        // Withheld callers on one phone share one thread; another phone is another thread.
+        let (w1, _) = resolve_thread_for_line_async(&st.db, &Rt, "bot-1", "SER1", "Moto", None).await.unwrap();
+        let (w2, _) = resolve_thread_for_line_async(&st.db, &Rt, "bot-1", "SER1", "Moto", Some("anonymous")).await.unwrap();
+        assert_eq!(w1, w2);
+        assert_ne!(w1, t1);
+        let (o, _) = resolve_thread_for_line_async(&st.db, &Rt, "bot-1", "SER2", "Pixel", None).await.unwrap();
+        assert_ne!(o, w1);
+        let (title, key): (String, String) = st.db.connect().unwrap().query_row("SELECT title, json_extract(origin, '$.channelKey') FROM bot_threads WHERE id = ?1", params![w1], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        assert_eq!((title.as_str(), key.as_str()), ("Phone: withheld caller on Moto", "linked:SER1:unknown"));
+        assert!(resolve_thread_for_line_async(&st.db, &Rt, "bot-1", "", "Moto", None).await.is_err());
+        assert!(resolve_thread_for_line_async(&st.db, &Rt, "bot-nope", "SER1", "Moto", None).await.is_err());
     }
 
     #[tokio::test]

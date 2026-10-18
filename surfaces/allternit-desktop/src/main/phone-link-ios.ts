@@ -39,6 +39,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import type { CallBridgeConfig } from './phone-call-bridge-config.js';
 import type { DriverContext, PhoneLinkDriver } from './phone-link.js';
 import type { HandedOverFrom, PhoneLinkApp, PhoneLinkStatus } from './phone-link-types.js';
 import { IOS_APP_BUNDLES, IOS_PROBE_BUNDLES, catalogPhoneApps, nameCatalogApps } from './phone-app-catalog.js';
@@ -96,6 +97,12 @@ export interface IosLinkRecord {
   apps?: PhoneLinkApp[];
   linkedAt: string;  /** Received from another computer by pairing handover (phone-link-handover.ts). */
   handedOverFrom?: HandedOverFrom;
+  /**
+   * "Call audio" settings (phone-call-bridge.ts). Machine-specific (audio
+   * devices of this Mac): a writer that doesn't carry it keeps the saved one,
+   * and a pairing handover never brings another computer's.
+   */
+  callBridge?: CallBridgeConfig;
 }
 
 export interface IosLinkStore {
@@ -117,11 +124,27 @@ export function fileLinkStore(file: string): IosLinkStore {
     all: () => Object.values(read()),
     save: (record) => {
       const all = read();
-      all[record.udid] = record;
+      // Writers that rebuild a record (relink, renewal, host/app refresh) never drop Call audio.
+      const kept = record.callBridge === undefined ? all[record.udid]?.callBridge : undefined;
+      all[record.udid] = kept ? { ...record, callBridge: kept } : record;
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(file, JSON.stringify(all, null, 2), { mode: 0o600 });
     },
   };
+}
+
+/** The linked iPhone a Call audio key names: its udid, its device id, or its `link:` serial. */
+export function findIosLinkRecord(store: IosLinkStore, key: string): IosLinkRecord | null {
+  const bare = key.startsWith('link:') ? key.slice(5) : key;
+  return store.all().find((r) => r.udid === bare || r.deviceId === bare) ?? null;
+}
+
+/** Save Call audio on a linked iPhone's record. False when no record matches. */
+export function setIosCallBridge(store: IosLinkStore, key: string, cfg: CallBridgeConfig): boolean {
+  const record = findIosLinkRecord(store, key);
+  if (!record) return false;
+  store.save({ ...record, callBridge: { ...cfg } });
+  return true;
 }
 
 /** The parts of IctrlClient the driver uses (faked in tests). */

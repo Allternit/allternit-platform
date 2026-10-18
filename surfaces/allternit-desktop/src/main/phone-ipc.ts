@@ -23,6 +23,14 @@ function wire(manager: PhoneDeviceManager): void {
   manager.on('pairing', (status) => broadcast('phone:pairing', status));
 }
 
+let bridgeWired = false;
+/** Call bridge states and needs-you notices go to every window ('phone:call-bridge-event'). */
+function wireCallBridge(): void {
+  if (bridgeWired) return;
+  bridgeWired = true;
+  phoneService.ensureCallBridge().on('event', (ev) => broadcast('phone:call-bridge-event', ev));
+}
+
 let usbWired = false;
 function wireUsb(usb: UsbAgentManager): void {
   if (usbWired) return;
@@ -276,6 +284,24 @@ export function registerPhoneIpc(handle: Guarded): void {
   handle('phone:comms-call-state', () => phoneService.callState());
   handle('phone:comms-list-apps', (_e, serial: unknown) => phoneService.listApps(String(serial ?? '')));
   handle('phone:comms-subscribe', (e) => subscribeComms(e.sender));
+
+  // Call bridge (CONTRACT-linked-phone-voice C5): the bot answers carrier
+  // calls on a phone wired to this Mac's sound card. `serial` is the phone
+  // mirror's key (adb serial, or link:<deviceId> for an iPhone).
+  handle('phone:call-bridge-get', async (_e, serial: unknown) => {
+    const res = await phoneService.callBridgeGet(String(serial ?? ''));
+    wireCallBridge();
+    return res;
+  });
+  handle('phone:call-bridge-set', async (_e, serial: unknown, cfg: unknown) => {
+    wireCallBridge();
+    return phoneService.callBridgeSet(String(serial ?? ''), cfg);
+  });
+  handle('phone:call-bridge-status', async () => {
+    const res = await phoneService.callBridgeStatus();
+    wireCallBridge();
+    return res;
+  });
   handle('phone:comms-unsubscribe', (e) => unsubscribeComms(e.sender));
 
   // iPhone over an Allternit USB Agent

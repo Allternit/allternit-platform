@@ -12,6 +12,7 @@ import {
   importHandover,
   openHandover,
   sealHandover,
+  type HandoverKey,
   type HandoverClientDeps,
   type HandoverStores,
 } from './phone-link-handover.js';
@@ -78,6 +79,15 @@ describe('pairing handover: seal, open, import', () => {
     expect(receiver.iosStore.load(IPHONE.udid)).toMatchObject({ meshHost: '100.64.0.9:8200', handedOverFrom: { name: 'Eoj’s MacBook Pro', at: '2026-10-17T11:00:00.000Z' } });
     // The Mac keeps its own pairing.
     expect(giver.secrets.get(`phone-link.ictrl.${IPHONE.udid}`)).toBe(KEY);
+  });
+
+  it("never brings the other computer's Call audio settings (its sound devices aren't here)", () => {
+    const giver = mac();
+    giver.iosStore.save({ ...IPHONE, callBridge: { enabled: true, botId: 'b', inputDeviceId: 'i', inputLabel: 'USB', outputDeviceId: 'o', outputLabel: 'USB' } });
+    const receiver = stores();
+    const sealed = sealHandover(exportPairing(giver, 'ios-dev-1', FROM), handoverKey(receiver.secrets, 'user_1'), 'user_1');
+    importHandover(receiver, openHandover(sealed, receiver.secrets, 'user_1'));
+    expect(receiver.iosStore.load(IPHONE.udid)?.callBridge).toBeUndefined();
   });
 
   it('moves an Android pairing too', () => {
@@ -200,7 +210,7 @@ describe('pairing handover: the receiving phone gateway', () => {
     closers.push(gw.close);
     const h = { [PHONE_GATEWAY_TOKEN_HEADER]: 'tkn', 'content-type': 'application/json' };
     expect((await fetch(`${gw.url}/phone/handover/key`)).status).toBe(403);
-    const key = await (await fetch(`${gw.url}/phone/handover/key`, { headers: h })).json();
+    const key = (await (await fetch(`${gw.url}/phone/handover/key`, { headers: h })).json()) as HandoverKey;
     const sealed = sealHandover(exportPairing(mac(), 'moto-1', FROM), key, 'user_1');
     const res = await fetch(`${gw.url}/phone/handover`, { method: 'POST', headers: h, body: JSON.stringify({ sealed }) });
     expect(await res.json()).toMatchObject({ ok: true, deviceId: 'moto-1', platform: 'android' });

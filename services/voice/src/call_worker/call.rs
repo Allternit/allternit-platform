@@ -94,6 +94,8 @@ pub struct CallContext {
     pub local: String,
     pub direction: String,
     pub number_id: String,
+    /// The call's line (C1); `None` for an in-app call.
+    pub line: Option<serde_json::Value>,
     pub bot: BotConfig,
     /// The SIP leg was already answered when the worker joined (always true
     /// inbound). An outbound leg that is still ringing flips on `SipStatus("active")`.
@@ -383,6 +385,7 @@ pub async fn run_call(
         from: if call.ctx.direction == "outbound" { call.ctx.local.clone() } else { call.ctx.remote.clone() },
         to: if call.ctx.direction == "outbound" { call.ctx.remote.clone() } else { call.ctx.local.clone() },
         number_id: call.ctx.number_id.clone(),
+        line: call.ctx.line.clone(),
     });
     if let Some(why) = &recording.unavailable {
         // Recording was requested and isn't happening: say so in the state the
@@ -615,6 +618,12 @@ impl Call {
     }
 
     async fn apply(&mut self, c: Control) {
+        if let Some(action) = super::line::unsupported_control(self.ctx.line.as_ref(), &c) {
+            // C2: a linked phone can't do it in v1. Ack, never fail the call.
+            tracing::info!(call_id = %self.ctx.call_id, action, "control not supported on a linked phone");
+            self.events.emit(self.state.unsupported_event(action));
+            return;
+        }
         match c {
             Control::Hangup => {
                 let _ = self.room_tx.send(RoomCommand::Hangup).await;
@@ -1278,6 +1287,7 @@ mod tests {
             local: "+16512686010".into(),
             direction: "inbound".into(),
             number_id: "num_1".into(),
+            line: Some(serde_json::json!({"kind": "number", "numberId": "num_1"})),
             sip_answered: true,
             bot: BotConfig {
                 name: Some("Acme Plumbing".into()),
@@ -1513,6 +1523,34 @@ mod tests {
 
     fn h_brain_unused(evs: &[EventEnvelope]) -> bool {
         !evs.iter().any(|e| e.payload["speaker"] == "bot" && e.payload["segmentId"] != "u-0")
+    }
+
+    #[tokio::test]
+    async fn linked_phone_acks_unsupported_controls() {
+        let mut c = ctx(false);
+        (c.number_id, c.line) = (String::new(), Some(serde_json::json!({"kind": "linked_phone", "deviceId": "ZY22", "label": "Moto", "platform": "android"})));
+        let mut h = start_with(CallDeps::bare(Box::new(NoScreening)), c, vec![]);
+        next_cmd(&mut h).await;
+        for ctl in [r#"{"action":"dtmf","digits":"1"}"#, r#"{"action":"transfer","to":"+15105550100"}"#, r#"{"action":"hold"}"#] {
+            h.room_input.send(RoomInput::Control(ctl.as_bytes().to_vec())).await.unwrap();
+        }
+        h.room_input.send(RoomInput::Control(br#"{"action":"mute","target":"bot"}"#.to_vec())).await.unwrap();
+        // The Desktop bridge leaving ends the call like a SIP hangup.
+        h.room_input.send(RoomInput::CallerLeft).await.unwrap();
+        let mut sent = Vec::new();
+        let (outcome, evs) = finish(h).await;
+        assert_eq!(outcome.reason, "caller_hangup");
+        for e in &evs {
+            sent.push((e.event_type.clone(), e.payload.get("unsupported").and_then(|u| u.as_str()).map(String::from)));
+        }
+        let state: Vec<_> = sent.iter().filter(|(t, _)| t == "call.state.changed").map(|(_, u)| u.clone()).collect();
+        assert_eq!(state, [Some("dtmf".into()), Some("transfer".into()), Some("hold".into()), None]);
+        assert!(!sent.iter().any(|(t, _)| t == "call.dtmf" || t == "call.transferred"));
+        let started = evs.iter().find(|e| e.event_type == "call.started").unwrap();
+        assert_eq!(started.payload["line"]["kind"], "linked_phone");
+        assert!(started.payload["numberId"].is_null());
+        assert!(evs.iter().all(|e| e.payload["held"] != true));
+        assert_eq!(evs.last().unwrap().event_type, "call.ended");
     }
 
     #[tokio::test]

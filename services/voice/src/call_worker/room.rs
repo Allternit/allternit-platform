@@ -1,5 +1,5 @@
 //! LiveKit binding (`call-worker` feature): joins the dispatched room, wires
-//! the SIP participant's audio, DTMF and the control topic into [`call`], and
+//! the caller's (SIP, linked phone or in-app) audio, DTMF and the control topic into [`call`], and
 //! applies [`RoomCommand`]s with the room and LiveKit's server API.
 
 use std::borrow::Cow;
@@ -38,6 +38,7 @@ use super::dispatch::{run_dispatch, JobHandler, JobInfo};
 use super::events::{Backoff, EventQueue};
 use super::session_adapter::{connect_ws, CoreCommand};
 use super::invite_code::{self, InviteCall};
+use super::line;
 use super::voicemail::{AnswerScreen, NoScreening, ScreenTimings, VoicemailDetector};
 use super::{AGENT_NAME, CONTROL_TOPIC};
 
@@ -133,17 +134,19 @@ async fn handle_job(cfg: WorkerConfig, cloud: CloudClient, job: JobInfo, cancel:
         .await
         .context("publish bot track")?;
 
-    let Some(caller) = wait_for_sip(&room, &mut lk_events, Duration::from_secs(15)).await else {
+    // cloud-api passes linked-phone and in-app call fields as job metadata.
+    let mut attrs = line::merge_metadata(&job.attributes, &job.metadata);
+    let Some(caller) = wait_for_caller(&room, &mut lk_events, &attrs, Duration::from_secs(15)).await else {
         let _ = rooms.delete_room(&room_name).await;
-        anyhow::bail!("no SIP participant joined {room_name}");
+        anyhow::bail!("no caller joined {room_name}");
     };
     let caller_identity = caller.identity().to_string();
-    let mut attrs = job.attributes.clone();
     attrs.extend(caller.attributes());
     let get = |k: &str| attrs.get(k).cloned().filter(|v| !v.is_empty());
 
     let direction = if get("direction").as_deref() == Some("outbound") { Direction::Outbound } else { Direction::Inbound };
-    if direction == Direction::Outbound && get("consentRef").is_none() {
+    let call_line = line::call_line(&get);
+    if line::needs_consent_ref(direction == Direction::Outbound, call_line.as_ref()) && get("consentRef").is_none() {
         // §4.1: outbound only through the consent gate.
         tracing::error!(room = %room_name, "outbound call without consentRef; hanging up");
         let _ = rooms.delete_room(&room_name).await;
@@ -152,7 +155,8 @@ async fn handle_job(cfg: WorkerConfig, cloud: CloudClient, job: JobInfo, cancel:
     let (remote, local) = call_parties(&direction, &get);
     let start_req = StartCallRequest {
         bot_id: get("botId").unwrap_or_default(),
-        number_id: get("numberId").unwrap_or_default(),
+        number_id: line::start_number_id(call_line.as_ref(), &get),
+        line: call_line.clone(),
         from: if direction == Direction::Outbound { local.clone() } else { remote.clone() },
         to: if direction == Direction::Outbound { remote.clone() } else { local.clone() },
         direction: direction.clone(),
@@ -207,7 +211,8 @@ async fn handle_job(cfg: WorkerConfig, cloud: CloudClient, job: JobInfo, cancel:
                 remote,
                 local,
                 direction: direction.as_str().into(),
-                number_id: start_req.number_id.clone(),
+                number_id: start_req.number_id.clone().unwrap_or_default(),
+                line: call_line.clone(),
                 bot: resp.bot,
                 sip_answered: get(SIP_CALL_STATUS).is_none_or(|s| s == "active"),
             };
@@ -301,18 +306,23 @@ async fn handle_job(cfg: WorkerConfig, cloud: CloudClient, job: JobInfo, cancel:
     Ok(())
 }
 
-async fn wait_for_sip(
+/// The caller: the SIP participant, a linked phone's Desktop bridge
+/// (`linked-phone-…`) or an in-app caller ([`line::is_caller`]). Nobody in
+/// `timeout` → `None` (the room is deleted).
+async fn wait_for_caller(
     room: &Room,
     events: &mut mpsc::UnboundedReceiver<RoomEvent>,
+    attrs: &HashMap<String, String>,
     timeout: Duration,
 ) -> Option<RemoteParticipant> {
-    if let Some(p) = room.remote_participants().into_values().find(|p| p.kind() == ParticipantKind::Sip) {
+    let matches = |p: &RemoteParticipant| line::is_caller(p.kind() == ParticipantKind::Sip, &p.identity().to_string(), attrs);
+    if let Some(p) = room.remote_participants().into_values().find(|p| matches(p)) {
         return Some(p);
     }
     tokio::time::timeout(timeout, async {
         while let Some(ev) = events.recv().await {
             if let RoomEvent::ParticipantConnected(p) = ev {
-                if p.kind() == ParticipantKind::Sip {
+                if matches(&p) {
                     return Some(p);
                 }
             }

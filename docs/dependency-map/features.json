@@ -373,6 +373,10 @@
         {
           "on": "2026-10-16",
           "note": "Voice Stage redesign shipped: output-audio-driven melting A-block mark (speaking state), typewriter captions with screen-reader twins, bot avatar as stage speaker in bot chats, docked-bar live transcript, 28 named voices with one-shot previews, first-run intro sheet. Design doc: allternit-ai docs/VOICE_STAGE_DESIGN.md."
+        },
+        {
+          "on": "2026-10-18",
+          "note": "Calls on a bot's own linked phone run through the same voice worker: POST /api/v1/voice/linked-calls creates the room (voice_linked_call_rooms), GET /api/v1/voice/calls/live lists live calls for web/PWA, runtime thread key linked:<deviceId>:<caller>, billed as Cloud Voice minutes (engine cloud) under ALLTERNIT_VOICE_BILLING_MODE."
         }
       ],
       "evidence": [
@@ -383,7 +387,10 @@
         "allternit-ai/src/components/voice/useTypewriter.ts",
         "allternit-ai/src/components/voice/useVoiceLevelChannel.ts",
         "allternit-ai/src/components/voice/VoiceIntroSheet.tsx",
-        "allternit-ai/src/lib/voice/preview.ts"
+        "allternit-ai/src/lib/voice/preview.ts",
+        "allternit/surfaces/docs/guides/bot-voice-on-linked-phone.mdx",
+        "allternit/surfaces/docs/guides/voice-call-runtime-routes.mdx",
+        "allternit/surfaces/docs/tools/voice-calls.mdx"
       ]
     },
     {
@@ -1354,6 +1361,10 @@
         {
           "on": "2026-10-17",
           "note": "iPhone Phone Link helper 1.98.12-allternit.2 (published + pinned) joins the user's mesh via sealed config; only local clients may use the one-shot pairing grant. Live 2026-10-17: iPhone on a phone hotspot (different network, no cable, helper started on the phone) driven from France over the mesh: ChatGPT opened, read_ui 208 lines, plaintext pairing over the mesh refused (403). Production mesh isolates customers (autogroup:self) since the same day. Android 0.2.1 runs the mesh in its own process."
+        },
+        {
+          "on": "2026-10-18",
+          "note": "Bot voice on a linked phone (CONTRACT-linked-phone-voice-2026-10-18): a call cable from the phone's headset port to a USB sound card on the Mac running Desktop. Desktop answers after one ring (Android adb KEYCODE_CALL, iPhone tap Accept via iCTRL, best effort), joins LiveKit room call-lp-<uuid> as linked-phone-<deviceId>, and the allternit-voice worker runs the bot as for a SIP call. Per-phone callBridge settings (Settings > Subscriptions > Linked phones > Call audio); call.started gains an optional line field; same CallScreen + phone-mirror switch on all three surfaces. dtmf/transfer/hold unsupported in v1. Bluetooth HFP (Moto) and iPhone Continuity were dropped first."
         }
       ],
       "evidence": [
@@ -1368,7 +1379,8 @@
         "allternit/surfaces/allternit-desktop/src/main/phone-usb-agent.ts",
         "allternit/surfaces/allternit-desktop/src/main/phone-scrcpy.ts",
         "allternit/surfaces/allternit-desktop/src/main/phone-stream.ts",
-        "allternit/cmd/allternit-sideload/README.md"
+        "allternit/cmd/allternit-sideload/README.md",
+        "allternit/surfaces/docs/guides/bot-voice-on-linked-phone.mdx"
       ]
     },
     {

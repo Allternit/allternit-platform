@@ -7,6 +7,7 @@
 //! middleware because they authenticate themselves, see [`crate::relay_auth`]):
 //!
 //! * `POST   /api/v1/voice/calls`                  start a call, resolve its thread
+//!   (a Telnyx number's call, or a call on a bot's linked real phone: see [`Line`])
 //! * `POST   /api/v1/voice/calls/{callId}/events`  write `call.*` events to the thread
 //! * `POST   /api/v1/voice/calls/{callId}/turn`    one bot turn, streamed as SSE
 //! * `DELETE /api/v1/voice/calls/{callId}/turn`    barge-in: abort the turn
@@ -54,11 +55,14 @@ fn fail(status: StatusCode, msg: &str) -> Response {
 
 // ---------------------------------------------------------------- seams
 
-/// Resolves the thread and session for a caller on a number. Production uses
-/// `channel_phone::resolve_thread_async`; tests plug in a fake `ThreadRuntime`.
+/// Resolves the thread and session for a caller on a number, or on a bot's
+/// linked real phone. Production uses `channel_phone::resolve_thread_async` /
+/// `resolve_thread_for_line_async`; tests plug in a fake.
 #[async_trait]
 pub trait ThreadResolver: Send + Sync {
     async fn resolve(&self, db: &DbHandle, number_id: &str, caller_e164: &str) -> Result<(String, String), String>;
+    /// `caller_e164` is `None` when the caller withheld their number.
+    async fn resolve_linked(&self, db: &DbHandle, bot_id: &str, line: &LinkedLine, caller_e164: Option<&str>) -> Result<(String, String), String>;
 }
 
 struct GizziResolver;
@@ -69,6 +73,96 @@ impl ThreadResolver for GizziResolver {
         let rt = crate::thread_routes::GizziRuntime { db: db.clone() };
         crate::channel_phone::resolve_thread_async(db, &rt, number_id, caller_e164).await
     }
+
+    async fn resolve_linked(&self, db: &DbHandle, bot_id: &str, line: &LinkedLine, caller_e164: Option<&str>) -> Result<(String, String), String> {
+        let rt = crate::thread_routes::GizziRuntime { db: db.clone() };
+        crate::channel_phone::resolve_thread_for_line_async(db, &rt, bot_id, &line.device_id, &line.label, caller_e164).await
+    }
+}
+
+// ---------------------------------------------------------------- lines
+
+/// A bot's real phone wired to the owner's computer (contract C1 `linked_phone`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct LinkedLine {
+    pub device_id: String,
+    pub serial: Option<String>,
+    pub label: String,
+    pub platform: String,
+}
+
+/// Which line a call is on (contract C1). Old call starts send no `line` and are number calls.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Line {
+    Number { number_id: String },
+    Linked(LinkedLine),
+}
+
+impl Line {
+    /// The `line` JSON stored on the call row.
+    pub fn to_json(&self) -> Value {
+        match self {
+            Line::Number { number_id } => json!({ "kind": "number", "numberId": number_id }),
+            Line::Linked(l) => {
+                let mut v = json!({ "kind": "linked_phone", "deviceId": l.device_id, "label": l.label, "platform": l.platform });
+                if let Some(s) = &l.serial {
+                    v["serial"] = json!(s);
+                }
+                v
+            }
+        }
+    }
+}
+
+fn id_ok(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 128 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"._:-".contains(&b))
+}
+
+/// The call's line from the start body's `numberId` and `line`. A number line must
+/// agree with `numberId`; a linked line needs a device id and a platform.
+pub fn parse_line(number_id: Option<&str>, line: Option<&Value>) -> Result<Line, &'static str> {
+    let number_id = number_id.filter(|n| !n.is_empty());
+    let Some(line) = line.filter(|l| !l.is_null()) else {
+        return number_id.map(|n| Line::Number { number_id: n.to_string() }).ok_or("numberId or line is required");
+    };
+    let text = |k: &str| line[k].as_str().map(str::trim).filter(|v| !v.is_empty()).map(str::to_string);
+    match line["kind"].as_str() {
+        Some("number") => match (text("numberId"), number_id) {
+            (Some(a), Some(b)) if a != b => Err("line.numberId does not match numberId"),
+            (Some(n), _) => Ok(Line::Number { number_id: n }),
+            (None, Some(n)) => Ok(Line::Number { number_id: n.to_string() }),
+            (None, None) => Err("numberId or line is required"),
+        },
+        Some("linked_phone") => {
+            let device_id = text("deviceId").filter(|d| id_ok(d)).ok_or("line.deviceId is required (letters, digits, . _ : -)")?;
+            let platform = text("platform").filter(|p| p == "android" || p == "ios").ok_or("line.platform must be android or ios")?;
+            let serial = text("serial").filter(|s| s.len() <= 128);
+            let label: String = text("label").unwrap_or_else(|| device_id.clone()).chars().take(80).collect();
+            Ok(Line::Linked(LinkedLine { device_id, serial, label, platform }))
+        }
+        _ => Err("line.kind must be number or linked_phone"),
+    }
+}
+
+/// The trust (sender role) of a caller on a linked phone, the same way a text to a
+/// bot's number is labelled: the owner's verified phone identity
+/// (`factory_owner_identities`, the `verify <code>` pairing on a number) or the
+/// owner's own person row is `owner`; a person the twin knows is `contact`;
+/// everyone else, and every withheld caller, is a `stranger`. A linked phone has
+/// no channel account, so there is no allowlist to refuse with: unknown callers
+/// get the receptionist treatment (the tainted thread envelope), never a hang-up.
+pub fn linked_caller_trust(conn: &rusqlite::Connection, owner: &str, caller_e164: Option<&str>) -> crate::netops::provenance::Trust {
+    use crate::netops::provenance::{sender_trust, Trust};
+    let Some(caller) = caller_e164.filter(|c| crate::channel_phone::is_e164(c)) else { return Trust::Stranger };
+    let verified: Vec<String> = conn
+        .prepare("SELECT identity FROM factory_owner_identities WHERE owner = ?1 AND channel IN ('sms', 'phone')")
+        .and_then(|mut st| st.query_map(params![owner], |r| r.get::<_, String>(0)).map(|rows| rows.filter_map(Result::ok).collect()))
+        .unwrap_or_default();
+    let rule = crate::channel_auth::Rule { owner_ids: verified, ..Default::default() };
+    if rule.is_owner(Some(caller)) {
+        return Trust::Owner;
+    }
+    sender_trust(conn, owner, caller)
 }
 
 /// How a turn's reply reaches the caller.
@@ -280,8 +374,9 @@ fn summary_prompt(db: &DbHandle, call: &CallRow, call_id: &str) -> Result<Option
         transcript = format!("[earlier part of the call omitted]\n{}", &transcript[cut..]);
     }
     Ok(Some(format!(
-        "Summarize this {} phone call for the bot's owner. Caller number: {caller}. Duration: {} seconds. Ended: {}.\n\nTranscript and tool log:\n{transcript}",
+        "Summarize this {} phone call for the bot's owner. Caller number: {}. Duration: {} seconds. Ended: {}.\n\nTranscript and tool log:\n{transcript}",
         call.direction,
+        if caller.is_empty() { "withheld" } else { caller.as_str() },
         duration.map_or("unknown".to_string(), |d| d.to_string()),
         if reason.is_empty() { "unknown" } else { &reason },
     )))
@@ -399,9 +494,17 @@ struct CreateBody {
     call_id: String,
     bot_id: String,
     owner_id: String,
-    number_id: String,
-    from: String,
-    to: String,
+    /// A Telnyx number's call. Absent for a call on a linked phone.
+    #[serde(default)]
+    number_id: Option<String>,
+    /// Contract C1. Absent on old call starts, which are number calls.
+    #[serde(default)]
+    line: Option<Value>,
+    /// E.164 on a number. On a linked phone either may be null or not E.164 (withheld caller, unknown own number).
+    #[serde(default)]
+    from: Option<String>,
+    #[serde(default)]
+    to: Option<String>,
     direction: String,
     room: String,
     started_at: String,
@@ -421,7 +524,15 @@ async fn create_h(State(state): State<Arc<AppState>>, Extension(deps): Extension
     if b.direction != "inbound" && b.direction != "outbound" {
         return fail(StatusCode::BAD_REQUEST, "direction must be inbound or outbound");
     }
-    if !crate::channel_phone::is_e164(&b.from) || !crate::channel_phone::is_e164(&b.to) {
+    let line = match parse_line(b.number_id.as_deref(), b.line.as_ref()) {
+        Ok(l) => l,
+        Err(e) => return fail(StatusCode::BAD_REQUEST, e),
+    };
+    let (from, to) = (b.from.clone().unwrap_or_default(), b.to.clone().unwrap_or_default());
+    if from.len() > 64 || to.len() > 64 {
+        return fail(StatusCode::BAD_REQUEST, "from and to are at most 64 characters");
+    }
+    if matches!(line, Line::Number { .. }) && (!crate::channel_phone::is_e164(&from) || !crate::channel_phone::is_e164(&to)) {
         return fail(StatusCode::BAD_REQUEST, "from and to must be E.164");
     }
     // A repeated callId (cloud-api retries while a computer wakes) returns the same ids.
@@ -431,58 +542,24 @@ async fn create_h(State(state): State<Arc<AppState>>, Extension(deps): Extension
         Ok(None) => {}
         Err(e) => return fail(StatusCode::INTERNAL_SERVER_ERROR, &e),
     }
-    // Backstop: the runtime's number table can be empty (fresh or restored computer). The body is
-    // signed by cloud-api for this owner, so register the number from it instead of failing every call.
-    let number = match crate::channel_phone::number(&state.db, &b.number_id) {
-        Some(n) => n,
-        None => {
-            let bot_e164 = if b.direction == "inbound" { &b.to } else { &b.from };
-            if let Err(e) = crate::channel_phone::upsert_number(&state.db, &b.number_id, &auth.owner, &b.bot_id, bot_e164, None) {
-                return fail(StatusCode::UNPROCESSABLE_ENTITY, &format!("couldn't set up that phone number on this runtime: {e}"));
-            }
-            tracing::info!(number_id = %b.number_id, bot_id = %b.bot_id, "voice call: registered unknown phone number from the signed call start");
-            match crate::channel_phone::number(&state.db, &b.number_id) {
-                Some(n) => n,
-                None => return fail(StatusCode::INTERNAL_SERVER_ERROR, "phone number was not stored"),
-            }
-        }
+    let resolved = match &line {
+        Line::Number { number_id } => start_number_call(&state, &deps, &auth, &b, number_id, &from, &to).await,
+        Line::Linked(l) => start_linked_call(&state, &deps, &auth, &b, l, &from, &to).await,
     };
-    if number.owner != auth.owner || number.bot_id != b.bot_id {
-        return fail(StatusCode::FORBIDDEN, "that number does not belong to this owner and bot");
-    }
-    let caller = if b.direction == "inbound" { &b.from } else { &b.to };
-    // Who may call the bot (audit S16): the number's channel account decides.
-    // A number registered without an account (the backstop above) has no
-    // setting to check; it stays open and says so in the log.
-    if b.direction == "inbound" {
-        if let Ok(conn) = state.db.connect() {
-            let account: Option<String> = conn
-                .query_row("SELECT account_id FROM channel_phone_numbers WHERE number_id = ?1", params![b.number_id], |r| r.get(0))
-                .ok()
-                .flatten();
-            match account {
-                Some(acct) => {
-                    if !crate::channel_auth::account_rule(&conn, &acct, "sms").allows(Some(&b.from)) {
-                        crate::channel_auth::record_rejection(
-                            &conn,
-                            &crate::channel_auth::Rejection { channel: "phone", binding: &acct, bot_id: Some(&b.bot_id), owner: Some(&auth.owner), sender: Some(&b.from) },
-                        );
-                        return fail(StatusCode::FORBIDDEN, "this caller is not allowed to reach the bot");
-                    }
-                }
-                None => tracing::warn!(number_id = %b.number_id, "voice call: number has no channel account, so no sender allowlist applies"),
-            }
-        }
-    }
-    let (thread_id, session_id) = match deps.resolver.resolve(&state.db, &b.number_id, caller).await {
+    let (thread_id, session_id) = match resolved {
         Ok(ids) => ids,
-        Err(e) => return fail(StatusCode::BAD_GATEWAY, &e),
+        Err(r) => return r,
     };
+    let number_id = match &line {
+        Line::Number { number_id } => Some(number_id.clone()),
+        Line::Linked(_) => None,
+    };
+    let line_json = line.to_json().to_string();
     let inserted = state.db.connect().and_then(|conn| {
         conn.execute(
-            "INSERT OR IGNORE INTO voice_calls (call_id, owner_id, bot_id, number_id, thread_id, session_id, from_e164, to_e164, direction, room, state, started_at)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,'active',?11)",
-            params![b.call_id, b.owner_id, b.bot_id, b.number_id, thread_id, session_id, b.from, b.to, b.direction, b.room, b.started_at],
+            "INSERT OR IGNORE INTO voice_calls (call_id, owner_id, bot_id, number_id, thread_id, session_id, from_e164, to_e164, direction, room, state, started_at, line)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,'active',?11,?12)",
+            params![b.call_id, b.owner_id, b.bot_id, number_id, thread_id, session_id, from, to, b.direction, b.room, b.started_at, line_json],
         )
     });
     if let Err(e) = inserted {
@@ -493,6 +570,92 @@ async fn create_h(State(state): State<Arc<AppState>>, Extension(deps): Extension
         Ok(Some(c)) if c.owner_id == auth.owner => Json(json!({ "threadId": c.thread_id, "sessionId": c.session_id })).into_response(),
         _ => fail(StatusCode::INTERNAL_SERVER_ERROR, "call was not stored"),
     }
+}
+
+/// A Telnyx number's call: the number lookups, owner and bot check, the number's
+/// sender allowlist, then the caller's thread on that number.
+async fn start_number_call(state: &AppState, deps: &VoiceDeps, auth: &RelayedAuth, b: &CreateBody, number_id: &str, from: &str, to: &str) -> Result<(String, String), Response> {
+    // Backstop: the runtime's number table can be empty (fresh or restored computer). The body is
+    // signed by cloud-api for this owner, so register the number from it instead of failing every call.
+    let number = match crate::channel_phone::number(&state.db, number_id) {
+        Some(n) => n,
+        None => {
+            let bot_e164 = if b.direction == "inbound" { to } else { from };
+            if let Err(e) = crate::channel_phone::upsert_number(&state.db, number_id, &auth.owner, &b.bot_id, bot_e164, None) {
+                return Err(fail(StatusCode::UNPROCESSABLE_ENTITY, &format!("couldn't set up that phone number on this runtime: {e}")));
+            }
+            tracing::info!(number_id = %number_id, bot_id = %b.bot_id, "voice call: registered unknown phone number from the signed call start");
+            match crate::channel_phone::number(&state.db, number_id) {
+                Some(n) => n,
+                None => return Err(fail(StatusCode::INTERNAL_SERVER_ERROR, "phone number was not stored")),
+            }
+        }
+    };
+    if number.owner != auth.owner || number.bot_id != b.bot_id {
+        return Err(fail(StatusCode::FORBIDDEN, "that number does not belong to this owner and bot"));
+    }
+    let caller = if b.direction == "inbound" { from } else { to };
+    // Who may call the bot (audit S16): the number's channel account decides.
+    // A number registered without an account (the backstop above) has no
+    // setting to check; it stays open and says so in the log.
+    if b.direction == "inbound" {
+        if let Ok(conn) = state.db.connect() {
+            let account: Option<String> = conn
+                .query_row("SELECT account_id FROM channel_phone_numbers WHERE number_id = ?1", params![number_id], |r| r.get(0))
+                .ok()
+                .flatten();
+            match account {
+                Some(acct) => {
+                    if !crate::channel_auth::account_rule(&conn, &acct, "sms").allows(Some(from)) {
+                        crate::channel_auth::record_rejection(
+                            &conn,
+                            &crate::channel_auth::Rejection { channel: "phone", binding: &acct, bot_id: Some(&b.bot_id), owner: Some(&auth.owner), sender: Some(from) },
+                        );
+                        return Err(fail(StatusCode::FORBIDDEN, "this caller is not allowed to reach the bot"));
+                    }
+                }
+                None => tracing::warn!(number_id = %number_id, "voice call: number has no channel account, so no sender allowlist applies"),
+            }
+        }
+    }
+    let (thread_id, session_id) = deps.resolver.resolve(&state.db, number_id, caller).await.map_err(|e| fail(StatusCode::BAD_GATEWAY, &e))?;
+    let caller = Some(caller.trim()).filter(|c| crate::channel_phone::is_e164(c));
+    label_caller(state, auth, &thread_id, caller, &format!("Phone call on {} with {}", number.e164, caller.unwrap_or("withheld")));
+    Ok((thread_id, session_id))
+}
+
+/// Label a call's thread with the caller's trust, the same way a text to the
+/// number is labelled, and tighten the thread's tools the first time a
+/// stranger reaches it.
+fn label_caller(state: &AppState, auth: &RelayedAuth, thread_id: &str, caller: Option<&str>, summary: &str) {
+    let Ok(conn) = state.db.connect() else { return };
+    use crate::netops::provenance;
+    let trust = linked_caller_trust(&conn, &auth.owner, caller);
+    let before = provenance::trust_floor(&conn, thread_id);
+    let label = provenance::label(&conn, thread_id, trust, "phone", caller.unwrap_or("withheld"), summary);
+    if label.trust.tainted() && !before.is_some_and(|f| f.tainted()) {
+        crate::thread_routes::enforce_envelope_bg(&state.db, thread_id);
+    }
+}
+
+/// A call on a bot's linked real phone (contract C4): no number directory. The
+/// bot must be the owner's; the caller may be withheld; the thread is keyed
+/// `linked:<deviceId>:<caller|unknown>` and labelled with the caller's trust.
+async fn start_linked_call(state: &AppState, deps: &VoiceDeps, auth: &RelayedAuth, b: &CreateBody, line: &LinkedLine, from: &str, to: &str) -> Result<(String, String), Response> {
+    let owns = state
+        .db
+        .connect()
+        .ok()
+        .and_then(|c| c.query_row("SELECT 1 FROM agents WHERE id = ?1 AND user_id = ?2", params![b.bot_id, auth.owner], |_| Ok(())).optional().ok().flatten())
+        .is_some();
+    if !owns {
+        return Err(fail(StatusCode::FORBIDDEN, "that bot does not belong to this owner"));
+    }
+    let raw = if b.direction == "inbound" { from } else { to };
+    let caller = Some(raw.trim()).filter(|c| crate::channel_phone::is_e164(c));
+    let (thread_id, session_id) = deps.resolver.resolve_linked(&state.db, &b.bot_id, line, caller).await.map_err(|e| fail(StatusCode::BAD_GATEWAY, &e))?;
+    label_caller(state, auth, &thread_id, caller, &format!("Phone call on {} with {}", line.label, caller.unwrap_or("withheld")));
+    Ok((thread_id, session_id))
 }
 
 // ---------------------------------------------------------------- events
@@ -515,7 +678,7 @@ struct EventIn {
 fn actor_for<'a>(call: &'a CallRow, ev: &'a EventIn, owner: &'a str) -> (&'static str, String) {
     let caller = if call.direction == "inbound" { &call.from_e164 } else { &call.to_e164 };
     match ev.payload["speaker"].as_str() {
-        Some("caller") => ("caller", caller.clone()),
+        Some("caller") => ("caller", if caller.is_empty() { "unknown".to_string() } else { caller.clone() }),
         Some("human") => ("human", ev.payload["by"].as_str().filter(|s| !s.is_empty()).unwrap_or(owner).to_string()),
         _ => ("bot", call.bot_id.clone()),
     }
@@ -765,6 +928,10 @@ mod tests {
         async fn resolve(&self, _db: &DbHandle, number_id: &str, caller: &str) -> Result<(String, String), String> {
             Ok((format!("thr-{number_id}-{caller}"), format!("sess-{number_id}-{caller}")))
         }
+        async fn resolve_linked(&self, _db: &DbHandle, _bot: &str, line: &LinkedLine, caller: Option<&str>) -> Result<(String, String), String> {
+            let key = crate::channel_phone::linked_key(&line.device_id, caller);
+            Ok((format!("thr-{key}"), format!("sess-{key}")))
+        }
     }
 
     #[derive(Default)]
@@ -922,6 +1089,10 @@ mod tests {
         assert_eq!(s, StatusCode::OK, "{b}");
         let n = crate::channel_phone::number(&h.state.db, "num-new").expect("registered");
         assert_eq!((n.owner.as_str(), n.bot_id.as_str(), n.e164.as_str()), (OWNER, "bot-1", "+14155550120"));
+        // Caller speech on a number call is labelled like a text to that number: an unknown caller is a stranger.
+        let from = call_body("c1")["from"].as_str().unwrap().to_string();
+        let trust: String = h.state.db.connect().unwrap().query_row("SELECT trust FROM content_provenance WHERE thread_id = ?1 AND source_kind = 'phone' LIMIT 1", params![format!("thr-num-new-{from}")], |r| r.get(0)).unwrap();
+        assert_eq!(trust, "stranger");
         // Outbound registers the bot's number from `from`.
         let mut out = call_body("c2");
         (out["numberId"], out["direction"], out["from"], out["to"]) = (json!("num-out"), json!("outbound"), json!("+14155550111"), json!("+14155550199"));
@@ -933,6 +1104,123 @@ mod tests {
         let (s, b) = send(&h.app, "POST", CALLS, foreign, true).await;
         assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{b}");
         assert!(crate::channel_phone::number(&h.state.db, "num-x").is_none());
+    }
+
+    fn linked_body(id: &str, from: Value) -> Value {
+        json!({ "callId": id, "botId": "bot-1", "ownerId": OWNER, "line": { "kind": "linked_phone", "deviceId": "ZY22ABC", "serial": "ZY22ABC", "label": "Moto", "platform": "android" }, "from": from, "to": null, "direction": "inbound", "room": "call-lp-1", "startedAt": "2026-10-18T10:00:00Z" })
+    }
+
+    fn stored(h: &H, call: &str) -> (Option<String>, Option<String>, String, String) {
+        h.state.db.connect().unwrap().query_row("SELECT number_id, line, from_e164, to_e164 FROM voice_calls WHERE call_id = ?1", params![call], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).unwrap()
+    }
+
+    #[test]
+    fn lines_parse_from_number_id_and_line() {
+        assert_eq!(parse_line(Some("num-1"), None), Ok(Line::Number { number_id: "num-1".into() }));
+        assert_eq!(parse_line(None, Some(&json!({ "kind": "number", "numberId": "num-1" }))), Ok(Line::Number { number_id: "num-1".into() }));
+        assert_eq!(parse_line(Some("num-1"), Some(&json!({ "kind": "number", "numberId": "num-1" }))), Ok(Line::Number { number_id: "num-1".into() }));
+        assert!(parse_line(Some("num-1"), Some(&json!({ "kind": "number", "numberId": "num-2" }))).is_err());
+        assert!(parse_line(None, None).is_err() && parse_line(Some(""), Some(&Value::Null)).is_err());
+        let l = parse_line(None, Some(&json!({ "kind": "linked_phone", "deviceId": "00008110-001A", "label": "iPhone", "platform": "ios" }))).unwrap();
+        assert_eq!(l.to_json(), json!({ "kind": "linked_phone", "deviceId": "00008110-001A", "label": "iPhone", "platform": "ios" }));
+        // No label: the device id stands in.
+        let Line::Linked(l) = parse_line(None, Some(&json!({ "kind": "linked_phone", "deviceId": "ZY1", "platform": "android" }))).unwrap() else { panic!() };
+        assert_eq!(l.label, "ZY1");
+        for bad in [json!({ "kind": "linked_phone", "platform": "android" }), json!({ "kind": "linked_phone", "deviceId": "a b", "platform": "android" }), json!({ "kind": "linked_phone", "deviceId": "ZY1", "platform": "windows" }), json!({ "kind": "sip" })] {
+            assert!(parse_line(None, Some(&bad)).is_err(), "{bad}");
+        }
+    }
+
+    #[tokio::test]
+    async fn linked_phone_calls_skip_the_number_and_accept_a_withheld_caller() {
+        let h = setup("linked", Some((TOKEN, OWNER))).await;
+        let (s, b) = send(&h.app, "POST", CALLS, linked_body("lp1", json!("+14155550123")), true).await;
+        assert_eq!(s, StatusCode::OK, "{b}");
+        let v: Value = serde_json::from_str(&b).unwrap();
+        assert_eq!(v["threadId"], "thr-linked:ZY22ABC:+14155550123");
+        let (num, line, from, to) = stored(&h, "lp1");
+        assert_eq!((num, from.as_str(), to.as_str()), (None, "+14155550123", ""));
+        assert_eq!(serde_json::from_str::<Value>(&line.unwrap()).unwrap(), json!({ "kind": "linked_phone", "deviceId": "ZY22ABC", "serial": "ZY22ABC", "label": "Moto", "platform": "android" }));
+        // No phone number was registered for it.
+        let numbers: i64 = h.state.db.connect().unwrap().query_row("SELECT COUNT(*) FROM channel_phone_numbers", [], |r| r.get(0)).unwrap();
+        assert_eq!(numbers, 1);
+        // Withheld caller (null, or a carrier word): one "unknown" thread per phone, labelled stranger.
+        for (id, from) in [("lp2", Value::Null), ("lp3", json!("Restricted"))] {
+            let (s, b) = send(&h.app, "POST", CALLS, linked_body(id, from), true).await;
+            assert_eq!(s, StatusCode::OK, "{b}");
+            assert_eq!(serde_json::from_str::<Value>(&b).unwrap()["threadId"], "thr-linked:ZY22ABC:unknown");
+        }
+        assert_eq!(stored(&h, "lp2").2, "");
+        let trust: String = h.state.db.connect().unwrap().query_row("SELECT trust FROM content_provenance WHERE thread_id = 'thr-linked:ZY22ABC:unknown' AND source_kind = 'phone' LIMIT 1", [], |r| r.get(0)).unwrap();
+        assert_eq!(trust, "stranger");
+        // Outbound: the dialed number is the caller.
+        let mut out = linked_body("lp4", Value::Null);
+        (out["direction"], out["to"]) = (json!("outbound"), json!("+14155550199"));
+        assert_eq!(serde_json::from_str::<Value>(&send(&h.app, "POST", CALLS, out, true).await.1).unwrap()["threadId"], "thr-linked:ZY22ABC:+14155550199");
+        // Someone else's bot, a bad line, or no line at all.
+        let mut bad = linked_body("lp5", Value::Null);
+        bad["botId"] = json!("bot-9");
+        assert_eq!(send(&h.app, "POST", CALLS, bad, true).await.0, StatusCode::FORBIDDEN);
+        let mut bad = linked_body("lp5", Value::Null);
+        bad["line"]["platform"] = json!("windows");
+        assert_eq!(send(&h.app, "POST", CALLS, bad, true).await.0, StatusCode::BAD_REQUEST);
+        let mut bad = linked_body("lp5", Value::Null);
+        bad.as_object_mut().unwrap().remove("line");
+        assert_eq!(send(&h.app, "POST", CALLS, bad, true).await.0, StatusCode::BAD_REQUEST);
+        let mut bad = linked_body("lp5", json!("x".repeat(65)));
+        bad["direction"] = json!("inbound");
+        assert_eq!(send(&h.app, "POST", CALLS, bad, true).await.0, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn number_calls_keep_their_checks_and_store_their_line() {
+        let h = setup("numline", Some((TOKEN, OWNER))).await;
+        let mut body = call_body("n1");
+        body["line"] = json!({ "kind": "number", "numberId": "num-1" });
+        let (s, b) = send(&h.app, "POST", CALLS, body, true).await;
+        assert_eq!(s, StatusCode::OK, "{b}");
+        let (num, line, _, _) = stored(&h, "n1");
+        assert_eq!(num.as_deref(), Some("num-1"));
+        assert_eq!(serde_json::from_str::<Value>(&line.unwrap()).unwrap(), json!({ "kind": "number", "numberId": "num-1" }));
+        // A number call still needs E.164 on both ends, and line and numberId must agree.
+        let mut bad = call_body("n2");
+        bad["from"] = Value::Null;
+        assert_eq!(send(&h.app, "POST", CALLS, bad, true).await.0, StatusCode::BAD_REQUEST);
+        let mut bad = call_body("n2");
+        bad["line"] = json!({ "kind": "number", "numberId": "num-2" });
+        assert_eq!(send(&h.app, "POST", CALLS, bad, true).await.0, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn a_linked_call_started_event_keeps_its_line_and_a_withheld_caller_is_unknown() {
+        let h = setup("lpevents", Some((TOKEN, OWNER))).await;
+        send(&h.app, "POST", CALLS, linked_body("lp1", Value::Null), true).await;
+        let line = json!({ "kind": "linked_phone", "deviceId": "ZY22ABC", "serial": "ZY22ABC", "label": "Moto", "platform": "android" });
+        let batch = json!({ "events": [
+            { "type": "call.started", "n": 0, "payload": { "direction": "inbound", "from": null, "to": null, "numberId": null, "line": line } },
+            { "type": "call.transcript.delta", "n": 1, "payload": { "speaker": "caller", "text": "hi", "final": true, "segmentId": "s1" } },
+        ] });
+        let (st, body) = send(&h.app, "POST", &format!("{CALLS}/lp1/events"), batch, true).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        let conn = h.state.db.connect().unwrap();
+        let mut stmt = conn.prepare("SELECT actor_id, payload FROM bot_events WHERE thread_id = 'thr-linked:ZY22ABC:unknown' AND idempotency_key LIKE 'call:lp1:%' ORDER BY rowid").unwrap();
+        let rows: Vec<(String, Value)> = stmt.query_map([], |r| Ok((r.get(0)?, serde_json::from_str::<Value>(&r.get::<_, String>(1)?).unwrap()))).unwrap().map(Result::unwrap).collect();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].1["line"], line);
+        assert_eq!(rows[1].0, "unknown");
+    }
+
+    #[tokio::test]
+    async fn linked_caller_trust_follows_the_owner_identity() {
+        use crate::netops::provenance::Trust;
+        let h = setup("lptrust", Some((TOKEN, OWNER))).await;
+        let conn = h.state.db.connect().unwrap();
+        conn.execute("INSERT INTO factory_owner_identities (account_id, channel, owner, identity, verified_at) VALUES ('acct-1', 'sms', ?1, '+1 (415) 555-0177', 't')", params![OWNER]).unwrap();
+        assert_eq!(linked_caller_trust(&conn, OWNER, Some("+14155550177")), Trust::Owner);
+        assert_eq!(linked_caller_trust(&conn, "user-b", Some("+14155550177")), Trust::Stranger);
+        assert_eq!(linked_caller_trust(&conn, OWNER, Some("+14155550123")), Trust::Stranger);
+        assert_eq!(linked_caller_trust(&conn, OWNER, None), Trust::Stranger);
+        assert_eq!(linked_caller_trust(&conn, OWNER, Some("Restricted")), Trust::Stranger);
     }
 
     fn ledger(h: &H, call: &str) -> Vec<(String, String, String, Value)> {
