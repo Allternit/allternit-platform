@@ -26,8 +26,10 @@ export const PINNED_ANDROID_MANIFESTS: Record<string, string> = {
   // 0.2.1: joins the mesh (own :mesh process), 16 MB. (0.2.0 was never pinned:
   // a failed upload left a cached 404 on its APK URL for 4 h.)
   '0.2.1': 'b177cbe831009d7ea907b7a86456cfe23511e2fe413eb3777553221cc2b44287',
+  // 0.3.1: shell server + in-app adb (screen over Wi-Fi), carrier stubs skipped.
+  '0.3.1': '32db339799c16054015831cf307ee205ce5195aba28b09c165eb7b4f4443014c',
 };
-export const ANDROID_HELPER_VERSION: string | null = '0.2.1';
+export const ANDROID_HELPER_VERSION: string | null = '0.3.1';
 
 export interface AndroidHelperManifest {
   version: string;
