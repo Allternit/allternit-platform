@@ -1,10 +1,10 @@
 // Boot — order matters: config → secret-store gate (D3/D15: refuse without
 // it) → store+migrations → events/http wiring → UDS (+TCP if enabled) → log binds.
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { request as httpRequest, type Server } from "node:http";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Express } from "express";
 import type { RedactingLogger } from "@allternit/subscription-fabric-contracts";
 import { loadConfig, stallTimeoutFor, type Config } from "./config.js";
@@ -409,9 +409,19 @@ async function main(): Promise<void> {
   process.on("SIGINT", shutdown);
 }
 
-const invokedDirectly =
-  typeof process.argv[1] === "string" &&
-  import.meta.url === pathToFileURL(process.argv[1]).href;
+// Compare real paths: started through a symlink (macOS /var -> /private/var,
+// a Windows 8.3 short name) the two spellings differ and the gateway would
+// exit 0 without booting.
+function invokedAsMain(): boolean {
+  if (typeof process.argv[1] !== "string") return false;
+  if (import.meta.url === pathToFileURL(process.argv[1]).href) return true;
+  try {
+    return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1]);
+  } catch {
+    return false;
+  }
+}
+const invokedDirectly = invokedAsMain();
 if (invokedDirectly) {
   void main();
 }
