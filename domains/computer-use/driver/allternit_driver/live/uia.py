@@ -53,10 +53,11 @@ class UIAObserver(Observer):
 
     def _run(self, ready: threading.Event) -> None:
         try:
-            import comtypes  # type: ignore
+            from ..com_init import init_com
+
+            init_com()
             import comtypes.client  # type: ignore
 
-            comtypes.CoInitializeEx(comtypes.COINIT_MULTITHREADED)
             comtypes.client.GetModule("UIAutomationCore.dll")
             from comtypes.gen import UIAutomationClient as U  # type: ignore
 
