@@ -93,6 +93,16 @@ The chosen route is written into the vendor's binding. Failover to the next elig
 
 The debug-port route (`desktop-app-cdp`) is used only while the shipped app accepts its debug flag unmodified; a launch-time probe records which desktop lane applies per app version. Allternit never patches, re-signs or injects into a vendor binary — when the flag is off, the app routes through accessibility (`desktop-app-ax`) or the phone instead.
 
+### Chats from the model picker use the same routes
+
+A chat with a subscription model from the model picker (`subs-chatgpt`, `subs-claude`, …) is a `POST /v1/tasks` with `capability` `chat.create` or `chat.continue` and `routing.provider` set. At submission — the start of the turn — the gateway asks the same route router a bot turn asks:
+
+- **A phone or desktop-app route** (`android-app`, `iphone-app-ictrl`, `iphone-app-usb-agent`, `desktop-app-cdp`, `desktop-app-ax`): the turn runs through that route's adapter, the same calls a bot turn makes. The task reads exactly like any other task: `task.status` `running`, `reply` events with `reply.text.delta`, then `completed` with `result.text`. `status_detail` names the route (`via android-app: …`). A later turn in the same `thread_id` continues the same conversation in the app. `POST /v1/tasks/:id/cancel` presses the app's Stop button while the reply is running.
+- **The web route, or no eligible route:** the task takes the browser path as before, and that path records its own reasons when nothing can serve it.
+- **A thread that already lives in a web account** stays there, because the conversation belongs to that account.
+
+An app-route failure ends the task `failed` with a typed error. Examples: `provider_ui_changed` when the app's layout moved, `auth_required`, `rate_limited`, and `timeout` when the app never finished its reply. These errors have `fallback_eligible: true`, so the next turn can pick another route. A running turn never switches routes. Turns that a vendor adapter submits on its own were already routed when they started (`x-subs-route-chosen: 1` over the gateway's socket), so they are not routed a second time.
+
 ## Errors
 
 | Status | `error` | Meaning |
