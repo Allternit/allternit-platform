@@ -256,7 +256,8 @@ async fn recover_plans_owned_unfinished_sessions_and_respawns_with_resume() {
     // --apply respawns through the spawn path, with the harness's resume.
     let applied = spawner.recover(RecoverOptions { only: Some("r-resume"), apply: true, caller: "lead-a", as_human: false }).await.unwrap();
     assert_eq!(applied[0].action, "recovered", "{applied:?}");
-    assert_eq!(argv_seen(env, "kimi"), words(&["--session", "abc"]));
+    // A pane kimi runs in never-ask mode (the gate adds `--auto`).
+    assert_eq!(argv_seen(env, "kimi"), words(&["--session", "abc", "--auto"]));
     let entry = &reg.load().unwrap().sessions["ao-r-resume"];
     assert!(entry.is_running());
     assert_eq!(entry.lead.as_deref(), Some("lead-a"), "the owner is kept");
