@@ -34,7 +34,7 @@ The numbers come from whatever runs the session's loop, so they match what that 
 | Qwen Code (`qwen-cli`) | After each turn gizzi runs Qwen Code's own `/context` on the session. This is a local command with no model call. | Reported by Qwen |
 | CodeBuddy | Its own `/context`, the same way as Claude Code. | Reported by CodeBuddy |
 | OpenCode | Its provider calls pass through a local relay in gizzi (127.0.0.1, with a per-process secret). The relay forwards each request unchanged and measures the exact system prompt, tool schemas and messages that OpenCode sent. | Reported by OpenCode |
-| Signed-in apps (ChatGPT, Claude on their websites) | After each turn the gateway reads the vendor's own endpoints inside your signed-in page. It reads the conversation (messages, tool turns, attachments), memory and custom instructions, project instructions and files, skills, and the tools used or switched on. Claude's 5-hour and weekly usage feeds the plan limits. The vendor's own system prompt and tool schemas are not shown, so those rows read **hidden**. | Reported by *name*'s page |
+| Signed-in apps (ChatGPT, Claude on their websites) | After each turn the gateway reads the vendor's own endpoints inside your signed-in page. It reads the conversation (messages, tool turns, attachments), memory and custom instructions, project instructions and files, skills, and the tools used or switched on. Claude's 5-hour and weekly usage feeds the plan limits. The vendor's own system prompt and tools are not shown, so those rows are estimates marked **~**. For Claude, the system prompt is Anthropic's published claude.ai prompt for the model, and the tools row is about 10.6k tokens (a measured full claude.ai prompt minus its published core). For ChatGPT, the prompt and each tool come from the measured sizes in the leaked ChatGPT prompts, with separate tables for Thinking and Instant models. Connector tool schemas that no source covers read **hidden**. | Reported by *name*'s page |
 | Other CLI brains (Cursor, Kiro, Trae, Antigravity, Qoder…) | Each row is gizzi's measure of what it sends the brain. Messages comes from the brain's reported total, or from the conversation. | Rows: what gizzi sends *name* |
 
 Between turns, a newer total from the same brain moves only Messages, so the panel keeps the brain's last full split.
@@ -50,6 +50,7 @@ The latest breakdown is saved with the session, so it survives a gizzi restart.
 | `source` | `"gizzi"` or `"brain"`. |
 | `brain`, `brainName` | The brain's provider id and display name, when `source` is `"brain"`. |
 | `hidden` | Rows the brain does not show (a signed-in app's own system prompt and tool schemas). The panel shows **hidden** for them. |
+| `estimatedRows` | Rows filled from a published or leaked measure of the brain's hidden prompt. The panel shows them with **~**. |
 | `split` | `"brain"` when the rows are the brain's own report, `"sent"` when they are gizzi's measure of what it sends the brain. |
 | `categories[].deferred` | `true` for `system_tools_deferred` and `mcp_tools_deferred`: listed, not counted in `usedTokens`. |
 | `skills` | `[{ name, tokens }]`, one entry per skill listed to the model. |
