@@ -99,7 +99,6 @@ function pushStream(serial: string, channel: string, payload: unknown): void {
 function ensureStreamConsumer(serial: string): void {
   if (streamConsumers.has(serial)) return;
   const manager = phoneService.getStreamManager();
-  if (!manager) return;
   const consumer: StreamConsumer = {
     onMeta: (s, meta) => pushStream(s, 'phone:stream-meta', meta),
     onChunk: (s, chunk) => pushStream(s, 'phone:stream-chunk', chunk),
@@ -115,14 +114,10 @@ function dropStreamConsumer(serial: string): void {
 }
 
 function subscribeStream(sender: WebContents, serial: string): void {
-  if (phoneService.getStreamManager()) {
-    ensureStreamConsumer(serial);
-  } else if (phoneService.androidInUse()) {
-    // The lane isn't up yet (fresh launch); bring it up so this and later
-    // subscriptions actually receive events. iPhone-only users never reach
-    // this: no Android phone was paired, so nothing starts.
-    void phoneService.ensureStreams().then(() => ensureStreamConsumer(serial)).catch(() => undefined);
-  }
+  // The manager exists without either lane (it costs nothing), so Android
+  // serials and linked iPhones (`link:<deviceId>`) subscribe the same way;
+  // startStream brings the right lane up.
+  ensureStreamConsumer(serial);
   if (streamSubs.some((sub) => sub.sender === sender && sub.serial === serial)) return;
   streamSubs.push({ sender, serial });
   // A sender can hold many subscriptions; clean them all when it dies.

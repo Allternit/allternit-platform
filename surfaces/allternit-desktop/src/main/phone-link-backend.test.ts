@@ -550,3 +550,13 @@ describe('cachedHostResolver shared scan', () => {
     expect(probes).toBe(2 + 253);
   });
 });
+
+describe('PhoneLinkBackend live-screen lookups', () => {
+  it('finds the linked phone and its current address by serial', async () => {
+    const b = backend(fakeClient({}), [iphone, android], { resolveHost: Object.assign(async (p: LinkedPhone) => `mesh-${p.deviceId}:8200`, {}) });
+    expect(b.linkedPhone('link:dev-1')?.platform).toBe('ios');
+    expect(b.linkedPhone('link:nope')).toBeNull();
+    expect(await b.hostFor('link:dev-2')).toBe('mesh-dev-2:8200');
+    expect(await b.hostFor('emulator-5554')).toBeNull();
+  });
+});
