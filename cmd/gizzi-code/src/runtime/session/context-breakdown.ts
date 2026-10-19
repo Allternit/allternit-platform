@@ -76,6 +76,8 @@ export namespace ContextBreakdown {
       split: z.enum(["brain", "sent"]).optional(),
       /** Rows the brain does not show (a signed-in app's own system prompt and tool schemas): 0, not measured. */
       hidden: CategoryID.array().optional(),
+      /** Rows filled from a published or leaked measure of the brain's hidden prompt (shown as estimates). */
+      estimatedRows: CategoryID.array().optional(),
       autoCompactEnabled: z.boolean(),
       /** Tokens auto-compaction keeps free (configured size, before clamping to what is left). */
       autoCompactBuffer: z.number(),
