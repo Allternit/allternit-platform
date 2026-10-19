@@ -68,6 +68,12 @@ export namespace ContextBreakdown {
       brain: z.string().optional(),
       /** Display name of `brain`, filled in at read time. */
       brainName: z.string().optional(),
+      /**
+       * Where a brain's rows come from: the brain's own report ("brain":
+       * Claude's /context, Codex's rollout) or gizzi's measure of what it
+       * sends the brain ("sent"), with Messages from the brain's total.
+       */
+      split: z.enum(["brain", "sent"]).optional(),
       autoCompactEnabled: z.boolean(),
       /** Tokens auto-compaction keeps free (configured size, before clamping to what is left). */
       autoCompactBuffer: z.number(),
@@ -113,7 +119,7 @@ export namespace ContextBreakdown {
     return [...description.matchAll(SKILL_ENTRY)].map((match) => ({ name: match[1].trim(), tokens: estimate(match[0]) }))
   }
 
-  function estimate(value: unknown) {
+  export function estimate(value: unknown) {
     try {
       return Token.estimate(typeof value === "string" ? value : JSON.stringify(value))
     } catch {
@@ -331,6 +337,53 @@ export namespace ContextBreakdown {
     })
   }
 
+  export type Parts = Record<Measured, number>
+  export type DeferredParts = Partial<Record<Deferred, number>>
+
+  /**
+   * A brain's snapshot from per-category counts it (or its own logs)
+   * reported: Codex's rollout + MCP status, a CLI brain's sent instructions.
+   */
+  export function fromParts(input: {
+    sessionID: string
+    messageID?: string
+    providerID: string
+    modelID: string
+    contextWindow: number
+    parts: Parts
+    deferred?: DeferredParts
+    autoCompactBuffer?: number
+    memoryFiles?: Snapshot["memoryFiles"]
+    mcpTools?: Snapshot["mcpTools"]
+    systemTools?: Snapshot["systemTools"]
+    skills?: Snapshot["skills"]
+    basis?: Snapshot["basis"]
+    now?: number
+  }): Snapshot {
+    const byTokens = (a: { tokens: number }, b: { tokens: number }) => b.tokens - a.tokens
+    const buffer = input.autoCompactBuffer ?? 0
+    return finish({
+      sessionID: input.sessionID,
+      messageID: input.messageID,
+      providerID: input.providerID,
+      modelID: input.modelID,
+      contextWindow: input.contextWindow,
+      basis: input.basis ?? "estimated",
+      source: "brain",
+      brain: input.providerID,
+      split: "brain",
+      autoCompactEnabled: buffer > 0,
+      autoCompactBuffer: buffer,
+      memoryFiles: [...(input.memoryFiles ?? [])].sort(byTokens),
+      mcpTools: [...(input.mcpTools ?? [])].sort(byTokens),
+      systemTools: [...(input.systemTools ?? [])].sort(byTokens),
+      skills: [...(input.skills ?? [])].sort(byTokens),
+      measuredAt: input.now ?? Date.now(),
+      parts: input.parts,
+      deferred: input.deferred,
+    })
+  }
+
   /** Claude Code `/context` category names → ours. */
   const CLAUDE_CATEGORIES: Record<string, CategoryID> = {
     "system prompt": "system_prompt",
@@ -431,6 +484,7 @@ export namespace ContextBreakdown {
       basis: "estimated",
       source: "brain",
       brain: input.providerID,
+      split: "brain",
       autoCompactEnabled: buffer > 0,
       autoCompactBuffer: buffer,
       memoryFiles: memoryFiles.sort(byTokens),

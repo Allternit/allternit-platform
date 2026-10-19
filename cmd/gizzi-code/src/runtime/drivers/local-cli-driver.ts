@@ -27,6 +27,7 @@ import { claudeToolDecision, deniedMessage } from "@/runtime/bots/bot-turn"
 import { acpCanLoadSession, acpMcpServers, claudePermissionFlags, claudeSessionFlags, codexPlanParams, codexThreadRequest, opencodeResumeFlags, qwenResumeFlags, vendorSessionIdFromEvent, codexMcpConfig, withInstructions, claudeContextArgv } from "@/runtime/drivers/cli-session-flags"
 import { ContextBreakdown } from "@/runtime/session/context-breakdown"
 import { ContextBreakdownStore } from "@/runtime/session/context-breakdown-store"
+import { CodexContext } from "@/runtime/session/codex-context"
 import { attachmentsToAcpContent } from "./attachments"
 import { RuntimeService, RuntimeNotFoundError, type RegisteredRuntime } from "@/runtime/runtime-service"
 import { ExecutionLogService } from "@/runtime/execution-log"
@@ -39,6 +40,8 @@ import {
   PROTOCOL_VERSION,
 } from "@agentclientprotocol/sdk"
 import { spawn as nodeSpawn } from "node:child_process"
+import os from "node:os"
+import path from "node:path"
 import { Readable, Writable } from "node:stream"
 import { CliBackgroundTasks } from "@/runtime/session/cli-background-tasks"
 import { ProcessRegistry } from "@/runtime/process-registry"
@@ -1348,6 +1351,7 @@ export class LocalCliDriver implements RuntimeDriver {
       writeToStdin(stdin, JSON.stringify(msg) + "\n")
     }
 
+    let lastCodexContext: { used: number; size: number } | undefined
     let nextId = 1
     const pending = new Map<
       number,
@@ -1483,7 +1487,10 @@ export class LocalCliDriver implements RuntimeDriver {
             // What is in context: the last request's tokens against the model's window.
             if (method === "thread/tokenUsage/updated") {
               const context = codexContext(params.tokenUsage)
-              if (context) pushEvent({ type: "context", ...context })
+              if (context) {
+                lastCodexContext = context
+                pushEvent({ type: "context", ...context })
+              }
               continue
             }
 
@@ -1604,6 +1611,8 @@ export class LocalCliDriver implements RuntimeDriver {
         threadId,
         input: [{ type: "text", text: prompt }],
       })
+      // Each MCP server's tools, for the context panel (asked while the servers are up).
+      const mcpStatus = request("mcpServerStatus/list", {}).catch(() => undefined)
 
       while (!done || events.length > 0) {
         while (events.length > 0) {
@@ -1622,6 +1631,11 @@ export class LocalCliDriver implements RuntimeDriver {
         const finishEv = { type: "finish", finishReason: "stop", usage: zeroUsage() } as AgentEvent
         yield finishEv
         await this.logEvent(handle.taskId, finishEv)
+      }
+      const sessionID = this.tasks.get(handle.taskId)?.sessionID
+      if (sessionID && lastCodexContext) {
+        const status = await Promise.race([mcpStatus, new Promise<undefined>((r) => setTimeout(() => r(undefined), 5_000))])
+        recordCodexContext({ threadId, sessionID, providerID: this.cliName, modelID: model ?? "codex", cwd, mcpStatus: status, context: lastCodexContext })
       }
     } catch (err) {
       log.error("codex app-server request failed", { error: err, taskId: handle.taskId })
@@ -2235,6 +2249,60 @@ export function codexContext(tokenUsage: unknown): { used: number; size: number 
   if (!last || size <= 0) return undefined
   const used = Number(last.totalTokens) || (Number(last.inputTokens) || 0) + (Number(last.outputTokens) || 0)
   return used > 0 ? { used, size } : undefined
+}
+
+/** The thread's rollout file under CODEX_HOME/sessions/YYYY/MM/DD/, newest days first. */
+async function codexRolloutFile(threadId: string): Promise<string | undefined> {
+  const { readdir } = await import("node:fs/promises")
+  const root = path.join(process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex"), "sessions")
+  const list = async (dir: string) => (await readdir(dir).catch(() => [] as string[])).sort().reverse()
+  for (const year of await list(root))
+    for (const month of await list(path.join(root, year)))
+      for (const day of await list(path.join(root, year, month))) {
+        const dir = path.join(root, year, month, day)
+        const hit = (await list(dir)).find((name) => name.endsWith(`-${threadId}.jsonl`))
+        if (hit) return path.join(dir, hit)
+      }
+  return undefined
+}
+
+/** Codex's own split of the turn's context (rollout + MCP status), recorded best effort. */
+function recordCodexContext(input: {
+  threadId: string
+  sessionID: string
+  providerID: string
+  modelID: string
+  cwd?: string
+  mcpStatus: unknown
+  context: { used: number; size: number }
+}) {
+  void (async () => {
+    try {
+      const { readFile } = await import("node:fs/promises")
+      const file = await codexRolloutFile(input.threadId)
+      if (!file) return
+      const home = process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex")
+      const agentFiles: Record<string, string> = {}
+      for (const candidate of [path.join(home, "AGENTS.md"), input.cwd ? path.join(input.cwd, "AGENTS.md") : ""]) {
+        if (!candidate) continue
+        const text = await readFile(candidate, "utf8").catch(() => "")
+        if (text) agentFiles[candidate] = text
+      }
+      const snapshot = CodexContext.build({
+        rollout: await readFile(file, "utf8"),
+        mcpStatus: input.mcpStatus,
+        agentFiles,
+        used: input.context.used,
+        size: input.context.size,
+        sessionID: input.sessionID,
+        providerID: input.providerID,
+        modelID: input.modelID,
+      })
+      if (snapshot) ContextBreakdownStore.record(snapshot)
+    } catch (error) {
+      log.info("codex context read failed", { sessionID: input.sessionID, error: error instanceof Error ? error.message : String(error) })
+    }
+  })()
 }
 
 /** The main model's context window from a Claude `result` event's `modelUsage`. */

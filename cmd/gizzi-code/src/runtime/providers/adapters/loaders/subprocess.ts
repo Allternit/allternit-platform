@@ -26,32 +26,92 @@ import { planInstructions } from "@/runtime/drivers/cli-session-flags"
 
 const log = Log.create({ service: "subprocess-lm" })
 
+/** gizzi's bridge tools as the CLI sees them over MCP (name, description, JSON schema), built once. */
+let bridgeSchemas: Promise<Record<string, unknown>> | undefined
+function bridgeToolSchemas() {
+  bridgeSchemas ??= (async () => {
+    const { z } = await import("zod/v4")
+    const out: Record<string, unknown> = {}
+    for (const info of CliBridge.TOOLS) {
+      try {
+        const tool = await info.init()
+        out[`mcp__${CliBridge.SERVER_NAME}__${info.id}`] = {
+          description: tool.description,
+          inputSchema: z.toJSONSchema(tool.parameters as any),
+        }
+      } catch {
+        // A tool that cannot describe itself without a session is left out.
+      }
+    }
+    return out
+  })()
+  return bridgeSchemas
+}
+
+/** gizzi's system text as InstructionPrompt blocks (memory files, MCP instructions), for ContextBreakdown.build. */
+function instructionBlocks(systemText: string) {
+  return systemText.split(/\n(?=(?:Instructions from|Auto-memory from): |# MCP Server Instructions)/)
+}
+
+/** A breakdown with a real split beyond Messages (Claude's /context, Codex's rollout, gizzi's sent rows). */
+function hasSplit(snapshot: ContextBreakdown.Snapshot | undefined) {
+  return Boolean(
+    snapshot?.categories.some(
+      (c) => c.id !== "messages" && c.id !== "free_space" && c.id !== "autocompact_buffer" && !c.deferred && c.tokens > 0,
+    ),
+  )
+}
+
 /**
  * The context total a CLI brain reported (ACP usage_update, Claude's result
- * modelUsage) as the session's breakdown. A fuller report from the same
- * brain (Claude's `/context`) keeps its split: only Messages moves.
+ * modelUsage, Codex tokenUsage) as the session's breakdown, every row filled:
+ * - a fuller report from the same brain (Claude's `/context`, Codex's
+ *   rollout) keeps its split, only Messages moves;
+ * - otherwise the rows are what gizzi itself sent the brain (instructions,
+ *   memory files, MCP server instructions, its bridge tools), measured, and
+ *   Messages holds the rest of the brain's total.
  */
-function recordBrainContext(
-  sessionID: string,
-  providerID: string,
-  modelID: string,
-  context: { used: number; size: number },
-) {
-  if (!(context.size > 0)) return
+async function recordBrainContext(input: {
+  sessionID: string
+  providerID: string
+  modelID: string
+  /** The brain's own report, when it sent one this turn. */
+  context?: { used: number; size: number }
+  systemText: string
+  /** The conversation the brain holds (gizzi's copy of it), as model messages. */
+  conversation: unknown[]
+}) {
+  const { sessionID, providerID, modelID, context } = input
   const previous = ContextBreakdown.get(sessionID)
-  const snapshot =
-    previous?.source === "brain" && previous.brain === providerID && previous.categories.some((category) => category.id !== "messages" && !category.deferred && category.id !== "free_space" && category.id !== "autocompact_buffer" && category.tokens > 0)
-      ? ContextBreakdown.reconcile(previous, { providerContextTokens: context.used, contextWindow: context.size })
-      : ContextBreakdown.fromUsage({
-          sessionID,
-          providerID,
-          modelID,
-          contextWindow: context.size,
-          providerContextTokens: context.used,
-          autoCompactBuffer: 0,
-          brain: providerID,
-        })
-  ContextBreakdownStore.record({ ...snapshot, measuredAt: Date.now() })
+  if (context && context.size > 0 && previous?.source === "brain" && previous.brain === providerID && hasSplit(previous)) {
+    const next = ContextBreakdown.reconcile(previous, { providerContextTokens: context.used, contextWindow: context.size })
+    ContextBreakdownStore.record({ ...next, measuredAt: Date.now() })
+    return
+  }
+  // No report (or only a total): gizzi's measure of what it sent, the
+  // conversation as the floor for Messages, the brain's total on top.
+  const size =
+    context?.size ||
+    (await import("@/runtime/providers/provider")
+      .then(({ Provider }) => Provider.getModel(providerID, modelID))
+      .then((model) => model.limit.context)
+      .catch(() => 0)) ||
+    previous?.contextWindow ||
+    0
+  if (!(size > 0)) return
+  const sent = ContextBreakdown.build({
+    sessionID,
+    providerID,
+    modelID,
+    contextWindow: size,
+    system: input.systemText ? [input.systemText] : [],
+    instructions: input.systemText ? instructionBlocks(input.systemText) : [],
+    tools: await bridgeToolSchemas().catch(() => ({})),
+    messages: input.conversation as any,
+    autoCompactBuffer: 0,
+  })
+  const next = context ? ContextBreakdown.reconcile(sent, { providerContextTokens: context.used }) : sent
+  ContextBreakdownStore.record({ ...next, basis: context ? "provider" : "estimated", source: "brain", brain: providerID, split: "sent", measuredAt: Date.now() })
 }
 
 export class SubprocessLanguageModel implements LanguageModelV2 {
@@ -134,6 +194,11 @@ export class SubprocessLanguageModel implements LanguageModelV2 {
         controller.enqueue({ type: "stream-start", warnings: [] })
 
         let finished = false
+        // The conversation the brain holds after this turn: gizzi's copy plus the reply.
+        const conversation = () => [
+          ...((options.prompt ?? []) as Array<{ role?: string }>).filter((m) => m?.role !== "system"),
+          ...(emitted ? [{ role: "assistant", content: emitted }] : []),
+        ]
         // What this turn streamed and the agent's last context report, for
         // estimating usage when the agent reports none.
         let emitted = ""
@@ -171,6 +236,10 @@ export class SubprocessLanguageModel implements LanguageModelV2 {
                 const outputTokens = Token.estimate(emitted)
                 return { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens }
               })()
+          // A brain that never reported its context still gets every row.
+          if (sessionID && !lastContext && reason !== "error") {
+            void recordBrainContext({ sessionID, providerID: this.providerID, modelID: this.modelId, systemText, conversation: conversation() }).catch(() => {})
+          }
           controller.enqueue({
             type: "finish",
             finishReason: reason as any,
@@ -185,7 +254,10 @@ export class SubprocessLanguageModel implements LanguageModelV2 {
           for await (const event of driver.stream(task)) {
             if (event.type === "context") {
               lastContext = { used: event.used, size: event.size }
-              if (sessionID) recordBrainContext(sessionID, this.providerID, this.modelId, event)
+              if (sessionID) {
+                const context = { used: event.used, size: event.size }
+                void recordBrainContext({ sessionID, providerID: this.providerID, modelID: this.modelId, context, systemText, conversation: conversation() }).catch(() => {})
+              }
               controller.enqueue({
                 type: "raw",
                 raw: { __gizzi: "observed_context", used: event.used, size: event.size },
