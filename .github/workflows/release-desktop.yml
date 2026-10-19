@@ -887,8 +887,8 @@ jobs:
       - name: Package with electron-builder
         # The unpacked build plus the .deb that cloud computer images install
         # (build-cloud-computer-image.sh DESKTOP_DEB). --publish never:
-        # publishing happens ONLY in the release job, and Linux isn't
-        # published there; the .deb is a build artifact for the image bake.
+        # publishing happens ONLY in the release job, which attaches the .deb
+        # as the Linux download (the same package the images run).
         run: npx electron-builder --linux deb --x64 --publish never
         working-directory: surfaces/allternit-desktop
         env:
@@ -960,12 +960,14 @@ jobs:
             |----------|------|
             | macOS (arm64 + x64) | `Allternit-*.dmg` |
             | Windows | `Allternit Setup *.exe` |
+            | Linux (Debian/Ubuntu x64) | `*.deb` |
 
             Auto-updates are enabled — the app will notify you when a new version is available.
           files: |
             artifacts/*.dmg
             artifacts/*.zip
             artifacts/*.exe
+            artifacts/*.deb
             artifacts/*.blockmap
             artifacts/latest-mac.yml
             artifacts/latest.yml
