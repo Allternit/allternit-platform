@@ -508,7 +508,12 @@ export class IosVideoSession implements StreamSessionHandle {
           this.log('not broadcasting: asking the runner to start the live screen');
           // Best effort: if automation can't finish, the iCTRL screen asks the user to tap.
           this.deps.call('start_live_screen', {}, START_LIVE_SCREEN_TIMEOUT_MS).then(
-            (res) => this.log(`start_live_screen: ${JSON.stringify(res)}`),
+            (res) => {
+              this.log(`start_live_screen: ${JSON.stringify(res)}`);
+              // Another recording holds the screen: waiting can't help, so say what to do.
+              const r = res as { otherCapture?: unknown; message?: unknown } | null;
+              if (r?.otherCapture === true) this.failStart(new Error(typeof r.message === 'string' ? r.message : 'Another screen recording is running on the iPhone.'));
+            },
             (error) => this.log(`start_live_screen failed: ${error instanceof Error ? error.message : String(error)}`),
           );
         }

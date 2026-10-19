@@ -271,6 +271,17 @@ describe('IosVideoSession', () => {
     expect(s.session.setDisplayPower(false)).toEqual({ ok: false, message: 'Not available on iPhone.' });
   });
 
+  it('ends the start with the helper\'s message when another screen recording holds the screen', async () => {
+    const msg = 'Another screen recording is running on the iPhone. Stop it from the red indicator at the top of the screen, then try again.';
+    const s = makeSession({ startLiveScreen: async () => ({ ok: false, broadcasting: false, needsTap: false, otherCapture: true, message: msg }) });
+    const started = s.session.start();
+    const failed = expect(started).rejects.toThrow(msg);
+    await flush();
+    s.socket.write(Buffer.concat([Buffer.from(OK_HEAD), status(false)]));
+    await failed;
+    expect(s.ends).toEqual([msg]);
+  });
+
   it('refuses input before live', () => {
     const s = makeSession();
     expect(s.session.sendControl([{ type: 'home' }])).toEqual({ ok: false, message: 'The stream is not live.' });
