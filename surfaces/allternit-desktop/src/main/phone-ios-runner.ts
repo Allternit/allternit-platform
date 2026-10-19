@@ -46,8 +46,10 @@ export const PINNED_RUNNER_MANIFESTS: Record<string, string> = {
   // .4: the extension is listed as a broadcast target (process mode under
   // NSExtensionAttributes) and sends app audio (AAC, /video types 4/5).
   '1.98.12-allternit.4': '7758efc9bd6667505015aca1b181ac48557afd0fd9d8f3b83eabfa1d00e83bdb',
+  // .5: start_live_screen reports another screen recording (otherCapture).
+  '1.98.12-allternit.5': '1c7c2c3ee695474fa225280e541db2844ada869bf434dc6fb20e5deb9d2c6041',
 };
-export const RUNNER_VERSION: string | null = '1.98.12-allternit.4';
+export const RUNNER_VERSION: string | null = '1.98.12-allternit.5';
 
 export interface RunnerPackage {
   file: string;
