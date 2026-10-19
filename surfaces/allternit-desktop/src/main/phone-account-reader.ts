@@ -422,6 +422,20 @@ async function readOnce(deps: AccountReaderDeps, opts: unknown): Promise<PhoneLi
 }
 
 /** One candidate path from a fresh launch. Taps only spec labels that pass the deny-list. */
+/**
+ * One read for parsing: the element tree (it carries labels that aren't
+ * visible text, like Gemini's account button) plus the visible text. Either
+ * alone is enough; a stopping error (offline, locked, pairing) from the tree
+ * is returned as is.
+ */
+async function readForParse(lane: AccountReaderDeps['lane'], serial: string): Promise<ToolResult> {
+  const tree = await lane.call('phone.read_ui', serial, { visible_only: true, max_elements: 400 });
+  if (!tree.ok && STOPPING.has(tree.error)) return tree;
+  const text = await readScreen(lane, serial);
+  if (!tree.ok) return text;
+  return { ...tree, text: [String(tree.text ?? ''), text.ok ? String(text.text ?? '') : ''].filter(Boolean).join('\n') };
+}
+
 async function walkPath(
   deps: AccountReaderDeps,
   r: Resolved,
@@ -448,7 +462,7 @@ async function walkPath(
     for (const step of steps) {
       checkBusy();
       if ('read' in step) {
-        const screen = await readScreen(lane, r.serial);
+        const screen = await readForParse(lane, r.serial);
         stopOn(screen);
         if (screen.ok) parsed = mergeParsed(parsed, parseAccountScreen(String(screen.text ?? ''), spec, now()));
         if (step.scroll && screen.ok) {
@@ -456,7 +470,7 @@ async function walkPath(
           stopOn(swiped);
           if (swiped.ok) {
             await sleep(800);
-            const more = await readScreen(lane, r.serial);
+            const more = await readForParse(lane, r.serial);
             stopOn(more);
             if (more.ok) parsed = mergeParsed(parsed, parseAccountScreen(String(more.text ?? ''), spec, now()));
           }
