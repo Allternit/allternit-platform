@@ -1411,6 +1411,10 @@
         {
           "on": "2026-10-18",
           "note": "Linked iPhones get a live screen as real video, Android-style (Eoj: smooth video mandatory, screenshot streaming not acceptable). iCTRL fork adds a ReplayKit Broadcast Upload Extension (iCTRLBroadcast, VideoToolbox H.264 30 fps) that feeds the runner over loopback 127.0.0.1:8203; the runner serves GET /video?ticket= as typed packets (STATUS/CONFIG/FRAME/ENDED) and start_live_screen/live_screen_status/stop_live_screen RPCs. Desktop IosVideoSession (phone-ios-video.ts) is a StreamSessionHandle for serial link:<deviceId>, so PhoneStreamManager, phone:stream-* IPC and the WebCodecs decoder are shared; input becomes tap/long_press/swipe/type/home RPCs. allternit-ai: liveScreenSerial() opens healthy iPhones in the phone frame. iOS requires a Start Broadcast tap per broadcast; the runner automates it via XCUITest when it can."
+        },
+        {
+          "on": "2026-10-19",
+          "note": "Turned phones: iPhone CONFIG rotation travels as PhoneStreamMeta.rotation and the viewer draws the frame upright (allternit-ai rotation.ts), sending input back in the video's own portrait pixels so old and new viewers agree. Simulator probe: the runner's synthesized tap/drag/swipe use that fixed portrait space in any orientation, XCUICoordinate uses the rotated one, so long_press goes fast when turned and Back swipes from the app's left edge. A mid-stream size change re-sends meta through PhoneStreamManager to Desktop, web and PWA viewers."
         }
       ],
       "evidence": [

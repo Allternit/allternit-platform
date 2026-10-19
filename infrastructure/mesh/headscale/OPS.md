@@ -7,6 +7,22 @@
 > what the platform enrolls against. Do not run these commands against
 > production; nothing here deploys automatically.
 
+## Production (mail VPS)
+
+- Service: `headscale.service` on the mail host (`ssh vps-root`), listening on
+  `0.0.0.0:8081` behind `https://mail.news.allternit.com:8444`.
+- Health: `curl -s https://mail.news.allternit.com:8444/health` → `{"status":"pass"}`;
+  `headscale nodes list` on the host for who is online.
+- Crash-loop guard (2026-10-19, after a 9 h loop): drop-in
+  `/etc/systemd/system/headscale.service.d/10-runtime-dir.conf` sets
+  `RuntimeDirectory=headscale` so the unix socket dir exists after a reboot.
+- Monitoring: `Allternit Brain/Ops/scripts/mesh-health.sh` (read-only; part of
+  the `site-monitor` skill) checks the public `/health`, the unit state,
+  restarts since its last run and nodes online, and raises a macOS alert on
+  failure. It is not scheduled; running it on a schedule is Eoj's decision.
+
+## Legacy Fly.io app
+
 App: `allternit-headscale` on Fly.io (region `lax`). Server URL:
 `https://allternit-headscale.fly.dev`. Pinned image: `headscale/headscale:0.29.2`
 (config schema verified against the v0.29.2 `config-example.yaml`).

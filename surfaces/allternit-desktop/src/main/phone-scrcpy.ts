@@ -116,6 +116,12 @@ export interface PhoneStreamMeta {
   width: number;
   height: number;
   codec: 'h264';
+  /**
+   * iPhone only: the video is the panel in portrait and the screen is turned
+   * this far (90 = view it turned 90° counter-clockwise). Viewers draw it
+   * upright and still send input in the video's own pixels. Absent = 0.
+   */
+  rotation?: 0 | 90 | 180 | 270;
 }
 
 export type PhoneStreamStatus =

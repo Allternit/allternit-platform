@@ -114,6 +114,16 @@ export class PhoneStreamManager {
       for (const consumer of rec.consumers) safely(() => consumer.onAudioChunk?.(serial, chunk));
     });
     session.on('deviceMessage', (message) => {
+      // A mid-stream size change (rotation, resolution) goes out as a fresh
+      // meta: the renderer and the web relay already reshape the frame on it.
+      if (message.type === 'size' && rec.session === session && rec.status.state === 'live') {
+        const current = rec.status.meta;
+        if (current.width !== message.width || current.height !== message.height) {
+          const meta = { ...current, width: message.width, height: message.height };
+          rec.status = { state: 'live', meta };
+          for (const consumer of rec.consumers) consumer.onMeta?.(serial, meta);
+        }
+      }
       for (const consumer of rec.consumers) consumer.onDeviceMessage?.(serial, message);
     });
     session.on('ended', (info) => {
