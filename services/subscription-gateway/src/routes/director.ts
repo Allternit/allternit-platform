@@ -12,10 +12,14 @@ import {
   ROUTE_ORDER,
   isRouteId,
   phoneDeviceOnline,
+  genericPhoneAdapterId,
   routeForPhoneDevice,
+  routeReliability,
   type LinkedPhoneDeviceLike,
   type RouteId,
+  type RouteReliability,
 } from "./registry.js";
+import { routeTelemetry } from "../observability/stats.js";
 import { selectRoute, type RouteCandidateState } from "./select.js";
 import {
   contractForVersion,
@@ -46,6 +50,8 @@ export interface VendorLaneInfo {
   routes: RouteId[];
   /** Lane reachable right now (not kill-switched / down). */
   online: boolean;
+  /** How the lane reads the app; absent = its own written adapter spec ("exact"). */
+  reliability?: RouteReliability;
 }
 
 export interface VendorLaneSource {
@@ -96,7 +102,22 @@ export interface RouteStatusView {
   signedIn: boolean;
   online: boolean;
   contract: { passed: string[]; failed: string[]; appVersion?: string; checkedAt?: string };
+  /** Absent when nothing serves the route (no adapter, no linked phone). */
+  telemetry?: RouteTelemetryView;
 }
+
+/** Mirrors the UI's VendorRouteTelemetry (allternit-ai sessions-computer-api.ts). */
+export interface RouteTelemetryView {
+  lastOkAt: string | null;
+  lastUsedAt: string | null;
+  latencyMs: number | null;
+  successRate7d: number | null;
+  tasks7d: number;
+  reliability?: RouteReliability;
+}
+
+const PHONE_ROUTES: ReadonlySet<RouteId> = new Set(["android-app", "iphone-app-ictrl", "iphone-app-usb-agent"]);
+const TELEMETRY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 export interface VendorRoutesView {
   vendor: string;
@@ -200,6 +221,25 @@ export class RouteDirector {
     return out;
   }
 
+  // Settings telemetry for one route: the implementing adapters' last 7 days
+  // of turns and probes, plus how the route reads the app. Absent when
+  // nothing serves the route — never a row of zeros for a route with no lane.
+  private async telemetryFor(vendor: string, route: RouteId, deviceLinked: boolean): Promise<RouteTelemetryView | undefined> {
+    const adapters = await this.adaptersFor(vendor, route);
+    const reliability = routeReliability(route, {
+      hasAdapter: adapters.length > 0,
+      declared: adapters[0]?.reliability,
+      deviceLinked,
+    });
+    if (adapters.length === 0 && reliability === null) return undefined;
+    const since = new Date(this.deps.now().getTime() - TELEMETRY_WINDOW_MS).toISOString();
+    const ids = adapters.map((a) => a.adapterId);
+    // A linked phone with no written adapter: its generic turns' attempts.
+    if (ids.length === 0 && PHONE_ROUTES.has(route)) ids.push(genericPhoneAdapterId(vendor, route));
+    const numbers = routeTelemetry(this.deps.db, ids, since);
+    return reliability ? { ...numbers, reliability } : numbers;
+  }
+
   /** The implementing adapter for a route (deterministic pick). */
   async adapterFor(vendor: string, route: RouteId): Promise<string | null> {
     return (await this.adaptersFor(vendor, route))[0]?.adapterId ?? null;
@@ -279,18 +319,21 @@ export class RouteDirector {
       const eligibility = await this.eligibilityAll(vendor);
       const binding = getBinding(this.deps.db, vendor);
       const override = getOverride(this.deps.db, vendor);
-      const view: VendorRoutesView = {
-        vendor,
-        routes: eligibility.map((e): RouteStatusView => {
-          const contract: RouteStatusView["contract"] = {
-            passed: e.contract.passed,
-            failed: e.contract.failed,
-          };
-          if (e.contract.appVersion !== null) contract.appVersion = e.contract.appVersion;
-          if (e.contract.checkedAt !== null) contract.checkedAt = e.contract.checkedAt;
-          return { route: e.route, eligible: e.eligible, signedIn: e.signedIn, online: e.online, contract };
-        }),
-      };
+      const routes: RouteStatusView[] = [];
+      for (const e of eligibility) {
+        const contract: RouteStatusView["contract"] = {
+          passed: e.contract.passed,
+          failed: e.contract.failed,
+        };
+        if (e.contract.appVersion !== null) contract.appVersion = e.contract.appVersion;
+        if (e.contract.checkedAt !== null) contract.checkedAt = e.contract.checkedAt;
+        const row: RouteStatusView = { route: e.route, eligible: e.eligible, signedIn: e.signedIn, online: e.online, contract };
+        // Phone routes: signedIn means a phone serving the route is linked.
+        const telemetry = await this.telemetryFor(vendor, e.route, PHONE_ROUTES.has(e.route) && e.signedIn);
+        if (telemetry) row.telemetry = telemetry;
+        routes.push(row);
+      }
+      const view: VendorRoutesView = { vendor, routes };
       if (binding?.boundRoute) view.boundRoute = binding.boundRoute;
       if (override) view.override = override;
       out.push(view);

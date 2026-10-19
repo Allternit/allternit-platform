@@ -1,0 +1,2288 @@
+{
+  "packs": [
+    {
+      "id": "hermes",
+      "displayName": "Hermes Agent",
+      "agentNoun": "agent",
+      "legalName": "Nous Research",
+      "logoAsset": "/assets/vendors/hermes.svg",
+      "monogram": "H",
+      "modes": [
+        "hosted",
+        "linked"
+      ],
+      "recommendedLane": "local",
+      "profiles": [
+        {
+          "id": "hermes-local",
+          "label": "Connect Hermes on your Sessions computer",
+          "authType": "local_endpoint",
+          "lane": "local",
+          "adapterId": "hermes",
+          "guarantee": "exact",
+          "recommended": true,
+          "scopes": [
+            "local"
+          ],
+          "permissionDescription": [
+            "Talk to the Hermes Agent on your Sessions computer",
+            "Each Hermes profile is an agent"
+          ]
+        }
+      ],
+      "permissions": {
+        "read": [
+          "agents",
+          "profiles"
+        ],
+        "send": [
+          "messages"
+        ],
+        "control": [
+          "tools"
+        ],
+        "sync": [
+          "transcripts"
+        ],
+        "unavailable": []
+      }
+    },
+    {
+      "id": "google",
+      "displayName": "Gemini",
+      "agentNoun": "agent",
+      "legalName": "Google LLC",
+      "logoAsset": "/assets/vendors/gemini.svg",
+      "monogram": "G",
+      "modes": [
+        "linked"
+      ],
+      "recommendedLane": "browser",
+      "profiles": [
+        {
+          "id": "gemini-browser",
+          "label": "Sign in to Gemini",
+          "authType": "browser_session",
+          "lane": "browser",
+          "wireLane": "ui_bridge",
+          "adapterId": "gemini-subscription",
+          "guarantee": "best_effort",
+          "recommended": true,
+          "loginUrl": "https://gemini.google.com/app",
+          "scopes": [
+            "session"
+          ],
+          "permissionDescription": [
+            "Chat with Gemini as you",
+            "Read the replies in your Gemini conversations"
+          ],
+          "requiresUserOwnedSubscription": true
+        }
+      ],
+      "permissions": {
+        "read": [
+          "chats"
+        ],
+        "send": [
+          "messages"
+        ],
+        "control": [],
+        "sync": [
+          "transcripts"
+        ],
+        "unavailable": []
+      }
+    },
+    {
+      "id": "microsoft",
+      "displayName": "Copilot",
+      "agentNoun": "agent",
+      "legalName": "Microsoft Corporation",
+      "logoAsset": "/assets/vendors/copilot.svg",
+      "monogram": "C",
+      "modes": [
+        "linked"
+      ],
+      "recommendedLane": "browser",
+      "profiles": [
+        {
+          "id": "copilot-browser",
+          "label": "Sign in to Copilot",
+          "authType": "browser_session",
+          "lane": "browser",
+          "wireLane": "ui_bridge",
+          "adapterId": "copilot-subscription",
+          "guarantee": "best_effort",
+          "recommended": true,
+          "loginUrl": "https://copilot.microsoft.com/",
+          "scopes": [
+            "session"
+          ],
+          "permissionDescription": [
+            "Chat with Copilot as you",
+            "Read the replies in your Copilot conversations"
+          ],
+          "requiresUserOwnedSubscription": true
+        }
+      ],
+      "permissions": {
+        "read": [
+          "chats"
+        ],
+        "send": [
+          "messages"
+        ],
+        "control": [],
+        "sync": [
+          "transcripts"
+        ],
+        "unavailable": []
+      }
+    },
+    {
+      "id": "xai",
+      "displayName": "Grok Bot",
+      "agentNoun": "bot",
+      "legalName": "xAI Corp.",
+      "logoAsset": "/assets/vendors/grok-bot.png",
+      "monogram": "G",
+      "modes": [
+        "linked",
+        "mirror"
+      ],
+      "recommendedLane": "browser",
+      "profiles": [
+        {
+          "id": "xai-browser",
+          "label": "Sign in to Grok",
+          "authType": "browser_session",
+          "lane": "browser",
+          "adapterId": "grok-bot",
+          "guarantee": "best_effort",
+          "recommended": true,
+          "loginUrl": "https://grok.com/",
+          "scopes": [
+            "session"
+          ],
+          "permissionDescription": [
+            "Read your Grok bots and conversations",
+            "Send messages as you"
+          ],
+          "requiresUserOwnedSubscription": true
+        }
+      ],
+      "permissions": {
+        "read": [
+          "bots",
+          "conversations"
+        ],
+        "send": [
+          "messages"
+        ],
+        "control": [],
+        "sync": [
+          "transcripts"
+        ],
+        "unavailable": [
+          "routine editing"
+        ]
+      }
+    },
+    {
+      "id": "anthropic",
+      "displayName": "Claude",
+      "agentNoun": "agent",
+      "legalName": "Anthropic PBC",
+      "logoAsset": "/assets/vendors/claude.png",
+      "monogram": "C",
+      "modes": [
+        "linked",
+        "hosted"
+      ],
+      "recommendedLane": "official",
+      "profiles": [
+        {
+          "id": "anthropic-browser",
+          "label": "Sign in to Claude",
+          "authType": "browser_session",
+          "lane": "browser",
+          "wireLane": "ui_bridge",
+          "adapterId": "claude-subscription",
+          "guarantee": "best_effort",
+          "recommended": true,
+          "loginUrl": "https://claude.ai/",
+          "scopes": [
+            "session"
+          ],
+          "permissionDescription": [
+            "Chat with Claude as you",
+            "Read the replies in your Claude conversations"
+          ],
+          "requiresUserOwnedSubscription": true
+        },
+        {
+          "id": "anthropic-desktop",
+          "label": "Connect the Claude desktop app",
+          "authType": "desktop_session",
+          "lane": "desktop",
+          "adapterId": "claude-desktop",
+          "guarantee": "best_effort",
+          "scopes": [
+            "ui"
+          ],
+          "permissionDescription": [
+            "Drive the local Claude app window",
+            "Read your Claude conversations"
+          ],
+          "termsWarning": "This drives the vendor app through its UI. It is fragile, can break when the app updates, and may conflict with the vendor's terms. Use only with your own subscription.",
+          "requiresUserOwnedSubscription": true
+        },
+        {
+          "id": "anthropic-key",
+          "label": "Use your own API key",
+          "authType": "api_key",
+          "lane": "official",
+          "adapterId": "claude-managed-agents",
+          "guarantee": "exact",
+          "scopes": [
+            "inference"
+          ],
+          "permissionDescription": [
+            "Run Claude with your key"
+          ]
+        }
+      ],
+      "permissions": {
+        "read": [
+          "projects"
+        ],
+        "send": [
+          "messages"
+        ],
+        "control": [
+          "tool use"
+        ],
+        "sync": [
+          "transcripts",
+          "artifacts"
+        ],
+        "unavailable": [
+          "account settings"
+        ]
+      }
+    },
+    {
+      "id": "openai",
+      "displayName": "ChatGPT",
+      "agentNoun": "agent",
+      "legalName": "OpenAI OpCo, LLC",
+      "logoAsset": "/assets/vendors/openai.svg",
+      "monogram": "O",
+      "modes": [
+        "linked",
+        "mirror"
+      ],
+      "recommendedLane": "browser",
+      "profiles": [
+        {
+          "id": "openai-chat",
+          "label": "Sign in to ChatGPT",
+          "authType": "browser_session",
+          "lane": "browser",
+          "wireLane": "ui_bridge",
+          "adapterId": "chatgpt-subscription",
+          "guarantee": "best_effort",
+          "recommended": true,
+          "loginUrl": "https://chatgpt.com/",
+          "scopes": [
+            "session"
+          ],
+          "permissionDescription": [
+            "Chat with ChatGPT as you",
+            "Read the replies in your ChatGPT conversations"
+          ],
+          "requiresUserOwnedSubscription": true
+        },
+        {
+          "id": "openai-browser",
+          "label": "ChatGPT dots (needs a plan with dots)",
+          "authType": "browser_session",
+          "lane": "browser",
+          "adapterId": "chatgpt-dots",
+          "guarantee": "best_effort",
+          "loginUrl": "https://chatgpt.com/",
+          "scopes": [
+            "session"
+          ],
+          "permissionDescription": [
+            "Read your dots and chats",
+            "Send messages as you"
+          ],
+          "requiresUserOwnedSubscription": true
+        },
+        {
+          "id": "openai-desktop",
+          "label": "Connect the ChatGPT desktop app",
+          "authType": "desktop_session",
+          "lane": "desktop",
+          "adapterId": "chatgpt-dots",
+          "guarantee": "degraded",
+          "scopes": [
+            "ui"
+          ],
+          "permissionDescription": [
+            "Drive the local ChatGPT app window"
+          ],
+          "termsWarning": "This drives the vendor app through its UI. It is fragile, can break when the app updates, and may conflict with the vendor's terms. Use only with your own subscription.",
+          "requiresUserOwnedSubscription": true
+        }
+      ],
+      "permissions": {
+        "read": [
+          "dots",
+          "chats"
+        ],
+        "send": [
+          "messages"
+        ],
+        "control": [],
+        "sync": [
+          "transcripts"
+        ],
+        "unavailable": [
+          "dot cards editing"
+        ]
+      }
+    },
+    {
+      "id": "meta",
+      "displayName": "Meta Muse",
+      "agentNoun": "agent",
+      "legalName": "Meta Platforms, Inc.",
+      "logoAsset": "/assets/vendors/meta.svg",
+      "monogram": "M",
+      "modes": [
+        "linked"
+      ],
+      "recommendedLane": "whatsapp",
+      "profiles": [
+        {
+          "id": "meta-whatsapp",
+          "label": "Authorize WhatsApp",
+          "authType": "channel_oauth",
+          "lane": "whatsapp",
+          "wireLane": "channel",
+          "adapterId": "whatsapp",
+          "guarantee": "best_effort",
+          "recommended": true,
+          "scopes": [
+            "messages"
+          ],
+          "permissionDescription": [
+            "Read and send in the linked WhatsApp conversation"
+          ]
+        }
+      ],
+      "permissions": {
+        "read": [
+          "linked conversation"
+        ],
+        "send": [
+          "messages"
+        ],
+        "control": [],
+        "sync": [
+          "messages"
+        ],
+        "unavailable": [
+          "Muse memory",
+          "other chats"
+        ]
+      }
+    },
+    {
+      "id": "kimi",
+      "displayName": "Kimi",
+      "agentNoun": "agent",
+      "legalName": "Moonshot AI",
+      "logoAsset": "/assets/vendors/kimi.svg",
+      "monogram": "K",
+      "modes": [
+        "linked"
+      ],
+      "recommendedLane": "browser",
+      "profiles": [
+        {
+          "id": "kimi-browser",
+          "label": "Sign in to Kimi",
+          "authType": "browser_session",
+          "lane": "browser",
+          "wireLane": "ui_bridge",
+          "adapterId": "kimi-subscription",
+          "guarantee": "best_effort",
+          "recommended": true,
+          "loginUrl": "https://www.kimi.ai/",
+          "scopes": [
+            "session"
+          ],
+          "permissionDescription": [
+            "Chat with Kimi as you",
+            "Read the replies in your Kimi conversations"
+          ],
+          "requiresUserOwnedSubscription": true
+        }
+      ],
+      "permissions": {
+        "read": [
+          "chats"
+        ],
+        "send": [
+          "messages"
+        ],
+        "control": [],
+        "sync": [
+          "transcripts"
+        ],
+        "unavailable": []
+      }
+    },
+    {
+      "id": "openclaw",
+      "displayName": "OpenClaw",
+      "agentNoun": "agent",
+      "legalName": "OpenClaw",
+      "logoAsset": "/assets/vendors/openclaw.svg",
+      "monogram": "OC",
+      "modes": [
+        "hosted",
+        "linked"
+      ],
+      "recommendedLane": "local",
+      "profiles": [
+        {
+          "id": "openclaw-local",
+          "label": "Discover local runtime",
+          "authType": "local_endpoint",
+          "lane": "local",
+          "adapterId": "openclaw",
+          "guarantee": "exact",
+          "recommended": true,
+          "scopes": [
+            "local"
+          ],
+          "permissionDescription": [
+            "Talk to the OpenClaw runtime on this machine"
+          ]
+        }
+      ],
+      "permissions": {
+        "read": [
+          "agents",
+          "sessions"
+        ],
+        "send": [
+          "messages"
+        ],
+        "control": [
+          "tools"
+        ],
+        "sync": [
+          "transcripts"
+        ],
+        "unavailable": []
+      }
+    },
+    {
+      "id": "openmausbot",
+      "displayName": "OpenMausBot",
+      "agentNoun": "bot",
+      "legalName": "OpenMausBot (milind-soni)",
+      "logoAsset": "/assets/vendors/openmausbot.png",
+      "monogram": "OM",
+      "modes": [
+        "linked"
+      ],
+      "recommendedLane": "local",
+      "profiles": [
+        {
+          "id": "openmausbot-paired",
+          "label": "Connect your paired OpenMausBot instance",
+          "authType": "api_key",
+          "lane": "local",
+          "adapterId": "openmausbot",
+          "guarantee": "best_effort",
+          "recommended": true,
+          "scopes": [
+            "agents.read",
+            "chat.read",
+            "chat.send"
+          ],
+          "permissionDescription": [
+            "Discover bots visible to your paired session",
+            "Send messages in the existing vendor conversation with approval mode Ask",
+            "Read streamed replies and history"
+          ],
+          "credentialLabel": "OpenMausBot paired session token",
+          "credentialDescription": "Use the token from a separately paired OpenMausBot client. Allternit stores it encrypted and checks bot access before connecting. Pair with the OpenMausBot instance running on your connected computer.",
+          "credentialHelpUrl": "https://github.com/milind-soni/OpenMausBot"
+        }
+      ],
+      "permissions": {
+        "read": [
+          "bots",
+          "conversation replies",
+          "vendor approval requests"
+        ],
+        "send": [
+          "guarded messages"
+        ],
+        "control": [
+          "explicit human approval responses"
+        ],
+        "sync": [
+          "transcript events"
+        ],
+        "unavailable": [
+          "cancellation",
+          "memory editing",
+          "computer control"
+        ]
+      }
+    },
+    {
+      "id": "codync",
+      "displayName": "Codync",
+      "agentNoun": "bot",
+      "legalName": "Codync (leepokai)",
+      "logoAsset": "/assets/vendors/codync.png",
+      "monogram": "C",
+      "modes": [
+        "linked"
+      ],
+      "recommendedLane": "local",
+      "profiles": [
+        {
+          "id": "codync-host",
+          "label": "Connect your Codync host",
+          "authType": "api_key",
+          "lane": "local",
+          "adapterId": "codync",
+          "guarantee": "best_effort",
+          "recommended": true,
+          "scopes": [
+            "agents.read",
+            "chat.read",
+            "chat.send",
+            "approvals.respond"
+          ],
+          "permissionDescription": [
+            "Discover the bots on your connected Codync computer",
+            "Message the vendor bot in its existing conversation",
+            "Read replies and forward explicit one-time human approvals"
+          ],
+          "credentialLabel": "Codync local host token",
+          "credentialDescription": "Use the local host token for the Codync instance running on your connected computer. Allternit stores it encrypted. Bots must use Ask for permission; persistent grants are not forwarded.",
+          "credentialHelpUrl": "https://github.com/leepokai/Codync"
+        }
+      ],
+      "permissions": {
+        "read": [
+          "bots",
+          "conversation replies",
+          "vendor approval requests"
+        ],
+        "send": [
+          "messages"
+        ],
+        "control": [
+          "explicit one-time human approval responses"
+        ],
+        "sync": [
+          "transcript events"
+        ],
+        "unavailable": [
+          "scoped cancellation",
+          "memory editing",
+          "computer control",
+          "atomic permission-mode guard"
+        ]
+      }
+    },
+    {
+      "id": "hivekeep",
+      "displayName": "Hivekeep",
+      "agentNoun": "agent",
+      "legalName": "Hivekeep",
+      "logoAsset": "/assets/vendors/hivekeep.png",
+      "monogram": "HK",
+      "modes": [
+        "linked"
+      ],
+      "recommendedLane": "local",
+      "profiles": [
+        {
+          "id": "hivekeep-client",
+          "label": "Connect your Hivekeep API client",
+          "authType": "api_key",
+          "lane": "local",
+          "adapterId": "hivekeep",
+          "guarantee": "best_effort",
+          "recommended": true,
+          "scopes": [
+            "agents.read",
+            "conversations.isolated",
+            "messages.send"
+          ],
+          "permissionDescription": [
+            "Discover agents allowed by your API client",
+            "Create isolated conversations and send messages",
+            "Read the matching request reply"
+          ],
+          "credentialLabel": "Hivekeep API client key",
+          "credentialDescription": "Create an API client in Hivekeep with isolated conversation access. Use its hk_ key for the instance on your connected computer. Allternit stores the key encrypted. Review tool approvals in Hivekeep.",
+          "credentialHelpUrl": "https://github.com/MarlBurroW/hivekeep/blob/main/external-api.md"
+        }
+      ],
+      "permissions": {
+        "read": [
+          "allowed agents",
+          "request replies"
+        ],
+        "send": [
+          "isolated conversation messages"
+        ],
+        "control": [],
+        "sync": [
+          "completed replies"
+        ],
+        "unavailable": [
+          "live streaming",
+          "approval forwarding",
+          "cancellation",
+          "memory editing",
+          "computer control"
+        ]
+      }
+    },
+    {
+      "id": "invisible-dots",
+      "displayName": "Invisible Dots",
+      "agentNoun": "Dot",
+      "legalName": "Invisible Dots",
+      "logoAsset": "/assets/vendors/invisible-dots.png",
+      "monogram": "ID",
+      "modes": [
+        "linked"
+      ],
+      "recommendedLane": "local",
+      "profiles": [
+        {
+          "id": "invisible-dots-api",
+          "label": "Connect your Invisible Dots server",
+          "authType": "api_key",
+          "lane": "local",
+          "adapterId": "invisible-dots",
+          "guarantee": "best_effort",
+          "recommended": true,
+          "scopes": [
+            "dots.read",
+            "messages.read",
+            "messages.send"
+          ],
+          "permissionDescription": [
+            "Discover the Dots on your connected computer",
+            "Send messages in the existing Dot conversation",
+            "Read replies matched to your vendor message"
+          ],
+          "credentialLabel": "Invisible Dots API token",
+          "credentialDescription": "Use the API token for the Invisible Dots server on your connected computer. Allternit stores it encrypted. Queued messages wait for a matched reply. Review tool approvals in Invisible Dots.",
+          "credentialHelpUrl": "https://github.com/feder-cr/invisible_dots"
+        }
+      ],
+      "permissions": {
+        "read": [
+          "Dots",
+          "matched replies"
+        ],
+        "send": [
+          "conversation messages"
+        ],
+        "control": [],
+        "sync": [
+          "completed replies"
+        ],
+        "unavailable": [
+          "approval forwarding",
+          "cancellation",
+          "memory editing",
+          "computer control"
+        ]
+      }
+    },
+    {
+      "id": "opendots-copilotkit",
+      "displayName": "OpenDots · CopilotKit",
+      "agentNoun": "Dot",
+      "legalName": "CopilotKit OpenDots",
+      "logoAsset": "/assets/vendors/opendots-copilotkit.svg",
+      "monogram": "OD",
+      "modes": [
+        "linked"
+      ],
+      "recommendedLane": "local",
+      "profiles": [
+        {
+          "id": "opendots-copilotkit-owner",
+          "label": "Connect your OpenDots runtime",
+          "authType": "api_key",
+          "lane": "local",
+          "adapterId": "opendots-copilotkit",
+          "guarantee": "best_effort",
+          "recommended": true,
+          "scopes": [
+            "dots.read",
+            "conversations.create",
+            "intelligence.run"
+          ],
+          "permissionDescription": [
+            "Discover the Dots in your OpenDots workspace",
+            "Create an isolated conversation for Allternit",
+            "Run the vendor Dot through its configured CopilotKit Intelligence connection"
+          ],
+          "credentialLabel": "OpenDots owner access token",
+          "credentialDescription": "Configure an owner access token in your OpenDots instance and use that token here. CopilotKit Intelligence must already be configured in the vendor app. Allternit stores the token encrypted. Review approvals in OpenDots.",
+          "credentialHelpUrl": "https://github.com/CopilotKit/OpenDots"
+        }
+      ],
+      "permissions": {
+        "read": [
+          "Dots",
+          "current-run replies"
+        ],
+        "send": [
+          "isolated conversation messages"
+        ],
+        "control": [],
+        "sync": [
+          "completed replies"
+        ],
+        "unavailable": [
+          "approval forwarding",
+          "cancellation",
+          "memory editing",
+          "computer control"
+        ]
+      }
+    },
+    {
+      "id": "ds-bot",
+      "displayName": "DeepSeek Bot",
+      "agentNoun": "Bot",
+      "legalName": "DS Bot project",
+      "logoAsset": "/assets/vendors/deepseek-feizhululu.svg",
+      "monogram": "DS",
+      "modes": [
+        "linked"
+      ],
+      "recommendedLane": "local",
+      "profiles": [
+        {
+          "id": "ds-bot-dsh",
+          "label": "Connect your DS Bot instance",
+          "authType": "api_key",
+          "lane": "local",
+          "adapterId": "ds-bot",
+          "guarantee": "best_effort",
+          "recommended": true,
+          "scopes": [
+            "bots.read",
+            "messages.send",
+            "messages.read"
+          ],
+          "permissionDescription": [
+            "Discover DS Bots in your DSH instance",
+            "Send messages to existing bot conversations and receive matched replies"
+          ],
+          "credentialLabel": "DSH Web launch token",
+          "credentialDescription": "Use the 43-character launch token from your own DSH Web instance. Configure its loopback origin with SUBS_GATEWAY_DS_BOT_URL on your Sessions computer and select each bot’s model in DSH first.",
+          "credentialHelpUrl": "https://github.com/Fei2411/DeepSeek-Bot"
+        }
+      ],
+      "permissions": {
+        "read": [
+          "bots",
+          "matched replies"
+        ],
+        "send": [
+          "existing bot conversation messages"
+        ],
+        "control": [],
+        "sync": [
+          "completed replies"
+        ],
+        "unavailable": [
+          "approval forwarding",
+          "cancellation",
+          "memory editing",
+          "computer control"
+        ]
+      }
+    },
+    {
+      "id": "openmuse-copilotkit",
+      "displayName": "OpenMuse · CopilotKit",
+      "agentNoun": "Muse",
+      "legalName": "CopilotKit OpenMuse",
+      "logoAsset": "/assets/vendors/openmuse-copilotkit.png",
+      "monogram": "OM",
+      "modes": [
+        "linked"
+      ],
+      "recommendedLane": "local",
+      "profiles": [
+        {
+          "id": "openmuse-copilotkit-access",
+          "label": "Connect your OpenMuse runtime",
+          "authType": "api_key",
+          "lane": "local",
+          "adapterId": "openmuse-copilotkit",
+          "guarantee": "best_effort",
+          "recommended": true,
+          "scopes": [
+            "agent.read",
+            "messages.send",
+            "replies.read"
+          ],
+          "permissionDescription": [
+            "Use the live agent configured in your OpenMuse runtime",
+            "Send messages and receive replies in a new conversation"
+          ],
+          "credentialLabel": "OpenMuse access key",
+          "credentialDescription": "Use your runtime’s OPENMUSE_ACCESS_KEY. OpenMuse must run in live mode with its agent configured. Conversation history lasts for this gateway session.",
+          "credentialHelpUrl": "https://github.com/CopilotKit/openmuse"
+        }
+      ],
+      "permissions": {
+        "read": [
+          "configured agent",
+          "current-run replies"
+        ],
+        "send": [
+          "isolated conversation messages"
+        ],
+        "control": [],
+        "sync": [
+          "completed replies"
+        ],
+        "unavailable": [
+          "conversation resume",
+          "approval forwarding",
+          "cancellation",
+          "memory editing",
+          "computer control"
+        ]
+      }
+    },
+    {
+      "id": "openbot-nightly",
+      "displayName": "OpenBot · Nightly",
+      "agentNoun": "Bot",
+      "legalName": "Nightly Labs OpenBot",
+      "logoAsset": "/assets/vendors/openbot-nightly.png",
+      "monogram": "OB",
+      "modes": [
+        "linked"
+      ],
+      "recommendedLane": "local",
+      "profiles": [
+        {
+          "id": "openbot-nightly-team",
+          "label": "Connect your OpenBot desktop host",
+          "authType": "api_key",
+          "lane": "local",
+          "adapterId": "openbot-nightly",
+          "guarantee": "best_effort",
+          "recommended": true,
+          "scopes": [
+            "agents.read",
+            "messages.send",
+            "messages.read"
+          ],
+          "permissionDescription": [
+            "Discover your OpenBot agents",
+            "Send messages to existing bot conversations and receive matched turn replies"
+          ],
+          "credentialLabel": "OpenBot Team session token",
+          "credentialDescription": "Use the sessionToken returned by your host’s local Team API login. Configure its runtime-assigned loopback port with SUBS_GATEWAY_OPENBOT_NIGHTLY_URL on your Sessions computer.",
+          "credentialHelpUrl": "https://github.com/nightly-labs/OpenBot"
+        }
+      ],
+      "permissions": {
+        "read": [
+          "agents",
+          "matched turn replies"
+        ],
+        "send": [
+          "existing bot conversation messages"
+        ],
+        "control": [],
+        "sync": [
+          "completed replies"
+        ],
+        "unavailable": [
+          "approval forwarding",
+          "cancellation",
+          "memory editing",
+          "computer control"
+        ]
+      }
+    },
+    {
+      "id": "rakazo",
+      "displayName": "Rakazo",
+      "agentNoun": "Bot",
+      "legalName": "Rakazo project",
+      "logoAsset": "/assets/vendors/rakazo.png",
+      "monogram": "R",
+      "modes": [
+        "linked"
+      ],
+      "recommendedLane": "local",
+      "profiles": [
+        {
+          "id": "rakazo-session",
+          "label": "Connect your Rakazo account",
+          "authType": "api_key",
+          "lane": "local",
+          "adapterId": "rakazo",
+          "guarantee": "best_effort",
+          "recommended": true,
+          "scopes": [
+            "bots.read",
+            "threads.send",
+            "threads.subscribe"
+          ],
+          "permissionDescription": [
+            "Discover bots in your selected Rakazo space",
+            "Send messages to existing threads and receive replies from the matching run"
+          ],
+          "credentialLabel": "Rakazo session and space",
+          "credentialDescription": "Enter JSON with your own Better Auth bearer session and selected space: {\"token\":\"your session token\",\"spaceId\":\"your space ID\"}. Configure the API origin with SUBS_GATEWAY_RAKAZO_URL on the gateway runtime.",
+          "credentialHelpUrl": "https://github.com/elie222/rakazo"
+        }
+      ],
+      "permissions": {
+        "read": [
+          "bots",
+          "matching run replies"
+        ],
+        "send": [
+          "existing bot thread messages"
+        ],
+        "control": [],
+        "sync": [
+          "completed replies"
+        ],
+        "unavailable": [
+          "approval forwarding",
+          "cancellation",
+          "memory editing",
+          "computer control"
+        ]
+      }
+    },
+    {
+      "id": "frockbot",
+      "displayName": "FrockBot",
+      "agentNoun": "Bot",
+      "legalName": "FrockBot project",
+      "logoAsset": "/assets/vendors/frockbot.png",
+      "monogram": "FB",
+      "modes": [
+        "linked"
+      ],
+      "recommendedLane": "official",
+      "profiles": [
+        {
+          "id": "frockbot-deployment-admin",
+          "label": "Connect a FrockBot deployment you administer",
+          "authType": "api_key",
+          "lane": "official",
+          "adapterId": "frockbot",
+          "guarantee": "best_effort",
+          "recommended": true,
+          "scopes": [
+            "bots.read",
+            "turns.send",
+            "runs.read"
+          ],
+          "permissionDescription": [
+            "Discover the bots of your FrockBot admin account",
+            "Send turns to those bots and receive the matching run reply"
+          ],
+          "credentialLabel": "FrockBot debug token and admin user",
+          "credentialDescription": "For self-hosted deployments you administer. Enter JSON: {\"token\":\"your DEBUG_TOKEN\",\"userId\":\"your admin user ID\"}. The gateway runtime needs SUBS_GATEWAY_FROCKBOT_URL and SUBS_GATEWAY_FROCKBOT_DEBUG_ENABLED=1. Use a dedicated deployment: this token can read other accounts on it.",
+          "credentialHelpUrl": "https://frockbot.com/open/"
+        }
+      ],
+      "permissions": {
+        "read": [
+          "bots",
+          "matching run replies"
+        ],
+        "send": [
+          "bot turns"
+        ],
+        "control": [],
+        "sync": [
+          "completed replies"
+        ],
+        "unavailable": [
+          "streaming",
+          "approval forwarding",
+          "cancellation",
+          "memory editing",
+          "computer control"
+        ]
+      }
+    },
+    {
+      "id": "sidemates",
+      "displayName": "Sidemates",
+      "agentNoun": "teammate",
+      "legalName": "Sidemates (PrisacariuRobert)",
+      "logoAsset": "/assets/vendors/sidemates.png",
+      "monogram": "S",
+      "modes": [
+        "linked"
+      ],
+      "recommendedLane": "local",
+      "profiles": [
+        {
+          "id": "sidemates-access",
+          "label": "Connect Sidemates on your Sessions computer",
+          "authType": "api_key",
+          "lane": "local",
+          "adapterId": "sidemates",
+          "guarantee": "best_effort",
+          "recommended": true,
+          "scopes": [
+            "teammates.read",
+            "messages.send",
+            "runs.read"
+          ],
+          "permissionDescription": [
+            "Discover your Sidemates teammates",
+            "Send messages to a teammate’s thread and receive the reply from that run"
+          ],
+          "credentialLabel": "Sidemates access key",
+          "credentialDescription": "Use the access token from your Sidemates data folder or a paired device key. Configure its loopback address with SUBS_GATEWAY_SIDEMATES_URL on your Sessions computer.",
+          "credentialHelpUrl": "https://github.com/PrisacariuRobert/sidemates"
+        }
+      ],
+      "permissions": {
+        "read": [
+          "teammates",
+          "matching run replies"
+        ],
+        "send": [
+          "existing teammate thread messages"
+        ],
+        "control": [],
+        "sync": [
+          "completed replies"
+        ],
+        "unavailable": [
+          "approval forwarding",
+          "cancellation",
+          "memory editing",
+          "computer control"
+        ]
+      }
+    },
+    {
+      "id": "nanomuse",
+      "displayName": "nanoMuse",
+      "agentNoun": "agent",
+      "legalName": "nanoMuse",
+      "logoAsset": "/assets/vendors/nanomuse.png",
+      "monogram": "nM",
+      "modes": [
+        "linked"
+      ],
+      "recommendedLane": "local",
+      "profiles": [
+        {
+          "id": "nanomuse-serve",
+          "label": "Connect nanoMuse running on your Sessions computer",
+          "authType": "api_key",
+          "lane": "local",
+          "adapterId": "nanomuse",
+          "guarantee": "best_effort",
+          "recommended": true,
+          "scopes": [
+            "agent.read",
+            "threads.create",
+            "messages.send"
+          ],
+          "permissionDescription": [
+            "Use the agent served by nanomuse serve",
+            "Start new conversations and receive its final replies"
+          ],
+          "credentialLabel": "nanoMuse server token",
+          "credentialDescription": "Use the token in your nanoMuse data folder (server_token). Run nanomuse serve and configure its loopback address with SUBS_GATEWAY_NANOMUSE_URL. The phone app is not supported.",
+          "credentialHelpUrl": "https://github.com/nano-muse/nanoMuse"
+        }
+      ],
+      "permissions": {
+        "read": [
+          "agent",
+          "final replies"
+        ],
+        "send": [
+          "new conversation messages"
+        ],
+        "control": [],
+        "sync": [
+          "completed replies"
+        ],
+        "unavailable": [
+          "approval forwarding",
+          "cancellation",
+          "memory editing",
+          "computer control"
+        ]
+      }
+    },
+    {
+      "id": "vellum-assistant",
+      "displayName": "Vellum Assistant",
+      "agentNoun": "assistant",
+      "legalName": "Vellum AI",
+      "logoAsset": "/assets/vendors/vellum-assistant.svg",
+      "monogram": "V",
+      "modes": [
+        "linked"
+      ],
+      "recommendedLane": "local",
+      "profiles": [
+        {
+          "id": "vellum-assistant-pair",
+          "label": "Connect your Vellum assistant",
+          "authType": "api_key",
+          "lane": "local",
+          "adapterId": "vellum-assistant",
+          "guarantee": "best_effort",
+          "recommended": true,
+          "scopes": [
+            "settings.read",
+            "chat.write",
+            "chat.read"
+          ],
+          "permissionDescription": [
+            "Read your assistant’s identity",
+            "Send messages and receive the reply to each request"
+          ],
+          "credentialLabel": "Vellum pairing token",
+          "credentialDescription": "Pair a client with your assistant runtime and paste its token. Configure the runtime’s loopback address with SUBS_GATEWAY_VELLUM_ASSISTANT_URL. Tokens are short-lived; pair again when it expires.",
+          "credentialHelpUrl": "https://github.com/vellum-ai/vellum-assistant"
+        }
+      ],
+      "permissions": {
+        "read": [
+          "assistant identity",
+          "matching replies"
+        ],
+        "send": [
+          "conversation messages"
+        ],
+        "control": [],
+        "sync": [
+          "completed replies"
+        ],
+        "unavailable": [
+          "approval forwarding",
+          "cancellation",
+          "memory editing",
+          "computer control"
+        ]
+      }
+    },
+    {
+      "id": "gemini-spark",
+      "displayName": "Gemini Spark",
+      "agentNoun": "bot",
+      "legalName": "Google LLC",
+      "logoAsset": "/assets/vendors/gemini-spark.png",
+      "monogram": "GS",
+      "modes": [
+        "linked"
+      ],
+      "recommendedLane": "browser",
+      "profiles": [
+        {
+          "id": "gemini-spark-browser",
+          "label": "Sign in to Gemini Spark",
+          "authType": "browser_session",
+          "lane": "browser",
+          "wireLane": "ui_bridge",
+          "adapterId": "gemini-spark-subscription",
+          "guarantee": "best_effort",
+          "recommended": true,
+          "loginUrl": "https://gemini.google.com/app",
+          "scopes": [
+            "session"
+          ],
+          "permissionDescription": [
+            "Run Gemini Spark tasks as you",
+            "Read the replies in those conversations"
+          ],
+          "requiresUserOwnedSubscription": true
+        }
+      ],
+      "permissions": {
+        "read": [
+          "chats"
+        ],
+        "send": [
+          "messages"
+        ],
+        "control": [],
+        "sync": [
+          "transcripts"
+        ],
+        "unavailable": [
+          "approval forwarding",
+          "cancellation",
+          "memory editing",
+          "computer control"
+        ]
+      }
+    },
+    {
+      "id": "slashy",
+      "displayName": "Slashy",
+      "agentNoun": "bot",
+      "legalName": "Slashy",
+      "logoAsset": "/assets/vendors/slashy.png",
+      "monogram": "S/",
+      "modes": [
+        "linked"
+      ],
+      "recommendedLane": "browser",
+      "profiles": [
+        {
+          "id": "slashy-browser",
+          "label": "Sign in to Slashy",
+          "authType": "browser_session",
+          "lane": "browser",
+          "wireLane": "ui_bridge",
+          "adapterId": "slashy-subscription",
+          "guarantee": "best_effort",
+          "recommended": true,
+          "loginUrl": "https://www.slashy.com/",
+          "scopes": [
+            "session"
+          ],
+          "permissionDescription": [
+            "Chat with your Slashy assistant as you",
+            "Read the replies in those conversations"
+          ],
+          "requiresUserOwnedSubscription": true
+        }
+      ],
+      "permissions": {
+        "read": [
+          "chats"
+        ],
+        "send": [
+          "messages"
+        ],
+        "control": [],
+        "sync": [
+          "transcripts"
+        ],
+        "unavailable": [
+          "approval forwarding",
+          "cancellation",
+          "memory editing",
+          "computer control"
+        ]
+      }
+    },
+    {
+      "id": "abacusai",
+      "displayName": "AbacusAI Bot",
+      "agentNoun": "bot",
+      "legalName": "Abacus.AI",
+      "logoAsset": "/assets/vendors/abacusai-bot.png",
+      "monogram": "A",
+      "modes": [
+        "linked"
+      ],
+      "recommendedLane": "browser",
+      "profiles": [
+        {
+          "id": "abacusai-browser",
+          "label": "Sign in to AbacusAI Bot",
+          "authType": "browser_session",
+          "lane": "browser",
+          "wireLane": "ui_bridge",
+          "adapterId": "abacusai-bot-subscription",
+          "guarantee": "best_effort",
+          "recommended": true,
+          "loginUrl": "https://apps.abacus.ai/bot/",
+          "scopes": [
+            "session"
+          ],
+          "permissionDescription": [
+            "Chat with your AbacusAI bots as you",
+            "Read the replies in those conversations"
+          ],
+          "requiresUserOwnedSubscription": true
+        }
+      ],
+      "permissions": {
+        "read": [
+          "chats"
+        ],
+        "send": [
+          "messages"
+        ],
+        "control": [],
+        "sync": [
+          "transcripts"
+        ],
+        "unavailable": [
+          "approval forwarding",
+          "cancellation",
+          "memory editing",
+          "computer control"
+        ]
+      }
+    },
+    {
+      "id": "iris",
+      "displayName": "Iris",
+      "agentNoun": "assistant",
+      "legalName": "Iris",
+      "logoAsset": "/assets/vendors/iris.png",
+      "monogram": "I",
+      "modes": [
+        "linked"
+      ],
+      "recommendedLane": "local",
+      "profiles": [
+        {
+          "id": "iris-connect",
+          "label": "Text Iris from your Mac",
+          "authType": "api_key",
+          "lane": "local",
+          "adapterId": "iris",
+          "guarantee": "best_effort",
+          "recommended": true,
+          "scopes": [
+            "messages.send",
+            "messages.read"
+          ],
+          "permissionDescription": [
+            "Send texts to Iris from your Messages app",
+            "Read Iris’s replies to those texts"
+          ],
+          "credentialLabel": "Assistant phone number or iMessage address",
+          "credentialDescription": "Allternit texts Iris from your own number using Messages on your Sessions computer (a Mac). Enter JSON {\"handle\":\"+1...\"} with the number you text Iris at. Requires SUBS_GATEWAY_MESSAGES_ENABLED=1 and Full Disk Access for the gateway so it can read replies.",
+          "credentialHelpUrl": "https://iris-agent.co/"
+        }
+      ],
+      "permissions": {
+        "read": [
+          "bots",
+          "matched replies"
+        ],
+        "send": [
+          "messages"
+        ],
+        "control": [],
+        "sync": [
+          "completed replies"
+        ],
+        "unavailable": [
+          "approval forwarding",
+          "cancellation",
+          "memory editing",
+          "computer control"
+        ]
+      }
+    },
+    {
+      "id": "poke",
+      "displayName": "Poke",
+      "agentNoun": "assistant",
+      "legalName": "Poke",
+      "logoAsset": "/assets/vendors/poke.png",
+      "monogram": "P",
+      "modes": [
+        "linked"
+      ],
+      "recommendedLane": "local",
+      "profiles": [
+        {
+          "id": "poke-connect",
+          "label": "Text Poke from your Mac",
+          "authType": "api_key",
+          "lane": "local",
+          "adapterId": "poke",
+          "guarantee": "best_effort",
+          "recommended": true,
+          "scopes": [
+            "messages.send",
+            "messages.read"
+          ],
+          "permissionDescription": [
+            "Send texts to Poke from your Messages app",
+            "Read Poke’s replies to those texts"
+          ],
+          "credentialLabel": "Assistant phone number or iMessage address",
+          "credentialDescription": "Allternit texts Poke from your own number using Messages on your Sessions computer (a Mac). Enter JSON {\"handle\":\"+1...\"} with the number you text Poke at. Requires SUBS_GATEWAY_MESSAGES_ENABLED=1 and Full Disk Access for the gateway so it can read replies.",
+          "credentialHelpUrl": "https://poke.com/"
+        }
+      ],
+      "permissions": {
+        "read": [
+          "bots",
+          "matched replies"
+        ],
+        "send": [
+          "messages"
+        ],
+        "control": [],
+        "sync": [
+          "completed replies"
+        ],
+        "unavailable": [
+          "approval forwarding",
+          "cancellation",
+          "memory editing",
+          "computer control"
+        ]
+      }
+    },
+    {
+      "id": "instinct",
+      "displayName": "Instinct",
+      "agentNoun": "assistant",
+      "legalName": "Instinct",
+      "logoAsset": "/assets/vendors/instinct.png",
+      "monogram": "In",
+      "modes": [
+        "linked"
+      ],
+      "recommendedLane": "local",
+      "profiles": [
+        {
+          "id": "instinct-connect",
+          "label": "Text Instinct from your Mac",
+          "authType": "api_key",
+          "lane": "local",
+          "adapterId": "instinct",
+          "guarantee": "best_effort",
+          "recommended": true,
+          "scopes": [
+            "messages.send",
+            "messages.read"
+          ],
+          "permissionDescription": [
+            "Send texts to Instinct from your Messages app",
+            "Read Instinct’s replies to those texts"
+          ],
+          "credentialLabel": "Assistant phone number or iMessage address",
+          "credentialDescription": "Allternit texts Instinct from your own number using Messages on your Sessions computer (a Mac). Enter JSON {\"handle\":\"+1...\"} with the number you text Instinct at. Requires SUBS_GATEWAY_MESSAGES_ENABLED=1 and Full Disk Access for the gateway so it can read replies.",
+          "credentialHelpUrl": "https://instinct.com/"
+        }
+      ],
+      "permissions": {
+        "read": [
+          "bots",
+          "matched replies"
+        ],
+        "send": [
+          "messages"
+        ],
+        "control": [],
+        "sync": [
+          "completed replies"
+        ],
+        "unavailable": [
+          "approval forwarding",
+          "cancellation",
+          "memory editing",
+          "computer control"
+        ]
+      }
+    },
+    {
+      "id": "flip",
+      "displayName": "Flip",
+      "agentNoun": "assistant",
+      "legalName": "Flip",
+      "logoAsset": "/assets/vendors/flip.png",
+      "monogram": "F",
+      "modes": [
+        "linked"
+      ],
+      "recommendedLane": "local",
+      "profiles": [
+        {
+          "id": "flip-connect",
+          "label": "Text Flip from your Mac",
+          "authType": "api_key",
+          "lane": "local",
+          "adapterId": "flip",
+          "guarantee": "best_effort",
+          "recommended": true,
+          "scopes": [
+            "messages.send",
+            "messages.read"
+          ],
+          "permissionDescription": [
+            "Send texts to Flip from your Messages app",
+            "Read Flip’s replies to those texts"
+          ],
+          "credentialLabel": "Assistant phone number or iMessage address",
+          "credentialDescription": "Allternit texts Flip from your own number using Messages on your Sessions computer (a Mac). Enter JSON {\"handle\":\"+1...\"} with the number you text Flip at. Requires SUBS_GATEWAY_MESSAGES_ENABLED=1 and Full Disk Access for the gateway so it can read replies.",
+          "credentialHelpUrl": "https://fliptexts.com/"
+        }
+      ],
+      "permissions": {
+        "read": [
+          "bots",
+          "matched replies"
+        ],
+        "send": [
+          "messages"
+        ],
+        "control": [],
+        "sync": [
+          "completed replies"
+        ],
+        "unavailable": [
+          "approval forwarding",
+          "cancellation",
+          "memory editing",
+          "computer control"
+        ]
+      }
+    },
+    {
+      "id": "cue",
+      "displayName": "Cue",
+      "agentNoun": "assistant",
+      "legalName": "Cue",
+      "logoAsset": "/assets/vendors/cue.png",
+      "monogram": "C",
+      "modes": [
+        "linked"
+      ],
+      "recommendedLane": "local",
+      "profiles": [
+        {
+          "id": "cue-connect",
+          "label": "Text Cue from your Mac",
+          "authType": "api_key",
+          "lane": "local",
+          "adapterId": "cue",
+          "guarantee": "best_effort",
+          "recommended": true,
+          "scopes": [
+            "messages.send",
+            "messages.read"
+          ],
+          "permissionDescription": [
+            "Send texts to Cue from your Messages app",
+            "Read Cue’s replies to those texts"
+          ],
+          "credentialLabel": "Assistant phone number or iMessage address",
+          "credentialDescription": "Allternit texts Cue from your own number using Messages on your Sessions computer (a Mac). Enter JSON {\"handle\":\"+1...\"} with the number you text Cue at. Requires SUBS_GATEWAY_MESSAGES_ENABLED=1 and Full Disk Access for the gateway so it can read replies.",
+          "credentialHelpUrl": "https://cue.im/"
+        }
+      ],
+      "permissions": {
+        "read": [
+          "bots",
+          "matched replies"
+        ],
+        "send": [
+          "messages"
+        ],
+        "control": [],
+        "sync": [
+          "completed replies"
+        ],
+        "unavailable": [
+          "approval forwarding",
+          "cancellation",
+          "memory editing",
+          "computer control"
+        ]
+      }
+    },
+    {
+      "id": "pally",
+      "displayName": "Pally",
+      "agentNoun": "assistant",
+      "legalName": "Pally",
+      "logoAsset": "/assets/vendors/pally.png",
+      "monogram": "Pa",
+      "modes": [
+        "linked"
+      ],
+      "recommendedLane": "local",
+      "profiles": [
+        {
+          "id": "pally-connect",
+          "label": "Text Pally from your Mac",
+          "authType": "api_key",
+          "lane": "local",
+          "adapterId": "pally",
+          "guarantee": "best_effort",
+          "recommended": true,
+          "scopes": [
+            "messages.send",
+            "messages.read"
+          ],
+          "permissionDescription": [
+            "Send texts to Pally from your Messages app",
+            "Read Pally’s replies to those texts"
+          ],
+          "credentialLabel": "Assistant phone number or iMessage address",
+          "credentialDescription": "Allternit texts Pally from your own number using Messages on your Sessions computer (a Mac). Enter JSON {\"handle\":\"+1...\"} with the number you text Pally at. Requires SUBS_GATEWAY_MESSAGES_ENABLED=1 and Full Disk Access for the gateway so it can read replies.",
+          "credentialHelpUrl": "https://pally.com/"
+        }
+      ],
+      "permissions": {
+        "read": [
+          "bots",
+          "matched replies"
+        ],
+        "send": [
+          "messages"
+        ],
+        "control": [],
+        "sync": [
+          "completed replies"
+        ],
+        "unavailable": [
+          "approval forwarding",
+          "cancellation",
+          "memory editing",
+          "computer control"
+        ]
+      }
+    },
+    {
+      "id": "gawkbot",
+      "displayName": "Gawkbot",
+      "agentNoun": "bot",
+      "legalName": "Gawkbot",
+      "logoAsset": "/assets/vendors/gawkbot.png",
+      "monogram": "GW",
+      "modes": [
+        "linked"
+      ],
+      "recommendedLane": "local",
+      "profiles": [
+        {
+          "id": "gawkbot-connect",
+          "label": "Connect your Gawkbot office",
+          "authType": "api_key",
+          "lane": "local",
+          "adapterId": "gawkbot",
+          "guarantee": "best_effort",
+          "recommended": true,
+          "scopes": [
+            "members.read",
+            "messages.send",
+            "messages.read"
+          ],
+          "permissionDescription": [
+            "Discover your Gawkbot office members",
+            "Message a member and receive its reply"
+          ],
+          "credentialLabel": "Gawkbot broker token",
+          "credentialDescription": "Use the broker token from Gawkbot on your Sessions computer; set its address with SUBS_GATEWAY_GAWKBOT_URL. Terminal-session members show as unavailable; other office members can be messaged.",
+          "credentialHelpUrl": "https://gawk.bot/"
+        }
+      ],
+      "permissions": {
+        "read": [
+          "bots",
+          "matched replies"
+        ],
+        "send": [
+          "messages"
+        ],
+        "control": [],
+        "sync": [
+          "completed replies"
+        ],
+        "unavailable": [
+          "approval forwarding",
+          "cancellation",
+          "memory editing",
+          "computer control"
+        ]
+      }
+    },
+    {
+      "id": "opendots-anil",
+      "displayName": "Open Dots · Anil",
+      "agentNoun": "bot",
+      "legalName": "Open Dots (Anil-matcha)",
+      "logoAsset": "/assets/vendors/opendots-anil.ico",
+      "monogram": "OD",
+      "modes": [
+        "linked"
+      ],
+      "recommendedLane": "local",
+      "profiles": [
+        {
+          "id": "opendots-anil-connect",
+          "label": "Connect Open Dots on your Sessions computer",
+          "authType": "api_key",
+          "lane": "local",
+          "adapterId": "opendots-anil",
+          "guarantee": "best_effort",
+          "recommended": true,
+          "scopes": [
+            "tasks.create",
+            "tasks.read"
+          ],
+          "permissionDescription": [
+            "Start Open Dots tasks",
+            "Read each task’s result"
+          ],
+          "credentialLabel": "Open Dots user ID",
+          "credentialDescription": "Enter your Open Dots user_id. Open Dots has no access control of its own, so Allternit only connects to it on this computer (SUBS_GATEWAY_OPENDOTS_ANIL_URL, loopback). Its backend needs LOCAL_EXECUTION_ENABLED=true. Approvals stay in Open Dots.",
+          "credentialHelpUrl": "https://github.com/Anil-matcha/open-dots"
+        }
+      ],
+      "permissions": {
+        "read": [
+          "bots",
+          "matched replies"
+        ],
+        "send": [
+          "messages"
+        ],
+        "control": [],
+        "sync": [
+          "completed replies"
+        ],
+        "unavailable": [
+          "approval forwarding",
+          "cancellation",
+          "memory editing",
+          "computer control"
+        ]
+      }
+    },
+    {
+      "id": "munder-difflin",
+      "displayName": "Munder Difflin",
+      "agentNoun": "bot",
+      "legalName": "Munder Difflin (HarnessMD)",
+      "logoAsset": "/assets/vendors/munder-difflin.png",
+      "monogram": "MD",
+      "modes": [
+        "linked"
+      ],
+      "recommendedLane": "local",
+      "profiles": [
+        {
+          "id": "munder-difflin-connect",
+          "label": "Connect your Munder Difflin floor",
+          "authType": "api_key",
+          "lane": "local",
+          "adapterId": "munder-difflin",
+          "guarantee": "best_effort",
+          "recommended": true,
+          "scopes": [
+            "tasks.create",
+            "tasks.read"
+          ],
+          "permissionDescription": [
+            "Send tasks to your Munder Difflin floor",
+            "Read each task’s result"
+          ],
+          "credentialLabel": "Webhook endpoint and secret",
+          "credentialDescription": "Enable a webhook endpoint in Munder Difflin and enter JSON {\"endpointId\":\"…\",\"secret\":\"…\"}. Messages go to the floor’s orchestrator, not a chosen agent.",
+          "credentialHelpUrl": "https://github.com/HarnessMD/munder-difflin"
+        }
+      ],
+      "permissions": {
+        "read": [
+          "bots",
+          "matched replies"
+        ],
+        "send": [
+          "messages"
+        ],
+        "control": [],
+        "sync": [
+          "completed replies"
+        ],
+        "unavailable": [
+          "approval forwarding",
+          "cancellation",
+          "memory editing",
+          "computer control"
+        ]
+      }
+    },
+    {
+      "id": "happy",
+      "displayName": "Happy",
+      "agentNoun": "bot",
+      "legalName": "Happy (slopus)",
+      "logoAsset": "/assets/vendors/happy.png",
+      "monogram": "H",
+      "modes": [
+        "linked"
+      ],
+      "recommendedLane": "official",
+      "profiles": [
+        {
+          "id": "happy-connect",
+          "label": "Connect your Happy account",
+          "authType": "api_key",
+          "lane": "official",
+          "adapterId": "happy",
+          "guarantee": "best_effort",
+          "recommended": true,
+          "scopes": [
+            "sessions.read",
+            "messages.send"
+          ],
+          "permissionDescription": [
+            "See your active Happy sessions",
+            "Send messages into a session and read the agent’s reply"
+          ],
+          "credentialLabel": "Happy restore secret",
+          "credentialDescription": "Enter JSON {\"secret\":\"…\"} with your Happy account’s restore secret (Happy → Settings → Account). Messages stay end-to-end encrypted; Allternit decrypts them with your key on the gateway.",
+          "credentialHelpUrl": "https://happy.engineering/"
+        }
+      ],
+      "permissions": {
+        "read": [
+          "bots",
+          "matched replies"
+        ],
+        "send": [
+          "messages"
+        ],
+        "control": [],
+        "sync": [
+          "completed replies"
+        ],
+        "unavailable": [
+          "approval forwarding",
+          "cancellation",
+          "memory editing",
+          "computer control"
+        ]
+      }
+    },
+    {
+      "id": "openbot-copilotkit",
+      "displayName": "OpenBot · CopilotKit",
+      "agentNoun": "bot",
+      "legalName": "CopilotKit OpenBot",
+      "logoAsset": "/assets/vendors/openbot-copilotkit.png",
+      "monogram": "OB",
+      "modes": [
+        "linked"
+      ],
+      "recommendedLane": "official",
+      "profiles": [
+        {
+          "id": "openbot-copilotkit-connect",
+          "label": "Connect your OpenBot workspace",
+          "authType": "api_key",
+          "lane": "official",
+          "adapterId": "openbot-copilotkit",
+          "guarantee": "best_effort",
+          "recommended": true,
+          "scopes": [
+            "agents.read",
+            "threads.create",
+            "messages.send"
+          ],
+          "permissionDescription": [
+            "Discover your OpenBot bots",
+            "Send messages in new threads and receive replies"
+          ],
+          "credentialLabel": "OpenBot origin and session",
+          "credentialDescription": "Enter JSON {\"origin\":\"https://your-openbot-host\",\"sessionToken\":\"…\"} using the better-auth.session_token from your own signed-in OpenBot.",
+          "credentialHelpUrl": "https://github.com/CopilotKit/OpenBot"
+        }
+      ],
+      "permissions": {
+        "read": [
+          "bots",
+          "matched replies"
+        ],
+        "send": [
+          "messages"
+        ],
+        "control": [],
+        "sync": [
+          "completed replies"
+        ],
+        "unavailable": [
+          "approval forwarding",
+          "cancellation",
+          "memory editing",
+          "computer control"
+        ]
+      }
+    }
+  ],
+  "botProjects": [
+    {
+      "id": "xai-grok-bot",
+      "displayName": "Grok Bot",
+      "sourceHint": "x.ai",
+      "status": "planned",
+      "identity": "unverified",
+      "logoAsset": "/assets/vendors/grok-bot.png",
+      "projectUrl": null,
+      "monogram": "GB"
+    },
+    {
+      "id": "openmausbot",
+      "displayName": "OpenMausBot",
+      "sourceHint": "openmausbot.com",
+      "status": "planned",
+      "identity": "verified",
+      "logoAsset": "/assets/vendors/openmausbot.png",
+      "projectUrl": "https://github.com/milind-soni/OpenMausBot",
+      "developer": "milind-soni",
+      "monogram": "O"
+    },
+    {
+      "id": "codync",
+      "displayName": "Codync",
+      "sourceHint": "codync.dev",
+      "status": "planned",
+      "identity": "verified",
+      "logoAsset": "/assets/vendors/codync.png",
+      "projectUrl": "https://github.com/leepokai/Codync",
+      "developer": "leepokai",
+      "monogram": "C"
+    },
+    {
+      "id": "meta-muse",
+      "displayName": "Muse Bot",
+      "sourceHint": "ai.meta.com",
+      "status": "planned",
+      "identity": "unverified",
+      "logoAsset": "/assets/vendors/meta.svg",
+      "projectUrl": null,
+      "monogram": "MB"
+    },
+    {
+      "id": "rakazo",
+      "displayName": "Rakazo",
+      "sourceHint": "rakazo.com",
+      "status": "planned",
+      "identity": "verified",
+      "logoAsset": "/assets/vendors/rakazo.png",
+      "projectUrl": "https://github.com/elie222/rakazo",
+      "monogram": "R"
+    },
+    {
+      "id": "cue",
+      "displayName": "Cue",
+      "sourceHint": "cue.im",
+      "status": "planned",
+      "identity": "unverified",
+      "logoAsset": "/assets/vendors/cue.png",
+      "projectUrl": null,
+      "monogram": "C"
+    },
+    {
+      "id": "openbot-nightly",
+      "displayName": "OpenBot · Nightly",
+      "sourceHint": "openbot.run",
+      "status": "planned",
+      "identity": "verified",
+      "logoAsset": "/assets/vendors/openbot-nightly.png",
+      "projectUrl": "https://github.com/nightly-labs/OpenBot",
+      "developer": "Nightly Labs",
+      "monogram": "O·"
+    },
+    {
+      "id": "openai-dots",
+      "displayName": "OpenAI Dots",
+      "sourceHint": "chatgpt.com",
+      "status": "planned",
+      "identity": "unverified",
+      "logoAsset": "/assets/vendors/openai.svg",
+      "projectUrl": null,
+      "monogram": "OD"
+    },
+    {
+      "id": "omnibots",
+      "displayName": "Omnibots",
+      "sourceHint": "omnibots.app",
+      "status": "planned",
+      "note": "On hold: Omnibots publishes no interface for outside apps.",
+      "identity": "unverified",
+      "logoAsset": "/assets/vendors/omnibots.png",
+      "projectUrl": null,
+      "monogram": "O"
+    },
+    {
+      "id": "nanomuse",
+      "displayName": "nanoMuse",
+      "sourceHint": "nanomuse.cn",
+      "status": "planned",
+      "identity": "unverified",
+      "logoAsset": "/assets/vendors/nanomuse.png",
+      "projectUrl": "https://github.com/nano-muse/nanoMuse",
+      "monogram": "N"
+    },
+    {
+      "id": "noodle",
+      "displayName": "Noodle",
+      "sourceHint": "usenoodle.app",
+      "status": "planned",
+      "note": "On hold: Noodle only talks over its own encrypted Hub link, which needs a separate bridge.",
+      "identity": "unverified",
+      "logoAsset": "/assets/vendors/noodle.png",
+      "projectUrl": null,
+      "monogram": "N"
+    },
+    {
+      "id": "sidemates",
+      "displayName": "Sidemates",
+      "sourceHint": "openbots.foundation",
+      "status": "planned",
+      "identity": "verified",
+      "logoAsset": "/assets/vendors/sidemates.png",
+      "projectUrl": "https://github.com/PrisacariuRobert/sidemates",
+      "monogram": "S"
+    },
+    {
+      "id": "frockbot",
+      "displayName": "FrockBot",
+      "sourceHint": "frockbot.com",
+      "status": "planned",
+      "identity": "unverified",
+      "logoAsset": "/assets/vendors/frockbot.png",
+      "projectUrl": null,
+      "monogram": "F"
+    },
+    {
+      "id": "munder-difflin",
+      "displayName": "Munder Difflin",
+      "sourceHint": "munderdiffl.in",
+      "status": "planned",
+      "identity": "unverified",
+      "logoAsset": "/assets/vendors/munder-difflin.png",
+      "projectUrl": null,
+      "monogram": "MD"
+    },
+    {
+      "id": "pally",
+      "displayName": "Pally",
+      "sourceHint": "pally.com",
+      "status": "planned",
+      "identity": "unverified",
+      "logoAsset": "/assets/vendors/pally.png",
+      "projectUrl": null,
+      "monogram": "P"
+    },
+    {
+      "id": "instinct",
+      "displayName": "Instinct",
+      "sourceHint": "instinct.com",
+      "status": "planned",
+      "identity": "unverified",
+      "logoAsset": "/assets/vendors/instinct.png",
+      "projectUrl": null,
+      "monogram": "I"
+    },
+    {
+      "id": "slashy",
+      "displayName": "Slashy",
+      "sourceHint": "slashy.com",
+      "status": "planned",
+      "identity": "unverified",
+      "logoAsset": "/assets/vendors/slashy.png",
+      "projectUrl": null,
+      "monogram": "S"
+    },
+    {
+      "id": "iris",
+      "displayName": "Iris",
+      "sourceHint": "iris-agent.co",
+      "status": "planned",
+      "identity": "unverified",
+      "logoAsset": "/assets/vendors/iris.png",
+      "projectUrl": null,
+      "monogram": "I"
+    },
+    {
+      "id": "cadu",
+      "displayName": "Cadu",
+      "sourceHint": "cadu.bot",
+      "status": "planned",
+      "identity": "unverified",
+      "logoAsset": "/assets/vendors/cadu.svg",
+      "projectUrl": null,
+      "monogram": "C"
+    },
+    {
+      "id": "openmuse-copilotkit",
+      "displayName": "OpenMuse · CopilotKit",
+      "sourceHint": "copilotkit.ai",
+      "status": "planned",
+      "identity": "verified",
+      "logoAsset": "/assets/vendors/openmuse-copilotkit.png",
+      "projectUrl": "https://github.com/CopilotKit/openmuse",
+      "monogram": "O·"
+    },
+    {
+      "id": "opendots-copilotkit",
+      "displayName": "OpenDots · CopilotKit",
+      "sourceHint": "copilotkit.ai",
+      "status": "planned",
+      "identity": "verified",
+      "logoAsset": "/assets/vendors/opendots-copilotkit.svg",
+      "projectUrl": "https://github.com/CopilotKit/OpenDots",
+      "monogram": "O·"
+    },
+    {
+      "id": "gemini-spark",
+      "displayName": "Gemini Spark",
+      "sourceHint": "gemini.google",
+      "status": "planned",
+      "identity": "unverified",
+      "logoAsset": "/assets/vendors/gemini-spark.png",
+      "projectUrl": null,
+      "monogram": "GS"
+    },
+    {
+      "id": "vellum-assistant",
+      "displayName": "Vellum Assistant",
+      "sourceHint": "vellum.ai",
+      "status": "planned",
+      "identity": "unverified",
+      "logoAsset": "/assets/vendors/vellum-assistant.svg",
+      "projectUrl": "https://github.com/vellum-ai/vellum-assistant",
+      "monogram": "VA"
+    },
+    {
+      "id": "poke",
+      "displayName": "Poke",
+      "sourceHint": "poke.com",
+      "status": "planned",
+      "identity": "unverified",
+      "logoAsset": "/assets/vendors/poke.png",
+      "projectUrl": null,
+      "monogram": "P"
+    },
+    {
+      "id": "flip",
+      "displayName": "Flip",
+      "sourceHint": "fliptexts.com",
+      "status": "planned",
+      "identity": "unverified",
+      "logoAsset": "/assets/vendors/flip.png",
+      "projectUrl": null,
+      "monogram": "F"
+    },
+    {
+      "id": "gawkbot",
+      "displayName": "Gawkbot",
+      "sourceHint": "gawk.bot",
+      "status": "planned",
+      "identity": "unverified",
+      "logoAsset": "/assets/vendors/gawkbot.png",
+      "projectUrl": null,
+      "monogram": "G"
+    },
+    {
+      "id": "happy",
+      "displayName": "Happy",
+      "sourceHint": "happy.engineering",
+      "status": "planned",
+      "identity": "unverified",
+      "logoAsset": "/assets/vendors/happy.png",
+      "projectUrl": null,
+      "monogram": "H"
+    },
+    {
+      "id": "abacusai-bot",
+      "displayName": "AbacusAI Bot",
+      "sourceHint": "bot.abacus.ai",
+      "status": "planned",
+      "identity": "verified",
+      "logoAsset": "/assets/vendors/abacusai-bot.png",
+      "projectUrl": "https://github.com/abacusai/abacusai-bot",
+      "monogram": "AB"
+    },
+    {
+      "id": "hivekeep",
+      "displayName": "Hivekeep",
+      "sourceHint": "hivekeep.app",
+      "status": "planned",
+      "identity": "verified",
+      "logoAsset": "/assets/vendors/hivekeep.png",
+      "projectUrl": "https://github.com/MarlBurroW/hivekeep",
+      "monogram": "H"
+    },
+    {
+      "id": "deepseek-feizhululu",
+      "displayName": "DeepSeek Bot",
+      "sourceHint": "FeiZhuLuLu",
+      "status": "planned",
+      "identity": "verified",
+      "logoAsset": "/assets/vendors/deepseek-feizhululu.svg",
+      "projectUrl": "https://github.com/Fei2411/DeepSeek-Bot",
+      "monogram": "DB",
+      "developer": "FeiZhuLulu / Fei2411"
+    },
+    {
+      "id": "opendots-anil",
+      "displayName": "Open Dots · Anil",
+      "sourceHint": "Anil-matcha",
+      "status": "planned",
+      "identity": "verified",
+      "logoAsset": "/assets/vendors/opendots-anil.ico",
+      "projectUrl": "https://github.com/Anil-matcha/open-dots",
+      "monogram": "OD"
+    },
+    {
+      "id": "invisible-dots",
+      "displayName": "Invisible Dots",
+      "sourceHint": "github.com",
+      "status": "planned",
+      "identity": "verified",
+      "logoAsset": "/assets/vendors/invisible-dots.png",
+      "projectUrl": "https://github.com/feder-cr/invisible_dots",
+      "monogram": "ID"
+    },
+    {
+      "id": "openbot-copilotkit",
+      "displayName": "OpenBot · CopilotKit",
+      "sourceHint": "copilotkit.ai",
+      "status": "planned",
+      "identity": "verified",
+      "logoAsset": "/assets/vendors/openbot-copilotkit.png",
+      "projectUrl": "https://github.com/CopilotKit/OpenBot",
+      "monogram": "O·"
+    }
+  ]
+}

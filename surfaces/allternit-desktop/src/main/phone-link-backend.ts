@@ -112,7 +112,11 @@ export class PhoneLinkBackend implements UsbPhoneBackend {
         if (!res.ok) return;
         const ids = (res.value?.apps ?? []).map((app) => app.package ?? app.bundle_id ?? '').filter(Boolean);
         if (ids.length === 0) return;
-        const found = catalogPhoneApps(ids, phone.platform);
+        // Keep what the Connections wizard last saw (rememberAppSignIn).
+        const found = catalogPhoneApps(ids, phone.platform).map((app) => {
+          const prior = (phone.apps ?? []).find((had) => had.vendor === app.vendor);
+          return prior && prior.signedIn !== null ? { ...app, signedIn: prior.signedIn } : app;
+        });
         const next =
           phone.platform === 'android'
             ? found
@@ -247,6 +251,28 @@ export class PhoneLinkBackend implements UsbPhoneBackend {
     return this.deps.phones().find((p) => serial === LINK_SERIAL_PREFIX + p.deviceId) ?? null;
   }
 
+  /** The phone's latest health (Connections wizard), or null when it hasn't been checked. */
+  healthOf(deviceId: string): PhoneLinkHealth | null {
+    return this.deps.health?.health(deviceId) ?? null;
+  }
+
+  /**
+   * Save what the Connections wizard saw (phone-app-signin.ts) into the
+   * phone's cached app list, so phone-link:devices reports it. An app that
+   * was just opened is installed, so it is added when the list lacked it.
+   */
+  rememberAppSignIn(deviceId: string, appId: string, signedIn: boolean | null): void {
+    const save = this.deps.saveApps;
+    const phone = this.deps.phones().find((p) => p.deviceId === deviceId);
+    if (!save || !phone) return;
+    const apps = phone.apps ?? [];
+    const had = apps.some((app) => app.vendor === appId);
+    const next = had
+      ? apps.map((app) => (app.vendor === appId ? { ...app, signedIn } : app))
+      : [...apps, ...nameCatalogApps([{ vendor: appId, signedIn }])];
+    save(phone, next);
+  }
+
   /** The phone's current "ip:port" (LAN, or a mesh-proxy loopback), for the iPhone live screen's /video socket. */
   async hostFor(serial: string): Promise<string | null> {
     const phone = this.linkedPhone(serial);
@@ -275,7 +301,7 @@ export class PhoneLinkBackend implements UsbPhoneBackend {
         return fail('device_offline', `Can't reach ${phone.name ?? 'the phone'} at ${host}. Check the phone is on the same Wi-Fi as this computer.`);
       }
       if (error.needsRepair) {
-        return fail('pairing_invalid', 'Pair this phone again in Settings › Subscriptions › Linked phones.');
+        return fail('pairing_invalid', 'Pair this phone again in Settings › Connections › Setup.');
       }
       // The helpers refuse screen work while the phone is locked; confirm before blaming the lane.
       const locked = await this.deps

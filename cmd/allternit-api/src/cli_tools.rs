@@ -60,7 +60,20 @@ pub(crate) struct ToolInfo {
 fn harness_key(provider_id: &str) -> String {
     match provider_id {
         "antigravity" => "agy".to_string(),
+        // Runtime ids are the binary names; the Factory manifest keys the tools.
+        "cursor-agent" => "cursor".to_string(),
+        "qodercli" => "qoder".to_string(),
         other => other.strip_suffix("-cli").unwrap_or(other).to_string(),
+    }
+}
+
+/// Extra binaries a manifest tool's package installs beside its `verifyCmd`
+/// program (npm @qoder-ai/qodercli ships bins `qoder` and `qodercli`; the
+/// runtime runs `qodercli`).
+fn also_installs(key: &str) -> &'static [&'static str] {
+    match key {
+        "qoder" => &["qodercli"],
+        _ => &[],
     }
 }
 
@@ -83,7 +96,7 @@ fn tool_info_in(manifest: &Value, provider_id: &str, binary: &str) -> Option<Too
         .and_then(Value::as_str)
         .and_then(|cmd| cmd.split_whitespace().next())
         .unwrap_or(&key);
-    if verify_bin != binary {
+    if verify_bin != binary && !also_installs(&key).iter().any(|b| *b == binary) {
         return None;
     }
     let license = tool
@@ -548,5 +561,17 @@ mod tests {
         // A provider whose binary differs from the manifest's is not offered.
         assert!(tool_info("claude-cli", "not-claude").is_none());
         assert!(tool_info("unknown-tool", "x").is_none());
+    }
+
+    #[test]
+    fn runtime_ids_resolve_to_manifest_keys() {
+        assert_eq!(harness_key("cursor-agent"), "cursor");
+        assert_eq!(harness_key("qodercli"), "qoder");
+        let cursor = tool_info("cursor-agent", "cursor-agent").expect("cursor in manifest");
+        assert_eq!(cursor.key, "cursor");
+        // The qoder package installs `qodercli` beside its `qoder` verify bin.
+        let qoder = tool_info("qodercli", "qodercli").expect("qoder in manifest");
+        assert_eq!(qoder.key, "qoder");
+        assert!(tool_info("qodercli", "not-qoder").is_none());
     }
 }

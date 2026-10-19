@@ -7,13 +7,15 @@ Connected subscriptions let the workspace use supported capabilities from your o
 
 For bot login assignment, gateway sign-in, and the account status reference, see the [Subscriptions surface guide](/surfaces/subscriptions).
 
+Subscriptions are managed in **Settings → Connections**, which replaced Settings → Subscriptions. See [Connections](/guides/connections) for its tabs, the order bots use to reach an app, and the connect wizard.
+
 ## Connect with your phone first
 
-The quickest way to connect is **Settings → Subscriptions → Link a phone**: your bots then use the apps already signed in on your phone, with no password and no Sessions computer. See [Phone Link](/guides/phone-link). Settings → Subscriptions › **Apps and channels** lists one row per app with how bots reach it (on your phone, a desktop app, or a browser sign-in) and which route they use. A browser sign-in, below, is the fallback for an app that isn't on your phone.
+The quickest way to connect is **Settings → Connections › Setup › Link a phone**: your bots then use the apps already signed in on your phone, with no password and no Sessions computer. See [Phone Link](/guides/phone-link). Settings → Connections › **Apps** lists one row per app with how bots reach it (on your phone, a desktop app, or a browser sign-in) and which route they use. A browser sign-in, below, is the fallback for an app that isn't on your phone.
 
 ## Which computer runs your subscriptions
 
-Allternit Desktop runs its own subscription gateway. **Settings → Subscriptions › Runs on** shows which computer answers:
+Allternit Desktop runs its own subscription gateway. **Settings → Connections › Setup › Runs on** shows which computer answers:
 
 - **A Sessions computer, when one is bound and running.** It answers first, for every route.
 - **This computer, otherwise.** Phone and desktop-app connections work from the computer you use Allternit Desktop on, with no Sessions computer. **Add a Sessions computer** binds an always-on computer that keeps your subscriptions working while this one is off. When a bound Sessions computer is stopped, the page names it and this computer answers until it runs again.
@@ -33,7 +35,7 @@ Turning the switch off closes every running browser sign-in on this computer. A 
 
 ## Connect an account in a browser
 
-1. Open Settings → Subscriptions (**Sign in with a browser**), the subscription connection flow in the model picker, or **Use your subscription** in [first-run setup](/guides/first-run-setup).
+1. Open Settings → Connections (**Sign in with a browser**), the subscription connection flow in the model picker, or **Use your subscription** in [first-run setup](/guides/first-run-setup).
 2. Make sure a Sessions computer is running, or that **Browser sign-ins on this computer** is on.
 3. Choose a supported provider and open its sign-in window. Sign in yourself: in the window that opens on this computer, or in the live computer view of your Sessions computer.
 4. Wait for sign-in detection, or use the sign-in check offered by an older gateway.
@@ -108,11 +110,11 @@ Your subscriptions run in their own browser on your Sessions computer. If a vend
 
 A slower-than-usual service, a vendor outage, or a change to a vendor's page shows as a quieter notice without **Fix**. These clear on their own.
 
-**×** hides the notice until that subscription's state changes, or for 24 hours. **Settings → Subscriptions** always shows each account's state and its **Log in** or **Finish the check** button.
+**×** hides the notice until that subscription's state changes, or for 24 hours. **Settings → Connections** always shows each account's state and its **Log in** or **Finish the check** button.
 
 ## Coding tools on any computer
 
-Settings → Subscriptions → Coding tools sets up CLI brains (Claude Code, Codex, Grok and others) on the computer it names: this Mac, or the computer your phone and the web are using, such as your always-on Allternit cloud computer. Anything set up on a cloud computer keeps working while your own computer is closed.
+Settings → Connections › Coding tools sets up CLI brains (Claude Code, Codex, Grok and others) on the computer it names: this Mac, or the computer your phone and the web are using, such as your always-on Allternit cloud computer. Anything set up on a cloud computer keeps working while your own computer is closed.
 
 1. **Install.** Tap Install. Some tools (Claude Code, for example) come with their maker's own terms, and you accept those first. Allternit installs a pinned, tested version and shows its progress. If the computer has no Node.js, Allternit installs a private copy for these tools only.
 2. **Sign in.** Tap Sign in. Allternit shows a link, and sometimes a short code. Open the link on any device (your phone works) and sign in with your own account.
@@ -137,6 +139,6 @@ For observation and control, see [Computers and ACI](/guides/computers-and-apps)
 
 ## Gemini and Copilot preview
 
-Gemini and Copilot are carried vendors with thread looks and connection setup in **Settings → Subscriptions**. Choose Add account, select the provider, read the provider-terms warning, and sign in yourself on the Sessions computer. On the phone, open Settings → Subscriptions and use the live computer sign-in view.
+Gemini and Copilot are carried vendors with thread looks and connection setup in **Settings → Connections**. Choose Add account, select the provider, read the provider-terms warning, and sign in yourself on the Sessions computer. On the phone, open Settings → Connections and use the live computer sign-in view.
 
 These connections use the `ui_bridge` lane and are **best effort**. Gemini and Copilot are new and **not yet verified against the live services**. A look, seeded vendor entry, or signed-in account does not prove that every provider capability works. Provider page changes can interrupt a connection. The terms warning describes account and provider-terms risk; acknowledging it does not grant permission from the provider or remove the human-initiation requirement.

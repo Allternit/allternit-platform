@@ -85,6 +85,7 @@
               "guides/bot-avatars",
               "guides/bot-home-screen",
               "guides/whatsapp-business",
+              "guides/connections",
               "guides/subscriptions",
               "guides/lane-status",
               "guides/always-on-bots",
@@ -795,6 +796,7 @@
             "pages": [
               "api/agent-chat",
               "api/subscription-gateway",
+              "api/connections",
               "api/conversations",
               "api/artifacts",
               "api/artifacts-v2",

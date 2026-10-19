@@ -11,7 +11,7 @@
  * (scripts/verify-phone-app-catalog.mjs re-checks them).
  *
  * `phone.devices` and the Phone Link status report installed catalog apps
- * with their name and category, so Settings → Subscriptions shows one row
+ * with their name and category, so Settings → Connections shows one row
  * per app without a list of its own.
  */
 import catalog from './phone-app-catalog.json' with { type: 'json' };

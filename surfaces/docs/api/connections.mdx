@@ -1,0 +1,144 @@
+---
+title: Connections API and Desktop bridge
+description: The endpoints and Desktop IPC behind Settings → Connections: route telemetry, the gateway catalog, CLI auth status, and the phone-link open-app / check-app calls.
+---
+
+Settings → Connections ([user guide](/guides/connections)) is built from four sources. This page covers the fields each one returns and the Desktop IPC the connect wizard uses.
+
+| Source | Used for |
+| --- | --- |
+| `GET /api/v1/subscriptions/gateway/v1/routes` | Each app's ways in, their order, the pinned way, and the drawer numbers. |
+| `GET /v1/gateway/catalog` | Which vendors and bot projects exist, their names, logos and connect profiles. |
+| `GET /api/v1/providers/auth/status?kind=cli` | The Coding tools tab. |
+| `window.allternit.phoneLink.openApp` / `checkApp` | The wizard's "Sign in on your phone" and "Check" steps (Allternit Desktop). |
+
+## Route telemetry: GET /v1/routes
+
+`GET /api/v1/subscriptions/gateway/v1/routes` is the route router view described in [Subscription gateway › Route router](/api/subscription-gateway#route-router). Each route row can carry a `telemetry` object:
+
+```json
+{
+  "route": "iphone-app-ictrl",
+  "eligible": false,
+  "signedIn": true,
+  "online": true,
+  "contract": { "passed": [], "failed": ["chat.start_continue"] },
+  "telemetry": {
+    "lastOkAt": "2026-10-18T09:12:44.000Z",
+    "lastUsedAt": "2026-10-18T09:12:44.000Z",
+    "latencyMs": 4210,
+    "successRate7d": 0.92,
+    "tasks7d": 25,
+    "reliability": "best_effort"
+  }
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `lastOkAt` | When a task turn last finished (`success` or `partial`) or a lane probe last passed on this route. `null` when neither has happened in the last 7 days. |
+| `lastUsedAt` | When a task turn or lane probe last ran on this route, whatever the result. `null` when none ran in the last 7 days. |
+| `latencyMs` | Median time to a reply over the last 7 days: task turns when there are any, otherwise lane probes. `null` with no data. |
+| `successRate7d` | Finished task turns divided by all task turns in the last 7 days, from 0 to 1. `null` when there were no turns. |
+| `tasks7d` | Task turns in the last 7 days. `0` when there were none. |
+| `reliability` | How the route reads the app: `exact` (its own written adapter), `structured` (a generic accessibility reader), or `best_effort` (generic screen reading, such as a linked phone with no written adapter for the app, or the USB Agent). Absent when nothing serves the route. |
+
+The numbers are computed when the request is read, from the gateway's `task_attempts` and `canary_runs` tables, for the adapters that implement the route. Nothing is estimated: a route with no rows behind it gets `null`s and `tasks7d: 0`. `telemetry` is left out entirely when nothing serves the route (no adapter and no linked phone), so the UI never shows a row of zeros for a way that doesn't exist.
+
+"Used first" in the UI is the vendor's `boundRoute`, and "Pin" is `PUT /v1/routes/:vendor/override` with `{ "route": "<id>" }` (clear it with `{ "route": null }`). A pin must be eligible, otherwise `400 route_not_eligible`.
+
+## Gateway catalog: GET /v1/gateway/catalog
+
+Returns the vendor and bot-project catalog that Bots & channels and the app rows are built from, from `cmd/allternit-api/assets/gateway-catalog.json` (the file's only copy).
+
+Two servers answer it from that one file. On the user's computer, allternit-api answers `GET /api/v1/gateway/catalog`. On the web, cloud-api answers the same path itself and does not relay it, so ai.allternit.com and the PWA get the current catalog even when the paired computer runs an older runtime.
+
+Response:
+
+```json
+{
+  "packs": [
+    {
+      "id": "google",
+      "displayName": "Gemini",
+      "legalName": "Google LLC",
+      "agentNoun": "agent",
+      "logoAsset": "/assets/vendors/gemini.svg",
+      "monogram": "G",
+      "modes": ["linked"],
+      "recommendedLane": "browser",
+      "profiles": [
+        {
+          "id": "gemini-browser",
+          "label": "Sign in to Gemini",
+          "authType": "browser_session",
+          "lane": "browser",
+          "wireLane": "ui_bridge",
+          "adapterId": "gemini-subscription",
+          "guarantee": "best_effort",
+          "recommended": true,
+          "loginUrl": "https://gemini.google.com/app",
+          "scopes": ["session"],
+          "permissionDescription": ["Chat with Gemini as you", "Read the replies in your Gemini conversations"],
+          "requiresUserOwnedSubscription": true
+        }
+      ],
+      "permissions": { "read": ["chats"], "send": ["messages"], "control": [], "sync": ["transcripts"], "unavailable": [] }
+    }
+  ],
+  "botProjects": [
+    { "id": "xai-grok-bot", "displayName": "Grok Bot", "sourceHint": "x.ai", "status": "planned", "identity": "unverified", "logoAsset": "/assets/vendors/grok-bot.png", "projectUrl": null, "monogram": "GB" }
+  ]
+}
+```
+
+`packs` are the vendors a person can connect, with one `profiles` entry per way to connect. `botProjects` are third-party bot projects Allternit tracks; `status` and `identity` say how far each one is (a `planned`, `unverified` project is listed but not connectable). The catalog is data: add a vendor by editing the JSON, not the UI.
+
+## Coding tools: GET /api/v1/providers/auth/status?kind=cli
+
+The Coding tools tab lists only CLI brains. `kind=cli` limits [`GET /api/v1/providers/auth/status`](/api/providers) to CLI rows; each row has its `status` (`not_installed` when the binary isn't on the computer) and an `install` object `{available, requiresTerms, license, termsUrl, pin}`. Local models are listed under Settings → Models and API-key providers under Settings → API Keys, so they are not in this response.
+
+## Desktop IPC: phone-link:open-app and phone-link:check-app
+
+Allternit Desktop exposes two calls on `window.allternit.phoneLink` for the connect wizard. Both take the linked phone's `deviceId` (from `phoneLink.devices()`) and the app's catalog id (`id` in `surfaces/allternit-desktop/src/main/phone-app-catalog.json`, such as `chatgpt` or `slack`). On web, the phone layout and the PWA, and on older Desktop builds, the functions are absent; the wizard checks for them first.
+
+```ts
+interface PhoneLinkAppResult {
+  ok: boolean;
+  signedIn: boolean | null;          // null = the screen didn't show either way
+  account?: string | null;           // an email or @handle the app plainly shows
+  error?: { code: string; message: string; retryable: boolean };
+}
+
+window.allternit.phoneLink.openApp({ deviceId, app }): Promise<PhoneLinkAppResult>;
+window.allternit.phoneLink.checkApp({ deviceId, app }): Promise<PhoneLinkAppResult>;
+```
+
+- **`openApp`** (IPC `phone-link:open-app`) opens the app on the phone so the person can sign in there. It maps the catalog id to the iPhone bundle ids (`ios`) or Android packages (`android`) and launches through the same Phone Link lane as the `phone.open_app` bot tool (iCTRL `launch_app`). It always answers `signedIn: null`.
+- **`checkApp`** (IPC `phone-link:check-app`) opens or foregrounds the app, waits for it to draw, reads its screen through the same path as `phone.screen_text` (falling back to `phone.read_ui`), and decides:
+  - `false` when a sign-in screen is showing: a whole label such as "Sign in", "Log in", "Sign up", "Create account" or "Continue with Google". This wins over everything else, because some apps show their main screen and a "Log in" button while signed out.
+  - `true` when the app's main screen is showing: for the AI chat apps (catalog category `AI chat`), the chat composer ("Message ChatGPT", "Ask anything", "New chat"); for other apps, main-screen labels for their category (for example "Inbox" for email, "Direct messages" for chat apps), or a "Sign out" / "Log out" control.
+  - `null` otherwise. It looks a second time before answering `null`.
+
+  `account` is an email address or an `@handle` that is shown on the screen, only when `signedIn` is not `false`; otherwise `null`. The result is saved on the phone's cached app list, so `phoneLink.devices()` reports the app's `signedIn` until the next check.
+
+Both calls are read-only on the phone beyond opening the app: they never type, never tap a sign-in button and never read a password field. The code is in `surfaces/allternit-desktop/src/main/phone-app-signin.ts`.
+
+| `error.code` | When | `retryable` |
+| --- | --- | --- |
+| `invalid_args` | `deviceId` or `app` missing. | no |
+| `device_not_found` | The phone isn't linked to this computer. | no |
+| `unknown_app` | The id isn't in the catalog, or the app has no build for this phone's platform. | no |
+| `not_installed` | The app isn't installed on the phone. | no |
+| `device_locked` | The phone is locked ("Unlock your phone."). | yes |
+| `device_offline` | The phone doesn't answer at its saved address. | yes |
+| `pairing_invalid` | The phone no longer accepts this computer's key. Pair it again in Settings → Connections › Setup. | no |
+| `helper_not_responding`, `developer_image_remount_required`, `signature_renewal_required` | The phone's health state, with the same wording as Settings → Connections › Setup. See [Phone Link › Health](/guides/phone-link). | per state |
+| `phone_failed` | The phone answered with an error. | yes |
+
+## Related
+
+- [Connections](/guides/connections)
+- [Subscription gateway](/api/subscription-gateway)
+- [Providers](/api/providers)
+- [Phone Link](/guides/phone-link)

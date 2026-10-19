@@ -214,7 +214,7 @@ describe('PhoneLinkBackend error mapping', () => {
     expect(await b.call('phone.tap', 'link:dev-1', { x: 1, y: 1 })).toEqual({
       ok: false,
       error: 'pairing_invalid',
-      message: 'Pair this phone again in Settings › Subscriptions › Linked phones.',
+      message: 'Pair this phone again in Settings › Connections › Setup.',
     });
   });
 

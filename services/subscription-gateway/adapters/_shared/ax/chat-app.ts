@@ -147,6 +147,8 @@ const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(
 
 export class AxChatAppProvider extends BaseAaiProvider {
   readonly adapterId: string;
+  /** GET /v1/routes reliability label: the generic AX chat-app reader, not a per-app adapter. */
+  readonly routeReliability = "structured" as const;
   private ctxs = new Map<string, Ctx>();
   private n = 0;
   private halted: AAIError | undefined;

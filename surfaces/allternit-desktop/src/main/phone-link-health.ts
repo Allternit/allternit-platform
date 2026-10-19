@@ -1,6 +1,6 @@
 /**
  * Phone Link: per-phone health. A linked phone is only useful to bots when it
- * actually answers, so `phone.devices` and Settings → Subscriptions › Linked phones show
+ * actually answers, so `phone.devices` and Settings → Connections › Setup show
  * one of a small set of states, classified from evidence only — never guessed.
  *
  *   HEALTHY                              whoami matches + a sealed call works
@@ -113,7 +113,7 @@ export function classifyHealth(ev: HealthEvidence, now: number): PhoneLinkHealth
       ...base,
       state: 'PAIRING_INVALID',
       recovery: 'manual',
-      action: 'Pair this phone again in Settings › Subscriptions › Linked phones.',
+      action: 'Pair this phone again in Settings › Connections › Setup.',
       detail: 'The phone no longer accepts this computer\'s key.',
     };
   }

@@ -1286,21 +1286,71 @@ fn auth_status_live_from_row(row: &ProviderRow) -> ProviderAuthStatusRow {
     }
 }
 
+/// `?kind=cli|api|local` on `GET /providers/auth/status`: only rows of that
+/// `details.provider_type` (`cli` = `subprocess`). Absent = every row.
+#[derive(Debug, Default, Deserialize)]
+struct AuthStatusQuery {
+    kind: Option<String>,
+}
+
+/// The `details.provider_type` a `kind` selects; `None` for an unknown kind.
+fn provider_type_for_kind(kind: &str) -> Option<&'static str> {
+    match kind {
+        "cli" => Some("subprocess"),
+        "api" => Some("api"),
+        "local" => Some("local"),
+        _ => None,
+    }
+}
+
+fn row_provider_type(row: &ProviderAuthStatusRow) -> Option<&str> {
+    row.details.as_ref()?.get("provider_type")?.as_str()
+}
+
+/// Keep only the rows of one provider type (no filter when `want` is None).
+fn filter_by_provider_type(rows: Vec<ProviderAuthStatusRow>, want: Option<&str>) -> Vec<ProviderAuthStatusRow> {
+    match want {
+        Some(t) => rows.into_iter().filter(|r| row_provider_type(r) == Some(t)).collect(),
+        None => rows,
+    }
+}
+
 async fn list_provider_auth_status(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
+    axum::extract::Query(query): axum::extract::Query<AuthStatusQuery>,
 ) -> Response {
     let _user = match get_user(&headers) {
         Some(u) => u,
         None => return unauthorized(),
     };
+    let want: Option<&'static str> = match query.kind.as_deref() {
+        None | Some("") => None,
+        Some(k) => match provider_type_for_kind(k) {
+            Some(t) => Some(t),
+            None => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({ "error": "invalid_kind", "kind": k, "allowed": ["cli", "api", "local"] })),
+                )
+                    .into_response()
+            }
+        },
+    };
+    let cli_only = want == Some("subprocess");
 
     // Prefer live Gizzi auth metadata; fall back to the static merge if either
-    // Gizzi call fails so the auth-status panel never goes blank.
-    match (
-        crate::gizzi_provider_auth::discover_providers().await,
-        crate::gizzi_provider_auth::provider_auth_methods().await,
-    ) {
+    // Gizzi call fails so the auth-status panel never goes blank. With
+    // kind=cli the auth-methods call is skipped (its payload only gates this
+    // branch) and the ~300 catalog rows are never built: only the payload's
+    // `connected` list and its subprocess rows feed the CLI rows, so their
+    // authenticated state matches the unfiltered response.
+    let auth_methods = if cli_only {
+        Ok(serde_json::Value::Null)
+    } else {
+        crate::gizzi_provider_auth::provider_auth_methods().await
+    };
+    match (crate::gizzi_provider_auth::discover_providers().await, auth_methods) {
         (Ok(providers_payload), Ok(_auth_methods_payload)) => {
             let connected = parse_connected(&providers_payload);
             let mut providers: Vec<ProviderAuthStatusRow> = providers_payload
@@ -1308,22 +1358,25 @@ async fn list_provider_auth_status(
                 .and_then(|value| value.as_array())
                 .into_iter()
                 .flatten()
+                .filter(|provider| !cli_only || is_gizzi_subprocess(provider))
                 .filter_map(|provider| auth_status_from_gizzi_provider(provider, &connected))
                 .collect();
             // Gizzi's catalog is often unauthenticated cloud rows. Union the
             // CLIs actually on PATH and the local brains on this machine so
             // Connect can default to a CLI runtime and still list Ollama.
             let mut extra_rows = subprocess_provider_rows(&connected);
-            extra_rows.push(ollama_provider_row(state.config.ollama_url()));
-            extra_rows.push(ProviderRow {
-                id: "allternit-sidecar".to_string(),
-                name: "Sidecar".to_string(),
-                provider_type: "local".to_string(),
-                base_url: None,
-                api_key_set: false,
-                models: vec![],
-                status: "ready".to_string(),
-            });
+            if !cli_only {
+                extra_rows.push(ollama_provider_row(state.config.ollama_url()));
+                extra_rows.push(ProviderRow {
+                    id: "allternit-sidecar".to_string(),
+                    name: "Sidecar".to_string(),
+                    provider_type: "local".to_string(),
+                    base_url: None,
+                    api_key_set: false,
+                    models: vec![],
+                    status: "ready".to_string(),
+                });
+            }
             for row in extra_rows {
                 let live = auth_status_live_from_row(&row);
                 if let Some(existing) = providers.iter_mut().find(|p| p.provider_id == row.id) {
@@ -1337,6 +1390,7 @@ async fn list_provider_auth_status(
                     providers.push(live);
                 }
             }
+            let providers = filter_by_provider_type(providers, want);
             return Json(json!({ "providers": with_install(providers) })).into_response();
         }
         (discover_result, auth_result) => {
@@ -1388,8 +1442,15 @@ async fn list_provider_auth_status(
     ]);
 
     let providers: Vec<ProviderAuthStatusRow> = all.iter().map(auth_status_live_from_row).collect();
+    let providers = filter_by_provider_type(providers, want);
 
     Json(json!({ "providers": with_install(providers) })).into_response()
+}
+
+/// A Gizzi catalog entry that `auth_status_from_gizzi_provider` types as
+/// `subprocess` (kept in step with that function).
+fn is_gizzi_subprocess(provider: &serde_json::Value) -> bool {
+    provider.get("auth_type").and_then(|v| v.as_str()) == Some("subprocess") || provider.get("subprocess_cmd").is_some()
 }
 
 /// GET /providers/:id/quota — plan usage windows (5-hour, weekly, …) for a
@@ -2320,4 +2381,51 @@ async fn search_huggingface(
         .unwrap_or_default();
 
     Json(json!({ "models": results })).into_response()
+}
+
+#[cfg(test)]
+mod auth_status_kind_tests {
+    use super::*;
+
+    fn row(id: &str, provider_type: &str) -> ProviderAuthStatusRow {
+        ProviderAuthStatusRow {
+            provider_id: id.to_string(),
+            status: "ok".to_string(),
+            authenticated: true,
+            auth_required: true,
+            auth_profile_id: None,
+            chat_profile_ids: Vec::new(),
+            details: Some(json!({ "provider_type": provider_type, "model_count": 0 })),
+            install: serde_json::Value::Null,
+        }
+    }
+
+    #[test]
+    fn kind_maps_to_provider_type() {
+        assert_eq!(provider_type_for_kind("cli"), Some("subprocess"));
+        assert_eq!(provider_type_for_kind("api"), Some("api"));
+        assert_eq!(provider_type_for_kind("local"), Some("local"));
+        assert_eq!(provider_type_for_kind("subprocess"), None);
+    }
+
+    #[test]
+    fn filter_keeps_only_the_kind() {
+        let rows = || vec![row("claude", "subprocess"), row("openai", "api"), row("ollama", "local")];
+        let ids = |v: Vec<ProviderAuthStatusRow>| v.into_iter().map(|r| r.provider_id).collect::<Vec<_>>();
+        assert_eq!(ids(filter_by_provider_type(rows(), Some("subprocess"))), vec!["claude"]);
+        assert_eq!(ids(filter_by_provider_type(rows(), Some("local"))), vec!["ollama"]);
+        assert_eq!(ids(filter_by_provider_type(rows(), None)).len(), 3);
+    }
+
+    #[test]
+    fn gizzi_subprocess_detection_matches_row_typing() {
+        let cli = json!({ "id": "x", "auth_type": "subprocess" });
+        let cmd = json!({ "id": "y", "auth_type": "api_key", "subprocess_cmd": "y" });
+        let api = json!({ "id": "z", "auth_type": "api_key" });
+        assert!(is_gizzi_subprocess(&cli) && is_gizzi_subprocess(&cmd) && !is_gizzi_subprocess(&api));
+        for p in [cli, cmd] {
+            let r = auth_status_from_gizzi_provider(&p, &HashSet::new()).unwrap();
+            assert_eq!(row_provider_type(&r), Some("subprocess"));
+        }
+    }
 }

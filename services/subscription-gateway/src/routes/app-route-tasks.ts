@@ -11,7 +11,8 @@
 import type { Task, TaskError } from "@allternit/subscription-fabric-contracts";
 import type { EventKind, EventLog } from "../events/log.js";
 import type { Db } from "../store/db.js";
-import { getActiveThreadMapping, getTask, updateTaskStatus } from "../store/queries.js";
+import { getActiveThreadMapping, getTask, insertAttempt, listAttempts, updateAttempt, updateTaskStatus } from "../store/queries.js";
+import { promptFingerprint } from "../worker/worker.js";
 
 /** Routes whose turns run through an AAI adapter instead of the web worker. */
 export const APP_ROUTES = new Set([
@@ -117,7 +118,7 @@ class ThreadStore {
 export class AppRouteTasks {
   private readonly threads: ThreadStore;
   /** Running turns: task → what cancel needs. */
-  private readonly running = new Map<string, { adapterId: string; contextId: string | null; cancelled: boolean }>();
+  private readonly running = new Map<string, { adapterId: string; contextId: string | null; cancelled: boolean; sent?: boolean }>();
   private readonly inFlight = new Set<Promise<void>>();
 
   constructor(private readonly deps: AppRouteTasksDeps) {
@@ -180,11 +181,13 @@ export class AppRouteTasks {
 
   /** Run the turn in the background; the task row carries the outcome. */
   run(task: Task, pick: AppRoutePick): Promise<void> {
-    const entry = { adapterId: pick.adapterId, contextId: null as string | null, cancelled: false };
+    const entry: { adapterId: string; contextId: string | null; cancelled: boolean; sent?: boolean } = { adapterId: pick.adapterId, contextId: null, cancelled: false };
     this.running.set(task.task_id, entry);
+    const attemptNo = this.startAttempt(task, pick);
     const p: Promise<void> = this.turn(task, pick, entry)
       .catch((e: Error) => this.fail(task, { code: "UNKNOWN", humanMessage: `The turn stopped: ${e.message}` }))
       .finally(() => {
+        this.endAttempt(task.task_id, attemptNo, entry.sent === true);
         this.running.delete(task.task_id);
         this.inFlight.delete(p);
       });
@@ -197,12 +200,57 @@ export class AppRouteTasks {
     while (this.inFlight.size > 0) await Promise.allSettled([...this.inFlight]);
   }
 
+  // The same task_attempts row the web worker writes, so /v1/stats/adapters
+  // and the /v1/routes telemetry see app-route turns. There is no gateway
+  // account behind a phone or desktop-app turn (the app holds the sign-in):
+  // account_id is "app-route:<route>", pool_key "<vendor>:<route>". The
+  // version is "0.0.0", the version the director's lanes report for AAI
+  // adapters. submission_state never enters sent_unconfirmed, so restart
+  // reconcile (web-only) never picks these rows up.
+  private startAttempt(task: Task, pick: AppRoutePick): number {
+    const attemptNo = listAttempts(this.deps.db, task.task_id).length + 1;
+    insertAttempt(this.deps.db, task.task_id, {
+      attempt_no: attemptNo,
+      adapter_id: pick.adapterId,
+      adapter_version: "0.0.0",
+      account_id: `app-route:${pick.route}`,
+      pool_key: `${task.routing.provider ?? "unknown"}:${pick.route}`,
+      submission_state: "not_sent",
+      prompt_fingerprint: promptFingerprint(task),
+      provider_thread_id: null,
+      requested_model_class: null,
+      observed_model: null,
+      started_at: new Date().toISOString(),
+      ended_at: null,
+      outcome: "failed",
+      error: null,
+    });
+    return attemptNo;
+  }
+
+  /** Close the attempt from the task row the turn wrote (completed / cancelled / failed). */
+  private endAttempt(taskId: string, attemptNo: number, sent: boolean): void {
+    try {
+      const t = getTask(this.deps.db, taskId);
+      const outcome = t?.status === "completed" ? "success" : t?.status === "cancelled" ? "cancelled" : "failed";
+      updateAttempt(this.deps.db, taskId, attemptNo, {
+        ended_at: new Date().toISOString(),
+        outcome,
+        // Sent to the app and the call returned (reply or a typed error): acknowledged.
+        submission_state: outcome === "success" || sent ? "acknowledged" : "not_sent",
+        ...(outcome === "failed" && t?.error ? { error: t.error } : {}),
+      });
+    } catch {
+      // Bookkeeping never breaks a turn.
+    }
+  }
+
   private fail(task: Task, e: { code: string; humanMessage: string; retryable?: boolean }): void {
     if (getTask(this.deps.db, task.task_id)?.status === "cancelled") return;
     this.setStatus(task, "failed", { completedAt: new Date().toISOString(), error: fromAaiError(e), statusDetail: e.humanMessage });
   }
 
-  private async turn(task: Task, pick: AppRoutePick, entry: { contextId: string | null; cancelled: boolean }): Promise<void> {
+  private async turn(task: Task, pick: AppRoutePick, entry: { contextId: string | null; cancelled: boolean; sent?: boolean }): Promise<void> {
     const { host } = this.deps;
     const key = task.thread_id ?? task.task_id;
     const binding = this.binding(pick.adapterId, key);
@@ -253,6 +301,7 @@ export class AppRouteTasks {
       }
     })();
 
+    entry.sent = true;
     const sent = await host.call("agent.context.message", binding, { contextId, text: task.prompt, correlationId: task.task_id });
     done = true;
     await poll;

@@ -77,6 +77,7 @@ import { meshManager } from './mesh-manager.js';
 import { PhoneLinkHealthMonitor } from './phone-link-health.js';
 import { PhoneChannelReader, type ChannelConversation, type ReaderResult, type ScreenRecorder } from './phone-channel-readers.js';
 import type { PhoneLinkDevice, PhoneLinkHandoverResult, PhoneLinkHandoverTarget } from './phone-link-types.js';
+import { checkLinkedApp, openLinkedApp, type PhoneLinkAppResult } from './phone-app-signin.js';
 import { readSecret, writeSecret, deleteSecret } from './secure-store.js';
 import {
   PhoneToolRunner,
@@ -386,9 +387,19 @@ class PhoneService {
     this.iosRecovery.start();
   }
 
-  /** Linked phones with health, for phone-link:devices (Settings → Subscriptions › Linked phones). */
+  /** Linked phones with health, for phone-link:devices (Settings → Connections). */
   linkedDevices(): Promise<PhoneLinkDevice[]> {
     return this.ensureLinkedBackend().linkedDevices();
+  }
+
+  /** phone-link:open-app — open a catalog app on a linked phone for the Connections wizard. */
+  openLinkedApp(opts: unknown): Promise<PhoneLinkAppResult> {
+    return openLinkedApp({ lane: this.ensureLinkedBackend() }, opts);
+  }
+
+  /** phone-link:check-app — read a catalog app's screen on a linked phone and report whether it is signed in. */
+  checkLinkedApp(opts: unknown): Promise<PhoneLinkAppResult> {
+    return checkLinkedApp({ lane: this.ensureLinkedBackend() }, opts);
   }
 
   // ── Pairing handover (phone-link-handover.ts) ──────────────────────────────

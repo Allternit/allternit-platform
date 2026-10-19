@@ -145,7 +145,7 @@ export interface PhoneLinkDevice {
 /** `window.allternit.phoneLink` */
 export interface PhoneLinkAPI {
   status(): Promise<PhoneLinkStatus>;
-  /** Linked phones with per-phone health, for Settings → Subscriptions › Linked phones. */
+  /** Linked phones with per-phone health, for Settings → Connections › Setup. */
   devices(): Promise<PhoneLinkDevice[]>;
   onStatusChanged(handler: (status: PhoneLinkStatus) => void): () => void;
   start(opts: { platform: PhoneLinkPlatform }): Promise<PhoneLinkStatus>;
@@ -159,4 +159,18 @@ export interface PhoneLinkAPI {
   handoverTargets(): Promise<PhoneLinkHandoverTarget[]>;
   /** Give a linked phone's pairing to the Sessions computer. Asks the person to confirm on this computer first. */
   handover(opts: { deviceId: string; computerId: string }): Promise<PhoneLinkHandoverResult>;
+  /** Connections wizard: open a catalog app (phone-app-catalog.json id) on a linked phone so the person can sign in there. */
+  openApp(opts: { deviceId: string; app: string }): Promise<PhoneLinkAppResult>;
+  /** Connections wizard: open the app, read its screen, report whether it is signed in (and as whom, when shown). */
+  checkApp(opts: { deviceId: string; app: string }): Promise<PhoneLinkAppResult>;
+}
+
+/** phone-link:open-app / phone-link:check-app answer (allternit-ai src/lib/phone-link-bridge.ts). */
+export interface PhoneLinkAppResult {
+  ok: boolean;
+  /** null = the screen didn't show either way (always null from open-app). */
+  signedIn: boolean | null;
+  /** An email or @handle the app plainly shows, else null. */
+  account?: string | null;
+  error?: PhoneLinkError;
 }

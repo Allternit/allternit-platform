@@ -103,6 +103,10 @@ export function registerPhoneLinkIpc(handleGuarded: Guarded): PhoneLinkManager {
   });
   handleGuarded('phone-link:status', () => manager.status());
   handleGuarded('phone-link:devices', () => phoneService.linkedDevices());
+  // Connections wizard (Settings → Connections): open a catalog app so the person
+  // signs in on the phone, then read its screen. Never types or taps sign-in.
+  handleGuarded('phone-link:open-app', (_event, opts?: unknown) => phoneService.openLinkedApp(opts));
+  handleGuarded('phone-link:check-app', (_event, opts?: unknown) => phoneService.checkLinkedApp(opts));
   handleGuarded('phone-link:handover-targets', () => phoneService.handoverTargets());
   handleGuarded('phone-link:remove', (_event, deviceId?: unknown) => {
     if (typeof deviceId !== 'string' || !deviceId) throw new Error('deviceId is required');

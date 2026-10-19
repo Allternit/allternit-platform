@@ -264,6 +264,7 @@ export async function boot(deps: BootDeps = {}): Promise<RunningGateway> {
               appVersion: "0.0.0",
               routes: [route],
               online: !p.disabled && !p.error,
+              ...(p.reliability ? { reliability: p.reliability } : {}),
             });
           }
         }

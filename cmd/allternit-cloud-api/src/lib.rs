@@ -104,6 +104,8 @@ pub struct ApiState {
 pub fn create_router(state: Arc<ApiState>) -> Router {
     // Create protected routes with auth middleware
     let protected_routes = Router::new()
+        // Vendor catalog for Settings → Connections (static; not relayed)
+        .route("/api/v1/gateway/catalog", get(routes::gateway_catalog::catalog))
         // Run endpoints (Cowork Runtime)
         .route("/api/v1/runs", post(routes::runs::create_run))
         .route("/api/v1/runs", get(routes::runs::list_runs))

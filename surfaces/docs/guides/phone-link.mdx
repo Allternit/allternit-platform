@@ -9,7 +9,7 @@ description: Link your phone so your bots can use the apps already signed in on 
 
 Phone Link runs in **Allternit Desktop**, because the first setup needs a cable between your phone and your computer. Open it from any of these:
 
-- **Settings → Subscriptions → Link a phone** (the button at the top)
+- **Settings → Connections › Setup › Link a phone** (the button at the top)
 - During first-run setup, at **Your AI**, under **Use the apps on your devices**: pick **Apps on your phone**
 
 On ai.allternit.com, the phone layout and the m.allternit.com app, the same buttons open a screen that tells you to set up from Allternit Desktop. Once the phone is linked, your bots can use it from any of your devices.
@@ -20,7 +20,9 @@ Settings → Computers → Phones keeps the Android cable tools and the USB Agen
 
 ## Which apps show up
 
-Settings → Subscriptions › **Apps and channels** has one row per app, built from what your phones report: each app found on a linked phone, plus each browser sign-in on your Sessions computer. A row says how bots reach that app: **On your phone** (one line per phone, with its state), **In a browser** (your sign-ins), and **Routes** with the one bots use now and a pin.
+Settings → Connections › **Apps** has one row per app, built from what your phones report: each app found on a linked phone, plus each browser sign-in on your Sessions computer. A row says how bots reach that app: **On your phone** (one line per phone, with its state), **In a browser** (your sign-ins), and **Routes** with the one bots use now and a pin.
+
+To sign in to an app on a linked phone, choose **Connect** on its row and pick the phone app: Allternit Desktop opens the app on the phone, you sign in there yourself, and **Check** reads the app's screen to confirm it is signed in. Allternit never types into a sign-in screen or sees your password. See [Connections › Connect a new app](/guides/connections#connect-a-new-app).
 
 Phone Link looks for the apps in Allternit's phone app catalog: the AI apps (ChatGPT, Claude, Gemini, Grok, Kimi, Copilot, Perplexity), Telegram, and the most useful apps that also have a [connector](/guides/connectors), such as Slack, Discord, WhatsApp, Instagram, X, Gmail, Notion, Google Drive, Asana, HubSpot, Shopify and Spotify — about a hundred in all, grouped the way the connector directory groups them. An app you install after setup shows up within about ten minutes on Android. Carrier placeholders don't count: some phones ship an icon for an app (WhatsApp on some Moto phones) that only opens a page to install it. Phone Link 0.3.1 and later skip those, so the app appears once you really install it. On an iPhone, plug it in once (or run setup again) after installing an app: iOS doesn't list installed apps over Wi-Fi.
 
@@ -28,7 +30,7 @@ A linked app means your bots can open and work the app on your phone. A chat wit
 
 Setup shows one step at a time: what to do, why, and a button when the phone can't report the step itself. You can cancel at any point, and closing the window stops a setup that's still running. When it finishes, you see the phone's name, its OS, and each app it found with its icon, marked **Signed in** or **Not signed in** once that's been checked.
 
-In Settings › Subscriptions each linked phone shows the icons of the apps it found and a count such as **17 apps · 1 signed in**. Click the count to see them all, grouped by category. A green dot on an icon means signed in, an amber dot not signed in; no dot means it hasn't been checked yet.
+In Settings › Connections › Setup each linked phone shows the icons of the apps it found and a count such as **17 apps · 1 signed in**. Click the count to see them all, grouped by category. A green dot on an icon means signed in, an amber dot not signed in; no dot means it hasn't been checked yet.
 
 ## Android
 
@@ -67,9 +69,9 @@ Keep the iPhone and the Mac on the same Wi-Fi network (not a guest network that 
 
 A free Apple ID can have only three of its own apps on a phone. Before installing, setup removes older copies of the Allternit helper (from an earlier setup or another Apple ID), so they don't use up that limit. Your other apps are never touched.
 
-**See your iPhone's screen.** Click **Open** next to the iPhone in Settings › Subscriptions or Computers › Phones, or pick it under **Connected phones** in the rail. The Allternit phone frame shows the iPhone's screen as live video, at up to 30 frames a second. You can tap, swipe and type in it, and so can your bots. iOS asks once each time the live screen starts: Allternit opens the screen-broadcast sheet on the iPhone and taps **Start Broadcast** for you. If it can't, the iPhone shows **Start live screen**; tap it, then **Start Broadcast**. A red status pill on the iPhone shows while the live screen runs. Closing the phone frame pauses it, so opening the iPhone again is instant. To end it, tap the red pill on the iPhone. In the frame, Esc goes back (a swipe from the left edge) and Home goes to the Home Screen. Screen off on phone and the apps list are Android-only. Sound from the iPhone's apps plays in Allternit too, and still plays on the iPhone. iOS doesn't let apps capture phone calls or the microphone this way. The speaker button turns the sound on or off.
+**See your iPhone's screen.** Click **Open** next to the iPhone in Settings › Connections › Setup or Computers › Phones, or pick it under **Connected phones** in the rail. The Allternit phone frame shows the iPhone's screen as live video, at up to 30 frames a second. You can tap, swipe and type in it, and so can your bots. iOS asks once each time the live screen starts: Allternit opens the screen-broadcast sheet on the iPhone and taps **Start Broadcast** for you. If it can't, the iPhone shows **Start live screen**; tap it, then **Start Broadcast**. A red status pill on the iPhone shows while the live screen runs. Closing the phone frame pauses it, so opening the iPhone again is instant. To end it, tap the red pill on the iPhone. In the frame, Esc goes back (a swipe from the left edge) and Home goes to the Home Screen. Screen off on phone and the apps list are Android-only. Sound from the iPhone's apps plays in Allternit too, and still plays on the iPhone. iOS doesn't let apps capture phone calls or the microphone this way. The speaker button turns the sound on or off.
 
-**Remove a phone:** Settings › Subscriptions › **⋯** next to the phone › **Remove phone**. Allternit forgets the phone on this computer (its link and pairing key, and on Android the screen connection). The helper app stays on the phone; link it again to set it up fresh.
+**Remove a phone:** Settings › Connections › Setup › **⋯** next to the phone › **Remove phone**. Allternit forgets the phone on this computer (its link and pairing key, and on Android the screen connection). The helper app stays on the phone; link it again to set it up fresh.
 
 If a step stops with an error, Allternit says what happened and offers **Try again** when retrying can help. If you'd rather use hardware, the [Allternit USB Agent](/guides/usb-agent) also works with an iPhone.
 
@@ -97,7 +99,7 @@ Allternit can read and send in some messaging apps on a linked Android phone by 
 
 ## Phone health
 
-Settings → Subscriptions › Linked phones shows each linked phone's state as an **Apps:** pill (for example **Apps: Connected**), the app rows under Apps and channels repeat it per app, and `phone.devices` reports it to bots. On Android, an adb phone's screen connects through wireless debugging, and a linked phone on your mesh also shows its screen through Phone Link's screen service (see [Live screen away from home](#android) and [A phone for your bot](/guides/phone-for-your-bot)). When a phone has both, Settings → Computers → Phones shows it as one row with **Screen: …** and **Apps: …**.
+Settings → Connections › Setup shows each linked phone's state as an **Apps:** pill (for example **Apps: Connected**), the app rows under Apps repeat it per app, and `phone.devices` reports it to bots. On Android, an adb phone's screen connects through wireless debugging, and a linked phone on your mesh also shows its screen through Phone Link's screen service (see [Live screen away from home](#android) and [A phone for your bot](/guides/phone-for-your-bot)). When a phone has both, Settings → Computers → Phones shows it as one row with **Screen: …** and **Apps: …**.
 
 The health states:
 
@@ -105,7 +107,7 @@ The health states:
 |---|---|---|
 | `HEALTHY` | The phone answers and accepts this computer's key. | Nothing. |
 | `DEVICE_LOCKED` | The phone answers but is locked. | Unlock your phone. |
-| `PAIRING_INVALID` | The phone no longer accepts this computer's key (revoked, app reinstalled). | Pair this phone again in Settings › Subscriptions › Linked phones. |
+| `PAIRING_INVALID` | The phone no longer accepts this computer's key (revoked, app reinstalled). | Pair this phone again in Settings › Connections › Setup. |
 | `TRANSPORT_OFFLINE` | Nothing answers at the phone's saved address. Desktop retries on its own. | Usually nothing; on iPhone this can mean the phone restarted. |
 | `HELPER_NOT_RESPONDING` | The phone answers but its helper doesn't complete calls. Desktop retries on its own. | Open the Allternit helper on your phone if it stays stuck. |
 | `DEVELOPER_IMAGE_REMOUNT_REQUIRED` | The iPhone restarted and its developer image needs remounting. | Plug your iPhone into this computer — Allternit remounts and restarts the helper by itself. No Mac at hand: on the iPhone, open iCTRL › Mount without a Mac, then Start Server. |
@@ -127,7 +129,7 @@ If away-from-home setup can't finish (for example, you're not signed in to Allte
 If you have a Sessions computer (an always-on computer that runs your subscriptions), it can use a phone you linked on your Mac, so the phone's apps work while your Mac is off. Your Mac gives the Sessions computer the phone's pairing; you don't set the phone up again, and nothing changes on the phone.
 
 1. Your Sessions computer must be on, with Allternit Desktop open on it.
-2. On your Mac, in Settings → Subscriptions › Linked phones, choose **Use on Sessions computer** for the phone.
+2. On your Mac, in Settings → Connections › Setup, choose **Use on Sessions computer** for the phone.
 3. Your Mac asks you to confirm. Choose **Use on**, followed by your Sessions computer's name.
 
 The phone then shows in the Sessions computer's Linked phones too. Your Mac keeps its pairing.
