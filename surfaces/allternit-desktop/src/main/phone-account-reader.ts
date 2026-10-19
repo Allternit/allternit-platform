@@ -274,7 +274,8 @@ const HANDLE = /^@[A-Za-z0-9_.]{2,30}$/;
 /** The nearest non-empty label after (+1) or before (-1) the anchor element. */
 function besideAnchor(elements: ScreenElement[], anchor: string, dir: 1 | -1): string | null {
   const want = anchor.startsWith('id:') ? anchor.slice(3).toLowerCase() : norm(anchor);
-  const at = elements.findIndex((el) => (anchor.startsWith('id:') ? el.id.toLowerCase() === want : norm(el.label) === want));
+  const idMatch = (id: string) => id.toLowerCase() === want || id.toLowerCase().endsWith(`:id/${want}`);
+  const at = elements.findIndex((el) => (anchor.startsWith('id:') ? idMatch(el.id) : norm(el.label) === want));
   if (at < 0) return null;
   for (let i = at + dir; i >= 0 && i < elements.length; i += dir) {
     const label = clean(elements[i].label).trim();
@@ -292,7 +293,10 @@ export function accountOnScreen(text: string, rules: PhoneAccountSpec['account']
     if ('kind' in rule && rule.kind === 'email') hit = labels.map((l) => EMAIL.exec(l)?.[0] ?? null).find(Boolean) ?? null;
     else if ('kind' in rule) hit = labels.find((l) => HANDLE.test(l)) ?? null;
     else if ('match' in rule) hit = labels.map((l) => rule.match.exec(l)?.[1]?.trim() ?? null).find(Boolean) ?? null;
-    else if ('after' in rule) hit = besideAnchor(screenElements(text), rule.after, 1);
+    else if ('atId' in rule) {
+      const want = rule.atId.toLowerCase();
+      hit = clean(screenElements(text).find((el) => { const id = el.id.toLowerCase(); return id === want || id.endsWith(`:id/${want}`); })?.label ?? '').trim() || null;
+    } else if ('after' in rule) hit = besideAnchor(screenElements(text), rule.after, 1);
     else hit = besideAnchor(screenElements(text), rule.before, -1);
     if (hit) return hit;
   }
@@ -337,7 +341,7 @@ export function screenElements(text: string): ScreenElement[] {
   for (const raw of text.split('\n')) {
     const line = raw.trim();
     if (!line) continue;
-    const xcui = /^([A-Za-z]+),\s*(.*?)\s*\{\{[-\d.]+,\s*[-\d.]+\},\s*\{[-\d.]+,\s*[-\d.]+\}\}\s*$/.exec(line);
+    const xcui = /^([A-Za-z]+),\s*(.*?)\s*\{\{[-\d.]+,\s*[-\d.]+\},\s*\{[-\d.]+,\s*[-\d.]+\}\}(?:,.*)?$/.exec(line);
     if (xcui) {
       const fields = xcui[2];
       const field = (name: string) => new RegExp(`(?:^|, )${name}: '(.*?)'(?=, (?:label|id|identifier|value|placeholderValue): '|,?\\s*$)`).exec(fields)?.[1] ?? '';
@@ -532,6 +536,33 @@ async function readForParse(lane: AccountReaderDeps['lane'], serial: string): Pr
 }
 
 /**
+ * Some apps ignore an accessibility click on an element (LinkedIn's profile
+ * button, 2026-10-19): when the screen is unchanged after the tap, tap once
+ * more where the element's label shows on screen.
+ */
+async function nudgeIfIgnored(
+  lane: AccountReaderDeps['lane'],
+  serial: string,
+  before: ScreenElement[],
+  elementId: string,
+  stopOn: (res: ToolResult) => void,
+  sleep: (ms: number) => Promise<void>,
+): Promise<void> {
+  const label = before.find((el) => el.id === elementId || el.label === elementId)?.label;
+  if (!label) return;
+  await sleep(TAP_SETTLE_MS);
+  const after = await lane.call('phone.read_ui', serial, { visible_only: true, max_elements: 400 });
+  stopOn(after);
+  // The top of the screen: a feed below keeps changing (timestamps, autoplay) even when the tap was ignored.
+  const sig = (els: ScreenElement[]) => els.slice(0, 6).map((el) => `${el.label}|${el.id}`).join('\n');
+  if (!after.ok || sig(screenElements(String(after.text ?? ''))) !== sig(before)) return;
+  const text = await readScreen(lane, serial);
+  stopOn(text);
+  const spot = text.ok ? pickTextTap(String(text.text ?? ''), { tap: [label] }) : null;
+  if (spot) stopOn(await lane.call('phone.tap', serial, { x: spot.x, y: spot.y }));
+}
+
+/**
  * Find and tap one step's element: the element tree first (it has classes,
  * to skip toggles, and ids), then the visible text's position; when neither
  * has it and the step allows, swipe up and look again. True once tapped.
@@ -543,8 +574,11 @@ async function tapStep(
   stopOn: (res: ToolResult) => void,
   sleep: (ms: number) => Promise<void>,
 ): Promise<boolean> {
-  for (let look = 0; look <= (step.scroll ?? 0); look++) {
-    if (look > 0) {
+  // Each swipe is one more look; a required step also gets one late look (a screen still loading, Discord's profile).
+  const looks = (step.scroll ?? 0) + (step.optional ? 1 : 2);
+  for (let look = 0; look < looks; look++) {
+    if (look > (step.scroll ?? 0)) await sleep(SETTLE_MS[1]);
+    else if (look > 0) {
       const swiped = await lane.call('phone.swipe', serial, { direction: 'up' });
       stopOn(swiped);
       if (!swiped.ok) return false;
@@ -552,11 +586,15 @@ async function tapStep(
     }
     const ui = await lane.call('phone.read_ui', serial, { visible_only: true, max_elements: 400 });
     stopOn(ui);
-    const target = ui.ok ? pickTap(screenElements(String(ui.text ?? '')), step) : null;
+    const elements = ui.ok ? screenElements(String(ui.text ?? '')) : [];
+    const target = pickTap(elements, step);
     if (target) {
       const tapped = await lane.call('phone.find_and_tap', serial, { element_id: target.element_id, match: 'exact' });
       stopOn(tapped);
-      if (tapped.ok) return true;
+      if (tapped.ok) {
+        await nudgeIfIgnored(lane, serial, elements, target.element_id, stopOn, sleep);
+        return true;
+      }
     }
     const text = await readScreen(lane, serial);
     stopOn(text);
@@ -601,12 +639,12 @@ async function walkPath(
         const screen = await readForParse(lane, r.serial);
         stopOn(screen);
         if (screen.ok) parsed = mergeParsed(parsed, parseAccountScreen(String(screen.text ?? ''), spec, now()));
-        if (parsed === before || sameParsed(parsed, before)) {
-          // Nothing new: the screen may still be drawing (TikTok's profile takes ~2 s). One more look.
+        // Nothing new: the screen may still be drawing (TikTok's profile ~2 s, LinkedIn's ~5 s). Two more looks.
+        for (let again = 0; again < 2 && sameParsed(parsed, before); again++) {
           await sleep(SETTLE_MS[1]);
-          const again = await readForParse(lane, r.serial);
-          stopOn(again);
-          if (again.ok) parsed = mergeParsed(parsed, parseAccountScreen(String(again.text ?? ''), spec, now()));
+          const more = await readForParse(lane, r.serial);
+          stopOn(more);
+          if (more.ok) parsed = mergeParsed(parsed, parseAccountScreen(String(more.text ?? ''), spec, now()));
         }
         if (step.scroll && screen.ok) {
           const swiped = await lane.call('phone.swipe', r.serial, { direction: 'up' });

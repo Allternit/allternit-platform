@@ -67,6 +67,11 @@ describe('classifySignIn', () => {
     expect(classifySignIn(slack, 'Direct messages\nActivity\n@eoj')).toEqual({ signedIn: true, account: null });
     expect(classifySignIn(catalogApp('discord')!, 'Messages\nAdd Friends')).toEqual({ signedIn: true, account: null });
     expect(classifySignIn(catalogApp('kimi')!, 'Session expired. Please log in again.')).toEqual({ signedIn: false, account: null });
+    // Android 2026-10-19: Facebook's saved-login screen, Telegram's welcome screen.
+    expect(classifySignIn(catalogApp('facebook')!, 'Continue as someone\nLog into another account\nCreate new account')).toEqual({ signedIn: false, account: null });
+    expect(classifySignIn(catalogApp('telegram')!, 'Telegram\nStart Messaging')).toEqual({ signedIn: false, account: null });
+    // Android tree lines end with flags after the bounds.
+    expect(classifySignIn(catalogApp('stripe')!, "Button, label: 'Sign in', id: 'sign-in-button', {{40, 1200}, {640, 90}}, clickable")).toEqual({ signedIn: false, account: null });
     expect(classifySignIn(catalogApp('notion')!, 'Sign out')).toEqual({ signedIn: true, account: null });
   });
 

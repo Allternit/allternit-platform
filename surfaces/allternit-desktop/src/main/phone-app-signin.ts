@@ -61,6 +61,11 @@ const GATE_LABELS: RegExp[] = [
   /^(enter|use) (your )?(email|e-mail|phone number|password)( address)?$/,
   // Kimi iOS when its token lapsed: "Session expired. Please log in again."
   /^(your )?session (has )?expired\b/,
+  // Facebook's saved-login screen, Telegram's welcome screen (Android, 2026-10-19).
+  /^continue as .+$/,
+  /^log into (another|your) account$/,
+  /^create new account$/,
+  /^start messaging$/,
 ];
 
 /** "Sign out" / "Log out": only signed-in apps show these. */
@@ -102,8 +107,8 @@ export function screenLabels(text: string): string[] {
   const out: string[] = [];
   for (const raw of text.split('\n')) {
     let line = raw.trim();
-    // The iPhone runner's XCUI tree: `StaticText, label: 'Usage', id: 'x', {{x, y}, {w, h}}`.
-    const xcui = /^[A-Za-z]+,\s*(.*?)\s*\{\{[-\d.]+,\s*[-\d.]+\},\s*\{[-\d.]+,\s*[-\d.]+\}\}\s*$/.exec(line);
+    // The iPhone runner's XCUI tree: `StaticText, label: 'Usage', id: 'x', {{x, y}, {w, h}}` (Android's helper adds flags after the bounds: `, clickable long-clickable`).
+    const xcui = /^[A-Za-z]+,\s*(.*?)\s*\{\{[-\d.]+,\s*[-\d.]+\},\s*\{[-\d.]+,\s*[-\d.]+\}\}(?:,.*)?$/.exec(line);
     if (xcui) {
       const label = /(?:^|, )label: '(.*?)'(?=, (?:label|id|identifier|value|placeholderValue): '|,?\s*$)/.exec(xcui[1])?.[1];
       if (label) out.push(label.replace(/[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g, '').replace(/[\u00a0\u202f]/g, ' '));
