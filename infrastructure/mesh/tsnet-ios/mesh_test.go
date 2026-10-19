@@ -184,3 +184,46 @@ func TestNoLogUploadsToTailscale(t *testing.T) {
 		t.Fatal("package init must switch tsnet's log uploads off")
 	}
 }
+
+// TestHealthServeStates: Health reports serve=off before ServeLocal, ok while
+// the listener accepts, dead when the listener dies on its own, and off again
+// after a clean StopServe (which must not count as dead).
+func TestHealthServeStates(t *testing.T) {
+	n := serveTestNode(t)
+	if h := n.Health(); h != "state=stopped;ip=;serve=off;warn=" {
+		t.Fatalf("before serve: %q", h)
+	}
+	if err := n.ServeLocal(8200, 8080); err != nil {
+		t.Fatal(err)
+	}
+	if h := n.Health(); h != "state=stopped;ip=;serve=ok;warn=" {
+		t.Fatalf("serving: %q", h)
+	}
+	// The tailnet listener dies underneath the node.
+	currentServeListener(t, n).Close()
+	deadline := time.Now().Add(2 * time.Second)
+	for n.Health() != "state=stopped;ip=;serve=dead;warn=" {
+		if time.Now().After(deadline) {
+			t.Fatalf("listener death not reported: %q", n.Health())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	// StopServe clears it; a clean stop is never reported as dead.
+	n.StopServe()
+	if err := n.ServeLocal(8200, 8080); err != nil {
+		t.Fatal(err)
+	}
+	n.StopServe()
+	time.Sleep(50 * time.Millisecond)
+	if h := n.Health(); h != "state=stopped;ip=;serve=off;warn=" {
+		t.Fatalf("after clean stop: %q", h)
+	}
+}
+
+func TestFormatHealthSortsAndFlattens(t *testing.T) {
+	got := formatHealth("error:a;b\nc", "100.64.0.16", "ok", []string{"no-derp-home", "not-in-map-poll"})
+	want := "state=error:a b c;ip=100.64.0.16;serve=ok;warn=no-derp-home,not-in-map-poll"
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+}

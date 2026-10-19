@@ -129,4 +129,20 @@ class MeshSupervisorTest {
         assertEquals(MeshSupervisor.PROCESS_DEAD, s.state())
         assertNull(s.host())
     }
+
+    @Test fun restartRequestHidesTheOldReportUntilTheRejoin() {
+        val s = newSupervisor()
+        assertFalse("nothing bound: nothing to restart in place", s.onRestartRequested())
+        s.onMeshStarting()
+        s.onMeshProcessBound()
+        s.onReport(MeshReport("running", "100.64.0.16"))
+        assertEquals("100.64.0.16:8200", s.host())
+        assertTrue(s.onRestartRequested())
+        assertEquals("starting", s.state())
+        assertNull(s.host())
+        s.onReport(MeshReport("running", "100.64.0.16"))
+        assertEquals("running", s.state())
+        s.onMeshProcessDied()
+        assertFalse("dead process: re-bind instead", s.onRestartRequested())
+    }
 }

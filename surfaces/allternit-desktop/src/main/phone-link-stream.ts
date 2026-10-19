@@ -24,6 +24,7 @@ import type { Duplex } from 'node:stream';
 import type { RequestEnvelope } from './ictrl-client.js';
 import type { LinkedPhone } from './phone-link-health.js';
 import type { ScrcpySocket } from './phone-scrcpy.js';
+import type { MeshHealFn } from './phone-mesh-heal.js';
 
 export type HelperStreamKind = 'video' | 'control';
 
@@ -286,6 +287,11 @@ export interface HelperHostDeps {
   /** `<100.x>:8200` → `127.0.0.1:<port>` via the mesh-node sidecar (MeshManager.proxyFor). */
   meshProxy: (meshHost: string) => Promise<string>;
   fetchWhoami: (host: string, timeoutMs: number) => Promise<{ device_id?: string } | null>;
+  /**
+   * The phone's mesh route failed: restart its mesh node over LAN/cable
+   * (phone-mesh-heal.ts). Non-null = restarted; the route is retried once.
+   */
+  healMesh?: MeshHealFn;
 }
 
 export const NO_MESH_MESSAGE =
@@ -301,13 +307,23 @@ export const NO_MESH_MESSAGE =
 export async function resolveHelperStreamHost(phone: LinkedPhone, deps: HelperHostDeps): Promise<string> {
   if (!deps.meshEnabled) throw new Error('The Allternit mesh is turned off on this computer (ALLTERNIT_PHONE_LINK_MESH=0), so the live screen needs Wireless debugging.');
   if (!phone.meshHost) throw new Error(NO_MESH_MESSAGE);
-  let proxy: string;
-  try {
-    proxy = await deps.meshProxy(phone.meshHost);
-  } catch (error) {
-    throw new Error(`Couldn't open the Allternit mesh: ${error instanceof Error ? error.message : String(error)}`);
+  const viaMesh = async (meshHost: string, timeoutMs: number) => {
+    let proxy: string;
+    try {
+      proxy = await deps.meshProxy(meshHost);
+    } catch (error) {
+      // This computer's own mesh is down: nothing a phone-side restart fixes.
+      throw new Error(`Couldn't open the Allternit mesh: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    return { proxy, who: await deps.fetchWhoami(proxy, timeoutMs).catch(() => null) };
+  };
+  let { proxy, who } = await viaMesh(phone.meshHost, 5000);
+  if (!who && deps.healMesh) {
+    // The phone's node can look online yet reset every connection (seen after
+    // a Headscale outage); if it answers off the mesh, restart its node and retry once.
+    const healed = await deps.healMesh(phone, 'live-screen mesh route failed').catch(() => null);
+    if (healed) ({ proxy, who } = await viaMesh(healed.meshHost ?? phone.meshHost, 15_000));
   }
-  const who = await deps.fetchWhoami(proxy, 5000).catch(() => null);
   if (!who) throw new Error(`Can't reach ${phone.name || 'the phone'} over the Allternit mesh. Check it is on and online.`);
   if (who.device_id !== phone.deviceId) throw new Error('The mesh address answered as a different phone. Run Phone Link setup again.');
   return proxy;

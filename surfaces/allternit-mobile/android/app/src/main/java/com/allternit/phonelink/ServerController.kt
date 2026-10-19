@@ -232,6 +232,15 @@ object ServerController {
         }
 
         override fun screenService() = shell.status()
+
+        override fun requestMeshRestart(deferred: Boolean): Boolean {
+            if (!initialized || !http.isRunning || settings.meshControlUrl == null) return false
+            if (deferred) {
+                scheduler.schedule({ meshManager.restart() }, 500, TimeUnit.MILLISECONDS)
+                return true
+            }
+            return meshManager.restart()
+        }
     }
 
     // ── Device facts ────────────────────────────────────────────────────────

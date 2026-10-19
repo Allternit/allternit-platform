@@ -41,6 +41,12 @@ interface ServerHooks {
     fun scheduleStop()
     /** Pings the screen service and reports it (blocking, ~1.5 s at most). */
     fun screenService(): ScreenServiceStatus = ScreenServiceStatus(false, "not_set_up", null, null)
+    /**
+     * `mesh_restart`: stop and rejoin the mesh node (same state dir/keys).
+     * [deferred] = do it ~0.5 s from now so a reply sent over the mesh itself
+     * still goes out. False when there is no mesh to restart.
+     */
+    fun requestMeshRestart(deferred: Boolean): Boolean = false
 }
 
 /**
@@ -145,6 +151,7 @@ class RpcDispatcher(
                 JSONObject().put("message", "Waited ${d}s")
             }
             "screen_service" -> screenService()
+            "mesh_restart" -> meshRestart(params)
             "stream_ticket" -> throw RpcException(RpcException.METHOD_NOT_FOUND, "Method not found: the Android server has no /stream", "unsupported")
             else -> throw RpcException(RpcException.METHOD_NOT_FOUND, "Method not found", "unknown_method")
         }
@@ -285,6 +292,38 @@ class RpcDispatcher(
             .put("screen_state", cfg.screenState)
             .put("mesh_host", cfg.meshHost ?: JSONObject.NULL)
             .put("system", system)
+    }
+
+    /**
+     * Stops and rejoins the phone's mesh node, then (unless wait is 0) waits
+     * for it to report `running` with a mesh address. Allternit Desktop calls
+     * it over LAN or the cable when the phone's mesh route resets while the
+     * phone still answers otherwise.
+     */
+    private fun meshRestart(p: JSONObject): JSONObject {
+        val waitS = (p.optDoubleOrNull("wait") ?: 20.0).coerceIn(0.0, 45.0)
+        val before = hooks.config()
+        if (!hooks.requestMeshRestart(deferred = waitS == 0.0)) {
+            throw RpcException(RpcException.SERVER_ERROR,
+                "This phone has no mesh to restart (no mesh control URL provisioned, or the server is stopped).",
+                "mesh_unavailable")
+        }
+        val start = clock()
+        var cfg = hooks.config()
+        if (waitS > 0) {
+            val deadline = start + (waitS * 1000).toLong()
+            while (!(cfg.meshState == "running" && cfg.meshHost != null) && clock() < deadline) {
+                sleep(250)
+                cfg = hooks.config()
+            }
+        }
+        return JSONObject()
+            .put("restarted", true)
+            .put("deferred", waitS == 0.0)
+            .put("mesh_state", cfg.meshState)
+            .put("mesh_host", cfg.meshHost ?: JSONObject.NULL)
+            .put("previous_mesh_host", before.meshHost ?: JSONObject.NULL)
+            .put("waited_ms", clock() - start)
     }
 
     private fun screenService(): JSONObject {

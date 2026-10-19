@@ -59,11 +59,14 @@ class MeshManager(
     private var internalHttp: HttpServer? = null
     private var handlerThread: HandlerThread? = null
     private var incoming: Messenger? = null
+    /** The bound :mesh service's command Messenger (MSG_RESTART). */
+    @Volatile private var service: Messenger? = null
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
             bound = true
             binding = false
+            service = Messenger(binder)
             supervisor.onMeshProcessBound()
             log("mesh process bound")
             onChanged()
@@ -92,6 +95,38 @@ class MeshManager(
         unbind()
         stopInternalListener()
         supervisor.onMeshStopped()
+    }
+
+    /**
+     * `mesh_restart`: has the :mesh process stop and rejoin its node (same
+     * state dir and node key). When no mesh process is bound but the mesh
+     * should run, binds one now instead. False when the mesh isn't
+     * provisioned or the server is stopped.
+     */
+    fun restart(): Boolean {
+        if (!started || meshControlUrl() == null) return false
+        val target = service
+        if (bound && target != null && supervisor.onRestartRequested()) {
+            try {
+                target.send(Message.obtain(null, MeshMessages.MSG_RESTART))
+                log("mesh restart requested")
+                onChanged()
+                return true
+            } catch (e: Exception) {
+                log("mesh restart message failed: ${e.javaClass.simpleName}; re-binding")
+            }
+        }
+        synchronized(this) {
+            if (!started) return false
+            lastParams = null
+            unbind()
+            supervisor.onMeshStopped()
+            ensureHandlerThread()
+            startInternalListener()
+            bindNow()
+        }
+        onChanged()
+        return true
     }
 
     fun state(): String = supervisor.state()
@@ -142,6 +177,7 @@ class MeshManager(
     private fun onDeath() {
         bound = false
         binding = false
+        service = null
         supervisor.onMeshProcessDied()
         onChanged()
         // After onBindingDied Android requires an explicit unbind before the
@@ -155,6 +191,7 @@ class MeshManager(
             if (!bound && !binding) return
             bound = false
             binding = false
+            service = null
         }
         try { app.unbindService(connection) } catch (_: IllegalArgumentException) {}
     }

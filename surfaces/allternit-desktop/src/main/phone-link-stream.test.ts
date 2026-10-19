@@ -232,6 +232,39 @@ describe('resolveHelperStreamHost', () => {
     await expect(resolveHelperStreamHost(ANDROID, { ...deps, fetchWhoami: async () => null })).rejects.toThrow(/over the Allternit mesh/);
     await expect(resolveHelperStreamHost(ANDROID, { ...deps, meshProxy: async () => Promise.reject(new Error('not signed in')) })).rejects.toThrow(/not signed in/);
   });
+
+  it('restarts the phone mesh off the mesh when the route is dead, then retries once', async () => {
+    let healed = 0;
+    let alive = false;
+    const host = await resolveHelperStreamHost(ANDROID, {
+      ...deps,
+      fetchWhoami: async () => (alive ? { device_id: 'dev-a' } : null),
+      healMesh: async () => {
+        healed++;
+        alive = true;
+        return { meshState: 'running', meshHost: ANDROID.meshHost ?? null };
+      },
+    });
+    expect(host).toBe('127.0.0.1:41000');
+    expect(healed).toBe(1);
+  });
+
+  it('gives the usual error when the heal is not possible or does not help', async () => {
+    await expect(resolveHelperStreamHost(ANDROID, { ...deps, fetchWhoami: async () => null, healMesh: async () => null })).rejects.toThrow(/over the Allternit mesh/);
+    let heals = 0;
+    await expect(
+      resolveHelperStreamHost(ANDROID, { ...deps, fetchWhoami: async () => null, healMesh: async () => (heals++, { meshState: 'starting', meshHost: null }) }),
+    ).rejects.toThrow(/over the Allternit mesh/);
+    expect(heals).toBe(1);
+  });
+
+  it('never heals when this computer cannot open the mesh', async () => {
+    let heals = 0;
+    await expect(
+      resolveHelperStreamHost(ANDROID, { ...deps, meshProxy: async () => Promise.reject(new Error('not signed in')), healMesh: async () => (heals++, null) }),
+    ).rejects.toThrow(/not signed in/);
+    expect(heals).toBe(0);
+  });
 });
 
 describe('relaySerials', () => {

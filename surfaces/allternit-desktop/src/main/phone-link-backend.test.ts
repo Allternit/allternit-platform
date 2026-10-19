@@ -518,6 +518,95 @@ describe('cachedHostResolver', () => {
   });
 });
 
+describe('cachedHostResolver mesh heal', () => {
+  const offLan = {
+    lanInterfaces: () => [] as { address: string; netmask: string }[],
+    fetchWhoami: async (host: string) => (host === '127.0.0.1:41000' && meshUp ? { device_id: 'dev-2' } : null),
+  };
+  let meshUp = false;
+
+  it('restarts the phone mesh when its mesh route is dead, then uses the mesh', async () => {
+    meshUp = false;
+    const heals: string[] = [];
+    const resolve = cachedHostResolver({
+      discovery: offLan,
+      remember: () => {},
+      meshProxy: async () => '127.0.0.1:41000',
+      healMesh: async (_p, why) => {
+        heals.push(why);
+        meshUp = true;
+        return { meshState: 'running', meshHost: '100.64.0.16:8200' };
+      },
+    });
+    expect(await resolve({ ...android, meshHost: '100.64.0.16:8200' })).toBe('127.0.0.1:41000');
+    expect(resolve.lastPath?.('dev-2')).toBe('mesh');
+    expect(heals).toEqual(['mesh route failed']);
+    expect(resolve.healMesh).toBeDefined();
+  });
+
+  it('no heal, no mesh: null as before', async () => {
+    meshUp = false;
+    const resolve = cachedHostResolver({ discovery: offLan, remember: () => {}, meshProxy: async () => '127.0.0.1:41000', healMesh: async () => null });
+    expect(await resolve({ ...android, meshHost: '100.64.0.16:8200' })).toBeNull();
+  });
+});
+
+describe('helperCall mesh heal', () => {
+  function meshResolver(heal: () => Promise<{ meshState: string; meshHost: string | null } | null>) {
+    let forgotten = 0;
+    const r = Object.assign(async () => '127.0.0.1:41000', {
+      lastPath: () => 'mesh' as const,
+      forget: () => void forgotten++,
+      healMesh: heal,
+    });
+    return { r, forgotten: () => forgotten };
+  }
+
+  it('heals a dead mesh route once and retries the call', async () => {
+    let fail = true;
+    const client = fakeClient({
+      is_locked: () => {
+        if (fail) throw new IctrlError('unreachable', 'reset');
+        return { locked: false };
+      },
+    });
+    let heals = 0;
+    const { r, forgotten } = meshResolver(async () => {
+      heals++;
+      fail = false;
+      return { meshState: 'running', meshHost: '100.64.0.16:8200' };
+    });
+    const b = backend(client, [android], { resolveHost: r });
+    expect(await b.helperCall('link:dev-2', 'is_locked')).toEqual({ locked: false });
+    expect(heals).toBe(1);
+    expect(forgotten()).toBe(1);
+  });
+
+  it('does not heal for app-level errors or LAN routes', async () => {
+    let heals = 0;
+    const heal = async () => (heals++, { meshState: 'running', meshHost: null });
+    const locked = fakeClient({ tap: () => { throw new IctrlError('rpc_error', 'screen_locked'); } });
+    await expect(backend(locked, [android], { resolveHost: meshResolver(heal).r }).helperCall('link:dev-2', 'tap')).rejects.toThrow(/screen_locked/);
+    const dead = fakeClient({ tap: () => { throw new IctrlError('unreachable', 'reset'); } });
+    const lan = Object.assign(async () => '192.168.1.21:8200', { lastPath: () => 'lan' as const, healMesh: heal });
+    await expect(backend(dead, [android], { resolveHost: lan }).helperCall('link:dev-2', 'tap')).rejects.toThrow(/reset/);
+    expect(heals).toBe(0);
+  });
+
+  it('tool calls heal too', async () => {
+    let fail = true;
+    const client = fakeClient({
+      page_source: () => {
+        if (fail) throw new IctrlError('unreachable', 'reset');
+        return { format: 'text', source: 'Button, label: "OK"', truncated: false };
+      },
+    });
+    const { r } = meshResolver(async () => ((fail = false), { meshState: 'running', meshHost: null }));
+    const res = await backend(client, [android], { resolveHost: r }).call('phone.read_ui', 'link:dev-2', {});
+    expect(res).toEqual({ ok: true, text: 'Button, label: "OK"' });
+  });
+});
+
 describe('rememberLinkedHost', () => {
   it('updates the right store for each platform', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pl-remember-'));
