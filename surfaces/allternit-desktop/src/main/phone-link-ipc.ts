@@ -12,6 +12,7 @@ import type { PhoneLinkPlatform } from './phone-link-types.js';
 import { createGoIosExec, createGoIosSpawn, ensureDdi, ensureGoIos, GoIos } from './phone-goios.js';
 import { ensureRunnerArtifacts, pickSigner } from './phone-ios-runner.js';
 import { ensureAndroidHelper } from './phone-android-helper.js';
+import { ensureScrcpyServer } from './phone-scrcpy.js';
 import { readPairRecord, startLoopbackForward } from './phone-usbmux.js';
 import { phoneService } from './phone-service.js';
 import { meshManager } from './mesh-manager.js';
@@ -76,6 +77,7 @@ async function androidDeps(): Promise<AndroidDriverDeps> {
   return {
     adb: () => phoneService.ensureAdbCall(),
     helper: (dir) => ensureAndroidHelper(dir),
+    scrcpyServer: (dir) => ensureScrcpyServer(dir),
     dataDir,
     ictrl: (storeKey, host) => new IctrlClient({ host, secrets, storeKey, logger: (m) => log.info(m) }),
     store: fileAndroidLinkStore(path.join(dataDir, 'phone-link-android.json')),

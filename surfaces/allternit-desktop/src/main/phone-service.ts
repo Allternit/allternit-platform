@@ -66,7 +66,8 @@ import { hasLinkedPhones } from './phone-link-stores.js';
 import { catalogNameForPackage, humanizePackage } from './phone-app-catalog.js';
 import { PhoneLinkBackend, cachedHostResolver, linkedPhoneSource, probeLinkedPhone, rememberLinkedApps,
   rememberLinkedHost, LINK_SERIAL_PREFIX, type LinkedPhone } from './phone-link-backend.js';
-import { fileAndroidLinkStore } from './phone-link-android.js';
+import { fileAndroidLinkStore, type AndroidLinkRecord } from './phone-link-android.js';
+import { openHelperStream, streamLaneFor, relaySerials, resolveHelperStreamHost } from './phone-link-stream.js';
 import { nodeDiscoveryDeps } from './phone-link-discovery.js';
 import { PHONE_LINK_MESH_ENABLED } from './phone-link-mesh.js';
 import { meshManager } from './mesh-manager.js';
@@ -202,6 +203,7 @@ class PhoneService {
   private callBridge: CallBridge | null = null;
   private callBridgeWindow: CallBridgeWindow | null = null;
   private iosRecordsCache: { at: number; records: IosLinkRecord[] } | null = null;
+  private androidRecordsCache: { at: number; records: AndroidLinkRecord[] } | null = null;
 
   getGatewayFile(): string {
     return this.gatewayFile;
@@ -252,15 +254,7 @@ class PhoneService {
       const resolveHost = cachedHostResolver({
         discovery: nodeDiscoveryDeps,
         remember: rememberLinkedHost(stores),
-        ...(PHONE_LINK_MESH_ENABLED
-          ? {
-              meshProxy: async (meshHost: string) => {
-                const url = await meshManager.proxyFor(`http://${meshHost}`);
-                // The lane speaks to a loopback host, not a URL.
-                return url.replace(/^https?:\/\//, '').replace(/\/$/, '');
-              },
-            }
-          : {}),
+        ...(PHONE_LINK_MESH_ENABLED ? { meshProxy: (meshHost: string) => this.meshProxy(meshHost) } : {}),
       });
       const client = (phone: LinkedPhone, host: string) =>
         new IctrlClient({ host, secrets, storeKey: phone.storeKey, logger: (m) => log.info(m) });
@@ -280,6 +274,13 @@ class PhoneService {
       });
     }
     return this.linkedBackend;
+  }
+
+  /** A phone's mesh address (`<100.x>:8200`) bridged to a loopback host (`127.0.0.1:<port>`) by the mesh-node sidecar. */
+  private async meshProxy(meshHost: string): Promise<string> {
+    const url = await meshManager.proxyFor(`http://${meshHost}`);
+    // The lane speaks to a loopback host, not a URL.
+    return url.replace(/^https?:\/\//, '').replace(/\/$/, '');
   }
 
   /**
@@ -564,6 +565,8 @@ class PhoneService {
       createSession: (serial, opts) => {
         const iphone = this.linkedIphone(serial);
         if (iphone) return this.createIosVideoSession(serial, iphone.name || 'iPhone');
+        const android = this.linkedAndroid(serial);
+        if (android) return this.createAndroidHelperSession(serial, android, opts);
         return new ScrcpySession(
           {
             adb: nodeScrcpyAdb(this.adbPath ?? '', serial),
@@ -583,7 +586,53 @@ class PhoneService {
   private linkedIphone(serial: string): LinkedPhone | null {
     if (!serial.startsWith(LINK_SERIAL_PREFIX) || this.iosRecords().length === 0) return null;
     const phone = this.ensureLinkedBackend().linkedPhone(serial);
-    return phone?.platform === 'ios' ? phone : null;
+    return streamLaneFor(serial, phone) === 'ios-video' ? phone : null;
+  }
+
+  /** A `link:` serial that names a linked Android phone (phone-link-android.json), else null. Never touches adb. */
+  private linkedAndroid(serial: string): LinkedPhone | null {
+    if (!serial.startsWith(LINK_SERIAL_PREFIX) || this.androidRecords().length === 0) return null;
+    const phone = this.ensureLinkedBackend().linkedPhone(serial);
+    return streamLaneFor(serial, phone) === 'android-helper' ? phone : null;
+  }
+
+  /**
+   * A linked Android phone's live screen through its Phone Link app
+   * (phone-link-stream.ts): scrcpy-server runs under the app's shell server
+   * and each socket comes over the Allternit mesh — no adb, no Wireless
+   * debugging, at home or away. The mesh host is resolved once per session.
+   */
+  private createAndroidHelperSession(serial: string, phone: LinkedPhone, opts: PhoneStreamOptions | undefined): ScrcpySession {
+    const secrets: SecretStore = { get: readSecret, set: writeSecret, delete: deleteSecret };
+    let route: Promise<{ host: string; client: IctrlClient }> | null = null;
+    const resolveRoute = () => {
+      route ??= (async () => {
+        const host = await resolveHelperStreamHost(phone, {
+          meshEnabled: PHONE_LINK_MESH_ENABLED,
+          meshProxy: (meshHost) => this.meshProxy(meshHost),
+          fetchWhoami: nodeDiscoveryDeps.fetchWhoami,
+        });
+        const client = new IctrlClient({ host, secrets, storeKey: phone.storeKey, logger: (m) => log.info(m) });
+        // One sealed call first: proves the key and corrects the clock the envelope's ts is checked against.
+        await client.call('device_info', {}, 10_000);
+        return { host, client };
+      })();
+      route.catch(() => {
+        route = null;
+      });
+      return route;
+    };
+    return new ScrcpySession(
+      {
+        serial,
+        openStream: async (req) => {
+          const { host, client } = await resolveRoute();
+          return openHelperStream({ host, seal: (body) => client.sealBody(body) }, req);
+        },
+        log: (message) => log.info('[PhoneStream]', message),
+      },
+      opts,
+    );
   }
 
   private createIosVideoSession(serial: string, deviceName: string): IosVideoSession {
@@ -609,8 +658,17 @@ class PhoneService {
    */
   async startStream(serial: string, opts?: PhoneStreamOptions): Promise<{ ok: true } | { ok: false; message: string }> {
     if (serial.startsWith(LINK_SERIAL_PREFIX)) {
-      this.iosRecordsCache = null; // a phone linked a moment ago must be found
-      if (!this.linkedIphone(serial)) return { ok: false, message: 'Live screen works with a linked iPhone. That phone is not one.' };
+      // A phone linked a moment ago must be found.
+      this.iosRecordsCache = null;
+      this.androidRecordsCache = null;
+      if (this.linkedAndroid(serial)) {
+        // Linked Android: through Phone Link over the mesh (no adb lane needed).
+        if (!this.ensureLinkedBackend().has(serial)) {
+          return { ok: false, message: "Can't reach that phone right now. Check it is on and Allternit Phone Link is running on it." };
+        }
+        return this.ensureStreamManager().start(serial, opts ?? {});
+      }
+      if (!this.linkedIphone(serial)) return { ok: false, message: 'That phone is not linked to this computer.' };
       if (!this.ensureLinkedBackend().has(serial)) {
         return { ok: false, message: "Can't reach that iPhone right now. Check it is unlocked and on the same Wi-Fi as this computer." };
       }
@@ -773,9 +831,18 @@ class PhoneService {
 
   private syncLinkSockets(): void {
     if (!authManager.getSessionSnapshot()) return;
-    const serials = (this.manager?.list() ?? []).map((phone) => phone.serial).filter(Boolean);
-    // Linked iPhones stream their live screen (IosVideoSession), so the web and PWA can open them too.
-    for (const r of this.iosRecords()) serials.push(`${LINK_SERIAL_PREFIX}${r.deviceId ?? r.udid}`);
+    // Linked iPhones stream their live screen (IosVideoSession) and linked
+    // Androids theirs through Phone Link (helper mode), so the web and PWA can
+    // open them too; a linked Android stands in for its adb twin while that
+    // twin is offline.
+    const androidLinks = this.androidRecords();
+    const backend = androidLinks.length ? this.ensureLinkedBackend() : null;
+    const serials = relaySerials({
+      adb: (this.manager?.list() ?? []).map((phone) => ({ serial: phone.serial, id: phone.id, state: phone.state })),
+      iosDeviceIds: this.iosRecords().map((r) => r.deviceId ?? r.udid),
+      androidLinks: androidLinks.filter((r) => r.meshHost).map((r) => ({ deviceId: r.deviceId, serial: r.serial })),
+      linkReachable: (deviceId) => backend?.has(`${LINK_SERIAL_PREFIX}${deviceId}`) ?? false,
+    });
     const seen = new Set<string>();
     for (const serial of serials) {
       seen.add(serial);
@@ -816,6 +883,8 @@ class PhoneService {
       phone: () => {
         const iphone = this.linkedIphone(serial);
         if (iphone) return { serial, model: 'iPhone', name: iphone.name || 'iPhone' };
+        const android = this.linkedAndroid(serial);
+        if (android) return { serial, model: 'Android', name: android.name || 'Android phone' };
         const p = this.manager?.list().find((entry) => entry.serial === serial);
         const bridge = p ? this.manager?.getCallBridge(p.id) : null;
         return {
@@ -844,7 +913,8 @@ class PhoneService {
     const started = await this.startStream(serial);
     if (!started.ok) return started;
     if (!this.linkConsumers.has(serial)) {
-      const streams = await this.ensureStreams();
+      // Linked phones (`link:`) stream without the adb lane.
+      const streams = serial.startsWith(LINK_SERIAL_PREFIX) ? this.ensureStreamManager() : await this.ensureStreams();
       const consumer: StreamConsumer = {
         onMeta: (_s, meta) => socket.push({ kind: 'meta', meta }),
         onChunk: (_s, chunk) => socket.push({ kind: 'chunk', chunk }),
@@ -951,7 +1021,10 @@ class PhoneService {
   async startForLinkedPhones(): Promise<void> {
     await this.ensureGateway().catch((error) => log.warn('[Phone] gateway for linked phones could not start:', error));
     this.iosRecordsCache = null;
+    this.androidRecordsCache = null;
     this.ensureCallBridge();
+    // Relay sockets for linked phones (iPhone video, Android through Phone Link) without the adb lane.
+    this.ensureLinkSync();
   }
 
   // ── Call bridge (CONTRACT-linked-phone-voice C5): the bot talks on a real  ──
@@ -1010,6 +1083,15 @@ class PhoneService {
       this.iosRecordsCache = { at: now, records: fileLinkStore(path.join(this.dir(), 'phone-link-ios.json')).all() };
     }
     return this.iosRecordsCache.records;
+  }
+
+  /** Linked Android records (Phone Link app), re-read at most every 5 s. */
+  private androidRecords(): AndroidLinkRecord[] {
+    const now = Date.now();
+    if (!this.androidRecordsCache || now - this.androidRecordsCache.at > 5_000) {
+      this.androidRecordsCache = { at: now, records: fileAndroidLinkStore(path.join(this.dir(), 'phone-link-android.json')).all() };
+    }
+    return this.androidRecordsCache.records;
   }
 
   /** Every phone that can carry a bridged call: Android over adb, iPhones on the iCTRL helper. */

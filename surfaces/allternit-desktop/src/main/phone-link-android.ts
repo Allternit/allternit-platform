@@ -53,6 +53,8 @@ export function accessibilityBound(dumpsys: string): boolean {
   return dumpsys.includes(ACCESSIBILITY_SERVICE_FULL) && /Bound services:\{[^\n]*label=Allternit Phone Link/.test(dumpsys);
 }
 const PROVISION_ACTION = `${PHONE_LINK_PACKAGE}.PROVISION`;
+/** Where the app's shell server runs scrcpy-server from (ShellServerProtocol.SCRCPY_JAR). */
+export const HELPER_SCRCPY_JAR = '/data/local/tmp/allternit-scrcpy-server.jar';
 const POLL_MS = 1500;
 const BIND_TIMEOUT_MS = 10_000;
 
@@ -161,6 +163,13 @@ export interface AndroidDriverDeps {
    */
   mesh?: PhoneLinkMeshDep;
   store: AndroidLinkStore;
+  /**
+   * The pinned scrcpy-server jar (phone-scrcpy.ts ensureScrcpyServer). Setup
+   * leaves a copy where the app's screen service runs it from, so the live
+   * screen works through Phone Link without adb. Optional: without it setup
+   * skips that copy.
+   */
+  scrcpyServer?: (dataDir: string) => Promise<string>;
   clientName?: string;
   now?: () => number;
   logger?: (message: string) => void;
@@ -296,6 +305,7 @@ export class AndroidDriver implements PhoneLinkDriver {
     if (!deviceId) {
       this.fail(ctx, 'provision_failed', "Couldn't set up the helper on your phone. Try again.", (provision.stdout + provision.stderr).trim() || 'the PROVISION broadcast gave no device id', true);
     }
+    await this.prepareScreenService(adb, serial);
     let bound = false;
     for (let waited = 0; waited < BIND_TIMEOUT_MS; waited += 500) {
       this.check(ctx);
@@ -380,6 +390,27 @@ export class AndroidDriver implements PhoneLinkDriver {
       });
     } finally {
       await this.removeForward();
+    }
+  }
+
+  /**
+   * The app's screen service (Phone Link 0.3+, Android 13+) starts
+   * scrcpy-server itself, so the live screen keeps working off the cable and
+   * away from home: it needs WRITE_SECURE_SETTINGS (to turn wireless debugging
+   * on for its own launch) and the pinned scrcpy-server jar on the phone.
+   * Best-effort: a phone without them still links; its live screen then needs
+   * Wireless debugging.
+   */
+  private async prepareScreenService(adb: AdbCall, serial: string): Promise<void> {
+    const grant = await adb(['shell', 'pm', 'grant', PHONE_LINK_PACKAGE, 'android.permission.WRITE_SECURE_SETTINGS'], { serial }).catch(() => null);
+    if (!grant || grant.code !== 0) this.log(`screen service: WRITE_SECURE_SETTINGS not granted (${(grant?.stderr || grant?.stdout || 'adb failed').trim().slice(0, 160)})`);
+    if (!this.deps.scrcpyServer) return;
+    try {
+      const jar = await this.deps.scrcpyServer(this.deps.dataDir);
+      const push = await adb(['push', jar, HELPER_SCRCPY_JAR], { serial });
+      if (push.code !== 0) this.log(`screen service: scrcpy-server push failed (${(push.stderr || push.stdout).trim().slice(0, 160)})`);
+    } catch (error) {
+      this.log(`screen service: scrcpy-server unavailable (${error instanceof Error ? error.message : String(error)})`);
     }
   }
 

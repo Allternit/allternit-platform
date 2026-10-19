@@ -54,7 +54,7 @@
  */
 
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as net from 'node:net';
 import * as path from 'node:path';
@@ -226,6 +226,41 @@ export interface ScrcpyDeps {
   log?: (message: string) => void;
   /** Bounds the initial header phase (push/forward/connect/meta). */
   startTimeoutMs?: number;
+}
+
+/** One raw scrcpy socket from the Phone Link Android helper (phone-link-stream.ts). */
+export interface ScrcpyHelperStreamRequest {
+  /** 'video' starts scrcpy-server with `args`; 'control' is the next socket of the same session. */
+  kind: 'video' | 'control';
+  scid: string;
+  args?: string[];
+}
+
+/**
+ * Helper mode: the phone's Phone Link app starts scrcpy-server itself (its
+ * shell server, over the mesh) and hands back each socket already connected,
+ * so Desktop does no adb push/forward/shell. Sockets are opened in scrcpy's
+ * accept order: video, then audio (when on), then control.
+ */
+export interface ScrcpyHelperDeps {
+  serial: string;
+  openStream: (req: ScrcpyHelperStreamRequest) => Promise<ScrcpySocket>;
+  /** Session id (8 hex, 31-bit); random by default. */
+  newScid?: () => string;
+  log?: (message: string) => void;
+  /** Bounds the start (the phone may have to start its screen service first). */
+  startTimeoutMs?: number;
+}
+
+export type ScrcpySessionDeps = ScrcpyDeps | ScrcpyHelperDeps;
+
+function isHelperDeps(deps: ScrcpySessionDeps): deps is ScrcpyHelperDeps {
+  return 'openStream' in deps;
+}
+
+/** scrcpy parses scid as a non-negative 31-bit hex int (Options.java), so the top bit stays clear. */
+export function randomScid(): string {
+  return (randomBytes(4).readUInt32BE(0) & 0x7fffffff).toString(16).padStart(8, '0');
 }
 
 // ── Control message serialization (control_msg.c, v5.0.1) ───────────────────
@@ -540,6 +575,8 @@ export interface ScrcpySessionEvents {
 }
 
 const DEFAULT_START_TIMEOUT_MS = 20_000;
+/** Helper mode may first start the phone's screen service (up to ~30 s, phone-link-stream.ts). */
+const HELPER_START_TIMEOUT_MS = 45_000;
 const CONNECT_RETRY_MS = 250;
 const CONNECT_RETRIES = 24; // ~6s: the server needs a moment after the shell spawns
 
@@ -556,12 +593,23 @@ function defaultAllocatePort(): Promise<number> {
 }
 
 export function buildServerCommand(options: PhoneStreamOptions): string {
+  return [`CLASSPATH=${DEVICE_SERVER_PATH}`, 'app_process', '/', 'com.genymobile.scrcpy.Server', SCRCPY_SERVER_VERSION_ARG, ...serverOptions(options)].join(' ');
+}
+
+/**
+ * Options the Phone Link helper sets itself and refuses from callers
+ * (ShellServerProtocol.RESERVED: it owns the session id and tunnel mode).
+ */
+export const HELPER_RESERVED_OPTIONS: readonly string[] = ['scid', 'tunnel_forward', 'log_level'];
+
+/** The same server options the adb lane uses, minus the ones the helper reserves. */
+export function helperServerArgs(options: PhoneStreamOptions): string[] {
+  return serverOptions(options).filter((arg) => !HELPER_RESERVED_OPTIONS.includes(arg.slice(0, arg.indexOf('='))));
+}
+
+/** scrcpy-server key=value options after the version argument. */
+function serverOptions(options: PhoneStreamOptions): string[] {
   const parts = [
-    `CLASSPATH=${DEVICE_SERVER_PATH}`,
-    'app_process',
-    '/',
-    'com.genymobile.scrcpy.Server',
-    SCRCPY_SERVER_VERSION_ARG,
     'tunnel_forward=true',
     // audio_dup stays at scrcpy's default (off): while the live view is open
     // the phone's sound plays here, not on the phone (Android 11+).
@@ -581,7 +629,7 @@ export function buildServerCommand(options: PhoneStreamOptions): string {
   if (videoBitrate > 0) parts.push(`video_bit_rate=${Math.trunc(videoBitrate)}`);
   const maxFps = options.maxFps ?? 30;
   if (maxFps > 0) parts.push(`max_fps=${maxFps}`);
-  return parts.join(' ');
+  return parts;
 }
 
 /**
@@ -618,7 +666,7 @@ export class ScrcpySession {
   private startTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
-    private readonly deps: ScrcpyDeps,
+    private readonly deps: ScrcpySessionDeps,
     private readonly options: PhoneStreamOptions = {},
   ) {
     this.metaPromise = new Promise<void>((resolve, reject) => {
@@ -658,12 +706,14 @@ export class ScrcpySession {
   }
 
   private async run(): Promise<void> {
-    const { adb } = this.deps;
+    if (isHelperDeps(this.deps)) return this.runHelper(this.deps);
+    const deps = this.deps;
+    const { adb } = deps;
     this.armStartTimeout();
 
-    const serverPath = await this.deps.serverPath;
+    const serverPath = await deps.serverPath;
     await adb.push(serverPath, DEVICE_SERVER_PATH);
-    this.port = this.deps.port ?? (await (this.deps.allocatePort ?? defaultAllocatePort)());
+    this.port = deps.port ?? (await (deps.allocatePort ?? defaultAllocatePort)());
     await adb.forward(this.port, `localabstract:${DEVICE_SOCKET_NAME}`);
 
     this.shell = adb.shell(buildServerCommand(this.options));
@@ -671,14 +721,14 @@ export class ScrcpySession {
       if (!this.intentionalClose && !this.ended) this.dispose(`the scrcpy server on the phone stopped (exit ${code ?? 'signal'})`);
     });
 
-    await this.connectVideo();
+    await this.connectVideo(deps);
     this.log(`video socket connected on 127.0.0.1:${this.port}`);
     // The server sends the device name, codec and first session packet only
     // after it has accepted every socket (DesktopConnection.open, then
     // Server.java sendDeviceMeta), so the audio and control sockets connect
     // now, right after the dummy byte, in the server's accept order.
     if (this.options.audio !== false) {
-      const audio = await this.connectWithRetry();
+      const audio = await this.connectWithRetry(deps);
       if (this.ended) {
         audio.destroy();
         throw new Error(this.endReason ?? 'The session was closed while connecting.');
@@ -686,7 +736,7 @@ export class ScrcpySession {
       this.audioSocket = audio;
       this.attachAudioSocket(audio);
     }
-    const control = await this.connectWithRetry();
+    const control = await this.connectWithRetry(deps);
     if (this.ended) {
       control.destroy();
       throw new Error(this.endReason ?? 'The session was closed while connecting.');
@@ -700,19 +750,92 @@ export class ScrcpySession {
   }
 
   /**
+   * Helper mode: the same socket order and parsing as the adb lane, but each
+   * socket comes from the phone's Phone Link app, already connected to
+   * scrcpy-server (no push, forward or shell here). The video socket still
+   * starts with the forward-tunnel dummy byte.
+   */
+  private async runHelper(deps: ScrcpyHelperDeps): Promise<void> {
+    this.armStartTimeout();
+    const scid = (deps.newScid ?? randomScid)();
+    const open = async (req: ScrcpyHelperStreamRequest): Promise<ScrcpySocket> => {
+      if (this.ended) throw new Error(this.endReason ?? 'The session was closed while connecting.');
+      const socket = await deps.openStream(req);
+      if (this.ended) {
+        socket.destroy();
+        throw new Error(this.endReason ?? 'The session was closed while connecting.');
+      }
+      return socket;
+    };
+    const video = await open({ kind: 'video', scid, args: helperServerArgs(this.options) });
+    this.videoSocket = video;
+    const probe = await this.probeVideo(video);
+    if (!probe.accepted) {
+      this.videoSocket = null;
+      video.destroy();
+      throw new Error(this.ended ? (this.endReason ?? 'The session was closed while connecting.') : `The phone's scrcpy server didn't answer: ${probe.error}`);
+    }
+    this.log(`video socket open through Phone Link (scid ${scid})`);
+    if (this.options.audio !== false) {
+      const audio = await open({ kind: 'control', scid });
+      this.audioSocket = audio;
+      this.attachAudioSocket(audio);
+    }
+    const control = await open({ kind: 'control', scid });
+    this.controlSocket = control;
+    this.attachSocket(control, 'control');
+    this.maybeGoLive();
+    await this.metaPromise;
+  }
+
+  /**
+   * Wait for the video socket's first byte (the dummy byte). Resolves
+   * accepted=false when it errors or closes first; once accepted, the socket
+   * feeds the video parser and its close/error end the session.
+   */
+  private probeVideo(socket: ScrcpySocket): Promise<{ accepted: boolean; error: string }> {
+    return new Promise((resolve) => {
+      let probing = true;
+      socket.on('data', (chunk) => {
+        if (probing) {
+          probing = false;
+          resolve({ accepted: true, error: '' });
+        }
+        this.onVideoData(chunk);
+      });
+      socket.on('error', (error) => {
+        if (probing) {
+          probing = false;
+          resolve({ accepted: false, error: error.message });
+          return;
+        }
+        this.dispose(`video socket error: ${error.message}`);
+      });
+      socket.on('close', () => {
+        if (probing) {
+          probing = false;
+          resolve({ accepted: false, error: 'the connection closed before the server answered' });
+          return;
+        }
+        if (!this.intentionalClose && !this.ended) this.dispose('the video stream closed (phone unplugged or server stopped)');
+      });
+    });
+  }
+
+  /**
    * Connect the video socket the way scrcpy's client does
    * (server.c connect_and_read_byte): through an adb forward the TCP connect
    * succeeds even while nothing listens on the phone yet, and adb then closes
    * it. Only the server's dummy byte proves the server accepted, so a close
    * before that byte is a retry, not the end of the stream.
    */
-  private async connectVideo(): Promise<void> {
+  private async connectVideo(deps: ScrcpyDeps): Promise<void> {
     let lastError = 'no attempt was made';
     for (let attempt = 0; attempt < CONNECT_RETRIES; attempt += 1) {
       if (this.ended) throw new Error(this.endReason ?? 'The session was closed while connecting.');
       let socket: ScrcpySocket;
       try {
-        socket = await this.deps.connect(this.port);
+        socket = await deps.connect(this.port);
       } catch (error) {
         lastError = error instanceof Error ? error.message : String(error);
         await new Promise((r) => setTimeout(r, CONNECT_RETRY_MS));
@@ -720,34 +843,9 @@ export class ScrcpySession {
       }
       // Held here so dispose() (start timeout) destroys a socket still waiting for its byte.
       this.videoSocket = socket;
-      const accepted = await new Promise<boolean>((resolve) => {
-        let probing = true;
-        socket.on('data', (chunk) => {
-          if (probing) {
-            probing = false;
-            resolve(true);
-          }
-          this.onVideoData(chunk);
-        });
-        socket.on('error', (error) => {
-          if (probing) {
-            probing = false;
-            lastError = error.message;
-            resolve(false);
-            return;
-          }
-          this.dispose(`video socket error: ${error.message}`);
-        });
-        socket.on('close', () => {
-          if (probing) {
-            probing = false;
-            lastError = 'the connection closed before the server answered';
-            resolve(false);
-            return;
-          }
-          if (!this.intentionalClose && !this.ended) this.dispose('the video stream closed (phone unplugged or server stopped)');
-        });
-      });
+      const probe = await this.probeVideo(socket);
+      const accepted = probe.accepted;
+      if (!accepted) lastError = probe.error;
       if (accepted) return;
       this.videoSocket = null;
       socket.destroy();
@@ -906,12 +1004,12 @@ export class ScrcpySession {
     this.log(`audio off: ${reason}; video continues`);
   }
 
-  private async connectWithRetry(): Promise<ScrcpySocket> {
+  private async connectWithRetry(deps: ScrcpyDeps): Promise<ScrcpySocket> {
     let lastError: unknown = null;
     for (let attempt = 0; attempt < CONNECT_RETRIES; attempt += 1) {
       if (this.ended) throw new Error(this.endReason ?? 'The session was closed while connecting.');
       try {
-        return await this.deps.connect(this.port);
+        return await deps.connect(this.port);
       } catch (error) {
         lastError = error;
         await new Promise((r) => setTimeout(r, CONNECT_RETRY_MS));
@@ -924,7 +1022,7 @@ export class ScrcpySession {
     this.clearStartTimeout();
     this.startTimer = setTimeout(() => {
       this.dispose('Timed out waiting for the phone to start streaming.');
-    }, this.deps.startTimeoutMs ?? DEFAULT_START_TIMEOUT_MS);
+    }, this.deps.startTimeoutMs ?? (isHelperDeps(this.deps) ? HELPER_START_TIMEOUT_MS : DEFAULT_START_TIMEOUT_MS));
     this.startTimer.unref?.();
   }
 
@@ -986,8 +1084,10 @@ export class ScrcpySession {
     } catch {
       /* already gone */
     }
-    void this.deps.adb.removeForward(this.port).catch(() => undefined);
-    void this.deps.adb.remove(DEVICE_SERVER_PATH).catch(() => undefined);
+    if (!isHelperDeps(this.deps)) {
+      void this.deps.adb.removeForward(this.port).catch(() => undefined);
+      void this.deps.adb.remove(DEVICE_SERVER_PATH).catch(() => undefined);
+    }
     this.emit('ended', { reason });
   }
 }
