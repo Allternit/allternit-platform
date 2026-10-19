@@ -48,8 +48,10 @@ export const PINNED_RUNNER_MANIFESTS: Record<string, string> = {
   '1.98.12-allternit.4': '7758efc9bd6667505015aca1b181ac48557afd0fd9d8f3b83eabfa1d00e83bdb',
   // .5: start_live_screen reports another screen recording (otherCapture).
   '1.98.12-allternit.5': '1c7c2c3ee695474fa225280e541db2844ada869bf434dc6fb20e5deb9d2c6041',
+  // .6: mesh_restart RPC + mesh watchdog (tsnet Health()).
+  '1.98.12-allternit.6': '43a796f27a2b752a911b7c724db99b14a23340aa78ded88c287e2391cf67e5ba',
 };
-export const RUNNER_VERSION: string | null = '1.98.12-allternit.5';
+export const RUNNER_VERSION: string | null = '1.98.12-allternit.6';
 
 export interface RunnerPackage {
   file: string;

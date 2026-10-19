@@ -31,8 +31,10 @@ export const PINNED_ANDROID_MANIFESTS: Record<string, string> = {
   // 0.3.2: screen_service RPC — Desktop starts the screen service over its adb
   // lane, so the live screen streams through Phone Link away from home.
   '0.3.2': 'f60ed9326b9b806362778c2338bf6dad5928c0302739a2106fcc1cd90d24ff45',
+  // 0.3.3: mesh_restart RPC + :mesh watchdog (tsnet Health()) — self-heals a stuck mesh node.
+  '0.3.3': 'c09074d62645e32f1ff10600847b2e9bb14bf5aca91412abb4aae45c67456e62',
 };
-export const ANDROID_HELPER_VERSION: string | null = '0.3.2';
+export const ANDROID_HELPER_VERSION: string | null = '0.3.3';
 
 export interface AndroidHelperManifest {
   version: string;
