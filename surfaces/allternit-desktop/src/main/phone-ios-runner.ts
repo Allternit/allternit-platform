@@ -43,8 +43,11 @@ export const PINNED_RUNNER_MANIFESTS: Record<string, string> = {
   // .3: live screen — ReplayKit broadcast extension (iCTRLBroadcast) + the
   // runner's GET /video and *_live_screen RPCs. Published 2026-10-18.
   '1.98.12-allternit.3': 'dfab5703b22f9fdfe21942d5332ba06a68ea350e98750dfe671a722c52eca141',
+  // .4: the extension is listed as a broadcast target (process mode under
+  // NSExtensionAttributes) and sends app audio (AAC, /video types 4/5).
+  '1.98.12-allternit.4': '7758efc9bd6667505015aca1b181ac48557afd0fd9d8f3b83eabfa1d00e83bdb',
 };
-export const RUNNER_VERSION: string | null = '1.98.12-allternit.3';
+export const RUNNER_VERSION: string | null = '1.98.12-allternit.4';
 
 export interface RunnerPackage {
   file: string;
