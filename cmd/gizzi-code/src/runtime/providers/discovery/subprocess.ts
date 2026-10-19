@@ -6,16 +6,21 @@
  * configuration — just having the CLI installed and logged in is enough.
  *
  * Adding a new CLI:
- *   Append an entry to SUBPROCESS_PROVIDERS below. That's it.
+ *   Add it to cli-catalog.json (next to this file) — the one list allternit-api
+ *   also reads (Settings → Connections → Coding tools, install, sign-in). A CLI
+ *   that answers a one-shot prompt needs only `adapter: "text"` + `headless`;
+ *   one that speaks a streaming protocol gets an adapter in local-cli-driver.ts.
+ *   Tools a user adds themselves arrive through customCliFile().
  */
 
 import { which } from "bun"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
-import { existsSync, readdirSync, statSync } from "node:fs"
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import type { DiscoveredProvider, DiscoveredModel } from "./index"
+import catalog from "./cli-catalog.json"
 
 const execFileAsync = promisify(execFile)
 
@@ -53,35 +58,31 @@ export function parseCodexModels(stdout: string): DiscoveredModel[] {
   }))
 }
 
+/** One entry of cli-catalog.json (the fields gizzi uses). */
+export interface CatalogTool {
+  id: string
+  name: string
+  bin: string
+  icon?: string
+  adapter: "builtin" | "text" | "unsupported"
+  probe?: { args: string[]; expect: string }
+  headless?: { args: string[]; modelArgs?: string[] }
+  models?: DiscoveredModel[]
+  envKeys?: { path: string; model?: string }
+  custom?: boolean
+}
+
+export const CLI_CATALOG: CatalogTool[] = (catalog as { tools: CatalogTool[] }).tools
+
 /**
  * Per-provider environment overrides matching the Multica Go runtime.
  *
  * `MULTICA_<PROVIDER>_PATH` takes precedence over PATH lookup.
  * `MULTICA_<PROVIDER>_MODEL` is available for adapters that accept a --model flag.
  */
-export const PROVIDER_ENV_KEYS: Record<string, { path: string; model?: string }> = {
-  "claude-cli":   { path: "MULTICA_CLAUDE_PATH",       model: "MULTICA_CLAUDE_MODEL" },
-  "codex-cli":    { path: "MULTICA_CODEX_PATH",        model: "MULTICA_CODEX_MODEL" },
-  opencode:       { path: "MULTICA_OPENCODE_PATH",     model: "MULTICA_OPENCODE_MODEL" },
-  deveco:         { path: "MULTICA_DEVECO_PATH",       model: "MULTICA_DEVECO_MODEL" },
-  openclaw:       { path: "MULTICA_OPENCLAW_PATH",     model: "MULTICA_OPENCLAW_MODEL" },
-  hermes:         { path: "MULTICA_HERMES_PATH",       model: "MULTICA_HERMES_MODEL" },
-  pi:             { path: "MULTICA_PI_PATH",           model: "MULTICA_PI_MODEL" },
-  "cursor-agent": { path: "MULTICA_CURSOR_PATH",       model: "MULTICA_CURSOR_MODEL" },
-  "kimi-cli":     { path: "MULTICA_KIMI_PATH",         model: "MULTICA_KIMI_MODEL" },
-  reasonix:       { path: "MULTICA_REASONIX_PATH",     model: "MULTICA_REASONIX_MODEL" },
-  "kiro-cli":     { path: "MULTICA_KIRO_PATH",         model: "MULTICA_KIRO_MODEL" },
-  codebuddy:      { path: "MULTICA_CODEBUDDY_PATH",    model: "MULTICA_CODEBUDDY_MODEL" },
-  qodercli:       { path: "MULTICA_QODER_PATH",        model: "MULTICA_QODER_MODEL" },
-  qoderclicn:     { path: "MULTICA_QODERCLICN_PATH",   model: "MULTICA_QODERCLICN_MODEL" },
-  traecli:        { path: "MULTICA_TRAECLI_PATH",      model: "MULTICA_TRAECLI_MODEL" },
-  grok:           { path: "MULTICA_GROK_PATH",         model: "MULTICA_GROK_MODEL" },
-  "qwen-cli":     { path: "MULTICA_QWEN_PATH",         model: "MULTICA_QWEN_MODEL" },
-  qwenpaw:        { path: "MULTICA_QWENPAW_PATH" },
-  mcode:          { path: "MULTICA_MCODE_PATH" },
-  antigravity:    { path: "MULTICA_ANTIGRAVITY_PATH",  model: "MULTICA_ANTIGRAVITY_MODEL" },
-  omp:            { path: "MULTICA_OMP_PATH",          model: "MULTICA_OMP_MODEL" },
-}
+export const PROVIDER_ENV_KEYS: Record<string, { path: string; model?: string }> = Object.fromEntries(
+  CLI_CATALOG.filter((tool) => tool.envKeys).map((tool) => [tool.id, tool.envKeys!]),
+)
 
 const SHELL_CACHE_TTL_MS = 30 * 60 * 1000
 
@@ -182,6 +183,9 @@ export async function resolveCliPath(spec: SubprocessSpec): Promise<string | nul
     if (override && existsSync(override)) return override
   }
 
+  // A custom tool may name its program by absolute path.
+  if (path.isAbsolute(spec.bin)) return isExecutable(spec.bin) ? spec.bin : null
+
   const fromPath = await resolveBinPath(spec.bin)
   if (fromPath) return fromPath
 
@@ -199,7 +203,7 @@ export async function resolveCliPath(spec: SubprocessSpec): Promise<string | nul
  */
 export async function currentCliPath(cliId: string, known: string): Promise<string> {
   if (!path.isAbsolute(known) || existsSync(known)) return known
-  const spec = SUBPROCESS_PROVIDERS.find((s) => s.id === cliId)
+  const spec = findSubprocessSpec(cliId)
   if (!spec) return known
   return (await resolveCliPath(spec)) ?? known
 }
@@ -273,15 +277,19 @@ export function knownInstallPaths(spec: Pick<SubprocessSpec, "id" | "bin">, home
 }
 
 export interface SubprocessSpec {
-  /** Binary name to look for in PATH */
+  /** Binary name to look for in PATH (or, for a custom tool, an absolute path) */
   bin: string
   /** Provider ID in gizzi's model list */
   id: string
   name: string
   /** Icon asset key (maps to /icons/agent-clis/{icon}.svg) */
   icon?: string
-  /** Command template — {prompt} is replaced with the user's message */
+  /** Display command (the binary); the argv a turn runs comes from the adapter */
   cmd: string
+  /** builtin = protocol adapter in local-cli-driver.ts; text = one-shot `headless` argv */
+  adapter: CatalogTool["adapter"]
+  /** For `text`: argv after the binary — exactly one element is "{prompt}" */
+  headless?: { args: string[]; modelArgs?: string[] }
   /** Known models surfaced by this CLI */
   models: DiscoveredModel[]
   /**
@@ -289,354 +297,103 @@ export interface SubprocessSpec {
    * If omitted, presence in PATH is treated as sufficient.
    */
   probe?: { args: string[]; expect: string | RegExp }
+  /** Added by a user (Settings → Coding tools → Add a CLI) */
+  custom?: boolean
 }
 
-export const SUBPROCESS_PROVIDERS: SubprocessSpec[] = [
-  // ── Anthropic ────────────────────────────────────────────────────────────
-  {
-    bin: "claude",
-    id: "claude-cli",
-    name: "Claude (installed CLI)",
-    icon: "claude",
-    cmd: "claude -p",
-    probe: { args: ["--version"], expect: /\d+\.\d+/ },
-    models: [
-      { id: "claude-sonnet-5", name: "Claude Sonnet 5", context: 200000, output: 64000 },
-      { id: "claude-opus-5",   name: "Claude Opus 5",   context: 200000, output: 32000 },
-    ],
-  },
+function toSpec(tool: CatalogTool): SubprocessSpec {
+  return {
+    bin: tool.bin,
+    id: tool.id,
+    name: tool.name,
+    icon: tool.icon ?? tool.id,
+    cmd: tool.bin,
+    adapter: tool.adapter,
+    headless: tool.headless,
+    models: tool.models ?? [],
+    probe: tool.probe ? { args: tool.probe.args, expect: new RegExp(tool.probe.expect) } : undefined,
+    custom: tool.custom,
+  }
+}
 
-  // ── Moonshot / Kimi ──────────────────────────────────────────────────────
-  {
-    bin: "kimi",
-    id: "kimi-cli",
-    name: "Kimi (CLI — subscription)",
-    icon: "kimi",
-    cmd: "kimi -p",
-    probe: { args: ["--version"], expect: /\d+\.\d+/ },
-    models: [
-      { id: "kimi-k3",       name: "Kimi K3",       context: 262144, output: 16384 },
-      { id: "kimi-k2.7-code", name: "Kimi K2.7 Code", context: 262144, output: 16384 },
-    ],
-  },
+/** Every CLI in the shared catalog (cli-catalog.json). */
+export const SUBPROCESS_PROVIDERS: SubprocessSpec[] = CLI_CATALOG.map(toSpec)
 
-  // ── Alibaba Qwen ─────────────────────────────────────────────────────────
-  {
-    bin: "qwen",
-    id: "qwen-cli",
-    name: "Qwen Code (CLI — subscription)",
-    icon: "qwen",
-    cmd: "qwen -p",
-    probe: { args: ["--version"], expect: /\d+\.\d+/ },
-    models: [
-      { id: "qwen-max",  name: "Qwen Max",  context: 131072, output: 8192 },
-      { id: "qwen-plus", name: "Qwen Plus", context: 131072, output: 8192 },
-    ],
-  },
+/** Where allternit-api mirrors the user's own CLIs (src/cli_catalog.rs `mirror_path`). */
+export function customCliFile(env: NodeJS.ProcessEnv = process.env): string {
+  return path.join(path.dirname(harnessBinDir(env)), "custom-clis.json")
+}
 
-  // ── OpenAI Codex ─────────────────────────────────────────────────────────
-  {
-    bin: "codex",
-    id: "codex-cli",
-    name: "Codex CLI (OpenAI — subscription or API)",
-    icon: "codex",
-    cmd: "codex",
-    probe: { args: ["--version"], expect: /codex/i },
-    models: [{ id: "gpt-6-astra", name: "GPT-6-Astra", context: 272000, output: 32768 }],
-  },
+const SHELL_META = /[;&|$`<>(){}[\]*?!~'"\\#\n\r\t\0]/
 
-  // ── Google Gemini ─────────────────────────────────────────────────────────
-  {
-    bin: "gemini",
-    id: "gemini-cli",
-    name: "Gemini CLI (Google — subscription)",
-    icon: "gemini",
-    cmd: "gemini -p",
-    probe: { args: ["--version"], expect: /\d+\.\d+/ },
-    models: [
-      { id: "gemini-1.5-pro-latest",  name: "Gemini 1.5 Pro",  context: 2000000, output: 8192 },
-      { id: "gemini-1.5-flash-latest", name: "Gemini 1.5 Flash", context: 1000000, output: 8192 },
-    ],
-  },
+/**
+ * A custom tool is only ever argv: a bare program name or absolute path, and
+ * an argument list with exactly one "{prompt}" element. Anything else in the
+ * file is dropped (allternit-api validates the same way before writing it).
+ */
+export function validCustomTool(tool: unknown): tool is CatalogTool {
+  const t = tool as CatalogTool
+  if (!t || typeof t.id !== "string" || !t.id.startsWith("custom-") || typeof t.name !== "string") return false
+  if (typeof t.bin !== "string" || !t.bin || SHELL_META.test(t.bin) || t.bin.startsWith("-")) return false
+  if (path.isAbsolute(t.bin) ? t.bin.split(/[\\/]/).includes("..") : !/^[A-Za-z0-9._+-]+$/.test(t.bin)) return false
+  const args = t.headless?.args
+  if (!Array.isArray(args) || !args.every((a) => typeof a === "string")) return false
+  if (args.filter((a) => a === "{prompt}").length !== 1 || args.filter((a) => a.includes("{prompt}")).length !== 1) return false
+  const modelArgs = t.headless?.modelArgs ?? []
+  if (!Array.isArray(modelArgs) || !modelArgs.every((a) => typeof a === "string" && !a.includes("{prompt}"))) return false
+  return true
+}
 
-  // ── Google Antigravity (agy CLI — subscription) ──────────────────────────
-  {
-    bin: "agy",
-    id: "antigravity",
-    name: "Antigravity (agy CLI — subscription)",
-    icon: "agy",
-    cmd: "agy -p",
-    probe: { args: ["--version"], expect: /\d+\.\d+/ },
-    models: [
-      { id: "gemini-3.7-flash-high", name: "Gemini 3.7 Flash", context: 1000000, output: 65536 },
-    ],
-  },
+/** The user-added CLIs on this computer (read fresh: they change while gizzi runs). */
+export function customSubprocessSpecs(file = customCliFile()): SubprocessSpec[] {
+  let parsed: { tools?: unknown[] }
+  try {
+    parsed = JSON.parse(readFileSync(file, "utf8"))
+  } catch {
+    return []
+  }
+  return (parsed.tools ?? []).filter(validCustomTool).map((tool) => {
+    const versionArgs = Array.isArray((tool as any).verifyArgs) ? ((tool as any).verifyArgs as string[]) : []
+    return toSpec({
+      ...tool,
+      adapter: "text",
+      custom: true,
+      models: [{ id: "default", name: `${tool.name} default`, context: 128000, output: 16384 }],
+      // A version command, when given, must print something; else presence is enough.
+      probe: versionArgs.length > 0 ? { args: versionArgs, expect: "\\S" } : undefined,
+    })
+  })
+}
 
-  // ── GitHub Copilot ───────────────────────────────────────────────────────
-  {
-    bin: "gh",
-    id: "copilot-cli",
-    name: "GitHub Copilot (CLI — subscription)",
-    icon: "copilot",
-    cmd: "gh copilot suggest -t shell",
-    probe: { args: ["copilot", "--version"], expect: /copilot/i },
-    models: [
-      { id: "copilot-gpt-4o",  name: "Copilot GPT-4o",  context: 128000, output: 4096  },
-      { id: "copilot-claude",  name: "Copilot Claude",  context: 200000, output: 8192  },
-    ],
-  },
+/** Catalog CLIs plus the user's own. */
+export function subprocessSpecs(): SubprocessSpec[] {
+  const builtIn = new Set(SUBPROCESS_PROVIDERS.map((s) => s.id))
+  return [...SUBPROCESS_PROVIDERS, ...customSubprocessSpecs().filter((s) => !builtIn.has(s.id))]
+}
 
-  // ── Simon Willison's LLM tool ────────────────────────────────────────────
-  {
-    bin: "llm",
-    id: "llm-cli",
-    name: "LLM (CLI — any configured backend)",
-    icon: "llm",
-    cmd: "llm prompt",
-    probe: { args: ["--version"], expect: /llm/ },
-    models: [
-      { id: "default", name: "LLM CLI default model", context: 128000, output: 8192 },
-    ],
-  },
+export function findSubprocessSpec(id: string): SubprocessSpec | undefined {
+  return SUBPROCESS_PROVIDERS.find((s) => s.id === id) ?? customSubprocessSpecs().find((s) => s.id === id)
+}
 
-  // ── aichat ───────────────────────────────────────────────────────────────
-  {
-    bin: "aichat",
-    id: "aichat-cli",
-    name: "AIChat (CLI — any configured backend)",
-    icon: "aichat",
-    cmd: "aichat",
-    probe: { args: ["--version"], expect: /aichat/ },
-    models: [
-      { id: "default", name: "AIChat default model", context: 128000, output: 8192 },
-    ],
-  },
+const MODEL_ID = /^[A-Za-z0-9._:\/@+-]{1,200}$/
 
-  // ── Ollama (CLI — reads installed models) ────────────────────────────────
-  {
-    bin: "ollama",
-    id: "ollama-cli",
-    name: "Ollama (CLI)",
-    icon: "ollama",
-    cmd: "ollama run",
-    probe: { args: ["list"], expect: /NAME/ },
-    models: [], // populated dynamically via probeOllamaModels()
-  },
-
-  // ── fabric ───────────────────────────────────────────────────────────────
-  {
-    bin: "fabric",
-    id: "fabric-cli",
-    name: "Fabric (CLI — any configured backend)",
-    icon: "fabric",
-    cmd: "fabric",
-    probe: { args: ["--version"], expect: /fabric/ },
-    models: [
-      { id: "default", name: "Fabric default model", context: 128000, output: 8192 },
-    ],
-  },
-
-  // ── ChatGPT (unofficial CLIs) ────────────────────────────────────────────
-  {
-    bin: "chatgpt",
-    id: "chatgpt-cli",
-    name: "ChatGPT (CLI — Plus/Pro subscription)",
-    icon: "chatgpt",
-    cmd: "chatgpt",
-    models: [
-      { id: "gpt-4o",   name: "GPT-4o",   context: 128000, output: 16384  },
-      { id: "o3",       name: "o3",       context: 200000, output: 100000 },
-      { id: "o4-mini",  name: "o4-mini",  context: 200000, output: 100000 },
-    ],
-  },
-
-  // ── Cursor Agent ─────────────────────────────────────────────────────────
-  {
-    bin: "cursor-agent",
-    id: "cursor-agent",
-    name: "Cursor Agent",
-    icon: "cursor",
-    cmd: "cursor-agent",
-    probe: { args: ["--version"], expect: /\d+\.\d+/ },
-    models: [{ id: "default", name: "Cursor Agent default", context: 200000, output: 64000 }],
-  },
-
-  // ── OpenCode ─────────────────────────────────────────────────────────────
-  {
-    bin: "opencode",
-    id: "opencode",
-    name: "OpenCode",
-    icon: "opencode",
-    cmd: "opencode",
-    probe: { args: ["--version"], expect: /\d+\.\d+/ },
-    models: [{ id: "default", name: "OpenCode default", context: 200000, output: 64000 }],
-  },
-
-  // ── OpenClaw ─────────────────────────────────────────────────────────────
-  {
-    bin: "openclaw",
-    id: "openclaw",
-    name: "OpenClaw",
-    icon: "openclaw",
-    cmd: "openclaw",
-    probe: { args: ["--version"], expect: /\d+\.\d+/ },
-    models: [{ id: "default", name: "OpenClaw default", context: 200000, output: 64000 }],
-  },
-
-  // ── Hermes ─────────────────────────────────────────────────────────────────
-  {
-    bin: "hermes",
-    id: "hermes",
-    name: "Hermes",
-    icon: "hermes",
-    cmd: "hermes",
-    probe: { args: ["--version"], expect: /\d+\.\d+/ },
-    models: [{ id: "default", name: "Hermes default", context: 200000, output: 64000 }],
-  },
-
-  // ── Pi ─────────────────────────────────────────────────────────────────────
-  {
-    bin: "pi",
-    id: "pi",
-    name: "Pi",
-    icon: "pi",
-    cmd: "pi -p --mode json",
-    probe: { args: ["--version"], expect: /\d+\.\d+/ },
-    models: [{ id: "default", name: "Pi default", context: 200000, output: 64000 }],
-  },
-
-  // ── CodeBuddy ──────────────────────────────────────────────────────────────
-  {
-    bin: "codebuddy",
-    id: "codebuddy",
-    name: "CodeBuddy",
-    icon: "codebuddy",
-    cmd: "codebuddy",
-    probe: { args: ["--version"], expect: /\d+\.\d+/ },
-    models: [{ id: "default", name: "CodeBuddy default", context: 200000, output: 64000 }],
-  },
-
-  // ── DevEco Code ────────────────────────────────────────────────────────────
-  {
-    bin: "deveco",
-    id: "deveco",
-    name: "DevEco Code",
-    icon: "deveco",
-    cmd: "deveco",
-    probe: { args: ["--version"], expect: /\d+\.\d+/ },
-    models: [{ id: "default", name: "DevEco Code default", context: 200000, output: 64000 }],
-  },
-
-  // ── Grok ───────────────────────────────────────────────────────────────────
-  {
-    bin: "grok",
-    id: "grok",
-    name: "Grok",
-    icon: "grok",
-    cmd: "grok",
-    probe: { args: ["--version"], expect: /\d+\.\d+/ },
-    models: [{ id: "default", name: "Grok default", context: 200000, output: 64000 }],
-  },
-
-  // ── Kiro CLI ───────────────────────────────────────────────────────────────
-  {
-    bin: "kiro-cli",
-    id: "kiro-cli",
-    name: "Kiro CLI",
-    icon: "kiro",
-    cmd: "kiro-cli",
-    probe: { args: ["--version"], expect: /\d+\.\d+/ },
-    models: [{ id: "default", name: "Kiro CLI default", context: 200000, output: 64000 }],
-  },
-
-  // ── Qoder CLI ──────────────────────────────────────────────────────────────
-  {
-    bin: "qodercli",
-    id: "qodercli",
-    name: "Qoder CLI",
-    icon: "qoder",
-    cmd: "qodercli",
-    probe: { args: ["--version"], expect: /\d+\.\d+/ },
-    models: [{ id: "default", name: "Qoder CLI default", context: 200000, output: 64000 }],
-  },
-
-  // ── Qoder CN ───────────────────────────────────────────────────────────────
-  {
-    bin: "qoderclicn",
-    id: "qoderclicn",
-    name: "Qoder CN",
-    icon: "qoder-cn",
-    cmd: "qoderclicn",
-    probe: { args: ["--version"], expect: /\d+\.\d+/ },
-    models: [{ id: "default", name: "Qoder CN default", context: 200000, output: 64000 }],
-  },
-
-  // ── QwenPaw ────────────────────────────────────────────────────────────────
-  {
-    bin: "qwenpaw",
-    id: "qwenpaw",
-    name: "QwenPaw",
-    icon: "qwenpaw",
-    cmd: "qwenpaw",
-    probe: { args: ["--version"], expect: /\d+\.\d+/ },
-    models: [{ id: "default", name: "QwenPaw default", context: 200000, output: 64000 }],
-  },
-
-  // ── Reasonix ───────────────────────────────────────────────────────────────
-  {
-    bin: "reasonix",
-    id: "reasonix",
-    name: "Reasonix",
-    icon: "reasonix",
-    cmd: "reasonix",
-    probe: { args: ["--version"], expect: /\d+\.\d+/ },
-    models: [{ id: "default", name: "Reasonix default", context: 200000, output: 64000 }],
-  },
-
-  // ── Trae CLI ─────────────────────────────────────────────────────────────────
-  {
-    bin: "traecli",
-    id: "traecli",
-    name: "Trae CLI",
-    icon: "trae",
-    cmd: "traecli",
-    probe: { args: ["--version"], expect: /\d+\.\d+/ },
-    models: [{ id: "default", name: "Trae CLI default", context: 200000, output: 64000 }],
-  },
-
-  // ── MiniMax Code ─────────────────────────────────────────────────────────────
-  {
-    bin: "mcode",
-    id: "mcode",
-    name: "MiniMax Code",
-    icon: "mcode",
-    cmd: "mcode acp",
-    probe: { args: ["--version"], expect: /\d+\.\d+/ },
-    models: [{ id: "default", name: "MiniMax Code default", context: 200000, output: 64000 }],
-  },
-
-  // ── DeepSeek Harness ─────────────────────────────────────────────────────────
-  {
-    bin: "dsh",
-    id: "dsh",
-    name: "DeepSeek Harness",
-    icon: "dsh",
-    cmd: "dsh --profile multica --stdio",
-    probe: { args: ["--profile", "multica", "--probe"], expect: /"type":"probe"/ },
-    models: [{ id: "default", name: "DSH default", context: 200000, output: 64000 }],
-  },
-
-  // ── Oh-My-Pi ─────────────────────────────────────────────────────────────────
-  {
-    bin: "omp",
-    id: "omp",
-    name: "Oh-My-Pi",
-    icon: "omp",
-    cmd: "omp -p --mode json",
-    probe: { args: ["--version"], expect: /\d+\.\d+/ },
-    models: [{ id: "default", name: "Oh-My-Pi default", context: 200000, output: 64000 }],
-  },
-]
+/**
+ * The argv a `text` CLI runs for one prompt. No shell: the prompt is one argv
+ * element (a leading "-" gets a space so it can't read as a flag), and
+ * `{model}` only takes a plain model id.
+ */
+export function headlessArgv(spec: SubprocessSpec, command: string, prompt: string, model?: string): string[] {
+  if (!spec.headless) throw new Error(`CLI "${spec.id}" has no headless invocation`)
+  const args = spec.headless.args
+  const modelInArgs = args.some((a) => a.includes("{model}"))
+  const picked = model && MODEL_ID.test(model) && !model.startsWith("-") ? model : undefined
+  const resolved = picked ?? (modelInArgs ? spec.models[0]?.id : undefined)
+  if (modelInArgs && !resolved) throw new Error(`${spec.name} needs a model — pick one in the model menu`)
+  const fill = (a: string) => (resolved ? a.split("{model}").join(resolved) : a)
+  const modelArgs = picked && !modelInArgs ? (spec.headless.modelArgs ?? []).map(fill) : []
+  const safePrompt = prompt.startsWith("-") ? ` ${prompt}` : prompt
+  return [command, ...modelArgs, ...args.map((a) => (a === "{prompt}" ? safePrompt : fill(a)))]
+}
 
 /**
  * Max time a probe subprocess may run before we kill it and treat it as unavailable.
@@ -704,7 +461,8 @@ export async function discoverSubprocessProviders(): Promise<DiscoveredProvider[
   const discovered: DiscoveredProvider[] = []
 
   await Promise.all(
-    SUBPROCESS_PROVIDERS.map(async (spec) => {
+    // A listed CLI gizzi can't drive yet isn't offered as a brain.
+    subprocessSpecs().filter((spec) => spec.adapter !== "unsupported").map(async (spec) => {
       const binPath = await resolveCliPath(spec)
       if (!binPath) return
 
@@ -730,7 +488,7 @@ export async function discoverSubprocessProviders(): Promise<DiscoveredProvider[
         id: spec.id,
         name: spec.name,
         auth_type: "subprocess",
-        subprocess_cmd: `${binPath} ${spec.cmd.split(" ").slice(1).join(" ")}`.trim(),
+        subprocess_cmd: binPath,
         source: "subprocess",
         models,
       })

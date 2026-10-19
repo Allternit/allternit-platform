@@ -36,7 +36,9 @@ use crate::auth::get_user;
 use crate::AppState;
 
 pub fn router() -> Router<Arc<AppState>> {
-    Router::new().route("/cli-tools/:id/install", post(install_cli_tool))
+    Router::new()
+        .route("/cli-tools/:id/install", post(install_cli_tool))
+        .merge(crate::cli_catalog::router())
 }
 
 // ─── Manifest ────────────────────────────────────────────────────────────────
@@ -125,7 +127,8 @@ fn tool_info_in(manifest: &Value, provider_id: &str, binary: &str) -> Option<Too
     })
 }
 
-/// The `install` field of a provider auth-status row.
+/// The `install` field of a provider auth-status row: the Factory harness
+/// install when the manifest has the tool, else the catalog's own recipe.
 pub(crate) fn install_json(provider_id: &str, binary: &str) -> Value {
     match tool_info(provider_id, binary) {
         Some(info) => json!({
@@ -135,7 +138,10 @@ pub(crate) fn install_json(provider_id: &str, binary: &str) -> Value {
             "termsUrl": info.terms_url,
             "pin": info.pin,
         }),
-        None => Value::Null,
+        None => crate::cli_catalog::find(provider_id)
+            .filter(|tool| tool.bin == binary)
+            .map(crate::cli_catalog::direct_install_json)
+            .unwrap_or(Value::Null),
     }
 }
 
@@ -155,55 +161,158 @@ fn sse(event: &str, data: Value) -> String {
 }
 
 async fn install_cli_tool(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
     headers: HeaderMap,
     body: Option<Json<InstallBody>>,
 ) -> Response {
-    if get_user(&headers).is_none() {
+    let Some(user) = get_user(&headers) else {
         return (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized"}))).into_response();
-    }
+    };
     let accept_terms = body.map(|Json(b)| b.accept_terms).unwrap_or(false);
-    let Some(binary) = crate::provider_routes::cli_binary_for(&id) else {
-        return (StatusCode::NOT_FOUND, Json(json!({"error": "unknown_tool"}))).into_response();
-    };
-    let Some(info) = tool_info(&id, binary) else {
-        return (StatusCode::NOT_FOUND, Json(json!({"error": "unknown_tool"}))).into_response();
-    };
-    if !info.available {
-        return (
+    let unknown = || (StatusCode::NOT_FOUND, Json(json!({"error": "unknown_tool"}))).into_response();
+    let unavailable = || {
+        (
             StatusCode::CONFLICT,
             Json(json!({"error": "install_unavailable", "message": "One-click install isn't available on this computer"})),
         )
-            .into_response();
-    }
-    if info.requires_terms && !accept_terms {
-        return (
-            StatusCode::CONFLICT,
-            Json(json!({"error": "terms_required", "license": info.license, "termsUrl": info.terms_url})),
-        )
-            .into_response();
-    }
-    if !INSTALLING.lock().unwrap().insert(info.key.clone()) {
-        return (StatusCode::CONFLICT, Json(json!({"error": "install_in_progress"}))).into_response();
+            .into_response()
+    };
+    let terms_required = |license: &str, terms_url: Option<String>| {
+        (StatusCode::CONFLICT, Json(json!({"error": "terms_required", "license": license, "termsUrl": terms_url})))
+            .into_response()
+    };
+
+    // A user's own CLI: its install command, always behind the terms consent.
+    if id.starts_with("custom-") {
+        if !crate::cli_catalog::custom_tools_allowed(&state) {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(json!({ "error": "custom_tools_disabled", "message": "Custom coding tools can only be added on your own computer." })),
+            )
+                .into_response();
+        }
+        let Some(tool) = crate::cli_catalog::load_custom(&state, &user.user_id, &id) else {
+            return unknown();
+        };
+        let Some(cmd) = tool.install_command.clone() else {
+            return unavailable();
+        };
+        let Ok(argv) = crate::cli_catalog::parse_install_command(&cmd) else {
+            return unavailable();
+        };
+        let Some(program) = resolve_binary(&argv[0]) else {
+            return unavailable();
+        };
+        if !accept_terms {
+            return terms_required("custom", tool.homepage.clone());
+        }
+        let mut command = tokio::process::Command::new(program);
+        command.args(&argv[1..]);
+        let binary = tool.command.clone();
+        return stream_install(command, None, tool.id.clone(), binary);
     }
 
-    let mut command = tokio::process::Command::new(crate::terminal_routes::factory_bin());
+    let Some(binary) = crate::provider_routes::cli_binary_for(&id) else {
+        return unknown();
+    };
+
+    // Tools the Factory harness installs (pinned, licence-gated).
+    if let Some(info) = tool_info(&id, binary) {
+        if !info.available {
+            return unavailable();
+        }
+        if info.requires_terms && !accept_terms {
+            return terms_required(&info.license, info.terms_url);
+        }
+        let mut command = tokio::process::Command::new(crate::terminal_routes::factory_bin());
+        command.args(["pane", "harness", "install", &info.key]);
+        if info.requires_terms {
+            command.args(["--accept-terms", &info.key]);
+        }
+        return stream_install(command, None, info.key.clone(), binary.to_string());
+    }
+
+    // Other catalog tools: their own pinned recipe (npm into the harness
+    // prefix, uv/brew, or the vendor's https install script).
+    let Some(tool) = crate::cli_catalog::find(&id).filter(|t| t.bin == binary) else {
+        return unknown();
+    };
+    let Some(plan) = crate::cli_catalog::direct_install(tool) else {
+        return unknown();
+    };
+    let offer = crate::cli_catalog::direct_install_json(tool);
+    if offer.get("available").and_then(Value::as_bool) != Some(true) {
+        return unavailable();
+    }
+    let license = tool.license.clone().unwrap_or_else(|| "undeclared".to_string());
+    if crate::cli_catalog::license_requires_terms(&license) && !accept_terms {
+        return terms_required(&license, tool.terms_url.clone());
+    }
+    match plan {
+        crate::cli_catalog::DirectInstall::Argv { program, args, env } => {
+            let Some(program) = resolve_binary(&program) else {
+                return unavailable();
+            };
+            let mut command = tokio::process::Command::new(program);
+            command.args(&args).envs(env);
+            stream_install(command, None, tool.id.clone(), binary.to_string())
+        }
+        crate::cli_catalog::DirectInstall::Script { url } => {
+            let curl = std::process::Command::new("curl")
+                .args(["-fsSL", "--proto", "=https", &url])
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null())
+                .spawn();
+            let Ok(mut curl) = curl else {
+                return unavailable();
+            };
+            let Some(script) = curl.stdout.take() else {
+                return unavailable();
+            };
+            let mut command = tokio::process::Command::new("bash");
+            command.args(["-s", "--"]);
+            stream_install(command, Some((curl, script)), tool.id.clone(), binary.to_string())
+        }
+    }
+}
+
+/// Run an installer, streaming its output as SSE; `done` reports whether
+/// `binary` now resolves. `piped` feeds a downloaded script to its stdin.
+fn stream_install(
+    mut command: tokio::process::Command,
+    piped: Option<(std::process::Child, std::process::ChildStdout)>,
+    key: String,
+    binary: String,
+) -> Response {
+    if !INSTALLING.lock().unwrap().insert(key.clone()) {
+        return (StatusCode::CONFLICT, Json(json!({"error": "install_in_progress"}))).into_response();
+    }
+    let (mut feeder, stdin) = match piped {
+        Some((child, stdout)) => (Some(child), std::process::Stdio::from(stdout)),
+        None => (None, std::process::Stdio::null()),
+    };
+    // Installed CLIs land in (and installers find npm/node in) the harness bin.
+    let path = std::env::join_paths(
+        std::iter::once(allternit_factory_engine::registry::harness_bin_dir())
+            .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())),
+    )
+    .unwrap_or_default();
     command
-        .args(["pane", "harness", "install", &info.key])
         .env("NO_COLOR", "1")
-        .stdin(std::process::Stdio::null())
+        .env("PATH", path)
+        .stdin(stdin)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
-    if info.requires_terms {
-        command.args(["--accept-terms", &info.key]);
-    }
     let (tx, rx) = tokio::sync::mpsc::channel::<String>(256);
-    let key = info.key.clone();
-    let binary = binary.to_string();
     match command.spawn() {
         Err(error) => {
             INSTALLING.lock().unwrap().remove(&key);
+            if let Some(mut feeder) = feeder.take() {
+                let _ = feeder.kill();
+                let _ = feeder.wait();
+            }
             let _ = tx.try_send(sse("done", json!({"ok": false, "error": format!("could not start the installer: {error}")})));
         }
         Ok(mut child) => {
@@ -243,12 +352,24 @@ async fn install_cli_tool(
                 for task in tasks {
                     let _ = task.await;
                 }
+                let feeder_ok = match feeder.take() {
+                    Some(mut feeder) => tokio::task::spawn_blocking(move || {
+                        let _ = feeder.kill();
+                        feeder.wait().map(|s| s.success()).unwrap_or(false)
+                    })
+                    .await
+                    .unwrap_or(false),
+                    None => true,
+                };
                 let done = match status {
-                    Ok(Ok(status)) if status.success() => match resolve_binary(&binary) {
+                    Ok(Ok(status)) if status.success() => match resolve_binary(&binary)
+                        .or_else(|| std::path::Path::new(&binary).is_absolute().then(|| PathBuf::from(&binary)).filter(|p| p.is_file()))
+                    {
                         Some(path) => {
                             reload_gizzi().await;
                             json!({"ok": true, "path": path.display().to_string()})
                         }
+                        None if !feeder_ok => json!({"ok": false, "error": "the install script could not be downloaded"}),
                         None => json!({"ok": false, "error": format!("the installer finished but {binary} wasn't found")}),
                     },
                     Ok(Ok(status)) => json!({"ok": false, "error": format!("the installer failed ({status})")}),

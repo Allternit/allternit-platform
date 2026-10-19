@@ -174,15 +174,15 @@ function healthError(health: PhoneLinkHealth | null): PhoneLinkAppResult | null 
 }
 
 /** A failed lane call as the wizard's error. */
-function toolError(res: ToolResult): PhoneLinkAppResult {
+export function toolError(res: ToolResult): PhoneLinkAppResult {
   if (res.ok) return err('phone_failed', 'The phone did not answer.');
   const retryable = res.error === 'device_offline' || res.error === 'device_locked' || res.error === 'phone_failed';
   return err(res.error, res.message, retryable);
 }
 
-type Resolved = { serial: string; phone: LinkedPhone; app: PhoneCatalogApp };
+export type Resolved = { serial: string; phone: LinkedPhone; app: PhoneCatalogApp };
 
-function resolve(lane: LinkedAppLane, opts: unknown): Resolved | PhoneLinkAppResult {
+export function resolve(lane: LinkedAppLane, opts: unknown): Resolved | PhoneLinkAppResult {
   const o = (opts ?? {}) as { deviceId?: unknown; app?: unknown };
   if (typeof o.deviceId !== 'string' || !o.deviceId) return err('invalid_args', 'deviceId is required.');
   if (typeof o.app !== 'string' || !o.app) return err('invalid_args', 'app is required.');
@@ -199,7 +199,7 @@ function resolve(lane: LinkedAppLane, opts: unknown): Resolved | PhoneLinkAppRes
   return { serial, phone, app };
 }
 
-async function launch(lane: LinkedAppLane, r: Resolved): Promise<PhoneLinkAppResult | null> {
+export async function launch(lane: LinkedAppLane, r: Resolved): Promise<PhoneLinkAppResult | null> {
   // The catalog id: the lane maps it to the bundle ids / packages itself.
   const res = await lane.call('phone.open_app', r.serial, { app: r.app.id });
   if (res.ok) return null;
@@ -216,7 +216,7 @@ export async function openLinkedApp(deps: LinkedAppDeps, opts: unknown): Promise
   return { ok: true, signedIn: null, account: null };
 }
 
-async function readScreen(lane: LinkedAppLane, serial: string): Promise<ToolResult> {
+export async function readScreen(lane: LinkedAppLane, serial: string): Promise<ToolResult> {
   const text = await lane.call('phone.screen_text', serial, {});
   if (text.ok || text.error === 'device_offline' || text.error === 'device_locked' || text.error === 'pairing_invalid') return text;
   // Older helpers without screen_text: the element tree has the same labels.

@@ -1415,6 +1415,10 @@
         {
           "on": "2026-10-19",
           "note": "Turned phones: iPhone CONFIG rotation travels as PhoneStreamMeta.rotation and the viewer draws the frame upright (allternit-ai rotation.ts), sending input back in the video's own portrait pixels so old and new viewers agree. Simulator probe: the runner's synthesized tap/drag/swipe use that fixed portrait space in any orientation, XCUICoordinate uses the rotated one, so long_press goes fast when turned and Back swipes from the app's left edge. A mid-stream size change re-sends meta through PhoneStreamManager to Desktop, web and PWA viewers."
+        },
+        {
+          "on": "2026-10-19",
+          "note": "Eoj: phone apps must show the same telemetry as browser sign-ins. Read-only account reader (taps only menu labels, deny-list, never types) reads account, plan and usage windows every 6 h on an idle unlocked phone; new ACCESSIBILITY_OFF health state replaces a false HEALTHY."
         }
       ],
       "evidence": [
@@ -1430,7 +1434,9 @@
         "allternit/surfaces/allternit-desktop/src/main/phone-scrcpy.ts",
         "allternit/surfaces/allternit-desktop/src/main/phone-stream.ts",
         "allternit/cmd/allternit-sideload/README.md",
-        "allternit/surfaces/docs/guides/bot-voice-on-linked-phone.mdx"
+        "allternit/surfaces/docs/guides/bot-voice-on-linked-phone.mdx",
+        "allternit/surfaces/allternit-desktop/src/main/phone-account-reader.ts",
+        "allternit/surfaces/allternit-desktop/src/main/phone-account-specs.ts"
       ]
     },
     {
@@ -1553,7 +1559,7 @@
       "label": "One-click install and sign-in for CLI brains",
       "product": "product:ai-allternit",
       "status": "building",
-      "description": "Settings → Subscriptions installs CLI brains (Claude Code, Codex, Grok, …) on the active computer with the Factory's pinned, licence-gated installer (private Node when the machine has none), then signs in with a link and code shown on any device, so a cloud computer can run them while the user's Mac is off.",
+      "description": "Settings → Connections → Coding tools installs CLI brains (Claude Code, Codex, Grok, …) on the active computer with the Factory's pinned, licence-gated installer (private Node when the machine has none), then signs in with a link and code shown on any device, so a cloud computer can run them while the user's Mac is off.",
       "touches": [
         "allternit-ai/src/components/settings",
         "allternit-ai/src/lib",
@@ -1566,12 +1572,19 @@
       "evidence": [
         "allternit/cmd/allternit-api/src/cli_tools.rs",
         "allternit-ai/src/lib/cli-connect.ts",
-        "allternit-ai/src/components/settings/CliConnectFlow.tsx"
+        "allternit-ai/src/components/settings/CliConnectFlow.tsx",
+        "allternit/cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json",
+        "allternit/cmd/allternit-api/src/cli_catalog.rs",
+        "allternit-ai/src/components/settings/CodingToolsAdd.tsx"
       ],
       "decisions": [
         {
           "on": "2026-10-16",
           "note": "Eoj: build plan step D (Install → Sign in → Connected for any computer) so his always-on cloud computer can run CLI brains. Reuses the Factory harness installer, not a second manifest; sign-in captures the CLI's own link/code instead of opening a browser nobody sees."
+        },
+        {
+          "on": "2026-10-19",
+          "note": "Eoj: show and support every popular coding CLI and let people add an unlisted one through the same channels. One catalog file (cli-catalog.json, 38 tools) now feeds gizzi's brains and allternit-api; custom CLIs (argv only, no shell) are accepted only on single-owner runtimes (Desktop, self-hosted)."
         }
       ]
     },

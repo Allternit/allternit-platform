@@ -54,6 +54,41 @@ export interface PhoneLinkApp {
   category?: string;
   /** Subscription gateway provider id when the app is a gateway vendor ('google' for Gemini). */
   provider?: string;
+  /** Account email or @handle last read from the app's own account screen (phone-account-reader.ts), else null. */
+  account?: string | null;
+  /** Plan name the app showed (Free, Plus, Pro, Max, SuperGrok, …), else null. */
+  plan?: string | null;
+  /** Usage windows the app showed (5-hour, Weekly, …), else null. */
+  usage?: PhoneLinkUsage | null;
+  /** ISO time of the last account read that saw anything. */
+  accountCheckedAt?: string;
+}
+
+/** One usage window as an app shows it ("Current session … 34% used … Resets in 2 hr"). */
+export interface PhoneLinkUsageWindow {
+  /** 'five_hour', 'weekly', 'weekly_opus', 'daily', 'monthly', 'messages'. */
+  id: string;
+  /** '5-hour', 'Weekly', … */
+  label: string;
+  /** 0–100, or null when the screen didn't show it. */
+  remaining_pct: number | null;
+  /** ISO reset time, or null when the screen didn't show it. */
+  resets_at: string | null;
+}
+
+export interface PhoneLinkUsage {
+  windows: PhoneLinkUsageWindow[];
+  /** ISO time the screen was read. */
+  observedAt: string;
+}
+
+/** phone-link:read-account answer (allternit-ai src/lib/phone-link-bridge.ts). Fields the app didn't show are null; never guessed. */
+export interface PhoneLinkAccountResult {
+  ok: boolean;
+  account: string | null;
+  plan: string | null;
+  usage: { windows: Array<{ id: string; label: string; remaining_pct: number | null; resets_at: string | null }>; observedAt: string } | null;
+  error?: PhoneLinkError;
 }
 
 export interface PhoneLinkError {
@@ -95,6 +130,8 @@ export type PhoneLinkHealthState =
   | 'PAIRING_INVALID'
   | 'DEVICE_LOCKED'
   | 'HELPER_NOT_RESPONDING'
+  // Android: the Phone Link app answers but its accessibility service is off, so no screen read or tap works.
+  | 'ACCESSIBILITY_OFF'
   | 'DEVELOPER_IMAGE_REMOUNT_REQUIRED'
   | 'SIGNATURE_RENEWAL_REQUIRED'
   | 'UNKNOWN';
@@ -163,6 +200,8 @@ export interface PhoneLinkAPI {
   openApp(opts: { deviceId: string; app: string }): Promise<PhoneLinkAppResult>;
   /** Connections wizard: open the app, read its screen, report whether it is signed in (and as whom, when shown). */
   checkApp(opts: { deviceId: string; app: string }): Promise<PhoneLinkAppResult>;
+  /** Read-only: open the app's own account/usage screen and read account, plan and usage windows. Never types or toggles. */
+  readAccount(opts: { deviceId: string; app: string }): Promise<PhoneLinkAccountResult>;
 }
 
 /** phone-link:open-app / phone-link:check-app answer (allternit-ai src/lib/phone-link-bridge.ts). */

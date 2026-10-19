@@ -108,7 +108,13 @@ export class KimiWebAdapter extends WebChatAdapter {
       usage:
         read.pct === null
           ? null
-          : { remaining_pct: read.pct, resets_at: read.resetsAt, observed_at: new Date().toISOString() },
+          : {
+              remaining_pct: read.pct,
+              resets_at: read.resetsAt,
+              observed_at: new Date().toISOString(),
+              // One figure: the subscription balance (GetSubscriptionStats).
+              windows: [{ id: "plan", label: "Plan", remaining_pct: read.pct, resets_at: read.resetsAt }],
+            },
     };
   }
 }

@@ -35,6 +35,7 @@ import { RuntimeService, RuntimeNotFoundError, type RegisteredRuntime } from "@/
 import { ExecutionLogService } from "@/runtime/execution-log"
 import { Log } from "@/shared/util/log"
 import { PROVIDER_ENV_KEYS } from "@/runtime/runtime-discovery"
+import { findSubprocessSpec, headlessArgv } from "@/runtime/providers/discovery/subprocess"
 import { currentCliPath } from "@/runtime/providers/discovery/subprocess"
 import {
   ClientSideConnection,
@@ -156,7 +157,8 @@ export class LocalCliDriver implements RuntimeDriver {
       log.info("cli path moved", { cli: this.cliName, from: cli.path, to: cliPath })
       cli.path = cliPath
     }
-    const baseCmd = parseCmd(`${cliPath} ${this.specArgs()}`)
+    // The path is one argv element (it may contain spaces, e.g. a custom tool).
+    const baseCmd = [cliPath, ...parseCmd(this.specArgs())]
     const adapter = resolveAdapter(this.cliName)
 
     if (task?.attachments && task.attachments.length > 0 && !adapter.supportsAttachments) {
@@ -2097,13 +2099,29 @@ const CLI_ADAPTERS: Record<string, CliAdapter> = {
   },
 }
 
+/**
+ * Catalog CLIs with `adapter: "text"` (cli-catalog.json) and the user's own
+ * CLIs: one-shot argv from their `headless` args — the prompt is one argv
+ * element, never a shell string.
+ */
+function textAdapter(name: string): CliAdapter | undefined {
+  const spec = findSubprocessSpec(name)
+  if (!spec || spec.adapter !== "text" || !spec.headless) return undefined
+  return {
+    mode: "one-shot-text",
+    buildArgv: ([command], message, ctx) => {
+      const envModel = PROVIDER_ENV_KEYS[name]?.model ? process.env[PROVIDER_ENV_KEYS[name]!.model!] : undefined
+      return headlessArgv(spec, command, message, sessionModel(ctx.model, name) ?? envModel)
+    },
+  }
+}
+
 function resolveAdapter(name: string): CliAdapter {
-  const adapter = CLI_ADAPTERS[name]
+  const adapter = CLI_ADAPTERS[name] ?? textAdapter(name)
   if (adapter) return adapter
 
   const unsupportedByProtocol: Record<string, string> = {
     dsh: "DSH multica stdio (private JSONL protocol)",
-    "copilot-cli": "Copilot suggest mode (not a verified agent chat protocol)",
   }
 
   const protocol = unsupportedByProtocol[name]
@@ -2136,7 +2154,7 @@ export interface CliAdapterInfo {
 }
 
 export function getCliAdapterInfo(name: string): CliAdapterInfo {
-  const adapter = CLI_ADAPTERS[name]
+  const adapter = CLI_ADAPTERS[name] ?? textAdapter(name)
   if (adapter) {
     // OpenClaw uses a dedicated runner but speaks a stream-json-style NDJSON wire.
     const mode = adapter.mode === "openclaw-json" ? "stream-json" : adapter.mode
@@ -2145,8 +2163,6 @@ export function getCliAdapterInfo(name: string): CliAdapterInfo {
 
   const unsupportedByProtocol: Record<string, string> = {
     dsh: "DSH multica stdio (private JSONL protocol)",
-    "copilot-cli": "Copilot suggest mode (not a verified agent chat protocol)",
-    copilot: "Copilot suggest mode (not a verified agent chat protocol)",
   }
 
   const protocol = unsupportedByProtocol[name]

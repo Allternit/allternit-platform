@@ -73,6 +73,8 @@ export interface LinkedPhoneDevice {
 /** Phone-Linked phones (iPhone helper + Android app, one iCTRL lane). Serials start with "link:". */
 export interface PhoneLinkBackend extends UsbPhoneBackend {
   linkedDevices(): Promise<LinkedPhoneDevice[]>;
+  /** A bot tool call started (+1) or ended (-1) on a linked phone; background account reads wait while it's busy. */
+  noteActivity?(serial: string, delta: number): void;
 }
 
 export interface PhoneToolDeps {
@@ -125,6 +127,8 @@ export type ToolErrorCode =
   | 'uncertain'
   // Phone Link lane states
   | 'pairing_invalid'
+  // Android Phone Link: the accessibility service is off, so no screen read or tap works
+  | 'accessibility_off'
   // element lookup (phone.find_and_tap)
   | 'not_found';
 
@@ -520,7 +524,15 @@ export class PhoneToolRunner {
     const serial = this.resolveSerial(a.serial, usb, links);
     if (typeof serial !== 'string') return serial;
     if (usb?.has(serial)) return usb.call(name, serial, a);
-    if (links?.has(serial)) return links.call(name, serial, a);
+    if (links?.has(serial)) {
+      // Linked phones: mark bot use so background account reads wait (phone-account-reader.ts).
+      links.noteActivity?.(serial, 1);
+      try {
+        return await links.call(name, serial, a);
+      } finally {
+        links.noteActivity?.(serial, -1);
+      }
+    }
 
     // Anything that operates the phone screen/SIM marks the phone busy, so
     // the UI can show a takeover banner while a bot is mid-action. Reads

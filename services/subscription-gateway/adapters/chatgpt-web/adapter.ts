@@ -174,7 +174,13 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
       usage:
         read.pct === null
           ? null
-          : { remaining_pct: read.pct, resets_at: null, observed_at: new Date().toISOString() },
+          : {
+              remaining_pct: read.pct,
+              resets_at: null,
+              observed_at: new Date().toISOString(),
+              // The sidebar's single "N% usage remaining" figure.
+              windows: [{ id: "usage", label: "Usage", remaining_pct: read.pct, resets_at: null }],
+            },
     };
   }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { classifyHealth, PhoneLinkHealthMonitor, type HealthEvidence, type LinkedPhone } from './phone-link-health.js';
+import { ACCESSIBILITY_OFF_ACTION, classifyHealth, isAccessibilityOffError, PhoneLinkHealthMonitor, type HealthEvidence, type LinkedPhone } from './phone-link-health.js';
 
 const NOW = Date.parse('2026-10-17T12:00:00.000Z');
 const ISO = new Date(NOW).toISOString();
@@ -157,5 +157,37 @@ describe('PhoneLinkHealthMonitor', () => {
   it('a probe that throws counts as "nothing answered"', async () => {
     const monitor = new PhoneLinkHealthMonitor({ phones: () => [phone({ platform: 'android' })], probe: async () => { throw new Error('boom'); } });
     expect((await monitor.check('dev-1')).state).toBe('TRANSPORT_OFFLINE');
+  });
+});
+
+describe('ACCESSIBILITY_OFF', () => {
+  it('is a manual state that tells the person where to turn the service on', () => {
+    expect(classifyHealth(ev({ platform: 'android', call: 'accessibility_off' }), NOW)).toMatchObject({
+      state: 'ACCESSIBILITY_OFF',
+      recovery: 'manual',
+      action: ACCESSIBILITY_OFF_ACTION,
+    });
+    expect(ACCESSIBILITY_OFF_ACTION).toContain('Settings › Accessibility › Allternit Phone Link');
+    expect(isAccessibilityOffError("Phone Link's accessibility service is not running. Re-run setup from Allternit Desktop.")).toBe(true);
+  });
+
+  it('a failed screen read keeps a probe-healthy phone out of HEALTHY until a good read', async () => {
+    let t = NOW;
+    const monitor = new PhoneLinkHealthMonitor({
+      phones: () => [{ deviceId: 'dev-1', platform: 'android', storeKey: 'k' }],
+      probe: async () => ev({ platform: 'android' }),
+      now: () => t,
+    });
+    expect((await monitor.check('dev-1')).state).toBe('HEALTHY');
+    monitor.observe('dev-1', 'accessibility_off');
+    expect(monitor.health('dev-1')?.state).toBe('ACCESSIBILITY_OFF');
+    expect((await monitor.check('dev-1')).state).toBe('ACCESSIBILITY_OFF');
+    monitor.observe('dev-1', 'ui_ok');
+    expect((await monitor.check('dev-1')).state).toBe('HEALTHY');
+
+    monitor.observe('dev-1', 'ui_failed');
+    expect((await monitor.check('dev-1')).state).toBe('HELPER_NOT_RESPONDING');
+    t += 6 * 60_000;
+    expect((await monitor.check('dev-1')).state).toBe('HEALTHY');
   });
 });

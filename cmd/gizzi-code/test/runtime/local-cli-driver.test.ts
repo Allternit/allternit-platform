@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, test } from "bun:test"
-import { getCliAdapterInfo, StreamJsonBlocks, streamJsonCutShort } from "@/runtime/drivers/local-cli-driver"
+import { cliAdapterArgv, getCliAdapterInfo, StreamJsonBlocks, streamJsonCutShort } from "@/runtime/drivers/local-cli-driver"
 import { SUBPROCESS_PROVIDERS } from "@/runtime/providers/discovery/subprocess"
 
 const EXPECTED_ACP_CLIS = [
@@ -33,7 +33,7 @@ const EXPECTED_STREAM_JSON_CLIS = [
   "qwen-cli",
 ]
 
-const EXPECTED_UNSUPPORTED = ["dsh", "copilot"]
+const EXPECTED_UNSUPPORTED = ["dsh"]
 
 describe("LocalCliDriver adapter registry", () => {
   test("every discovered subprocess CLI has a known adapter status", () => {
@@ -66,6 +66,21 @@ describe("LocalCliDriver adapter registry", () => {
       expect(info.supported).toBe(false)
       expect(info.reason).toContain("not implemented")
     }
+  })
+
+  test("every catalog CLI is runnable unless the catalog says it isn't", () => {
+    for (const spec of SUBPROCESS_PROVIDERS) {
+      const info = getCliAdapterInfo(spec.id)
+      expect({ id: spec.id, supported: info.supported }).toEqual({ id: spec.id, supported: spec.adapter !== "unsupported" })
+      // "builtin" means a protocol adapter exists; "text" runs the headless argv.
+      if (spec.adapter === "text") expect({ id: spec.id, mode: info.mode }).toEqual({ id: spec.id, mode: "one-shot-text" })
+    }
+  })
+
+  test("text CLIs run their headless argv with the prompt as one element", () => {
+    const argv = cliAdapterArgv("gemini-cli", ["/bin/gemini"], "fix it; rm -rf / $(x)", { taskId: "t", model: "gemini-2.5-pro" })
+    expect(argv).toEqual(["/bin/gemini", "-m", "gemini-2.5-pro", "-p", "fix it; rm -rf / $(x)", "--approval-mode=yolo"])
+    expect(cliAdapterArgv("aider", ["aider"], "hi", { taskId: "t" })).toEqual(["aider", "--message", "hi", "--yes"])
   })
 
   test("there is no generic fallback for unknown CLIs", () => {

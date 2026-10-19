@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { currentCliPath, harnessBinDir, knownInstallPaths, prependHarnessBin, SUBPROCESS_PROVIDERS } from "../../src/runtime/providers/discovery/subprocess"
+import { currentCliPath, customCliFile, customSubprocessSpecs, harnessBinDir, headlessArgv, knownInstallPaths, prependHarnessBin, PROVIDER_ENV_KEYS, SUBPROCESS_PROVIDERS } from "../../src/runtime/providers/discovery/subprocess"
 import type { Provider } from "../../src/runtime/providers/provider"
 import { cliModel, stripProviderPrefix } from "../../src/runtime/providers/cli-model"
 
@@ -114,5 +114,59 @@ describe("CLI models the built-in list doesn't have", () => {
       process.env.HOME = saved.HOME
       process.env.PATH = saved.PATH
     }
+  })
+})
+
+describe("the shared CLI catalog and the user's own CLIs", () => {
+  test("catalog ids are unique and text CLIs carry exactly one {prompt} argv element", () => {
+    const ids = SUBPROCESS_PROVIDERS.map((s) => s.id)
+    expect(new Set(ids).size).toBe(ids.length)
+    for (const spec of SUBPROCESS_PROVIDERS.filter((s) => s.adapter === "text")) {
+      expect(spec.headless?.args.filter((a) => a === "{prompt}").length).toBe(1)
+    }
+    // Env overrides come from the catalog too.
+    expect(PROVIDER_ENV_KEYS["claude-cli"]).toEqual({ path: "MULTICA_CLAUDE_PATH", model: "MULTICA_CLAUDE_MODEL" })
+  })
+
+  test("headless argv: prompt is one element, models only fill {model}, flags can't be smuggled", () => {
+    const spec = SUBPROCESS_PROVIDERS.find((s) => s.id === "ollama-cli")!
+    expect(headlessArgv({ ...spec, models: [] }, "ollama", "hello world", "llama3")).toEqual(["ollama", "run", "llama3", "hello world"])
+    expect(() => headlessArgv({ ...spec, models: [] }, "ollama", "hi")).toThrow()
+    const goose = SUBPROCESS_PROVIDERS.find((s) => s.id === "goose")!
+    expect(headlessArgv(goose, "goose", "-rf now", "--evil")).toEqual(["goose", "run", "--no-session", "-q", "-t", " -rf now"])
+  })
+
+  test("custom CLIs come from the harness mirror, and unsafe entries are dropped", () => {
+    const home = mkdtempSync(path.join(os.tmpdir(), "gizzi-harness-"))
+    const env = { HOME: home, ALLTERNIT_FACTORY_HARNESS_HOME: path.join(home, "h") }
+    const file = customCliFile(env)
+    expect(file).toBe(path.join(home, "h", "custom-clis.json"))
+    mkdirSync(path.dirname(file), { recursive: true })
+    const good = {
+      id: "custom-my-agent-abc123",
+      name: "My Agent",
+      bin: "/opt/My Tools/agent",
+      headless: { args: ["run", "{prompt}"], modelArgs: ["--model={model}"] },
+      verifyArgs: ["--version"],
+    }
+    writeFileSync(
+      file,
+      JSON.stringify({
+        tools: [
+          good,
+          { ...good, id: "custom-shell", bin: "sh -c evil" },
+          { ...good, id: "custom-two", headless: { args: ["{prompt}", "{prompt}"] } },
+          { ...good, id: "custom-glued", headless: { args: ["--q={prompt}"] } },
+          { ...good, id: "claude-cli" },
+        ],
+      }),
+    )
+    const specs = customSubprocessSpecs(file)
+    expect(specs.map((s) => s.id)).toEqual(["custom-my-agent-abc123"])
+    const [spec] = specs
+    expect(spec.adapter).toBe("text")
+    expect(spec.custom).toBe(true)
+    expect(headlessArgv(spec, spec.bin, "a $(b) c", "m1")).toEqual(["/opt/My Tools/agent", "--model=m1", "run", "a $(b) c"])
+    expect(customSubprocessSpecs(path.join(home, "missing.json"))).toEqual([])
   })
 })

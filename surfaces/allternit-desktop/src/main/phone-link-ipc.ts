@@ -107,6 +107,8 @@ export function registerPhoneLinkIpc(handleGuarded: Guarded): PhoneLinkManager {
   // signs in on the phone, then read its screen. Never types or taps sign-in.
   handleGuarded('phone-link:open-app', (_event, opts?: unknown) => phoneService.openLinkedApp(opts));
   handleGuarded('phone-link:check-app', (_event, opts?: unknown) => phoneService.checkLinkedApp(opts));
+  // Read-only: the app's own account screen → account, plan, usage windows. Never types or toggles.
+  handleGuarded('phone-link:read-account', (_event, opts?: unknown) => phoneService.readLinkedAccount(opts));
   handleGuarded('phone-link:handover-targets', () => phoneService.handoverTargets());
   handleGuarded('phone-link:remove', (_event, deviceId?: unknown) => {
     if (typeof deviceId !== 'string' || !deviceId) throw new Error('deviceId is required');

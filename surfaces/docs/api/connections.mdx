@@ -1,6 +1,6 @@
 ---
 title: Connections API and Desktop bridge
-description: The endpoints and Desktop IPC behind Settings → Connections: route telemetry, the gateway catalog, CLI auth status, and the phone-link open-app / check-app calls.
+description: The endpoints and Desktop IPC behind Settings → Connections: route telemetry, the gateway catalog, CLI auth status, and the phone-link open-app / check-app / read-account calls.
 ---
 
 Settings → Connections ([user guide](/guides/connections)) is built from four sources. This page covers the fields each one returns and the Desktop IPC the connect wizard uses.
@@ -11,6 +11,7 @@ Settings → Connections ([user guide](/guides/connections)) is built from four 
 | `GET /v1/gateway/catalog` | Which vendors and bot projects exist, their names, logos and connect profiles. |
 | `GET /api/v1/providers/auth/status?kind=cli` | The Coding tools tab. |
 | `window.allternit.phoneLink.openApp` / `checkApp` | The wizard's "Sign in on your phone" and "Check" steps (Allternit Desktop). |
+| `window.allternit.phoneLink.readAccount` | A phone way's account, plan and usage windows (Allternit Desktop). |
 
 ## Route telemetry: GET /v1/routes
 
@@ -133,8 +134,58 @@ Both calls are read-only on the phone beyond opening the app: they never type, n
 | `device_locked` | The phone is locked ("Unlock your phone."). | yes |
 | `device_offline` | The phone doesn't answer at its saved address. | yes |
 | `pairing_invalid` | The phone no longer accepts this computer's key. Pair it again in Settings → Connections › Setup. | no |
+| `accessibility_off` | Android: Phone Link's accessibility service is off, so it can't read or tap the screen. The message says to turn it on in Settings › Accessibility › Allternit Phone Link on the phone, or to run Phone Link setup again. | no |
 | `helper_not_responding`, `developer_image_remount_required`, `signature_renewal_required` | The phone's health state, with the same wording as Settings → Connections › Setup. See [Phone Link › Health](/guides/phone-link). | per state |
-| `phone_failed` | The phone answered with an error. | yes |
+| `phone_failed` | The phone answered with an error. The message is the phone's own error. | yes |
+
+`not_installed` is reported only when the phone's own app list doesn't have the app, or every launch attempt said the app is missing. Other launch failures (accessibility off, locked, offline, or the phone refusing to start the app) come back as their own code and message.
+
+## Desktop IPC: phone-link:read-account
+
+`window.allternit.phoneLink.readAccount({ deviceId, app })` (IPC `phone-link:read-account`) reads the account, plan and usage windows of an AI chat app on a linked phone: `chatgpt`, `claude`, `gemini`, `grok`, `kimi`, `copilot` or `perplexity`. Like the wizard calls, it is absent on web, the phone layout, the PWA and older Desktop builds.
+
+```ts
+interface PhoneLinkAccountResult {
+  ok: boolean;
+  account: string | null;            // email or @handle the app shows
+  plan: string | null;               // "Free", "Plus", "Pro", "Max", "SuperGrok", "Moderato", …
+  usage: {
+    windows: Array<{
+      id: string;                    // "five_hour", "weekly", "weekly_opus", "daily", "monthly", "messages"
+      label: string;                 // "5-hour", "Weekly", "Weekly (Opus)", …
+      remaining_pct: number | null;  // 0–100
+      resets_at: string | null;      // ISO time
+    }>;
+    observedAt: string;              // ISO time of the read
+  } | null;
+  error?: { code: string; message: string; retryable: boolean };
+}
+
+window.allternit.phoneLink.readAccount({ deviceId, app }): Promise<PhoneLinkAccountResult>;
+```
+
+How it reads:
+
+- Each vendor has navigation specs in `surfaces/allternit-desktop/src/main/phone-account-specs.ts`. A spec is a list of candidate paths. Each path is a series of taps, each with candidate labels, content descriptions or resource ids (for example the menu, **Settings**, **Account**, **Usage**), followed by screen reads. Every spec is marked `verified: false` until it has been confirmed on a real phone. The reader tries the paths in order and returns whatever it could read.
+- Taps go through `phone.find_and_tap` with exact matching, and only to an element whose whole label or resource id is a spec candidate. A deny-list is checked before every tap: anything matching sign out, log out, delete, remove, upgrade, buy, subscribe, cancel, billing, payment, manage subscription, reset or sign in is never tapped, and neither are switches, toggles, check boxes or sliders. Nothing is typed.
+- The reader always ends with Home, even after a failure. On Android it also steps back out of each path it tried.
+- Parsing is in `phone-account-reader.ts` and never guesses. `account` is a visible email or @handle. `plan` is a known plan name for that vendor, shown as "ChatGPT Plus", "Max plan" or "Plan: Pro", or as a one-word name right after a "Plan" or "Subscription" label. A screen that shows two different plans, such as a plan comparison, gives `null`. Usage windows come from a header such as "Current session" or "Weekly limits", followed by "34% used" (`remaining_pct` 66), "66% left" or "12 of 40 messages left", and "Resets in 2 hr 10 min" or "Resets Thu 9:00 AM". The reset time is turned into ISO in the computer's local time. Anything else is `null`.
+
+A read that saw anything is saved on the phone's app record. `phoneLink.devices()` then returns `account`, `plan`, `usage` and `accountCheckedAt` on each app in `apps`.
+
+Desktop also refreshes these in the background. Each signed-in AI chat app is read again every 6 hours, and about a minute after the phone links or the wizard's **Check** finds the app signed in. A background read happens only when the phone's health is `HEALTHY` (so the phone is unlocked). It doesn't run while a bot used the phone in the last 10 minutes or while its live screen is open. Only one app is read at a time.
+
+| `error.code` | When | `retryable` |
+| --- | --- | --- |
+| `unsupported_app` | The app has no account spec (not an AI chat app). | no |
+| `phone_busy` | A bot is using the phone, or someone is watching its live screen. The read stops before it starts, or between steps. | yes |
+| `accessibility_off`, `device_locked`, `device_offline`, `pairing_invalid`, `not_installed`, … | As for `checkApp` above. | as above |
+
+An `ok: true` result with `null` fields means the app opened, but the reader couldn't find those facts on the screens it reached.
+
+## Health state ACCESSIBILITY_OFF
+
+`phoneLink.devices()` reports `health.state: 'ACCESSIBILITY_OFF'` for an Android phone whose Phone Link app answers but whose accessibility service is off. The probe sees this from `device_info` (`system.accessibility_enabled: false`) or from `is_locked` failing with the helper's "accessibility service is not running" error. A screen read that fails this way also sets it, for 5 minutes or until a read succeeds. Its `recovery` is `manual`, and its `action` tells the person to turn on **Allternit Phone Link** in Settings › Accessibility on the phone, or to run Phone Link setup again. On iPhone, a runner that answers but can't read the screen is reported as `HELPER_NOT_RESPONDING` in the same way.
 
 ## Related
 

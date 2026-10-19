@@ -22,12 +22,14 @@ import { catalogApp, catalogAppByName, catalogPhoneApps, nameCatalogApps } from 
 import { scanLan, type DiscoveryDeps } from './phone-link-discovery.js';
 import { PACKAGE_RE, resolveApp, type ToolErrorCode, type ToolResult, type UsbPhoneBackend } from './phone-tools.js';
 import {
+  ACCESSIBILITY_OFF_ACTION,
+  isAccessibilityOffError,
   PhoneLinkHealthMonitor,
   type HealthEvidence,
   type LinkedPhone,
   type LinkedPhoneSource,
 } from './phone-link-health.js';
-import type { HandedOverFrom, PhoneLinkApp, PhoneLinkDevice, PhoneLinkHealth } from './phone-link-types.js';
+import type { HandedOverFrom, PhoneLinkApp, PhoneLinkDevice, PhoneLinkHealth, PhoneLinkUsage } from './phone-link-types.js';
 import type { MeshHealFn } from './phone-mesh-heal.js';
 
 export type { LinkedPhone, LinkedPhoneSource };
@@ -84,11 +86,36 @@ export interface PhoneLinkBackendDeps {
 /** How often a healthy phone's apps are re-read, so an app installed after setup shows up. */
 export const APPS_REFRESH_MS = 10 * 60_000;
 
+/** A phone a bot used this recently counts as busy: account reads wait (bot tasks are many calls with gaps). */
+export const BOT_IDLE_MS = 10 * 60_000;
+
+/** What an account read saw (phone-account-reader.ts), saved on the phone's app record. */
+export interface AppAccountInfo {
+  account: string | null;
+  plan: string | null;
+  usage: PhoneLinkUsage | null;
+  accountCheckedAt: string;
+}
+
+/** Fields a re-read app list must keep from the saved record (sign-in check + account read). */
+function keepChecked(prior: PhoneLinkApp | undefined, app: PhoneLinkApp): PhoneLinkApp {
+  if (!prior) return app;
+  return {
+    ...app,
+    ...(prior.signedIn !== null ? { signedIn: prior.signedIn } : {}),
+    ...(prior.accountCheckedAt
+      ? { account: prior.account ?? null, plan: prior.plan ?? null, usage: prior.usage ?? null, accountCheckedAt: prior.accountCheckedAt }
+      : {}),
+  };
+}
+
 export class PhoneLinkBackend implements UsbPhoneBackend {
   /** image pixels per phone point, learned from a screenshot (deviceId → scale). */
   /** Latest screenshot's pixel size per phone (for direction swipes). */
   private readonly screens = new Map<string, { width: number; height: number }>();
   private readonly appsReadAt = new Map<string, number>();
+  /** Bot tool calls in flight and the last one's time, per device id (PhoneToolRunner → noteActivity). */
+  private readonly botCalls = new Map<string, { inFlight: number; lastAt: number }>();
 
   constructor(private readonly deps: PhoneLinkBackendDeps) {}
 
@@ -113,10 +140,9 @@ export class PhoneLinkBackend implements UsbPhoneBackend {
         const ids = (res.value?.apps ?? []).map((app) => app.package ?? app.bundle_id ?? '').filter(Boolean);
         if (ids.length === 0) return;
         // Keep what the Connections wizard last saw (rememberAppSignIn).
-        const found = catalogPhoneApps(ids, phone.platform).map((app) => {
-          const prior = (phone.apps ?? []).find((had) => had.vendor === app.vendor);
-          return prior && prior.signedIn !== null ? { ...app, signedIn: prior.signedIn } : app;
-        });
+        const found = catalogPhoneApps(ids, phone.platform).map((app) =>
+          keepChecked((phone.apps ?? []).find((had) => had.vendor === app.vendor), app),
+        );
         const next =
           phone.platform === 'android'
             ? found
@@ -135,13 +161,16 @@ export class PhoneLinkBackend implements UsbPhoneBackend {
     return this.serials().includes(serial);
   }
 
-  /** Online = health is HEALTHY or DEVICE_LOCKED (or not checked yet). */
+  /**
+   * Online = health is HEALTHY, DEVICE_LOCKED or ACCESSIBILITY_OFF (or not
+   * checked yet): the phone answers, so a tool call gets the real reason back.
+   */
   serials(): string[] {
     return this.deps
       .phones()
       .filter((p) => {
         const health = this.deps.health?.fresh(p.deviceId) ?? null;
-        return !health || health.state === 'HEALTHY' || health.state === 'DEVICE_LOCKED';
+        return !health || health.state === 'HEALTHY' || health.state === 'DEVICE_LOCKED' || health.state === 'ACCESSIBILITY_OFF';
       })
       .map((p) => LINK_SERIAL_PREFIX + p.deviceId);
   }
@@ -246,6 +275,11 @@ export class PhoneLinkBackend implements UsbPhoneBackend {
     }
   }
 
+  /** Every linked phone (both link stores), with its saved app list. */
+  linkedPhones(): LinkedPhone[] {
+    return this.deps.phones();
+  }
+
   /** The linked phone behind a `link:` serial (name, platform), or null when none is linked. */
   linkedPhone(serial: string): LinkedPhone | null {
     return this.deps.phones().find((p) => serial === LINK_SERIAL_PREFIX + p.deviceId) ?? null;
@@ -273,6 +307,36 @@ export class PhoneLinkBackend implements UsbPhoneBackend {
     save(phone, next);
   }
 
+  /**
+   * Save what an account read saw (phone-account-reader.ts) on the app's
+   * record, so phone-link:devices reports account, plan and usage.
+   */
+  rememberAppAccount(deviceId: string, appId: string, info: AppAccountInfo): void {
+    const save = this.deps.saveApps;
+    const phone = this.deps.phones().find((p) => p.deviceId === deviceId);
+    if (!save || !phone) return;
+    const apps = phone.apps ?? [];
+    const had = apps.some((app) => app.vendor === appId);
+    const next = had
+      ? apps.map((app) => (app.vendor === appId ? { ...app, ...info } : app))
+      : [...apps, ...nameCatalogApps([{ vendor: appId, signedIn: true, ...info }])];
+    save(phone, next);
+  }
+
+  /** A bot tool call on a linked phone started (+1) or ended (-1); PhoneToolRunner reports it. */
+  noteActivity(serial: string, delta: number): void {
+    if (!serial.startsWith(LINK_SERIAL_PREFIX)) return;
+    const deviceId = serial.slice(LINK_SERIAL_PREFIX.length);
+    const entry = this.botCalls.get(deviceId) ?? { inFlight: 0, lastAt: 0 };
+    this.botCalls.set(deviceId, { inFlight: Math.max(0, entry.inFlight + delta), lastAt: this.now() });
+  }
+
+  /** True while a bot is using the phone: a call in flight, or one within BOT_IDLE_MS. */
+  botBusy(deviceId: string, idleMs = BOT_IDLE_MS): boolean {
+    const entry = this.botCalls.get(deviceId);
+    return !!entry && (entry.inFlight > 0 || this.now() - entry.lastAt < idleMs);
+  }
+
   /** The phone's current "ip:port" (LAN, or a mesh-proxy loopback), for the iPhone live screen's /video socket. */
   async hostFor(serial: string): Promise<string | null> {
     const phone = this.linkedPhone(serial);
@@ -297,6 +361,10 @@ export class PhoneLinkBackend implements UsbPhoneBackend {
   /** IctrlError → ToolErrorCode; anything else becomes the generic lane failure. */
   private async mapError(phone: LinkedPhone, host: string, error: unknown): Promise<ToolResult> {
     if (error instanceof IctrlError) {
+      if (isAccessibilityOffError(error.message)) {
+        this.deps.health?.observe?.(phone.deviceId, 'accessibility_off');
+        return fail('accessibility_off', `Phone Link's accessibility service is off on ${phone.name ?? 'the phone'}. ${ACCESSIBILITY_OFF_ACTION}`);
+      }
       if (error.code === 'unreachable') {
         return fail('device_offline', `Can't reach ${phone.name ?? 'the phone'} at ${host}. Check the phone is on the same Wi-Fi as this computer.`);
       }
@@ -412,28 +480,60 @@ export class PhoneLinkBackend implements UsbPhoneBackend {
       return fail('unknown_app', `"${app}" isn't a known app name. Use the app name or its package id.`);
     }
     let last: ToolResult | null = null;
+    let allSaidMissing = true;
     for (const bundle of candidates) {
       const res = await this.invoke(phone, 'launch_app', { bundle_id: bundle });
       if (res.ok) return { ok: true, app: bundle };
       last = res.result;
-      // Transport, pairing and lock failures are not per-app; don't try the next alias.
-      if (last.error === 'device_offline' || last.error === 'pairing_invalid' || last.error === 'device_locked') return last;
+      // Transport, pairing, lock and accessibility failures are not per-app; don't try the next alias.
+      if (last.error === 'device_offline' || last.error === 'pairing_invalid' || last.error === 'device_locked' || last.error === 'accessibility_off') {
+        return last;
+      }
+      if (!last.ok && !NOT_INSTALLED_RE.test(last.message)) allSaidMissing = false;
     }
-    return fail('unknown_app', `No app matching "${app}" is installed on the phone.`);
+    // Only "not installed" when the phone's own package list says so (or every launch said so).
+    const listed = await this.invoke<{ apps?: { package?: string; bundle_id?: string }[] }>(phone, 'list_apps', {}, 10_000);
+    const ids = listed.ok ? (listed.value?.apps ?? []).map((a) => a.package ?? a.bundle_id ?? '').filter(Boolean) : [];
+    // Android lists every launchable package; the iPhone runner's list can be partial, so only an Android list proves absence.
+    const listProvesMissing = phone.platform === 'android' && ids.length > 0 && !candidates.some((c) => ids.includes(c));
+    const listShowsInstalled = candidates.some((c) => ids.includes(c));
+    if (listProvesMissing || (allSaidMissing && !listShowsInstalled)) {
+      return fail('unknown_app', `No app matching "${app}" is installed on the phone.`);
+    }
+    return last && !last.ok ? last : fail('phone_failed', `Couldn't open "${app}" on the phone.`);
   }
 
   private async readUi(phone: LinkedPhone, a: Record<string, unknown>): Promise<ToolResult> {
     const params = pageSourceParams(a);
     if ('error' in params) return params.error;
     const res = await this.invoke<unknown>(phone, 'page_source', params.params);
+    this.observeRead(phone, res);
     if (!res.ok) return res.result;
     return { ok: true, text: textOf(res.value) };
   }
 
   private async screenText(phone: LinkedPhone): Promise<ToolResult> {
     const res = await this.invoke<unknown>(phone, 'screen_text');
+    this.observeRead(phone, res);
     if (!res.ok) return res.result;
     return { ok: true, text: textOf(res.value) };
+  }
+
+  /**
+   * Tell health what a real screen read did: a good read clears a stale
+   * failure; an iPhone runner that answers but can't read the UI counts as
+   * HELPER_NOT_RESPONDING (Android's accessibility case is noted in mapError).
+   * A missing method on an older helper (rpc "not found") is not a failure.
+   */
+  private observeRead(phone: LinkedPhone, res: { ok: true } | { ok: false; result: ToolResult }): void {
+    if (res.ok) {
+      this.deps.health?.observe?.(phone.deviceId, 'ui_ok');
+      return;
+    }
+    const r = res.result;
+    if (phone.platform === 'ios' && !r.ok && r.error === 'phone_failed' && !/not found|unknown method/i.test(r.message)) {
+      this.deps.health?.observe?.(phone.deviceId, 'ui_failed');
+    }
   }
 
   private async findAndTap(phone: LinkedPhone, a: Record<string, unknown>): Promise<ToolResult> {
@@ -446,6 +546,9 @@ export class PhoneLinkBackend implements UsbPhoneBackend {
     return res.ok ? { ok: true, message: res.value?.message, matched: res.value?.matched } : res.result;
   }
 }
+
+/** A launch failure that means the app isn't on the phone (Android helper: "… is not installed (or has no launcher activity)"). */
+const NOT_INSTALLED_RE = /not installed|no launcher|not found|no such (app|bundle|package)|unknown (app|bundle)/i;
 
 export function defaultResolveHost(phone: LinkedPhone): Promise<string | null> {
   return Promise.resolve(phone.lanHost ?? null);
@@ -694,8 +797,17 @@ export async function probeLinkedPhone(
     return { ...base, whoami: null, call: 'failed' };
   }
   try {
-    await c.call('device_info', {}, 5000);
-    const locked = await c.call<{ locked?: boolean }>('is_locked').catch(() => null);
+    const info = await c.call<{ system?: { accessibility_enabled?: unknown } }>('device_info', {}, 5000);
+    // Android: the app answers with its accessibility service off; every screen read would fail.
+    if (phone.platform === 'android' && info?.system?.accessibility_enabled === false) {
+      return { ...base, whoami: { deviceId: whoami.device_id }, call: 'accessibility_off' };
+    }
+    let accessibilityOff = false;
+    const locked = await c.call<{ locked?: boolean }>('is_locked').catch((error: unknown) => {
+      accessibilityOff = error instanceof Error && isAccessibilityOffError(error.message);
+      return null;
+    });
+    if (accessibilityOff) return { ...base, whoami: { deviceId: whoami.device_id }, call: 'accessibility_off' };
     return { ...base, whoami: { deviceId: whoami.device_id }, call: locked?.locked === true ? 'locked' : 'ok' };
   } catch (error) {
     return { ...base, whoami: { deviceId: whoami.device_id }, call: error instanceof IctrlError && error.needsRepair ? 'needs_repair' : 'failed' };

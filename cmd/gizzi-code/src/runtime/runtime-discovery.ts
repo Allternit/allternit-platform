@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { existsSync } from 'node:fs';
-import { SUBPROCESS_PROVIDERS, type SubprocessSpec, resolveCliPath, PROVIDER_ENV_KEYS } from '@/runtime/providers/discovery/subprocess';
+import { subprocessSpecs, type SubprocessSpec, resolveCliPath, PROVIDER_ENV_KEYS } from '@/runtime/providers/discovery/subprocess';
 
 const execFileAsync = promisify(execFile);
 
@@ -49,7 +49,9 @@ export async function discoverLocalAgentClis(): Promise<DiscoveredCli[]> {
   const results: DiscoveredCli[] = [];
 
   await Promise.all(
-    SUBPROCESS_PROVIDERS.map(async (spec) => {
+    // Catalog CLIs plus the user's own (custom-clis.json); a listed CLI with
+    // no driver adapter yet isn't registered as runnable.
+    subprocessSpecs().filter((spec) => spec.adapter !== 'unsupported').map(async (spec) => {
       const path = await resolveCliPath(spec);
       if (!path) return;
       const alive = await runProbe(path, spec);

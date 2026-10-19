@@ -424,13 +424,17 @@ describe("claude-web readAccount", () => {
 });
 
 describe("claude-web readAccount usage", () => {
-  it("reads the active org's tightest usage window, never a token", async () => {
+  it("reads every usage window of the active org, summary = tightest 5-hour/weekly, never a token", async () => {
     const adapter = new ClaudeWebAdapter({ freshChat: false }, FAST);
     const page = await browser.newPage();
     await page.context().addCookies([{ name: "lastActiveOrg", value: "org-b", url: "https://claude.ai" }]);
     const usage = (util5: number, util7: number) => ({
       five_hour: { utilization: util5, resets_at: "2026-09-30T21:30:00+00:00" },
       seven_day: { utilization: util7, resets_at: "2026-10-06T12:00:00+00:00" },
+      // A model-specific window: listed, but not the account-wide summary.
+      seven_day_opus: { utilization: 90, resets_at: null },
+      // Non-window fields in the payload are ignored.
+      extra_usage: null,
     });
     await page.route("https://claude.ai/**", (route) => {
       const url = route.request().url();
@@ -447,6 +451,11 @@ describe("claude-web readAccount usage", () => {
     const read = await adapter.readAccount(new AbortController().signal);
     expect(read.identity).toBe("eoj@example.com");
     expect(read.usage).toMatchObject({ remaining_pct: 51, resets_at: "2026-10-06T12:00:00+00:00" });
+    expect(read.usage?.windows).toEqual([
+      { id: "five_hour", label: "5-hour", remaining_pct: 80, resets_at: "2026-09-30T21:30:00+00:00" },
+      { id: "seven_day", label: "Weekly", remaining_pct: 51, resets_at: "2026-10-06T12:00:00+00:00" },
+      { id: "seven_day_opus", label: "Weekly (Opus)", remaining_pct: 10, resets_at: null },
+    ]);
     expect(JSON.stringify(read)).not.toContain("sk-secret");
     await page.close();
   }, 30000);
@@ -478,6 +487,7 @@ describe("kimi-web readAccount", () => {
     const read = await adapter.readAccount(new AbortController().signal);
     expect(read.identity).toBe("gizzi");
     expect(read.usage).toMatchObject({ remaining_pct: 58.7, resets_at: "2026-10-19T00:00:00Z" });
+    expect(read.usage?.windows).toEqual([{ id: "plan", label: "Plan", remaining_pct: 58.7, resets_at: "2026-10-19T00:00:00Z" }]);
     expect(auths).toEqual(["Bearer kimi-secret", "Bearer kimi-secret"]);
     expect(JSON.stringify(read)).not.toContain("kimi-secret");
     await page.close();

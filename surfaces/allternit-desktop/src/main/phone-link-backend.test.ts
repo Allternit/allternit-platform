@@ -649,3 +649,59 @@ describe('PhoneLinkBackend live-screen lookups', () => {
     expect(await b.hostFor('emulator-5554')).toBeNull();
   });
 });
+
+describe('accessibility off and open_app errors', () => {
+  const offMessage = "Phone Link's accessibility service is not running. Re-run setup from Allternit Desktop, or turn it on in Settings › Accessibility › Allternit Phone Link.";
+  const off = () => {
+    throw new IctrlError('rpc_error', offMessage);
+  };
+
+  it('probe reports accessibility_off from device_info or a failing is_locked', async () => {
+    const byInfo = fakeClient({ device_info: () => ({ system: { accessibility_enabled: false } }) }, { device_id: 'dev-2' });
+    expect(await probeLinkedPhone(android, () => byInfo)).toMatchObject({ call: 'accessibility_off' });
+    const byLock = fakeClient({ device_info: () => ({}), is_locked: off }, { device_id: 'dev-2' });
+    expect(await probeLinkedPhone(android, () => byLock)).toMatchObject({ call: 'accessibility_off' });
+  });
+
+  it('screen reads and open_app pass the accessibility error through instead of "not installed"', async () => {
+    const observed: string[] = [];
+    const client = fakeClient({ launch_app: off, screen_text: off });
+    const b = backend(client, [android], { health: { health: () => null, fresh: () => null, observe: (_id: string, kind: string) => observed.push(kind) } as never });
+    expect(await b.call('phone.open_app', 'link:dev-2', { app: 'chatgpt' })).toMatchObject({ ok: false, error: 'accessibility_off' });
+    expect(await b.call('phone.screen_text', 'link:dev-2', {})).toMatchObject({ ok: false, error: 'accessibility_off' });
+    expect(observed).toContain('accessibility_off');
+    expect(client.calls.filter((c) => c.method === 'launch_app')).toHaveLength(1);
+  });
+
+  it('says not installed only when the package list lacks the app', async () => {
+    const refused = fakeClient({
+      launch_app: () => {
+        throw new IctrlError('rpc_error', 'Android refused to start com.openai.chatgpt.');
+      },
+      list_apps: () => ({ apps: [{ package: 'com.openai.chatgpt' }] }),
+    }, { device_id: 'dev-2' });
+    expect(await backend(refused, [android]).call('phone.open_app', 'link:dev-2', { app: 'chatgpt' })).toMatchObject({
+      ok: false,
+      error: 'phone_failed',
+      message: 'Android refused to start com.openai.chatgpt.',
+    });
+    const missing = fakeClient({
+      launch_app: () => {
+        throw new IctrlError('rpc_error', 'Android refused to start com.openai.chatgpt.');
+      },
+      list_apps: () => ({ apps: [{ package: 'org.telegram.messenger' }] }),
+    }, { device_id: 'dev-2' });
+    expect(await backend(missing, [android]).call('phone.open_app', 'link:dev-2', { app: 'chatgpt' })).toMatchObject({ ok: false, error: 'unknown_app' });
+  });
+
+  it('notes bot activity per phone', () => {
+    let t = 1_000_000;
+    const b = backend(fakeClient({}), [android], { now: () => t });
+    expect(b.botBusy('dev-2')).toBe(false);
+    b.noteActivity('link:dev-2', 1);
+    expect(b.botBusy('dev-2')).toBe(true);
+    b.noteActivity('link:dev-2', -1);
+    t += 11 * 60_000;
+    expect(b.botBusy('dev-2')).toBe(false);
+  });
+});

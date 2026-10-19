@@ -343,6 +343,7 @@ describe("execute e2e against fixtures", () => {
     const seen = await adapter.readAccount(new AbortController().signal);
     expect(seen.identity).toBe("eoj@example.com");
     expect(seen.usage).toMatchObject({ remaining_pct: 8, resets_at: null });
+    expect(seen.usage?.windows).toEqual([{ id: "usage", label: "Usage", remaining_pct: 8, resets_at: null }]);
     expect(JSON.stringify(seen)).not.toContain("SECRET");
     await page.close();
   }, 30000);
