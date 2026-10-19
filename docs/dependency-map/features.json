@@ -1399,6 +1399,10 @@
         {
           "on": "2026-10-18",
           "note": "iPhone setup signs in with the Mac's own AuthKit anisette headers (allternit-sideload mac_anisette.rs; remote anisette only as fallback) because Apple now answers -80045 to emulated-device anisette servers. 2FA can be texted (two_factor_sms / submitTwoFactor('sms')), setup removes older Allternit helpers before install (free Apple ID 3-app limit), iOS 26 launch 'Error code: 2' reads as untrusted developer, and any linked phone can be removed (phone-link:remove). Live E2E on iPhone iOS 26.6.2 recorded by Eoj the same day."
+        },
+        {
+          "on": "2026-10-18",
+          "note": "Linked iPhones get a live screen as real video, Android-style (Eoj: smooth video mandatory, screenshot streaming not acceptable). iCTRL fork adds a ReplayKit Broadcast Upload Extension (iCTRLBroadcast, VideoToolbox H.264 30 fps) that feeds the runner over loopback 127.0.0.1:8203; the runner serves GET /video?ticket= as typed packets (STATUS/CONFIG/FRAME/ENDED) and start_live_screen/live_screen_status/stop_live_screen RPCs. Desktop IosVideoSession (phone-ios-video.ts) is a StreamSessionHandle for serial link:<deviceId>, so PhoneStreamManager, phone:stream-* IPC and the WebCodecs decoder are shared; input becomes tap/long_press/swipe/type/home RPCs. allternit-ai: liveScreenSerial() opens healthy iPhones in the phone frame. iOS requires a Start Broadcast tap per broadcast; the runner automates it via XCUITest when it can."
         }
       ],
       "evidence": [

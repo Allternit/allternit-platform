@@ -293,6 +293,7 @@ class PhoneService {
    */
   private ensureIosRecovery(): void {
     if (this.iosRecovery || process.platform !== 'darwin') return;
+    if (this.iosRecords().length > 0) this.ensureLinkSync();
     const dir = this.dir();
     const store = fileLinkStore(path.join(dir, 'phone-link-ios.json'));
     let built: Promise<IosRecoveryDeps | null> | null = null;
@@ -530,9 +531,7 @@ class PhoneService {
         });
         this.manager = manager;
         this.ensureStreamManager();
-        this.linkSyncTimer = setInterval(() => this.syncLinkSockets(), LINK_SYNC_INTERVAL_MS);
-        this.linkSyncTimer.unref?.();
-        this.syncLinkSockets();
+        this.ensureLinkSync();
         this.ensureCallBridge();
         return manager;
       })();
@@ -764,17 +763,26 @@ class PhoneService {
   // ── attach and idles off on a grace after the last detach.                 ──
 
   /** Signed out ⇒ no sockets; the sync timer picks sign-in up within a minute. */
+  /** Keep one relay socket per phone a web viewer can open; started by the Android lane or a linked iPhone. */
+  private ensureLinkSync(): void {
+    if (this.linkSyncTimer) return;
+    this.linkSyncTimer = setInterval(() => this.syncLinkSockets(), LINK_SYNC_INTERVAL_MS);
+    this.linkSyncTimer.unref?.();
+    this.syncLinkSockets();
+  }
+
   private syncLinkSockets(): void {
     if (!authManager.getSessionSnapshot()) return;
-    const phones = this.manager?.list() ?? [];
+    const serials = (this.manager?.list() ?? []).map((phone) => phone.serial).filter(Boolean);
+    // Linked iPhones stream their live screen (IosVideoSession), so the web and PWA can open them too.
+    for (const r of this.iosRecords()) serials.push(`${LINK_SERIAL_PREFIX}${r.deviceId ?? r.udid}`);
     const seen = new Set<string>();
-    for (const phone of phones) {
-      if (!phone.serial) continue;
-      seen.add(phone.serial);
-      if (!this.linkSockets.has(phone.serial)) {
-        this.linkSockets.set(phone.serial, this.createLinkSocket(phone.serial));
+    for (const serial of serials) {
+      seen.add(serial);
+      if (!this.linkSockets.has(serial)) {
+        this.linkSockets.set(serial, this.createLinkSocket(serial));
       }
-      this.linkSockets.get(phone.serial)?.notePhoneChanged();
+      this.linkSockets.get(serial)?.notePhoneChanged();
     }
     for (const [serial, socket] of this.linkSockets) {
       if (seen.has(serial)) continue;
@@ -805,6 +813,8 @@ class PhoneService {
         };
       },
       phone: () => {
+        const iphone = this.linkedIphone(serial);
+        if (iphone) return { serial, model: 'iPhone', name: iphone.name || 'iPhone' };
         const p = this.manager?.list().find((entry) => entry.serial === serial);
         const bridge = p ? this.manager?.getCallBridge(p.id) : null;
         return {
