@@ -59,6 +59,7 @@ export interface AccountPath {
  * Where the app's own account is on a read screen; the first rule that finds
  * one wins. `email` = the first email, `handle` = the first label that is a
  * whole "@handle", `match` = group 1 of a pattern tried on each label,
+ * `atId` = the label of the element with that id,
  * `after` / `before` = the nearest non-empty label after / before an anchor
  * (a whole label, or `id:<id>`).
  */
@@ -67,7 +68,9 @@ export type AccountRule =
   | { kind: 'handle' }
   | { match: RegExp }
   | { after: string }
-  | { before: string };
+  | { before: string }
+  /** The label of the element with this id (Android: the part after ":id/"). */
+  | { atId: string };
 
 export interface PhoneAccountSpec {
   /** Phone app catalog id (phone-app-catalog.json). */
@@ -114,6 +117,19 @@ const readHere: AccountReadStep = { read: true };
  * restart it), so a read cut short last time must not strand this one. Only
  * Back / Close controls the path's own screens were seen to have.
  */
+/** Google's Android apps: the account button reads "Signed in as <name> <email>\nAccount and settings." */
+const GOOGLE_SIGNED_IN: AccountRule = { match: /signed in as[\s\S]*?([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})/i };
+
+/** Google apps on Android: the home screen's account button names the account (checked 2026-10-19, moto g play). */
+const googleAccountApp = (app: string): PhoneAccountSpec => ({
+  app,
+  verified: true,
+  plans: [],
+  vendorWords: [],
+  account: [GOOGLE_SIGNED_IN],
+  paths: [{ name: 'home screen account button (Android, verified)', verifiedOn: 'android', steps: [readHere] }],
+});
+
 /** Discord's profile back button carries the unread mention count. */
 const DISCORD_PROFILE_BACK = 're:^back( [\\d,]+ mentions?)?$';
 
@@ -244,7 +260,8 @@ export const ACCOUNT_SPECS: Readonly<Record<string, PhoneAccountSpec>> = {
   },
 
   // ── Apps that aren't AI chat: the account (none of them shows a plan or usage) ──
-  // All checked 2026-10-19 on iPhone, signed in, every screen read.
+  // All checked 2026-10-19 on iPhone and on Android (moto g play), signed in, every screen read.
+  // Signed out on the moto then: ChatGPT, Facebook, Telegram, Stripe, Square (the sign-in check covers them).
 
   discord: {
     app: 'discord',
@@ -268,6 +285,12 @@ export const ACCOUNT_SPECS: Readonly<Record<string, PhoneAccountSpec>> = {
           ...leave('Back', 'Back', DISCORD_PROFILE_BACK),
         ],
       },
+      {
+        // Same rows on Android ("<name>, Online" → Settings → Account); Back steps out at the end.
+        name: 'profile → settings → account (Android, verified)',
+        verifiedOn: 'android',
+        steps: [...leave('Back', 'Back', 'Back'), { tap: ['re:^.+, (online|idle|do not disturb|invisible|offline)$'] }, { tap: ['Settings'] }, { tap: ['Account'] }, readHere],
+      },
     ],
   },
   telegram: {
@@ -287,8 +310,13 @@ export const ACCOUNT_SPECS: Readonly<Record<string, PhoneAccountSpec>> = {
     verified: true,
     plans: [],
     vendorWords: [],
-    account: [{ before: 'id:profile-add-button' }],
-    paths: [{ name: 'profile tab (iOS, verified)', verifiedOn: 'ios', steps: [{ tap: ['id:profile-tab'] }, readHere] }],
+    // Android: Profile tab (id profile_tab), the username is the title bar (id action_bar_title).
+    account: [{ before: 'id:profile-add-button' }, { atId: 'action_bar_title' }],
+    paths: [
+      { name: 'profile tab (iOS, verified)', verifiedOn: 'ios', steps: [{ tap: ['id:profile-tab'] }, readHere] },
+      // Optional tap: Instagram can reopen on the profile already (the title is then read where it is).
+      { name: 'profile tab (Android, verified)', verifiedOn: 'android', steps: [{ tap: ['id:profile_tab'], optional: true }, readHere] },
+    ],
   },
   facebook: {
     app: 'facebook',
@@ -310,7 +338,10 @@ export const ACCOUNT_SPECS: Readonly<Record<string, PhoneAccountSpec>> = {
     plans: [],
     vendorWords: [],
     account: [{ kind: 'handle' }],
-    paths: [{ name: 'profile tab (iOS, verified)', verifiedOn: 'ios', steps: [{ tap: ['id:a11y_vo_profile', 'Profile'] }, readHere] }],
+    paths: [
+      { name: 'profile tab (iOS, verified)', verifiedOn: 'ios', steps: [{ tap: ['id:a11y_vo_profile', 'Profile'] }, readHere] },
+      { name: 'profile tab (Android, verified)', verifiedOn: 'android', steps: [{ tap: ['Profile'] }, readHere] },
+    ],
   },
   twitter: {
     app: 'twitter',
@@ -320,7 +351,11 @@ export const ACCOUNT_SPECS: Readonly<Record<string, PhoneAccountSpec>> = {
     plans: [],
     vendorWords: [],
     account: [{ kind: 'handle' }],
-    paths: [{ name: 'account menu (iOS, verified)', verifiedOn: 'ios', steps: [{ tap: ['id:NavigationBarDashButton', 'Account Menu'] }, readHere] }],
+    paths: [
+      { name: 'account menu (iOS, verified)', verifiedOn: 'ios', steps: [{ tap: ['id:NavigationBarDashButton', 'Account Menu'] }, readHere] },
+      // Android: "Show navigation drawer" shows the name and "@handle".
+      { name: 'navigation drawer (Android, verified)', verifiedOn: 'android', steps: [{ tap: ['Show navigation drawer'] }, readHere] },
+    ],
   },
   youtube: {
     app: 'youtube',
@@ -342,6 +377,8 @@ export const ACCOUNT_SPECS: Readonly<Record<string, PhoneAccountSpec>> = {
           { tap: ['id:id.ui.browse.close.button'], optional: true },
         ],
       },
+      // Android: You → Accounts lists the Google account's name and email.
+      { name: 'you → accounts (Android, verified)', verifiedOn: 'android', steps: [{ tap: ['You'] }, { tap: ['Accounts'], optional: true }, readHere] },
     ],
   },
   github: {
@@ -355,6 +392,21 @@ export const ACCOUNT_SPECS: Readonly<Record<string, PhoneAccountSpec>> = {
     // Left on the profile by a cut-short read: its "Back" (id BackButton) returns Home.
     paths: [{ name: 'home navigation bar (iOS, verified)', verifiedOn: 'ios', steps: [...leave('id:BackButton'), readHere] }],
   },
+  linkedin: {
+    app: 'linkedin',
+    // Android: the profile image (id me_launcher; its container ignores an accessibility click) opens your profile; the name follows "Edit profile".
+    verified: true,
+    plans: [],
+    vendorWords: [],
+    account: [{ after: 'Edit profile' }],
+    // Left on the profile by a cut-short read: its "Back button" returns to the feed.
+    paths: [{ name: 'me → profile (Android, verified)', verifiedOn: 'android', steps: [...leave('Back button'), { tap: ['id:me_launcher'] }, readHere] }],
+  },
+  gmail: googleAccountApp('gmail'),
+  google_drive: googleAccountApp('google_drive'),
+  googlecalendar: googleAccountApp('googlecalendar'),
+  googlemeet: googleAccountApp('googlemeet'),
+  googlephotos: googleAccountApp('googlephotos'),
 };
 
 export function accountSpec(appId: string): PhoneAccountSpec | null {

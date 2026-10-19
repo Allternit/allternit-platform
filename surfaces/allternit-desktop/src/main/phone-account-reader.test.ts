@@ -591,3 +591,38 @@ describe('apps that are not AI chat, on iPhone (real screens)', () => {
     expect(parseAccountScreen(github, spec('github'), NOW).account).toBe('Someone');
   });
 });
+
+// Lines copied from the real apps on Android (moto g play, 2026-10-19); names and emails replaced.
+describe('apps on Android (real screens)', () => {
+  const spec = (app: string) => ACCOUNT_SPECS[app];
+  // The first tap that isn't a back-out ("Back" / "Back button").
+  const androidStep = (app: string) =>
+    (spec(app).paths.find((p) => p.verifiedOn === 'android')!.steps as AccountTapStep[]).find((st) => 'tap' in st && !/^back/i.test(st.tap[0]))!;
+
+  it('parses the Android helper\'s tree, which adds flags after the bounds', () => {
+    const tabs = "FrameLayout, label: 'Profile', id: 'com.instagram.android:id/profile_tab', {{576, 1439}, {144, 77}}, clickable long-clickable";
+    expect(screenElements(tabs)).toEqual([{ className: 'FrameLayout', label: 'Profile', id: 'com.instagram.android:id/profile_tab' }]);
+    expect(pickTap(screenElements(tabs), androidStep('instagram'))).toEqual({ element_id: 'com.instagram.android:id/profile_tab' });
+    const profile = "TextView, label: 'someone', id: 'com.instagram.android:id/action_bar_title', {{300, 100}, {100, 40}}";
+    expect(parseAccountScreen(profile, spec('instagram'), NOW).account).toBe('someone');
+  });
+
+  it('Google apps: the account button names the account, never an inbox sender', () => {
+    const gmail = [
+      "FrameLayout, label: 'Signed in as Some One someone@example.com\nAccount and settings.', id: 'com.google.android.gm:id/selected_account_disc_gmail', {{620, 90}, {80, 80}}, clickable",
+    ].join('\n');
+    // A label can carry a newline; the tree line is still one element.
+    expect(parseAccountScreen(gmail.replace('\n', '\\n'), spec('gmail'), NOW).account).toBe('someone@example.com');
+    expect(parseAccountScreen(['billing@vendor.example @ (10, 300)', 'Signed in as Some One someone@example.com @ (650, 120)'].join('\n'), spec('gmail'), NOW).account).toBe('someone@example.com');
+    for (const app of ['google_drive', 'googlecalendar', 'googlemeet', 'googlephotos']) expect(spec(app).paths[0].verifiedOn).toBe('android');
+  });
+
+  it('LinkedIn, X and Discord on Android', () => {
+    const linkedin = ["View, label: 'Edit profile', {{600, 400}, {60, 60}}, clickable", "TextView, label: 'Some Company LLC', {{40, 480}, {400, 40}}"].join('\n');
+    expect(parseAccountScreen(linkedin, spec('linkedin'), NOW).account).toBe('Some Company LLC');
+    expect(androidStep('twitter')).toMatchObject({ tap: ['Show navigation drawer'] });
+    expect(parseAccountScreen("TextView, label: '@someone', {{40, 200}, {200, 30}}", spec('twitter'), NOW).account).toBe('@someone');
+    const discord = "Button, label: 'someone, Online', {{0, 1400}, {300, 80}}, clickable";
+    expect(pickTap(screenElements(discord), androidStep('discord'))).toEqual({ element_id: 'someone, Online' });
+  });
+});
