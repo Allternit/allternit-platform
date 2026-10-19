@@ -16,7 +16,8 @@ import { defaultAdaptersDir } from "../src/adapters/registry.js";
 import { createServer } from "../src/http/server.js";
 import { issueToken } from "../src/security/tokens.js";
 import { openDatabase, type Db } from "../src/store/db.js";
-import { upsertAccount } from "../src/store/queries.js";
+import { getTask, insertAttempt, insertCanaryRun, insertTask, upsertAccount } from "../src/store/queries.js";
+import { AppRouteTasks } from "../src/routes/app-route-tasks.js";
 import {
   RouteDirector,
   type RouteChoiceLogEntry,
@@ -35,7 +36,7 @@ import {
   type RouteId,
 } from "../src/routes/registry.js";
 import { selectRoute, type RouteCandidateState } from "../src/routes/select.js";
-import { cleanupDir, makeDeps, tmpStateDir, type TestDeps } from "./helpers.js";
+import { cleanupDir, makeDeps, sampleTask, tmpStateDir, type TestDeps } from "./helpers.js";
 
 // ---------------------------------------------------------------------------
 // fixtures
@@ -536,7 +537,7 @@ describe("RouteDirector", () => {
     const view = (await d.status(["acme"]))[0];
     expect(Object.keys(view).sort()).toEqual(["boundRoute", "routes", "vendor"]);
     const web = view.routes.find((r) => r.route === "web")!;
-    expect(Object.keys(web).sort()).toEqual(["contract", "eligible", "online", "route", "signedIn"]);
+    expect(Object.keys(web).sort()).toEqual(["contract", "eligible", "online", "route", "signedIn", "telemetry"]);
     expect(Object.keys(web.contract).sort()).toEqual(["appVersion", "checkedAt", "failed", "passed"]);
     expect(web.contract.passed).toEqual([...CONTRACT_ITEM_IDS]);
     expect(web.contract.failed).toEqual([]);
@@ -597,10 +598,120 @@ describe("GET /v1/routes + PUT /v1/routes/:vendor/override", () => {
         appVersion: "1.0.0",
         checkedAt: "2026-10-17T00:00:00.000Z",
       },
+      // A lane with no turns or probes yet: honest nulls, never invented numbers.
+      telemetry: { lastOkAt: null, lastUsedAt: null, latencyMs: null, successRate7d: null, tasks7d: 0, reliability: "exact" },
     });
     const phone = v.routes.find((x: { route: string }) => x.route === "android-app");
     expect(phone.eligible).toBe(false);
     expect(phone.contract.appVersion).toBeUndefined();
+    // Nothing serves the phone route (no adapter, no linked phone) → no telemetry.
+    expect(phone.telemetry).toBeUndefined();
+  });
+
+  it("per-route telemetry: last 7 days of the route's adapter turns + probes, reliability per lane", async () => {
+    const now = new Date("2026-10-18T12:00:00.000Z");
+    const at = (minAgo: number) => new Date(now.getTime() - minAgo * 60_000).toISOString();
+    const attempt = (no: number, startMin: number, durMs: number, outcome: "success" | "failed", adapter = "acme-adapter") => ({
+      attempt_no: no, adapter_id: adapter, adapter_version: "1.0.0", account_id: "acme-acct", pool_key: "acme:acme-acct:main",
+      submission_state: "acknowledged" as const, prompt_fingerprint: "fp", provider_thread_id: null, requested_model_class: null,
+      observed_model: null, started_at: at(startMin), ended_at: new Date(Date.parse(at(startMin)) + durMs).toISOString(), outcome, error: null,
+    });
+    insertTask(deps.db, sampleTask({ task_id: "tele-1" }));
+    insertAttempt(deps.db, "tele-1", attempt(1, 60, 4000, "success"));
+    insertAttempt(deps.db, "tele-1", attempt(2, 30, 2000, "failed"));
+    insertAttempt(deps.db, "tele-1", attempt(3, 10, 3000, "success"));
+    // 8 days old: outside the 7-day window.
+    insertAttempt(deps.db, "tele-1", attempt(4, 8 * 24 * 60, 9000, "success"));
+    // Another adapter's turn never leaks into this route.
+    insertAttempt(deps.db, "tele-1", attempt(5, 5, 100, "success", "other-adapter"));
+    insertCanaryRun(deps.db, {
+      account_id: "acme-acct", adapter_id: "acme-adapter", kind: "probe", started_at: at(2), ended_at: at(1),
+      outcome: "fail", health: "ready", latency_ms: 700, error: null, evidence_ref: null,
+    });
+
+    upsertAccount(deps.db, readyAccount("acme"));
+    const director = new RouteDirector({
+      db: deps.db,
+      now: () => now,
+      lanes: {
+        lanes: async () => [
+          ...lanesFor("acme", ["web"], "1.0.0"),
+          { vendor: "acme", adapterId: "acme-desktop", appVersion: "0.0.0", routes: ["desktop-app-ax"], online: true, reliability: "structured" },
+        ],
+      },
+      phones: { linkedDevices: async () => [{ serial: "usb:abc", platform: "ios", via: "usb-agent" }] } as never,
+    });
+    app = createServer({ ...deps, routeDirector: director });
+    const r = await request(app).get("/v1/routes").set("Authorization", `Bearer ${tok}`).expect(200);
+    const routes = r.body.vendors[0].routes as Array<{ route: string; telemetry?: Record<string, unknown> }>;
+    const by = (id: string) => routes.find((x) => x.route === id)?.telemetry;
+
+    expect(by("web")).toEqual({
+      lastOkAt: new Date(Date.parse(at(10)) + 3000).toISOString(),
+      lastUsedAt: at(1), // the probe, though it failed
+      latencyMs: 3000, // median of 4000 / 2000 / 3000 — task turns, not the probe
+      successRate7d: 2 / 3,
+      tasks7d: 3,
+      reliability: "exact",
+    });
+    expect(by("desktop-app-ax")).toEqual({
+      lastOkAt: null, lastUsedAt: null, latencyMs: null, successRate7d: null, tasks7d: 0, reliability: "structured",
+    });
+    // Linked USB-agent iPhone, no adapter: vision route, best effort, no numbers.
+    expect(by("iphone-app-usb-agent")).toEqual({
+      lastOkAt: null, lastUsedAt: null, latencyMs: null, successRate7d: null, tasks7d: 0, reliability: "best_effort",
+    });
+    expect(by("android-app")).toBeUndefined();
+    expect(by("desktop-app-cdp")).toBeUndefined();
+  });
+
+  it("phone and desktop-app turns record attempts that /v1/routes telemetry and /v1/stats/adapters read", async () => {
+    const hostFor = (result: { ok: true; value: unknown } | { ok: false; error: { code: string; humanMessage: string } }) => ({
+      async call(op: string) {
+        if (op === "agent.list") return { ok: true as const, value: [{ agentId: "app" }] };
+        if (op === "agent.context.open") return { ok: true as const, value: { contextId: "ctx-1" } };
+        if (op === "agent.events") return { ok: true as const, value: { events: [] } };
+        if (op === "agent.context.message") return result;
+        return { ok: false as const, error: { code: "UNSUPPORTED", humanMessage: op } };
+      },
+    });
+    const turn = async (taskId: string, route: string, adapterId: string, host: ReturnType<typeof hostFor>) => {
+      const task = sampleTask({ task_id: taskId, routing: { ...sampleTask().routing, provider: "chatgpt" } as never });
+      insertTask(deps.db, task);
+      const runner = new AppRouteTasks({ db: deps.db, log: deps.log, host, director: { routeForTurn: async () => ({ ok: false, error: "NO_ROUTE", reason: "unused" }) }, pollMs: 1 });
+      await runner.run(task, { route, adapterId, reason: "test" });
+    };
+    await turn("phone-turn", "iphone-app-ictrl", "chatgpt-iphone-app", hostFor({ ok: true, value: { reply: "hi from the phone" } }));
+    await turn("desktop-turn", "desktop-app-ax", "chatgpt-desktop", hostFor({ ok: false, error: { code: "ADAPTER_DRIFT", humanMessage: "composer moved" } }));
+
+    upsertAccount(deps.db, readyAccount("chatgpt"));
+    const director = new RouteDirector({
+      db: deps.db,
+      lanes: {
+        lanes: async () => [
+          { vendor: "chatgpt", adapterId: "chatgpt-iphone-app", appVersion: "0.0.0", routes: ["iphone-app-ictrl"], online: true },
+          { vendor: "chatgpt", adapterId: "chatgpt-desktop", appVersion: "0.0.0", routes: ["desktop-app-ax"], online: true, reliability: "structured" },
+        ],
+      },
+    });
+    app = createServer({ ...deps, routeDirector: director });
+    const r = await request(app).get("/v1/routes").set("Authorization", `Bearer ${tok}`).expect(200);
+    const routes = r.body.vendors.find((v: { vendor: string }) => v.vendor === "chatgpt").routes as Array<{ route: string; telemetry?: Record<string, unknown> }>;
+    const phone = routes.find((x) => x.route === "iphone-app-ictrl")!.telemetry!;
+    const desktop = routes.find((x) => x.route === "desktop-app-ax")!.telemetry!;
+    expect(phone).toMatchObject({ tasks7d: 1, successRate7d: 1, reliability: "exact" });
+    expect(typeof phone.lastOkAt).toBe("string");
+    expect(typeof phone.latencyMs).toBe("number");
+    expect(desktop).toMatchObject({ tasks7d: 1, successRate7d: 0, lastOkAt: null, reliability: "structured" });
+    expect(typeof desktop.lastUsedAt).toBe("string");
+
+    const stats = await request(app).get("/v1/stats/adapters").set("Authorization", `Bearer ${tok}`).expect(200);
+    const row = (id: string) => (stats.body as Array<{ adapter_id: string }>).find((s) => s.adapter_id === id) as Record<string, any>;
+    expect(row("chatgpt-iphone-app")).toMatchObject({ adapter_version: "0.0.0", attempts: 1, completed: 1 });
+    expect(row("chatgpt-desktop")).toMatchObject({ attempts: 1, completed: 0, failed: 1, failures_by_class: { provider_ui_changed: 1 } });
+    // The rows are the worker's shape: no gateway account behind an app turn.
+    const attempts = getTask(deps.db, "phone-turn")!.attempts;
+    expect(attempts).toEqual([expect.objectContaining({ attempt_no: 1, account_id: "app-route:iphone-app-ictrl", outcome: "success", submission_state: "acknowledged" })]);
   });
 
   it("PUT override: pins an eligible route, rejects an ineligible one with 400, null clears", async () => {

@@ -1,0 +1,73 @@
+---
+title: Connections
+description: "Settings → Connections: the apps, bots, channels and coding tools your bots can use, how each one is reached, and how to connect a new one."
+---
+
+**Settings → Connections** is where you see and connect everything your bots can work through: the apps you use, your bots and messaging channels, and the coding tools on your computers. It replaces **Settings → Subscriptions**. Anything you set up under Subscriptions is still there.
+
+Connections is the same on Allternit Desktop, ai.allternit.com, the phone layout and the m.allternit.com app. A few steps need Allternit Desktop, because they talk to a phone or a computer near you; those are marked below.
+
+## The four tabs
+
+| Tab | What it holds |
+| --- | --- |
+| **Apps** | One row per app (ChatGPT, Claude, Gmail, Slack, Notion and others), with how bots reach it and whether that way is working. |
+| **Bots & channels** | Your bots and the messaging channels they answer on (Telegram, WhatsApp, Slack, email and others). |
+| **Coding tools** | CLI brains such as Claude Code, Codex and Grok, installed and signed in on a computer you name. |
+| **Setup** | Link a phone, your linked phones and their state, which computer runs your connections, and browser sign-ins on this computer. |
+
+Your Allternit plan is no longer on this page. It moved to **Settings → Billing**.
+
+## How bots reach an app
+
+A bot can reach the same app in up to four ways. Each app row lists the ways that exist for it, most reliable first:
+
+1. **Connector.** The app's own API through an MCP connector. See [Connectors](/guides/connectors).
+2. **Phone app.** The app on a phone you linked, already signed in. See [Phone Link](/guides/phone-link).
+3. **Desktop app.** The app installed on your computer.
+4. **Browser sign-in.** A sign-in in a separate browser profile on this computer or on your Sessions computer.
+
+The order is fixed. When a task starts, Allternit uses the first way that is connected and working, and marks it **Used first**. If it stops working, the next task moves to the next working way. A task that is already running does not switch partway through.
+
+To always use one way for an app, open the app and choose **Pin** on that way. A pinned way is used first while it works. Choose **Unpin** to go back to the fixed order. A way that is not working can't be pinned.
+
+## What the drawer shows
+
+Click an app row to open its drawer. For each way it shows:
+
+- **Health:** working, needs you (for example, sign in again or unlock your phone), or offline.
+- **Last worked:** when a task or check last succeeded through it.
+- **Plan left:** what the vendor reports about your plan's remaining use, when it reports it.
+- **Last 7 days:** how many tasks went through it, how many finished, and the typical reply time.
+- **Recent tasks:** the latest tasks that used it, with their result.
+
+A number that has no data behind it is shown as a dash, not as zero. A new connection shows dashes until it has been used.
+
+## Connect a new app
+
+Choose **Connect** on an app row. The wizard has four steps:
+
+1. **Choose a way.** Pick one of the ways the app offers. The most reliable one is selected for you.
+2. **Sign in on your phone.** For a phone app, Allternit opens the app on your linked phone (Allternit Desktop only). Sign in there yourself, the way you normally would. For a desktop app or a browser sign-in, the sign-in opens on that computer instead.
+3. **Check.** Allternit opens the app again and reads what is on its screen to see whether it is signed in. If it shows your email or handle, the wizard shows it so you can confirm it is the right account.
+4. **Done.** The way appears in the app row, and bots can use it.
+
+Allternit never sees or stores your password. It doesn't type into sign-in screens or tap sign-in buttons for you; it only reads what the app already shows. If the check can't tell, it says so and you can check again after the app finishes loading.
+
+If the check says the phone is locked or offline, unlock the phone or bring it back on the same Wi-Fi as your computer, then choose **Check again**.
+
+## Coding tools
+
+The Coding tools tab is only for CLI brains: Claude Code, Codex, Grok and the other command-line tools Allternit can install and sign in on a computer. See [Coding tools on any computer](/guides/subscriptions#coding-tools-on-any-computer) for the steps.
+
+Two kinds of brains live elsewhere:
+
+- **Local models** on your own computer are under **Settings → Models**.
+- **API providers** (an API key from a model provider) are under **Settings → API Keys**.
+
+## Related
+
+- [Phone Link](/guides/phone-link)
+- [Connected subscriptions](/guides/subscriptions)
+- [Lane status](/guides/lane-status)
+- [Connections API and Desktop bridge](/api/connections) (for developers)

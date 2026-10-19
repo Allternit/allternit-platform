@@ -358,6 +358,7 @@ pub fn agent_gateway_router() -> Router<Arc<AppState>> {
         .route("/channel-bindings/:id", patch(patch_channel))
         .route("/vendor-packs/:vendor/gaps", post(record_gap).get(list_gaps))
         .route("/vendor-packs/:vendor/parity", get(parity))
+        .route("/catalog", get(catalog))
         .route("/vendor-pack-gaps/:id", patch(patch_gap))
         .route("/bots/:bot_id/vendor-memory", get(vendor_memory_h))
         .route("/bots/:bot_id/vendor-memory/:record_id/promote", post(promote_memory_h))
@@ -1318,6 +1319,21 @@ async fn patch_gap(State(state): State<Arc<AppState>>, Extension(user): Extensio
     .await
 }
 
+// ---------------------------------------------------------------- catalog
+
+/// The vendor packs and bot projects Settings → Connections lists
+/// (`assets/gateway-catalog.json`, the data of allternit-ai's
+/// `VENDOR_PACKS` + `BOT_PROJECTS`, field shapes unchanged). Static display
+/// metadata only: connection truth stays on `/provider-accounts`.
+const CATALOG_JSON: &str = include_str!("../assets/gateway-catalog.json");
+
+static CATALOG: once_cell::sync::Lazy<Value> =
+    once_cell::sync::Lazy::new(|| serde_json::from_str(CATALOG_JSON).expect("assets/gateway-catalog.json is valid JSON"));
+
+async fn catalog() -> Response {
+    Json(CATALOG.clone()).into_response()
+}
+
 async fn parity(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(vendor): Path<String>) -> Response {
     run(&state, move |db| {
         let conn = db.connect()?;
@@ -1757,6 +1773,28 @@ mod tests {
         assert_eq!(s, StatusCode::BAD_REQUEST);
         let (_, v) = call(&st, "GET", "/threads/th-1/channel-bindings", "user-a", None).await;
         assert_eq!(v["bindings"].as_array().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn catalog_lists_packs_and_bot_projects() {
+        let st = setup("catalog").await;
+        let (s, v) = call(&st, "GET", "/catalog", "user-a", None).await;
+        assert_eq!(s, StatusCode::OK);
+        let packs = v["packs"].as_array().expect("packs");
+        let bots = v["botProjects"].as_array().expect("botProjects");
+        assert_eq!(packs.len(), 36);
+        assert_eq!(bots.len(), 33);
+        assert_eq!(packs[0]["id"], "hermes");
+        for p in packs {
+            for k in ["id", "displayName", "agentNoun", "legalName", "monogram", "modes", "recommendedLane", "profiles", "permissions"] {
+                assert!(p.get(k).is_some(), "pack {} missing {k}", p["id"]);
+            }
+        }
+        for b in bots {
+            for k in ["id", "displayName", "sourceHint", "status", "identity", "monogram"] {
+                assert!(b.get(k).is_some(), "bot project {} missing {k}", b["id"]);
+            }
+        }
     }
 
     #[tokio::test]

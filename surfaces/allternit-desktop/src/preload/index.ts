@@ -692,6 +692,10 @@ const phoneLinkAPI = {
   handover: (opts: { deviceId: string; computerId: string }): Promise<unknown> => ipcRenderer.invoke('phone-link:handover', opts),
   /** Forget a linked phone on this Desktop (record + pairing secret); true when one was removed. */
   remove: (deviceId: string): Promise<boolean> => ipcRenderer.invoke('phone-link:remove', deviceId),
+  /** Connections wizard: open a catalog app (phone-app-catalog.json id) on a linked phone so the person can sign in there. */
+  openApp: (opts: { deviceId: string; app: string }): Promise<unknown> => ipcRenderer.invoke('phone-link:open-app', opts),
+  /** Connections wizard: read that app's screen; { ok, signedIn: true | false | null, account?, error? }. */
+  checkApp: (opts: { deviceId: string; app: string }): Promise<unknown> => ipcRenderer.invoke('phone-link:check-app', opts),
   start: (opts: { platform: 'ios' | 'android' }): Promise<unknown> => ipcRenderer.invoke('phone-link:start', opts),
   cancel: (): Promise<unknown> => ipcRenderer.invoke('phone-link:cancel'),
   continue: (): Promise<unknown> => ipcRenderer.invoke('phone-link:continue'),

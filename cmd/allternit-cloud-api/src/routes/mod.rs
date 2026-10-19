@@ -5,6 +5,7 @@ pub mod agent_sessions;
 pub mod api_keys;
 pub mod artifacts_comments;
 pub mod artifacts_v2;
+pub mod gateway_catalog;
 pub mod approvals;
 pub mod auth;
 pub mod billing_credits;

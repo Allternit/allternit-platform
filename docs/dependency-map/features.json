@@ -207,7 +207,10 @@
         "allternit/services/subscription-gateway",
         "allternit-ai/src/components/bots",
         "allternit/surfaces/allternit-desktop",
-        "allternit-ai/src/views/settings"
+        "allternit-ai/src/views/settings",
+        "allternit/cmd/allternit-api/src/agent_*",
+        "allternit/cmd/allternit-api/src/provider_*",
+        "allternit/cmd/allternit-api/src/cli_*"
       ],
       "decisions": [
         {
@@ -229,6 +232,10 @@
         {
           "on": "2026-10-16",
           "note": "The bot setup picker's vendor tiles (Claude, Dots, Grok, Muse) run the real VENDOR_PACKS profiles and the one-step connect (useOneStepConnect shared with QuickConnect); the Claude desktop app profile opens ConnectionWizard."
+        },
+        {
+          "on": "2026-10-18",
+          "note": "Settings → Subscriptions becomes Connections. GET /v1/routes (subscription-gateway) gives each route an optional telemetry block {lastOkAt, lastUsedAt, latencyMs, successRate7d, tasks7d, reliability}: computed on read from the route's adapters' task_attempts and canary_runs over the last 7 days, null with no rows, absent when nothing serves the route; reliability is exact for written adapters, structured for the generic AX chat-app reader, best_effort for the USB-agent vision route and linked phones without an adapter. allternit-api serves GET /api/v1/gateway/catalog {packs, botProjects} from assets/gateway-catalog.json (the UI's VENDOR_PACKS + BOT_PROJECTS data, relayed on the web by the cloud-api data-plane fallback), and GET /providers/auth/status takes ?kind=cli|api|local (cli skips the Gizzi auth-methods call and catalog rows). Install metadata maps cursor-agent → cursor and qodercli → qoder."
         }
       ],
       "evidence": [
@@ -238,7 +245,8 @@
         "allternit/scripts/e2e/gateway-live-check.sh",
         "allternit/surfaces/docs/guides/bot-setup-picker.mdx",
         "allternit/services/subscription-gateway/src/routes/director.ts",
-        "allternit/surfaces/docs/api/subscription-gateway.mdx"
+        "allternit/surfaces/docs/api/subscription-gateway.mdx",
+        "allternit/cmd/allternit-api/assets/gateway-catalog.json"
       ]
     },
     {

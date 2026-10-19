@@ -114,6 +114,18 @@ export function phoneRouteForAdapterId(adapterId: string): RouteId | null {
   return null;
 }
 
+/**
+ * Stable adapter id for a phone app with no written adapter (generic screen
+ * reading, best_effort): "<vendor>-<route>-generic", e.g.
+ * "chatgpt-iphone-app-ictrl-generic". Never ends in "-android-app" /
+ * "-iphone-app", so phoneRouteForAdapterId never mistakes it for a written one.
+ * Attempts a generic phone turn records carry this id; the director counts
+ * them for the (vendor, route) when no written adapter serves it.
+ */
+export function genericPhoneAdapterId(vendor: string, route: RouteId): string {
+  return `${vendor}-${route}-generic`;
+}
+
 export function routesForAgentManifest(m: AgentCapabilityManifest): RouteId[] {
   if (m.lane !== "ui_bridge") return [];
   const phone = phoneRouteForAdapterId(m.adapterId);
@@ -156,5 +168,33 @@ export function routeForPhoneDevice(d: LinkedPhoneDeviceLike): RouteId | null {
   if (d.platform === "ios" && (d.via === "usb-agent" || d.serial.startsWith("usb:"))) {
     return "iphone-app-usb-agent";
   }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// How a route reads the app (Settings → Connections "reliability" label).
+// exact: a written adapter spec for this app (phone ChatGPT, desktop CDP/AX
+// adapters with their own selector pack, web selector packs). structured: a
+// desktop app read through the generic accessibility chat-app reader.
+// best_effort: generic phone screen reading or vision (the USB agent).
+// ---------------------------------------------------------------------------
+export type RouteReliability = "exact" | "structured" | "best_effort";
+
+/**
+ * `hasAdapter` whether a lane implements the route; `declared` what the lane
+ * that runs its turns (the director's deterministic pick) says about itself —
+ * a lane on the generic AX reader declares "structured"; `deviceLinked`
+ * whether a phone serving the route is linked. Null when nothing serves the
+ * route — no label to show.
+ */
+export function routeReliability(
+  route: RouteId,
+  o: { hasAdapter: boolean; declared?: RouteReliability; deviceLinked?: boolean }
+): RouteReliability | null {
+  if (!o.hasAdapter && !o.deviceLinked) return null;
+  if (route === "iphone-app-usb-agent") return "best_effort";
+  if (o.hasAdapter) return o.declared ?? "exact";
+  // A linked phone with no written adapter for this app: generic screen reading.
+  if (route === "android-app" || route === "iphone-app-ictrl") return "best_effort";
   return null;
 }

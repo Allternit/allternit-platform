@@ -166,7 +166,7 @@ export class AaiHost {
     return undefined;
   }
 
-  async providers(): Promise<Array<{ adapterId: string; disabled: boolean; pacing?: AaiPacing; manifest: AgentCapabilityManifest | null; error?: string }>> {
+  async providers(): Promise<Array<{ adapterId: string; disabled: boolean; pacing?: AaiPacing; manifest: AgentCapabilityManifest | null; error?: string; reliability?: "exact" | "structured" | "best_effort" }>> {
     const out = [];
     for (const [adapterId, r] of this.regs) {
       let manifest: AgentCapabilityManifest | null = null;
@@ -180,7 +180,10 @@ export class AaiHost {
         else if (!agentId) error = `no agent available${agents.ok ? " (the vendor lists none; is it running and signed in?)" : `: ${agents.error.humanMessage}`}`;
         else error = m.error.humanMessage;
       } catch (e) { error = (e as Error).message; }
-      out.push({ adapterId, disabled: this.disabled.has(adapterId), ...(r.pacing ? { pacing: r.pacing } : {}), manifest, ...(error ? { error } : {}) });
+      // A provider may say how it reads the app (AxChatAppProvider: "structured").
+      const declared = (r.provider as { routeReliability?: unknown }).routeReliability;
+      const reliability = declared === "exact" || declared === "structured" || declared === "best_effort" ? declared : undefined;
+      out.push({ adapterId, disabled: this.disabled.has(adapterId), ...(r.pacing ? { pacing: r.pacing } : {}), manifest, ...(error ? { error } : {}), ...(reliability ? { reliability } : {}) });
     }
     for (const [adapterId, error] of this.loadErrors) {
       if (!this.regs.has(adapterId)) out.push({ adapterId, disabled: this.disabled.has(adapterId), manifest: null, error: `failed to load: ${error}` });

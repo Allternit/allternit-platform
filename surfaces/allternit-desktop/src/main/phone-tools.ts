@@ -575,7 +575,7 @@ export class PhoneToolRunner {
       return raw;
     }
     if (online.length === 1) return online[0];
-    if (online.length === 0) return fail('device_offline', 'No phone is connected. Link one in Settings → Subscriptions, or connect an Android phone or USB Agent in Settings → Computers → Phones.');
+    if (online.length === 0) return fail('device_offline', 'No phone is connected. Link one in Settings → Connections › Setup, or connect an Android phone or USB Agent in Settings → Computers → Phones.');
     return fail('device_required', `Several phones are connected (${online.join(', ')}); pass serial.`);
   }
 
