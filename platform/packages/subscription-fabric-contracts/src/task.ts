@@ -175,9 +175,41 @@ export const taskConstraintsSchema = z.object({
 });
 export type TaskConstraints = z.infer<typeof taskConstraintsSchema>;
 
+/**
+ * What fills the provider conversation's context, read in the signed-in
+ * page after a turn (the vendor's own conversation, memory, project and
+ * settings endpoints). Tokens are chars/4 estimates of the text the page
+ * returns. `hidden` names rows the vendor does not show (its own system
+ * prompt), which stay 0.
+ */
+export const contextReportSchema = z.object({
+  vendor: z.string(),
+  model: z.string().optional(),
+  context_window: z.number().optional(),
+  rows: z.object({
+    messages: z.number(),
+    system_tools: z.number(),
+    memory_files: z.number(),
+    skills: z.number(),
+    system_prompt: z.number(),
+    mcp_tools: z.number(),
+    mcp_instructions: z.number(),
+  }),
+  memory_files: z.array(z.object({ path: z.string(), tokens: z.number() })),
+  mcp_tools: z.array(z.object({ name: z.string(), server: z.string(), tokens: z.number() })),
+  system_tools: z.array(z.object({ name: z.string(), tokens: z.number() })),
+  skills: z.array(z.object({ name: z.string(), tokens: z.number() })),
+  hidden: z.array(z.string()),
+  limits: z
+    .array(z.object({ id: z.string(), label: z.string(), used_ratio: z.number(), resets_at: z.string().nullable() }))
+    .optional(),
+});
+export type ContextReport = z.infer<typeof contextReportSchema>;
+
 export const taskResultSchema = z.object({
   artifact_ids: z.array(z.string()),
   text: z.string().optional(),
+  context: contextReportSchema.optional(),
 });
 export type TaskResult = z.infer<typeof taskResultSchema>;
 
