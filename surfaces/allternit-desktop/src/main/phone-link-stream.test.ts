@@ -190,6 +190,10 @@ describe('helper server args', () => {
     }
     expect(args).toContain('video_codec=h264');
     expect(args).toContain('audio_codec=opus');
+    // scrcpy's cleanup deletes the jar on this lane; nothing would push it back.
+    expect(args).toContain('cleanup=false');
+    expect(args).toContain('stay_awake=false');
+    expect(args).not.toContain('cleanup=true');
   });
 
   it('makes 31-bit scids scrcpy can parse', () => {
