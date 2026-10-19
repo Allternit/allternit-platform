@@ -28,6 +28,7 @@ import { acpCanLoadSession, acpMcpServers, claudePermissionFlags, claudeSessionF
 import { ContextBreakdown } from "@/runtime/session/context-breakdown"
 import { ContextBreakdownStore } from "@/runtime/session/context-breakdown-store"
 import { CodexContext } from "@/runtime/session/codex-context"
+import { QwenContext } from "@/runtime/session/qwen-context"
 import { attachmentsToAcpContent } from "./attachments"
 import { RuntimeService, RuntimeNotFoundError, type RegisteredRuntime } from "@/runtime/runtime-service"
 import { ExecutionLogService } from "@/runtime/execution-log"
@@ -750,6 +751,10 @@ export class LocalCliDriver implements RuntimeDriver {
 
           if (evt.type === "result") {
             finished = true
+            // Qwen Code's own /context on the session just run.
+            if (this.cliName === "qwen-cli" && options.sessionID && lastVendorId && !evt.is_error) {
+              refreshQwenContext({ argv, vendorSessionId: lastVendorId, sessionID: options.sessionID, cwd: options.cwd, env: options.env })
+            }
             if (this.cliName === "claude-cli") {
               // What is in context now: the last request's prompt plus its
               // reply (result.usage sums every request of the turn).
@@ -1956,7 +1961,10 @@ const CLI_ADAPTERS: Record<string, CliAdapter> = {
         "--output-format", "stream-json",
         "--yolo",
         ...qwenResumeFlags(ctx.vendorSessionId),
-        ...modelFlag(PROVIDER_ENV_KEYS["qwen-cli"]?.model ? process.env[PROVIDER_ENV_KEYS["qwen-cli"]!.model!] : undefined),
+        ...modelFlag(
+          sessionModel(ctx.model, "qwen-cli") ??
+            (PROVIDER_ENV_KEYS["qwen-cli"]?.model ? process.env[PROVIDER_ENV_KEYS["qwen-cli"]!.model!] : undefined),
+        ),
       ]
     },
   },
@@ -2309,6 +2317,42 @@ function recordCodexContext(input: {
 function claudeContextWindow(modelUsage: unknown): number {
   if (!modelUsage || typeof modelUsage !== "object") return 0
   return Math.max(0, ...Object.values(modelUsage as Record<string, { contextWindow?: unknown }>).map((entry) => Number(entry?.contextWindow) || 0))
+}
+
+/**
+ * Argv for Qwen Code's `/context` on the turn's session: the turn's binary
+ * and model, the local command instead of the prompt.
+ */
+export function qwenContextArgv(turnArgv: string[], vendorSessionId: string): string[] {
+  const model = turnArgv.indexOf("--model")
+  return [turnArgv[0], "-p", "/context", "--resume", vendorSessionId, ...(model > 0 ? ["--model", turnArgv[model + 1]] : [])]
+}
+
+function refreshQwenContext(input: { argv: string[]; vendorSessionId: string; sessionID: string; cwd?: string; env?: Record<string, string> }) {
+  if (claudeContextReads.has(input.sessionID)) return
+  claudeContextReads.add(input.sessionID)
+  void (async () => {
+    const proc = Bun.spawn(qwenContextArgv(input.argv, input.vendorSessionId), {
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "ignore",
+      cwd: input.cwd,
+      env: mergeEnv(process.env, input.env),
+    })
+    ProcessRegistry.track(proc, { label: "cli:qwen-cli:context" })
+    const timer = setTimeout(() => terminateProcessTree(proc), CLAUDE_CONTEXT_TIMEOUT_MS)
+    try {
+      const text = await new Response(proc.stdout).text()
+      await proc.exited
+      const snapshot = QwenContext.parse({ text, sessionID: input.sessionID, providerID: "qwen-cli", modelID: "qwen" })
+      if (snapshot) ContextBreakdownStore.record(snapshot)
+    } catch (error) {
+      log.info("qwen /context read failed", { sessionID: input.sessionID, error: error instanceof Error ? error.message : String(error) })
+    } finally {
+      clearTimeout(timer)
+      claudeContextReads.delete(input.sessionID)
+    }
+  })()
 }
 
 /** One `/context` read per session at a time; a newer turn's read waits for none. */
