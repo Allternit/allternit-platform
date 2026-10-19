@@ -40,4 +40,14 @@ describe("FabricContext.snapshot", () => {
     expect(instant.report.mcp_tools.map((t) => t.name)).toEqual(["gmail", "gcal", "gcontacts"])
     expect(instant.estimated).toEqual(["system_prompt", "system_tools", "mcp_tools"])
   })
+
+  test("Gemini and Kimi web: core prompt and tools from their leaked prompts", () => {
+    const base = { rows: { messages: 100, system_tools: 0, memory_files: 0, skills: 0, system_prompt: 0, mcp_tools: 0, mcp_instructions: 0 }, memory_files: [], mcp_tools: [], system_tools: [], skills: [], hidden: ["system_prompt", "system_tools", "mcp_tools"] }
+    const gemini = FabricContext.estimateHidden({ ...base, vendor: "google" })
+    expect(gemini.report.rows.system_prompt).toBe(8_333)
+    expect(gemini.report.rows.system_tools).toBe(6_081)
+    expect(gemini.report.hidden).toEqual(["mcp_tools"])
+    expect(FabricContext.estimateHidden({ ...base, vendor: "kimi" }).report.rows.system_prompt).toBe(8_286)
+  })
 })
+

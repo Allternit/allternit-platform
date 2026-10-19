@@ -54,6 +54,38 @@ function instructionBlocks(systemText: string) {
   return systemText.split(/\n(?=(?:Instructions from|Auto-memory from): |# MCP Server Instructions)/)
 }
 
+/**
+ * Closed-backend CLIs' own prompt and built-in tools (tokens, chars/4),
+ * measured from their leaked prompts (github.com/asgeirtj/system_prompts_leaks,
+ * Oct 2026): Cursor/cursor.md, xAI/grok-4.7-cli.md, Google/antigravity-cli.md,
+ * Misc/hermes.md.
+ */
+const CLI_OWN_PROMPT: Record<string, { prompt: number; tools: number }> = {
+  "cursor-agent": { prompt: 2_882, tools: 1_645 },
+  grok: { prompt: 4_562, tools: 14_859 },
+  antigravity: { prompt: 6_122, tools: 0 },
+  hermes: { prompt: 4_385, tools: 0 },
+}
+
+function addOwnPrompt(snapshot: ContextBreakdown.Snapshot, own: { prompt: number; tools: number }) {
+  const parts = Object.fromEntries(
+    snapshot.categories.filter((c) => !c.deferred && c.id !== "free_space" && c.id !== "autocompact_buffer").map((c) => [c.id, c.tokens]),
+  ) as ContextBreakdown.Parts
+  parts.system_prompt = (parts.system_prompt ?? 0) + own.prompt
+  parts.system_tools = (parts.system_tools ?? 0) + own.tools
+  return ContextBreakdown.fromParts({
+    sessionID: snapshot.sessionID,
+    providerID: snapshot.providerID,
+    modelID: snapshot.modelID,
+    contextWindow: snapshot.contextWindow,
+    parts,
+    memoryFiles: snapshot.memoryFiles,
+    mcpTools: snapshot.mcpTools,
+    systemTools: [...snapshot.systemTools, ...(own.tools > 0 ? [{ name: "built-in tools (estimated)", tokens: own.tools }] : [])],
+    skills: snapshot.skills,
+  })
+}
+
 async function modelWindow(providerID: string, modelID: string): Promise<number> {
   return import("@/runtime/providers/provider")
     .then(({ Provider }) => Provider.getModel(providerID, modelID))
@@ -123,8 +155,20 @@ async function recordBrainContext(input: {
     messages: input.conversation as any,
     autoCompactBuffer: 0,
   })
-  const next = context ? ContextBreakdown.reconcile(sent, { providerContextTokens: context.used }) : sent
-  ContextBreakdownStore.record({ ...next, basis: context ? "provider" : "estimated", source: "brain", brain: providerID, split: "sent", measuredAt: Date.now() })
+  // The brain's own prompt and tools, which gizzi never sees: a measured
+  // estimate from its leaked prompt where one exists (Cursor, Grok…).
+  const own = CLI_OWN_PROMPT[providerID]
+  const withOwn = own ? addOwnPrompt(sent, own) : sent
+  const next = context ? ContextBreakdown.reconcile(withOwn, { providerContextTokens: context.used }) : withOwn
+  ContextBreakdownStore.record({
+    ...next,
+    basis: context ? "provider" : "estimated",
+    source: "brain",
+    brain: providerID,
+    split: "sent",
+    ...(own ? { estimatedRows: ["system_prompt", "system_tools"] as ContextBreakdown.CategoryID[] } : {}),
+    measuredAt: Date.now(),
+  })
 }
 
 export class SubprocessLanguageModel implements LanguageModelV2 {
