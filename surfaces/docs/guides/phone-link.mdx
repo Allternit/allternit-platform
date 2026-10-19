@@ -42,6 +42,10 @@ You need Allternit Desktop, a USB cable, and the phone on the same Wi-Fi as your
 
 To stop the helper, use **Stop** on its notification, or uninstall **Allternit Phone Link** from the phone.
 
+**Live screen away from home.** The phone's live screen runs through a small screen service inside Phone Link (Android 13 or newer, phone joined to your Allternit mesh). Allternit Desktop starts that service for you whenever the phone is connected to it over USB or over Wireless debugging at home, and checks it every few minutes while it stays connected. Once started, it keeps running until the phone restarts, so you can leave home and still open the phone's screen from Allternit, ai.allternit.com or the phone app.
+
+After the phone restarts, the service is off until Desktop can reach the phone again: bring the phone home on Wi-Fi once with your computer on and Allternit open (or plug it in). Phone Link turns on Wireless debugging by itself so Desktop can reconnect, and turns it back off once the screen service is running (only if Phone Link was the one that turned it on). Until then the live view says it is waiting for your computer.
+
 ## iPhone
 
 You need Allternit Desktop on a Mac and a cable. It's one cable session, then it works over Wi-Fi. You do **not** need to put the iPhone in DFU or recovery mode.
@@ -93,7 +97,7 @@ Allternit can read and send in some messaging apps on a linked Android phone by 
 
 ## Phone health
 
-Settings → Subscriptions › Linked phones shows each linked phone's state as an **Apps:** pill (for example **Apps: Connected**), the app rows under Apps and channels repeat it per app, and `phone.devices` reports it to bots. On Android, Phone Link doesn't show the screen: an Android phone's screen connects through wireless debugging (see [A phone for your bot](/guides/phone-for-your-bot)). When a phone has both, Settings → Computers → Phones shows it as one row with **Screen: …** and **Apps: …**.
+Settings → Subscriptions › Linked phones shows each linked phone's state as an **Apps:** pill (for example **Apps: Connected**), the app rows under Apps and channels repeat it per app, and `phone.devices` reports it to bots. On Android, an adb phone's screen connects through wireless debugging, and a linked phone on your mesh also shows its screen through Phone Link's screen service (see [Live screen away from home](#android) and [A phone for your bot](/guides/phone-for-your-bot)). When a phone has both, Settings → Computers → Phones shows it as one row with **Screen: …** and **Apps: …**.
 
 The health states:
 

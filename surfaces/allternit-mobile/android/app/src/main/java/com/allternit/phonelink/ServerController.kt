@@ -75,9 +75,9 @@ object ServerController {
         )
         meshKeyBox = MeshKeyBox(kv, KeystoreSealer())
         adbKeyBox = AdbKeyBox(kv, KeystoreSealer())
-        shell = ShellServerLauncher(app, adbKeyBox, log = ::log, onChanged = { notifyChanged() })
+        shell = ShellServerLauncher(app, adbKeyBox, kv, log = ::log, onChanged = { notifyChanged() })
         val streams = StreamOpener { command ->
-            if (!shell.ensureRunningBlocking()) throw java.io.IOException(shell.lastError ?: "The screen service isn't set up on this phone.")
+            if (!shell.ensureRunningBlocking()) throw java.io.IOException(shell.lastError ?: "The screen service isn't running on this phone yet.")
             shell.client.openRaw(command)
         }
         val phoneServer = PhoneServer(auth, dispatcher, config = { meshAwareConfig() }, log = ::log, streams = streams)
@@ -230,6 +230,8 @@ object ServerController {
         override fun scheduleStop() {
             scheduler.schedule({ stopByUser(app) }, 1, TimeUnit.SECONDS)
         }
+
+        override fun screenService() = shell.status()
     }
 
     // ── Device facts ────────────────────────────────────────────────────────

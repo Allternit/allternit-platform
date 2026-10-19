@@ -68,6 +68,8 @@ import { PhoneLinkBackend, cachedHostResolver, linkedPhoneSource, probeLinkedPho
   rememberLinkedHost, LINK_SERIAL_PREFIX, type LinkedPhone } from './phone-link-backend.js';
 import { fileAndroidLinkStore, type AndroidLinkRecord } from './phone-link-android.js';
 import { openHelperStream, streamLaneFor, relaySerials, resolveHelperStreamHost } from './phone-link-stream.js';
+import { ScreenServiceKeeper, type AdbScreenPhone } from './phone-screen-service.js';
+import { parseAdbDevices as parseAdbDeviceRows } from './phone-adb-pairing.js';
 import { nodeDiscoveryDeps } from './phone-link-discovery.js';
 import { PHONE_LINK_MESH_ENABLED } from './phone-link-mesh.js';
 import { meshManager } from './mesh-manager.js';
@@ -204,6 +206,7 @@ class PhoneService {
   private callBridgeWindow: CallBridgeWindow | null = null;
   private iosRecordsCache: { at: number; records: IosLinkRecord[] } | null = null;
   private androidRecordsCache: { at: number; records: AndroidLinkRecord[] } | null = null;
+  private screenKeeper: ScreenServiceKeeper | null = null;
 
   getGatewayFile(): string {
     return this.gatewayFile;
@@ -529,8 +532,10 @@ class PhoneService {
             if (!serial.startsWith(LINK_SERIAL_PREFIX) && !online.has(serial)) this.streams?.deviceDisconnected(serial);
           }
           this.syncLinkSockets();
+          void this.screenKeeper?.pass();
         });
         this.manager = manager;
+        this.ensureScreenKeeper();
         this.ensureStreamManager();
         this.ensureLinkSync();
         this.ensureCallBridge();
@@ -1025,6 +1030,40 @@ class PhoneService {
     this.ensureCallBridge();
     // Relay sockets for linked phones (iPhone video, Android through Phone Link) without the adb lane.
     this.ensureLinkSync();
+    if (this.androidRecords().length > 0) this.ensureScreenKeeper();
+  }
+
+  /**
+   * Linked Androids' screen service (phone-screen-service.ts): whenever one is
+   * online over adb (USB or home Wireless debugging), Desktop starts the Phone
+   * Link app's shell server through that trusted connection, so its live
+   * screen keeps working over the mesh after it leaves home (until it restarts).
+   */
+  private ensureScreenKeeper(): void {
+    if (this.screenKeeper) return;
+    this.screenKeeper = new ScreenServiceKeeper({
+      links: () => this.androidRecords().map((r) => ({ deviceId: r.deviceId, serial: r.serial, deviceName: r.deviceName })),
+      adbPhones: async () => {
+        const adb = await this.ensureAdbCall();
+        const rows = parseAdbDeviceRows((await adb(['devices', '-l'], { timeoutMs: 10_000 })).stdout).filter((r) => r.state === 'device');
+        const known = this.manager?.list() ?? [];
+        return rows.map((row): AdbScreenPhone => {
+          const stored = known.find((p) => p.serial === row.serial);
+          return { serial: row.serial, hardwareSerial: stored?.id ?? null, model: stored?.model ?? row.model ?? null, name: stored?.name ?? null };
+        });
+      },
+      readHardwareSerial: async (serial) => {
+        const adb = await this.ensureAdbCall();
+        const out = (await adb(['shell', 'getprop', 'ro.serialno'], { serial, timeoutMs: 10_000 })).stdout.trim();
+        return out || null;
+      },
+      helperCall: (deviceId, method, params, timeoutMs) =>
+        this.ensureLinkedBackend().helperCall(`${LINK_SERIAL_PREFIX}${deviceId}`, method, params, timeoutMs),
+      // One short-lived `adb -s <serial> shell <line>` per line; the lines are validated first.
+      adbShell: async (serial, line) => (await this.ensureAdbCall())(['shell', line], { serial, timeoutMs: 15_000 }),
+      log: (message) => log.info(message),
+    });
+    this.screenKeeper.start();
   }
 
   // ── Call bridge (CONTRACT-linked-phone-voice C5): the bot talks on a real  ──
@@ -1347,6 +1386,8 @@ class PhoneService {
     this.callBridge = null;
     this.callBridgeWindow = null;
     this.iosRecovery?.stop();
+    this.screenKeeper?.stop();
+    this.screenKeeper = null;
     if (this.linkSyncTimer) clearInterval(this.linkSyncTimer);
     this.linkSyncTimer = null;
     for (const [serial, socket] of this.linkSockets) {

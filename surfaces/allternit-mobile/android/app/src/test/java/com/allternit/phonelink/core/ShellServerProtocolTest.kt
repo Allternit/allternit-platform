@@ -83,4 +83,25 @@ class ShellServerProtocolTest {
         ss.close()
         assertFalse(ShellClient(port = { ss.localPort }, token = { token }).ping())
     }
+
+    @Test fun launchLinesAreTheExactShellLines() {
+        val apk = "/data/app/~~Ab12-_==/com.allternit.phonelink-Xy_9==/base.apk"
+        val l = ShellServerProtocol.launchLines(apk, token, ShellServerProtocol.DEFAULT_PORT)
+        assertEquals("pkill -f 'phonelink[.]shell[.][S]hellServerMain'", l.kill)
+        assertEquals(
+            "setsid app_process -Djava.class.path=$apk / com.allternit.phonelink.shell.ShellServerMain $token 18210 " +
+                "</dev/null >/data/local/tmp/allternit-shell.log 2>&1 &",
+            l.start,
+        )
+    }
+
+    @Test fun launchLinesRefuseAnythingOddInTheirInputs() {
+        val apk = "/data/app/com.allternit.phonelink-1/base.apk"
+        for (bad in listOf("/data/app/x;reboot/base.apk", "/data/app/x y/base.apk", "/sdcard/base.apk", "/data/app/../../x/base.apk", "/data/app/x/base.apk.bak")) {
+            assertTrue(bad, runCatching { ShellServerProtocol.launchLines(bad, token, 18210) }.isFailure)
+        }
+        assertTrue(runCatching { ShellServerProtocol.launchLines(apk, "xyz", 18210) }.isFailure)
+        assertTrue(runCatching { ShellServerProtocol.launchLines(apk, token, 80) }.isFailure)
+        assertTrue(runCatching { ShellServerProtocol.launchLines(apk, token, 18210) }.isSuccess)
+    }
 }

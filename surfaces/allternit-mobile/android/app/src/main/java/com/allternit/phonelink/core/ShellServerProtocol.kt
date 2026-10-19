@@ -34,6 +34,35 @@ object ShellServerProtocol {
     const val SCRCPY_VERSION = "5.0.1"
     const val SCRCPY_JAR = "/data/local/tmp/allternit-scrcpy-server.jar"
 
+    const val MAIN_CLASS = "com.allternit.phonelink.shell.ShellServerMain"
+    const val LOG_FILE = "/data/local/tmp/allternit-shell.log"
+    /**
+     * Stops a server left over from an older token (it would hold the port).
+     * The bracket keeps pkill -f from matching its own `sh -c` line; run it as
+     * its own shell call, before [LaunchLines.start].
+     */
+    const val KILL_LINE = "pkill -f 'phonelink[.]shell[.][S]hellServerMain'"
+
+    /**
+     * The two shell lines that (re)start the server as the shell uid. The app
+     * runs them over its own adb connection, and Allternit Desktop runs the
+     * same lines over its adb lane (`screen_service` RPC), so both paths start
+     * an identical server. Desktop checks them against this exact shape.
+     */
+    data class LaunchLines(val kill: String, val start: String)
+
+    private val APK = Regex("^/data/app/[A-Za-z0-9._~=+-]+(/[A-Za-z0-9._~=+-]+)*/base\\.apk$")
+
+    fun launchLines(apk: String, token: String, port: Int): LaunchLines {
+        require(APK.matches(apk) && !apk.contains("..")) { "unexpected apk path" }
+        require(isValidToken(token)) { "bad token" }
+        require(port in 1024..65535) { "bad port" }
+        return LaunchLines(
+            kill = KILL_LINE,
+            start = "setsid app_process -Djava.class.path=$apk / $MAIN_CLASS $token $port </dev/null >$LOG_FILE 2>&1 &",
+        )
+    }
+
     private val TOKEN = Regex("^[0-9a-f]{64}$")
     private val SCID = Regex("^[0-9a-f]{8}$")
     /** scrcpy server options are key=value with a small alphabet; nothing a shell could read as syntax. */

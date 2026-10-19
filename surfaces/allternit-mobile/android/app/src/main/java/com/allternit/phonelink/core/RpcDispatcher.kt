@@ -16,9 +16,22 @@ data class ServerConfig(
     val meshHost: String? = null,
     /**
      * The shell server that serves the live screen (ShellServerLauncher.State,
-     * lower-case): not_set_up / starting / running / waiting_for_wifi / error.
+     * lower-case): not_set_up / starting / running / waiting_for_wifi /
+     * waiting_for_computer / error.
      */
     val screenState: String = "not_set_up",
+)
+
+/**
+ * The screen service (shell server) as `screen_service` reports it, after a
+ * fresh local ping. [launch] is what Allternit Desktop runs over its adb lane
+ * when [running] is false (null when the app can't build the lines).
+ */
+data class ScreenServiceStatus(
+    val running: Boolean,
+    val state: String,
+    val lastError: String?,
+    val launch: ShellServerProtocol.LaunchLines?,
 )
 
 /** Server-level operations `config` can trigger. Changes apply after the reply is sent. */
@@ -26,6 +39,8 @@ interface ServerHooks {
     fun config(): ServerConfig
     fun applyConfig(allowRemote: Boolean?, port: Int?, deviceName: String?)
     fun scheduleStop()
+    /** Pings the screen service and reports it (blocking, ~1.5 s at most). */
+    fun screenService(): ScreenServiceStatus = ScreenServiceStatus(false, "not_set_up", null, null)
 }
 
 /**
@@ -129,6 +144,7 @@ class RpcDispatcher(
                 sleep((d * 1000).toLong())
                 JSONObject().put("message", "Waited ${d}s")
             }
+            "screen_service" -> screenService()
             "stream_ticket" -> throw RpcException(RpcException.METHOD_NOT_FOUND, "Method not found: the Android server has no /stream", "unsupported")
             else -> throw RpcException(RpcException.METHOD_NOT_FOUND, "Method not found", "unknown_method")
         }
@@ -269,6 +285,16 @@ class RpcDispatcher(
             .put("screen_state", cfg.screenState)
             .put("mesh_host", cfg.meshHost ?: JSONObject.NULL)
             .put("system", system)
+    }
+
+    private fun screenService(): JSONObject {
+        val s = hooks.screenService()
+        val launch = s.launch?.let { JSONObject().put("kill", it.kill).put("start", it.start) }
+        return JSONObject()
+            .put("running", s.running)
+            .put("state", s.state)
+            .put("lastError", s.lastError ?: JSONObject.NULL)
+            .put("launch", launch ?: JSONObject.NULL)
     }
 
     private fun pageSource(p: JSONObject, o: DeviceOps): JSONObject {
