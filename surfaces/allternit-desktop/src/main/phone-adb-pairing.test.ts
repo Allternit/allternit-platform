@@ -61,6 +61,12 @@ describe('mDNS parsing', () => {
     expect(findConnectService(services, '10.0.0.1')).toBeUndefined();
   });
 
+  it('finds a known phone by its serial in the service name after its address changed', () => {
+    const moved = [{ name: 'adb-ZY22LK9NF5-ojBY2D', type: '_adb-tls-connect._tcp', host: '10.0.0.238', port: 37723 }];
+    expect(findConnectService(moved, '10.0.0.11', 'ZY22LK9NF5')).toEqual(moved[0]);
+    expect(findConnectService(moved, '10.0.0.11', 'OTHER')).toBeUndefined();
+  });
+
   it('parses host:port including bad input', () => {
     expect(parseHostPort('192.168.1.20:37123')).toEqual({ host: '192.168.1.20', port: 37123 });
     expect(parseHostPort('192.168.1.20')).toBeNull();
