@@ -40,7 +40,7 @@ function recordBrainContext(
   if (!(context.size > 0)) return
   const previous = ContextBreakdown.get(sessionID)
   const snapshot =
-    previous?.source === "brain" && previous.brain === providerID && previous.categories.length > 2
+    previous?.source === "brain" && previous.brain === providerID && previous.categories.some((category) => category.id !== "messages" && !category.deferred && category.id !== "free_space" && category.id !== "autocompact_buffer" && category.tokens > 0)
       ? ContextBreakdown.reconcile(previous, { providerContextTokens: context.used, contextWindow: context.size })
       : ContextBreakdown.fromUsage({
           sessionID,

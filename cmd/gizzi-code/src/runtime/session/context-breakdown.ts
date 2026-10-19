@@ -222,16 +222,11 @@ export namespace ContextBreakdown {
       "mcp_tools",
       "mcp_instructions",
     ]
-    const categories: Category[] = order
-      .filter((id) => parts[id] > 0 || id === "messages")
-      .map((id) => ({ id, name: NAMES[id], tokens: parts[id] }))
-    if (buffer > 0) categories.push({ id: "autocompact_buffer", name: NAMES.autocompact_buffer, tokens: buffer })
-    if (window > 0)
-      categories.push({ id: "free_space", name: NAMES.free_space, tokens: Math.max(0, window - used - buffer) })
-    for (const id of DEFERRED) {
-      const tokens = deferred?.[id] ?? 0
-      if (tokens > 0) categories.push({ id, name: NAMES[id], tokens, deferred: true })
-    }
+    // Every row, every brain: a category the brain does not fill reads 0.
+    const categories: Category[] = order.map((id) => ({ id, name: NAMES[id], tokens: parts[id] }))
+    categories.push({ id: "autocompact_buffer", name: NAMES.autocompact_buffer, tokens: buffer })
+    categories.push({ id: "free_space", name: NAMES.free_space, tokens: window > 0 ? Math.max(0, window - used - buffer) : 0 })
+    for (const id of DEFERRED) categories.push({ id, name: NAMES[id], tokens: deferred?.[id] ?? 0, deferred: true })
     return {
       ...rest,
       usedTokens: used,

@@ -54,9 +54,22 @@ describe("context breakdown", () => {
     expect(snapshot.basis).toBe("estimated")
   })
 
-  test("orders categories like the panel and drops empty ones", () => {
+  test("orders categories like the panel and keeps every row, empty ones at 0", () => {
     const snapshot = ContextBreakdown.build(base({ tools: {}, instructions: [] }))
-    expect(snapshot.categories.map((category) => category.id)).toEqual(["messages", "system_prompt", "free_space"])
+    expect(snapshot.categories.map((category) => category.id)).toEqual([
+      "messages",
+      "system_tools",
+      "memory_files",
+      "skills",
+      "system_prompt",
+      "mcp_tools",
+      "mcp_instructions",
+      "autocompact_buffer",
+      "free_space",
+      "system_tools_deferred",
+      "mcp_tools_deferred",
+    ])
+    expect(tokens(snapshot, "mcp_tools")).toBe(0)
   })
 
   test("reconcile attributes the provider's extra tokens to messages", () => {
@@ -87,7 +100,7 @@ describe("context breakdown", () => {
 
     const full = ContextBreakdown.build(base({ contextWindow: 1_000, autoCompactBuffer: 20_000 }))
     expect(tokens(full, "free_space")).toBe(0)
-    expect(tokens(full, "autocompact_buffer")).toBeUndefined()
+    expect(tokens(full, "autocompact_buffer")).toBe(0)
     expect(full.utilization).toBe(1)
   })
 
