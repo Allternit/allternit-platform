@@ -8,6 +8,7 @@ import {
   IOS_PACKET_ENDED,
   IOS_PACKET_FRAME,
   IOS_PACKET_STATUS,
+  IOS_HELPER_LOST_MESSAGE,
   IOS_START_TIMEOUT_MESSAGE,
   IosGestureMapper,
   IosVideoPacketParser,
@@ -241,7 +242,7 @@ describe('IosVideoSession', () => {
     const failed = expect(started).rejects.toThrow(IOS_START_TIMEOUT_MESSAGE);
     await vi.advanceTimersByTimeAsync(0);
     s.socket.write(Buffer.concat([Buffer.from(OK_HEAD), status(false)]));
-    await vi.advanceTimersByTimeAsync(59_000);
+    await vi.advanceTimersByTimeAsync(179_000);
     expect(s.ends).toEqual([]);
     await vi.advanceTimersByTimeAsync(1_500);
     await failed;
@@ -270,13 +271,79 @@ describe('IosVideoSession', () => {
     expect(s.session.setDisplayPower(false)).toEqual({ ok: false, message: 'Not available on iPhone.' });
   });
 
-  it('refuses input before live and ends once when the socket closes', async () => {
+  it('refuses input before live', () => {
     const s = makeSession();
     expect(s.session.sendControl([{ type: 'home' }])).toEqual({ ok: false, message: 'The stream is not live.' });
-    await goLive(s);
-    s.socket.destroy();
-    await flush();
-    expect(s.ends).toEqual(['the iPhone closed the video connection']);
+  });
+
+  it('a live connection that closes or goes quiet reconnects with a new ticket and stays live', async () => {
+    vi.useFakeTimers();
+    const sockets: PassThrough[] = [];
+    const call = vi.fn(async (method: string) => (method === 'stream_ticket' ? { ticket: `T-${sockets.length + 1}` } : { ok: true }));
+    const session = new IosVideoSession({
+      call,
+      host: async () => '127.0.0.1:52001',
+      connect: () => {
+        const sock = new PassThrough();
+        sockets.push(sock);
+        return sock;
+      },
+      deviceName: 'iPhone 15',
+    });
+    const metas: PhoneStreamMeta[] = [];
+    const chunks: Buffer[] = [];
+    const ends: string[] = [];
+    session.on('meta', (m) => metas.push(m));
+    session.on('videoChunk', (c) => chunks.push(c));
+    session.on('ended', (e) => ends.push(e.reason));
+    const started = session.start();
+    await vi.advanceTimersByTimeAsync(0);
+    sockets[0].write(Buffer.concat([Buffer.from(OK_HEAD), status(true), config()]));
+    await started;
+
+    // The runner was killed: no FIN, just silence. 7 s later the session reconnects.
+    await vi.advanceTimersByTimeAsync(7_000 + 2_000);
+    expect(sockets).toHaveLength(2);
+    sockets[1].write(Buffer.concat([Buffer.from(OK_HEAD), status(true), config(), frame()]));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(chunks).toHaveLength(1);
+    expect(metas).toHaveLength(1); // still the same live stream
+    expect(ends).toEqual([]);
+
+    // A clean close reconnects too.
+    sockets[1].end();
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(sockets).toHaveLength(3);
+    expect(ends).toEqual([]);
+  });
+
+  it('gives up with a plain message when the helper stays gone', async () => {
+    vi.useFakeTimers();
+    let clock = 0;
+    const s = new IosVideoSession({
+      call: async (method: string) => {
+        if (method === 'stream_ticket' && clock > 0) throw new Error("Can't reach the phone");
+        return { ticket: 'T' };
+      },
+      host: async () => '127.0.0.1:52001',
+      connect: () => {
+        const sock = new PassThrough();
+        if (clock === 0) setImmediate(() => sock.write(Buffer.concat([Buffer.from(OK_HEAD), status(true), config()])));
+        return sock;
+      },
+      deviceName: 'iPhone 15',
+      now: () => clock,
+    });
+    const ends: string[] = [];
+    s.on('ended', (e) => ends.push(e.reason));
+    const started = s.start();
+    await vi.advanceTimersByTimeAsync(1);
+    await started;
+    for (let i = 0; i < 30 && ends.length === 0; i++) {
+      clock += 2_000;
+      await vi.advanceTimersByTimeAsync(2_000);
+    }
+    expect(ends).toEqual([IOS_HELPER_LOST_MESSAGE]);
   });
 });
 

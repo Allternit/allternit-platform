@@ -137,6 +137,11 @@ export function decodeIosVideoPacket(type: number, payload: Buffer): IosVideoPac
 export class IosVideoPacketParser {
   private buf: Buffer = Buffer.alloc(0);
 
+  /** Drop a partial packet (a new connection starts on a packet boundary). */
+  reset(): void {
+    this.buf = Buffer.alloc(0);
+  }
+
   /** Throws on a packet larger than the cap (a corrupt stream; the caller ends the session). */
   push(chunk: Buffer): IosVideoPacket[] {
     this.buf = this.buf.length ? Buffer.concat([this.buf, chunk]) : chunk;
@@ -274,8 +279,12 @@ export interface IosVideoDeps {
   deviceName: string;
   log?(message: string): void;
   now?(): number;
-  /** How long to wait for the first CONFIG (default 60 s). */
+  /** How long to wait for the first CONFIG (default 3 min: the user may tap Start Broadcast late). */
   startTimeoutMs?: number;
+  /** Silence on a live connection that counts as lost (default 7 s; the runner sends STATUS every 2 s). */
+  stallMs?: number;
+  /** How long to keep reconnecting a lost live connection (default 45 s; a cable relaunch takes ~6 s). */
+  reconnectForMs?: number;
 }
 
 interface IosVideoEvents {
@@ -287,8 +296,12 @@ interface IosVideoEvents {
   ended(info: { reason: string }): void;
 }
 
-export const IOS_START_TIMEOUT_MS = 60_000;
+export const IOS_START_TIMEOUT_MS = 180_000;
 export const IOS_START_TIMEOUT_MESSAGE = 'Tap Start live screen on the iPhone, then try again.';
+export const IOS_STALL_MS = 7_000;
+export const IOS_RECONNECT_FOR_MS = 45_000;
+const RECONNECT_EVERY_MS = 2_000;
+export const IOS_HELPER_LOST_MESSAGE = 'The helper on your iPhone stopped. Plug the iPhone into this Mac to restart it, or open iCTRL › Start Server, then try again.';
 const TICKET_TIMEOUT_MS = 5_000;
 const START_LIVE_SCREEN_TIMEOUT_MS = 20_000;
 const GESTURE_TIMEOUT_MS = 10_000;
@@ -320,6 +333,11 @@ export class IosVideoSession implements StreamSessionHandle {
   private ended = false;
   private askedToStart = false;
   private startTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Live: fires when the connection goes quiet (the runner's 2 s STATUS stopped). */
+  private stallTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Live and reconnecting since this time (ms); null while connected. */
+  private lostAt: number | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private queue: Promise<void> = Promise.resolve();
   private queued = 0;
 
@@ -360,6 +378,12 @@ export class IosVideoSession implements StreamSessionHandle {
     void livePromise.catch(() => undefined);
     this.startTimer = setTimeout(() => this.failStart(new Error(IOS_START_TIMEOUT_MESSAGE)), this.deps.startTimeoutMs ?? IOS_START_TIMEOUT_MS);
 
+    await this.openVideo();
+    await livePromise;
+  }
+
+  /** Mint a ticket and open `/video`; every socket event is ignored once a newer socket replaced it. */
+  private async openVideo(): Promise<void> {
     const minted = (await this.deps.call('stream_ticket', {}, TICKET_TIMEOUT_MS)) as { ticket?: unknown } | null;
     const ticket = typeof minted?.ticket === 'string' ? minted.ticket : '';
     if (!ticket) throw new Error('The iPhone did not hand out a video ticket.');
@@ -370,12 +394,59 @@ export class IosVideoSession implements StreamSessionHandle {
 
     const socket = (this.deps.connect ?? nodeIosVideoConnect)(host, `/video?ticket=${encodeURIComponent(ticket)}`);
     this.socket = socket;
-    socket.on('data', (chunk: Buffer) => this.onData(chunk));
-    socket.on('error', (error: Error) => this.dispose(`video socket error: ${error.message}`));
-    socket.on('close', () => this.onClose());
-    socket.on('end', () => this.onClose());
+    this.head = Buffer.alloc(0);
+    this.errorBody = null;
+    this.parser.reset();
+    const current = () => this.socket === socket;
+    socket.on('data', (chunk: Buffer) => current() && this.onData(chunk));
+    socket.on('error', (error: Error) => current() && this.onLost(`video socket error: ${error.message}`));
+    socket.on('close', () => current() && this.onClose());
+    socket.on('end', () => current() && this.onClose());
     this.log(`requesting /video from ${host}`);
-    await livePromise;
+    this.armStall();
+  }
+
+  /** Live only: no bytes for `stallMs` means the runner is gone (a killed process leaves the TCP socket open). */
+  private armStall(): void {
+    if (this.stallTimer) clearTimeout(this.stallTimer);
+    this.stallTimer = null;
+    if (!this.live || this.ended) return;
+    this.stallTimer = setTimeout(() => this.onLost('no data from the iPhone'), this.deps.stallMs ?? IOS_STALL_MS);
+  }
+
+  /**
+   * A live connection dropped or went quiet. Keep the stream live and reopen
+   * `/video` every 2 s: the runner restarts (Desktop's recovery relaunches it
+   * over the cable in ~6 s) while the broadcast extension keeps running and
+   * reconnects to it, and the runner starts each new viewer at a keyframe.
+   */
+  private onLost(reason: string): void {
+    if (this.ended) return;
+    if (!this.live) return this.dispose(reason);
+    if (this.stallTimer) clearTimeout(this.stallTimer);
+    this.stallTimer = null;
+    const old = this.socket;
+    this.socket = null;
+    try {
+      old?.destroy();
+    } catch {
+      /* already gone */
+    }
+    if (this.lostAt === null) {
+      this.lostAt = this.now();
+      this.log(`connection lost (${reason}); reconnecting`);
+    }
+    if (this.now() - this.lostAt >= (this.deps.reconnectForMs ?? IOS_RECONNECT_FOR_MS)) return this.dispose(IOS_HELPER_LOST_MESSAGE);
+    if (this.reconnectTimer) return;
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      if (this.ended) return;
+      this.openVideo().catch((error) => this.onLost(error instanceof Error ? error.message : String(error)));
+    }, RECONNECT_EVERY_MS);
+  }
+
+  private now(): number {
+    return this.deps.now?.() ?? Date.now();
   }
 
   private failStart(error: Error): void {
@@ -388,6 +459,7 @@ export class IosVideoSession implements StreamSessionHandle {
 
   private onData(chunk: Buffer): void {
     if (this.ended) return;
+    this.armStall();
     try {
       if (this.errorBody) {
         this.errorBody.body = Buffer.concat([this.errorBody.body, chunk]).subarray(0, 4096);
@@ -411,7 +483,7 @@ export class IosVideoSession implements StreamSessionHandle {
         if (this.ended) return;
       }
     } catch (error) {
-      this.dispose(error instanceof Error ? error.message : String(error));
+      this.onLost(error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -421,11 +493,11 @@ export class IosVideoSession implements StreamSessionHandle {
       const text = this.errorBody.body.toString('utf8').trim();
       const error = new Error(text || `The iPhone refused the video request (HTTP ${this.errorBody.status}).`);
       if (!this.live) return this.failStart(error);
-      return this.dispose(error.message);
+      return this.onLost(error.message);
     }
     const reason = this.live ? 'the iPhone closed the video connection' : 'the iPhone closed the video connection before the live screen started';
     if (!this.live) return this.failStart(new Error(reason));
-    this.dispose(reason);
+    this.onLost(reason);
   }
 
   private onPacket(packet: IosVideoPacket): void {
@@ -445,8 +517,13 @@ export class IosVideoSession implements StreamSessionHandle {
         const { type: _type, ...config } = packet;
         const previous = this.config;
         this.config = config;
+        if (this.lostAt !== null) {
+          this.log(`reconnected after ${this.now() - this.lostAt} ms`);
+          this.lostAt = null;
+        }
         if (!this.live) {
           this.live = true;
+          this.armStall();
           if (this.startTimer) clearTimeout(this.startTimer);
           this.startTimer = null;
           this.emit('meta', { deviceName: this.deps.deviceName, width: config.width, height: config.height, codec: 'h264' });
@@ -536,6 +613,10 @@ export class IosVideoSession implements StreamSessionHandle {
     this.log(`ended: ${reason}`);
     if (this.startTimer) clearTimeout(this.startTimer);
     this.startTimer = null;
+    if (this.stallTimer) clearTimeout(this.stallTimer);
+    this.stallTimer = null;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
     this.liveReject?.(new Error(reason));
     this.liveResolve = null;
     this.liveReject = null;
