@@ -118,6 +118,12 @@ export interface ScreenServiceKeeperDeps {
   helperCall: (deviceId: string, method: string, params: Record<string, unknown>, timeoutMs: number) => Promise<unknown>;
   /** One `adb -s <serial> shell <line>` call (a short-lived exec, not a long-lived shell). */
   adbShell: (serial: string, line: string) => Promise<AdbResult>;
+  /**
+   * Puts the pinned scrcpy-server jar back on the phone when it is missing
+   * (setup pushes it to /data/local/tmp, which the phone may clear); true
+   * when it pushed. Without the jar the service runs but every stream fails.
+   */
+  ensureScrcpyJar?: (serial: string) => Promise<boolean>;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   log: (message: string) => void;
@@ -206,6 +212,11 @@ export class ScreenServiceKeeper {
     this.lastAttempt.set(link.deviceId, this.now());
     const who = `${link.deviceName || 'Android'} (${link.deviceId.slice(0, 8)}, adb ${adbSerial})`;
     try {
+      const pushed = await this.deps.ensureScrcpyJar?.(adbSerial).catch((e: unknown) => {
+        this.deps.log(`[PhoneScreen] ${who}: scrcpy-server check failed (${e instanceof Error ? e.message : String(e)})`);
+        return false;
+      });
+      if (pushed) this.deps.log(`[PhoneScreen] ${who}: scrcpy-server was missing on the phone; pushed it again`);
       const first = await this.status(link.deviceId);
       if (!first) return this.done('unreachable', `${who}: Phone Link didn't answer screen_service`);
       if (first === 'bad') return this.done('bad_reply', `${who}: screen_service reply not understood`);

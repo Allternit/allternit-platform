@@ -185,6 +185,26 @@ class MeshManager {
     return `127.0.0.1:${node.port}`;
   }
 
+  /**
+   * Replace the proxy sidecar for one mesh target: its node can stay up while
+   * every connection through it fails (seen 2026-10-19: Headscale listed it
+   * offline and it ignored SIGTERM), so it is killed outright and the next
+   * proxyFor/loopbackFor spawns a fresh one. False when there was none.
+   */
+  restartProxy(target: string): boolean {
+    const node = this.nodes.get(target);
+    if (!node) return false;
+    this.nodes.delete(target);
+    if (node.restarting) clearTimeout(node.restarting);
+    try {
+      node.proc.kill('SIGKILL');
+    } catch {
+      // already gone
+    }
+    log.info(`[Mesh] Replaced the mesh-node proxy for ${target}`);
+    return true;
+  }
+
   async stop(): Promise<void> {
     this.stopping = true;
     for (const node of this.nodes.values()) {
