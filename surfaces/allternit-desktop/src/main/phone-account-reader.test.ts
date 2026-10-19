@@ -7,6 +7,7 @@ import {
   parseResetTime,
   parseUsageWindows,
   pickTap,
+  pickTextTap,
   PhoneAccountScheduler,
   readLinkedAccount,
   remainingPct,
@@ -248,9 +249,94 @@ describe('readLinkedAccount', () => {
     expect(calls).toEqual([]);
   });
 
-  it('refuses apps without a spec', async () => {
-    const { lane } = setup({});
-    expect((await readLinkedAccount({ lane }, { deviceId: 'and-1', app: 'slack' })).error?.code).toBe('unsupported_app');
+  it('checks an app without a spec for sign-in only: a sign-in screen is saved as signed out', async () => {
+    const { lane, calls, saved } = setup({
+      launch_app: () => ({ message: 'Launched' }),
+      page_source: () => source('android.widget.Button "Sign in"', 'android.widget.Button "Create account"'),
+      screen_text: () => items('Get paid anywhere', 'Create account', 'Sign in'),
+      home: () => ({}),
+    });
+    const res = await readLinkedAccount({ lane, sleep: async () => {}, now: () => NOW }, { deviceId: 'and-1', app: 'quickbooks' });
+    expect(res).toMatchObject({ ok: true, signedIn: false, account: null, plan: null, usage: null });
+    expect(calls.some((c) => c.method === 'find_and_tap' || c.method === 'tap')).toBe(false);
+    expect(saved.at(-1)?.find((a) => a.vendor === 'quickbooks')).toMatchObject({ signedIn: false, account: null, accountCheckedAt: NOW.toISOString() });
+    expect(calls.at(-1)?.method).toBe('home');
+  });
+
+  it('a signed-out app with a spec stops at its sign-in screen and forgets the old account', async () => {
+    const { lane, calls, saved, phone } = setup({
+      launch_app: () => ({ message: 'Launched' }),
+      page_source: () => source('android.widget.TextView "Session expired. Please log in again."', 'android.widget.Button "Log in"'),
+      screen_text: () => items('Session expired. Please log in again.', 'Log in'),
+      home: () => ({}),
+    });
+    phone.apps = [{ vendor: 'claude', signedIn: true, name: 'Claude', category: 'AI chat', account: 'old@example.com', plan: 'Max', accountCheckedAt: '2026-10-17T00:00:00.000Z' }];
+    const res = await readLinkedAccount({ lane, sleep: async () => {}, now: () => NOW }, { deviceId: 'and-1', app: 'claude' });
+    expect(res).toMatchObject({ ok: true, signedIn: false, account: null });
+    expect(calls.filter((c) => c.method === 'find_and_tap')).toEqual([]);
+    expect(saved.at(-1)?.[0]).toMatchObject({ signedIn: false, account: null, plan: null });
+  });
+
+  it('a read that sees nothing keeps the last account', async () => {
+    const { lane, saved, phone } = setup({
+      launch_app: () => ({ message: 'Launched' }),
+      page_source: () => source('android.widget.TextView "New chat"'),
+      screen_text: () => items('New chat'),
+      find_and_tap: () => ({ message: 'tapped' }),
+      swipe: () => ({}),
+      back: () => ({}),
+      home: () => ({}),
+    });
+    phone.apps = [{ vendor: 'claude', signedIn: true, name: 'Claude', category: 'AI chat', account: 'eoj@example.com', plan: 'Max', accountCheckedAt: '2026-10-17T00:00:00.000Z' }];
+    const res = await readLinkedAccount({ lane, sleep: async () => {}, now: () => NOW }, { deviceId: 'and-1', app: 'claude' });
+    expect(res).toMatchObject({ ok: true, signedIn: true, account: null });
+    expect(saved.at(-1)?.[0]).toMatchObject({ signedIn: true, account: 'eoj@example.com', plan: 'Max' });
+  });
+
+  it('swipes a Settings list to find a row further down, and taps visible text that has no element', async () => {
+    let screen = 'home';
+    let swipes = 0;
+    const { lane, calls } = setup(
+      {
+        launch_app: () => ({ message: 'Launched' }),
+        // The iPhone runner: the element tree comes back as XCUI text.
+        page_source: () => ({
+          source:
+            screen === 'settings' && swipes > 0
+              ? "Button, label: 'Usage and limits', {{16, 504}, {361, 51}}"
+              : screen === 'settings'
+                ? "Button, label: 'Subscription, Plus', {{16, 348}, {361, 52}}"
+                : "TextView, label: 'New Message', {{16, 400}, {361, 40}}",
+        }),
+        screen_text: () => (screen === 'home' ? items('Ask ChatGPT', 'Settings') : items('Settings')),
+        tap: () => {
+          screen = 'settings';
+          return {};
+        },
+        find_and_tap: (p) => {
+          if (p.element_id === 'Usage and limits') screen = 'usage';
+          return { message: 'tapped' };
+        },
+        swipe: () => {
+          swipes++;
+          return {};
+        },
+        home: () => ({}),
+      },
+      'ios',
+    );
+    const spec = { ...ACCOUNT_SPECS.chatgpt, paths: [{ name: 't', verifiedOn: 'ios' as const, steps: [{ tap: ['Settings'] }, { tap: ['Usage and limits'], scroll: 2 }] }] };
+    const prior = ACCOUNT_SPECS.chatgpt;
+    (ACCOUNT_SPECS as Record<string, typeof prior>).chatgpt = spec;
+    try {
+      lane.linkedPhones()[0].apps = [{ vendor: 'chatgpt', signedIn: true, name: 'ChatGPT', category: 'AI chat' }];
+      await readLinkedAccount({ lane, sleep: async () => {}, now: () => NOW }, { deviceId: 'and-1', app: 'chatgpt' });
+    } finally {
+      (ACCOUNT_SPECS as Record<string, typeof prior>).chatgpt = prior;
+    }
+    expect(calls.find((c) => c.method === 'tap')?.params).toMatchObject({ x: 10 });
+    expect(swipes).toBe(1);
+    expect(calls.filter((c) => c.method === 'find_and_tap').map((c) => c.params.element_id)).toEqual(['Usage and limits']);
   });
 });
 
@@ -266,7 +352,7 @@ describe('PhoneAccountScheduler', () => {
     ],
   });
 
-  it('reads one due signed-in AI chat app per tick, then waits 6 h', async () => {
+  it('checks every app on the phone, signed in or not, one per tick, then waits 6 h', async () => {
     let t = Date.parse('2026-10-18T12:00:00Z');
     const read: string[] = [];
     const s = new PhoneAccountScheduler({
@@ -280,14 +366,16 @@ describe('PhoneAccountScheduler', () => {
       now: () => t,
     });
     expect((await s.tick())?.app).toBe('claude');
+    expect((await s.tick())?.app).toBe('slack');
+    expect((await s.tick())?.app).toBe('chatgpt');
     expect(await s.tick()).toBeNull();
     t += 6 * 3600_000;
     expect((await s.tick())?.app).toBe('claude');
-    expect(read).toEqual(['claude', 'claude']);
+    expect(read).toEqual(['claude', 'slack', 'chatgpt', 'claude']);
   });
 
   it('skips locked, unhealthy and busy phones, and fresh reads', async () => {
-    const mk = (health: PhoneLinkHealth['state'], busy: boolean, phone = base()) =>
+    const mk = (health: PhoneLinkHealth['state'], busy: boolean, phone: LinkedPhone = base()) =>
       new PhoneAccountScheduler({
         phones: () => [phone],
         health: () => ({ ...healthy, state: health }),
@@ -298,10 +386,18 @@ describe('PhoneAccountScheduler', () => {
     expect(mk('DEVICE_LOCKED', false).due()).toBeNull();
     expect(mk('ACCESSIBILITY_OFF', false).due()).toBeNull();
     expect(mk('HEALTHY', true).due()).toBeNull();
-    expect(mk('HEALTHY', false, base({ accountCheckedAt: '2026-10-18T10:00:00Z' })).due()).toBeNull();
+    expect(mk('HEALTHY', false, base({ accountCheckedAt: '2026-10-18T10:00:00Z' })).due()).toEqual({ deviceId: 'and-1', app: 'slack' });
     expect(mk('HEALTHY', false).due()).toEqual({ deviceId: 'and-1', app: 'claude' });
+    // A renewal warning while the signature is still valid: the phone works.
+    expect(mk('SIGNATURE_RENEWAL_REQUIRED', false, { ...base(), expiresAt: '2026-10-19T08:00:00Z' }).due()).toEqual({ deviceId: 'and-1', app: 'claude' });
+    expect(mk('SIGNATURE_RENEWAL_REQUIRED', false, { ...base(), expiresAt: '2026-10-18T08:00:00Z' }).due()).toBeNull();
   });
 });
+
+/** A path's tap step by its first candidate (paths start with optional back-out taps). */
+const stepOf = (app: string, first: string, path = 0) =>
+  (ACCOUNT_SPECS[app].paths[path].steps as AccountTapStep[]).find((st) => 'tap' in st && st.tap[0] === first && !st.optional) ??
+  (ACCOUNT_SPECS[app].paths[path].steps as AccountTapStep[]).find((st) => 'tap' in st && st.tap[0] === first)!;
 
 // Lines copied from the real Claude iOS app (iPhone, 2026-10-19), email replaced.
 describe('Claude on iPhone (real screens)', () => {
@@ -328,10 +424,11 @@ describe('Claude on iPhone (real screens)', () => {
   const now = new Date(2026, 9, 19, 9, 0, 0);
 
   it('taps the sidebar, the account button and Usage by their real ids and labels', () => {
-    const steps = ACCOUNT_SPECS.claude.paths[0].steps as AccountTapStep[];
-    expect(pickTap(screenElements(sidebar), steps[0])).toEqual({ element_id: 'drawer-toggle' });
-    expect(pickTap(screenElements(sidebar), steps[1])).toEqual({ element_id: 'sidebar-account-button' });
-    expect(pickTap(screenElements(settings), steps[3])).toEqual({ element_id: 'Usage' });
+    expect(pickTap(screenElements(sidebar), stepOf('claude', 'id:drawer-toggle'))).toEqual({ element_id: 'drawer-toggle' });
+    expect(pickTap(screenElements(sidebar), stepOf('claude', 'id:sidebar-account-button'))).toEqual({ element_id: 'sidebar-account-button' });
+    expect(pickTap(screenElements(settings), stepOf('claude', 'Usage'))).toEqual({ element_id: 'Usage' });
+    // The back-out taps a cut-short read relies on find nothing on the sidebar.
+    expect(pickTap(screenElements(sidebar), stepOf('claude', 'Close'))).toBeNull();
     expect(ACCOUNT_SPECS.claude.verified).toBe(true);
   });
 
@@ -349,5 +446,148 @@ describe('Claude on iPhone (real screens)', () => {
 
   it('never picks the credits purchase button', () => {
     expect(pickTap(screenElements(usage), { tap: ['Buy usage credits'] })).toBeNull();
+  });
+});
+
+// Lines copied from the real apps on an iPhone (2026-10-19), every Settings
+// page scrolled; emails, names and handles replaced.
+describe('ChatGPT on iPhone (real screens)', () => {
+  const settings = [
+    "Button, label: 'Email, someone@example.com', {{16, 221}, {361, 74}}",
+    "Button, label: 'Subscription, Plus', {{16, 348}, {361, 52}}",
+    "Button, label: 'Restore purchases', {{16, 400}, {361, 52}}",
+  ].join('\n');
+  const page2 = "Button, label: 'Usage and limits', {{16, 504}, {361, 51}}";
+  const usage = [
+    "Button, label: 'Back', id: 'BackButton', {{16, 59}, {44, 44}}",
+    "StaticText, label: 'Agentic usage limit', {{32, 124}, {151, 20}}",
+    "StaticText, label: 'Weekly usage limit', {{32, 178}, {141, 20}}",
+    "StaticText, label: '95% remaining', {{254, 180}, {106, 18}}",
+    "StaticText, label: 'Resets Sat 11:15 PM', {{32, 226}, {111, 14}}",
+    "StaticText, label: 'Credits remaining, 0 Credits', {{32, 330}, {300, 20}}",
+    "Button, label: 'Buy credits', {{32, 430}, {120, 40}}",
+  ].join('\n');
+  const now = new Date(2026, 9, 19, 16, 0, 0);
+  it('finds "Usage and limits" on Settings page 2 and backs out', () => {
+    const row = stepOf('chatgpt', 'Usage and limits');
+    expect(row).toMatchObject({ tap: ['Usage and limits'], scroll: 2 });
+    expect(pickTap(screenElements(settings), row)).toBeNull();
+    expect(pickTap(screenElements(page2), row)).toEqual({ element_id: 'Usage and limits' });
+    expect(pickTap(screenElements(usage), stepOf('chatgpt', 'id:BackButton'))).toEqual({ element_id: 'BackButton' });
+    // Left on Usage by a cut-short read: the path's first taps back out of it.
+    expect(ACCOUNT_SPECS.chatgpt.paths[0].steps[0]).toEqual({ tap: ['id:BackButton'], optional: true });
+    expect(pickTap(screenElements(settings), { tap: ['Restore purchases'] })).toBeNull();
+    expect(pickTap(screenElements(usage), { tap: ['Buy credits'] })).toBeNull();
+  });
+
+  it('reads account, plan and the weekly window', () => {
+    const merged = mergeParsed(parseAccountScreen(settings, ACCOUNT_SPECS.chatgpt, now), parseAccountScreen(usage, ACCOUNT_SPECS.chatgpt, now));
+    expect(merged.account).toBe('someone@example.com');
+    expect(merged.plan).toBe('Plus');
+    expect(merged.windows).toEqual([{ id: 'weekly', label: 'Weekly', remaining_pct: 95, resets_at: local(2026, 9, 24, 23, 15) }]);
+  });
+});
+
+describe('Gemini on iPhone (real screens)', () => {
+  const home =
+    "Button, label: 'Account and settings. Signed in as gizzi, someone@example.com', id: 'kOGLAccessibilityIdentifierAccountParticleDiscButton', {{326, 52}, {58, 58}}";
+  const sheet = "Button, label: 'Settings ', {{16, 340}, {361, 56}}";
+  const settings = [
+    "Button, label: 'Upgrade to Google AI Plus', {{16, 197}, {361, 54}}",
+    "Button, label: 'Usage limits', {{16, 251}, {361, 54}}",
+  ].join('\n');
+  // The element tree lists the weekly window without its percentage; the visible text has it.
+  const tree = [
+    "StaticText, label: 'Your plan's limits determine how much you can use Gemini over time. Advanced models and features can take up more usage. Learn more', {{32, 206}, {318, 56}}",
+    "StaticText, label: 'Current usage', {{32, 330}, {110, 21}}",
+    "StaticText, label: '0% used', {{295, 330}, {66, 21}}",
+    "StaticText, label: 'Resets at 8:54 PM', {{32, 379}, {116, 19}}",
+    "StaticText, label: 'Weekly limit', {{32, 432}, {85, 19}}",
+    "StaticText, label: 'Resets at 6:54 PM', {{32, 455}, {103, 16}}",
+    "Button, label: 'Upgrade', {{278, 515}, {90, 48}}",
+    "Switch, label: 'Auto model selection', value: '1', {{313, 678}, {52, 32}}",
+  ].join('\n');
+  const text = ['Current usage ① @ (96, 343)', 'Resets at 8:54PM @ (90, 389)', '0% used @ (329, 341)', 'Weekly limit @ (75, 443)', 'Resets at 6:54PM @ (84, 464)', '0% used @ (331, 452)'].join('\n');
+  const now = new Date(2026, 9, 19, 16, 1, 0);
+  it('opens the account sheet, Settings (trailing space) and Usage limits', () => {
+    expect(pickTap(screenElements(home), stepOf('gemini', 'id:kOGLAccessibilityIdentifierAccountParticleDiscButton'))).toEqual({ element_id: 'kOGLAccessibilityIdentifierAccountParticleDiscButton' });
+    expect(pickTap(screenElements(sheet), stepOf('gemini', 'Settings'))).toEqual({ element_id: 'Settings ' });
+    expect(pickTap(screenElements(settings), stepOf('gemini', 'Usage limits'))).toEqual({ element_id: 'Usage limits' });
+    expect(pickTap(screenElements(tree), { tap: ['Upgrade', 'Auto model selection'] })).toBeNull();
+  });
+
+  it('reads the account and both windows, filling the weekly percentage from the visible text', () => {
+    const merged = mergeParsed(parseAccountScreen(home, ACCOUNT_SPECS.gemini, now), parseAccountScreen(`${tree}\n${text}`, ACCOUNT_SPECS.gemini, now));
+    expect(merged.account).toBe('someone@example.com');
+    expect(merged.plan).toBeNull();
+    expect(merged.windows).toEqual([
+      { id: 'current', label: 'Current', remaining_pct: 100, resets_at: local(2026, 9, 19, 20, 54) },
+      { id: 'weekly', label: 'Weekly', remaining_pct: 100, resets_at: local(2026, 9, 19, 18, 54) },
+    ]);
+  });
+});
+
+describe('apps that are not AI chat, on iPhone (real screens)', () => {
+  const spec = (app: string) => ACCOUNT_SPECS[app];
+  const first = (app: string) => (spec(app).paths[0].steps as AccountTapStep[]).find((st) => 'tap' in st && !st.optional)!;
+
+  it('Discord: the status button by pattern, then the account email (or username)', () => {
+    const home = "Button, label: 'Joedirt, Online', {{36, 774}, {257, 32}}";
+    expect(pickTap(screenElements(home), first('discord'))).toEqual({ element_id: 'Joedirt, Online' });
+    expect(pickTap(screenElements("Button, label: 'Back 19,457 mentions', {{16, 60}, {44, 44}}"), stepOf('discord', 're:^back( [\\d,]+ mentions?)?$'))).toEqual({ element_id: 'Back 19,457 mentions' });
+    const account = [
+      "Button, label: 'Username, someone01440', {{16, 178}, {361, 56}}",
+      "Button, label: 'Display Name, Someone', {{16, 234}, {361, 56}}",
+      "Button, label: 'Email, someone@example.com', {{16, 290}, {361, 56}}",
+      "Button, label: 'Delete Account', {{16, 1080}, {361, 56}}",
+    ].join('\n');
+    expect(parseAccountScreen(account, spec('discord'), NOW).account).toBe('someone@example.com');
+    expect(parseAccountScreen(account.split('\n')[0], spec('discord'), NOW).account).toBe('someone01440');
+    expect(pickTap(screenElements(account), { tap: ['Delete Account'] })).toBeNull();
+  });
+
+  it('Telegram: taps the Settings tab where the text is, then reads the handle after the phone number', () => {
+    const chats = ['Contacts @ (68, 815)', 'Calls @ (152, 815)', 'Chats @ (239, 815)', 'Settings @ (324, 816)'].join('\n');
+    expect(pickTap(screenElements("Other, label: 'Allternit', {{0, 100}, {393, 76}}"), first('telegram'))).toBeNull();
+    expect(pickTextTap(chats, first('telegram'))).toEqual({ x: 324, y: 816, label: 'Settings' });
+    const settings = ['Someone @ (196, 202)', '+1555 555 0100•@someone @ (197, 230)', 'Add Account @ (127, 440)'].join('\n');
+    expect(parseAccountScreen(settings, spec('telegram'), NOW).account).toBe('@someone');
+    expect(pickTextTap(settings, { tap: ['Add Account'] })).toBeNull();
+  });
+
+  it('Instagram: the username just before the creation-menu button, not a story tile', () => {
+    const profile = [
+      "Button, label: 'someone_mc', value: 'Other profiles have notifications', id: 'user-switch-title-button', {{128, 29}, {135, 109}}",
+      "StaticText, label: 'someone_mc', {{128, 69}, {107, 28}}",
+      "Button, label: 'Tap to open creation menu', id: 'profile-add-button', {{16, 62}, {44, 44}}",
+    ].join('\n');
+    expect(pickTap(screenElements("Button, label: 'Profile', id: 'profile-tab', {{295, 770}, {65, 60}}"), first('instagram'))).toEqual({ element_id: 'profile-tab' });
+    expect(parseAccountScreen(profile, spec('instagram'), NOW).account).toBe('someone_mc');
+  });
+
+  it("Facebook: the profile name, never the bio's email", () => {
+    const profile = [
+      "Button, label: 'Edit profile picture', {{234, 250}, {36, 36}}",
+      'StaticText, {{131, 300}, {1, 1}}',
+      "StaticText, label: 'Some One ', {{131, 307}, {134, 26}}",
+      "Button, label: 'Some One', {{131, 306}, {129, 28}}",
+      "Button, label: 'Instagram-Snapchat-Twitter : @someone                        booking@example.com', {{0, 367}, {393, 44}}",
+    ].join('\n');
+    expect(parseAccountScreen(profile, spec('facebook'), NOW).account).toBe('Some One');
+  });
+
+  it("TikTok and X: the person's own @handle (X wraps it in bidi marks); a feed's handles are never read", () => {
+    expect(first('tiktok')).toMatchObject({ tap: ['id:a11y_vo_profile', 'Profile'] });
+    expect(parseAccountScreen(['What’s up? @ (197, 96)', '@someone @ (197, 240)', 'Edit @ (311, 217)'].join('\n'), spec('tiktok'), NOW).account).toBe('@someone');
+    const menu = "Button, label: '⁦‪@Someone‬⁩', {{32, 144}, {103, 18}}";
+    expect(parseAccountScreen(menu, spec('twitter'), NOW).account).toBe('@Someone');
+    expect(pickTap(screenElements("Button, label: 'Account Menu', id: 'NavigationBarDashButton', {{16, 65}, {32, 32}}"), first('twitter'))).toEqual({ element_id: 'NavigationBarDashButton' });
+  });
+
+  it('YouTube: the Google account email on Accounts; GitHub: the login in the navigation bar', () => {
+    const accounts = ["StaticText, label: 'someone@example.com', {{12, 133}, {132, 16}}", "StaticText, label: '@somechannel', {{74, 199}, {69, 17}}"].join('\n');
+    expect(parseAccountScreen(accounts, spec('youtube'), NOW).account).toBe('someone@example.com');
+    const github = ["Button, label: 'Someone', {{20, 60}, {54, 42}}", "Button, label: 'Add', {{281, 63}, {36, 36}}", "Button, label: 'Search', {{337, 63}, {36, 36}}"].join('\n');
+    expect(parseAccountScreen(github, spec('github'), NOW).account).toBe('Someone');
   });
 });

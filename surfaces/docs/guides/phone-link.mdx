@@ -112,7 +112,7 @@ The health states:
 | `HELPER_NOT_RESPONDING` | The phone answers but its helper doesn't complete calls, or (iPhone) can't read the screen. Desktop retries on its own. | Open the Allternit helper on your phone if it stays stuck. |
 | `ACCESSIBILITY_OFF` | Android: the Phone Link app answers, but its accessibility service is off, so it can't read or tap the screen. | On your phone, open Settings › Accessibility › Allternit Phone Link and turn it on, or run Phone Link setup again. |
 | `DEVELOPER_IMAGE_REMOUNT_REQUIRED` | The iPhone restarted and its developer image needs remounting. | Plug your iPhone into this computer — Allternit remounts and restarts the helper by itself. No Mac at hand: on the iPhone, open iCTRL › Mount without a Mac, then Start Server. |
-| `SIGNATURE_RENEWAL_REQUIRED` | The iPhone helper's free-Apple-ID signature expired or runs out within 24 hours. | Plug your iPhone into this computer — Allternit re-signs it by itself (about once a week). If Apple asks for your password again, run Phone Link setup. |
+| `SIGNATURE_RENEWAL_REQUIRED` | The iPhone helper's free-Apple-ID signature expired or runs out within 24 hours. Until it actually runs out, the phone keeps working: bots and checks still reach it. | Plug your iPhone into this computer — Allternit re-signs it by itself (about once a week). If Apple asks for your password again, run Phone Link setup. |
 | `UNKNOWN` | Not enough evidence to classify. | Nothing; it re-checks itself. |
 
 Remounting and signature renewal are manual states at heart — they only appear on evidence, never from a guess. Desktop clears them only after the phone's helper truly answers again: either on its own after an automatic recovery, or after you do the action above.

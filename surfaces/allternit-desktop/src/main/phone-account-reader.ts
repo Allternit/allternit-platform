@@ -1,8 +1,8 @@
 /**
- * Settings → Connections, phone ways: read which account an AI chat app on a
- * linked phone is signed in to, its plan, and its usage windows (5-hour,
- * Weekly, …), the same facts the browser sign-ins show
- * (IPC `phone-link:read-account`).
+ * Settings → Connections, phone ways: check any app on a linked phone —
+ * whether it is signed in, which account, and for AI chat apps their plan
+ * and usage windows (5-hour, Weekly, …), the same facts the browser sign-ins
+ * show (IPC `phone-link:read-account`).
  *
  * Read-only by design. The reader opens the app, walks the vendor's
  * navigation spec (phone-account-specs.ts) by tapping only elements whose
@@ -12,11 +12,12 @@
  *
  * Parsing is evidence-only: a field the screen didn't plainly show is null.
  * Results are saved on the phone's app record (phone-link:devices) and a
- * background scheduler refreshes each signed-in AI chat app every 6 h on a
- * healthy, unlocked phone that no bot is using, one app at a time.
+ * background scheduler checks every app again every 6 h on a working,
+ * unlocked phone that no bot is using, one app at a time.
  */
-import { catalogApp, PROBE_CATEGORY } from './phone-app-catalog.js';
+import { catalogApp } from './phone-app-catalog.js';
 import {
+  classifySignIn,
   launch,
   readScreen,
   resolve as resolveLinkedApp,
@@ -29,7 +30,7 @@ import {
 } from './phone-app-signin.js';
 import { accountSpec, deniedElement, type AccountTapStep, type PhoneAccountSpec } from './phone-account-specs.js';
 import type { AppAccountInfo } from './phone-link-backend.js';
-import type { LinkedPhone } from './phone-link-health.js';
+import { phoneWorks, type LinkedPhone } from './phone-link-health.js';
 import type { PhoneLinkAccountResult, PhoneLinkError, PhoneLinkHealth, PhoneLinkUsageWindow } from './phone-link-types.js';
 import type { ToolResult } from './phone-tools.js';
 
@@ -43,9 +44,9 @@ export interface ParsedAccountScreen {
   windows: PhoneLinkUsageWindow[];
 }
 
-/** Zero-width characters iOS puts inside emails and names; no-break spaces it puts before AM/PM. */
+/** Zero-width and bidi marks iOS puts inside emails, names and handles (X wraps "@handle" in them); no-break spaces it puts before AM/PM. */
 function clean(label: string): string {
-  return label.replace(/[\u200b-\u200d\u2060\ufeff]/g, '').replace(/[\u00a0\u202f]/g, ' ');
+  return label.replace(/[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g, '').replace(/[\u00a0\u202f]/g, ' ');
 }
 
 function norm(label: string): string {
@@ -103,6 +104,8 @@ function windowHeader(label: string): WindowKind | null {
   const withModel = (id: string, name: string): WindowKind =>
     model ? { id: `${id}_${model}`, label: `${name} (${model[0].toUpperCase()}${model.slice(1)})` } : { id, label: name };
   if (/\bcurrent session\b|\b5[- ]?(hour|hr|h)\b|\bfive[- ]hour\b/.test(label)) return withModel('five_hour', '5-hour');
+  // Gemini's short window: "Current usage, 0% used, Resets at 8:54 PM" (no length shown).
+  if (/^current usage\b/.test(label)) return { id: 'current', label: 'Current' };
   // Claude's weekly rows for one model family: "Fable only, 0% used, Resets Thu 9:00 AM".
   const only = /^([a-z][a-z0-9 .-]{1,24}) only\b/.exec(label)?.[1];
   if (only && only !== 'all models') {
@@ -229,7 +232,10 @@ export function parseUsageWindows(labels: string[], now: Date): PhoneLinkUsageWi
   const used = new Set<number>();
   for (let i = 0; i < normed.length; i++) {
     const kind = windowHeader(normed[i]);
-    if (!kind || windows.some((w) => w.id === kind.id)) continue;
+    if (!kind) continue;
+    // A window seen again (the element tree, then the visible text) fills what the first sighting missed.
+    const had = windows.find((w) => w.id === kind.id);
+    if (had && had.remaining_pct !== null && had.resets_at !== null) continue;
     let remaining: number | null = null;
     let resets: string | null = null;
     for (let j = i; j < Math.min(normed.length, i + 6); j++) {
@@ -242,7 +248,12 @@ export function parseUsageWindows(labels: string[], now: Date): PhoneLinkUsageWi
       }
       used.add(j);
     }
-    if (remaining !== null || resets !== null) windows.push({ ...kind, remaining_pct: remaining, resets_at: resets });
+    if (had) {
+      had.remaining_pct ??= remaining;
+      had.resets_at ??= resets;
+    } else if (remaining !== null || resets !== null) {
+      windows.push({ ...kind, remaining_pct: remaining, resets_at: resets });
+    }
   }
   if (!windows.length) {
     normed.forEach((text, i) => {
@@ -257,10 +268,46 @@ export function parseUsageWindows(labels: string[], now: Date): PhoneLinkUsageWi
   return windows;
 }
 
+const EMAIL = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
+const HANDLE = /^@[A-Za-z0-9_.]{2,30}$/;
+
+/** The nearest non-empty label after (+1) or before (-1) the anchor element. */
+function besideAnchor(elements: ScreenElement[], anchor: string, dir: 1 | -1): string | null {
+  const want = anchor.startsWith('id:') ? anchor.slice(3).toLowerCase() : norm(anchor);
+  const at = elements.findIndex((el) => (anchor.startsWith('id:') ? el.id.toLowerCase() === want : norm(el.label) === want));
+  if (at < 0) return null;
+  for (let i = at + dir; i >= 0 && i < elements.length; i += dir) {
+    const label = clean(elements[i].label).trim();
+    if (label && norm(label) !== norm(elements[at].label)) return label;
+  }
+  return null;
+}
+
+/** The app's own account on a screen, by the spec's rules (default: email, else a whole-label @handle). */
+export function accountOnScreen(text: string, rules: PhoneAccountSpec['account']): string | null {
+  const labels = screenLabels(text).map((l) => clean(l).trim());
+  if (!rules) return visibleAccount(labels);
+  for (const rule of rules) {
+    let hit: string | null = null;
+    if ('kind' in rule && rule.kind === 'email') hit = labels.map((l) => EMAIL.exec(l)?.[0] ?? null).find(Boolean) ?? null;
+    else if ('kind' in rule) hit = labels.find((l) => HANDLE.test(l)) ?? null;
+    else if ('match' in rule) hit = labels.map((l) => rule.match.exec(l)?.[1]?.trim() ?? null).find(Boolean) ?? null;
+    else if ('after' in rule) hit = besideAnchor(screenElements(text), rule.after, 1);
+    else hit = besideAnchor(screenElements(text), rule.before, -1);
+    if (hit) return hit;
+  }
+  return null;
+}
+
 /** Account, plan and usage windows from one screen's text (screen_text / read_ui output). Pure; unit-tested. */
-export function parseAccountScreen(text: string, spec: Pick<PhoneAccountSpec, 'plans' | 'vendorWords'>, now: Date): ParsedAccountScreen {
+export function parseAccountScreen(text: string, spec: Pick<PhoneAccountSpec, 'plans' | 'vendorWords' | 'account'>, now: Date): ParsedAccountScreen {
   const labels = screenLabels(text);
-  return { account: visibleAccount(labels), plan: parsePlan(labels, spec), windows: parseUsageWindows(labels, now) };
+  const plan = spec.plans.length ? parsePlan(labels, spec) : null;
+  return { account: accountOnScreen(text, spec.account), plan, windows: parseUsageWindows(labels, now) };
+}
+
+function sameParsed(a: ParsedAccountScreen, b: ParsedAccountScreen): boolean {
+  return a.account === b.account && a.plan === b.plan && a.windows.length === b.windows.length;
 }
 
 /** First non-null account/plan wins; windows are united by id (first seen wins). */
@@ -327,9 +374,31 @@ export function pickTap(elements: ScreenElement[], step: Pick<AccountTapStep, 't
       if (hit) return { element_id: hit.id };
       continue;
     }
+    if (candidate.startsWith('re:')) {
+      const re = new RegExp(candidate.slice(3), 'i');
+      const hit = elements.find((el) => el.label && re.test(norm(el.label)) && !deniedElement(el.label, el.className));
+      if (hit) return { element_id: hit.label };
+      continue;
+    }
     const want = norm(candidate);
     const hit = elements.find((el) => el.label && norm(el.label) === want && !deniedElement(el.label, el.className));
     if (hit) return { element_id: hit.label };
+  }
+  return null;
+}
+
+/**
+ * A candidate that is only visible text (screen_text "label @ (x, y)", no
+ * element: Telegram's tab bar, TikTok while its tree is busy): where to tap.
+ * Whole labels only (no ids, no patterns), deny-list checked.
+ */
+export function pickTextTap(screenText: string, step: Pick<AccountTapStep, 'tap'>): { x: number; y: number; label: string } | null {
+  const lines = screenText.split('\n').map((raw) => /^(.*?)\s*@\s*\(\s*(-?[\d.]+),\s*(-?[\d.]+)\s*\)\s*$/.exec(raw.trim())).filter((m): m is RegExpExecArray => !!m);
+  for (const candidate of step.tap) {
+    if (candidate.startsWith('id:') || candidate.startsWith('re:')) continue;
+    const want = norm(candidate);
+    const hit = lines.find((m) => norm(m[1]) === want && !deniedElement(m[1]));
+    if (hit) return { x: Number(hit[2]), y: Number(hit[3]), label: hit[1] };
   }
   return null;
 }
@@ -385,20 +454,23 @@ export function readLinkedAccount(deps: AccountReaderDeps, opts: unknown): Promi
 async function readOnce(deps: AccountReaderDeps, opts: unknown): Promise<PhoneLinkAccountResult> {
   const r = resolveLinkedApp(deps.lane, opts);
   if ('ok' in r) return fromError(r.error);
+  // No spec: the app still gets its sign-in check.
   const spec = accountSpec(r.app.id);
-  if (!spec) return fail('unsupported_app', `Reading the account isn't available for ${r.app.name} yet.`);
   if (deps.busy?.(r.phone.deviceId)) return fail('phone_busy', `A bot is using ${r.phone.name ?? 'the phone'} right now. Try again when it's done.`, true);
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((done) => setTimeout(done, ms)));
   const now = deps.now ?? (() => new Date());
   const log = deps.logger ?? (() => {});
 
   let parsed: ParsedAccountScreen = { account: null, plan: null, windows: [] };
+  let signedIn: boolean | null = null;
   try {
+    // Every app's check starts with its first screen: a sign-in screen ends the read there.
+    signedIn = await signInOnLaunch(deps.lane, r, sleep);
     // Confirmed paths only, once this platform has any: guessed labels are never tried on a known app.
-    const confirmed = spec.paths.filter((p) => p.verifiedOn === r.phone.platform);
-    const paths = confirmed.length ? confirmed : spec.paths.filter((p) => !p.verifiedOn);
+    const confirmed = spec?.paths.filter((p) => p.verifiedOn === r.phone.platform) ?? [];
+    const paths = signedIn === false || !spec ? [] : confirmed.length ? confirmed : spec.paths.filter((p) => !p.verifiedOn);
     for (const path of paths) {
-      const got = await walkPath(deps, r, spec, path.steps, sleep, now);
+      const got = await walkPath(deps, r, spec!, path.steps, sleep, now);
       parsed = mergeParsed(parsed, got);
       if (parsed.plan && parsed.windows.length > 0 && parsed.account) {
         log(`[PhoneAccount] ${r.app.id}: read via "${path.name}"`);
@@ -415,13 +487,36 @@ async function readOnce(deps: AccountReaderDeps, opts: unknown): Promise<PhoneLi
 
   const observedAt = now().toISOString();
   const usage = parsed.windows.length ? { windows: parsed.windows, observedAt } : null;
-  if (parsed.account || parsed.plan || usage) {
-    deps.lane.rememberAppAccount(r.phone.deviceId, r.app.id, { account: parsed.account, plan: parsed.plan, usage, accountCheckedAt: observedAt });
+  if (signedIn === false) {
+    // Signed out on the phone: what an earlier read saw no longer holds.
+    deps.lane.rememberAppAccount(r.phone.deviceId, r.app.id, { signedIn: false, account: null, plan: null, usage: null, accountCheckedAt: observedAt });
+  } else if (parsed.account || parsed.plan || usage) {
+    signedIn = true;
+    deps.lane.rememberAppAccount(r.phone.deviceId, r.app.id, { signedIn: true, account: parsed.account, plan: parsed.plan, usage, accountCheckedAt: observedAt });
+  } else if (signedIn !== null) {
+    // Nothing read this time: keep the last account, plan and usage.
+    deps.lane.rememberAppSignIn(r.phone.deviceId, r.app.id, signedIn);
   }
-  return { ok: true, account: parsed.account, plan: parsed.plan, usage };
+  return { ok: true, signedIn, account: parsed.account, plan: parsed.plan, usage };
 }
 
-/** One candidate path from a fresh launch. Taps only spec labels that pass the deny-list. */
+/** Launch the app and classify its first screen (classifySignIn), with one more look while it is still drawing. */
+async function signInOnLaunch(lane: AccountLane, r: Resolved, sleep: (ms: number) => Promise<void>): Promise<boolean | null> {
+  const launched = await launch(lane, r);
+  if (launched) throw new Stop(fromError(launched.error));
+  for (const wait of SETTLE_MS) {
+    await sleep(wait);
+    const screen = await readForParse(lane, r.serial);
+    if (!screen.ok) {
+      if (STOPPING.has(screen.error)) throw new Stop(fromError(toolError(screen).error));
+      continue;
+    }
+    const verdict = classifySignIn(r.app, String(screen.text ?? '')).signedIn;
+    if (verdict !== null) return verdict;
+  }
+  return null;
+}
+
 /**
  * One read for parsing: the element tree (it carries labels that aren't
  * visible text, like Gemini's account button) plus the visible text. Either
@@ -436,6 +531,46 @@ async function readForParse(lane: AccountReaderDeps['lane'], serial: string): Pr
   return { ...tree, text: [String(tree.text ?? ''), text.ok ? String(text.text ?? '') : ''].filter(Boolean).join('\n') };
 }
 
+/**
+ * Find and tap one step's element: the element tree first (it has classes,
+ * to skip toggles, and ids), then the visible text's position; when neither
+ * has it and the step allows, swipe up and look again. True once tapped.
+ */
+async function tapStep(
+  lane: AccountReaderDeps['lane'],
+  serial: string,
+  step: AccountTapStep,
+  stopOn: (res: ToolResult) => void,
+  sleep: (ms: number) => Promise<void>,
+): Promise<boolean> {
+  for (let look = 0; look <= (step.scroll ?? 0); look++) {
+    if (look > 0) {
+      const swiped = await lane.call('phone.swipe', serial, { direction: 'up' });
+      stopOn(swiped);
+      if (!swiped.ok) return false;
+      await sleep(800);
+    }
+    const ui = await lane.call('phone.read_ui', serial, { visible_only: true, max_elements: 400 });
+    stopOn(ui);
+    const target = ui.ok ? pickTap(screenElements(String(ui.text ?? '')), step) : null;
+    if (target) {
+      const tapped = await lane.call('phone.find_and_tap', serial, { element_id: target.element_id, match: 'exact' });
+      stopOn(tapped);
+      if (tapped.ok) return true;
+    }
+    const text = await readScreen(lane, serial);
+    stopOn(text);
+    const spot = text.ok ? pickTextTap(String(text.text ?? ''), step) : null;
+    if (spot) {
+      const tapped = await lane.call('phone.tap', serial, { x: spot.x, y: spot.y });
+      stopOn(tapped);
+      if (tapped.ok) return true;
+    }
+  }
+  return false;
+}
+
+/** One candidate path from a fresh launch. Taps only spec labels that pass the deny-list. */
 async function walkPath(
   deps: AccountReaderDeps,
   r: Resolved,
@@ -462,9 +597,17 @@ async function walkPath(
     for (const step of steps) {
       checkBusy();
       if ('read' in step) {
+        const before = parsed;
         const screen = await readForParse(lane, r.serial);
         stopOn(screen);
         if (screen.ok) parsed = mergeParsed(parsed, parseAccountScreen(String(screen.text ?? ''), spec, now()));
+        if (parsed === before || sameParsed(parsed, before)) {
+          // Nothing new: the screen may still be drawing (TikTok's profile takes ~2 s). One more look.
+          await sleep(SETTLE_MS[1]);
+          const again = await readForParse(lane, r.serial);
+          stopOn(again);
+          if (again.ok) parsed = mergeParsed(parsed, parseAccountScreen(String(again.text ?? ''), spec, now()));
+        }
         if (step.scroll && screen.ok) {
           const swiped = await lane.call('phone.swipe', r.serial, { direction: 'up' });
           stopOn(swiped);
@@ -477,19 +620,8 @@ async function walkPath(
         }
         continue;
       }
-      // The element tree has classes (to skip toggles) and ids; screen_text is the fallback.
-      let ui = await lane.call('phone.read_ui', r.serial, { visible_only: true, max_elements: 400 });
-      stopOn(ui);
-      if (!ui.ok) ui = await readScreen(lane, r.serial);
-      stopOn(ui);
-      const target = ui.ok ? pickTap(screenElements(String(ui.text ?? '')), step) : null;
-      if (!target) {
-        if (step.optional) continue;
-        return parsed;
-      }
-      const tapped = await lane.call('phone.find_and_tap', r.serial, { element_id: target.element_id, match: 'exact' });
-      stopOn(tapped);
-      if (!tapped.ok) {
+      const tapped = await tapStep(lane, r.serial, step, stopOn, sleep);
+      if (!tapped) {
         if (step.optional) continue;
         return parsed;
       }
@@ -510,7 +642,7 @@ async function walkPath(
 
 // ── Scheduler ───────────────────────────────────────────────────────────────
 
-/** How often each signed-in AI chat app's account is re-read. */
+/** How often each app on a linked phone is checked again. */
 export const ACCOUNT_REFRESH_MS = 6 * 3600_000;
 /** How often the scheduler looks for a due app (one app per look). */
 export const ACCOUNT_TICK_MS = 5 * 60_000;
@@ -530,10 +662,11 @@ export interface AccountSchedulerDeps {
 }
 
 /**
- * Refreshes account reads in the background: every 6 h per signed-in AI chat
- * app, and soon after a phone links or an app signs in. Only on a HEALTHY
- * phone (so never locked, offline or with accessibility off) that no bot is
- * using; one app per tick, so reads never pile up.
+ * Refreshes checks in the background: every 6 h per app on the phone (every
+ * catalog app, signed in or not, so a sign-in or sign-out on the phone shows
+ * up), and soon after a phone links or an app signs in. Only on a phone that
+ * works (phoneWorks: never locked, offline or with accessibility off) and
+ * that no bot is using; one app per tick, so reads never pile up.
  */
 export class PhoneAccountScheduler {
   /** Last attempt per `deviceId:app`, so a failing read waits a full period too. */
@@ -574,12 +707,10 @@ export class PhoneAccountScheduler {
   due(): { deviceId: string; app: string } | null {
     const period = this.deps.refreshMs ?? ACCOUNT_REFRESH_MS;
     for (const phone of this.deps.phones()) {
-      if (this.deps.health(phone.deviceId)?.state !== 'HEALTHY') continue;
+      if (!phoneWorks(this.deps.health(phone.deviceId), phone.expiresAt, this.now())) continue;
       if (this.deps.busy(phone.deviceId)) continue;
       for (const app of phone.apps ?? []) {
-        if (app.signedIn !== true) continue;
-        const entry = catalogApp(app.vendor);
-        if ((app.category ?? entry?.category) !== PROBE_CATEGORY || !accountSpec(app.vendor)) continue;
+        if (!catalogApp(app.vendor)) continue;
         const key = `${phone.deviceId}:${app.vendor}`;
         const forced = this.force.has(key) || this.force.has(phone.deviceId) || this.force.has('*');
         const checked = app.accountCheckedAt ? Date.parse(app.accountCheckedAt) : 0;

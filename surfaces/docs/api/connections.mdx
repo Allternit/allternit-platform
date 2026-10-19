@@ -142,16 +142,17 @@ Both calls are read-only on the phone beyond opening the app: they never type, n
 
 ## Desktop IPC: phone-link:read-account
 
-`window.allternit.phoneLink.readAccount({ deviceId, app })` (IPC `phone-link:read-account`) reads the account, plan and usage windows of an AI chat app on a linked phone: `chatgpt`, `claude`, `gemini`, `grok`, `kimi`, `copilot` or `perplexity`. Like the wizard calls, it is absent on web, the phone layout, the PWA and older Desktop builds.
+`window.allternit.phoneLink.readAccount({ deviceId, app })` (IPC `phone-link:read-account`) checks any catalog app on a linked phone: whether it is signed in, which account, and the plan and usage windows when the app shows them. Like the wizard calls, it is absent on web, the phone layout, the PWA and older Desktop builds.
 
 ```ts
 interface PhoneLinkAccountResult {
   ok: boolean;
-  account: string | null;            // email or @handle the app shows
+  signedIn?: boolean | null;         // false = the app opened on its sign-in screen; absent on failures
+  account: string | null;            // the person's email, @handle or name, by the app's account rule
   plan: string | null;               // "Free", "Plus", "Pro", "Max", "SuperGrok", "Moderato", …
   usage: {
     windows: Array<{
-      id: string;                    // "five_hour", "weekly", "weekly_opus", "daily", "monthly", "messages"
+      id: string;                    // "five_hour", "current", "weekly", "weekly_opus", "daily", "monthly", "messages"
       label: string;                 // "5-hour", "Weekly", "Weekly (Opus)", …
       remaining_pct: number | null;  // 0–100
       resets_at: string | null;      // ISO time
@@ -166,18 +167,19 @@ window.allternit.phoneLink.readAccount({ deviceId, app }): Promise<PhoneLinkAcco
 
 How it reads:
 
-- Each vendor has navigation specs in `surfaces/allternit-desktop/src/main/phone-account-specs.ts`. A spec is a list of candidate paths. Each path is a series of taps, each with candidate labels, content descriptions or resource ids (for example the menu, **Settings**, **Account**, **Usage**), followed by screen reads. Every spec is marked `verified: false` until it has been confirmed on a real phone. The reader tries the paths in order and returns whatever it could read.
-- Taps go through `phone.find_and_tap` with exact matching, and only to an element whose whole label or resource id is a spec candidate. A deny-list is checked before every tap: anything matching sign out, log out, delete, remove, upgrade, buy, subscribe, cancel, billing, payment, manage subscription, reset or sign in is never tapped, and neither are switches, toggles, check boxes or sliders. Nothing is typed.
+- Every read starts with the sign-in check (`classifySignIn` on the app's first screen, one more look while it is still drawing). A sign-in screen ends the read with `signedIn: false`, and the app record's account, plan and usage are cleared.
+- Apps with navigation specs in `surfaces/allternit-desktop/src/main/phone-account-specs.ts` then walk them. A spec is a list of paths; each path is a series of taps, each with candidates: a whole label, `id:<accessibility or resource id>`, or `re:<pattern>` for a label that carries the person's name (Discord's "<name>, Online"). A tap step with `scroll: n` swipes up at most n times looking for its row. A path marked `verifiedOn: 'ios' | 'android'` was walked on a real phone; once a platform has verified paths for an app, only those run there. Verified paths start with optional Back / Close taps, because an app reopens on the screen it was left on. An app without a spec gets only the sign-in check.
+- Each spec has an `account` rule list: `email`, `handle` (a whole-label @handle), `match` (a pattern), or `after` / `before` an anchor label. Feed apps use their own rule so other people's handles and emails on a feed are never taken. Without rules (the AI chat apps), the first email, else a whole-label @handle.
+- Taps go through `phone.find_and_tap` with exact matching, and only to an element whose whole label or id is a spec candidate. A label that is only visible text, with no element (Telegram's tab bar, TikTok while its element tree is busy), is tapped at the text's position with `phone.tap`. A deny-list is checked before every tap: anything matching sign out, log out, delete, remove, upgrade, buy, subscribe, cancel, billing, payment, manage subscription, reset or sign in is never tapped, and neither are switches, toggles, check boxes or sliders. Nothing is typed.
 - The reader always ends with Home, even after a failure. On Android it also steps back out of each path it tried.
 - Parsing is in `phone-account-reader.ts` and never guesses. `account` is a visible email or @handle. `plan` is a known plan name for that vendor, shown as "ChatGPT Plus", "Max plan" or "Plan: Pro", or as a one-word name right after a "Plan" or "Subscription" label. A screen that shows two different plans, such as a plan comparison, gives `null`. Usage windows come from a header such as "Current session" or "Weekly limits", followed by "34% used" (`remaining_pct` 66), "66% left" or "12 of 40 messages left", and "Resets in 2 hr 10 min" or "Resets Thu 9:00 AM". The reset time is turned into ISO in the computer's local time. Anything else is `null`.
 
-A read that saw anything is saved on the phone's app record. `phoneLink.devices()` then returns `account`, `plan`, `usage` and `accountCheckedAt` on each app in `apps`.
+A read that saw anything is saved on the phone's app record; a read that saw nothing keeps the last account, plan and usage and only updates `signedIn`. `phoneLink.devices()` then returns `signedIn`, `account`, `plan`, `usage` and `accountCheckedAt` on each app in `apps`, plus `reader: 'verified'` on apps with a path verified on that phone's platform (the drawer shows **Verified reader**).
 
-Desktop also refreshes these in the background. Each signed-in AI chat app is read again every 6 hours, and about a minute after the phone links or the wizard's **Check** finds the app signed in. A background read happens only when the phone's health is `HEALTHY` (so the phone is unlocked). It doesn't run while a bot used the phone in the last 10 minutes or while its live screen is open. Only one app is read at a time.
+Desktop also checks every app in the background, signed in or not: each app on the phone again every 6 hours, and about a minute after the phone links or the wizard's **Check** finds the app signed in. A background check happens only when the phone works: health `HEALTHY`, or `SIGNATURE_RENEWAL_REQUIRED` while the iPhone helper's signature hasn't lapsed yet (the phone still answers; tool calls reach it too). It doesn't run while a bot used the phone in the last 10 minutes or while its live screen is open. Only one app is read at a time.
 
 | `error.code` | When | `retryable` |
 | --- | --- | --- |
-| `unsupported_app` | The app has no account spec (not an AI chat app). | no |
 | `phone_busy` | A bot is using the phone, or someone is watching its live screen. The read stops before it starts, or between steps. | yes |
 | `accessibility_off`, `device_locked`, `device_offline`, `pairing_invalid`, `not_installed`, … | As for `checkApp` above. | as above |
 

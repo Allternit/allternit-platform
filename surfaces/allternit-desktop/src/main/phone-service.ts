@@ -460,7 +460,7 @@ class PhoneService {
     return result;
   }
 
-  /** phone-link:read-account — read-only: the app's account, plan and usage windows (phone-account-reader.ts). */
+  /** phone-link:read-account — read-only check of any app: signed in, account, and plan/usage where shown (phone-account-reader.ts). */
   readLinkedAccount(opts: unknown): Promise<PhoneLinkAccountResult> {
     const backend = this.ensureLinkedBackend();
     return readLinkedAccount({ lane: backend, busy: (deviceId) => this.linkedPhoneBusy(deviceId), logger: (m) => log.info(m) }, opts);
@@ -471,7 +471,7 @@ class PhoneService {
     return this.ensureLinkedBackend().botBusy(deviceId) || this.linkConsumers.has(LINK_SERIAL_PREFIX + deviceId);
   }
 
-  /** Background account refresh: every 6 h per signed-in AI chat app, one app at a time (phone-account-reader.ts). */
+  /** Background checks: every app on each linked phone every 6 h, one app at a time (phone-account-reader.ts). */
   private ensureAccountScheduler(): PhoneAccountScheduler {
     if (!this.accountScheduler) {
       const backend = this.ensureLinkedBackend();

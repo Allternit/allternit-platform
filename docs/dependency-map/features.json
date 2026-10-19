@@ -1419,6 +1419,10 @@
         {
           "on": "2026-10-19",
           "note": "Eoj: phone apps must show the same telemetry as browser sign-ins. Read-only account reader (taps only menu labels, deny-list, never types) reads account, plan and usage windows every 6 h on an idle unlocked phone; new ACCESSIBILITY_OFF health state replaces a false HEALTHY."
+        },
+        {
+          "on": "2026-10-19",
+          "note": "Every app on a linked phone gets a check (signed in + account; plan and usage where the app shows them), not only AI chat. iPhone paths verified screen by screen with every Settings page scrolled: ChatGPT Settings > Usage and limits (Weekly), Gemini Settings > Usage limits (Current + Weekly), Claude, plus Discord, Telegram, Instagram, Facebook, TikTok, X, YouTube and GitHub accounts; per-app account rules so feed handles are never taken; drawer says Verified reader. A renewal-window iPhone whose signature hasn't lapsed now counts as working (it was treated as offline)."
         }
       ],
       "evidence": [

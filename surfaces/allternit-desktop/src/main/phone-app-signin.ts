@@ -18,7 +18,7 @@
  *   null   neither: the screen didn't show either way
  */
 import { catalogApp, PROBE_CATEGORY, type PhoneCatalogApp } from './phone-app-catalog.js';
-import type { LinkedPhone } from './phone-link-health.js';
+import { phoneWorks, type LinkedPhone } from './phone-link-health.js';
 import type { PhoneLinkAppResult, PhoneLinkHealth } from './phone-link-types.js';
 import type { ToolResult } from './phone-tools.js';
 
@@ -59,6 +59,8 @@ const GATE_LABELS: RegExp[] = [
   /^(don['’]t|do not) have an account\??( (sign|create|join)[a-z ]*)?$/,
   /^forgot (your )?password\??$/,
   /^(enter|use) (your )?(email|e-mail|phone number|password)( address)?$/,
+  // Kimi iOS when its token lapsed: "Session expired. Please log in again."
+  /^(your )?session (has )?expired\b/,
 ];
 
 /** "Sign out" / "Log out": only signed-in apps show these. */
@@ -78,7 +80,7 @@ const AI_CHAT_MARKERS: RegExp[] = [
 
 /** Main-screen labels by catalog category. Only labels a signed-out app doesn't show. */
 const CATEGORY_MARKERS: Record<string, RegExp[]> = {
-  Communication: [/^(chats|calls|direct messages|dms|activity|channels|updates|communities)$/, /^new (message|chat|group)$/],
+  Communication: [/^(chats|messages|calls|direct messages|dms|activity|channels|updates|communities)$/, /^new (message|chat|group)$/],
   Social: [/^(home|reels|explore|notifications|your story|create post|what['’]s on your mind\??)$/],
   Email: [/^(inbox|primary|compose|new mail|new message|focused)$/],
   Storage: [/^(my drive|my files|files|recent|shared with me|starred)$/],
@@ -104,7 +106,7 @@ export function screenLabels(text: string): string[] {
     const xcui = /^[A-Za-z]+,\s*(.*?)\s*\{\{[-\d.]+,\s*[-\d.]+\},\s*\{[-\d.]+,\s*[-\d.]+\}\}\s*$/.exec(line);
     if (xcui) {
       const label = /(?:^|, )label: '(.*?)'(?=, (?:label|id|identifier|value|placeholderValue): '|,?\s*$)/.exec(xcui[1])?.[1];
-      if (label) out.push(label.replace(/[\u200b-\u200d\u2060\ufeff]/g, '').replace(/[\u00a0\u202f]/g, ' '));
+      if (label) out.push(label.replace(/[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g, '').replace(/[\u00a0\u202f]/g, ' '));
       continue;
     }
     const quoted = /"([^"]*)"/.exec(line);
@@ -134,7 +136,12 @@ export function visibleAccount(labels: string[]): string | null {
   return null;
 }
 
-/** Decide signedIn + account from a screen's text. Pure; unit-tested. */
+/**
+ * Decide signedIn + account from a screen's text. Pure; unit-tested. The
+ * account is only taken from an AI chat app's screen: a social or video
+ * app's first screen is a feed full of other people's @handles and emails
+ * (its account comes from the account reader's per-app rule instead).
+ */
 export function classifySignIn(app: Pick<PhoneCatalogApp, 'name' | 'category'>, screenText: string): { signedIn: boolean | null; account: string | null } {
   const labels = screenLabels(screenText);
   const normed = labels.map(norm);
@@ -147,7 +154,7 @@ export function classifySignIn(app: Pick<PhoneCatalogApp, 'name' | 'category'>, 
     ...(app.category === PROBE_CATEGORY ? [...AI_CHAT_MARKERS, new RegExp(`^(message|ask) ${escapeRe(name)}$`)] : []),
     ...(CATEGORY_MARKERS[app.category] ?? []),
   ];
-  if (has(markers)) return { signedIn: true, account: visibleAccount(labels) };
+  if (has(markers)) return { signedIn: true, account: app.category === PROBE_CATEGORY ? visibleAccount(labels) : null };
   return { signedIn: null, account: null };
 }
 
@@ -201,7 +208,9 @@ export function resolve(lane: LinkedAppLane, opts: unknown): Resolved | PhoneLin
   if ((phone.platform === 'ios' ? app.ios : app.android).length === 0) {
     return err('unknown_app', `${app.name} has no ${phone.platform === 'ios' ? 'iPhone' : 'Android'} app.`);
   }
-  const unhealthy = healthError(lane.healthOf(phone.deviceId));
+  const health = lane.healthOf(phone.deviceId);
+  // A renewal warning while the signature is still valid: the phone works.
+  const unhealthy = phoneWorks(health, phone.expiresAt, Date.now()) ? null : healthError(health);
   if (unhealthy) return unhealthy;
   return { serial, phone, app };
 }

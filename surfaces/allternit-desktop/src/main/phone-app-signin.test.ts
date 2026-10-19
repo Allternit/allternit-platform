@@ -63,7 +63,10 @@ describe('classifySignIn', () => {
   });
 
   it('uses category markers and Sign out for other apps', () => {
-    expect(classifySignIn(slack, 'Direct messages\nActivity\n@eoj')).toEqual({ signedIn: true, account: '@eoj' });
+    // Other apps' screens are full of other people's handles: no account from the sign-in check.
+    expect(classifySignIn(slack, 'Direct messages\nActivity\n@eoj')).toEqual({ signedIn: true, account: null });
+    expect(classifySignIn(catalogApp('discord')!, 'Messages\nAdd Friends')).toEqual({ signedIn: true, account: null });
+    expect(classifySignIn(catalogApp('kimi')!, 'Session expired. Please log in again.')).toEqual({ signedIn: false, account: null });
     expect(classifySignIn(catalogApp('notion')!, 'Sign out')).toEqual({ signedIn: true, account: null });
   });
 
