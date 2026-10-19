@@ -51,6 +51,19 @@ describe('createMeshHealer', () => {
     await ok.heal({ ...ANDROID, deviceId: 'dev-b', lanHost: '192.168.1.6:8200' }, 'x');
   });
 
+  it('replaces this computer\'s proxy too, and asks for a retry even when the phone has no other route', async () => {
+    const replaced: string[] = [];
+    const restartProxy = (phone: LinkedPhone) => (replaced.push(phone.meshHost!), true);
+    const both = setup({ restartProxy });
+    expect(await both.heal(ANDROID, 'x')).toEqual({ meshState: 'running', meshHost: '100.64.0.16:8200' });
+    expect(replaced).toEqual(['100.64.0.16:8200']);
+    expect(both.logs[0]).toBe("[PhoneLink] mesh heal moto: x; replaced this computer's mesh proxy");
+    const proxyOnly = setup({ restartProxy }, {});
+    expect(await proxyOnly.heal(ANDROID, 'x')).toEqual({ meshState: 'proxy_replaced', meshHost: null });
+    const neither = setup({ restartProxy: () => false }, {});
+    expect(await neither.heal(ANDROID, 'x')).toBeNull();
+  });
+
   it('shares one attempt between concurrent callers', async () => {
     const { heal, calls } = setup();
     const [a, b] = await Promise.all([heal(ANDROID, 'x'), heal(ANDROID, 'y')]);

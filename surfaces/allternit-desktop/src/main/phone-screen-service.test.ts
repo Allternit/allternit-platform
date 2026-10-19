@@ -61,7 +61,7 @@ describe('matchLinkForAdb', () => {
   });
 });
 
-function harness(opts: { statuses: unknown[]; phones?: () => AdbScreenPhone[]; links?: ScreenServiceLink[] }) {
+function harness(opts: { statuses: unknown[]; phones?: () => AdbScreenPhone[]; links?: ScreenServiceLink[]; ensureScrcpyJar?: (serial: string) => Promise<boolean> }) {
   let t = 1_000_000;
   const shells: string[] = [];
   const calls: string[] = [];
@@ -80,6 +80,7 @@ function harness(opts: { statuses: unknown[]; phones?: () => AdbScreenPhone[]; l
       shells.push(`${serial} ${line}`);
       return { code: line.startsWith('pkill') ? 1 : 0, stdout: '', stderr: '' };
     },
+    ...(opts.ensureScrcpyJar ? { ensureScrcpyJar: opts.ensureScrcpyJar } : {}),
     now: () => t,
     sleep: async () => {},
     log: (m) => logs.push(m),
@@ -105,6 +106,18 @@ describe('ScreenServiceKeeper', () => {
     await h.keeper.pass();
     expect(h.shells).toEqual([]);
     expect(h.logs[0]).toContain('running');
+  });
+
+  it('puts a missing scrcpy-server jar back before checking (the phone cleared /data/local/tmp)', async () => {
+    const asked: string[] = [];
+    const h = harness({ statuses: [up], ensureScrcpyJar: async (serial) => (asked.push(serial), true) });
+    await h.keeper.pass();
+    expect(asked).toEqual(['R58N123']);
+    expect(h.logs[0]).toContain('scrcpy-server was missing on the phone; pushed it again');
+    const failing = harness({ statuses: [up], ensureScrcpyJar: async () => Promise.reject(new Error('no space')) });
+    await failing.keeper.pass();
+    expect(failing.logs[0]).toContain('scrcpy-server check failed (no space)');
+    expect(failing.logs.at(-1)).toContain('running');
   });
 
   it('never runs lines that fail validation', async () => {

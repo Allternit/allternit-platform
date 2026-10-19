@@ -67,7 +67,7 @@ import { catalogNameForPackage, humanizePackage } from './phone-app-catalog.js';
 import { PhoneLinkBackend, cachedHostResolver, linkedPhoneSource, probeLinkedPhone, rememberLinkedApps,
   rememberLinkedHost, rememberLinkedMeshHost, LINK_SERIAL_PREFIX, type LinkedPhone } from './phone-link-backend.js';
 import { createMeshHealer, phoneOffMeshRoutes, type MeshHealFn } from './phone-mesh-heal.js';
-import { fileAndroidLinkStore, type AndroidLinkRecord } from './phone-link-android.js';
+import { HELPER_SCRCPY_JAR, fileAndroidLinkStore, type AndroidLinkRecord } from './phone-link-android.js';
 import { openHelperStream, streamLaneFor, relaySerials, resolveHelperStreamHost } from './phone-link-stream.js';
 import { ScreenServiceKeeper, type AdbScreenPhone } from './phone-screen-service.js';
 import { parseAdbDevices as parseAdbDeviceRows } from './phone-adb-pairing.js';
@@ -311,6 +311,7 @@ class PhoneService {
         fetchWhoami: nodeDiscoveryDeps.fetchWhoami,
         call: (phone, host, method, params, timeoutMs) =>
           new IctrlClient({ host, secrets, storeKey: phone.storeKey, logger: (m) => log.info(m) }).call(method, params, timeoutMs),
+        restartProxy: (phone) => (phone.meshHost ? meshManager.restartProxy(phone.meshHost) : false),
         rememberMeshHost: (phone, meshHost) => {
           rememberLinkedMeshHost(stores)(phone, meshHost);
           this.iosRecordsCache = null;
@@ -1004,9 +1005,9 @@ class PhoneService {
     if (!socket) return { ok: false, message: 'The relay session is gone.' };
     const started = await this.startStream(serial);
     if (!started.ok) return started;
+    // Linked phones (`link:`) stream without the adb lane.
+    const streams = serial.startsWith(LINK_SERIAL_PREFIX) ? this.ensureStreamManager() : await this.ensureStreams();
     if (!this.linkConsumers.has(serial)) {
-      // Linked phones (`link:`) stream without the adb lane.
-      const streams = serial.startsWith(LINK_SERIAL_PREFIX) ? this.ensureStreamManager() : await this.ensureStreams();
       const consumer: StreamConsumer = {
         onMeta: (_s, meta) => socket.push({ kind: 'meta', meta }),
         onChunk: (_s, chunk) => socket.push({ kind: 'chunk', chunk }),
@@ -1021,6 +1022,11 @@ class PhoneService {
       };
       this.linkConsumers.set(serial, streams.subscribe(serial, consumer));
     }
+    // The meta went out when the stream went live, often before this viewer
+    // (a reopen within the grace, a token reconnect): without it the web
+    // viewer never leaves "connecting". Re-sending to an existing one is a no-op.
+    const status = streams.status(serial);
+    if (status.state === 'live') socket.push({ kind: 'meta', meta: status.meta });
     return { ok: true };
   }
 
@@ -1150,6 +1156,14 @@ class PhoneService {
         this.ensureLinkedBackend().helperCall(`${LINK_SERIAL_PREFIX}${deviceId}`, method, params, timeoutMs),
       // One short-lived `adb -s <serial> shell <line>` per line; the lines are validated first.
       adbShell: async (serial, line) => (await this.ensureAdbCall())(['shell', line], { serial, timeoutMs: 15_000 }),
+      ensureScrcpyJar: async (serial) => {
+        const adb = await this.ensureAdbCall();
+        const there = await adb(['shell', `test -f ${HELPER_SCRCPY_JAR} && echo yes`], { serial, timeoutMs: 10_000 });
+        if (there.stdout.trim() === 'yes') return false;
+        const push = await adb(['push', await this.ensureScrcpyServerPath(), HELPER_SCRCPY_JAR], { serial, timeoutMs: 60_000 });
+        if (push.code !== 0) throw new Error((push.stderr || push.stdout).trim().slice(0, 160) || 'adb push failed');
+        return true;
+      },
       log: (message) => log.info(message),
     });
     this.screenKeeper.start();

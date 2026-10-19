@@ -49,6 +49,12 @@ export interface MeshHealDeps {
   /** A sealed iCTRL call on the phone at `host`. */
   call: (phone: LinkedPhone, host: string, method: string, params: Record<string, unknown>, timeoutMs: number) => Promise<unknown>;
   log: (line: string) => void;
+  /**
+   * Replace this computer's own proxy node for the phone (mesh-manager
+   * restartProxy): the computer side can hang too (seen 2026-10-19). True
+   * when one was replaced; the caller's retry then spawns a fresh one.
+   */
+  restartProxy?: (phone: LinkedPhone) => boolean;
   /** A rejoined node reported a different mesh address: save it to the link record. */
   rememberMeshHost?: (phone: LinkedPhone, meshHost: string) => void;
   now?: () => number;
@@ -66,6 +72,8 @@ export function createMeshHealer(deps: MeshHealDeps): MeshHealFn {
   const label = (phone: LinkedPhone) => phone.name || phone.deviceId.slice(0, 8);
 
   const attempt = async (phone: LinkedPhone, why: string): Promise<MeshHealResult | null> => {
+    const proxyReplaced = deps.restartProxy?.(phone) ?? false;
+    if (proxyReplaced) deps.log(`[PhoneLink] mesh heal ${label(phone)}: ${why}; replaced this computer's mesh proxy`);
     for (const open of deps.routes(phone)) {
       const route = await open().catch(() => null);
       if (!route) continue;
@@ -97,7 +105,8 @@ export function createMeshHealer(deps: MeshHealDeps): MeshHealFn {
       }
     }
     deps.log(`[PhoneLink] mesh heal ${label(phone)}: ${why}; no LAN or cable route answered, can't restart its mesh`);
-    return null;
+    // A fresh proxy alone may be the fix: let the caller retry once.
+    return proxyReplaced ? { meshState: 'proxy_replaced', meshHost: null } : null;
   };
 
   return (phone, why) => {
