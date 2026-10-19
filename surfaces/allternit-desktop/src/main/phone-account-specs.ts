@@ -78,6 +78,8 @@ export function deniedElement(label: string, className = ''): boolean {
 }
 
 const read: AccountReadStep = { read: true, scroll: true };
+/** Verified paths read what's on screen without swiping: a swipe can push the next tap's row off screen. */
+const readHere: AccountReadStep = { read: true };
 
 /** Opening the app's menu / sidebar / profile, shared by most vendors. */
 const MENU = ['Open sidebar', 'Open menu', 'Menu', 'Show sidebar', 'Open navigation drawer', 'Navigation drawer'] as const;
@@ -93,7 +95,7 @@ export const ACCOUNT_SPECS: Readonly<Record<string, PhoneAccountSpec>> = {
     plans: ['Free', 'Go', 'Plus', 'Pro', 'Team', 'Business', 'Enterprise', 'Edu'],
     vendorWords: ['ChatGPT'],
     paths: [
-      { name: 'menu → open settings (iOS, verified)', verifiedOn: 'ios', steps: [{ tap: ['Menu'], optional: true }, { tap: ['Open Settings'] }, read, { tap: ['Close'], optional: true }] },
+      { name: 'menu → open settings (iOS, verified)', verifiedOn: 'ios', steps: [{ tap: ['Menu'], optional: true }, { tap: ['Open Settings'] }, readHere, { tap: ['Close'], optional: true }] },
       { name: 'sidebar → settings → account', steps: [{ tap: MENU, optional: true }, { tap: [...SETTINGS, ...PROFILE] }, read, { tap: ['Account', 'Subscription', 'Plan'], optional: true }, read] },
       { name: 'profile → settings', steps: [{ tap: PROFILE }, { tap: SETTINGS, optional: true }, read] },
     ],
@@ -108,7 +110,7 @@ export const ACCOUNT_SPECS: Readonly<Record<string, PhoneAccountSpec>> = {
     plans: ['Free', 'Pro', 'Max', 'Team', 'Enterprise'],
     vendorWords: ['Claude'],
     paths: [
-      { name: 'sidebar → account → usage (iOS, verified)', verifiedOn: 'ios', steps: [{ tap: ['id:drawer-toggle', 'Open sidebar'], optional: true }, { tap: ['id:sidebar-account-button'] }, read, { tap: ['Usage'] }, read, { tap: ['id:BackButton'], optional: true }, { tap: ['Close'], optional: true }] },
+      { name: 'sidebar → account → usage (iOS, verified)', verifiedOn: 'ios', steps: [{ tap: ['id:drawer-toggle', 'Open sidebar'], optional: true }, { tap: ['id:sidebar-account-button'] }, readHere, { tap: ['Usage'] }, readHere, { tap: ['id:BackButton'], optional: true }, { tap: ['Close'], optional: true }] },
       { name: 'menu → settings → usage', steps: [{ tap: MENU, optional: true }, { tap: [...SETTINGS, ...PROFILE] }, read, { tap: ['Usage', 'Plan usage', 'Usage limits', 'Plan usage limits'], optional: true }, read] },
       { name: 'profile → usage', steps: [{ tap: PROFILE }, { tap: ['Usage', 'Plan usage', 'Usage limits'], optional: true }, read] },
     ],
@@ -133,7 +135,7 @@ export const ACCOUNT_SPECS: Readonly<Record<string, PhoneAccountSpec>> = {
     plans: ['Free', 'Advanced', 'Google AI Plus', 'Google AI Pro', 'Google AI Ultra', 'AI Pro', 'AI Ultra'],
     vendorWords: ['Gemini', 'Google'],
     paths: [
-      { name: 'home screen account button (iOS, verified)', verifiedOn: 'ios', steps: [read] },
+      { name: 'home screen account button (iOS, verified)', verifiedOn: 'ios', steps: [readHere] },
       { name: 'account → settings', steps: [{ tap: PROFILE }, read, { tap: ['Settings', 'Subscriptions', 'Your plan'], optional: true }, read] },
       { name: 'menu → settings', steps: [{ tap: MENU, optional: true }, { tap: SETTINGS }, read] },
     ],
