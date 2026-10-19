@@ -250,7 +250,9 @@ export class SubprocessLanguageModel implements LanguageModelV2 {
                 return { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens }
               })()
           // A brain that never reported its context still gets every row.
-          if (sessionID && (!lastContext || BrainContextReaders.has(this.providerID)) && reason !== "error") {
+          // A failed turn still sent its request: a record-reading brain still has its rows.
+          const reader = BrainContextReaders.has(this.providerID)
+          if (sessionID && (!lastContext || reader) && (reason !== "error" || reader)) {
             const args = { sessionID, providerID: this.providerID, modelID: this.modelId, context: lastContext, systemText, conversation: conversation() }
             // The brain's own record is written as the turn ends: read it a moment later.
             setTimeout(() => void recordBrainContext(args).catch(() => {}), BrainContextReaders.has(this.providerID) ? 750 : 0)

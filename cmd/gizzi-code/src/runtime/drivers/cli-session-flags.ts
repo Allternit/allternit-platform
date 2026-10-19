@@ -105,7 +105,7 @@ export function claudeSessionIdFromEvent(evt: unknown): string | undefined {
  * the `session_id` shape; OpenCode stamps `sessionID` on every event.
  */
 export function vendorSessionIdFromEvent(cli: string, evt: unknown): string | undefined {
-  if (cli === "claude-cli" || cli === "qwen-cli") return claudeSessionIdFromEvent(evt)
+  if (cli === "claude-cli" || cli === "qwen-cli" || cli === "codebuddy") return claudeSessionIdFromEvent(evt)
   if (cli === "opencode") {
     const id = (evt as { sessionID?: unknown } | null)?.sessionID
     return typeof id === "string" && id ? id : undefined

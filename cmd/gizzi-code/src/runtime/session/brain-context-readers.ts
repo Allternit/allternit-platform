@@ -3,6 +3,7 @@ import path from "node:path"
 import { readdir, readFile } from "node:fs/promises"
 import { ContextBreakdown } from "@/runtime/session/context-breakdown"
 import { KimiContext } from "@/runtime/session/kimi-context"
+import { BrainRelay } from "@/runtime/session/brain-relay"
 
 /**
  * Brains whose own session record holds the full context (prompt, tools,
@@ -41,7 +42,26 @@ export namespace BrainContextReaders {
     return undefined
   }
 
-  const READERS: Record<string, Reader> = { "kimi-cli": kimi }
+  /** MCP server names from OpenCode's config, so `<server>_<tool>` names count as MCP tools. */
+  async function opencodeMcpServers(): Promise<string[]> {
+    const dir = process.env.XDG_CONFIG_HOME ? path.join(process.env.XDG_CONFIG_HOME, "opencode") : path.join(os.homedir(), ".config", "opencode")
+    const names = new Set<string>(["allternit"])
+    for (const file of ["opencode.json", "opencode.jsonc", "config.json"]) {
+      const text = await readFile(path.join(dir, file), "utf8").catch(() => "")
+      if (!text) continue
+      try {
+        const config = JSON.parse(text.replace(/^\s*\/\/.*$/gm, ""))
+        for (const name of Object.keys(config?.mcp ?? {})) names.add(name)
+      } catch {}
+    }
+    return [...names]
+  }
+
+  /** CLIs whose provider calls pass through BrainRelay: the last request they sent. */
+  const relayed: Reader = async (input) =>
+    BrainRelay.breakdown({ ...input, mcpServers: input.providerID === "opencode" ? await opencodeMcpServers() : [] })
+
+  const READERS: Record<string, Reader> = { "kimi-cli": kimi, opencode: relayed }
 
   export function has(providerID: string) {
     return providerID in READERS
