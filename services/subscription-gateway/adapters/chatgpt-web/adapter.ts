@@ -11,6 +11,7 @@ import {
   type AccountObservation,
   type AdapterEvent,
   type AdapterManifest,
+  type ContextReport,
   type ExecutionContext,
   type ReconcileResult,
   type Task,
@@ -20,6 +21,7 @@ import {
   type VendorThreadText,
 } from "@allternit/subscription-fabric-contracts";
 import { chatgptMemory, chatgptThreads, chatgptThreadText } from "../_shared/vendor-memory.js";
+import { chatgptContextReport } from "../_shared/context-report.js";
 import {
   DeclarativeChatAdapter,
   attachFiles,
@@ -214,6 +216,31 @@ export class ChatGPTWebAdapter extends DeclarativeChatAdapter {
       };
     });
     return chatgptMemory(raw);
+  }
+
+  /** What fills this conversation's context (context panel), from chatgpt.com's own endpoints in the page. */
+  async readContext(conversationId: string, _signal: AbortSignal): Promise<ContextReport | null> {
+    if (!/^[\w-]+$/.test(conversationId)) return null;
+    const raw = await this.inPage(async (conv: string) => {
+      const tok = await fetch("/api/auth/session", { credentials: "include" })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((j: { accessToken?: string } | null) => j?.accessToken ?? null)
+        .catch(() => null);
+      const get = async (path: string) => {
+        try {
+          const r = await fetch(path, { credentials: "include", headers: tok ? { authorization: `Bearer ${tok}` } : {} });
+          return r.ok ? await r.json() : null;
+        } catch {
+          return null;
+        }
+      };
+      return {
+        conversation: await get(`/backend-api/conversation/${encodeURIComponent(conv)}`),
+        memories: await get("/backend-api/memories?include_memory_entries=true"),
+        instructions: await get("/backend-api/user_system_messages"),
+      };
+    }, conversationId);
+    return chatgptContextReport(raw);
   }
 
   async listThreads(opts: { limit: number }, _signal: AbortSignal): Promise<VendorThreadSummary[]> {

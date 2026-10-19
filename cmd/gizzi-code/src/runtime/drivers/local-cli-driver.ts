@@ -28,6 +28,8 @@ import { acpCanLoadSession, acpMcpServers, claudePermissionFlags, claudeSessionF
 import { ContextBreakdown } from "@/runtime/session/context-breakdown"
 import { ContextBreakdownStore } from "@/runtime/session/context-breakdown-store"
 import { CodexContext } from "@/runtime/session/codex-context"
+import { QwenContext } from "@/runtime/session/qwen-context"
+import { BrainRelay } from "@/runtime/session/brain-relay"
 import { attachmentsToAcpContent } from "./attachments"
 import { RuntimeService, RuntimeNotFoundError, type RegisteredRuntime } from "@/runtime/runtime-service"
 import { ExecutionLogService } from "@/runtime/execution-log"
@@ -176,7 +178,9 @@ export class LocalCliDriver implements RuntimeDriver {
       model: task?.model,
     })
 
-    const env = adapter.env ? { ...adapter.env, ...task?.env } : task?.env
+    // CLIs whose records lack what they send: their provider calls pass through BrainRelay.
+    const relay = task?.sessionID && adapter.relayEnv ? adapter.relayEnv(task.sessionID) : undefined
+    const env = adapter.env || relay ? { ...adapter.env, ...relay, ...task?.env } : task?.env
 
     let failed = false
     try {
@@ -752,6 +756,10 @@ export class LocalCliDriver implements RuntimeDriver {
 
           if (evt.type === "result") {
             finished = true
+            // Qwen Code's own /context on the session just run.
+            if (this.cliName === "qwen-cli" && options.sessionID && lastVendorId && !evt.is_error) {
+              refreshQwenContext({ argv, vendorSessionId: lastVendorId, sessionID: options.sessionID, cwd: options.cwd, env: options.env })
+            }
             if (this.cliName === "claude-cli") {
               // What is in context now: the last request's prompt plus its
               // reply (result.usage sums every request of the turn).
@@ -767,9 +775,10 @@ export class LocalCliDriver implements RuntimeDriver {
                 await this.logEvent(handle.taskId, contextEv)
               }
               // Then Claude Code's own split of it, read in the background.
-              if (options.sessionID && lastVendorId && !evt.is_error) {
-                refreshClaudeContext({ argv, vendorSessionId: lastVendorId, sessionID: options.sessionID, cwd: options.cwd, env: options.env })
-              }
+            }
+            // Claude Code and its fork CodeBuddy: their own /context on the session.
+            if ((this.cliName === "claude-cli" || this.cliName === "codebuddy") && options.sessionID && lastVendorId && !evt.is_error) {
+              refreshClaudeContext({ argv, vendorSessionId: lastVendorId, sessionID: options.sessionID, providerID: this.cliName, cwd: options.cwd, env: options.env })
             }
             const usage = evt.usage ?? {}
             const finishEv = {
@@ -1788,6 +1797,12 @@ interface CliAdapter {
   endsWithResult?: boolean
   /** Environment every run of this CLI gets (the task's own env wins). */
   env?: Record<string, string>
+  /**
+   * Environment that routes the CLI's provider calls through BrainRelay for
+   * one session (exact context measure). Only for CLIs whose own records do
+   * not hold their prompt and tool schemas.
+   */
+  relayEnv?: (sessionID: string) => Record<string, string>
   /** Build the final argv. */
   buildArgv(
     baseCmd: string[],
@@ -1823,6 +1838,19 @@ function sessionModel(model: string | undefined, providerID: string): string | u
 
 function modelFlag(modelEnv?: string): string[] {
   return modelEnv ? ["--model", modelEnv] : []
+}
+
+/** OpenCode's built-in provider API bases (models.dev `api`), the ones the relay stands in for. */
+const OPENCODE_PROVIDER_BASES: Record<string, string> = {
+  openrouter: "https://openrouter.ai/api/v1",
+  anthropic: "https://api.anthropic.com/v1",
+  openai: "https://api.openai.com/v1",
+  opencode: "https://opencode.ai/zen/v1",
+  deepseek: "https://api.deepseek.com/v1",
+  groq: "https://api.groq.com/openai/v1",
+  xai: "https://api.x.ai/v1",
+  mistral: "https://api.mistral.ai/v1",
+  moonshotai: "https://api.moonshot.ai/v1",
 }
 
 const CLI_ADAPTERS: Record<string, CliAdapter> = {
@@ -1897,6 +1925,14 @@ const CLI_ADAPTERS: Record<string, CliAdapter> = {
   opencode: {
     mode: "stream-json",
     promptOnStdin: true,
+    // Inline config (merged over the user's): each provider's calls go through the relay.
+    relayEnv: (sessionID) => ({
+      OPENCODE_CONFIG_CONTENT: JSON.stringify({
+        provider: Object.fromEntries(
+          Object.entries(OPENCODE_PROVIDER_BASES).map(([id, base]) => [id, { options: { baseURL: BrainRelay.url(sessionID, base) } }]),
+        ),
+      }),
+    }),
     buildArgv: ([command], _message, ctx) => {
       return [
         command,
@@ -1958,7 +1994,10 @@ const CLI_ADAPTERS: Record<string, CliAdapter> = {
         "--output-format", "stream-json",
         "--yolo",
         ...qwenResumeFlags(ctx.vendorSessionId),
-        ...modelFlag(PROVIDER_ENV_KEYS["qwen-cli"]?.model ? process.env[PROVIDER_ENV_KEYS["qwen-cli"]!.model!] : undefined),
+        ...modelFlag(
+          sessionModel(ctx.model, "qwen-cli") ??
+            (PROVIDER_ENV_KEYS["qwen-cli"]?.model ? process.env[PROVIDER_ENV_KEYS["qwen-cli"]!.model!] : undefined),
+        ),
       ]
     },
   },
@@ -2327,6 +2366,42 @@ function claudeContextWindow(modelUsage: unknown): number {
   return Math.max(0, ...Object.values(modelUsage as Record<string, { contextWindow?: unknown }>).map((entry) => Number(entry?.contextWindow) || 0))
 }
 
+/**
+ * Argv for Qwen Code's `/context` on the turn's session: the turn's binary
+ * and model, the local command instead of the prompt.
+ */
+export function qwenContextArgv(turnArgv: string[], vendorSessionId: string): string[] {
+  const model = turnArgv.indexOf("--model")
+  return [turnArgv[0], "-p", "/context", "--resume", vendorSessionId, ...(model > 0 ? ["--model", turnArgv[model + 1]] : [])]
+}
+
+function refreshQwenContext(input: { argv: string[]; vendorSessionId: string; sessionID: string; cwd?: string; env?: Record<string, string> }) {
+  if (claudeContextReads.has(input.sessionID)) return
+  claudeContextReads.add(input.sessionID)
+  void (async () => {
+    const proc = Bun.spawn(qwenContextArgv(input.argv, input.vendorSessionId), {
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "ignore",
+      cwd: input.cwd,
+      env: mergeEnv(process.env, input.env),
+    })
+    ProcessRegistry.track(proc, { label: "cli:qwen-cli:context" })
+    const timer = setTimeout(() => terminateProcessTree(proc), CLAUDE_CONTEXT_TIMEOUT_MS)
+    try {
+      const text = await new Response(proc.stdout).text()
+      await proc.exited
+      const snapshot = QwenContext.parse({ text, sessionID: input.sessionID, providerID: "qwen-cli", modelID: "qwen" })
+      if (snapshot) ContextBreakdownStore.record(snapshot)
+    } catch (error) {
+      log.info("qwen /context read failed", { sessionID: input.sessionID, error: error instanceof Error ? error.message : String(error) })
+    } finally {
+      clearTimeout(timer)
+      claudeContextReads.delete(input.sessionID)
+    }
+  })()
+}
+
 /** One `/context` read per session at a time; a newer turn's read waits for none. */
 const claudeContextReads = new Set<string>()
 const CLAUDE_CONTEXT_TIMEOUT_MS = 45_000
@@ -2341,6 +2416,7 @@ function refreshClaudeContext(input: {
   argv: string[]
   vendorSessionId: string
   sessionID: string
+  providerID: string
   cwd?: string
   env?: Record<string, string>
 }) {
@@ -2365,7 +2441,7 @@ function refreshClaudeContext(input: {
       const snapshot = ContextBreakdown.fromClaudeContext({
         markdown: parsed.result,
         sessionID: input.sessionID,
-        providerID: "claude-cli",
+        providerID: input.providerID,
         modelID: model,
       })
       if (snapshot) ContextBreakdownStore.record(snapshot)

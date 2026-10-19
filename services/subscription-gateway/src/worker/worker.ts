@@ -10,6 +10,7 @@ import {
 } from "@allternit/subscription-adapter-sdk";
 import type {
   AdapterEvent,
+  ContextReport,
   ExecutionContext,
   PageLease,
   RedactingLogger,
@@ -306,6 +307,7 @@ export async function runAttempt(deps: WorkerDeps, req: RunRequest): Promise<Run
   // Shared event path for the interactive stream and detached resume streams.
   let providerUrl: string | null = null;
   let artifactUrl: string | null = null;
+  let contextReport: ContextReport | null = null
   const handleEvent = (event: AdapterEvent): RunOutcome | null => {
     deps.onEvent?.(req.taskId, event);
     deps.supervisor?.heartbeat(req.taskId);
@@ -420,7 +422,7 @@ export async function runAttempt(deps: WorkerDeps, req: RunRequest): Promise<Run
         const status = event.outcome === "success" ? "completed" : "partial";
         setStatus(status, {
           completedAt: new Date().toISOString(),
-          result: { artifact_ids: artifactIds, text: event.text },
+          result: { artifact_ids: artifactIds, text: event.text, ...(contextReport ? { context: contextReport } : {}) },
         });
         return { kind: "terminal", status };
       }
@@ -445,6 +447,14 @@ export async function runAttempt(deps: WorkerDeps, req: RunRequest): Promise<Run
         setStatus("provider_running", { statusDetail: "provider running server-side" });
         scheduleResume(event.resume_token, event.poll_after_s);
         return { kind: "detached", resumeToken: event.resume_token };
+      }
+      // A finished chat turn: read what fills the conversation's context
+      // (non-spending, in the page) for the caller's context panel.
+      if (event.t === "done" && task.capability.startsWith("chat.") && ctx.attempt.provider_thread_id && req.adapter.readContext) {
+        contextReport = await Promise.race([
+          req.adapter.readContext(ctx.attempt.provider_thread_id, controller.signal).catch(() => null),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 8_000)),
+        ]);
       }
       const outcome = handleEvent(event);
       if (outcome) return outcome;

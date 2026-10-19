@@ -196,6 +196,31 @@ const NOT_ON_IPHONE = 'Not available on iPhone.';
 const pt = (px: number, scale: number) => Math.round((px / scale) * 10) / 10;
 
 /**
+ * The back edge swipe in panel points. ReplayKit always encodes the panel
+ * upright in portrait and labels the turn (CONFIG rotation, from
+ * CGImagePropertyOrientation: 90 = .left, turn the panel 90° counter-clockwise
+ * to view it). The runner's synthesized gestures use the same fixed portrait
+ * space as the video, so taps, drags and swipes need no turning; only "the
+ * left edge of the app" moves to another side of the panel.
+ */
+export function backSwipe(screen: IosVideoConfig): { from_x: number; from_y: number; to_x: number; to_y: number } {
+  const w = screen.width / screen.scale;
+  const h = screen.height / screen.scale;
+  const cx = Math.round(w / 2);
+  const cy = Math.round(h / 2);
+  switch (screen.rotation) {
+    case 90:
+      return { from_x: cx, from_y: 2, to_x: cx, to_y: Math.round(h * 0.6) };
+    case 180:
+      return { from_x: Math.round(w - 2), from_y: cy, to_x: Math.round(w * 0.4), to_y: cy };
+    case 270:
+      return { from_x: cx, from_y: Math.round(h - 2), to_x: cx, to_y: Math.round(h * 0.4) };
+    default:
+      return { from_x: 2, from_y: cy, to_x: Math.round(w * 0.6), to_y: cy };
+  }
+}
+
+/**
  * Turns the renderer's input events (the scrcpy-shaped PhoneInputEvent, in
  * video pixels) into runner gestures in points. Single-finger only: a second
  * pointer while one is down is ignored. Stateful across sendControl batches
@@ -225,7 +250,12 @@ export class IosGestureMapper {
           return { ok: true, rpcs: [{ method: 'tap', params: { x: pt(d.x, s), y: pt(d.y, s) } }] };
         }
         if (moved < TAP_SLOP_PX) {
-          return { ok: true, rpcs: [{ method: 'long_press', params: { x: pt(d.x, s), y: pt(d.y, s), duration: Math.round(held / 10) / 100 } }] };
+          const params: Record<string, unknown> = { x: pt(d.x, s), y: pt(d.y, s), duration: Math.round(held / 10) / 100 };
+          // The runner's default long_press goes through XCUICoordinate, which
+          // works in the rotated interface space; fast is synthesized in the
+          // panel space this video uses (checked on the simulator).
+          if (screen.rotation !== 0) params.fast = true;
+          return { ok: true, rpcs: [{ method: 'long_press', params }] };
         }
         // drag replays the finger's path over (about) the time it took, so a
         // quick flick keeps its momentum and a slow drag moves precisely.
@@ -247,10 +277,9 @@ export class IosGestureMapper {
         };
       }
       case 'back': {
-        // iOS has no back key: the edge swipe most apps honour.
-        const w = screen.width / s;
-        const y = Math.round(screen.height / s / 2);
-        return { ok: true, rpcs: [{ method: 'drag', params: { from_x: 2, from_y: y, to_x: Math.round(w * 0.6), to_y: y, duration: 0.3 } }] };
+        // iOS has no back key: the edge swipe most apps honour, from the left
+        // edge of the app as the user holds the phone (backSwipe).
+        return { ok: true, rpcs: [{ method: 'drag', params: { ...backSwipe(screen), duration: 0.3 } }] };
       }
       case 'text':
         if (typeof event.text !== 'string' || !event.text) return { ok: false, message: 'text must be a non-empty string.' };
@@ -531,13 +560,16 @@ export class IosVideoSession implements StreamSessionHandle {
           this.armStall();
           if (this.startTimer) clearTimeout(this.startTimer);
           this.startTimer = null;
-          this.emit('meta', { deviceName: this.deps.deviceName, width: config.width, height: config.height, codec: 'h264' });
-          this.log(`live at ${config.width}x${config.height} (scale ${config.scale})`);
+          this.emit('meta', this.metaOf(config));
+          this.log(`live at ${config.width}x${config.height} (scale ${config.scale}, rotation ${config.rotation})`);
           this.liveResolve?.();
           this.liveResolve = null;
           this.liveReject = null;
           return;
         }
+        // A turn keeps the panel's pixel size (ReplayKit stays portrait), so
+        // the new rotation goes out as a fresh meta for the viewers.
+        if (previous && previous.rotation !== config.rotation) this.emit('meta', this.metaOf(config));
         if (previous && (previous.width !== config.width || previous.height !== config.height)) {
           this.emit('deviceMessage', { type: 'size', width: config.width, height: config.height, clientResized: false });
         }
@@ -558,6 +590,10 @@ export class IosVideoSession implements StreamSessionHandle {
         if (this.live && this.audioMeta) this.emitAudio(() => this.emit('audioChunk', packet.data));
         return;
     }
+  }
+
+  private metaOf(config: IosVideoConfig): PhoneStreamMeta {
+    return { deviceName: this.deps.deviceName, width: config.width, height: config.height, codec: 'h264', rotation: config.rotation };
   }
 
   /** Audio listeners can never break the video reader. */

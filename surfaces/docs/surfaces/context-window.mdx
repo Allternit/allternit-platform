@@ -30,7 +30,12 @@ The numbers come from whatever runs the session's loop, so they match what that 
 | API and local models (gizzi's own loop) | gizzi measures every request it sends: system blocks, tool schemas and messages. The provider's reported input then corrects Messages. | Estimated, or Measured by the provider |
 | Claude Code (`claude-cli`) | After each turn gizzi runs Claude Code's own `/context` on the session. This is a local command, so it makes no model call and spends no tokens. It does not write to the transcript. The result includes deferred tools, MCP tools, memory files and skills. | Reported by Claude Code |
 | Codex (`codex-cli`) | After each turn gizzi reads the thread's own record (`~/.codex/sessions/…/rollout-*.jsonl`). That record holds the base instructions, the developer blocks, skills, AGENTS.md and every item. The app server's `mcpServerStatus/list` gives each MCP server's tools. System tools is what the first request measured beyond the prompt blocks. When the MCP schemas are bigger than that, Codex is searching for them, so they show as deferred. | Reported by Codex |
-| Other CLI brains (Kimi, Qwen, Gemini, OpenCode…) | Each row is gizzi's measure of what it sends the brain: its instructions, memory files, MCP server instructions and bridge tools. Messages comes from the brain's reported total, or from the conversation when the brain reports none. The brain's own built-in prompt and tools are not visible to gizzi. | Rows: what gizzi sends *name* |
+| Kimi Code (`kimi-cli`) | After each turn gizzi reads Kimi's own session record (`~/.kimi-code/sessions/…/agents/main/wire.jsonl`). It holds the system prompt, the AGENTS.md files it read, the exact tool snapshot sent to the model (MCP tools by server) and the conversation. | Reported by Kimi |
+| Qwen Code (`qwen-cli`) | After each turn gizzi runs Qwen Code's own `/context` on the session. This is a local command with no model call. | Reported by Qwen |
+| CodeBuddy | Its own `/context`, the same way as Claude Code. | Reported by CodeBuddy |
+| OpenCode | Its provider calls pass through a local relay in gizzi (127.0.0.1, with a per-process secret). The relay forwards each request unchanged and measures the exact system prompt, tool schemas and messages that OpenCode sent. | Reported by OpenCode |
+| Signed-in apps (ChatGPT, Claude on their websites) | After each turn the gateway reads the vendor's own endpoints inside your signed-in page. It reads the conversation (messages, tool turns, attachments), memory and custom instructions, project instructions and files, skills, and the tools used or switched on. Claude's 5-hour and weekly usage feeds the plan limits. The vendor's own system prompt and tool schemas are not shown, so those rows read **hidden**. | Reported by *name*'s page |
+| Other CLI brains (Cursor, Kiro, Trae, Antigravity, Qoder…) | Each row is gizzi's measure of what it sends the brain. Messages comes from the brain's reported total, or from the conversation. | Rows: what gizzi sends *name* |
 
 Between turns, a newer total from the same brain moves only Messages, so the panel keeps the brain's last full split.
 
@@ -44,6 +49,7 @@ The latest breakdown is saved with the session, so it survives a gizzi restart.
 | --- | --- |
 | `source` | `"gizzi"` or `"brain"`. |
 | `brain`, `brainName` | The brain's provider id and display name, when `source` is `"brain"`. |
+| `hidden` | Rows the brain does not show (a signed-in app's own system prompt and tool schemas). The panel shows **hidden** for them. |
 | `split` | `"brain"` when the rows are the brain's own report, `"sent"` when they are gizzi's measure of what it sends the brain. |
 | `categories[].deferred` | `true` for `system_tools_deferred` and `mcp_tools_deferred`: listed, not counted in `usedTokens`. |
 | `skills` | `[{ name, tokens }]`, one entry per skill listed to the model. |

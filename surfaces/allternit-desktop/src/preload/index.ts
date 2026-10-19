@@ -640,7 +640,7 @@ const permissionGuideAPI = {
 // the Annex-B chunks and sends PhoneInputEvents back.
 
 type PhoneStreamOptions = { maxSize?: number; videoBitrate?: number; maxFps?: number };
-type PhoneStreamMeta = { deviceName: string; width: number; height: number; codec: 'h264' };
+type PhoneStreamMeta = { deviceName: string; width: number; height: number; codec: 'h264'; rotation?: 0 | 90 | 180 | 270 };
 /** Phone audio format (opus from Android, AAC from iPhone); description = base64 WebCodecs AudioDecoderConfig.description. */
 type PhoneAudioMeta = { codec: 'opus' | 'aac'; sampleRate: number; channels: number; description: string };
 type PhoneStreamStatus =

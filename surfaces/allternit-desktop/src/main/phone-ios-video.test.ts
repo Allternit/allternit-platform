@@ -11,6 +11,7 @@ import {
   IOS_HELPER_LOST_MESSAGE,
   IOS_START_TIMEOUT_MESSAGE,
   IosGestureMapper,
+  backSwipe,
   IosVideoPacketParser,
   IosVideoSession,
   parseHttpHead,
@@ -161,6 +162,28 @@ describe('IosGestureMapper', () => {
     expect(m.map(touch('up', 300, 600, 0), screen, 30).ok).toBe(true);
   });
 
+  it('turned phone: panel-space gestures pass through, long_press goes fast, back swipes from the app\'s left edge', () => {
+    // Synthesized taps/drags/swipes use the fixed portrait space the video is
+    // in (simulator probe 2026-10-19), so only these two change.
+    const turned = (rotation: 0 | 90 | 180 | 270): IosVideoConfig => ({ ...screen, rotation });
+    const m = new IosGestureMapper();
+    m.map(touch('down', 300, 600), turned(90), 0);
+    expect(m.map(touch('up', 300, 600), turned(90), 100)).toEqual({ ok: true, rpcs: [{ method: 'tap', params: { x: 100, y: 200 } }] });
+    m.map(touch('down', 300, 600), turned(90), 0);
+    expect(m.map(touch('up', 300, 600), turned(90), 900)).toEqual({
+      ok: true,
+      rpcs: [{ method: 'long_press', params: { x: 100, y: 200, duration: 0.9, fast: true } }],
+    });
+    // 390 x 844 points: 90 = the app's left edge is the panel's top.
+    expect(backSwipe(turned(90))).toEqual({ from_x: 195, from_y: 2, to_x: 195, to_y: 506 });
+    expect(backSwipe(turned(180))).toEqual({ from_x: 388, from_y: 422, to_x: 156, to_y: 422 });
+    expect(backSwipe(turned(270))).toEqual({ from_x: 195, from_y: 842, to_x: 195, to_y: 338 });
+    expect(m.map({ type: 'back' }, turned(270), 0)).toEqual({
+      ok: true,
+      rpcs: [{ method: 'drag', params: { from_x: 195, from_y: 842, to_x: 195, to_y: 338, duration: 0.3 } }],
+    });
+  });
+
   it('maps scroll, back, text and home; refuses Android-only keys', () => {
     const m = new IosGestureMapper();
     expect(m.map({ type: 'scroll', x: 300, y: 600, vScroll: 1 }, screen, 0)).toEqual({
@@ -195,7 +218,7 @@ describe('IosVideoSession', () => {
     s.socket.write(bytes.subarray(OK_HEAD.length + 3));
     await started;
     await flush();
-    expect(s.metas).toEqual([{ deviceName: 'iPhone 15', width: 1170, height: 2532, codec: 'h264' }]);
+    expect(s.metas).toEqual([{ deviceName: 'iPhone 15', width: 1170, height: 2532, codec: 'h264', rotation: 0 }]);
     expect(s.chunks).toEqual([IDR]);
     expect(s.calls.some((c) => c.method === 'start_live_screen')).toBe(false);
   });
@@ -219,6 +242,11 @@ describe('IosVideoSession', () => {
     s.socket.write(config({ width: 2532, height: 1170, scale: 3, rotation: 90 }));
     await flush();
     expect(s.messages).toEqual([{ type: 'size', width: 2532, height: 1170, clientResized: false }]);
+    // A turn at the same size re-sends meta with the rotation.
+    s.socket.write(config({ width: 2532, height: 1170, scale: 3, rotation: 270 }));
+    await flush();
+    expect(s.metas.at(-1)).toEqual({ deviceName: 'iPhone 15', width: 2532, height: 1170, codec: 'h264', rotation: 270 });
+    expect(s.messages).toHaveLength(1);
     s.socket.write(ended('Stopped from Control Center'));
     await flush();
     expect(s.ends).toEqual(['Stopped from Control Center']);

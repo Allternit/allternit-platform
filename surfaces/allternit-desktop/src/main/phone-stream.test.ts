@@ -138,6 +138,21 @@ describe('PhoneStreamManager lifecycle', () => {
     expect(c.message).toHaveBeenCalledWith('192.168.1.20:41234', size);
   });
 
+  it('a mid-stream size change re-sends meta so viewers reshape; an unchanged size does not', async () => {
+    const { manager, sessions } = makeManager();
+    const c = makeConsumer();
+    manager.subscribe('192.168.1.20:41234', c);
+    await goLive(manager, sessions);
+    c.meta.mockClear();
+    const session = sessions.get('192.168.1.20:41234')!;
+    session.emit('deviceMessage', { type: 'size', width: 2400, height: 1080, clientResized: false });
+    const rotated = { ...META, width: 2400, height: 1080 };
+    expect(c.meta).toHaveBeenCalledWith('192.168.1.20:41234', rotated);
+    expect(manager.status('192.168.1.20:41234')).toEqual({ state: 'live', meta: rotated });
+    session.emit('deviceMessage', { type: 'size', width: 2400, height: 1080, clientResized: false });
+    expect(c.meta).toHaveBeenCalledTimes(1);
+  });
+
   it('stopAll closes everything (desktop shutdown)', async () => {
     const { manager, sessions } = makeManager();
     await goLive(manager, sessions);

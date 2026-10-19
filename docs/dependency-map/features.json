@@ -1414,6 +1414,10 @@
         },
         {
           "on": "2026-10-19",
+          "note": "Turned phones: iPhone CONFIG rotation travels as PhoneStreamMeta.rotation and the viewer draws the frame upright (allternit-ai rotation.ts), sending input back in the video's own portrait pixels so old and new viewers agree. Simulator probe: the runner's synthesized tap/drag/swipe use that fixed portrait space in any orientation, XCUICoordinate uses the rotated one, so long_press goes fast when turned and Back swipes from the app's left edge. A mid-stream size change re-sends meta through PhoneStreamManager to Desktop, web and PWA viewers."
+        },
+        {
+          "on": "2026-10-19",
           "note": "Eoj: phone apps must show the same telemetry as browser sign-ins. Read-only account reader (taps only menu labels, deny-list, never types) reads account, plan and usage windows every 6 h on an idle unlocked phone; new ACCESSIBILITY_OFF health state replaces a false HEALTHY."
         }
       ],

@@ -8,7 +8,7 @@ import type { AdapterManifest } from "./manifest";
 import type { QuotaSignal } from "./quota";
 import type { ThreadSnapshot } from "./thread";
 import type { ArtifactFile, ProviderArtifactRef } from "./artifact";
-import type { Task, TaskAttempt, TaskError } from "./task";
+import type { ContextReport, Task, TaskAttempt, TaskError } from "./task";
 import { artifactSchema, providerArtifactRefSchema } from "./artifact";
 import { quotaSignalSchema } from "./quota";
 import { taskErrorSchema } from "./task";
@@ -257,6 +257,9 @@ export interface SubscriptionAdapter {
   readMemory?(signal: AbortSignal): Promise<VendorMemory>;
   listThreads?(opts: { limit: number }, signal: AbortSignal): Promise<VendorThreadSummary[]>;
   readThreadText?(id: string, signal: AbortSignal): Promise<VendorThreadText | null>;
+  // Context panel — non-spending, read-only: what fills this conversation's
+  // context, read in the page after a turn (see contextReportSchema).
+  readContext?(provider_thread_id: string, signal: AbortSignal): Promise<ContextReport | null>;
 
   // Execution — streaming, cancellable.
   execute(task: Task, ctx: ExecutionContext): AsyncIterable<AdapterEvent>;
