@@ -104,8 +104,14 @@ export function findPairingService(services: MdnsService[], name: string): MdnsS
 }
 
 /** Connect port for the phone at `host` (the port changes every time Wireless debugging is toggled). */
-export function findConnectService(services: MdnsService[], host: string): MdnsService | undefined {
-  return services.find((s) => s.type === ADB_CONNECT_SERVICE && s.host === host);
+/**
+ * The phone's wireless-debugging connect service. adbd names it
+ * `adb-<hardware serial>-<random>`, so a known phone is found by its serial
+ * even after the router gave it a new address; else by address.
+ */
+export function findConnectService(services: MdnsService[], host: string, deviceId?: string): MdnsService | undefined {
+  const connect = services.filter((s) => s.type === ADB_CONNECT_SERVICE);
+  return (deviceId ? connect.find((s) => s.name.startsWith(`adb-${deviceId}-`)) : undefined) ?? connect.find((s) => s.host === host);
 }
 
 function stateOf(token: string): AdbDeviceState {

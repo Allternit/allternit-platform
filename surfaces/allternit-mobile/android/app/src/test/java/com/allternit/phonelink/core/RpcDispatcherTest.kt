@@ -263,6 +263,20 @@ class RpcDispatcherTest {
     @Test fun schemaListsEveryDispatchedMethod() {
         val names = Schema.METHODS.map { it.name }.toSet()
         for (m in RpcDispatcher.UI_METHODS) assertTrue(m, m in names)
-        for (m in listOf("device_info", "config", "is_locked", "list_apps", "terminate_app", "wait")) assertTrue(m, m in names)
+        for (m in listOf("device_info", "config", "is_locked", "list_apps", "terminate_app", "wait", "screen_service")) assertTrue(m, m in names)
+    }
+
+    @Test fun screenServiceReportsStateAndTheLaunchLines() {
+        val down = call("screen_service")
+        assertEquals(false, down.getBoolean("running"))
+        assertEquals("waiting_for_computer", down.getString("state"))
+        assertEquals("Waiting", down.getString("lastError"))
+        assertEquals("k", down.getJSONObject("launch").getString("kill"))
+        assertEquals("s", down.getJSONObject("launch").getString("start"))
+        hooks.screen = ScreenServiceStatus(true, "running", null, null)
+        val up = call("screen_service")
+        assertEquals(true, up.getBoolean("running"))
+        assertTrue(up.isNull("lastError"))
+        assertTrue(up.isNull("launch"))
     }
 }

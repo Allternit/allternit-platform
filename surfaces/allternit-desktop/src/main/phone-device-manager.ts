@@ -293,12 +293,13 @@ export class PhoneDeviceManager extends EventEmitter {
   }
 
   /** `adb connect` to the phone's connect port (found over mDNS; falls back to a stored port). Returns the adb serial. */
-  private async connectHost(host: string, fallbackPort: number | null): Promise<string | null> {
+  private async connectHost(host: string, fallbackPort: number | null, deviceId?: string): Promise<string | null> {
     const mdns = await this.deps.adb(['mdns', 'services']);
-    const svc = findConnectService(parseMdnsServices(mdns.stdout), host);
+    const svc = findConnectService(parseMdnsServices(mdns.stdout), host, deviceId);
     const port = svc?.port ?? fallbackPort;
     if (!port) return null;
-    const target = `${host}:${port}`;
+    // The service names this phone: use its current address (DHCP may have moved it).
+    const target = `${svc?.host ?? host}:${port}`;
     const res = await this.deps.adb(['connect', target], { timeoutMs: 15_000 });
     return connectSucceeded(res.stdout + res.stderr) ? target : null;
   }
@@ -346,7 +347,7 @@ export class PhoneDeviceManager extends EventEmitter {
     if (this.now() < rec.nextAttemptAt) return;
     rec.state = nextPhoneState(rec.state, { type: 'reconnect_started' });
     this.emit('devices');
-    const serial = await this.connectHost(rec.stored.host, rec.stored.port);
+    const serial = await this.connectHost(rec.stored.host, rec.stored.port, rec.stored.id);
     if (serial) {
       rec.adbSerial = serial;
       this.adoptPort(rec, serial);
@@ -368,7 +369,7 @@ export class PhoneDeviceManager extends EventEmitter {
   /** Wireless debugging picks a new connect port each time it is toggled; remember the latest. */
   private adoptPort(rec: Record_, serial: string): void {
     const hp = parseHostPort(serial);
-    if (hp && hp.port !== rec.stored.port) {
+    if (hp && (hp.port !== rec.stored.port || hp.host !== rec.stored.host)) {
       rec.stored = { ...rec.stored, host: hp.host, port: hp.port };
       this.persist();
     }

@@ -6,14 +6,14 @@ import org.json.JSONObject
 /** Method catalogue served at GET /schema, plus the GET /skill manual. */
 object Schema {
     const val PROTOCOL_VERSION = 1
-    const val SERVER_VERSION = "0.3.0-android"
+    const val SERVER_VERSION = "0.3.2-android"
     const val PLATFORM = "android"
 
     /** Feature tags (a subset of iCTRL's, plus android-only ones). */
     val CAPABILITY_TAGS = listOf(
         "envelope_v1", "page_source_filter", "visible_only", "max_depth", "find_element_ref",
         "clear_text", "open_url", "stop_server", "screenshot_jpeg", "screen_text",
-        "system_metrics", "android", "coordinate_pixels", "back_button", "page_source_structured",
+        "system_metrics", "android", "coordinate_pixels", "back_button", "page_source_structured", "screen_service",
     )
 
     class P(val name: String, val type: String, val required: Boolean, val description: String)
@@ -35,6 +35,8 @@ object Schema {
             P("clear_sessions", "boolean", false, "Revoke every paired client"),
             P("stop_server", "boolean", false, "Stop the server ~1 s after replying. It stays off (also across reboots) until started from the app or re-provisioned."),
         ), "{message, allow_remote_access, listen_port, device_name, sessions:[{session_id, client_name, granted_at, last_active_at, expires, last_address, last_via}]}"),
+        M("screen_service", "Pings the live-screen service (the shell server that runs scrcpy-server) and reports it. When it isn't running, `launch` holds the two shell lines that start it as the shell user (run `kill`, then `start`, each as its own `adb shell` call); Allternit Desktop runs them over its own adb connection.", emptyList(),
+            "{running, state, lastError, launch:{kill, start}|null}"),
         M("page_source", "Accessibility tree of the windows on screen (app, keyboard, system dialogs). Text form close to iCTRL's: `Class, label: '…', value: '…', id: 'pkg:id/x', {{x, y}, {w, h}}, flags` in PIXELS.", listOf(
             P("filter", "object", false, "{label:'…'} | {type:'button'} | {text:'…'}: matching nodes plus their ancestors"),
             P("max_depth", "number", false, "Max depth"),

@@ -76,6 +76,8 @@ class FakeHooks(var cfg: ServerConfig = ServerConfig("dev-1234", "Test phone", t
         cfg = cfg.copy(allowRemote = allowRemote ?: cfg.allowRemote, port = port ?: cfg.port, deviceName = deviceName ?: cfg.deviceName)
     }
     override fun scheduleStop() { stopScheduled = true }
+    var screen = ScreenServiceStatus(false, "waiting_for_computer", "Waiting", ShellServerProtocol.LaunchLines("k", "s"))
+    override fun screenService() = screen
 }
 
 /** Software AES-GCM standing in for the Keystore-backed sealer in unit tests. */
