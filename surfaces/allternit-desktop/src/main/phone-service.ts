@@ -67,6 +67,7 @@ import { catalogNameForPackage, humanizePackage } from './phone-app-catalog.js';
 import { PhoneLinkBackend, cachedHostResolver, linkedPhoneSource, probeLinkedPhone, rememberLinkedApps,
   rememberLinkedHost, rememberLinkedMeshHost, LINK_SERIAL_PREFIX, type LinkedPhone } from './phone-link-backend.js';
 import { createMeshHealer, phoneOffMeshRoutes, type MeshHealFn } from './phone-mesh-heal.js';
+import { createMeshPendingRetry, type MeshPendingPhone } from './phone-mesh-retry.js';
 import { HELPER_SCRCPY_JAR, fileAndroidLinkStore, type AndroidLinkRecord } from './phone-link-android.js';
 import { openHelperStream, streamLaneFor, relaySerials, resolveHelperStreamHost } from './phone-link-stream.js';
 import { ScreenServiceKeeper, type AdbScreenPhone } from './phone-screen-service.js';
@@ -211,6 +212,7 @@ class PhoneService {
   private androidRecordsCache: { at: number; records: AndroidLinkRecord[] } | null = null;
   private screenKeeper: ScreenServiceKeeper | null = null;
   private meshHealer: MeshHealFn | null = null;
+  private meshRetry: (() => Promise<void>) | null = null;
   private accountScheduler: PhoneAccountScheduler | null = null;
 
   getGatewayFile(): string {
@@ -321,6 +323,53 @@ class PhoneService {
       });
     }
     return this.meshHealer;
+  }
+
+  /** Finishes the mesh join of phones linked while it couldn't (phone-mesh-retry.ts). */
+  private ensureMeshRetry(): () => Promise<void> {
+    if (this.meshRetry) return this.meshRetry;
+    const dir = this.dir();
+    const secrets: SecretStore = { get: readSecret, set: writeSecret, delete: deleteSecret };
+    const iosStore = fileLinkStore(path.join(dir, 'phone-link-ios.json'));
+    const androidStore = fileAndroidLinkStore(path.join(dir, 'phone-link-android.json'));
+    this.meshRetry = createMeshPendingRetry({
+      pending: () => [
+        ...this.iosRecords()
+          .filter((r) => r.meshPending && !r.meshHost && r.lanHost)
+          .map((r): MeshPendingPhone => ({ deviceId: r.deviceId ?? r.udid, platform: 'ios', name: r.deviceName, host: r.lanHost! })),
+        ...this.androidRecords()
+          .filter((r) => r.meshPending && !r.meshHost && r.lanHost)
+          .map((r): MeshPendingPhone => ({ deviceId: r.deviceId, platform: 'android', name: r.deviceName, host: r.lanHost! })),
+      ],
+      fetchSchema: async (host) => {
+        const res = await fetch(`http://${host}/schema`, { signal: AbortSignal.timeout(5000) });
+        return res.ok ? res.json() : null;
+      },
+      whoami: (host) => nodeDiscoveryDeps.fetchWhoami(host, 3000),
+      enroll: async () => {
+        const enrollment = await meshManager.enrollForGizzi();
+        if (!enrollment) throw new Error('Desktop is not signed in to an Allternit account.');
+        return enrollment;
+      },
+      call: (phone, method, params) => {
+        const linked = this.ensureLinkedBackend().linkedPhones().find((p) => p.deviceId === phone.deviceId);
+        if (!linked) return Promise.reject(new Error('not linked'));
+        return new IctrlClient({ host: phone.host, secrets, storeKey: linked.storeKey, logger: (m) => log.info(m) }).call(method, params, 15_000);
+      },
+      joined: (phone, meshHost) => {
+        if (phone.platform === 'android') {
+          const record = androidStore.load(phone.deviceId);
+          if (record) androidStore.save({ ...record, meshHost, meshPending: undefined });
+        } else {
+          const record = iosStore.all().find((r) => (r.deviceId ?? r.udid) === phone.deviceId);
+          if (record) iosStore.save({ ...record, meshHost, meshPending: undefined });
+        }
+        this.iosRecordsCache = null;
+        this.androidRecordsCache = null;
+      },
+      log: (line) => log.info(line),
+    });
+    return this.meshRetry;
   }
 
   /** A phone's mesh address (`<100.x>:8200`) bridged to a loopback host (`127.0.0.1:<port>`) by the mesh-node sidecar. */
@@ -924,6 +973,7 @@ class PhoneService {
 
   private syncLinkSockets(): void {
     if (!authManager.getSessionSnapshot()) return;
+    if (PHONE_LINK_MESH_ENABLED) void this.ensureMeshRetry()().catch(() => {});
     // Linked iPhones stream their live screen (IosVideoSession) and linked
     // Androids theirs through Phone Link (helper mode), so the web and PWA can
     // open them too; a linked Android stands in for its adb twin while that
