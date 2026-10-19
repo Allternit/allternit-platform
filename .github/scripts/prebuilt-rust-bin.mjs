@@ -64,6 +64,9 @@ function inputsFor(bins) {
     for (const dep of depInfoFiles(path.resolve(root, dFile))) {
       const abs = path.resolve(root, dep);
       if (!abs.startsWith(root + path.sep) || abs.includes(`${path.sep}target${path.sep}`)) continue;
+      // A build script's `rerun-if-changed=<dir>` lands in the .d file as a
+      // directory; its files are hashed through the crate's tracked files.
+      if (fs.existsSync(abs) && fs.statSync(abs).isDirectory()) continue;
       files.add(rel(abs));
       const crate = crateRoot(abs);
       if (crate) crates.add(rel(crate));
@@ -82,7 +85,8 @@ function hashOf(files) {
   for (const f of files) {
     const abs = path.join(root, f);
     h.update(`\0${f}\0`);
-    h.update(fs.existsSync(abs) ? fs.readFileSync(abs) : 'missing');
+    const st = fs.existsSync(abs) ? fs.statSync(abs) : null;
+    h.update(st?.isFile() ? fs.readFileSync(abs) : st ? 'dir' : 'missing');
   }
   return h.digest('hex');
 }
