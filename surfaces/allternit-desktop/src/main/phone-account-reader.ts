@@ -43,8 +43,13 @@ export interface ParsedAccountScreen {
   windows: PhoneLinkUsageWindow[];
 }
 
+/** Zero-width characters iOS puts inside emails and names; no-break spaces it puts before AM/PM. */
+function clean(label: string): string {
+  return label.replace(/[\u200b-\u200d\u2060\ufeff]/g, '').replace(/[\u00a0\u202f]/g, ' ');
+}
+
 function norm(label: string): string {
-  return label.toLowerCase().replace(/[’]/g, "'").replace(/\s+/g, ' ').replace(/[,:;·•]+$/, '').trim();
+  return clean(label).toLowerCase().replace(/[’]/g, "'").replace(/\s+/g, ' ').replace(/[,:;·•]+$/, '').trim();
 }
 
 function escapeRe(value: string): string {
@@ -73,7 +78,7 @@ export function parsePlan(labels: string[], spec: Pick<PhoneAccountSpec, 'plans'
     for (const plan of plans) {
       const p = escapeRe(plan.toLowerCase());
       const framed = new RegExp(
-        `^(?:(?:your |current )?(?:plan|subscription|membership)\\s*[:\\-–]\\s*)?(?:(?:${vendor}) )?${p}(?: (?:plan|subscription|membership|member|subscriber))?(?: \\(current\\)| · current| current plan)?$`,
+        `^(?:(?:billing|plan|subscription|membership)\\s*,\\s*)?(?:(?:your |current )?(?:plan|subscription|membership)\\s*[:\\-–]\\s*)?(?:(?:${vendor}) )?${p}(?: (?:plan|subscription|membership|member|subscriber))?(?: \\(current\\)| · current| current plan)?$`,
       );
       if (!framed.test(label)) continue;
       // A one-word bare name ("Pro", "SuperGrok") is also an upsell tile's title, so it needs a plan label nearby.
@@ -98,6 +103,12 @@ function windowHeader(label: string): WindowKind | null {
   const withModel = (id: string, name: string): WindowKind =>
     model ? { id: `${id}_${model}`, label: `${name} (${model[0].toUpperCase()}${model.slice(1)})` } : { id, label: name };
   if (/\bcurrent session\b|\b5[- ]?(hour|hr|h)\b|\bfive[- ]hour\b/.test(label)) return withModel('five_hour', '5-hour');
+  // Claude's weekly rows for one model family: "Fable only, 0% used, Resets Thu 9:00 AM".
+  const only = /^([a-z][a-z0-9 .-]{1,24}) only\b/.exec(label)?.[1];
+  if (only && only !== 'all models') {
+    const name = only.replace(/\b\w/g, (c) => c.toUpperCase());
+    return { id: `weekly_${only.replace(/[^a-z0-9]+/g, '_')}`, label: `Weekly (${name})` };
+  }
   if (/\bweekly\b|\bthis week\b|\b7[- ]day\b|\bper week\b/.test(label)) return withModel('weekly', 'Weekly');
   if (/\bdaily\b|\btoday'?s? (limit|usage|messages|queries)\b|\b24[- ]hour\b|\bper day\b/.test(label)) return withModel('daily', 'Daily');
   if (/\bmonthly\b|\bthis month\b|\bper month\b/.test(label)) return withModel('monthly', 'Monthly');
@@ -269,12 +280,25 @@ export interface ScreenElement {
   id: string;
 }
 
-/** read_ui lines (`class "label" [id] {{x, y}, {w, h}}`) or screen_text lines (`label @ (x, y)`). */
+/**
+ * read_ui lines: Android (`class "label" [id] {{x, y}, {w, h}}`) or the
+ * iPhone runner's XCUI tree (`Button, label: 'Usage', id: 'x', {{x, y}, {w, h}}`),
+ * or screen_text lines (`label @ (x, y)`).
+ */
 export function screenElements(text: string): ScreenElement[] {
   const out: ScreenElement[] = [];
   for (const raw of text.split('\n')) {
     const line = raw.trim();
     if (!line) continue;
+    const xcui = /^([A-Za-z]+),\s*(.*?)\s*\{\{[-\d.]+,\s*[-\d.]+\},\s*\{[-\d.]+,\s*[-\d.]+\}\}\s*$/.exec(line);
+    if (xcui) {
+      const fields = xcui[2];
+      const field = (name: string) => new RegExp(`(?:^|, )${name}: '(.*?)'(?=, (?:label|id|identifier|value|placeholderValue): '|,?\\s*$)`).exec(fields)?.[1] ?? '';
+      const label = clean(field('label'));
+      const id = field('id') || field('identifier');
+      if (label || id) out.push({ className: xcui[1], label, id });
+      continue;
+    }
     const quoted = /^(\S*)\s*"([^"]*)"\s*(?:\[([^\]]*)\])?/.exec(line);
     if (quoted) {
       out.push({ className: quoted[1] ?? '', label: quoted[2], id: quoted[3] ?? '' });
@@ -370,7 +394,10 @@ async function readOnce(deps: AccountReaderDeps, opts: unknown): Promise<PhoneLi
 
   let parsed: ParsedAccountScreen = { account: null, plan: null, windows: [] };
   try {
-    for (const path of spec.paths) {
+    // Confirmed paths only, once this platform has any: guessed labels are never tried on a known app.
+    const confirmed = spec.paths.filter((p) => p.verifiedOn === r.phone.platform);
+    const paths = confirmed.length ? confirmed : spec.paths.filter((p) => !p.verifiedOn);
+    for (const path of paths) {
       const got = await walkPath(deps, r, spec, path.steps, sleep, now);
       parsed = mergeParsed(parsed, got);
       if (parsed.plan && parsed.windows.length > 0 && parsed.account) {

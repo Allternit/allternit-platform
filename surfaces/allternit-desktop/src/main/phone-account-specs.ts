@@ -43,6 +43,8 @@ export type AccountStep = AccountTapStep | AccountReadStep;
 export interface AccountPath {
   /** For logs: which path got the answer. */
   name: string;
+  /** The phone platform this path was confirmed on. A phone runs only its platform's verified paths when it has any. */
+  verifiedOn?: 'ios' | 'android';
   steps: readonly AccountStep[];
 }
 
@@ -85,20 +87,28 @@ const SETTINGS = ['Settings', 'Open settings', 'Settings and help', 'id:settings
 export const ACCOUNT_SPECS: Readonly<Record<string, PhoneAccountSpec>> = {
   chatgpt: {
     app: 'chatgpt',
-    verified: false,
+    // Checked 2026-10-19 on iPhone (ChatGPT iOS): Menu → "Open Settings" shows
+    // "Email, <email>" and "Subscription, Plus". The app has no usage screen.
+    verified: true,
     plans: ['Free', 'Go', 'Plus', 'Pro', 'Team', 'Business', 'Enterprise', 'Edu'],
     vendorWords: ['ChatGPT'],
     paths: [
+      { name: 'menu → open settings (iOS, verified)', verifiedOn: 'ios', steps: [{ tap: ['Menu'], optional: true }, { tap: ['Open Settings'] }, read, { tap: ['Close'], optional: true }] },
       { name: 'sidebar → settings → account', steps: [{ tap: MENU, optional: true }, { tap: [...SETTINGS, ...PROFILE] }, read, { tap: ['Account', 'Subscription', 'Plan'], optional: true }, read] },
       { name: 'profile → settings', steps: [{ tap: PROFILE }, { tap: SETTINGS, optional: true }, read] },
     ],
   },
   claude: {
     app: 'claude',
-    verified: false,
+    // Checked 2026-10-19 on iPhone (Claude iOS): sidebar → account button
+    // ("<name>, Settings") shows "Personal, <email>" and "Billing, Max plan";
+    // Settings → Usage shows "Current session, N% used, …", "Weekly limits",
+    // "All models, N% used, Resets Thu 8:59 AM", "<Model> only, …".
+    verified: true,
     plans: ['Free', 'Pro', 'Max', 'Team', 'Enterprise'],
     vendorWords: ['Claude'],
     paths: [
+      { name: 'sidebar → account → usage (iOS, verified)', verifiedOn: 'ios', steps: [{ tap: ['id:drawer-toggle', 'Open sidebar'], optional: true }, { tap: ['id:sidebar-account-button'] }, read, { tap: ['Usage'] }, read, { tap: ['id:BackButton'], optional: true }, { tap: ['Close'], optional: true }] },
       { name: 'menu → settings → usage', steps: [{ tap: MENU, optional: true }, { tap: [...SETTINGS, ...PROFILE] }, read, { tap: ['Usage', 'Plan usage', 'Usage limits', 'Plan usage limits'], optional: true }, read] },
       { name: 'profile → usage', steps: [{ tap: PROFILE }, { tap: ['Usage', 'Plan usage', 'Usage limits'], optional: true }, read] },
     ],
@@ -115,10 +125,15 @@ export const ACCOUNT_SPECS: Readonly<Record<string, PhoneAccountSpec>> = {
   },
   gemini: {
     app: 'gemini',
-    verified: false,
+    // Checked 2026-10-19 on iPhone (Gemini iOS): the home screen's account
+    // button is labelled "Account and settings. Signed in as <name>, <email>".
+    // The account sheet shows no plan (only an "Upgrade to Google AI Plus"
+    // offer) and the app has no usage screen, so the account is all it shows.
+    verified: true,
     plans: ['Free', 'Advanced', 'Google AI Plus', 'Google AI Pro', 'Google AI Ultra', 'AI Pro', 'AI Ultra'],
     vendorWords: ['Gemini', 'Google'],
     paths: [
+      { name: 'home screen account button (iOS, verified)', verifiedOn: 'ios', steps: [read] },
       { name: 'account → settings', steps: [{ tap: PROFILE }, read, { tap: ['Settings', 'Subscriptions', 'Your plan'], optional: true }, read] },
       { name: 'menu → settings', steps: [{ tap: MENU, optional: true }, { tap: SETTINGS }, read] },
     ],

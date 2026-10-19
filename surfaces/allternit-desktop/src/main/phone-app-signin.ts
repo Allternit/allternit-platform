@@ -100,6 +100,13 @@ export function screenLabels(text: string): string[] {
   const out: string[] = [];
   for (const raw of text.split('\n')) {
     let line = raw.trim();
+    // The iPhone runner's XCUI tree: `StaticText, label: 'Usage', id: 'x', {{x, y}, {w, h}}`.
+    const xcui = /^[A-Za-z]+,\s*(.*?)\s*\{\{[-\d.]+,\s*[-\d.]+\},\s*\{[-\d.]+,\s*[-\d.]+\}\}\s*$/.exec(line);
+    if (xcui) {
+      const label = /(?:^|, )label: '(.*?)'(?=, (?:label|id|identifier|value|placeholderValue): '|,?\s*$)/.exec(xcui[1])?.[1];
+      if (label) out.push(label.replace(/[\u200b-\u200d\u2060\ufeff]/g, '').replace(/[\u00a0\u202f]/g, ' '));
+      continue;
+    }
     const quoted = /"([^"]*)"/.exec(line);
     if (quoted) line = quoted[1];
     line = line.replace(/\s*@\s*\(\s*-?[\d.]+,\s*-?[\d.]+\s*\)\s*$/, '').trim();
