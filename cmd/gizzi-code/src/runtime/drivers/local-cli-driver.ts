@@ -24,7 +24,9 @@ import type {
   TaskHandle,
 } from "@/runtime/runtime-driver"
 import { claudeToolDecision, deniedMessage } from "@/runtime/bots/bot-turn"
-import { acpCanLoadSession, acpMcpServers, claudePermissionFlags, claudeSessionFlags, codexPlanParams, codexThreadRequest, opencodeResumeFlags, qwenResumeFlags, vendorSessionIdFromEvent, codexMcpConfig, withInstructions } from "@/runtime/drivers/cli-session-flags"
+import { acpCanLoadSession, acpMcpServers, claudePermissionFlags, claudeSessionFlags, codexPlanParams, codexThreadRequest, opencodeResumeFlags, qwenResumeFlags, vendorSessionIdFromEvent, codexMcpConfig, withInstructions, claudeContextArgv } from "@/runtime/drivers/cli-session-flags"
+import { ContextBreakdown } from "@/runtime/session/context-breakdown"
+import { ContextBreakdownStore } from "@/runtime/session/context-breakdown-store"
 import { attachmentsToAcpContent } from "./attachments"
 import { RuntimeService, RuntimeNotFoundError, type RegisteredRuntime } from "@/runtime/runtime-service"
 import { ExecutionLogService } from "@/runtime/execution-log"
@@ -166,6 +168,7 @@ export class LocalCliDriver implements RuntimeDriver {
       vendorSessionId: task?.vendorSessionId,
       bot: task?.bot,
       plan: task?.plan,
+      model: task?.model,
     })
 
     const env = adapter.env ? { ...adapter.env, ...task?.env } : task?.env
@@ -465,6 +468,7 @@ export class LocalCliDriver implements RuntimeDriver {
     },
   ): AsyncIterable<AgentEvent> {
     let lastVendorId: string | undefined
+    let lastCallUsage: ClaudeCallUsage | undefined
     log.info("spawning stream-json subprocess", {
       taskId: handle.taskId,
       argv: argv.join(" "),
@@ -689,6 +693,7 @@ export class LocalCliDriver implements RuntimeDriver {
           }
 
           if (evt.type === "assistant" && Array.isArray(evt.message?.content)) {
+            if (evt.message?.usage) lastCallUsage = evt.message.usage
             const unsent = blocks.assistantParts(evt.message)
             for (const [idx, part] of evt.message.content.entries()) {
               if (!part || typeof part !== "object") continue
@@ -742,6 +747,25 @@ export class LocalCliDriver implements RuntimeDriver {
 
           if (evt.type === "result") {
             finished = true
+            if (this.cliName === "claude-cli") {
+              // What is in context now: the last request's prompt plus its
+              // reply (result.usage sums every request of the turn).
+              const size = claudeContextWindow(evt.modelUsage)
+              if (lastCallUsage && size > 0) {
+                const used =
+                  (lastCallUsage.input_tokens ?? 0) +
+                  (lastCallUsage.cache_read_input_tokens ?? 0) +
+                  (lastCallUsage.cache_creation_input_tokens ?? 0) +
+                  (lastCallUsage.output_tokens ?? 0)
+                const contextEv = { type: "context", used, size } as AgentEvent
+                yield contextEv
+                await this.logEvent(handle.taskId, contextEv)
+              }
+              // Then Claude Code's own split of it, read in the background.
+              if (options.sessionID && lastVendorId && !evt.is_error) {
+                refreshClaudeContext({ argv, vendorSessionId: lastVendorId, sessionID: options.sessionID, cwd: options.cwd, env: options.env })
+              }
+            }
             const usage = evt.usage ?? {}
             const finishEv = {
               type: "finish",
@@ -1456,6 +1480,13 @@ export class LocalCliDriver implements RuntimeDriver {
               continue
             }
 
+            // What is in context: the last request's tokens against the model's window.
+            if (method === "thread/tokenUsage/updated") {
+              const context = codexContext(params.tokenUsage)
+              if (context) pushEvent({ type: "context", ...context })
+              continue
+            }
+
             if (method === "turn/started" || method === "codex/event") {
               const event = params.event as Record<string, unknown> | undefined
               if (method === "turn/started" || event?.type === "task_started") {
@@ -1753,6 +1784,8 @@ interface CliAdapter {
       vendorSessionId?: string
       bot?: AgentTask["bot"]
       plan?: AgentTask["plan"]
+      /** The session's model (the picker's choice); the CLI validates it. */
+      model?: string
     },
   ): string[]
 }
@@ -1764,6 +1797,12 @@ function claudeStreamJsonInput(message: string): string {
       message: { role: "user", content: [{ type: "text", text: message }] },
     }) + "\n"
   )
+}
+
+/** A real model id from the session, not a placeholder ("default", the provider id). */
+function sessionModel(model: string | undefined, providerID: string): string | undefined {
+  const id = model?.trim()
+  return id && id !== "default" && id !== providerID ? id : undefined
 }
 
 function modelFlag(modelEnv?: string): string[] {
@@ -1793,7 +1832,11 @@ const CLI_ADAPTERS: Record<string, CliAdapter> = {
         ...claudePermissionFlags(ctx),
         "--disallowedTools", "AskUserQuestion",
         ...claudeSessionFlags(ctx),
-        ...modelFlag(PROVIDER_ENV_KEYS["claude-cli"]?.model ? process.env[PROVIDER_ENV_KEYS["claude-cli"]!.model!] : undefined),
+        // The picked model first; without one, the env override or Claude's default.
+        ...modelFlag(
+          sessionModel(ctx.model, "claude-cli") ??
+            (PROVIDER_ENV_KEYS["claude-cli"]?.model ? process.env[PROVIDER_ENV_KEYS["claude-cli"]!.model!] : undefined),
+        ),
       ]
     },
   },
@@ -2178,6 +2221,79 @@ function extractTextContent(content: unknown): string {
   return ""
 }
 
+/**
+ * Codex app-server `thread/tokenUsage/updated` → tokens in context / window.
+ * `last` is the latest request (input includes the cached part), `total`
+ * sums the whole thread, so only `last` measures the context.
+ */
+export function codexContext(tokenUsage: unknown): { used: number; size: number } | undefined {
+  const usage = tokenUsage as
+    | { last?: { inputTokens?: number; outputTokens?: number; totalTokens?: number }; modelContextWindow?: number | null }
+    | undefined
+  const size = Number(usage?.modelContextWindow) || 0
+  const last = usage?.last
+  if (!last || size <= 0) return undefined
+  const used = Number(last.totalTokens) || (Number(last.inputTokens) || 0) + (Number(last.outputTokens) || 0)
+  return used > 0 ? { used, size } : undefined
+}
+
+/** The main model's context window from a Claude `result` event's `modelUsage`. */
+function claudeContextWindow(modelUsage: unknown): number {
+  if (!modelUsage || typeof modelUsage !== "object") return 0
+  return Math.max(0, ...Object.values(modelUsage as Record<string, { contextWindow?: unknown }>).map((entry) => Number(entry?.contextWindow) || 0))
+}
+
+/** One `/context` read per session at a time; a newer turn's read waits for none. */
+const claudeContextReads = new Set<string>()
+const CLAUDE_CONTEXT_TIMEOUT_MS = 45_000
+
+/**
+ * Claude Code's own `/context` report for the session just run (a local
+ * command: no model call, nothing written to the transcript), recorded as
+ * the session's context breakdown. Best effort: on any failure the total
+ * from the turn's usage stays.
+ */
+function refreshClaudeContext(input: {
+  argv: string[]
+  vendorSessionId: string
+  sessionID: string
+  cwd?: string
+  env?: Record<string, string>
+}) {
+  if (claudeContextReads.has(input.sessionID)) return
+  claudeContextReads.add(input.sessionID)
+  void (async () => {
+    const proc = Bun.spawn(claudeContextArgv(input.argv, input.vendorSessionId), {
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "ignore",
+      cwd: input.cwd,
+      env: mergeEnv(process.env, input.env),
+    })
+    ProcessRegistry.track(proc, { label: "cli:claude-cli:context" })
+    const timer = setTimeout(() => terminateProcessTree(proc), CLAUDE_CONTEXT_TIMEOUT_MS)
+    try {
+      const text = await new Response(proc.stdout).text()
+      await proc.exited
+      const parsed = JSON.parse(text) as { result?: unknown; is_error?: unknown }
+      if (parsed.is_error || typeof parsed.result !== "string") return
+      const model = parsed.result.match(/\*\*Model:\*\*\s*(\S+)/)?.[1] ?? "claude"
+      const snapshot = ContextBreakdown.fromClaudeContext({
+        markdown: parsed.result,
+        sessionID: input.sessionID,
+        providerID: "claude-cli",
+        modelID: model,
+      })
+      if (snapshot) ContextBreakdownStore.record(snapshot)
+    } catch (error) {
+      log.info("claude /context read failed", { sessionID: input.sessionID, error: error instanceof Error ? error.message : String(error) })
+    } finally {
+      clearTimeout(timer)
+      claudeContextReads.delete(input.sessionID)
+    }
+  })()
+}
+
 function mergeEnv(base: NodeJS.ProcessEnv, extra?: Record<string, string>): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {}
   for (const [key, value] of Object.entries(base)) {
@@ -2393,10 +2509,20 @@ function safeKill(proc: KillableProcess): void {
   }
 }
 
+/** One API request's usage, as Claude stream-json reports it. */
+interface ClaudeCallUsage {
+  input_tokens?: number
+  output_tokens?: number
+  cache_read_input_tokens?: number
+  cache_creation_input_tokens?: number
+}
+
 interface StreamJsonEvent {
   type: string
   status?: string
-  message?: { id?: string; content?: Array<Record<string, unknown>> }
+  message?: { id?: string; content?: Array<Record<string, unknown>>; usage?: ClaudeCallUsage }
+  /** `result`: per-model totals for the turn, with each model's context window. */
+  modelUsage?: Record<string, { contextWindow?: number }>
   /** `stream_event` (--include-partial-messages): the raw API stream event. */
   event?: Record<string, unknown>
   content?: Array<Record<string, unknown>> | Record<string, unknown> | string

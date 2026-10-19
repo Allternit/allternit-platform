@@ -3,6 +3,7 @@ import { Session } from "@/runtime/session"
 import { MessageV2 } from "@/runtime/session/message-v2"
 import { SessionCompaction } from "@/runtime/session/compaction"
 import { ContextBreakdown } from "@/runtime/session/context-breakdown"
+import { ContextBreakdownStore } from "@/runtime/session/context-breakdown-store"
 import { Provider } from "@/runtime/providers/provider"
 import { ProviderQuotas, type QuotaResult } from "@/runtime/providers/quota"
 import { Log } from "@/shared/util/log"
@@ -56,7 +57,7 @@ export namespace SessionContextUsage {
 
   export async function read(sessionID: string, options: { limits?: boolean } = {}): Promise<Result> {
     await Session.get(sessionID)
-    const snapshot = ContextBreakdown.get(sessionID)
+    const snapshot = await ContextBreakdownStore.get(sessionID)
     const assistant = await latestAssistant(sessionID)
     const providerID = snapshot?.providerID ?? assistant?.providerID
     const modelID = snapshot?.modelID ?? assistant?.modelID
@@ -66,7 +67,11 @@ export namespace SessionContextUsage {
     const reported = assistant && (!snapshot || assistant.parentID === snapshot.messageID) ? assistant : undefined
 
     let breakdown: ContextBreakdown.Snapshot | null = null
-    if (snapshot) {
+    if (snapshot?.source === "brain") {
+      // The brain measured it (its own /context or context total) after the
+      // turn: its numbers stand, including its own autocompact buffer.
+      breakdown = snapshot
+    } else if (snapshot) {
       breakdown = ContextBreakdown.reconcile(snapshot, {
         providerContextTokens: reported ? contextTokens(reported.tokens) : undefined,
         autoCompactBuffer,
@@ -81,6 +86,11 @@ export namespace SessionContextUsage {
         providerContextTokens: contextTokens(reported.tokens),
         autoCompactBuffer: autoCompactBuffer ?? 0,
       })
+    }
+
+    if (breakdown?.source === "brain" && breakdown.brain) {
+      const brain = await Provider.getProvider(breakdown.brain).catch(() => undefined)
+      if (brain?.name) breakdown = { ...breakdown, brainName: brain.name }
     }
 
     const limits = options.limits === false || !providerID ? null : await limitsFor(providerID)

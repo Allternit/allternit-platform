@@ -969,6 +969,9 @@ export namespace Session {
         .then(({ Scratchpad }) => Scratchpad.cleanup(sessionID, !session.parentID))
         .catch((error) => log.warn("failed to clean session scratchpad", { sessionID, error }))
       await unshare(sessionID).catch(() => {})
+      await import("@/runtime/session/context-breakdown-store")
+        .then(({ ContextBreakdownStore }) => ContextBreakdownStore.remove(sessionID))
+        .catch(() => {})
       // WP-S1U-3: the session's last turn gets its ROUTE_MODEL label now.
       await import("@/runtime/routing/turn-router")
         .then((m) => m.endSession(sessionID, "session_deleted"))

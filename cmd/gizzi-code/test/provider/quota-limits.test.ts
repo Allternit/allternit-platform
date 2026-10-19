@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import {
   ProviderQuotas,
+  claudePlanLabel,
+  codexPlanLabel,
   parseAllternitUsage,
   parseGatewayRateLimits,
   parseLimitHeaders,
@@ -144,5 +146,19 @@ describe("Allternit Cloud quota credentials", () => {
       process.env = saved.env
       ProviderQuotas.clearCache()
     }
+  })
+})
+
+describe("plan labels", () => {
+  test("Claude: the account's rate-limit tier names the Max multiple", () => {
+    expect(claudePlanLabel({ organizationRateLimitTier: "default_claude_max_5x" })).toBe("Max (5x)")
+    expect(claudePlanLabel({ userRateLimitTier: "default_claude_max_20x", organizationRateLimitTier: "x" })).toBe("Max (20x)")
+    expect(claudePlanLabel({ subscriptionType: "pro" })).toBe("Pro")
+    expect(claudePlanLabel(undefined)).toBeUndefined()
+  })
+
+  test("Codex: rate_limits.plan_type", () => {
+    expect(codexPlanLabel({ plan_type: "plus" })).toBe("Plus")
+    expect(codexPlanLabel({})).toBeUndefined()
   })
 })

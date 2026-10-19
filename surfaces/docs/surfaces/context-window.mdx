@@ -1,0 +1,54 @@
+---
+title: Context window panel
+description: What fills a session's context window, measured by the brain that runs it, plus the plan usage limits for its model.
+---
+
+The composer's usage meter (HUD blocks with a percent, beside the model pill) opens the **Context window** panel. It is the same panel in Allternit Desktop, the ai.allternit.com phone layout and the m.allternit.com PWA.
+
+## What the panel shows
+
+| Part | What it shows |
+| --- | --- |
+| Header | Tokens in context / the model's window, and the share used. |
+| Bar | One segment per category, in the legend's colors. Deferred tools have no segment. |
+| Categories | Messages, System tools, Memory files, Skills, System prompt, MCP tools, MCP server instructions, Autocompact buffer and Free space, each with tokens and its share of the window. |
+| Deferred tools | **System tools (deferred)** and **MCP tools (deferred)**: tools the brain loads only when it searches for them. They are listed with their size, but they are not in the window, so their share reads **—**. |
+| MCP tools | Expands to each tool by server. The header shows the total tokens and the number of tools. |
+| Memory files | Expands to each instruction file (AGENTS.md, CLAUDE.md, auto-memory) with its size and count. |
+| System tools, Skills | Expand to each tool or skill with its size and count. |
+| Footnote | Who measured the numbers (see below) and whether auto-compact is on. |
+| Plan usage limits | The windows of the model's plan (5-hour, Weekly, per-model weekly) with reset times. The plan name shows beside the title when the provider says it, for example **Max (5x)** for Claude or **Plus** for Codex. |
+
+Every row shows for every brain. A category the brain does not fill reads 0 (a model gizzi runs itself has no deferred tools, for example).
+
+## Who measures it
+
+The numbers come from whatever runs the session's loop, so they match what that brain actually holds:
+
+| Brain | Source | Footnote |
+| --- | --- | --- |
+| API and local models (gizzi's own loop) | gizzi measures every request it sends: system blocks, tool schemas and messages. The provider's reported input then corrects Messages. | Estimated, or Measured by the provider |
+| Claude Code (`claude-cli`) | After each turn gizzi runs Claude Code's own `/context` on the session. This is a local command, so it makes no model call and spends no tokens. It does not write to the transcript. The result includes deferred tools, MCP tools, memory files and skills. | Reported by Claude Code |
+| Codex and other ACP brains | The brain's own context report (tokens in context / window). | *Name* reports only the total in context |
+
+Between turns, a newer total from the same brain moves only Messages, so the panel keeps the brain's last full split.
+
+The latest breakdown is saved with the session, so it survives a gizzi restart.
+
+## API
+
+`GET /api/v1/agent-sessions/:id/context` (gizzi `GET /session/:id/context`) returns `{ breakdown, limits }`. The breakdown fields added for this panel are all optional, so older clients ignore them:
+
+| Field | Meaning |
+| --- | --- |
+| `source` | `"gizzi"` or `"brain"`. |
+| `brain`, `brainName` | The brain's provider id and display name, when `source` is `"brain"`. |
+| `categories[].deferred` | `true` for `system_tools_deferred` and `mcp_tools_deferred`: listed, not counted in `usedTokens`. |
+| `skills` | `[{ name, tokens }]`, one entry per skill listed to the model. |
+
+`GET /api/v1/providers/:id/quota` gains `quota.plan`, the subscription's name when known.
+
+## Related
+
+- [Context usage in the CLI](/cli/context): the gizzi TUI's own `/context` report.
+- [Subscriptions](/surfaces/subscriptions): connecting the plans whose limits the panel shows.
