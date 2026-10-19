@@ -29,7 +29,8 @@ The numbers come from whatever runs the session's loop, so they match what that 
 | --- | --- | --- |
 | API and local models (gizzi's own loop) | gizzi measures every request it sends: system blocks, tool schemas and messages. The provider's reported input then corrects Messages. | Estimated, or Measured by the provider |
 | Claude Code (`claude-cli`) | After each turn gizzi runs Claude Code's own `/context` on the session. This is a local command, so it makes no model call and spends no tokens. It does not write to the transcript. The result includes deferred tools, MCP tools, memory files and skills. | Reported by Claude Code |
-| Codex and other ACP brains | The brain's own context report (tokens in context / window). | *Name* reports only the total in context |
+| Codex (`codex-cli`) | After each turn gizzi reads the thread's own record (`~/.codex/sessions/…/rollout-*.jsonl`). That record holds the base instructions, the developer blocks, skills, AGENTS.md and every item. The app server's `mcpServerStatus/list` gives each MCP server's tools. System tools is what the first request measured beyond the prompt blocks. When the MCP schemas are bigger than that, Codex is searching for them, so they show as deferred. | Reported by Codex |
+| Other CLI brains (Kimi, Qwen, Gemini, OpenCode…) | Each row is gizzi's measure of what it sends the brain: its instructions, memory files, MCP server instructions and bridge tools. Messages comes from the brain's reported total, or from the conversation when the brain reports none. The brain's own built-in prompt and tools are not visible to gizzi. | Rows: what gizzi sends *name* |
 
 Between turns, a newer total from the same brain moves only Messages, so the panel keeps the brain's last full split.
 
@@ -43,6 +44,7 @@ The latest breakdown is saved with the session, so it survives a gizzi restart.
 | --- | --- |
 | `source` | `"gizzi"` or `"brain"`. |
 | `brain`, `brainName` | The brain's provider id and display name, when `source` is `"brain"`. |
+| `split` | `"brain"` when the rows are the brain's own report, `"sent"` when they are gizzi's measure of what it sends the brain. |
 | `categories[].deferred` | `true` for `system_tools_deferred` and `mcp_tools_deferred`: listed, not counted in `usedTokens`. |
 | `skills` | `[{ name, tokens }]`, one entry per skill listed to the model. |
 
