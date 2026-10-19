@@ -33,6 +33,8 @@ object MeshMessages {
     const val EXTRA_REPLY = "com.allternit.phonelink.MESH_REPLY"
     /** Mesh → main: [android.os.Message.obj] is [encodeReport]'d [MeshReport]. */
     const val MSG_REPORT = 1
+    /** Main → mesh: stop and rejoin the node (same state dir/keys). Sent by `mesh_restart`. */
+    const val MSG_RESTART = 2
     /** Bundle key for the encoded report. Message.obj can't cross processes unless it's Parcelable. */
     const val KEY_REPORT = "report"
 

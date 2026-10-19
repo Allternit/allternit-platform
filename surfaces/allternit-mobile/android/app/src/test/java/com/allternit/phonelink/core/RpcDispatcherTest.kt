@@ -279,4 +279,51 @@ class RpcDispatcherTest {
         assertTrue(up.isNull("lastError"))
         assertTrue(up.isNull("launch"))
     }
+
+    // ── mesh_restart ────────────────────────────────────────────────────────
+
+    /** A dispatcher whose sleep advances its clock, so wait loops run instantly. */
+    private fun meshDispatcher(onSleep: (Long) -> Unit): RpcDispatcher {
+        var now = 0L
+        return RpcDispatcher({ ops }, { FakeDeviceOps.INFO }, auth, hooks, "com.allternit.phonelink",
+            sleep = { now += it; onSleep(now) }, clock = { now })
+    }
+
+    @Test fun meshRestartWaitsForTheRejoin() {
+        hooks.cfg = hooks.cfg.copy(meshState = "running", meshHost = "100.64.0.16:8200")
+        hooks.onMeshRestart = { hooks.cfg = hooks.cfg.copy(meshState = "starting", meshHost = null) }
+        val md = meshDispatcher { now -> if (now >= 3_000) hooks.cfg = hooks.cfg.copy(meshState = "running", meshHost = "100.64.0.16:8200") }
+        val r = md.dispatch("mesh_restart", JSONObject())
+        assertEquals(listOf(false), hooks.meshRestarts)
+        assertTrue(r.getBoolean("restarted"))
+        assertFalse(r.getBoolean("deferred"))
+        assertEquals("running", r.getString("mesh_state"))
+        assertEquals("100.64.0.16:8200", r.getString("mesh_host"))
+        assertEquals("100.64.0.16:8200", r.getString("previous_mesh_host"))
+        assertEquals(3_000L, r.getLong("waited_ms"))
+    }
+
+    @Test fun meshRestartGivesUpAfterWaitAndReportsTheState() {
+        hooks.onMeshRestart = { hooks.cfg = hooks.cfg.copy(meshState = "starting", meshHost = null) }
+        val r = meshDispatcher {}.dispatch("mesh_restart", JSONObject().put("wait", 5))
+        assertEquals("starting", r.getString("mesh_state"))
+        assertTrue(r.isNull("mesh_host"))
+        assertEquals(5_000L, r.getLong("waited_ms"))
+    }
+
+    @Test fun meshRestartWithWaitZeroIsDeferredForMeshCallers() {
+        val r = meshDispatcher { fail("must not wait") }.dispatch("mesh_restart", JSONObject().put("wait", 0))
+        assertEquals(listOf(true), hooks.meshRestarts)
+        assertTrue(r.getBoolean("deferred"))
+    }
+
+    @Test fun meshRestartWithoutAMeshIsATypedError() {
+        hooks.meshAvailable = false
+        expectType("mesh_unavailable") { call("mesh_restart") }
+    }
+
+    @Test fun meshRestartIsInTheSchema() {
+        assertTrue(Schema.METHODS.any { it.name == "mesh_restart" })
+        assertTrue("mesh_restart" in Schema.CAPABILITY_TAGS)
+    }
 }

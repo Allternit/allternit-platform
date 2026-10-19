@@ -14,7 +14,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -34,6 +36,10 @@ type Node struct {
 	proxy    *nodeProxy
 	srvLn    net.Listener
 	srvPort  int
+	// srvDead is set when the ServeLocal listener stopped accepting on its
+	// own (not via StopServe/Close): peers can no longer reach the phone even
+	// though the node may still report running. Health reports it.
+	srvDead bool
 
 	// listen is the seam tests override to serve without a tailnet. When nil,
 	// ServeLocal listens through the node's tsnet server.
@@ -236,6 +242,7 @@ func (n *Node) ServeLocal(port int, localPort int) error {
 	}
 	n.srvLn = ln
 	n.srvPort = port
+	n.srvDead = false
 	go n.serveLocal(ln, localPort)
 	return nil
 }
@@ -247,7 +254,14 @@ func (n *Node) serveLocal(ln net.Listener, localPort int) {
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
-			return // listener closed
+			// StopServe/Close clear srvLn before closing it; if it is still
+			// this listener, the tailnet listener died underneath us.
+			n.mu.Lock()
+			if n.srvLn == ln {
+				n.srvDead = true
+			}
+			n.mu.Unlock()
+			return
 		}
 		go func(c net.Conn) {
 			upstream, err := net.DialTimeout("tcp", target, 15*time.Second)
@@ -270,10 +284,66 @@ func (n *Node) StopServe() error {
 
 func (n *Node) stopServeLocked() {
 	if n.srvLn != nil {
-		n.srvLn.Close()
+		ln := n.srvLn
 		n.srvLn = nil
 		n.srvPort = 0
+		ln.Close()
 	}
+	n.srvDead = false
+}
+
+// Health returns a one-line self-check for an app watchdog, as
+// `state=<State()>;ip=<MeshIP()>;serve=<ok|dead|off>;warn=<codes>`:
+//
+//   - serve: "ok" while the ServeLocal listener accepts, "dead" when it
+//     stopped accepting without StopServe/Close, "off" when not serving;
+//   - warn: comma-separated tailscale health warnable codes currently
+//     unhealthy (e.g. "not-in-map-poll" — no live map poll with the control
+//     server, "mapresponse-timeout" — no netmap for a while, "no-derp-home",
+//     "derp-timed-out"), sorted, empty when healthy.
+//
+// tsnet does not expose the last netmap time; the not-in-map-poll and
+// mapresponse-timeout warnables are what tailscale itself raises when the
+// netmap goes stale. Never blocks for long; safe to poll.
+func (n *Node) Health() string {
+	n.mu.Lock()
+	srv := n.srv
+	serve := "off"
+	if n.srvLn != nil {
+		serve = "ok"
+	}
+	if n.srvDead {
+		serve = "dead"
+	}
+	n.mu.Unlock()
+	return formatHealth(n.State(), n.MeshIP(), serve, warnCodes(srv))
+}
+
+func warnCodes(srv *tsnet.Server) []string {
+	if srv == nil {
+		return nil
+	}
+	sys := srv.Sys()
+	if sys == nil {
+		return nil
+	}
+	ht, ok := sys.HealthTracker.GetOK()
+	if !ok || ht == nil {
+		return nil
+	}
+	var codes []string
+	for code := range ht.CurrentState().Warnings {
+		codes = append(codes, string(code))
+	}
+	return codes
+}
+
+// formatHealth renders Health's line; ';' and ',' never appear in the fields
+// it joins (state reasons are flattened).
+func formatHealth(state, ip, serve string, warn []string) string {
+	sort.Strings(warn)
+	clean := strings.NewReplacer(";", " ", "\n", " ").Replace
+	return "state=" + clean(state) + ";ip=" + ip + ";serve=" + serve + ";warn=" + strings.Join(warn, ",")
 }
 
 // StartProxy starts a loopback TCP proxy that forwards connections from

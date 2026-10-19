@@ -65,7 +65,8 @@ import { readPairRecord, startLoopbackForward } from './phone-usbmux.js';
 import { hasLinkedPhones } from './phone-link-stores.js';
 import { catalogNameForPackage, humanizePackage } from './phone-app-catalog.js';
 import { PhoneLinkBackend, cachedHostResolver, linkedPhoneSource, probeLinkedPhone, rememberLinkedApps,
-  rememberLinkedHost, LINK_SERIAL_PREFIX, type LinkedPhone } from './phone-link-backend.js';
+  rememberLinkedHost, rememberLinkedMeshHost, LINK_SERIAL_PREFIX, type LinkedPhone } from './phone-link-backend.js';
+import { createMeshHealer, phoneOffMeshRoutes, type MeshHealFn } from './phone-mesh-heal.js';
 import { fileAndroidLinkStore, type AndroidLinkRecord } from './phone-link-android.js';
 import { openHelperStream, streamLaneFor, relaySerials, resolveHelperStreamHost } from './phone-link-stream.js';
 import { ScreenServiceKeeper, type AdbScreenPhone } from './phone-screen-service.js';
@@ -207,6 +208,7 @@ class PhoneService {
   private iosRecordsCache: { at: number; records: IosLinkRecord[] } | null = null;
   private androidRecordsCache: { at: number; records: AndroidLinkRecord[] } | null = null;
   private screenKeeper: ScreenServiceKeeper | null = null;
+  private meshHealer: MeshHealFn | null = null;
 
   getGatewayFile(): string {
     return this.gatewayFile;
@@ -257,7 +259,9 @@ class PhoneService {
       const resolveHost = cachedHostResolver({
         discovery: nodeDiscoveryDeps,
         remember: rememberLinkedHost(stores),
-        ...(PHONE_LINK_MESH_ENABLED ? { meshProxy: (meshHost: string) => this.meshProxy(meshHost) } : {}),
+        ...(PHONE_LINK_MESH_ENABLED
+          ? { meshProxy: (meshHost: string) => this.meshProxy(meshHost), healMesh: this.ensureMeshHealer() }
+          : {}),
       });
       const client = (phone: LinkedPhone, host: string) =>
         new IctrlClient({ host, secrets, storeKey: phone.storeKey, logger: (m) => log.info(m) });
@@ -277,6 +281,42 @@ class PhoneService {
       });
     }
     return this.linkedBackend;
+  }
+
+  /**
+   * Phone mesh self-heal (phone-mesh-heal.ts): when a phone's mesh route
+   * resets but the phone answers over the LAN or the cable, it is asked to
+   * restart its mesh node (`mesh_restart`), at most once per 2 min per phone.
+   * Shared by the host resolver, helper calls and the Android live screen.
+   */
+  private ensureMeshHealer(): MeshHealFn {
+    if (!this.meshHealer) {
+      const dir = this.dir();
+      const secrets: SecretStore = { get: readSecret, set: writeSecret, delete: deleteSecret };
+      const stores = {
+        iosStore: fileLinkStore(path.join(dir, 'phone-link-ios.json')),
+        androidStore: fileAndroidLinkStore(path.join(dir, 'phone-link-android.json')),
+      };
+      this.meshHealer = createMeshHealer({
+        routes: phoneOffMeshRoutes({
+          androidSerial: (deviceId) => this.androidRecords().find((r) => r.deviceId === deviceId)?.serial ?? null,
+          iosUdid: (deviceId) => this.iosRecords().find((r) => (r.deviceId ?? r.udid) === deviceId)?.udid ?? null,
+          // Only an adb that is already up: a heal never downloads or starts adb.
+          adb: async () => (this.adbReady ? this.adbReady.catch(() => null) : null),
+          ...(process.platform === 'darwin' ? { usbForward: (udid: string, port: number) => startLoopbackForward(udid, port) } : {}),
+        }),
+        fetchWhoami: nodeDiscoveryDeps.fetchWhoami,
+        call: (phone, host, method, params, timeoutMs) =>
+          new IctrlClient({ host, secrets, storeKey: phone.storeKey, logger: (m) => log.info(m) }).call(method, params, timeoutMs),
+        rememberMeshHost: (phone, meshHost) => {
+          rememberLinkedMeshHost(stores)(phone, meshHost);
+          this.iosRecordsCache = null;
+          this.androidRecordsCache = null;
+        },
+        log: (line) => log.info(line),
+      });
+    }
+    return this.meshHealer;
   }
 
   /** A phone's mesh address (`<100.x>:8200`) bridged to a loopback host (`127.0.0.1:<port>`) by the mesh-node sidecar. */
@@ -616,6 +656,7 @@ class PhoneService {
           meshEnabled: PHONE_LINK_MESH_ENABLED,
           meshProxy: (meshHost) => this.meshProxy(meshHost),
           fetchWhoami: nodeDiscoveryDeps.fetchWhoami,
+          healMesh: this.ensureMeshHealer(),
         });
         const client = new IctrlClient({ host, secrets, storeKey: phone.storeKey, logger: (m) => log.info(m) });
         // One sealed call first: proves the key and corrects the clock the envelope's ts is checked against.

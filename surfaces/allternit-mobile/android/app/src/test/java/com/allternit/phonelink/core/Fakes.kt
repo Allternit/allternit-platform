@@ -78,6 +78,16 @@ class FakeHooks(var cfg: ServerConfig = ServerConfig("dev-1234", "Test phone", t
     override fun scheduleStop() { stopScheduled = true }
     var screen = ScreenServiceStatus(false, "waiting_for_computer", "Waiting", ShellServerProtocol.LaunchLines("k", "s"))
     override fun screenService() = screen
+    /** mesh_restart: whether there is a mesh, and what the restart does to cfg. */
+    var meshAvailable = true
+    val meshRestarts = ArrayList<Boolean>()
+    var onMeshRestart: () -> Unit = {}
+    override fun requestMeshRestart(deferred: Boolean): Boolean {
+        if (!meshAvailable) return false
+        meshRestarts.add(deferred)
+        onMeshRestart()
+        return true
+    }
 }
 
 /** Software AES-GCM standing in for the Keystore-backed sealer in unit tests. */

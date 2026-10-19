@@ -42,6 +42,16 @@ class GomobileMeshNode(hostname: String) : MeshNodeApi {
     override fun serveLocal(port: Int, localPort: Int) =
         node.serveLocal(port.toLong(), localPort.toLong())
 
+    /**
+     * Node.Health() (`state=…;ip=…;serve=…;warn=…`), looked up reflectively so
+     * an older Mesh.aar without it still runs: the watchdog then falls back
+     * to [state] and [meshIp].
+     */
+    private val healthMethod = try { node.javaClass.getMethod("health") } catch (_: Exception) { null }
+
+    override fun health(): String =
+        healthMethod?.let { m -> try { m.invoke(node) as? String } catch (_: Exception) { null } }.orEmpty()
+
     override fun state(): String = node.state()
     override fun meshIp(): String = node.meshIP()
     override fun close() = node.close()

@@ -25,6 +25,7 @@ class FakeMeshNode(
     var closed = false
     var stateOverride: String = "running"
     var refreshCount = 0
+    var healthLine: String = ""
 
     override fun start(controlUrl: String, authKey: String, dataDir: File) {
         if (failStart) throw RuntimeException("control server unreachable")
@@ -40,6 +41,7 @@ class FakeMeshNode(
     override fun meshIp() = ip
     override fun close() { closed = true }
     override fun refreshInterfaces() { refreshCount++ }
+    override fun health() = healthLine
 }
 
 /**
@@ -187,5 +189,44 @@ class MeshControllerTest {
         } finally {
             internal.stop()
         }
+    }
+
+    @Test fun restartClosesTheNodeAndRejoinsOnTheSameStateDir() {
+        val nodes = CopyOnWriteArrayList<FakeMeshNode>()
+        val c = MeshController(
+            params = params(authKey = ""),
+            nodeFactory = { h -> FakeMeshNode(hostname = h).also { nodes.add(it) } },
+            onReport = { reports.add(it) },
+        )
+        controller = c
+        c.start()
+        awaitRunning()
+        assertEquals(1, nodes.size)
+        reports.clear()
+
+        c.restart("test")
+        val deadline = System.currentTimeMillis() + 10_000
+        while (nodes.size < 2 || reports.none { it.state == "running" }) {
+            if (System.currentTimeMillis() > deadline) throw AssertionError("no rejoin: $reports")
+            Thread.sleep(10)
+        }
+        assertTrue("old node closed", nodes[0].closed)
+        assertFalse("new node live", nodes[1].closed)
+        assertEquals(File(tmp.root, "mesh"), nodes[1].startArgs!!.third)
+        assertEquals("starting", reports.first().state)
+    }
+
+    @Test fun healthSnapshotParsesNodeHealthAndFallsBackForOlderAars() {
+        val fake = FakeMeshNode()
+        val c = newController(fake)
+        assertNull("no node yet", c.healthSnapshot())
+        c.start()
+        awaitRunning()
+        // Older Mesh.aar: Health() missing -> state + address only.
+        assertEquals(MeshHealth("running", "100.64.0.5", "unknown"), c.healthSnapshot())
+        fake.healthLine = "state=running;ip=100.64.0.5;serve=dead;warn=not-in-map-poll"
+        val h = c.healthSnapshot()!!
+        assertEquals("dead", h.serve)
+        assertEquals(setOf("not-in-map-poll"), h.warnings)
     }
 }

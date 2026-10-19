@@ -90,6 +90,7 @@ port, err := node.StartProxy("100.x.y.z", 4096) // loopback proxy → 127.0.0.1:
 err  = node.StopProxy()
 st   := node.State()                         // "stopped"|"starting"|"needs_login"|"running"|"error:…"
 err  = node.ServeLocal(8200, 8080)           // tailnet :8200 → 127.0.0.1:8080 (inbound serving)
+h    := node.Health()                        // "state=…;ip=…;serve=ok|dead|off;warn=<tailscale health codes>" (app watchdogs)
 err  = node.StopServe()
 err  = node.Close()
 ```

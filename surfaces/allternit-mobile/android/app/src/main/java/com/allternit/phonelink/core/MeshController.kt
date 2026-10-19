@@ -16,6 +16,8 @@ interface MeshNodeApi {
     fun close()
     /** Re-read the device's interfaces (Android denies Go the netlink dump; see GomobileMeshNode). */
     fun refreshInterfaces() {}
+    /** Node.Health()'s self-check line, or "" when the bound node predates it (see [MeshHealth.parse]). */
+    fun health(): String = ""
 }
 
 /** Backoff between failed joins: quick at first (boot races Wi-Fi), then every 5 minutes. */
@@ -132,6 +134,30 @@ class MeshController(
             try { n?.close() } catch (_: Exception) {}
             return false
         }
+    }
+
+    /**
+     * Stops and rejoins the node: the old tsnet server closes, a fresh one
+     * starts on the same state dir, so the node key (and mesh IP) carry
+     * over and no pre-auth key is needed. Used by the watchdog and by the
+     * main process's `mesh_restart` (MeshMessages.MSG_RESTART).
+     */
+    @Synchronized
+    fun restart(reason: String) {
+        log("mesh restart: $reason")
+        stop()
+        start()
+    }
+
+    /** The current node's self-check, or null while no node is up (joining or retrying). */
+    fun healthSnapshot(): MeshHealth? {
+        val n = synchronized(lock) { node } ?: return null
+        val raw = try { n.health() } catch (e: Exception) { "" }
+        MeshHealth.parse(raw)?.let { return it }
+        // Older Mesh.aar without Health(): state and address only.
+        val st = try { n.state() } catch (e: Exception) { "error:${(e.message ?: e.javaClass.simpleName).take(120)}" }
+        val ip = try { n.meshIp() } catch (e: Exception) { "" }
+        return MeshHealth(st, ip, "unknown")
     }
 
     /** The node's current state + mesh address, as a report (network changes, post-join). */

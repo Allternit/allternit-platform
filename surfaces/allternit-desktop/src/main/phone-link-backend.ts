@@ -28,6 +28,7 @@ import {
   type LinkedPhoneSource,
 } from './phone-link-health.js';
 import type { HandedOverFrom, PhoneLinkApp, PhoneLinkDevice, PhoneLinkHealth } from './phone-link-types.js';
+import type { MeshHealFn } from './phone-mesh-heal.js';
 
 export type { LinkedPhone, LinkedPhoneSource };
 
@@ -61,6 +62,10 @@ const isInt = (v: unknown): v is number => Number.isInteger(v) && (v as number) 
  */
 export type HostResolver = ((phone: LinkedPhone) => Promise<string | null>) & {
   lastPath?: (deviceId: string) => 'lan' | 'mesh' | undefined;
+  /** Drops a cached answer so the next resolution probes again (after a mesh heal). */
+  forget?: (deviceId: string) => void;
+  /** Restarts the phone's mesh node over LAN/cable when its mesh route fails (phone-mesh-heal.ts). */
+  healMesh?: MeshHealFn;
 };
 
 export interface PhoneLinkBackendDeps {
@@ -212,7 +217,29 @@ export class PhoneLinkBackend implements UsbPhoneBackend {
     if (!phone) throw new Error(`Phone ${serial} is not linked.`);
     const host = await (this.deps.resolveHost ?? defaultResolveHost)(phone);
     if (!host) throw new Error(`No address is known for ${phone.name ?? 'this phone'} yet.`);
-    return this.deps.client(phone, host).call(method, params, timeoutMs);
+    return this.callHealing(phone, host, method, params, timeoutMs);
+  }
+
+  /**
+   * A sealed call that survives one dead mesh route: when the call can't
+   * reach a phone resolved over the mesh, the phone's mesh node is restarted
+   * over LAN/cable (phone-mesh-heal.ts, at most once per 2 min per phone)
+   * and the call is retried once on a fresh resolution.
+   */
+  private async callHealing<T>(phone: LinkedPhone, host: string, method: string, params: Record<string, unknown>, timeoutMs?: number): Promise<T> {
+    try {
+      return await this.deps.client(phone, host).call<T>(method, params, timeoutMs);
+    } catch (error) {
+      const r = this.deps.resolveHost;
+      const unreachable = error instanceof IctrlError && error.code === 'unreachable';
+      if (!unreachable || !r?.healMesh || r.lastPath?.(phone.deviceId) !== 'mesh') throw error;
+      const healed = await r.healMesh(phone, `${method} over the mesh failed`).catch(() => null);
+      if (!healed) throw error;
+      r.forget?.(phone.deviceId);
+      const again = await r(phone);
+      if (!again) throw error;
+      return this.deps.client(phone, again).call<T>(method, params, timeoutMs);
+    }
   }
 
   /** The linked phone behind a `link:` serial (name, platform), or null when none is linked. */
@@ -234,7 +261,7 @@ export class PhoneLinkBackend implements UsbPhoneBackend {
       return { ok: false, result: fail('device_offline', `No address is known for ${phone.name ?? 'this phone'} yet. Open Phone Link setup to reconnect it.`) };
     }
     try {
-      const value = await this.deps.client(phone, host).call<T>(method, params, timeoutMs);
+      const value = await this.callHealing<T>(phone, host, method, params, timeoutMs);
       return { ok: true, value };
     } catch (error) {
       return { ok: false, result: await this.mapError(phone, host, error) };
@@ -518,6 +545,11 @@ export function cachedHostResolver(deps: {
    * MeshManager.proxyFor; tests fake it. Omit to disable the mesh fallback.
    */
   meshProxy?: (meshHost: string) => Promise<string | null>;
+  /**
+   * The mesh route failed (proxy up, phone silent): restart the phone's mesh
+   * node off the mesh (cable, since LAN just failed) and retry once.
+   */
+  healMesh?: MeshHealFn;
   ttlMs?: number;
   now?: () => number;
 }): HostResolver {
@@ -542,14 +574,18 @@ export function cachedHostResolver(deps: {
     }
     if (!host) host = (await sharedScan()).get(phone.deviceId) ?? null;
     if (!host && phone.meshHost && deps.meshProxy) {
-      const proxy = await deps.meshProxy(phone.meshHost).catch(() => null);
-      if (proxy) {
-        const who = await deps.discovery.fetchWhoami(proxy, 3000).catch(() => null);
-        if (who?.device_id === phone.deviceId) {
-          host = proxy;
-          path = 'mesh';
-        }
+      const viaMesh = async (meshHost: string, timeoutMs: number): Promise<string | null> => {
+        const proxy = await deps.meshProxy!(meshHost).catch(() => null);
+        if (!proxy) return null;
+        const who = await deps.discovery.fetchWhoami(proxy, timeoutMs).catch(() => null);
+        return who?.device_id === phone.deviceId ? proxy : null;
+      };
+      host = await viaMesh(phone.meshHost, 3000);
+      if (!host && deps.healMesh) {
+        const healed = await deps.healMesh(phone, 'mesh route failed').catch(() => null);
+        if (healed) host = await viaMesh(healed.meshHost ?? phone.meshHost, 15_000);
       }
+      if (host) path = 'mesh';
     }
     if (!host) {
       cache.delete(phone.deviceId);
@@ -562,10 +598,13 @@ export function cachedHostResolver(deps: {
     return host;
   };
   resolve.lastPath = (deviceId: string) => paths.get(deviceId);
+  resolve.forget = (deviceId: string) => {
+    cache.delete(deviceId);
+  };
+  if (deps.healMesh) resolve.healMesh = deps.healMesh;
   return resolve;
 }
 
-/** Writes a phone's new address back to the store it came from. */
 /** Saves a phone's re-read app list into its link record. */
 export function rememberLinkedApps(stores: { iosStore: IosLinkStore; androidStore: AndroidLinkStore }) {
   return (phone: LinkedPhone, apps: PhoneLinkApp[]): void => {
@@ -579,6 +618,20 @@ export function rememberLinkedApps(stores: { iosStore: IosLinkStore; androidStor
   };
 }
 
+/** Writes a phone's new mesh address (after a mesh heal rejoined it elsewhere) back to its link record. */
+export function rememberLinkedMeshHost(stores: { iosStore: IosLinkStore; androidStore: AndroidLinkStore }) {
+  return (phone: LinkedPhone, meshHost: string): void => {
+    if (phone.platform === 'android') {
+      const record = stores.androidStore.load(phone.deviceId);
+      if (record) stores.androidStore.save({ ...record, meshHost });
+      return;
+    }
+    const record = stores.iosStore.all().find((r) => (r.deviceId ?? r.udid) === phone.deviceId);
+    if (record) stores.iosStore.save({ ...record, meshHost });
+  };
+}
+
+/** Writes a phone's new address back to the store it came from. */
 export function rememberLinkedHost(stores: { iosStore: IosLinkStore; androidStore: AndroidLinkStore }) {
   return (phone: LinkedPhone, host: string): void => {
     if (phone.platform === 'android') {

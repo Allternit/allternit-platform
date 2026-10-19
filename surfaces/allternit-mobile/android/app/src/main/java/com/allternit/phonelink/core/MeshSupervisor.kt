@@ -101,6 +101,18 @@ class MeshSupervisor(
         }
     }
 
+    /**
+     * `mesh_restart` asked the bound mesh process to rejoin. Until its fresh
+     * reports arrive the state reads `starting` and no mesh host is offered,
+     * so a caller waiting for `running` never sees the old node's report.
+     * False when no mesh process is bound (nothing to restart in place).
+     */
+    fun onRestartRequested(): Boolean = synchronized(lock) {
+        if (!bound || died) return false
+        lastReport = MeshReport("starting", null)
+        true
+    }
+
     /** Clean unbind (server stopped): stop reporting, cancel any pending re-bind. */
     fun onMeshStopped() = synchronized(lock) {
         stopped = true

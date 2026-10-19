@@ -15,6 +15,7 @@ import android.util.Log
 import com.allternit.phonelink.core.MeshController
 import com.allternit.phonelink.core.MeshMessages
 import com.allternit.phonelink.core.MeshReport
+import com.allternit.phonelink.core.MeshWatchdog
 
 /**
  * Runs the gomobile tsnet node in the app's private `:mesh` process
@@ -37,6 +38,13 @@ class MeshService : Service() {
     private var handler: Handler? = null
     private var controller: MeshController? = null
     private var replyTo: Messenger? = null
+    private var watchdog: MeshWatchdog? = null
+    private val watchdogTick = object : Runnable {
+        override fun run() {
+            try { watchdog?.tick() } catch (e: Exception) { Log.i(TAG, "mesh watchdog tick failed: ${e.message}") }
+            handler?.postDelayed(this, MeshWatchdog.INTERVAL_MS)
+        }
+    }
 
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) = onNetworkChanged()
@@ -70,10 +78,18 @@ class MeshService : Service() {
             Log.i(TAG, "network callback unavailable: ${e.message}")
         }
         ctl.start()
+        watchdog = MeshWatchdog(
+            probe = { ctl.healthSnapshot() },
+            restart = { reason -> ctl.restart("watchdog: $reason") },
+            log = { Log.i(TAG, it) },
+        )
+        h.postDelayed(watchdogTick, MeshWatchdog.INTERVAL_MS)
         return Messenger(h).binder
     }
 
     override fun onDestroy() {
+        handler?.removeCallbacks(watchdogTick)
+        watchdog = null
         try {
             getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(networkCallback)
         } catch (_: Exception) {
@@ -87,8 +103,10 @@ class MeshService : Service() {
     }
 
     private fun handleCommand(msg: Message): Boolean {
-        // The main process drives this service through bind/unbind alone; any
-        // stray message (e.g. a recycled report) is dropped, never crashed on.
+        // The main process drives this service through bind/unbind, plus
+        // MSG_RESTART (`mesh_restart`); any other message is dropped, never
+        // crashed on.
+        if (msg.what == MeshMessages.MSG_RESTART) controller?.restart("requested by the main process (mesh_restart)")
         return true
     }
 
