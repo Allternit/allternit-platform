@@ -1,7 +1,10 @@
 import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  AUDIO_CODEC_OPUS,
   buildServerCommand,
+  opusHeadChannels,
+  ScrcpyAudioDemuxer,
   DEVICE_SERVER_PATH,
   encodeControlMessage,
   encodeSetDisplayPower,
@@ -13,6 +16,7 @@ import {
   ScrcpySession,
   SCRCPY_SERVER_SHA256,
   verifyServerBinary,
+  type PhoneAudioMeta,
   type PhoneStreamMeta,
   type ScrcpyAdb,
   type ScrcpyDeviceMessage,
@@ -190,11 +194,14 @@ describe('pinned server binary', () => {
 });
 
 describe('server command', () => {
-  it('pins the version, tunnel and h264, and disables audio', () => {
+  it('pins the version, tunnel and h264, and asks for opus audio by default', () => {
     const cmd = buildServerCommand({});
+    expect(cmd).toContain('audio=true audio_codec=opus');
+    expect(cmd).not.toContain('audio_dup'); // scrcpy's default: sound moves to the computer
+    expect(buildServerCommand({ audio: false })).toContain('audio=false');
+    expect(buildServerCommand({ audio: false })).not.toContain('audio_codec');
     expect(cmd).toContain('app_process / com.genymobile.scrcpy.Server 5.0.1');
     expect(cmd).toContain('tunnel_forward=true');
-    expect(cmd).toContain('audio=false');
     expect(cmd).toContain('video_codec=h264');
     expect(cmd).toContain('stay_awake=true');
     expect(cmd).toContain('max_size=1080');
@@ -243,7 +250,7 @@ function fakeAdb() {
   return { adb, calls, kill, endShell: (code: number | null) => shellDone(code) };
 }
 
-function makeSession(opts: { deviceName?: string; width?: number; height?: number; startTimeoutMs?: number; onConnect?: (s: FakeSocket, n: number) => void } = {}) {
+function makeSession(opts: { deviceName?: string; width?: number; height?: number; startTimeoutMs?: number; audio?: boolean; onConnect?: (s: FakeSocket, n: number) => void } = {}) {
   const { adb, calls, kill, endShell } = fakeAdb();
   const sockets: FakeSocket[] = [];
   const session = new ScrcpySession(
@@ -260,7 +267,9 @@ function makeSession(opts: { deviceName?: string; width?: number; height?: numbe
       port: 27183,
       startTimeoutMs: opts.startTimeoutMs,
     },
-    {},
+    // The video/control socket tests run audio-off (two sockets); the audio
+    // tests below run the production default (video, audio, control).
+    { audio: opts.audio ?? false },
   );
   const meta = vi.fn();
   const chunks: Buffer[] = [];
@@ -479,5 +488,130 @@ describe('ScrcpySession', () => {
     session.close();
     session.close();
     expect(ended).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── Audio (opus over the audio socket) ──────────────────────────────────────
+
+const OPUS_HEAD = Buffer.concat([Buffer.from('OpusHead', 'latin1'), Buffer.from([1, 2, 0x38, 0x01, 0x80, 0xbb, 0, 0, 0, 0, 0])]);
+
+function audioPacket(payload: Buffer, opts: { config?: boolean; pts?: number } = {}): Buffer {
+  const h = Buffer.alloc(12);
+  h.writeBigUInt64BE(opts.config ? 0x4000000000000000n : BigInt(opts.pts ?? 0), 0);
+  h.writeUInt32BE(payload.length, 8);
+  return Buffer.concat([h, payload]);
+}
+
+function codecId(id: number): Buffer {
+  const b = Buffer.alloc(4);
+  b.writeUInt32BE(id >>> 0, 0);
+  return b;
+}
+
+const OPUS_META: PhoneAudioMeta = { codec: 'opus', sampleRate: 48000, channels: 2, description: OPUS_HEAD.toString('base64') };
+
+describe('ScrcpyAudioDemuxer', () => {
+  it('reads the codec id, the OpusHead config packet and opus frames across splits', () => {
+    const d = new ScrcpyAudioDemuxer();
+    const bytes = Buffer.concat([codecId(AUDIO_CODEC_OPUS), audioPacket(OPUS_HEAD, { config: true }), audioPacket(Buffer.from([0xfc, 1, 2]), { pts: 20000 }), audioPacket(Buffer.from([0xfc, 3]))]);
+    const events = [];
+    for (const byte of bytes) events.push(...d.push(Buffer.from([byte])));
+    expect(events).toEqual([
+      { type: 'meta', meta: OPUS_META },
+      { type: 'chunk', data: Buffer.from([0xfc, 1, 2]) },
+      { type: 'chunk', data: Buffer.from([0xfc, 3]) },
+    ]);
+  });
+
+  it('codec 0 (no capture, Android < 11) and 1 (error) disable audio and swallow the rest', () => {
+    for (const [id, reason] of [[0, /Android 11/], [1, /configuration error/], [0x00616163, /unsupported audio codec 0x616163/]] as const) {
+      const d = new ScrcpyAudioDemuxer();
+      const events = d.push(Buffer.concat([codecId(id), audioPacket(Buffer.from([1]))]));
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({ type: 'disabled' });
+      expect((events[0] as { reason: string }).reason).toMatch(reason);
+      expect(d.disabled).toBe(true);
+      expect(d.push(audioPacket(Buffer.from([2])))).toEqual([]);
+    }
+  });
+
+  it('a corrupt packet disables audio instead of throwing', () => {
+    const d = new ScrcpyAudioDemuxer();
+    const bad = Buffer.alloc(12);
+    bad.writeUInt32BE(0xffffffff, 8); // absurd size
+    expect(d.push(Buffer.concat([codecId(AUDIO_CODEC_OPUS), bad]))).toEqual([{ type: 'disabled', reason: 'corrupt audio packet' }]);
+  });
+
+  it('reads the channel count from the OpusHead', () => {
+    const mono = Buffer.from(OPUS_HEAD);
+    mono[9] = 1;
+    expect(opusHeadChannels(mono)).toBe(1);
+    expect(opusHeadChannels(Buffer.from('nope'))).toBe(2);
+  });
+});
+
+describe('ScrcpySession audio', () => {
+  function audioSession() {
+    const s = makeSession({ audio: true });
+    const audioMetas: PhoneAudioMeta[] = [];
+    const audioChunks: Buffer[] = [];
+    s.session.on('audioMeta', (m) => audioMetas.push(m));
+    s.session.on('audioChunk', (c) => audioChunks.push(Buffer.from(c)));
+    // Server order with audio on: video (dummy byte), audio, control, then the header.
+    const goLive = async () => {
+      const started = s.session.start();
+      await vi.waitFor(() => expect(s.sockets.length).toBe(1));
+      const header = headerBytes('Pixel 8');
+      s.sockets[0].emit('data', header.subarray(0, 1));
+      await vi.waitFor(() => expect(s.sockets.length).toBe(3));
+      s.sockets[0].emit('data', header.subarray(1));
+      await started;
+      expect(s.meta).toHaveBeenCalledTimes(1);
+    };
+    return { ...s, audioMetas, audioChunks, goLive };
+  }
+
+  it('opens video, audio, control in order and demuxes opus beside the video', async () => {
+    const s = audioSession();
+    await s.goLive();
+    expect(s.calls[2][1]).toContain('audio=true audio_codec=opus');
+    const [video, audio, control] = s.sockets;
+    audio.emit('data', Buffer.concat([codecId(AUDIO_CODEC_OPUS), audioPacket(OPUS_HEAD, { config: true }), audioPacket(Buffer.from([0xfc, 9]))]));
+    video.emit('data', mediaPacket(Buffer.from([0, 0, 0, 1, 0x65])));
+    expect(s.audioMetas).toEqual([OPUS_META]);
+    expect(s.audioChunks).toEqual([Buffer.from([0xfc, 9])]);
+    expect(s.chunks).toEqual([Buffer.from([0, 0, 0, 1, 0x65])]);
+    // Input goes to the third socket (control), never the audio one.
+    expect(s.session.sendControl([{ type: 'home' }])).toEqual({ ok: true });
+    expect(control.written).toHaveLength(2);
+    expect(audio.written).toHaveLength(0);
+    s.session.close();
+    expect(audio.destroyed).toBe(true);
+  });
+
+  it('a phone without audio capture (codec 0) keeps streaming video', async () => {
+    const s = audioSession();
+    await s.goLive();
+    s.sockets[1].emit('data', codecId(0));
+    s.sockets[0].emit('data', mediaPacket(Buffer.from([1])));
+    expect(s.audioMetas).toEqual([]);
+    expect(s.chunks).toEqual([Buffer.from([1])]);
+    expect(s.ended).not.toHaveBeenCalled();
+  });
+
+  it('audio socket errors/closes and throwing audio listeners never end the video', async () => {
+    const s = audioSession();
+    s.session.on('audioChunk', () => {
+      throw new Error('decoder blew up');
+    });
+    await s.goLive();
+    const [video, audio] = s.sockets;
+    audio.emit('data', Buffer.concat([codecId(AUDIO_CODEC_OPUS), audioPacket(OPUS_HEAD, { config: true }), audioPacket(Buffer.from([1]))]));
+    audio.emit('error', new Error('ECONNRESET'));
+    audio.emit('close');
+    video.emit('data', mediaPacket(Buffer.from([2])));
+    expect(s.chunks).toEqual([Buffer.from([2])]);
+    expect(s.ended).not.toHaveBeenCalled();
+    expect(s.session.sendControl([{ type: 'home' }])).toEqual({ ok: true });
   });
 });

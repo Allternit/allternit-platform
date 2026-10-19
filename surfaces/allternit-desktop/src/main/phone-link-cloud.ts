@@ -14,7 +14,16 @@
  *     Annex-B access units between (the WebCodecs client in allternit-ai
  *     decodes; see src/lib/phone-stream).
  *   Browser → Desktop: JSON {type:'input', events}, {type:'displayPower', on},
- *     {type:'ping'} (we answer pong).
+ *     {type:'audio', on}, {type:'ping'} (we answer pong).
+ *
+ * Audio is opt-in per socket: nothing audio is sent until a viewer sends
+ * {type:'audio', on:true}. Then: JSON {type:'audioMeta', codec, sampleRate,
+ * channels, description} (the current format, and again on every change),
+ * followed by binary frames [0xA0] + one encoded audio packet. 0xA0 can
+ * never start an Annex-B access unit (00 00 01 / 00 00 00 01), so video
+ * binary frames are unchanged and clients that never opt in see no audio.
+ * {type:'audio', on:false}, the last viewer leaving, or a reconnect turns it
+ * off again.
  *
  * Electron-free and Node-testable: socket factory, clock and every service
  * hook are injected. phone-service.ts owns the lifecycle and the scrcpy
@@ -22,7 +31,10 @@
  */
 
 import WebSocket from 'ws';
-import type { PhoneInputEvent, PhoneStreamMeta } from './phone-scrcpy.js';
+import type { PhoneAudioMeta, PhoneInputEvent, PhoneStreamMeta } from './phone-scrcpy.js';
+
+/** First byte of a relay binary frame that carries audio (never the first byte of an Annex-B unit). */
+export const PHONE_AUDIO_FRAME_TAG = 0xa0;
 
 export interface LinkedPhoneSummary {
   serial: string;
@@ -79,6 +91,8 @@ const HELLO_DEBOUNCE_MS = 1_000;
 export type PhoneLinkOutgoing =
   | { kind: 'meta'; meta: PhoneStreamMeta }
   | { kind: 'chunk'; chunk: Uint8Array }
+  | { kind: 'audioMeta'; meta: PhoneAudioMeta }
+  | { kind: 'audioChunk'; chunk: Uint8Array }
   | { kind: 'end'; reason: string };
 
 export class PhoneLinkPhoneSocket {
@@ -90,6 +104,10 @@ export class PhoneLinkPhoneSocket {
   private helloTimer: ReturnType<typeof setTimeout> | null = null;
   private lastHelloJson = '';
   private viewers = 0;
+  /** A viewer asked for sound ({type:'audio', on:true}); off until then. */
+  private audioWanted = false;
+  /** The stream's current audio format, sent when a viewer opts in. */
+  private audioMeta: PhoneAudioMeta | null = null;
 
   constructor(private readonly deps: PhoneLinkSocketDeps) {}
 
@@ -132,10 +150,20 @@ export class PhoneLinkPhoneSocket {
 
   /** Data plane, service → viewer. */
   push(out: PhoneLinkOutgoing): void {
+    if (out.kind === 'audioMeta') this.audioMeta = out.meta;
+    else if (out.kind === 'end') this.audioMeta = null;
     if (this.socket?.readyState() !== SOCKET_OPEN) return;
     try {
       if (out.kind === 'chunk') {
         this.socket.send(out.chunk);
+      } else if (out.kind === 'audioChunk') {
+        if (!this.audioWanted || !this.audioMeta || out.chunk.length === 0) return;
+        const frame = new Uint8Array(out.chunk.length + 1);
+        frame[0] = PHONE_AUDIO_FRAME_TAG;
+        frame.set(out.chunk, 1);
+        this.socket.send(frame);
+      } else if (out.kind === 'audioMeta') {
+        if (this.audioWanted) this.socket.send(JSON.stringify({ type: 'audioMeta', ...out.meta }));
       } else if (out.kind === 'meta') {
         this.socket.send(JSON.stringify({ type: 'meta', ...out.meta }));
       } else {
@@ -171,6 +199,7 @@ export class PhoneLinkPhoneSocket {
     this.socket = socket;
     socket.onOpen(() => {
       this.retryAttempt = 0;
+      this.audioWanted = false; // a fresh relay leg: viewers opt in again
       this.lastHelloJson = '';
       this.sendHello();
       this.heartbeatTimer = setInterval(() => this.sendJson({ type: 'ping' }), HEARTBEAT_INTERVAL_MS);
@@ -244,6 +273,7 @@ export class PhoneLinkPhoneSocket {
       }
       case 'viewer_detached': {
         this.viewers = Math.max(0, this.viewers - 1);
+        if (this.viewers === 0) this.audioWanted = false;
         // The service owns the scrcpy stop (it tracks viewer counts per
         // serial and grace-timers); we only report that this socket's last
         // viewer for the serial is gone.
@@ -257,6 +287,12 @@ export class PhoneLinkPhoneSocket {
       }
       case 'displayPower': {
         this.deps.onDisplayPower(serial, frame.on !== false);
+        return;
+      }
+      case 'audio': {
+        // Every opt-in gets the current format (a second viewer may join later).
+        this.audioWanted = frame.on === true;
+        if (this.audioWanted && this.audioMeta) this.sendJson({ type: 'audioMeta', ...this.audioMeta });
         return;
       }
       default:

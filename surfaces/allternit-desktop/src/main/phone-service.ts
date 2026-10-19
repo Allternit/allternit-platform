@@ -847,6 +847,10 @@ class PhoneService {
       const consumer: StreamConsumer = {
         onMeta: (_s, meta) => socket.push({ kind: 'meta', meta }),
         onChunk: (_s, chunk) => socket.push({ kind: 'chunk', chunk }),
+        // Replayed on subscribe (the stream is already live here); the socket
+        // sends audio only to viewers that opted in with {type:'audio', on:true}.
+        onAudioMeta: (_s, meta) => socket.push({ kind: 'audioMeta', meta }),
+        onAudioChunk: (_s, chunk) => socket.push({ kind: 'audioChunk', chunk }),
         onEnd: (_s, info) => {
           socket.push({ kind: 'end', reason: info.reason });
           this.detachLinkConsumer(serial);

@@ -10,17 +10,26 @@
  * is surfaced as `ended` (the device manager's reconnect loop handles
  * re-pairing; the stream can simply be started again).
  *
+ * Audio (both lanes, best-effort): sessions may emit `audioMeta` (format)
+ * and `audioChunk` (one encoded packet). The manager keeps the last
+ * audioMeta per serial and replays it to a consumer that subscribes late
+ * (the relay attaches after start()); chunks only flow while the stream is
+ * live and has an audioMeta. A throwing audio consumer is isolated — audio
+ * never ends or stalls the video fan-out.
+ *
  * The session factory is injected so this manager is unit-tested with a fake
  * session and no adb/phone.
  */
 
-import type { PhoneInputEvent, PhoneStreamMeta, PhoneStreamOptions, PhoneStreamStatus, ScrcpyDeviceMessage } from './phone-scrcpy.js';
+import type { PhoneAudioMeta, PhoneInputEvent, PhoneStreamMeta, PhoneStreamOptions, PhoneStreamStatus, ScrcpyDeviceMessage } from './phone-scrcpy.js';
 
 /** What the manager needs from a session (ScrcpySession satisfies this). */
 export interface StreamSessionHandle {
   start(): Promise<void>;
   on(event: 'meta', cb: (meta: PhoneStreamMeta) => void): () => void;
   on(event: 'videoChunk', cb: (chunk: Buffer) => void): () => void;
+  on(event: 'audioMeta', cb: (meta: PhoneAudioMeta) => void): () => void;
+  on(event: 'audioChunk', cb: (chunk: Buffer) => void): () => void;
   on(event: 'deviceMessage', cb: (message: ScrcpyDeviceMessage) => void): () => void;
   on(event: 'ended', cb: (info: { reason: string }) => void): () => void;
   sendControl(events: PhoneInputEvent[]): { ok: boolean; message?: string };
@@ -32,6 +41,10 @@ export interface StreamSessionHandle {
 export interface StreamConsumer {
   onMeta?(serial: string, meta: PhoneStreamMeta): void;
   onChunk?(serial: string, chunk: Buffer): void;
+  /** Audio format; replayed on subscribe when the stream already has one. */
+  onAudioMeta?(serial: string, meta: PhoneAudioMeta): void;
+  /** One encoded audio packet (opus or AAC, per the last onAudioMeta). */
+  onAudioChunk?(serial: string, chunk: Buffer): void;
   onDeviceMessage?(serial: string, message: ScrcpyDeviceMessage): void;
   onEnd?(serial: string, info: { reason: string }): void;
 }
@@ -46,6 +59,16 @@ interface StreamRecord {
   consumers: Set<StreamConsumer>;
   /** True while a start() is in flight; stop() during this still cleans up. */
   starting: boolean;
+  /** The current session's last audio format (null = no audio yet / none). */
+  audioMeta: PhoneAudioMeta | null;
+}
+
+function safely(fn: () => void): void {
+  try {
+    fn();
+  } catch {
+    // An audio consumer failure stays with that consumer.
+  }
 }
 
 export class PhoneStreamManager {
@@ -56,7 +79,7 @@ export class PhoneStreamManager {
   private record(serial: string): StreamRecord {
     let rec = this.streams.get(serial);
     if (!rec) {
-      rec = { session: null, status: { state: 'idle' }, consumers: new Set(), starting: false };
+      rec = { session: null, status: { state: 'idle' }, consumers: new Set(), starting: false, audioMeta: null };
       this.streams.set(serial, rec);
     }
     return rec;
@@ -69,6 +92,7 @@ export class PhoneStreamManager {
     rec.session?.close('replaced by a new stream');
     rec.status = { state: 'starting' };
     rec.starting = true;
+    rec.audioMeta = null;
 
     const session = this.deps.createSession(serial, opts);
     rec.session = session;
@@ -80,11 +104,21 @@ export class PhoneStreamManager {
       if (rec.status.state !== 'live') return;
       for (const consumer of rec.consumers) consumer.onChunk?.(serial, chunk);
     });
+    session.on('audioMeta', (meta) => {
+      if (rec.session !== session) return;
+      rec.audioMeta = meta;
+      for (const consumer of rec.consumers) safely(() => consumer.onAudioMeta?.(serial, meta));
+    });
+    session.on('audioChunk', (chunk) => {
+      if (rec.session !== session || rec.status.state !== 'live' || !rec.audioMeta) return;
+      for (const consumer of rec.consumers) safely(() => consumer.onAudioChunk?.(serial, chunk));
+    });
     session.on('deviceMessage', (message) => {
       for (const consumer of rec.consumers) consumer.onDeviceMessage?.(serial, message);
     });
     session.on('ended', (info) => {
       rec.starting = false;
+      if (rec.session === session) rec.audioMeta = null;
       // A failed start keeps its `error` status: the start() return already
       // told the caller, and a late cleanup `ended` must not mask it.
       if (rec.status.state === 'error') return;
@@ -128,10 +162,18 @@ export class PhoneStreamManager {
       .map(([serial]) => serial);
   }
 
+  /** The live stream's current audio format, or null (no stream, no audio, or not reported yet). */
+  audioMeta(serial: string): PhoneAudioMeta | null {
+    const rec = this.streams.get(serial);
+    return rec && (rec.status.state === 'live' || rec.status.state === 'starting') ? rec.audioMeta : null;
+  }
+
   /** Attach a consumer; the returned function detaches. Detaching never stops the stream. */
   subscribe(serial: string, consumer: StreamConsumer): () => void {
     const rec = this.record(serial);
     rec.consumers.add(consumer);
+    const audioMeta = this.audioMeta(serial);
+    if (audioMeta) safely(() => consumer.onAudioMeta?.(serial, audioMeta));
     return () => rec.consumers.delete(consumer);
   }
 

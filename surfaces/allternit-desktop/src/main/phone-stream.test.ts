@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { PhoneStreamManager, type StreamConsumer, type StreamSessionHandle } from './phone-stream.js';
-import type { PhoneStreamMeta, ScrcpyDeviceMessage } from './phone-scrcpy.js';
+import type { PhoneAudioMeta, PhoneStreamMeta, ScrcpyDeviceMessage } from './phone-scrcpy.js';
 
 const META: PhoneStreamMeta = { deviceName: 'Pixel 8', width: 1080, height: 2400, codec: 'h264' };
 
@@ -155,3 +155,74 @@ function makeConsumer(): StreamConsumer & { meta: ReturnType<typeof vi.fn>; chun
   };
   return { ...c, onMeta: c.meta, onChunk: c.chunk, onDeviceMessage: c.message, onEnd: c.end };
 }
+
+describe('PhoneStreamManager audio', () => {
+  const SERIAL = '192.168.1.20:41234';
+  const AUDIO: PhoneAudioMeta = { codec: 'opus', sampleRate: 48000, channels: 2, description: 'T3B1c0hlYWQ=' };
+
+  it('fans audio meta/chunks out and replays the last audioMeta to a late subscriber', async () => {
+    const { manager, sessions } = makeManager();
+    const early = { metas: [] as PhoneAudioMeta[], chunks: [] as Buffer[] };
+    manager.subscribe(SERIAL, {
+      onAudioMeta: (_s, m) => early.metas.push(m),
+      onAudioChunk: (_s, c) => early.chunks.push(c),
+    });
+    await goLive(manager, sessions);
+    const session = sessions.get(SERIAL)!;
+    session.emit('audioMeta', AUDIO);
+    session.emit('audioChunk', Buffer.from([1]));
+    expect(early.metas).toEqual([AUDIO]);
+    expect(early.chunks).toEqual([Buffer.from([1])]);
+    expect(manager.audioMeta(SERIAL)).toEqual(AUDIO);
+
+    const late = { metas: [] as PhoneAudioMeta[], chunks: [] as Buffer[] };
+    manager.subscribe(SERIAL, {
+      onAudioMeta: (_s, m) => late.metas.push(m),
+      onAudioChunk: (_s, c) => late.chunks.push(c),
+    });
+    expect(late.metas).toEqual([AUDIO]);
+    session.emit('audioChunk', Buffer.from([2]));
+    expect(late.chunks).toEqual([Buffer.from([2])]);
+  });
+
+  it('drops audio chunks before live or before an audioMeta, and forgets the meta when the stream ends', async () => {
+    const { manager, sessions } = makeManager();
+    const chunks: Buffer[] = [];
+    manager.subscribe(SERIAL, { onAudioChunk: (_s, c) => chunks.push(c) });
+    await manager.start(SERIAL);
+    const session = sessions.get(SERIAL)!;
+    session.emit('audioMeta', AUDIO);
+    session.emit('audioChunk', Buffer.from([1])); // not live yet
+    session.emit('meta', META);
+    session.emit('audioChunk', Buffer.from([2]));
+    expect(chunks).toEqual([Buffer.from([2])]);
+    await manager.stop(SERIAL);
+    await vi.waitFor(() => expect(manager.status(SERIAL).state).toBe('ended'));
+    expect(manager.audioMeta(SERIAL)).toBeNull();
+    const replayed: PhoneAudioMeta[] = [];
+    manager.subscribe(SERIAL, { onAudioMeta: (_s, m) => replayed.push(m) });
+    expect(replayed).toEqual([]);
+  });
+
+  it('video without audio never calls the audio hooks; a throwing audio consumer does not stop video', async () => {
+    const { manager, sessions } = makeManager();
+    const video: Buffer[] = [];
+    const onAudioMeta = vi.fn();
+    manager.subscribe(SERIAL, {
+      onAudioMeta,
+      onAudioChunk: () => {
+        throw new Error('boom');
+      },
+      onChunk: (_s, c) => video.push(c),
+    });
+    await goLive(manager, sessions);
+    const session = sessions.get(SERIAL)!;
+    session.emit('videoChunk', Buffer.from([9]));
+    expect(onAudioMeta).not.toHaveBeenCalled();
+    session.emit('audioMeta', AUDIO);
+    expect(() => session.emit('audioChunk', Buffer.from([1]))).not.toThrow();
+    session.emit('videoChunk', Buffer.from([10]));
+    expect(video).toEqual([Buffer.from([9]), Buffer.from([10])]);
+    expect(manager.status(SERIAL).state).toBe('live');
+  });
+});

@@ -13,6 +13,14 @@
  *   1 CONFIG  JSON {"width","height","scale","rotation"}
  *   2 FRAME   one H.264 access unit, Annex-B, SPS/PPS in-band on every IDR
  *   3 ENDED   JSON {"reason"} — the broadcast stopped; the socket stays open
+ *   4 AUDIO_CONFIG JSON {"codec":"aac","sampleRate","channels","asc":"<base64>"}
+ *             — the app-audio format (AAC-LC AudioSpecificConfig); resent
+ *             after CONFIG for each subscriber and whenever it changes
+ *   5 AUDIO   one raw AAC access unit (no ADTS)
+ *
+ * Audio is best-effort: a malformed AUDIO_CONFIG is skipped, AUDIO before a
+ * valid AUDIO_CONFIG or before live is dropped, and nothing audio-related
+ * ends the session. Older helpers never send 4/5 → video only.
  *
  * iOS needs a person to start a broadcast once each time. On a fresh
  * connection that reports "not broadcasting" this asks the runner to try
@@ -30,7 +38,7 @@
 import * as net from 'node:net';
 import type { Duplex } from 'node:stream';
 import { ICTRL_PORT } from './ictrl-client.js';
-import type { PhoneInputEvent, PhoneStreamMeta, ScrcpyDeviceMessage } from './phone-scrcpy.js';
+import type { PhoneAudioMeta, PhoneInputEvent, PhoneStreamMeta, ScrcpyDeviceMessage } from './phone-scrcpy.js';
 import type { StreamSessionHandle } from './phone-stream.js';
 
 // ── Packet framing ──────────────────────────────────────────────────────────
@@ -39,6 +47,8 @@ export const IOS_PACKET_STATUS = 0;
 export const IOS_PACKET_CONFIG = 1;
 export const IOS_PACKET_FRAME = 2;
 export const IOS_PACKET_ENDED = 3;
+export const IOS_PACKET_AUDIO_CONFIG = 4;
+export const IOS_PACKET_AUDIO = 5;
 
 const PACKET_HEADER_LENGTH = 5;
 const PACKET_MAX_SIZE = 8 * 1024 * 1024; // far above a 4 Mbit/s IDR
@@ -56,7 +66,9 @@ export type IosVideoPacket =
   | { type: 'status'; broadcasting: boolean }
   | ({ type: 'config' } & IosVideoConfig)
   | { type: 'frame'; data: Buffer }
-  | { type: 'ended'; reason: string };
+  | { type: 'ended'; reason: string }
+  | { type: 'audioConfig'; meta: PhoneAudioMeta }
+  | { type: 'audio'; data: Buffer };
 
 /** Build one packet (tests, and anything that ever needs to speak the format). */
 export function encodeIosVideoPacket(type: number, payload: Buffer | string | object): Buffer {
@@ -99,6 +111,23 @@ export function decodeIosVideoPacket(type: number, payload: Buffer): IosVideoPac
       const reason = typeof json?.reason === 'string' && json.reason.trim() ? json.reason.trim() : 'the iPhone stopped the live screen';
       return { type: 'ended', reason };
     }
+    case IOS_PACKET_AUDIO_CONFIG: {
+      const json = jsonOf(payload);
+      const sampleRate = json?.sampleRate;
+      const channels = json?.channels;
+      const asc = typeof json?.asc === 'string' ? json.asc : '';
+      if (json?.codec !== 'aac' || !Number.isInteger(sampleRate) || (sampleRate as number) <= 0) return null;
+      if (!Number.isInteger(channels) || (channels as number) <= 0 || (channels as number) > 8) return null;
+      // The AudioSpecificConfig is 2+ bytes; re-encode so the description is canonical base64.
+      const ascBytes = Buffer.from(asc, 'base64');
+      if (ascBytes.length < 2) return null;
+      return {
+        type: 'audioConfig',
+        meta: { codec: 'aac', sampleRate: sampleRate as number, channels: channels as number, description: ascBytes.toString('base64') },
+      };
+    }
+    case IOS_PACKET_AUDIO:
+      return payload.length > 0 ? { type: 'audio', data: payload } : null;
     default:
       return null;
   }
@@ -252,6 +281,8 @@ export interface IosVideoDeps {
 interface IosVideoEvents {
   meta(meta: PhoneStreamMeta): void;
   videoChunk(chunk: Buffer): void;
+  audioMeta(meta: PhoneAudioMeta): void;
+  audioChunk(chunk: Buffer): void;
   deviceMessage(message: ScrcpyDeviceMessage): void;
   ended(info: { reason: string }): void;
 }
@@ -284,6 +315,7 @@ export class IosVideoSession implements StreamSessionHandle {
   private head: Buffer | null = Buffer.alloc(0); // null once the HTTP head is parsed
   private errorBody: { status: number; body: Buffer } | null = null;
   private config: IosVideoConfig | null = null;
+  private audioMeta: PhoneAudioMeta | null = null;
   private live = false;
   private ended = false;
   private askedToStart = false;
@@ -436,6 +468,22 @@ export class IosVideoSession implements StreamSessionHandle {
         // Before live this is a stale broadcast ending; keep waiting for a CONFIG.
         if (this.live) this.dispose(packet.reason);
         return;
+      case 'audioConfig':
+        this.audioMeta = packet.meta;
+        this.emitAudio(() => this.emit('audioMeta', packet.meta));
+        return;
+      case 'audio':
+        if (this.live && this.audioMeta) this.emitAudio(() => this.emit('audioChunk', packet.data));
+        return;
+    }
+  }
+
+  /** Audio listeners can never break the video reader. */
+  private emitAudio(fn: () => void): void {
+    try {
+      fn();
+    } catch (error) {
+      this.log(`audio listener failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 

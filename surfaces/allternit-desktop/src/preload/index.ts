@@ -641,6 +641,8 @@ const permissionGuideAPI = {
 
 type PhoneStreamOptions = { maxSize?: number; videoBitrate?: number; maxFps?: number };
 type PhoneStreamMeta = { deviceName: string; width: number; height: number; codec: 'h264' };
+/** Phone audio format (opus from Android, AAC from iPhone); description = base64 WebCodecs AudioDecoderConfig.description. */
+type PhoneAudioMeta = { codec: 'opus' | 'aac'; sampleRate: number; channels: number; description: string };
 type PhoneStreamStatus =
   | { state: 'idle' }
   | { state: 'starting' }
@@ -734,6 +736,42 @@ const phonesAPI = {
     streamSubscribe(serial);
     return () => {
       ipcRenderer.removeListener('phone:stream-chunk', listener);
+      streamUnsubscribe(serial);
+    };
+  },
+  /** Audio format for the stream; also delivers the current one right away when the stream already has audio. */
+  onStreamAudioMeta: (serial: string, cb: (meta: PhoneAudioMeta) => void): (() => void) => {
+    let active = true;
+    let seen = false;
+    const listener = (_: IpcRendererEvent, s: string, meta: PhoneAudioMeta) => {
+      if (s !== serial) return;
+      seen = true;
+      cb(meta);
+    };
+    ipcRenderer.on('phone:stream-audio-meta', listener);
+    streamSubscribe(serial);
+    // A late subscriber missed the push: read the current format once.
+    void ipcRenderer.invoke('phone:stream-audio-meta-get', serial).then(
+      (meta: PhoneAudioMeta | null) => {
+        if (active && !seen && meta) cb(meta);
+      },
+      () => undefined,
+    );
+    return () => {
+      active = false;
+      ipcRenderer.removeListener('phone:stream-audio-meta', listener);
+      streamUnsubscribe(serial);
+    };
+  },
+  /** One encoded audio packet (no header), decoded per the last onStreamAudioMeta. */
+  onStreamAudioChunk: (serial: string, cb: (chunk: ArrayBuffer) => void): (() => void) => {
+    const listener = (_: IpcRendererEvent, s: string, chunk: Uint8Array) => {
+      if (s === serial) cb(toArrayBuffer(chunk));
+    };
+    ipcRenderer.on('phone:stream-audio-chunk', listener);
+    streamSubscribe(serial);
+    return () => {
+      ipcRenderer.removeListener('phone:stream-audio-chunk', listener);
       streamUnsubscribe(serial);
     };
   },

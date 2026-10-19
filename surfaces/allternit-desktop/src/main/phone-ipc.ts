@@ -80,6 +80,10 @@ const errorResult = (error: unknown) => ({ ok: false as const, message: error in
 // senders only. Chunks travel as Buffers (structured-cloned to Uint8Array in
 // the renderer) — base64 would add a copy + ~33% size on the hot path.
 // Subscriptions die with their webContents ('destroyed').
+// Audio rides the same subscription: 'phone:stream-audio-meta'
+// (PhoneAudioMeta) and 'phone:stream-audio-chunk' (one encoded packet as a
+// Buffer). A renderer that subscribes after the format was sent reads it
+// with the 'phone:stream-audio-meta-get' invoke.
 
 interface StreamSub {
   sender: WebContents;
@@ -102,6 +106,8 @@ function ensureStreamConsumer(serial: string): void {
   const consumer: StreamConsumer = {
     onMeta: (s, meta) => pushStream(s, 'phone:stream-meta', meta),
     onChunk: (s, chunk) => pushStream(s, 'phone:stream-chunk', chunk),
+    onAudioMeta: (s, meta) => pushStream(s, 'phone:stream-audio-meta', meta),
+    onAudioChunk: (s, chunk) => pushStream(s, 'phone:stream-audio-chunk', chunk),
     onEnd: (s, info) => pushStream(s, 'phone:stream-end', info),
   };
   streamConsumers.set(serial, manager.subscribe(serial, consumer));
@@ -270,6 +276,7 @@ export function registerPhoneIpc(handle: Guarded): void {
   handle('phone:stream-status', (_e, serial: unknown) => phoneService.streamStatus(String(serial ?? '')));
   handle('phone:stream-input', (_e, serial: unknown, events: unknown) => phoneService.sendStreamInput(String(serial ?? ''), events));
   handle('phone:stream-display-power', (_e, serial: unknown, on: unknown) => phoneService.setStreamDisplayPower(String(serial ?? ''), Boolean(on)));
+  handle('phone:stream-audio-meta-get', (_e, serial: unknown) => phoneService.getStreamManager().audioMeta(String(serial ?? '')));
   handle('phone:stream-subscribe', (e, serial: unknown) => subscribeStream(e.sender, String(serial ?? '')));
   handle('phone:stream-unsubscribe', (e, serial: unknown) => unsubscribeStream(e.sender, String(serial ?? '')));
 

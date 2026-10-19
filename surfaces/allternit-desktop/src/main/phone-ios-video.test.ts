@@ -2,6 +2,8 @@ import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   encodeIosVideoPacket,
+  IOS_PACKET_AUDIO,
+  IOS_PACKET_AUDIO_CONFIG,
   IOS_PACKET_CONFIG,
   IOS_PACKET_ENDED,
   IOS_PACKET_FRAME,
@@ -13,7 +15,7 @@ import {
   parseHttpHead,
   type IosVideoConfig,
 } from './phone-ios-video.js';
-import type { PhoneStreamMeta, ScrcpyDeviceMessage } from './phone-scrcpy.js';
+import type { PhoneAudioMeta, PhoneStreamMeta, ScrcpyDeviceMessage } from './phone-scrcpy.js';
 
 const OK_HEAD = 'HTTP/1.1 200 OK\r\nContent-Type: application/x-ictrl-h264\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n';
 const CONFIG = { width: 1170, height: 2532, scale: 3, rotation: 0 };
@@ -275,5 +277,63 @@ describe('IosVideoSession', () => {
     s.socket.destroy();
     await flush();
     expect(s.ends).toEqual(['the iPhone closed the video connection']);
+  });
+});
+
+describe('IosVideoSession audio (packet types 4/5)', () => {
+  const ASC = Buffer.from([0x11, 0x90]); // AAC-LC, 48 kHz, stereo
+  const audioConfig = (o: object = { codec: 'aac', sampleRate: 48000, channels: 2, asc: ASC.toString('base64') }) =>
+    encodeIosVideoPacket(IOS_PACKET_AUDIO_CONFIG, o);
+  const audio = (data: Buffer) => encodeIosVideoPacket(IOS_PACKET_AUDIO, data);
+
+  function listen(s: ReturnType<typeof makeSession>) {
+    const audioMetas: PhoneAudioMeta[] = [];
+    const audioChunks: Buffer[] = [];
+    s.session.on('audioMeta', (m) => audioMetas.push(m));
+    s.session.on('audioChunk', (c) => audioChunks.push(c));
+    return { audioMetas, audioChunks };
+  }
+
+  it('turns AUDIO_CONFIG into audioMeta and AUDIO into audioChunks, beside the video', async () => {
+    const s = makeSession();
+    const a = listen(s);
+    await goLive(s);
+    s.socket.write(Buffer.concat([audioConfig(), frame(), audio(Buffer.from([0x21, 1, 2])), audio(Buffer.from([0x21, 3]))]));
+    await flush();
+    expect(a.audioMetas).toEqual([{ codec: 'aac', sampleRate: 48000, channels: 2, description: ASC.toString('base64') }]);
+    expect(a.audioChunks).toEqual([Buffer.from([0x21, 1, 2]), Buffer.from([0x21, 3])]);
+    expect(s.chunks).toEqual([IDR]);
+  });
+
+  it('drops audio before a valid AUDIO_CONFIG and skips malformed configs', async () => {
+    const s = makeSession();
+    const a = listen(s);
+    await goLive(s);
+    s.socket.write(Buffer.concat([
+      audio(Buffer.from([1])),
+      audioConfig({ codec: 'opus', sampleRate: 48000, channels: 2, asc: ASC.toString('base64') }),
+      audioConfig({ codec: 'aac', sampleRate: 0, channels: 2, asc: ASC.toString('base64') }),
+      audioConfig({ codec: 'aac', sampleRate: 48000, channels: 2, asc: '' }),
+      encodeIosVideoPacket(IOS_PACKET_AUDIO_CONFIG, 'not json'),
+      audio(Buffer.from([2])),
+      frame(),
+    ]));
+    await flush();
+    expect(a.audioMetas).toEqual([]);
+    expect(a.audioChunks).toEqual([]);
+    expect(s.chunks).toEqual([IDR]);
+    expect(s.ends).toEqual([]);
+  });
+
+  it('a throwing audio listener never ends or stalls the video', async () => {
+    const s = makeSession();
+    s.session.on('audioChunk', () => {
+      throw new Error('decoder blew up');
+    });
+    await goLive(s);
+    s.socket.write(Buffer.concat([audioConfig(), audio(Buffer.from([7])), frame()]));
+    await flush();
+    expect(s.chunks).toEqual([IDR]);
+    expect(s.ends).toEqual([]);
   });
 });
