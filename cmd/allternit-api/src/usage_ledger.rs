@@ -438,25 +438,36 @@ pub fn reported_row(call: &ReportedCall, tenant_id: Option<&str>, user_id: &str)
 // ─── Summary (GET /usage/summary?group_by=…) ───────────────────────────────
 
 /// Group-by dimension → SQL expression (whitelist; never interpolate input).
-fn dimension(name: &str) -> Option<&'static str> {
+/// `bot` is the bot (agent) whose session made the call, read from the
+/// session's metadata (`agentId`, stamped on every bot session); '' when the
+/// call came from no bot session. `day` is the call's calendar day,
+/// shifted by the viewer's UTC offset in minutes (an integer, so the
+/// formatted SQL stays a whitelist).
+fn dimension(name: &str, tz_offset_minutes: i32) -> Option<String> {
     Some(match name {
-        "surface" => "COALESCE(surface, 'api')",
-        "tier" => "COALESCE(tier, 'S2')",
-        "model" => "COALESCE(provider_id, '?') || '/' || COALESCE(model_id, '?')",
-        "lane" => "COALESCE(lane, 'api')",
+        "surface" => "COALESCE(surface, 'api')".into(),
+        "tier" => "COALESCE(tier, 'S2')".into(),
+        "model" => "COALESCE(provider_id, '?') || '/' || COALESCE(model_id, '?')".into(),
+        "lane" => "COALESCE(lane, 'api')".into(),
+        "bot" => "COALESCE((SELECT json_extract(m.metadata, '$.agentId') FROM session_metadata m
+                  WHERE m.session_id = llm_usage_events.gizzi_session_id), '')"
+            .into(),
+        "day" => format!("date(created_at, '{} minutes')", tz_offset_minutes.clamp(-14 * 60, 14 * 60)),
         _ => return None,
     })
 }
 
-/// Parse `surface,tier` style group-by lists (1..=4 known dimensions).
+const DIMENSIONS: &str = "surface, tier, model, lane, bot, day";
+
+/// Parse `surface,tier` style group-by lists (1..=6 known dimensions).
 pub fn parse_group_by(raw: &str) -> Result<Vec<String>, String> {
     let dims: Vec<String> = raw.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
-    if dims.is_empty() || dims.len() > 4 {
-        return Err("group_by takes 1 to 4 of: surface, tier, model, lane".into());
+    if dims.is_empty() || dims.len() > 6 {
+        return Err(format!("group_by takes 1 to 6 of: {DIMENSIONS}"));
     }
     for d in &dims {
-        if dimension(d).is_none() {
-            return Err(format!("unknown group_by dimension '{d}' (surface, tier, model, lane)"));
+        if dimension(d, 0).is_none() {
+            return Err(format!("unknown group_by dimension '{d}' ({DIMENSIONS})"));
         }
     }
     Ok(dims)
@@ -474,7 +485,19 @@ fn hit_rate(prompt: i64, read: i64, write: i64) -> Option<f64> {
 /// estimated savings (incumbent cost of decisions S1 actually served).
 /// Cost reads `COALESCE(recomputed_cost_microdollars, cost_microdollars)`.
 pub fn summary(conn: &Connection, tenant_id: &str, start: &str, end: &str, group_by: &[String]) -> rusqlite::Result<Value> {
-    let exprs: Vec<&str> = group_by.iter().filter_map(|d| dimension(d)).collect();
+    summary_at_offset(conn, tenant_id, start, end, group_by, 0)
+}
+
+/// [`summary`] with `day` buckets in the viewer's timezone (UTC offset in minutes).
+pub fn summary_at_offset(
+    conn: &Connection,
+    tenant_id: &str,
+    start: &str,
+    end: &str,
+    group_by: &[String],
+    tz_offset_minutes: i32,
+) -> rusqlite::Result<Value> {
+    let exprs: Vec<String> = group_by.iter().filter_map(|d| dimension(d, tz_offset_minutes)).collect();
     let keys = exprs.iter().enumerate().map(|(i, e)| format!("{e} AS k{i}")).collect::<Vec<_>>().join(", ");
     let group = (0..exprs.len()).map(|i| format!("k{i}")).collect::<Vec<_>>().join(", ");
     let sql = format!(
@@ -741,5 +764,33 @@ mod tests {
         assert_eq!(model["groups"][0]["key"]["model"], "prov/big");
         assert!(parse_group_by("surface,secret").is_err());
         assert!(parse_group_by("").is_err());
+    }
+
+    #[test]
+    fn summary_groups_by_bot_from_session_metadata_and_by_local_day() {
+        let (db, _d) = db();
+        db.set_session_metadata("ses_bot", &serde_json::json!({ "isBot": true, "agentId": "bot-1" })).unwrap();
+        let conn = db.connect().unwrap();
+        let row = |sid: Option<&str>, cost: i64| LedgerRow {
+            source: "gizzi", ctx: LedgerCtx::surface("chat").tenant(Some("org-1"), None), provider_id: Some("anthropic".into()),
+            model_id: Some("claude".into()), prompt_tokens: 10, cost_microdollars: cost, status: "ok".into(),
+            gizzi_session_id: sid.map(str::to_string), ..Default::default()
+        };
+        insert(&conn, &row(Some("ses_bot"), 700)).unwrap();
+        insert(&conn, &row(None, 300)).unwrap();
+        conn.execute("UPDATE llm_usage_events SET created_at = '2026-10-19 02:00:00'", []).unwrap();
+        let (s, e) = ("2000-01-01", "2999-01-01");
+
+        let bots = summary(&conn, "org-1", s, e, &parse_group_by("bot").unwrap()).unwrap();
+        let groups = bots["groups"].as_array().unwrap();
+        assert_eq!((groups[0]["key"]["bot"].as_str(), groups[0]["cost_microdollars"].as_i64()), (Some("bot-1"), Some(700)));
+        assert_eq!((groups[1]["key"]["bot"].as_str(), groups[1]["cost_microdollars"].as_i64()), (Some(""), Some(300)));
+
+        // 02:00 UTC is still the 18th in Chicago (UTC-5).
+        let utc = summary(&conn, "org-1", s, e, &parse_group_by("day").unwrap()).unwrap();
+        assert_eq!(utc["groups"][0]["key"]["day"], "2026-10-19");
+        let local = summary_at_offset(&conn, "org-1", s, e, &parse_group_by("bot,day").unwrap(), -300).unwrap();
+        assert!(local["groups"].as_array().unwrap().iter().all(|g| g["key"]["day"] == "2026-10-18"));
+        assert!(parse_group_by("surface,tier,model,lane,bot,day").is_ok());
     }
 }

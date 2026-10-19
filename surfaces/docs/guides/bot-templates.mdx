@@ -5,9 +5,21 @@ description: Launch reusable workers and coordinated projects from recipes you c
 
 A **bot template** describes one worker's instructions, tools, skills, routines, and first task. A **team template** adds roles and a plan of dependent tasks. Templates are recipes; instantiated bots and threads are the running work.
 
+## Marketplace
+
+**Bots rail ⋯ → Marketplace** (it was called Templates) opens everything you can add to your bots, in three tabs:
+
+| Tab | What it shows |
+| --- | --- |
+| **Agents** | Bot and team templates: the same gallery as the Bots launch surface. |
+| **Apps** | The connector directory. Your connected apps come first, then the rest. Selecting a card or **+** opens the connector's page, where you connect it, sign in or enter an API key. |
+| **Skills** | The skill directory. **+** installs a skill into `~/.agents/skills`; every bot can use it from its next turn. Turn skills on or off in Customize → Skills. |
+
+Apps and Skills have a search box. Cards show only what the directory knows (maker, category, tools); there are no ratings or install counts. If the app directory cannot load, the Apps tab says why and offers **Try again**. The Marketplace is the same on Desktop, the ai.allternit.com phone layout and the m.allternit.com app (bot drawer **⋯ → Marketplace**).
+
 ## Use a template
 
-Browse templates from the Bots launch surface. Open a recipe to inspect its roles, required setup, planned outputs, and approval points. For a team, enter the project brief and review which existing bots it will reuse and which it will add, then start the project.
+Browse templates from the Bots launch surface or the Marketplace **Agents** tab. Open a recipe to inspect its roles, required setup, planned outputs, and approval points. For a team, enter the project brief and review which existing bots it will reuse and which it will add, then start the project.
 
 The team flow matches each role to an existing bot where possible and creates missing bots. It creates the project, lays out task threads and their dependencies, and starts the root threads through Al. Downstream work follows the [coordinator's dependency rules](/guides/project-coordination).
 

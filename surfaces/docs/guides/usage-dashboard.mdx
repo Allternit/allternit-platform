@@ -1,0 +1,32 @@
+---
+title: Usage dashboard
+description: See what your model calls cost, overall, per brain and per bot, day by day.
+---
+
+**Settings → Usage → Cost and tokens** shows every model call for the active organization from one ledger: chat, bots, code, cowork and the API.
+
+## What it shows
+
+| Part | What it shows |
+| --- | --- |
+| Totals | Cost and number of calls, tokens in and out, cache hit rate (the cached share of input tokens), and S1-served decisions with estimated savings. |
+| **By brain** | Cost or tokens per brain (Claude, OpenAI/Codex, Gemini, Grok, Kimi, local models, …), with each brain's share, tokens and calls. |
+| **Daily cost** / **Daily tokens** | One point per day for the period, days without use included. Days follow your timezone. |
+| **Breakdown** | A table by **Surface**, **Tier**, **Model**, **Brain**, **Lane**, **Bot** or **Day**. On a phone each row is a card. |
+
+## Filters
+
+- **Bot**: **All bots**, one bot, or **No bot** (calls from chat, code and other places outside a bot). The totals, brains, chart and breakdown all narrow to that choice. S1 decision counts stay organization-wide.
+- **Cost / Tokens**: what the brain list and the daily chart measure.
+- **All / 90d / 30d / 7d**: the period.
+
+A call counts toward a bot when it ran in one of that bot's sessions (its main chat, a thread, or a routine run). Calls from a bot that has since been deleted show as **Deleted bot**.
+
+Only organization owners and admins see the cost breakdown. On a server too old for the Bot and Day breakdowns, the dashboard shows the other breakdowns and hides the bot picker and the daily chart.
+
+The dashboard is the same on Desktop, the ai.allternit.com phone layout and the m.allternit.com app. For the API behind it, see [Usage API](/api/usage).
+
+## Related pages
+
+- [Bot routines](/guides/bot-routines)
+- [Usage API](/api/usage)

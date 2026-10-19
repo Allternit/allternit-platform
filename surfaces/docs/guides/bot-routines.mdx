@@ -26,6 +26,18 @@ Choose **New routine** to open the same scheduled-task form used by Automation T
 
 The tab is the same on Desktop, on ai.allternit.com (including the phone layout) and in the m.allternit.com app.
 
+### List, Graph and Calendar
+
+The switch at the top of the tab shows the same routines three ways. The tab remembers your choice on this device.
+
+- **List**: the rows described above.
+- **Graph**: each routine as a flow from its trigger (schedule, next run, **Run now**) to the bot that runs it, to its last result (**Done**, **Failed** with the error, or **No run yet**). Lines are green after a good run, red after a failed one, and dashed when the routine is paused or has not run. A run is one turn by one bot, so the graph never shows multi-step chains.
+- **Calendar**: upcoming runs as a **Day**, **Week** or **Month** view, with **Today** and back/forward, plus an **Upcoming runs** list for the next two weeks. Run times are worked out from each routine's schedule in your timezone, with the same rules the scheduler uses (cron fields, intervals from the next run, one-off runs). Paused, manual and at-launch routines are not shown.
+
+**This bot / All bots** widens Graph and Calendar to every bot's routines. Each calendar event then shows the bot's avatar, so you can read the whole team's schedule. Selecting a routine in either view opens its details: status, schedule, what it does, which bot runs it, a **Next 7 days** strip with the first run time of each day, and run history with each run's duration. **Run now** and **Pause / Resume** work there too.
+
+On a phone the graph is shown as stacked cards (trigger, then result) and the week view as one day per row.
+
 ## When a routine fails
 
 Every failed run is recorded and reported, whether or not the routine has a bot, and whether or not an Allternit window is open. You are told in four places:

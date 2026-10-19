@@ -5,6 +5,13 @@ description: 'Changelog for the Allternit platform, SDKs, and Gizzi Code CLI'
 
 # Release Notes
 
+## 2026-10-19 — Routine graph and calendar, usage by brain and bot, Bot Mode Marketplace
+
+- A bot's **Routines** tab now switches between **List**, **Graph** and **Calendar**. The graph draws each routine from its trigger to the bot to its last result, with failures in red. The calendar shows upcoming runs by day, week or month, with an Upcoming runs list; **All bots** shows the whole team's schedule with each bot's avatar. Selecting a routine opens its details, a Next 7 days strip and run history with durations. See [Bot routines](/guides/bot-routines#list-graph-and-calendar).
+- **Settings → Usage** now splits cost and tokens per brain, draws a daily chart, and can narrow everything to one bot. The breakdown gains **Brain**, **Bot** and **Day**. The usage summary API takes `group_by=bot,day` and `tz_offset_minutes`. See [Usage dashboard](/guides/usage-dashboard) and [Usage API](/api/usage).
+- **Bots rail ⋯ → Templates** is now **Marketplace**, with **Agents** (templates), **Apps** (connectors) and **Skills** (one-click install) tabs. See [Marketplace](/guides/bot-templates#marketplace).
+- Fix: red error states that used an undefined colour token now show in red, and a connector directory that fails to load offers **Try again** instead of loading forever.
+
 ## 2026-10-18 — Delegate tasks to a project's bots
 
 - Every project now has **Delegate**: a to-do list you hand to the project's bots. Add tasks with an optional time estimate, then drag one onto a bot or use **Assign to…**. Each task becomes a project thread for that bot. A bot works its tasks one at a time, and its lane shows what it runs now and what waits. Turn on **Auto** to give tasks to whoever is free first. Each bot shows its average cost per finished task, and "Busy until" is built from your estimates. Both are labelled as estimates. On the phone, Delegate is one column with **Assign to…**. See [Delegate tasks to a project's bots](/guides/project-delegate).

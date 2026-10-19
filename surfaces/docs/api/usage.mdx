@@ -34,6 +34,40 @@ Query parameters:
 | `organization_id` | string | Organization to query. Must match the active organization. |
 | `period_start` | string | ISO 8601 start timestamp (inclusive). |
 | `period_end` | string | ISO 8601 end timestamp (exclusive). |
+| `group_by` | string | Optional. Comma-separated, 1 to 6 of `surface`, `tier`, `model`, `lane`, `bot`, `day`. When set, the response adds a `ledger` object built from every model call (`llm_usage_events`). An unknown dimension returns `400 invalid_group_by`. |
+| `tz_offset_minutes` | integer | Optional. The viewer's UTC offset in minutes (for example `-300` for Chicago in summer), so `day` buckets follow the viewer's calendar. Default `0` (UTC); clamped to ±840. |
+
+Dimensions:
+
+| Dimension | Key value |
+| --- | --- |
+| `surface` | Where the call came from (`chat`, `bot`, `cowork`, `api`, …). |
+| `tier` | `S1`, `S2`, … |
+| `model` | `provider/model`, for example `anthropic/claude-opus-5-5`. The dashboard's **Brain** breakdown is the provider half of this key. |
+| `lane` | `api`, `subscription-cli`, `vendor`, `local`. |
+| `bot` | The bot (agent id) whose session made the call, read from the session's `agentId` metadata. An empty string means the call came from no bot session. |
+| `day` | `YYYY-MM-DD`, shifted by `tz_offset_minutes`. |
+
+With `group_by`, the response also carries:
+
+```json
+"ledger": {
+  "group_by": ["model", "bot", "day"],
+  "groups": [
+    {
+      "key": { "model": "anthropic/claude-opus-5-5", "bot": "bot_chief", "day": "2026-10-19" },
+      "calls": 12, "prompt_tokens": 48210, "completion_tokens": 3920, "reasoning_tokens": 0,
+      "cache_read_tokens": 102400, "cache_write_tokens": 0,
+      "cost_microdollars": 731000, "latency_ms_total": 41200, "cache_hit_rate": 0.68
+    }
+  ],
+  "totals": { "calls": 12, "prompt_tokens": 48210, "completion_tokens": 3920, "reasoning_tokens": 0, "cache_read_tokens": 102400, "cache_write_tokens": 0, "cost_microdollars": 731000, "latency_ms_total": 41200 },
+  "cache_hit_rate": 0.68,
+  "s1": { "decisions": 0, "served_by_s1": 0, "estimated_savings_microdollars": 0 }
+}
+```
+
+Groups cover every combination of the requested dimensions, so a client can roll them up to any one dimension (or filter to one bot) without asking again. Servers older than `bot`/`day` reject those two with `invalid_group_by`; the web dashboard then retries with the first four.
 
 Response:
 
