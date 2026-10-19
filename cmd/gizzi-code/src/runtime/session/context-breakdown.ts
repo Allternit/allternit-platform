@@ -11,6 +11,12 @@ import { Token } from "@/shared/util/token"
  * (Token.estimate) until the provider reports the turn's real input size;
  * `reconcile` then attributes the difference to Messages, the only category
  * we cannot measure exactly up front.
+ *
+ * A brain that runs its own loop (Claude Code, Codex and other CLI brains,
+ * signed-in app fabric) never sees gizzi's tools or prompt, so its snapshot
+ * comes from the brain instead (`source: "brain"`): Claude Code's own
+ * `/context` report (`fromClaudeContext`), or the context total it reports
+ * (`fromUsage`).
  */
 export namespace ContextBreakdown {
   export const CategoryID = z.enum([
@@ -23,6 +29,9 @@ export namespace ContextBreakdown {
     "mcp_instructions",
     "autocompact_buffer",
     "free_space",
+    // Loaded on demand (tool search): listed, not in the context window.
+    "system_tools_deferred",
+    "mcp_tools_deferred",
   ])
   export type CategoryID = z.infer<typeof CategoryID>
 
@@ -30,6 +39,8 @@ export namespace ContextBreakdown {
     id: CategoryID,
     name: z.string(),
     tokens: z.number(),
+    /** Not in the window: tools the brain loads only when it searches for them. */
+    deferred: z.boolean().optional(),
   })
   export type Category = z.infer<typeof Category>
 
@@ -51,6 +62,12 @@ export namespace ContextBreakdown {
       /** usedTokens / contextWindow, 0–1. */
       utilization: z.number(),
       basis: z.enum(["provider", "estimated"]),
+      /** Who measured it: gizzi's own request ("gizzi") or the brain itself ("brain"). */
+      source: z.enum(["gizzi", "brain"]).optional(),
+      /** The brain's provider id when `source` is "brain" (claude-cli, codex-cli…). */
+      brain: z.string().optional(),
+      /** Display name of `brain`, filled in at read time. */
+      brainName: z.string().optional(),
       autoCompactEnabled: z.boolean(),
       /** Tokens auto-compaction keeps free (configured size, before clamping to what is left). */
       autoCompactBuffer: z.number(),
@@ -59,6 +76,8 @@ export namespace ContextBreakdown {
       memoryFiles: z.object({ path: z.string(), tokens: z.number() }).array(),
       mcpTools: z.object({ name: z.string(), server: z.string(), tokens: z.number() }).array(),
       systemTools: Item.array(),
+      /** Skills listed to the model, one entry each. */
+      skills: Item.array().optional(),
       measuredAt: z.number(),
     })
     .meta({ ref: "SessionContextBreakdown" })
@@ -74,6 +93,8 @@ export namespace ContextBreakdown {
     mcp_instructions: "MCP server instructions",
     autocompact_buffer: "Autocompact buffer",
     free_space: "Free space",
+    system_tools_deferred: "System tools (deferred)",
+    mcp_tools_deferred: "MCP tools (deferred)",
   }
 
   /** Instruction blocks as InstructionPrompt.system() renders them. */
@@ -82,6 +103,15 @@ export namespace ContextBreakdown {
   const MCP_INSTRUCTIONS_HEADING = "# MCP Server Instructions"
   const MCP_PREFIX = "mcp__"
   const SKILL_TOOL = "skill"
+
+  /** One `<skill>` entry of the skill tool's `<available_skills>` list (tools/builtins/skill.ts). */
+  const SKILL_ENTRY = /<skill>\s*<name>([^<]+)<\/name>[\s\S]*?<\/skill>/g
+
+  function skillItems(schema: unknown) {
+    const description = (schema as { description?: unknown } | null)?.description
+    if (typeof description !== "string") return []
+    return [...description.matchAll(SKILL_ENTRY)].map((match) => ({ name: match[1].trim(), tokens: estimate(match[0]) }))
+  }
 
   function estimate(value: unknown) {
     try {
@@ -129,11 +159,15 @@ export namespace ContextBreakdown {
     const mcpTools: Snapshot["mcpTools"] = []
     const systemTools: Snapshot["systemTools"] = []
     let skillTokens = 0
+    let skills: Snapshot["systemTools"] = []
     for (const [name, schema] of Object.entries(input.tools)) {
       if (name === "invalid") continue
       const tokens = estimate(schema)
       if (name.startsWith(MCP_PREFIX)) mcpTools.push({ name, server: mcpServer(name), tokens })
-      else if (name === SKILL_TOOL) skillTokens += tokens
+      else if (name === SKILL_TOOL) {
+        skillTokens += tokens
+        skills = skillItems(schema)
+      }
       else systemTools.push({ name, tokens })
     }
     const byTokens = (a: { tokens: number }, b: { tokens: number }) => b.tokens - a.tokens
@@ -145,11 +179,13 @@ export namespace ContextBreakdown {
       modelID: input.modelID,
       contextWindow: input.contextWindow,
       basis: "estimated",
+      source: "gizzi",
       autoCompactEnabled: input.autoCompactBuffer > 0,
       autoCompactBuffer: input.autoCompactBuffer,
       memoryFiles: memoryFiles.sort(byTokens),
       mcpTools: mcpTools.sort(byTokens),
       systemTools: systemTools.sort(byTokens),
+      skills: skills.sort(byTokens),
       measuredAt: input.now ?? Date.now(),
       parts: {
         messages: input.messages.reduce((sum, message) => sum + estimate(message), 0),
@@ -163,12 +199,17 @@ export namespace ContextBreakdown {
     })
   }
 
-  type Measured = Exclude<CategoryID, "autocompact_buffer" | "free_space">
+  type Measured = Exclude<CategoryID, "autocompact_buffer" | "free_space" | Deferred>
+  type Deferred = "system_tools_deferred" | "mcp_tools_deferred"
+  const DEFERRED: Deferred[] = ["system_tools_deferred", "mcp_tools_deferred"]
 
   function finish(
-    input: Omit<Snapshot, "categories" | "usedTokens" | "utilization"> & { parts: Record<Measured, number> },
+    input: Omit<Snapshot, "categories" | "usedTokens" | "utilization"> & {
+      parts: Record<Measured, number>
+      deferred?: Partial<Record<Deferred, number>>
+    },
   ): Snapshot {
-    const { parts, ...rest } = input
+    const { parts, deferred, ...rest } = input
     const used = Object.values(parts).reduce((sum, tokens) => sum + tokens, 0)
     const window = input.contextWindow
     const buffer = window > 0 ? Math.min(input.autoCompactBuffer, Math.max(0, window - used)) : 0
@@ -187,6 +228,10 @@ export namespace ContextBreakdown {
     if (buffer > 0) categories.push({ id: "autocompact_buffer", name: NAMES.autocompact_buffer, tokens: buffer })
     if (window > 0)
       categories.push({ id: "free_space", name: NAMES.free_space, tokens: Math.max(0, window - used - buffer) })
+    for (const id of DEFERRED) {
+      const tokens = deferred?.[id] ?? 0
+      if (tokens > 0) categories.push({ id, name: NAMES[id], tokens, deferred: true })
+    }
     return {
       ...rest,
       usedTokens: used,
@@ -211,6 +256,14 @@ export namespace ContextBreakdown {
     return parts
   }
 
+  function deferredOf(snapshot: Snapshot): Partial<Record<Deferred, number>> {
+    const out: Partial<Record<Deferred, number>> = {}
+    for (const category of snapshot.categories) {
+      if (category.deferred) out[category.id as Deferred] = category.tokens
+    }
+    return out
+  }
+
   /**
    * Fold in what is only known at read time:
    * - `providerContextTokens`: what the provider reported for the latest
@@ -221,22 +274,25 @@ export namespace ContextBreakdown {
    */
   export function reconcile(
     snapshot: Snapshot,
-    input: { providerContextTokens?: number; autoCompactBuffer?: number },
+    input: { providerContextTokens?: number; autoCompactBuffer?: number; contextWindow?: number },
   ): Snapshot {
     const parts = partsOf(snapshot)
     const provider = input.providerContextTokens && input.providerContextTokens > 0 ? input.providerContextTokens : undefined
     if (provider !== undefined) {
       const fixed = snapshot.usedTokens - parts.messages
-      parts.messages = Math.max(parts.messages, provider - fixed)
+      // gizzi's own estimate is a floor; a brain's earlier report is just older.
+      parts.messages = Math.max(snapshot.source === "brain" ? 0 : parts.messages, provider - fixed)
     }
     const buffer = input.autoCompactBuffer ?? snapshot.autoCompactBuffer
     const { categories: _categories, usedTokens: _used, utilization: _utilization, ...rest } = snapshot
     return finish({
       ...rest,
+      contextWindow: input.contextWindow && input.contextWindow > 0 ? input.contextWindow : snapshot.contextWindow,
       basis: provider !== undefined ? "provider" : snapshot.basis,
       autoCompactBuffer: buffer,
       autoCompactEnabled: buffer > 0,
       parts,
+      deferred: deferredOf(snapshot),
     })
   }
 
@@ -249,6 +305,8 @@ export namespace ContextBreakdown {
     contextWindow: number
     providerContextTokens: number
     autoCompactBuffer: number
+    /** Set when the brain itself reported the total (CLI brains, fabric). */
+    brain?: string
     now?: number
   }): Snapshot {
     return finish({
@@ -258,11 +316,13 @@ export namespace ContextBreakdown {
       modelID: input.modelID,
       contextWindow: input.contextWindow,
       basis: "provider",
+      ...(input.brain ? { source: "brain" as const, brain: input.brain } : {}),
       autoCompactEnabled: input.autoCompactBuffer > 0,
       autoCompactBuffer: input.autoCompactBuffer,
       memoryFiles: [],
       mcpTools: [],
       systemTools: [],
+      skills: [],
       measuredAt: input.now ?? Date.now(),
       parts: {
         messages: input.providerContextTokens,
@@ -273,6 +333,118 @@ export namespace ContextBreakdown {
         mcp_tools: 0,
         mcp_instructions: 0,
       },
+    })
+  }
+
+  /** Claude Code `/context` category names → ours. */
+  const CLAUDE_CATEGORIES: Record<string, CategoryID> = {
+    "system prompt": "system_prompt",
+    "system tools": "system_tools",
+    "mcp tools": "mcp_tools",
+    "mcp server instructions": "mcp_instructions",
+    "custom agents": "system_prompt",
+    "memory files": "memory_files",
+    skills: "skills",
+    messages: "messages",
+    "free space": "free_space",
+    "autocompact buffer": "autocompact_buffer",
+    "system tools (deferred)": "system_tools_deferred",
+    "mcp tools (deferred)": "mcp_tools_deferred",
+  }
+
+  /** "144.6k" → 144600, "1m" → 1000000, "~140" → 140. */
+  export function parseTokenCount(text: string): number {
+    const match = text.trim().replace(/^~/, "").replace(/,/g, "").match(/^([\d.]+)\s*([kKmM]?)/)
+    if (!match) return 0
+    const value = Number(match[1])
+    const scale = match[2].toLowerCase() === "m" ? 1_000_000 : match[2].toLowerCase() === "k" ? 1_000 : 1
+    return Number.isFinite(value) ? Math.round(value * scale) : 0
+  }
+
+  /** The rows of the Markdown table under `### <heading>`, cells trimmed, header and rule dropped. */
+  function tableRows(markdown: string, heading: RegExp): string[][] {
+    const lines = markdown.split("\n")
+    const start = lines.findIndex((line) => /^#{2,4}\s/.test(line) && heading.test(line))
+    if (start === -1) return []
+    const rows: string[][] = []
+    for (const line of lines.slice(start + 1)) {
+      if (/^#{2,4}\s/.test(line)) break
+      if (!line.trim().startsWith("|")) continue
+      const cells = line.trim().replace(/^\||\|$/g, "").split("|").map((cell) => cell.trim())
+      if (cells.every((cell) => /^:?-+:?$/.test(cell))) continue
+      rows.push(cells)
+    }
+    return rows.slice(1)
+  }
+
+  /**
+   * Claude Code's own `/context` report (`claude -p /context --resume <id>
+   * --output-format json`, Markdown in `result`) as a snapshot: every
+   * category it shows, deferred tools, MCP tools, memory files and skills.
+   */
+  export function fromClaudeContext(input: {
+    markdown: string
+    sessionID: string
+    messageID?: string
+    providerID: string
+    modelID: string
+    now?: number
+  }): Snapshot | undefined {
+    const header = input.markdown.match(/\*\*Tokens:\*\*\s*([^/\n]+)\/\s*([^\s(]+)/)
+    const window = header ? parseTokenCount(header[2]) : 0
+    const parts: Record<Measured, number> = {
+      messages: 0,
+      system_tools: 0,
+      memory_files: 0,
+      skills: 0,
+      system_prompt: 0,
+      mcp_tools: 0,
+      mcp_instructions: 0,
+    }
+    const deferred: Partial<Record<Deferred, number>> = {}
+    let buffer = 0
+    let seen = false
+    for (const [name, tokens] of tableRows(input.markdown, /usage by category/i)) {
+      const id = CLAUDE_CATEGORIES[name?.toLowerCase() ?? ""]
+      if (!id || tokens === undefined) continue
+      seen = true
+      const count = parseTokenCount(tokens)
+      if (id === "autocompact_buffer") buffer = count
+      else if (id === "system_tools_deferred" || id === "mcp_tools_deferred") deferred[id] = count
+      else if (id !== "free_space") parts[id] += count
+    }
+    if (!seen || window <= 0) return undefined
+    const byTokens = (a: { tokens: number }, b: { tokens: number }) => b.tokens - a.tokens
+    const mcpTools = tableRows(input.markdown, /^#+\s*MCP Tools/i)
+      .filter((row) => row.length >= 3)
+      .map(([name, server, tokens]) => ({ name, server, tokens: parseTokenCount(tokens) }))
+    const memoryFiles = tableRows(input.markdown, /^#+\s*Memory Files/i)
+      .filter((row) => row.length >= 3)
+      .map(([, path, tokens]) => ({ path, tokens: parseTokenCount(tokens) }))
+    const skills = tableRows(input.markdown, /^#+\s*Skills/i)
+      .filter((row) => row.length >= 2)
+      .map((row) => ({ name: row[0], tokens: parseTokenCount(row[row.length - 1]) }))
+    const systemTools = tableRows(input.markdown, /^#+\s*System Tools/i)
+      .filter((row) => row.length >= 2)
+      .map((row) => ({ name: row[0], tokens: parseTokenCount(row[row.length - 1]) }))
+    return finish({
+      sessionID: input.sessionID,
+      messageID: input.messageID,
+      providerID: input.providerID,
+      modelID: input.modelID,
+      contextWindow: window,
+      basis: "estimated",
+      source: "brain",
+      brain: input.providerID,
+      autoCompactEnabled: buffer > 0,
+      autoCompactBuffer: buffer,
+      memoryFiles: memoryFiles.sort(byTokens),
+      mcpTools: mcpTools.sort(byTokens),
+      systemTools: systemTools.sort(byTokens),
+      skills: skills.sort(byTokens),
+      measuredAt: input.now ?? Date.now(),
+      parts,
+      deferred,
     })
   }
 

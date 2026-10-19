@@ -18,11 +18,41 @@ import { CliBridge } from "@/runtime/integrations/cli-bridge"
 import { extractSystemText } from "@/runtime/providers/adapters/loaders/system-text"
 import { Server } from "@/runtime/server/server"
 import { VendorSession } from "@/runtime/session/vendor-session"
+import { ContextBreakdown } from "@/runtime/session/context-breakdown"
+import { ContextBreakdownStore } from "@/runtime/session/context-breakdown-store"
 import { Instance } from "@/runtime/context/project/instance"
 import * as BotTurn from "@/runtime/bots/bot-turn"
 import { planInstructions } from "@/runtime/drivers/cli-session-flags"
 
 const log = Log.create({ service: "subprocess-lm" })
+
+/**
+ * The context total a CLI brain reported (ACP usage_update, Claude's result
+ * modelUsage) as the session's breakdown. A fuller report from the same
+ * brain (Claude's `/context`) keeps its split: only Messages moves.
+ */
+function recordBrainContext(
+  sessionID: string,
+  providerID: string,
+  modelID: string,
+  context: { used: number; size: number },
+) {
+  if (!(context.size > 0)) return
+  const previous = ContextBreakdown.get(sessionID)
+  const snapshot =
+    previous?.source === "brain" && previous.brain === providerID && previous.categories.length > 2
+      ? ContextBreakdown.reconcile(previous, { providerContextTokens: context.used, contextWindow: context.size })
+      : ContextBreakdown.fromUsage({
+          sessionID,
+          providerID,
+          modelID,
+          contextWindow: context.size,
+          providerContextTokens: context.used,
+          autoCompactBuffer: 0,
+          brain: providerID,
+        })
+  ContextBreakdownStore.record({ ...snapshot, measuredAt: Date.now() })
+}
 
 export class SubprocessLanguageModel implements LanguageModelV2 {
   readonly specificationVersion = "v2" as const
@@ -155,6 +185,7 @@ export class SubprocessLanguageModel implements LanguageModelV2 {
           for await (const event of driver.stream(task)) {
             if (event.type === "context") {
               lastContext = { used: event.used, size: event.size }
+              if (sessionID) recordBrainContext(sessionID, this.providerID, this.modelId, event)
               controller.enqueue({
                 type: "raw",
                 raw: { __gizzi: "observed_context", used: event.used, size: event.size },

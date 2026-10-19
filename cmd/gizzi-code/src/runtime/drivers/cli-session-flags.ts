@@ -137,3 +137,32 @@ export function codexThreadRequest(
 export function acpCanLoadSession(agentCapabilities: unknown): boolean {
   return (agentCapabilities as { loadSession?: boolean } | undefined)?.loadSession === true
 }
+
+/** Turn-only Claude flags that a `/context` read must not repeat (value-taking ones list 1). */
+const CLAUDE_TURN_ONLY: Record<string, number> = {
+  "--output-format": 1,
+  "--input-format": 1,
+  "--verbose": 0,
+  "--include-partial-messages": 0,
+  "--resume": 1,
+  "--permission-prompt-tool": 1,
+}
+
+/**
+ * Argv for Claude Code's own `/context` report on the turn's vendor session:
+ * the turn's argv with the same model, system prompt, MCP config and
+ * settings isolation, but a local slash command instead of a model call
+ * (no tokens spent) and no write to the session's transcript.
+ */
+export function claudeContextArgv(turnArgv: string[], vendorSessionId: string): string[] {
+  const out: string[] = []
+  for (let i = 0; i < turnArgv.length; i++) {
+    const skip = CLAUDE_TURN_ONLY[turnArgv[i]]
+    if (skip !== undefined) {
+      i += skip
+      continue
+    }
+    out.push(turnArgv[i])
+  }
+  return [...out, "--output-format", "json", "--no-session-persistence", "--resume", vendorSessionId, "/context"]
+}

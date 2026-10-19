@@ -113,4 +113,75 @@ describe("context breakdown", () => {
     expect(ContextBreakdown.get("ses_1")).toBeUndefined()
     expect(ContextBreakdown.get("s299")).toBeDefined()
   })
+
+  test("lists each skill the skill tool offers", () => {
+    const skill = {
+      description:
+        "Load a skill.\n<available_skills>\n  <skill>\n    <name>deploy</name>\n    <description>" +
+        "d".repeat(400) +
+        "</description>\n  </skill>\n  <skill>\n    <name>quote</name>\n    <description>q</description>\n  </skill>\n</available_skills>",
+    }
+    const snapshot = ContextBreakdown.build(base({ tools: { skill } }))
+    expect(snapshot.skills?.map((item) => item.name)).toEqual(["deploy", "quote"])
+    expect(snapshot.source).toBe("gizzi")
+  })
+
+  test("reads Claude Code's own /context report, deferred tools apart", () => {
+    const markdown = [
+      "## Context Usage",
+      "",
+      "**Model:** claude-haiku-5-5  ",
+      "**Tokens:** 34k / 1m (3%)",
+      "",
+      "### Estimated usage by category",
+      "",
+      "| Category | Tokens | Percentage |",
+      "|----------|--------|------------|",
+      "| System prompt | 3.3k | 0.3% |",
+      "| System tools | 611 | 0.1% |",
+      "| MCP tools | 671 | 0.1% |",
+      "| MCP server instructions | 717 | 0.1% |",
+      "| MCP tools (deferred) | 1.4k | 0.1% |",
+      "| System tools (deferred) | 14.1k | 1.4% |",
+      "| Memory files | 5.8k | 0.6% |",
+      "| Skills | 10k | 1.0% |",
+      "| Messages | 13k | 1.3% |",
+      "| Free space | 933k | 93.3% |",
+      "| Autocompact buffer | 33k | 3.3% |",
+      "",
+      "### MCP Tools",
+      "",
+      "| Tool | Server | Tokens |",
+      "|------|--------|--------|",
+      "| mcp__docs__read | docs | 324 |",
+      "",
+      "### Memory Files",
+      "",
+      "| Type | Path | Tokens |",
+      "|------|------|--------|",
+      "| User | /Users/me/.claude/CLAUDE.md | 5.8k |",
+      "",
+      "### Skills",
+      "",
+      "| Skill | Source | Tokens |",
+      "|-------|--------|--------|",
+      "| deploy | User | ~140 |",
+    ].join("\n")
+    const snapshot = ContextBreakdown.fromClaudeContext({ markdown, sessionID: "ses_1", providerID: "claude-cli", modelID: "claude-haiku-5-5" })!
+    expect(snapshot.source).toBe("brain")
+    expect(snapshot.contextWindow).toBe(1_000_000)
+    expect(tokens(snapshot, "messages")).toBe(13_000)
+    expect(tokens(snapshot, "autocompact_buffer")).toBe(33_000)
+    expect(tokens(snapshot, "system_tools_deferred")).toBe(14_100)
+    // deferred tools are listed but not in the window
+    expect(snapshot.usedTokens).toBe(3_300 + 611 + 671 + 717 + 5_800 + 10_000 + 13_000)
+    expect(snapshot.mcpTools).toEqual([{ name: "mcp__docs__read", server: "docs", tokens: 324 }])
+    expect(snapshot.memoryFiles).toEqual([{ path: "/Users/me/.claude/CLAUDE.md", tokens: 5_800 }])
+    expect(snapshot.skills).toEqual([{ name: "deploy", tokens: 140 }])
+    // a later context total from the same brain moves only Messages
+    const next = ContextBreakdown.reconcile(snapshot, { providerContextTokens: snapshot.usedTokens + 5_000 })
+    expect(tokens(next, "messages")).toBe(18_000)
+    expect(tokens(next, "mcp_tools_deferred")).toBe(1_400)
+  })
 })
+

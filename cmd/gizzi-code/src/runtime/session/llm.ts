@@ -30,6 +30,7 @@ import { SessionTrace } from "@/runtime/session/trace"
 import { ContextProjector } from "@/runtime/session/context-projector"
 import { ContextAccounting } from "@/runtime/session/context-accounting"
 import { ContextBreakdown } from "@/runtime/session/context-breakdown"
+import { ContextBreakdownStore } from "@/runtime/session/context-breakdown-store"
 import { RuntimeTelemetry } from "@/runtime/telemetry"
 import { Bus } from "@/shared/bus"
 import { SessionContext } from "./context-event"
@@ -275,8 +276,11 @@ export namespace LLM {
     })
     // The context-window panel shows the session's own turns, not the hidden
     // helper calls (title, summary, compaction) that share its sessionID.
-    if (!input.small && !HELPER_AGENTS.has(input.agent.name)) {
-      ContextBreakdown.record(
+    // A brain with its own loop (CLI brains, signed-in app fabric) never sees
+    // these tools or this prompt: it reports its own context instead.
+    const brainOwnsContext = language.provider === "subprocess" || language.provider === "subscription-fabric"
+    if (!input.small && !HELPER_AGENTS.has(input.agent.name) && !brainOwnsContext) {
+      ContextBreakdownStore.record(
         ContextBreakdown.build({
           sessionID: input.sessionID,
           messageID: input.user.id,

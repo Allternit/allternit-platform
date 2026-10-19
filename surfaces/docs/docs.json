@@ -461,6 +461,7 @@
             "group": "Surfaces",
             "pages": [
               "surfaces/desktop",
+              "surfaces/context-window",
               "surfaces/sign-in",
               "surfaces/public-embed",
               "surfaces/platform",

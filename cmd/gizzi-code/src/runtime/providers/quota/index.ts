@@ -31,8 +31,38 @@ export interface QuotaWindow {
 export interface ProviderQuota {
   providerID: string
   source: string
+  /** The subscription's name as the provider calls it ("Max (5x)", "Plus"), when known. */
+  plan?: string
   windows: QuotaWindow[]
   fetchedAt: number
+}
+
+function titleCase(value: string) {
+  return value.replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()).trim()
+}
+
+/** Claude's account rate-limit tier ("default_claude_max_5x") or subscription ("max") → "Max (5x)". */
+export function claudePlanLabel(account: { organizationRateLimitTier?: unknown; userRateLimitTier?: unknown; subscriptionType?: unknown } | undefined) {
+  const tier = String(account?.userRateLimitTier ?? account?.organizationRateLimitTier ?? "")
+  const multiple = tier.match(/max_(\d+)x/)
+  if (multiple) return `Max (${multiple[1]}x)`
+  const kind = String(account?.subscriptionType ?? "") || (tier.match(/claude_(pro|max|team|enterprise)/)?.[1] ?? "")
+  return kind ? titleCase(kind) : undefined
+}
+
+async function claudePlan(): Promise<string | undefined> {
+  const dir = process.env.CLAUDE_CONFIG_DIR
+  const file = dir ? path.join(dir, ".claude.json") : path.join(homedir(), ".claude.json")
+  try {
+    return claudePlanLabel(JSON.parse(await readFile(file, "utf8"))?.oauthAccount)
+  } catch {
+    return undefined
+  }
+}
+
+/** Codex `rate_limits.plan_type` ("plus", "pro") → "Plus". */
+export function codexPlanLabel(limits: any): string | undefined {
+  return typeof limits?.plan_type === "string" && limits.plan_type ? titleCase(limits.plan_type) : undefined
 }
 
 export type QuotaResult =
@@ -292,7 +322,13 @@ const codex: Fetcher = async () => {
     const limits = lastObject(await tail(file), "rate_limits")
     return {
       status: "ok",
-      quota: { providerID: "codex-cli", source: "Codex", windows: limits ? parseCodexRateLimits(limits) : [], fetchedAt: Date.now() },
+      quota: {
+        providerID: "codex-cli",
+        source: "Codex",
+        plan: codexPlanLabel(limits),
+        windows: limits ? parseCodexRateLimits(limits) : [],
+        fetchedAt: Date.now(),
+      },
     }
   } catch (err) {
     log.warn("codex quota read failed", { error: err instanceof Error ? err.message : String(err) })
@@ -327,7 +363,7 @@ const claude: Fetcher = async () => {
     const q = lastObject(await tail(file), "quotaLimits")
     return {
       status: "ok",
-      quota: { providerID: "claude-cli", source: "Claude", windows: parseClaudeQuotaLimits(q), fetchedAt: Date.now() },
+      quota: { providerID: "claude-cli", source: "Claude", plan: await claudePlan(), windows: parseClaudeQuotaLimits(q), fetchedAt: Date.now() },
     }
   } catch (err) {
     log.warn("claude quota read failed", { error: err instanceof Error ? err.message : String(err) })
@@ -405,9 +441,11 @@ const allternit: Fetcher = async () => {
         const res = await get(path, token).catch(() => undefined)
         if (res?.status === 401 || res?.status === 403) rejected++
         if (!res?.ok) continue
-        const windows = parse(await res.json().catch(() => undefined))
+        const payload = await res.json().catch(() => undefined)
+        const windows = parse(payload)
         if (windows.length > 0) {
-          return { status: "ok", quota: { providerID: "allternit", source: "Allternit Cloud", windows, fetchedAt: Date.now() } }
+          const plan = typeof payload?.plan === "string" && payload.plan ? titleCase(payload.plan) : undefined
+          return { status: "ok", quota: { providerID: "allternit", source: "Allternit Cloud", plan, windows, fetchedAt: Date.now() } }
         }
       }
     }
