@@ -40,8 +40,11 @@ export const PINNED_RUNNER_MANIFESTS: Record<string, string> = {
   // .2: joins the user's mesh (config mesh_control_url / mesh_auth_key); only
   // local clients may use the one-shot pairing grant. Live 2026-10-17.
   '1.98.12-allternit.2': '97dd791451a01e88afc7d738173388857edc22fdc2f8a0fcd5a821208bcba053',
+  // .3: live screen — ReplayKit broadcast extension (iCTRLBroadcast) + the
+  // runner's GET /video and *_live_screen RPCs. Published 2026-10-18.
+  '1.98.12-allternit.3': 'dfab5703b22f9fdfe21942d5332ba06a68ea350e98750dfe671a722c52eca141',
 };
-export const RUNNER_VERSION: string | null = '1.98.12-allternit.2';
+export const RUNNER_VERSION: string | null = '1.98.12-allternit.3';
 
 export interface RunnerPackage {
   file: string;
