@@ -1,7 +1,7 @@
 /** Tests for the per-phone Phone Link cloud socket: lifecycle, hello, backoff, viewer control, data plane. */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PHONE_AUDIO_FRAME_TAG, PhoneLinkPhoneSocket, SOCKET_OPEN, type PhoneLinkSocket, type PhoneLinkSocketDeps } from './phone-link-cloud.js';
+import { PHONE_AUDIO_FRAME_TAG, PhoneLinkPhoneSocket, phoneLinkApiUrl, SOCKET_OPEN, type PhoneLinkSocket, type PhoneLinkSocketDeps } from './phone-link-cloud.js';
 
 class FakeSocket implements PhoneLinkSocket {
   sent: (string | Uint8Array)[] = [];
@@ -276,5 +276,18 @@ describe('PhoneLinkPhoneSocket', () => {
     client.push({ kind: 'audioChunk', chunk: new Uint8Array([3]) });
     expect(sockets[0].sent.filter((f) => f instanceof Uint8Array)).toHaveLength(0);
     client.stop();
+  });
+});
+
+describe('phoneLinkApiUrl', () => {
+  it('targets the local api, never the cloud control plane (which 404s /ws/phone-link)', () => {
+    expect(phoneLinkApiUrl('http://127.0.0.1:8013', {})).toBe('http://127.0.0.1:8013');
+    // The old knob pointed this socket at api.allternit.com; it must not anymore.
+    expect(phoneLinkApiUrl('http://127.0.0.1:8013', { ALLTERNIT_CLOUD_API_URL: 'https://api.allternit.com' })).toBe('http://127.0.0.1:8013');
+  });
+
+  it('honours the dev override and trims trailing slashes', () => {
+    expect(phoneLinkApiUrl('http://127.0.0.1:8013', { ALLTERNIT_PHONE_LINK_API_URL: 'http://127.0.0.1:18013/' })).toBe('http://127.0.0.1:18013');
+    expect(phoneLinkApiUrl('http://127.0.0.1:8013//', {})).toBe('http://127.0.0.1:8013');
   });
 });

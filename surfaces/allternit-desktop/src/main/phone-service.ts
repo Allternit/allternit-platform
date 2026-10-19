@@ -35,7 +35,7 @@ import {
 import { PhoneStreamManager, type StreamConsumer } from './phone-stream.js';
 import { IosVideoSession } from './phone-ios-video.js';
 import { PhoneUserComms, type CallStateName, type CommsResult, type PhoneAppInfo, type PhoneSmsMessage, type PhoneSmsThread } from './phone-user-comms.js';
-import { PhoneLinkPhoneSocket } from './phone-link-cloud.js';
+import { PhoneLinkPhoneSocket, phoneLinkApiUrl } from './phone-link-cloud.js';
 import { authManager } from './auth-manager.js';
 import { backendManager } from './backend-manager.js';
 import { URLS } from './config.js';
@@ -795,10 +795,11 @@ class PhoneService {
 
   private createLinkSocket(serial: string): PhoneLinkPhoneSocket {
     const client = new PhoneLinkPhoneSocket({
-      // Both relay legs must terminate at the same api the web app talks to
-      // (the cloud transport uses the same base). In dev, point Desktop at
-      // the local api with ALLTERNIT_CLOUD_API_URL=http://127.0.0.1:18013.
-      apiUrl: () => (process.env.ALLTERNIT_CLOUD_API_URL || URLS.CLOUD_API).replace(/\/$/, ''),
+      // The relay is this Desktop's own allternit-api: api.allternit.com is
+      // the cloud control plane and has no /ws/phone-link route (404), and the
+      // viewer's stream token is minted by this api. Web viewers reach it via
+      // the cloud runtime socket relay. See phoneLinkApiUrl.
+      apiUrl: () => phoneLinkApiUrl(backendManager.getUrl()),
       // The desktop-access-token credential + the signed-in user's headers —
       // the api's auth middleware maps them to the account browsers mint
       // tokens against (auth.rs verify_desktop_access_token + user headers).

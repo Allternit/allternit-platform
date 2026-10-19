@@ -54,8 +54,27 @@ interface ViewerDetachedFrame {
   serial: string;
 }
 
+/**
+ * Where the phone-link session socket terminates: this Desktop's own
+ * allternit-api, never the cloud control plane.
+ *
+ * api.allternit.com is allternit-cloud-api, which has no `/ws/phone-link` or
+ * `/ws/phones` routes (it 404s them). The relay lives in allternit-api
+ * (phone_ws.rs), and the browser's stream token is minted by the account's
+ * runtime: `POST /api/v1/phones/:serial/ws-token` on the cloud falls through
+ * to the data-plane relay and lands on this Desktop's api, which signs it with
+ * its own secret. So both legs must meet here: the Desktop attaches locally,
+ * and web/PWA viewers reach `/ws/phones/:serial/stream` through the cloud
+ * runtime socket relay (`/api/v1/runtime-devices/:id/socket`), the same way
+ * the computer VNC viewer does. `ALLTERNIT_PHONE_LINK_API_URL` overrides it
+ * (e.g. a dev api on 18013).
+ */
+export function phoneLinkApiUrl(localApiUrl: string, env: NodeJS.ProcessEnv = process.env): string {
+  return (env.ALLTERNIT_PHONE_LINK_API_URL || localApiUrl).replace(/\/+$/, '');
+}
+
 export interface PhoneLinkSocketDeps {
-  apiUrl: () => string; // http(s) base, no trailing slash — dev points at 18013, prod at the cloud api
+  apiUrl: () => string; // http(s) base, no trailing slash — this Desktop's local allternit-api (see phoneLinkApiUrl)
   /** Full auth header set for the connect request (desktop token + signed-in user headers). */
   headers: () => Record<string, string>;
   /** This socket's one phone; called at connect and on re-hello. */

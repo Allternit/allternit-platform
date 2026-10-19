@@ -18,6 +18,8 @@ Two WebSockets plus two HTTPS endpoints make the plane:
 
 <Note>
 Served by the node's allternit-api (the Desktop's gateway, default `http://127.0.0.1:18013` in dev; the installed Desktop owns 8013). Device identity persists in cloud PG (`registered_phones`); the online registry is in-memory in the serving api instance, so `online` means "this node's Desktop is attached".
+
+The Desktop attaches its phone-link session to its **own** allternit-api, not to `api.allternit.com`: that host is the cloud control plane (allternit-cloud-api), which has no `/ws/phone-link` or `/ws/phones` routes and answers them 404. From ai.allternit.com and the m.allternit.com PWA, the HTTPS calls reach the node through the cloud data-plane fallback, and the stream socket goes through the runtime socket relay (`POST /api/v1/runtime-devices/:id/socket-ticket`, then `/api/v1/runtime-devices/:id/socket`), the same path the computer VNC viewer uses. Dev override for the Desktop side: `ALLTERNIT_PHONE_LINK_API_URL=http://127.0.0.1:18013`.
 </Note>
 
 ## `GET /api/v1/phones`
