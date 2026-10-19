@@ -7,6 +7,7 @@
  * the task (the chat bridge for a send, the approval relay for a tool call).
  */
 
+import type { FabricContext } from "@/runtime/session/fabric-context"
 import { createHash } from "crypto"
 import { Log } from "@/shared/util/log"
 import { FabricError, HUMAN_ACTION_HEADER, fabricConfigured, fabricFetch, fabricJson, readSse } from "./client"
@@ -20,7 +21,7 @@ export interface FabricTask {
   task_id: string
   status: string
   status_detail: string | null
-  result: { text?: string; artifact_ids: string[] } | null
+  result: { text?: string; artifact_ids: string[]; context?: FabricContext.Report } | null
   error: { class?: string; detail?: string; user_action?: string | null } | null
 }
 

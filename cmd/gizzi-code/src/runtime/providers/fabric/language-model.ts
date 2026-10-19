@@ -36,6 +36,7 @@ import { FabricError, HUMAN_ACTION_HEADER, fabricFetch, fabricJson, providerDisp
 import { askProviderQuestion, confirmSend } from "./human-gate"
 import { cancelFabricTask, followFabricTask, submitFabricTask, type FabricTask, type FabricTaskBody, type FollowHandlers } from "./tasks"
 import { createThoughtStream } from "./thoughts"
+import { FabricContext } from "@/runtime/session/fabric-context"
 
 const log = Log.create({ service: "fabric-lm" })
 
@@ -217,6 +218,10 @@ export class SubscriptionFabricLanguageModel implements LanguageModelV2 {
             outcome = await followFabricTask(next.task_id, abortSignal, handlers)
           }
           if (outcome.status === "completed" || outcome.status === "partial") {
+            // What fills the vendor conversation's context, read in the signed-in page.
+            if (outcome.result?.context && sessionID) {
+              void FabricContext.record({ sessionID, providerID: this.providerID, modelID: this.modelId, report: outcome.result.context }).catch(() => {})
+            }
             const full = outcome.result?.text ?? ""
             if (full.startsWith(streamed)) text(full.slice(streamed.length))
             else if (!streamed) text(full)

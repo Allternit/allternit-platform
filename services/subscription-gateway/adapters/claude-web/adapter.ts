@@ -3,7 +3,8 @@
 // chat.create / chat.continue only; model_class is not applied yet (the
 // account's default model answers). Selectors are v1-unverified (see
 // selectors/v1.yaml).
-import type { AccountObservation, VendorMemory, VendorThreadSummary, VendorThreadText } from "@allternit/subscription-fabric-contracts";
+import type { AccountObservation, ContextReport, VendorMemory, VendorThreadSummary, VendorThreadText } from "@allternit/subscription-fabric-contracts";
+import { claudeContextReport } from "../_shared/context-report.js";
 import { claudeMemory, claudeThreads, claudeThreadText } from "../_shared/vendor-memory.js";
 import type { DeclarativeChatConfig, SdkSelectorResolver } from "@allternit/subscription-adapter-sdk";
 import type { Page } from "playwright";
@@ -161,6 +162,31 @@ export class ClaudeWebAdapter extends WebChatAdapter {
     if (!/^[0-9a-f-]{36}$/.test(id)) return null;
     const [conv] = await this.claudeGet([`/api/organizations/{org}/chat_conversations/${id}?tree=True&rendering_mode=messages`]);
     return conv.ok ? claudeThreadText(id, conv.body) : null;
+  }
+
+  /** What fills this conversation's context (context panel), from claude.ai's own endpoints in the page. */
+  async readContext(conversationId: string, _signal: AbortSignal): Promise<ContextReport | null> {
+    if (!/^[0-9a-f-]{36}$/.test(conversationId)) return null;
+    const [conversation, memory, usage, skills] = await this.claudeGet([
+      `/api/organizations/{org}/chat_conversations/${conversationId}?tree=True&rendering_mode=messages`,
+      "/api/organizations/{org}/memory",
+      "/api/organizations/{org}/usage",
+      "/api/organizations/{org}/skills",
+    ]);
+    if (!conversation.ok) return null;
+    const projectId = (conversation.body as { project_uuid?: unknown } | null)?.project_uuid;
+    const [project, projectDocs] =
+      typeof projectId === "string" && /^[0-9a-f-]{36}$/.test(projectId)
+        ? await this.claudeGet([`/api/organizations/{org}/projects/${projectId}`, `/api/organizations/{org}/projects/${projectId}/docs`])
+        : [{ ok: false, body: null }, { ok: false, body: null }];
+    return claudeContextReport({
+      conversation: conversation.body,
+      memory: memory.ok ? memory.body : undefined,
+      usage: usage.ok ? usage.body : undefined,
+      skills: skills.ok ? skills.body : undefined,
+      project: project.ok ? project.body : undefined,
+      projectDocs: projectDocs.ok ? projectDocs.body : undefined,
+    });
   }
 
   async readAccount(_signal: AbortSignal): Promise<AccountObservation> {
