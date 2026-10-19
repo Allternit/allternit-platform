@@ -608,9 +608,18 @@ export function buildServerCommand(options: PhoneStreamOptions): string {
  */
 export const HELPER_RESERVED_OPTIONS: readonly string[] = ['scid', 'tunnel_forward', 'log_level'];
 
-/** The same server options the adb lane uses, minus the ones the helper reserves. */
+/**
+ * The same server options the adb lane uses, minus the ones the helper
+ * reserves, and without scrcpy's cleanup: cleanup deletes the server jar from
+ * the phone at start (checked on a moto 2026-10-19), and on this lane nothing
+ * pushes it again before the next stream, so only the first stream after
+ * setup worked. With no cleanup to undo it, stay_awake stays off too; a
+ * screen turned off from the frame is turned back on by close().
+ */
 export function helperServerArgs(options: PhoneStreamOptions): string[] {
-  return serverOptions(options).filter((arg) => !HELPER_RESERVED_OPTIONS.includes(arg.slice(0, arg.indexOf('='))));
+  return serverOptions(options)
+    .filter((arg) => !HELPER_RESERVED_OPTIONS.includes(arg.slice(0, arg.indexOf('='))))
+    .map((arg) => (arg === 'cleanup=true' ? 'cleanup=false' : arg === 'stay_awake=true' ? 'stay_awake=false' : arg));
 }
 
 /** scrcpy-server key=value options after the version argument. */
@@ -663,6 +672,8 @@ export class ScrcpySession {
   private shell: ScrcpyShell | null = null;
   private ended = false;
   private intentionalClose = false;
+  /** The screen was turned off from the frame; close() turns it back on. */
+  private displayOff = false;
   private port = 0;
   private videoSize: { width: number; height: number } | null = null;
   private deviceName = '';
@@ -1052,12 +1063,22 @@ export class ScrcpySession {
   setDisplayPower(on: boolean): { ok: boolean; message?: string } {
     if (this.ended || !this.controlSocket) return { ok: false, message: 'The stream is not live.' };
     this.controlSocket.write(encodeSetDisplayPower(on));
+    this.displayOff = !on;
     return { ok: true };
   }
 
   /** Idempotent; emits `ended` exactly once with the reason. */
   close(reason = 'closed'): void {
     this.intentionalClose = true;
+    // The helper lane runs without scrcpy's cleanup, which would otherwise
+    // turn the phone's screen back on when the stream ends.
+    if (this.displayOff && !this.ended && this.controlSocket) {
+      try {
+        this.controlSocket.write(encodeSetDisplayPower(true));
+      } catch {
+        /* the socket is going away anyway */
+      }
+    }
     this.dispose(reason);
   }
 
