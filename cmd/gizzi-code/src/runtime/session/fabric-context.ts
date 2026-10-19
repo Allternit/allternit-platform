@@ -41,6 +41,14 @@ export namespace FabricContext {
     connectors: { gmail: 914, gcal: 716, gcontacts: 138 },
   }
 
+  /** Other signed-in apps: core prompt and built-in tools measured from the same leak collection. */
+  const OTHER_APPS: Record<string, { prompt: number; tools: number }> = {
+    // Google/gemini-3.8-flash.md: core before "# Tools", then the tool section.
+    google: { prompt: 8_333, tools: 6_081 },
+    // Kimi/kimi-3.md: core prompt, then its JSON tool definitions.
+    kimi: { prompt: 8_286, tools: 685 },
+  }
+
   /** Fill the hidden rows with the vendor estimates above; returns which rows were estimated. */
   export function estimateHidden(report: Report): { report: Report; estimated: string[] } {
     const hidden = new Set(report.hidden)
@@ -73,6 +81,17 @@ export namespace FabricContext {
         rows.mcp_tools = Object.values(table.connectors).reduce((sum, t) => sum + t, 0)
         report = { ...report, mcp_tools: Object.entries(table.connectors).map(([name, tokens]) => ({ name, server: name, tokens })) }
         estimated.push("mcp_tools")
+      }
+    } else if (OTHER_APPS[report.vendor]) {
+      const table = OTHER_APPS[report.vendor]
+      if (hidden.has("system_prompt")) {
+        rows.system_prompt = table.prompt
+        estimated.push("system_prompt")
+      }
+      if (hidden.has("system_tools")) {
+        rows.system_tools = table.tools
+        systemTools = [...systemTools.filter((t) => t.tokens > 0), { name: `${report.vendor} built-in tools (estimated)`, tokens: table.tools }]
+        estimated.push("system_tools")
       }
     }
     return {

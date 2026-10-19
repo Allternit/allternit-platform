@@ -12,11 +12,13 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { load as yamlLoad } from "js-yaml";
 import { captureEvidence } from "./evidence.js";
+import { tokensOf } from "./context-report.js";
 import type { Page } from "playwright";
 import {
   adapterManifestSchema,
   type AdapterEvent,
   type AdapterManifest,
+  type ContextReport,
   type ExecutionContext,
   type ReconcileResult,
   type Task,
@@ -268,6 +270,36 @@ export class WebChatAdapter extends DeclarativeChatAdapter {
       last = count;
       await page.waitForTimeout(250);
     }
+  }
+
+  /**
+   * What fills this conversation's context, from the turns the open thread
+   * renders (user turns and replies): the shared reader for chat apps with
+   * no richer source (Kimi, Gemini…). Non-spending and read-only: it never
+   * navigates, so it reads only when the page is on this thread. The
+   * vendor's own prompt and tools are not on the page: `hidden`, which the
+   * caller fills from published or leaked prompt measures.
+   */
+  async readContext(providerThreadId: string, _signal: AbortSignal): Promise<ContextReport | null> {
+    const page = this.attachedPage();
+    if (!page) return null;
+    if (threadIdFromUrl(page.url(), this.cfg.threadUrlPattern) !== providerThreadId) return null;
+    const resolver = createResolver(page, this.pack);
+    const texts: string[] = [];
+    for (const key of ["user_turn", "response"] as const) {
+      const turns = await resolver.tryResolveLocator(key).catch(() => null);
+      if (turns) texts.push(...(await turns.allInnerTexts().catch(() => [] as string[])));
+    }
+    if (texts.length === 0) return null;
+    return {
+      vendor: this.manifest.provider,
+      rows: { messages: tokensOf(texts.join("\n")), system_tools: 0, memory_files: 0, skills: 0, system_prompt: 0, mcp_tools: 0, mcp_instructions: 0 },
+      memory_files: [],
+      mcp_tools: [],
+      system_tools: [],
+      skills: [],
+      hidden: ["system_prompt", "system_tools", "mcp_tools"],
+    };
   }
 
   override async reconcile(attempt: TaskAttempt, ctx: ExecutionContext): Promise<ReconcileResult> {
