@@ -28,8 +28,11 @@ export const PINNED_ANDROID_MANIFESTS: Record<string, string> = {
   '0.2.1': 'b177cbe831009d7ea907b7a86456cfe23511e2fe413eb3777553221cc2b44287',
   // 0.3.1: shell server + in-app adb (screen over Wi-Fi), carrier stubs skipped.
   '0.3.1': '32db339799c16054015831cf307ee205ce5195aba28b09c165eb7b4f4443014c',
+  // 0.3.2: screen_service RPC — Desktop starts the screen service over its adb
+  // lane, so the live screen streams through Phone Link away from home.
+  '0.3.2': 'f60ed9326b9b806362778c2338bf6dad5928c0302739a2106fcc1cd90d24ff45',
 };
-export const ANDROID_HELPER_VERSION: string | null = '0.3.1';
+export const ANDROID_HELPER_VERSION: string | null = '0.3.2';
 
 export interface AndroidHelperManifest {
   version: string;
