@@ -20,6 +20,7 @@ import { Server } from "@/runtime/server/server"
 import { VendorSession } from "@/runtime/session/vendor-session"
 import { ContextBreakdown } from "@/runtime/session/context-breakdown"
 import { ContextBreakdownStore } from "@/runtime/session/context-breakdown-store"
+import { BrainContextReaders } from "@/runtime/session/brain-context-readers"
 import { Instance } from "@/runtime/context/project/instance"
 import * as BotTurn from "@/runtime/bots/bot-turn"
 import { planInstructions } from "@/runtime/drivers/cli-session-flags"
@@ -53,6 +54,13 @@ function instructionBlocks(systemText: string) {
   return systemText.split(/\n(?=(?:Instructions from|Auto-memory from): |# MCP Server Instructions)/)
 }
 
+async function modelWindow(providerID: string, modelID: string): Promise<number> {
+  return import("@/runtime/providers/provider")
+    .then(({ Provider }) => Provider.getModel(providerID, modelID))
+    .then((model) => model.limit.context)
+    .catch(() => 0)
+}
+
 /** A breakdown with a real split beyond Messages (Claude's /context, Codex's rollout, gizzi's sent rows). */
 function hasSplit(snapshot: ContextBreakdown.Snapshot | undefined) {
   return Boolean(
@@ -83,6 +91,18 @@ async function recordBrainContext(input: {
 }) {
   const { sessionID, providerID, modelID, context } = input
   const previous = ContextBreakdown.get(sessionID)
+  // A brain whose own record holds its full context: read that.
+  if (BrainContextReaders.has(providerID)) {
+    const vendorSessionId = await VendorSession.get(sessionID, providerID)
+    const size = context?.size || previous?.contextWindow || (await modelWindow(providerID, modelID))
+    const own = vendorSessionId && size > 0
+      ? await BrainContextReaders.read({ sessionID, providerID, modelID, vendorSessionId, used: context?.used, size })
+      : undefined
+    if (own) {
+      ContextBreakdownStore.record(own)
+      return
+    }
+  }
   if (context && context.size > 0 && previous?.source === "brain" && previous.brain === providerID && hasSplit(previous)) {
     const next = ContextBreakdown.reconcile(previous, { providerContextTokens: context.used, contextWindow: context.size })
     ContextBreakdownStore.record({ ...next, measuredAt: Date.now() })
@@ -90,14 +110,7 @@ async function recordBrainContext(input: {
   }
   // No report (or only a total): gizzi's measure of what it sent, the
   // conversation as the floor for Messages, the brain's total on top.
-  const size =
-    context?.size ||
-    (await import("@/runtime/providers/provider")
-      .then(({ Provider }) => Provider.getModel(providerID, modelID))
-      .then((model) => model.limit.context)
-      .catch(() => 0)) ||
-    previous?.contextWindow ||
-    0
+  const size = context?.size || (await modelWindow(providerID, modelID)) || previous?.contextWindow || 0
   if (!(size > 0)) return
   const sent = ContextBreakdown.build({
     sessionID,
@@ -237,8 +250,10 @@ export class SubprocessLanguageModel implements LanguageModelV2 {
                 return { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens }
               })()
           // A brain that never reported its context still gets every row.
-          if (sessionID && !lastContext && reason !== "error") {
-            void recordBrainContext({ sessionID, providerID: this.providerID, modelID: this.modelId, systemText, conversation: conversation() }).catch(() => {})
+          if (sessionID && (!lastContext || BrainContextReaders.has(this.providerID)) && reason !== "error") {
+            const args = { sessionID, providerID: this.providerID, modelID: this.modelId, context: lastContext, systemText, conversation: conversation() }
+            // The brain's own record is written as the turn ends: read it a moment later.
+            setTimeout(() => void recordBrainContext(args).catch(() => {}), BrainContextReaders.has(this.providerID) ? 750 : 0)
           }
           controller.enqueue({
             type: "finish",
