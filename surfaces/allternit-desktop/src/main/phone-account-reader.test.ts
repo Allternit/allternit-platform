@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { IctrlError } from './ictrl-client.js';
 import {
+  mergeParsed,
   parseAccountScreen,
   parsePlan,
   parseResetTime,
@@ -11,7 +12,7 @@ import {
   remainingPct,
   screenElements,
 } from './phone-account-reader.js';
-import { ACCOUNT_SPECS, deniedElement } from './phone-account-specs.js';
+import { ACCOUNT_SPECS, deniedElement, type AccountTapStep } from './phone-account-specs.js';
 import { PhoneLinkBackend } from './phone-link-backend.js';
 import type { LinkedPhone } from './phone-link-health.js';
 import type { IctrlLike } from './phone-link-ios.js';
@@ -299,5 +300,54 @@ describe('PhoneAccountScheduler', () => {
     expect(mk('HEALTHY', true).due()).toBeNull();
     expect(mk('HEALTHY', false, base({ accountCheckedAt: '2026-10-18T10:00:00Z' })).due()).toBeNull();
     expect(mk('HEALTHY', false).due()).toEqual({ deviceId: 'and-1', app: 'claude' });
+  });
+});
+
+// Lines copied from the real Claude iOS app (iPhone, 2026-10-19), email replaced.
+describe('Claude on iPhone (real screens)', () => {
+  const sidebar = [
+    "Button, label: 'Open sidebar', id: 'drawer-toggle', {{20, 63}, {36, 36}}",
+    "Button, label: 'joe, Settings', id: 'sidebar-account-button', {{30, 778}, {44, 44}}",
+  ].join('\n');
+  const settings = [
+    "NavigationBar, id: 'Settings', {{0, 75}, {393, 54}}",
+    "Other, label: 'Personal, someone​@​example​.com', value: 'Max', {{32, 160}, {329, 44}}",
+    "Button, label: 'Add account', {{32, 234}, {329, 21}}",
+    "Button, label: 'Billing, Max plan', {{32, 392}, {329, 21}}",
+    "Button, label: 'Usage', {{32, 443}, {329, 21}}",
+  ].join('\n');
+  const usage = [
+    "StaticText, label: 'Current session, 0% used, Starts when a message is sent', {{32, 164}, {329, 61}}",
+    "StaticText, label: 'Current session', {{32, 164}, {127, 21}}",
+    "StaticText, label: 'Weekly limits', {{32, 270}, {120, 21}}",
+    "StaticText, label: 'All models, 60% used, Resets Thu 8:59 AM', {{32, 318}, {329, 61}}",
+    "StaticText, label: 'All models', {{32, 318}, {83, 21}}",
+    "StaticText, label: 'Fable only, 0% used, Resets Thu 9:00 AM', {{32, 418}, {329, 61}}",
+    "Button, label: 'Buy usage credits', {{32, 780}, {200, 21}}",
+  ].join('\n');
+  const now = new Date(2026, 9, 19, 9, 0, 0);
+
+  it('taps the sidebar, the account button and Usage by their real ids and labels', () => {
+    const steps = ACCOUNT_SPECS.claude.paths[0].steps as AccountTapStep[];
+    expect(pickTap(screenElements(sidebar), steps[0])).toEqual({ element_id: 'drawer-toggle' });
+    expect(pickTap(screenElements(sidebar), steps[1])).toEqual({ element_id: 'sidebar-account-button' });
+    expect(pickTap(screenElements(settings), steps[3])).toEqual({ element_id: 'Usage' });
+    expect(ACCOUNT_SPECS.claude.verified).toBe(true);
+  });
+
+  it('reads account, plan and every window', () => {
+    const merged = mergeParsed(parseAccountScreen(settings, ACCOUNT_SPECS.claude, now), parseAccountScreen(usage, ACCOUNT_SPECS.claude, now));
+    expect(merged.account).toBe('someone@example.com');
+    expect(merged.plan).toBe('Max');
+    expect(merged.windows.map((w) => [w.id, w.label, w.remaining_pct])).toEqual([
+      ['five_hour', '5-hour', 100],
+      ['weekly', 'Weekly', 40],
+      ['weekly_fable', 'Weekly (Fable)', 100],
+    ]);
+    expect(new Date(merged.windows[1].resets_at!).getDay()).toBe(4);
+  });
+
+  it('never picks the credits purchase button', () => {
+    expect(pickTap(screenElements(usage), { tap: ['Buy usage credits'] })).toBeNull();
   });
 });
