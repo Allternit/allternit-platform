@@ -270,7 +270,15 @@ describe("account queries", () => {
     expect(getAccount(db, "acct-1")?.agents).toEqual(agents);
 
     // Who is signed in and the observed usage round-trip.
-    const usage = { remaining_pct: 8, resets_at: null, observed_at: "2026-09-29T14:54:00.000Z" };
+    const usage = {
+      remaining_pct: 8,
+      resets_at: null,
+      observed_at: "2026-09-29T14:54:00.000Z",
+      windows: [
+        { id: "five_hour", label: "5-hour", remaining_pct: 8, resets_at: "2026-09-29T19:00:00+00:00" },
+        { id: "seven_day", label: "Weekly", remaining_pct: 60, resets_at: null },
+      ],
+    };
     upsertAccount(db, { ...account, identity: "eoj@example.com", usage });
     expect(getAccount(db, "acct-1")).toMatchObject({ identity: "eoj@example.com", usage });
 

@@ -1,0 +1,1614 @@
+{
+  "version": 1,
+  "_doc": "The one list of coding CLIs Allternit supports. Read by gizzi (src/runtime/providers/discovery/subprocess.ts — its subprocess brains) and embedded by allternit-api (src/cli_catalog.rs — CLI provider rows, sign-in, GET /api/v1/cli-tools/catalog). adapter: builtin = a protocol adapter in local-cli-driver.ts CLI_ADAPTERS; text = one-shot argv from headless.args ({prompt} is exactly one argv element, never a shell string; {model} from headless.modelArgs); unsupported = listed, not runnable as a brain yet. install.harness = the Factory installs it (pin + licence in factory/pane/src/ao/harness/harness.json); otherwise method npm|uv|brew|script with the pin verified against the registry on the date in _verified. Logos are paths in the web app's public dir.",
+  "_verified": "2026-10-19 (npm registry, PyPI, formulae.brew.sh, vendor CLI docs)",
+  "tools": [
+    {
+      "id": "claude-cli",
+      "aliases": [
+        "claude"
+      ],
+      "name": "Claude Code",
+      "vendor": "Anthropic",
+      "homepage": "https://code.claude.com/docs",
+      "logo": "/assets/logos-apps/claude.svg",
+      "bin": "claude",
+      "adapter": "builtin",
+      "probe": {
+        "args": [
+          "--version"
+        ],
+        "expect": "\\d+\\.\\d+"
+      },
+      "models": [
+        {
+          "id": "claude-sonnet-5",
+          "name": "Claude Sonnet 5",
+          "context": 200000,
+          "output": 64000
+        },
+        {
+          "id": "claude-opus-5",
+          "name": "Claude Opus 5",
+          "context": 200000,
+          "output": 32000
+        }
+      ],
+      "signIn": "subscription",
+      "login": [
+        "auth",
+        "login"
+      ],
+      "signInPage": "https://claude.ai/login",
+      "install": {
+        "harness": "claude"
+      },
+      "envKeys": {
+        "path": "MULTICA_CLAUDE_PATH",
+        "model": "MULTICA_CLAUDE_MODEL"
+      },
+      "category": "coding",
+      "icon": "claude"
+    },
+    {
+      "id": "codex-cli",
+      "aliases": [
+        "codex"
+      ],
+      "name": "Codex",
+      "vendor": "OpenAI",
+      "homepage": "https://github.com/openai/codex",
+      "logo": "/assets/logos-apps/codex.svg",
+      "bin": "codex",
+      "adapter": "builtin",
+      "probe": {
+        "args": [
+          "--version"
+        ],
+        "expect": "codex"
+      },
+      "models": [
+        {
+          "id": "gpt-6-astra",
+          "name": "GPT-6-Astra",
+          "context": 272000,
+          "output": 32768
+        },
+        {
+          "id": "gpt-5.6-sol",
+          "name": "GPT-5.6 Sol",
+          "context": 272000,
+          "output": 32768
+        },
+        {
+          "id": "gpt-5.6-terra",
+          "name": "GPT-5.6 Terra",
+          "context": 272000,
+          "output": 32768
+        },
+        {
+          "id": "gpt-5.6-luna",
+          "name": "GPT-5.6 Luna",
+          "context": 272000,
+          "output": 32768
+        }
+      ],
+      "signIn": "subscription",
+      "login": [
+        "login"
+      ],
+      "signInPage": "https://chatgpt.com/",
+      "install": {
+        "harness": "codex"
+      },
+      "envKeys": {
+        "path": "MULTICA_CODEX_PATH",
+        "model": "MULTICA_CODEX_MODEL"
+      },
+      "category": "coding",
+      "icon": "codex"
+    },
+    {
+      "id": "qwen-cli",
+      "aliases": [
+        "qwen"
+      ],
+      "name": "Qwen Code",
+      "vendor": "Alibaba",
+      "homepage": "https://github.com/QwenLM/qwen-code",
+      "logo": "/assets/runtime-logos/qwen-cli.svg",
+      "bin": "qwen",
+      "adapter": "builtin",
+      "probe": {
+        "args": [
+          "--version"
+        ],
+        "expect": "\\d+\\.\\d+"
+      },
+      "models": [
+        {
+          "id": "qwen-plus",
+          "name": "Qwen Plus",
+          "context": 131072,
+          "output": 8192
+        },
+        {
+          "id": "qwen-max",
+          "name": "Qwen Max",
+          "context": 131072,
+          "output": 8192
+        }
+      ],
+      "signIn": "subscription",
+      "login": [
+        "auth"
+      ],
+      "signInPage": "https://qwen.ai/",
+      "install": {
+        "harness": "qwen"
+      },
+      "envKeys": {
+        "path": "MULTICA_QWEN_PATH",
+        "model": "MULTICA_QWEN_MODEL"
+      },
+      "category": "coding",
+      "icon": "qwen"
+    },
+    {
+      "id": "kimi-cli",
+      "aliases": [
+        "kimi"
+      ],
+      "name": "Kimi Code",
+      "vendor": "Moonshot AI",
+      "homepage": "https://www.kimi.com/",
+      "logo": "/assets/runtime-logos/kimi-cli.svg",
+      "bin": "kimi",
+      "adapter": "builtin",
+      "probe": {
+        "args": [
+          "--version"
+        ],
+        "expect": "\\d+\\.\\d+"
+      },
+      "models": [
+        {
+          "id": "kimi-k3",
+          "name": "Kimi K3",
+          "context": 262144,
+          "output": 16384
+        },
+        {
+          "id": "kimi-k2.7-code",
+          "name": "Kimi K2.7 Code",
+          "context": 262144,
+          "output": 16384
+        }
+      ],
+      "signIn": "subscription",
+      "login": [
+        "login"
+      ],
+      "signInPage": "https://www.kimi.com/",
+      "install": {
+        "harness": "kimi"
+      },
+      "envKeys": {
+        "path": "MULTICA_KIMI_PATH",
+        "model": "MULTICA_KIMI_MODEL"
+      },
+      "category": "coding",
+      "icon": "kimi"
+    },
+    {
+      "id": "antigravity",
+      "aliases": [
+        "agy"
+      ],
+      "name": "Antigravity",
+      "vendor": "Google",
+      "homepage": "https://antigravity.google/",
+      "logo": "/assets/logos-apps/google-antigravity.svg",
+      "bin": "agy",
+      "adapter": "builtin",
+      "probe": {
+        "args": [
+          "--version"
+        ],
+        "expect": "\\d+\\.\\d+"
+      },
+      "models": [
+        {
+          "id": "gemini-3.7-flash-high",
+          "name": "Gemini 3.7 Flash",
+          "context": 1000000,
+          "output": 65536
+        }
+      ],
+      "signIn": "subscription",
+      "signInPage": "https://antigravity.google/",
+      "install": {
+        "harness": "agy"
+      },
+      "envKeys": {
+        "path": "MULTICA_ANTIGRAVITY_PATH",
+        "model": "MULTICA_ANTIGRAVITY_MODEL"
+      },
+      "category": "coding",
+      "login": [],
+      "icon": "agy"
+    },
+    {
+      "id": "cursor-agent",
+      "name": "Cursor Agent",
+      "vendor": "Cursor",
+      "homepage": "https://cursor.com/",
+      "logo": "/app-icons/cursor.svg",
+      "bin": "cursor-agent",
+      "adapter": "builtin",
+      "probe": {
+        "args": [
+          "--version"
+        ],
+        "expect": "\\d+\\.\\d+"
+      },
+      "models": [
+        {
+          "id": "default",
+          "name": "Cursor Agent default",
+          "context": 200000,
+          "output": 64000
+        }
+      ],
+      "signIn": "subscription",
+      "signInPage": "https://cursor.com/",
+      "install": {
+        "harness": "cursor"
+      },
+      "envKeys": {
+        "path": "MULTICA_CURSOR_PATH",
+        "model": "MULTICA_CURSOR_MODEL"
+      },
+      "aliases": [],
+      "category": "coding",
+      "login": [],
+      "icon": "cursor"
+    },
+    {
+      "id": "grok",
+      "name": "Grok Build",
+      "vendor": "xAI",
+      "homepage": "https://grok.com/",
+      "logo": "/assets/logos-apps/grok.svg",
+      "bin": "grok",
+      "adapter": "builtin",
+      "probe": {
+        "args": [
+          "--version"
+        ],
+        "expect": "\\d+\\.\\d+"
+      },
+      "models": [
+        {
+          "id": "default",
+          "name": "Grok default",
+          "context": 200000,
+          "output": 64000
+        }
+      ],
+      "signIn": "subscription",
+      "login": [
+        "login"
+      ],
+      "signInPage": "https://grok.com/",
+      "install": {
+        "harness": "grok"
+      },
+      "envKeys": {
+        "path": "MULTICA_GROK_PATH",
+        "model": "MULTICA_GROK_MODEL"
+      },
+      "aliases": [],
+      "category": "coding",
+      "icon": "grok"
+    },
+    {
+      "id": "opencode",
+      "name": "OpenCode",
+      "vendor": "Anomaly",
+      "homepage": "https://opencode.ai/",
+      "logo": "/assets/logos-apps/opencode.svg",
+      "bin": "opencode",
+      "adapter": "builtin",
+      "probe": {
+        "args": [
+          "--version"
+        ],
+        "expect": "\\d+\\.\\d+"
+      },
+      "models": [
+        {
+          "id": "default",
+          "name": "OpenCode default",
+          "context": 200000,
+          "output": 64000
+        }
+      ],
+      "signIn": "api_key",
+      "install": {
+        "harness": "opencode"
+      },
+      "envKeys": {
+        "path": "MULTICA_OPENCODE_PATH",
+        "model": "MULTICA_OPENCODE_MODEL"
+      },
+      "aliases": [],
+      "category": "coding",
+      "login": [],
+      "icon": "opencode"
+    },
+    {
+      "id": "codebuddy",
+      "name": "CodeBuddy",
+      "vendor": "Tencent",
+      "homepage": "https://www.codebuddy.ai/",
+      "logo": "/assets/runtime-logos/codebuddy.svg",
+      "bin": "codebuddy",
+      "adapter": "builtin",
+      "probe": {
+        "args": [
+          "--version"
+        ],
+        "expect": "\\d+\\.\\d+"
+      },
+      "models": [
+        {
+          "id": "default",
+          "name": "CodeBuddy default",
+          "context": 200000,
+          "output": 64000
+        }
+      ],
+      "signIn": "subscription",
+      "install": {
+        "harness": "codebuddy"
+      },
+      "envKeys": {
+        "path": "MULTICA_CODEBUDDY_PATH",
+        "model": "MULTICA_CODEBUDDY_MODEL"
+      },
+      "aliases": [],
+      "category": "coding",
+      "login": [],
+      "icon": "codebuddy"
+    },
+    {
+      "id": "qodercli",
+      "name": "Qoder CLI",
+      "vendor": "Qoder",
+      "homepage": "https://qoder.com/cli",
+      "logo": "/assets/runtime-logos/qodercli.svg",
+      "bin": "qodercli",
+      "adapter": "builtin",
+      "probe": {
+        "args": [
+          "--version"
+        ],
+        "expect": "\\d+\\.\\d+"
+      },
+      "models": [
+        {
+          "id": "default",
+          "name": "Qoder CLI default",
+          "context": 200000,
+          "output": 64000
+        }
+      ],
+      "signIn": "subscription",
+      "install": {
+        "harness": "qoder"
+      },
+      "envKeys": {
+        "path": "MULTICA_QODER_PATH",
+        "model": "MULTICA_QODER_MODEL"
+      },
+      "aliases": [],
+      "category": "coding",
+      "login": [],
+      "icon": "qoder"
+    },
+    {
+      "id": "qoderclicn",
+      "name": "Qoder CN",
+      "vendor": "Qoder",
+      "homepage": "https://qoder.com/cli",
+      "logo": "/assets/runtime-logos/qoderclicn.svg",
+      "bin": "qoderclicn",
+      "adapter": "builtin",
+      "probe": {
+        "args": [
+          "--version"
+        ],
+        "expect": "\\d+\\.\\d+"
+      },
+      "models": [
+        {
+          "id": "default",
+          "name": "Qoder CN default",
+          "context": 200000,
+          "output": 64000
+        }
+      ],
+      "signIn": "subscription",
+      "envKeys": {
+        "path": "MULTICA_QODERCLICN_PATH",
+        "model": "MULTICA_QODERCLICN_MODEL"
+      },
+      "aliases": [],
+      "category": "coding",
+      "login": [],
+      "icon": "qoder-cn",
+      "install": null
+    },
+    {
+      "id": "kiro-cli",
+      "name": "Kiro CLI",
+      "vendor": "Amazon",
+      "homepage": "https://kiro.dev/",
+      "logo": "/assets/runtime-logos/kiro-cli.svg",
+      "bin": "kiro-cli",
+      "adapter": "builtin",
+      "probe": {
+        "args": [
+          "--version"
+        ],
+        "expect": "\\d+\\.\\d+"
+      },
+      "models": [
+        {
+          "id": "default",
+          "name": "Kiro CLI default",
+          "context": 200000,
+          "output": 64000
+        }
+      ],
+      "signIn": "subscription",
+      "login": [
+        "login"
+      ],
+      "signInPage": "https://kiro.dev/",
+      "install": {
+        "method": "brew",
+        "package": "kiro-cli",
+        "cask": true
+      },
+      "license": "proprietary-terms",
+      "termsUrl": "https://kiro.dev/",
+      "envKeys": {
+        "path": "MULTICA_KIRO_PATH",
+        "model": "MULTICA_KIRO_MODEL"
+      },
+      "aliases": [],
+      "category": "coding",
+      "icon": "kiro"
+    },
+    {
+      "id": "openclaw",
+      "name": "OpenClaw",
+      "vendor": "OpenClaw",
+      "homepage": "https://github.com/openclaw/openclaw",
+      "logo": "/assets/runtime-logos/openclaw.svg",
+      "bin": "openclaw",
+      "adapter": "builtin",
+      "probe": {
+        "args": [
+          "--version"
+        ],
+        "expect": "\\d+\\.\\d+"
+      },
+      "models": [
+        {
+          "id": "default",
+          "name": "OpenClaw default",
+          "context": 200000,
+          "output": 64000
+        }
+      ],
+      "signIn": "api_key",
+      "install": {
+        "harness": "openclaw"
+      },
+      "envKeys": {
+        "path": "MULTICA_OPENCLAW_PATH",
+        "model": "MULTICA_OPENCLAW_MODEL"
+      },
+      "aliases": [],
+      "category": "coding",
+      "login": [],
+      "icon": "openclaw"
+    },
+    {
+      "id": "hermes",
+      "name": "Hermes",
+      "vendor": "Nous Research",
+      "homepage": "https://pypi.org/project/hermes-agent/",
+      "logo": "/assets/logos-apps/hermes-icon.svg",
+      "bin": "hermes",
+      "adapter": "builtin",
+      "probe": {
+        "args": [
+          "--version"
+        ],
+        "expect": "\\d+\\.\\d+"
+      },
+      "models": [
+        {
+          "id": "default",
+          "name": "Hermes default",
+          "context": 200000,
+          "output": 64000
+        }
+      ],
+      "signIn": "api_key",
+      "install": {
+        "harness": "hermes"
+      },
+      "envKeys": {
+        "path": "MULTICA_HERMES_PATH",
+        "model": "MULTICA_HERMES_MODEL"
+      },
+      "aliases": [],
+      "category": "coding",
+      "login": [],
+      "icon": "hermes"
+    },
+    {
+      "id": "pi",
+      "name": "Pi",
+      "vendor": "Earendil",
+      "homepage": "https://github.com/earendil-works/pi",
+      "logo": "/assets/runtime-logos/pi.svg",
+      "bin": "pi",
+      "adapter": "builtin",
+      "probe": {
+        "args": [
+          "--version"
+        ],
+        "expect": "\\d+\\.\\d+"
+      },
+      "models": [
+        {
+          "id": "default",
+          "name": "Pi default",
+          "context": 200000,
+          "output": 64000
+        }
+      ],
+      "signIn": "api_key",
+      "install": {
+        "harness": "pi"
+      },
+      "envKeys": {
+        "path": "MULTICA_PI_PATH",
+        "model": "MULTICA_PI_MODEL"
+      },
+      "aliases": [],
+      "category": "coding",
+      "login": [],
+      "icon": "pi"
+    },
+    {
+      "id": "omp",
+      "name": "Oh-My-Pi",
+      "vendor": "Oh-My-Pi",
+      "homepage": "https://oh-my-pi.dev/",
+      "logo": "/assets/runtime-logos/omp.svg",
+      "bin": "omp",
+      "adapter": "builtin",
+      "probe": {
+        "args": [
+          "--version"
+        ],
+        "expect": "\\d+\\.\\d+"
+      },
+      "models": [
+        {
+          "id": "default",
+          "name": "Oh-My-Pi default",
+          "context": 200000,
+          "output": 64000
+        }
+      ],
+      "signIn": "api_key",
+      "envKeys": {
+        "path": "MULTICA_OMP_PATH",
+        "model": "MULTICA_OMP_MODEL"
+      },
+      "aliases": [],
+      "category": "coding",
+      "login": [],
+      "icon": "omp",
+      "install": null
+    },
+    {
+      "id": "deveco",
+      "name": "DevEco Code",
+      "vendor": "Huawei",
+      "homepage": "https://developer.huawei.com/",
+      "logo": "/assets/runtime-logos/deveco.svg",
+      "bin": "deveco",
+      "adapter": "builtin",
+      "probe": {
+        "args": [
+          "--version"
+        ],
+        "expect": "\\d+\\.\\d+"
+      },
+      "models": [
+        {
+          "id": "default",
+          "name": "DevEco Code default",
+          "context": 200000,
+          "output": 64000
+        }
+      ],
+      "signIn": "subscription",
+      "envKeys": {
+        "path": "MULTICA_DEVECO_PATH",
+        "model": "MULTICA_DEVECO_MODEL"
+      },
+      "aliases": [],
+      "category": "coding",
+      "login": [],
+      "icon": "deveco",
+      "install": null
+    },
+    {
+      "id": "traecli",
+      "name": "Trae CLI",
+      "vendor": "ByteDance",
+      "homepage": "https://www.trae.ai/",
+      "logo": "/assets/runtime-logos/traecli.svg",
+      "bin": "traecli",
+      "adapter": "builtin",
+      "probe": {
+        "args": [
+          "--version"
+        ],
+        "expect": "\\d+\\.\\d+"
+      },
+      "models": [
+        {
+          "id": "default",
+          "name": "Trae CLI default",
+          "context": 200000,
+          "output": 64000
+        }
+      ],
+      "signIn": "subscription",
+      "signInPage": "https://trae.ai/",
+      "envKeys": {
+        "path": "MULTICA_TRAECLI_PATH",
+        "model": "MULTICA_TRAECLI_MODEL"
+      },
+      "aliases": [],
+      "category": "coding",
+      "login": [],
+      "icon": "trae",
+      "install": null
+    },
+    {
+      "id": "qwenpaw",
+      "name": "QwenPaw",
+      "vendor": "Alibaba",
+      "homepage": "https://qwen.ai/",
+      "logo": "/assets/runtime-logos/qwenpaw.svg",
+      "bin": "qwenpaw",
+      "adapter": "builtin",
+      "probe": {
+        "args": [
+          "--version"
+        ],
+        "expect": "\\d+\\.\\d+"
+      },
+      "models": [
+        {
+          "id": "default",
+          "name": "QwenPaw default",
+          "context": 200000,
+          "output": 64000
+        }
+      ],
+      "signIn": "subscription",
+      "envKeys": {
+        "path": "MULTICA_QWENPAW_PATH"
+      },
+      "aliases": [],
+      "category": "coding",
+      "login": [],
+      "icon": "qwenpaw",
+      "install": null
+    },
+    {
+      "id": "reasonix",
+      "name": "Reasonix",
+      "vendor": "Reasonix",
+      "homepage": "https://reasonix.ai/",
+      "logo": "/assets/runtime-logos/reasonix.svg",
+      "bin": "reasonix",
+      "adapter": "builtin",
+      "probe": {
+        "args": [
+          "--version"
+        ],
+        "expect": "\\d+\\.\\d+"
+      },
+      "models": [
+        {
+          "id": "default",
+          "name": "Reasonix default",
+          "context": 200000,
+          "output": 64000
+        }
+      ],
+      "signIn": "subscription",
+      "envKeys": {
+        "path": "MULTICA_REASONIX_PATH",
+        "model": "MULTICA_REASONIX_MODEL"
+      },
+      "aliases": [],
+      "category": "coding",
+      "login": [],
+      "icon": "reasonix",
+      "install": null
+    },
+    {
+      "id": "mcode",
+      "name": "MiniMax Code",
+      "vendor": "MiniMax",
+      "homepage": "https://minimaxi.com/",
+      "logo": "/assets/runtime-logos/mcode.svg",
+      "bin": "mcode",
+      "adapter": "builtin",
+      "probe": {
+        "args": [
+          "--version"
+        ],
+        "expect": "\\d+\\.\\d+"
+      },
+      "models": [
+        {
+          "id": "default",
+          "name": "MiniMax Code default",
+          "context": 200000,
+          "output": 64000
+        }
+      ],
+      "signIn": "subscription",
+      "envKeys": {
+        "path": "MULTICA_MCODE_PATH"
+      },
+      "aliases": [],
+      "category": "coding",
+      "login": [],
+      "icon": "mcode",
+      "install": null
+    },
+    {
+      "id": "dsh",
+      "name": "DeepSeek Harness",
+      "vendor": "DeepSeek",
+      "homepage": "https://deepseek.com/",
+      "logo": "/assets/runtime-logos/dsh.svg",
+      "bin": "dsh",
+      "adapter": "unsupported",
+      "probe": {
+        "args": [
+          "--profile",
+          "multica",
+          "--probe"
+        ],
+        "expect": "\"type\":\"probe\""
+      },
+      "models": [
+        {
+          "id": "default",
+          "name": "DSH default",
+          "context": 200000,
+          "output": 64000
+        }
+      ],
+      "signIn": "api_key",
+      "install": {
+        "harness": "dsh"
+      },
+      "aliases": [],
+      "category": "coding",
+      "login": [],
+      "icon": "dsh"
+    },
+    {
+      "id": "gemini-cli",
+      "aliases": [
+        "gemini"
+      ],
+      "name": "Gemini CLI",
+      "vendor": "Google",
+      "homepage": "https://geminicli.com",
+      "logo": "/assets/vendors/gemini.svg",
+      "bin": "gemini",
+      "headless": {
+        "args": [
+          "-p",
+          "{prompt}",
+          "--approval-mode=yolo"
+        ],
+        "modelArgs": [
+          "-m",
+          "{model}"
+        ]
+      },
+      "models": [
+        {
+          "id": "gemini-2.5-pro",
+          "name": "Gemini 2.5 Pro",
+          "context": 1000000,
+          "output": 65536
+        },
+        {
+          "id": "gemini-2.5-flash",
+          "name": "Gemini 2.5 Flash",
+          "context": 1000000,
+          "output": 65536
+        }
+      ],
+      "signIn": "subscription",
+      "signInPage": "https://geminicli.com",
+      "auth": {
+        "files": [
+          [
+            ".gemini",
+            "oauth_creds.json"
+          ]
+        ],
+        "env": [
+          "GEMINI_API_KEY",
+          "GOOGLE_API_KEY"
+        ]
+      },
+      "install": {
+        "method": "npm",
+        "package": "@google/gemini-cli",
+        "pinnedVersion": "0.64.0"
+      },
+      "license": "apache",
+      "termsUrl": "https://github.com/google-gemini/gemini-cli/blob/main/LICENSE",
+      "adapter": "text",
+      "probe": {
+        "args": [
+          "--version"
+        ],
+        "expect": "\\d"
+      },
+      "category": "coding",
+      "login": [],
+      "icon": "gemini"
+    },
+    {
+      "id": "copilot",
+      "aliases": [
+        "copilot-cli"
+      ],
+      "name": "GitHub Copilot CLI",
+      "vendor": "GitHub",
+      "homepage": "https://docs.github.com/en/copilot/concepts/agents/about-copilot-cli",
+      "logo": "/assets/runtime-logos/copilot.svg",
+      "bin": "copilot",
+      "headless": {
+        "args": [
+          "-p",
+          "{prompt}",
+          "-s",
+          "--allow-all-tools"
+        ],
+        "modelArgs": [
+          "--model",
+          "{model}"
+        ]
+      },
+      "models": [
+        {
+          "id": "default",
+          "name": "Copilot default",
+          "context": 200000,
+          "output": 64000
+        }
+      ],
+      "signIn": "subscription",
+      "signInPage": "https://github.com/features/copilot",
+      "auth": {
+        "files": [
+          [
+            ".copilot"
+          ]
+        ],
+        "env": [
+          "COPILOT_GITHUB_TOKEN",
+          "GH_TOKEN",
+          "GITHUB_TOKEN"
+        ]
+      },
+      "install": {
+        "method": "npm",
+        "package": "@github/copilot",
+        "pinnedVersion": "1.0.98"
+      },
+      "license": "proprietary-terms",
+      "termsUrl": "https://www.npmjs.com/package/@github/copilot",
+      "adapter": "text",
+      "probe": {
+        "args": [
+          "--version"
+        ],
+        "expect": "\\d"
+      },
+      "category": "coding",
+      "login": [],
+      "icon": "copilot"
+    },
+    {
+      "id": "aider",
+      "name": "Aider",
+      "vendor": "Aider",
+      "homepage": "https://aider.chat",
+      "logo": "/assets/runtime-logos/aider-logo.svg",
+      "bin": "aider",
+      "headless": {
+        "args": [
+          "--message",
+          "{prompt}",
+          "--yes"
+        ],
+        "modelArgs": [
+          "--model",
+          "{model}"
+        ]
+      },
+      "models": [
+        {
+          "id": "default",
+          "name": "Aider default",
+          "context": 200000,
+          "output": 64000
+        }
+      ],
+      "signIn": "api_key",
+      "install": {
+        "method": "uv",
+        "package": "aider-chat",
+        "pinnedVersion": "0.86.2",
+        "extraArgs": [
+          "--python",
+          "python3.12",
+          "--with",
+          "pip"
+        ]
+      },
+      "license": "apache",
+      "termsUrl": "https://github.com/Aider-AI/aider/blob/main/LICENSE.txt",
+      "adapter": "text",
+      "probe": {
+        "args": [
+          "--version"
+        ],
+        "expect": "\\d"
+      },
+      "aliases": [],
+      "category": "coding",
+      "login": [],
+      "icon": "aider"
+    },
+    {
+      "id": "amp",
+      "name": "Amp",
+      "vendor": "Sourcegraph",
+      "homepage": "https://ampcode.com",
+      "logo": "/assets/runtime-logos/amp-logo.svg",
+      "bin": "amp",
+      "headless": {
+        "args": [
+          "-x",
+          "{prompt}"
+        ]
+      },
+      "models": [
+        {
+          "id": "default",
+          "name": "Amp default",
+          "context": 200000,
+          "output": 64000
+        }
+      ],
+      "signIn": "subscription",
+      "login": [
+        "login"
+      ],
+      "signInPage": "https://ampcode.com",
+      "install": {
+        "method": "npm",
+        "package": "@sourcegraph/amp",
+        "pinnedVersion": "0.0.1792411243-gb8cffc"
+      },
+      "license": "proprietary-terms",
+      "termsUrl": "https://ampcode.com",
+      "adapter": "text",
+      "probe": {
+        "args": [
+          "--version"
+        ],
+        "expect": "\\d"
+      },
+      "aliases": [],
+      "category": "coding",
+      "icon": "amp"
+    },
+    {
+      "id": "goose",
+      "name": "Goose",
+      "vendor": "Block",
+      "homepage": "https://goose-docs.ai",
+      "logo": "/assets/runtime-logos/goose-logo.svg",
+      "bin": "goose",
+      "headless": {
+        "args": [
+          "run",
+          "--no-session",
+          "-q",
+          "-t",
+          "{prompt}"
+        ],
+        "modelArgs": [
+          "--model",
+          "{model}"
+        ]
+      },
+      "models": [
+        {
+          "id": "default",
+          "name": "Goose default",
+          "context": 200000,
+          "output": 64000
+        }
+      ],
+      "signIn": "api_key",
+      "install": {
+        "method": "brew",
+        "package": "block-goose-cli"
+      },
+      "license": "apache",
+      "termsUrl": "https://github.com/aaif-goose/goose/blob/main/LICENSE",
+      "adapter": "text",
+      "probe": {
+        "args": [
+          "--version"
+        ],
+        "expect": "\\d"
+      },
+      "aliases": [],
+      "category": "coding",
+      "login": [],
+      "icon": "goose"
+    },
+    {
+      "id": "crush",
+      "name": "Crush",
+      "vendor": "Charm",
+      "homepage": "https://charm.sh/crush",
+      "logo": "/assets/logos-apps/charm-crush.png",
+      "bin": "crush",
+      "headless": {
+        "args": [
+          "run",
+          "-q",
+          "{prompt}"
+        ],
+        "modelArgs": [
+          "-m",
+          "{model}"
+        ]
+      },
+      "models": [
+        {
+          "id": "default",
+          "name": "Crush default",
+          "context": 200000,
+          "output": 64000
+        }
+      ],
+      "signIn": "api_key",
+      "login": [
+        "login"
+      ],
+      "install": {
+        "method": "npm",
+        "package": "@charmland/crush",
+        "pinnedVersion": "0.98.1"
+      },
+      "license": "proprietary-terms",
+      "termsUrl": "https://github.com/charmbracelet/crush/blob/main/LICENSE.md",
+      "adapter": "text",
+      "probe": {
+        "args": [
+          "--version"
+        ],
+        "expect": "\\d"
+      },
+      "aliases": [],
+      "category": "coding",
+      "icon": "crush"
+    },
+    {
+      "id": "cline",
+      "name": "Cline",
+      "vendor": "Cline",
+      "homepage": "https://cline.bot",
+      "logo": "/assets/logos-apps/cline.svg",
+      "bin": "cline",
+      "headless": {
+        "args": [
+          "--yolo",
+          "{prompt}"
+        ],
+        "modelArgs": [
+          "-m",
+          "{model}"
+        ]
+      },
+      "models": [
+        {
+          "id": "default",
+          "name": "Cline default",
+          "context": 200000,
+          "output": 64000
+        }
+      ],
+      "signIn": "subscription",
+      "signInPage": "https://cline.bot",
+      "auth": {
+        "files": [
+          [
+            ".cline",
+            "data"
+          ]
+        ]
+      },
+      "install": {
+        "method": "npm",
+        "package": "cline",
+        "pinnedVersion": "3.0.73"
+      },
+      "license": "apache",
+      "termsUrl": "https://github.com/cline/cline/blob/main/LICENSE",
+      "adapter": "text",
+      "probe": {
+        "args": [
+          "--version"
+        ],
+        "expect": "\\d"
+      },
+      "aliases": [],
+      "category": "coding",
+      "login": [],
+      "icon": "cline"
+    },
+    {
+      "id": "kilo",
+      "aliases": [
+        "kilocode"
+      ],
+      "name": "Kilo Code CLI",
+      "vendor": "Kilo Code",
+      "homepage": "https://kilo.ai",
+      "logo": "/assets/logos-apps/kilo-code.svg",
+      "bin": "kilo",
+      "headless": {
+        "args": [
+          "run",
+          "--auto",
+          "{prompt}"
+        ],
+        "modelArgs": [
+          "-m",
+          "{model}"
+        ]
+      },
+      "models": [
+        {
+          "id": "default",
+          "name": "Kilo Code default",
+          "context": 200000,
+          "output": 64000
+        }
+      ],
+      "signIn": "subscription",
+      "signInPage": "https://kilo.ai",
+      "install": {
+        "method": "npm",
+        "package": "@kilocode/cli",
+        "pinnedVersion": "7.8.12"
+      },
+      "license": "mit",
+      "termsUrl": "https://github.com/Kilo-Org/kilocode/blob/main/LICENSE",
+      "adapter": "text",
+      "probe": {
+        "args": [
+          "--version"
+        ],
+        "expect": "\\d"
+      },
+      "category": "coding",
+      "login": [],
+      "icon": "kilo"
+    },
+    {
+      "id": "droid",
+      "name": "Factory Droid",
+      "vendor": "Factory",
+      "homepage": "https://factory.ai",
+      "logo": "/assets/logos-apps/factory-droid.svg",
+      "bin": "droid",
+      "headless": {
+        "args": [
+          "exec",
+          "--auto",
+          "high",
+          "{prompt}"
+        ],
+        "modelArgs": [
+          "-m",
+          "{model}"
+        ]
+      },
+      "models": [
+        {
+          "id": "default",
+          "name": "Droid default",
+          "context": 200000,
+          "output": 64000
+        }
+      ],
+      "signIn": "api_key",
+      "auth": {
+        "env": [
+          "FACTORY_API_KEY"
+        ]
+      },
+      "signInPage": "https://app.factory.ai",
+      "install": {
+        "method": "npm",
+        "package": "droid",
+        "pinnedVersion": "0.244.0"
+      },
+      "license": "proprietary-terms",
+      "termsUrl": "https://factory.ai",
+      "adapter": "text",
+      "probe": {
+        "args": [
+          "--version"
+        ],
+        "expect": "\\d"
+      },
+      "aliases": [],
+      "category": "coding",
+      "login": [],
+      "icon": "droid"
+    },
+    {
+      "id": "auggie",
+      "name": "Augment Auggie",
+      "vendor": "Augment Code",
+      "homepage": "https://augmentcode.com",
+      "logo": "/assets/logos-apps/augment.svg",
+      "bin": "auggie",
+      "headless": {
+        "args": [
+          "--print",
+          "--quiet",
+          "{prompt}"
+        ],
+        "modelArgs": [
+          "--model",
+          "{model}"
+        ]
+      },
+      "models": [
+        {
+          "id": "default",
+          "name": "Auggie default",
+          "context": 200000,
+          "output": 64000
+        }
+      ],
+      "signIn": "subscription",
+      "login": [
+        "login"
+      ],
+      "signInPage": "https://augmentcode.com",
+      "install": {
+        "method": "npm",
+        "package": "@augmentcode/auggie",
+        "pinnedVersion": "0.36.0"
+      },
+      "license": "proprietary-terms",
+      "termsUrl": "https://augmentcode.com",
+      "adapter": "text",
+      "probe": {
+        "args": [
+          "--version"
+        ],
+        "expect": "\\d"
+      },
+      "aliases": [],
+      "category": "coding",
+      "icon": "auggie"
+    },
+    {
+      "id": "openhands",
+      "name": "OpenHands CLI",
+      "vendor": "All Hands AI",
+      "homepage": "https://docs.openhands.dev",
+      "logo": "/assets/logos-apps/openhands.svg",
+      "bin": "openhands",
+      "headless": {
+        "args": [
+          "--headless",
+          "-t",
+          "{prompt}"
+        ]
+      },
+      "models": [
+        {
+          "id": "default",
+          "name": "OpenHands default",
+          "context": 200000,
+          "output": 64000
+        }
+      ],
+      "signIn": "subscription",
+      "login": [
+        "login"
+      ],
+      "signInPage": "https://app.all-hands.dev",
+      "install": {
+        "method": "uv",
+        "package": "openhands",
+        "pinnedVersion": "1.16.0",
+        "extraArgs": [
+          "--python",
+          "3.12"
+        ]
+      },
+      "license": "mit",
+      "termsUrl": "https://github.com/OpenHands/OpenHands-CLI/blob/main/LICENSE",
+      "adapter": "text",
+      "probe": {
+        "args": [
+          "--version"
+        ],
+        "expect": "\\d"
+      },
+      "aliases": [],
+      "category": "coding",
+      "icon": "openhands"
+    },
+    {
+      "id": "continue-cli",
+      "aliases": [
+        "cn"
+      ],
+      "name": "Continue CLI",
+      "vendor": "Continue",
+      "homepage": "https://continue.dev",
+      "logo": "/assets/logos-apps/continue.png",
+      "bin": "cn",
+      "headless": {
+        "args": [
+          "-p",
+          "{prompt}",
+          "--silent"
+        ]
+      },
+      "models": [
+        {
+          "id": "default",
+          "name": "Continue default",
+          "context": 200000,
+          "output": 64000
+        }
+      ],
+      "signIn": "subscription",
+      "login": [
+        "login"
+      ],
+      "signInPage": "https://hub.continue.dev",
+      "install": {
+        "method": "npm",
+        "package": "@continuedev/cli",
+        "pinnedVersion": "1.5.47"
+      },
+      "license": "apache",
+      "termsUrl": "https://github.com/continuedev/continue/blob/main/LICENSE",
+      "adapter": "text",
+      "probe": {
+        "args": [
+          "--version"
+        ],
+        "expect": "\\d"
+      },
+      "category": "coding",
+      "icon": "continue-cli"
+    },
+    {
+      "id": "warp-oz",
+      "aliases": [
+        "oz"
+      ],
+      "name": "Warp Oz",
+      "vendor": "Warp",
+      "homepage": "https://warp.dev",
+      "logo": "/assets/logos-apps/warp.svg",
+      "bin": "oz",
+      "headless": {
+        "args": [
+          "agent",
+          "run",
+          "--prompt",
+          "{prompt}"
+        ],
+        "modelArgs": [
+          "--model",
+          "{model}"
+        ]
+      },
+      "models": [
+        {
+          "id": "default",
+          "name": "Oz default",
+          "context": 200000,
+          "output": 64000
+        }
+      ],
+      "signIn": "subscription",
+      "login": [
+        "login"
+      ],
+      "signInPage": "https://app.warp.dev",
+      "auth": {
+        "env": [
+          "WARP_API_KEY"
+        ]
+      },
+      "license": "proprietary-terms",
+      "termsUrl": "https://warp.dev",
+      "adapter": "text",
+      "probe": {
+        "args": [
+          "--version"
+        ],
+        "expect": "\\d"
+      },
+      "category": "coding",
+      "icon": "warp-oz",
+      "install": null
+    },
+    {
+      "id": "llm-cli",
+      "aliases": [
+        "llm"
+      ],
+      "category": "llm",
+      "name": "LLM",
+      "vendor": "Simon Willison",
+      "homepage": "https://llm.datasette.io",
+      "logo": null,
+      "bin": "llm",
+      "probe": {
+        "args": [
+          "--version"
+        ],
+        "expect": "llm"
+      },
+      "headless": {
+        "args": [
+          "{prompt}"
+        ],
+        "modelArgs": [
+          "-m",
+          "{model}"
+        ]
+      },
+      "models": [
+        {
+          "id": "default",
+          "name": "LLM CLI default model",
+          "context": 128000,
+          "output": 8192
+        }
+      ],
+      "signIn": "api_key",
+      "adapter": "text",
+      "login": [],
+      "icon": "llm",
+      "install": null
+    },
+    {
+      "id": "aichat-cli",
+      "aliases": [
+        "aichat"
+      ],
+      "category": "llm",
+      "name": "AIChat",
+      "vendor": "sigoden",
+      "homepage": "https://github.com/sigoden/aichat",
+      "logo": null,
+      "bin": "aichat",
+      "probe": {
+        "args": [
+          "--version"
+        ],
+        "expect": "aichat"
+      },
+      "headless": {
+        "args": [
+          "{prompt}"
+        ],
+        "modelArgs": [
+          "-m",
+          "{model}"
+        ]
+      },
+      "models": [
+        {
+          "id": "default",
+          "name": "AIChat default model",
+          "context": 128000,
+          "output": 8192
+        }
+      ],
+      "signIn": "api_key",
+      "adapter": "text",
+      "login": [],
+      "icon": "aichat",
+      "install": null
+    },
+    {
+      "id": "ollama-cli",
+      "category": "llm",
+      "name": "Ollama",
+      "vendor": "Ollama",
+      "homepage": "https://ollama.com",
+      "logo": "/assets/logos-apps/ollama.svg",
+      "bin": "ollama",
+      "probe": {
+        "args": [
+          "list"
+        ],
+        "expect": "NAME"
+      },
+      "headless": {
+        "args": [
+          "run",
+          "{model}",
+          "{prompt}"
+        ]
+      },
+      "models": [],
+      "signIn": "none",
+      "adapter": "text",
+      "aliases": [],
+      "login": [],
+      "icon": "ollama",
+      "install": null
+    }
+  ]
+}

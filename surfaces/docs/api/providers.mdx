@@ -36,6 +36,9 @@ http://127.0.0.1:8013/api/v1
 | `GET` | `/api/v1/providers/:id/connect/status` | Check connect status |
 | `POST` | `/api/v1/providers/:id/connect/confirm` | Confirm a completed connect flow |
 | `POST` | `/api/v1/providers/:id/connect/code` | Paste the code a sign-in page showed into the waiting CLI |
+| `GET` | `/api/v1/cli-tools/catalog` | Every coding CLI Allternit supports, installed or not, plus your custom ones |
+| `POST` | `/api/v1/cli-tools/custom` | Add a coding CLI that isn't in the catalog (your own computer only) |
+| `DELETE` | `/api/v1/cli-tools/custom/:id` | Remove a custom coding CLI |
 | `POST` | `/api/v1/cli-tools/:id/install` | Install a CLI brain (pinned, licence-gated), streamed as SSE |
 | `GET` | `/api/v1/providers/auth/status` | List auth status for all providers |
 | `POST` | `/api/v1/providers/video/generate` | Generate a video via a media provider |
@@ -156,7 +159,7 @@ For subprocess providers, `supported` may be `false` because the runtime owns mo
 
 ## Install a CLI brain
 
-`POST /api/v1/cli-tools/:id/install` installs a CLI brain (Claude Code, Codex, Grok, Kimi, Qwen, …) on the computer this runtime runs on. It runs the Factory's version-pinned installer, `allternit-factory pane harness install <tool>`, whose pins and licences come from `factory/pane/src/ao/harness/harness.json`.
+`POST /api/v1/cli-tools/:id/install` installs a CLI brain (Claude Code, Codex, Grok, Kimi, Qwen, …) on the computer this runtime runs on. Tools the Factory manages run its version-pinned installer, `allternit-factory pane harness install <tool>`, whose pins and licences come from `factory/pane/src/ao/harness/harness.json`. Other catalog tools install from the pinned recipe in the catalog (npm into the harness folder, uv, Homebrew, or an https install script). A custom tool installs with the command you gave it, and always needs `acceptTerms: true`.
 
 Tools are installed into the harness's managed `bin/`: `~/.allternit/factory/harness/bin`, or `$ALLTERNIT_FACTORY_HARNESS_HOME/bin` if that's set. allternit-api and gizzi put that folder first on their `PATH` at startup, so the tool works right away.
 
@@ -187,6 +190,48 @@ data: {"ok":true,"path":"/Users/you/.allternit/factory/harness/bin/claude"}
 | `409 {"error":"install_unavailable"}` | One-click install isn't supported on this computer (Windows today). |
 
 In `GET /api/v1/providers/auth/status`, every CLI row has an `install` object: `{available, requiresTerms, license, termsUrl, pin}`. A CLI whose binary isn't on the computer reports `status: "not_installed"`.
+
+## Coding CLI catalog
+
+`GET /api/v1/cli-tools/catalog` lists every coding CLI Allternit supports, whether or not it is installed, plus the caller's custom tools. It is built from one file, `cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json`, which gizzi reads for its CLI brains and allternit-api embeds, so the list, the install recipes and the brains can't drift apart.
+
+```json
+{
+  "tools": [
+    { "id": "claude-cli", "name": "Claude Code", "vendor": "Anthropic", "homepage": "https://claude.com/claude-code",
+      "logo": "/assets/logos-apps/claude.svg", "installed": true, "authenticated": true, "status": "ok",
+      "install": { "available": true, "requiresTerms": true, "license": "Anthropic Commercial Terms", "termsUrl": "…", "pin": "…" },
+      "signIn": "subscription", "custom": false, "runnable": true }
+  ],
+  "customAllowed": true
+}
+```
+
+`status` is `ok`, `missing` (installed, not signed in), `not_installed` or `unknown`. `signIn` is `subscription`, `api_key` or `none`. `customAllowed` is `false` on a shared hosted runtime (see below).
+
+## Add your own coding CLI
+
+`POST /api/v1/cli-tools/custom` registers a coding CLI that isn't in the catalog. It then appears in the catalog and in `GET /api/v1/providers/auth/status?kind=cli`, installs and signs in through the same flows, and gizzi can run it as a brain.
+
+```bash
+curl -X POST https://api.allternit.com/api/v1/cli-tools/custom \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"My Agent","command":"my-agent","promptArgs":["-p","{prompt}"],"modelArgs":["--model","{model}"],"installCommand":"npm install -g my-agent@1.2.0"}'
+```
+
+| Field | Rules |
+|-------|-------|
+| `name` | Shown in Settings. |
+| `command` | A bare program name or an absolute path. No shell characters, no `..`. |
+| `promptArgs` | An argument array with exactly one element equal to `{prompt}`. The prompt is always passed as one argument, never through a shell. |
+| `modelArgs` | Optional; must contain `{model}`. |
+| `versionArgs`, `authCheckArgs` | Optional argument arrays. |
+| `installCommand` | Optional. Must start with a known package manager (npm, pnpm, bun, yarn, brew, pip, pip3, pipx, uv, cargo, go, gem). Split into arguments without a shell, and it runs only after the person accepts the terms. |
+| `homepage` | Optional. |
+
+Each person can add up to 50. `DELETE /api/v1/cli-tools/custom/:id` removes one.
+
+Custom tools run a program on the machine, so only a runtime that belongs to one person accepts them: Allternit Desktop and self-hosted installs. A shared hosted runtime answers `403 {"error":"custom_tools_disabled"}`, never runs them, and reports `customAllowed: false`.
 
 ## Connect a provider
 

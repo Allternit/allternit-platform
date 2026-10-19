@@ -16,10 +16,23 @@ export type SessionHealth = z.infer<typeof sessionHealthSchema>;
 
 // What the account's own page shows about usage (e.g. ChatGPT's "8% usage
 // remaining"); every field is what was observed, never estimated.
+// One usage limit as the vendor's own usage page shows it (claude.ai: "5-hour",
+// "Weekly", "Weekly (Opus)"; ChatGPT: "Usage"; Kimi: "Plan").
+export const accountUsageWindowSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  remaining_pct: z.number().nullable(),
+  resets_at: z.string().nullable(),
+});
+export type AccountUsageWindow = z.infer<typeof accountUsageWindowSchema>;
+
+// remaining_pct/resets_at stay the most-constrained window for older clients;
+// `windows` carries every limit the vendor shows, in the vendor's order.
 export const accountUsageSchema = z.object({
   remaining_pct: z.number().nullable(),
   resets_at: z.string().nullable(),
   observed_at: z.string(),
+  windows: z.array(accountUsageWindowSchema).optional(),
 });
 export type AccountUsage = z.infer<typeof accountUsageSchema>;
 

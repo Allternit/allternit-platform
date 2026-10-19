@@ -696,6 +696,8 @@ const phoneLinkAPI = {
   openApp: (opts: { deviceId: string; app: string }): Promise<unknown> => ipcRenderer.invoke('phone-link:open-app', opts),
   /** Connections wizard: read that app's screen; { ok, signedIn: true | false | null, account?, error? }. */
   checkApp: (opts: { deviceId: string; app: string }): Promise<unknown> => ipcRenderer.invoke('phone-link:check-app', opts),
+  /** Read-only account read: { ok, account, plan, usage: { windows: [{ id, label, remaining_pct, resets_at }], observedAt } | null, error? }. */
+  readAccount: (opts: { deviceId: string; app: string }): Promise<unknown> => ipcRenderer.invoke('phone-link:read-account', opts),
   start: (opts: { platform: 'ios' | 'android' }): Promise<unknown> => ipcRenderer.invoke('phone-link:start', opts),
   cancel: (): Promise<unknown> => ipcRenderer.invoke('phone-link:cancel'),
   continue: (): Promise<unknown> => ipcRenderer.invoke('phone-link:continue'),

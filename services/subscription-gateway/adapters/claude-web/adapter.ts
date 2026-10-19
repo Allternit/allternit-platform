@@ -109,8 +109,8 @@ export class ClaudeWebAdapter extends WebChatAdapter {
   // Who is signed in and how much is left. Non-spending: claude.ai's own
   // account and usage endpoints, read in the page (same-origin); only the
   // email and numbers leave the page, never a token. Usage is the active org's
-  // (lastActiveOrg cookie, else the first chat org) tightest window: whichever
-  // of the 5-hour / 7-day limits is most used.
+  // (lastActiveOrg cookie, else the first chat org): every window as
+  // `windows`, with remaining_pct/resets_at the tightest 5-hour / weekly one.
   // ── Memory Drive reads ────────────────────────────────────────────────
   // claude.ai's own same-origin endpoints, in the page with the page's own
   // session (the conversation endpoint is the one lastAssistant uses, live
@@ -183,8 +183,10 @@ export class ClaudeWebAdapter extends WebChatAdapter {
       const identity = typeof email === "string" ? email : null;
 
       type Window = { utilization?: unknown; resets_at?: unknown } | null;
+      type UsageWindow = { id: string; label: string; remaining_pct: number | null; resets_at: string | null };
       let pct: number | null = null;
       let resetsAt: string | null = null;
+      const windows: UsageWindow[] = [];
       const cookieOrg = /(?:^|;\s*)lastActiveOrg=([^;]+)/.exec(document.cookie)?.[1];
       let org = cookieOrg ? decodeURIComponent(cookieOrg) : null;
       if (!org) {
@@ -196,12 +198,38 @@ export class ClaudeWebAdapter extends WebChatAdapter {
       }
       if (org) {
         const u = (await getJson(`/api/organizations/${org}/usage`)) as Record<string, Window> | null;
-        for (const w of [u?.five_hour, u?.seven_day]) {
-          if (!w || typeof w.utilization !== "number") continue;
-          const left = Math.max(0, Math.round(100 - w.utilization));
-          if (pct === null || left < pct) {
-            pct = left;
-            resetsAt = typeof w.resets_at === "string" ? w.resets_at : null;
+        // Every window object the payload carries ({utilization, resets_at}),
+        // labelled the way claude.ai's usage page names them: five_hour →
+        // "5-hour", seven_day → "Weekly", seven_day_<model> → "Weekly (<Model>)".
+        const labelFor = (id: string): string => {
+          const base: Record<string, string> = { five_hour: "5-hour", seven_day: "Weekly" };
+          if (base[id]) return base[id];
+          const m = /^(five_hour|seven_day)_(.+)$/.exec(id);
+          const rest = (m ? m[2] : id).split("_").map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w)).join(" ");
+          return m ? `${base[m[1]]} (${rest})` : rest;
+        };
+        const keys = u && typeof u === "object" ? Object.keys(u) : [];
+        const ordered = ["five_hour", "seven_day"].filter((k) => keys.includes(k)).concat(keys.filter((k) => k !== "five_hour" && k !== "seven_day"));
+        for (const id of ordered) {
+          const w = u?.[id];
+          if (!w || typeof w !== "object" || Array.isArray(w) || typeof w.utilization !== "number") continue;
+          windows.push({
+            id,
+            label: labelFor(id),
+            remaining_pct: Math.max(0, Math.round(100 - w.utilization)),
+            resets_at: typeof w.resets_at === "string" ? w.resets_at : null,
+          });
+        }
+        // The summary number stays the tightest of the account-wide limits
+        // (5-hour / weekly) so a model-specific window (e.g. Weekly (Opus))
+        // doesn't mark the whole account exhausted; fall back to every window
+        // only when neither account-wide window is present.
+        const general = windows.filter((w) => w.id === "five_hour" || w.id === "seven_day");
+        for (const w of general.length ? general : windows) {
+          if (w.remaining_pct === null) continue;
+          if (pct === null || w.remaining_pct < pct) {
+            pct = w.remaining_pct;
+            resetsAt = w.resets_at;
           }
         }
       }
@@ -215,7 +243,7 @@ export class ClaudeWebAdapter extends WebChatAdapter {
             .map((p) => ({ id: p.uuid as string, name: p.name as string, kind: "project" }));
         }
       }
-      return { identity, pct, resetsAt, projects };
+      return { identity, pct, resetsAt, windows, projects };
     });
     return {
       identity: read.identity,
@@ -223,7 +251,12 @@ export class ClaudeWebAdapter extends WebChatAdapter {
       usage:
         read.pct === null
           ? null
-          : { remaining_pct: read.pct, resets_at: read.resetsAt, observed_at: new Date().toISOString() },
+          : {
+              remaining_pct: read.pct,
+              resets_at: read.resetsAt,
+              observed_at: new Date().toISOString(),
+              windows: read.windows,
+            },
     };
   }
 }

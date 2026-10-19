@@ -78,6 +78,7 @@ import { PhoneLinkHealthMonitor } from './phone-link-health.js';
 import { PhoneChannelReader, type ChannelConversation, type ReaderResult, type ScreenRecorder } from './phone-channel-readers.js';
 import type { PhoneLinkDevice, PhoneLinkHandoverResult, PhoneLinkHandoverTarget } from './phone-link-types.js';
 import { checkLinkedApp, openLinkedApp, type PhoneLinkAppResult } from './phone-app-signin.js';
+import { PhoneAccountScheduler, readLinkedAccount, type PhoneLinkAccountResult } from './phone-account-reader.js';
 import { readSecret, writeSecret, deleteSecret } from './secure-store.js';
 import {
   PhoneToolRunner,
@@ -210,6 +211,7 @@ class PhoneService {
   private androidRecordsCache: { at: number; records: AndroidLinkRecord[] } | null = null;
   private screenKeeper: ScreenServiceKeeper | null = null;
   private meshHealer: MeshHealFn | null = null;
+  private accountScheduler: PhoneAccountScheduler | null = null;
 
   getGatewayFile(): string {
     return this.gatewayFile;
@@ -398,8 +400,41 @@ class PhoneService {
   }
 
   /** phone-link:check-app — read a catalog app's screen on a linked phone and report whether it is signed in. */
-  checkLinkedApp(opts: unknown): Promise<PhoneLinkAppResult> {
-    return checkLinkedApp({ lane: this.ensureLinkedBackend() }, opts);
+  async checkLinkedApp(opts: unknown): Promise<PhoneLinkAppResult> {
+    const result = await checkLinkedApp({ lane: this.ensureLinkedBackend() }, opts);
+    // Just signed in on the phone: read its account, plan and usage soon.
+    const o = (opts ?? {}) as { deviceId?: unknown; app?: unknown };
+    if (result.ok && result.signedIn === true && typeof o.deviceId === 'string' && typeof o.app === 'string') {
+      this.ensureAccountScheduler().kick(o.deviceId, o.app);
+    }
+    return result;
+  }
+
+  /** phone-link:read-account — read-only: the app's account, plan and usage windows (phone-account-reader.ts). */
+  readLinkedAccount(opts: unknown): Promise<PhoneLinkAccountResult> {
+    const backend = this.ensureLinkedBackend();
+    return readLinkedAccount({ lane: backend, busy: (deviceId) => this.linkedPhoneBusy(deviceId), logger: (m) => log.info(m) }, opts);
+  }
+
+  /** A bot is using the phone, or someone is watching or driving its live screen: background reads wait. */
+  private linkedPhoneBusy(deviceId: string): boolean {
+    return this.ensureLinkedBackend().botBusy(deviceId) || this.linkConsumers.has(LINK_SERIAL_PREFIX + deviceId);
+  }
+
+  /** Background account refresh: every 6 h per signed-in AI chat app, one app at a time (phone-account-reader.ts). */
+  private ensureAccountScheduler(): PhoneAccountScheduler {
+    if (!this.accountScheduler) {
+      const backend = this.ensureLinkedBackend();
+      this.accountScheduler = new PhoneAccountScheduler({
+        phones: () => backend.linkedPhones(),
+        health: (deviceId) => backend.healthOf(deviceId),
+        busy: (deviceId) => this.linkedPhoneBusy(deviceId),
+        read: (opts) => this.readLinkedAccount(opts),
+        logger: (m) => log.info(m),
+      });
+      this.accountScheduler.start();
+    }
+    return this.accountScheduler;
   }
 
   // ── Pairing handover (phone-link-handover.ts) ──────────────────────────────
@@ -1083,6 +1118,8 @@ class PhoneService {
     // Relay sockets for linked phones (iPhone video, Android through Phone Link) without the adb lane.
     this.ensureLinkSync();
     if (this.androidRecords().length > 0) this.ensureScreenKeeper();
+    // Account, plan and usage for signed-in AI chat apps: right after linking, then every 6 h.
+    this.ensureAccountScheduler().kick();
   }
 
   /**

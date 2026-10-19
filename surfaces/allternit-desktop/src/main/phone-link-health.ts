@@ -8,6 +8,9 @@
  *   PAIRING_INVALID                      whoami matches, the key was revoked
  *   TRANSPORT_OFFLINE                    nothing answers at the saved address
  *   HELPER_NOT_RESPONDING                whoami matches, the sealed call fails
+ *                                        (iPhone: also when the runner answers but can't read the screen)
+ *   ACCESSIBILITY_OFF                    Android: the app answers, its accessibility service is off
+ *                                        (device_info says so, or a screen read failed with that error)
  *   DEVELOPER_IMAGE_REMOUNT_REQUIRED     on the cable, no developer image
  *   SIGNATURE_RENEWAL_REQUIRED           helper signature expired/expiring
  *   UNKNOWN                              anything else
@@ -45,13 +48,25 @@ export interface HealthEvidence {
   deviceId: string;
   platform: 'ios' | 'android';
   whoami: { deviceId: string } | null;
-  call: 'ok' | 'locked' | 'needs_repair' | 'failed';
+  call: 'ok' | 'locked' | 'needs_repair' | 'failed' | 'accessibility_off';
   /** Injected go-ios probe: phone on the cable, no developer image mounted. */
   remountRequired?: boolean;
   expiresAt?: string;
 }
 
 export const SIGNATURE_WARNING_MS = 24 * 3600_000;
+
+/** What the person does when Android's accessibility service is off. */
+export const ACCESSIBILITY_OFF_ACTION =
+  'On your phone, open Settings › Accessibility › Allternit Phone Link and turn it on, or run Phone Link setup again from Settings › Connections › Setup.';
+
+/** The Android helper's error when its accessibility service isn't bound (RpcDispatcher.requireOps). */
+export function isAccessibilityOffError(message: string): boolean {
+  return /accessibility service is not running|accessibility_off/i.test(message);
+}
+
+/** How long a failed screen read seen by the lane keeps a probe-HEALTHY phone in the failed state. */
+export const LANE_OBSERVATION_MS = 5 * 60_000;
 const RESTART_DETAIL = 'The iPhone may have restarted; its developer image then needs remounting.';
 const REMOUNT_DETAIL =
   'The phone is connected but has no developer image mounted. Or on the iPhone: open iCTRL › Mount without a Mac, then Start Server.';
@@ -127,6 +142,16 @@ export function classifyHealth(ev: HealthEvidence, now: number): PhoneLinkHealth
     };
   }
 
+  if (ev.call === 'accessibility_off') {
+    return {
+      ...base,
+      state: 'ACCESSIBILITY_OFF',
+      recovery: 'manual',
+      action: ACCESSIBILITY_OFF_ACTION,
+      detail: 'Phone Link answers, but its accessibility service is off, so it can\'t read or tap the screen.',
+    };
+  }
+
   // The phone works; a lapsed (or about-to-lapse) helper signature still wins.
   if (ev.platform === 'ios' && signatureExpiring(ev.expiresAt, now)) {
     return { ...base, state: 'SIGNATURE_RENEWAL_REQUIRED', recovery: 'manual', action: signatureAction(ev.expiresAt!) };
@@ -187,7 +212,7 @@ export function handedOverHealth(health: PhoneLinkHealth, phone: Pick<LinkedPhon
 
 /** States that count as online for tool routing: the phone answers, even locked. */
 export function healthIsOnline(health: PhoneLinkHealth | null | undefined): boolean {
-  return !health || health.state === 'HEALTHY' || health.state === 'DEVICE_LOCKED';
+  return !health || health.state === 'HEALTHY' || health.state === 'DEVICE_LOCKED' || health.state === 'ACCESSIBILITY_OFF';
 }
 
 export interface PhoneLinkHealthMonitorDeps {
@@ -209,6 +234,8 @@ export interface PhoneLinkHealthMonitorDeps {
  */
 export class PhoneLinkHealthMonitor {
   private readonly cache = new Map<string, { at: number; health: PhoneLinkHealth }>();
+  /** Screen-read failures the lane saw on a phone the probe calls healthy (cleared by a good read). */
+  private readonly observed = new Map<string, { at: number; kind: 'accessibility_off' | 'ui_failed' }>();
   private readonly now: () => number;
   private readonly ttlMs: number;
   private readonly budgetMs: number;
@@ -228,6 +255,40 @@ export class PhoneLinkHealthMonitor {
   fresh(deviceId: string): PhoneLinkHealth | null {
     const entry = this.cache.get(deviceId);
     return entry && this.now() - entry.at < this.ttlMs ? entry.health : null;
+  }
+
+  /**
+   * What the lane saw on a real screen read: the probe's calls (device_info,
+   * is_locked) can succeed while every read fails, so a failed read keeps
+   * the phone out of HEALTHY for LANE_OBSERVATION_MS, and a good read clears it.
+   */
+  observe(deviceId: string, kind: 'ui_ok' | 'accessibility_off' | 'ui_failed'): void {
+    if (kind === 'ui_ok') {
+      if (!this.observed.delete(deviceId)) return;
+      this.cache.delete(deviceId);
+      return;
+    }
+    this.observed.set(deviceId, { at: this.now(), kind });
+    const cached = this.cache.get(deviceId);
+    if (cached) this.cache.set(deviceId, { at: cached.at, health: this.withObservation(deviceId, cached.health) });
+  }
+
+  private withObservation(deviceId: string, health: PhoneLinkHealth): PhoneLinkHealth {
+    const seen = this.observed.get(deviceId);
+    if (!seen || health.state !== 'HEALTHY') return health;
+    if (this.now() - seen.at >= LANE_OBSERVATION_MS) {
+      this.observed.delete(deviceId);
+      return health;
+    }
+    if (seen.kind === 'accessibility_off') {
+      return classifyHealth({ deviceId, platform: 'android', whoami: { deviceId }, call: 'accessibility_off' }, this.now());
+    }
+    return {
+      ...health,
+      state: 'HELPER_NOT_RESPONDING',
+      recovery: 'automatic',
+      detail: 'The phone answered, but its helper could not read the screen.',
+    };
   }
 
   /** Probe one phone now and cache the result. */
@@ -257,7 +318,7 @@ export class PhoneLinkHealthMonitor {
       evidence ?? { deviceId, platform: phone?.platform ?? 'ios', whoami: null, call: 'failed', expiresAt: phone?.expiresAt },
       this.now(),
     );
-    const health = phone ? handedOverHealth(classified, phone) : classified;
+    const health = this.withObservation(deviceId, phone ? handedOverHealth(classified, phone) : classified);
     this.cache.set(deviceId, { at: this.now(), health });
     return health;
   }

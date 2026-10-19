@@ -367,43 +367,13 @@ static ENV_PROVIDER_SPECS: &[(&str, &str, &str, &[&str])] = &[
     ),
 ];
 
-/// Static specs for CLI/subprocess brains: (id, display name, binary, default model).
-/// IDs and default models must match what the gizzi runtime registers
-/// (cmd/gizzi-code src/runtime/providers/discovery/subprocess.ts).
-/// This list mirrors the agent-runtime surface used by Multica: the user brings
+/// CLI/subprocess brains come from the shared catalog
+/// (`cmd/gizzi-code/src/runtime/providers/discovery/cli-catalog.json`, see
+/// `crate::cli_catalog`) — the same file gizzi builds its subprocess brains
+/// from, so ids, binaries and default models can't drift. The user brings
 /// their own installed + authenticated CLI tool, and Allternit routes to it.
-static CLI_PROVIDER_SPECS: &[(&str, &str, &str, &str)] = &[
-    ("claude-cli", "Claude CLI", "claude", "claude-sonnet-5"),
-    ("codex-cli", "Codex CLI", "codex", "gpt-6-astra"),
-    ("qwen-cli", "Qwen CLI", "qwen", "qwen-plus"),
-    ("kimi-cli", "Kimi CLI", "kimi", "kimi-k3"),
-    ("antigravity", "Antigravity", "agy", "antigravity"),
-    ("cursor-agent", "Cursor Agent", "cursor-agent", "cursor-agent"),
-    ("copilot", "GitHub Copilot CLI", "copilot", "copilot"),
-    ("opencode", "OpenCode", "opencode", "opencode"),
-    ("openclaw", "OpenClaw", "openclaw", "openclaw"),
-    ("hermes", "Hermes", "hermes", "hermes"),
-    ("pi", "Pi", "pi", "pi"),
-    ("codebuddy", "CodeBuddy", "codebuddy", "codebuddy"),
-    ("deveco", "DevEco Code", "deveco", "deveco"),
-    ("grok", "Grok", "grok", "grok"),
-    ("kiro-cli", "Kiro CLI", "kiro-cli", "kiro-cli"),
-    ("qodercli", "Qoder CLI", "qodercli", "qodercli"),
-    ("qoderclicn", "Qoder CN", "qoderclicn", "qoderclicn"),
-    ("qwenpaw", "QwenPaw", "qwenpaw", "qwenpaw"),
-    ("reasonix", "Reasonix", "reasonix", "reasonix"),
-    ("traecli", "Trae CLI", "traecli", "traecli"),
-    ("dsh", "DeepSeek Harness", "dsh", "dsh"),
-    ("omp", "Oh-My-Pi", "omp", "omp"),
-    ("mcode", "MiniMax Code", "mcode", "mcode"),
-    ("dim", "Dim", "dim", "dim"),
-];
-
-fn cli_models_for<'a>(id: &str, default_model: &'a str) -> Vec<&'a str> {
-    match id {
-        "codex-cli" => vec!["gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"],
-        _ => vec![default_model],
-    }
+fn cli_models_for(tool: &crate::cli_catalog::CliTool) -> Vec<&str> {
+    tool.model_ids()
 }
 
 /// Per-model display metadata: (model id, description, tier, supports_effort).
@@ -456,12 +426,12 @@ pub fn available_model_catalog() -> Vec<serde_json::Value> {
             "supports_effort": supports_effort,
         }));
     };
-    for &(id, name, _binary, model) in CLI_PROVIDER_SPECS {
-        for model_id in cli_models_for(id, model) {
+    for tool in crate::cli_catalog::tools().iter().filter(|t| t.adapter != "unsupported") {
+        for model_id in cli_models_for(tool) {
             push(
-                &format!("{}/{}", id, model_id),
-                format!("{} ({})", model_id, name),
-                id,
+                &format!("{}/{}", tool.id, model_id),
+                format!("{} ({})", model_id, tool.name),
+                &tool.id,
                 model_id,
             );
         }
@@ -488,11 +458,13 @@ struct ProviderAuthStatusRow {
     install: serde_json::Value,
 }
 
-/// Attach the one-click install offer to every CLI row.
-fn with_install(mut rows: Vec<ProviderAuthStatusRow>) -> Vec<ProviderAuthStatusRow> {
+/// Attach the one-click install offer to every CLI row (catalog and custom).
+fn with_install(mut rows: Vec<ProviderAuthStatusRow>, custom: &[crate::cli_catalog::CustomTool]) -> Vec<ProviderAuthStatusRow> {
     for row in &mut rows {
         if let Some(binary) = cli_binary_for(&row.provider_id) {
             row.install = crate::cli_tools::install_json(&row.provider_id, binary);
+        } else if let Some(tool) = custom.iter().find(|t| t.id == row.provider_id) {
+            row.install = crate::cli_catalog::custom_install_json(tool);
         }
     }
     rows
@@ -507,10 +479,7 @@ pub(crate) fn cli_binary_for(id: &str) -> Option<&'static str> {
         }
         return None;
     }
-    CLI_PROVIDER_SPECS
-        .iter()
-        .find(|(spec_id, ..)| *spec_id == id)
-        .map(|&(_, _, binary, _)| binary)
+    crate::cli_catalog::find(id).map(|tool| tool.bin.as_str())
 }
 
 fn compute_provider_status(provider_type: &str, api_key_env_var: Option<&str>) -> String {
@@ -681,30 +650,29 @@ fn subprocess_provider_rows(connected: &HashSet<String>) -> Vec<ProviderRow> {
     // the token itself) or, for Claude/Codex, a stored API key. We reuse the same
     // detection as the one-click connect flow so the merged status never reports a
     // signed-in CLI as "missing key" (root-cause correctness, not a fallback).
-    for &(id, name, binary, model) in CLI_PROVIDER_SPECS {
+    for tool in crate::cli_catalog::tools() {
+        let (id, binary) = (tool.id.as_str(), tool.bin.as_str());
         let available = command_on_path(binary).is_some();
         // Gizzi's `connected` list is "binary on PATH", not a live OAuth
         // session. Claude's `auth status` exits 0 even when loggedIn is
         // false — only subscription_auth_check parses that.
-        let authed = match id {
-            "claude" | "claude-cli" => subscription_auth_check(id, binary),
-            "codex" | "codex-cli" => {
-                connected.contains(id)
-                    || subscription_auth_check(id, binary)
-                    || std::env::var("OPENAI_API_KEY").is_ok()
-            }
-            _ => connected.contains(id) || subscription_auth_check(id, binary),
-        };
+        let authed = available
+            && match id {
+                "claude-cli" => subscription_auth_check(id, binary),
+                "codex-cli" => {
+                    connected.contains(id)
+                        || subscription_auth_check(id, binary)
+                        || std::env::var("OPENAI_API_KEY").is_ok()
+                }
+                _ => connected.contains(id) || subscription_auth_check(id, binary),
+            };
         rows.push(ProviderRow {
             id: id.to_string(),
-            name: name.to_string(),
+            name: tool.name.clone(),
             provider_type: "subprocess".to_string(),
             base_url: None,
             api_key_set: authed,
-            models: cli_models_for(id, model)
-                .into_iter()
-                .map(str::to_string)
-                .collect(),
+            models: cli_models_for(tool).into_iter().map(str::to_string).collect(),
             status: if available {
                 if authed {
                     "active"
@@ -731,6 +699,41 @@ fn subprocess_provider_rows(connected: &HashSet<String>) -> Vec<ProviderRow> {
     });
 
     rows
+}
+
+/// `(installed, authenticated)` per catalog CLI id, from the same check the
+/// provider rows use (`GET /cli-tools/catalog`).
+pub(crate) fn cli_status_by_id(connected: &HashSet<String>) -> std::collections::HashMap<String, (bool, bool)> {
+    subprocess_provider_rows(connected)
+        .into_iter()
+        .filter(|row| row.provider_type == "subprocess")
+        .map(|row| (row.id, (row.status != "offline", row.status == "active")))
+        .collect()
+}
+
+/// The user's own CLIs (`crate::cli_catalog` custom tools) as provider rows.
+fn custom_provider_rows(tools: &[crate::cli_catalog::CustomTool]) -> Vec<ProviderRow> {
+    tools
+        .iter()
+        .map(|tool| {
+            let path = crate::cli_catalog::resolve_custom(tool);
+            let authed = path.as_deref().is_some_and(|p| crate::cli_catalog::custom_authenticated(tool, p));
+            ProviderRow {
+                id: tool.id.clone(),
+                name: tool.name.clone(),
+                provider_type: "subprocess".to_string(),
+                base_url: None,
+                api_key_set: authed,
+                models: vec!["default".to_string()],
+                status: match (path.is_some(), authed) {
+                    (false, _) => "offline",
+                    (true, true) => "active",
+                    (true, false) => "missing_key",
+                }
+                .to_string(),
+            }
+        })
+        .collect()
 }
 
 fn row_to_provider(row: &rusqlite::Row) -> Result<ProviderRow, rusqlite::Error> {
@@ -1320,9 +1323,20 @@ async fn list_provider_auth_status(
     headers: HeaderMap,
     axum::extract::Query(query): axum::extract::Query<AuthStatusQuery>,
 ) -> Response {
-    let _user = match get_user(&headers) {
+    let user = match get_user(&headers) {
         Some(u) => u,
         None => return unauthorized(),
+    };
+    // The user's own CLIs ride along with the catalog ones (single-owner runtimes only).
+    let custom_tools = if crate::cli_catalog::custom_tools_allowed(&state) {
+        state
+            .db
+            .connect()
+            .ok()
+            .and_then(|conn| crate::cli_catalog::list_custom(&conn, Some(&user.user_id)).ok())
+            .unwrap_or_else(|| crate::cli_catalog::mirrored_custom(Some(&user.user_id)))
+    } else {
+        Vec::new()
     };
     let want: Option<&'static str> = match query.kind.as_deref() {
         None | Some("") => None,
@@ -1360,11 +1374,17 @@ async fn list_provider_auth_status(
                 .flatten()
                 .filter(|provider| !cli_only || is_gizzi_subprocess(provider))
                 .filter_map(|provider| auth_status_from_gizzi_provider(provider, &connected))
+                // gizzi lists every custom CLI on this runtime; show only this user's.
+                .filter(|row| {
+                    !row.provider_id.starts_with("custom-")
+                        || custom_tools.iter().any(|t| t.id == row.provider_id)
+                })
                 .collect();
             // Gizzi's catalog is often unauthenticated cloud rows. Union the
             // CLIs actually on PATH and the local brains on this machine so
             // Connect can default to a CLI runtime and still list Ollama.
             let mut extra_rows = subprocess_provider_rows(&connected);
+            extra_rows.extend(custom_provider_rows(&custom_tools));
             if !cli_only {
                 extra_rows.push(ollama_provider_row(state.config.ollama_url()));
                 extra_rows.push(ProviderRow {
@@ -1391,7 +1411,7 @@ async fn list_provider_auth_status(
                 }
             }
             let providers = filter_by_provider_type(providers, want);
-            return Json(json!({ "providers": with_install(providers) })).into_response();
+            return Json(json!({ "providers": with_install(providers, &custom_tools) })).into_response();
         }
         (discover_result, auth_result) => {
             if let Err(error) = discover_result {
@@ -1438,13 +1458,14 @@ async fn list_provider_auth_status(
         env_provider_rows(),
         read_gizzi_providers(&connected),
         subprocess_provider_rows(&connected),
+        custom_provider_rows(&custom_tools),
         vec![ollama_provider_row(state.config.ollama_url())],
     ]);
 
     let providers: Vec<ProviderAuthStatusRow> = all.iter().map(auth_status_live_from_row).collect();
     let providers = filter_by_provider_type(providers, want);
 
-    Json(json!({ "providers": with_install(providers) })).into_response()
+    Json(json!({ "providers": with_install(providers, &custom_tools) })).into_response()
 }
 
 /// A Gizzi catalog entry that `auth_status_from_gizzi_provider` types as
@@ -1617,279 +1638,38 @@ struct SubscriptionProvider {
     /// Default model id the gizzi runtime registers for this brain.
     model: &'static str,
     /// argv passed to the binary to start sign-in (empty => no CLI flow).
-    login: &'static [&'static str],
+    login: &'static [String],
     /// Fallback page the frontend opens when there is no automatic browser flow.
     page: &'static str,
     /// true => API-key only (no OAuth); false => OAuth/subscription CLI.
     api_key_only: bool,
 }
 
+static NO_LOGIN: Vec<String> = Vec::new();
+
+/// Sign-in metadata for a CLI brain: every catalog CLI (`crate::cli_catalog`,
+/// by id, alias or binary name) plus API-key-only Z.ai.
 fn subscription_provider(id: &str) -> Option<(&'static str, SubscriptionProvider)> {
+    let tool = crate::cli_catalog::find(id)
+        .or_else(|| crate::cli_catalog::tools().iter().find(|t| t.bin == id));
+    if let Some(tool) = tool {
+        return Some((
+            tool.bin.as_str(),
+            SubscriptionProvider {
+                id: tool.id.as_str(),
+                label: tool.name.as_str(),
+                model: tool.default_model(),
+                login: &tool.login,
+                page: tool
+                    .sign_in_page
+                    .as_deref()
+                    .or(tool.homepage.as_deref())
+                    .unwrap_or(""),
+                api_key_only: false,
+            },
+        ));
+    }
     match id {
-        "claude" | "claude-cli" => Some((
-            "claude",
-            SubscriptionProvider {
-                id: "claude-cli",
-                label: "Claude",
-                model: "claude-sonnet-5",
-                login: &["auth", "login"],
-                page: "https://claude.ai/login",
-                api_key_only: false,
-            },
-        )),
-        "codex" | "codex-cli" => Some((
-            "codex",
-            SubscriptionProvider {
-                id: "codex-cli",
-                label: "Codex",
-                model: "gpt-5.6-sol",
-                login: &["login"],
-                page: "https://chatgpt.com/",
-                api_key_only: false,
-            },
-        )),
-        "qwen" | "qwen-cli" => Some((
-            "qwen",
-            SubscriptionProvider {
-                id: "qwen-cli",
-                label: "Qwen",
-                model: "qwen-plus",
-                login: &["auth"],
-                page: "https://qwen.ai/",
-                api_key_only: false,
-            },
-        )),
-        "kimi" | "kimi-cli" => Some((
-            "kimi",
-            SubscriptionProvider {
-                id: "kimi-cli",
-                label: "Kimi",
-                model: "kimi-k3",
-                login: &["login"],
-                page: "https://www.kimi.com/",
-                api_key_only: false,
-            },
-        )),
-        "antigravity" | "agy" => Some((
-            "agy",
-            SubscriptionProvider {
-                id: "antigravity",
-                label: "Antigravity",
-                model: "gemini-3.7-flash-high",
-                login: &[],
-                page: "https://antigravity.google/",
-                api_key_only: false,
-            },
-        )),
-        "cursor-agent" => Some((
-            "cursor-agent",
-            SubscriptionProvider {
-                id: "cursor-agent",
-                label: "Cursor Agent",
-                model: "cursor-agent",
-                login: &[],
-                page: "https://cursor.com/",
-                api_key_only: false,
-            },
-        )),
-        "copilot" => Some((
-            "copilot",
-            SubscriptionProvider {
-                id: "copilot",
-                label: "GitHub Copilot CLI",
-                model: "copilot",
-                login: &[],
-                page: "https://github.com/features/copilot",
-                api_key_only: false,
-            },
-        )),
-        "opencode" => Some((
-            "opencode",
-            SubscriptionProvider {
-                id: "opencode",
-                label: "OpenCode",
-                model: "opencode",
-                login: &[],
-                page: "https://opencode.ai/",
-                api_key_only: false,
-            },
-        )),
-        "openclaw" => Some((
-            "openclaw",
-            SubscriptionProvider {
-                id: "openclaw",
-                label: "OpenClaw",
-                model: "openclaw",
-                login: &[],
-                page: "https://github.com/ConlinJoe/ai-platform",
-                api_key_only: false,
-            },
-        )),
-        "hermes" => Some((
-            "hermes",
-            SubscriptionProvider {
-                id: "hermes",
-                label: "Hermes",
-                model: "hermes",
-                login: &[],
-                page: "https://hermes.cx/",
-                api_key_only: false,
-            },
-        )),
-        "pi" => Some((
-            "pi",
-            SubscriptionProvider {
-                id: "pi",
-                label: "Pi",
-                model: "pi",
-                login: &[],
-                page: "https://pi.ai/",
-                api_key_only: false,
-            },
-        )),
-        "codebuddy" => Some((
-            "codebuddy",
-            SubscriptionProvider {
-                id: "codebuddy",
-                label: "CodeBuddy",
-                model: "codebuddy",
-                login: &[],
-                page: "https://codebuddy.ai/",
-                api_key_only: false,
-            },
-        )),
-        "deveco" => Some((
-            "deveco",
-            SubscriptionProvider {
-                id: "deveco",
-                label: "DevEco Code",
-                model: "deveco",
-                login: &[],
-                page: "https://developer.huawei.com/",
-                api_key_only: false,
-            },
-        )),
-        "grok" => Some((
-            "grok",
-            SubscriptionProvider {
-                id: "grok",
-                label: "Grok",
-                model: "grok",
-                login: &["login"],
-                page: "https://grok.com/",
-                api_key_only: false,
-            },
-        )),
-        "kiro-cli" => Some((
-            "kiro-cli",
-            SubscriptionProvider {
-                id: "kiro-cli",
-                label: "Kiro CLI",
-                model: "kiro-cli",
-                login: &[],
-                page: "https://kiro.dev/",
-                api_key_only: false,
-            },
-        )),
-        "qodercli" => Some((
-            "qodercli",
-            SubscriptionProvider {
-                id: "qodercli",
-                label: "Qoder CLI",
-                model: "qodercli",
-                login: &[],
-                page: "https://qoder.ai/",
-                api_key_only: false,
-            },
-        )),
-        "qoderclicn" => Some((
-            "qoderclicn",
-            SubscriptionProvider {
-                id: "qoderclicn",
-                label: "Qoder CN",
-                model: "qoderclicn",
-                login: &[],
-                page: "https://qoder.ai/",
-                api_key_only: false,
-            },
-        )),
-        "qwenpaw" => Some((
-            "qwenpaw",
-            SubscriptionProvider {
-                id: "qwenpaw",
-                label: "QwenPaw",
-                model: "qwenpaw",
-                login: &[],
-                page: "https://qwen.ai/",
-                api_key_only: false,
-            },
-        )),
-        "reasonix" => Some((
-            "reasonix",
-            SubscriptionProvider {
-                id: "reasonix",
-                label: "Reasonix",
-                model: "reasonix",
-                login: &[],
-                page: "https://reasonix.ai/",
-                api_key_only: false,
-            },
-        )),
-        "traecli" => Some((
-            "traecli",
-            SubscriptionProvider {
-                id: "traecli",
-                label: "Trae CLI",
-                model: "traecli",
-                login: &[],
-                page: "https://trae.ai/",
-                api_key_only: false,
-            },
-        )),
-        "dsh" => Some((
-            "dsh",
-            SubscriptionProvider {
-                id: "dsh",
-                label: "DeepSeek Harness",
-                model: "dsh",
-                login: &[],
-                page: "https://deepseek.com/",
-                api_key_only: false,
-            },
-        )),
-        "omp" => Some((
-            "omp",
-            SubscriptionProvider {
-                id: "omp",
-                label: "Oh-My-Pi",
-                model: "omp",
-                login: &[],
-                page: "https://oh-my-pi.dev/",
-                api_key_only: false,
-            },
-        )),
-        "mcode" => Some((
-            "mcode",
-            SubscriptionProvider {
-                id: "mcode",
-                label: "MiniMax Code",
-                model: "mcode",
-                login: &[],
-                page: "https://minimaxi.com/",
-                api_key_only: false,
-            },
-        )),
-        "dim" => Some((
-            "dim",
-            SubscriptionProvider {
-                id: "dim",
-                label: "Dim",
-                model: "dim",
-                login: &[],
-                page: "https://dim.ai/",
-                api_key_only: false,
-            },
-        )),
         // Z.ai sells the GLM Coding Plan subscription, but today it has no public
         // OAuth/device-flow for third parties (Z.ai/ZCode OAuth is in progress).
         // The standard path is a console-created API key, so we treat it as key-based.
@@ -1899,7 +1679,7 @@ fn subscription_provider(id: &str) -> Option<(&'static str, SubscriptionProvider
                 id: "zai",
                 label: "Z.ai",
                 model: "glm-4.6",
-                login: &[],
+                login: &NO_LOGIN,
                 page: "https://z.ai/subscribe",
                 api_key_only: true,
             },
@@ -1969,6 +1749,13 @@ fn claude_cli_logged_in(binary: &str) -> bool {
         && !lower.contains("logged out")
 }
 
+/// The catalog's sign-in locations for a CLI, when it lists any.
+fn catalog_auth(id: &str) -> Option<&'static crate::cli_catalog::AuthCheck> {
+    crate::cli_catalog::find(id)
+        .and_then(|tool| tool.auth.as_ref())
+        .filter(|auth| !auth.files.is_empty() || !auth.env.is_empty())
+}
+
 fn subscription_auth_check(id: &str, binary: &str) -> bool {
     match id {
         "claude" | "claude-cli" => claude_cli_logged_in(binary),
@@ -2003,6 +1790,15 @@ fn subscription_auth_check(id: &str, binary: &str) -> bool {
             cli_alive(binary, &["--version"], None)
                 && (home_file(&[".grok", "auth.json"]).exists() || std::env::var("XAI_API_KEY").is_ok())
         }
+        // A catalog CLI that says where its sign-in lives (a credentials
+        // file, or an API key env var): the binary runs AND one is present.
+        _ if catalog_auth(id).is_some() => {
+            let auth = catalog_auth(id).expect("checked above");
+            cli_alive(binary, &["--version"], None)
+                && (auth.files.iter().any(|parts| {
+                    home_file(&parts.iter().map(String::as_str).collect::<Vec<_>>()).exists()
+                }) || auth.env.iter().any(|var| std::env::var(var).is_ok_and(|v| !v.is_empty())))
+        }
         // Generic agent-runtime CLI: if the binary is on PATH and answers a
         // version/help probe, assume the user has already installed and
         // authenticated it locally. This matches the Multica model where users
@@ -2024,14 +1820,14 @@ struct ConnectBody {
 /// The sign-in argv for a provider: device-code variants when the user is
 /// remote and the CLI has one (Codex, Grok); Claude's own flow already works
 /// remotely (link, then paste the code the page shows).
-fn login_argv(provider: &str, default: &'static [&'static str], remote: bool) -> (&'static [&'static str], Option<String>) {
+fn login_argv(provider: &str, default: &'static [String], remote: bool) -> (Vec<&'static str>, Option<String>) {
     match (provider, remote) {
         ("codex-cli", true) => (
-            &["login", "--device-auth"],
+            vec!["login", "--device-auth"],
             Some("If OpenAI rejects the code, turn on \"device code authorization for Codex\" in ChatGPT Settings → Security, then try again.".to_string()),
         ),
-        ("grok", true) => (&["login", "--device-auth"], None),
-        _ => (default, None),
+        ("grok", true) => (vec!["login", "--device-auth"], None),
+        _ => (default.iter().map(String::as_str).collect(), None),
     }
 }
 
@@ -2178,7 +1974,7 @@ async fn connect_provider(
     // Keep the CLI's own sign-in running with its output captured, so the
     // link / device code / paste prompt reach the UI on any device.
     let (argv, hint) = login_argv(meta.id, meta.login, remote);
-    match crate::cli_tools::start_login(meta.id, &binary_path, argv, hint).await {
+    match crate::cli_tools::start_login(meta.id, &binary_path, &argv, hint).await {
         Ok(login) => Json(json!({
             "status": "started",
             "provider": id,
@@ -2427,5 +2223,57 @@ mod auth_status_kind_tests {
             let r = auth_status_from_gizzi_provider(&p, &HashSet::new()).unwrap();
             assert_eq!(row_provider_type(&r), Some("subprocess"));
         }
+    }
+
+    #[test]
+    fn cli_brains_come_from_the_shared_catalog() {
+        // Sign-in metadata, binaries and models all read the one catalog.
+        let (binary, meta) = subscription_provider("claude").expect("claude");
+        assert_eq!(binary, "claude");
+        assert_eq!(meta.id, "claude-cli");
+        assert_eq!(meta.login, ["auth".to_string(), "login".to_string()]);
+        assert_eq!(subscription_provider("agy").map(|(b, m)| (b, m.id)), Some(("agy", "antigravity")));
+        assert!(subscription_provider("zai").is_some_and(|(_, m)| m.api_key_only));
+        assert!(subscription_provider("nope").is_none());
+
+        assert_eq!(cli_binary_for("gemini-cli"), Some("gemini"));
+        assert_eq!(cli_binary_for("copilot"), Some("copilot"));
+        assert_eq!(cli_binary_for("zai"), None);
+
+        let ids: Vec<String> = available_model_catalog()
+            .iter()
+            .filter_map(|m| m.get("id").and_then(|v| v.as_str()).map(str::to_string))
+            .collect();
+        assert!(ids.contains(&"antigravity/gemini-3.7-flash-high".to_string()));
+        assert!(ids.contains(&"codex-cli/gpt-5.6-luna".to_string()));
+        assert!(ids.contains(&"aider/default".to_string()));
+        assert!(!ids.iter().any(|id| id.starts_with("dsh/")), "unsupported CLIs aren't offered as brains");
+    }
+
+    #[test]
+    fn remote_sign_in_prefers_device_codes() {
+        let (_, codex) = subscription_provider("codex-cli").unwrap();
+        assert_eq!(login_argv("codex-cli", codex.login, true).0, vec!["login", "--device-auth"]);
+        assert_eq!(login_argv("codex-cli", codex.login, false).0, vec!["login"]);
+    }
+
+    #[test]
+    fn custom_tools_become_subprocess_rows() {
+        let tool = crate::cli_catalog::CustomTool {
+            id: "custom-x-123456".into(),
+            user_id: "u".into(),
+            name: "X".into(),
+            command: "/definitely/not/here/x".into(),
+            prompt_args: vec!["{prompt}".into()],
+            model_args: vec![],
+            version_args: vec![],
+            auth_check_args: vec![],
+            install_command: None,
+            homepage: None,
+        };
+        let rows = custom_provider_rows(&[tool]);
+        assert_eq!(rows[0].provider_type, "subprocess");
+        assert_eq!(rows[0].status, "offline");
+        assert_eq!(auth_status_live_from_row(&rows[0]).status, "not_installed");
     }
 }

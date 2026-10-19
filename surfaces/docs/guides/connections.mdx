@@ -56,9 +56,27 @@ Allternit never sees or stores your password. It doesn't type into sign-in scree
 
 If the check says the phone is locked or offline, unlock the phone or bring it back on the same Wi-Fi as your computer, then choose **Check again**.
 
+## Account, plan and usage on a phone
+
+For the AI chat apps on a linked phone (ChatGPT, Claude, Gemini, Grok, Kimi, Copilot and Perplexity), a phone way shows the same facts as a browser sign-in when the app shows them (Allternit Desktop reads them):
+
+- **Account:** the email or @handle the app shows.
+- **Plan:** the plan name the app shows, such as Free, Plus, Pro, Max or SuperGrok.
+- **Usage:** each usage window the app shows, such as **5-hour** or **Weekly**, with the percent left and when it resets.
+
+Allternit opens the app's own settings or usage screen, reads it, and goes back to the Home screen. It only taps menu entries such as **Settings**, **Account** or **Usage**. It never types, never changes a setting, and never taps anything that signs out, deletes, upgrades, buys, subscribes or cancels.
+
+Allternit reads each signed-in AI chat app shortly after you link the phone or finish the wizard's **Check** step, and again about every 6 hours. It reads one app at a time and only while the phone is unlocked and working. It waits while a bot is using the phone or while you are watching its live screen. A fact the app doesn't show, or that Allternit can't read for certain, is shown as a dash. Allternit doesn't guess it.
+
+These screens differ between app versions, so Allternit tries several ways through each app. If a phone way still shows dashes after a read, open the app on the phone once to check that it has finished loading. The next read picks the facts up.
+
 ## Coding tools
 
 The Coding tools tab is only for CLI brains: Claude Code, Codex, Grok and the other command-line tools Allternit can install and sign in on a computer. See [Coding tools on any computer](/guides/subscriptions#coding-tools-on-any-computer) for the steps.
+
+- **On this computer** lists the tools that are installed, ready ones first, with **Sign in** or **Sign in again**.
+- **Add a coding tool** at the bottom shows every other tool Allternit supports: Gemini CLI, GitHub Copilot CLI, Aider, Amp, Goose, Crush, Cline, Kilo Code, Factory Droid, Augment Auggie, OpenHands, Continue and more. **Install** runs a pinned installer, then the same sign-in.
+- **Add your own** registers a CLI that isn't listed. Give its command and how it takes a prompt (for example `-p {prompt}`), and optionally a model flag, a sign-in check and an install command. It then installs, signs in and works as a brain like the others, and you can remove it any time. Custom tools are only available on your own computer, not on a shared hosted runtime.
 
 Two kinds of brains live elsewhere:
 
