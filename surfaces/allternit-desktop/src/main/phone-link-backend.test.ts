@@ -272,6 +272,23 @@ describe('PhoneLinkBackend phones and health', () => {
     expect(b.has('link:dev-2')).toBe(false);
   });
 
+  it('serials() keeps an answering iPhone inside the renewal window online until its signature lapses', async () => {
+    const now = Date.parse('2026-10-19T21:00:00Z');
+    const renewing: LinkedPhone = { ...iphone, expiresAt: '2026-10-20T08:48:22Z', apps: [{ vendor: 'chatgpt', signedIn: true }, { vendor: 'quickbooks', signedIn: false }] };
+    const probe = vi.fn(async (p: LinkedPhone) => ({ deviceId: p.deviceId, platform: p.platform, whoami: { deviceId: p.deviceId }, call: 'ok' as const, expiresAt: p.expiresAt }));
+    let t = now;
+    const monitor = new PhoneLinkHealthMonitor({ phones: () => [renewing], probe, now: () => t });
+    const b = backend(fakeClient({}), [renewing], { health: monitor, now: () => t });
+    const [device] = await b.linkedDevices();
+    expect(device.health.state).toBe('SIGNATURE_RENEWAL_REQUIRED');
+    expect(b.serials()).toEqual(['link:dev-1']);
+    // Apps with a reader confirmed on this platform are listed as verified.
+    expect(device.apps).toEqual([{ vendor: 'chatgpt', signedIn: true, reader: 'verified' }, { vendor: 'quickbooks', signedIn: false }]);
+    t = Date.parse('2026-10-20T09:00:00Z');
+    await monitor.check('dev-1');
+    expect(b.serials()).toEqual([]);
+  });
+
   it('linkedDevices() refreshes stale health and returns the phone.devices shape', async () => {
     const probe = vi.fn(async (p: LinkedPhone) => ({ deviceId: p.deviceId, platform: p.platform, whoami: { deviceId: p.deviceId }, call: 'ok' as const }));
     const monitor = new PhoneLinkHealthMonitor({ phones: () => [android], probe, now: () => 1_000_000 });

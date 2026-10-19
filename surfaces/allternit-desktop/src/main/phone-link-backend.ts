@@ -19,12 +19,14 @@ import { IctrlError, ictrlStoreKey } from './ictrl-client.js';
 import { IOS_VENDOR_BUNDLES, type IctrlLike, type IosLinkStore } from './phone-link-ios.js';
 import { ANDROID_VENDOR_PACKAGES, type AndroidLinkStore } from './phone-link-android.js';
 import { catalogApp, catalogAppByName, catalogPhoneApps, nameCatalogApps } from './phone-app-catalog.js';
+import { verifiedReader } from './phone-account-specs.js';
 import { scanLan, type DiscoveryDeps } from './phone-link-discovery.js';
 import { PACKAGE_RE, resolveApp, type ToolErrorCode, type ToolResult, type UsbPhoneBackend } from './phone-tools.js';
 import {
   ACCESSIBILITY_OFF_ACTION,
   isAccessibilityOffError,
   PhoneLinkHealthMonitor,
+  phoneWorks,
   type HealthEvidence,
   type LinkedPhone,
   type LinkedPhoneSource,
@@ -91,6 +93,8 @@ export const BOT_IDLE_MS = 10 * 60_000;
 
 /** What an account read saw (phone-account-reader.ts), saved on the phone's app record. */
 export interface AppAccountInfo {
+  /** What the read's first screen showed: false = a sign-in screen. */
+  signedIn: boolean | null;
   account: string | null;
   plan: string | null;
   usage: PhoneLinkUsage | null;
@@ -131,7 +135,7 @@ export class PhoneLinkBackend implements UsbPhoneBackend {
     const save = this.deps.saveApps;
     if (!save) return;
     for (const phone of phones) {
-      if (this.deps.health?.health(phone.deviceId)?.state !== 'HEALTHY') continue;
+      if (!phoneWorks(this.deps.health?.health(phone.deviceId) ?? null, phone.expiresAt, this.now())) continue;
       const last = this.appsReadAt.get(phone.deviceId);
       if (last !== undefined && this.now() - last < APPS_REFRESH_MS) continue;
       this.appsReadAt.set(phone.deviceId, this.now());
@@ -164,13 +168,14 @@ export class PhoneLinkBackend implements UsbPhoneBackend {
   /**
    * Online = health is HEALTHY, DEVICE_LOCKED or ACCESSIBILITY_OFF (or not
    * checked yet): the phone answers, so a tool call gets the real reason back.
+   * A renewal warning before the signature lapses is online too (phoneWorks).
    */
   serials(): string[] {
     return this.deps
       .phones()
       .filter((p) => {
         const health = this.deps.health?.fresh(p.deviceId) ?? null;
-        return !health || health.state === 'HEALTHY' || health.state === 'DEVICE_LOCKED' || health.state === 'ACCESSIBILITY_OFF';
+        return !health || health.state === 'DEVICE_LOCKED' || health.state === 'ACCESSIBILITY_OFF' || phoneWorks(health, p.expiresAt, this.now());
       })
       .map((p) => LINK_SERIAL_PREFIX + p.deviceId);
   }
@@ -194,7 +199,7 @@ export class PhoneLinkBackend implements UsbPhoneBackend {
         recovery: 'automatic',
         detail: 'Health has not been checked yet.',
       },
-      apps: p.apps,
+      apps: p.apps?.map((app) => (verifiedReader(app.vendor, p.platform) ? { ...app, reader: 'verified' as const } : app)),
       ...(pathOf?.(p.deviceId) ? { path: pathOf(p.deviceId)! } : {}),
       ...(p.handedOverFrom ? { handedOverFrom: p.handedOverFrom } : {}),
     }));
@@ -319,7 +324,7 @@ export class PhoneLinkBackend implements UsbPhoneBackend {
     const had = apps.some((app) => app.vendor === appId);
     const next = had
       ? apps.map((app) => (app.vendor === appId ? { ...app, ...info } : app))
-      : [...apps, ...nameCatalogApps([{ vendor: appId, signedIn: true, ...info }])];
+      : [...apps, ...nameCatalogApps([{ vendor: appId, ...info }])];
     save(phone, next);
   }
 

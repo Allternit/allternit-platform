@@ -56,27 +56,35 @@ Allternit never sees or stores your password. It doesn't type into sign-in scree
 
 If the check says the phone is locked or offline, unlock the phone or bring it back on the same Wi-Fi as your computer, then choose **Check again**.
 
-## Account, plan and usage on a phone
+## Checks for every app on a phone
 
-For the AI chat apps on a linked phone (ChatGPT, Claude, Gemini, Grok, Kimi, Copilot and Perplexity), a phone way shows the same facts as a browser sign-in when the app shows them (Allternit Desktop reads them):
+Every app on a linked phone gets a check, not only the AI chat apps (Allternit Desktop runs it). A phone way shows:
 
-- **Account:** the email or @handle the app shows.
-- **Plan:** the plan name the app shows, such as Free, Plus, Pro, Max or SuperGrok.
-- **Usage:** each usage window the app shows, such as **5-hour** or **Weekly**, with the percent left and when it resets.
+- **Signed in or not:** **Not signed in** when the app opens on its sign-in screen. Choose **Open on phone**, sign in there yourself, then **Check**.
+- **Account:** the email, @handle or name the app shows for your own account.
+- **Plan and usage:** for apps that show them, the plan name (such as Free, Plus, Pro or Max) and each usage window, such as **5-hour**, **Current** or **Weekly**, with the percent left and when it resets.
 
-Allternit opens the app's own settings or usage screen, reads it, and goes back to the Home screen. It only taps menu entries such as **Settings**, **Account** or **Usage**. It never types, never changes a setting, and never taps anything that signs out, deletes, upgrades, buys, subscribes or cancels.
+Allternit opens the app, reads its first screen, then opens the app's own profile, settings or usage screen, reads it, and goes back to the Home screen. It scrolls a long settings list to find a row further down. It only taps entries such as **Settings**, **Account**, **Profile** or **Usage**, and Back or Close. It never types, never changes a setting, and never taps anything that signs out, deletes, upgrades, buys, subscribes or cancels.
 
-Allternit reads each signed-in AI chat app shortly after you link the phone or finish the wizard's **Check** step, and again about every 6 hours. It reads one app at a time and only while the phone is unlocked and working. It waits while a bot is using the phone or while you are watching its live screen. A fact the app doesn't show, or that Allternit can't read for certain, is shown as a dash. Allternit doesn't guess it.
+Allternit checks each app shortly after you link the phone or finish the wizard's **Check** step, and again about every 6 hours. It checks one app at a time and only while the phone is unlocked and working. It waits while a bot is using the phone or while you are watching its live screen. A check that can't read the account keeps the last one it read. A fact the app doesn't show, or that Allternit can't read for certain, is shown as a dash. Allternit doesn't guess it.
 
-What each app shows on an iPhone (checked on a real phone, October 2026):
+A phone way says **Verified reader** when the app's path was checked on a real phone of that kind. These apps were checked on an iPhone in October 2026, with every settings page scrolled:
 
 | App | Account | Plan | Usage |
 |-----|---------|------|-------|
-| Claude | Yes | Yes | 5-hour, Weekly, and Weekly per model (for example Weekly (Fable)) |
-| ChatGPT | Yes | Yes | The app has no usage screen |
-| Gemini | Yes | The app doesn't show it | The app has no usage screen |
+| Claude | Email | Yes | 5-hour, Weekly, and Weekly per model (for example Weekly (Fable)) |
+| ChatGPT | Email | Yes | Weekly (Settings › Usage and limits) |
+| Gemini | Email | The free tier names no plan | Current and Weekly (Settings › Usage limits) |
+| Discord | Email | – | – |
+| Telegram | @handle | – | – |
+| Instagram | Username | – | – |
+| Facebook | Profile name | – | – |
+| TikTok | @handle | – | – |
+| X | @handle | – | – |
+| YouTube | Google account email | – | – |
+| GitHub | Login | – | – |
 
-On a phone and app pair that hasn't been checked yet (Android, Kimi, Perplexity, Grok, Copilot), Allternit tries the usual ways through the app's menus. If a phone way still shows dashes after a read, open the app on the phone once to check that it is signed in and has finished loading. The next read picks the facts up.
+Every other app (and every app on Android until its paths are checked) gets the sign-in check: signed in, or **Not signed in**. Kimi and Perplexity try the usual ways through their menus until a signed-in phone is checked. If a phone way still shows dashes after a check, open the app on the phone once to make sure it is signed in and has finished loading. The next check picks the facts up.
 
 ## Coding tools
 

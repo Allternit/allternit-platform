@@ -62,6 +62,8 @@ export interface PhoneLinkApp {
   usage?: PhoneLinkUsage | null;
   /** ISO time of the last account read that saw anything. */
   accountCheckedAt?: string;
+  /** 'verified' when the account reader has a path confirmed on this phone's platform (phone-account-specs.ts); listed, not saved. */
+  reader?: 'verified';
 }
 
 /** One usage window as an app shows it ("Current session … 34% used … Resets in 2 hr"). */
@@ -85,6 +87,8 @@ export interface PhoneLinkUsage {
 /** phone-link:read-account answer (allternit-ai src/lib/phone-link-bridge.ts). Fields the app didn't show are null; never guessed. */
 export interface PhoneLinkAccountResult {
   ok: boolean;
+  /** Whether the app's first screen was a sign-in screen (false), its signed-in UI (true), or neither (null). Absent on failures. */
+  signedIn?: boolean | null;
   account: string | null;
   plan: string | null;
   usage: { windows: Array<{ id: string; label: string; remaining_pct: number | null; resets_at: string | null }>; observedAt: string } | null;

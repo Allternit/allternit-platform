@@ -91,6 +91,19 @@ function signatureExpiring(expiresAt: string | undefined, now: number): boolean 
   return Number.isFinite(at) && at - now <= SIGNATURE_WARNING_MS;
 }
 
+/**
+ * True when the phone works: HEALTHY, or SIGNATURE_RENEWAL_REQUIRED while the
+ * signature hasn't lapsed yet. classifyHealth reports a silent phone as
+ * TRANSPORT_OFFLINE until the signature runs out, so a renewal warning with a
+ * future expiry always means the helper answered — the phone stays usable
+ * (2026-10-19: a phone inside the 24 h window was treated as offline).
+ */
+export function phoneWorks(health: PhoneLinkHealth | null, expiresAt: string | undefined, now: number): boolean {
+  if (!health) return false;
+  if (health.state === 'HEALTHY') return true;
+  return health.state === 'SIGNATURE_RENEWAL_REQUIRED' && !!expiresAt && !signatureExpired(expiresAt, now);
+}
+
 /** Classify one probe's evidence into a health object. Pure; unit-tested. */
 export function classifyHealth(ev: HealthEvidence, now: number): PhoneLinkHealth {
   const base = { checkedAt: new Date(now).toISOString() };
