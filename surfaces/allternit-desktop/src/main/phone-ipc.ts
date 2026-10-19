@@ -80,6 +80,10 @@ const errorResult = (error: unknown) => ({ ok: false as const, message: error in
 // senders only. Chunks travel as Buffers (structured-cloned to Uint8Array in
 // the renderer) — base64 would add a copy + ~33% size on the hot path.
 // Subscriptions die with their webContents ('destroyed').
+// Audio rides the same subscription: 'phone:stream-audio-meta'
+// (PhoneAudioMeta) and 'phone:stream-audio-chunk' (one encoded packet as a
+// Buffer). A renderer that subscribes after the format was sent reads it
+// with the 'phone:stream-audio-meta-get' invoke.
 
 interface StreamSub {
   sender: WebContents;
@@ -99,10 +103,11 @@ function pushStream(serial: string, channel: string, payload: unknown): void {
 function ensureStreamConsumer(serial: string): void {
   if (streamConsumers.has(serial)) return;
   const manager = phoneService.getStreamManager();
-  if (!manager) return;
   const consumer: StreamConsumer = {
     onMeta: (s, meta) => pushStream(s, 'phone:stream-meta', meta),
     onChunk: (s, chunk) => pushStream(s, 'phone:stream-chunk', chunk),
+    onAudioMeta: (s, meta) => pushStream(s, 'phone:stream-audio-meta', meta),
+    onAudioChunk: (s, chunk) => pushStream(s, 'phone:stream-audio-chunk', chunk),
     onEnd: (s, info) => pushStream(s, 'phone:stream-end', info),
   };
   streamConsumers.set(serial, manager.subscribe(serial, consumer));
@@ -115,14 +120,10 @@ function dropStreamConsumer(serial: string): void {
 }
 
 function subscribeStream(sender: WebContents, serial: string): void {
-  if (phoneService.getStreamManager()) {
-    ensureStreamConsumer(serial);
-  } else if (phoneService.androidInUse()) {
-    // The lane isn't up yet (fresh launch); bring it up so this and later
-    // subscriptions actually receive events. iPhone-only users never reach
-    // this: no Android phone was paired, so nothing starts.
-    void phoneService.ensureStreams().then(() => ensureStreamConsumer(serial)).catch(() => undefined);
-  }
+  // The manager exists without either lane (it costs nothing), so Android
+  // serials and linked iPhones (`link:<deviceId>`) subscribe the same way;
+  // startStream brings the right lane up.
+  ensureStreamConsumer(serial);
   if (streamSubs.some((sub) => sub.sender === sender && sub.serial === serial)) return;
   streamSubs.push({ sender, serial });
   // A sender can hold many subscriptions; clean them all when it dies.
@@ -275,6 +276,7 @@ export function registerPhoneIpc(handle: Guarded): void {
   handle('phone:stream-status', (_e, serial: unknown) => phoneService.streamStatus(String(serial ?? '')));
   handle('phone:stream-input', (_e, serial: unknown, events: unknown) => phoneService.sendStreamInput(String(serial ?? ''), events));
   handle('phone:stream-display-power', (_e, serial: unknown, on: unknown) => phoneService.setStreamDisplayPower(String(serial ?? ''), Boolean(on)));
+  handle('phone:stream-audio-meta-get', (_e, serial: unknown) => phoneService.getStreamManager().audioMeta(String(serial ?? '')));
   handle('phone:stream-subscribe', (e, serial: unknown) => subscribeStream(e.sender, String(serial ?? '')));
   handle('phone:stream-unsubscribe', (e, serial: unknown) => unsubscribeStream(e.sender, String(serial ?? '')));
 

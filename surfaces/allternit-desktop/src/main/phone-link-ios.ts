@@ -807,28 +807,42 @@ export async function reconnectIos(
       }
     }
   }
-  if (!(await deps.goios.list()).includes(udid)) return null;
+  const say = (message: string) => deps.logger?.(`[phone-link ios] ${message}`);
+  if (!(await deps.goios.list()).includes(udid)) {
+    say('reconnect: the iPhone is not on the cable');
+    return null;
+  }
   const tunnel = deps.goios.tunnelStart(udid);
   let fwd: { port: number; close(): Promise<void> } | null = null;
   try {
     for (let i = 0; i < 40 && !(await deps.goios.tunnels()).some((t) => t.udid === udid); i++) await sleep(500);
     await deps.goios.imageAuto(udid, await deps.ddiDir());
     const launched = await deps.goios.launch(udid, record.runnerBundleId, { killExisting: true });
-    if (!launched.ok) return null;
+    if (!launched.ok) {
+      say(`reconnect: launching the helper failed: ${launched.error}${launched.untrusted ? ' (the developer is not trusted on the iPhone)' : ''}`);
+      return null;
+    }
     // The phone is right here on the cable: refresh the pairing file the
     // phone-side "Mount without a Mac" flow reads from the host app.
     await leavePairingFile(deps, udid, record.hostBundleId, (message) => deps.logger?.(`[phone-link ios] ${message}`));
     fwd = await deps.forward(udid, ICTRL_PORT);
     const usb = deps.ictrl(udid, `127.0.0.1:${fwd.port}`);
+    let last = 'the helper never answered over the cable';
     for (let i = 0; i < 20; i++) {
-      const config = await usb.call<Parameters<typeof pickLanHost>[0]>('config').catch(() => null);
+      const config = await usb.call<Parameters<typeof pickLanHost>[0]>('config').catch((error) => {
+        last = `the helper didn't answer over the cable (${error instanceof Error ? error.message : String(error)})`;
+        return null;
+      });
       const host = config ? pickLanHost(config) : null;
+      if (config && !host) last = 'the helper answered but has no Wi-Fi address (is the iPhone on Wi-Fi?)';
       if (host && (await probe(host))) {
         deps.store.save({ ...record, lanHost: host });
         return host;
       }
+      if (host) last = `the helper answered over the cable but not on Wi-Fi at ${host}`;
       await sleep(1000);
     }
+    say(`reconnect: ${last}`);
     return null;
   } catch (error) {
     deps.logger?.(`[phone-link ios] reconnect failed: ${error instanceof Error ? error.message : String(error)}`);

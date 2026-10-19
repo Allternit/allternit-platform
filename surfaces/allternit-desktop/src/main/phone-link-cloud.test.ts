@@ -1,7 +1,7 @@
 /** Tests for the per-phone Phone Link cloud socket: lifecycle, hello, backoff, viewer control, data plane. */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PhoneLinkPhoneSocket, SOCKET_OPEN, type PhoneLinkSocket, type PhoneLinkSocketDeps } from './phone-link-cloud.js';
+import { PHONE_AUDIO_FRAME_TAG, PhoneLinkPhoneSocket, phoneLinkApiUrl, SOCKET_OPEN, type PhoneLinkSocket, type PhoneLinkSocketDeps } from './phone-link-cloud.js';
 
 class FakeSocket implements PhoneLinkSocket {
   sent: (string | Uint8Array)[] = [];
@@ -217,5 +217,77 @@ describe('PhoneLinkPhoneSocket', () => {
     expect(sent[1]).toBeInstanceOf(Uint8Array);
     expect(sent[2]).toBe(JSON.stringify({ type: 'end', reason: 'done' }));
     client.stop();
+  });
+  it('sends audio only after a viewer opts in: audioMeta JSON first, then 0xA0-tagged binary frames', async () => {
+    const { deps, sockets } = makeDeps();
+    const client = new PhoneLinkPhoneSocket(deps);
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    sockets[0].simulateOpen();
+    sockets[0].simulateServerMessage({ type: 'viewer_attached', serial: 'ser1' });
+    await vi.advanceTimersByTimeAsync(0);
+    const audioMeta = { codec: 'opus' as const, sampleRate: 48000, channels: 2, description: 'T3B1c0hlYWQ=' };
+    client.push({ kind: 'audioMeta', meta: audioMeta });
+    client.push({ kind: 'audioChunk', chunk: new Uint8Array([1, 2]) });
+    client.push({ kind: 'chunk', chunk: new Uint8Array([0, 0, 0, 1, 0x65]) });
+    // Not opted in: only the video frame went out (old clients see no audio).
+    let sent = sockets[0].sent.slice(1);
+    expect(sent).toHaveLength(1);
+    expect(Array.from(sent[0] as Uint8Array)).toEqual([0, 0, 0, 1, 0x65]);
+
+    sockets[0].simulateServerMessage({ type: 'audio', on: true });
+    await vi.advanceTimersByTimeAsync(0);
+    client.push({ kind: 'audioChunk', chunk: new Uint8Array([3, 4]) });
+    client.push({ kind: 'chunk', chunk: new Uint8Array([0, 0, 1, 0x41]) });
+    sent = sockets[0].sent.slice(2);
+    expect(sent[0]).toBe(JSON.stringify({ type: 'audioMeta', ...audioMeta }));
+    expect(Array.from(sent[1] as Uint8Array)).toEqual([PHONE_AUDIO_FRAME_TAG, 3, 4]);
+    expect(Array.from(sent[2] as Uint8Array)).toEqual([0, 0, 1, 0x41]);
+
+    sockets[0].simulateServerMessage({ type: 'audio', on: false });
+    await vi.advanceTimersByTimeAsync(0);
+    const before = sockets[0].sent.length;
+    client.push({ kind: 'audioChunk', chunk: new Uint8Array([5]) });
+    expect(sockets[0].sent.length).toBe(before);
+    client.stop();
+  });
+
+  it('opting in before the format waits for it; the last viewer leaving or an end turns audio off', async () => {
+    const { deps, sockets } = makeDeps();
+    const client = new PhoneLinkPhoneSocket(deps);
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    sockets[0].simulateOpen();
+    sockets[0].simulateServerMessage({ type: 'viewer_attached', serial: 'ser1' });
+    sockets[0].simulateServerMessage({ type: 'audio', on: true });
+    await vi.advanceTimersByTimeAsync(0);
+    client.push({ kind: 'audioChunk', chunk: new Uint8Array([1]) }); // no format yet: dropped
+    expect(sockets[0].sent.slice(1)).toEqual([]);
+    const audioMeta = { codec: 'aac' as const, sampleRate: 48000, channels: 2, description: 'EZA=' };
+    client.push({ kind: 'audioMeta', meta: audioMeta });
+    expect(textFrames(sockets[0]).filter((f) => f.type === 'audioMeta')).toHaveLength(1);
+    client.push({ kind: 'end', reason: 'done' });
+    client.push({ kind: 'audioChunk', chunk: new Uint8Array([2]) }); // format forgotten with the stream
+    expect(sockets[0].sent.filter((f) => f instanceof Uint8Array)).toHaveLength(0);
+
+    client.push({ kind: 'audioMeta', meta: audioMeta });
+    sockets[0].simulateServerMessage({ type: 'viewer_detached', serial: 'ser1' });
+    await vi.advanceTimersByTimeAsync(0);
+    client.push({ kind: 'audioChunk', chunk: new Uint8Array([3]) });
+    expect(sockets[0].sent.filter((f) => f instanceof Uint8Array)).toHaveLength(0);
+    client.stop();
+  });
+});
+
+describe('phoneLinkApiUrl', () => {
+  it('targets the local api, never the cloud control plane (which 404s /ws/phone-link)', () => {
+    expect(phoneLinkApiUrl('http://127.0.0.1:8013', {})).toBe('http://127.0.0.1:8013');
+    // The old knob pointed this socket at api.allternit.com; it must not anymore.
+    expect(phoneLinkApiUrl('http://127.0.0.1:8013', { ALLTERNIT_CLOUD_API_URL: 'https://api.allternit.com' })).toBe('http://127.0.0.1:8013');
+  });
+
+  it('honours the dev override and trims trailing slashes', () => {
+    expect(phoneLinkApiUrl('http://127.0.0.1:8013', { ALLTERNIT_PHONE_LINK_API_URL: 'http://127.0.0.1:18013/' })).toBe('http://127.0.0.1:18013');
+    expect(phoneLinkApiUrl('http://127.0.0.1:8013//', {})).toBe('http://127.0.0.1:8013');
   });
 });

@@ -609,6 +609,10 @@ export interface PhonesAPI {
   streamStatus(serial: string): Promise<PhoneStreamStatus>;
   onStreamMeta(serial: string, cb: (meta: PhoneStreamMeta) => void): () => void;
   onStreamChunk(serial: string, cb: (chunk: ArrayBuffer) => void): () => void;
+  /** Audio format (replays the current one on subscribe); absent audio = never called. */
+  onStreamAudioMeta(serial: string, cb: (meta: PhoneAudioMeta) => void): () => void;
+  /** One encoded audio packet, no header. */
+  onStreamAudioChunk(serial: string, cb: (chunk: ArrayBuffer) => void): () => void;
   onStreamEnd(serial: string, cb: (info: { reason: string }) => void): () => void;
   sendStreamInput(serial: string, events: PhoneInputEvent[]): Promise<{ ok: boolean; message?: string }>;
   setStreamDisplayPower(serial: string, on: boolean): Promise<{ ok: boolean; message?: string }>;
@@ -633,6 +637,14 @@ export interface PhoneStreamOptions {
   maxSize?: number;
   videoBitrate?: number;
   maxFps?: number;
+}
+
+/** Phone audio format: opus (Android/scrcpy) or AAC-LC (iPhone); description = base64 OpusHead / AudioSpecificConfig. */
+export interface PhoneAudioMeta {
+  codec: 'opus' | 'aac';
+  sampleRate: number;
+  channels: number;
+  description: string;
 }
 
 export interface PhoneStreamMeta {

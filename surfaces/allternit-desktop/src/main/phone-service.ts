@@ -33,8 +33,9 @@ import {
   type PhoneStreamStatus,
 } from './phone-scrcpy.js';
 import { PhoneStreamManager, type StreamConsumer } from './phone-stream.js';
+import { IosVideoSession } from './phone-ios-video.js';
 import { PhoneUserComms, type CallStateName, type CommsResult, type PhoneAppInfo, type PhoneSmsMessage, type PhoneSmsThread } from './phone-user-comms.js';
-import { PhoneLinkPhoneSocket } from './phone-link-cloud.js';
+import { PhoneLinkPhoneSocket, phoneLinkApiUrl } from './phone-link-cloud.js';
 import { authManager } from './auth-manager.js';
 import { backendManager } from './backend-manager.js';
 import { URLS } from './config.js';
@@ -292,6 +293,7 @@ class PhoneService {
    */
   private ensureIosRecovery(): void {
     if (this.iosRecovery || process.platform !== 'darwin') return;
+    if (this.iosRecords().length > 0) this.ensureLinkSync();
     const dir = this.dir();
     const store = fileLinkStore(path.join(dir, 'phone-link-ios.json'));
     let built: Promise<IosRecoveryDeps | null> | null = null;
@@ -520,29 +522,16 @@ class PhoneService {
         manager.on('devices', () => {
           // The reconnect state machine handles re-pairing; a stream on a
           // phone that just went away simply ends and can be restarted.
+          // Linked iPhones (`link:`) are not adb devices: their stream ends on its own socket.
           const online = new Set(manager.onlineSerials());
           for (const serial of this.streams?.activeSerials() ?? []) {
-            if (!online.has(serial)) this.streams?.deviceDisconnected(serial);
+            if (!serial.startsWith(LINK_SERIAL_PREFIX) && !online.has(serial)) this.streams?.deviceDisconnected(serial);
           }
           this.syncLinkSockets();
         });
         this.manager = manager;
-        this.streams = new PhoneStreamManager({
-          createSession: (serial, opts) =>
-            new ScrcpySession(
-              {
-                adb: nodeScrcpyAdb(this.adbPath ?? '', serial),
-                serial,
-                serverPath: this.ensureScrcpyServerPath(),
-                connect: nodeScrcpyConnect,
-                log: (message) => log.info('[PhoneStream]', message),
-              },
-              opts,
-            ),
-        });
-        this.linkSyncTimer = setInterval(() => this.syncLinkSockets(), LINK_SYNC_INTERVAL_MS);
-        this.linkSyncTimer.unref?.();
-        this.syncLinkSockets();
+        this.ensureStreamManager();
+        this.ensureLinkSync();
         this.ensureCallBridge();
         return manager;
       })();
@@ -564,17 +553,69 @@ class PhoneService {
     return this.scrcpyServerReady;
   }
 
-  /** The in-app live view manager (scrcpy-server video + input); created with the Android lane. */
+  /**
+   * The in-app live view manager, one for both lanes: Android phones stream
+   * over scrcpy-server (adb), linked iPhones (`link:<deviceId>`) over the
+   * runner's /video (phone-ios-video.ts). Building it costs nothing — no adb,
+   * no processes — so an iPhone-only user gets live video without adb.
+   */
+  private ensureStreamManager(): PhoneStreamManager {
+    this.streams ??= new PhoneStreamManager({
+      createSession: (serial, opts) => {
+        const iphone = this.linkedIphone(serial);
+        if (iphone) return this.createIosVideoSession(serial, iphone.name || 'iPhone');
+        return new ScrcpySession(
+          {
+            adb: nodeScrcpyAdb(this.adbPath ?? '', serial),
+            serial,
+            serverPath: this.ensureScrcpyServerPath(),
+            connect: nodeScrcpyConnect,
+            log: (message) => log.info('[PhoneStream]', message),
+          },
+          opts,
+        );
+      },
+    });
+    return this.streams;
+  }
+
+  /** A `link:` serial that names a linked iPhone (phone-link-ios.json), else null. Never touches adb. */
+  private linkedIphone(serial: string): LinkedPhone | null {
+    if (!serial.startsWith(LINK_SERIAL_PREFIX) || this.iosRecords().length === 0) return null;
+    const phone = this.ensureLinkedBackend().linkedPhone(serial);
+    return phone?.platform === 'ios' ? phone : null;
+  }
+
+  private createIosVideoSession(serial: string, deviceName: string): IosVideoSession {
+    const backend = this.ensureLinkedBackend();
+    return new IosVideoSession({
+      call: (method, params, timeoutMs) => backend.helperCall(serial, method, params, timeoutMs),
+      host: () => backend.hostFor(serial),
+      deviceName,
+      log: (message) => log.info('[PhoneStream]', message),
+    });
+  }
+
+  /** The stream manager for Android callers: brings the adb lane up first. */
   async ensureStreams(): Promise<PhoneStreamManager> {
     await this.ensureReady();
-    return this.streams!;
+    return this.ensureStreamManager();
   }
 
   /**
-   * Start a live stream on request only. The phone must be online; the
-   * pinned scrcpy-server is downloaded on first use, not here.
+   * Start a live stream on request only. An Android phone must be online on
+   * adb (the pinned scrcpy-server is downloaded on first use, not here); a
+   * linked iPhone must be reachable on the iCTRL lane — no adb involved.
    */
   async startStream(serial: string, opts?: PhoneStreamOptions): Promise<{ ok: true } | { ok: false; message: string }> {
+    if (serial.startsWith(LINK_SERIAL_PREFIX)) {
+      this.iosRecordsCache = null; // a phone linked a moment ago must be found
+      if (!this.linkedIphone(serial)) return { ok: false, message: 'Live screen works with a linked iPhone. That phone is not one.' };
+      if (!this.ensureLinkedBackend().has(serial)) {
+        return { ok: false, message: "Can't reach that iPhone right now. Check it is unlocked and on the same Wi-Fi as this computer." };
+      }
+      return this.ensureStreamManager().start(serial, opts ?? {});
+    }
     const manager = await this.ensureReady();
     const phone = manager.list().find((p) => p.serial === serial);
     if (!phone || phone.state !== 'online') return { ok: false, message: 'That phone is not connected.' };
@@ -706,8 +747,9 @@ class PhoneService {
     return fn(target.serial, await this.ensureComms());
   }
 
-  getStreamManager(): PhoneStreamManager | null {
-    return this.streams;
+  /** Always available (no adb needed): renderers subscribe before either lane is up. */
+  getStreamManager(): PhoneStreamManager {
+    return this.ensureStreamManager();
   }
 
   // ── Cloud relay (Phones 2.0 Phase 2): the persistent session that lets     ──
@@ -721,17 +763,26 @@ class PhoneService {
   // ── attach and idles off on a grace after the last detach.                 ──
 
   /** Signed out ⇒ no sockets; the sync timer picks sign-in up within a minute. */
+  /** Keep one relay socket per phone a web viewer can open; started by the Android lane or a linked iPhone. */
+  private ensureLinkSync(): void {
+    if (this.linkSyncTimer) return;
+    this.linkSyncTimer = setInterval(() => this.syncLinkSockets(), LINK_SYNC_INTERVAL_MS);
+    this.linkSyncTimer.unref?.();
+    this.syncLinkSockets();
+  }
+
   private syncLinkSockets(): void {
     if (!authManager.getSessionSnapshot()) return;
-    const phones = this.manager?.list() ?? [];
+    const serials = (this.manager?.list() ?? []).map((phone) => phone.serial).filter(Boolean);
+    // Linked iPhones stream their live screen (IosVideoSession), so the web and PWA can open them too.
+    for (const r of this.iosRecords()) serials.push(`${LINK_SERIAL_PREFIX}${r.deviceId ?? r.udid}`);
     const seen = new Set<string>();
-    for (const phone of phones) {
-      if (!phone.serial) continue;
-      seen.add(phone.serial);
-      if (!this.linkSockets.has(phone.serial)) {
-        this.linkSockets.set(phone.serial, this.createLinkSocket(phone.serial));
+    for (const serial of serials) {
+      seen.add(serial);
+      if (!this.linkSockets.has(serial)) {
+        this.linkSockets.set(serial, this.createLinkSocket(serial));
       }
-      this.linkSockets.get(phone.serial)?.notePhoneChanged();
+      this.linkSockets.get(serial)?.notePhoneChanged();
     }
     for (const [serial, socket] of this.linkSockets) {
       if (seen.has(serial)) continue;
@@ -744,10 +795,11 @@ class PhoneService {
 
   private createLinkSocket(serial: string): PhoneLinkPhoneSocket {
     const client = new PhoneLinkPhoneSocket({
-      // Both relay legs must terminate at the same api the web app talks to
-      // (the cloud transport uses the same base). In dev, point Desktop at
-      // the local api with ALLTERNIT_CLOUD_API_URL=http://127.0.0.1:18013.
-      apiUrl: () => (process.env.ALLTERNIT_CLOUD_API_URL || URLS.CLOUD_API).replace(/\/$/, ''),
+      // The relay is this Desktop's own allternit-api: api.allternit.com is
+      // the cloud control plane and has no /ws/phone-link route (404), and the
+      // viewer's stream token is minted by this api. Web viewers reach it via
+      // the cloud runtime socket relay. See phoneLinkApiUrl.
+      apiUrl: () => phoneLinkApiUrl(backendManager.getUrl()),
       // The desktop-access-token credential + the signed-in user's headers —
       // the api's auth middleware maps them to the account browsers mint
       // tokens against (auth.rs verify_desktop_access_token + user headers).
@@ -762,6 +814,8 @@ class PhoneService {
         };
       },
       phone: () => {
+        const iphone = this.linkedIphone(serial);
+        if (iphone) return { serial, model: 'iPhone', name: iphone.name || 'iPhone' };
         const p = this.manager?.list().find((entry) => entry.serial === serial);
         const bridge = p ? this.manager?.getCallBridge(p.id) : null;
         return {
@@ -794,6 +848,10 @@ class PhoneService {
       const consumer: StreamConsumer = {
         onMeta: (_s, meta) => socket.push({ kind: 'meta', meta }),
         onChunk: (_s, chunk) => socket.push({ kind: 'chunk', chunk }),
+        // Replayed on subscribe (the stream is already live here); the socket
+        // sends audio only to viewers that opted in with {type:'audio', on:true}.
+        onAudioMeta: (_s, meta) => socket.push({ kind: 'audioMeta', meta }),
+        onAudioChunk: (_s, chunk) => socket.push({ kind: 'audioChunk', chunk }),
         onEnd: (_s, info) => {
           socket.push({ kind: 'end', reason: info.reason });
           this.detachLinkConsumer(serial);

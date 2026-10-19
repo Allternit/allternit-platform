@@ -215,6 +215,17 @@ export class PhoneLinkBackend implements UsbPhoneBackend {
     return this.deps.client(phone, host).call(method, params, timeoutMs);
   }
 
+  /** The linked phone behind a `link:` serial (name, platform), or null when none is linked. */
+  linkedPhone(serial: string): LinkedPhone | null {
+    return this.deps.phones().find((p) => serial === LINK_SERIAL_PREFIX + p.deviceId) ?? null;
+  }
+
+  /** The phone's current "ip:port" (LAN, or a mesh-proxy loopback), for the iPhone live screen's /video socket. */
+  async hostFor(serial: string): Promise<string | null> {
+    const phone = this.linkedPhone(serial);
+    return phone ? (this.deps.resolveHost ?? defaultResolveHost)(phone) : null;
+  }
+
   // ── calls ────────────────────────────────────────────────────────────────
 
   private async invoke<T>(phone: LinkedPhone, method: string, params: Record<string, unknown> = {}, timeoutMs?: number): Promise<{ ok: true; value: T } | { ok: false; result: ToolResult }> {

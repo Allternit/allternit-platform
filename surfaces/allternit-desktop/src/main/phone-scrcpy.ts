@@ -8,10 +8,10 @@
  * phone and no adb.
  *
  * Protocol sources followed (all at tag v5.0.1):
- *  - doc/develop.md — socket order (video, then control, when audio is off),
- *    the dummy byte on the first forward-tunnel socket, the 64-byte device
- *    name, the u32 codec id, the 12-byte session packet (rotation/size
- *    changes) and the 12-byte media frame header.
+ *  - doc/develop.md — socket order (video, audio, control; audio is
+ *    skipped when disabled), the dummy byte on the first forward-tunnel
+ *    socket, the 64-byte device name, the u32 codec id, the 12-byte session
+ *    packet (rotation/size changes) and the 12-byte media frame header.
  *  - app/src/control_msg.c + control_msg.h — control message serialization
  *    (byte layout for keycode/text/touch/scroll/back-or-screen-on/
  *    set-display-power/rotate-device; type ids from the enum).
@@ -24,7 +24,11 @@
  *  - server/.../Server.java, Options.java, device/DesktopConnection.java,
  *    device/Streamer.java — launch args (version must equal the server's
  *    exactly), option defaults (audio defaults to on and must be disabled
- *    explicitly) and the accept/meta order.
+ *    explicitly), the accept/meta order, the packet flag bits
+ *    (PACKET_FLAG_SESSION = 1<<63, PACKET_FLAG_CONFIG = 1<<62,
+ *    PACKET_FLAG_KEY_FRAME = 1<<61), writeDisableStream (audio codec id 0 =
+ *    "could not capture, carry on with video", 1 = "configuration error")
+ *    and fixOpusConfigPacket (the opus config packet is the bare OpusHead).
  *
  * Wire layout this implements (video socket, forward tunnel, audio=false):
  *   dummy byte (1, 0x00) → device name (64, UTF-8 NUL-padded) → codec id
@@ -36,6 +40,17 @@
  * forwards only Annex-B payloads to the renderer. Rotation/size changes
  * arrive as session packets on this same socket. The control socket carries
  * our control messages and, rarely, device messages from the server.
+ *
+ * Audio socket (opened between video and control when audio is on — the
+ * default; scrcpy's own default keeps playback off the phone while it is
+ * captured):
+ *   codec id (u32: "opus" = 0x6f707573; 0 = disabled, e.g. Android < 11;
+ *   1 = error) → [media packet (12-byte header + payload)]… — no session
+ *   packets. The first packet carries the config flag (bit 62) and is the
+ *   OpusHead → `audioMeta` (base64 description for WebCodecs); every other
+ *   packet is one opus frame → `audioChunk`. Audio is strictly best-effort:
+ *   a disabled/unknown codec, a corrupt packet, or an audio socket error or
+ *   close only stops audio (logged); the video stream never ends because of it.
  */
 
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
@@ -59,12 +74,17 @@ export const DEVICE_SERVER_PATH = '/data/local/tmp/scrcpy-server-manual.jar';
 export const DEVICE_SOCKET_NAME = 'scrcpy';
 
 const VIDEO_CODEC_H264 = 0x68323634; // "h264", u32 big-endian (Streamer.java)
+export const AUDIO_CODEC_OPUS = 0x6f707573; // "opus" (AudioCodec.java)
+const AUDIO_CODEC_DISABLED = 0; // writeDisableStream(false): no capture, video only
+const AUDIO_CODEC_ERROR = 1; // writeDisableStream(true): configuration error
+const OPUS_SAMPLE_RATE = 48_000; // opus always decodes at 48 kHz
 const DEVICE_NAME_FIELD_LENGTH = 64;
 
 const DUMMY_BYTE_LENGTH = 1;
 const CODEC_ID_LENGTH = 4;
 const SESSION_PACKET_LENGTH = 12;
-const SESSION_PACKET_FLAG = 0x80000000;
+const SESSION_PACKET_FLAG = 0x80000000; // bit 63 of the u64 header, as seen in its first u32
+const CONFIG_PACKET_FLAG = 0x40000000; // bit 62 (PACKET_FLAG_CONFIG)
 const FRAME_HEADER_LENGTH = 12;
 const MEDIA_PACKET_MAX_SIZE = 8 * 1024 * 1024; // way above anything 5 Mbit/s 30 fps produces
 
@@ -75,6 +95,20 @@ export interface PhoneStreamOptions {
   maxSize?: number;
   videoBitrate?: number;
   maxFps?: number;
+  /** Device audio (opus) alongside the video; default on. Android 11+ only — older phones stream video only. */
+  audio?: boolean;
+}
+
+/**
+ * Audio stream format, shared by both lanes and every surface (Desktop main ↔
+ * renderer ↔ web relay). `description` is base64: the OpusHead for opus, the
+ * AudioSpecificConfig for AAC — exactly WebCodecs AudioDecoderConfig.description.
+ */
+export interface PhoneAudioMeta {
+  codec: 'opus' | 'aac';
+  sampleRate: number;
+  channels: number;
+  description: string;
 }
 
 export interface PhoneStreamMeta {
@@ -417,11 +451,90 @@ export function parseDeviceMessage(buf: Buffer): DeviceMessageParse {
   }
 }
 
+// ── Audio stream demux (audio socket, Streamer.java v5.0.1) ─────────────────
+
+/** Channels from an OpusHead (RFC 7845 §5.1: "OpusHead", version, channel count, …); stereo when unreadable. */
+export function opusHeadChannels(head: Buffer): number {
+  if (head.length >= 19 && head.subarray(0, 8).toString('latin1') === 'OpusHead' && head[9] > 0) return head[9];
+  return 2;
+}
+
+export type ScrcpyAudioEvent =
+  | { type: 'disabled'; reason: string }
+  | { type: 'meta'; meta: PhoneAudioMeta }
+  | { type: 'chunk'; data: Buffer };
+
+/**
+ * Incremental audio socket parser: u32 codec id, then 12-byte-header packets.
+ * Once disabled (codec 0/1/unsupported, or a corrupt packet) it swallows
+ * everything after — the server keeps writing until it is told to stop, and
+ * we keep draining so it never blocks — and never throws.
+ */
+export class ScrcpyAudioDemuxer {
+  private buf: Buffer = Buffer.alloc(0);
+  private phase: 'codec' | 'stream' | 'disabled' = 'codec';
+
+  get disabled(): boolean {
+    return this.phase === 'disabled';
+  }
+
+  push(chunk: Buffer): ScrcpyAudioEvent[] {
+    if (this.phase === 'disabled') return [];
+    this.buf = this.buf.length ? Buffer.concat([this.buf, chunk]) : chunk;
+    const out: ScrcpyAudioEvent[] = [];
+    if (this.phase === 'codec') {
+      if (this.buf.length < CODEC_ID_LENGTH) return out;
+      const codecId = this.buf.readUInt32BE(0);
+      this.buf = this.buf.subarray(CODEC_ID_LENGTH);
+      if (codecId !== AUDIO_CODEC_OPUS) {
+        const reason =
+          codecId === AUDIO_CODEC_DISABLED
+            ? 'the phone cannot capture audio (Android 11+ is needed)'
+            : codecId === AUDIO_CODEC_ERROR
+              ? 'the phone reported an audio configuration error'
+              : `unsupported audio codec 0x${codecId.toString(16)}`;
+        return this.disable(out, reason);
+      }
+      this.phase = 'stream';
+    }
+    for (;;) {
+      if (this.buf.length < FRAME_HEADER_LENGTH) return out;
+      const flags = this.buf.readUInt32BE(0);
+      const size = this.buf.readUInt32BE(8);
+      if ((flags & SESSION_PACKET_FLAG) !== 0 || size > MEDIA_PACKET_MAX_SIZE) {
+        return this.disable(out, 'corrupt audio packet');
+      }
+      if (this.buf.length < FRAME_HEADER_LENGTH + size) return out;
+      const payload = Buffer.from(this.buf.subarray(FRAME_HEADER_LENGTH, FRAME_HEADER_LENGTH + size));
+      this.buf = this.buf.subarray(FRAME_HEADER_LENGTH + size);
+      if ((flags & CONFIG_PACKET_FLAG) !== 0) {
+        out.push({
+          type: 'meta',
+          meta: { codec: 'opus', sampleRate: OPUS_SAMPLE_RATE, channels: opusHeadChannels(payload), description: payload.toString('base64') },
+        });
+      } else if (size > 0) {
+        out.push({ type: 'chunk', data: payload });
+      }
+    }
+  }
+
+  private disable(out: ScrcpyAudioEvent[], reason: string): ScrcpyAudioEvent[] {
+    this.phase = 'disabled';
+    this.buf = Buffer.alloc(0);
+    out.push({ type: 'disabled', reason });
+    return out;
+  }
+}
+
 // ── The session ─────────────────────────────────────────────────────────────
 
 export interface ScrcpySessionEvents {
   meta(meta: PhoneStreamMeta): void;
   videoChunk(chunk: Buffer): void;
+  /** Opus stream format; may arrive before or after `meta`, and again if the encoder restarts. */
+  audioMeta(meta: PhoneAudioMeta): void;
+  /** One opus packet (no header). */
+  audioChunk(chunk: Buffer): void;
   deviceMessage(message: ScrcpyDeviceMessage): void;
   ended(info: { reason: string }): void;
 }
@@ -450,7 +563,9 @@ export function buildServerCommand(options: PhoneStreamOptions): string {
     'com.genymobile.scrcpy.Server',
     SCRCPY_SERVER_VERSION_ARG,
     'tunnel_forward=true',
-    'audio=false',
+    // audio_dup stays at scrcpy's default (off): while the live view is open
+    // the phone's sound plays here, not on the phone (Android 11+).
+    ...(options.audio === false ? ['audio=false'] : ['audio=true', 'audio_codec=opus']),
     'video_codec=h264',
     // send_frame_meta stays on (default): the 12-byte headers let main
     // demux media from session packets even when TCP coalesces them, and
@@ -483,6 +598,10 @@ export class ScrcpySession {
   private readonly metaPromise: Promise<void>;
   private videoSocket: ScrcpySocket | null = null;
   private controlSocket: ScrcpySocket | null = null;
+  private audioSocket: ScrcpySocket | null = null;
+  private readonly audio = new ScrcpyAudioDemuxer();
+  /** Set once audio stopped for this session (logged once); the socket keeps draining. */
+  private audioOff = false;
   /** The first session packet, held until the control socket is attached. */
   private pendingLive: ParsedSessionPacket | null = null;
   private live = false;
@@ -556,8 +675,17 @@ export class ScrcpySession {
     this.log(`video socket connected on 127.0.0.1:${this.port}`);
     // The server sends the device name, codec and first session packet only
     // after it has accepted every socket (DesktopConnection.open, then
-    // Server.java sendDeviceMeta), so the control socket connects now, right
-    // after the dummy byte, not after the header.
+    // Server.java sendDeviceMeta), so the audio and control sockets connect
+    // now, right after the dummy byte, in the server's accept order.
+    if (this.options.audio !== false) {
+      const audio = await this.connectWithRetry();
+      if (this.ended) {
+        audio.destroy();
+        throw new Error(this.endReason ?? 'The session was closed while connecting.');
+      }
+      this.audioSocket = audio;
+      this.attachAudioSocket(audio);
+    }
     const control = await this.connectWithRetry();
     if (this.ended) {
       control.destroy();
@@ -740,6 +868,44 @@ export class ScrcpySession {
     });
   }
 
+  /** Audio is best-effort: nothing on this socket may end the session. */
+  private attachAudioSocket(socket: ScrcpySocket): void {
+    socket.on('data', (chunk) => this.onAudioData(chunk));
+    socket.on('error', (error) => {
+      if (!this.ended) this.stopAudio(`audio socket error: ${error.message}`);
+    });
+    socket.on('close', () => {
+      if (!this.ended && !this.intentionalClose) this.stopAudio('the audio stream closed');
+    });
+  }
+
+  private onAudioData(chunk: Buffer): void {
+    if (this.ended || this.audioOff) return;
+    try {
+      for (const event of this.audio.push(chunk)) {
+        if (event.type === 'disabled') this.stopAudio(event.reason);
+        else if (event.type === 'meta') {
+          this.log(`audio: opus ${event.meta.channels} ch`);
+          this.emit('audioMeta', event.meta);
+        } else this.emit('audioChunk', event.data);
+      }
+    } catch (error) {
+      // A throwing audio listener must not reach the socket reader.
+      this.stopAudio(`audio listener failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /**
+   * Stop producing audio for this session. The socket stays open and keeps
+   * being drained (a full buffer would block the server's audio thread);
+   * dispose() closes it with the others.
+   */
+  private stopAudio(reason: string): void {
+    if (this.audioOff) return;
+    this.audioOff = true;
+    this.log(`audio off: ${reason}; video continues`);
+  }
+
   private async connectWithRetry(): Promise<ScrcpySocket> {
     let lastError: unknown = null;
     for (let attempt = 0; attempt < CONNECT_RETRIES; attempt += 1) {
@@ -807,6 +973,11 @@ export class ScrcpySession {
     }
     try {
       this.controlSocket?.destroy();
+    } catch {
+      /* already gone */
+    }
+    try {
+      this.audioSocket?.destroy();
     } catch {
       /* already gone */
     }
