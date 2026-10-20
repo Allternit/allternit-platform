@@ -119,11 +119,12 @@ pub async fn call(target: &Target, method: reqwest::Method, path: &str, body: Op
     res.json::<Value>().await.map_err(|e| format!("{} sent an unreadable reply: {e}", target.name))
 }
 
-/// The session id in `/agent-sessions/<id>[/…]`, except the collection and sync.
+/// The session id in `/agent-sessions/<id>[/…]`, except the collection, sync
+/// and the bulk linked-PRs route (`/agent-sessions/prs`).
 pub fn session_in_path(path: &str) -> Option<&str> {
     let rest = &path[path.find("/agent-sessions/")? + "/agent-sessions/".len()..];
     let id = rest.split('/').next()?;
-    (!id.is_empty() && id != "sync").then_some(id)
+    (!id.is_empty() && id != "sync" && id != "prs").then_some(id)
 }
 
 /// Pass calls for a placed session through to where it lives (streams too).
@@ -310,6 +311,8 @@ mod tests {
         assert_eq!(session_in_path("/api/v1/agent-sessions/ses_1/messages"), Some("ses_1"));
         assert_eq!(session_in_path("/agent-sessions/ses_1"), Some("ses_1"));
         assert_eq!(session_in_path("/api/v1/agent-sessions/sync"), None);
+        assert_eq!(session_in_path("/api/v1/agent-sessions/prs"), None);
+        assert_eq!(session_in_path("/api/v1/agent-sessions/ses_1/prs"), Some("ses_1"));
         assert_eq!(session_in_path("/api/v1/agent-sessions"), None);
     }
 }
