@@ -34,11 +34,22 @@ describe("CliBridge MCP server", () => {
       "artifact_share",
       "artifact_comment",
       "artifact_storage",
+      "question",
     ])
+    const question = list.result.tools.find((t: any) => t.name === "question")
+    expect(question.description).toContain("no AskUserQuestion")
+    expect(question.inputSchema.properties.questions).toBeDefined()
     const media = list.result.tools.find((t: any) => t.name === "media_generate")
     expect(media.inputSchema.type).toBe("object")
     expect(media.inputSchema.properties.kind).toBeDefined()
     expect(media.inputSchema.$schema).toBeUndefined()
+  })
+
+  test("question shows the card and returns at once; bad input is an error", async () => {
+    const call = (args: unknown) =>
+      CliBridge.handle("ses_1", { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "question", arguments: args } }, signal) as Promise<any>
+    const bad = await call({ questions: "nope" })
+    expect(bad.result.isError).toBe(true)
   })
 
   test("notifications get no reply; unknown methods get a JSON-RPC error", async () => {
