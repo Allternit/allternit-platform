@@ -32,11 +32,27 @@ The switch at the top of the tab shows the same routines three ways. The tab rem
 
 - **List**: the rows described above.
 - **Graph**: each routine as a flow from its trigger (schedule, next run, **Run now**) to the bot that runs it, to its last result (**Done**, **Failed** with the error, or **No run yet**). Lines are green after a good run, red after a failed one, and dashed when the routine is paused or has not run. A run is one turn by one bot, so the graph never shows multi-step chains.
-- **Calendar**: upcoming runs as a **Day**, **Week** or **Month** view, with **Today** and back/forward, plus an **Upcoming runs** list for the next two weeks. Run times are worked out from each routine's schedule in your timezone, with the same rules the scheduler uses (cron fields, intervals from the next run, one-off runs). Paused, manual and at-launch routines are not shown.
+- **Calendar**: a calendar you can edit, opening on **Day**. **Week** and **Month** are one click away, with **Today** and back/forward, plus an **Upcoming runs** list for the next two weeks. Run times are worked out from each routine's schedule in your timezone, with the same rules the scheduler uses.
 
-**This bot / All bots** widens Graph and Calendar to every bot's routines. Each calendar event then shows the bot's avatar, so you can read the whole team's schedule. Selecting a routine in either view opens its details: status, schedule, what it does, which bot runs it, a **Next 7 days** strip with the first run time of each day, and run history with each run's duration. **Run now** and **Pause / Resume** work there too.
+**This bot / All bots** widens Graph and Calendar to every bot's routines. Each calendar entry then shows the bot's avatar, so you can read the whole team's schedule. Selecting a routine in the graph or in **Upcoming runs** opens its details: status, schedule, what it does, which bot runs it, a **Next 7 days** strip with the first run time of each day, and run history with each run's duration. **Run now** and **Pause / Resume** work there too.
 
-On a phone the graph is shown as stacked cards (trigger, then result) and the week view as one day per row.
+### Edit routines on the calendar
+
+Day and Week are hour grids from 6 AM to 10 PM. The grid opens at 7 AM and shows a line at the current time.
+
+- **Add a routine at a time:** click an empty slot. The new routine starts at that time (snapped to the half hour), on weekdays if you clicked a weekday or on that day of the week otherwise. Choose which bot runs it and what it does. A new bot routine offers that bot's example asks as one-tap titles.
+- **Change a routine:** click it. You can change which bot runs it, its title and when it runs:
+  - **Every day**, **Weekdays** or **Some days** (pick the days), at a time.
+  - **Monthly** on a day of the month (1 to 28), at a time.
+  - **Every few hours**: every 30 minutes, or every 1, 2, 3 or 4 hours, between a start and an end time, on the days you pick.
+  The editor shows the schedule in plain words and the cron it saves. **On / Paused** switches the routine off without deleting it. **Remove** deletes it.
+- **Move a routine:** drag it up or down. It moves in 15-minute steps and saves when you let go.
+
+A routine that runs every few hours is drawn as one striped band from its first to its last run, not as a separate entry per run, so a busy day stays readable. **Month** shows a dot per routine on each day it runs. Click a day to open it in Day view.
+
+Changes save to the routine itself. The scheduler recalculates its next run from the new schedule at once. Routines the calendar can't place (at launch, once, manual, or a cron with specific months or uneven times) are listed under the calendar. Click one to open its details. The **New routine** form still offers every option, including raw cron expressions and goals.
+
+On a phone the graph is shown as stacked cards (trigger, then result). The calendar uses single-letter weekdays, and the routine editor opens as a sheet from the bottom of the screen.
 
 ## When a routine fails
 

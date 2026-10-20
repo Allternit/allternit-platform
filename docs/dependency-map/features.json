@@ -144,6 +144,10 @@
         {
           "on": "2026-10-19",
           "note": "Routines tab gains List / Graph / Calendar views (trigger → bot → result graph on @xyflow/react; Day/Week/Month calendar expanded client-side from each routine's schedule, This bot / All bots) and a routine details panel. Bots rail ⋯ → Templates becomes Marketplace (Agents templates, Apps connector directory, Skills one-click install); no made-up install counts."
+        },
+        {
+          "on": "2026-10-20",
+          "note": "Routines → Calendar is now the editable scheduler (RoutineScheduler/RoutineEditor): Day default, click a slot to add, click to edit, drag to move; saves the cron in place."
         }
       ],
       "evidence": [
@@ -1769,6 +1773,30 @@
         "allternit-ai/src/lib/__tests__/launch-prompt.test.ts",
         "allternit-ai/src/embed/__tests__/preview-api.test.ts",
         "allternit-ai/src/embed/__tests__/embed-modes.test.ts"
+      ]
+    },
+    {
+      "id": "feature:meet-your-bots",
+      "label": "Meet your bots onboarding card",
+      "product": "product:digital-twin",
+      "status": "building",
+      "description": "First-run setup's Main bot step and the first visit to Bot Mode: the Bots network, a team picked from the bot templates (drag onto a grid or tap), the main bot (A:// by default), the team's routines on the editable scheduler, and a guided first job. Shown once per account.",
+      "touches": [
+        "allternit-ai/src/components/bots",
+        "allternit-ai/src/components/onboarding",
+        "allternit-ai/src/views/bots",
+        "allternit-ai/src/lib/bots"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-20",
+          "note": "Eoj approved round 4 of the prototype: real templates, A:// first and default, editable Day-first scheduler (slot to create, click to edit, drag to move) also in Bot Mode → Routines, one seen flag across setup and Bot Mode."
+        }
+      ],
+      "evidence": [
+        "allternit-ai/src/components/bots/schedule/RoutineScheduler.tsx",
+        "allternit-ai/src/views/bots/home/BotRoutinesSchedule.tsx",
+        "allternit/surfaces/docs/guides/bot-routines.mdx"
       ]
     }
   ],
