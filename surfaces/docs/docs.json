@@ -100,6 +100,8 @@
               "guides/dashboards",
               "guides/artifact-modes",
               "guides/cowork-session-panel",
+              "guides/code-session-list",
+              "guides/code-linked-prs",
               "guides/motion",
               "guides/computers-and-apps",
               "guides/phone-for-your-bot",
@@ -128,6 +130,14 @@
               "guides/wake-a-bot-from-app-events"
             ],
             "icon": "/icons/window.svg"
+          },
+          {
+            "group": "Code mode",
+            "pages": [
+              "code/session-panel",
+              "code/cloud-environments",
+              "code/cloud-environment-runtime"
+            ]
           },
           {
             "group": "Architecture",
@@ -745,7 +755,8 @@
               "api/memory-reconstruction",
               "api/checkpoints",
               "api/enrollment",
-              "api/team-skills"
+              "api/team-skills",
+              "api/code-environments"
             ],
             "icon": "/icons/agent.svg"
           },

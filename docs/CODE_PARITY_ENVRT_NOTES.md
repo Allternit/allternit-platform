@@ -1,0 +1,36 @@
+# ENVRT notes: applying a cloud environment when a session starts (Contract C)
+
+Branch `factory/cp-envrt`. Code only. Nothing was built, typechecked or tested, per the map. The orchestrator's build should run `bun test test/session/environment.test.ts` (pure modules) along with the usual gizzi typecheck. The first compile may turn up small type nits.
+
+## Built (cmd/gizzi-code)
+- **Session schema**: `migration/20261020120000_session_environment` adds a nullable JSON `environment` column. `Session.Info.environment = { id, name, status: connecting|setting_up|ready|failed, error?, repos?, dirs?, at }`. `Session.create` (so `POST /v1/session`) accepts `environmentId` and `repos`. When `environmentId` is set, the session is created with status `connecting`. There's a new `Session.setEnvironment()`, and a new bus event `Session.Event.EnvironmentUpdated` (`session.environment.updated` `{ sessionID, environment: { id, name, status, error? } }`). `GET /v1/session/:id` returns the `environment` field with no route change needed.
+- **`src/runtime/session/environment/`**
+  - `resolve.ts` calls `GET {ALLTERNIT_CLOUD_API_URL | GIZZI_PLATFORM_API_URL | api.allternit.com}/api/v1/code-environments/:id/resolve`. It tries the Pairing device token first, then `ALLTERNIT_API_KEY` / `ALLTERNIT_API_TOKEN`, and accepts either the flattened body or `{environment, secret_values}`. 404, 401/403, 503 and network failures each map to a readable error.
+  - `dotenv.ts` parses `.env` text: `export`, comments, single, double and backtick quotes, multiline values, and `\n`/`\t` escapes in double quotes. There's no `${VAR}` expansion. Invalid lines are reported.
+  - `redactor.ts` is `SecretRedactor`. It replaces each value and its base64, unpadded base64 and base64url forms with `[secret:NAME]`, longest match first. Values shorter than 4 characters are skipped, with a warning in the Setup step. It has no other imports.
+  - `egress-proxy.ts` is a per-session HTTP/CONNECT proxy on 127.0.0.1:ephemeral. `none` refuses everything. `limited` allows `allowed_hosts` plus each secret's hosts, using exact, `*.x`, `.x` or `*` patterns. Refusals get a 403 that names the host.
+  - `runtime-state.ts` holds `EnvironmentRuntime`, the in-memory tool env (vars, secrets, proxy vars) and the proxy handle. `toolEnv(sessionID, {proxy})` returns that env. `dispose()` runs from `Session.remove`.
+  - `index.ts` is `SessionEnvironment.ensure()`. The flow is: connecting → resolve → setting_up → clone each repo into `<workspace>/<repo-name>` → load vars, secrets and proxy → set the sandbox network policy → run the setup script.
+    - **Clone**: repos already cloned with the same remote are reused. A missing branch is created from the default branch. A `GITHUB_TOKEN`/`GH_TOKEN`/`GITHUB_PAT` secret becomes GitHub auth through `GIT_CONFIG_*` env vars, never argv. Each clone is capped at 10 minutes.
+    - **Setup script**: runs with `bash <tmpfile>` in the workspace, with a 10-minute cap and abort on cancel. Output streams into a **Setup step**: an assistant message with `mode: "environment-setup"` and a tool part `setup` whose live output is in `state.metadata.output`. When the step finishes the session becomes `ready`, or `failed` with an `EnvironmentSetupError` on the message.
+    - **After a restart**: a ready session rebuilds vars, secrets and proxy on its next turn, quietly, with no re-clone and no script run. A failed session retries on the next message.
+    - **Failures**: all of them are caught and fail only that session.
+- **Wiring**
+  - `prompt.ts`: `applyEnvironment()` runs after `holdForLimit` and before `loop`, only when `session.environment` is set (the module is lazy-imported, so local sessions never load it). Session status is busy during setup. On failure it publishes `session.error` and returns the failed Setup message instead of running the agent. On success it adds a synthetic `<cloud_environment>` note for the model: repos, setup ran, secret names, network policy. `cancel()` aborts setup. Built-in and MCP tool outputs are redacted before they reach the model. The `!` shell-command path gets `toolEnv`.
+  - `bash.ts`: `toolEnv` is merged into the child env. The VM path gets vars and secrets but no proxy vars, because 127.0.0.1 isn't reachable there.
+  - `message-v2.ts`: `toModelMessages` skips `environment-setup` messages.
+  - `index.ts` (Session): `updateMessage` and `updatePart` redact before storage and trace. `updatePartDelta` redacts each delta.
+  - `shared/bus/index.ts`: `Bus.publish` redacts every payload. This is a no-op when no secret is registered.
+  - **Sandbox**: when the session runs sandboxed (the default), the policy is carried into `SessionSandbox`. `none` means `allowNetwork: false`. `limited` means an allowlist through the existing sandbox proxy (`*.`/`.` prefixes are stripped, since that proxy suffix-matches). `full` allows everything. A sandbox that was explicitly disabled stays disabled.
+- **Docs**: `surfaces/docs/code/cloud-environment-runtime.mdx` is at https://docs.allternit.com/code/cloud-environment-runtime. It's in a new "Code mode" nav group in `docs.json`, the same group name and position ENVAPI added. `check_links.py` reports 0 problems and `docs-lint` passes.
+
+## For the merge
+- `docs.json` will conflict with ENVAPI on the "Code mode" group, but trivially. Keep one group with `code/cloud-environments` first and then `code/cloud-environment-runtime`. After the merge, a link from ENVAPI's page "Session status" section to `/code/cloud-environment-runtime` (and back) is worth adding. I left mine unlinked so check_links stays green on this branch.
+- PRLINK edits the same package. My edits in `prompt.ts` are small: one block before `loop`, a helper, one line in `cancel`, and redaction at the two tool wrappers. In `session/index.ts` I touched Info, create, `setEnvironment`, `remove`, `updateMessage`, `updatePart` and `updatePartDelta`. If PRLINK adds a column, both migrations apply because the folder names differ.
+- ENVUI should render the Setup step from the assistant message with `mode === "environment-setup"` and tool `setup`, and read status from `session.environment` / `session.environment.updated`.
+
+## Limits (documented honestly in the docs page)
+- **Network policy**: it covers tool processes only. When commands run unsandboxed (sandbox off, or Windows), it relies on proxy env vars. The setup script runs unsandboxed with the proxy vars set. Cloning is done by gizzi itself and isn't limited. On Linux with bwrap, `limited` needs `socat`; this is the existing sandbox behaviour, and the bash tool raises a clear error without it.
+- **Redaction**: a secret split across two streamed deltas can show in a live delta, but the final stored part is redacted. Bash output that is too long spills to a truncation file on the runtime's disk before redaction, and reading that file back through a tool is redacted.
+- **Coverage**: PTY terminals (no session id) and subprocess harnesses (CLI brains) don't get the environment's vars, secrets or proxy. Only gizzi's own bash tool and the `!` shell command do.
+- **Dependency map**: not updated here. ENVAPI added `feature:code-cloud-environments`. The orchestrator can add `cmd/gizzi-code/src/runtime/session/environment/` as a component of it when merging, to avoid a features.json conflict.

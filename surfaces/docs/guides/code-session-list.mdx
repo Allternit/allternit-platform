@@ -1,0 +1,54 @@
+---
+title: 'Code session list'
+description: 'How Code sessions are grouped by repository in the rail, what each row shows, and the row menu with its keyboard shortcuts.'
+---
+
+The rail in Code mode lists your Code sessions, local and cloud. This page covers how the list is grouped, what a row shows, and what the row menu does.
+
+## Grouped by repository
+
+Sessions are grouped by the repository they work in. The group name comes from the session folder's git remote, or the folder's name when it has no remote. Each group header shows:
+
+- The repository name.
+- A cloud icon when the group's sessions run on a cloud runtime.
+- A **+** button that starts a new Code session in that repository or folder.
+
+Use the **Group by** filter to group another way. The app remembers your choice.
+
+## What a row shows
+
+| Mark | Meaning |
+| --- | --- |
+| Dot | Unread: there is something new, or you marked it unread. Opening the session clears it. |
+| Check | You marked the session completed. |
+| PR badge | The session has linked pull requests. See [Linked pull requests in Code](/guides/code-linked-prs). |
+
+The **Status** filter can show only completed sessions.
+
+## The row menu
+
+Hover over a row and click **⋯**, or right-click it. The same items are in the session header's menu while the session is open.
+
+| Item | Shortcut | What it does |
+| --- | --- | --- |
+| **Open PR** | G | Opens the session's linked PR in your browser. With several PRs, pick one from the submenu. Only shown when the session has a linked PR. |
+| **Open in** |  | Opens the session's folder in a new window, VS Code, or a terminal. |
+| **Pin** | P | Keeps the session at the top of the rail. |
+| **Mark as unread** | U | Shows the unread dot until you open the session again. |
+| **Mark as completed** |  | Marks the session done and shows a check. Choose it again to undo. |
+| **Rename** | R | Changes the session's title. |
+| **Share** |  | Shares a link to the session. On phones it opens the share sheet. |
+| **Copy link** | C | Copies a link that opens this session. |
+| **Move to** |  | Moves the session to another repository or folder group. |
+| **Move to project** |  | Adds the session to one of your projects. |
+| **Continue as project** |  | Makes a new project from the session's folder or repository and adds the session to it. |
+| **Archive** | A | Archives the session and hides it from the list. |
+| **Delete** | D | Deletes the session after you confirm. |
+
+Shortcuts work while the row is hovered or focused, or while its menu is open. They are shown at the right of each menu item.
+
+Unread, completed, archived and project moves are saved with the session, so they show the same on every device you sign in on.
+
+## On phones
+
+On ai.allternit.com's phone layout and in the m.allternit.com app, Code sessions are in the drawer, grouped by repository, with the same unread dot and PR badge. Press and hold a row, or tap **⋯**, to open the same items as a sheet. Phones have no keyboard shortcuts.

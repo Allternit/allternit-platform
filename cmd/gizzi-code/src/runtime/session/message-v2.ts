@@ -561,6 +561,10 @@ export namespace MessageV2 {
         }
       }
 
+      // A cloud environment's Setup step (SessionEnvironment.SETUP_MODE) is
+      // for people; the model gets a short synthetic note on the user turn.
+      if (msg.info.role === "assistant" && msg.info.mode === "environment-setup") continue
+
       if (msg.info.role === "assistant") {
         const differentModel = `${model.providerID}/${model.id}` !== `${msg.info.providerID}/${msg.info.modelID}`
         const media: Array<{ mime: string; url: string }> = []

@@ -87,6 +87,17 @@ export const SessionTable = sqliteTable(
       resetAt?: number
       at: number
     }>(),
+    // Cloud code environment (Contract C): which environment the session
+    // starts in, the repos to clone, and where applying it stands.
+    environment: text({ mode: "json" }).$type<{
+      id: string
+      name: string
+      status: "connecting" | "setting_up" | "ready" | "failed"
+      error?: string
+      repos?: { url: string; branch?: string }[]
+      dirs?: string[]
+      at: number
+    }>(),
     ...Timestamps,
     time_compacting: integer(),
     time_archived: integer(),

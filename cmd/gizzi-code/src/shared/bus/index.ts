@@ -3,6 +3,7 @@ import { Log } from "@/shared/util/log"
 import { Instance } from "@/runtime/context/project/instance"
 import { BusEvent } from "@/shared/bus/bus-event"
 import { GlobalBus } from "@/shared/bus/global"
+import { SecretRedactor } from "@/runtime/session/environment/redactor"
 
 export namespace Bus {
   const log = Log.create({ service: "bus" })
@@ -49,7 +50,8 @@ export namespace Bus {
   ) {
     const payload = {
       type: def.type,
-      properties,
+      // Cloud environment secrets never leave the process on the bus.
+      properties: SecretRedactor.deep(properties),
     }
     log.info("publishing", {
       type: def.type,

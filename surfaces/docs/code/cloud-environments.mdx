@@ -1,0 +1,116 @@
+---
+title: 'Cloud environments'
+description: 'Set up the workspace a cloud Code session starts in: network access, secrets, a setup script, environment variables and repos.'
+---
+
+A **cloud environment** is the recipe a Code mode session uses when it runs on a cloud computer or another paired runtime instead of this computer. It says which repos to clone, what to install before the agent starts, which environment variables to set, which secrets the session may use, and how much of the internet the session's tools can reach.
+
+Environments belong to your account. You can keep one per project, for example "Web app" with Node installed and "Data jobs" with Python, and pick one each time you start a session.
+
+Every account has at least one environment. The first time you open the environment list, Allternit makes one named **Default** with full network access and nothing else set.
+
+## Pick an environment for a session
+
+1. In Code mode, open the environment button in the workspace bar under the composer.
+2. Under **Cloud environments**, pick the one you want. **This computer** runs the session locally instead.
+3. Start the session.
+
+The choice is per session. A new session starts with the environment you used last. To change an environment, click the gear next to its name. To make a new one, click **New environment**.
+
+## Edit an environment
+
+The editor has these fields. Click **Save changes** to store them. Changes apply to sessions you start afterward, not to sessions already running.
+
+### Name
+
+Up to 80 characters. It's the name you see in the picker.
+
+### Network access
+
+Network access decides what the session's tools (the shell, package managers, test runners) can connect to.
+
+| Setting | What tools can reach |
+|---|---|
+| **Full** | Anything. No proxy is set. |
+| **Limited** | Only the hosts in the allowed list, plus the hosts set on your secrets. Everything else is refused. |
+| **None** | Nothing. Every outbound connection from tools is refused. |
+
+New environments start with this allowed list. You can remove any of it or add your own hosts. A host can be a plain name like `api.example.com` or a wildcard like `*.example.com`.
+
+| For | Hosts |
+|---|---|
+| GitHub | `github.com`, `api.github.com`, `codeload.github.com`, `objects.githubusercontent.com`, `raw.githubusercontent.com`, `*.githubusercontent.com`, `ghcr.io` |
+| JavaScript | `registry.npmjs.org`, `registry.yarnpkg.com`, `repo.yarnpkg.com`, `bun.sh` |
+| Python | `pypi.org`, `files.pythonhosted.org` |
+| Rust | `crates.io`, `index.crates.io`, `static.crates.io`, `static.rust-lang.org` |
+| Go | `proxy.golang.org`, `sum.golang.org` |
+| Ruby | `rubygems.org` |
+| Java and Kotlin | `repo.maven.apache.org`, `repo1.maven.org` |
+| System packages | `deb.debian.org`, `security.debian.org`, `archive.ubuntu.com`, `security.ubuntu.com` |
+
+<Warning>
+**What this covers.** Limited and None apply to the processes the agent's tools start, through a proxy the runtime sets for them. They do not firewall the machine itself. The runtime still talks to Allternit and to the model, and a program that ignores proxy settings can get around Limited. Treat Limited as a guard against mistakes, not as a sandbox for code you don't trust.
+</Warning>
+
+### Network secrets
+
+Secrets let a session call an API without anyone seeing the key. Add a secret with a name, a value and, if you want, the hosts it's for.
+
+- The name must be in capitals, digits and underscores, starting with a letter or underscore, for example `NPM_TOKEN`.
+- After you save a secret, its value can't be viewed again, here or anywhere in the app. You can replace it by adding a secret with the same name, or delete it.
+- The session's tools get the secret as an environment variable with that name.
+- Wherever the value would show up in tool output, the transcript, or what is sent to the model, it is replaced with `[secret:NAME]`.
+- Under **Limited** network access, the hosts you set on a secret are allowed too.
+
+Values are encrypted when they are stored. They are only sent to a runtime you paired to your own account, when a session starts in that environment.
+
+### Setup script
+
+A Bash script that runs in the session's workspace when a new session starts, before the agent launches. Use it to install dependencies, for example:
+
+```bash
+#!/bin/bash
+npm install
+```
+
+The script can be up to 64 KB and has 10 minutes to finish. Its output shows in the session as a **Setup** step. If it fails, the session stops with the error so you can fix the script.
+
+### Environment variables
+
+Plain `.env` text, one `NAME=value` per line, up to 64 KB. These are set for the session's tools.
+
+<Warning>
+Environment variables are stored as you type them and anyone who can use the environment can read them. Put keys and tokens in **Network secrets** instead.
+</Warning>
+
+### Repos
+
+The repos to clone into the workspace, each with an optional branch. Each repo gets its own folder. URLs can be `https://`, `ssh://` or `git@host:owner/repo`. You can list up to 20.
+
+A session can also name its own repos when it starts. Those replace the environment's list for that session.
+
+## Session status
+
+While a cloud session gets ready, it shows where it is:
+
+| Status | Meaning |
+|---|---|
+| **Connecting** | The runtime is starting or coming online. |
+| **Setting up** | Cloning repos, writing environment variables and running the setup script. |
+| **Ready** | The agent has started. |
+| **Failed** | Something in setup went wrong. The error shows in the session, with a button to edit the environment. |
+
+## Archive an environment
+
+Click **Archive environment** at the bottom of the editor. It leaves the picker, and if it was your default, it no longer is. Sessions already running in it keep running. If you archive every environment, the next time you open the list you get a fresh **Default**. Archived environments can be brought back from the API (see below).
+
+## For developers
+
+The environments live in the cloud API under `/api/v1/code-environments`. Sign in with a Clerk session, an API token with the `compute` scope, or a runtime device token. The full reference, including the runtime-only `resolve` route that returns secret values to your own paired devices, is in [Code environments API](/api/code-environments).
+
+## Related pages
+
+- [How a cloud session starts](/code/cloud-environment-runtime): cloning, the setup script, secret redaction and the network proxy, step by step.
+- [Code session list](/guides/code-session-list)
+- [Linked pull requests in Code](/guides/code-linked-prs)
+- [Session panel](/code/session-panel): the Environment card shows the environment and its status for each session.

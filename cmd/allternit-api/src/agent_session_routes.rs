@@ -122,6 +122,10 @@ fn agent_allowed_on_surface(
 pub fn agent_session_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/agent-sessions", get(list_sessions).post(create_session))
+        // Linked PRs for many sessions (Contract A). A literal segment, so it
+        // wins over `/agent-sessions/:id` (matchit prefers static segments);
+        // `/agent-sessions/sync` already relies on the same rule.
+        .route("/agent-sessions/prs", get(list_prs_bulk))
         .route(
             "/agent-sessions/:id",
             get(get_session)
@@ -141,6 +145,13 @@ pub fn agent_session_router() -> Router<Arc<AppState>> {
         .route("/agent-sessions/:id/handoff", post(handoff_session))
         .route("/agent-sessions/:id/lineage", get(lineage_session))
         .route("/agent-sessions/:id/context", get(context_session))
+        // Linked PRs for one session (Contract A), proxied to gizzi's
+        // `/v1/session/:id/prs*`.
+        .route(
+            "/agent-sessions/:id/prs",
+            get(list_session_prs).post(link_session_pr).delete(unlink_session_pr),
+        )
+        .route("/agent-sessions/:id/prs/refresh", post(refresh_session_prs))
         // Everything a session delegated (background shells, background and
         // foreground subagents) for the surfaces' background-tasks pane.
         .route("/agent-sessions/:id/tasks", get(list_session_tasks))
@@ -199,6 +210,14 @@ struct CreateSessionBody {
     model: Option<GizziModelRef>,
     /// The session's project; the web client sends it top-level.
     project_id: Option<String>,
+    /// Code environment the session starts in (Contract C). Accepted as
+    /// `environmentId` or `environment_id`; gizzi applies it on first turn.
+    #[serde(default, rename = "environmentId", alias = "environment_id")]
+    environment_id: Option<String>,
+    /// Repos cloned into the session workspace; override the environment's
+    /// own repos when given. `[{ url, branch? }]`.
+    #[serde(default)]
+    repos: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -293,6 +312,11 @@ struct GizziSessionInfo {
     /// label, usedRatio, resetAt?, at }`; absent/null when nothing to show.
     #[serde(default)]
     limit: Option<serde_json::Value>,
+    /// The code environment the session runs in (Contract C):
+    /// `{ id, name, status: connecting|setting_up|ready|failed, error? }`.
+    /// Passed through unchanged; absent for sessions without one.
+    #[serde(default)]
+    environment: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -454,6 +478,7 @@ fn transform_session(info: GizziSessionInfo, db: &DbHandle) -> serde_json::Value
     metadata.insert("handoff".to_string(), json!(info.handoff));
     metadata.insert("paused".to_string(), json!(info.paused));
     metadata.insert("limit".to_string(), json!(info.limit));
+    metadata.insert("environment".to_string(), json!(info.environment));
     for (key, value) in stored_metadata {
         metadata.insert(key, value);
     }
@@ -468,6 +493,9 @@ fn transform_session(info: GizziSessionInfo, db: &DbHandle) -> serde_json::Value
         "message_count": 0,
         "active": info.time.as_ref().and_then(|t| t.archived).is_none(),
         "tags": Vec::<String>::new(),
+        // Code environment status (Contract C), unchanged from gizzi. Also
+        // mirrored in `metadata.environment` for clients that read the bag.
+        "environment": info.environment,
         "metadata": serde_json::Value::Object(metadata),
     })
 }
@@ -1040,6 +1068,32 @@ async fn create_session(
     // configuration crosses this gateway boundary.
     if let Some(harness) = agent_harness {
         payload.insert("harness".to_string(), harness);
+    }
+
+    // Code environment + repos (Contract C). Top-level fields first, then the
+    // metadata bag (camelCase or snake_case) for clients that only carry one.
+    let meta_field = |keys: &[&str]| -> Option<serde_json::Value> {
+        let m = body.metadata.as_ref()?;
+        keys.iter().find_map(|k| m.get(*k)).cloned()
+    };
+    if let Some(environment_id) = body
+        .environment_id
+        .clone()
+        .or_else(|| {
+            meta_field(&["environmentId", "environment_id"])
+                .and_then(|v| v.as_str().map(str::to_string))
+        })
+        .filter(|id| !id.trim().is_empty())
+    {
+        payload.insert("environmentId".to_string(), json!(environment_id));
+    }
+    if let Some(repos) = body
+        .repos
+        .clone()
+        .or_else(|| meta_field(&["repos"]))
+        .filter(|v| v.as_array().map_or(false, |a| !a.is_empty()))
+    {
+        payload.insert("repos".to_string(), repos);
     }
     let session = match gizzi_json::<GizziSessionInfo>(
         &client,
@@ -1667,6 +1721,94 @@ async fn context_session(
     }
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct PrsBulkQuery {
+    /// Comma-separated session ids; omitted = every session with linked PRs.
+    ids: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct PrUrlQuery {
+    url: Option<String>,
+}
+
+/// `GET /agent-sessions/prs?ids=a,b` → gizzi `GET /v1/session/prs?ids=` →
+/// `{ bySession: Record<sessionId, LinkedPR[]> }`.
+async fn list_prs_bulk(headers: HeaderMap, Query(query): Query<PrsBulkQuery>) -> impl IntoResponse {
+    let client = gizzi_client(&headers);
+    let mut path = "/v1/session/prs".to_string();
+    if let Some(ids) = query.ids.as_deref().map(str::trim).filter(|ids| !ids.is_empty()) {
+        path.push_str(&format!("?ids={}", urlencoding::encode(ids)));
+    }
+    match gizzi_json::<serde_json::Value>(&client, reqwest::Method::GET, &path, None).await {
+        Ok(result) => Json(result).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn session_prs_path(session_id: &str) -> String {
+    format!("/v1/session/{}/prs", urlencoding::encode(session_id))
+}
+
+/// `GET /agent-sessions/:id/prs` → `{ prs: LinkedPR[] }`.
+async fn list_session_prs(headers: HeaderMap, Path(session_id): Path<String>) -> impl IntoResponse {
+    let client = gizzi_client(&headers);
+    match gizzi_json::<serde_json::Value>(&client, reqwest::Method::GET, &session_prs_path(&session_id), None).await {
+        Ok(result) => Json(result).into_response(),
+        Err(response) => response,
+    }
+}
+
+/// `POST /agent-sessions/:id/prs/refresh` → `{ prs }` after a forced refresh.
+async fn refresh_session_prs(headers: HeaderMap, Path(session_id): Path<String>) -> impl IntoResponse {
+    let client = gizzi_client(&headers);
+    let path = format!("{}/refresh", session_prs_path(&session_id));
+    match gizzi_json::<serde_json::Value>(&client, reqwest::Method::POST, &path, Some(json!({}))).await {
+        Ok(result) => Json(result).into_response(),
+        Err(response) => response,
+    }
+}
+
+/// `POST /agent-sessions/:id/prs` `{ url }` → link a PR by hand → `{ prs }`.
+async fn link_session_pr(
+    headers: HeaderMap,
+    Path(session_id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let Some(url) = body.get("url").and_then(|v| v.as_str()).map(str::trim).filter(|u| !u.is_empty()) else {
+        return (StatusCode::BAD_REQUEST, Json(json!({ "error": "url is required" }))).into_response();
+    };
+    let client = gizzi_client(&headers);
+    match gizzi_json::<serde_json::Value>(
+        &client,
+        reqwest::Method::POST,
+        &session_prs_path(&session_id),
+        Some(json!({ "url": url })),
+    )
+    .await
+    {
+        Ok(result) => Json(result).into_response(),
+        Err(response) => response,
+    }
+}
+
+/// `DELETE /agent-sessions/:id/prs?url=` → unlink → `{ prs }`.
+async fn unlink_session_pr(
+    headers: HeaderMap,
+    Path(session_id): Path<String>,
+    Query(query): Query<PrUrlQuery>,
+) -> impl IntoResponse {
+    let Some(url) = query.url.as_deref().map(str::trim).filter(|u| !u.is_empty()) else {
+        return (StatusCode::BAD_REQUEST, Json(json!({ "error": "url query parameter required" }))).into_response();
+    };
+    let client = gizzi_client(&headers);
+    let path = format!("{}?url={}", session_prs_path(&session_id), urlencoding::encode(url));
+    match gizzi_json::<serde_json::Value>(&client, reqwest::Method::DELETE, &path, None).await {
+        Ok(result) => Json(result).into_response(),
+        Err(response) => response,
+    }
+}
+
 async fn list_session_tasks(headers: HeaderMap, Path(session_id): Path<String>) -> impl IntoResponse {
     let client = gizzi_client(&headers);
     let path = format!("/v1/session/{}/tasks", urlencoding::encode(&session_id));
@@ -1892,7 +2034,9 @@ async fn transform_bus_event(
                         "handoff": info.handoff,
                         "paused": info.paused,
                         "limit": info.limit,
-                    }
+                        "environment": info.environment,
+                    },
+                    "environment": info.environment,
                 })
             }),
         // Context handoff (gizzi P3.16): the conversation moved to a fresh
@@ -2005,6 +2149,33 @@ async fn transform_bus_event(
                 "task": props,
             }))
         }
+        // Code environment lifecycle (Contract C): connecting → setting_up →
+        // ready | failed. Same shape the session's `environment` field has.
+        "session.environment.updated" => Some(json!({
+            "type": "session_environment",
+            "session_id": props.get("sessionID"),
+            "environment": props
+                .get("environment")
+                .cloned()
+                .unwrap_or_else(|| {
+                    let mut env = props.clone();
+                    if let Some(obj) = env.as_object_mut() {
+                        obj.remove("sessionID");
+                    }
+                    env
+                }),
+        })),
+        // Linked PRs (Contract A): the list or a PR's status changed. Same
+        // event name and shape gizzi's agent-compat stream emits.
+        "session.prs.updated" => Some(json!({
+            "type": "session_prs",
+            "session_id": props.get("sessionID"),
+            "prs": props
+                .get("prs")
+                .filter(|v| v.is_array())
+                .cloned()
+                .unwrap_or_else(|| json!([])),
+        })),
         "message.part.updated" => Some(json!({
             "type": "part_updated",
             "session_id": props.get("sessionID"),

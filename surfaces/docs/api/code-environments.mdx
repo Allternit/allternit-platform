@@ -1,0 +1,102 @@
+---
+title: 'Code environments API'
+description: 'Create, edit, archive and resolve the cloud environments that Code mode sessions start in.'
+---
+
+## Overview
+
+A code environment is a per-user recipe that a cloud Code session starts in. The user guide is [Cloud environments](/code/cloud-environments). The machine-readable spec is `cmd/allternit-cloud-api/openapi/code-environments.yaml`.
+
+Served by the cloud API at `https://api.allternit.com`.
+
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| `GET` | `/api/v1/code-environments` | User | List. `?archived=1` includes archived. Creates "Default" when the user has none. |
+| `POST` | `/api/v1/code-environments` | User | Create. Answers `201`. |
+| `PATCH` | `/api/v1/code-environments/:id` | User | Partial update. |
+| `POST` | `/api/v1/code-environments/:id/archive` | User | Archive and clear `is_default`. |
+| `POST` | `/api/v1/code-environments/:id/unarchive` | User | Unarchive. |
+| `POST` | `/api/v1/code-environments/:id/secrets` | User | Set a secret, upsert by name. |
+| `DELETE` | `/api/v1/code-environments/:id/secrets/:name` | User | Delete a secret. |
+| `GET` | `/api/v1/code-environments/:id/resolve` | Runtime device only | The environment plus secret values. |
+
+**User** auth is a Clerk session JWT, an `allternit_*` API token with the `compute` scope, or a runtime device token (`Bearer allternit_runtime_…`) acting as its owner. Every row is scoped to the caller. Another user's environment id answers `404`.
+
+## The environment object
+
+```json
+{
+  "id": "6f1c2a8e-…",
+  "name": "Web app",
+  "network_access": "limited",
+  "allowed_hosts": ["github.com", "registry.npmjs.org"],
+  "secrets": [
+    { "name": "NPM_TOKEN", "hosts": ["registry.npmjs.org"], "created_at": "2026-10-20T12:00:00Z" }
+  ],
+  "setup_script": "#!/bin/bash\nnpm ci\n",
+  "env_vars": "NODE_ENV=development\n",
+  "repos": [{ "url": "https://github.com/acme/web.git", "branch": "main" }],
+  "is_default": true,
+  "archived": false,
+  "created_at": "2026-10-20T12:00:00Z",
+  "updated_at": "2026-10-20T12:00:00Z"
+}
+```
+
+`secrets` lists names, hosts and created times only. No route but `resolve` returns a value.
+
+## Create and update
+
+`POST` takes `name` (required) and any of `network_access`, `allowed_hosts`, `setup_script`, `env_vars`, `repos`, `is_default`. `PATCH` takes any subset; omitted fields stay as they are. Unknown fields are rejected.
+
+- When `allowed_hosts` is left out on create, the environment gets the default list from the user guide (GitHub plus the common package registries).
+- `is_default: true` clears the flag on the user's other environments. Setting it on an archived environment answers `409`.
+
+Validation errors answer `422` with code `VALIDATION_ERROR`:
+
+| Field | Rule |
+|---|---|
+| `name` | 1 to 80 characters after trimming, no control characters |
+| `network_access` | `full`, `limited` or `none` |
+| `allowed_hosts`, secret `hosts` | Hostnames or `*.` wildcards, no scheme, port or path. At most 200. Lower-cased and de-duplicated |
+| `setup_script`, `env_vars` | At most 64 KB each, no NUL bytes |
+| `repos` | At most 20. `https://`, `ssh://` or `git@host:owner/repo`. A branch can't start with `-`, contain `..` or whitespace |
+| secret `name` | `^[A-Z_][A-Z0-9_]*$`, at most 128 characters |
+| secret `value` | 1 byte to 64 KB. At most 100 secrets per environment |
+
+## Secrets
+
+```http
+POST /api/v1/code-environments/:id/secrets
+Content-Type: application/json
+
+{ "name": "NPM_TOKEN", "value": "npm_…", "hosts": ["registry.npmjs.org"] }
+```
+
+Answers the environment object. Values are encrypted at rest with the platform AES-256-GCM credential cipher, the same `ALLTERNIT_CREDENTIALS_KEY` that protects provider tokens and bring-your-own inference keys. When that key isn't configured, the secret routes and `resolve` answer `503` with `{"error":"code_environment_secrets_not_configured"}`. The rest of the API keeps working.
+
+## Resolve (runtime only)
+
+```http
+GET /api/v1/code-environments/:id/resolve
+Authorization: Bearer allternit_runtime_…
+```
+
+```json
+{
+  "id": "6f1c2a8e-…",
+  "name": "Web app",
+  "network_access": "limited",
+  "…": "every field of the environment object",
+  "secret_values": { "NPM_TOKEN": "npm_…" }
+}
+```
+
+Gizzi calls this on the first turn of a cloud session started with an `environmentId`, then clones the repos, writes the env vars, runs the setup script and starts the agent. Only a runtime device token is accepted (a Clerk session or API token answers `401`), and only for a device owned by the environment's user (others answer `404`). Archived environments still resolve so a session started just before an archive can finish setting up. Secret values are never written to logs.
+
+## Storage
+
+Migration `095_code_environments.sql` adds two tables:
+
+- `code_environments`: one row per environment, `user_id` scoped, with a partial unique index that allows one default per user.
+- `code_environment_secrets`: `(environment_id, name)` primary key, `value_ciphertext` and the 12-byte GCM `value_nonce`, `hosts`. Rows are deleted with their environment.
