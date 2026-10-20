@@ -1335,7 +1335,8 @@
         }
       ],
       "evidence": [
-        "allternit/surfaces/docs/guides/code-linked-prs.mdx"
+        "allternit/surfaces/docs/guides/code-linked-prs.mdx",
+        "allternit/surfaces/docs/code/session-panel.mdx"
       ]
     },
     {

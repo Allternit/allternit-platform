@@ -134,6 +134,7 @@
           {
             "group": "Code mode",
             "pages": [
+              "code/session-panel",
               "code/cloud-environments",
               "code/cloud-environment-runtime"
             ]

@@ -1,0 +1,70 @@
+---
+title: 'Session panel'
+description: 'The panel beside a Code session: where it runs, how much context it uses, its connectors, the files it made and the pull requests it opened.'
+---
+
+Every Code session has a session panel on the right side of the conversation. It collects what the session runs on and what it has done in one place.
+
+## Open and close it
+
+Click the first icon in the session header (the panel icon). The panel is closed the first time you use Code. After that it remembers whether you left it open.
+
+The rest of the header toolbar, from left to right:
+
+| Button | What it does |
+|---|---|
+| Panel | Opens or closes the session panel. |
+| Terminal | Opens or closes the Terminal pane. |
+| Changes | Opens or closes the diff of the session's file changes. |
+| Browser | Opens or closes the Browser pane. |
+| Files | Opens or closes the Files pane. |
+| Panes | Opens the other panes: Computer, Artifacts, Transcript and Tasks. |
+| Share | Shares or copies a link to the session. |
+| ⋮ | The session menu. See [Code session list](/guides/code-session-list) for every item and its shortcut. |
+
+Before the first message there is no header yet, so the same buttons float over the conversation (without the panel button).
+
+## The cards
+
+### Environment
+
+For a session on this computer:
+
+- **This computer**, with **Save**. Save turns the folder into a [cloud environment](/code/cloud-environments): its name is the folder name and its repo is the folder's git remote and branch. You need to be signed in.
+- The folder name and path.
+- The branch (or a dash when the folder is not a git repo), with a **Worktree** switch. Turn it on to run the session in its own git worktree.
+- **Remote Control**. Remote control works per computer, not per session: when this Desktop is paired with Allternit Mobile, all of its sessions can be reached from your phone. The switch shows whether this computer is paired, and clicking it opens Settings → Allternit Mobile. On the web it is off and says it needs Allternit Desktop.
+
+For a cloud session:
+
+- The environment name and its status: **Connecting**, **Setting up**, nothing once it is ready, or **Failed** with the error. The gear opens the environment editor.
+- **Repositories**, one row per repo. Click **+** to add a repo to the environment.
+- The branch.
+
+### Context
+
+The context window bar and the full breakdown: messages, system tools, connector tools, the system prompt, skills, memory files and free space. It fills in after the first message.
+
+### Connectors
+
+Folded by default. Lists the session's connectors with how many tools each one gives the session. A connector the session needs but that is not connected shows a warning and a **Connect** button. Tool counts appear after the first message.
+
+### Outputs
+
+The files and artifacts the session made. A file opens in the session's Files pane; an artifact or an answer page opens in its own pane.
+
+### Changes
+
+The pull requests the session opened, with their status colour (open, draft, merged, conflict or closed), the repo and number, and the lines added and removed. Each row's ⋮ menu has **Open PR**, **Copy link**, **Refresh** and **Unlink**. With no PRs yet, you can paste a GitHub pull request URL into **Link a PR**. See [Linked pull requests in Code](/guides/code-linked-prs).
+
+## Fold and reorder the cards
+
+- Click a card's title to fold or unfold it.
+- Hover a card to show the drag handle on its left, then drag the card up or down.
+- With the keyboard, focus the handle and press **Alt+↑** or **Alt+↓**.
+
+The order and the folded cards are saved in this browser.
+
+## On a phone
+
+There is no side panel on a phone. Open the pane menu in the session header and choose **Session**: the same cards open full screen. You can fold cards there, but not reorder them.
