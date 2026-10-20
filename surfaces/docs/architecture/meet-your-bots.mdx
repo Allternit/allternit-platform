@@ -38,7 +38,7 @@ A failure never stops later items. **Retry what didn't finish** reruns only fail
 
 ## Seen flag
 
-`src/lib/bots/bots-intro.ts`: one flag for both entries. Web and the PWA read and write Clerk `user.unsafeMetadata.botsIntroSeenAt`; localStorage `allternit-bots-intro-seen` is the fallback when signed out and on Desktop (its sign-in session has no Clerk client to write metadata), and a cache so the card never flashes back during load. Set on finish and on skip. `requestBotsIntroReplay()` (Bots rail **⋯** → **Replay intro**, the Bots header on a phone) reopens it in `botmode`.
+`src/lib/bots/bots-intro.ts`: one flag for both entries, Clerk `user.unsafeMetadata.botsIntroSeenAt`. Web and the PWA read and write it with the Clerk client. Desktop has no Clerk client, only a session JWT, so it reads it once from `GET /api/v1/me/flags` on the cloud API (waiting up to 3 s before deciding) and writes it with `PUT` (see [Me API](/api/me)). If this device saw the card before the account knew, it tells the account. localStorage `allternit-bots-intro-seen` is the cache, and the fallback when signed out, offline, or the endpoint answers 404/503. Set on finish and on skip. `requestBotsIntroReplay()` (Bots rail **⋯** → **Replay intro**, the Bots header on a phone) reopens it in `botmode`.
 
 ## Routines scheduler
 

@@ -22,6 +22,8 @@ All endpoints require a valid Bearer token in the `Authorization` header. See [A
 | GET | `/me` | Get the current user profile. |
 | GET | `/me/usage` | Get weekly usage metering for the caller. |
 | POST | `/me/organization` | Create a personal organization (self-hosted/no-Clerk only). |
+| GET | `/me/flags` | Read the caller's account UI flags (Allternit Cloud). |
+| PUT | `/me/flags` | Set account UI flags (Allternit Cloud). |
 
 ## Get current user
 
@@ -93,6 +95,44 @@ Response:
   "created": true
 }
 ```
+
+## Account flags
+
+```bash
+GET /api/v1/me/flags
+PUT /api/v1/me/flags
+```
+
+Served by the Allternit Cloud API (`https://api.allternit.com`). Small per-account UI flags stored in the caller's Clerk user `unsafe_metadata`, so they follow the account across Allternit Desktop, ai.allternit.com and the m.allternit.com app. Web and the phone app write the same keys with the Clerk client; Desktop has no Clerk client and uses this endpoint with its Clerk session token.
+
+Auth: a Clerk session JWT, or an API token with the `account` scope.
+
+The only flag today is `botsIntroSeenAt`: when the person finished or skipped the **Meet your bots** card (an ISO-8601 time). Every allowed flag is always present in the response, `null` when unset.
+
+Response (both methods):
+
+```json
+{
+  "flags": {
+    "botsIntroSeenAt": "2026-10-20T12:00:00.000Z"
+  }
+}
+```
+
+`PUT` body: an object of the flags to set. Each value must be an RFC 3339 / ISO-8601 time string of at most 40 characters. Only the flags you send change; other metadata on the account is kept.
+
+```json
+{ "botsIntroSeenAt": "2026-10-20T12:00:00.000Z" }
+```
+
+| Status | Code | When |
+|--------|------|------|
+| 400 | `BAD_REQUEST` | Body isn't an object, is empty, names an unknown flag, or a value isn't an ISO-8601 time. |
+| 415 / 422 | — | `PUT` without `Content-Type: application/json`, or a body that isn't valid JSON (plain-text error). |
+| 401 | `UNAUTHORIZED` | Missing or invalid Clerk session or API token. |
+| 403 | `FORBIDDEN` | API token without the `account` scope. |
+| 404 | `NOT_FOUND` | The account doesn't exist in Clerk. |
+| 503 | `SERVICE_UNAVAILABLE` | `CLERK_SECRET_KEY` isn't configured, or Clerk couldn't be reached. Nothing was changed. |
 
 ## Error codes
 

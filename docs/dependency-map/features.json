@@ -1795,6 +1795,10 @@
         {
           "on": "2026-10-20",
           "note": "Eoj approved round 4 of the prototype: real templates, A:// first and default, editable Day-first scheduler (slot to create, click to edit, drag to move) also in Bot Mode → Routines, one seen flag across setup and Bot Mode."
+        },
+        {
+          "on": "2026-10-20",
+          "note": "Eoj approved the cloud endpoint: Allternit Desktop (no Clerk client) reads and writes the seen flag through GET/PUT /api/v1/me/flags on the cloud API (Clerk unsafe_metadata botsIntroSeenAt, allowlisted keys only), so the card shows once per account on Desktop, web and phone; localStorage stays the cache and offline fallback."
         }
       ],
       "evidence": [
@@ -1802,7 +1806,8 @@
         "allternit-ai/src/components/bots/schedule/RoutineScheduler.tsx",
         "allternit-ai/src/views/bots/home/BotRoutinesSchedule.tsx",
         "allternit/surfaces/docs/guides/meet-your-bots.mdx",
-        "allternit/surfaces/docs/architecture/meet-your-bots.mdx"
+        "allternit/surfaces/docs/architecture/meet-your-bots.mdx",
+        "allternit/cmd/allternit-cloud-api/src/routes/me_flags.rs"
       ]
     }
   ],

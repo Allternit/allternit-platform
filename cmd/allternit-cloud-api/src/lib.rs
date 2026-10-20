@@ -432,6 +432,10 @@ pub fn create_router(state: Arc<ApiState>) -> Router {
         // Desktop device tokens and Clerk sessions both read Allternit
         // subscription remaining compute here (plan + credits).
         .merge(routes::me_usage::routes())
+        // Per-account UI flags (Meet your bots seen) in Clerk unsafe_metadata;
+        // Clerk session or `account` API token per-request, 503 without
+        // CLERK_SECRET_KEY. Desktop's way to share what web writes directly.
+        .merge(routes::me_flags::routes())
         // Photo avatars included with a plan (Allternit-paid, per-plan monthly
         // allowance); Clerk session or `compute` API token per-request.
         .merge(routes::photo_avatars::routes())
