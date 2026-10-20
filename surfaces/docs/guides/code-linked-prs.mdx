@@ -1,0 +1,87 @@
+---
+title: 'Linked pull requests in Code'
+description: 'How a Code session links the GitHub pull requests it opens or pushes, the PR badge on the session row, and the routes and event behind it.'
+---
+
+When a Code session opens a pull request on GitHub, or pushes to one, the session remembers it. The session's row in the rail then shows a PR badge, and **Open PR** takes you straight to it. This works for local sessions on Desktop and for cloud sessions, on every surface.
+
+## How a PR gets linked
+
+Gizzi Code reads the result of each finished step. A PR is linked when the step is one of these:
+
+| Step | Example |
+| --- | --- |
+| A terminal command that creates or works on a PR | `gh pr create`, `gh pr view`, `gh pr edit`, `gh pr ready`, `gh pr merge`, `gh pr reopen`, `gh pr comment` |
+| A GitHub API call on pulls | `gh api repos/acme/site/pulls -f title=...` |
+| A push whose output names a PR | `git push` when GitHub replies with a pull request link |
+| A GitHub connector tool that creates or updates a PR | the GitHub MCP server's `create_pull_request` |
+
+The link must name a real PR number, such as `https://github.com/acme/site/pull/42`. The "create a pull request" hint that GitHub prints after pushing a new branch (`.../pull/new/my-branch`) is not a PR, so it is not linked.
+
+A PR link that only shows up in a file the agent read, a web page it fetched, or a search result is not linked. `gh pr list` does not link every PR it lists either.
+
+A PR opened by a subagent is linked to the subagent's session and to the main session that started it, so it shows on the row you see in the rail.
+
+Each PR is linked once per session, however many times it comes up.
+
+## The PR badge
+
+A session with linked PRs shows a badge on its row with an icon and the number of PRs:
+
+| Icon | Meaning |
+| --- | --- |
+| Green pull request | Open |
+| Grey pull request | Draft |
+| Orange | Has merge conflicts with its base branch |
+| Purple merge | Merged |
+
+Hover over the badge to see the list. Each PR shows its title, its status (**Open**, **Draft**, **Conflict** or **Merged**), `owner/repo #number`, and the lines it adds and removes in green and red. Click a PR to open it in your browser.
+
+## Open PR
+
+**Open PR** is in the session row's ⋯ menu and in the session header's menu. The shortcut is **G**. With one linked PR it opens that PR. With several, it shows them in a submenu. The item only appears when the session has a linked PR. See [Code session list](/guides/code-session-list) for the rest of the menu.
+
+## How status stays current
+
+Gizzi Code looks up each PR on GitHub:
+
+1. With the GitHub CLI (`gh api`) when `gh` is installed and signed in on the machine that runs the session.
+2. Otherwise with the GitHub REST API, using `GITHUB_TOKEN` or `GH_TOKEN` from the runtime's environment if one is set. Without a token only public repositories can be read.
+3. If neither works, the badge keeps the last status it saw.
+
+A status is reused for 60 seconds before it is checked again, and for 10 minutes once the PR is merged or closed. Checks run in the background. They never hold up the agent's turn, and the rail updates by itself when a status changes.
+
+A PR counts as **Merged** once GitHub reports a merge, **Closed** when it was closed without one, and **Conflict** when GitHub says it can't be merged cleanly. While GitHub is still working that out, the badge shows the PR as open.
+
+## For developers
+
+PR links are stored with the session in Gizzi Code's storage (`session_prs/<sessionID>.json`) and deleted with the session. Code: `cmd/gizzi-code/src/runtime/session/linked-prs.ts` (`LinkedPRs`). The detector runs from `Session.updatePart` when a tool part completes, off the turn's path. It is wrapped so a failure is logged and never reaches the tool pipeline.
+
+Each linked PR has this shape:
+
+```ts
+type LinkedPR = {
+  url: string            // https://github.com/<owner>/<repo>/pull/<n>
+  owner: string; repo: string; number: number
+  title: string          // empty until the first status check returns
+  state: 'open' | 'draft' | 'merged' | 'closed'
+  mergeable: 'clean' | 'conflict' | 'unknown'
+  additions: number; deletions: number
+  updatedAt: string      // ISO, from GitHub
+  detectedAt: string     // ISO, when the session first saw it
+}
+```
+
+Routes on the Gizzi Code server, with the same auth as the other session routes. Each one also works without the `/v1` prefix.
+
+| Route | Returns |
+| --- | --- |
+| `GET /v1/session/:id/prs` | `{ prs }`. Starts a background check of any status older than its cache time. |
+| `GET /v1/session/prs?ids=a,b,c` | `{ bySession }`, the PRs for each id. Leave out `ids` for every session with linked PRs. |
+| `POST /v1/session/:id/prs/refresh` | `{ prs }` after checking every PR on GitHub now (up to 10 seconds per PR). |
+| `POST /v1/session/:id/prs` with body `{ "url": "https://github.com/acme/site/pull/42" }` | `{ prs }`. Links a PR by hand. A URL that isn't a GitHub PR gets a 400. |
+| `DELETE /v1/session/:id/prs?url=...` | `{ prs }` without that PR. |
+
+When a session's list or a PR's status changes, the event stream sends `session.prs.updated` with `{ sessionID, prs }`. The app's agent-sessions feed (`/v1/agent-sessions/sync`) sends it as `{ type: "session_prs", session_id, prs }`, and `GET /v1/agent-sessions/:id/prs` returns the same `{ prs }`.
+
+The TypeScript SDK has `sessionPrsList`, `sessionPrsBulk`, `sessionPrsRefresh`, `sessionPrsLink` and `sessionPrsUnlink`, plus the `LinkedPr` and `EventSessionPrsUpdated` types.

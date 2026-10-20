@@ -1315,6 +1315,33 @@
       ]
     },
     {
+      "id": "feature:code-linked-prs",
+      "label": "Linked PRs on Code sessions",
+      "product": "product:ai-allternit",
+      "status": "building",
+      "description": "Code sessions link the GitHub PRs they open or push (gh pr create/view, gh api pulls, git push output, GitHub MCP PR tools); rows show a PR badge with status, a hover list and Open PR (G). gizzi stores them per session and refreshes status via gh api or GitHub REST.",
+      "touches": [
+        "allternit/cmd/gizzi-code/src/runtime/session/linked-prs.ts",
+        "allternit/cmd/gizzi-code/src/runtime/session",
+        "allternit/cmd/gizzi-code/src/runtime/server/routes/session.ts",
+        "allternit/cmd/gizzi-code/src/runtime/server/routes/agent-compat.ts",
+        "allternit/cmd/gizzi-code/packages/sdk/src/gen",
+        "allternit-ai/src/shell",
+        "allternit-ai/src/views/code",
+        "allternit/surfaces/docs/guides/code-linked-prs.mdx",
+        "allternit/surfaces/docs/guides/code-session-list.mdx"
+      ],
+      "decisions": [
+        {
+          "on": "2026-10-20",
+          "note": "Contract A of the Code parity program: GET /session/:id/prs, GET /session/prs?ids=, POST /session/:id/prs/refresh, POST/DELETE /session/:id/prs, event session.prs.updated (agent-compat sync: session_prs). Detection runs detached from Session.updatePart; pull/new hints and PR links in file reads or web fetches are never linked. Status: gh api, else REST with GITHUB_TOKEN/GH_TOKEN, 60s cache (10 min once merged/closed), last values kept on error."
+        }
+      ],
+      "evidence": [
+        "allternit/surfaces/docs/guides/code-linked-prs.mdx"
+      ]
+    },
+    {
       "id": "feature:code-file-workflow",
       "label": "Code session file browser and editor",
       "product": "product:ai-allternit",
