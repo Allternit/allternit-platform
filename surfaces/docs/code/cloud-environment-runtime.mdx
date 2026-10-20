@@ -1,0 +1,103 @@
+---
+title: 'How a cloud session starts'
+description: 'What the runtime does with a cloud environment before the agent runs: repos, variables, secrets, network policy and the setup script.'
+---
+
+When you start a Code mode session in a cloud environment, the runtime that hosts the session (a cloud computer or another paired runtime) sets the environment up before the agent's first turn. You see this as a **Setup** step at the top of the session. The agent only starts once setup has finished.
+
+This page covers what happens during that step and what each environment setting actually enforces. The environment editor itself is described on the Cloud environments page in this section.
+
+## Session status
+
+The session shows one of four states while the environment is applied:
+
+| Status | What is happening |
+|---|---|
+| Connecting | The runtime is loading the environment from your Allternit account. |
+| Setting up | Repos are being cloned and the setup script is running. Output streams into the Setup step. |
+| Ready | Setup finished. The agent runs your message. |
+| Failed | Something in setup went wrong. The Setup step shows the error and the agent does not run. |
+
+A failed setup only stops that session. Fix the cause (for example the setup script or a repo URL), then send another message in the session to try again, or start a new session.
+
+## What runs, in order
+
+1. **Load the environment.** The runtime asks Allternit for the environment, including secret values. Only a runtime paired to the environment's owner can do this, using its own device credential. If the runtime isn't signed in, setup fails with a message saying so.
+2. **Clone the repos.** Each repo goes into its own folder in the session's workspace, named after the repo. If you picked a branch, that branch is checked out. If the branch doesn't exist yet, the runtime clones the default branch and creates the new branch from it. Repos chosen for the session replace the environment's own repo list.
+3. **Load variables and secrets.** The environment's variables and secrets are added to the environment of every shell command the agent runs.
+4. **Turn on the network policy** for the session's tools (see below).
+5. **Run the setup script** with bash in the workspace folder. It can run for up to 10 minutes. A script that exits with a non-zero code, or runs longer than 10 minutes, fails setup.
+6. **Start the agent.** The agent is told which repos were cloned, that the setup script ran, which secret names it can use, and what network access it has.
+
+Clones and the setup script happen once per session. If the runtime restarts, the next message reloads the variables, secrets and network policy without cloning again or re-running the script.
+
+### Private repos
+
+For a private GitHub repo, add a secret named `GITHUB_TOKEN` (or `GH_TOKEN`) to the environment. The runtime uses it to clone over HTTPS and never puts it on the command line. Without one, cloning uses whatever git credentials the runtime machine already has.
+
+## Variables
+
+The environment variables field takes the same text as a `.env` file:
+
+```bash
+NODE_ENV=development
+export API_BASE=https://staging.example.com   # comments after values are ignored
+GREETING="Line one\nLine two"
+PRIVATE_NOTE='kept exactly as written'
+```
+
+- Lines can start with `export`.
+- Double quotes understand `\n`, `\t` and `\"`. Single quotes and backticks keep text as written.
+- Quoted values can span several lines.
+- `${OTHER_VAR}` is not expanded.
+- Lines that aren't `NAME=value` are skipped, and the Setup step lists them.
+
+Variables are not secret. Anyone who can use the environment can read them, and command output shows them as printed.
+
+## Secrets
+
+Secret values are only sent to the runtime that runs the session, and only kept in its memory. They are added to the environment of the agent's shell commands and the setup script.
+
+Before any command output is saved, shown to you or sent to the model, every secret value is replaced with `[secret:NAME]`. The base64 form of each value is replaced too.
+
+Limits worth knowing:
+
+- Values shorter than 4 characters can't be hidden this way, so the Setup step warns about them.
+- A secret that a command transforms (reverses, hashes, splits) is no longer recognisable, so it isn't hidden.
+- Secrets are hidden from what the agent and you see. A command the agent runs can still use them, for example by sending them to a host the network policy allows.
+
+## Network policy
+
+Network access applies to the session's **tool processes**: the shell commands the agent runs and the setup script. It does not limit the runtime itself, which still needs to reach Allternit and the model provider.
+
+| Setting | What tool processes get |
+|---|---|
+| Full | No restriction. |
+| Limited | Requests go through a proxy that only lets through the environment's allowed hosts plus each secret's hosts. Anything else is refused with a 403 that names the host. |
+| None | Requests go through a proxy that refuses everything. |
+
+The proxy runs inside the runtime, one per session, on `127.0.0.1`, and closes when the session is deleted. Requests to `localhost` skip it, so local dev servers keep working.
+
+Host patterns in the allowed list:
+
+| Pattern | Matches |
+|---|---|
+| `github.com` | That host only |
+| `*.github.com` | Any subdomain, such as `api.github.com` |
+| `.github.com` | `github.com` and any subdomain |
+| `*` | Any host |
+
+How strongly this is enforced depends on how commands run on the runtime:
+
+- **Sandboxed commands** (the default on macOS and Linux): the OS sandbox enforces the policy. With **None**, the sandbox blocks all outbound connections. With **Limited**, connections can only go through the sandbox's allowlisting proxy, which matches the allowed domains and their subdomains. On Linux this needs `socat` on the runtime.
+- **Unsandboxed commands** (the sandbox turned off, or Windows): the policy is set through the `HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY` variables. Tools that respect those variables (curl, git, npm, pip, cargo and most SDKs) are held to the policy. A program that opens network connections directly can get around it.
+
+The setup script runs outside the sandbox with the proxy variables set, so with **Limited** a package install in the script reaches the allowed registries. Repo cloning is done by the runtime itself and is not limited by the policy.
+
+## For developers
+
+- Create the session with `POST /v1/session` and include `environmentId`, plus `repos` (`[{ url, branch? }]`) to override the environment's repos.
+- `GET /v1/session/:id` returns `environment: { id, name, status, error? }`, where status is `connecting`, `setting_up`, `ready` or `failed`. The same object is sent on the event stream as `session.environment.updated`.
+- The Setup step is an assistant message whose `mode` is `environment-setup`, with one tool part named `setup`. Its output streams in `state.metadata.output`. When setup fails, the message carries an `EnvironmentSetupError`. This message is never sent to the model.
+- The runtime loads the environment from `GET /api/v1/code-environments/:id/resolve` on the cloud API (`ALLTERNIT_CLOUD_API_URL`), authenticated with its paired device token.
+- Sessions without `environmentId` run exactly as before.

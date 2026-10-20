@@ -130,6 +130,12 @@
             "icon": "/icons/window.svg"
           },
           {
+            "group": "Code mode",
+            "pages": [
+              "code/cloud-environment-runtime"
+            ]
+          },
+          {
             "group": "Architecture",
             "pages": [
               "architecture",
