@@ -38,7 +38,8 @@ All production requests must include a Clerk session JWT in the `Authorization` 
 | `message_count` | integer | Always `0` in list responses; use messages endpoints for counts. |
 | `active` | boolean | `true` unless the session is archived. |
 | `tags` | array | Always empty in current responses. |
-| `metadata` | object | Runtime metadata including `project_id`, `directory`, `agent_id`, `surface`, `originSurface`, `permission`, and `ephemeral`. |
+| `environment` | object \| null | Code environment the session runs in: `{ id, name, status, error? }`. `status` is `connecting`, `setting_up`, `ready`, or `failed`. Absent or `null` when the session has no environment. Also copied to `metadata.environment`. |
+| `metadata` | object | Runtime metadata including `project_id`, `directory`, `agent_id`, `surface`, `originSurface`, `permission`, `ephemeral`, and `environment`. |
 
 ## Endpoints
 
@@ -116,6 +117,8 @@ Creates a new Gizzi session. The gateway stamps the default model, resolves the 
 | `metadata` | object | No | Bag carried by clients. `metadata.surface`, `metadata.projectId`, and `metadata.project_id` are read by the gateway. |
 | `project_id` | string | No | Project the session belongs to (top-level form used by the web client). |
 | `model` | object | No | Optional model reference stamped on the session. |
+| `environmentId` | string | No | Code environment to start the session in (`environment_id` also accepted, top-level or in `metadata`). The runtime clones its repos, writes its env vars and runs its setup script before the first turn. |
+| `repos` | array | No | `[{ "url": "...", "branch": "..." }]` repos to clone into the session workspace. Replaces the environment's own repo list when given. |
 
 #### Example request
 
@@ -391,6 +394,32 @@ Opens a server-sent event stream that forwards Gizzi bus events in a frontend-fr
 | `part_updated` | A message part was updated. |
 | `part_delta` | A streaming delta for a message part. |
 | `part_removed` | A message part was removed. |
+| `session_environment` | A code environment changed status: `{ session_id, environment: { id, name, status, error? } }`. |
+| `session_prs` | A session's linked pull requests changed (new link or new status): `{ session_id, prs: LinkedPR[] }`. |
+
+### Linked pull requests
+
+GitHub pull requests a code session created or pushed to, or that were linked by hand. Each item is a `LinkedPR`:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `url` | string | `https://github.com/<owner>/<repo>/pull/<n>`. |
+| `owner`, `repo`, `number` | string, string, integer | Parsed from the URL. |
+| `title` | string | PR title. |
+| `state` | string | `open`, `draft`, `merged`, or `closed`. |
+| `mergeable` | string | `clean`, `conflict`, or `unknown`. |
+| `additions`, `deletions` | integer | Line counts. |
+| `updatedAt`, `detectedAt` | string | ISO 8601 timestamps. |
+
+Statuses are cached for at least a minute and refresh in the background; changes arrive on the sync stream as `session_prs`.
+
+| Method | Path | Response |
+|--------|------|----------|
+| `GET` | `/api/v1/agent-sessions/prs?ids=a,b` | `{ "bySession": { "<sessionId>": [LinkedPR] } }`. Omit `ids` for every session with linked PRs. |
+| `GET` | `/api/v1/agent-sessions/:id/prs` | `{ "prs": [LinkedPR] }` |
+| `POST` | `/api/v1/agent-sessions/:id/prs/refresh` | `{ "prs": [LinkedPR] }` after a forced refresh from GitHub. |
+| `POST` | `/api/v1/agent-sessions/:id/prs` | Body `{ "url": "..." }` links a PR by hand. Returns `{ "prs": [LinkedPR] }`; `400` if the URL is not a GitHub PR. |
+| `DELETE` | `/api/v1/agent-sessions/:id/prs?url=...` | Unlinks a PR. Returns `{ "prs": [LinkedPR] }`. |
 
 #### Example curl
 
